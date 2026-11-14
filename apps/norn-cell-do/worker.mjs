@@ -25,6 +25,8 @@ const MAX_BODY = 65536;
 const PROVISION_PATH = "/v1/cell:provision";
 /** The largest provisioning submission (a tenant's artifact set), in bytes; the cell checks the same bound. This is read before the cell authorizes the caller. */
 const MAX_PROVISION_BODY = 1048576;
+/** HOST-INSTALL-1: a definitions change carries a pack, bounded like a provisioning set. */
+const DEFINITIONS_PATHS = new Set(["/v1/cell/definitions:plan", "/v1/cell/definitions:apply"]);
 // The environments a tenant cell may exist in: pinned configuration (NORN_TENANT_ENVIRONMENTS,
 // comma-separated), never taken from a request. An organization has at most one cell per
 // declared environment; a scope naming any other environment never reaches a cell of its own.
@@ -222,7 +224,7 @@ export class Cell {
       return live.accept(this.ctx, scope, authorization, request.headers.get("sec-websocket-protocol") ?? "");
     }
     // A submission (an ad-hoc question, a definition, a provisioning set) is read once, bounded, before the cell sees it.
-    const limit = url.pathname === PROVISION_PATH ? MAX_PROVISION_BODY : MAX_BODY;
+    const limit = url.pathname === PROVISION_PATH || DEFINITIONS_PATHS.has(url.pathname) ? MAX_PROVISION_BODY : MAX_BODY;
     const body = request.method === "POST" ? await readBounded(request, limit) : undefined;
     if (body === null) {
       return Response.json({ format: "norn/refusal@2", retryable: false, reason: null, code: "request.too_large", category: "limit", message: "the request body is too large", explanation: `submissions are at most ${limit} bytes` }, { status: 413 });

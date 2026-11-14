@@ -17,6 +17,214 @@
       },
       "subcommands": {}
     },
+    "cell": {
+      "args": {},
+      "subcommands": {
+        "apply": {
+          "args": {
+            "email": {
+              "long": "email",
+              "short": null,
+              "aliases": [],
+              "positional": false,
+              "takes_value": true,
+              "multiple": false,
+              "required": false,
+              "default": [],
+              "values": []
+            },
+            "env": {
+              "long": "env",
+              "short": null,
+              "aliases": [],
+              "positional": false,
+              "takes_value": true,
+              "multiple": false,
+              "required": true,
+              "default": [],
+              "values": []
+            },
+            "expected_version": {
+              "long": "expected-version",
+              "short": null,
+              "aliases": [],
+              "positional": false,
+              "takes_value": true,
+              "multiple": false,
+              "required": false,
+              "default": [],
+              "values": []
+            },
+            "json": {
+              "long": "json",
+              "short": null,
+              "aliases": [],
+              "positional": false,
+              "takes_value": false,
+              "multiple": false,
+              "required": false,
+              "default": [],
+              "values": [
+                "true",
+                "false"
+              ]
+            },
+            "org": {
+              "long": "org",
+              "short": null,
+              "aliases": [],
+              "positional": false,
+              "takes_value": true,
+              "multiple": false,
+              "required": true,
+              "default": [],
+              "values": []
+            },
+            "password_env": {
+              "long": "password-env",
+              "short": null,
+              "aliases": [],
+              "positional": false,
+              "takes_value": true,
+              "multiple": false,
+              "required": false,
+              "default": [],
+              "values": []
+            },
+            "paths": {
+              "long": null,
+              "short": null,
+              "aliases": [],
+              "positional": true,
+              "takes_value": true,
+              "multiple": true,
+              "required": true,
+              "default": [],
+              "values": []
+            },
+            "token_env": {
+              "long": "token-env",
+              "short": null,
+              "aliases": [],
+              "positional": false,
+              "takes_value": true,
+              "multiple": false,
+              "required": false,
+              "default": [],
+              "values": []
+            },
+            "url": {
+              "long": "url",
+              "short": null,
+              "aliases": [],
+              "positional": false,
+              "takes_value": true,
+              "multiple": false,
+              "required": true,
+              "default": [],
+              "values": []
+            }
+          },
+          "subcommands": {}
+        },
+        "plan": {
+          "args": {
+            "email": {
+              "long": "email",
+              "short": null,
+              "aliases": [],
+              "positional": false,
+              "takes_value": true,
+              "multiple": false,
+              "required": false,
+              "default": [],
+              "values": []
+            },
+            "env": {
+              "long": "env",
+              "short": null,
+              "aliases": [],
+              "positional": false,
+              "takes_value": true,
+              "multiple": false,
+              "required": true,
+              "default": [],
+              "values": []
+            },
+            "json": {
+              "long": "json",
+              "short": null,
+              "aliases": [],
+              "positional": false,
+              "takes_value": false,
+              "multiple": false,
+              "required": false,
+              "default": [],
+              "values": [
+                "true",
+                "false"
+              ]
+            },
+            "org": {
+              "long": "org",
+              "short": null,
+              "aliases": [],
+              "positional": false,
+              "takes_value": true,
+              "multiple": false,
+              "required": true,
+              "default": [],
+              "values": []
+            },
+            "password_env": {
+              "long": "password-env",
+              "short": null,
+              "aliases": [],
+              "positional": false,
+              "takes_value": true,
+              "multiple": false,
+              "required": false,
+              "default": [],
+              "values": []
+            },
+            "paths": {
+              "long": null,
+              "short": null,
+              "aliases": [],
+              "positional": true,
+              "takes_value": true,
+              "multiple": true,
+              "required": true,
+              "default": [],
+              "values": []
+            },
+            "token_env": {
+              "long": "token-env",
+              "short": null,
+              "aliases": [],
+              "positional": false,
+              "takes_value": true,
+              "multiple": false,
+              "required": false,
+              "default": [],
+              "values": []
+            },
+            "url": {
+              "long": "url",
+              "short": null,
+              "aliases": [],
+              "positional": false,
+              "takes_value": true,
+              "multiple": false,
+              "required": true,
+              "default": [],
+              "values": []
+            }
+          },
+          "subcommands": {}
+        }
+      }
+    },
     "check": {
       "args": {
         "artifacts": {

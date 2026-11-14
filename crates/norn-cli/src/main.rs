@@ -1,5 +1,6 @@
 //! Native entrypoint for the same checker ABI used by typed TypeScript authoring.
 use std::io::{BufRead as _, Write as _};
+mod cell;
 #[cfg(test)]
 mod cli_contract;
 mod eval;
@@ -26,6 +27,8 @@ enum Command {
     Mcp,
     /// Discover and invoke a remote server's live MCP catalog.
     Remote(remote::RemoteArgs),
+    /// Plan and apply a pack on a running hosted cell (HOST-INSTALL-1).
+    Cell(cell::CellArgs),
     /// Read a configured source and print sealed raw observations.
     Source(source::SourceArgs),
     /// List the available human operations and their input schemas.
@@ -90,6 +93,7 @@ fn run(command: Command) -> Result<(String, bool), String> {
         Command::Mcp => mcp::serve(),
         Command::Capabilities { cursor } => mcp::capabilities(cursor.as_deref()),
         Command::Remote(args) => remote::execute(&args).map(|(text, failed)| (text, !failed)),
+        Command::Cell(args) => cell::execute(&args),
         Command::Source(args) => source::execute(&args),
         Command::Openapi => norn_api::openapi::openapi_json()
             .map(|document| (document, true))

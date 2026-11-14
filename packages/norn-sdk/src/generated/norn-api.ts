@@ -57,6 +57,55 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/cell/definitions:apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * `POST /v1/cell/definitions:apply`: install the submission over the active
+         *     definitions as the next version, compare-and-set on `expectedVersion`.
+         * @description # Errors
+         *     As [`plan_definitions`]; 400 without `expectedVersion`; 409 `defs.stale`
+         *     when the active version is no longer the planned one.
+         */
+        post: operations["apply_cell_definitions"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/cell/definitions:plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * `POST /v1/cell/definitions:plan`: what applying the submission over the
+         *     active definitions would change. Never writes.
+         * @description # Errors
+         *     The opaque 403; 400 for a body that is not a change or names a reserved
+         *     or repeated artifact; 413 over the bound; 422 `defs.refused` with the
+         *     checker's findings; 409 `defs.live_data_refused` with the stored objects
+         *     the candidate laws refuse, `defs.migration_refused`, or
+         *     `defs.not_installed`.
+         */
+        post: operations["plan_cell_definitions"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/cell:provision": {
         parameters: {
             query?: never;
@@ -1042,6 +1091,11 @@ export interface components {
             restatementSha256: string | null;
         };
         /**
+         * @description Whether an apply installed a new version.
+         * @enum {string}
+         */
+        ApplyOutcome: "installed" | "unchanged";
+        /**
          * @description One object type an ad-hoc question may range over, with every effective
          *     property and its resolved type (`null` for a registry or unresolved type).
          */
@@ -1394,6 +1448,75 @@ export interface components {
              * @description Its current version.
              */
             version: number;
+        };
+        /** @description The installed definitions. */
+        DefinitionsApplied: {
+            /**
+             * Format: int64
+             * @description The ledger commit that installed it.
+             */
+            commitSeq: number;
+            /**
+             * Format: int64
+             * @description The active definitions version now.
+             */
+            definitionsVersion: number;
+            /** @description Whether this call installed a version. */
+            outcome: components["schemas"]["ApplyOutcome"];
+            /** @description What the change added, replaced and found identical. */
+            plan: components["schemas"]["DefinitionsPlan"];
+            /**
+             * Format: int64
+             * @description The version the change was applied over.
+             */
+            previousVersion: number;
+            /** @description The installed set's admission receipt digest. */
+            receiptSha256: string;
+        };
+        /** @description `POST /v1/cell/definitions:plan` and `:apply`. */
+        DefinitionsChangeRequest: {
+            /** @description The pack's artifact envelopes; none in a reserved namespace (core., std.). Each one is added, or replaces the active artifact of its id. */
+            artifacts: components["schemas"]["NornArtifactEnvelope"][];
+            /**
+             * Format: int64
+             * @description The active definitions version the change was planned against.
+             *     Required by apply; a plan reports the version it planned against.
+             */
+            expectedVersion?: number | null;
+        };
+        /** @description What applying the submission would change. */
+        DefinitionsPlan: {
+            /** @description Artifacts the change adds. */
+            added: components["schemas"]["PlannedArtifact"][];
+            /**
+             * Format: int64
+             * @description The active definitions version the plan was made against: apply's
+             *     `expectedVersion`.
+             */
+            baseVersion: number;
+            /** @description Artifacts the change replaces. */
+            changed: components["schemas"]["PlannedArtifact"][];
+            /**
+             * Format: int64
+             * @description Stored objects evaluated under the candidate laws.
+             */
+            checkedObjects: number;
+            /** @description The checker's non-blocking findings and live-data warnings. */
+            diagnostics: components["schemas"]["RefusalDiagnostic"][];
+            /** @description Object types the installed set would serve that the active one does not. */
+            newObjectTypes: string[];
+            /**
+             * Format: int64
+             * @description The definitions version an apply would install, or the active one when
+             *     nothing changes.
+             */
+            nextVersion: number;
+            /** @description The candidate set's admission receipt digest. */
+            receiptSha256: string;
+            /** @description Submitted artifacts identical to the active ones. */
+            same: string[];
+            /** @description Whether the submission is already the active set (apply writes nothing). */
+            unchanged: boolean;
         };
         /** @description `POST /v1/questions:evaluate`: one ad-hoc question to admit and answer. */
         EvaluateRequest: {
@@ -12364,6 +12487,17 @@ export interface components {
             /** @description The decision id (`POST /v1/decisions/{id}:decide`). */
             id: string;
         };
+        /** @description One artifact the change adds or replaces. */
+        PlannedArtifact: {
+            /** @description The artifact id. */
+            artifactId: string;
+            /** @description The active artifact's version, when the change replaces one. */
+            fromVersion?: string | null;
+            /** @description The artifact kind (`entity`, `law`, `action`, …). */
+            kind: string;
+            /** @description The submitted artifact's version. */
+            toVersion: string;
+        };
         /**
          * @description Whether the call provisioned the cell or found it provisioned.
          * @enum {string}
@@ -12835,6 +12969,172 @@ export interface operations {
             };
             /** @description The request was refused: a declared limit was exceeded. */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    apply_cell_definitions: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DefinitionsChangeRequest"];
+            };
+        };
+        responses: {
+            /** @description The definitions were installed, or already are the active set. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DefinitionsApplied"];
+                };
+            };
+            /** @description The request was refused as invalid: no `expectedVersion`, a reserved or repeated artifact. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied, with the same document whatever the reason. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: the definitions changed since the plan (`defs.stale`), stored objects break the candidate laws (`defs.live_data_refused`), or the live data cannot be migrated. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: the body exceeds the host bound. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused (`defs.refused`): the definitions are not admissible over the active set. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    plan_cell_definitions: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DefinitionsChangeRequest"];
+            };
+        };
+        responses: {
+            /** @description What applying the submission would change. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DefinitionsPlan"];
+                };
+            };
+            /** @description The request was refused as invalid, or names an artifact in a reserved namespace. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied, with the same document whatever the reason. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: stored objects break the candidate laws (`defs.live_data_refused`), the live data cannot be migrated, or the cell has no definitions. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: the body exceeds the host bound. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused (`defs.refused`): the definitions are not admissible over the active set. */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
