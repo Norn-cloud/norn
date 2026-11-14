@@ -1,6 +1,7 @@
 import { Schema } from "effect"
 import { Norn } from "@norn/authoring"
 import { SourceEvidence, SourceDocument as ScanProvenance } from "../../core/src/evidence.ts"
+import { ItemizedDocument, LineItem } from "../canon/records.ts"
 
 /**
  * Scanned source documents (#588, #343): receipts, invoices and expense
@@ -9,7 +10,10 @@ import { SourceEvidence, SourceDocument as ScanProvenance } from "../../core/src
  * (`demo/documents/generate.py`); see `contract.md`.
  */
 
-const Money = Norn.decimal(2, { currency: "currency" })
+// Money is a flow: a document's total, a line's amount and a booked entry's amount each add up
+// across records and over time, so the cell derives their sums by each type's own date (a scanned
+// document's `issued_on`, an entry's `posted_on`): that date is the type's valid time.
+const Money = Norn.decimal(2, { currency: "currency", additivity: { kind: "additive" } })
 
 export const SourceDocument = Norn.interfaceType({
   name: "docs.SourceDocument", title: "Extracted source document", version: "0.1.0",
@@ -42,12 +46,12 @@ export const LedgerEntry = Norn.type({
 
 export const ScannedDocument = Norn.type({
   name: "docs.ScannedDocument", title: "Scanned document", version: "0.1.0", role: "thing",
-  description: "A scanned receipt, invoice or expense report as its extractor read it. `lines_total` is the mapping's sum of the printed line amounts (null when the document prints no lines). A correction is a governed patch that records its reason, its evidence and the verified actor.",
-  implements: [SourceDocument, ScanProvenance],
+  description: "A scanned receipt, invoice or expense report as its extractor read it. It is a `canon.ItemizedDocument`: its printed lines are the `docs.DocumentLine` objects that link to it (`lines`), and the concept's law holds its total to their sum. A correction is a governed patch that records its reason, its evidence and the verified actor.",
+  implements: [SourceDocument, ScanProvenance, ItemizedDocument],
   properties: Schema.Struct({
     id: Schema.String, doc_number: Schema.String, kind: Schema.Literals(["receipt", "invoice", "expense_report"]),
     vendor: Schema.String, issued_on: Schema.NullOr(Norn.date()), currency: Schema.Literals(["USD"]),
-    total: Money, lines_total: Schema.NullOr(Money), line_count: Schema.Int,
+    total: Money, line_count: Schema.Int,
     document_uri: Schema.String, document_digest: Schema.String, media_type: Schema.String,
     extractor: Schema.String, extractor_version: Schema.String,
     correction_reason: Schema.NullOr(Schema.String), corrected_by: Schema.NullOr(Schema.String), correction_evidence: Schema.NullOr(Schema.String),
@@ -58,8 +62,8 @@ export const ScannedDocument = Norn.type({
 
 export const DocumentLine = Norn.type({
   name: "docs.DocumentLine", title: "Scanned document line", version: "0.1.0", role: "thing",
-  description: "One printed line as its extractor read it. `review` is `extracted` until a governed correction fixes a misread amount; the correction records its reason, its evidence and the verified actor, and restates the document's sum of lines in the same commit.",
-  implements: [SourceDocumentLine],
+  description: "One printed line as its extractor read it: a `canon.LineItem` of its document. `review` is `extracted` until a governed correction fixes a misread amount; the correction records its reason, its evidence and the verified actor, and the document's law is checked again over its lines as the correction leaves them.",
+  implements: [SourceDocumentLine, LineItem],
   properties: Schema.Struct({
     id: Schema.String, document_id: Schema.String, line_no: Schema.Int, description: Schema.String, currency: Schema.Literals(["USD"]), amount: Money,
     review: Schema.Literals(["extracted", "corrected"]),
@@ -67,7 +71,7 @@ export const DocumentLine = Norn.type({
   }),
   lifecycles: [{ property: "review", initial: ["extracted"], terminal: ["corrected"], transitions: [{ id: "correct", from: ["extracted"], to: "corrected" }] }],
   identity: [{ name: "primary", properties: ["id"] }],
-  links: [{ id: "document", target: ScannedDocument, cardinality: { to: "one", from: "many", required: true } }],
+  links: [{ id: "document", target: ScannedDocument, cardinality: { to: "one", from: "many", required: true }, inverse: "lines" }],
 })
 
 export const FieldEvidence = Norn.type({
@@ -83,13 +87,9 @@ export const FieldEvidence = Norn.type({
   links: [{ id: "of", target: ScannedDocument, cardinality: { to: "one", from: "many", required: true } }],
 })
 
-/** LAW A: caught at the source. A document that prints lines must print their sum as its total. */
-export const TotalMatchesLines = Norn.law("total_matches_lines", {
-  on: ScannedDocument,
-  when: self => self.lines_total !== null,
-  must: self => self.total === (self.lines_total ?? self.total),
-  because: "A document's printed total must equal the sum of its printed lines; when they differ, a digit was usually misread or a decimal point dropped.",
-})
+// LAW A (caught at the source) is not declared here: it is the law of
+// `canon.ItemizedDocument`, which this pack's documents implement, summed over
+// the line objects that link to each document (LAW-LINK-MANY-1).
 
 /**
  * LAW B (LAW-LINK-1): a document booked to a journal entry must carry that
@@ -194,7 +194,6 @@ export const Mapping = Norn.mapping({
         { property: "kind", value: "input.kind" }, { property: "vendor", value: "input.vendor" },
         { property: "issued_on", value: "input.issued_on" }, { property: "currency", value: "input.currency" },
         { property: "total", value: "input.total" },
-        { property: "lines_total", value: "input.line_count == 0 ? null : sum(map(input.lines, #.amount))" },
         { property: "line_count", value: "input.line_count" },
         { property: "document_uri", value: "input.document_uri" }, { property: "document_digest", value: "input.document_digest" },
         { property: "media_type", value: "input.media_type" },
@@ -305,7 +304,7 @@ const LineValues = Schema.Struct({
 const DocumentValues = Schema.Struct({
   id: Schema.String, doc_number: Schema.String, kind: Schema.Literals(["receipt", "invoice", "expense_report"]),
   vendor: Schema.String, issued_on: Schema.NullOr(Schema.String), currency: Schema.Literals(["USD"]),
-  total: Amount, lines_total: Schema.NullOr(Amount), line_count: Schema.Int,
+  total: Amount, line_count: Schema.Int,
   document_uri: Schema.String, document_digest: Schema.String, media_type: Schema.String,
   extractor: Schema.String, extractor_version: Schema.String, correction_reason: Schema.NullOr(Schema.String), corrected_by: Schema.NullOr(Schema.String), correction_evidence: Schema.NullOr(Schema.String),
 })
@@ -317,15 +316,16 @@ const EvidenceValues = Schema.Struct({
 })
 const LineSlice = Schema.Struct({ line: LineValues, document: DocumentValues, evidence: EvidenceValues })
 const Patch = Schema.Struct({
-  currency: Schema.Literals(["USD"]), amount: Schema.optionalKey(Amount), total: Schema.optionalKey(Amount), lines_total: Schema.optionalKey(Amount),
+  currency: Schema.Literals(["USD"]), amount: Schema.optionalKey(Amount), total: Schema.optionalKey(Amount),
   correction_reason: Schema.optionalKey(Schema.String), correction_evidence: Schema.optionalKey(Schema.String), corrected_by: Schema.optionalKey(Schema.String),
 })
 
 /**
  * The line correction's writer: the line takes the printed amount, and its
- * document's sum of lines moves by the same difference (and its total, when
- * that was misread too), in one commit, so the document's laws judge the
- * corrected whole. Who corrected is the verified actor.
+ * document records the correction (and takes its printed total, when that was
+ * misread too), in one commit. The document's law sums its lines as the
+ * commit leaves them, so it judges the corrected whole. Who corrected is the
+ * verified actor.
  */
 export const LineCorrectionWriter = Norn.decision({
   id: "docs.document_line.writer", title: "Restate a corrected line and its document", version: "0.1.0", contract: "decide", scopeRequired: ["orgId", "environmentId"],
@@ -341,7 +341,6 @@ export const LineCorrectionWriter = Norn.decision({
       correction_evidence: input.event.input.correction_evidence, corrected_by: input.event.actor } },
     { op: "patch", objectType: "docs.ScannedDocument", key: input.slice.line.document_id, patch: {
       currency: input.slice.document.currency,
-      lines_total: (input.slice.document.lines_total ?? input.slice.line.amount) - input.slice.line.amount + input.event.input.amount,
       total: input.event.input.document_total ?? input.slice.document.total,
       correction_reason: input.event.input.correction_reason, correction_evidence: input.event.input.correction_evidence, corrected_by: input.event.actor } },
   ],
@@ -350,9 +349,10 @@ export const LineCorrectionWriter = Norn.decision({
 
 /**
  * The governed correction of one printed line: the line's amount as printed,
- * cited by the evidence read for that line. The document's sum of lines is
- * restated with it; when the document's printed total was misread too, the
- * same correction fixes it, so the laws judge both at once.
+ * cited by the evidence read for that line. The document's law is checked
+ * again over its lines with the corrected amount; when the document's printed
+ * total was misread too, the same correction fixes it, so the law judges both
+ * at once.
  */
 export const CorrectDocumentLine = Norn.action({
   id: "docs.document_line.correct", title: "Correct an extracted line", version: "0.1.0",

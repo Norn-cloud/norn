@@ -66,7 +66,8 @@ pub struct LawFailure {
     /// Original invariant refusal details for the existing attempt journal.
     pub invariant: Option<Box<BoundInvariantFailure>>,
     /// LAW-LINK-1: the exact version of each link target the failing instance
-    /// read, by link id. Non-empty exactly when the outcome is `Linked`.
+    /// read, by link id, and (LAW-LINK-MANY-1) each source an inverse role
+    /// read, by `role/key`. Non-empty exactly when the outcome is `Linked`.
     pub links: std::collections::BTreeMap<String, norn_ir::FactRef>,
     /// DIAG-REASON-1: the stored values the law read, by path (`total`,
     /// `ledger_entry.amount`), so a refusal can say what was checked.
@@ -95,6 +96,25 @@ pub trait LinkTargets {
     /// # Errors
     /// The snapshot cannot be read, or the target's values cannot be proven.
     fn target(&mut self, link: &str) -> Result<Option<LinkedTarget>, LawEvaluationError>;
+
+    /// LAW-LINK-MANY-1: the live objects of `source` (or a type that is one)
+    /// whose forward `link` targets the subject, read through its inverse
+    /// `role`, with their values; empty when none does. A caller that cannot
+    /// read them refuses, so a law never sums a partial set.
+    ///
+    /// # Errors
+    /// The snapshot cannot be read, or a source's values cannot be proven.
+    fn sources(
+        &mut self,
+        role: &str,
+        source: &ObjectTypeName,
+        link: &str,
+    ) -> Result<Vec<LinkedTarget>, LawEvaluationError> {
+        let _ = (source, link);
+        Err(LawEvaluationError::Unsupported(format!(
+            "LAW-LINK-MANY-1: inverse role {role} is read by a governing law, but this caller cannot read it"
+        )))
+    }
 
     /// Whether laws that read links are left for a later pass (an observation
     /// prepared before its bundle's links are known). Such laws are skipped.
@@ -131,16 +151,75 @@ impl LinkTargets for NoLinkTargets {
     }
 }
 
-/// LAW-LINK-1: the declared to-one links of `subject` a law reads, in order.
-/// A to-many link, or a second hop past a link target, refuses.
+/// LAW-LINK-1 / LAW-LINK-MANY-1: one link a governing law reads.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum LinkRead {
+    /// A declared to-one forward link of the subject (`self.ledger_entry`):
+    /// one target, or `null`.
+    Forward(String),
+    /// An inverse role of the subject (`self.lines`): every object of
+    /// `source` whose forward `link` targets the subject, as a list ordered
+    /// by key. A law reads only those objects' own properties.
+    Inverse {
+        /// The inverse role the law reads.
+        role: String,
+        /// The object type that declares the forward link.
+        source: ObjectTypeName,
+        /// The forward link id on `source`.
+        link: String,
+    },
+}
+
+impl LinkRead {
+    /// The member of `self` the law reads.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Forward(link) => link,
+            Self::Inverse { role, .. } => role,
+        }
+    }
+}
+
+/// The declared forward links with inverse `role` whose target `subject`
+/// reaches and that many sources may share (`from: many`): the declarations
+/// an inverse read of `subject.role` resolves to. A to-one inverse role is
+/// not one; the checker refuses a law that reads it.
+fn inverse_declarations(
+    catalog: &TypeCatalog<'_>,
+    subject: &ObjectTypeName,
+    role: &str,
+) -> Vec<(ObjectTypeName, String)> {
+    let mut found = Vec::new();
+    for source in catalog.object_type_names() {
+        for link in catalog.declared_links(&source) {
+            if link.inverse.as_ref().is_some_and(|id| id.as_str() == role)
+                && reaches(catalog, subject, &link.target)
+                && link.cardinality.from == norn_ir::Multiplicity::Many
+            {
+                let entry = (source.clone(), link.id.as_str().to_owned());
+                if !found.contains(&entry) {
+                    found.push(entry);
+                }
+            }
+        }
+    }
+    found
+}
+
+/// LAW-LINK-1 / LAW-LINK-MANY-1: the links of `subject` a law reads, in
+/// order: a declared to-one forward link and its target's properties, or an
+/// inverse role and its sources' own properties. A to-many forward link, a
+/// second hop, or an inverse role more than one link declares refuses.
 ///
 /// # Errors
-/// An unparsable expression, a to-many link, or a second hop.
+/// An unparsable expression, a to-many forward link, a second hop, or an
+/// ambiguous inverse role.
 pub fn law_link_reads(
     catalog: &TypeCatalog<'_>,
     subject: &ObjectTypeName,
     law: &LawIR,
-) -> Result<Vec<String>, LawEvaluationError> {
+) -> Result<Vec<LinkRead>, LawEvaluationError> {
     let declared = |owner: &ObjectTypeName, id: &str| {
         catalog.ancestry(owner).into_iter().find_map(|definition| {
             catalog
@@ -166,19 +245,56 @@ pub fn law_link_reads(
         let paths = norn_expr::expression_read_paths(text, "self")
             .map_err(|error| LawEvaluationError::Invalid(format!("{}: {error}", law.id)))?;
         for path in paths {
-            let Some(link) = path.first().and_then(|first| declared(subject, first)) else {
+            let Some(first) = path.first() else {
                 continue;
             };
-            let second_hop = path
-                .get(1)
-                .is_some_and(|member| declared(&link.target, member).is_some());
-            if link.cardinality.to != norn_ir::Multiplicity::One || second_hop {
+            if let Some(link) = declared(subject, first) {
+                let second_hop = path
+                    .get(1)
+                    .is_some_and(|member| declared(&link.target, member).is_some());
+                if link.cardinality.to != norn_ir::Multiplicity::One || second_hop {
+                    return Err(LawEvaluationError::Unsupported(format!(
+                        "{}: LAW-LINK-1 reads one to-one link and its target's properties",
+                        law.id
+                    )));
+                }
+                reads.insert(LinkRead::Forward(link.id.as_str().to_owned()));
+                continue;
+            }
+            let inverse = inverse_declarations(catalog, subject, first);
+            let [(source, link)] = inverse.as_slice() else {
+                if inverse.is_empty() {
+                    continue;
+                }
                 return Err(LawEvaluationError::Unsupported(format!(
-                    "{}: LAW-LINK-1 reads one to-one link and its target's properties",
+                    "{}: LAW-LINK-MANY-1: inverse role {first} is declared by more than one link",
+                    law.id
+                )));
+            };
+            let hops = norn_expr::expression_element_paths(text, "self")
+                .map_err(|error| LawEvaluationError::Invalid(format!("{}: {error}", law.id)))?
+                .get(std::slice::from_ref(first))
+                .is_some_and(|reads| {
+                    reads.iter().any(|read| {
+                        read.first()
+                            .is_none_or(|member| declared(source, member).is_some())
+                    })
+                });
+            if hops
+                || path
+                    .get(1)
+                    .is_some_and(|member| declared(source, member).is_some())
+            {
+                return Err(LawEvaluationError::Unsupported(format!(
+                    "{}: LAW-LINK-MANY-1 reads an inverse role and its sources' own properties",
                     law.id
                 )));
             }
-            reads.insert(link.id.as_str().to_owned());
+            reads.insert(LinkRead::Inverse {
+                role: first.clone(),
+                source: source.clone(),
+                link: link.clone(),
+            });
         }
     }
     Ok(reads.into_iter().collect())
@@ -200,36 +316,65 @@ pub fn reads_links(
     Ok(false)
 }
 
-/// LAW-LINK-1: every (subject type, link, declared target type) a governing
-/// law reads, once per catalog. Empty for a catalog without link laws, which
-/// then pays nothing for them.
+/// LAW-LINK-1 / LAW-LINK-MANY-1: the links governing laws read, once per
+/// catalog. Empty for a catalog without link laws, which then pays nothing
+/// for them.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LinkLawIndex {
+    /// (subject type, forward link, declared target type): a write of a
+    /// target re-checks the subjects that link to it.
+    pub forward: Vec<(ObjectTypeName, String, ObjectTypeName)>,
+    /// (subject type, source type, forward link): a write of a source, or of
+    /// its link, re-checks the subject its link reaches.
+    pub inverse: Vec<(ObjectTypeName, ObjectTypeName, String)>,
+}
+
+impl LinkLawIndex {
+    /// Whether no governing law reads a link.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.forward.is_empty() && self.inverse.is_empty()
+    }
+}
+
+/// LAW-LINK-1 / LAW-LINK-MANY-1: every link a governing law reads, by
+/// subject type.
 ///
 /// # Errors
 /// As [`law_link_reads`].
-pub fn link_law_index(
-    catalog: &TypeCatalog<'_>,
-) -> Result<Vec<(ObjectTypeName, String, ObjectTypeName)>, LawEvaluationError> {
-    let mut index = Vec::new();
+pub fn link_law_index(catalog: &TypeCatalog<'_>) -> Result<LinkLawIndex, LawEvaluationError> {
+    let mut index = LinkLawIndex::default();
     if catalog.law_artifacts.is_empty() {
         return Ok(index);
     }
     for subject in &catalog.object_type_names() {
         for artifact in catalog.governing_laws(subject)? {
             let law = decode(artifact)?;
-            for link in law_link_reads(catalog, subject, &law)? {
-                let declared = catalog
-                    .ancestry(subject)
-                    .into_iter()
-                    .find_map(|definition| {
-                        catalog
-                            .declared_links(&definition.name)
-                            .into_iter()
-                            .find(|declared| declared.id.as_str() == link)
-                    });
-                if let Some(declared) = declared {
-                    let entry = (subject.clone(), link, declared.target.clone());
-                    if !index.contains(&entry) {
-                        index.push(entry);
+            for read in law_link_reads(catalog, subject, &law)? {
+                match read {
+                    LinkRead::Forward(link) => {
+                        let declared =
+                            catalog
+                                .ancestry(subject)
+                                .into_iter()
+                                .find_map(|definition| {
+                                    catalog
+                                        .declared_links(&definition.name)
+                                        .into_iter()
+                                        .find(|declared| declared.id.as_str() == link)
+                                });
+                        if let Some(declared) = declared {
+                            let entry = (subject.clone(), link, declared.target.clone());
+                            if !index.forward.contains(&entry) {
+                                index.forward.push(entry);
+                            }
+                        }
+                    }
+                    LinkRead::Inverse { source, link, .. } => {
+                        let entry = (subject.clone(), source, link);
+                        if !index.inverse.contains(&entry) {
+                            index.inverse.push(entry);
+                        }
                     }
                 }
             }
@@ -260,6 +405,7 @@ fn law_operands(
     law: &LawIR,
     subject: &JsonObject,
     targets: &std::collections::BTreeMap<String, JsonObject>,
+    sources: &std::collections::BTreeMap<String, Vec<JsonObject>>,
 ) -> std::collections::BTreeMap<String, norn_ir::RuntimeValue> {
     let response = if let LawResponse::Predicate { expression } = &law.response {
         Some(expression.as_str())
@@ -277,6 +423,11 @@ fn law_operands(
             continue;
         };
         for path in paths {
+            // An inverse role's sources are reported by what the law's
+            // closures read from them, below.
+            if path.first().is_some_and(|role| sources.contains_key(role)) {
+                continue;
+            }
             let value = match path.as_slice() {
                 [property] => subject.get(property),
                 [link, property] => targets.get(link).and_then(|target| target.get(property)),
@@ -284,6 +435,33 @@ fn law_operands(
             };
             if let Some(value) = value {
                 operands.insert(path.join("."), value.clone());
+            }
+        }
+        // LAW-LINK-MANY-1: a property the law reads from an inverse role's
+        // sources (`map(self.lines, #.amount)`) is the list of every source's
+        // value, in the order the law read them (`lines.amount`).
+        let Ok(elements) = norn_expr::expression_element_paths(text, "self") else {
+            continue;
+        };
+        for (collection, reads) in elements {
+            let [role] = collection.as_slice() else {
+                continue;
+            };
+            let Some(rows) = sources.get(role) else {
+                continue;
+            };
+            for read in reads {
+                let [property] = read.as_slice() else {
+                    continue;
+                };
+                let values = rows
+                    .iter()
+                    .map(|row| row.get(property).cloned().unwrap_or_default())
+                    .collect();
+                operands.insert(
+                    format!("{role}.{property}"),
+                    norn_ir::RuntimeValue::Array(values),
+                );
             }
         }
     }
@@ -528,6 +706,79 @@ pub fn evaluate(
     evaluate_linked(catalog, key, values, &mut NoLinkTargets, remaining)
 }
 
+/// The link reads one law evaluation bound: each read's pin, and the values
+/// of every to-one target and inverse-role source, by link or role.
+#[derive(Default)]
+struct BoundLinks {
+    pinned: std::collections::BTreeMap<String, norn_ir::FactRef>,
+    targets: std::collections::BTreeMap<String, JsonObject>,
+    sources: std::collections::BTreeMap<String, Vec<JsonObject>>,
+}
+
+/// LAW-LINK-1 / LAW-LINK-MANY-1: bind each link a law reads into the
+/// subject's expression object: a to-one target (or `null`), or an inverse
+/// role's sources as a list ordered by key, each pinned at the version read.
+fn bind_links(
+    key: &FactKey,
+    reads: Vec<LinkRead>,
+    links: &mut dyn LinkTargets,
+    object: &mut std::collections::BTreeMap<String, Value>,
+) -> Result<BoundLinks, LawEvaluationError> {
+    let mut bound = BoundLinks::default();
+    for read in reads {
+        match read {
+            LinkRead::Forward(link) => {
+                let value = match links.target(&link)? {
+                    Some(target) => {
+                        bound.targets.insert(link.clone(), target.values.clone());
+                        bound.pinned.insert(
+                            link.clone(),
+                            norn_ir::FactRef::new(
+                                target.key.object_type.as_str(),
+                                target.key.key.clone(),
+                                target.version,
+                            ),
+                        );
+                        expr_object(&target.values)?
+                    }
+                    None => Value::Null,
+                };
+                object.insert(link, value);
+            }
+            LinkRead::Inverse { role, source, link } => {
+                let mut found = links.sources(&role, &source, &link)?;
+                if found.len() > crate::commit_check::MAX_LINK_LAW_SUBJECTS {
+                    return Err(LawEvaluationError::LinkFanOutExceeded {
+                        target: format!("{}/{}", key.object_type.as_str(), key.key),
+                        limit: crate::commit_check::MAX_LINK_LAW_SUBJECTS,
+                    });
+                }
+                found.sort_by(|left, right| left.key.key.cmp(&right.key.key));
+                found.dedup_by(|left, right| left.key == right.key);
+                let mut items = Vec::with_capacity(found.len());
+                let mut rows = Vec::with_capacity(found.len());
+                for item in found {
+                    // Each source is pinned at the exact version read, by
+                    // `role/key`, so a retained finding replays the same set.
+                    bound.pinned.insert(
+                        format!("{role}/{}", item.key.key),
+                        norn_ir::FactRef::new(
+                            item.key.object_type.as_str(),
+                            item.key.key.clone(),
+                            item.version,
+                        ),
+                    );
+                    items.push(expr_object(&item.values)?);
+                    rows.push(item.values);
+                }
+                bound.sources.insert(role.clone(), rows);
+                object.insert(role, Value::Array(items));
+            }
+        }
+    }
+    Ok(bound)
+}
+
 /// LAW-COMMIT-1 / LAW-LINK-1: evaluate retained direct laws over the subject's
 /// values and, for a law that reads a to-one link, its target's values in the
 /// same snapshot (`self.<link>` is `null` when there is no target).
@@ -560,26 +811,7 @@ pub fn evaluate_linked(
             continue;
         }
         let mut object = subject.clone();
-        let mut pinned = std::collections::BTreeMap::new();
-        let mut targets = std::collections::BTreeMap::new();
-        for link in reads {
-            let value = match links.target(&link)? {
-                Some(target) => {
-                    targets.insert(link.clone(), target.values.clone());
-                    pinned.insert(
-                        link.clone(),
-                        norn_ir::FactRef::new(
-                            target.key.object_type.as_str(),
-                            target.key.key.clone(),
-                            target.version,
-                        ),
-                    );
-                    expr_object(&target.values)?
-                }
-                None => Value::Null,
-            };
-            object.insert(link, value);
-        }
+        let bound = bind_links(key, reads, links, &mut object)?;
         let context = Value::object([("self", Value::Object(object))]);
         let invariant_id = invariant_binding(catalog, &key.object_type, &law)?;
         let mut invariant_failure = None;
@@ -630,8 +862,8 @@ pub fn evaluate_linked(
         };
         if let Err(outcome) = result {
             let mut failure = law_failure(artifact, &law, outcome, invariant_failure)?;
-            failure.links = pinned;
-            failure.values = law_operands(&law, values, &targets);
+            failure.values = law_operands(&law, values, &bound.targets, &bound.sources);
+            failure.links = bound.pinned;
             failures.push(failure);
         }
     }

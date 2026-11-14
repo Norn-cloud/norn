@@ -1,13 +1,11 @@
 {
-  "sha256": "fcde0268cd81d612254b72f7d6e5d4a19f3dc9d630beeef3074d842acfbc2f8f",
-  "origin": "derived",
-  "category": "generated",
+  "sha256": "be8e3c45a963af4ceee0cfea0d0bf42e02dd9f041de1fef48efca22a3fc461f7",
+  "origin": "authored",
+  "category": "code",
   "license": "Apache-2.0",
   "sources": [],
   "analyzed_sources": [],
-  "parents": [
-    "registry/packs/documents/documents.ts"
-  ],
+  "parents": [],
   "rights_evidence": [
     {
       "path": "NOTICE",

@@ -60,6 +60,9 @@
         "total": {
           "description": "The total as printed on the scanned page. It must equal the sum of the printed lines and, for a booked document, its journal entry; a misread line is corrected on that line.",
           "nornType": {
+            "additivity": {
+              "kind": "additive"
+            },
             "currencySource": {
               "links": [],
               "property": "currency"

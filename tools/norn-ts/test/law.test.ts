@@ -117,8 +117,9 @@ test("law exceptions never pass through a statement or render from two homes", (
 describe("closures, sum and day helpers", () => {
   const line = S.record({ amount: S.integer, sku: S.text() })
   const entry = S.record({ status: S.text(["draft", "posted"]), issue_date: S.text(), due_date: S.text(), debit: S.integer, credit: S.integer, debit_sku: S.text(), credit_sku: S.text(), lines: S.array(line) })
-  // The kernel binds a law's `self` to the subject's own properties, so the admitted laws iterate a list built from
-  // them. Reading a to-many link's targets is LAW-LINK-1's to-many extension; until then the checker refuses it.
+  // The kernel binds a law's `self` to the subject's own properties, so these laws iterate a list built from them.
+  // A law sums over linked objects through an inverse role (LAW-LINK-MANY-1, `canon.ItemizedDocument`'s law); a
+  // to-many forward link of an object type stays refused.
   const entryType = E.objectType({
     name: "books.JournalEntry", title: "Journal entry", version: "0.1.0",
     properties: [E.property("status", E.enumeration("draft", "posted")), E.property("issue_date", E.date), E.property("due_date", E.date), E.property("debit", E.integer), E.property("credit", E.integer), E.property("debit_sku", E.text()), E.property("credit_sku", E.text())],

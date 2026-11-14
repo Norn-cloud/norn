@@ -1,0 +1,51 @@
+{
+  "artifactId": "canon.ItemizedDocument.total_matches_lines.law",
+  "dependencies": [
+    {
+      "artifactId": "canon.ItemizedDocument.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "An itemized document's total equals the sum of its lines",
+  "namespace": "canon",
+  "payload": {
+    "condition": "len(self.lines) > 0",
+    "id": "canon.ItemizedDocument.total_matches_lines",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "canon",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/canon/records.ts"
+    },
+    "rationale": "A document's total must equal the sum of its lines; when they differ, a digit was usually misread or a decimal point dropped.",
+    "response": {
+      "expression": "self.total == sum(map(self.lines, #.amount))",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "canon.ItemizedDocument"
+      ],
+      "root": {
+        "id": "canon.ItemizedDocument",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "canon.ItemizedDocument"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/canon/artifacts/canon.ItemizedDocument.total_matches_lines.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -112,14 +112,26 @@ export interface Law {
   readonly modality: string
   readonly response: string
   readonly owner: string
-  /** The two facts a predicate law holds equal, when it reads `self.a == self.b` (or `self.a == (self.b ?? …)`): what a broken record shows side by side. */
+  /**
+   * The two facts a predicate law holds equal, when it reads `self.a == self.b` (or `self.a == (self.b ?? …)`), or
+   * a total held to the sum over its lines, `self.total == sum(map(self.lines, #.amount))` (then the second is the
+   * path `lines.amount`): what a broken record shows side by side.
+   */
   readonly compares?: readonly [string, string]
+  /** The concept that declares the law, when a concept inherits it (an interface it implements, a supertype). */
+  readonly inheritedFrom?: string
 }
+
+const IDENT = "[A-Za-z_][A-Za-z0-9_]*"
+const PAIR = new RegExp(`^\\s*self\\.(${IDENT})\\s*==\\s*\\(?\\s*self\\.(${IDENT})\\b`)
+const SUM = new RegExp(`^\\s*self\\.(${IDENT})\\s*==\\s*sum\\(\\s*map\\(\\s*self\\.(${IDENT})\\s*,\\s*#\\.(${IDENT})\\s*\\)\\s*\\)\\s*$`)
 
 /** The two facts an equality law compares, read from its declared predicate; anything else compares nothing. */
 export function comparedFacts(expression: unknown): readonly [string, string] | undefined {
   if (typeof expression !== "string") return undefined
-  const match = /^\s*self\.([A-Za-z_][A-Za-z0-9_]*)\s*==\s*\(?\s*self\.([A-Za-z_][A-Za-z0-9_]*)\b/.exec(expression)
+  const sum = SUM.exec(expression)
+  if (sum) return [sum[1]!, `${sum[2]!}.${sum[3]!}`]
+  const match = PAIR.exec(expression)
   return match ? [match[1]!, match[2]!] : undefined
 }
 
@@ -305,6 +317,27 @@ export function catalogOf(artifacts: readonly Artifact[], locale = "en"): Catalo
       lifecycles: "lifecycles" in def ? def.lifecycles ?? [] : [],
     })
   }
-  concepts.sort((a, b) => a.title.localeCompare(b.title, locale))
-  return { concepts, systems, byName: new Map(concepts.map((concept) => [concept.name, concept])) }
+  // LAW-INTERFACE-1: a law declared on a concept governs every concept that implements or extends
+  // it, so each one lists the laws (and rules) of its ancestors too, marked with where they come from.
+  const parentsOf = new Map(concepts.map((concept) => [concept.name, concept.parents]))
+  const ancestors = (name: string): string[] => {
+    const seen = new Set<string>()
+    const pending = [...parentsOf.get(name) ?? []]
+    while (pending.length > 0) {
+      const next = pending.shift()!
+      if (seen.has(next) || next === name) continue
+      seen.add(next)
+      pending.push(...parentsOf.get(next) ?? [])
+    }
+    return [...seen]
+  }
+  const governed = concepts.map((concept) => {
+    const inherited = ancestors(concept.name).flatMap((ancestor) => (laws.get(ancestor) ?? []).map((law) => ({ ...law, inheritedFrom: ancestor })))
+    const fresh = inherited.filter((law, index) => !concept.laws.some(({ id }) => id === law.id) && inherited.findIndex(({ id }) => id === law.id) === index)
+    if (fresh.length === 0) return concept
+    const rationales = fresh.map(({ rationale }) => rationale).filter((rationale) => !concept.rules.includes(rationale))
+    return { ...concept, laws: [...concept.laws, ...fresh], rules: [...concept.rules, ...rationales] }
+  })
+  governed.sort((a, b) => a.title.localeCompare(b.title, locale))
+  return { concepts: governed, systems, byName: new Map(governed.map((concept) => [concept.name, concept])) }
 }

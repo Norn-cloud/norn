@@ -9,7 +9,7 @@
   "payload": {
     "entityVersion": "2.0",
     "objectType": {
-      "description": "A scanned receipt, invoice or expense report as its extractor read it. `lines_total` is the mapping's sum of the printed line amounts (null when the document prints no lines). A correction is a governed patch that records its reason, its evidence and the verified actor.",
+      "description": "A scanned receipt, invoice or expense report as its extractor read it. It is a `canon.ItemizedDocument`: its printed lines are the `docs.DocumentLine` objects that link to it (`lines`), and the concept's law holds its total to their sum. A correction is a governed patch that records its reason, its evidence and the verified actor.",
       "identity": [
         {
           "name": "primary",
@@ -20,7 +20,8 @@
       ],
       "implements": [
         "docs.SourceDocument",
-        "norn.SourceDocument"
+        "norn.SourceDocument",
+        "canon.ItemizedDocument"
       ],
       "links": [
         {
@@ -92,20 +93,9 @@
         {
           "id": "total",
           "type": {
-            "currencySource": {
-              "links": [],
-              "property": "currency"
+            "additivity": {
+              "kind": "additive"
             },
-            "kind": "decimal",
-            "scale": 2
-          }
-        },
-        {
-          "constraints": {
-            "nullable": true
-          },
-          "id": "lines_total",
-          "type": {
             "currencySource": {
               "links": [],
               "property": "currency"
