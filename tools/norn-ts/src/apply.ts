@@ -9,12 +9,16 @@
  *   norn apply registry/packs/jewelry --url https://studio.example/api/host \
  *     --org ORG --env ENV --email you@example.com --password-env NORN_PASSWORD
  *
- * `--token-env VAR` sends a host bearer token instead (a host reached
- * directly). Credentials are read from the environment, never arguments.
+ * With `--email`, the session acts in workspace `--org` (selected as Studio
+ * selects it), so an account in several workspaces applies to any of them it
+ * may write. `--token-env VAR` sends a host bearer token instead (a host
+ * reached directly). Credentials are read from the environment, never
+ * arguments.
  */
 import { statSync } from "node:fs"
 import { resolve } from "node:path"
-import { compilePack } from "./pack.ts"
+import { loadChecker } from "./checker-abi.ts"
+import { authoredArtifacts, bindSourcePins, compilePack, hasMappings } from "./pack.ts"
 
 export const PLAN_PATH = "/v1/cell/definitions:plan"
 export const APPLY_PATH = "/v1/cell/definitions:apply"
@@ -34,17 +38,37 @@ export function credentialsAllowed(url: string): boolean {
   return parsed.protocol === "https:" || (parsed.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(parsed.hostname))
 }
 
-/** Sign in to Studio by email and password; the session cookie. */
-async function signIn(origin: string, email: string, password: string): Promise<string> {
-  const response = await fetch(`${origin}/api/auth/sign-in/email`, {
+/** The cookies `response` sets, over `jar` (a later cookie of the same name wins). */
+function cookies(jar: string, response: Response): string {
+  const named = new Map(jar.split("; ").filter(Boolean).map((pair) => [pair.split("=")[0]!, pair] as const))
+  for (const cookie of response.headers.getSetCookie().map((c) => c.split(";")[0]!).filter(Boolean)) named.set(cookie.split("=")[0]!, cookie)
+  return [...named.values()].join("; ")
+}
+
+/**
+ * Sign in to Studio by email and password, then select the workspace `org`
+ * for the session through the same route Studio's workspace switch uses
+ * (`/api/auth/organization/set-active`): a session otherwise acts in the
+ * user's default workspace, and every other workspace's cell refuses it. The
+ * server decides: a workspace the user is not a member of is refused there.
+ * The session cookie.
+ */
+export async function studioSession(origin: string, email: string, password: string, org: string): Promise<string> {
+  const signedIn = await fetch(`${origin}/api/auth/sign-in/email`, {
     method: "POST", redirect: "manual",
     headers: { "content-type": "application/json", origin },
     body: JSON.stringify({ email, password }),
   })
-  if (!response.ok) throw new Error(`Studio sign-in refused (${response.status})`)
-  const cookies = response.headers.getSetCookie().map((cookie) => cookie.split(";")[0]).filter(Boolean)
-  if (cookies.length === 0) throw new Error("Studio sign-in returned no session")
-  return cookies.join("; ")
+  if (!signedIn.ok) throw new Error(`Studio sign-in refused (${signedIn.status})`)
+  const session = cookies("", signedIn)
+  if (session === "") throw new Error("Studio sign-in returned no session")
+  const selected = await fetch(`${origin}/api/auth/organization/set-active`, {
+    method: "POST", redirect: "manual",
+    headers: { "content-type": "application/json", origin, cookie: session },
+    body: JSON.stringify({ organizationId: org }),
+  })
+  if (!selected.ok) throw new Error(`Studio refused workspace ${org} for this account (${selected.status})`)
+  return cookies(session, selected)
 }
 
 export async function post(target: Target, path: string, body: unknown): Promise<{ status: number; document: Doc }> {
@@ -119,8 +143,17 @@ export async function main(command: "plan" | "apply", args: ReadonlyArray<string
   const passwordEnv = option(args, "--password-env")
   const tokenEnv = option(args, "--token-env")
   if ((email || tokenEnv) && !credentialsAllowed(url)) { process.stderr.write("credentials are sent only over HTTPS (or HTTP to loopback)\n"); return 2 }
-  const pack = compilePack(resolve(input), { scope: { orgId: org, environmentId: env }, root: process.cwd(), ...(statSync(input).isFile() ? { modules: [resolve(input)] } : {}) })
+  const options = { scope: { orgId: org, environmentId: env }, root: process.cwd(), ...(statSync(input).isFile() ? { modules: [resolve(input)] } : {}) }
+  const pack = compilePack(resolve(input), options)
   if (!pack.ok) { process.stdout.write(`${JSON.stringify(pack)}\n`); return 1 }
+  let artifacts: ReadonlyArray<unknown> = pack.artifacts
+  if (hasMappings(pack.artifacts)) {
+    // A mapping's source pin names its schema as authored; bind it to the
+    // schema as compiled for this tenant, by the checker's hash.
+    const authored = authoredArtifacts(resolve(input), options)
+    const checker = authored ? await loadChecker() : undefined
+    if (authored && checker) artifacts = bindSourcePins(checker, pack.artifacts, authored)
+  }
   const headers: Record<string, string> = {}
   if (tokenEnv) {
     const token = process.env[tokenEnv]
@@ -131,11 +164,11 @@ export async function main(command: "plan" | "apply", args: ReadonlyArray<string
     if (!password) { process.stderr.write("--password-env names no set variable\n"); return 2 }
     const origin = new URL(url).origin
     // Studio accepts a state change only from its own origin.
-    headers.cookie = await signIn(origin, email, password)
+    headers.cookie = await studioSession(origin, email, password, org)
     headers.origin = origin
   }
   const expected = option(args, "--expected-version")
-  const { out, ok } = await change({ url, org, env, headers }, command, pack.artifacts, args.includes("--json"), expected === undefined ? undefined : Number(expected))
+  const { out, ok } = await change({ url, org, env, headers }, command, artifacts, args.includes("--json"), expected === undefined ? undefined : Number(expected))
   process.stdout.write(`${out.join("\n")}\n`)
   return ok ? 0 : 1
 }

@@ -294,3 +294,72 @@ export function finalizeFlowSourceMap(
   })
   return { format: FLOW_SOURCE_MAP_FORMAT, flows: boundFlows }
 }
+
+type Envelope = { readonly artifactId?: unknown; readonly version?: unknown; readonly kind?: unknown; readonly payload?: { readonly source?: { readonly schemaId?: unknown; readonly version?: unknown; readonly sha256?: unknown } } }
+
+/** The Rust checker's hash of `artifact` (its `ArtifactRef`); hashing is the checker's alone. */
+function checkerHash(checker: CheckerAbi, artifact: Json): string | undefined {
+  const { receipt } = checker.checkArtifactSet([artifact], null)
+  const set = typeof receipt === "object" && receipt !== null ? (receipt as { readonly artifactSet?: { readonly artifacts?: ReadonlyArray<{ readonly sha256?: unknown }> } }).artifactSet : undefined
+  const sha256 = set?.artifacts?.[0]?.sha256
+  return typeof sha256 === "string" ? sha256 : undefined
+}
+
+/**
+ * Bind each mapping's source pin to the source schema it is compiled with.
+ *
+ * A mapping pins its source schema by the checker's hash of the schema's
+ * envelope (`MappingIr.source.sha256`), and a pack writes that pin for the
+ * schema as the registry carries it (scope `{}`, a system envelope). A
+ * tenant compile (`norn compile --org --env`, `norn plan|apply`) stamps the
+ * tenant's envelope on the schema, so the authored pin no longer names it
+ * and every cell refuses the mapping (`mapping.model.source_hash_mismatch`).
+ *
+ * Here the authored pin is checked against the checker's hash of the
+ * schema as authored (`authored`, the same pack compiled as its registry
+ * package); only a pin that names it exactly is moved to the checker's hash
+ * of the schema as compiled (`compiled`). A pin that names neither stays as
+ * written, and the checker refuses it as before.
+ */
+export function bindSourcePins(checker: CheckerAbi, compiled: ReadonlyArray<Json>, authored: ReadonlyArray<Json>): Json[] {
+  const key = (id: unknown, version: unknown) => `${String(id)}\u0000${String(version)}`
+  const schemas = (artifacts: ReadonlyArray<Json>) => new Map(artifacts
+    .filter((artifact) => (artifact as Envelope).kind === "source_schema")
+    .map((artifact) => [key((artifact as Envelope).artifactId, (artifact as Envelope).version), artifact] as const))
+  const compiledSchemas = schemas(compiled), authoredSchemas = schemas(authored)
+  const hashes = new Map<Json, string | undefined>()
+  const hash = (artifact: Json) => {
+    if (!hashes.has(artifact)) hashes.set(artifact, checkerHash(checker, artifact))
+    return hashes.get(artifact)
+  }
+  return compiled.map((artifact) => {
+    const mapping = artifact as Envelope
+    const source = mapping.kind === "mapping" ? mapping.payload?.source : undefined
+    if (!source) return artifact
+    const target = compiledSchemas.get(key(source.schemaId, source.version))
+    const asAuthored = authoredSchemas.get(key(source.schemaId, source.version))
+    if (!target || !asAuthored || source.sha256 !== hash(asAuthored)) return artifact
+    const bound = hash(target)
+    if (bound === undefined || bound === source.sha256) return artifact
+    const payload = (artifact as { readonly payload: Record<string, Json> }).payload
+    return { ...(artifact as Record<string, Json>), payload: { ...payload, source: { ...(payload.source as Record<string, Json>), sha256: bound } } } as Json
+  })
+}
+
+/** Whether `artifacts` hold a mapping, whose source pin {@link bindSourcePins} binds. */
+export function hasMappings(artifacts: ReadonlyArray<Json>): boolean {
+  return artifacts.some((artifact) => (artifact as Envelope).kind === "mapping")
+}
+
+/**
+ * The pack at `dir` compiled as its registry package (the envelope its pins
+ * are written for), or undefined when it is not a package under `root`.
+ */
+export function authoredArtifacts(dir: string, options: PackOptions): ReadonlyArray<Json> | undefined {
+  try {
+    const authored = compilePack(dir, { ...options, registry: dir })
+    return authored.ok ? authored.artifacts : undefined
+  } catch {
+    return undefined
+  }
+}

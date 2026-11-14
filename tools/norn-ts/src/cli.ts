@@ -5,7 +5,7 @@ import { resolve } from "node:path"
 import { ProfileChecker } from "./check.ts"
 import { compileDashboards, compileQuestions } from "./compiler/definitions.ts"
 import { loadChecker, sourceMappedDiagnostics } from "./checker-abi.ts"
-import { admit, compilePack } from "./pack.ts"
+import { admit, authoredArtifacts, bindSourcePins, compilePack, hasMappings } from "./pack.ts"
 
 if (process.argv[2] === "--version" || process.argv[2] === "-V") {
   const { versionLine } = await import("./build-info.ts")
@@ -97,11 +97,17 @@ if (command === "check") {
   const { warnAuthoringVersion } = await import("./authoring-version.ts")
   warnAuthoringVersion(resolve(input))
 }
-const pack = compilePack(resolve(input), { scope: { orgId, environmentId }, root: process.cwd(), ...(statSync(input).isFile() ? { modules: [resolve(input)] } : {}) })
-if (!pack.ok) {
-  process.stdout.write(`${JSON.stringify(pack)}\n`)
+const packOptions = { scope: { orgId, environmentId }, root: process.cwd(), ...(statSync(input).isFile() ? { modules: [resolve(input)] } : {}) }
+const compiled = compilePack(resolve(input), packOptions)
+if (!compiled.ok) {
+  process.stdout.write(`${JSON.stringify(compiled)}\n`)
   process.exit(1)
 }
+// A mapping's source pin names its schema as authored; bind it to the schema
+// as compiled for this tenant, by the checker's hash (bindSourcePins).
+const authored = hasMappings(compiled.artifacts) ? authoredArtifacts(resolve(input), packOptions) : undefined
+const pinChecker = authored ? await loadChecker().catch(() => undefined) : undefined
+const pack = authored && pinChecker ? { ...compiled, artifacts: bindSourcePins(pinChecker, compiled.artifacts, authored) } : compiled
 if (command === "compile") {
   const output = option("--out")
   const document = `${JSON.stringify(pack.artifacts)}\n`
