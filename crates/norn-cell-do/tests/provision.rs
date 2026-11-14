@@ -695,6 +695,52 @@ fn an_identical_retry_replays_and_a_different_one_refuses() {
     assert_eq!(definitions(&mut cell, Some(&owner)), installed);
 }
 
+/// #1358: a cell answers "which connections?" from its first request: its
+/// own sources pack is installed right after the provisioned revision, so an
+/// admin's and the owner's reads of `source.Connection` are an empty page,
+/// never a refusal. The provisioned revision, and so the receipt and its
+/// replay, are unchanged, and a replay installs nothing again.
+#[test]
+fn a_provisioned_cell_serves_its_connections_from_the_start() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = file(&directory, "a");
+    let scope = scope("org_a", "prod");
+    let owner = user("org_a", "owner");
+    let body = submission(&plain());
+    let mut cell = open(&path, &scope);
+    let first = json_of(&provision(&mut cell, Some(&owner), &body));
+    assert_eq!(first["outcome"], "provisioned", "{first}");
+    assert_eq!(first["definitionsVersion"], 1, "{first}");
+    let installed = definitions(&mut cell, Some(&owner));
+    assert_eq!(installed.status, 200, "{}", installed.body);
+    assert!(
+        installed.body.contains("source.Connection"),
+        "{}",
+        installed.body
+    );
+    let query = query(&scope);
+    for role in ["owner", "admin"] {
+        let auth = user("org_a", role);
+        for object_type in ["source.Connection", "source.SyncRun", "source.Upload"] {
+            let page = call(
+                &mut cell,
+                "GET",
+                &format!("/v1/objects/{object_type}"),
+                &query,
+                Some(&auth),
+                "",
+            );
+            assert_eq!(page.status, 200, "{role} {object_type}: {}", page.body);
+            assert_eq!(json_of(&page)["records"], json!([]), "{role} {object_type}");
+        }
+    }
+    let mut again = json_of(&provision(&mut cell, Some(&owner), &body));
+    assert_eq!(again["outcome"], "replayed", "{again}");
+    again["outcome"] = json!("provisioned");
+    assert_eq!(again, first);
+    assert_eq!(definitions(&mut cell, Some(&owner)), installed);
+}
+
 // ------------------------------------------------------------ unprovisioned
 
 /// Requests no verified principal makes, across the host's routes.
