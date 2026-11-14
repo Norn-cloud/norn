@@ -792,7 +792,7 @@ fn a_provisioned_privacy_set_pseudonymizes_a_party_name() {
                 norn_cell::InstalledDefinitionInput {
                     canonical_set: admitted.canonical_set.clone(),
                     registry: vec![],
-                    receipt_sha256: admitted.receipt_sha256.clone(),
+                    receipt_sha256: admitted.receipt_sha256,
                     admission_receipt: None,
                     readmission: None,
                     diff: json!({}),
