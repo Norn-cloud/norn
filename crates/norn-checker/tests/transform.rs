@@ -85,8 +85,16 @@ fn ontology() -> Vec<Value> {
                 "links": [
                     {"id": "customer", "target": "shop.Customer",
                         "cardinality": {"to": "one", "from": "many", "required": true}},
-                    {"id": "tags", "target": "shop.Tag", "cardinality": {"to": "many", "from": "many"}}
+                    {"id": "tags", "target": "shop.Tag", "cardinality": {"to": "many", "from": "many"}},
+                    {"id": "lines", "target": "shop.Line", "cardinality": {"to": "many", "from": "one"}}
                 ]
+            }),
+        ),
+        entity(
+            "shop.Line",
+            json!({
+                "properties": [{"id": "amount", "type": {"kind": "decimal", "scale": 2,
+                    "additivity": {"kind": "additive"}}}]
             }),
         ),
         entity(
@@ -102,10 +110,11 @@ fn ontology() -> Vec<Value> {
     ]
 }
 
-const TYPES: [(&str, &str); 4] = [
+const TYPES: [(&str, &str); 5] = [
     ("customer", "shop.Customer"),
     ("tag", "shop.Tag"),
     ("order", "shop.Order"),
+    ("line", "shop.Line"),
     ("lead", "shop.Lead"),
 ];
 
@@ -861,4 +870,205 @@ fn admission_refuses_an_expression_every_evaluation_would_refuse() {
         links: BTreeMap::new(),
     };
     assert_eq!(evaluate(&plan, &input).expect("evaluated").rows.len(), 1);
+}
+
+/// One order worth 80 with two tags and one line worth 80.
+fn tagged_order() -> TransformInput {
+    TransformInput {
+        rows: BTreeMap::from([
+            (
+                "order".to_owned(),
+                vec![order("o1", "2026-11-02T10:00:00Z", "EGP", "80.00")],
+            ),
+            (
+                "tag".to_owned(),
+                vec![
+                    row("t1", &[("label", s("gold"))]),
+                    row("t2", &[("label", s("gift"))]),
+                ],
+            ),
+            ("line".to_owned(), vec![row("l1", &[("amount", num("80.00"))])]),
+        ]),
+        links: BTreeMap::from([
+            (
+                ("order".to_owned(), "tags".to_owned()),
+                BTreeMap::from([("o1".to_owned(), vec!["t1".to_owned(), "t2".to_owned()])]),
+            ),
+            (
+                ("order".to_owned(), "lines".to_owned()),
+                BTreeMap::from([("o1".to_owned(), vec!["l1".to_owned()])]),
+            ),
+        ]),
+    }
+}
+
+fn tags_join() -> Value {
+    json!({"op": "join", "left": "order", "right": "tag",
+        "on": {"link": {"column": "id", "link": "tags"}}, "kind": "inner", "prefix": "tag_"})
+}
+
+fn total(plan: &norn_checker::transform::TransformPlan) -> RuntimeValue {
+    evaluate(plan, &tagged_order()).expect("evaluated").rows[0].values["total"].clone()
+}
+
+#[test]
+fn a_link_join_from_repeated_rows_repeats_its_right_side() {
+    // The lines of one order, summed: 80.
+    let lines = admitted(
+        with(json!({
+        "k": {"op": "join", "left": "order", "right": "line",
+            "on": {"link": {"column": "id", "link": "lines"}}, "kind": "inner", "prefix": "line_"},
+        "a": {"op": "aggregate", "input": "k", "groupBy": [],
+            "measures": [{"name": "total", "fn": "sum", "column": "line_amount"}]}})),
+        "a",
+    );
+    assert_eq!(total(&lines), num("80"));
+    // After the tags join each order row repeats once per tag, so every line
+    // it reaches repeats too: the sum would be 160.
+    refuses(
+        with(json!({
+        "j": tags_join(),
+        "k": {"op": "join", "left": "j", "right": "line",
+            "on": {"link": {"column": "id", "link": "lines"}}, "kind": "inner", "prefix": "line_"},
+        "a": {"op": "aggregate", "input": "k", "groupBy": [],
+            "measures": [{"name": "total", "fn": "sum", "column": "line_amount"}]}})),
+        "a",
+        codes::AMBIGUOUS_GRAIN,
+    );
+}
+
+#[test]
+fn a_dedupe_makes_a_value_single_only_on_its_owners_key() {
+    // Deduplicating by the order id alone: one row per order, 80.
+    let by_order = admitted(
+        with(json!({
+        "j": tags_join(),
+        "d": {"op": "dedupe", "input": "j", "key": ["id"],
+            "orderBy": [{"column": "tag_id", "direction": "asc"}], "keep": "first"},
+        "a": {"op": "aggregate", "input": "d", "groupBy": [],
+            "measures": [{"name": "total", "fn": "sum", "column": "flat"}]}})),
+        "a",
+    );
+    assert_eq!(total(&by_order), num("80"));
+    // The key [id, tag_id] drops nothing: the order still repeats per tag.
+    refuses(
+        with(json!({
+        "j": tags_join(),
+        "d": {"op": "dedupe", "input": "j", "key": ["id", "tag_id"],
+            "orderBy": [], "keep": "first"},
+        "a": {"op": "aggregate", "input": "d", "groupBy": [],
+            "measures": [{"name": "total", "fn": "sum", "column": "flat"}]}})),
+        "a",
+        codes::AMBIGUOUS_GRAIN,
+    );
+}
+
+#[test]
+fn a_group_key_stays_repeated_unless_one_input_owns_the_keys() {
+    // Grouped by the order alone: one row per order, 80.
+    let by_order = admitted(
+        with(json!({
+        "j": tags_join(),
+        "g": {"op": "aggregate", "input": "j", "groupBy": [{"column": "id"}, {"column": "flat"}],
+            "measures": [{"name": "n", "fn": "count"}]},
+        "a": {"op": "aggregate", "input": "g", "groupBy": [],
+            "measures": [{"name": "total", "fn": "sum", "column": "flat"}]}})),
+        "a",
+    );
+    assert_eq!(total(&by_order), num("80"));
+    // Grouped per order and tag: the order's value is in two groups.
+    refuses(
+        with(json!({
+        "j": tags_join(),
+        "g": {"op": "aggregate", "input": "j",
+            "groupBy": [{"column": "id"}, {"column": "tag_id"}, {"column": "flat"}],
+            "measures": [{"name": "n", "fn": "count"}]},
+        "a": {"op": "aggregate", "input": "g", "groupBy": [],
+            "measures": [{"name": "total", "fn": "sum", "column": "flat"}]}})),
+        "a",
+        codes::AMBIGUOUS_GRAIN,
+    );
+}
+
+#[test]
+fn a_measure_without_group_keys_may_be_null() {
+    let plan = admitted(
+        with(json!({"a": {"op": "aggregate", "input": "order", "groupBy": [],
+        "measures": [{"name": "total", "fn": "sum", "column": "flat"},
+            {"name": "first", "fn": "min", "column": "placed_at"},
+            {"name": "last", "fn": "max", "column": "placed_at"},
+            {"name": "orders", "fn": "count"}]}})),
+        "a",
+    );
+    let schema = plan.output_schema();
+    for name in ["total", "first", "last"] {
+        assert!(schema.column(name).expect(name).describe().0, "{name}");
+    }
+    assert!(!schema.column("orders").expect("orders").describe().0);
+    // Over no rows the one keyless row holds null.
+    let empty = TransformInput {
+        rows: BTreeMap::from([("order".to_owned(), Vec::new())]),
+        links: BTreeMap::new(),
+    };
+    let out = evaluate(&plan, &empty).expect("evaluated");
+    assert_eq!(out.rows[0].values["total"], RuntimeValue::Null);
+    // Every group has a member, so a grouped measure keeps its type.
+    let grouped = admitted(
+        with(json!({"a": {"op": "aggregate", "input": "order", "groupBy": [{"column": "currency"}],
+        "measures": [{"name": "total", "fn": "sum", "column": "flat"}]}})),
+        "a",
+    );
+    assert!(!grouped.output_schema().column("total").expect("total").describe().0);
+}
+
+#[test]
+fn distinct_counts_are_not_summed() {
+    let weekly = |function: &str| {
+        with(json!({
+        "w": {"op": "aggregate", "input": "order",
+            "groupBy": [{"column": "placed_at", "grain": "week"}],
+            "measures": [{"name": "n", "fn": function, "column": "currency"}]},
+        "m": {"op": "aggregate", "input": "w", "groupBy": [],
+            "measures": [{"name": "total", "fn": "sum", "column": "n"}]}}))
+    };
+    admits(weekly("count"), "m");
+    refuses(
+        weekly("count_distinct"),
+        "m",
+        "metric.validation.invalid_additivity",
+    );
+}
+
+#[test]
+fn a_computed_column_that_reads_the_whole_row_carries_every_column() {
+    let mut documents = ontology();
+    documents[0]["payload"]["objectType"]["properties"][0]["markings"] = json!(["pii.contact"]);
+    documents.push(artifact(
+        "shop.markings",
+        "entity",
+        json!([]),
+        json!({"entityVersion": "2.0", "markings": [{"id": "pii.contact", "label": "Contact",
+            "severity": "high", "category": "pii.contact", "mask": {"kind": "redacted"}}]}),
+    ));
+    // A closure body is not a literal read path: the email it reads is
+    // known only as "some of the row".
+    documents.push(view(
+        with(json!({"p": {"op": "project", "input": "customer", "columns": [
+            {"name": "id", "expression": "input.id"},
+            {"name": "hit", "expression": "some([1], input.email == \"a@x\")"}]}})),
+        "p",
+    ));
+    let pool = envelopes(documents);
+    let found = findings_of(&pool);
+    assert!(found.is_empty(), "{found:#?}");
+    let plan = admit(pool.last().expect("view"), &pool, &BTreeSet::new()).expect("admitted");
+    let hit = plan.output_schema().column("hit").expect("hit").clone();
+    assert!(
+        hit.origins
+            .iter()
+            .any(|origin| origin.alias == "customer" && origin.property == "email"),
+        "{:?}",
+        hit.origins
+    );
+    assert!(hit.markings.contains("pii.contact"), "{:?}", hit.markings);
 }

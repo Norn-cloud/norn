@@ -395,6 +395,29 @@ fn every_gate_is_one_opaque_refusal_before_evaluation() {
 }
 
 #[test]
+fn the_plan_route_applies_the_input_gates() {
+    // The plan names every input type's properties, markings and links: a
+    // reader without Population on one input gets the rows route's refusal.
+    let (host, _directory) = host();
+    let rows = get_transform_rows(
+        &host,
+        &scope(),
+        Some("nocust"),
+        TRANSFORM,
+        &params(None, None),
+        &Mapping,
+    )
+    .expect_err("rows denied");
+    let plan = get_transform_plan(&host, &scope(), Some("nocust"), TRANSFORM, &Mapping)
+        .expect_err("plan denied");
+    assert_eq!(plan.status, 403);
+    assert_eq!(
+        serde_json::to_string(&plan).unwrap(),
+        serde_json::to_string(&rows).unwrap()
+    );
+}
+
+#[test]
 fn a_reader_who_may_only_count_a_row_sees_it_withheld() {
     let (host, _directory) = host();
     let page = get_transform_rows(
