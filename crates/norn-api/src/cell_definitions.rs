@@ -160,7 +160,7 @@ pub struct HeldBackObject {
     /// The law it breaks.
     pub law: String,
     /// The stored values the law compared, by path.
-    #[schema(value_type = Object)]
+    #[schema(value_type = BTreeMap<String, serde_json::Value>)]
     pub values: BTreeMap<String, RuntimeValue>,
 }
 
