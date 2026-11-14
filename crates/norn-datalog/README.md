@@ -1,8 +1,10 @@
 # norn-datalog
 
-Shared portable Datalog contracts for the future definition and record
-backends (Norn-cloud/norn#565). This crate contains data and structural validation;
-it does not execute rules or produce production findings.
+Shared portable Datalog contracts for the definition and record backends
+(Norn-cloud/norn#565): the rule AST, structural validation, and a small
+reference executor that runs an admitted program over finite input facts. It
+produces derived relations as data, never production findings or
+authorization decisions.
 
 `Program` is a closed serde AST; `Program::canonical_json` delegates to
 `norn-canonical`. Array order is preserved, so this is canonical wire encoding,
@@ -38,21 +40,53 @@ isolate catalog snapshots as well. Validation and entailment modes label rule
 intent; dependency helpers still participate in validation and cannot be
 removed by simply filtering modes. Runtime OWL entailment remains unapproved.
 
+`evaluate(program, facts, Budget, ExecBudget)` admits the program with
+`validate` first; a refused program never runs. It evaluates bottom-up and
+semi-naively, one stratum at a time, so a negated relation is complete before
+any rule reads it. Facts may be supplied only for declared input relations,
+with the declared width and NFC text (`datalog.derived_in_input`,
+`datalog.arity_mismatch`, `datalog.noncanonical_constant`,
+`datalog.undefined_predicate`). The active domain is fixed before the first
+rule runs and constants are numbered in canonical-encoding order, so the
+result and the metered work depend only on the set of input facts: not on
+their order, repeats, or rule order. Output relations are in name order and
+their tuples in canonical order. `ExecBudget` bounds supplied facts and text,
+derived facts, derived values, result bytes and work; memory is charged before
+it is held (joins are depth-first over one binding, and each derived fact is
+charged for its values and their encoded bytes before it is stored). Reaching
+any limit refuses with `datalog.budget_exhausted`, naming the running rule, and
+returns nothing partial. `validate` bounds each rule's arity, variables and
+body literals. Inputs are deduplicated before work is charged and rules run in
+identifier order, so usage does not depend on fact order, repeats or rule
+order. Joins scan in body order using ordered prefix ranges; there is no query
+planner, so a pack should order its premises from most to least bound. Limits
+and codes are in `docs/platform/datalog-contract.md`.
+
+The executor is the reference semantics, not a replacement for generated
+backends: the checker's inheritance step still runs as generated Ascent code,
+and its exhaustive small-graph test now checks the Ascent step, the old
+oracle and this executor running the recursive overlap pack against each
+other.
+
 `Provenance` is a witness sidecar at an explained class/frontier, carrying rule
 ID and minimal derivation height. Height can rise on retraction. Witnesses do
 not participate in fact identity, distinctness or recursion. This crate neither
-computes nor authenticates them. L1 soundness proofs, executor parity, Ascent
-code generation and WellDB integration are later work.
+computes nor authenticates them, and the executor does not emit them. L1
+soundness proofs, general executor/Ascent parity and WellDB integration are
+later work.
 
 ## Boundary
 
 - Ring 0: pure, synchronous, sans-IO, portable to wasm32-unknown-unknown.
 - Only Norn edges: norn-canonical (canonical encoding), norn-graph (bounded
   traversal/order), norn-ir (shared fact data/schema). Third party: existing
-  serde only; serde_json is test-only. See docs/platform/datalog-contract.md; the machine-checked rules are in `boundary.json`.
-- Rule AST, shared validator/diagnostic codes, provenance shape and fixed AST
-  packs only. No executor, Ascent generation, DB/service, permission inference,
-  authorization, findings plumbing, host API, or kernel commit integration.
+  serde only; serde_json and proptest are test-only. See docs/platform/datalog-contract.md; the machine-checked rules are in `boundary.json`.
+- Rule AST, shared validator/diagnostic codes, provenance shape, fixed AST
+  packs and the reference executor. No Ascent generation, DB/service,
+  permission inference, authorization, findings plumbing, host API, or kernel
+  commit integration.
+- The executor is metered and refuses rather than runs away; it takes finite
+  facts from its caller and performs no IO.
 - All validation work is bounded. No functions/value invention; all aggregates
   are refused until a later finite-domain lattice implementation is admitted.
 - norn-ir owns the one declared metadata projection and never validates it.

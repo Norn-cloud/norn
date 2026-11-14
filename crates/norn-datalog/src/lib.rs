@@ -1,4 +1,5 @@
-//! Portable shared Datalog data and admission contract. No executor or IO.
+//! Portable shared Datalog data, admission contract and reference executor.
+//! No IO.
 //!
 //! Function-free, range-restricted rules over finite inputs terminate, including
 //! positive recursion. Negation must be stratified. All aggregates are refused
@@ -6,9 +7,11 @@
 //! Modes annotate intent; neither mode grants OWL runtime semantics or authority.
 #![forbid(unsafe_code)]
 
+mod exec;
 pub mod overlap;
 mod validate;
 
+pub use exec::{Evaluation, ExecBudget, Facts, Relation, Tuple, Usage, evaluate};
 pub use norn_ir::facts::Value;
 use serde::{Deserialize, Serialize};
 pub use validate::{Budget, Code, Diagnostic, Group, Plan, validate};
@@ -134,7 +137,8 @@ pub struct Rule {
     pub body: Vec<Literal>,
 }
 
-/// Both future backends consume this data and the same validator result.
+/// The reference executor and any generated backend consume this data and
+/// the same validator result.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Program {
