@@ -242,6 +242,11 @@ fn the_catalog_is_projected_from_the_cell_and_offers_no_raw_storage() {
     assert_eq!(answer["_meta"]["ui"]["resourceUri"], View::Answer.uri());
     assert_eq!(answer["_meta"]["openai/outputTemplate"], View::Answer.uri());
     assert_eq!(answer["annotations"]["readOnlyHint"], true);
+    let inbox = listed
+        .iter()
+        .find(|tool| tool["name"] == "norn_inbox")
+        .unwrap();
+    assert_eq!(inbox["_meta"]["ui"]["resourceUri"], View::Inbox.uri());
     // #733: no tool takes or names physical storage, at any depth of its schema.
     let forbidden = [
         "sql",

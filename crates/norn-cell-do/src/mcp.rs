@@ -65,6 +65,8 @@ pub enum View {
     Findings,
     /// A planned definitions change: what it adds, replaces and finds.
     Plan,
+    /// The caller's work queue: held-back groups, decisions, failing sources.
+    Inbox,
 }
 
 impl View {
@@ -79,11 +81,12 @@ impl View {
             Self::Records => "ui://norn/records.html",
             Self::Findings => "ui://norn/findings.html",
             Self::Plan => "ui://norn/plan.html",
+            Self::Inbox => "ui://norn/inbox.html",
         }
     }
 
     /// Every view, in a fixed order.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Answer,
         Self::Lineage,
         Self::Dashboard,
@@ -91,6 +94,7 @@ impl View {
         Self::Records,
         Self::Findings,
         Self::Plan,
+        Self::Inbox,
     ];
 }
 
@@ -438,7 +442,7 @@ fn generic_tools(
                 "inputSchema": {"type": "object", "additionalProperties": false, "properties": {}},
                 "annotations": read_only(),
             }),
-            None,
+            Some(View::Inbox),
         )?,
         tool(
             json!({

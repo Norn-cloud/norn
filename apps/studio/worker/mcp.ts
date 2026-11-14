@@ -100,7 +100,7 @@ export interface McpEdge {
  * page asks for data only through those tools. Like Studio's own /assets, it carries no data
  * and decides nothing, so the edge serves it rather than the cell.
  */
-export const WIDGET_VIEWS = ["answer", "lineage", "dashboard", "receipt", "records", "findings", "plan"] as const
+export const WIDGET_VIEWS = ["answer", "lineage", "dashboard", "receipt", "records", "findings", "plan", "inbox"] as const
 export const UI_MIME_TYPE = "text/html;profile=mcp-app"
 export const widgetUri = (view: (typeof WIDGET_VIEWS)[number]) => `ui://norn/${view}.html`
 const WIDGET_TITLES: Readonly<Record<(typeof WIDGET_VIEWS)[number], string>> = {
@@ -111,6 +111,7 @@ const WIDGET_TITLES: Readonly<Record<(typeof WIDGET_VIEWS)[number], string>> = {
   records: "Norn records",
   findings: "Norn held record",
   plan: "Norn definitions plan",
+  inbox: "Norn inbox",
 }
 /** The sandbox the widget needs: inline script and style only, no connections, no frames. */
 const WIDGET_META = { ui: { prefersBorder: true, csp: { connectDomains: [], resourceDomains: [] } } }

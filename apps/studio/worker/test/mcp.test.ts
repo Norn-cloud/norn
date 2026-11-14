@@ -259,7 +259,7 @@ test("the widget pages are served as ui:// resources, to a granted assistant onl
   expect((await mcp(withWidget, null, { jsonrpc: "2.0", id: 1, method: "resources/list" })).status).toBe(401)
 
   const list = (await (await mcp(withWidget, accessToken, { jsonrpc: "2.0", id: 2, method: "resources/list" })).json()) as { result: { resources: { uri: string; mimeType: string }[] } }
-  expect(list.result.resources.map(({ uri }) => uri)).toEqual(["ui://norn/answer.html", "ui://norn/lineage.html", "ui://norn/dashboard.html", "ui://norn/receipt.html", "ui://norn/records.html", "ui://norn/findings.html", "ui://norn/plan.html"])
+  expect(list.result.resources.map(({ uri }) => uri)).toEqual(["ui://norn/answer.html", "ui://norn/lineage.html", "ui://norn/dashboard.html", "ui://norn/receipt.html", "ui://norn/records.html", "ui://norn/findings.html", "ui://norn/plan.html", "ui://norn/inbox.html"])
   expect(list.result.resources.every(({ mimeType }) => mimeType === "text/html;profile=mcp-app")).toBe(true)
 
   const read = (await (await mcp(withWidget, accessToken, { jsonrpc: "2.0", id: 3, method: "resources/read", params: { uri: "ui://norn/lineage.html" } })).json()) as { result: { contents: { uri: string; text: string; _meta: { ui: { csp: { connectDomains: string[] } } } }[] } }
