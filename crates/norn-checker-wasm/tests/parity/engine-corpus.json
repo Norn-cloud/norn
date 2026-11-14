@@ -1,0 +1,32 @@
+{
+  "machines": [
+    "apps/studio/src/decisions/decision-sheet.widget.json",
+    "fixtures/ui/orders-approve.machine.json"
+  ],
+  "expressions": [
+    "1.10 + 2.205",
+    "0.1 + 0.2 == 0.3",
+    "input.fields.amount * 3",
+    "input.fields.choice ?? \"none\"",
+    "input.fields.missing == null",
+    "len(input.fields.note ?? \"\") > 3",
+    "input.event.value != (input.fields.refusedChoice ?? \"\")",
+    "not input.fields.needsConfirm",
+    "input.fields.choice in [\"approve\", \"reject\"]",
+    "1 +",
+    "input.nope.deep",
+    "\"a\" + 1"
+  ],
+  "inputs": [
+    { "fields": {}, "event": {} },
+    { "fields": { "choice": "approve", "note": "", "needsConfirm": true, "lastCode": null, "refusedChoice": null, "amount": 1240.50 }, "event": { "value": "reject", "confirm": false, "code": "decision.law_not_satisfied" } },
+    { "fields": { "choice": null, "note": "Short delivery confirmed.", "needsConfirm": false, "lastCode": "authz.denied", "refusedChoice": "approve", "amount": 0.1 }, "event": { "value": "approve", "confirm": true, "code": "decision.resolved" } }
+  ],
+  "rawInputs": [
+    "{\"fields\": 3}",
+    "{\"unknown\": {}}",
+    "not json",
+    "{\"fields\": {\"x\": 1e400}}"
+  ],
+  "profiles": ["norn-zen/6", "norn-zen/0"]
+}
