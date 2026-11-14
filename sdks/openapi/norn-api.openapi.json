@@ -32178,7 +32178,7 @@
           },
           "engine": {
             "type": "string",
-            "description": "The engine that computed the profile: `cell`, the native exact engine."
+            "description": "The engine that computed the profile: `cell`, the native exact engine,\nor `duckdb`, the tenant analytics engine."
           },
           "objectType": {
             "type": "string",
@@ -32646,7 +32646,8 @@
         "description": "The evaluator that produced an answer.",
         "enum": [
           "ivm",
-          "cell"
+          "cell",
+          "duckdb"
         ]
       },
       "NornQueryFreshness": {

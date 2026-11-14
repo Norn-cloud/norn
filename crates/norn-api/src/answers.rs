@@ -108,6 +108,8 @@ pub enum NornQueryEngine {
     Ivm,
     /// Exact cell snapshot.
     Cell,
+    /// Embedded SQL over the exact authorized contribution snapshot.
+    Duckdb,
 }
 
 /// Snapshot freshness, independent of source cursor ordering.
