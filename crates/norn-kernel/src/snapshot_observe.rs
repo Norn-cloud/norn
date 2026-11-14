@@ -1609,7 +1609,8 @@ fn findings_for(
             failure.severity,
             failure.message,
             failure.outcome,
-        )?;
+        )?
+        .with_values(failure.values);
         findings.push(if failure.links.is_empty() {
             finding
         } else {
@@ -1641,6 +1642,10 @@ pub fn verify_finding_values(
             && expected.message == finding.message
             && expected.outcome == finding.outcome
             && expected.severity == finding.severity
+            // DIAG-REASON-1: compared values, when recorded, are what the
+            // replay reads; a finding retained before they were recorded
+            // carries none and claims none.
+            && (finding.values.is_empty() || expected.values == finding.values)
     }))
 }
 

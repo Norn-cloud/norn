@@ -29,6 +29,8 @@ export interface Finding {
   readonly status: "open" | "acknowledged" | "resolved" | "superseded"
   readonly firstSeen: string
   readonly lastSeen: string
+  /** DIAG-REASON-1: for a law finding, the values the law compared, by path, as the cell read them (a list for every line it summed). */
+  readonly values?: Readonly<Record<string, unknown>>
 }
 
 export interface ObjectFindings {

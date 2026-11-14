@@ -9,6 +9,7 @@ import { Chip, FactChip } from "@/components/chip"
 import { Button } from "@/components/ui/button"
 import { transport, type Artifact } from "@/lib/transport"
 import type { RefusalReason } from "../lib/actions.ts"
+import { compared, isList, roleOf } from "../lib/law-values.ts"
 
 /** The law the cell pinned, from the catalog: its own sentence, as declared. */
 function rationaleOf(artifacts: readonly Artifact[], artifactId: string | undefined): string | undefined {
@@ -47,9 +48,14 @@ export function LawRefusal({ code, reason, explanation, fields, technical, onUse
   // The checked values this form did not set are the ones the record still holds.
   const held = checked.filter(([path]) => !Object.hasOwn(fields, path))
   const sentence = (text: string) => text.charAt(0).toUpperCase() + text.slice(1)
-  // Each value by the label the action asks it by, at the field's declared scale.
-  const label = (path: string) => fields[path]?.title ?? words(path)
-  const shown = (path: string, value: unknown) => atDeclared(value, fields[path]?.nornType?.kind === "decimal" ? fields[path]?.nornType?.scale : undefined)
+  // Each value by the label the action asks it by, at the field's declared scale. A list is every
+  // line the law summed (LAW-LINK-MANY-1): it is shown as their sum, at the scale of the value it is held to.
+  const listed = checked.find(([, value]) => isList(value))?.[0]
+  const scaleOf = (path: string) => fields[path]?.nornType?.kind === "decimal" ? fields[path]?.nornType?.scale : undefined
+  const listScale = checked.map(([path]) => scaleOf(path)).find((scale) => scale !== undefined)
+  const label = (path: string) => fields[path]?.title ?? (path === listed ? `sum of ${words(roleOf(path))}` : words(path))
+  const shown = (path: string, value: unknown) => isList(value) ? atDeclared(compared(value).text, listScale) : atDeclared(value, scaleOf(path))
+  const parts = (value: unknown) => isList(value) ? value.map((part) => atDeclared(part, listScale)).join(" + ") : undefined
   return (
     <div role="alert" className="overflow-hidden rounded-xl border border-border bg-card text-sm">
       <div className="flex flex-wrap items-center gap-2 border-b border-border/70 px-3 py-2">
@@ -64,7 +70,7 @@ export function LawRefusal({ code, reason, explanation, fields, technical, onUse
           const [setPath, setValue] = checked.find(([path]) => path !== heldPath)!
           return <>
             <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 tabular-nums" aria-label="The values it checked">
-              <div className="rounded-lg bg-muted px-3 py-2"><div className="text-xs text-muted-foreground">{sentence(label(heldPath))}</div><div className="pt-0.5 text-lg font-light tracking-tight">{shown(heldPath, heldValue)}</div></div>
+              <div className="rounded-lg bg-muted px-3 py-2"><div className="text-xs text-muted-foreground">{sentence(label(heldPath))}</div><div className="pt-0.5 text-lg font-light tracking-tight">{shown(heldPath, heldValue)}</div>{parts(heldValue) && <div className="text-xs text-muted-foreground" aria-label="The lines it summed">{parts(heldValue)}</div>}</div>
               <span aria-label="does not equal" className="flex size-7 items-center justify-center rounded-full bg-tone-red/12 text-sm text-tone-red">≠</span>
               <div className="rounded-lg bg-muted px-3 py-2"><div className="text-xs text-muted-foreground">{sentence(label(setPath))}</div><div className="pt-0.5 text-lg font-light tracking-tight text-tone-red">{shown(setPath, setValue)}</div></div>
             </div>
@@ -125,6 +131,16 @@ export function RedactedLawRefusal({ objectType, id, code, message, technical }:
     }
     return { label, value: undefined }
   }
+  // A value the finding recorded: a list (every line the law summed) is its sum, at the scale of the fact it is held to.
+  const readFact = (path: string, value: unknown, heldTo: string) => {
+    const scale = concept?.fields.find(({ id: candidate }) => candidate === heldTo)?.decimal?.scale
+    if (isList(value)) {
+      const sum = compared(value)
+      return { label: `sum of ${roleOf(path).replaceAll("_", " ")}`, value: `${atScale(sum.text, scale)} (${(sum.parts ?? []).map((part) => atScale(part, scale)).join(" + ")})` }
+    }
+    const field = concept?.fields.find(({ id: candidate }) => candidate === path)
+    return { label: field?.label ?? path.replaceAll(".", " ").replaceAll("_", " "), value: atScale(String(value), field?.decimal?.scale ?? scale) }
+  }
   return (
     <div role="alert" data-refusal="redacted" className="overflow-hidden rounded-xl border border-border bg-card text-sm">
       <div className="flex flex-wrap items-center gap-2 border-b border-border/70 px-3 py-2">
@@ -138,12 +154,14 @@ export function RedactedLawRefusal({ objectType, id, code, message, technical }:
             <div className="text-xs font-medium text-muted-foreground">Open findings on this record</div>
             {open.map((finding) => {
               const law = finding.ruleRef.kind === "law" ? concept?.laws.find(({ id: lawId }) => lawId === (finding.ruleRef as { lawId: string }).lawId) : undefined
-              const compared = law?.compares?.map(fact)
+              // The values the law read, as the finding records them; else the record's stored ones.
+              const read = finding.values
+              const comparedFacts = law?.compares?.map((path) => read && Object.hasOwn(read, path) ? readFact(path, read[path], law.compares![0]) : fact(path))
               return (
                 <div key={finding.id} className="grid gap-1.5 rounded-lg bg-muted px-3 py-2">
                   <p className="text-pretty">{law?.rationale ?? finding.message}</p>
-                  {compared && <div className="flex flex-wrap items-center gap-1.5 tabular-nums">
-                    {compared.map(({ label, value }, index) => <span key={label} className="contents">
+                  {comparedFacts && <div className="flex flex-wrap items-center gap-1.5 tabular-nums">
+                    {comparedFacts.map(({ label, value }, index) => <span key={label} className="contents">
                       {index > 0 && <span className="text-meta text-muted-foreground">vs</span>}
                       <FactChip label={label}>{value ?? "—"}</FactChip>
                     </span>)}

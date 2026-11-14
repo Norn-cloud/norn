@@ -12849,6 +12849,13 @@
               "$ref": "#/components/schemas/NornIrDataQualitySubject"
             },
             "description": "Objects affected by the finding, sorted by type and key."
+          },
+          "values": {
+            "type": "object",
+            "description": "DIAG-REASON-1 / LAW-LINK-MANY-1: for a law finding, the stored values\nthe law compared, by path, as it read them: the subject's own\nproperties (`total`), a to-one target's (`ledger_entry.amount`), and\nan inverse role's sources' as a list (`lines.amount`). Not part of the\nidentity: the subject version and `links` fix them. Empty for every\nother finding, and then omitted.",
+            "additionalProperties": {
+              "description": "Exact JSON value. Number tokens retain decimal precision and are not binary64 values. Preserve source text or use an exact-decimal JSON parser; JavaScript JSON.parse may lose precision."
+            }
           }
         },
         "additionalProperties": false

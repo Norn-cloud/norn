@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { catalogOf, cellOwned, conceptTitle, systemName, type SourceSystem } from "../src/lib/catalog.ts"
+import { catalogOf, cellOwned, comparedFacts, conceptTitle, systemName, type SourceSystem } from "../src/lib/catalog.ts"
+import { exactSum } from "../src/lib/law-values.ts"
 import { readDocument } from "../src/lib/exact.ts"
 import type { Artifact } from "../src/lib/transport.ts"
 import { watermarkText } from "../src/lib/format.ts"
@@ -104,4 +105,26 @@ test("a connection's watermark reads as its latest version and how many kinds of
   expect(watermarkText('{"stock.quant":{"version":"2026-11-12 15:14:32","id":8}}')).toBe("2026-11-12 15:14 · 1 kind of record")
   expect(watermarkText("2026-11-12T10:00:00Z")).toBe("2026-11-12T10:00:00Z")
   expect(watermarkText(null)).toBe("—")
+})
+
+test("a concept's law governs every concept that implements it, and a sum over its lines is a compared pair", () => {
+  const read = (path: string) => JSON.parse(readFileSync(join(import.meta.dir, "../../../registry/packs", path), "utf8")) as Artifact
+  const document = [
+    read("canon/artifacts/canon.ItemizedDocument.interface.json"),
+    read("canon/artifacts/canon.LineItem.interface.json"),
+    read("canon/artifacts/canon.ItemizedDocument.total_matches_lines.law.json"),
+    read("documents/artifacts/docs.ScannedDocument.entity.json"),
+  ]
+  const catalog = catalogOf(document, "en")
+  const law = catalog.byName.get("docs.ScannedDocument")?.laws.find(({ id }) => id === "canon.ItemizedDocument.total_matches_lines")
+  // Declared once, on the concept; the scanned document is bound by it with no law of its own.
+  expect(law).toMatchObject({ inheritedFrom: "canon.ItemizedDocument", compares: ["total", "lines.amount"] })
+  expect(catalog.byName.get("canon.ItemizedDocument")?.laws.map(({ id }) => id)).toEqual(["canon.ItemizedDocument.total_matches_lines"])
+  expect(comparedFacts("self.total == sum(map(self.lines, #.amount))")).toEqual(["total", "lines.amount"])
+  expect(comparedFacts("sum(map(self.lines, #.amount)) > 0")).toBeUndefined()
+  // The sum of what the cell sent is exact: no binary rounding.
+  expect(exactSum(["0.1", "0.2"])).toBe("0.3")
+  expect(exactSum([30, 40, 2])).toBe("72")
+  expect(exactSum(["-1.50", "1"])).toBe("-0.50")
+  expect(exactSum(["x"])).toBeUndefined()
 })

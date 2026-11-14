@@ -22,12 +22,16 @@ later unit (LAW B, #343).
 
 ## What Norn derives and checks
 
-- `lines_total` is the mapping's sum of the printed line amounts; it is null
-  when the document prints no lines.
-- LAW A (`docs.ScannedDocument.total_matches_lines`, error severity): when a
-  document prints lines, its printed total equals their sum. An imported
-  document that breaks it is kept as evidence, gets a finding pinned to the
-  law and is quarantined from authoritative reads (OBS-EVIDENCE-1).
+- Each scanned document is a `canon.ItemizedDocument` and each printed line a
+  `canon.LineItem` that links to it; the document reaches its lines through
+  the inverse role `lines`.
+- LAW A (`canon.ItemizedDocument.total_matches_lines`, error severity) is the
+  concept's law, declared once in the canon pack and inherited by every
+  implementer: when a document has lines, its total equals the sum of their
+  amounts, read from the line objects in the model. An imported document that
+  breaks it is kept as evidence, gets a finding pinned to the law and is
+  quarantined from authoritative reads (OBS-EVIDENCE-1). Correcting a line
+  checks its document again.
 - The correction action (`docs.scanned_document.correct`) patches the total of
   an existing document, requires a reason and an evidence object, records the
   verified actor, and runs the same law: an inconsistent correction is refused.

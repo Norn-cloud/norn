@@ -62,7 +62,7 @@
                 "_id": "row_0",
                 "condition": "",
                 "out_commands": "[]",
-                "out_facts": "[{op: 'patch', objectType: 'docs.DocumentLine', key: event.input.id, patch: {currency: slice.line.currency, amount: event.input.amount, correction_reason: event.input.correction_reason, correction_evidence: event.input.correction_evidence, corrected_by: event.actor}}, {op: 'patch', objectType: 'docs.ScannedDocument', key: slice.line.document_id, patch: {currency: slice.document.currency, lines_total: ((slice.document.lines_total ?? slice.line.amount) - slice.line.amount) + event.input.amount, total: event.input.document_total ?? slice.document.total, correction_reason: event.input.correction_reason, correction_evidence: event.input.correction_evidence, corrected_by: event.actor}}]",
+                "out_facts": "[{op: 'patch', objectType: 'docs.DocumentLine', key: event.input.id, patch: {currency: slice.line.currency, amount: event.input.amount, correction_reason: event.input.correction_reason, correction_evidence: event.input.correction_evidence, corrected_by: event.actor}}, {op: 'patch', objectType: 'docs.ScannedDocument', key: slice.line.document_id, patch: {currency: slice.document.currency, total: event.input.document_total ?? slice.document.total, correction_reason: event.input.correction_reason, correction_evidence: event.input.correction_evidence, corrected_by: event.actor}}]",
                 "out_timers": "[]"
               }
             ]
@@ -197,12 +197,6 @@
                 "line_count": {
                   "type": "integer"
                 },
-                "lines_total": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
                 "media_type": {
                   "type": "string"
                 },
@@ -221,7 +215,6 @@
                 "issued_on",
                 "currency",
                 "total",
-                "lines_total",
                 "line_count",
                 "document_uri",
                 "document_digest",
@@ -445,9 +438,6 @@
                       "USD"
                     ],
                     "type": "string"
-                  },
-                  "lines_total": {
-                    "type": "number"
                   },
                   "total": {
                     "type": "number"

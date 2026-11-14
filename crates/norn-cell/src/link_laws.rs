@@ -5,10 +5,12 @@
 //! changed. Verifying a finding retained in history replays the evaluation
 //! against the exact target versions the finding pinned ([`PinnedLinks`]),
 //! so a later change to the target never alters what was proven.
+//! LAW-LINK-MANY-1: an inverse role reads every source whose link targets the
+//! subject; a finding pins each source it read as `role/key`.
 
 use std::collections::BTreeMap;
 
-use norn_ir::FactRef;
+use norn_ir::{FactRef, ObjectTypeName};
 use norn_kernel::FactKey;
 use norn_kernel::governing_laws::{LawEvaluationError, LinkTargets, LinkedTarget};
 
@@ -57,6 +59,46 @@ impl<S: SqlEngine> LinkTargets for CurrentLinks<'_, '_, S> {
             values: record.values,
         }))
     }
+
+    fn sources(
+        &mut self,
+        role: &str,
+        source: &ObjectTypeName,
+        link: &str,
+    ) -> Result<Vec<LinkedTarget>, LawEvaluationError> {
+        let subject_type = self.subject.object_type.as_str();
+        let edges = self
+            .reader
+            .links_touching(self.world, subject_type, &self.subject.key)
+            .map_err(|error| unreadable(role, error))?;
+        let mut found = Vec::new();
+        for edge in edges {
+            if edge.link != link
+                || edge.target != self.subject.key
+                || !self.reader.model().is_a(subject_type, &edge.target_type)
+            {
+                continue;
+            }
+            let record = self
+                .reader
+                .object(self.world, &edge.source_type, &edge.source)
+                .map_err(|error| unreadable(role, error))?
+                .ok_or_else(|| unreadable(role, "a source is absent"))?;
+            if !self
+                .reader
+                .model()
+                .is_a(record.object_type.as_str(), source.as_str())
+            {
+                continue;
+            }
+            found.push(LinkedTarget {
+                key: FactKey::new(record.object_type.as_str(), record.id.clone()),
+                version: record.version,
+                values: record.values,
+            });
+        }
+        Ok(found)
+    }
 }
 
 /// The exact target versions a retained finding pinned, by link id.
@@ -86,6 +128,38 @@ impl<S: SqlEngine> LinkTargets for PinnedLinks<'_, '_, S> {
             version: record.version,
             values: record.values,
         }))
+    }
+
+    fn sources(
+        &mut self,
+        role: &str,
+        _source: &ObjectTypeName,
+        _link: &str,
+    ) -> Result<Vec<LinkedTarget>, LawEvaluationError> {
+        // LAW-LINK-MANY-1: a finding pins every source it read as `role/key`.
+        let prefix = format!("{role}/");
+        let mut found = Vec::new();
+        for (name, pinned) in &self.links {
+            if !name.starts_with(&prefix) {
+                continue;
+            }
+            let record = self
+                .reader
+                .object_at_version(
+                    self.world,
+                    pinned.object_type.as_str(),
+                    &pinned.key,
+                    pinned.version,
+                )
+                .map_err(|error| unreadable(role, error))?
+                .ok_or_else(|| unreadable(role, "a pinned source version is a tombstone"))?;
+            found.push(LinkedTarget {
+                key: FactKey::new(record.object_type.as_str(), record.id),
+                version: record.version,
+                values: record.values,
+            });
+        }
+        Ok(found)
     }
 }
 

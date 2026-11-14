@@ -35,6 +35,9 @@
         "amount": {
           "description": "The line's amount as printed on the scanned page.",
           "nornType": {
+            "additivity": {
+              "kind": "additive"
+            },
             "currencySource": {
               "links": [],
               "property": "currency"
@@ -64,6 +67,9 @@
         "document_total": {
           "description": "Only when the document's printed total was misread too: the total as printed.",
           "nornType": {
+            "additivity": {
+              "kind": "additive"
+            },
             "currencySource": {
               "links": [],
               "property": "currency"
