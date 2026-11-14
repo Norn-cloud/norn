@@ -282,9 +282,11 @@ pub fn unservable(detail: impl Into<String>) -> Refusal {
 
 /// The submission's own artifacts, decoded from their exact text: none in a
 /// reserved namespace, each an artifact envelope scoped inside `cell`.
-fn tenant_artifacts(
+/// `refused` makes the refusal of artifacts scoped outside the cell.
+pub(crate) fn tenant_artifacts(
     cell: &CellScope,
     sources: &[Box<RawValue>],
+    refused: fn(Vec<RefusalDiagnostic>) -> Refusal,
 ) -> Result<Vec<ArtifactEnvelope>, Refusal> {
     let mut reserved = Vec::new();
     let mut malformed = Vec::new();
@@ -410,43 +412,48 @@ pub fn admit_submission(
             ),
         ));
     }
-    let tenant = tenant_artifacts(cell, &request.artifacts)?;
+    let tenant = tenant_artifacts(cell, &request.artifacts, refused)?;
+    let mut artifacts = base.artifacts.clone();
+    artifacts.extend(tenant.iter().cloned());
+    kernel_set::admit_kernel_set_with_base(&artifacts, &base.ids).map_err(|refusal| match refusal {
+        KernelRefusal::Refused(findings) => refused(placed(&findings, &tenant)),
+        KernelRefusal::Invalid(detail) => unservable(detail),
+    })
+}
+
+/// The checker's `findings` as refusal diagnostics placed in a submission of
+/// `tenant`: a finding that names one of the submitted artifacts points at
+/// it (`/artifacts/{index}…`); a finding on the retained set has no place.
+pub(crate) fn placed(
+    findings: &[norn_checker::Diagnostic],
+    tenant: &[ArtifactEnvelope],
+) -> Vec<RefusalDiagnostic> {
     let position = |id: &str| {
         tenant
             .iter()
             .position(|artifact| artifact.artifact_id == id)
     };
-    let mut artifacts = base.artifacts.clone();
-    artifacts.extend(tenant.iter().cloned());
-    kernel_set::admit_kernel_set_with_base(&artifacts, &base.ids).map_err(|refusal| match refusal {
-        KernelRefusal::Refused(findings) => refused(
-            findings
-                .iter()
-                .filter_map(|finding| {
-                    let mut diagnostic =
-                        RefusalDiagnostic::from_checker(std::slice::from_ref(finding), "").pop()?;
-                    // A finding is placed in the submission when it names one
-                    // of the tenant's artifacts; a base finding has no place.
-                    diagnostic.span =
+    findings
+        .iter()
+        .filter_map(|finding| {
+            let mut diagnostic =
+                RefusalDiagnostic::from_checker(std::slice::from_ref(finding), "").pop()?;
+            diagnostic.span = finding
+                .artifact_id
+                .as_deref()
+                .and_then(position)
+                .map(|index| RefusalSpan {
+                    pointer: format!(
+                        "/artifacts/{index}{}",
                         finding
-                            .artifact_id
-                            .as_deref()
-                            .and_then(position)
-                            .map(|index| RefusalSpan {
-                                pointer: format!(
-                                    "/artifacts/{index}{}",
-                                    finding
-                                        .span
-                                        .as_ref()
-                                        .map_or("", |span| span.pointer.as_str())
-                                ),
-                            });
-                    Some(diagnostic)
-                })
-                .collect(),
-        ),
-        KernelRefusal::Invalid(detail) => unservable(detail),
-    })
+                            .span
+                            .as_ref()
+                            .map_or("", |span| span.pointer.as_str())
+                    ),
+                });
+            Some(diagnostic)
+        })
+        .collect()
 }
 
 /// The install input of `admitted` at the logical time `installed_at`.

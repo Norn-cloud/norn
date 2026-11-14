@@ -28,6 +28,8 @@ pub use clock::{Clock, ManualClock};
 
 /// The `binding` retained-definition kind (CONNECT's tool bindings).
 pub mod binding_definitions;
+/// HOST-INSTALL-1: plan and apply a running cell's kernel definitions.
+pub mod cell_definitions;
 /// Retained (non-kernel) definitions: admit, install, retire, list, get.
 pub mod definition_routes;
 /// The `flow` retained-definition kind (automations lowered by `lowerFlow`).
