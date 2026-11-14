@@ -32,7 +32,7 @@ mod quint_tests;
 pub mod specialisation;
 /// Exact symbolic projections of the shared declaration relation.
 pub mod transition;
-/// Status of translation-preservation goals, without solver execution.
+/// Translation-preservation goals lowered to SMT-LIB, without solver execution.
 pub mod translation;
 #[cfg(test)]
 mod translation_tests;
