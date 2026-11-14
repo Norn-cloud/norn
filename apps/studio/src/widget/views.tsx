@@ -106,7 +106,7 @@ export function grouped(text: string): string {
 
 /** A member key (`demo/holding/owner/east/gold`) as its last two segments: `east / gold`. */
 const memberLabel = (id: string) => id.split("/").filter(Boolean).slice(-2).join(" / ") || id
-const short = (hash: string | null | undefined) => (hash ? `${hash.slice(0, 8)}…` : "—")
+const short = (hash: string | null | undefined) => (hash ? `${hash.slice(0, 10)}…` : "—")
 
 /** A bar table: label, a monochrome bar scaled to the largest value, and the exact value. */
 function BarTable({ rows, label, valueLabel, onSelect }: { readonly rows: readonly { readonly key: string; readonly label: string; readonly value: string }[]; readonly label: string; readonly valueLabel: string; readonly onSelect?: (key: string) => void }) {
@@ -171,7 +171,8 @@ function AnswerCard({ read, input, bridge }: { readonly read: Read<Answer>; read
 /** One bucket's contributions: value, source system, source record, receipt. */
 function LineageTable({ read }: { readonly read: Read<Trace> }) {
   const contributions = read.document.contributions
-  const text = (index: number) => read.numbers.get(`/contributions/${index}/amounts/0`) ?? "—"
+  // A sum has one amount; a ratio its numerator and denominator, each the server's exact text.
+  const text = (index: number) => (contributions[index]?.amounts ?? []).map((_, at) => grouped(read.numbers.get(`/contributions/${index}/amounts/${at}`) ?? "—")).join(" / ") || "—"
   const mapping = contributions.flatMap((contribution) => {
     const provenance = contribution.source.status === "resolved" ? contribution.source.provenance : undefined
     const fields = (provenance as { fieldProvenance?: Record<string, { mappingVersion?: string; sourceFields?: string[] }> } | undefined)?.fieldProvenance
@@ -186,7 +187,7 @@ function LineageTable({ read }: { readonly read: Read<Trace> }) {
             const ref = contribution.source.status === "resolved" ? (contribution.source.provenance as { documentRef?: { system?: string; record?: string } } | undefined)?.documentRef : undefined
             return (
               <TableRow key={`${contribution.fact.key}-${index}`}>
-                <TableCell className="text-right tabular-nums">{contribution.restricted ? "withheld" : grouped(text(index))}</TableCell>
+                <TableCell className="text-right tabular-nums">{contribution.restricted ? "withheld" : text(index)}</TableCell>
                 <TableCell>{ref?.system ?? contribution.source.status}</TableCell>
                 <TableCell className="font-mono text-xs">{ref?.record ?? contribution.fact.key}</TableCell>
                 <TableCell className="font-mono text-xs" title={contribution.receiptHash ?? undefined}>{short(contribution.receiptHash)}</TableCell>
@@ -206,7 +207,8 @@ function TraceCard({ read, input }: { readonly read: Read<Trace>; readonly input
   return (
     <Card size="sm">
       <CardHeader>
-        <CardTitle>Lineage of {bucketTitle(bucket)}: every value traced to a source record</CardTitle>
+        <CardTitle>Where {bucketTitle(bucket)} comes from</CardTitle>
+        <CardDescription>Every value traced to its source record and receipt.</CardDescription>
         <CardAction><Chip>{read.document.contributions.length} contributions{restricted > 0 ? `, ${restricted} withheld` : ""}</Chip></CardAction>
       </CardHeader>
       <CardContent><LineageTable read={read} /></CardContent>
@@ -509,7 +511,7 @@ function Refused({ refusal, action }: { readonly refusal: Refusal; readonly acti
         <CardAction><Chip tone="bad">{refusal.code}</Chip></CardAction>
       </CardHeader>
       <CardContent><RefusalBody refusal={refusal} /></CardContent>
-      {action && <CardFooter className="text-xs text-muted-foreground">The agent asked; the workspace's laws and policy decided. Nothing was written.</CardFooter>}
+      {action && <CardFooter className="text-xs text-muted-foreground">Nothing was changed. The agent asked; the workspace's laws and policy decided.</CardFooter>}
     </Card>
   )
 }
