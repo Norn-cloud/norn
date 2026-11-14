@@ -2276,6 +2276,10 @@
     "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
   },
   {
+    "code": "question.validation.linked_path",
+    "fix": "Group by a field of the measured type itself, or by a linked time with a grain. Grouping by a linked type's field (an order line's customer) is not supported yet."
+  },
+  {
     "code": "question.validation.marked_field",
     "fix": "Group or filter by an unmarked field instead. A marked field (such as a person's name) can be counted but not used as a group label or filter; read it per row, where it is masked."
   },
