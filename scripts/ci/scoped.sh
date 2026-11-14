@@ -68,7 +68,7 @@ if [[ $touched != - ]]; then
   [[ -d $scoped_tmp && -w $scoped_tmp ]] || scoped_tmp=${TMPDIR:-/tmp}
   echo "tests TMPDIR=$scoped_tmp" | tee -a "$out/steps"
   step tests env NORN_CI_PACKAGES="$packages" TMPDIR="$scoped_tmp" bash scripts/ci/core.sh test all
-  step regen bash -c 'cargo run --locked -q -p norn-cli -- openapi > sdks/openapi/norn-api.openapi.json && (cd packages/norn-sdk && bun run generate) && git diff --exit-code -- sdks/openapi packages/norn-sdk/src/generated'
+  step regen bash -c 'cargo run --locked -q -p norn-cli -- openapi > sdks/openapi/norn-api.openapi.json && (cd packages/norn-sdk && bun install --frozen-lockfile --backend copyfile && bun run generate) && git diff --exit-code -- sdks/openapi packages/norn-sdk/src/generated'
 fi
 step provenance bash scripts/ci/core.sh provenance
 if grep -q '^apps/studio/' <<<"$changed"; then
