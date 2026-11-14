@@ -40,8 +40,8 @@ const hidden = "!opacity-0 !border-0 !bg-transparent"
  */
 const CARD_W = 232
 const CARD_H = 92
-const GAP_X = 72
-const GAP_Y = 20
+const GAP_X = 40
+const GAP_Y = 44
 
 /**
  * Activate on pointer down for a mouse (hover re-renders the cards, which can swallow a later click)
@@ -55,8 +55,8 @@ const activate = (run: () => void) => ({
 function StateCard({ id, data }: NodeProps<Node<StateData, "state">>) {
   return (
     <div onMouseEnter={() => data.onHover(id)} onMouseLeave={() => data.onHover(undefined)} style={{ width: CARD_W, minHeight: CARD_H }} className={cn(tile(data.faded, data.lit), "px-3.5 py-2.5")}>
-      <Handle type="target" position={Position.Left} className={hidden} />
-      <Handle type="source" position={Position.Right} className={hidden} />
+      <Handle type="target" position={Position.Top} className={hidden} />
+      <Handle type="source" position={Position.Bottom} className={hidden} />
       <button type="button" aria-pressed={data.pinned === id} {...activate(() => data.onPick(id))} className="block w-full rounded-md text-start outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
         <div className="flex items-start gap-2">
           {dot(data.start, data.terminal)}
@@ -84,8 +84,8 @@ function StateCard({ id, data }: NodeProps<Node<StateData, "state">>) {
 function StepCard_({ data }: NodeProps<Node<StepData, "step">>) {
   return (
     <button type="button" aria-pressed={data.pinned === data.id} {...activate(() => data.onPick(data.id))} onMouseEnter={() => data.onHover(data.id)} onMouseLeave={() => data.onHover(undefined)} style={{ width: CARD_W, minHeight: CARD_H }} className={cn(tile(data.faded, data.lit), "block px-3.5 py-2.5 text-start text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50")}>
-      <Handle type="target" position={Position.Left} className={hidden} />
-      <Handle type="source" position={Position.Right} className={hidden} />
+      <Handle type="target" position={Position.Top} className={hidden} />
+      <Handle type="source" position={Position.Bottom} className={hidden} />
       <div className="flex items-start gap-2 font-medium leading-snug">
         <span className="mt-px flex size-5 shrink-0 items-center justify-center rounded-full text-[0.6875rem] tabular-nums" style={{ background: "color-mix(in oklab, var(--tint-route) 14%, transparent)", color: "var(--tint-route)" }}>{data.order}</span>
         <span className="line-clamp-2">{data.label}</span>
@@ -101,16 +101,17 @@ function More({ data }: NodeProps<Node<MoreData, "more">>) {
 
 const NODE_TYPES = { state: StateCard, step: StepCard_, more: More }
 
-/** Where the arrow keys go from an element: along its steps, back along its path, or to its siblings. */
+/** Where the arrow keys go from an element: down its steps, up its path, or across to its siblings. */
 function moveFrom(tree: Tree, at: string, key: string): string | undefined {
   const node = tree.nodes.find(({ id }) => id === at)
   if (node === undefined) return undefined
-  if (key === "ArrowRight") return tree.edges.find(({ source }) => source === at)?.target
-  if (key === "ArrowLeft") return pathTo(tree, at).path.at(-2)
+  // The chart runs top to bottom: Down follows the steps, Up goes back, Left and Right move between branches.
+  if (key === "ArrowDown") return tree.edges.find(({ source }) => source === at)?.target
+  if (key === "ArrowUp") return pathTo(tree, at).path.at(-2)
   if (node.kind !== "step") return undefined
   const siblings = tree.nodes.filter((other) => other.kind === "step" && other.from === node.from).sort((a, b) => a.row - b.row)
   const index = siblings.findIndex(({ id }) => id === at)
-  return siblings[index + (key === "ArrowDown" ? 1 : -1)]?.id
+  return siblings[index + (key === "ArrowRight" ? 1 : -1)]?.id
 }
 
 /** The lifecycle as a left-to-right decision tree: hover or pin an element to light its path from the start and its next options. */
@@ -140,7 +141,8 @@ function Chart({ workflow, pinned, onPin }: { readonly workflow: Workflow; reado
   const lit = route && new Set([...route.path, ...route.next, ...back ? [back.from, back.to] : []])
   const { shown, hidden: folded } = visibleOf(tree, pinned, expanded)
   const nodes: Node[] = tree.nodes.filter(({ id }) => shown.has(id)).map((node) => {
-    const position = { x: node.column * (CARD_W + GAP_X), y: node.row * (CARD_H + GAP_Y) }
+    // Top to bottom: each layer (a state, then the steps out of it) is a row; its branches sit side by side.
+    const position = { x: node.row * (CARD_W + GAP_X), y: node.column * (CARD_H + GAP_Y) }
     const common = { faded: lit !== undefined && !lit.has(node.id), lit: node.id === active || node.id === back?.from, pinned, onPick: pin, onHover: setHover }
     if (node.kind === "state") {
       return { id: node.id, type: "state", position, data: { ...common, label: state(node.state), start: lifecycle.initial.includes(node.state), terminal: lifecycle.terminal?.includes(node.state) ?? false, laws: workflow.laws.length,
@@ -151,8 +153,8 @@ function Chart({ workflow, pinned, onPin }: { readonly workflow: Workflow; reado
     return { id: node.id, type: "step", position, data: { ...common, id: node.id, order: node.order, label: state(node.transition.id), sub: node.transition.description ?? (guards.length === 0 ? "Always" : `Requires: ${fields.join(", ")}`) } }
   })
   if (folded > 0) {
-    const right = Math.max(...nodes.map(({ position }) => position.x)) + CARD_W + GAP_X
-    nodes.push({ id: "more", type: "more", position: { x: right, y: CARD_H / 2 - 16 }, data: { count: folded, onExpand: () => setExpanded(true) } })
+    const below = Math.max(...nodes.map(({ position }) => position.y)) + CARD_H + GAP_Y
+    nodes.push({ id: "more", type: "more", position: { x: 0, y: below }, data: { count: folded, onExpand: () => setExpanded(true) } })
   }
   const edges: Edge[] = tree.edges.filter(({ source, target }) => shown.has(source) && shown.has(target)).map(({ source, target }) => ({
     id: `${source}>${target}`, source, target, type: "smoothstep", pathOptions: { borderRadius: 10 },
@@ -175,7 +177,7 @@ function Chart({ workflow, pinned, onPin }: { readonly workflow: Workflow; reado
   const rows = Math.max(...nodes.map(({ position }) => position.y)) + CARD_H
   useEffect(() => {
     const element = frame.current
-    const fit = () => void flow.current?.fitView({ padding: 0.06, maxZoom: 1, minZoom: 0.35 })
+    const fit = () => void flow.current?.fitView({ padding: 0.04, maxZoom: 1, minZoom: 0.6 })
     fit()
     const observer = element === null || typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(fit)
     if (element) observer?.observe(element)
@@ -183,12 +185,12 @@ function Chart({ workflow, pinned, onPin }: { readonly workflow: Workflow; reado
   }, [nodes.length, rows])
   return (
     <div ref={frame} role="group" className="w-full rounded-lg outline-none focus-visible:ring-3 focus-visible:ring-ring/30" tabIndex={0} onKeyDown={onKeyDown} aria-label={`${words(workflow.objectType)} lifecycle: arrow keys move along steps, Enter pins, Escape clears`}>
-      <div style={{ height: Math.min(560, rows + 48) }}>
+      <div style={{ height: rows + 48 }}>
         <ReactFlow nodes={nodes} edges={edges} nodeTypes={NODE_TYPES}
           // Node handlers also give the cards pointer events; without them React Flow makes static nodes inert.
           onNodeMouseEnter={(_, node) => setHover(node.id === "more" ? undefined : node.id)} onNodeMouseLeave={() => setHover(undefined)}
-          onInit={(instance) => { flow.current = instance; void instance.fitView({ padding: 0.06, maxZoom: 1, minZoom: 0.35 }) }}
-          colorMode="system" fitView fitViewOptions={{ padding: 0.06, maxZoom: 1, minZoom: 0.35 }} panOnDrag={false} panOnScroll={false} zoomOnScroll={false} zoomOnPinch={false} zoomOnDoubleClick={false} preventScrolling={false}
+          onInit={(instance) => { flow.current = instance; void instance.fitView({ padding: 0.04, maxZoom: 1, minZoom: 0.6 }) }}
+          colorMode="system" fitView fitViewOptions={{ padding: 0.04, maxZoom: 1, minZoom: 0.6 }} panOnDrag={false} panOnScroll={false} zoomOnScroll={false} zoomOnPinch={false} zoomOnDoubleClick={false} preventScrolling={false}
           nodesDraggable={false} nodesConnectable={false} elementsSelectable={false} nodesFocusable={false} edgesFocusable={false} proOptions={{ hideAttribution: true }}>
           <Background />
         </ReactFlow>
