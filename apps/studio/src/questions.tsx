@@ -171,7 +171,13 @@ function UnitGroups({ metric, window, conditions, sources, title, declared, pick
           </Table></TableCard>
         </div>
       )}
+      {/* One group: its total for the window is the first number on screen while its answer per period comes. */}
       {open && weekly && <AskedAnswer question={weekly} title={title} unit={open.unit} declared={declared} heading="none" onSettled={onSettled}
+        placeholder={groups.length === 1 ? <div data-slot="answer-total" className="rounded-2xl bg-card p-5 shadow-[var(--elevation-1)] ring-1 ring-foreground/5 sm:p-7">
+          <div className="text-meta text-muted-foreground">Total, {period(totals.window)}</div>
+          <div className="pt-2 text-[3rem] leading-none font-light tracking-[-0.045em] tabular-nums">{figure(open.bucket, open.unit)}</div>
+          <div className="pt-3 text-meta text-muted-foreground">{open.bucket.members.length.toLocaleString("en")} records · reading each {window.grain}…</div>
+        </div> : undefined}
         total={{ label: `Total, ${period(totals.window)}`, value: figure(open.bucket, open.unit) }} />}
     </div>
   )
