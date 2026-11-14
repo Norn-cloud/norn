@@ -157,6 +157,7 @@ impl QueryRow {
             }
             if self.members.len() < min_disclosed {
                 self.totals.clear();
+                self.null_counts.clear();
                 self.value = None;
                 self.suppressed = true;
             }
@@ -180,6 +181,11 @@ pub struct QueryRow {
     /// `value` null. Never set on an unredacted result.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub suppressed: bool,
+    /// Per operand, in `totals` order: how many members had a null measured
+    /// value, skipped by the sum (never read as 0). Empty when there were none,
+    /// and when the bucket is `suppressed`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub null_counts: Vec<u64>,
 }
 /// Result envelope for QUERY-ENGINE-1; construction alone grants no authority.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -460,12 +466,27 @@ struct Snapshot {
     finding_members: BTreeSet<String>,
 }
 
+/// Exact sums per bucket, and per operand the count of null measured values skipped.
 #[derive(Clone, Default)]
-pub(crate) struct Totals(BTreeMap<String, Vec<i128>>);
+pub(crate) struct Totals(BTreeMap<String, Vec<i128>>, BTreeMap<String, Vec<u64>>);
 impl Totals {
     /// COMPUTE-DETERMINISTIC-1: apply one signed identity contribution with checked exact arithmetic.
     pub(crate) fn adjust(&mut self, value: &Contribution, retract: bool) -> Result<(), CellError> {
         let key = bucket_key(value)?;
+        let nulls = self
+            .1
+            .entry(key.clone())
+            .or_insert_with(|| vec![0; value.amounts.len()]);
+        for (count, null) in nulls.iter_mut().zip(&value.nulls) {
+            if *null {
+                *count = if retract {
+                    count.checked_sub(1)
+                } else {
+                    count.checked_add(1)
+                }
+                .ok_or_else(|| refused("core.compute.bound_exceeded"))?;
+            }
+        }
         let totals = self
             .0
             .entry(key)
@@ -485,6 +506,15 @@ impl Totals {
         Ok(())
     }
 }
+/// A bucket's skipped-null counts, or none when nothing was null: answers over
+/// complete data are unchanged.
+fn null_counts(counts: Option<&Vec<u64>>) -> Vec<u64> {
+    counts
+        .filter(|counts| counts.iter().any(|count| *count > 0))
+        .cloned()
+        .unwrap_or_default()
+}
+
 fn bucket_key(value: &Contribution) -> Result<String, CellError> {
     String::from_utf8(value.bucket.canonical_json()?)
         .map_err(|e| CellError::Encoding(e.to_string()))
@@ -523,6 +553,7 @@ pub(crate) fn finish(
     totals: &Totals,
 ) -> Result<QueryResult, CellError> {
     let (context, exclusions) = population;
+    let totals_in = totals;
     let mut grouped: BTreeMap<String, Bucket> = BTreeMap::new();
     for (id, (version, contribution)) in contributions {
         let key = bucket_key(contribution)?;
@@ -553,6 +584,7 @@ pub(crate) fn finish(
                 )?),
                 _ => return Err(refused(UNSUPPORTED_ENGINE)),
             };
+            let null_counts = null_counts(totals_in.1.get(&key));
             Ok((
                 key,
                 QueryRow {
@@ -561,6 +593,7 @@ pub(crate) fn finish(
                     value,
                     members,
                     suppressed: false,
+                    null_counts,
                 },
             ))
         })
@@ -641,10 +674,10 @@ mod tests {
         fn delta_retraction_restores_exact_totals(values in proptest::collection::vec(proptest::option::of(proptest::num::i32::ANY), 0..100)) {
             let mut totals = Totals::default();
             for value in &values {
-                totals.adjust(&Contribution { bucket: RuntimeValue::Null, amounts: vec![value.map(i64::from)] }, false).expect("bounded add");
+                totals.adjust(&Contribution { bucket: RuntimeValue::Null, amounts: vec![value.map(i64::from)], nulls: vec![false] }, false).expect("bounded add");
             }
             for value in values.iter().rev() {
-                totals.adjust(&Contribution { bucket: RuntimeValue::Null, amounts: vec![value.map(i64::from)] }, true).expect("bounded retract");
+                totals.adjust(&Contribution { bucket: RuntimeValue::Null, amounts: vec![value.map(i64::from)], nulls: vec![false] }, true).expect("bounded retract");
             }
             proptest::prop_assert!(totals.0.values().all(|sums| sums.iter().all(|sum| *sum == 0)));
         }

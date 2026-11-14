@@ -256,6 +256,22 @@ test("sign-up answers a registered address byte for byte like a new one, apart f
   expect((await post(env, "/api/auth/sign-in/email", { email: "ha@example.com", password: "another horse battery" })).status).toBe(200)
 })
 
+test("a failed padding write leaves the sign-up answer unchanged and at most expired rows behind", async () => {
+  const env = stage()
+  const db = env.AUTH_DB as unknown as Database
+  await post(env, "/api/auth/sign-up/email", { email: "ka@example.com", password: "correct horse battery", name: "Ka" })
+  db.run("create trigger refuse_pad_delete before delete on verification when old.identifier like 'signup-pad:%' begin select raise(abort, 'delete refused'); end")
+  const duplicate = await post(env, "/api/auth/sign-up/email", { email: "ka@example.com", password: "another horse battery", name: "Ka" })
+  expect(duplicate.status).toBe(200)
+  expect((await duplicate.text()).replace(/"id":"[0-9a-f-]{36}"/, '"id":"ID"')).toBe('{"token":null,"user":{"id":"ID","email":"ka@example.com","name":"Ka","emailVerified":false}}')
+  const left = db.query("select value, expiresAt <= ? as expired from verification where identifier like 'signup-pad:%'").all(new Date().toISOString()) as { value: string; expired: number }[]
+  expect(left).toHaveLength(2)
+  expect(left.every((row) => row.value === "" && row.expired === 1)).toBe(true)
+  db.run("drop trigger refuse_pad_delete")
+  db.run("create trigger refuse_pad_insert before insert on verification when new.identifier like 'signup-pad:%' begin select raise(abort, 'insert refused'); end")
+  expect((await post(env, "/api/auth/sign-up/email", { email: "ka@example.com", password: "another horse battery", name: "Ka" })).status).toBe(200)
+})
+
 
 test("a failed membership insert is retried safely on the next sign-in", async () => {
   const env = stage()

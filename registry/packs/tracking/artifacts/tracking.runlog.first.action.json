@@ -1,0 +1,110 @@
+{
+  "artifactId": "tracking.runlog.first.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Log a run's first batch",
+  "namespace": "tracking",
+  "payload": {
+    "actionId": "tracking.runlog.first",
+    "effectProgram": {
+      "entityArtifactId": "tracking.RunLog.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "log_id",
+      "objectKind": "tracking.RunLog",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "digest": {
+          "type": "string"
+        },
+        "end_time": {
+          "type": "integer"
+        },
+        "log_id": {
+          "type": "string"
+        },
+        "metrics": {
+          "type": "string"
+        },
+        "params": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "run_name": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer"
+        },
+        "tags": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id",
+        "seq",
+        "log_id",
+        "digest",
+        "params",
+        "tags",
+        "metrics"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "log_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "log_id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "input.seq == 0 and startsWith(input.log_id, input.run_id + \"/\")"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "run_id"
+          }
+        },
+        "name": "run",
+        "objectType": "tracking.Run"
+      }
+    ],
+    "title": "Log a run's first batch",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "tracking.RunLog"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/tracking/artifacts/tracking.runlog.first.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
