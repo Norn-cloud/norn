@@ -144,7 +144,45 @@ export function watermarkText(watermark: string | null | undefined): string {
   if (marks === null || typeof marks !== "object" || Array.isArray(marks)) return watermark
   const versions = Object.values(marks).flatMap((mark) => typeof (mark as { version?: unknown } | null)?.version === "string" ? [(mark as { version: string }).version] : [])
   const kinds = Object.keys(marks).length
+  if (kinds === 0) return "—"
   if (versions.length === 0) return `${kinds} kind${kinds === 1 ? "" : "s"} of record`
   const latest = versions.reduce((a, b) => (b > a ? b : a))
   return `${latest.slice(0, 16)} · ${kinds} kind${kinds === 1 ? "" : "s"} of record`
+}
+
+/** The refusal a sync records when this workspace has not installed the connection's connector. */
+export const CONNECTOR_NOT_INSTALLED = "source.connector_missing"
+
+/** One connection's state as the Connections table shows it. */
+export interface ConnectionStatus {
+  readonly label: string
+  readonly variant: "secondary" | "outline" | "destructive"
+  /** A plain sentence under the badge, when there is something to say. */
+  readonly note: string | null
+  /** The cell's error code and message, for a real failure only. */
+  readonly error: { readonly code: string; readonly message: string | null } | null
+  /** Whether "Sync now" can do anything. */
+  readonly syncable: boolean
+}
+
+const CONNECTION_STATUS: Readonly<Record<string, Pick<ConnectionStatus, "label" | "variant">>> = {
+  ok: { label: "Synced", variant: "secondary" },
+  syncing: { label: "Syncing", variant: "outline" },
+  partial: { label: "Partly synced", variant: "outline" },
+  failed: { label: "Failed", variant: "destructive" },
+  never: { label: "Not synced yet", variant: "outline" },
+}
+
+/**
+ * A connection's state in plain words. A connection whose connector this workspace has not
+ * installed has not failed: it is not set up yet, and syncing it again changes nothing, so it is
+ * said as such, without a red badge or a raw code. Every other failure keeps its code and message.
+ */
+export function connectionStatus(values: { readonly status?: string | null; readonly last_error_code?: string | null; readonly last_error_message?: string | null }): ConnectionStatus {
+  if (values.last_error_code === CONNECTOR_NOT_INSTALLED) {
+    return { label: "Not set up", variant: "outline", note: "Its connector is not installed in this workspace yet.", error: null, syncable: false }
+  }
+  const known = CONNECTION_STATUS[values.status ?? ""] ?? { label: values.status ?? "—", variant: "outline" as const }
+  const error = values.last_error_code ? { code: values.last_error_code, message: values.last_error_message ?? null } : null
+  return { ...known, note: null, error, syncable: true }
 }

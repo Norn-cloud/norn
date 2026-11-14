@@ -9,7 +9,7 @@ import type { Read } from "@/lib/exact"
 import { CellRefusal, NotServed, cellRead } from "@/lib/live-transport"
 import { transport, type Artifact } from "@/lib/transport"
 import { systemName } from "./lib/catalog.ts"
-import { watermarkText } from "./lib/format.ts"
+import { connectionStatus, watermarkText } from "./lib/format.ts"
 import { UploadCsv } from "./upload-csv.tsx"
 
 /** The platform sources pack's connection type: one record per connected system or upload. */
@@ -27,14 +27,6 @@ interface Connection {
 }
 
 interface Page { readonly records: readonly Connection[] }
-
-const STATUS: Record<string, { readonly label: string; readonly variant: "secondary" | "outline" | "destructive" }> = {
-  ok: { label: "Synced", variant: "secondary" },
-  syncing: { label: "Syncing", variant: "outline" },
-  partial: { label: "Partly synced", variant: "outline" },
-  failed: { label: "Failed", variant: "destructive" },
-  never: { label: "Not synced yet", variant: "outline" },
-}
 
 /** An instant the cell sent, in the reader's own words; the exact text stays on hover. */
 function Instant({ iso }: { readonly iso: string | null | undefined }) {
@@ -114,21 +106,22 @@ export function SourceConnections() {
           </TableRow></TableHeader>
           <TableBody>
             {connections.data.document.records.map(({ id, values }, index) => {
-              const status = STATUS[values.status ?? ""] ?? { label: values.status ?? "—", variant: "outline" as const }
+              const status = connectionStatus(values)
               const read = connections.data
               return (
                 <TableRow key={id}>
                   <TableCell><div className="font-medium">{values.label ?? id}</div><div className="text-xs text-muted-foreground">{systemName(values.system ?? "")} · <span className="font-mono">{values.target}</span></div></TableCell>
                   <TableCell>
                     <Badge variant={status.variant}>{status.label}</Badge>
-                    {values.last_error_code && <div className="max-w-64 pt-1 text-xs whitespace-normal text-destructive" title={values.last_error_message ?? undefined}><span className="font-mono">{values.last_error_code}</span>{values.last_error_message ? `: ${values.last_error_message}` : ""}</div>}
+                    {status.note && <div className="max-w-64 pt-1 text-xs whitespace-normal text-muted-foreground">{status.note}</div>}
+                    {status.error && <div className="max-w-64 pt-1 text-xs whitespace-normal text-destructive" title={status.error.message ?? undefined}><span className="font-mono">{status.error.code}</span>{status.error.message ? `: ${status.error.message}` : ""}</div>}
                   </TableCell>
                   <TableCell className="text-sm whitespace-nowrap">{values.status === "syncing" ? <>started <Instant iso={values.last_sync_started_at} /></> : <Instant iso={values.last_sync_ended_at} />}</TableCell>
                   <TableCell className="max-w-48 truncate font-mono text-xs" title={values.watermark ?? "The source's own modified-since mark after the last sync"}>{watermarkText(values.watermark)}</TableCell>
                   <TableCell className="text-right tabular-nums">{count(read, index, "rows_read", values.rows_read)}</TableCell>
                   <TableCell className="text-right tabular-nums">{count(read, index, "rows_landed", values.rows_landed)}</TableCell>
                   <TableCell className="text-right tabular-nums" title={values.quarantine_reasons ?? undefined}>{count(read, index, "rows_quarantined", values.rows_quarantined)}{values.quarantine_reasons ? <div className="font-mono text-xs text-muted-foreground">{values.quarantine_reasons}</div> : null}</TableCell>
-                  <TableCell>{values.system !== "upload" && <SyncNow id={id} />}</TableCell>
+                  <TableCell>{values.system !== "upload" && status.syncable && <SyncNow id={id} />}</TableCell>
                 </TableRow>
               )
             })}

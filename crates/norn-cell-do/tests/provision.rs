@@ -741,6 +741,67 @@ fn a_provisioned_cell_serves_its_connections_from_the_start() {
     assert_eq!(definitions(&mut cell, Some(&owner)), installed);
 }
 
+/// #1036: Studio's connector page asks the cell `POST /v1/access:decide`,
+/// and the cell decides under its declared connector grants. An admin reads
+/// and binds, a viewer reads only, a binding the cell does not hold is never
+/// run, and a caller outside the cell gets the shared 403 Studio reads as
+/// deny-all. Before this route existed every hosted cell answered 404, and
+/// Studio's Connections page showed `connectors.access_unavailable`.
+#[test]
+fn the_cell_decides_connector_checks_for_its_members() {
+    let directory = tempfile::tempdir().unwrap();
+    let scope = scope("org_a", "prod");
+    let mut cell = provisioned(&file(&directory, "a"), &scope, &plain());
+    let query = query(&scope);
+    let body = json!({ "checks": [
+        { "action": "connector.read", "resource": { "type": "studio.Workspace", "id": "org_a" } },
+        { "action": "connector.bind", "resource": { "type": "studio.Workspace", "id": "org_a" } },
+        { "action": "connector.run", "resource": { "type": "studio.ToolBinding", "id": "binding.none" } },
+        { "action": "connector.read", "resource": { "type": "studio.Workspace", "id": "org_b" } },
+    ] })
+    .to_string();
+    let decide = |cell: &mut Cell<NativeEngine>, auth: &str| {
+        let response = call(cell, "POST", "/v1/access:decide", &query, Some(auth), &body);
+        (response.status, json_of(&response))
+    };
+    let decisions = |answer: &Value| -> Vec<(String, Value)> {
+        answer["decisions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| {
+                (
+                    d["decision"].as_str().unwrap().to_owned(),
+                    d["rule"].clone(),
+                )
+            })
+            .collect()
+    };
+    let (status, admin) = decide(&mut cell, &user("org_a", "admin"));
+    assert_eq!(status, 200, "{admin}");
+    assert_eq!(
+        decisions(&admin),
+        [
+            ("permit".to_owned(), json!("connector-read")),
+            ("permit".to_owned(), json!("connector-bind")),
+            ("deny".to_owned(), Value::Null),
+            ("deny".to_owned(), Value::Null),
+        ]
+    );
+    assert_eq!(
+        admin["decisions"][0]["resource"]["type"],
+        "studio.Workspace"
+    );
+    let (status, viewer) = decide(&mut cell, &user("org_a", "viewer"));
+    assert_eq!(status, 200, "{viewer}");
+    assert_eq!(decisions(&viewer)[0].0, "permit");
+    assert_eq!(decisions(&viewer)[1].0, "deny");
+    let (status, outsider) = decide(&mut cell, &user("org_b", "owner"));
+    assert_eq!(status, 403, "{outsider}");
+    let anonymous = call(&mut cell, "POST", "/v1/access:decide", &query, None, &body);
+    assert_eq!(anonymous.status, 403, "{}", anonymous.body);
+}
+
 // ------------------------------------------------------------ unprovisioned
 
 /// Requests no verified principal makes, across the host's routes.

@@ -246,6 +246,69 @@ impl RefusalDisclosers {
     }
 }
 
+/// Declared connector grants over `studio-roles/1` (#1036): who may see a
+/// workspace's connectors, who may bind a tool, and who may run a binding of
+/// each `runRole`. Studio asks through `POST /v1/access:decide` and holds no
+/// role logic; a change is a new version.
+#[derive(Debug)]
+pub struct ConnectorGrants {
+    /// Identity of this table.
+    pub version: &'static str,
+    /// Roles that may see the workspace's connectors and bindings.
+    pub read: &'static [&'static str],
+    /// Roles that may add, edit and remove tool bindings.
+    pub bind: &'static [&'static str],
+    /// For each binding `runRole`, the roles that may run it.
+    pub run: &'static [(&'static str, &'static [&'static str])],
+}
+
+/// The demo cells' connector grants: every member reads, admins and owners
+/// bind, and a binding runs for its `runRole` and the roles above it.
+pub const CONNECTOR_GRANTS: ConnectorGrants = ConnectorGrants {
+    version: "norn-cell-do-connector-grants/1",
+    read: &["viewer", "member", "admin", "owner"],
+    bind: &["admin", "owner"],
+    run: &[
+        ("member", &["member", "admin", "owner"]),
+        ("admin", &["admin", "owner"]),
+    ],
+};
+
+impl ConnectorGrants {
+    /// The rule that permits `roles` to take `action` on `resource` of the
+    /// workspace `org`, or `None` (deny). `run_role` is the bound binding's
+    /// declared `runRole`, read by the host from its cell definition.
+    #[must_use]
+    pub fn decide(
+        &self,
+        roles: &[String],
+        org: &str,
+        action: &str,
+        resource: (&str, &str),
+        run_role: Option<&str>,
+    ) -> Option<&'static str> {
+        let holds = |granted: &[&str]| roles.iter().any(|held| granted.contains(&held.as_str()));
+        match (action, resource) {
+            ("connector.read", ("studio.Workspace", id)) if id == org && holds(self.read) => {
+                Some("connector-read")
+            }
+            ("connector.bind", ("studio.Workspace", id)) if id == org && holds(self.bind) => {
+                Some("connector-bind")
+            }
+            ("connector.run", ("studio.ToolBinding", _)) => {
+                let run_role = run_role?;
+                let (_, granted) = self.run.iter().find(|(role, _)| *role == run_role)?;
+                holds(granted).then_some(if run_role == "admin" {
+                    "run-admin"
+                } else {
+                    "run-member"
+                })
+            }
+            _ => None,
+        }
+    }
+}
+
 /// The principal a resolver verified for the current request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Caller {
