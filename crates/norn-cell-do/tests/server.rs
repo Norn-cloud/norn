@@ -326,3 +326,102 @@ fn a_cursor_at_the_cursor_bound_reaches_the_route() {
     assert_eq!(status, 400, "{body}");
     assert_eq!(body["diagnostics"][0]["code"], "query.cursor_invalid");
 }
+
+/// Served routes the `OpenAPI` document does not describe, each with its reason.
+const UNDOCUMENTED: &[server::Route] = &[
+    // Served only by the published host's entry point, for the access view:
+    // the dev host and `server::handle` refuse it. Its document types live in
+    // this crate, outside the generated contract.
+    server::Route::Access,
+];
+
+/// The route's path template with every `{parameter}` filled by `x`.
+fn concrete(template: &str) -> String {
+    let mut path = String::new();
+    let mut parameter = false;
+    for character in template.chars() {
+        match character {
+            '{' => {
+                parameter = true;
+                path.push('x');
+            }
+            '}' => parameter = false,
+            _ if parameter => {}
+            other => path.push(other),
+        }
+    }
+    path
+}
+
+/// The generated document describes exactly what the host serves: every
+/// route is documented or named above, the document names no route the host
+/// does not serve, and each route's method is the one the router accepts.
+#[test]
+fn every_served_route_is_documented_or_named_as_undocumented() {
+    // `Route` and `Route::ALL` come from one list (`routes!`), so every
+    // variant is in `ALL`, once.
+    let document: Value =
+        serde_json::from_str(&norn_api::openapi::openapi_json().unwrap()).unwrap();
+    let documented: std::collections::BTreeSet<(String, String)> = document["paths"]
+        .as_object()
+        .unwrap()
+        .iter()
+        .flat_map(|(path, item)| {
+            item.as_object()
+                .unwrap()
+                .keys()
+                .filter(|method| {
+                    matches!(method.as_str(), "get" | "post" | "put" | "patch" | "delete")
+                })
+                .map(move |method| (method.to_uppercase(), path.clone()))
+        })
+        .collect();
+    let served: std::collections::BTreeSet<(String, String)> = server::Route::ALL
+        .iter()
+        .filter(|route| !UNDOCUMENTED.contains(route))
+        .map(|route| {
+            let (method, template) = route.signature();
+            (method.to_owned(), template.to_owned())
+        })
+        .collect();
+    assert_eq!(documented, served);
+
+    let demo = host(NativeEngine::open_in_memory().unwrap());
+    for &route in server::Route::ALL {
+        let (method, template) = route.signature();
+        let path = concrete(template);
+        // Each template names its own route, so the list and the router agree.
+        assert_eq!(server::Route::of(&path), Some(route), "{template}");
+        if UNDOCUMENTED.contains(&route) {
+            continue;
+        }
+        // The router serves the route on its method, and only on it.
+        let served = call(&demo, method, &path, SCOPE, VIEWER);
+        let code: Value = serde_json::from_str(&served.body).unwrap();
+        assert!(
+            served.status != 405 && code["code"] != "route.not_found",
+            "{method} {template}: {} {}",
+            served.status,
+            served.body
+        );
+        let other = if method == "GET" { "POST" } else { "GET" };
+        let refused = call(&demo, other, &path, SCOPE, VIEWER);
+        assert_eq!(refused.status, 405, "{other} {template}: {}", refused.body);
+    }
+
+    // A path the list does not name is not served, and neither is the one
+    // route this dispatch leaves to the published host's entry point.
+    for path in [
+        "/v1/nothing",
+        "/v1/access",
+        "/v1/objects",
+        "/v1/objects/x/x/history",
+    ] {
+        let (status, body) = get(&demo, path, SCOPE, VIEWER);
+        assert_eq!(
+            (status, body["code"].as_str()),
+            (404, Some("route.not_found")),
+            "{path}"
+        );
+    }
+}

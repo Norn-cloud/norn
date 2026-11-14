@@ -7,8 +7,31 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import coverage_manifest as coverage
-import migrate_registry_pr as migration
+
+def _sibling(name, directory=None):
+    """Load sibling module `name` from its source by explicit path: never through sys.path,
+    never from a bytecode cache, never a same-named module loaded some other way (#513)."""
+    import pathlib
+    import sys
+    import types
+
+    path = (directory or pathlib.Path(__file__).resolve().parent) / f"{name}.py"
+    loaded = sys.modules.get(name)
+    if getattr(loaded, "__norn_sibling__", None) == str(path):
+        return loaded
+    module = types.ModuleType(name)
+    module.__file__ = str(path)
+    module.__norn_sibling__ = str(path)
+    sys.modules[name] = module
+    try:
+        exec(compile(path.read_bytes(), str(path), "exec", dont_inherit=True), module.__dict__)
+    except BaseException:
+        del sys.modules[name]
+        raise
+    return module
+
+coverage = _sibling("coverage_manifest")
+migration = _sibling("migrate_registry_pr")
 
 
 class MigrationTests(unittest.TestCase):

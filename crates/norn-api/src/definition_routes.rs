@@ -267,6 +267,14 @@ impl DefinitionKinds {
     }
 }
 
+fn request_payload_schema() -> utoipa::openapi::schema::Object {
+    crate::objects::free_form("The kind's payload.", false)
+}
+
+fn admitted_payload_schema() -> utoipa::openapi::schema::Object {
+    crate::objects::free_form("The admitted payload, as canonical JSON.", false)
+}
+
 /// `POST /v1/definitions:admit`.
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -276,7 +284,7 @@ pub struct AdmitDefinitionRequest {
     /// The definition id.
     pub id: String,
     /// The kind's payload.
-    #[schema(value_type = Object)]
+    #[schema(schema_with = request_payload_schema)]
     pub payload: Box<RawValue>,
 }
 
@@ -289,7 +297,7 @@ pub struct InstallDefinitionRequest {
     /// The definition id.
     pub id: String,
     /// The kind's payload.
-    #[schema(value_type = Object)]
+    #[schema(schema_with = request_payload_schema)]
     pub payload: Box<RawValue>,
     /// The id's current version; absent requires that the id is unused.
     pub expected_version: Option<u64>,
@@ -459,7 +467,7 @@ pub struct DefinitionDocument {
     /// `active` or `retired`.
     pub lifecycle: String,
     /// The admitted payload, as canonical JSON.
-    #[schema(value_type = Object)]
+    #[schema(schema_with = admitted_payload_schema)]
     pub payload: Box<RawValue>,
     /// The commit that installed this version.
     pub receipt: DefinitionReceipt,
@@ -933,7 +941,7 @@ fn question_findings<E: SqlEngine>(
             }
             Some(Ok(question)) => question,
         };
-    let Some(runtime) = questions else {
+    let Some(runtime) = questions.filter(|runtime| runtime.publishes_questions()) else {
         findings.push(RefusalDiagnostic::error(
             codes::QUESTION_UNAVAILABLE,
             "this cell admits no ad-hoc questions",
@@ -1177,8 +1185,26 @@ fn append<E: SqlEngine>(
                     flow,
                     &previously_owned,
                 )?;
+                // The rebuilt model is the admitted set's alone. A cell that
+                // serves actions also holds the kernel's own action types
+                // (their call records, possibly with rows): keep them, or
+                // the install would drop them and the migration refuses.
+                let action_ready =
+                    cell.store().model().object_types().any(|object_type| {
+                        object_type.name.as_str() == norn_kernel::ACTION_CALL_TYPE
+                    });
+                let model = if action_ready {
+                    crate::action_admission::prepare_action_model(&admitted.model)?
+                } else {
+                    admitted.model
+                };
+                // DEFS-REOPEN-1: the cell must still open under the new
+                // model; a policy that cannot serve it refuses before any write.
+                let candidate: Vec<norn_ir::ObjectTypeDef> =
+                    model.object_types().cloned().collect();
+                host.authorizer.admits_model(&candidate)?;
                 (
-                    admitted.model,
+                    model,
                     admitted.canonical_set,
                     admitted.receipt_sha256,
                     Some(admitted.receipt),

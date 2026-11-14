@@ -1,11 +1,26 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { basename, join, resolve } from "node:path"
+import { buildInfo, type BuildInfo } from "./build-info.ts"
 import { TOOL_ROOT } from "./profile.ts"
 import { ProjectError, parseProject, type Project } from "./project.ts"
 
-export function projectDependencies(mode: "repository" | "published" = "repository") {
-  if (mode === "published") throw new ProjectError("cli.setup.unpublished", "Published distribution is unavailable; run init from the repository.", 3)
-  return { "@norn/cli": `file:${TOOL_ROOT}`, "@norn/authoring": `file:${TOOL_ROOT}`, effect: "4.0.0-rc.117", typescript: "6.0.3" }
+/** Whether this tool runs from the Norn repository (a checkout) or from a released package. */
+export function distribution(root: string = TOOL_ROOT): "repository" | "published" {
+  return existsSync(join(root, "../../crates/norn-checker")) ? "repository" : "published"
+}
+
+/**
+ * What a new project depends on. From a checkout, this tree. From a released
+ * package, the packages of that same release, as its build manifest names
+ * them (a version on a registry, or a tarball address).
+ */
+export function projectDependencies(mode: "repository" | "published" = distribution(), build: BuildInfo | undefined = buildInfo()) {
+  const pinned = { effect: "4.0.0-rc.117", typescript: "6.0.3" }
+  if (mode === "repository") return { "@norn/cli": `file:${TOOL_ROOT}`, "@norn/authoring": `file:${TOOL_ROOT}`, ...pinned }
+  const cli = build?.packages["@norn/cli"]
+  const authoring = build?.packages["@norn/authoring"]
+  if (!cli || !authoring) throw new ProjectError("cli.setup.unpublished", "Published distribution is unavailable; run init from the repository.", 3)
+  return { "@norn/cli": cli, "@norn/authoring": authoring, ...pinned }
 }
 
 export async function init(args: readonly string[]): Promise<void> {

@@ -307,7 +307,7 @@ jobs:
           key: norn-interop-${{ hashFiles('scripts/importers/erpnext-runtime.lock.json') }}
       - uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2.89.1
         with:
-          tool: nextest@0.9.150
+          tool: nextest@0.9.150,cargo-deny@0.19.0,wasm-bindgen@0.2.129
       - run: bash scripts/ci/core.sh bundle "$PLAN" "$BUNDLE_ID"
   full:
     needs: [core, plan, test]
@@ -446,7 +446,7 @@ jobs:
               comments
             }));
       - name: Validate candidate as data with base-owned policy
-        run: python3 trusted/scripts/ci/validate-runner-policy.py --root candidate --maintainer-evidence "$RUNNER_TEMP/maintainer-approval.json"
+        run: python3 -I -B -X pycache_prefix="$(mktemp -d)" trusted/scripts/ci/validate-runner-policy.py --root candidate --maintainer-evidence "$RUNNER_TEMP/maintainer-approval.json"
       - name: Report trusted policy on the exact PR head
         if: always()
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
