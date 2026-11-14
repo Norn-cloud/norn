@@ -105,7 +105,7 @@ function ScopeSwitcher() {
   const { live, open } = useOpenWorkspace()
   return (
     <Menu>
-      <MenuTrigger className="group/scope -mx-1.5 flex max-w-full min-w-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-start text-sm text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-open:bg-accent">
+      <MenuTrigger data-scope className="group/scope -mx-1.5 flex max-w-full min-w-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-start text-sm text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-open:bg-accent">
         <span className="truncate">{open?.name}<span className="text-muted-foreground"> · {open?.detail}</span></span>
         <ChevronDown aria-hidden className="size-3.5 shrink-0 transition-transform group-data-open/scope:rotate-180" />
       </MenuTrigger>
@@ -170,7 +170,7 @@ export function AccountMenu({ account, onSignOut }: { readonly account: Account;
         <KitMenuSeparator />
         <div className="grid px-2 py-1.5 text-sm">
           <span>{organization?.name ?? "No organization"}</span>
-          {organization && <span className="text-meta text-muted-foreground">{organization.name} · {organization.role}</span>}
+          {organization && <span className="text-meta text-muted-foreground">Role: {organization.role}</span>}
         </div>
         <KitMenuSeparator />
         <ViewAndLanguage />
@@ -236,7 +236,9 @@ function AppletPanel({ section, pathname }: { readonly section: Section; readonl
   const badge = shown((section.useBadge ?? none)())
   const groups = [...new Set(entries.map(({ group }) => group ?? ""))]
   const current = [...entries].filter(({ href }) => within(href, pathname)).sort((a, b) => b.href.length - a.href.length)[0]?.href ?? (pathname === section.path ? OVERVIEW : null)
-  const [expanded, setExpanded] = useState<string[]>(() => groups.map((group) => `group:${group}`))
+  // Groups start open and stay open unless the reader closes one; the current page's group never closes.
+  const [collapsed, setCollapsed] = useState<readonly string[]>([])
+  const values = groups.map((heading) => `group:${heading}`)
   const close = () => setOpenMobile(false)
   const label = "flex h-8 w-full min-w-0 items-center gap-2 rounded-lg px-2 text-sm text-sidebar-foreground/85 outline-none hover:bg-sidebar-accent hover:text-sidebar-foreground data-current:bg-sidebar-accent data-current:font-medium data-current:text-sidebar-foreground [&_svg]:size-4 [&_svg]:shrink-0"
   return (
@@ -253,7 +255,7 @@ function AppletPanel({ section, pathname }: { readonly section: Section; readonl
         )}
       </div>
       <nav aria-label={section.label} className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
-        <Tree aria-label={`${section.label} pages`} mode="none" current={current} expanded={[...new Set([...expanded, ...groups.map((heading) => `group:${heading}`).filter((value) => holds(value, current, entries))])]} onExpandedChange={setExpanded}>
+        <Tree aria-label={`${section.label} pages`} mode="none" current={current} expanded={values.filter((value) => !collapsed.includes(value) || holds(value, current, entries))} onExpandedChange={(next) => setCollapsed(values.filter((value) => !next.includes(value)))}>
           <TreeItem value={OVERVIEW} label="Overview" className={focusRow}>
             <TreeItemLabel render={<Link to={section.path} onClick={close} />} className={cn(label, section.kind && KINDS[section.kind].svg)}>
               <section.icon aria-hidden /><span className="truncate">Overview</span>
@@ -350,7 +352,7 @@ function CommandMenu({ sections }: { readonly sections: readonly Section[] }) {
             <Search aria-hidden className="size-4 text-muted-foreground" />
             <CommandInput aria-label="Search applets, object types, questions" placeholder="Search applets, object types, questions…" className="h-12 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground" />
           </div>
-          <CommandEmpty className="px-4 py-8 text-center text-sm text-muted-foreground">Nothing matches.</CommandEmpty>
+          <CommandEmpty className="hidden px-4 py-8 text-center text-sm text-muted-foreground data-empty:block">Nothing matches.</CommandEmpty>
           <CommandList className="max-h-[min(24rem,60vh)] overflow-y-auto p-1.5">
             <CommandGroup>
               <CommandGroupLabel className="px-2 pt-2 pb-1 text-xs text-muted-foreground">Applets</CommandGroupLabel>
@@ -365,6 +367,7 @@ function CommandMenu({ sections }: { readonly sections: readonly Section[] }) {
                 <CommandGroupLabel className="px-2 pt-3 pb-1 text-xs text-muted-foreground">{section.label}</CommandGroupLabel>
                 {entries.map((entry) => (
                   <CommandItem key={entry.href} value={`entry:${section.path}:${entry.href}`} label={typeof entry.label === "string" ? entry.label : entry.href} keywords={entry.group ? [entry.group] : undefined} className="flex cursor-default items-center gap-2 rounded-lg px-2 py-1.5 text-sm data-highlighted:bg-accent">
+                    {(() => { const Icon = entry.icon ?? (entry.kind ? KINDS[entry.kind].icon : section.icon); return <CommandItemIcon className="flex text-muted-foreground [&_svg]:size-4"><Icon /></CommandItemIcon> })()}
                     <span className="truncate">{entry.label}</span>{entry.group && <span className="ms-auto truncate text-xs text-muted-foreground">{entry.group}</span>}
                   </CommandItem>
                 ))}
