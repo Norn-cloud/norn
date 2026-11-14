@@ -38,3 +38,16 @@ server. This command does not supply a local server or install definitions.
 
 The client reuses clap, ureq/rustls and the maintained sse-stream decoder;
 MCP event data stays text so business decimals never round through floats.
+
+`norn port parity|scoreboard|code-ontology|selftest [ARGS...]` forwards to the
+porting tools and exits with the tool's own status. `code-ontology` reads
+source as data; `parity` EXECUTES the original function it is given, in a
+subprocess that is not a sandbox, so use it only on code you would run
+yourself. The CLI links none of that code. It finds the tools from an absolute
+`NORN_PORT_HOME`, an installed `<prefix>/share/norn/port` beside
+`<prefix>/bin/norn`, or the checkout it was built from, never from the working
+directory; refuses unless the tools and interpreter are owned by you or root
+and nobody else can write them; and runs them under `python3` from an absolute `PATH` entry (or an absolute
+`NORN_PORT_PYTHON`) in isolated mode with a short fixed environment. Today the
+tools ship only in a source checkout. Details and limits:
+`tools/norn-port/README.md`.

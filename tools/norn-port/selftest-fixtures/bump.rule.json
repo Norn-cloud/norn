@@ -1,0 +1,237 @@
+{
+  "artifactId": "demo.bump.rule",
+  "irVersion": "0.1",
+  "kind": "rule",
+  "namespace": "demo",
+  "name": "Bump",
+  "version": "0.1.0",
+  "lifecycle": "draft",
+  "dependencies": [],
+  "payload": {
+    "ruleId": "demo.bump.rule",
+    "ruleVersion": "2.0",
+    "contract": "decide",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "slice": {
+          "type": "object",
+          "properties": {
+            "doc": {
+              "type": "object",
+              "properties": {
+                "count": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "count"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "doc"
+          ],
+          "additionalProperties": false
+        },
+        "event": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "slice",
+        "event"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "facts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": [
+                  "set"
+                ]
+              },
+              "objectType": {
+                "type": "string",
+                "enum": [
+                  "demo.Sample"
+                ]
+              },
+              "key": {
+                "type": "string"
+              },
+              "property": {
+                "type": "string",
+                "enum": [
+                  "value"
+                ]
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "op",
+              "objectType",
+              "key",
+              "property",
+              "value"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "commands": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "value": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "refusal": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "reason"
+                ],
+                "additionalProperties": false
+              },
+              "input": {
+                "type": "object",
+                "properties": {
+                  "doc": {
+                    "type": "object",
+                    "properties": {
+                      "count": {
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "count"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "doc"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "value",
+              "refusal",
+              "input"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "timers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "facts",
+        "commands",
+        "timers"
+      ],
+      "additionalProperties": false
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "graph": {
+      "contentType": "application/vnd.gorules.decision",
+      "nodes": [
+        {
+          "id": "in",
+          "name": "in",
+          "type": "inputNode"
+        },
+        {
+          "id": "calc",
+          "name": "original unit outcome",
+          "type": "expressionNode",
+          "content": {
+            "expressions": [
+              {
+                "id": "facts",
+                "key": "facts",
+                "value": "[]"
+              },
+              {
+                "id": "commands",
+                "key": "commands",
+                "value": "[{value: slice.doc.count < 0 ? null : slice.doc.count + 1, refusal: slice.doc.count < 0 ? {type: 'ValidationError', reason: 'count must be nonnegative'} : null, input: {doc: {count: slice.doc.count < 0 ? slice.doc.count : slice.doc.count + 1}}}]"
+              },
+              {
+                "id": "timers",
+                "key": "timers",
+                "value": "[]"
+              }
+            ]
+          }
+        },
+        {
+          "id": "out",
+          "name": "out",
+          "type": "outputNode"
+        }
+      ],
+      "edges": [
+        {
+          "id": "in-calc",
+          "sourceId": "in",
+          "targetId": "calc",
+          "type": "edge"
+        },
+        {
+          "id": "calc-out",
+          "sourceId": "calc",
+          "targetId": "out",
+          "type": "edge"
+        }
+      ]
+    }
+  },
+  "scope": {
+    "environmentId": "offline",
+    "orgId": "port-calibration"
+  },
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "tools/norn-port/selftest-fixtures/bump.rule.json"
+  }
+}

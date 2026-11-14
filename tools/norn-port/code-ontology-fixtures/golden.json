@@ -1,0 +1,2265 @@
+{
+  "coverage": {
+    "demo": {
+      "entityEdges": 90,
+      "handlers": 32,
+      "resolvedEntityEdges": 56,
+      "resolvedPercent": 62.22,
+      "unresolved": {
+        "dynamic_client_handlers": 3,
+        "dynamic_client_target": 1,
+        "dynamic_entity": 2,
+        "dynamic_fields": 1,
+        "dynamic_hook": 1,
+        "field_expression": 1,
+        "unknown_entity": 2,
+        "unresolved_call": 2,
+        "untyped_document": 26
+      }
+    }
+  },
+  "diagnostics": [],
+  "entities": {
+    "Invoice": [
+      "demo/demo/api.py:alias_invalidation",
+      "demo/demo/api.py:alias_loop",
+      "demo/demo/api.py:branch",
+      "demo/demo/api.py:comprehensions",
+      "demo/demo/api.py:daily",
+      "demo/demo/api.py:exception_alias",
+      "demo/demo/api.py:has_permission",
+      "demo/demo/api.py:loop",
+      "demo/demo/api.py:match_captures",
+      "demo/demo/api.py:on_update",
+      "demo/demo/api.py:permission",
+      "demo/demo/api.py:shared_unknown",
+      "demo/demo/api.py:shared_wildcard",
+      "demo/demo/api.py:update",
+      "demo/demo/client.json:form.Invoice.refresh@31/script",
+      "demo/demo/client.json:form@0/script",
+      "demo/demo/doctype/invoice/invoice.py:Invoice.validate",
+      "demo/demo/invoice.js:form.Invoice.catch_scope@788",
+      "demo/demo/invoice.js:form.Invoice.changed@371",
+      "demo/demo/invoice.js:form.Invoice.refresh@148",
+      "demo/demo/invoice.js:form.Invoice.scope_checks@526",
+      "demo/demo/invoice.js:form.Invoice.validate@229",
+      "demo/demo/invoice.js:form@115",
+      "demo/demo/invoice.js:form@338",
+      "demo/demo/invoice.js:form@493",
+      "demo/demo/invoice.js:form@755"
+    ]
+  },
+  "facts": [
+    {
+      "condition": "(doc.total < 0)",
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": null,
+      "field": null,
+      "handler": "demo/demo/api.py:on_update",
+      "relation": "throws_if",
+      "script_line": null,
+      "source": {
+        "line": 21,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": "'Negative'"
+    },
+    {
+      "condition": "(self.total < 0)",
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": null,
+      "field": null,
+      "handler": "demo/demo/doctype/invoice/invoice.py:Invoice.validate",
+      "relation": "throws_if",
+      "script_line": null,
+      "source": {
+        "line": 7,
+        "path": "demo/demo/doctype/invoice/invoice.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "c9e5f1898f2c9f66270ec0c38dcb192189aefd2c007b770c6d803e0e3c1d5195"
+      },
+      "target": "'Negative total'"
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": "status",
+      "handler": "demo/demo/api.py:comprehensions",
+      "relation": "reads",
+      "script_line": null,
+      "source": {
+        "line": 67,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": null
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": "status",
+      "handler": "demo/demo/api.py:daily",
+      "relation": "reads",
+      "script_line": null,
+      "source": {
+        "line": 25,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": "frappe.get_list"
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": "status",
+      "handler": "demo/demo/api.py:has_permission",
+      "relation": "reads",
+      "script_line": null,
+      "source": {
+        "line": 31,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": null
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": "status",
+      "handler": "demo/demo/api.py:on_update",
+      "relation": "writes",
+      "script_line": null,
+      "source": {
+        "line": 22,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": null
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": "status",
+      "handler": "demo/demo/api.py:update",
+      "relation": "reads",
+      "script_line": null,
+      "source": {
+        "line": 10,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": "frappe.get_all"
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": "status",
+      "handler": "demo/demo/api.py:update",
+      "relation": "reads",
+      "script_line": null,
+      "source": {
+        "line": 11,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": "frappe.db.get_list"
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": "status",
+      "handler": "demo/demo/api.py:update",
+      "relation": "writes",
+      "script_line": null,
+      "source": {
+        "line": 6,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": null
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": "status",
+      "handler": "demo/demo/api.py:update",
+      "relation": "writes",
+      "script_line": null,
+      "source": {
+        "line": 8,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": "frappe.db.set_value"
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": "status",
+      "handler": "demo/demo/doctype/invoice/invoice.py:Invoice.validate",
+      "relation": "writes",
+      "script_line": null,
+      "source": {
+        "line": 8,
+        "path": "demo/demo/doctype/invoice/invoice.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "c9e5f1898f2c9f66270ec0c38dcb192189aefd2c007b770c6d803e0e3c1d5195"
+      },
+      "target": null
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": "status",
+      "handler": "demo/demo/invoice.js:form.Invoice.catch_scope@788",
+      "relation": "writes",
+      "script_line": null,
+      "source": {
+        "line": 29,
+        "path": "demo/demo/invoice.js",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "6f725281b375ab2d2b59b47fb8641c6036f72baf501aa59c22dd5d2af76ae5c8"
+      },
+      "target": null
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": "status",
+      "handler": "demo/demo/invoice.js:form.Invoice.refresh@148",
+      "relation": "writes",
+      "script_line": null,
+      "source": {
+        "line": 4,
+        "path": "demo/demo/invoice.js",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "6f725281b375ab2d2b59b47fb8641c6036f72baf501aa59c22dd5d2af76ae5c8"
+      },
+      "target": null
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": "status",
+      "handler": "demo/demo/invoice.js:form.Invoice.scope_checks@526",
+      "relation": "writes",
+      "script_line": null,
+      "source": {
+        "line": 19,
+        "path": "demo/demo/invoice.js",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "6f725281b375ab2d2b59b47fb8641c6036f72baf501aa59c22dd5d2af76ae5c8"
+      },
+      "target": null
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": "status",
+      "handler": "demo/demo/invoice.js:form.Invoice.validate@229",
+      "relation": "writes",
+      "script_line": null,
+      "source": {
+        "line": 5,
+        "path": "demo/demo/invoice.js",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "6f725281b375ab2d2b59b47fb8641c6036f72baf501aa59c22dd5d2af76ae5c8"
+      },
+      "target": null
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": "total",
+      "handler": "demo/demo/api.py:alias_invalidation",
+      "relation": "reads",
+      "script_line": null,
+      "source": {
+        "line": 72,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": null
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": "total",
+      "handler": "demo/demo/api.py:on_update",
+      "relation": "reads",
+      "script_line": null,
+      "source": {
+        "line": 20,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": null
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": "total",
+      "handler": "demo/demo/api.py:update",
+      "relation": "reads",
+      "script_line": null,
+      "source": {
+        "line": 10,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": "frappe.get_all"
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": "total",
+      "handler": "demo/demo/api.py:update",
+      "relation": "reads",
+      "script_line": null,
+      "source": {
+        "line": 7,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": null
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": "total",
+      "handler": "demo/demo/api.py:update",
+      "relation": "reads",
+      "script_line": null,
+      "source": {
+        "line": 9,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": "frappe.db.get_value"
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": "total",
+      "handler": "demo/demo/client.json:form.Invoice.refresh@31/script",
+      "relation": "reads",
+      "script_line": 1,
+      "source": {
+        "line": 1,
+        "path": "demo/demo/client.json",
+        "pointer": "/script",
+        "revision": "fixture",
+        "sha256": "3ee12694aeb0406a95df5f8ab2aa542f80a829f252be5211f76ca05aaf86024b"
+      },
+      "target": null
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": "total",
+      "handler": "demo/demo/doctype/invoice/invoice.py:Invoice.validate",
+      "relation": "reads",
+      "script_line": null,
+      "source": {
+        "line": 6,
+        "path": "demo/demo/doctype/invoice/invoice.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "c9e5f1898f2c9f66270ec0c38dcb192189aefd2c007b770c6d803e0e3c1d5195"
+      },
+      "target": null
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": "total",
+      "handler": "demo/demo/doctype/invoice/invoice.py:Invoice.validate",
+      "relation": "reads",
+      "script_line": null,
+      "source": {
+        "line": 9,
+        "path": "demo/demo/doctype/invoice/invoice.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "c9e5f1898f2c9f66270ec0c38dcb192189aefd2c007b770c6d803e0e3c1d5195"
+      },
+      "target": null
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": "total",
+      "handler": "demo/demo/doctype/invoice/invoice.py:Invoice.validate",
+      "relation": "writes",
+      "script_line": null,
+      "source": {
+        "line": 9,
+        "path": "demo/demo/doctype/invoice/invoice.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "c9e5f1898f2c9f66270ec0c38dcb192189aefd2c007b770c6d803e0e3c1d5195"
+      },
+      "target": null
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": "total",
+      "handler": "demo/demo/invoice.js:form.Invoice.changed@371",
+      "relation": "reads",
+      "script_line": null,
+      "source": {
+        "line": 9,
+        "path": "demo/demo/invoice.js",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "6f725281b375ab2d2b59b47fb8641c6036f72baf501aa59c22dd5d2af76ae5c8"
+      },
+      "target": null
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": "total",
+      "handler": "demo/demo/invoice.js:form.Invoice.changed@371",
+      "relation": "writes",
+      "script_line": null,
+      "source": {
+        "line": 9,
+        "path": "demo/demo/invoice.js",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "6f725281b375ab2d2b59b47fb8641c6036f72baf501aa59c22dd5d2af76ae5c8"
+      },
+      "target": null
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": "total",
+      "handler": "demo/demo/invoice.js:form.Invoice.refresh@148",
+      "relation": "reads",
+      "script_line": null,
+      "source": {
+        "line": 4,
+        "path": "demo/demo/invoice.js",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "6f725281b375ab2d2b59b47fb8641c6036f72baf501aa59c22dd5d2af76ae5c8"
+      },
+      "target": null
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": "total",
+      "handler": "demo/demo/invoice.js:form.Invoice.scope_checks@526",
+      "relation": "reads",
+      "script_line": null,
+      "source": {
+        "line": 15,
+        "path": "demo/demo/invoice.js",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "6f725281b375ab2d2b59b47fb8641c6036f72baf501aa59c22dd5d2af76ae5c8"
+      },
+      "target": null
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": "total",
+      "handler": "demo/demo/invoice.js:form.Invoice.scope_checks@526",
+      "relation": "reads",
+      "script_line": null,
+      "source": {
+        "line": 16,
+        "path": "demo/demo/invoice.js",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "6f725281b375ab2d2b59b47fb8641c6036f72baf501aa59c22dd5d2af76ae5c8"
+      },
+      "target": null
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": "total",
+      "handler": "demo/demo/invoice.js:form.Invoice.scope_checks@526",
+      "relation": "writes",
+      "script_line": null,
+      "source": {
+        "line": 15,
+        "path": "demo/demo/invoice.js",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "6f725281b375ab2d2b59b47fb8641c6036f72baf501aa59c22dd5d2af76ae5c8"
+      },
+      "target": null
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": "total",
+      "handler": "demo/demo/invoice.js:form.Invoice.scope_checks@526",
+      "relation": "writes",
+      "script_line": null,
+      "source": {
+        "line": 16,
+        "path": "demo/demo/invoice.js",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "6f725281b375ab2d2b59b47fb8641c6036f72baf501aa59c22dd5d2af76ae5c8"
+      },
+      "target": null
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": null,
+      "handler": "demo/demo/api.py:alias_invalidation",
+      "relation": "reads",
+      "script_line": null,
+      "source": {
+        "line": 71,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": "frappe.get_doc"
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": null,
+      "handler": "demo/demo/api.py:alias_loop",
+      "relation": "reads",
+      "script_line": null,
+      "source": {
+        "line": 78,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": "frappe.get_doc"
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": null,
+      "handler": "demo/demo/api.py:branch",
+      "relation": "reads",
+      "script_line": null,
+      "source": {
+        "line": 43,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": "frappe.get_doc"
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": null,
+      "handler": "demo/demo/api.py:comprehensions",
+      "relation": "reads",
+      "script_line": null,
+      "source": {
+        "line": 61,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": "frappe.get_doc"
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": null,
+      "handler": "demo/demo/api.py:exception_alias",
+      "relation": "reads",
+      "script_line": null,
+      "source": {
+        "line": 84,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": "frappe.get_doc"
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": null,
+      "handler": "demo/demo/api.py:has_permission",
+      "relation": "triggers_on",
+      "script_line": null,
+      "source": {
+        "line": 8,
+        "path": "demo/demo/hooks.py",
+        "pointer": "/Invoice",
+        "revision": "fixture",
+        "sha256": "1da17919c2c64fb4eef68554c91ed103b8a4bebfaee1179c089a9eb70ef8b86d"
+      },
+      "target": "has_permission/Invoice"
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": null,
+      "handler": "demo/demo/api.py:loop",
+      "relation": "reads",
+      "script_line": null,
+      "source": {
+        "line": 52,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": "frappe.get_doc"
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": null,
+      "handler": "demo/demo/api.py:match_captures",
+      "relation": "reads",
+      "script_line": null,
+      "source": {
+        "line": 101,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": "frappe.get_doc"
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": null,
+      "handler": "demo/demo/api.py:match_captures",
+      "relation": "reads",
+      "script_line": null,
+      "source": {
+        "line": 105,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": "frappe.get_doc"
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": null,
+      "handler": "demo/demo/api.py:match_captures",
+      "relation": "reads",
+      "script_line": null,
+      "source": {
+        "line": 97,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": "frappe.get_doc"
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": null,
+      "handler": "demo/demo/api.py:on_update",
+      "relation": "triggers_on",
+      "script_line": null,
+      "source": {
+        "line": 2,
+        "path": "demo/demo/hooks.py",
+        "pointer": "/Invoice/on_update",
+        "revision": "fixture",
+        "sha256": "1da17919c2c64fb4eef68554c91ed103b8a4bebfaee1179c089a9eb70ef8b86d"
+      },
+      "target": "doc_events/Invoice/on_update"
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": null,
+      "handler": "demo/demo/api.py:permission",
+      "relation": "triggers_on",
+      "script_line": null,
+      "source": {
+        "line": 7,
+        "path": "demo/demo/hooks.py",
+        "pointer": "/Invoice",
+        "revision": "fixture",
+        "sha256": "1da17919c2c64fb4eef68554c91ed103b8a4bebfaee1179c089a9eb70ef8b86d"
+      },
+      "target": "permission_query_conditions/Invoice"
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": null,
+      "handler": "demo/demo/api.py:shared_unknown",
+      "relation": "triggers_on",
+      "script_line": null,
+      "source": {
+        "line": 2,
+        "path": "demo/demo/hooks.py",
+        "pointer": "/Invoice/validate/1",
+        "revision": "fixture",
+        "sha256": "1da17919c2c64fb4eef68554c91ed103b8a4bebfaee1179c089a9eb70ef8b86d"
+      },
+      "target": "doc_events/Invoice/validate/1"
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": null,
+      "handler": "demo/demo/api.py:shared_wildcard",
+      "relation": "triggers_on",
+      "script_line": null,
+      "source": {
+        "line": 2,
+        "path": "demo/demo/hooks.py",
+        "pointer": "/Invoice/validate/0",
+        "revision": "fixture",
+        "sha256": "1da17919c2c64fb4eef68554c91ed103b8a4bebfaee1179c089a9eb70ef8b86d"
+      },
+      "target": "doc_events/Invoice/validate/0"
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": null,
+      "handler": "demo/demo/api.py:update",
+      "relation": "reads",
+      "script_line": null,
+      "source": {
+        "line": 5,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": "frappe.get_doc"
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": null,
+      "handler": "demo/demo/api.py:update",
+      "relation": "writes",
+      "script_line": null,
+      "source": {
+        "line": 12,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": "frappe.new_doc"
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": null,
+      "handler": "demo/demo/client.json:form.Invoice.refresh@31/script",
+      "relation": "triggers_on",
+      "script_line": 1,
+      "source": {
+        "line": 1,
+        "path": "demo/demo/client.json",
+        "pointer": "/script",
+        "revision": "fixture",
+        "sha256": "3ee12694aeb0406a95df5f8ab2aa542f80a829f252be5211f76ca05aaf86024b"
+      },
+      "target": "refresh"
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": null,
+      "handler": "demo/demo/client.json:form@0/script",
+      "relation": "triggers_on",
+      "script_line": 1,
+      "source": {
+        "line": 1,
+        "path": "demo/demo/client.json",
+        "pointer": "/script",
+        "revision": "fixture",
+        "sha256": "3ee12694aeb0406a95df5f8ab2aa542f80a829f252be5211f76ca05aaf86024b"
+      },
+      "target": "frappe.ui.form.on"
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": null,
+      "handler": "demo/demo/invoice.js:form.Invoice.catch_scope@788",
+      "relation": "triggers_on",
+      "script_line": null,
+      "source": {
+        "line": 24,
+        "path": "demo/demo/invoice.js",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "6f725281b375ab2d2b59b47fb8641c6036f72baf501aa59c22dd5d2af76ae5c8"
+      },
+      "target": "catch_scope"
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": null,
+      "handler": "demo/demo/invoice.js:form.Invoice.changed@371",
+      "relation": "triggers_on",
+      "script_line": null,
+      "source": {
+        "line": 9,
+        "path": "demo/demo/invoice.js",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "6f725281b375ab2d2b59b47fb8641c6036f72baf501aa59c22dd5d2af76ae5c8"
+      },
+      "target": "changed"
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": null,
+      "handler": "demo/demo/invoice.js:form.Invoice.refresh@148",
+      "relation": "triggers_on",
+      "script_line": null,
+      "source": {
+        "line": 4,
+        "path": "demo/demo/invoice.js",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "6f725281b375ab2d2b59b47fb8641c6036f72baf501aa59c22dd5d2af76ae5c8"
+      },
+      "target": "refresh"
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": null,
+      "handler": "demo/demo/invoice.js:form.Invoice.scope_checks@526",
+      "relation": "triggers_on",
+      "script_line": null,
+      "source": {
+        "line": 14,
+        "path": "demo/demo/invoice.js",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "6f725281b375ab2d2b59b47fb8641c6036f72baf501aa59c22dd5d2af76ae5c8"
+      },
+      "target": "scope_checks"
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": null,
+      "handler": "demo/demo/invoice.js:form.Invoice.validate@229",
+      "relation": "triggers_on",
+      "script_line": null,
+      "source": {
+        "line": 5,
+        "path": "demo/demo/invoice.js",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "6f725281b375ab2d2b59b47fb8641c6036f72baf501aa59c22dd5d2af76ae5c8"
+      },
+      "target": "validate"
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": null,
+      "handler": "demo/demo/invoice.js:form@115",
+      "relation": "triggers_on",
+      "script_line": null,
+      "source": {
+        "line": 3,
+        "path": "demo/demo/invoice.js",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "6f725281b375ab2d2b59b47fb8641c6036f72baf501aa59c22dd5d2af76ae5c8"
+      },
+      "target": "frappe.ui.form.on"
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": null,
+      "handler": "demo/demo/invoice.js:form@338",
+      "relation": "triggers_on",
+      "script_line": null,
+      "source": {
+        "line": 8,
+        "path": "demo/demo/invoice.js",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "6f725281b375ab2d2b59b47fb8641c6036f72baf501aa59c22dd5d2af76ae5c8"
+      },
+      "target": "frappe.ui.form.on"
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": null,
+      "handler": "demo/demo/invoice.js:form@493",
+      "relation": "triggers_on",
+      "script_line": null,
+      "source": {
+        "line": 13,
+        "path": "demo/demo/invoice.js",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "6f725281b375ab2d2b59b47fb8641c6036f72baf501aa59c22dd5d2af76ae5c8"
+      },
+      "target": "frappe.ui.form.on"
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": "Invoice",
+      "field": null,
+      "handler": "demo/demo/invoice.js:form@755",
+      "relation": "triggers_on",
+      "script_line": null,
+      "source": {
+        "line": 23,
+        "path": "demo/demo/invoice.js",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "6f725281b375ab2d2b59b47fb8641c6036f72baf501aa59c22dd5d2af76ae5c8"
+      },
+      "target": "frappe.ui.form.on"
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": null,
+      "field": null,
+      "handler": "demo/demo/api.py:daily",
+      "relation": "schedules",
+      "script_line": null,
+      "source": {
+        "line": 6,
+        "path": "demo/demo/hooks.py",
+        "pointer": "/daily/0",
+        "revision": "fixture",
+        "sha256": "1da17919c2c64fb4eef68554c91ed103b8a4bebfaee1179c089a9eb70ef8b86d"
+      },
+      "target": "scheduler_events/daily/0"
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": null,
+      "field": null,
+      "handler": "demo/demo/api.py:same_line",
+      "relation": "calls",
+      "script_line": null,
+      "source": {
+        "line": 58,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": "demo/demo/api.py:helper"
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": null,
+      "field": null,
+      "handler": "demo/demo/api.py:update",
+      "relation": "calls",
+      "script_line": null,
+      "source": {
+        "line": 13,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": "demo/demo/api.py:helper"
+    },
+    {
+      "condition": null,
+      "confidence": "resolved",
+      "diagnostic": null,
+      "entity": null,
+      "field": null,
+      "handler": "demo/demo/api.py:update",
+      "relation": "exposes_api",
+      "script_line": null,
+      "source": {
+        "line": 3,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": "demo.api.update"
+    },
+    {
+      "condition": null,
+      "confidence": "unresolved",
+      "diagnostic": "dynamic_client_handlers",
+      "entity": null,
+      "field": null,
+      "handler": "demo/demo/invoice.js:form@289",
+      "relation": "calls",
+      "script_line": null,
+      "source": {
+        "line": 7,
+        "path": "demo/demo/invoice.js",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "6f725281b375ab2d2b59b47fb8641c6036f72baf501aa59c22dd5d2af76ae5c8"
+      },
+      "target": "client_handlers"
+    },
+    {
+      "condition": null,
+      "confidence": "unresolved",
+      "diagnostic": "dynamic_client_handlers",
+      "entity": null,
+      "field": null,
+      "handler": "demo/demo/invoice.js:form@338",
+      "relation": "calls",
+      "script_line": null,
+      "source": {
+        "line": 10,
+        "path": "demo/demo/invoice.js",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "6f725281b375ab2d2b59b47fb8641c6036f72baf501aa59c22dd5d2af76ae5c8"
+      },
+      "target": "imported"
+    },
+    {
+      "condition": null,
+      "confidence": "unresolved",
+      "diagnostic": "dynamic_client_handlers",
+      "entity": null,
+      "field": null,
+      "handler": "demo/demo/invoice.js:form@338",
+      "relation": "calls",
+      "script_line": null,
+      "source": {
+        "line": 11,
+        "path": "demo/demo/invoice.js",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "6f725281b375ab2d2b59b47fb8641c6036f72baf501aa59c22dd5d2af76ae5c8"
+      },
+      "target": null
+    },
+    {
+      "condition": null,
+      "confidence": "unresolved",
+      "diagnostic": "dynamic_client_target",
+      "entity": null,
+      "field": null,
+      "handler": "demo/demo/invoice.js:form@289",
+      "relation": "triggers_on",
+      "script_line": null,
+      "source": {
+        "line": 7,
+        "path": "demo/demo/invoice.js",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "6f725281b375ab2d2b59b47fb8641c6036f72baf501aa59c22dd5d2af76ae5c8"
+      },
+      "target": "frappe.ui.form.on"
+    },
+    {
+      "condition": null,
+      "confidence": "unresolved",
+      "diagnostic": "dynamic_entity",
+      "entity": null,
+      "field": null,
+      "handler": "demo/demo/api.py:dynamic",
+      "relation": "reads",
+      "script_line": null,
+      "source": {
+        "line": 34,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": "frappe.get_doc"
+    },
+    {
+      "condition": null,
+      "confidence": "unresolved",
+      "diagnostic": "dynamic_entity",
+      "entity": null,
+      "field": null,
+      "handler": "demo/demo/api.py:shared_wildcard",
+      "relation": "triggers_on",
+      "script_line": null,
+      "source": {
+        "line": 3,
+        "path": "demo/demo/hooks.py",
+        "pointer": "/*/on_update",
+        "revision": "fixture",
+        "sha256": "1da17919c2c64fb4eef68554c91ed103b8a4bebfaee1179c089a9eb70ef8b86d"
+      },
+      "target": "doc_events/*/on_update"
+    },
+    {
+      "condition": null,
+      "confidence": "unresolved",
+      "diagnostic": "dynamic_fields",
+      "entity": "Invoice",
+      "field": null,
+      "handler": "demo/demo/api.py:dynamic",
+      "relation": "reads",
+      "script_line": null,
+      "source": {
+        "line": 36,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": "frappe.get_all"
+    },
+    {
+      "condition": null,
+      "confidence": "unresolved",
+      "diagnostic": "dynamic_hook",
+      "entity": null,
+      "field": null,
+      "handler": "demo/demo/hooks.py:doc_events@9",
+      "relation": "triggers_on",
+      "script_line": null,
+      "source": {
+        "line": 9,
+        "path": "demo/demo/hooks.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "1da17919c2c64fb4eef68554c91ed103b8a4bebfaee1179c089a9eb70ef8b86d"
+      },
+      "target": null
+    },
+    {
+      "condition": null,
+      "confidence": "unresolved",
+      "diagnostic": "field_expression",
+      "entity": "Invoice",
+      "field": null,
+      "handler": "demo/demo/api.py:dynamic",
+      "relation": "reads",
+      "script_line": null,
+      "source": {
+        "line": 37,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": "frappe.db.get_value"
+    },
+    {
+      "condition": null,
+      "confidence": "unresolved",
+      "diagnostic": "unknown_entity",
+      "entity": "External",
+      "field": "missing",
+      "handler": "demo/demo/api.py:dynamic",
+      "relation": "reads",
+      "script_line": null,
+      "source": {
+        "line": 38,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": "frappe.db.get_value"
+    },
+    {
+      "condition": null,
+      "confidence": "unresolved",
+      "diagnostic": "unknown_entity",
+      "entity": "Missing",
+      "field": null,
+      "handler": "demo/demo/api.py:shared_unknown",
+      "relation": "triggers_on",
+      "script_line": null,
+      "source": {
+        "line": 4,
+        "path": "demo/demo/hooks.py",
+        "pointer": "/Missing/on_update",
+        "revision": "fixture",
+        "sha256": "1da17919c2c64fb4eef68554c91ed103b8a4bebfaee1179c089a9eb70ef8b86d"
+      },
+      "target": "doc_events/Missing/on_update"
+    },
+    {
+      "condition": null,
+      "confidence": "unresolved",
+      "diagnostic": "unresolved_call",
+      "entity": null,
+      "field": null,
+      "handler": "demo/demo/api.py:exception_alias",
+      "relation": "calls",
+      "script_line": null,
+      "source": {
+        "line": 86,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": "external"
+    },
+    {
+      "condition": null,
+      "confidence": "unresolved",
+      "diagnostic": "unresolved_call",
+      "entity": null,
+      "field": null,
+      "handler": "demo/demo/api.py:same_line",
+      "relation": "calls",
+      "script_line": null,
+      "source": {
+        "line": 58,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": "external"
+    },
+    {
+      "condition": null,
+      "confidence": "unresolved",
+      "diagnostic": "untyped_document",
+      "entity": null,
+      "field": "status",
+      "handler": "demo/demo/api.py:branch",
+      "relation": "writes",
+      "script_line": null,
+      "source": {
+        "line": 46,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": null
+    },
+    {
+      "condition": null,
+      "confidence": "unresolved",
+      "diagnostic": "untyped_document",
+      "entity": null,
+      "field": "status",
+      "handler": "demo/demo/api.py:branch.<locals>.nested",
+      "relation": "writes",
+      "script_line": null,
+      "source": {
+        "line": 48,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": null
+    },
+    {
+      "condition": null,
+      "confidence": "unresolved",
+      "diagnostic": "untyped_document",
+      "entity": null,
+      "field": "status",
+      "handler": "demo/demo/api.py:comprehensions",
+      "relation": "reads",
+      "script_line": null,
+      "source": {
+        "line": 62,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": null
+    },
+    {
+      "condition": null,
+      "confidence": "unresolved",
+      "diagnostic": "untyped_document",
+      "entity": null,
+      "field": "status",
+      "handler": "demo/demo/api.py:comprehensions",
+      "relation": "reads",
+      "script_line": null,
+      "source": {
+        "line": 63,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": null
+    },
+    {
+      "condition": null,
+      "confidence": "unresolved",
+      "diagnostic": "untyped_document",
+      "entity": null,
+      "field": "status",
+      "handler": "demo/demo/api.py:comprehensions",
+      "relation": "reads",
+      "script_line": null,
+      "source": {
+        "line": 64,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": null
+    },
+    {
+      "condition": null,
+      "confidence": "unresolved",
+      "diagnostic": "untyped_document",
+      "entity": null,
+      "field": "status",
+      "handler": "demo/demo/api.py:comprehensions",
+      "relation": "reads",
+      "script_line": null,
+      "source": {
+        "line": 65,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": null
+    },
+    {
+      "condition": null,
+      "confidence": "unresolved",
+      "diagnostic": "untyped_document",
+      "entity": null,
+      "field": "status",
+      "handler": "demo/demo/api.py:comprehensions",
+      "relation": "reads",
+      "script_line": null,
+      "source": {
+        "line": 66,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": null
+    },
+    {
+      "condition": null,
+      "confidence": "unresolved",
+      "diagnostic": "untyped_document",
+      "entity": null,
+      "field": "status",
+      "handler": "demo/demo/invoice.js:form.Invoice.catch_scope@788",
+      "relation": "writes",
+      "script_line": null,
+      "source": {
+        "line": 26,
+        "path": "demo/demo/invoice.js",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "6f725281b375ab2d2b59b47fb8641c6036f72baf501aa59c22dd5d2af76ae5c8"
+      },
+      "target": null
+    },
+    {
+      "condition": null,
+      "confidence": "unresolved",
+      "diagnostic": "untyped_document",
+      "entity": null,
+      "field": "status",
+      "handler": "demo/demo/invoice.js:form.Invoice.scope_checks@526",
+      "relation": "writes",
+      "script_line": null,
+      "source": {
+        "line": 17,
+        "path": "demo/demo/invoice.js",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "6f725281b375ab2d2b59b47fb8641c6036f72baf501aa59c22dd5d2af76ae5c8"
+      },
+      "target": null
+    },
+    {
+      "condition": null,
+      "confidence": "unresolved",
+      "diagnostic": "untyped_document",
+      "entity": null,
+      "field": "status",
+      "handler": "demo/demo/invoice.js:form.Invoice.scope_checks@526",
+      "relation": "writes",
+      "script_line": null,
+      "source": {
+        "line": 18,
+        "path": "demo/demo/invoice.js",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "6f725281b375ab2d2b59b47fb8641c6036f72baf501aa59c22dd5d2af76ae5c8"
+      },
+      "target": null
+    },
+    {
+      "condition": null,
+      "confidence": "unresolved",
+      "diagnostic": "untyped_document",
+      "entity": null,
+      "field": "total",
+      "handler": "demo/demo/api.py:alias_invalidation",
+      "relation": "reads",
+      "script_line": null,
+      "source": {
+        "line": 75,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": null
+    },
+    {
+      "condition": null,
+      "confidence": "unresolved",
+      "diagnostic": "untyped_document",
+      "entity": null,
+      "field": "total",
+      "handler": "demo/demo/api.py:alias_loop",
+      "relation": "reads",
+      "script_line": null,
+      "source": {
+        "line": 81,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": null
+    },
+    {
+      "condition": null,
+      "confidence": "unresolved",
+      "diagnostic": "untyped_document",
+      "entity": null,
+      "field": "total",
+      "handler": "demo/demo/api.py:alias_loop",
+      "relation": "writes",
+      "script_line": null,
+      "source": {
+        "line": 80,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": null
+    },
+    {
+      "condition": null,
+      "confidence": "unresolved",
+      "diagnostic": "untyped_document",
+      "entity": null,
+      "field": "total",
+      "handler": "demo/demo/api.py:comprehensions",
+      "relation": "reads",
+      "script_line": null,
+      "source": {
+        "line": 64,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": null
+    },
+    {
+      "condition": null,
+      "confidence": "unresolved",
+      "diagnostic": "untyped_document",
+      "entity": null,
+      "field": "total",
+      "handler": "demo/demo/api.py:dynamic",
+      "relation": "reads",
+      "script_line": null,
+      "source": {
+        "line": 40,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": null
+    },
+    {
+      "condition": null,
+      "confidence": "unresolved",
+      "diagnostic": "untyped_document",
+      "entity": null,
+      "field": "total",
+      "handler": "demo/demo/api.py:dynamic",
+      "relation": "writes",
+      "script_line": null,
+      "source": {
+        "line": 35,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": null
+    },
+    {
+      "condition": null,
+      "confidence": "unresolved",
+      "diagnostic": "untyped_document",
+      "entity": null,
+      "field": "total",
+      "handler": "demo/demo/api.py:exception_alias",
+      "relation": "reads",
+      "script_line": null,
+      "source": {
+        "line": 88,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": null
+    },
+    {
+      "condition": null,
+      "confidence": "unresolved",
+      "diagnostic": "untyped_document",
+      "entity": null,
+      "field": "total",
+      "handler": "demo/demo/api.py:loop",
+      "relation": "writes",
+      "script_line": null,
+      "source": {
+        "line": 54,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": null
+    },
+    {
+      "condition": null,
+      "confidence": "unresolved",
+      "diagnostic": "untyped_document",
+      "entity": null,
+      "field": "total",
+      "handler": "demo/demo/api.py:loop",
+      "relation": "writes",
+      "script_line": null,
+      "source": {
+        "line": 55,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": null
+    },
+    {
+      "condition": null,
+      "confidence": "unresolved",
+      "diagnostic": "untyped_document",
+      "entity": null,
+      "field": "total",
+      "handler": "demo/demo/api.py:match_captures",
+      "relation": "reads",
+      "script_line": null,
+      "source": {
+        "line": 100,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": null
+    },
+    {
+      "condition": null,
+      "confidence": "unresolved",
+      "diagnostic": "untyped_document",
+      "entity": null,
+      "field": "total",
+      "handler": "demo/demo/api.py:match_captures",
+      "relation": "reads",
+      "script_line": null,
+      "source": {
+        "line": 104,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": null
+    },
+    {
+      "condition": null,
+      "confidence": "unresolved",
+      "diagnostic": "untyped_document",
+      "entity": null,
+      "field": "total",
+      "handler": "demo/demo/api.py:match_captures",
+      "relation": "reads",
+      "script_line": null,
+      "source": {
+        "line": 108,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": null
+    },
+    {
+      "condition": null,
+      "confidence": "unresolved",
+      "diagnostic": "untyped_document",
+      "entity": null,
+      "field": "total",
+      "handler": "demo/demo/api.py:match_captures",
+      "relation": "reads",
+      "script_line": null,
+      "source": {
+        "line": 109,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": null
+    },
+    {
+      "condition": null,
+      "confidence": "unresolved",
+      "diagnostic": "untyped_document",
+      "entity": null,
+      "field": "total",
+      "handler": "demo/demo/api.py:shared_unknown",
+      "relation": "reads",
+      "script_line": null,
+      "source": {
+        "line": 94,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": null
+    },
+    {
+      "condition": null,
+      "confidence": "unresolved",
+      "diagnostic": "untyped_document",
+      "entity": null,
+      "field": "total",
+      "handler": "demo/demo/api.py:shared_wildcard",
+      "relation": "reads",
+      "script_line": null,
+      "source": {
+        "line": 91,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "target": null
+    },
+    {
+      "condition": null,
+      "confidence": "unresolved",
+      "diagnostic": "untyped_document",
+      "entity": null,
+      "field": "total",
+      "handler": "demo/demo/invoice.js:form.Invoice.catch_scope@788",
+      "relation": "reads",
+      "script_line": null,
+      "source": {
+        "line": 27,
+        "path": "demo/demo/invoice.js",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "6f725281b375ab2d2b59b47fb8641c6036f72baf501aa59c22dd5d2af76ae5c8"
+      },
+      "target": null
+    }
+  ],
+  "format": "norn.code-ontology/1",
+  "handlers": [
+    {
+      "id": "demo/demo/api.py:alias_invalidation",
+      "kind": "function",
+      "source": {
+        "line": 70,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "symbol": "alias_invalidation"
+    },
+    {
+      "id": "demo/demo/api.py:alias_loop",
+      "kind": "function",
+      "source": {
+        "line": 77,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "symbol": "alias_loop"
+    },
+    {
+      "id": "demo/demo/api.py:branch",
+      "kind": "function",
+      "source": {
+        "line": 42,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "symbol": "branch"
+    },
+    {
+      "id": "demo/demo/api.py:branch.<locals>.nested",
+      "kind": "function",
+      "source": {
+        "line": 47,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "symbol": "branch.<locals>.nested"
+    },
+    {
+      "id": "demo/demo/api.py:comprehensions",
+      "kind": "function",
+      "source": {
+        "line": 60,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "symbol": "comprehensions"
+    },
+    {
+      "id": "demo/demo/api.py:daily",
+      "kind": "function",
+      "source": {
+        "line": 24,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "symbol": "daily"
+    },
+    {
+      "id": "demo/demo/api.py:dynamic",
+      "kind": "function",
+      "source": {
+        "line": 33,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "symbol": "dynamic"
+    },
+    {
+      "id": "demo/demo/api.py:exception_alias",
+      "kind": "function",
+      "source": {
+        "line": 83,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "symbol": "exception_alias"
+    },
+    {
+      "id": "demo/demo/api.py:has_permission",
+      "kind": "function",
+      "source": {
+        "line": 30,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "symbol": "has_permission"
+    },
+    {
+      "id": "demo/demo/api.py:helper",
+      "kind": "function",
+      "source": {
+        "line": 16,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "symbol": "helper"
+    },
+    {
+      "id": "demo/demo/api.py:loop",
+      "kind": "function",
+      "source": {
+        "line": 51,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "symbol": "loop"
+    },
+    {
+      "id": "demo/demo/api.py:match_captures",
+      "kind": "function",
+      "source": {
+        "line": 96,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "symbol": "match_captures"
+    },
+    {
+      "id": "demo/demo/api.py:on_update",
+      "kind": "function",
+      "source": {
+        "line": 19,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "symbol": "on_update"
+    },
+    {
+      "id": "demo/demo/api.py:permission",
+      "kind": "function",
+      "source": {
+        "line": 27,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "symbol": "permission"
+    },
+    {
+      "id": "demo/demo/api.py:same_line",
+      "kind": "function",
+      "source": {
+        "line": 57,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "symbol": "same_line"
+    },
+    {
+      "id": "demo/demo/api.py:shared_unknown",
+      "kind": "function",
+      "source": {
+        "line": 93,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "symbol": "shared_unknown"
+    },
+    {
+      "id": "demo/demo/api.py:shared_wildcard",
+      "kind": "function",
+      "source": {
+        "line": 90,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "symbol": "shared_wildcard"
+    },
+    {
+      "id": "demo/demo/api.py:update",
+      "kind": "function",
+      "source": {
+        "line": 4,
+        "path": "demo/demo/api.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "ca52659dba0ee56be7a508c03e74f6ff304f64cd307ea9c816c9b56b3cbd9339"
+      },
+      "symbol": "update"
+    },
+    {
+      "id": "demo/demo/client.json:form.Invoice.refresh@31/script",
+      "kind": "client_handler",
+      "source": {
+        "line": 1,
+        "path": "demo/demo/client.json",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "3ee12694aeb0406a95df5f8ab2aa542f80a829f252be5211f76ca05aaf86024b"
+      },
+      "symbol": "form.Invoice.refresh@31/script"
+    },
+    {
+      "id": "demo/demo/client.json:form@0/script",
+      "kind": "client_script",
+      "source": {
+        "line": 1,
+        "path": "demo/demo/client.json",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "3ee12694aeb0406a95df5f8ab2aa542f80a829f252be5211f76ca05aaf86024b"
+      },
+      "symbol": "form@0/script"
+    },
+    {
+      "id": "demo/demo/doctype/invoice/invoice.py:Invoice.validate",
+      "kind": "controller_method",
+      "source": {
+        "line": 5,
+        "path": "demo/demo/doctype/invoice/invoice.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "c9e5f1898f2c9f66270ec0c38dcb192189aefd2c007b770c6d803e0e3c1d5195"
+      },
+      "symbol": "Invoice.validate"
+    },
+    {
+      "id": "demo/demo/hooks.py:doc_events@9",
+      "kind": "hook",
+      "source": {
+        "line": 9,
+        "path": "demo/demo/hooks.py",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "1da17919c2c64fb4eef68554c91ed103b8a4bebfaee1179c089a9eb70ef8b86d"
+      },
+      "symbol": "doc_events@9"
+    },
+    {
+      "id": "demo/demo/invoice.js:form.Invoice.catch_scope@788",
+      "kind": "client_handler",
+      "source": {
+        "line": 24,
+        "path": "demo/demo/invoice.js",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "6f725281b375ab2d2b59b47fb8641c6036f72baf501aa59c22dd5d2af76ae5c8"
+      },
+      "symbol": "form.Invoice.catch_scope@788"
+    },
+    {
+      "id": "demo/demo/invoice.js:form.Invoice.changed@371",
+      "kind": "client_handler",
+      "source": {
+        "line": 9,
+        "path": "demo/demo/invoice.js",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "6f725281b375ab2d2b59b47fb8641c6036f72baf501aa59c22dd5d2af76ae5c8"
+      },
+      "symbol": "form.Invoice.changed@371"
+    },
+    {
+      "id": "demo/demo/invoice.js:form.Invoice.refresh@148",
+      "kind": "client_handler",
+      "source": {
+        "line": 4,
+        "path": "demo/demo/invoice.js",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "6f725281b375ab2d2b59b47fb8641c6036f72baf501aa59c22dd5d2af76ae5c8"
+      },
+      "symbol": "form.Invoice.refresh@148"
+    },
+    {
+      "id": "demo/demo/invoice.js:form.Invoice.scope_checks@526",
+      "kind": "client_handler",
+      "source": {
+        "line": 14,
+        "path": "demo/demo/invoice.js",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "6f725281b375ab2d2b59b47fb8641c6036f72baf501aa59c22dd5d2af76ae5c8"
+      },
+      "symbol": "form.Invoice.scope_checks@526"
+    },
+    {
+      "id": "demo/demo/invoice.js:form.Invoice.validate@229",
+      "kind": "client_handler",
+      "source": {
+        "line": 5,
+        "path": "demo/demo/invoice.js",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "6f725281b375ab2d2b59b47fb8641c6036f72baf501aa59c22dd5d2af76ae5c8"
+      },
+      "symbol": "form.Invoice.validate@229"
+    },
+    {
+      "id": "demo/demo/invoice.js:form@115",
+      "kind": "client_script",
+      "source": {
+        "line": 3,
+        "path": "demo/demo/invoice.js",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "6f725281b375ab2d2b59b47fb8641c6036f72baf501aa59c22dd5d2af76ae5c8"
+      },
+      "symbol": "form@115"
+    },
+    {
+      "id": "demo/demo/invoice.js:form@289",
+      "kind": "client_script",
+      "source": {
+        "line": 7,
+        "path": "demo/demo/invoice.js",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "6f725281b375ab2d2b59b47fb8641c6036f72baf501aa59c22dd5d2af76ae5c8"
+      },
+      "symbol": "form@289"
+    },
+    {
+      "id": "demo/demo/invoice.js:form@338",
+      "kind": "client_script",
+      "source": {
+        "line": 8,
+        "path": "demo/demo/invoice.js",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "6f725281b375ab2d2b59b47fb8641c6036f72baf501aa59c22dd5d2af76ae5c8"
+      },
+      "symbol": "form@338"
+    },
+    {
+      "id": "demo/demo/invoice.js:form@493",
+      "kind": "client_script",
+      "source": {
+        "line": 13,
+        "path": "demo/demo/invoice.js",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "6f725281b375ab2d2b59b47fb8641c6036f72baf501aa59c22dd5d2af76ae5c8"
+      },
+      "symbol": "form@493"
+    },
+    {
+      "id": "demo/demo/invoice.js:form@755",
+      "kind": "client_script",
+      "source": {
+        "line": 23,
+        "path": "demo/demo/invoice.js",
+        "pointer": "",
+        "revision": "fixture",
+        "sha256": "6f725281b375ab2d2b59b47fb8641c6036f72baf501aa59c22dd5d2af76ae5c8"
+      },
+      "symbol": "form@755"
+    }
+  ],
+  "limitations": [
+    "Static source coverage; no runtime composition, execution, inferred permissions or parity.",
+    "Coverage denominator is reads + writes + triggers_on, including unresolved edges; calls/schedules/API/throws are reported separately.",
+    "DocType and field resolution requires supplied metadata; external stock entities remain typed gaps."
+  ],
+  "substrate": "codegraph-rust/0.54.0"
+}

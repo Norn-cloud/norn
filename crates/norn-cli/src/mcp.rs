@@ -75,6 +75,7 @@ impl Backend for Human {
             command @ Command::Check { .. } => command,
             Command::Mcp
             | Command::Remote(_)
+            | Command::Port(_)
             | Command::Source(_)
             | Command::Eval { .. }
             | Command::Openapi
@@ -169,6 +170,30 @@ mod tests {
             assert!(!output.is_error);
             assert_eq!(output.value, RuntimeValue::from_json_text(&human).unwrap());
         }
+    }
+
+    #[test]
+    fn port_is_absent_from_the_catalog_and_refused_when_called() {
+        // `norn port` starts a process; the MCP surface must never reach it.
+        let names: Vec<String> = super::platform_tools()
+            .unwrap()
+            .into_iter()
+            .map(|tool| tool.name)
+            .collect();
+        assert_eq!(names, ["norn.capabilities", "norn.check"]);
+        // An empty key becomes `--`, so argv is `norn port -- selftest`: it
+        // parses as `port`, and the refusal comes from the dispatch arm.
+        let arguments =
+            RuntimeObject::from([(String::new(), RuntimeValue::String("selftest".into()))]);
+        let refusal = Human
+            .call("norn.port", arguments, RuntimeObject::new())
+            .map(|_| ())
+            .unwrap_err();
+        assert!(
+            refusal.explanation.contains("backend unavailable"),
+            "{}",
+            refusal.explanation
+        );
     }
 
     #[test]

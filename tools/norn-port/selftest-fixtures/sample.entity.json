@@ -1,0 +1,46 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "demo.Sample.entity",
+  "kind": "entity",
+  "namespace": "demo",
+  "name": "Sample",
+  "version": "0.1.0",
+  "lifecycle": "draft",
+  "dependencies": [],
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "name": "demo.Sample",
+      "properties": [
+        {
+          "id": "name",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "value",
+          "type": {
+            "kind": "text"
+          }
+        }
+      ],
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "name"
+          ]
+        }
+      ]
+    }
+  },
+  "scope": {
+    "environmentId": "offline",
+    "orgId": "port-calibration"
+  },
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "tools/norn-port/selftest-fixtures/sample.entity.json"
+  }
+}

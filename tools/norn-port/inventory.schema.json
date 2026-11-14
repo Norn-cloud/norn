@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:norn:code-unit-inventory:0.1",
+  "title": "Code unit inventory 0.1",
+  "description": "One ported application's source code units and where each one goes. Version 0.1 only ever gains optional members; an incompatible revision is a new schema with a new $id and format. Objects are open: a producer may add members, and readers ignore the ones they do not know. Rules that relate members to each other (a translated unit names an artifact, any other unit gives a reason) are enforced by the scoreboard, not here.",
+  "type": "object",
+  "required": [
+    "format",
+    "app",
+    "sourceLoc",
+    "units"
+  ],
+  "properties": {
+    "format": {
+      "const": "norn.code-unit-inventory/0.1"
+    },
+    "app": {
+      "type": "string",
+      "description": "The source application's name."
+    },
+    "sourceLoc": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Lines in all inventoried source files, translated or not."
+    },
+    "elapsedMinutes": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0,
+      "description": "Null when unknown; null is not zero."
+    },
+    "modelTokens": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "description": "Null when unknown; null is not zero."
+    },
+    "units": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "source",
+          "loc",
+          "status",
+          "nornArtifactIds"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Unique within the inventory."
+          },
+          "source": {
+            "type": "object",
+            "required": [
+              "path",
+              "symbol",
+              "line"
+            ],
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "symbol": {
+                "type": "string",
+                "minLength": 1
+              },
+              "line": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          },
+          "trigger": {
+            "type": "string",
+            "description": "What invokes the unit in the source system."
+          },
+          "reads": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Declared reads."
+          },
+          "writes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Declared writes."
+          },
+          "externalCalls": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Declared calls that leave the application."
+          },
+          "loc": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Inclusive source lines of the unit."
+          },
+          "target": {
+            "type": "string",
+            "description": "The kind of Norn definition the unit maps to. Values in use: rule, transition, action, connector, widget, function, access, setup-only. Other values are allowed."
+          },
+          "parityRecipe": {
+            "type": "string",
+            "description": "The application's own name for how this unit's parity is established. Free text; no vocabulary is defined here."
+          },
+          "recipeNotes": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "minLength": 1,
+            "description": "translated: a Norn candidate exists and nornArtifactIds names it. fallback: the unit stays in source code, with a reason. setup-only: outside the runtime targets, with a reason. Other values are counted by the scoreboard under their own name and need a reason."
+          },
+          "nornArtifactIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "uniqueItems": true
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Required by the scoreboard for every unit that is not translated."
+          },
+          "scope": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

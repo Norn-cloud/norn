@@ -255,7 +255,7 @@ PY
       cargo test --locked -p norn-cell --features duckdb --test duckdb_question
       ;;
     wasm)
-      cargo check --locked --target wasm32-unknown-unknown -p norn-canonical -p norn-ir -p norn-expr -p norn-checker -p norn-graph -p norn-datalog -p norn-authz -p norn-kernel -p norn-builtins -p norn-projections -p norn-decisions -p norn-api
+      cargo check --locked --target wasm32-unknown-unknown -p norn-canonical -p norn-ir -p norn-expr -p norn-checker -p norn-graph -p norn-datalog -p norn-code-ontology -p norn-authz -p norn-kernel -p norn-builtins -p norn-projections -p norn-decisions -p norn-api
       cargo check --locked -p norn-cell --no-default-features --target wasm32-unknown-unknown
       cargo clippy --locked -p norn-checker-wasm --target wasm32-unknown-unknown -- -D warnings
       cargo clippy --locked -p norn-cell-do --target wasm32-unknown-unknown -- -D warnings
@@ -311,6 +311,20 @@ PY
       "$upstream/openapi-venv/bin/python" -m pip install --disable-pip-version-check --no-input openapi-spec-validator==0.9.0
       "$upstream/openapi-venv/bin/python" -m openapi_spec_validator sdks/openapi/norn-api.openapi.json
       git diff --exit-code -- sdks/openapi/norn-api.openapi.json packages/norn-sdk/src/generated/norn-api.ts
+      # norn port (tools/norn-port): the parity harness against this build's `norn`, and the
+      # code-ontology goldens against the pinned code-graph binary. Two downloads, both pinned by
+      # SHA-256: wheels from PyPI (every hash is in requirements.txt), and one release archive from
+      # github.com/sunerpy/codegraph-rust (archive and binary digests are in codegraph.py).
+      python3 -m venv "$upstream/port-venv"
+      "$upstream/port-venv/bin/python" -m pip install --disable-pip-version-check --no-input --require-hashes -r tools/norn-port/requirements.txt
+      export NORN_PORT_HOME="$PWD/tools/norn-port" NORN_PORT_PYTHON="$upstream/port-venv/bin/python"
+      "$NORN_BIN" port selftest
+      CODEGRAPH_BIN=$("$NORN_PORT_PYTHON" tools/norn-port/codegraph.py --fetch "$upstream/codegraph")
+      [[ -x $CODEGRAPH_BIN ]]
+      export CODEGRAPH_BIN
+      "$NORN_PORT_PYTHON" -m unittest discover -s tools/norn-port -p '*_test.py'
+      "$NORN_BIN" port code-ontology tools/norn-port/code-ontology-fixtures/demo --codegraph "$CODEGRAPH_BIN" --revision fixture \
+        | cmp - tools/norn-port/code-ontology-fixtures/golden.json
       ;;
     browser)
       # Studio browser rows (#1113): Playwright against `vite preview` of this build, with the

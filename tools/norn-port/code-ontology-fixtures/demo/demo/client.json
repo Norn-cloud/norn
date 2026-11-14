@@ -1,0 +1,1 @@
+{"doctype":"Client Script","dt":"Invoice","script":"frappe.ui.form.on(\"Invoice\", { refresh(frm) { frm.doc.total; } });"}

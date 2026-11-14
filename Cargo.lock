@@ -2260,10 +2260,19 @@ dependencies = [
  "norn-decisions",
  "norn-expr",
  "norn-ir",
+ "rustix",
  "serde_json",
  "sse-stream",
  "tokio",
  "ureq",
+]
+
+[[package]]
+name = "norn-code-ontology"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
