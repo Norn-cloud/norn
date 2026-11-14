@@ -501,3 +501,25 @@ fn input_derivation_metadata_preserves_transition_metadata() {
         true
     );
 }
+
+#[test]
+fn server_filled_fields_leave_the_caller_schema() {
+    let mut action = fixture_action();
+    action.input_schema = serde_json::from_value(json!({
+        "type": "object", "additionalProperties": false,
+        "properties": {"id": {"type": "string"}, "corrected_by": {"type": "string"}, "brand": {"type": "string"}},
+        "required": ["id", "corrected_by", "brand"]
+    }))
+    .expect("schema decodes");
+    action.derive = serde_json::from_value(json!([
+        {"field": "corrected_by", "expression": "actor.subjectId", "inputRequired": false},
+        {"field": "brand", "expression": "input.brand ?? 'NORN'", "inputRequired": false}
+    ]))
+    .expect("derivations decode");
+    let tool = serde_json::to_value(action_tool(&action).expect("projects")).expect("encodes");
+    let schema = &tool["inputSchema"];
+    assert!(schema["properties"].get("corrected_by").is_none(), "the actor is the server's to fill");
+    assert_eq!(schema["required"], json!(["id"]));
+    assert!(schema["properties"]["brand"]["anyOf"].is_array(), "a default over input stays the caller's");
+    assert_eq!(tool["_meta"]["norn/inputDerivations"][0]["field"], "corrected_by");
+}

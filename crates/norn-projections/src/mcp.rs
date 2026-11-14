@@ -40,7 +40,8 @@ impl std::error::Error for McpProjectionError {}
 /// `name`, `title`, `description`, and `outputSchema` are copied from the root.
 /// The input schema describes caller requirements: defaulted/computed fields
 /// marked `inputRequired: false` are optional; normalized required inputs stay
-/// required. Derivations are exposed in metadata in execution order.
+/// required; a field the server fills without reading any input (the actor,
+/// the clock) is not in the schema at all. Derivations are exposed in metadata in execution order.
 /// The annotations are derived, never authored, so they cannot
 /// contradict the definition:
 ///
@@ -175,6 +176,16 @@ fn caller_input_schema(action: &ActionRoot) -> JsonObject {
             })
         });
     }
+    // A field the server fills from its own context (the actor, the clock) is
+    // not the caller's to send: it leaves the schema, so an agent never offers
+    // a value the call would refuse.
+    let filled = server_filled(action);
+    if let Some(JsonValue::Object(properties)) = input_schema.get_mut("properties") {
+        properties.retain(|field, _| !filled.contains(field.as_str()));
+    }
+    if let Some(JsonValue::Array(required)) = input_schema.get_mut("required") {
+        required.retain(|field| field.as_string().is_none_or(|field| !filled.contains(field)));
+    }
     if let Some(JsonValue::Object(properties)) = input_schema.get_mut("properties") {
         let mut projected = std::collections::BTreeSet::new();
         for derivation in action.derive.iter().filter(|step| !step.input_required) {
@@ -197,6 +208,30 @@ fn caller_input_schema(action: &ActionRoot) -> JsonObject {
         }
     }
     input_schema
+}
+
+/// Fields every derivation of which is optional for the caller and reads no
+/// caller input (`actor.subjectId`, `now`): the server's to fill, never the
+/// caller's. A derivation that reads `input` (a default, a normalization)
+/// keeps its field in the schema.
+fn server_filled(action: &ActionRoot) -> std::collections::BTreeSet<&str> {
+    let reads_input = |expression: &str| {
+        expression
+            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .any(|word| word == "input")
+    };
+    let mut filled = std::collections::BTreeSet::new();
+    for derivation in &action.derive {
+        filled.insert(derivation.field.as_str());
+    }
+    filled.retain(|field| {
+        action
+            .derive
+            .iter()
+            .filter(|derivation| derivation.field == *field)
+            .all(|derivation| !derivation.input_required && !reads_input(&derivation.expression.0))
+    });
+    filled
 }
 
 /// Preserve transition metadata beside ordered input derivations.
