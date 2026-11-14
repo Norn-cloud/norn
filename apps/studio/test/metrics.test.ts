@@ -27,3 +27,10 @@ test("a metric that says nothing about how it combines is never called a total",
   expect(additivityOf(RATIO)).toBeUndefined()
   expect(metricHeading(RATIO)).toBe(RATIO.label)
 })
+
+test("the assistant's suggested requests read a type's id in a metric label as its title, never the raw id", async () => {
+  const { examples, inWords } = await import("../src/dashboards/assistant.tsx")
+  expect(inWords(AS_OF.label)).toBe("quantity, as of observed_at; last value per Holding at each period's end")
+  const catalog = { objectSet: "canon.Holding", properties: [{ name: "vault", kind: "text", unit: null }], metrics: [{ name: "m", label: AS_OF.label, type: "simple" }], grains: [], operators: [], example: { irVersion: "0.1", calendar: "iso_utc", freshness: null }, declarations: { metrics: [], objectType: null } }
+  for (const request of examples(catalog)) expect(request).not.toContain("canon.")
+})

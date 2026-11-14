@@ -10,6 +10,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { dashboardField, type Dashboard } from "@/lib/definitions"
 import { SafePrompt, type GuardDocument } from "@/components/safe-prompt"
 import type { QuestionCatalog } from "../builder.tsx"
+import { conceptTitle } from "../lib/catalog.ts"
 
 /**
  * The dashboard assistant in Studio. The person says what they want; the
@@ -50,10 +51,14 @@ const STATES: Record<ProposalState, { readonly label: string; readonly variant: 
 }
 export const dollars = (micro: number) => micro < 10_000 ? "under $0.01" : `$${(micro / 1_000_000).toFixed(2)}`
 
+/** A catalog label in words: an object type's id inside it (`canon.Holding`) reads as its title (`Holding`). */
+export const inWords = (label: string): string => label.replace(/\b(?:[a-z][a-z0-9_]*\.)+[A-Z][A-Za-z0-9]*\b/g, (id) => conceptTitle(id))
+
 /** Three requests the catalog can answer, worded from its own labels: never a name it does not declare. */
 export function examples(catalog: QuestionCatalog): readonly string[] {
-  const [first, second] = catalog.metrics.filter(({ type }) => type !== "ratio")
-  const ratio = catalog.metrics.find(({ type }) => type === "ratio")
+  const [first, second] = catalog.metrics.filter(({ type }) => type !== "ratio").map((metric) => ({ ...metric, label: inWords(metric.label) }))
+  const found = catalog.metrics.find(({ type }) => type === "ratio")
+  const ratio = found && { ...found, label: inWords(found.label) }
   const category = catalog.properties.find(({ kind }) => kind === "text" || kind === "enum")?.name.replaceAll("_", " ")
   return [
     first && `A weekly overview of ${first.label}${second ? ` and ${second.label}` : ""}, with a headline total for each`,
@@ -151,7 +156,8 @@ export function DashboardAssistant({ catalog, dashboardId, preview }: { readonly
         </label>
         {!dashboardId && (
           <div className="flex flex-wrap gap-2">
-            {examples(catalog).map((example) => <Button key={example} type="button" size="sm" variant="outline" className="h-auto py-1.5 text-start whitespace-normal" onClick={() => setRequest(example)}>{example}</Button>)}
+            {/* A long request is one line, cut to the panel, with its full text as a tooltip. */}
+            {examples(catalog).map((example) => <Button key={example} type="button" size="sm" variant="outline" title={example} className="max-w-full min-w-0 shrink justify-start" onClick={() => setRequest(example)}><span className="min-w-0 truncate">{example}</span></Button>)}
           </div>
         )}
         <div className="flex flex-wrap items-center gap-2">
