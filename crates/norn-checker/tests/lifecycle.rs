@@ -431,6 +431,83 @@ fn a_guard_appended_to_an_inherited_fact_is_a_guarded_fact() {
     );
 }
 
+/// A subtype cannot turn an inherited fact into a request (so its appended
+/// guard would make the base type's fact refusable), nor re-label an
+/// inherited ending's outcome.
+#[test]
+fn a_subtype_keeps_an_inherited_mode_and_ending_outcome() {
+    let base: ObjectTypeDef = serde_json::from_value(serde_json::json!({
+        "name": "test.Delivery",
+        "properties": [
+            { "id": "ref", "type": { "kind": "text" } },
+            { "id": "status", "type": { "kind": "enum", "values": [
+                { "value": "pending" }, { "value": "shipped" }, { "value": "delivered" }
+            ] }, "default": "pending" }
+        ],
+        "identity": [{ "name": "primary", "properties": ["ref"] }],
+        "lifecycles": [{
+            "property": "status",
+            "initial": ["pending"],
+            "terminal": ["delivered"],
+            "endings": [{ "state": "delivered", "outcome": "completed" }],
+            "transitions": [
+                { "id": "ship", "from": ["pending"], "to": "shipped", "mode": "fact" },
+                { "id": "deliver", "from": ["shipped"], "to": "delivered" }
+            ]
+        }]
+    }))
+    .expect("decodes");
+    let subtype = |ship: serde_json::Value, outcome: &str| {
+        serde_json::from_value::<ObjectTypeDef>(serde_json::json!({
+            "name": "test.CheckedDelivery",
+            "extends": "test.Delivery",
+            "lifecycles": [{
+                "property": "status",
+                "initial": ["pending"],
+                "terminal": ["delivered"],
+                "endings": [{ "state": "delivered", "outcome": outcome }],
+                "transitions": [
+                    ship,
+                    { "id": "deliver", "from": ["shipped"], "to": "delivered" }
+                ]
+            }]
+        }))
+        .expect("decodes")
+    };
+    let widens = |found: Vec<(String, String)>| {
+        found
+            .into_iter()
+            .filter(|(code, _)| code == codes::WIDENS_TRANSITION)
+            .map(|(_, at)| at)
+            .collect::<Vec<_>>()
+    };
+    let request = subtype(
+        serde_json::json!({
+            "id": "ship", "from": ["pending"], "to": "shipped", "mode": "request",
+            "guards": ["self.ref != \"\""]
+        }),
+        "completed",
+    );
+    assert_eq!(
+        widens(run(&[request], std::slice::from_ref(&base), None)),
+        vec!["/objectTypes/0/lifecycles/0/transitions/0/mode".to_owned()]
+    );
+    let relabelled = subtype(
+        serde_json::json!({ "id": "ship", "from": ["pending"], "to": "shipped" }),
+        "cancelled",
+    );
+    assert_eq!(
+        widens(run(&[relabelled], std::slice::from_ref(&base), None)),
+        vec!["/objectTypes/0/lifecycles/0/endings/0/outcome".to_owned()]
+    );
+    // Restating the inherited mode and outcome is accepted.
+    let restated = subtype(
+        serde_json::json!({ "id": "ship", "from": ["pending"], "to": "shipped", "mode": "fact" }),
+        "completed",
+    );
+    assert_eq!(run(&[restated], &[base], None), Vec::new());
+}
+
 #[test]
 fn guards_are_parsed_even_when_the_lifecycle_property_is_invalid() {
     // T1-ONT-2: guards are expression sites, checked independently of the

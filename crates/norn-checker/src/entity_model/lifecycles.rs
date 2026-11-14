@@ -26,7 +26,7 @@
 use std::collections::BTreeSet;
 use std::rc::Rc;
 
-use norn_ir::{JsonValue, Lifecycle, ObjectTypeDef, ObjectTypeName, PropertyType};
+use norn_ir::{JsonValue, Lifecycle, ObjectTypeDef, ObjectTypeName, PropertyType, TransitionMode};
 
 use super::{Checker, Table};
 use crate::lifecycles::{Machine, Machines, codes};
@@ -568,6 +568,7 @@ impl<'a> Checker<'a, '_> {
                 ));
             }
         }
+        self.check_narrowed_endings(at, lifecycle, wide);
         for (position, transition) in lifecycle.transitions.iter().enumerate() {
             let position = position.to_string();
             let at = [at, &["transitions", position.as_str()]].concat();
@@ -607,6 +608,22 @@ impl<'a> Checker<'a, '_> {
                     ));
                 }
             }
+            // A fact stays a fact and a request stays a request (LIFE-SOUND-5);
+            // a trigger makes the inherited transition a fact.
+            if let Some(mode) = transition.mode {
+                let fact =
+                    inherited.trigger.is_some() || inherited.mode == Some(TransitionMode::Fact);
+                if (mode == TransitionMode::Fact) != fact {
+                    self.out.push(error(
+                        codes::WIDENS_TRANSITION,
+                        format!(
+                            "transition {id:?} is declared {mode:?}, but the inherited transition is {}; a subtype keeps every inherited transition's mode",
+                            if fact { "a fact" } else { "a request" }
+                        ),
+                        span_at(&at, &["mode"]),
+                    ));
+                }
+            }
             if transition
                 .guard_refusal_code
                 .as_deref()
@@ -632,6 +649,29 @@ impl<'a> Checker<'a, '_> {
                         span_at(&at, &["id"]),
                     ));
                 }
+            }
+        }
+    }
+
+    /// An inherited ending keeps its outcome: re-labelling it would let a
+    /// subtype escape the soundness findings the supertype's outcome owes.
+    fn check_narrowed_endings(&mut self, at: &[&str], lifecycle: &Lifecycle, wide: &Machine<'a>) {
+        for (index, ending) in lifecycle.endings.iter().enumerate() {
+            if let Some((_, outcome)) = wide
+                .endings
+                .iter()
+                .find(|(state, _)| *state == ending.state.as_str())
+                && *outcome != ending.outcome
+            {
+                let index = index.to_string();
+                self.out.push(error(
+                    codes::WIDENS_TRANSITION,
+                    format!(
+                        "ending {:?} is {:?}, but the inherited lifecycle declares it {outcome:?}; a subtype keeps every inherited ending's outcome",
+                        ending.state, ending.outcome
+                    ),
+                    span_at(at, &["endings", index.as_str(), "outcome"]),
+                ));
             }
         }
     }
