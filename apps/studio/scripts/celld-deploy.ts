@@ -15,6 +15,9 @@ import { awaitServed, entryChunk } from "./served-build.ts"
 // script); the checks then apply to that checkout. It defaults to this script's own app.
 //
 // Environment (see #1027): STUDIO_STAGE, BETTER_AUTH_URL, BETTER_AUTH_SECRET,
+// STUDIO_CLIENT_IP_HEADER (required: the header the stage's edge sets to the
+// client's address, `x-real-ip` behind Traefik, `cf-connecting-ip` behind
+// Cloudflare; the deploy refuses without it, #1328),
 // STUDIO_DEFAULT_ORG, NORN_HOST_SERVICE, AI_GATEWAY_URL + AI_GATEWAY_TOKEN +
 // NORN_CHECKER_WASM_PKG (the assistant), CELLD_BUCKET, S3_ENDPOINT, AWS_REGION,
 // AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY. `celld` and `esbuild` on PATH.
