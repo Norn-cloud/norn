@@ -90,6 +90,167 @@ pub fn expression_read_paths(source: &str, root: &str) -> Result<BTreeSet<Vec<St
         })
 }
 
+/// LAW-LINK-MANY-1: the member paths each closure builtin reads from the
+/// elements of a literal collection below `root`, by that collection's path
+/// below `root`: `map(self.lines, #.amount)` and
+/// `all(self.lines as line, line.amount > 0)` both read `[amount]` from
+/// `[lines]`. An element read that is not a literal member path (the element
+/// as a whole, a dynamic selector, anything inside a nested closure) is the
+/// empty path, so a caller refuses what it cannot resolve exactly.
+///
+/// # Errors
+/// Returns an expression error for malformed or over-budget source.
+pub fn expression_element_paths(
+    source: &str,
+    root: &str,
+) -> Result<BTreeMap<Vec<String>, BTreeSet<Vec<String>>>, ExprError> {
+    expression_reads(source, root)?;
+    IntelliSense::new()
+        .with_strict(true)
+        .with_ast(source, false, |ast, _metadata| {
+            let found = std::cell::RefCell::new(BTreeMap::new());
+            ast.walk(|node| {
+                let Node::FunctionCall { arguments, .. } = node else {
+                    return;
+                };
+                let [collection, closure, ..] = arguments else {
+                    return;
+                };
+                let Node::Closure { body, alias } = closure else {
+                    return;
+                };
+                let Some(path) = literal_path(collection) else {
+                    return;
+                };
+                let Some((first, below)) = path.split_first() else {
+                    return;
+                };
+                if first != root {
+                    return;
+                }
+                let mut reads = BTreeSet::new();
+                element_paths(body, *alias, &mut reads);
+                found
+                    .borrow_mut()
+                    .entry(below.to_vec())
+                    .or_insert_with(BTreeSet::new)
+                    .extend(reads);
+            });
+            found.into_inner()
+        })
+        .ok_or_else(|| ExprError::Compile {
+            message: "expression does not parse".to_owned(),
+        })
+}
+
+/// The literal member path `node` reads from the closure's element (`#`, or
+/// its alias), if it is one.
+fn element_path(node: &Node<'_>, alias: Option<&str>) -> Option<Vec<String>> {
+    match node {
+        Node::Pointer => alias.is_none().then(Vec::new),
+        Node::Identifier(name) => (alias == Some(*name)).then(Vec::new),
+        Node::Parenthesized(inner) => element_path(inner, alias),
+        Node::Member { node, property } => {
+            let Node::String(property) = property else {
+                return None;
+            };
+            let mut path = element_path(node, alias)?;
+            path.push((*property).to_owned());
+            Some(path)
+        }
+        Node::Null
+        | Node::Bool(_)
+        | Node::Number(_)
+        | Node::String(_)
+        | Node::TemplateString(_)
+        | Node::Array(_)
+        | Node::Object(_)
+        | Node::Assignments { .. }
+        | Node::Closure { .. }
+        | Node::Root
+        | Node::Slice { .. }
+        | Node::Interval { .. }
+        | Node::Conditional { .. }
+        | Node::Unary { .. }
+        | Node::Binary { .. }
+        | Node::FunctionCall { .. }
+        | Node::MethodCall { .. }
+        | Node::Error { .. } => None,
+    }
+}
+
+/// Every element read in a closure body: a literal member path, or the empty
+/// path for a read this cannot resolve (the whole element, a dynamic member,
+/// a nested closure, whose `#` is another element).
+fn element_paths(node: &Node<'_>, alias: Option<&str>, output: &mut BTreeSet<Vec<String>>) {
+    if let Some(path) = element_path(node, alias) {
+        output.insert(path);
+        return;
+    }
+    match node {
+        Node::Null
+        | Node::Bool(_)
+        | Node::Number(_)
+        | Node::String(_)
+        | Node::Identifier(_)
+        | Node::Root
+        | Node::Pointer => {}
+        Node::Closure { .. } | Node::Assignments { .. } | Node::Error { .. } => {
+            output.insert(Vec::new());
+        }
+        Node::Parenthesized(inner) | Node::Unary { node: inner, .. } => {
+            element_paths(inner, alias, output);
+        }
+        Node::Member { node, property } => {
+            element_paths(node, alias, output);
+            element_paths(property, alias, output);
+        }
+        Node::FunctionCall { arguments, .. } => {
+            for argument in *arguments {
+                element_paths(argument, alias, output);
+            }
+        }
+        Node::MethodCall {
+            this, arguments, ..
+        } => {
+            element_paths(this, alias, output);
+            for argument in *arguments {
+                element_paths(argument, alias, output);
+            }
+        }
+        Node::TemplateString(parts) | Node::Array(parts) => {
+            for part in *parts {
+                element_paths(part, alias, output);
+            }
+        }
+        Node::Object(entries) => {
+            for (key, value) in *entries {
+                element_paths(key, alias, output);
+                element_paths(value, alias, output);
+            }
+        }
+        Node::Slice { node, from, to } => {
+            element_paths(node, alias, output);
+            for bound in [from, to].into_iter().flatten() {
+                element_paths(bound, alias, output);
+            }
+        }
+        Node::Interval { left, right, .. } | Node::Binary { left, right, .. } => {
+            element_paths(left, alias, output);
+            element_paths(right, alias, output);
+        }
+        Node::Conditional {
+            condition,
+            on_true,
+            on_false,
+        } => {
+            for branch in [condition, on_true, on_false] {
+                element_paths(branch, alias, output);
+            }
+        }
+    }
+}
+
 pub(crate) fn literal_path(node: &Node<'_>) -> Option<Vec<String>> {
     match node {
         Node::Identifier(name) => Some(vec![(*name).to_owned()]),
@@ -436,8 +597,60 @@ fn root_access(
 
 #[cfg(test)]
 mod tests {
-    use super::{ExpressionReads, expression_read_paths, expression_reads};
+    use super::{
+        ExpressionReads, expression_element_paths, expression_read_paths, expression_reads,
+    };
     use std::collections::BTreeSet;
+
+    /// LAW-LINK-MANY-1: what a closure reads from a collection's elements,
+    /// by `#` or by alias; anything it cannot resolve is the empty path.
+    #[test]
+    fn element_paths_name_what_a_closure_reads_from_each_element() {
+        let read = |source: &str| {
+            expression_element_paths(source, "self")
+                .expect("parses")
+                .into_iter()
+                .map(|(collection, reads)| {
+                    (
+                        collection.join("."),
+                        reads
+                            .into_iter()
+                            .map(|read| read.join("."))
+                            .collect::<Vec<_>>(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let one = |collection: &str, reads: &[&str]| {
+            vec![(
+                collection.to_owned(),
+                reads
+                    .iter()
+                    .map(|read| (*read).to_owned())
+                    .collect::<Vec<_>>(),
+            )]
+        };
+        assert_eq!(
+            read("self.total == sum(map(self.lines, #.amount))"),
+            one("lines", &["amount"])
+        );
+        assert_eq!(
+            read("all(self.lines as line, line.amount > 0)"),
+            one("lines", &["amount"])
+        );
+        assert_eq!(
+            read("sum(map(self.lines, #.document.total)) > 0"),
+            one("lines", &["document.total"])
+        );
+        // The whole element, and anything a nested closure reads, are reads it
+        // cannot resolve; the nested call's own argument is an outer read.
+        assert_eq!(read("len(map(self.lines, #)) > 0"), one("lines", &[""]));
+        assert_eq!(
+            read("len(map(self.lines, map(#.parts, #.x))) > 0"),
+            one("lines", &["", "parts"])
+        );
+        assert!(read("len(self.lines) > 0").is_empty());
+    }
 
     fn fields(values: &[&str]) -> ExpressionReads {
         ExpressionReads {

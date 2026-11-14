@@ -16,7 +16,7 @@
   "payload": {
     "access": {
       "artifactId": "docs.scanned_document.access.policy",
-      "version": "0.1.0"
+      "version": "0.2.0"
     },
     "actionId": "docs.document_line.correct",
     "effectProgram": {
@@ -35,6 +35,9 @@
         "amount": {
           "description": "The line's amount as printed on the scanned page.",
           "nornType": {
+            "additivity": {
+              "kind": "additive"
+            },
             "currencySource": {
               "links": [],
               "property": "currency"
@@ -64,6 +67,9 @@
         "document_total": {
           "description": "Only when the document's printed total was misread too: the total as printed.",
           "nornType": {
+            "additivity": {
+              "kind": "additive"
+            },
             "currencySource": {
               "links": [],
               "property": "currency"

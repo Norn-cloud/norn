@@ -59,6 +59,31 @@
             "environment"
           ]
         }
+      },
+      {
+        "actions": [
+          "docs.document_line.correct"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "DataSteward",
+                "member",
+                "admin",
+                "owner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "docs.ScannedDocument",
+        "ruleId": "steward_line_documents",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
       }
     ]
   },
@@ -67,5 +92,5 @@
     "sourcePath": "registry/packs/documents/artifacts/docs.scanned_document.access.policy.json"
   },
   "scope": {},
-  "version": "0.1.0"
+  "version": "0.2.0"
 }
