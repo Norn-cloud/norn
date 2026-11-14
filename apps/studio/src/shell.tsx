@@ -140,20 +140,20 @@ function ScopeSwitcher() {
   )
 }
 
-/** The view (Business or Technical) and the language, as menu choices. */
+/** The view (Business or Technical) and the language, as menu choices; choosing one closes the menu. */
 function ViewAndLanguage() {
   const { view, setView } = useView()
   const { locale, setLocale } = useLocale()
   return <>
     <MenuRadioGroup value={view} onValueChange={(next) => { if (next === "business" || next === "technical") setView(next) }}>
       <KitMenuLabel>View</KitMenuLabel>
-      <KitMenuRadioItem value="business">Business</KitMenuRadioItem>
-      <KitMenuRadioItem value="technical">Technical</KitMenuRadioItem>
+      <KitMenuRadioItem value="business" closeOnSelect>Business</KitMenuRadioItem>
+      <KitMenuRadioItem value="technical" closeOnSelect>Technical</KitMenuRadioItem>
     </MenuRadioGroup>
     <KitMenuSeparator />
     <MenuRadioGroup value={locale} onValueChange={(next) => { if (isLocale(next)) setLocale(next) }}>
       <KitMenuLabel>Language</KitMenuLabel>
-      {LOCALES.map(({ tag, name }) => <KitMenuRadioItem key={tag} value={tag} lang={tag}>{name}</KitMenuRadioItem>)}
+      {LOCALES.map(({ tag, name }) => <KitMenuRadioItem key={tag} value={tag} lang={tag} closeOnSelect>{name}</KitMenuRadioItem>)}
     </MenuRadioGroup>
   </>
 }
