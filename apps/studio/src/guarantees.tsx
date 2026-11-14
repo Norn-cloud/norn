@@ -205,7 +205,7 @@ function LiveLaws() {
   if (read.isError) return <p className="text-destructive">{read.error.message}</p>
   const governed = catalog?.concepts.filter(({ laws, rules, definition }) => (laws.length > 0 || rules.length > 0) && definition === "object type") ?? []
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       {governed.length === 0 && <EmptyState icon={Scale}>No admitted law governs a type in this cell.</EmptyState>}
       {governed.length > 0 && <StatStrip>
         <KpiTile icon={Scale} label="Laws in force" value={governed.reduce((sum, { laws, rules }) => sum + laws.length + rules.filter((rule) => !laws.some(({ rationale }) => rationale === rule)).length, 0)} sub={`over ${governed.length} ${governed.length === 1 ? "type" : "types"}`} />
@@ -223,7 +223,7 @@ function LiveLaws() {
 export function GuaranteesPage() {
   const mode = useMode()
   if (mode.data?.kind === "live") return (
-    <section className="space-y-8">
+    <section className="space-y-5">
       <PageHeader title="Rules" description="The laws this cell admitted, type by type. Try to break one: the cell refuses the change and names the law." />
       <LiveLaws />
     </section>
