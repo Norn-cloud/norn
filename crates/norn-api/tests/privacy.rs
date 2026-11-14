@@ -851,7 +851,8 @@ fn a_provisioned_privacy_set_pseudonymizes_a_party_name() {
 /// by the overlay), for any caller, since the answer's buckets would carry the
 /// name unmasked; grouping by the owner's unmarked `kind` still admits. This is
 /// the admission `POST /v1/questions:evaluate` and saved question definitions
-/// both run (`norn_checker::metric::compute::admit`).
+/// both run (`norn_checker::metric::compute::admit`, over
+/// `check_metrics_and_questions`).
 #[test]
 fn a_question_cannot_group_or_filter_by_a_marked_party_name() {
     use norn_ir::{ArtifactEnvelope, MetricDefinition, QuestionIR};
@@ -926,8 +927,15 @@ fn a_question_cannot_group_or_filter_by_a_marked_party_name() {
     };
     let owner = |property: &str| json!({ "links": ["owner"], "property": property });
 
+    // The unmarked baseline passes the checker's admission, where the marking
+    // rule lives (the count itself is outside the exact engine's profile).
     let by_kind = question(json!([{ "path": owner("kind") }]), json!([]));
-    assert!(admit(&by_kind).is_ok(), "{:?}", admit(&by_kind).err());
+    let findings = norn_checker::check_metrics_and_questions(
+        std::slice::from_ref(&metric),
+        std::slice::from_ref(&by_kind),
+        &catalog,
+    );
+    assert!(findings.is_empty(), "{findings:?}");
     assert!(refused(&question(
         json!([{ "path": owner("display_name") }]),
         json!([])

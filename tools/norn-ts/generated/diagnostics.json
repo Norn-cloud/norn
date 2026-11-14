@@ -4553,6 +4553,14 @@
       "no_fix": null
     },
     {
+      "code": "question.validation.marked_field",
+      "tier": "T3",
+      "severity": "error",
+      "message": "a question cannot group or filter by a field that carries a declared marking (for example pii.contact)",
+      "fix": "Group or filter by an unmarked field instead. A marked field (such as a person's name) can be counted but not used as a group label or filter; read it per row, where it is masked.",
+      "no_fix": null
+    },
+    {
       "code": "question.validation.mixed_axis_rollup",
       "tier": "T3",
       "severity": "error",
