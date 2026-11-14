@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { readDocument } from "../src/lib/exact.ts"
-import { bucketLabel, derivedMetricWords, headline, pathWords, percent, period, scope, words } from "../src/lib/format.ts"
+import { bucketLabel, connectionStatus, derivedMetricWords, headline, pathWords, percent, period, scope, watermarkText, words } from "../src/lib/format.ts"
 import { measured, operandUnits } from "../src/lib/units.ts"
 import type { Answer, Metric, ObjectType, Question } from "../src/lib/transport.ts"
 
@@ -94,4 +94,17 @@ test("a derived metric's id reads as what it measures; the raw id never reaches 
   expect(words(`analysis.object_63616e6f6e2e506f7374696e67.amount.by_${time}`)).toBe("Amount")
   expect(words(time)).toBe("Event's occurred at")
   expect(words("demo.yield_week")).toBe("Yield week")
+})
+
+// The Connections table: a connection whose connector the workspace has not installed is "Not
+// set up" in plain words, never a red failure with a raw code; a real failure keeps its code.
+test("a connection without its connector is not set up, not failed", () => {
+  const missing = connectionStatus({ status: "failed", last_error_code: "source.connector_missing", last_error_message: "docs.scans.connector is not installed" })
+  expect(missing).toEqual({ label: "Not set up", variant: "outline", note: "Its connector is not installed in this workspace yet.", error: null, syncable: false })
+  const failed = connectionStatus({ status: "failed", last_error_code: "source.http_status", last_error_message: "the source answered 502" })
+  expect(failed).toMatchObject({ label: "Failed", variant: "destructive", note: null, error: { code: "source.http_status", message: "the source answered 502" }, syncable: true })
+  expect(connectionStatus({ status: "ok" })).toMatchObject({ label: "Synced", error: null, syncable: true })
+  expect(connectionStatus({})).toMatchObject({ label: "—", variant: "outline" })
+  // A sync that read nothing has no mark to show.
+  expect(watermarkText("{}")).toBe("—")
 })
