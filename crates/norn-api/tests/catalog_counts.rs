@@ -7,6 +7,7 @@
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,
+    clippy::indexing_slicing,
     clippy::arithmetic_side_effects,
     missing_docs,
     reason = "catalog count correspondence"

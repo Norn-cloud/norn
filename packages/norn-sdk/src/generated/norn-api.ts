@@ -2262,6 +2262,16 @@ export interface components {
              * @description Editor sidecar revision.
              */
             layoutRevision: number;
+            /**
+             * @description Live record counts by object type, under the caller's own visibility:
+             *     each is the total `GET /v1/objects/{type}` reports on its first page,
+             *     through the same gates, counted to at most 500 visible records
+             *     (`approximate`, and the count 500, past it). A type the caller may not
+             *     list has no entry, never a zero.
+             */
+            objectCounts: {
+                [key: string]: components["schemas"]["NornQueryTotal"];
+            };
             /** @description The original checker receipt, without host reinterpretation. */
             receipt: {
                 [key: string]: unknown;
