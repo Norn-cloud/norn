@@ -7,6 +7,11 @@ import { compileQuestions } from "./compiler/definitions.ts"
 import { loadChecker, sourceMappedDiagnostics } from "./checker-abi.ts"
 import { admit, compilePack } from "./pack.ts"
 
+if (process.argv[2] === "--version" || process.argv[2] === "-V") {
+  const { versionLine } = await import("./build-info.ts")
+  process.stdout.write(`${versionLine()}\n`)
+  process.exit(0)
+}
 if (process.argv[2] === "fmt") {
   const { fmt } = await import("./fmt.ts")
   const { ProjectError } = await import("./project.ts")
@@ -72,6 +77,11 @@ const environmentId = option("--env")
 if (!orgId || !environmentId) {
   process.stderr.write("--org and --env are required\n")
   process.exit(2)
+}
+if (command === "check") {
+  // Before compiling: a project whose sources do not compile is told too.
+  const { warnAuthoringVersion } = await import("./authoring-version.ts")
+  warnAuthoringVersion(resolve(input))
 }
 const pack = compilePack(resolve(input), { scope: { orgId, environmentId }, root: process.cwd(), ...(statSync(input).isFile() ? { modules: [resolve(input)] } : {}) })
 if (!pack.ok) {

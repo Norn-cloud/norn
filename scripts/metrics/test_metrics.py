@@ -15,12 +15,34 @@ import unittest
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))
 
-import collect_ci  # noqa: E402
-import ratchet  # noqa: E402
-import record  # noqa: E402
-import report  # noqa: E402
+def _sibling(name, directory=None):
+    """Load sibling module `name` from its source by explicit path: never through sys.path,
+    never from a bytecode cache, never a same-named module loaded some other way (#513)."""
+    import pathlib
+    import sys
+    import types
+
+    path = (directory or pathlib.Path(__file__).resolve().parent) / f"{name}.py"
+    loaded = sys.modules.get(name)
+    if getattr(loaded, "__norn_sibling__", None) == str(path):
+        return loaded
+    module = types.ModuleType(name)
+    module.__file__ = str(path)
+    module.__norn_sibling__ = str(path)
+    sys.modules[name] = module
+    try:
+        exec(compile(path.read_bytes(), str(path), "exec", dont_inherit=True), module.__dict__)
+    except BaseException:
+        del sys.modules[name]
+        raise
+    return module
+
+
+collect_ci = _sibling("collect_ci")
+ratchet = _sibling("ratchet")
+record = _sibling("record")
+report = _sibling("report")
 
 SHA = "6cbc5766c342dd26744106920bc3a38a3cacfe58"
 GIT_ENV = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid", "GIT_COMMITTER_NAME": "t",
@@ -304,8 +326,8 @@ class CollectCi(unittest.TestCase):
 
 class Probes(unittest.TestCase):
     def test_probe_output_becomes_valid_records(self):
-        import boat_nightly
-        import run_probes
+        boat_nightly = _sibling("boat_nightly")
+        run_probes = _sibling("run_probes")
         with tempfile.TemporaryDirectory() as root:
             (Path(root) / "present").write_text("")
             probes = [
@@ -343,7 +365,7 @@ class Probes(unittest.TestCase):
 
 
     def test_prepare_timeout_fails_the_probe(self):
-        import run_probes
+        run_probes = _sibling("run_probes")
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             ok = run_probes.run_probe({"name": "slow", "prepare": "sleep 5", "run": "true", "timeout_s": 1,
