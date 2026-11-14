@@ -734,7 +734,7 @@ rustup toolchain uninstall stable nightly-2025-03-01
 df -h /
 [ "$(available)" -ge "$minimum" ] || { echo "Insufficient Boat runner space: need 40 GiB free"; df -Pk /; exit 1; }
 """}
-    nextest = {"uses": "taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941",
+    nextest = {"uses": "taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39",
                "with": {"tool": "nextest@0.9.150,cargo-deny@0.19.0,wasm-bindgen@0.2.129"}}
     candidate_condition = "github.event_name != 'pull_request_target' && github.event_name != 'issue_comment'"
     for name, command in required_runs.items():

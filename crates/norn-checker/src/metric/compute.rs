@@ -218,8 +218,8 @@ fn lower_sum(
         .and_then(Result::ok)
         .ok_or_else(refuse)?;
     let property = object.property(property.as_str()).ok_or_else(refuse)?;
+    // A nullable property is summed over its present values; nulls are counted, never read as 0.
     if property.computed
-        || property.nullable
         || !matches!(
             property.kind,
             EffectiveKind::Base(PropertyType::Decimal { .. } | PropertyType::Integer { .. })

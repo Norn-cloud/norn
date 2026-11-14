@@ -13,8 +13,9 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use norn_ir::{
-    ArtifactEnvelope, EntityRoot, Lifecycle, ObjectTypeName, PropertyId, PropertyType, Transition,
-    TransitionId, ZenExpression,
+    ArtifactEnvelope, EntityRoot, Lifecycle, LifecycleEnding, LifecycleEvent, LifecycleIgnore,
+    LifecycleOutcome, ObjectTypeName, PropertyId, PropertyType, Transition, TransitionId,
+    TransitionMode, TransitionTrigger, ZenExpression,
 };
 
 use crate::entity_instance::{EffectiveCatalog, EffectiveLifecycle};
@@ -95,6 +96,17 @@ pub(crate) struct Machine<'a> {
     pub(crate) immutable: BTreeSet<&'a str>,
     pub(crate) transitions: Vec<Edge<'a>>,
     pub(crate) path_properties: Vec<&'a norn_ir::LifecyclePathProperty>,
+    /// Declared endings and their outcomes (LIFE-SOUND-1), in declaration order.
+    pub(crate) endings: Vec<(&'a str, LifecycleOutcome)>,
+    /// External event kinds, each with its ignore entries (states, reason) (LIFE-SOUND-6).
+    pub(crate) events: Vec<MachineEvent<'a>>,
+}
+
+/// One external event kind of a [`Machine`].
+#[derive(Debug, Clone)]
+pub(crate) struct MachineEvent<'a> {
+    pub(crate) id: &'a str,
+    pub(crate) ignored_in: Vec<(BTreeSet<&'a str>, &'a str)>,
 }
 
 /// One transition of a [`Machine`].
@@ -106,6 +118,12 @@ pub(crate) struct Edge<'a> {
     /// Every guard that applies (their conjunction), inherited ones first.
     pub(crate) guards: Vec<&'a str>,
     pub(crate) guard_refusal_code: Option<&'a str>,
+    /// A timer or external event that fires it (LIFE-SOUND-3).
+    pub(crate) trigger: Option<&'a TransitionTrigger>,
+    /// Declared fact or request (LIFE-SOUND-5).
+    pub(crate) mode: Option<TransitionMode>,
+    /// The transition compensating the effect this one dispatches (LIFE-SOUND-8).
+    pub(crate) compensated_by: Option<&'a TransitionId>,
 }
 
 /// Effective machines of a type, by lifecycle property.
@@ -120,6 +138,28 @@ impl<'a> Machine<'a> {
             initial: lifecycle.initial.iter().map(String::as_str).collect(),
             terminal: lifecycle.terminal.iter().map(String::as_str).collect(),
             immutable: lifecycle.immutable.iter().map(String::as_str).collect(),
+            endings: lifecycle
+                .endings
+                .iter()
+                .map(|ending| (ending.state.as_str(), ending.outcome))
+                .collect(),
+            events: lifecycle
+                .events
+                .iter()
+                .map(|event| MachineEvent {
+                    id: event.id.as_str(),
+                    ignored_in: event
+                        .ignored_in
+                        .iter()
+                        .map(|ignore| {
+                            (
+                                ignore.states.iter().map(String::as_str).collect(),
+                                ignore.reason.as_str(),
+                            )
+                        })
+                        .collect(),
+                })
+                .collect(),
             transitions: lifecycle
                 .transitions
                 .iter()
@@ -128,6 +168,9 @@ impl<'a> Machine<'a> {
                     from: transition.from.iter().map(String::as_str).collect(),
                     to: transition.to.as_str(),
                     guard_refusal_code: transition.guard_refusal_code.as_deref(),
+                    trigger: transition.trigger.as_ref(),
+                    mode: transition.mode,
+                    compensated_by: transition.compensated_by.as_ref(),
                     guards: transition
                         .guards
                         .iter()
@@ -150,6 +193,30 @@ impl<'a> Machine<'a> {
             initial: self.initial.intersection(&keep).copied().collect(),
             terminal: self.terminal.intersection(&keep).copied().collect(),
             immutable: self.immutable.intersection(&keep).copied().collect(),
+            endings: self
+                .endings
+                .iter()
+                .filter(|(state, _)| keep.contains(state))
+                .copied()
+                .collect(),
+            events: self
+                .events
+                .iter()
+                .map(|event| MachineEvent {
+                    id: event.id,
+                    ignored_in: event
+                        .ignored_in
+                        .iter()
+                        .map(|(states, reason)| {
+                            (
+                                states.intersection(&keep).copied().collect::<BTreeSet<_>>(),
+                                *reason,
+                            )
+                        })
+                        .filter(|(states, _)| !states.is_empty())
+                        .collect(),
+                })
+                .collect(),
             transitions: self
                 .transitions
                 .iter()
@@ -188,6 +255,29 @@ impl<'a> Machine<'a> {
                 initial: ordered(&self.initial),
                 terminal: ordered(&self.terminal),
                 immutable: ordered(&self.immutable),
+                endings: self
+                    .endings
+                    .iter()
+                    .map(|(state, outcome)| LifecycleEnding {
+                        state: (*state).to_owned(),
+                        outcome: *outcome,
+                    })
+                    .collect(),
+                events: self
+                    .events
+                    .iter()
+                    .map(|event| LifecycleEvent {
+                        id: event.id.to_owned(),
+                        ignored_in: event
+                            .ignored_in
+                            .iter()
+                            .map(|(states, reason)| LifecycleIgnore {
+                                states: ordered(states),
+                                reason: (*reason).to_owned(),
+                            })
+                            .collect(),
+                    })
+                    .collect(),
                 transitions: self
                     .transitions
                     .iter()
@@ -197,6 +287,9 @@ impl<'a> Machine<'a> {
                         from: ordered(&edge.from),
                         to: edge.to.to_owned(),
                         guard_refusal_code: edge.guard_refusal_code.map(str::to_owned),
+                        trigger: edge.trigger.cloned(),
+                        mode: edge.mode,
+                        compensated_by: edge.compensated_by.cloned(),
                         guards: edge
                             .guards
                             .iter()

@@ -1,0 +1,140 @@
+{
+  "artifactId": "tracking.Run.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Run",
+  "namespace": "tracking",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "run_id"
+          ]
+        }
+      ],
+      "lifecycles": [
+        {
+          "initial": [
+            "RUNNING"
+          ],
+          "property": "status",
+          "terminal": [
+            "FINISHED",
+            "FAILED",
+            "KILLED"
+          ],
+          "transitions": [
+            {
+              "from": [
+                "RUNNING"
+              ],
+              "id": "finish",
+              "to": "FINISHED"
+            },
+            {
+              "from": [
+                "RUNNING"
+              ],
+              "id": "fail",
+              "to": "FAILED"
+            },
+            {
+              "from": [
+                "RUNNING"
+              ],
+              "id": "kill",
+              "to": "KILLED"
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "id": "experiment",
+          "target": "tracking.Experiment"
+        }
+      ],
+      "name": "tracking.Run",
+      "properties": [
+        {
+          "id": "run_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "experiment_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "run_name",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "user_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "start_time",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "artifact_uri",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "tags",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "default": "RUNNING",
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "RUNNING"
+              },
+              {
+                "value": "FINISHED"
+              },
+              {
+                "value": "FAILED"
+              },
+              {
+                "value": "KILLED"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/tracking/artifacts/tracking.Run.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
