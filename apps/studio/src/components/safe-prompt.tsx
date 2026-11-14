@@ -26,13 +26,13 @@ const ICONS: Readonly<Record<string, LucideIcon>> = {
 }
 export const iconOf = (kind: string | undefined): LucideIcon => (kind === undefined ? Hash : ICONS[kind] ?? Hash)
 
-/** Each data type's muted tint (the canvas tints, D65), as in the enum chips; the icon tells the type apart too. */
+/** Each data type's tone (design system v2 detail colours); the icon tells the type apart too. */
 const TINTS: Readonly<Record<string, string>> = {
-  CUSTOMER: "--tint-tool", NAME: "--tint-tool", PERSON: "--tint-tool", EMAIL: "--tint-agent", PHONE: "--tint-ask", CARD: "--tint-outcome", ADDRESS: "--tint-route", ACCOUNT: "--tint-wait",
+  CUSTOMER: "--tone-blue", NAME: "--tone-blue", PERSON: "--tone-blue", EMAIL: "--tone-violet", PHONE: "--tone-orange", CARD: "--tone-green", ADDRESS: "--tone-teal", ACCOUNT: "--tone-amber",
 }
-export const tintOf = (kind: string | undefined): CSSProperties => ({ "--tint": `var(${(kind !== undefined && TINTS[kind]) || "--tint-state"})` } as CSSProperties)
+export const tintOf = (kind: string | undefined): CSSProperties => ({ "--tint": `var(${(kind !== undefined && TINTS[kind]) || "--tone-gray"})` } as CSSProperties)
 /** A tinted chip surface: the type's colour at low strength, its text darkened for contrast. */
-export const TINTED = "bg-[color-mix(in_oklab,var(--tint)_12%,transparent)] text-[color-mix(in_oklab,var(--tint)_78%,var(--foreground))] ring-1 ring-[color-mix(in_oklab,var(--tint)_24%,transparent)] ring-inset"
+export const TINTED = "bg-[color-mix(in_oklab,var(--tint)_12%,transparent)] text-[var(--tint)] ring-1 ring-[color-mix(in_oklab,var(--tint)_22%,transparent)] ring-inset"
 
 /** A placeholder token as a chip: monospace, with its type's icon. Told apart by icon, never by colour. */
 export function TokenChip({ token, kind }: { readonly token: string; readonly kind?: string }) {
@@ -106,7 +106,7 @@ export function SafePrompt({ guard }: { readonly guard: GuardDocument }) {
   }
   const shown = original.kind === "shown" ? original.segments : splitTokens(guard.safePrompt, guard.tokens)
   return (
-    <section data-safe-prompt className="grid gap-3 rounded-2xl border border-border bg-card p-4 shadow-sm" aria-label="Safe prompt">
+    <section data-safe-prompt className="grid gap-4 rounded-2xl bg-card p-5 shadow-[var(--elevation-1)] ring-1 ring-foreground/5" aria-label="Safe prompt">
       <header className="flex items-center justify-between gap-3">
         <h3 className="text-sm font-medium text-muted-foreground">{original.kind === "shown" ? "Original prompt" : "Safe prompt"}</h3>
         {revealable && (
@@ -131,8 +131,8 @@ export function SafePrompt({ guard }: { readonly guard: GuardDocument }) {
             const Icon = iconOf(token.kind)
             return (
               <li key={token.token} className="grid gap-0.5 text-sm" style={tintOf(token.kind)}>
-                <span className="inline-flex items-center gap-1.5 font-medium"><Icon className="size-3.5 text-[color-mix(in_oklab,var(--tint)_80%,var(--foreground))]" aria-hidden />{token.label}</span>
-                <span className="ps-5 font-mono text-xs text-[color-mix(in_oklab,var(--tint)_78%,var(--foreground))]">{token.token}</span>
+                <span className="inline-flex items-center gap-1.5 font-medium"><Icon className="size-3.5 text-[var(--tint)]" aria-hidden />{token.label}</span>
+                <span className="ps-5 font-mono text-xs text-[var(--tint)]">{token.token}</span>
               </li>
             )
           })}
