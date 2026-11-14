@@ -108,7 +108,7 @@ pub enum NornQueryEngine {
     Ivm,
     /// Exact cell snapshot.
     Cell,
-    /// Embedded SQL (DuckDB) over the exact authorized contribution snapshot.
+    /// Embedded SQL over the exact authorized contribution snapshot.
     Duckdb,
 }
 
