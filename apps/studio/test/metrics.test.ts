@@ -34,3 +34,10 @@ test("the assistant's suggested requests read a type's id in a metric label as i
   const catalog = { objectSet: "canon.Holding", properties: [{ name: "vault", kind: "text", unit: null }], metrics: [{ name: "m", label: AS_OF.label, type: "simple" }], grains: [], operators: [], example: { irVersion: "0.1", calendar: "iso_utc", freshness: null }, declarations: { metrics: [], objectType: null } }
   for (const request of examples(catalog)) expect(request).not.toContain("canon.")
 })
+
+test("a date's range sent as epoch milliseconds opens a window; with no range at all, the latest 52 ISO weeks are asked", async () => {
+  const { windowOf, recentWindow } = await import("../src/lib/metrics.ts")
+  const profile = { properties: [{ property: "observed_at", min: Date.UTC(2026, 9, 21, 9), max: Date.UTC(2026, 10, 12, 18) }] } as unknown as Parameters<typeof windowOf>[0]
+  expect(windowOf(profile, "observed_at")).toEqual({ start: "2026-10-19T00:00:00Z", end: "2026-11-16T00:00:00Z", grain: "week" })
+  expect(recentWindow(Date.UTC(2026, 10, 14, 4, 30))).toEqual({ start: "2025-11-17T00:00:00Z", end: "2026-11-16T00:00:00Z", grain: "week" })
+})
