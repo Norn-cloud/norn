@@ -475,6 +475,7 @@ mod tests {
             ids,
             [
                 "jewelry.Melt.entity",
+                "jewelry.melt.access.policy",
                 "jewelry.melt.fine_mass_conserved.law",
                 "jewelry.melt.record.action"
             ]
