@@ -13,10 +13,16 @@
 //! - **A refused set** (the checker's findings, a set the cell cannot serve,
 //!   or live data the new laws break) answers the same refusal from plan and
 //!   apply, and apply writes nothing.
-//! - **Live data** (HOST-INSTALL-LIVE-1): every stored object of a type whose
-//!   governing laws or declaration change is evaluated under the candidate
-//!   laws. A violation is a finding naming the object and the law, and the
-//!   set is held back: it is never installed over data it would refuse.
+//! - **Live data** (HOST-INSTALL-LIVE-1, #1360): every stored object of a
+//!   type whose governing laws or declaration change is evaluated under the
+//!   candidate laws. When only the laws change, the set installs and every
+//!   object a law breaks is held back with an open finding pinned to the law
+//!   and the values it compared, as an import holds a row back: it stays out
+//!   of every answer, `/findings` and `:quarantined` serve it for review, and
+//!   a write that satisfies the law releases it. The plan reports how many
+//!   objects apply would hold back, with a sample. A violation in a type whose
+//!   declaration also changes cannot be held back that way: the set is
+//!   refused (409 `defs.live_data_refused`) and nothing is written.
 //! - **Apply** is compare-and-set on the planned `expectedVersion` and
 //!   installs atomically (`CellStore::install_definitions`: the version, its
 //!   receipt and the ledger event in one transaction) under the model a
@@ -28,7 +34,7 @@ use std::collections::BTreeMap;
 use http::StatusCode;
 use norn_cell::engine::SqlEngine;
 use norn_cell::{CellError, CellStore, InstalledDefinitionInput, InstalledDefinitionSet, Model};
-use norn_ir::{ArtifactEnvelope, RuntimeValue};
+use norn_ir::{ArtifactEnvelope, DataQualityFinding, DataQualityRuleRef, RuntimeValue};
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 use utoipa::ToSchema;
@@ -58,7 +64,8 @@ pub mod codes {
     /// A stored object the candidate laws refuse (a finding of
     /// [`LIVE_DATA_REFUSED`]).
     pub const LIVE_DATA_VIOLATION: &str = "defs.live_data_violation";
-    /// Stored objects the candidate laws refuse: the set is held back (409).
+    /// Stored objects the candidate laws break in a type whose declaration
+    /// also changes: they cannot be held back, so the set is refused (409).
     pub const LIVE_DATA_REFUSED: &str = "defs.live_data_refused";
     /// A stored object a candidate law could not be evaluated on (a finding).
     pub const LIVE_DATA_UNCHECKED: &str = "defs.live_data_unchecked";
@@ -109,7 +116,7 @@ pub struct PlannedArtifact {
 }
 
 /// What applying the submission would change.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DefinitionsPlan {
     /// The active definitions version the plan was made against: apply's
@@ -130,11 +137,35 @@ pub struct DefinitionsPlan {
     pub new_object_types: Vec<String>,
     /// Stored objects evaluated under the candidate laws.
     pub checked_objects: u64,
+    /// Stored objects the candidate laws break, which apply holds back with
+    /// findings (#1360).
+    pub held_back_objects: u64,
+    /// Up to [`HELD_BACK_SAMPLE`] of them: which object, and which law with
+    /// the values it compared.
+    pub held_back: Vec<HeldBackObject>,
     /// The checker's non-blocking findings and live-data warnings.
     pub diagnostics: Vec<RefusalDiagnostic>,
     /// The candidate set's admission receipt digest.
     pub receipt_sha256: String,
 }
+
+/// A stored object the candidate laws break.
+#[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct HeldBackObject {
+    /// The object type.
+    pub object_type: String,
+    /// The object id.
+    pub id: String,
+    /// The law it breaks.
+    pub law: String,
+    /// The stored values the law compared, by path.
+    #[schema(value_type = Object)]
+    pub values: BTreeMap<String, RuntimeValue>,
+}
+
+/// The most held-back objects a plan lists; the count names them all.
+pub const HELD_BACK_SAMPLE: usize = 20;
 
 /// Whether an apply installed a new version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
@@ -147,7 +178,7 @@ pub enum ApplyOutcome {
 }
 
 /// The installed definitions.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DefinitionsApplied {
     /// Whether this call installed a version.
@@ -379,6 +410,8 @@ fn candidate<E: SqlEngine>(
                 same,
                 new_object_types,
                 checked_objects: 0,
+                held_back_objects: 0,
+                held_back: Vec::new(),
                 diagnostics: Vec::new(),
                 receipt_sha256: admitted.receipt_sha256.clone(),
             },
@@ -408,22 +441,54 @@ fn install_input(
     }
 }
 
+/// What the candidate laws make of the stored objects.
+#[derive(Default)]
+struct Live {
+    /// Objects evaluated.
+    checked: u64,
+    /// Objects a law breaks in a type whose declaration also changes: they
+    /// cannot be held back under the candidate model, so the set is refused.
+    refused: Vec<RefusalDiagnostic>,
+    /// Laws that could not be evaluated on stored values alone (warnings).
+    unchecked: Vec<RefusalDiagnostic>,
+    /// The open findings apply holds the breaking objects back with.
+    findings: Vec<DataQualityFinding>,
+    /// Each held-back object (sorted, once) with its first law.
+    held: BTreeMap<(String, String), HeldBackObject>,
+}
+
+impl Live {
+    fn plan(&self, plan: &mut DefinitionsPlan) {
+        plan.checked_objects = self.checked;
+        plan.held_back_objects = u64::try_from(self.held.len()).unwrap_or(u64::MAX);
+        plan.held_back = self.held.values().take(HELD_BACK_SAMPLE).cloned().collect();
+        plan.diagnostics.extend(self.unchecked.iter().cloned());
+    }
+}
+
 /// HOST-INSTALL-LIVE-1: evaluate every stored object of a type whose
 /// governing laws or declaration the candidate changes under the candidate's
-/// laws. Returns how many objects were evaluated and the findings: a
-/// violation is an error, a law that cannot be evaluated on stored values
-/// alone (one that reads a link) a warning.
+/// laws. A law the object breaks is a finding to hold it back with, first
+/// seen at `at_ms`; one in a type whose declaration changes is a refusal; a
+/// law that cannot be evaluated on stored values alone (one that reads a
+/// link) is a warning.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one paged pass decides each stored object: checked, held back, refused or unchecked"
+)]
 fn live_findings<E: SqlEngine>(
     store: &CellStore<E>,
     candidate: &Model,
-) -> Result<(u64, Vec<RefusalDiagnostic>), Refusal> {
+    at_ms: u64,
+) -> Result<Live, Refusal> {
     let current = store.model();
     let catalog = norn_kernel::TypeCatalog::new(candidate.object_types())
         .with_interfaces(candidate.interfaces())
+        .with_property_types(candidate.property_types())
         .with_governing_laws(candidate.law_artifacts());
+    let at = norn_ir::provenance::UtcTimestamp(crate::sources::rfc3339(at_ms));
     let reader = store.read();
-    let mut checked: u64 = 0;
-    let mut findings = Vec::new();
+    let mut live = Live::default();
     for object_type in current.object_types() {
         let name = object_type.name.as_str();
         let Some(next) = candidate.object_types().find(|t| t.name.as_str() == name) else {
@@ -434,6 +499,7 @@ fn live_findings<E: SqlEngine>(
         if laws_next.is_empty() || (laws_now == laws_next && next == object_type) {
             continue;
         }
+        let reshaped = next != object_type;
         let mut after: Option<String> = None;
         loop {
             let page = reader
@@ -444,8 +510,8 @@ fn live_findings<E: SqlEngine>(
                 if record.object_type != name {
                     continue;
                 }
-                checked = checked.saturating_add(1);
-                if usize::try_from(checked).unwrap_or(usize::MAX) > MAX_CHECKED_OBJECTS {
+                live.checked = live.checked.saturating_add(1);
+                if usize::try_from(live.checked).unwrap_or(usize::MAX) > MAX_CHECKED_OBJECTS {
                     return Err(conflict(
                         codes::LIVE_DATA_UNBOUNDED,
                         "the change would need more stored objects checked than one plan evaluates",
@@ -455,48 +521,62 @@ fn live_findings<E: SqlEngine>(
                     ));
                 }
                 let key = norn_kernel::FactKey::new(name, record.id.clone());
+                let pointer = format!("/objects/{name}/{}", record.id);
                 let mut budget = LAW_FUEL;
-                match norn_kernel::governing_laws::evaluate(
+                let failures = match norn_kernel::governing_laws::evaluate(
                     &catalog,
                     &key,
                     &record.values,
                     &mut budget,
                 ) {
-                    Ok(failures) => {
-                        for failure in failures {
-                            let law = match &failure.rule_ref {
-                                norn_ir::DataQualityRuleRef::Law { law_id, .. } => law_id.clone(),
-                                norn_ir::DataQualityRuleRef::Invariant { invariant_id, .. } => {
-                                    invariant_id.0.clone()
-                                }
-                                norn_ir::DataQualityRuleRef::Builtin { id, .. } => id.clone(),
-                            };
-                            findings.push(RefusalDiagnostic {
-                                code: codes::LIVE_DATA_VIOLATION.to_owned(),
-                                severity: "error".to_owned(),
-                                message: format!(
-                                    "{name} {} breaks {law}: {}",
-                                    record.id, failure.message
-                                ),
-                                law: Some(law),
-                                span: Some(RefusalSpan {
-                                    pointer: format!("/objects/{name}/{}", record.id),
-                                }),
-                            });
-                        }
+                    Ok(failures) => failures,
+                    Err(reason) => {
+                        live.unchecked.push(RefusalDiagnostic {
+                            code: codes::LIVE_DATA_UNCHECKED.to_owned(),
+                            severity: "warning".to_owned(),
+                            message: format!(
+                                "{name} {} was not evaluated under the candidate laws: {reason}",
+                                record.id
+                            ),
+                            law: None,
+                            span: Some(RefusalSpan { pointer }),
+                        });
+                        continue;
                     }
-                    Err(reason) => findings.push(RefusalDiagnostic {
-                        code: codes::LIVE_DATA_UNCHECKED.to_owned(),
-                        severity: "warning".to_owned(),
-                        message: format!(
-                            "{name} {} was not evaluated under the candidate laws: {reason}",
-                            record.id
-                        ),
-                        law: None,
-                        span: Some(RefusalSpan {
-                            pointer: format!("/objects/{name}/{}", record.id),
-                        }),
-                    }),
+                };
+                for failure in failures {
+                    let law = match &failure.rule_ref {
+                        DataQualityRuleRef::Law { law_id, .. } => law_id.clone(),
+                        DataQualityRuleRef::Invariant { invariant_id, .. } => {
+                            invariant_id.0.clone()
+                        }
+                        DataQualityRuleRef::Builtin { id, .. } => id.clone(),
+                    };
+                    if reshaped {
+                        live.refused.push(RefusalDiagnostic {
+                            code: codes::LIVE_DATA_VIOLATION.to_owned(),
+                            severity: "error".to_owned(),
+                            message: format!(
+                                "{name} {} breaks {law}: {}",
+                                record.id, failure.message
+                            ),
+                            law: Some(law),
+                            span: Some(RefusalSpan {
+                                pointer: pointer.clone(),
+                            }),
+                        });
+                        continue;
+                    }
+                    live.findings
+                        .push(held_finding(&key, &record.values, &failure, &at)?);
+                    live.held
+                        .entry((name.to_owned(), record.id.clone()))
+                        .or_insert_with(|| HeldBackObject {
+                            object_type: name.to_owned(),
+                            id: record.id.clone(),
+                            law,
+                            values: failure.values.clone(),
+                        });
                 }
             }
             match page.last() {
@@ -505,28 +585,61 @@ fn live_findings<E: SqlEngine>(
             }
         }
     }
-    Ok((checked, findings))
+    Ok(live)
 }
 
-/// The live-data refusal of `findings`, if any is an error.
-fn held_back(findings: &[RefusalDiagnostic]) -> Option<Refusal> {
-    let errors: Vec<RefusalDiagnostic> = findings
-        .iter()
-        .filter(|finding| finding.severity == "error")
-        .cloned()
-        .collect();
-    if errors.is_empty() {
+/// The open finding `failure` holds the stored object `key` back with: the
+/// same shape a mapped import records (rule, subject, evidence digest of the
+/// stored values, outcome, the values the law compared), with no source
+/// provenance (it is the install's own evaluation), first seen at `at`.
+fn held_finding(
+    key: &norn_kernel::FactKey,
+    values: &BTreeMap<String, RuntimeValue>,
+    failure: &norn_kernel::governing_laws::LawFailure,
+    at: &norn_ir::provenance::UtcTimestamp,
+) -> Result<DataQualityFinding, Refusal> {
+    let digest = norn_ir::canonical::canonical_json_of(values)
+        .map(|bytes| {
+            format!(
+                "sha256:{}",
+                norn_ir::canonical::HashProfile::Norn1.hash_canonical_bytes(&bytes)
+            )
+        })
+        .map_err(Refusal::host)?;
+    DataQualityFinding::v2(
+        failure.rule_ref.clone(),
+        vec![norn_ir::DataQualitySubject::new(
+            key.object_type.clone(),
+            key.key.clone(),
+        )],
+        failure.severity,
+        failure.message.clone(),
+        failure.outcome.clone(),
+        Vec::new(),
+        at.clone(),
+        at.clone(),
+        norn_ir::DataQualityFindingStatus::Open,
+    )
+    .and_then(|finding| finding.with_evidence_digest(digest))
+    .map(|finding| finding.with_values(failure.values.clone()))
+    .map_err(Refusal::host)
+}
+
+/// The live-data refusal: objects a law breaks in a type whose declaration
+/// also changes, which cannot be held back under the candidate model.
+fn held_back(live: &Live) -> Option<Refusal> {
+    if live.refused.is_empty() {
         return None;
     }
     let mut refusal = conflict(
         codes::LIVE_DATA_REFUSED,
-        "stored objects break the candidate laws; the definitions are held back",
+        "stored objects break the candidate laws of a type whose declaration also changes",
         format!(
-            "{} stored object finding(s); correct the objects or the laws, then plan again. Nothing was changed",
-            errors.len()
+            "{} stored object finding(s) in a changed type; change the type and its laws in separate installs, or correct the objects. Nothing was changed",
+            live.refused.len()
         ),
     );
-    refusal.diagnostics = errors;
+    refusal.diagnostics.clone_from(&live.refused);
     Some(refusal)
 }
 
@@ -537,9 +650,9 @@ fn held_back(findings: &[RefusalDiagnostic]) -> Option<Refusal> {
 /// The opaque 403; 400 for a body that is not a change or names a reserved
 /// or repeated artifact; 413 over the bound; 422 `defs.refused` with the
 /// checker's findings; 409 `defs.live_data_refused` with the stored objects
-/// the candidate laws refuse, `defs.migration_refused`, or
+/// the candidate laws break in a type whose declaration also changes, `defs.migration_refused`, or
 /// `defs.not_installed`.
-#[utoipa::path(post, path = "/v1/cell/definitions:plan", operation_id = "plan_cell_definitions", params(ScopeQuery), request_body = DefinitionsChangeRequest, responses((status = 200, description = "What applying the submission would change.", body = DefinitionsPlan), (status = 400, description = "The request was refused as invalid, or names an artifact in a reserved namespace.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied, with the same document whatever the reason.", body = Refusal), (status = 409, description = "The request was refused: stored objects break the candidate laws (`defs.live_data_refused`), the live data cannot be migrated, or the cell has no definitions.", body = Refusal), (status = 413, description = "The request was refused: the body exceeds the host bound.", body = Refusal), (status = 422, description = "The request was refused (`defs.refused`): the definitions are not admissible over the active set.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
+#[utoipa::path(post, path = "/v1/cell/definitions:plan", operation_id = "plan_cell_definitions", params(ScopeQuery), request_body = DefinitionsChangeRequest, responses((status = 200, description = "What applying the submission would change.", body = DefinitionsPlan), (status = 400, description = "The request was refused as invalid, or names an artifact in a reserved namespace.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied, with the same document whatever the reason.", body = Refusal), (status = 409, description = "The request was refused: stored objects break the candidate laws of a type whose declaration also changes (`defs.live_data_refused`; objects a law-only change breaks are held back with findings instead), the live data cannot be migrated, or the cell has no definitions.", body = Refusal), (status = 413, description = "The request was refused: the body exceeds the host bound.", body = Refusal), (status = 422, description = "The request was refused (`defs.refused`): the definitions are not admissible over the active set.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
 pub fn plan_definitions<E: SqlEngine>(
     host: &DevHost<E>,
     scope: &ScopeQuery,
@@ -551,12 +664,15 @@ pub fn plan_definitions<E: SqlEngine>(
     if !candidate.plan.unchanged {
         let _epoch = host.definition_read()?;
         let cell = host.cell()?;
-        let (checked, findings) = live_findings(cell.store(), &candidate.model)?;
-        if let Some(refusal) = held_back(&findings) {
+        let live = live_findings(
+            cell.store(),
+            &candidate.model,
+            candidate.active.installed_at,
+        )?;
+        if let Some(refusal) = held_back(&live) {
             return Err(refusal);
         }
-        candidate.plan.checked_objects = checked;
-        candidate.plan.diagnostics.extend(findings);
+        live.plan(&mut candidate.plan);
     }
     Ok(candidate.plan)
 }
@@ -567,7 +683,7 @@ pub fn plan_definitions<E: SqlEngine>(
 /// # Errors
 /// As [`plan_definitions`]; 400 without `expectedVersion`; 409 `defs.stale`
 /// when the active version is no longer the planned one.
-#[utoipa::path(post, path = "/v1/cell/definitions:apply", operation_id = "apply_cell_definitions", params(ScopeQuery), request_body = DefinitionsChangeRequest, responses((status = 200, description = "The definitions were installed, or already are the active set.", body = DefinitionsApplied), (status = 400, description = "The request was refused as invalid: no `expectedVersion`, a reserved or repeated artifact.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied, with the same document whatever the reason.", body = Refusal), (status = 409, description = "The request was refused: the definitions changed since the plan (`defs.stale`), stored objects break the candidate laws (`defs.live_data_refused`), or the live data cannot be migrated.", body = Refusal), (status = 413, description = "The request was refused: the body exceeds the host bound.", body = Refusal), (status = 422, description = "The request was refused (`defs.refused`): the definitions are not admissible over the active set.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
+#[utoipa::path(post, path = "/v1/cell/definitions:apply", operation_id = "apply_cell_definitions", params(ScopeQuery), request_body = DefinitionsChangeRequest, responses((status = 200, description = "The definitions were installed, or already are the active set.", body = DefinitionsApplied), (status = 400, description = "The request was refused as invalid: no `expectedVersion`, a reserved or repeated artifact.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied, with the same document whatever the reason.", body = Refusal), (status = 409, description = "The request was refused: the definitions changed since the plan (`defs.stale`), stored objects break the candidate laws of a type whose declaration also changes (`defs.live_data_refused`; objects a law-only change breaks are held back with findings instead), or the live data cannot be migrated.", body = Refusal), (status = 413, description = "The request was refused: the body exceeds the host bound.", body = Refusal), (status = 422, description = "The request was refused (`defs.refused`): the definitions are not admissible over the active set.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
 pub fn apply_definitions<E: SqlEngine>(
     host: &DevHost<E>,
     scope: &ScopeQuery,
@@ -602,18 +718,14 @@ pub fn apply_definitions<E: SqlEngine>(
             plan,
         });
     }
-    let mut live = (0, Vec::new());
-    let installed = host.install_definitions_checked(
-        model,
-        install_input(&admitted, &active, now_ms),
-        Some(expected),
-        |store| {
-            live = live_findings(store, &install_model(store, &admitted)?)?;
-            held_back(&live.1).map_or(Ok(()), Err)
-        },
-    )?;
-    plan.checked_objects = live.0;
-    plan.diagnostics.extend(live.1);
+    let input = install_input(&admitted, &active, now_ms);
+    let installed_at = input.installed_at;
+    let mut live = Live::default();
+    let installed = host.install_definitions_checked(model, input, Some(expected), |store| {
+        live = live_findings(store, &install_model(store, &admitted)?, installed_at)?;
+        held_back(&live).map_or_else(|| Ok(std::mem::take(&mut live.findings)), Err)
+    })?;
+    live.plan(&mut plan);
     Ok(DefinitionsApplied {
         outcome: ApplyOutcome::Installed,
         definitions_version: installed.version,

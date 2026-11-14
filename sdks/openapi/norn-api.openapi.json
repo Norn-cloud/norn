@@ -342,7 +342,7 @@
             }
           },
           "409": {
-            "description": "The request was refused: the definitions changed since the plan (`defs.stale`), stored objects break the candidate laws (`defs.live_data_refused`), or the live data cannot be migrated.",
+            "description": "The request was refused: the definitions changed since the plan (`defs.stale`), stored objects break the candidate laws of a type whose declaration also changes (`defs.live_data_refused`; objects a law-only change breaks are held back with findings instead), or the live data cannot be migrated.",
             "content": {
               "application/json": {
                 "schema": {
@@ -395,7 +395,7 @@
           "crate::cell_definitions"
         ],
         "summary": "`POST /v1/cell/definitions:plan`: what applying the submission over the\nactive definitions would change. Never writes.",
-        "description": "# Errors\nThe opaque 403; 400 for a body that is not a change or names a reserved\nor repeated artifact; 413 over the bound; 422 `defs.refused` with the\nchecker's findings; 409 `defs.live_data_refused` with the stored objects\nthe candidate laws refuse, `defs.migration_refused`, or\n`defs.not_installed`.",
+        "description": "# Errors\nThe opaque 403; 400 for a body that is not a change or names a reserved\nor repeated artifact; 413 over the bound; 422 `defs.refused` with the\nchecker's findings; 409 `defs.live_data_refused` with the stored objects\nthe candidate laws break in a type whose declaration also changes, `defs.migration_refused`, or\n`defs.not_installed`.",
         "operationId": "plan_cell_definitions",
         "parameters": [
           {
@@ -459,7 +459,7 @@
             }
           },
           "409": {
-            "description": "The request was refused: stored objects break the candidate laws (`defs.live_data_refused`), the live data cannot be migrated, or the cell has no definitions.",
+            "description": "The request was refused: stored objects break the candidate laws of a type whose declaration also changes (`defs.live_data_refused`; objects a law-only change breaks are held back with findings instead), the live data cannot be migrated, or the cell has no definitions.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5955,6 +5955,8 @@
           "same",
           "newObjectTypes",
           "checkedObjects",
+          "heldBackObjects",
+          "heldBack",
           "diagnostics",
           "receiptSha256"
         ],
@@ -5991,6 +5993,19 @@
               "$ref": "#/components/schemas/RefusalDiagnostic"
             },
             "description": "The checker's non-blocking findings and live-data warnings."
+          },
+          "heldBack": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HeldBackObject"
+            },
+            "description": "Up to [`HELD_BACK_SAMPLE`] of them: which object, and which law with\nthe values it compared."
+          },
+          "heldBackObjects": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Stored objects the candidate laws break, which apply holds back with\nfindings (#1360).",
+            "minimum": 0
           },
           "newObjectTypes": {
             "type": "array",
@@ -6069,6 +6084,34 @@
           "version": {
             "type": "string",
             "description": "The flow's authored version."
+          }
+        }
+      },
+      "HeldBackObject": {
+        "type": "object",
+        "description": "A stored object the candidate laws break.",
+        "required": [
+          "objectType",
+          "id",
+          "law",
+          "values"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The object id."
+          },
+          "law": {
+            "type": "string",
+            "description": "The law it breaks."
+          },
+          "objectType": {
+            "type": "string",
+            "description": "The object type."
+          },
+          "values": {
+            "type": "object",
+            "description": "The stored values the law compared, by path."
           }
         }
       },

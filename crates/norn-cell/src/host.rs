@@ -472,6 +472,108 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
         Ok(installed)
     }
 
+    /// #1360: hold back the stored objects the active laws break, each with
+    /// its open `findings` (one subject each), in one commit: an install
+    /// that adds or tightens a law calls this right after it, under the same
+    /// definitions write epoch. A finding is proven against its subject's
+    /// snapshot under the active model, so an object whose current snapshot
+    /// was written under another model is re-emitted unchanged in this commit
+    /// first. Read paths then serve the object as quarantined, and a later
+    /// write that satisfies the law resolves its finding. `Ok(0)` when no
+    /// finding names a live object.
+    ///
+    /// # Errors
+    /// A finding that names more than one subject, or a store error.
+    pub fn hold_back(
+        &mut self,
+        findings: &[norn_ir::DataQualityFinding],
+        logical_time: u64,
+    ) -> Result<usize, CellError> {
+        let model_hash = self.store.model().model_hash().to_owned();
+        let mut writes = Vec::new();
+        let mut events = Vec::new();
+        let mut rewritten = std::collections::BTreeSet::new();
+        let mut held = std::collections::BTreeSet::new();
+        for finding in findings {
+            let [subject] = finding.subjects.as_slice() else {
+                return Err(CellError::Engine(
+                    "a held-back finding names exactly one subject".to_owned(),
+                ));
+            };
+            let reader = self.store.read();
+            let Some(record) = reader.object(
+                crate::MAIN_WORLD,
+                subject.object_type.as_str(),
+                &subject.key,
+            )?
+            else {
+                continue;
+            };
+            let current = reader.snapshot_model_hash(
+                crate::MAIN_WORLD,
+                &record.object_type,
+                &record.id,
+                record.version,
+            )?;
+            if current.as_deref() != Some(model_hash.as_str())
+                && rewritten.insert((record.object_type.clone(), record.id.clone()))
+            {
+                writes.push(crate::store::FactWriteRow::Put {
+                    object_type: record.object_type.clone(),
+                    key: record.id.clone(),
+                    values: record.values.clone(),
+                });
+            }
+            held.insert((record.object_type.clone(), record.id.clone()));
+            events.push(norn_ir::runtime_object! {
+                "op" => "data_quality_finding",
+                "fact" => norn_ir::runtime::encode(finding).map_err(CellError::Encoding)?,
+            });
+        }
+        let Some(first) = findings.first() else {
+            return Ok(0);
+        };
+        if events.is_empty() {
+            return Ok(0);
+        }
+        // The re-check's own typed preimage: the commit consumes it, so the
+        // findings' recorded times are proven producer data, as an import's
+        // are by its observation (OBS-EVIDENCE-1), never free event text.
+        let ids: Vec<&str> = findings.iter().map(|finding| finding.id.as_str()).collect();
+        let digest = norn_ir::canonical::domain_hash_hex(b"norn.definitions.recheck.v1\0", &ids)
+            .map_err(|error| CellError::Engine(error.to_string()))?;
+        let id = format!("definitions-recheck:{digest}");
+        let observed = norn_kernel::Observed {
+            id: norn_kernel::ObservationId(id.clone()),
+            provenance: norn_kernel::Provenance {
+                source: "norn.cell".to_owned(),
+                source_id: id.clone(),
+                mapping_version: "definitions-recheck/1".to_owned(),
+                observed_at: LogicalTime::from_millis(logical_time),
+            },
+            input: norn_ir::runtime_object! {
+                "contract" => "norn.definitions_recheck/v1",
+                "definitionsVersion" => self.store.read().active_definitions_version()?.unwrap_or(0),
+                "recordedAt" => first.first_seen.0.clone(),
+                "findings" => u64::try_from(findings.len()).unwrap_or(u64::MAX),
+            },
+        };
+        self.store.inject(
+            &id,
+            &norn_ir::runtime::encode(&observed).map_err(CellError::Encoding)?,
+        )?;
+        self.store.commit(&crate::store::CommitBatch {
+            world: crate::MAIN_WORLD.to_owned(),
+            scope: self.scope.clone(),
+            logical_time,
+            consumes: Some(Consumption::Observation { observation_id: id }),
+            writes,
+            events,
+            ..crate::store::CommitBatch::default()
+        })?;
+        Ok(held.len())
+    }
+
     /// Install one retained (non-kernel) definition revision through the
     /// governed definitions install; see [`CellStore::install_retained_definition`].
     ///

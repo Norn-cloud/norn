@@ -298,6 +298,25 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         Ok(model)
     }
 
+    /// #1360: the definition model the proven snapshot of `object_type`
+    /// `key` at `version` was written under; `None` without a proven one.
+    ///
+    /// # Errors
+    /// A SQL-engine error.
+    pub(crate) fn snapshot_model_hash(
+        &self,
+        world: &str,
+        object_type: &str,
+        key: &str,
+        version: u64,
+    ) -> Result<Option<String>, CellError> {
+        match self.proven_snapshot(world, object_type, key, version) {
+            Ok(snapshot) => Ok(Some(snapshot.model_hash)),
+            Err(CellError::HistoricalValueUnproven(_)) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
     fn proven_snapshot(
         &self,
         world: &str,

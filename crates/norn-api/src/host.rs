@@ -454,13 +454,17 @@ impl<E: SqlEngine> DevHost<E> {
         input: InstalledDefinitionInput,
         expected_version: Option<u64>,
     ) -> Result<InstalledDefinitionSet, Refusal> {
-        self.install_definitions_checked(candidate_model, input, expected_version, |_| Ok(()))
+        self.install_definitions_checked(candidate_model, input, expected_version, |_| {
+            Ok(Vec::new())
+        })
     }
 
     /// [`Self::install_definitions`], with `check` run on the cell's store
     /// under the same exclusive epoch, before anything is written: what it
     /// reads cannot change before the install commits, and its refusal
-    /// installs nothing.
+    /// installs nothing. The findings it returns (#1360: stored objects the
+    /// installed laws break) are held back right after the install, under
+    /// the same epoch, before any request sees the new revision.
     /// # Errors
     /// `check`'s refusal, or as [`Self::install_definitions`].
     pub fn install_definitions_checked(
@@ -468,11 +472,11 @@ impl<E: SqlEngine> DevHost<E> {
         candidate_model: Model,
         input: InstalledDefinitionInput,
         expected_version: Option<u64>,
-        check: impl FnOnce(&CellStore<E>) -> Result<(), Refusal>,
+        check: impl FnOnce(&CellStore<E>) -> Result<Vec<norn_ir::DataQualityFinding>, Refusal>,
     ) -> Result<InstalledDefinitionSet, Refusal> {
         let _epoch = self.definition_write()?;
         let mut cell = self.cell()?;
-        check(cell.store())?;
+        let held = check(cell.store())?;
         check_reopens(
             &candidate_model,
             &input.canonical_set,
@@ -499,6 +503,10 @@ impl<E: SqlEngine> DevHost<E> {
                 }
                 Refusal::host(error)
             })?;
+        if !held.is_empty() {
+            cell.hold_back(&held, installed.installed_at)
+                .map_err(Refusal::host)?;
+        }
         self.model_changed(&cell);
         Ok(installed)
     }

@@ -96,7 +96,7 @@ export interface paths {
          *     The opaque 403; 400 for a body that is not a change or names a reserved
          *     or repeated artifact; 413 over the bound; 422 `defs.refused` with the
          *     checker's findings; 409 `defs.live_data_refused` with the stored objects
-         *     the candidate laws refuse, `defs.migration_refused`, or
+         *     the candidate laws break in a type whose declaration also changes, `defs.migration_refused`, or
          *     `defs.not_installed`.
          */
         post: operations["plan_cell_definitions"];
@@ -1503,6 +1503,17 @@ export interface components {
             checkedObjects: number;
             /** @description The checker's non-blocking findings and live-data warnings. */
             diagnostics: components["schemas"]["RefusalDiagnostic"][];
+            /**
+             * @description Up to [`HELD_BACK_SAMPLE`] of them: which object, and which law with
+             *     the values it compared.
+             */
+            heldBack: components["schemas"]["HeldBackObject"][];
+            /**
+             * Format: int64
+             * @description Stored objects the candidate laws break, which apply holds back with
+             *     findings (#1360).
+             */
+            heldBackObjects: number;
             /** @description Object types the installed set would serve that the active one does not. */
             newObjectTypes: string[];
             /**
@@ -1537,6 +1548,17 @@ export interface components {
             title?: string | null;
             /** @description The flow's authored version. */
             version: string;
+        };
+        /** @description A stored object the candidate laws break. */
+        HeldBackObject: {
+            /** @description The object id. */
+            id: string;
+            /** @description The law it breaks. */
+            law: string;
+            /** @description The object type. */
+            objectType: string;
+            /** @description The stored values the law compared, by path. */
+            values: Record<string, never>;
         };
         /** @description `POST /v1/definitions:install`. */
         InstallDefinitionRequest: {
@@ -13052,7 +13074,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
-            /** @description The request was refused: the definitions changed since the plan (`defs.stale`), stored objects break the candidate laws (`defs.live_data_refused`), or the live data cannot be migrated. */
+            /** @description The request was refused: the definitions changed since the plan (`defs.stale`), stored objects break the candidate laws of a type whose declaration also changes (`defs.live_data_refused`; objects a law-only change breaks are held back with findings instead), or the live data cannot be migrated. */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -13135,7 +13157,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
-            /** @description The request was refused: stored objects break the candidate laws (`defs.live_data_refused`), the live data cannot be migrated, or the cell has no definitions. */
+            /** @description The request was refused: stored objects break the candidate laws of a type whose declaration also changes (`defs.live_data_refused`; objects a law-only change breaks are held back with findings instead), the live data cannot be migrated, or the cell has no definitions. */
             409: {
                 headers: {
                     [name: string]: unknown;

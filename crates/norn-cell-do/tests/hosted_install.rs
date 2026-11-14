@@ -7,8 +7,9 @@
 //! a member may not apply; the owner's plan names the new type; an admin's
 //! apply installs it as the next revision with a receipt; a melt that loses
 //! metal is refused and a correct one accepted; a restart reopens the cell at
-//! the applied revision; and a law change the stored melts break is held back
-//! with findings naming them.
+//! the applied revision; and a law change the stored melt breaks installs with
+//! the melt held back under a finding naming the law and its values (#1360),
+//! across a restart, until a correction releases it.
 //!
 //! These pin decisions of the server's permission and admission system that
 //! no existing property covers (D79).
@@ -43,6 +44,7 @@ const HANDLE_KEY: [u8; 32] = [7; 32];
 const QUERY: &str = "orgId=org_a&environmentId=prod";
 const MELT: &str = "jewelry.Melt";
 const RECORD: &str = "jewelry.melt.record";
+const LAW: &str = "jewelry.melt.fine_mass_conserved";
 const RECORDED: &str =
     include_str!("../../../fixtures/demo/explorer/three-systems.definitions.json");
 const JEWELRY: [&str; 4] = [
@@ -184,6 +186,39 @@ impl Cell {
         )
     }
 
+    /// The melt `id`, held back: out of the page of melts, in the type's
+    /// quarantine, and served to an admin through its findings, open and
+    /// pinned to the law.
+    fn held_back(&mut self, id: &str) {
+        let page = json_of(&self.melts());
+        assert_eq!(page["records"].as_array().map(Vec::len), Some(0), "{page}");
+        let quarantined = self.call(
+            "GET",
+            &format!("/v1/objects/{MELT}:quarantined"),
+            Some(&user("admin")),
+            "",
+        );
+        assert_eq!(quarantined.status, 200, "{}", quarantined.body);
+        let quarantined = json_of(&quarantined);
+        assert_eq!(quarantined["items"][0]["id"], id, "{quarantined}");
+        let findings = self.call(
+            "GET",
+            &format!("/v1/objects/{MELT}/{id}/findings"),
+            Some(&user("admin")),
+            "",
+        );
+        assert_eq!(findings.status, 200, "{}", findings.body);
+        let findings = json_of(&findings);
+        assert_eq!(findings["quarantined"], true, "{findings}");
+        let finding = &findings["findings"][0];
+        assert_eq!(finding["status"], "open", "{findings}");
+        assert_eq!(finding["ruleRef"]["lawId"], LAW, "{findings}");
+        assert!(
+            finding["values"].get("input_fine_g").is_some(),
+            "{findings}"
+        );
+    }
+
     fn melts(&mut self) -> Response {
         self.call(
             "GET",
@@ -319,34 +354,71 @@ fn a_pack_is_planned_and_applied_on_a_running_cell() {
     let lossy = cell.melt("m3", "50.000", "49.000", "0.000");
     assert!(lossy.status >= 400, "{}", lossy.body);
 
-    // HOST-INSTALL-LIVE-1: a law the stored melt breaks is held back, with a
-    // finding naming the melt; nothing changes.
+    // HOST-INSTALL-LIVE-1, #1360: a law the stored melt breaks installs, and
+    // the melt is held back with a finding naming the law and the values it
+    // compared, as an import holds a row back. The plan says so first.
     let stricter = with_law("self.input_fine_g == self.output_fine_g");
-    let held = cell.change(PLAN_PATH, Some("owner"), &stricter, None);
-    assert_eq!(held.status, 409, "{}", held.body);
-    let held = json_of(&held);
-    assert_eq!(held["code"], "defs.live_data_refused");
-    assert_eq!(
-        held["diagnostics"][0]["span"]["pointer"],
-        format!("/objects/{MELT}/m2"),
-        "{held}"
-    );
+    let planned = cell.change(PLAN_PATH, Some("owner"), &stricter, None);
+    assert_eq!(planned.status, 200, "{}", planned.body);
+    let plan = json_of(&planned);
+    assert_eq!(plan["heldBackObjects"], 1, "{plan}");
+    let sample = &plan["heldBack"][0];
+    assert_eq!(sample["objectType"], MELT, "{plan}");
+    assert_eq!(sample["id"], "m2", "{plan}");
+    assert_eq!(sample["law"], LAW, "{plan}");
+    assert!(sample["values"].get("input_fine_g").is_some(), "{plan}");
+    assert_eq!(cell.version(), base + 1, "a plan writes nothing");
+    for role in ["member", "viewer"] {
+        let response = cell.change(APPLY_PATH, Some(role), &stricter, Some(base + 1));
+        assert_eq!(response, denied, "{role}");
+    }
     let applied = cell.change(APPLY_PATH, Some("owner"), &stricter, Some(base + 1));
-    assert_eq!(json_of(&applied)["code"], "defs.live_data_refused");
-    assert_eq!(cell.version(), base + 1);
-    // A law the stored melt keeps installs, with the stored melt checked.
+    assert_eq!(applied.status, 200, "{}", applied.body);
+    let receipt = json_of(&applied);
+    assert_eq!(receipt["outcome"], "installed", "{receipt}");
+    assert_eq!(receipt["plan"]["heldBackObjects"], 1, "{receipt}");
+    assert_eq!(cell.version(), base + 2);
+    cell.held_back("m2");
+
+    // A restarted host reopens the cell with the melt still held back.
+    drop(cell);
+    let mut cell = Cell::opened(&path);
+    assert_eq!(cell.version(), base + 2);
+    cell.held_back("m2");
+
+    // A correction that keeps the law releases the melt and resolves its finding.
+    let body = json!({ "input": { "id": "m2", "metal": "gold", "input_fine_g": "98.000",
+        "output_fine_g": "98.000", "loss_fine_g": "0.000", "loss_reason": null },
+        "idempotencyKey": "m2-corrected" });
+    let corrected = cell.call(
+        "POST",
+        &format!("/v1/actions/{RECORD}"),
+        Some(&user("member")),
+        &body.to_string(),
+    );
+    assert_eq!(corrected.status, 200, "{}", corrected.body);
+    assert_eq!(
+        json_of(&cell.melts())["records"].as_array().map(Vec::len),
+        Some(1),
+        "released"
+    );
+    let findings = cell.call(
+        "GET",
+        &format!("/v1/objects/{MELT}/m2/findings"),
+        Some(&user("admin")),
+        "",
+    );
+    let findings = json_of(&findings);
+    assert_eq!(findings["quarantined"], false, "{findings}");
+    assert_eq!(findings["findings"][0]["status"], "resolved", "{findings}");
+
+    // A law the stored melts keep installs with nothing held back.
     let looser = with_law("self.input_fine_g >= self.output_fine_g + self.loss_fine_g");
-    let applied = cell.change(APPLY_PATH, Some("owner"), &looser, Some(base + 1));
+    let applied = cell.change(APPLY_PATH, Some("owner"), &looser, Some(base + 2));
     assert_eq!(applied.status, 200, "{}", applied.body);
     assert_eq!(json_of(&applied)["plan"]["checkedObjects"], 1);
-    assert_eq!(
-        json_of(&applied)["plan"]["changed"]
-            .as_array()
-            .unwrap()
-            .len(),
-        1
-    );
-    assert_eq!(cell.version(), base + 2);
+    assert_eq!(json_of(&applied)["plan"]["heldBackObjects"], 0);
+    assert_eq!(cell.version(), base + 3);
 }
 
 /// A reserved artifact or an empty change is refused before admission.
