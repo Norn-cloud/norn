@@ -956,14 +956,17 @@ fn governed_call<E: SqlEngine>(
         environment_id: fields.remove("environmentId"),
         version,
     };
-    // No runtime, no actor: one denial, before the body is read.
-    let (Some(runtime), Some(_)) = (questions, actor) else {
+    // No actor or no cell: one denial, before the body is read.
+    let (Some(actor), Some(host)) = (actor, host) else {
         return Err(action_denied());
     };
-    let host = host.ok_or_else(action_denied)?;
     let action = percent_encoding::percent_decode_str(action)
         .decode_utf8()
         .map_err(|_invalid| Refusal::invalid("the action path segment is not UTF-8"))?;
+    let Some(runtime) = questions else {
+        return Err(without_receipt_handles(host, &query, actor, &action));
+    };
+    let actor = Some(actor);
     let request = decode_action_request(body)?;
     let now = norn_kernel::LogicalTime::from_millis(now.saturating_mul(1000));
     match call_action(host, &query, actor, &action, &request, named(runtime), now)? {
@@ -1497,6 +1500,46 @@ fn submission<T: serde::de::DeserializeOwned>(body: &str) -> Result<T, Refusal> 
 }
 
 /// The named-question view of the cell's question runtime.
+/// A governed call on a cell whose host keys no receipt handles (it was
+/// opened without the stage's lineage key, so no call can commit its
+/// receipt). A verified member of the cell calling an action its policy
+/// governs (the gate every call passes before the kernel decides it per
+/// target) is told so, typed and retryable once the operator sets the key: a
+/// host's configuration, not cell data. Anyone else, and any action the
+/// policy does not govern, gets the one opaque denial.
+fn without_receipt_handles<E: SqlEngine>(
+    host: &DevHost<E>,
+    query: &ActionQuery,
+    actor: &str,
+    action: &str,
+) -> Refusal {
+    let scope = ScopeQuery {
+        org_id: query.org_id.clone(),
+        environment_id: query.environment_id.clone(),
+    };
+    let callable = definition_routes::authorize(
+        host,
+        &scope,
+        Some(actor),
+        Operation::CallAction(action.to_owned()),
+    )
+    .is_ok();
+    if !callable {
+        return action_denied();
+    }
+    let mut refusal = Refusal::new(
+        StatusCode::SERVICE_UNAVAILABLE,
+        ACTION_RECEIPTS_UNCONFIGURED,
+        "this cell cannot commit governed actions now",
+        "the host has no lineage key to key the call's receipt; its operator sets NORN_LINEAGE_KEY",
+    );
+    refusal.retryable = true;
+    refusal
+}
+
+/// The code of [`without_receipt_handles`]: the host keys no receipt handles.
+pub const ACTION_RECEIPTS_UNCONFIGURED: &str = "action.receipts_unconfigured";
+
 fn named<E: SqlEngine>(runtime: &dyn AdHocQuestions<E>) -> &dyn QuestionRuntime<E> {
     runtime
 }

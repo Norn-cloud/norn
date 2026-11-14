@@ -12851,6 +12851,15 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
+            /** @description The request was refused (`action.receipts_unconfigured`, retryable): the host keys no receipt handles, so no call can commit. Told only to a verified member calling an action the scope's policy governs; anyone else gets the 403. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
         };
     };
     provision_cell: {
