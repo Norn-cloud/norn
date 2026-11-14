@@ -198,3 +198,46 @@ export const SetValuationPolicy = Norn.action({
   writes: [{ type: ValuationPolicy, change: "created" }, { type: ValuationPolicy, change: "modified" }],
   effect: { kind: "upsert_input_object", type: ValuationPolicy, objectIdField: "id" },
 })
+
+/**
+ * LAW-LINK-MANY-1 (#611): an itemized document (an invoice, a receipt, an
+ * order) and its lines. The concept owns the relation and the law that ties
+ * them; every type that implements it is bound by that one law, with no copy
+ * per type. The document reaches its lines through `lines`, which each
+ * implementer meets with the inverse role of its line type's link to it, so
+ * the sum is over the line objects in the model, never a field an import
+ * computed.
+ */
+export const ItemizedDocument = Norn.interfaceType({
+  name: "canon.ItemizedDocument", title: "Itemized document", version: "0.1.0",
+  description: "A document that states a total and lists the lines it is the sum of: an invoice, a receipt, an expense report or an order.",
+  properties: Schema.Struct({ currency: Schema.Literals(ISO_4217), total: Norn.decimal(2, { currency: "currency", additivity: { kind: "additive" } }) }),
+  links: [{ id: "lines", target: "canon.LineItem", cardinality: { to: "many", from: "one" } }],
+})
+export const LineItem = Norn.interfaceType({
+  name: "canon.LineItem", title: "Line item", version: "0.1.0",
+  description: "One line of an itemized document: the amount it adds to the document's total.",
+  properties: Schema.Struct({ currency: Schema.Literals(ISO_4217), amount: Norn.decimal(2, { currency: "currency", additivity: { kind: "additive" } }) }),
+  links: [{ id: "document", target: ItemizedDocument, cardinality: { to: "one", from: "many", required: true } }],
+})
+
+/**
+ * The law of the concept: a document that lists lines states their sum as
+ * its total. It is declared once, on `canon.ItemizedDocument`, and governs
+ * every implementer (LAW-INTERFACE-1); a specialization cannot drop or
+ * narrow it, since it is not the specialization's to declare. A document with
+ * no lines is not bound by it. Correcting a line re-checks its document.
+ */
+export const TotalMatchesLines = Norn.law({
+  id: "canon.ItemizedDocument.total_matches_lines.law", title: "An itemized document's total equals the sum of its lines", version: "0.1.0",
+  dependencies: [{ artifactId: "canon.ItemizedDocument.interface", kind: "entity", version: "0.1.0", required: true }],
+  law: {
+    lawVersion: "0.1", id: "canon.ItemizedDocument.total_matches_lines", owner: "canon",
+    severity: "error", rationale: "A document's total must equal the sum of its lines; when they differ, a digit was usually misread or a decimal point dropped.",
+    provenance: { source: "authoring_sdk", sourcePath: "registry/packs/canon/records.ts" },
+    subject: "canon.ItemizedDocument",
+    scope: { root: { kind: "entity", id: "canon.ItemizedDocument" }, objectTypes: ["canon.ItemizedDocument"] },
+    condition: "len(self.lines) > 0",
+    modality: { kind: "always" }, response: { kind: "predicate", expression: "self.total == sum(map(self.lines, #.amount))" },
+  },
+})

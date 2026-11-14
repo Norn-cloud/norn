@@ -93,7 +93,9 @@ pub use expression::{
     Evaluation, EvaluationAttempt, EvaluationBudget, Expression, UnaryTest, check_unary_syntax,
 };
 pub use literals::{FieldValue, ObjectLiteral, command_records, object_literals};
-pub use reads::{ExpressionReads, expression_read_paths, expression_reads};
+pub use reads::{
+    ExpressionReads, expression_element_paths, expression_read_paths, expression_reads,
+};
 pub use row_tree::{RowArithmetic, RowComparison, RowExpr, row_expression};
 pub use structural_sum::{StructuralSumEquality, structural_sum_equality};
 pub use value::{Number, Value};

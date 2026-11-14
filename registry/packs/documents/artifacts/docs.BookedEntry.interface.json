@@ -38,6 +38,9 @@
         {
           "id": "amount",
           "type": {
+            "additivity": {
+              "kind": "additive"
+            },
             "currencySource": {
               "links": [],
               "property": "currency"

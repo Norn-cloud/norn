@@ -4158,6 +4158,17 @@ export interface components {
             status: "open" | "acknowledged" | "resolved" | "superseded";
             /** @description Objects affected by the finding, sorted by type and key. */
             subjects: components["schemas"]["NornIrDataQualitySubject"][];
+            /**
+             * @description DIAG-REASON-1 / LAW-LINK-MANY-1: for a law finding, the stored values
+             *     the law compared, by path, as it read them: the subject's own
+             *     properties (`total`), a to-one target's (`ledger_entry.amount`), and
+             *     an inverse role's sources' as a list (`lines.amount`). Not part of the
+             *     identity: the subject version and `links` fix them. Empty for every
+             *     other finding, and then omitted.
+             */
+            values?: {
+                [key: string]: unknown;
+            };
         };
         /**
          * @description The lifecycle state of a data quality finding.
@@ -12983,6 +12994,15 @@ export interface operations {
             };
             /** @description The request was refused: host failure. */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused (`action.receipts_unconfigured`, retryable): the host keys no receipt handles, so no call can commit. Told only to a verified member calling an action the scope's policy governs; anyone else gets the 403. */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

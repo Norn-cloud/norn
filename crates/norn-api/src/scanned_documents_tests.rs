@@ -8,9 +8,11 @@
 //!
 //! - CAUGHT AT THE SOURCE: invoice INV-0042 prints lines 30.00 + 40.00 + 2.00,
 //!   but the seeded legacy-OCR import reads its total as 720. LAW A
-//!   (`docs.ScannedDocument.total_matches_lines`) records a finding pinned to
-//!   the law and quarantines the document; the raw read keeps the source truth,
-//!   and the evidence of where the total was read survives.
+//!   (`canon.ItemizedDocument.total_matches_lines`, the canon concept's law
+//!   the scanned document inherits) sums the line objects that link to the
+//!   document, records a finding pinned to the law and to each line it read,
+//!   and quarantines the document; the raw read keeps the source truth, and
+//!   the evidence of where the total was read survives.
 //! - SLIPPED THROUGH: expense report RPT-0117 prints no lines, so no law
 //!   applies, and its 72.0 read as 720 is admitted with field lineage.
 //! - CORRECTED: the governed correction patches the total, records the reason,
@@ -57,7 +59,8 @@ const EVIDENCE: &str = "docs.FieldEvidence";
 const CORRECT: &str = "docs.scanned_document.correct";
 const CORRECT_LINE: &str = "docs.document_line.correct";
 const LINE: &str = "docs.DocumentLine";
-const LAW: &str = "docs.ScannedDocument.total_matches_lines.law";
+const LAW: &str = "canon.ItemizedDocument.total_matches_lines.law";
+const LAW_ID: &str = "canon.ItemizedDocument.total_matches_lines";
 const LAW_B: &str = "docs.ScannedDocument.total_matches_ledger.law";
 const STEWARD: &str = "user:steward";
 const EXTRACTED_AT_MS: u64 = 1_793_620_800_000;
@@ -71,12 +74,15 @@ fn artifact(path: &str) -> Value {
 }
 
 /// The core artifacts the pack needs (the evidence interface, and the
-/// observed link claims mapped links record) and every artifact of the pack.
+/// observed link claims mapped links record), the canon itemized-document
+/// concept its documents implement, and every artifact of the pack.
 fn documents() -> Vec<Value> {
     let mut documents = vec![
         artifact("registry/core/artifacts/norn.SourceEvidence.interface.json"),
         artifact("registry/core/artifacts/norn.SourceDocument.interface.json"),
         artifact("registry/core/artifacts/norn.ObservedLinkClaim.entity.json"),
+        artifact("registry/packs/canon/artifacts/canon.ItemizedDocument.interface.json"),
+        artifact("registry/packs/canon/artifacts/canon.LineItem.interface.json"),
     ];
     let directory = root().join("registry/packs/documents/artifacts");
     let mut paths: Vec<_> = std::fs::read_dir(&directory)
@@ -99,6 +105,10 @@ fn documents() -> Vec<Value> {
         serde_json::from_str::<Value>(&std::fs::read_to_string(path).expect("artifact"))
             .expect("artifact JSON")
     }));
+    // The concept's law, after the types it governs.
+    documents.push(artifact(
+        "registry/packs/canon/artifacts/canon.ItemizedDocument.total_matches_lines.law.json",
+    ));
     documents
 }
 
@@ -494,6 +504,41 @@ fn text(record: &ObjectRecord, property: &str) -> String {
     }
 }
 
+/// LAW-LINK-MANY-1: INV-0042's finding under the concept's law read the three
+/// line objects that link to the document, each pinned at the exact version it
+/// read, and records the values it compared.
+fn sums_the_linked_lines(findings: &[norn_ir::DataQualityFinding]) {
+    let lines_law = findings
+        .iter()
+        .find(|finding| {
+            matches!(&finding.rule_ref, DataQualityRuleRef::Law { artifact_id, .. } if artifact_id == LAW)
+        })
+        .expect("the lines finding");
+    assert_eq!(
+        lines_law.links,
+        (1..=3)
+            .map(|n| {
+                let key = format!("SCAN-INV-0042~line-{n}");
+                (format!("lines/{key}"), FactRef::new(LINE, key, 1))
+            })
+            .collect::<BTreeMap<_, _>>(),
+        "{lines_law:#?}"
+    );
+    assert_eq!(
+        lines_law.values.get("lines.amount"),
+        Some(&RuntimeValue::Array(
+            [30_i64, 40, 2]
+                .map(|amount| RuntimeValue::Number(amount.into()))
+                .to_vec()
+        )),
+        "{lines_law:#?}"
+    );
+    assert_eq!(
+        lines_law.values.get("total"),
+        Some(&RuntimeValue::Number(720_i64.into()))
+    );
+}
+
 #[test]
 fn a_dropped_decimal_is_caught_at_the_source_with_its_evidence() {
     let store = loaded();
@@ -504,14 +549,16 @@ fn a_dropped_decimal_is_caught_at_the_source_with_its_evidence() {
         .expect("read")
         .expect("a consistent invoice is admitted");
     assert_eq!(text(&clean, "total"), "30.5");
-    assert_eq!(text(&clean, "lines_total"), "30.5");
 
     let caught = reader
         .object(MAIN_WORLD, DOCUMENT, "SCAN-INV-0042")
         .expect("read")
         .expect("raw reads keep the source truth");
     assert_eq!(text(&caught, "total"), "720");
-    assert_eq!(text(&caught, "lines_total"), "72");
+    assert!(
+        !caught.values.contains_key("lines_total"),
+        "no import-computed sum: the law reads the line objects"
+    );
     assert!(
         reader
             .observation_is_quarantined(MAIN_WORLD, &caught)
@@ -528,7 +575,8 @@ fn a_dropped_decimal_is_caught_at_the_source_with_its_evidence() {
         .observation_findings(MAIN_WORLD, DOCUMENT, "SCAN-INV-0042")
         .expect("findings");
     // 720 breaks both laws: its lines sum to 72 and its booked entry is 72.00.
-    assert_eq!(law_pins(&findings), [LAW_B, LAW], "{findings:#?}");
+    assert_eq!(law_pins(&findings), [LAW, LAW_B], "{findings:#?}");
+    sums_the_linked_lines(&findings);
     assert!(
         findings
             .iter()
@@ -607,7 +655,6 @@ fn a_slipped_value_is_admitted_with_field_lineage_and_corrected_by_a_governed_ac
             .expect("read")
             .expect("no law applies to a document without lines");
         assert_eq!(text(&record, "total"), "720");
-        assert_eq!(text(&record, "lines_total"), "null");
         let mut budget = DecodeBudget::new(&ReactiveLimits::from_profile(
             &norn_ir::ResourceLimitProfile::norn_limits_v1(),
         ));
@@ -886,8 +933,8 @@ fn a_correction_must_satisfy_the_law_and_then_releases_the_quarantine() {
 
 /// LAW-LINK-1 on a native write: INV-0043 printed one line of 72.00 and a
 /// total of 72.00, booked as JE-0043 (72.00); the import read 720 for both.
-/// The misread line is corrected on the line itself; its document's sum of
-/// lines (and total) is restated in the same commit.
+/// The misread line is corrected on the line itself (and the total in the
+/// same commit); the concept's law sums the lines as the commit leaves them.
 #[allow(
     clippy::too_many_lines,
     reason = "one scenario walks every refusal before the correction that commits"
@@ -914,11 +961,17 @@ fn corrections_under_the_ledger_law(host: &DevHost<NativeEngine>) {
         .reason
         .as_ref()
         .expect("a law refusal carries its reason");
-    assert_eq!(reason.law, "docs.ScannedDocument.total_matches_lines");
-    assert!(
-        reason.values.contains_key("total") && reason.values.contains_key("lines_total"),
+    assert_eq!(reason.law, LAW_ID);
+    // The operands are the document's total and every line amount the law
+    // summed, read from the line objects (LAW-LINK-MANY-1).
+    assert_eq!(
+        reason.values.get("lines.amount"),
+        Some(&RuntimeValue::Array(vec![RuntimeValue::Number(
+            720_i64.into()
+        )])),
         "{reason:?}"
     );
+    assert!(reason.values.contains_key("total"), "{reason:?}");
     // Fixing the line alone breaks LAW A the other way: the total still reads 720.
     let only_line = call(
         host,
@@ -986,14 +1039,12 @@ fn corrections_under_the_ledger_law(host: &DevHost<NativeEngine>) {
         .expect("findings");
     assert_eq!(law_pins(&findings), [LAW_B]);
     assert_eq!(findings[0].status, DataQualityFindingStatus::Resolved);
+
     let document = reader
         .authoritative_object(MAIN_WORLD, DOCUMENT, "SCAN-INV-0043")
         .expect("read")
         .expect("released from quarantine");
-    assert_eq!(
-        (text(&document, "total"), text(&document, "lines_total")),
-        ("72".to_owned(), "72".to_owned())
-    );
+    assert_eq!(text(&document, "total"), "72");
     let corrected = reader
         .object(MAIN_WORLD, LINE, "SCAN-INV-0043~line-1")
         .expect("read")
@@ -1097,6 +1148,92 @@ fn a_native_ledger_change_that_contradicts_a_booked_document_refuses() {
     });
     cell.commit(native)
         .expect("an entry whose document already disagrees stays writable");
+}
+
+/// A scanned document's valid time is its `issued_on`: its total is a flow,
+/// so the cell derives its sum by that date, and the metric names it as the
+/// type's time property (what Studio's History orders "valid time" by).
+#[test]
+fn a_scanned_document_takes_its_issue_date_as_its_valid_time() {
+    let artifacts: Vec<norn_ir::ArtifactEnvelope> = documents()
+        .into_iter()
+        .map(|value| serde_json::from_value(value).expect("envelope"))
+        .collect();
+    let space = norn_checker::metric::derive::derive_metric_space(
+        &artifacts,
+        &std::collections::BTreeSet::new(),
+        &norn_ir::LawRoot::Cell("org_demo/dev".to_owned()),
+    )
+    .expect("derived metric space");
+    let times: std::collections::BTreeSet<String> = space
+        .candidates()
+        .iter()
+        .filter_map(|candidate| {
+            let params = candidate
+                .definition
+                .type_params
+                .metric_aggregation_params
+                .as_ref()?;
+            (params.semantic_model.as_str() == DOCUMENT)
+                .then(|| crate::question_routes::metric_summary(&candidate.definition, Vec::new()))
+                .and_then(|summary| summary.time_property)
+        })
+        .collect();
+    assert_eq!(
+        times,
+        std::collections::BTreeSet::from(["issued_on".to_owned()])
+    );
+}
+
+/// LAW-LINK-MANY-1: a native write of one line alone re-checks the document it
+/// belongs to. The concept's law sums the document's lines as the commit
+/// leaves them, so a change that breaks the total refuses atomically, naming
+/// the law, and one that keeps the amount commits.
+#[test]
+fn a_line_change_rechecks_its_document() {
+    use norn_kernel::{CellCommit, CellHost, FactKey, FactMutation, FactVersion, FactWrite};
+    let mut cell: SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, NativeEngine> =
+        SqliteCell::new(loaded(), "org_demo/dev", |_| BTreeMap::new()).expect("cell");
+    let key = FactKey::new(LINE, "SCAN-INV-0041~line-1");
+    let (values, version) = {
+        let reader = cell.store().read();
+        let record = reader
+            .object(MAIN_WORLD, LINE, &key.key)
+            .expect("read")
+            .expect("SCAN-INV-0041's first line");
+        (record.values, record.version)
+    };
+    let change = |property: &str, value: &str| {
+        let mut values = values.clone();
+        values.insert(
+            property.into(),
+            RuntimeValue::from_json_text(value).expect("value"),
+        );
+        let mut native = CellCommit::empty();
+        native.writes.push(FactWrite {
+            key: key.clone(),
+            expected: FactVersion(version),
+            mutation: FactMutation::Put { values },
+        });
+        native
+    };
+    let refusal = cell
+        .commit(change("amount", "99.00"))
+        .expect_err("SCAN-INV-0041's total is 30.50");
+    assert_eq!(refusal.code(), "core.laws.violated", "{refusal:?}");
+    assert!(format!("{refusal:?}").contains(LAW_ID), "{refusal:?}");
+    assert_eq!(
+        cell.store()
+            .read()
+            .object(MAIN_WORLD, LINE, &key.key)
+            .expect("read")
+            .expect("line")
+            .version,
+        version,
+        "nothing is written"
+    );
+    cell.commit(change("description", "\"Re-read line\""))
+        .expect("a change that keeps the amount commits");
 }
 
 /// A later observation of `record` (a source re-export), as version `version`.
@@ -1231,5 +1368,5 @@ fn a_page_load_catches_the_dropped_decimal_too() {
     let findings = reader
         .observation_findings(MAIN_WORLD, DOCUMENT, "SCAN-INV-0042")
         .expect("findings");
-    assert_eq!(law_pins(&findings), [LAW_B, LAW], "{findings:#?}");
+    assert_eq!(law_pins(&findings), [LAW, LAW_B], "{findings:#?}");
 }

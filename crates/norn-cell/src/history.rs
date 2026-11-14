@@ -2075,6 +2075,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         } else {
             canonical.with_links(finding.links.clone())?
         };
+        // DIAG-REASON-1: the compared values are proven by the same replay
+        // (`verify_finding_values` compares them), and are not identity.
+        let canonical = canonical.with_values(finding.values.clone());
         if canonical.id != finding.id || canonical.dedupe_key != finding.dedupe_key {
             return Ok(None);
         }

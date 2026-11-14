@@ -27,7 +27,8 @@ import { Findings } from "./evidence/findings.tsx"
 import { History } from "./evidence/history.tsx"
 import { readFindings, readHistory, SOURCE_DOCUMENT, type Evidence, type EvidenceRef, type Finding } from "./evidence/review.ts"
 import { useEvidenceActions } from "./actions/evidence-actions.tsx"
-import { exactPretty, factDisplay, readProblem, recordName } from "./lib/objects.ts"
+import { atScale, exactPretty, factDisplay, readProblem, recordName } from "./lib/objects.ts"
+import { compared, isList, roleOf } from "./lib/law-values.ts"
 import { stamp } from "./lib/format.ts"
 import { transport, type ObjectReads, type SourceLineage } from "./lib/transport.ts"
 import { countText, keyFacts, linkGroups, type CountedLinkPage, type LinkGroup } from "./lib/record-page.ts"
@@ -186,19 +187,33 @@ function AsOf({ objectType, id, version, live }: { readonly objectType: string; 
 function Broken({ concept, reads, finding, heldBack }: { readonly concept: Concept; readonly reads: ObjectReads; readonly finding: Finding; readonly heldBack: boolean }) {
   const { view } = useView()
   const law = finding.ruleRef.kind === "law" ? concept.laws.find(({ id }) => id === (finding.ruleRef as { lawId: string }).lawId) : undefined
-  const fields = law?.compares?.map((id) => concept.fields.find((field) => field.id === id))
-  const pair = fields?.every((field) => field !== undefined) ? fields as readonly Concept["fields"][number][] : undefined
+  const fieldOf = (id: string) => concept.fields.find((field) => field.id === id)
   const label = (field: Concept["fields"][number]) => field.label ?? field.id.replaceAll("_", " ")
-  const value = (field: Concept["fields"][number]) => factDisplay(field, reads.object.document, reads.object.numbers, "", view)
+  // The values the law read, as the finding records them (DIAG-REASON-1); a list is every line it summed.
+  const read = finding.values
+  const scale = law?.compares ? fieldOf(law.compares[0])?.decimal?.scale : undefined
+  const fromRead = law?.compares && read && law.compares.every((path) => Object.hasOwn(read, path))
+    ? law.compares.map((path) => {
+      const field = fieldOf(path)
+      const value = compared(read[path])
+      return { key: path, label: field ? label(field) : isList(read[path]) ? `Sum of ${roleOf(path).replaceAll("_", " ")}` : path.replaceAll(".", " ").replaceAll("_", " "),
+        text: atScale(value.text, field?.decimal?.scale ?? scale), parts: value.parts?.map((part) => atScale(part, scale)) }
+    })
+    : undefined
+  const fields = law?.compares?.map(fieldOf)
+  const pair = fromRead ?? (fields?.every((field) => field !== undefined)
+    ? (fields as readonly Concept["fields"][number][]).map((field) => ({ key: field.id, label: label(field), text: factDisplay(field, reads.object.document, reads.object.numbers, "", view), parts: undefined }))
+    : undefined)
   return (
     <section aria-label="The rule this record breaks" className="rounded-2xl bg-card p-6 shadow-[var(--elevation-1)] ring-1 ring-foreground/5 sm:px-7">
       {pair ? (
         <div className="grid items-center gap-4 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:gap-6">
-          {pair.map((field, index) => <Fragment key={field.id}>
+          {pair.map((side, index) => <Fragment key={side.key}>
             {index === 1 && <span aria-label="does not equal" className="flex size-11 items-center justify-center rounded-full bg-tone-red/12 text-xl text-tone-red">≠</span>}
             <div className="min-w-0">
-              <div className="text-meta text-muted-foreground">{label(field)}</div>
-              <div className={cn("truncate pt-2 text-[2.75rem] leading-none font-light tracking-[-0.045em] tabular-nums sm:text-[3.25rem]", index === 0 && "text-tone-red")}>{value(field)}</div>
+              <div className="text-meta text-muted-foreground">{side.label}</div>
+              <div className={cn("truncate pt-2 text-[2.75rem] leading-none font-light tracking-[-0.045em] tabular-nums sm:text-[3.25rem]", index === 0 && "text-tone-red")}>{side.text}</div>
+              {side.parts && side.parts.length > 1 && <div className="truncate pt-1.5 text-meta text-muted-foreground tabular-nums" aria-label="The lines it summed">{side.parts.join(" + ")}</div>}
             </div>
           </Fragment>)}
         </div>

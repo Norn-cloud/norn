@@ -801,6 +801,142 @@ impl<E, C, T, V: CommitView + ?Sized> crate::governing_laws::LinkTargets
             values,
         }))
     }
+
+    fn sources(
+        &mut self,
+        role: &str,
+        source: &ObjectTypeName,
+        link: &str,
+    ) -> Result<Vec<crate::governing_laws::LinkedTarget>, crate::governing_laws::LawEvaluationError>
+    {
+        let unreadable = || {
+            crate::governing_laws::LawEvaluationError::Unsupported(format!(
+                "LAW-LINK-MANY-1: the sources of {role} cannot be read"
+            ))
+        };
+        let (commit, model, view) = (self.commit, self.model, self.view);
+        let resolved = (|| -> Result<Vec<ResolvedTarget>, CommitError<V::Error>> {
+            let mut found = Vec::new();
+            for key in links_after_commit(commit, model, view, &self.subject)? {
+                if key.target != self.subject || key.link != link {
+                    continue;
+                }
+                let concrete = view
+                    .concrete(&key.source)
+                    .map_err(CommitError::Host)?
+                    .unwrap_or_else(|| key.source.object_type.clone());
+                if !model.is_a(&concrete, source) {
+                    continue;
+                }
+                if found.len() >= MAX_LINK_LAW_SUBJECTS {
+                    return Err(CommitError::Law {
+                        key: self.subject.clone(),
+                        reason: crate::governing_laws::LawEvaluationError::LinkFanOutExceeded {
+                            target: format!(
+                                "{}/{}",
+                                self.subject.object_type.as_str(),
+                                self.subject.key
+                            ),
+                            limit: MAX_LINK_LAW_SUBJECTS,
+                        },
+                    });
+                }
+                let Some(values) = values_after_commit(commit, model, view, &key.source)? else {
+                    return Err(CommitError::Law {
+                        key: key.source,
+                        reason: unreadable(),
+                    });
+                };
+                let version = match commit
+                    .writes
+                    .iter()
+                    .rev()
+                    .find(|write| model.canonical(&write.key) == key.source)
+                {
+                    Some(write) => write.expected.0.saturating_add(1),
+                    None => view.version(&key.source).map_err(CommitError::Host)?.0,
+                };
+                found.push((
+                    FactKey::new(concrete.as_str(), key.source.key),
+                    version,
+                    values,
+                ));
+            }
+            Ok(found)
+        })();
+        match resolved {
+            Ok(found) => Ok(found
+                .into_iter()
+                .map(
+                    |(key, version, values)| crate::governing_laws::LinkedTarget {
+                        key,
+                        version,
+                        values,
+                    },
+                )
+                .collect()),
+            Err(CommitError::Host(error)) => {
+                self.host = Some(error);
+                Err(unreadable())
+            }
+            Err(CommitError::Law { reason, .. }) => Err(reason),
+            Err(_) => Err(unreadable()),
+        }
+    }
+}
+
+/// LAW-LINK-MANY-1: the subjects whose governing law reads, through an
+/// inverse role, the object `source` (of concrete type `concrete`): the
+/// targets its forward link reaches before and after the commit, so a source
+/// that moves re-checks both the subject it leaves and the one it joins.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the forward and inverse re-checks share one call site and its inputs"
+)]
+fn inverse_subjects<E, C, T, V: CommitView + ?Sized>(
+    commit: &CellCommit<E, C, T>,
+    model: CommitModel<'_, '_>,
+    view: &V,
+    index: &crate::governing_laws::LinkLawIndex,
+    source: &FactKey,
+    concrete: &ObjectTypeName,
+    skip: &BTreeSet<FactKey>,
+    out: &mut BTreeSet<FactKey>,
+) -> Result<(), CommitError<V::Error>> {
+    let readers: Vec<_> = index
+        .inverse
+        .iter()
+        .filter(|(_, declared, _)| model.is_a(concrete, declared))
+        .collect();
+    if readers.is_empty() {
+        return Ok(());
+    }
+    let before: BTreeSet<LinkKey> = view
+        .links_of(source)
+        .map_err(CommitError::Host)?
+        .iter()
+        .map(|link| model.canonical_link(link))
+        .collect();
+    let after = links_after_commit(commit, model, view, source)?;
+    for link in before.union(&after) {
+        if link.source != *source || skip.contains(&link.target) {
+            continue;
+        }
+        let subject = view
+            .concrete(&link.target)
+            .map_err(CommitError::Host)?
+            .map_or_else(
+                || link.target.clone(),
+                |ty| FactKey::new(ty.as_str(), link.target.key.clone()),
+            );
+        if readers
+            .iter()
+            .any(|(reader, _, id)| *id == link.link && model.is_a(&subject.object_type, reader))
+        {
+            out.insert(subject);
+        }
+    }
+    Ok(())
 }
 
 /// LAW-LINK-1: the live subjects whose governing law reads a link to the
@@ -811,7 +947,7 @@ pub(crate) fn linked_subjects<E, C, T, V: CommitView + ?Sized>(
     commit: &CellCommit<E, C, T>,
     model: CommitModel<'_, '_>,
     view: &V,
-    index: &[(ObjectTypeName, String, ObjectTypeName)],
+    index: &crate::governing_laws::LinkLawIndex,
     written: &FactKey,
     skip: &BTreeSet<FactKey>,
     out: &mut BTreeSet<FactKey>,
@@ -821,7 +957,9 @@ pub(crate) fn linked_subjects<E, C, T, V: CommitView + ?Sized>(
         .concrete(&target)
         .map_err(CommitError::Host)?
         .unwrap_or_else(|| written.object_type.clone());
+    inverse_subjects(commit, model, view, index, &target, &concrete, skip, out)?;
     let readers: Vec<_> = index
+        .forward
         .iter()
         .filter(|(_, _, declared)| {
             crate::governing_laws::reaches(model.catalog, &concrete, declared)
@@ -944,6 +1082,7 @@ fn check_governing_laws<E, C, T, V: CommitView + ?Sized>(
                 |ty| FactKey::new(ty.as_str(), key.source.key.clone()),
             );
         if index
+            .forward
             .iter()
             .any(|(subject, link, _)| *link == key.link && model.is_a(&source.object_type, subject))
         {
@@ -951,6 +1090,32 @@ fn check_governing_laws<E, C, T, V: CommitView + ?Sized>(
         }
     }
     let mut of_targets = BTreeSet::new();
+    // LAW-LINK-MANY-1: a source whose link is added or removed (a line moved,
+    // added to or deleted from its document) re-checks the subject it links.
+    for write in &commit.links {
+        let key = model.canonical_link(&write.key);
+        if checked.contains(&key.target) {
+            continue;
+        }
+        let source = view
+            .concrete(&key.source)
+            .map_err(CommitError::Host)?
+            .unwrap_or_else(|| key.source.object_type.clone());
+        let subject = view
+            .concrete(&key.target)
+            .map_err(CommitError::Host)?
+            .map_or_else(
+                || key.target.clone(),
+                |ty| FactKey::new(ty.as_str(), key.target.key.clone()),
+            );
+        if index.inverse.iter().any(|(reader, declared, link)| {
+            *link == key.link
+                && model.is_a(&source, declared)
+                && model.is_a(&subject.object_type, reader)
+        }) {
+            of_targets.insert(subject);
+        }
+    }
     for write in &commit.writes {
         if matches!(write.mutation, FactMutation::Put { .. }) {
             linked_subjects(
@@ -985,6 +1150,14 @@ fn check_governing_laws<E, C, T, V: CommitView + ?Sized>(
     // freeze its target.
     let before = CellCommit::<E, C, T>::empty();
     for subject in of_targets.difference(&relinked) {
+        // A subject this commit deletes has no law left to hold.
+        let canonical = model.canonical(subject);
+        if commit.writes.iter().any(|write| {
+            matches!(write.mutation, FactMutation::Delete)
+                && model.canonical(&write.key) == canonical
+        }) {
+            continue;
+        }
         let values = values_after_commit(commit, model, view, subject)?
             .ok_or_else(|| unreadable(subject))?;
         let after = evaluate(commit, subject, &values, &mut remaining)?;
