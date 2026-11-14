@@ -489,3 +489,189 @@ fn an_unknown_or_malformed_predictions_type_is_refused() {
         one("model.validation.invalid_payload")
     );
 }
+
+#[test]
+fn the_payload_version_is_the_envelope_version() {
+    // The envelope is at 1.0.0; a payload at another version is refused.
+    let payload = with("/version", json!("1.1.0"));
+    assert_eq!(local_codes(&payload), BTreeSet::new());
+    assert_eq!(
+        model_findings(&[account(), customer(), model(&payload)], &[]),
+        at("model.validation.invalid_payload", "/payload/version")
+    );
+}
+
+#[test]
+fn a_nullable_subject_or_model_version_is_refused() {
+    for id in ["subject", "model_version"] {
+        let nullable =
+            json!({ "id": id, "type": { "kind": "text" }, "constraints": { "nullable": true } });
+        let prediction = churn_prediction(Some((id, nullable)));
+        assert_eq!(
+            model_findings(
+                &[
+                    account(),
+                    customer(),
+                    prediction,
+                    model(&with_predictions())
+                ],
+                &[]
+            ),
+            at(
+                "model.admission.prediction_type_mismatch",
+                "/payload/predictions/objectType"
+            ),
+            "{id}"
+        );
+    }
+}
+
+/// `artifact` with its envelope scope replaced by `scope`.
+fn scoped(mut artifact: ArtifactEnvelope, scope: &Value) -> ArtifactEnvelope {
+    artifact.scope = serde_json::from_value(scope.clone()).expect("scope");
+    artifact
+}
+
+/// The model's error findings as `(code, pointer)`, so a scenario names
+/// exactly where the model is refused.
+fn model_findings(
+    candidates: &[ArtifactEnvelope],
+    base: &[ArtifactEnvelope],
+) -> BTreeSet<(String, String)> {
+    check_artifact_set(
+        candidates,
+        &EntityArtifactSetContext {
+            registry: &BTreeSet::new(),
+            base,
+            tenant: None,
+        },
+    )
+    .into_iter()
+    .filter(|finding| {
+        finding.is_error() && finding.artifact_id.as_deref() == Some("sales.churn_model.model")
+    })
+    .map(|finding| {
+        (
+            finding.code.as_str().to_owned(),
+            finding.span.map(|span| span.pointer).unwrap_or_default(),
+        )
+    })
+    .collect()
+}
+
+fn at(code: &str, pointer: &str) -> BTreeSet<(String, String)> {
+    BTreeSet::from([(code.to_owned(), pointer.to_owned())])
+}
+
+const SCOPE_REFUSED: &str = "artifact_set.scope.incompatible_reference";
+
+/// The model's own scope in the scope scenarios: tenant A, workspace A.
+fn tenant_a() -> Value {
+    json!({ "tenantId": "tenant_a", "workspaceId": "ws_a" })
+}
+
+/// Types the model's scope cannot see: another tenant, another workspace of
+/// its tenant, and a narrower scope (a business unit the model leaves unset).
+fn invisible_scopes() -> [Value; 3] {
+    [
+        json!({ "tenantId": "tenant_b" }),
+        json!({ "tenantId": "tenant_a", "workspaceId": "ws_b" }),
+        json!({ "tenantId": "tenant_a", "workspaceId": "ws_a", "businessUnitId": "bu_x" }),
+    ]
+}
+
+/// Types the model's scope sees: its own scope, its tenant only, and global.
+fn visible_scopes() -> [Value; 3] {
+    [tenant_a(), json!({ "tenantId": "tenant_a" }), json!({})]
+}
+
+#[test]
+fn an_input_type_outside_the_models_scope_is_refused() {
+    let payload = churn_payload();
+    for scope in invisible_scopes() {
+        let input = scoped(customer(), &scope);
+        let model = scoped(model(&payload), &tenant_a());
+        // From the set and from the installed base alike.
+        assert_eq!(
+            model_findings(&[account(), input.clone(), model.clone()], &[]),
+            at(SCOPE_REFUSED, "/payload/input/objectType"),
+            "candidate {scope}"
+        );
+        assert_eq!(
+            model_findings(&[model], &[account(), input]),
+            at(SCOPE_REFUSED, "/payload/input/objectType"),
+            "installed {scope}"
+        );
+    }
+}
+
+#[test]
+fn a_predictions_type_outside_the_models_scope_is_refused() {
+    let payload = with_predictions();
+    for scope in invisible_scopes() {
+        let predictions = scoped(churn_prediction(None), &scope);
+        let model = scoped(model(&payload), &tenant_a());
+        assert_eq!(
+            model_findings(
+                &[account(), customer(), predictions.clone(), model.clone()],
+                &[]
+            ),
+            at(SCOPE_REFUSED, "/payload/predictions/objectType"),
+            "candidate {scope}"
+        );
+        assert_eq!(
+            model_findings(&[model], &[account(), customer(), predictions]),
+            at(SCOPE_REFUSED, "/payload/predictions/objectType"),
+            "installed {scope}"
+        );
+    }
+}
+
+#[test]
+fn types_of_the_models_own_or_a_broader_scope_are_admitted() {
+    let payload = with_predictions();
+    for scope in visible_scopes() {
+        let model = scoped(model(&payload), &tenant_a());
+        let input = scoped(customer(), &scope);
+        let predictions = scoped(churn_prediction(None), &scope);
+        assert_eq!(
+            model_findings(
+                &[account(), input.clone(), predictions.clone(), model.clone()],
+                &[]
+            ),
+            BTreeSet::new(),
+            "candidate {scope}"
+        );
+        assert_eq!(
+            model_findings(&[model], &[account(), input, predictions]),
+            BTreeSet::new(),
+            "installed {scope}"
+        );
+    }
+}
+
+#[test]
+fn a_type_name_defined_in_another_scope_too_fails_closed() {
+    // `sales.Customer` is defined twice: in the model's tenant as a
+    // candidate and in tenant B in the installed base. Whichever definition
+    // resolves, the model may not be admitted over one it cannot see.
+    let mut other = customer();
+    other.artifact_id = "sales.CustomerB.entity".into();
+    other.name = "CustomerB.entity".into();
+    let other = scoped(other, &json!({ "tenantId": "tenant_b" }));
+    let model = scoped(model(&churn_payload()), &tenant_a());
+    assert_eq!(
+        model_findings(
+            &[account(), scoped(customer(), &tenant_a()), model.clone()],
+            std::slice::from_ref(&other)
+        ),
+        at(SCOPE_REFUSED, "/payload/input/objectType")
+    );
+    assert_eq!(
+        model_findings(
+            &[account(), other, model],
+            &[scoped(customer(), &tenant_a())]
+        ),
+        at(SCOPE_REFUSED, "/payload/input/objectType")
+    );
+}
