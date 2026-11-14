@@ -93,10 +93,12 @@ test("facets that never arrive: the rail stops counting after its deadline, says
   await page.route("**/v1/objects/canon.Holding:facets**", (route) => held ? new Promise<void>(() => {}) : route.fallback())
   await page.goto("/objects/canon.Holding")
   await expect(page.getByText("30 records", { exact: true })).toBeVisible()
-  await expect(page.getByText("Counting values…")).toBeVisible()
-  await expect(page.getByText("Counts aren't available right now.")).toBeVisible({ timeout: 25_000 })
-  await expect(page.getByText("Counting values…")).toHaveCount(0)
+  // The rail renders twice (the side panel, and a disclosure for narrow screens); the side panel is read.
+  const side = page.locator("aside")
+  await expect(side.getByText("Counting values…")).toBeVisible()
+  await expect(side.getByText("Counts aren't available right now.")).toBeVisible({ timeout: 25_000 })
+  await expect(side.getByText("Counting values…")).toHaveCount(0)
   held = false
-  await page.getByRole("button", { name: "Count again" }).click()
+  await side.getByRole("button", { name: "Count again" }).click()
   await expect(rail(page)).toContainText("30 records, counted by the cell")
 })
