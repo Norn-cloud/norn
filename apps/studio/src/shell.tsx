@@ -5,7 +5,8 @@ import { MenuRadioGroup, MenuTrigger } from "@ui-sdk/react/menu"
 import { PopoverTitle, PopoverTrigger } from "@ui-sdk/react/popover"
 import { Toolbar, ToolbarButton, ToolbarLink } from "@ui-sdk/react/toolbar"
 import { Tree, TreeGroup, TreeItem, TreeItemIndicator, TreeItemLabel } from "@ui-sdk/react/tree"
-import { Bell, ChevronDown, ChevronRight, ChevronsLeft, CloudOff, Keyboard, LogOut, Plus, Search, SlidersHorizontal, type LucideIcon } from "lucide-react"
+import { AssistantPanel, AssistantProvider, useAssistant, type AssistantContent } from "@/assistant-slot"
+import { Bell, ChevronDown, ChevronRight, ChevronsLeft, CloudOff, Keyboard, LogOut, Plus, Search, SlidersHorizontal, Sparkles, type LucideIcon } from "lucide-react"
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react"
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "@/components/ui/breadcrumb"
 import { Button } from "@/components/ui/button"
@@ -102,7 +103,10 @@ function useOpenWorkspace() {
   return { live, open }
 }
 
-/** The scope switcher: the open workspace, and the others with whether Studio has recorded documents for them. */
+/** A workspace entry that does something here: published results, or the recording while no cell is connected. */
+const real = (workspace: (typeof WORKSPACES)[number], live: boolean) => workspace.results !== undefined || (workspace.recorded && !live)
+
+/** The scope switcher: the open workspace, and the others that open from here. */
 function ScopeSwitcher() {
   const { live, open } = useOpenWorkspace()
   return (
@@ -115,12 +119,18 @@ function ScopeSwitcher() {
         <ChevronDown aria-hidden className="size-3.5 shrink-0 self-start mt-0.5 transition-transform group-data-open/scope:rotate-180" />
       </MenuTrigger>
       <KitMenuContent align="start" className="w-72">
-        <MenuRadioGroup value={live ? "" : open?.id ?? ""}>
-          {WORKSPACE_GROUPS.map((group, index) => (
+        <MenuRadioGroup value={live ? "live" : open?.id ?? ""}>
+          {live && open && (
+            <KitMenuRadioItem value="live" className="flex-col items-start gap-0">
+              <span>{open.name}</span><span className="text-xs text-muted-foreground">{open.detail}</span>
+            </KitMenuRadioItem>
+          )}
+          {/* Only what opens: the recorded workspace and published results; nothing greyed out or "coming soon". */}
+          {WORKSPACE_GROUPS.filter((group) => WORKSPACES.some((workspace) => workspace.group === group && real(workspace, live))).map((group, index) => (
             <div key={group} role="none">
-              {index > 0 && <KitMenuSeparator />}
+              {(index > 0 || live) && <KitMenuSeparator />}
               <KitMenuLabel>{group}</KitMenuLabel>
-              {WORKSPACES.filter((workspace) => workspace.group === group).map((workspace) => workspace.results !== undefined
+              {WORKSPACES.filter((workspace) => workspace.group === group && real(workspace, live)).map((workspace) => workspace.results !== undefined
                 ? (
                   <KitMenuItem key={workspace.id} value={workspace.id} label={workspace.name} render={<a href={workspace.results} target="_blank" rel="noreferrer" />} className="flex-col items-start gap-0">
                     <span>{workspace.name}</span><span className="text-xs text-muted-foreground">{workspace.detail} · results ↗</span>
@@ -205,8 +215,21 @@ function RailLink({ section }: { readonly section: Section }) {
   )
 }
 
-/** The thin rail of applets: the mark, every section, then the viewer. */
-function Rail({ sections, account, onSignOut }: { readonly sections: readonly Section[]; readonly account: Account; readonly onSignOut: () => void }) {
+/** The rail's assistant button: opens the panel beside the page (also ⌘J). */
+function AssistantToggle({ title }: { readonly title: string }) {
+  const { open, toggle } = useAssistant()
+  return (
+    <Hint label={<>{title} <Keys className="opacity-70">⌘J</Keys></>}>
+      <ToolbarButton aria-label={title} aria-pressed={open} onClick={toggle}
+        className="flex size-9 items-center justify-center rounded-lg text-muted-foreground outline-none hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring aria-pressed:bg-background aria-pressed:text-foreground aria-pressed:shadow-sm aria-pressed:ring-1 aria-pressed:ring-border [&_svg]:size-[1.15rem]">
+        <Sparkles aria-hidden />
+      </ToolbarButton>
+    </Hint>
+  )
+}
+
+/** The thin rail of applets: the mark, every section, then the assistant and the viewer. */
+function Rail({ sections, account, onSignOut, assistant }: { readonly sections: readonly Section[]; readonly account: Account; readonly onSignOut: () => void; readonly assistant?: AssistantContent }) {
   const main = sections.filter(({ foot }) => foot !== true)
   const foot = sections.filter(({ foot }) => foot === true)
   const groups = [...new Set(main.map(({ group }) => group))]
@@ -223,6 +246,7 @@ function Rail({ sections, account, onSignOut }: { readonly sections: readonly Se
       ))}
       <div className="mt-auto flex flex-col items-center gap-2">
         {foot.map((section) => <RailLink key={section.path} section={section} />)}
+        {assistant && <AssistantToggle title={assistant.title} />}
         <AccountMenu account={account} onSignOut={onSignOut} />
       </div>
     </Toolbar>
@@ -445,8 +469,8 @@ function BarButtons({ tools }: { readonly tools?: ReactNode }) {
  * The app rail and the selected applet's sidebar (shadcn's sidebar-09 layout), the page in a
  * rounded card beside them, and the inspector docked on its right.
  */
-export function Shell(props: { readonly sections: readonly Section[]; readonly tools?: ReactNode; readonly account: Account; readonly onSignOut: () => void }) {
-  return <LocaleProvider><LocalizedShell {...props} /></LocaleProvider>
+export function Shell(props: { readonly sections: readonly Section[]; readonly tools?: ReactNode; readonly assistant?: AssistantContent; readonly account: Account; readonly onSignOut: () => void }) {
+  return <LocaleProvider><AssistantProvider><LocalizedShell {...props} /></AssistantProvider></LocaleProvider>
 }
 
 /**
@@ -472,7 +496,7 @@ function useHashScroll() {
 }
 
 /** The shell in the reader's direction: in Arabic the rail docks on the right. */
-function LocalizedShell({ sections, tools, account, onSignOut }: { readonly sections: readonly Section[]; readonly tools?: ReactNode; readonly account: Account; readonly onSignOut: () => void }) {
+function LocalizedShell({ sections, tools, assistant, account, onSignOut }: { readonly sections: readonly Section[]; readonly tools?: ReactNode; readonly assistant?: AssistantContent; readonly account: Account; readonly onSignOut: () => void }) {
   const { locale } = useLocale()
   const pathname = useRouterState({ select: (state) => state.location.pathname })
   const current = sectionOf(sections, pathname)
@@ -483,7 +507,7 @@ function LocalizedShell({ sections, tools, account, onSignOut }: { readonly sect
         <Sidebar collapsible="icon" variant="inset" side={directionOf(locale) === "rtl" ? "right" : "left"}
           className="overflow-hidden p-0! group-data-[collapsible=icon]:w-(--sidebar-width-icon)!">
           <div className="flex size-full min-w-0 flex-row bg-shell">
-          <Rail sections={sections} account={account} onSignOut={onSignOut} />
+          <Rail sections={sections} account={account} onSignOut={onSignOut} assistant={assistant} />
           <div className="flex min-w-0 flex-1 py-2 max-md:pe-2">
             <div className="flex min-w-0 flex-1 overflow-hidden rounded-2xl bg-sidebar ring-1 ring-sidebar-border">
               {current
@@ -507,6 +531,7 @@ function LocalizedShell({ sections, tools, account, onSignOut }: { readonly sect
             <div className="mx-auto w-full max-w-6xl px-4 py-6 md:px-8"><Outlet /></div>
           </div>
           <Inspector />
+          <AssistantPanel assistant={assistant} />
         </SidebarInset>
       </SidebarProvider>
     </TooltipProvider></InspectorProvider></ViewProvider>

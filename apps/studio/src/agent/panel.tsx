@@ -1,4 +1,5 @@
 import { Chat, useChat } from "@ai-sdk/react"
+import { useQuery } from "@tanstack/react-query"
 import { DefaultChatTransport, type UIMessage } from "ai"
 import { Check, LoaderCircle, Sparkles } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -272,6 +273,29 @@ export function AgentPanel({ state }: { readonly state: AgentState }) {
         </form>
         </fieldset>
       </div>
+    </div>
+  )
+}
+
+/**
+ * Whether this deployment serves the agent: asked once per page load and kept, so no page asks
+ * again. The shell offers the assistant only when it does.
+ */
+export function useAgentServed(): boolean {
+  return useQuery({ queryKey: ["agent-served"], queryFn: () => probeAgentRoute(), staleTime: Number.POSITIVE_INFINITY, retry: false }).data === true
+}
+
+/** The assistant as the shell's panel content (the slot owns opening and closing). */
+export function AgentAssistant() {
+  const state = useAgentState()
+  return (
+    <div className="flex h-full flex-col">
+      <div className="space-y-2 border-b px-4 py-3">
+        <p className="text-sm text-muted-foreground">Proposes changes to the Jewelry world's definitions: melts of gold scrap and the law that fine mass is conserved. The server's checker admits or refuses each one; nothing is installed.</p>
+        {/* The world the server's checker loads (worker/world.ts). */}
+        <Badge variant="outline" className="w-fit">World · Jewelry (synthetic)</Badge>
+      </div>
+      <AgentPanel state={state} />
     </div>
   )
 }

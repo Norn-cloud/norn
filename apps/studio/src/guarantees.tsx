@@ -210,12 +210,10 @@ function LiveLaws() {
       {governed.length > 0 && <StatStrip>
         <KpiTile icon={Scale} label="Laws in force" value={governed.reduce((sum, { laws, rules }) => sum + laws.length + rules.filter((rule) => !laws.some(({ rationale }) => rationale === rule)).length, 0)} sub={`over ${governed.length} ${governed.length === 1 ? "type" : "types"}`} />
         <KpiTile icon={ShieldCheck} label="Refuse a breaking write" value={governed.reduce((sum, { laws }) => sum + laws.filter(({ severity }) => severity === "error").length, 0)} sub="checked on every write" />
-        <KpiTile icon={CircleHelp} label="Model-checked" value="—" sub="not served by this cell yet" />
       </StatStrip>}
       <p className="flex items-start gap-2 text-meta text-muted-foreground"><ShieldCheck aria-hidden className="mt-0.5 size-3.5 shrink-0" />{ENFORCED}</p>
       {governed.map((concept) => <LawsPanel key={concept.name} concept={concept} enforced={false}
         label={<Link to="/sources/$concept" params={{ concept: concept.name }} className="underline-offset-4 hover:underline">{concept.title}</Link>} />)}
-      <p className="text-meta text-muted-foreground">Model-checked guarantees (bounded proofs over each law) are not served by this cell yet; the laws above are enforced on every write regardless.</p>
     </div>
   )
 }
@@ -224,7 +222,7 @@ export function GuaranteesPage() {
   const mode = useMode()
   if (mode.data?.kind === "live") return (
     <section className="space-y-5">
-      <PageHeader title="Rules" description="The laws this cell admitted, type by type. Try to break one: the cell refuses the change and names the law." />
+      <PageHeader title="Guarantees" description="The laws this cell admitted, type by type. Try to break one: the cell refuses the change and names the law." />
       <LiveLaws />
     </section>
   )

@@ -131,3 +131,13 @@ test("the rail shows the signed-in user's initials and never the recorded-demo p
   expect(initials("")).toBe("?")
   expect(initials("ada@example.com")).toBe("A")
 })
+
+test("an assistant mounts in the shell's panel, opened from the rail; a page can hand it a prompt", async () => {
+  const html = await at("/sources", () => <Shell sections={[sources]} assistant={{ title: "Assistant", content: <p>agent here</p> }} account={account} onSignOut={() => {}} />)
+  expect(html).toMatch(/<button[^>]*aria-label="Assistant"[^>]*aria-pressed="false"/)
+  expect(html).toMatch(/data-slot="assistant-panel"[^>]*hidden/)
+  expect(html).toContain("agent here")
+  const none = await at("/sources", () => <Shell sections={[sources]} account={account} onSignOut={() => {}} />)
+  expect(none).not.toContain('data-slot="assistant-panel"')
+  expect(none).not.toContain('aria-label="Assistant"')
+})

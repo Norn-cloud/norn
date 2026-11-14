@@ -9,6 +9,7 @@ import { readDocument, type Read } from "./exact.ts"
 import { readsOf } from "./objects.ts"
 import type { Artifact, Envelope, LinkPage, ObjectPage, ObjectRecord, SourceLineage, Transport } from "./transport.ts"
 import type { CountedLinkPage, LinkCounts } from "./record-page.ts"
+import { totalOf, type Total } from "./records-query.ts"
 
 /** A read this cell does not serve. While a cell is connected nothing recorded stands in for it. */
 export class NotServed extends Error {
@@ -31,7 +32,23 @@ function linkPage(read: Read<{ readonly objectType: string; readonly id: string;
 }
 
 /** Where Studio's documents come from: the connected cell, or the recording when no cell is connected. */
-export type Mode = { readonly kind: "live"; readonly catalog: Read<readonly Artifact[]> } | { readonly kind: "recorded" }
+export type Mode = { readonly kind: "live"; readonly catalog: Read<readonly Artifact[]>; readonly counts: ObjectCounts } | { readonly kind: "recorded" }
+
+/**
+ * Each object type's record count, as the cell counted it for this caller with the records list's own
+ * permissions. A type the caller may not list has no entry; the cell decides, and Studio only shows it.
+ */
+export type ObjectCounts = Readonly<Record<string, Total>>
+
+/** The catalog's `objectCounts`, keeping only well-formed counts. */
+export function countsOf(document: unknown): ObjectCounts {
+  const raw = (document as { objectCounts?: unknown } | null)?.objectCounts
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return {}
+  return Object.fromEntries(Object.entries(raw).flatMap(([objectType, total]) => {
+    const counted = totalOf({ total })
+    return counted ? [[objectType, counted] as const] : []
+  }))
+}
 
 /**
  * Decide once where documents come from. A workspace whose server reports a scope and whose cell
@@ -66,11 +83,11 @@ export async function readMode(fetcher: Fetch): Promise<Mode> {
   const artifacts = (parsed as { artifacts?: unknown } | null)?.artifacts
   if (!Array.isArray(artifacts)) throw new CellUnavailable(response.status, "The cell's definitions read carried no artifacts.")
   const read = readDocument<{ readonly artifacts: readonly Artifact[] }>(text, "live")
-  return { kind: "live", catalog: subRead(read, "/artifacts", read.document.artifacts) }
+  return { kind: "live", catalog: subRead(read, "/artifacts", read.document.artifacts), counts: countsOf(read.document) }
 }
 
 /** The live transport over one connected cell's routes. */
-export function liveTransport(catalog: Read<readonly Artifact[]>, fetcher: Fetch): Transport {
+export function liveTransport(catalog: Read<readonly Artifact[]>, fetcher: Fetch, counts: ObjectCounts = {}): Transport {
   const call = scopedHostFetch(fetcher, "/api/host", () => readStudioScope(fetcher))
   /** One read; `null` when the cell answers 404 (no such object, or none this principal may read). */
   const read = async <T,>(path: string): Promise<Read<T> | null> => {
@@ -87,6 +104,7 @@ export function liveTransport(catalog: Read<readonly Artifact[]>, fetcher: Fetch
   const objectPath = (objectType: string, id: string, leaf?: string) => `/v1/objects/${encodeURIComponent(objectType)}/${encodeURIComponent(id)}${leaf ? `/${leaf}` : ""}`
   return {
     catalog: async () => catalog,
+    objectCounts: async () => counts,
     definitions: async () => catalog.document.map((artifact, index) => subRead(catalog, `/${index}`, artifact as Envelope)),
     questionBoard: async () => { throw new NotServed("Saved questions are") },
     restatement: async () => { throw new NotServed("Restated answers are") },

@@ -38,7 +38,7 @@ use norn_api::question_routes::{
     evaluate_question, get_answer, get_numeric_trace, list_metrics, question_catalog, trace_ad_hoc,
 };
 use norn_api::refusal::Refusal;
-use norn_api::routes::{DefinitionsQuery, get_defs};
+use norn_api::routes::{DefinitionsQuery, get_defs_counted};
 use norn_api::scope::ScopeQuery;
 use norn_api::transform_routes::{
     CompileTransformRequest, TransformRowsParams, compile_transform, get_transform_plan,
@@ -719,7 +719,7 @@ fn route<E: SqlEngine>(
                 |target| transforms(cell(host)?, actor, target, (query, now)),
             ),
             (None, _) => definitions_query(query)
-                .and_then(|query| get_defs(cell(host)?, &query, actor))
+                .and_then(|query| get_defs_counted(cell(host)?, &query, actor, &CellObjectAccess))
                 .and_then(|document| document_json(&document)),
             (Some((name, "answer")), Some(runtime)) => parse(query, &["orgId", "environmentId"])
                 .and_then(|fields| {
