@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import importlib.util
 import json
 import re
 import shlex
@@ -44,6 +45,7 @@ def _sibling(name, directory=None):
 
 _verification_attestation = _sibling("verification_attestation", ROOT / "scripts")
 selector_is_declared = _verification_attestation.selector_is_declared
+strip_comments_and_strings = _verification_attestation.strip_comments_and_strings
 _proof_enrollment = _sibling("proof_enrollment", ROOT / "scripts")
 validate_enrollment = _proof_enrollment.validate
 coverage_manifest = _sibling("coverage_manifest", ROOT / "scripts")
@@ -178,7 +180,7 @@ SELECTOR_KINDS_BY_STATUS = {
     ("model", "executable_reference"): {"fixture", "test"},
     ("model", "exhaustive_bounded"): {"test"},
     ("model", "partial"): {"invariant", "fixture", "checker"},
-    ("proof", "implementation_proved"): {"theorem", "predicate"},
+    ("proof", "implementation_proved"): {"theorem", "predicate", "harness"},
     ("proof", "reference_proved"): {"theorem", "harness"},
     ("proof", "partial"): {"theorem", "predicate", "harness"},
 }
@@ -190,7 +192,7 @@ REQUIRED_SELECTOR_KINDS_BY_STATUS = {
     ("model", "bounded_model_checked"): {"invariant"},
     ("model", "exhaustive_bounded"): {"test"},
     ("proof", "reference_proved"): {"theorem"},
-    ("proof", "implementation_proved"): {"theorem", "predicate"},
+    ("proof", "implementation_proved"): {"predicate"},
 }
 
 
@@ -598,8 +600,11 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
     require(workflow.get("run-name") == "${{ github.event_name == 'pull_request' && github.event.action == 'ready_for_review' && format('READY {0} {1} {2}', github.event.pull_request.head.sha, github.event.pull_request.updated_at, github.sha) || github.event_name }}",
             "run name must attribute READY to the triggering event and head")
     jobs = workflow["jobs"]
-    require(set(jobs) == {"core", "plan", "test", "full", "trusted-policy"}, "workflow job inventory changed")
-    check_names = {"core": "core", "plan": "plan", "full": "full", "trusted-policy": "trusted-policy evaluation"}
+    require(set(jobs) == {"core", "plan", "test", "full", "trusted-policy",
+                          "implementation-receipts", "implementation-receipt-check"}, "workflow job inventory changed")
+    check_names = {"core": "core", "plan": "plan", "full": "full", "trusted-policy": "trusted-policy evaluation",
+                   "implementation-receipts": "implementation receipts",
+                   "implementation-receipt-check": "implementation receipt check"}
     require(all(jobs[name].get("name", name) == expected for name, expected in check_names.items()),
             "control and required check names must remain stable")
     require(not workflow.get("env"), "workflow must not inherit an execution environment")
@@ -658,6 +663,42 @@ await github.rest.repos.createCommitStatus({
         return any(key in step or key in job.get("defaults", {}).get("run", {})
                    or key in workflow.get("defaults", {}).get("run", {})
                    for key in ("shell", "working-directory"))
+    # D43, D47: receipt jobs run only base-owned code, from the trusted checkout,
+    # with the candidate checked out as data beside it. The producer compiles
+    # candidate code, so it gets a read-only token, no secrets, no OIDC token
+    # and no cache; the checker uses no cache either and fails when the
+    # producer did not succeed. No executable step may be skipped or tolerated.
+    wrapper = 'python3 trusted/scripts/ci/implementation_receipts.py {} --root candidate --head "$HEAD_SHA" ' \
+              '--receipts "$RUNNER_TEMP/implementation-receipts"'
+    scope = 'python3 trusted/scripts/ci/implementation_receipts.py scope --root candidate >> "$GITHUB_OUTPUT"'
+    for name, runs, permissions, base in (
+            ("implementation-receipts", [scope, wrapper.format("run")], {"contents": "read"},
+             "${{ steps.pr.outputs.base_sha }}"),
+            ("implementation-receipt-check", ["exit 1", wrapper.format("verify")],
+             {"contents": "read", "statuses": "write"}, "${{ needs.implementation-receipts.outputs.base_sha }}")):
+        job = jobs[name]
+        steps = job.get("steps", [])
+        caches = [step for step in steps if step.get("uses", "").startswith("actions/cache")]
+        require("secrets." not in json.dumps(job) and "environment" not in job and "container" not in job
+                and "services" not in job, f"{name}: no secrets, environment, container or service")
+        require(caches == [], f"{name}: candidate-influenced tools and receipts are never cached")
+        if name == "implementation-receipt-check":
+            require(steps[0] == {"name": "Reject a receipt producer that did not succeed",
+                                 "if": "needs.implementation-receipts.result != 'success'", "run": "exit 1"},
+                    f"{name}: a producer that did not succeed must fail the check first")
+        checkouts = [step.get("with", {}) for step in steps if step.get("uses", "").startswith("actions/checkout@")]
+        require(job.get("permissions") == permissions and not job.get("continue-on-error")
+                and "github.event_name == 'pull_request_target'" in job.get("if", "")
+                and [step["run"].strip() for step in steps if "run" in step] == runs
+                and all("if" not in step and not step.get("continue-on-error")
+                        for step in steps if "run" in step and step["run"].strip() != "exit 1")
+                and all(not has_execution_override(job, step) for step in steps)
+                and [c.get("path") for c in checkouts] == ["trusted", "candidate"]
+                and checkouts[0].get("ref") == base and set(checkouts[0]) == {"ref", "path", "persist-credentials"}
+                and all(c.get("persist-credentials") is False for c in checkouts),
+                f"{name}: only the base-owned wrapper may execute, least-privileged, beside candidate data")
+    require("norn-verification-tools" not in json.dumps(jobs),
+            "no job may cache the candidate-influenced verification tool directory")
     required_runs = {
         "core": "bash scripts/ci/core.sh cheap",
         "plan": '''if [ -n "$BASE" ]; then plan=$(bash scripts/ci/core.sh plan --affected "$BASE" "$HEAD_SHA"); else plan=$(bash scripts/ci/core.sh plan); fi
@@ -972,6 +1013,39 @@ def validate_selector_gate_order(
                 )
 
 
+# D43: an implementation_proved claim is admitted only from a receipt that the
+# base-owned wrapper (scripts/ci/implementation_receipts.py) writes in the
+# trusted implementation-receipts job. Its kind is the wrapper that ran it,
+# never a reading of command or script text. This validator checks only the
+# typed fields that wrapper reads, with the wrapper's own planning functions.
+_RECEIPTS_SPEC = importlib.util.spec_from_file_location(
+    "implementation_receipts", ROOT / "scripts/ci/implementation_receipts.py")
+implementation_receipts = importlib.util.module_from_spec(_RECEIPTS_SPEC)
+_RECEIPTS_SPEC.loader.exec_module(implementation_receipts)
+IMPLEMENTATION_FIELDS = ("correspondenceSource", "correspondenceMutations", "extractionBinding")
+
+
+def validate_implementation_claim(subsystem_id: str, claim_id: str, claim: dict[str, Any]) -> None:
+    """Require the typed fields the claim's receipt wrapper will read, then refuse it until #969."""
+    label = f"{subsystem_id}.{claim_id}"
+    if claim.get("proof") != "implementation_proved":
+        present = [field for field in IMPLEMENTATION_FIELDS if field in claim]
+        require(not present, f"{label}: correspondence fields require an implementation proof: {present}")
+        return
+    try:
+        if implementation_receipts.kind_of(claim) == "kani":
+            implementation_receipts.kani_plan(claim)
+        else:
+            implementation_receipts.extraction_plan(claim, "target/implementation-receipts")
+    except implementation_receipts.Refused as error:
+        raise InvalidCoverage(f"{label}: {error}") from error
+    # D47(c): admission must not depend on the optional receipt check. Until an
+    # isolated producer exists, no receipt can establish implementation
+    # correspondence, so the manifest itself refuses the status.
+    require(False, f"{label}: implementation_proved is refused until #969 provides an isolated producer; "
+                   "record the claim as partial")
+
+
 def validate_claim_evidence_shape(
     subsystem_id: str,
     claim_id: str,
@@ -1037,6 +1111,84 @@ def validate_claim_evidence_shape(
                     f"{subsystem_id}.{claim_id}.evidence.{layer_name}: invalid selector {selector!r}",
                 )
                 selector_kind = selector.split(":", 1)[0]
+                if (layer_name, status, selector_kind) == ("proof", "implementation_proved", "harness"):
+                    harness = ROOT / artifact
+                    name = selector.split(":", 1)[1]
+                    declaration = re.search(
+                        r"((?:#\[[^\]]+\]\s*)+)(?:pub\s+)?fn\s+" + re.escape(name) + r"\b",
+                        strip_comments_and_strings(harness.read_text(), line_marker="//", block=("/*", "*/"))
+                        if harness.is_file() else "",
+                    )
+                    harness_source = (
+                        strip_comments_and_strings(harness.read_text(), line_marker="//", block=("/*", "*/"))
+                        if harness.is_file() else ""
+                    )
+                    require(
+                        declaration is not None
+                        # No conditional compilation anywhere in a proved harness file: an
+                        # outer, inner or enclosing-module `cfg`/`cfg_attr` (any spacing,
+                        # raw identifiers included) can remove the selected harness.
+                        and re.search(r"#\s*!?\s*\[\s*(?:r#)?cfg(?:_attr)?\b", harness_source) is None,
+                        f"{subsystem_id}.{claim_id}: implementation harness must be unconditional",
+                    )
+                    require(
+                        # include_str!/include_bytes! would let the harness assert on
+                        # production source text instead of calling production code.
+                        re.search(r"\b(?:r#)?(?:macro_rules|include(?:_str|_bytes)?)\s*!", harness_source) is None,
+                        f"{subsystem_id}.{claim_id}: implementation harness cannot contain macro_rules! or "
+                        "include!, include_str! or include_bytes!",
+                    )
+                    # Imports may only reach the production source named by this
+                    # claim and independently cited by its predicate evidence.
+                    production = claim.get("correspondenceSource")
+                    require(
+                        isinstance(production, str)
+                        and production.startswith("crates/")
+                        and production.endswith(".rs")
+                        and ".." not in Path(production).parts
+                        and (ROOT / production).is_file()
+                        and any(item["artifact"] == production and any(
+                            selector.startswith("predicate:") for selector in item["selectors"]
+                        ) for item in entries),
+                        f"{subsystem_id}.{claim_id}: Kani correspondenceSource must name its production predicate source",
+                    )
+                    raw_source = harness.read_text()
+                    imported_production = False
+                    brace_depth = 0
+                    previous_end = 0
+                    for attribute in re.finditer(r"#\s*!?\s*\[\s*(?:r#)?path\b[^\]]*\]", harness_source):
+                        preceding = harness_source[previous_end:attribute.start()]
+                        brace_depth += preceding.count("{") - preceding.count("}")
+                        previous_end = attribute.end()
+                        require(
+                            brace_depth == 0,
+                            f"{subsystem_id}.{claim_id}: #[path] imports must be at harness top level",
+                        )
+                        # The stripping helper preserves offsets. Accept only an
+                        # ordinary module item with a literal path, never a
+                        # redirected proof function or a conditional attribute.
+                        imported = re.fullmatch(
+                            r'#\s*\[\s*path\s*=\s*"([^"\\]+)"\s*\]',
+                            raw_source[attribute.start():attribute.end()],
+                        )
+                        require(
+                            imported is not None
+                            and re.match(r"\s*(?:pub\s+)?mod\s+\w+\s*;", harness_source[attribute.end():]) is not None
+                            and (harness.parent / imported.group(1)).resolve().is_relative_to(ROOT.resolve())
+                            and (harness.parent / imported.group(1)).resolve() == (ROOT / production).resolve(),
+                            f"{subsystem_id}.{claim_id}: #[path] must import the declared correspondenceSource as a module",
+                        )
+                        imported_production = True
+                    require(
+                        imported_production,
+                        f"{subsystem_id}.{claim_id}: harness must import the declared correspondenceSource with top-level #[path]",
+                    )
+                    require(
+                        harness.suffix == ".rs" and re.search(
+                            r"#\[kani::proof\]\s*(?:#\[[^\]]+\]\s*)*fn\s+" + re.escape(name) + r"\b",
+                            harness_source) is not None,
+                        f"{subsystem_id}.{claim_id}: implementation harness must be a Kani proof",
+                    )
                 observed_selector_kinds.add(selector_kind)
                 allowed_kinds = SELECTOR_KINDS_BY_STATUS.get((layer_name, status))
                 require(
@@ -1050,12 +1202,19 @@ def validate_claim_evidence_shape(
                 f"{subsystem_id}.{claim_id}.evidence.{layer_name}: duplicate evidence entry",
             )
             identities.add(identity)
+        if (layer_name, status) == ("proof", "implementation_proved"):
+            require(
+                bool(observed_selector_kinds & {"theorem", "harness"}),
+                f"{subsystem_id}.{claim_id}: implementation proof needs a theorem or Kani harness",
+            )
         required_kinds = REQUIRED_SELECTOR_KINDS_BY_STATUS.get((layer_name, status), set())
         require(
             required_kinds.issubset(observed_selector_kinds),
             f"{subsystem_id}.{claim_id}.evidence.{layer_name}: status {status!r} "
             f"requires selector kinds {sorted(required_kinds)}, got {sorted(observed_selector_kinds)}",
         )
+
+    validate_implementation_claim(subsystem_id, claim_id, claim)
 
 
 def validate(

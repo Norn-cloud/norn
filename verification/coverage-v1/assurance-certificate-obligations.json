@@ -80,6 +80,19 @@
     "#718",
     "#712"
    ]
+  },
+  {
+   "id": "INV-CERT-INTEGER-NEGATION-CORRESPONDENCE",
+   "priority": "P0",
+   "statement": "For every i64 n, production Rational::checked_neg on (n, 1) returns None exactly when mathematical -n exceeds i64::MAX, otherwise exactly (-n, 1).",
+   "assumptions": [
+    "Input is a canonical integer rational with denominator 1.",
+    "Kani 0.67.0, its Rust compiler and CBMC faithfully implement fixed-width Rust semantics; unwinding assertions are enabled."
+   ],
+   "sourceIssues": [
+    "#717",
+    "#718"
+   ]
   }
  ]
 }

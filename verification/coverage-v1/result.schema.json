@@ -302,7 +302,30 @@
                       }
                     }
                   }
+                },
+                "correspondenceSource": {
+                  "$ref": "#/$defs/kaniCorrespondence/properties/correspondenceSource"
+                },
+                "correspondenceMutations": {
+                  "$ref": "#/$defs/kaniCorrespondence/properties/correspondenceMutations"
+                },
+                "extractionBinding": {
+                  "$ref": "#/$defs/extractionBinding"
                 }
+              },
+              "dependentRequired": {
+                "correspondenceSource": [
+                  "correspondenceMutations"
+                ],
+                "correspondenceMutations": [
+                  "correspondenceSource"
+                ]
+              },
+              "not": {
+                "required": [
+                  "extractionBinding",
+                  "correspondenceSource"
+                ]
               }
             }
           },
@@ -490,6 +513,101 @@
           "items": {
             "type": "string",
             "minLength": 1
+          }
+        }
+      }
+    },
+    "correspondenceMutation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "before",
+        "after"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "before": {
+          "type": "string",
+          "minLength": 1
+        },
+        "after": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "kaniCorrespondence": {
+      "description": "Typed Kani implementation-proof fields read by the base-owned receipt wrapper (scripts/ci/implementation_receipts.py).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "correspondenceSource",
+        "correspondenceMutations"
+      ],
+      "properties": {
+        "correspondenceSource": {
+          "type": "string",
+          "pattern": "^crates/[^\\s]+\\.rs$"
+        },
+        "correspondenceMutations": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/correspondenceMutation"
+          }
+        }
+      }
+    },
+    "extractionBinding": {
+      "description": "Typed hax/F* extraction read by the base-owned receipt wrapper (scripts/ci/implementation_receipts.py), which builds every argv from these fields.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "package",
+        "items",
+        "module",
+        "proofRoot",
+        "models",
+        "proofs"
+      ],
+      "properties": {
+        "package": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_-]*$"
+        },
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*(::[A-Za-z_][A-Za-z0-9_]*)+$"
+          }
+        },
+        "module": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Za-z0-9_]*\\.fst$"
+        },
+        "proofRoot": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_][A-Za-z0-9_./-]*$"
+        },
+        "models": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_.]*\\.fst$"
+          }
+        },
+        "proofs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_.]*\\.fst$"
           }
         }
       }

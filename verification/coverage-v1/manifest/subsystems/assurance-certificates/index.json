@@ -36,8 +36,7 @@
     }
   },
   "proof": {
-    "status": "reference_proved",
-    "scope": "reference",
+    "status": "partial",
     "artifacts": {
       "$entries": "proof.artifacts"
     },
@@ -49,7 +48,8 @@
     },
     "resultArtifacts": {
       "$entries": "proof.resultArtifacts"
-    }
+    },
+    "correspondenceArtifact": "verification/implementation-v1/rational_neg_kani.rs"
   },
   "limitations": {
     "$entries": "limitations"
