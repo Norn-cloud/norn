@@ -282,7 +282,7 @@ export const CorrectScannedDocument = Norn.action({
   preconditions: [Norn.expression(Schema.Struct({ input: CorrectionInput }), x => x.input.correction_reason !== "" && x.input.correction_evidence !== "")],
   writes: [{ type: ScannedDocument, change: "modified" }, { type: ScannedDocument, change: "created" }],
   effect: { kind: "upsert_input_object", type: ScannedDocument, objectIdField: "id", writeMode: { kind: "upsert" } },
-  access: { artifactId: "docs.scanned_document.access.policy", version: "0.1.0" },
+  access: { artifactId: "docs.scanned_document.access.policy", version: "0.2.0" },
 })
 
 const LineCorrectionInput = Schema.Struct({
@@ -374,16 +374,22 @@ export const CorrectDocumentLine = Norn.action({
     x => x.input.correction_reason !== "" && (x.slice.evidence.subject_key ?? "") === x.input.id)],
   writes: [{ type: DocumentLine, change: "modified" }, { type: ScannedDocument, change: "modified" }],
   effect: { kind: "fire_transition", type: DocumentLine, objectIdField: "id", lifecycle: "review", transition: "correct" },
-  access: { artifactId: "docs.scanned_document.access.policy", version: "0.1.0" },
+  access: { artifactId: "docs.scanned_document.access.policy", version: "0.2.0" },
 })
 
-/** Who may correct: a data steward, or (on the alpha) any member of the org. */
+/**
+ * Who may correct: a data steward, or (on the alpha) any member of the org.
+ * A line correction also patches its document (the total, when it was misread
+ * too), so the line action is granted on both the lines and the documents.
+ */
 export const CorrectionAccess = Norn.access({
-  id: "docs.scanned_document.access", title: "Scanned document steward", version: "0.1.0",
+  id: "docs.scanned_document.access", title: "Scanned document steward", version: "0.2.0",
   rules: [
     { ruleId: "steward", actions: [CorrectScannedDocument], resourceType: ScannedDocument,
       scope: { dimensions: ["org", "environment"] }, allOf: [{ role: { anyOf: ["DataSteward", "member", "admin", "owner"] } }] },
     { ruleId: "steward_lines", actions: [CorrectDocumentLine], resourceType: DocumentLine,
+      scope: { dimensions: ["org", "environment"] }, allOf: [{ role: { anyOf: ["DataSteward", "member", "admin", "owner"] } }] },
+    { ruleId: "steward_line_documents", actions: [CorrectDocumentLine], resourceType: ScannedDocument,
       scope: { dimensions: ["org", "environment"] }, allOf: [{ role: { anyOf: ["DataSteward", "member", "admin", "owner"] } }] },
   ],
 })

@@ -1,20 +1,27 @@
-//! The pitch's invoice moment on a hosted cell: a document a law holds back
-//! is read and corrected through the cell's own routes.
+//! The pitch's invoice moment on a hosted cell, under the canon concept's
+//! law (`canon.ItemizedDocument.total_matches_lines`, LAW-INTERFACE-1): a
+//! document the law holds back is read and corrected through the cell's own
+//! routes, as Studio's quarantined-record page does.
 //!
 //! The documents pack is provisioned on a tenant cell and its scans are loaded
-//! through the cell's own mapping. INV-0042 prints three lines that sum to
-//! 72.00 but was read as 720; `docs.ScannedDocument.total_matches_lines` holds
-//! it back. Then:
+//! through the cell's own mapping. INV-0042 prints lines 30.00 + 40.00 + 2.00
+//! and INV-0043 one line of 72.00, but the import read both totals (and
+//! INV-0043's line) as 720. The lines law holds INV-0042 back, and the ledger
+//! law (its journal entry books 72.00) INV-0043. Then, also after the
+//! host reopens the cell:
 //!
-//! - its plain read is the one 404 (held-back values stay out of every
-//!   answer), while an admin reads it as quarantined, with its open finding,
-//!   through its findings and its history;
-//! - a correction to 70.00 is refused with its reason (the law and its
-//!   values) for an admin, never the opaque denial; a member is refused the
-//!   same way without the detail, and a viewer, whom the pack does not let
-//!   correct, gets the one opaque denial;
-//! - the correction to 72.00 commits, resolves the finding and releases the
-//!   document: its plain read then serves the corrected total.
+//! - the plain read of each is the one 404 (held-back values stay out of
+//!   every answer), while an admin reads it as quarantined, with its open
+//!   findings, through its findings and its history;
+//! - a correction of INV-0042 to 70.00 is refused with its reason (the law
+//!   and its values) for an admin, never the opaque denial; a member is
+//!   refused the same way without the detail, and a viewer, whom the pack does
+//!   not let correct, gets the one opaque denial;
+//! - "Use 72.00" commits: INV-0042's total, and INV-0043's line with its
+//!   total; each is released, and its plain read serves the corrected values.
+//!
+//! A host opened without the stage's lineage key cannot commit a receipt: it
+//! tells a verified member so (typed, retryable), never the opaque 403.
 //!
 //! Correspondence pins on the governed correction path (D79).
 #![allow(
@@ -45,7 +52,10 @@ const ISSUER: &str = "https://studio-preview.example";
 const NOW: u64 = 1_800_000_000;
 const QUERY: &str = "orgId=org_a&environmentId=prod";
 const CORRECT: &str = "docs.scanned_document.correct";
-const LAW: &str = "docs.ScannedDocument.total_matches_";
+const LAWS: [&str; 2] = [
+    "canon.ItemizedDocument.total_matches_lines",
+    "docs.ScannedDocument.total_matches_ledger",
+];
 const HANDLE_KEY: [u8; 32] = [7; 32];
 
 fn key() -> SigningKey {
@@ -86,8 +96,8 @@ fn artifact(path: &Path) -> Value {
     serde_json::from_str(&std::fs::read_to_string(path).expect("artifact")).expect("JSON")
 }
 
-/// The documents pack with the core artifacts it names, interfaces and types
-/// before the artifacts that use them.
+/// The documents pack with the core and canon artifacts it names, interfaces
+/// and types before the artifacts that use them.
 fn documents() -> Vec<Value> {
     let core = root().join("registry/core/artifacts");
     let mut documents: Vec<Value> = [
@@ -114,7 +124,22 @@ fn documents() -> Vec<Value> {
             2
         }
     });
+    // The canon itemized-document concept the pack's documents implement,
+    // and its law (LAW-INTERFACE-1), after the types it governs.
+    let canon = root().join("registry/packs/canon/artifacts");
+    documents.splice(
+        3..3,
+        [
+            "canon.ItemizedDocument.interface.json",
+            "canon.LineItem.interface.json",
+        ]
+        .iter()
+        .map(|name| artifact(&canon.join(name))),
+    );
     documents.extend(paths.iter().map(|path| artifact(path)));
+    documents.push(artifact(
+        &canon.join("canon.ItemizedDocument.total_matches_lines.law.json"),
+    ));
     documents
 }
 
@@ -162,9 +187,9 @@ fn loaded(path: &Path) -> Cell {
     loaded_with(path, Some(&HANDLE_KEY))
 }
 
-/// As [`loaded`], on a host keyed with `handle_key` (none: a host opened
-/// without the stage's lineage key).
-fn loaded_with(path: &Path, handle_key: Option<&[u8]>) -> Cell {
+/// The tenant cell stored at `path`, opened as the host opens it, keyed
+/// with `handle_key` (none: a host opened without the stage's lineage key).
+fn opened(path: &Path, handle_key: Option<&[u8]>) -> Cell {
     let file = path.to_owned();
     let tenant = Tenant::open(
         scope(),
@@ -176,7 +201,12 @@ fn loaded_with(path: &Path, handle_key: Option<&[u8]>) -> Cell {
     )
     .unwrap();
     let tokens = TokenPrincipals::new(ISSUER, &jwks(), scope(), tenant.caller(), NOW).unwrap();
-    let mut cell = Cell { tenant, tokens };
+    Cell { tenant, tokens }
+}
+
+/// As [`loaded`], on a host keyed with `handle_key`.
+fn loaded_with(path: &Path, handle_key: Option<&[u8]>) -> Cell {
+    let mut cell = opened(path, handle_key);
     let body = json!({
         "baseSha256": base::trusted_base().unwrap().sha256(),
         "artifacts": documents(),
@@ -237,34 +267,63 @@ impl Cell {
             serde_json::from_str(&response.body).unwrap_or(Value::Null),
         )
     }
-}
 
-const DOCUMENT: &str = "/v1/objects/docs.ScannedDocument/SCAN-INV-0042";
+    /// The held-back document `id`: its plain read refuses, its findings and
+    /// history serve it to an admin.
+    fn held_back(&mut self, id: &str) {
+        let document = format!("/v1/objects/docs.ScannedDocument/{id}");
+        let (status, plain) = self.get(&document, "admin");
+        assert_eq!(status, 404, "{id} is held back: {plain}");
+        let (status, findings) = self.get(&format!("{document}/findings"), "admin");
+        assert_eq!(status, 200, "{id}: {findings}");
+        assert_eq!(findings["quarantined"], true, "{id}: {findings}");
+        let text = findings.to_string();
+        assert!(
+            LAWS.iter().any(|law| text.contains(law)),
+            "{id}: {findings}"
+        );
+        let (status, history) = self.get(&format!("{document}/history"), "admin");
+        assert_eq!(status, 200, "{id}: {history}");
+        assert!(
+            history.to_string().contains("720"),
+            "{id}: the imported total: {history}"
+        );
+    }
+
+    /// The released document `id`: its plain read serves `total`.
+    fn released(&mut self, id: &str, total: i64) {
+        let document = format!("/v1/objects/docs.ScannedDocument/{id}");
+        let (status, released) = self.get(&document, "member");
+        assert_eq!(status, 200, "{id} is released: {released}");
+        assert_eq!(
+            released["values"]["total"],
+            json!(total),
+            "{id}: {released}"
+        );
+    }
+}
 
 #[test]
 fn a_held_back_invoice_is_read_and_corrected_through_its_own_routes() {
     let directory = tempfile::tempdir().unwrap();
-    let mut cell = loaded(&directory.path().join("a.sqlite"));
-
-    let (status, plain) = cell.get(DOCUMENT, "admin");
-    assert_eq!(status, 404, "held back: {plain}");
-    let (status, findings) = cell.get(&format!("{DOCUMENT}/findings"), "admin");
-    assert_eq!(status, 200, "{findings}");
-    assert_eq!(findings["quarantined"], true, "{findings}");
-    assert!(findings.to_string().contains(LAW), "{findings}");
-    let (status, history) = cell.get(&format!("{DOCUMENT}/history"), "admin");
-    assert_eq!(status, 200, "{history}");
-    assert!(
-        history.to_string().contains("720"),
-        "the imported total: {history}"
-    );
+    let path = directory.path().join("a.sqlite");
+    let mut cell = loaded(&path);
+    for id in ["SCAN-INV-0042", "SCAN-INV-0043"] {
+        cell.held_back(id);
+    }
+    // The host reopens the cell (a restart, or the next request's reload).
+    drop(cell);
+    let mut cell = opened(&path, Some(&HANDLE_KEY));
+    for id in ["SCAN-INV-0042", "SCAN-INV-0043"] {
+        cell.held_back(id);
+    }
 
     let (status, refusal) = cell.correct("admin", "70.00");
     assert_eq!(status, 422, "{refusal}");
     assert!(
         refusal["reason"]["law"]
             .as_str()
-            .is_some_and(|law| law.starts_with(LAW)),
+            .is_some_and(|law| LAWS.contains(&law)),
         "{refusal}"
     );
     assert_eq!(refusal["reason"]["values"]["total"], json!(70), "{refusal}");
@@ -272,14 +331,31 @@ fn a_held_back_invoice_is_read_and_corrected_through_its_own_routes() {
     assert_eq!(status, 422, "{member}");
     assert!(member.get("reason").is_none_or(Value::is_null), "{member}");
     let (status, viewer) = cell.correct("viewer", "70.00");
-    assert_eq!(status, 403, "{viewer}");
+    assert_eq!(
+        (status, &viewer["code"]),
+        (403, &json!("authz.denied")),
+        "{viewer}"
+    );
 
+    // "Use 72.00".
     let (status, receipt) = cell.correct("admin", "72.00");
     assert_eq!(status, 200, "{receipt}");
     assert_eq!(receipt["outcome"], "committed", "{receipt}");
-    let (status, released) = cell.get(DOCUMENT, "member");
-    assert_eq!(status, 200, "released: {released}");
-    assert_eq!(released["values"]["total"], json!(72), "{released}");
+    cell.released("SCAN-INV-0042", 72);
+
+    // INV-0043's line was misread too: its line and its total, together.
+    let body = json!({ "idempotencyKey": "inv-0043",
+        "input": { "id": "SCAN-INV-0043~line-1", "currency": "USD", "amount": "72.00",
+                   "document_total": "72.00",
+                   "correction_reason": "Line and total both read 720; the scan says 72.00.",
+                   "correction_evidence": "SCAN-INV-0043~lines.1.amount" } });
+    let response = cell.call(
+        "/v1/actions/docs.document_line.correct",
+        &user("admin"),
+        &body.to_string(),
+    );
+    assert_eq!(response.status, 200, "{}", response.body);
+    cell.released("SCAN-INV-0043", 72);
 }
 
 /// A host opened without the stage's lineage key keys no receipt, so no
@@ -306,12 +382,7 @@ fn a_host_without_its_lineage_key_says_so_to_its_members() {
     let outsider = cell.call(&format!("/v1/actions/{CORRECT}"), &outsider(), &body);
     assert_eq!(outsider.status, 403, "{}", outsider.body);
     assert_eq!(outsider.body, unknown.body);
-    let (status, findings) = cell.get(&format!("{DOCUMENT}/findings"), "admin");
-    assert_eq!(
-        (status, &findings["quarantined"]),
-        (200, &json!(true)),
-        "{findings}"
-    );
+    cell.held_back("SCAN-INV-0042");
 }
 
 /// Another organization's admin.

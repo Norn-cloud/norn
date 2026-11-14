@@ -9,7 +9,7 @@
   "payload": {
     "access": {
       "artifactId": "docs.scanned_document.access.policy",
-      "version": "0.1.0"
+      "version": "0.2.0"
     },
     "actionId": "docs.scanned_document.correct",
     "derive": [
