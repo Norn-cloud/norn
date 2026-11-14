@@ -1,0 +1,81 @@
+{
+  "artifactId": "tracking.experiment.create.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Create experiment",
+  "namespace": "tracking",
+  "payload": {
+    "actionId": "tracking.experiment.create",
+    "effectProgram": {
+      "entityArtifactId": "tracking.Experiment.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "experiment_id",
+      "objectKind": "tracking.Experiment",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_location": {
+          "type": "string"
+        },
+        "creation_time": {
+          "type": "integer"
+        },
+        "experiment_id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "tags": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "experiment_id",
+        "name",
+        "artifact_location",
+        "creation_time",
+        "tags"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "experiment_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "experiment_id"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Create experiment",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "tracking.Experiment"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/tracking/artifacts/tracking.experiment.create.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
