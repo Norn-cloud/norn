@@ -7001,7 +7001,7 @@ export interface components {
          */
         NornIrMetricDefinition: {
             /**
-             * @description How a person would name the metric in a sentence ("quantity at period end"), for
+             * @description How a person would name the metric in a sentence ("quantity on hand"), for
              *     prompts and suggestions. Generated metrics set it; it never changes what the metric means.
              */
             display?: string;
