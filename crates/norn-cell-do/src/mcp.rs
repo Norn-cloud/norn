@@ -641,7 +641,7 @@ fn generic_tools(
             json!({
                 "name": "norn_evaluate",
                 "title": "Ask a new question",
-                "description": "Admit and answer a typed question (QuestionIR) over the workspace's declared metrics, once, without saving it. The checker refuses a question that names undeclared metrics or mixes incompatible units, with the reason.",
+                "description": "Admit and answer a typed question (QuestionIR) over the workspace's declared metrics, once, without saving it. The checker refuses a question that names undeclared metrics or mixes incompatible units, with the reason. Take the metric name and its object type from norn_question_catalog (a metric's type_params.metric_aggregation_params.semantic_model is the objectSet). Every field below is required; keep the window to the period asked about (a year at most), and add groupBy only when a breakdown is asked for: {\"irVersion\": \"0.1\", \"name\": \"stock_now\", \"objectSet\": \"canon.Holding\", \"aggregate\": [{\"metric\": \"<metric name>\"}], \"groupBy\": [], \"filter\": [], \"window\": {\"start\": \"2026-01-01T00:00:00Z\", \"end\": \"2026-12-01T00:00:00Z\"}, \"calendar\": \"iso_utc\", \"freshness\": {\"kind\": \"live\", \"maxAgeMs\": 5000}}. Then trace a bucket with norn_trace_evaluated.",
                 "inputSchema": {"type": "object", "additionalProperties": false, "required": ["question"], "properties": {
                     "question": {"type": "object", "description": "A QuestionIR document."}
                 }},
