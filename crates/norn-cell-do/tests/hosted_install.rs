@@ -463,9 +463,15 @@ fn an_agent_plans_and_applies_a_pack_through_mcp() {
             "input_fine_g": "100.000", "output_fine_g": "99.000", "loss_fine_g": loss, "loss_reason": "crucible"}})
     };
     let refused = cell.mcp("member", "norn_call_action", &melt("melt-mcp-1", "0.000"));
-    assert_eq!(refused["structuredContent"]["code"], "core.laws.violated", "{refused}");
+    assert_eq!(
+        refused["structuredContent"]["code"], "core.laws.violated",
+        "{refused}"
+    );
     let committed = cell.mcp("member", "norn_call_action", &melt("melt-mcp-2", "1.000"));
-    assert_eq!(committed["structuredContent"]["outcome"], "committed", "{committed}");
+    assert_eq!(
+        committed["structuredContent"]["outcome"], "committed",
+        "{committed}"
+    );
     let unknown = cell.mcp(
         "member",
         "norn_call_action",

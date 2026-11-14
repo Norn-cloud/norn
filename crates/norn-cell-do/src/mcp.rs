@@ -941,11 +941,16 @@ impl<E: SqlEngine> Loopback<'_, E> {
             "norn_call_action" => {
                 let action = required(arguments, "action")?;
                 if !self.actions.values().any(|callable| *callable == action) {
-                    let mut callable: Vec<&str> = self.actions.values().map(String::as_str).collect();
+                    let mut callable: Vec<&str> =
+                        self.actions.values().map(String::as_str).collect();
                     callable.sort_unstable();
                     return Err(Refusal::invalid(format!(
                         "{action} is not an action you may call here; you may call: {}",
-                        if callable.is_empty() { "none".to_owned() } else { callable.join(", ") }
+                        if callable.is_empty() {
+                            "none".to_owned()
+                        } else {
+                            callable.join(", ")
+                        }
                     )));
                 }
                 let Some(RuntimeValue::Object(input)) = arguments.get("input") else {
