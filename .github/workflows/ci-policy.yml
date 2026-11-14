@@ -27,18 +27,19 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
 jobs:
   core:
-    # Boat: merge groups, and same-repository pull requests whose author, actor and
+    # Boat: merge groups, pushes to main while NORN_MAIN_RUNNER is 'boat' (the only runs that
+    # write the shared compiler cache), and same-repository pull requests whose author, actor and
     # re-runner are all Boat CI's public-repository user (`boat ci public`). Every
     # other job, fork, bot or user runs hosted, never queued on Boat.
     if: github.event_name != 'pull_request_target' && github.event_name != 'issue_comment'
-    # The writable cache key is an environment secret of `ci-cache-writer` (deployment branches:
-    # main and gh-readonly-queue/main/*); every other run sees only the read-only repository key.
-    environment: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'merge_group') && 'ci-cache-writer' || '' }}
+    # The writable cache key is an environment secret of `ci-cache-writer` (deployment branch:
+    # main only). Merge groups and pull requests see only the read-only repository key.
+    environment: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'ci-cache-writer' || '' }}
     env:
       SCCACHE_CACHE_SIZE: 10G
       SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
       NORN_INTEROP_CACHE: ~/.cache/norn-interop
-    runs-on: ${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}
+    runs-on: ${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.NORN_MAIN_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}
     timeout-minutes: 110
     steps:
       - name: Reclaim runner disk space
@@ -119,9 +120,11 @@ jobs:
           set -uo pipefail
           # Hosted runners share the GitHub Actions cache. A disposable Boat VM never uses it (its
           # egress limit is account-wide): it keeps a local cache bounded by SCCACHE_CACHE_SIZE and,
-          # when the project bucket's secrets are present, reads a shared R2 cache behind it. Only
-          # main pushes and merge groups (reviewed code) write there; every other event gets the
-          # read-only key and READ_ONLY mode. The keys reach only this step and the server it starts.
+          # when the project bucket's secrets are present, reads a shared R2 cache behind it. Only a
+          # push to main (code that has landed) writes there. Merge groups and pull requests run code
+          # that has not landed, so they get the read-only key and READ_ONLY mode. The keys are in
+          # this step's environment and in the server it starts, which later steps share a user
+          # with: what stops a write is the token's scope, not this step.
           gha=false
           [ "$RUNNER_ENVIRONMENT" != github-hosted ] || gha=true
           export SCCACHE_GHA_ENABLED=$gha
@@ -129,7 +132,7 @@ jobs:
           if [ "$gha" = false ] && [ -n "${NORN_SCCACHE_BUCKET:-}" ] && [ -n "${NORN_SCCACHE_ENDPOINT:-}" ]; then
             mode=READ_ONLY
             case "$GITHUB_EVENT_NAME:$GITHUB_REF" in
-              push:refs/heads/main | merge_group:refs/heads/gh-readonly-queue/main/*) mode=READ_WRITE ;;
+              push:refs/heads/main) mode=READ_WRITE ;;
             esac
             export SCCACHE_MULTILEVEL_CHAIN=disk,s3 SCCACHE_BUCKET="$NORN_SCCACHE_BUCKET" \
               SCCACHE_ENDPOINT="$NORN_SCCACHE_ENDPOINT" SCCACHE_REGION=auto SCCACHE_S3_KEY_PREFIX=norn/ \
@@ -184,7 +187,7 @@ jobs:
   # Pull requests and merge groups use affected plans; main runs the full set.
   plan:
     if: github.event_name != 'pull_request_target' && github.event_name != 'issue_comment' && !(github.event_name == 'pull_request' && github.event.pull_request.draft)
-    runs-on: ${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}
+    runs-on: ${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.NORN_MAIN_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}
     timeout-minutes: 5
     outputs:
       plan: ${{ steps.plan.outputs.plan }}
@@ -206,9 +209,9 @@ jobs:
     name: bundle (${{ matrix.bundle.id }})
     needs: [core, plan]
     if: fromJSON(needs.plan.outputs.plan).bundle[0] != null
-    # The writable cache key is an environment secret of `ci-cache-writer` (deployment branches:
-    # main and gh-readonly-queue/main/*); every other run sees only the read-only repository key.
-    environment: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'merge_group') && 'ci-cache-writer' || '' }}
+    # The writable cache key is an environment secret of `ci-cache-writer` (deployment branch:
+    # main only). Merge groups and pull requests see only the read-only repository key.
+    environment: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'ci-cache-writer' || '' }}
     env:
       SCCACHE_CACHE_SIZE: 10G
       SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
@@ -218,7 +221,7 @@ jobs:
       NORN_CI_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before || 'origin/main' }}
       PLAN: ${{ needs.plan.outputs.plan }}
       BUNDLE_ID: ${{ matrix.bundle.id }}
-    runs-on: ${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}
+    runs-on: ${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.NORN_MAIN_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}
     timeout-minutes: 110
     strategy:
       fail-fast: false
@@ -294,9 +297,11 @@ jobs:
           set -uo pipefail
           # Hosted runners share the GitHub Actions cache. A disposable Boat VM never uses it (its
           # egress limit is account-wide): it keeps a local cache bounded by SCCACHE_CACHE_SIZE and,
-          # when the project bucket's secrets are present, reads a shared R2 cache behind it. Only
-          # main pushes and merge groups (reviewed code) write there; every other event gets the
-          # read-only key and READ_ONLY mode. The keys reach only this step and the server it starts.
+          # when the project bucket's secrets are present, reads a shared R2 cache behind it. Only a
+          # push to main (code that has landed) writes there. Merge groups and pull requests run code
+          # that has not landed, so they get the read-only key and READ_ONLY mode. The keys are in
+          # this step's environment and in the server it starts, which later steps share a user
+          # with: what stops a write is the token's scope, not this step.
           gha=false
           [ "$RUNNER_ENVIRONMENT" != github-hosted ] || gha=true
           export SCCACHE_GHA_ENABLED=$gha
@@ -304,7 +309,7 @@ jobs:
           if [ "$gha" = false ] && [ -n "${NORN_SCCACHE_BUCKET:-}" ] && [ -n "${NORN_SCCACHE_ENDPOINT:-}" ]; then
             mode=READ_ONLY
             case "$GITHUB_EVENT_NAME:$GITHUB_REF" in
-              push:refs/heads/main | merge_group:refs/heads/gh-readonly-queue/main/*) mode=READ_WRITE ;;
+              push:refs/heads/main) mode=READ_WRITE ;;
             esac
             export SCCACHE_MULTILEVEL_CHAIN=disk,s3 SCCACHE_BUCKET="$NORN_SCCACHE_BUCKET" \
               SCCACHE_ENDPOINT="$NORN_SCCACHE_ENDPOINT" SCCACHE_REGION=auto SCCACHE_S3_KEY_PREFIX=norn/ \

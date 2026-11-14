@@ -1066,13 +1066,14 @@ def workflow_sccache_canaries(source: str) -> None:
                         raise AssertionError(f"{name}: sccache wrapper drift {server}/{compiler}: "
                                              f"{compiled.returncode} runs={calls} {compiled.stderr!r}")
 
-        # The shared Boat cache (R2): reviewed code writes, everything else reads. Run the start
+        # The shared Boat cache (R2): only a push to main writes, everything else reads. Run the start
         # step with the bucket's keys present for each event and record what the server gets.
         for runner, event, ref, mode in (
                 ("github-hosted", "push", "refs/heads/main", None),
                 ("github-hosted", "merge_group", "refs/heads/gh-readonly-queue/main/pr-1-a", None),
                 ("self-hosted", "push", "refs/heads/main", "READ_WRITE"),
-                ("self-hosted", "merge_group", "refs/heads/gh-readonly-queue/main/pr-1-a", "READ_WRITE"),
+                ("self-hosted", "merge_group", "refs/heads/gh-readonly-queue/main/pr-1-a", "READ_ONLY"),
+                ("self-hosted", "merge_group", "refs/heads/main", "READ_ONLY"),
                 ("self-hosted", "pull_request", "refs/pull/1/merge", "READ_ONLY"),
                 ("self-hosted", "pull_request", "refs/heads/main", "READ_ONLY"),
                 ("self-hosted", "push", "refs/heads/other", "READ_ONLY"),
@@ -1531,8 +1532,17 @@ def workflow_context_canaries(source: str) -> None:
                         "disable_annotations", False)),
                     ("cache writer for every event", lambda job: job.__setitem__("environment", "ci-cache-writer")),
                     ("cache writer for pull requests", lambda job: job.__setitem__("environment",
-                        job["environment"].replace("github.event_name == 'merge_group'",
-                                                   "github.event_name == 'merge_group' || github.event_name == 'pull_request'"))),
+                        job["environment"].replace("github.event_name == 'push' && github.ref == 'refs/heads/main'",
+                                                   "(github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'pull_request')"))),
+                    ("cache writer for merge groups", lambda job: job.__setitem__("environment",
+                        job["environment"].replace("github.event_name == 'push' && github.ref == 'refs/heads/main'",
+                                                   "(github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'merge_group')"))),
+                    ("cache writer for every push", lambda job: job.__setitem__("environment",
+                        job["environment"].replace(" && github.ref == 'refs/heads/main'", ""))),
+                    ("merge groups write the shared cache", lambda job: next(step for step in job["steps"]
+                        if step.get("name") == "Start sccache or compile without it").__setitem__("run",
+                        next(step for step in job["steps"] if step.get("name") == "Start sccache or compile without it")["run"]
+                        .replace("push:refs/heads/main)", "push:refs/heads/main | merge_group:refs/heads/gh-readonly-queue/main/*)"))),
                     ("cache keys in the job environment", lambda job: job["env"].update(
                         {"AWS_ACCESS_KEY_ID": "${{ secrets.NORN_SCCACHE_KEY_ID }}"})),
                     ("cache keys exported to later steps", lambda job: next(step for step in job["steps"]
@@ -1609,7 +1619,7 @@ def workflow_context_canaries(source: str) -> None:
             return next(step for step in document["jobs"][job]["steps"]
                         if step.get("uses", "").startswith(action + "@"))
 
-        runner = "${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}"
+        runner = "${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.NORN_MAIN_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}"
         merge_only = "${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat' && 'boat' || 'ubuntu-24.04' }}"
         same_repo = "github.event.pull_request.head.repo.full_name == github.repository && "
         legacy = '${{ github.event_name == \'merge_group\' && vars.NORN_MERGE_RUNNER == \'self-hosted\' && fromJSON(format(\'["self-hosted","norn-merge","norn-run-{0}"]\', github.run_id)) || \'ubuntu-24.04\' }}'
@@ -1622,6 +1632,8 @@ def workflow_context_canaries(source: str) -> None:
                     ("", "boat", "self-hosted", "other"), ("", "boat", "self-hosted", "other"),
                     ("Norn-cloud/norn", "attacker/norn", ""), *[boat_users] * 3):
                 concrete = (expression.replace("github.event_name", repr(event))
+                            .replace("github.ref", repr("refs/heads/main"))
+                            .replace("vars.NORN_MAIN_RUNNER", repr("boat"))
                             .replace("vars.NORN_MERGE_RUNNER", repr(merge_variable))
                             .replace("vars.NORN_PR_RUNNER", repr(pr_variable))
                             .replace("github.event.pull_request.head.repo.full_name", repr(head_repository))
@@ -1630,15 +1642,43 @@ def workflow_context_canaries(source: str) -> None:
                             .replace("github.actor", repr(actor))
                             .replace("github.repository", repr("Norn-cloud/norn"))
                             .replace("&&", " and ").replace("||", " or "))
-                expected = ("boat" if (event == "merge_group" and merge_variable == "boat")
+                expected = ("boat" if (event == "merge_group" and merge_variable == "boat") or event == "push"
                             or (event == "pull_request" and pr_variable == "boat"
                                 and head_repository == "Norn-cloud/norn"
                                 and author == actor == rerunner == "Youssef-Tarek-Ali-26") else "ubuntu-24.04")
                 if condition_value(concrete) != expected:
                     raise AssertionError("Boat runner evaluation drift: " + "/".join(
                         (event, merge_variable, pr_variable, head_repository, author, actor, rerunner)))
+            # A push runs on Boat only on main and only while NORN_MAIN_RUNNER is exactly 'boat';
+            # the switch moves no other event.
+            for main_variable, ref, merge_variable, pr_variable in itertools.product(
+                    ("", "boat", "self-hosted", "other"),
+                    ("refs/heads/main", "refs/heads/main-x", "refs/heads/other", "refs/tags/main"),
+                    ("", "boat"), ("", "boat")):
+                concrete = (expression.replace("github.event_name", repr(event))
+                            .replace("github.ref", repr(ref))
+                            .replace("vars.NORN_MAIN_RUNNER", repr(main_variable))
+                            .replace("vars.NORN_MERGE_RUNNER", repr(merge_variable))
+                            .replace("vars.NORN_PR_RUNNER", repr(pr_variable))
+                            .replace("github.event.pull_request.head.repo.full_name", repr("Norn-cloud/norn"))
+                            .replace("github.event.pull_request.user.login", repr("Youssef-Tarek-Ali-26"))
+                            .replace("github.triggering_actor", repr("Youssef-Tarek-Ali-26"))
+                            .replace("github.actor", repr("Youssef-Tarek-Ali-26"))
+                            .replace("github.repository", repr("Norn-cloud/norn"))
+                            .replace("&&", " and ").replace("||", " or "))
+                expected = ("boat" if (event == "merge_group" and merge_variable == "boat")
+                            or (event == "push" and ref == "refs/heads/main" and main_variable == "boat")
+                            or (event == "pull_request" and pr_variable == "boat") else "ubuntu-24.04")
+                if condition_value(concrete) != expected:
+                    raise AssertionError("Boat runner evaluation drift: " + "/".join(
+                        (event, main_variable, ref, merge_variable, pr_variable)))
         for name in ("core", "plan", "test", "full", "trusted-policy"):
             unsafe = ["boat", "self-hosted", ["self-hosted", "norn-merge"], legacy,
+                      "${{ vars.NORN_MAIN_RUNNER || 'ubuntu-24.04' }}",
+                      runner.replace("github.event_name == 'push' && ", ""),
+                      runner.replace(" && github.ref == 'refs/heads/main'", ""),
+                      runner.replace(" && vars.NORN_MAIN_RUNNER == 'boat'", ""),
+                      runner.replace("vars.NORN_MAIN_RUNNER", "vars.NORN_MERGE_RUNNER"),
                       "${{ vars.NORN_MERGE_RUNNER || 'ubuntu-24.04' }}",
                       "${{ vars.NORN_PR_RUNNER || 'ubuntu-24.04' }}",
                       runner.replace("github.event_name == 'merge_group' && ", ""),
