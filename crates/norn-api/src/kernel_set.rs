@@ -158,7 +158,11 @@ pub fn kernel_model(artifacts: &[ArtifactEnvelope]) -> Result<Model, KernelRefus
             EntityRoot::V2(root) => objects.push(root.object_type),
             EntityRoot::V2Interface(root) => interfaces.push(root.interface),
             EntityRoot::V2PropertyTypes(root) => properties.extend(root.property_types),
-            EntityRoot::V2Markings(_) | EntityRoot::V2Extension(_) | EntityRoot::V1(_) => {
+            // A markings catalog declares no object type. The read path takes
+            // it from the retained canonical set (`privacy::catalog_of`), as
+            // the checker admitted it, so the model has nothing to hold.
+            EntityRoot::V2Markings(_) => {}
+            EntityRoot::V2Extension(_) | EntityRoot::V1(_) => {
                 return Err(KernelRefusal::Invalid(format!(
                     "{} is outside the supported entity profile",
                     artifact.artifact_id
