@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
+# Python isolation (#513): no script directory or cwd on sys.path, and no bytecode read or
+# written next to any source. Older Pythons ignore these variables, so the assertion refuses
+# to run where they have no effect. scripts/ci/python_isolation.py pins these lines.
+export PYTHONSAFEPATH=1
+export PYTHONDONTWRITEBYTECODE=1
+export PYTHONPYCACHEPREFIX="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/norn-pycache.XXXXXX")"
+python3 -c 'import sys; sys.exit(0 if sys.flags.safe_path and sys.dont_write_bytecode and sys.pycache_prefix else 1)' || { echo "Python isolation not honoured" >&2; exit 1; }
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -343,8 +350,30 @@ import json
 import pathlib
 import sys
 
-sys.path.insert(0, "scripts")
-import coverage_manifest
+def _sibling(name, directory=None):
+    """Load sibling module `name` from its source by explicit path: never through sys.path,
+    never from a bytecode cache, never a same-named module loaded some other way (#513)."""
+    import pathlib
+    import sys
+    import types
+
+    path = (directory or pathlib.Path(__file__).resolve().parent) / f"{name}.py"
+    loaded = sys.modules.get(name)
+    if getattr(loaded, "__norn_sibling__", None) == str(path):
+        return loaded
+    module = types.ModuleType(name)
+    module.__file__ = str(path)
+    module.__norn_sibling__ = str(path)
+    sys.modules[name] = module
+    try:
+        exec(compile(path.read_bytes(), str(path), "exec", dont_inherit=True), module.__dict__)
+    except BaseException:
+        del sys.modules[name]
+        raise
+    return module
+
+
+coverage_manifest = _sibling("coverage_manifest", pathlib.Path("scripts").resolve())
 coverage = coverage_manifest.load(pathlib.Path(sys.argv[1]))
 gates = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))["gates"]
 result_root = pathlib.Path(sys.argv[3]).resolve()
@@ -775,6 +804,33 @@ run_gate full kernel-l1-reference \
 run_gate full kernel-l1-version-correspondence \
   "scripts/verify-kernel-l1-aeneas.sh" command \
   scripts/verify-kernel-l1-aeneas.sh
+run_gate full exact-arith-correspondence \
+  "scripts/verify-exact-arith-aeneas.sh" command \
+  scripts/verify-exact-arith-aeneas.sh
+run_gate full semantics-v1-lean \
+  "scripts/verify-semantics-lean.sh" command \
+  scripts/verify-semantics-lean.sh
+run_gate full norm-precedence-decision-correspondence \
+  "scripts/verify-norm-precedence-aeneas.sh" command \
+  scripts/verify-norm-precedence-aeneas.sh
+run_gate full checker-certificates-correspondence \
+  "scripts/verify-checker-certificates-aeneas.sh" command \
+  scripts/verify-checker-certificates-aeneas.sh
+run_gate full law-exceptions-correspondence \
+  "scripts/verify-law-exceptions-aeneas.sh" command \
+  scripts/verify-law-exceptions-aeneas.sh
+run_gate full preservation-correspondence \
+  "scripts/verify-preservation-aeneas.sh" command \
+  scripts/verify-preservation-aeneas.sh
+run_gate full kernel-commit-order-correspondence \
+  "scripts/verify-kernel-commit-aeneas.sh" command \
+  scripts/verify-kernel-commit-aeneas.sh
+run_gate full kernel-binding-correspondence \
+  "scripts/verify-kernel-binding-aeneas.sh" command \
+  scripts/verify-kernel-binding-aeneas.sh
+run_gate full kernel-decider-correspondence \
+  "scripts/verify-kernel-decider-aeneas.sh" command \
+  scripts/verify-kernel-decider-aeneas.sh
 
 # Validate observed selectors only after every producing gate has run.
 run_gate full verification-executed-test-selectors \
@@ -790,8 +846,30 @@ import json
 import pathlib
 import sys
 
-sys.path.insert(0, "scripts")
-import coverage_manifest
+def _sibling(name, directory=None):
+    """Load sibling module `name` from its source by explicit path: never through sys.path,
+    never from a bytecode cache, never a same-named module loaded some other way (#513)."""
+    import pathlib
+    import sys
+    import types
+
+    path = (directory or pathlib.Path(__file__).resolve().parent) / f"{name}.py"
+    loaded = sys.modules.get(name)
+    if getattr(loaded, "__norn_sibling__", None) == str(path):
+        return loaded
+    module = types.ModuleType(name)
+    module.__file__ = str(path)
+    module.__norn_sibling__ = str(path)
+    sys.modules[name] = module
+    try:
+        exec(compile(path.read_bytes(), str(path), "exec", dont_inherit=True), module.__dict__)
+    except BaseException:
+        del sys.modules[name]
+        raise
+    return module
+
+
+coverage_manifest = _sibling("coverage_manifest", pathlib.Path("scripts").resolve())
 coverage = coverage_manifest.load(pathlib.Path(sys.argv[1]))
 artifacts = {
     artifact
@@ -808,8 +886,30 @@ import json
 import pathlib
 import sys
 
-sys.path.insert(0, "scripts")
-import coverage_manifest
+def _sibling(name, directory=None):
+    """Load sibling module `name` from its source by explicit path: never through sys.path,
+    never from a bytecode cache, never a same-named module loaded some other way (#513)."""
+    import pathlib
+    import sys
+    import types
+
+    path = (directory or pathlib.Path(__file__).resolve().parent) / f"{name}.py"
+    loaded = sys.modules.get(name)
+    if getattr(loaded, "__norn_sibling__", None) == str(path):
+        return loaded
+    module = types.ModuleType(name)
+    module.__file__ = str(path)
+    module.__norn_sibling__ = str(path)
+    sys.modules[name] = module
+    try:
+        exec(compile(path.read_bytes(), str(path), "exec", dont_inherit=True), module.__dict__)
+    except BaseException:
+        del sys.modules[name]
+        raise
+    return module
+
+
+coverage_manifest = _sibling("coverage_manifest", pathlib.Path("scripts").resolve())
 coverage = coverage_manifest.load(pathlib.Path(sys.argv[1]))
 artifacts = {
     artifact

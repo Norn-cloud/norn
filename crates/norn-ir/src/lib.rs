@@ -36,7 +36,9 @@ use serde_json::value::RawValue;
 
 pub mod access;
 pub mod action;
+pub mod aggregate_input;
 pub mod business_pack;
+pub mod cell_id;
 pub mod connector;
 pub mod customization;
 pub mod data_quality;
@@ -44,12 +46,16 @@ pub mod decision_output;
 pub mod defined_concept;
 pub mod definition_catalog;
 pub use defined_concept::DefinedConceptRoot;
+pub mod labels;
+pub use labels::{LabelCatalogRoot, LabelEntry, LabelReview, LabelTarget};
 pub mod decision_question;
 pub mod deontic;
 pub mod entitlement;
 pub mod entity;
 pub mod entity_v2;
+pub mod explain;
 pub mod fact_change;
+pub mod facts;
 pub mod flow_source_map;
 pub mod function;
 pub mod identifier_limits;
@@ -71,6 +77,7 @@ pub mod posting;
 pub mod provenance;
 pub mod quantity_ledger;
 pub mod requirement_display;
+pub mod reviewed_locale;
 mod rounding;
 pub use rounding::Rounding;
 pub mod rule;
@@ -78,6 +85,7 @@ pub mod runtime;
 pub mod sealing;
 pub mod setting;
 pub mod source_schema;
+pub mod source_tree;
 pub mod technical_view;
 pub mod theorem_input;
 pub mod view;
@@ -92,6 +100,7 @@ pub use action::{
     ActionQuantityOperation, ActionQuantityParameter, ActionRoot, ActionRuleRef, ActionUiEffect,
     ActionUiEffects, ActionWrite, McpTool, McpToolAnnotations, WriteChange,
 };
+pub use aggregate_input::{ActionAggregateInput, AggregateFunction, AggregateWindow};
 pub use business_pack::{
     BusinessPackKind, BusinessPackRoot, CompositionPackKind, CompositionPackRoot,
     CorrespondenceRelation, LinkResidual, LinkedPack, MappingRelation, OntologyLinkKind,
@@ -255,8 +264,8 @@ pub mod canonical {
 
 pub mod verification;
 pub use verification::{
-    LawIR, LawModality, LawProvenance, LawResponse, LawRoot, LawScope, LawSeverity, LawStateScope,
-    LawTiming,
+    LawException, LawIR, LawModality, LawProvenance, LawResponse, LawRoot, LawScope, LawSeverity,
+    LawStateScope, LawTiming,
 };
 
 pub const SUPPORTED_IR_VERSION: &str = "0.1";
@@ -290,6 +299,9 @@ pub enum ArtifactKind {
     Law,
     /// Pure classification over existing base identities.
     DefinedConcept,
+    /// Localized labels for definitions; never part of a definition's
+    /// identity ([`labels`]).
+    Labels,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -331,6 +343,7 @@ pub const fn direct_artifact_write_allowed(
             | ArtifactKind::Mapping
             | ArtifactKind::Law
             | ArtifactKind::DefinedConcept
+            | ArtifactKind::Labels
     );
     let grants_runtime_authority = matches!(
         lifecycle,
@@ -1221,6 +1234,7 @@ define_payload_root!(ActionPayload {
         ledger_category => "ledgerCategory" as String,
         preconditions => "preconditions" as Vec<ZenExpression>,
         slice => "slice" as Vec<SliceDeclaration>,
+        aggregates => "aggregates" as Vec<ActionAggregateInput>,
         derive => "derive" as Vec<ActionInputDerivation>,
         commands => "commands" as Vec<ActionCommand>,
         synchronous_rule => "synchronousRule" as action::ActionRuleRef,
@@ -1444,7 +1458,11 @@ define_payload_root!(
             modality => "modality" as LawModality,
             response => "response" as LawResponse
         }
-        optional { condition => "condition" as ZenExpression, timing => "timing" as LawTiming }
+        optional {
+            condition => "condition" as ZenExpression,
+            timing => "timing" as LawTiming,
+            exceptions => "exceptions" as Vec<LawException>
+        }
     }
 );
 
@@ -1461,6 +1479,20 @@ define_payload_root!(
             bounds => "bounds" as ResourceLimitProfile
         }
         optional {}
+    }
+);
+
+define_payload_root!(
+    /// Localized presentation labels for definitions ([`labels`]).
+    #[schemars(with = "LabelCatalogRoot")]
+    LabelsPayload {
+        required {
+            labels_version => "labelsVersion" as IrVersion01,
+            entries => "entries" as Vec<LabelEntry>
+        }
+        optional {
+            required_locales => "requiredLocales" as Vec<String>
+        }
     }
 );
 
@@ -1504,6 +1536,7 @@ pub enum ArtifactPayload {
     Mapping(MappingPayload),
     Law(LawPayload),
     DefinedConcept(DefinedConceptPayload),
+    Labels(LabelsPayload),
 }
 
 /// The wire payload root must be a JSON object before it can select a closed kind root.
@@ -1557,6 +1590,7 @@ impl ArtifactPayload {
             ArtifactKind::DefinedConcept => {
                 Self::DefinedConcept(DefinedConceptPayload::from_json_object(object))
             }
+            ArtifactKind::Labels => Self::Labels(LabelsPayload::from_json_object(object)),
         }
     }
 
@@ -1579,6 +1613,7 @@ impl ArtifactPayload {
             Self::Mapping(_) => ArtifactKind::Mapping,
             Self::Law(_) => ArtifactKind::Law,
             Self::DefinedConcept(_) => ArtifactKind::DefinedConcept,
+            Self::Labels(_) => ArtifactKind::Labels,
         }
     }
 
@@ -1601,6 +1636,7 @@ impl ArtifactPayload {
             Self::Mapping(payload) => payload.to_json_value(),
             Self::Law(payload) => payload.to_json_value(),
             Self::DefinedConcept(payload) => payload.to_json_value(),
+            Self::Labels(payload) => payload.to_json_value(),
         }
     }
 
@@ -1623,6 +1659,7 @@ impl ArtifactPayload {
             Self::Mapping(payload) => payload.unknown_fields(),
             Self::Law(payload) => payload.unknown_fields(),
             Self::DefinedConcept(payload) => payload.unknown_fields(),
+            Self::Labels(payload) => payload.unknown_fields(),
         }
     }
 
@@ -1645,6 +1682,7 @@ impl ArtifactPayload {
             Self::Mapping(payload) => payload.has_invalid_extensions(),
             Self::Law(payload) => payload.has_invalid_extensions(),
             Self::DefinedConcept(payload) => payload.has_invalid_extensions(),
+            Self::Labels(payload) => payload.has_invalid_extensions(),
         }
     }
 
@@ -2149,6 +2187,7 @@ pub fn artifact_payload_schema(kind: &ArtifactKind) -> Schema {
         ArtifactKind::Mapping => schema_for!(MappingPayload),
         ArtifactKind::Law => schema_for!(LawPayload),
         ArtifactKind::DefinedConcept => schema_for!(DefinedConceptPayload),
+        ArtifactKind::Labels => schema_for!(LabelsPayload),
     }
 }
 

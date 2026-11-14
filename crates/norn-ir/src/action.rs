@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::members::{IrVersion01, present_non_null};
 use crate::rule::JsonObject;
-use crate::{ActionEffectProgram, SliceDeclaration, ZenExpression};
+use crate::{ActionAggregateInput, ActionEffectProgram, SliceDeclaration, ZenExpression};
 
 /// Typed payload of an `action` artifact.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -41,7 +41,9 @@ pub struct ActionRoot {
     /// Ledger category of the event the action appends.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ledger_category: Option<String>,
-    /// Closed JSON Schema of the action input (an object schema).
+    /// Closed action input schema, using the shared `number` + `nornType`
+    /// Decimal refinement with scale 0..=18. Transports carry these leaves as
+    /// exact JSON strings; the kernel decodes them before authorization or effects.
     pub input_schema: JsonObject,
     /// Closed JSON Schema of the action output.
     pub output_schema: JsonObject,
@@ -53,6 +55,10 @@ pub struct ActionRoot {
     /// commit against the versions they read.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub slice: Vec<SliceDeclaration>,
+    /// Bounded exact folds over stored objects (#1105), read by preconditions
+    /// by name and resolved in the action's commit against the matched set.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub aggregates: Vec<ActionAggregateInput>,
     /// Ordered input derivations applied before validation and writing.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub derive: Vec<ActionInputDerivation>,

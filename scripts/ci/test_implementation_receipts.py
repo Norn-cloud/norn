@@ -13,6 +13,7 @@ import subprocess
 import tempfile
 import tomllib
 import unittest
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 SPEC = importlib.util.spec_from_file_location("implementation_receipts", HERE / "implementation_receipts.py")
@@ -588,6 +589,62 @@ class ReceiptTest(unittest.TestCase):
                                                                     f'source = "{evil}"\n'))
         with self.assertRaisesRegex(guard.Refused, f"{name} {version}: build-time code not locked on the base"):
             guard.guard_cargo(self.root, "lib")
+
+
+    def test_candidate_processes_inherit_no_runner_secrets(self) -> None:
+        secrets = {"GITHUB_TOKEN": "ghs_leak", "ACTIONS_RUNTIME_TOKEN": "act_leak", "MY_SECRET": "s3cret",
+                   "RUNNER_TEMP": "/runner"}
+        os.environ.update(secrets)
+        real, envs = subprocess.run, []
+
+        def capture(argv, *positional, **options):
+            envs.append((argv, options.get("env")))
+            return real(argv, *positional, **options)
+
+        guard = importlib.util.module_from_spec(SPEC)
+        SPEC.loader.exec_module(guard)
+        metadata = {"packages": [{"id": "a", "name": "lib", "version": "0.1.0", "source": None,
+                                  "targets": [{"kind": ["lib"]}]}],
+                    "resolve": {"nodes": [{"id": "a", "deps": []}]}}
+        fake = self.tmp / "cargo-bin/cargo"
+        fake.parent.mkdir()
+        fake.write_text(f"#!/bin/sh\ncat <<'EOF'\n{json.dumps(metadata)}\nEOF\n")
+        fake.chmod(0o755)
+        os.environ["PATH"] = f"{fake.parent}:{os.environ['PATH']}"
+        for name in ("Cargo.lock", *guard.CARGO_CONFIG):
+            if (guard.TRUSTED / name).is_file():
+                (self.root / name).parent.mkdir(exist_ok=True)
+                shutil.copyfile(guard.TRUSTED / name, self.root / name)
+        self.commit()
+        with mock.patch.object(subprocess, "run", capture):
+            self.produce()
+            guard.guard_cargo(self.root, "lib")
+            receipts.git_object(self.root, "src/lib.rs")
+        tools = {Path(argv[0]).name for argv, _ in envs}
+        self.assertTrue({"git", "kani", "cargo-hax", "fstar.exe", "cargo"} <= tools, tools)
+        for argv, env in envs:
+            self.assertIsNotNone(env, argv)
+            self.assertFalse(set(secrets) & set(env), argv)
+            self.assertFalse([n for n in env if n.startswith(("GITHUB_", "ACTIONS_", "RUNNER_"))], argv)
+            self.assertNotIn("ghs_leak", json.dumps(env), argv)
+        # The receipt still records the run identity from the wrapper's own environment.
+        self.assertEqual(json.loads(self.receipt("INV-KANI").read_text())["repository"], "o/r")
+
+    def test_one_claim_raising_still_runs_the_others(self) -> None:
+        self.claims = {"INV-EXTRACT": self.claims["INV-EXTRACT"], "INV-KANI": self.claims["INV-KANI"]}
+        real = receipts.run
+        self.addCleanup(setattr, receipts, "run", real)
+
+        def first_raises(root, claim, *rest):
+            if claim["id"] == "INV-EXTRACT":
+                raise OSError("disk went away")
+            return real(root, claim, *rest)
+
+        receipts.run = first_raises
+        status = receipts.run_all(self.root, self.claims, self.head, self.out, self.tmp / "tools")
+        self.assertEqual(status, 1)
+        self.assertFalse(self.receipt("INV-EXTRACT").exists())
+        self.assertEqual(json.loads(self.receipt("INV-KANI").read_text())["exitCode"], 0)
 
 
 if __name__ == "__main__":

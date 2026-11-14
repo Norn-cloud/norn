@@ -5,7 +5,9 @@ use js_sys::{Array, Uint8Array};
 use wasm_bindgen::{closure::ScopedClosure, prelude::*};
 
 use crate::CellError;
-use crate::engine::{MAX_SAFE_INTEGER, SqlEngine, SqlValue, validate_bindings};
+use crate::engine::{
+    MAX_SAFE_INTEGER, SqlEngine, SqlValue, Transact, run_transaction, validate_bindings,
+};
 
 #[wasm_bindgen(inline_js = r#"
 export function rows(storage, sql, params) {
@@ -95,14 +97,53 @@ fn decode(value: &JsValue) -> Result<SqlValue, CellError> {
     Err(CellError::Engine("unsupported DO SQL value".into()))
 }
 
-struct Active<'a>(&'a Cell<bool>);
-impl Drop for Active<'_> {
-    fn drop(&mut self) {
-        self.0.set(false);
+/// `storage.transactionSync`; the decision logic is `run_transaction`.
+impl Transact for WorkersEngine {
+    type Thrown = JsValue;
+
+    fn transaction_sync<F: FnMut() -> Result<(), JsValue>>(
+        &self,
+        callback: &mut F,
+    ) -> Result<(), JsValue> {
+        // The closure type is named: a generic `F` alone does not pin its arity.
+        let closure =
+            ScopedClosure::<dyn FnMut() -> Result<(), JsValue> + '_>::borrow_mut_aborting(callback);
+        transact(&self.storage, closure.as_js_value()).map(|_| ())
+    }
+
+    fn rollback_marker(&self) -> JsValue {
+        JsValue::from_str("norn:rollback")
+    }
+
+    fn is_rollback_marker(&self, thrown: &JsValue) -> bool {
+        thrown.as_string().as_deref() == Some("norn:rollback")
+    }
+
+    fn callback_reused(&self) -> JsValue {
+        JsValue::from_str("transaction callback reused")
+    }
+
+    fn engine_error(&self, thrown: &JsValue) -> CellError {
+        backend(thrown)
     }
 }
 
 impl SqlEngine for WorkersEngine {
+    /// Tables the runtime keeps in the DO's own database, visible in
+    /// `sqlite_master`: `_cf_*` and `__cf_*` (reserved by the Durable Objects
+    /// storage API, `__cf_kv` among them), celld's Litestream replication
+    /// tables, and Wrangler/Miniflare's local `__miniflare_do_name`.
+    fn platform_table_globs(&self) -> &'static [&'static str] {
+        &["_cf_*", "__cf_*", "_litestream_*", "__miniflare_*"]
+    }
+
+    /// A Durable Object's storage has one connection, this cell's, and the
+    /// cell serves each request in one synchronous Wasm call with no await, so
+    /// nothing writes between two reads of a call.
+    fn read_isolation(&self) -> crate::engine::ReadIsolation {
+        crate::engine::ReadIsolation::ExclusiveSynchronous
+    }
+
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
         self.query(sql, params).map(|_| ())
     }
@@ -130,40 +171,6 @@ impl SqlEngine for WorkersEngine {
     }
 
     fn transaction<T, X: From<CellError>>(&self, f: impl FnOnce() -> Result<T, X>) -> Result<T, X> {
-        if self.active.replace(true) {
-            return Err(CellError::Engine("nested transaction refused".into()).into());
-        }
-        let _active = Active(&self.active);
-        let mut operation = Some(f);
-        let mut output = None;
-        let mut callback = || -> Result<(), JsValue> {
-            let Some(f) = operation.take() else {
-                return Err(JsValue::from_str("transaction callback reused"));
-            };
-            let result = f();
-            let failed = result.is_err();
-            output = Some(result);
-            if failed {
-                Err(JsValue::from_str("norn:rollback"))
-            } else {
-                Ok(())
-            }
-        };
-        let result = {
-            let closure = ScopedClosure::borrow_mut_aborting(&mut callback);
-            transact(&self.storage, closure.as_js_value())
-        };
-        match (result, output) {
-            (Err(error), Some(Err(refusal)))
-                if error.as_string().as_deref() == Some("norn:rollback") =>
-            {
-                Err(refusal)
-            }
-            (Err(error), _) => Err(backend(&error).into()),
-            (Ok(_), Some(Ok(value))) => Ok(value),
-            (Ok(_), None | Some(Err(_))) => {
-                Err(CellError::Engine("transaction callback/rollback missing".into()).into())
-            }
-        }
+        run_transaction(self, &self.active, f)
     }
 }

@@ -1,0 +1,30 @@
+{
+  "runner": "boat",
+  "metrics": {
+    "fork.cow.create.f1000.p50": {
+      "better": "lower",
+      "noise_pct": 25,
+      "why": "Copy-on-write fork latency at 1000 forks (BENCH-FORK-1). Dominated by opening a SQLite connection and cloning caches; sub-millisecond values swing with scheduler noise on 4 vCPUs."
+    },
+    "fork.cow.read.fork.f20.p50": {
+      "better": "lower",
+      "noise_pct": 25,
+      "why": "Point reads through a fork (BENCH-FORK-1); CPU-bound in memory at about 10 us, so scheduler noise is a large share."
+    },
+    "fork.cow.storage_vs_full.f1000": {
+      "better": "lower",
+      "noise_pct": 5,
+      "why": "Storage of 1000 forks against 1000 full copies. Page counts are deterministic for a fixed workload, so only a real layout change moves it."
+    },
+    "proof.gate.promoted_subsystems.s": {
+      "better": "lower",
+      "noise_pct": 20,
+      "why": "The formal phase's proof run (verify-promoted-subsystems.sh full) on a default Boat VM after untimed tool bootstraps; solver and Lean times vary with VM load, and Rust builds inside the gate start cold."
+    },
+    "sim.dst.serial_total_s": {
+      "better": "lower",
+      "noise_pct": 15,
+      "why": "The D79 simulator set (sim.dst.serial_total_s), run serially on a Boat default VM. #1223 saw 33.4 s and 34.7 s for the same set on two VMs (about 4%); 15% leaves room for VM-to-VM CPU variance on a single run."
+    }
+  }
+}

@@ -64,8 +64,6 @@ pub enum Ring {
     One,
     /// Listed by SKELETON.md as "unchanged until their scoped plan work".
     Unscoped,
-    /// Test/CI-only tooling (this guard).
-    Tooling,
     /// Test-support library (`norn-testkit`): any workspace crate may take it
     /// as a dev-dependency; no crate may take it as a normal or build
     /// dependency, so it never reaches a shipped or `wasm32` build.
@@ -123,6 +121,12 @@ const fn rule(name: &'static str, ring: Ring, allowed_norn: &'static [&'static s
 pub const CRATES: &[CrateRule] = &[
     r0("norn-graph", &[], &["rust_decimal"]),
     r0("norn-canonical", &[], &[]),
+    // Shared data/validator only; no executor.
+    r0(
+        "norn-datalog",
+        &["norn-canonical", "norn-graph", "norn-ir"],
+        &["serde"],
+    ),
     r0(
         "norn-ir",
         &["norn-canonical"],
@@ -133,10 +137,25 @@ pub const CRATES: &[CrateRule] = &[
         &["norn-ir"],
         &["zen-expression", "chrono", "chrono-tz"],
     ),
+    // Bounded inheritance classification: Ascent (vendored, clock-free profile)
+    // at runtime; norn-datalog and quote only at build time.
     r0(
         "norn-checker",
-        &["norn-ir", "norn-expr", "norn-canonical", "norn-graph"],
-        &["serde_json", "sha2", "regex-lite", "serde_path_to_error"],
+        &[
+            "norn-ir",
+            "norn-expr",
+            "norn-canonical",
+            "norn-graph",
+            "norn-datalog",
+        ],
+        &[
+            "serde_json",
+            "sha2",
+            "regex-lite",
+            "serde_path_to_error",
+            "ascent",
+            "quote",
+        ],
     ),
     r0(
         "norn-decisions",
@@ -160,10 +179,33 @@ pub const CRATES: &[CrateRule] = &[
         ],
         &["serde", "thiserror"],
     ),
+    r0(
+        "norn-builtins",
+        &["norn-ir", "norn-kernel"],
+        &["serde", "serde_json"],
+    ),
     rule(
         "norn-cell",
         Ring::One,
-        &["norn-kernel", "norn-checker", "norn-projections", "norn-ir"],
+        &[
+            "norn-kernel",
+            "norn-builtins",
+            "norn-checker",
+            "norn-projections",
+            "norn-ir",
+        ],
+    ),
+    rule(
+        "norn-cell-do",
+        Ring::One,
+        &[
+            "norn-api",
+            "norn-cell",
+            "norn-checker",
+            "norn-ir",
+            "norn-kernel",
+            "norn-projections",
+        ],
     ),
     rule("norn-dataplane", Ring::One, &["norn-ir"]),
     rule(
@@ -187,7 +229,16 @@ pub const CRATES: &[CrateRule] = &[
         Ring::One,
         &["norn-checker", "norn-projections", "norn-expr", "norn-ir"],
     ),
-    rule("norn-skeleton-guard", Ring::Tooling, &[]),
+    // Format-family readers (XSD first; norn-platform#2739, #3507): decisions +
+    // expr evaluate the type tables; the checker runs the conformance harness
+    // in tests only. Standards and systems are packs, never Rust.
+    CrateRule {
+        name: "norn-formats",
+        ring: Ring::One,
+        allowed_norn: &["norn-ir", "norn-decisions", "norn-expr"],
+        dev_only_norn: &["norn-checker"],
+        third_party: &[],
+    },
     CrateRule {
         name: "norn-testkit",
         ring: Ring::TestSupport,
@@ -201,6 +252,10 @@ pub const CRATES: &[CrateRule] = &[
     rule("zen-tmpl", Ring::Vendored, &[]),
     rule("zen-types", Ring::Vendored, &[]),
 ];
+
+/// This guard's package. It is its own Cargo workspace (D95), outside the ring model and the
+/// root workspace, and no workspace crate may depend on it in any dependency kind.
+pub const GUARD_CRATE: &str = "norn-skeleton-guard";
 
 /// Optional normal dependencies that belong exclusively to norn-cell's
 /// native host adapters, enabled by its `native` feature.
@@ -923,6 +978,16 @@ pub fn check_dependencies(metadata: &Metadata) -> Vec<Violation> {
         }
         for dep in &pkg.dependencies {
             let dep_name = dep.name.as_str();
+            if dep_name == GUARD_CRATE {
+                out.push(violation(
+                    "guard-dependency",
+                    format!(
+                        "`{name}` depends on `{GUARD_CRATE}` ({}); the guard is its own workspace and no Norn crate may take it",
+                        kind_label(dep.kind)
+                    ),
+                ));
+                continue;
+            }
             check_calendar_dependencies(name, dep, &mut out);
             if dep_name == name {
                 // Self dev-dependency used to enable test-only features.

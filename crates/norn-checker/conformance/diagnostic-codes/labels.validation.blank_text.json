@@ -1,0 +1,7 @@
+{
+  "code": "labels.validation.blank_text",
+  "message": "a label or description is blank, or an entry has no label",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

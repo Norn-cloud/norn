@@ -3,8 +3,12 @@ import { readFileSync, statSync } from "node:fs"
 import { createHash } from "node:crypto"
 import { relative, resolve, sep } from "node:path"
 import ts from "typescript"
-import { COMPILER_OPTIONS, ProfileChecker, createHost, type Diagnostic } from "../check.ts"
-import { INTRINSICS_PATH, TOOL_ROOT } from "../profile.ts"
+import { COMPILER_OPTIONS, ProfileChecker, RESERVED_CLOSURE_NAMES, createHost, type Diagnostic } from "../check.ts"
+import { INTRINSICS_PATH, TOOL_ROOT, dependencyDir } from "../profile.ts"
+
+// The pinned declaration trees, wherever the package manager installed them.
+const EFFECT_DIR = resolve(dependencyDir("effect")) + sep
+const TYPESCRIPT_DIR = resolve(dependencyDir("typescript")) + sep
 import type { Json } from "../canonical.ts"
 import type { FlowSourceMapDraft, FlowSourceMapLocation, FlowSourceMapStepKind } from "../flow-source-map.ts"
 import { BudgetExceeded, ExpansionBudget } from "../builder/budget.ts"
@@ -13,13 +17,15 @@ import type { FlowDef, FnRef, Step, TaggedErrorDecl, SourceLocation, BuildOption
 import type { Expr } from "../builder/expr.ts"
 import { CompileError, SchemaBudget, resultSchema, valueSchema } from "./types.ts"
 
-export const COMPILER_LIMITS = { maxSourceBytes: 1_048_576, maxNodes: 100_000, maxModules: 128, maxDepth: 128, maxOutputBytes: 8_388_608, maxMillis: 30_000 } as const
+export const COMPILER_LIMITS = { maxSourceBytes: 1_048_576, maxNodes: 100_000, maxExpansionWork: 100_000, maxModules: 128, maxDepth: 128, maxOutputBytes: 8_388_608, maxMillis: 30_000 } as const
 export type CompilerLimits = { readonly [K in keyof typeof COMPILER_LIMITS]: number }
 export type CompileResult =
   | { readonly ok: true; readonly definition: FlowDef; readonly artifacts: ReadonlyArray<Json>; readonly sourceMap: Json; readonly warnings: ReadonlyArray<Diagnostic>; readonly flowSourceMap?: FlowSourceMapDraft }
   | { readonly ok: false; readonly diagnostics: ReadonlyArray<Diagnostic> }
 
 type Env = ReadonlyMap<ts.Symbol, Expr>
+/** Array methods and the norn-zen/6 closures they lower to (A2, #1176). */
+const ARRAY_CLOSURES: Readonly<Record<string, B.X.ClosureFn>> = { some: "some", every: "all", filter: "filter", map: "map" }
 interface Plan {
   readonly steps: ReadonlyArray<Step>
   readonly value: Expr
@@ -34,7 +40,7 @@ function boundedHost(started: number, limits: CompilerLimits, declarations: Map<
   let bytes = 0, tokens = 0
   host.getSourceFile = (file, languageVersion, onError, shouldCreateNewSourceFile) => {
     const path = resolve(file)
-    const pinnedDeclarations = path.endsWith(".d.ts") && (path.startsWith(resolve(TOOL_ROOT, "node_modules/effect") + sep) || path.startsWith(resolve(TOOL_ROOT, "node_modules/typescript") + sep) || path === INTRINSICS_PATH)
+    const pinnedDeclarations = path.endsWith(".d.ts") && (path.startsWith(EFFECT_DIR) || path.startsWith(TYPESCRIPT_DIR) || path === INTRINSICS_PATH)
     if (pinnedDeclarations && !shouldCreateNewSourceFile) {
       if (Date.now() - started >= limits.maxMillis) throw new CompileError("NORN-FLOW-UNBOUNDED", "cooperative compiler time bound exceeded", ts.createSourceFile(path, "", ts.ScriptTarget.ES2022))
       const known = declarations.get(path)
@@ -141,7 +147,7 @@ export function prepareCompilation(files: ReadonlyArray<string>, overrides: Part
       failed.set(path, [diagnostic(sf, "NORN-FLOW-UNBOUNDED", "source exceeds compiler byte bound")])
     } else { eligible.push(path); rootBytes += rawBytes; readRoots.add(path) }
   }
-  const expansion = new ExpansionBudget({ maxWork: limits.maxNodes, maxOutputBytes: limits.maxOutputBytes, deadline: started + limits.maxMillis })
+  const expansion = new ExpansionBudget({ maxWork: limits.maxExpansionWork, maxOutputBytes: limits.maxOutputBytes, deadline: started + limits.maxMillis })
   let reports: ReturnType<ProfileChecker["check"]>
   let program: ts.Program | undefined
   try {
@@ -417,7 +423,11 @@ export class SyntaxCompiler {
         }
         if (ts.isPropertyAccessExpression(e) && e.name.text === "length") {
           const t = this.checker.getTypeAtLocation(e.expression)
-          if (this.checker.isArrayType(t) || this.checker.isTupleType(t)) return B.X.call("len", this.data(e.expression, env))
+          if (this.checker.isArrayType(t) || this.checker.isTupleType(t)) {
+            const list = this.data(e.expression, env)
+            // `xs.filter(f).length` counts without building the filtered list.
+            return list._tag === "Closure" && list.fn === "filter" ? B.X.closure("count", list.list, list.alias, list.body) : B.X.call("len", list)
+          }
           if ((t.flags & ts.TypeFlags.StringLike) !== 0) throw new CompileError("NORN-FLOW-EXPRESSION", "string.length counts UTF-16 units in JavaScript; use Norn.byteLength(text) for the canonical UTF-8 byte count", e)
         }
         const base = this.data(e.expression, env)
@@ -458,8 +468,33 @@ export class SyntaxCompiler {
           return B.X.call(id.endsWith("parseDate") ? "date" : "timestamp", this.data(e.arguments[0]!, env))
         }
         if (id === "@norn/authoring#Norn.dateBefore") return B.X.call("dateBefore", ...e.arguments.map((a) => this.data(a, env)))
+        if (id === "@norn/authoring#Norn.sum" || id === "@norn/authoring#Norn.daysBetween" || id === "@norn/authoring#Norn.addDays") {
+          const args = e.arguments.map((a) => this.data(a, env))
+          if (id.endsWith(".sum")) { if (args.length !== 1) throw new CompileError("NORN-FLOW-EXPRESSION", "Norn.sum takes one list", e); return B.X.sum(args[0]!) }
+          if (args.length !== 2) throw new CompileError("NORN-FLOW-EXPRESSION", `${id.slice(id.indexOf("#") + 1)} takes two arguments`, e)
+          return id.endsWith(".daysBetween") ? B.X.daysBetween(args[0]!, args[1]!) : B.X.addDays(args[0]!, args[1]!)
+        }
         if (ts.isPropertyAccessExpression(e.expression)) {
           const receiver = this.data(e.expression.expression, env), name = e.expression.name.text
+          const closure = ARRAY_CLOSURES[name]
+          if (closure !== undefined && Object.hasOwn(ARRAY_CLOSURES, name)) {
+            const t = this.checker.getTypeAtLocation(e.expression.expression)
+            const fn = e.arguments[0]
+            if (!(this.checker.isArrayType(t) || this.checker.isTupleType(t))) throw new CompileError("NORN-FLOW-EXPRESSION", `.${name} iterates an array`, e)
+            if (e.arguments.length !== 1 || !fn || !ts.isArrowFunction(fn)) throw new CompileError("NORN-FLOW-CAPTURE", `pass .${name} one inline arrow callback`, fn ?? e)
+            const param = fn.parameters[0]
+            if (fn.parameters.length !== 1 || !param || !ts.isIdentifier(param.name) || param.initializer || param.dotDotDotToken || ts.isBlock(fn.body)) {
+              throw new CompileError("NORN-FLOW-UNSUPPORTED-SYNTAX", `a .${name} callback takes one plain parameter and an expression body`, fn)
+            }
+            const alias = param.name.text
+            if (RESERVED_CLOSURE_NAMES.has(alias)) throw new CompileError("NORN-FLOW-UNSUPPORTED-SYNTAX", `\`${alias}\` names a Norn expression binding; call the element something else`, param)
+            const inner = new Map(env)
+            inner.set(this.symbol(param.name), B.X.ref(alias))
+            try { return B.X.closure(closure, receiver, alias, this.data(fn.body, inner)) } catch (error) {
+              if (error instanceof B.X.ExprError) throw new CompileError(error.code, error.message, param)
+              throw error
+            }
+          }
           const args = e.arguments.map((a) => this.data(a, env))
           if (name === "concat") return B.X.call("concat", receiver, ...args)
           if (name === "includes") {

@@ -55,7 +55,7 @@ allow-wildcard-paths = true
 # SKELETON.md single-owner crates (knowledge/architecture/build-plan-2026-09-09/
 # SKELETON.md). `wrappers` lists the only crates allowed to depend on each one
 # directly, across the whole graph including transitive and dev edges; the
-# direct-edge table itself is enforced by `cargo test -p norn-skeleton-guard`.
+# direct-edge table itself is enforced by `cargo test --manifest-path crates/norn-skeleton-guard/Cargo.toml`.
 deny = [
   { crate = "worker", wrappers = ["norn-cell-do"], reason = "SKELETON.md: workers-rs is confined to the Cloudflare host adapter" },
   { crate = "rusqlite", wrappers = ["norn-cell"], reason = "SKELETON.md: only norn-cell (native test driver) may use rusqlite" },

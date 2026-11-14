@@ -1,0 +1,7 @@
+{
+  "code": "labels.admission.conflicting_label",
+  "message": "two candidate labels artifacts label the same target in the same locale",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

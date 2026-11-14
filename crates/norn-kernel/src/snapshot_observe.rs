@@ -1226,6 +1226,29 @@ impl ObservationAuthorization {
     }
 }
 
+/// Resolve the exact retained domain declaration for a property failure.
+fn property_finding_rule_ref(
+    catalog: &TypeCatalog<'_>,
+    failure: &InvariantFailure,
+) -> Result<DataQualityRuleRef, ObservationRefusal> {
+    let norn_ir::InvariantOwner::Object(owner) = &failure.owner else {
+        return Err(ObservationRefusal::Encoding(
+            "property owner must be an object".to_owned(),
+        ));
+    };
+    let property = norn_ir::PropertyId(
+        failure
+            .id
+            .as_str()
+            .trim_start_matches("$property.")
+            .to_owned(),
+    );
+    catalog
+        .property_domain_rule_ref(owner, &property)
+        .map_err(|error| ObservationRefusal::Encoding(error.to_string()))?
+        .ok_or_else(|| ObservationRefusal::Encoding("property domain is not retained".to_owned()))
+}
+
 fn findings_for(
     catalog: &TypeCatalog<'_>,
     key: &FactKey,
@@ -1279,6 +1302,10 @@ fn findings_for(
                         "unsupported built-in invariant finding outcome: {outcome:?}"
                     )));
                 }
+                None if failure.id.as_str().starts_with("$property.") => (
+                    property_finding_rule_ref(catalog, failure)?,
+                    failure.outcome.clone(),
+                ),
                 None => {
                     let version = catalog
                         .invariant_owner_version(&failure.owner)
@@ -1523,6 +1550,15 @@ pub fn prepare_observed_snapshot(
             ));
         }
     }
+    if let Some(first) = lifecycles
+        .first()
+        .filter(|_| catalog.effective_view_refused(&key.object_type))
+    {
+        return Err(invalid(
+            &first.property,
+            "the effective type view is refused, so protected lifecycle properties cannot be checked",
+        ));
+    }
     for snapshot in lifecycles {
         if catalog
             .effective_type(&key.object_type)
@@ -1651,6 +1687,7 @@ pub fn prepare_observed_snapshot(
             effects: Vec::new(),
             links: Vec::new(),
             link_reads: Vec::new(),
+            predicate_reads: Vec::new(),
         },
         authorization,
     })
@@ -1928,6 +1965,15 @@ fn reject_protected_observed_delete(
     catalog: &TypeCatalog<'_>,
     key: &FactKey,
 ) -> Result<(), ObservationRefusal> {
+    if catalog.effective_view_refused(&key.object_type) {
+        return Err(ObservationRefusal::Properties(Box::new(
+            DecisionRefusal::InvalidOutput {
+                reason: format!(
+                    "{key} has no effective type view, so its protected properties cannot be checked"
+                ),
+            },
+        )));
+    }
     if let Some(property) = catalog
         .effective_type(&key.object_type)
         .and_then(|effective| {
@@ -2317,8 +2363,39 @@ where
             effects: Vec::new(),
             links: prepared.links,
             link_reads: Vec::new(),
+            predicate_reads: Vec::new(),
         },
         authorization,
     )
     .map_err(ObservationCommitRefusal::Commit)
+}
+
+#[cfg(test)]
+mod refused_view_tests {
+    use super::reject_protected_observed_delete;
+    use crate::FactKey;
+    use crate::decision_commit::TypeCatalog;
+    use norn_ir::ObjectTypeDef;
+
+    #[test]
+    #[allow(clippy::unwrap_used, reason = "test fixtures require successful setup")]
+    fn observed_delete_is_refused_when_the_effective_view_is_refused() {
+        let object: ObjectTypeDef = serde_json::from_value(serde_json::json!({
+            "name": "test.Counter", "properties": [{ "id": "total",
+                "type": { "kind": "integer" }, "protected": true }]
+        }))
+        .unwrap();
+        let key = FactKey::new("test.Counter", "one");
+        let resolved = TypeCatalog::new([&object]);
+        assert!(reject_protected_observed_delete(&resolved, &key).is_err());
+        let plain: ObjectTypeDef = serde_json::from_value(serde_json::json!({
+            "name": "test.Counter", "properties": [{ "id": "total",
+                "type": { "kind": "integer" } }]
+        }))
+        .unwrap();
+        assert!(reject_protected_observed_delete(&TypeCatalog::new([&plain]), &key).is_ok());
+        let refused = TypeCatalog::new([&plain]);
+        assert!(refused.refuse_effective_view_for_test());
+        assert!(reject_protected_observed_delete(&refused, &key).is_err());
+    }
 }

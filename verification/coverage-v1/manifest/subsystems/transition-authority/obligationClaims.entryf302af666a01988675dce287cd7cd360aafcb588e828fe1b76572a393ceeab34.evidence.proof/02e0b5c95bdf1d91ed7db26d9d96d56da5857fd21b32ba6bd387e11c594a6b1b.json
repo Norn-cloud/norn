@@ -1,0 +1,10 @@
+{
+  "order": 1,
+  "value": {
+    "artifact": "verification/kernel-proof-v1/Commit/CasProof.lean",
+    "command": "scripts/verify-kernel-commit-aeneas.sh",
+    "selectors": {
+      "$entries": "obligationClaims.entryf302af666a01988675dce287cd7cd360aafcb588e828fe1b76572a393ceeab34.evidence.proof.entry02e0b5c95bdf1d91ed7db26d9d96d56da5857fd21b32ba6bd387e11c594a6b1b.selectors"
+    }
+  }
+}

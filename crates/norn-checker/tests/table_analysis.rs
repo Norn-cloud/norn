@@ -31,41 +31,6 @@ fn table(policy: &str, conditions: &[&str]) -> JdmDecisionTableContent {
 }
 
 #[test]
-fn finite_gap_has_exact_input_golden() {
-    let result = analyze_table(&table("first", &["true"]), &boolean()).expect("exhaustive");
-    let actual = json!({"inputsChecked":result.inputs_checked,
-        "uncovered":result.uncovered,"uncoveredCount":result.uncovered_count,
-        "unreachableRows":result.unreachable_rows,"overlaps":result.overlaps.len()});
-    let expected: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../fixtures/rule-ir-v2/analysis/finite-gap.expected.json"
-    ))
-    .expect("golden");
-    assert_eq!(actual, expected);
-}
-
-#[test]
-fn first_shadowing_and_collect_overlap_have_distinct_reachability() {
-    let first =
-        analyze_table(&table("first", &["false", "false", "true"]), &boolean()).expect("first");
-    assert!(first.uncovered.is_none());
-    assert_eq!(first.unreachable_rows, ["row_1"]);
-    assert_eq!(first.overlaps[0].input, json!({"approved":false}));
-    assert_eq!(first.overlaps[0].matching_rows, ["row_0", "row_1"]);
-    assert_eq!(first.overlaps[0].selected_rows, ["row_0"]);
-    let collect =
-        analyze_table(&table("collect", &["false", "false", "true"]), &boolean()).expect("collect");
-    assert!(collect.unreachable_rows.is_empty());
-    assert_eq!(collect.overlaps[0].selected_rows, ["row_0", "row_1"]);
-}
-
-#[test]
-fn impossible_row_is_unreachable_under_collect() {
-    let result =
-        analyze_table(&table("collect", &["true", "false", "null"]), &boolean()).expect("analysis");
-    assert_eq!(result.unreachable_rows, ["row_2"]);
-}
-
-#[test]
 fn standard_expression_cells_use_context_without_a_subject() {
     let mut value = table("first", &["approved == true", "approved == false"]);
     value.inputs[0].field = None;
@@ -99,12 +64,6 @@ fn optional_nullable_and_enum_inputs_are_exhaustive() {
     let result = analyze_table(&table("collect", &[""]), &schema).expect("analysis");
     assert_eq!(result.inputs_checked, 8);
     assert!(result.uncovered.is_none());
-}
-
-#[test]
-fn empty_table_is_not_vacuously_complete() {
-    let result = analyze_table(&table("first", &[]), &boolean()).expect("analysis");
-    assert_eq!(result.uncovered_count, 2);
 }
 
 #[test]

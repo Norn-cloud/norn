@@ -1,0 +1,7 @@
+{
+  "code": "labels.lint.missing_label",
+  "message": "{count} definitions have no {locale} label: {targets}",
+  "severity": "warning",
+  "since": "0.1.0",
+  "tier": "T2"
+}

@@ -84,12 +84,7 @@ pub(crate) fn consumed_input<E: SqlEngine>(
             generation,
         } => {
             let pending = reader
-                .head_command()?
-                .filter(|row| {
-                    row.command.command_id == *command_id
-                        && row.command.generation == *generation
-                        && row.result.is_some()
-                })
+                .pending_result(command_id, *generation)?
                 .ok_or_else(not_pending)?;
             let runs = reader.runs(command_id)?;
             preimage(&ConsumedInput::Result {
@@ -255,12 +250,44 @@ impl<E: SqlEngine> CellStore<E> {
         Ok(self.read().next_commit_seq()?.saturating_sub(1))
     }
 
-    /// Return the immutable export record for one commit, verifying its local Norn1 hash.
+    /// Return a portable record after verifying its hash, events and versioned
+    /// cell identity against the owning store. Unqualified history stays local.
     ///
     /// # Errors
     ///
-    /// Engine errors, invalid JSON, or an export record whose content hash does not verify.
+    /// `core.world.fork_evidence_forbidden` for a commit minted after the
+    /// fork's lineage left main (FORK-EVIDENCE-1); engine errors, invalid JSON, or an export
+    /// record whose content hash does not verify.
     pub fn export_record(&self, commit_seq: u64) -> Result<Option<ExportRecord>, CellError> {
+        // The lineage's main horizon, not this fork's base: a fork of a fork
+        // inherits its parent fork's minted commits below its own base.
+        if self
+            .fork_pin()
+            .is_some_and(|pin| commit_seq > pin.main_horizon)
+        {
+            return Err(CellError::ForkEvidenceForbidden);
+        }
+        let Some(record) = self.local_export_record(commit_seq)? else {
+            return Ok(None);
+        };
+        let Some(record_cell_id) = crate::cell_identity::from_bindings(&record.bindings)? else {
+            return Err(CellError::BindingMismatch {
+                key: crate::cell_identity::KEY.to_owned(),
+                expected: "a qualified cell export".to_owned(),
+                found: String::new(),
+            });
+        };
+        self.require_cell_id(&record_cell_id)?;
+        Ok(Some(record))
+    }
+
+    /// [`Self::export_record`] for the store's own use: verified local
+    /// history without portable cell provenance, and in a fork its minted
+    /// commits too.
+    pub(crate) fn local_export_record(
+        &self,
+        commit_seq: u64,
+    ) -> Result<Option<ExportRecord>, CellError> {
         let Some(record) = read_record(&self.conn, commit_seq)? else {
             return Ok(None);
         };

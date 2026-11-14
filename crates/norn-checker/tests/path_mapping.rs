@@ -538,7 +538,13 @@ fn runtime_admission_enforces_required_paths_and_budget() {
         .iter()
         .find(|d| d.code == "consistency.path_mapping.preserved")
         .unwrap();
-    assert!(evidence.message.contains("bounded-no-counterexample"));
+    // The identity mapping is certified by chase certificates (#718 U7), so
+    // its evidence is a proof, not a bounded search.
+    assert!(
+        evidence.message.starts_with("certified;"),
+        "{}",
+        evidence.message
+    );
     assert!(
         evidence.message.contains(
             &norn_checker::receipt::ArtifactRef::of(good.last().unwrap())
@@ -750,4 +756,49 @@ fn runtime_keeps_evidence_for_distinct_catalog_bindings() {
             )
         );
     }
+}
+
+/// A self-link with two images under one long path equation has 2^32 rule
+/// choices. The certificate attempt gives up without enumerating them (the
+/// unit test `a_choice_product_beyond_the_limit_is_never_enumerated` pins
+/// that), and the bounded search then refuses on its own facts budget, as it
+/// did before certificates existed.
+#[test]
+fn many_rule_choices_are_counted_not_enumerated() {
+    let node = |ns: &str, equations: Value| -> Vec<ArtifactEnvelope> {
+        let mut payload = json!({"entityVersion": "2.0", "objectType": {
+            "name": format!("{ns}.Node"), "links": [link("next", &format!("{ns}.Node"))]}});
+        if !equations.is_null() {
+            payload["extensions"] = json!({"norn.path-equations/1.0.0": equations});
+        }
+        vec![
+            serde_json::from_value(json!({
+                "irVersion": "0.1", "artifactId": format!("{ns}.Node.entity"), "kind": "entity",
+                "namespace": ns, "name": "Node", "version": "0.1.0", "lifecycle": "draft",
+                "scope": {"orgId": "org_demo", "environmentId": "dev"}, "dependencies": [],
+                "provenance": {"source": "authoring_sdk", "sourcePath": "paths.ts"},
+                "payload": payload
+            }))
+            .unwrap(),
+        ]
+    };
+    let path = vec!["next"; 16];
+    let target = node("t", json!([{"id": "loop", "left": path, "right": path}]));
+    let image = json!({"concept": "t.Node", "link": "next", "path": ["next"]});
+    let mapping: PathMapping = serde_json::from_value(json!({
+        "id": "doubled", "objects": {"t.Node": "s.Node"}, "links": [image.clone(), image]
+    }))
+    .unwrap();
+    let result = admit_path_mapping(
+        &node("s", Value::Null),
+        &target,
+        &mapping,
+        &BTreeSet::new(),
+        ChaseBudget::default(),
+    );
+    let findings = result.unwrap_err();
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    let refusal = &findings[0];
+    assert_eq!(refusal.code.as_str(), codes::CHASE_REFUSED);
+    assert!(refusal.message.contains("facts budget"), "{refusal:?}");
 }

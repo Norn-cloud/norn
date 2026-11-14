@@ -3,6 +3,7 @@
   "ring": "One",
   "allowed_norn": [
     "norn-kernel",
+    "norn-builtins",
     "norn-checker",
     "norn-projections",
     "norn-ir"

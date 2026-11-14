@@ -3,6 +3,9 @@ reviews:
   path_filters:
     - "!.github/ci/provenance/artifacts/**"
   # Integration branches (for example next/assurance, #718) are reviewed like main.
+  # D82: no automatic reviews. Every review comes through the merge queue's explicit
+  # `@coderabbitai review`, so pushes do not spend the shared hourly quota.
   auto_review:
+    enabled: false
     base_branches:
       - "next/.*"

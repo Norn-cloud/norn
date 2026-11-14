@@ -1,0 +1,7 @@
+{
+  "code": "cli.setup.host_unavailable",
+  "message": "No native Norn host; build norn-dev-host from the Norn repository (for a released CLI, at the commit `norn --version` prints) and set NORN_DEV_HOST_BIN to its absolute path.",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T0"
+}

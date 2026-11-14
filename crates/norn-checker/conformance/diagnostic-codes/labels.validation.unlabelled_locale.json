@@ -1,0 +1,7 @@
+{
+  "code": "labels.validation.unlabelled_locale",
+  "message": "a description or review state names a locale that has no label",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

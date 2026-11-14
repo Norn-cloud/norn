@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+import ast
 import copy
 import importlib.util
+import itertools
 import json
 import os
 import re
@@ -24,6 +26,7 @@ COVERAGE = Path(__file__).with_name("manifest")
 VALIDATOR = Path(__file__).with_name("validate.py")
 WRITER = ROOT / "scripts/write-verification-result.py"
 RESULT_VALIDATOR = Path(__file__).with_name("validate_result.py")
+CONCURRENCY_CASES = Path(__file__).with_name("fixtures") / "pull-request-concurrency.json"
 PROOF_HOLE_CHECKER = ROOT / "scripts/check-proof-holes.py"
 ATTESTATION_HELPER = ROOT / "scripts/verification_attestation.py"
 CENTRAL_OBLIGATIONS = (
@@ -45,10 +48,32 @@ VERIFICATION_TOOL_ROOT = Path(
     )
 )
 QUINT = VERIFICATION_TOOL_ROOT / "bin/quint"
-sys.path.insert(0, str(ROOT / "scripts"))
 
-import coverage_manifest  # noqa: E402
-import quint_apalache  # noqa: E402  (shared Quint/Apalache execution policy)
+def _sibling(name, directory=None):
+    """Load sibling module `name` from its source by explicit path: never through sys.path,
+    never from a bytecode cache, never a same-named module loaded some other way (#513)."""
+    import pathlib
+    import sys
+    import types
+
+    path = (directory or pathlib.Path(__file__).resolve().parent) / f"{name}.py"
+    loaded = sys.modules.get(name)
+    if getattr(loaded, "__norn_sibling__", None) == str(path):
+        return loaded
+    module = types.ModuleType(name)
+    module.__file__ = str(path)
+    module.__norn_sibling__ = str(path)
+    sys.modules[name] = module
+    try:
+        exec(compile(path.read_bytes(), str(path), "exec", dont_inherit=True), module.__dict__)
+    except BaseException:
+        del sys.modules[name]
+        raise
+    return module
+
+
+coverage_manifest = _sibling("coverage_manifest", ROOT / "scripts")
+quint_apalache = _sibling("quint_apalache", ROOT / "scripts")
 
 
 CANONICAL_CENTRAL_OBLIGATION_IDS = frozenset(
@@ -83,6 +108,46 @@ CANONICAL_CENTRAL_OBLIGATION_IDS = frozenset(
     }
 )
 CENTRAL_CANARY_SUBSTITUTE_ID = "INV-CENTRAL-CANARY-SUBSTITUTE"
+
+
+def condition_value(expression: str, names: dict | None = None):
+    """Evaluate a workflow condition already rewritten to Python syntax, without `eval`
+    (#513): only `and`/`or`/`not`, `==`/`!=`, literals, parentheses and calls to `names`."""
+    names = names or {}
+
+    def value(node):
+        if isinstance(node, ast.Expression):
+            return value(node.body)
+        if isinstance(node, ast.Constant):
+            return node.value
+        if isinstance(node, ast.BoolOp):
+            result = None
+            for operand in node.values:
+                result = value(operand)
+                if isinstance(node.op, ast.And) and not result or isinstance(node.op, ast.Or) and result:
+                    return result
+            return result
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+            return not value(node.operand)
+        if isinstance(node, ast.Compare):
+            left = value(node.left)
+            for operator, right in zip(node.ops, node.comparators):
+                right = value(right)
+                if isinstance(operator, ast.Eq):
+                    ok = left == right
+                elif isinstance(operator, ast.NotEq):
+                    ok = left != right
+                else:
+                    raise AssertionError(f"unsupported comparison in {expression!r}")
+                if not ok:
+                    return False
+                left = right
+            return True
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in names and not node.keywords:
+            return names[node.func.id](*(value(argument) for argument in node.args))
+        raise AssertionError(f"unsupported expression {ast.dump(node)} in {expression!r}")
+
+    return value(ast.parse(expression.strip(), mode="eval"))
 
 
 def load_module(name: str, path: Path) -> ModuleType:
@@ -616,6 +681,93 @@ def workflow_verdict_canaries(source: str) -> None:
             raise AssertionError(f"workflow verdict case {index} had unexpected status {result.returncode}")
 
 
+def rust_parity_evidence_canaries() -> None:
+    """The cheap phase requires the two Rust parity tests to have run and passed (nextest JUnit)."""
+    validator = load_module("norn_rust_parity_evidence_canaries", VALIDATOR)
+    core = validator.CORE_RUNNER.read_text(encoding="utf-8")
+    first = "ci::tests::the_parity_fixture_keeps_every_gate_pinned_case"
+    second = "ci::tests::pull_request_concurrency_matches_the_shared_parity_fixture"
+    call = f"      require_passed \"$parity_report\" norn-skeleton-guard {first} {second}\n"
+    run = f"      \"${{nextest[@]}}\" run --locked --ignore-default-filter \"${{guard[@]}}\" --lib -E 'test(={first}) | test(={second})'\n"
+    with tempfile.TemporaryDirectory() as directory:
+        mutated = Path(directory) / "core.sh"
+        for label, before, after in (
+                ("the parity tests are not run", run, ""),
+                ("their run is not required", call, ""),
+                ("a parity test renamed", call, call.replace(f" {first} ", " ci::tests::renamed ")),
+                ("only one parity test required", call, call.replace(f" {second}", "")),
+                ("a skipped test counts as passed", '"failure", "error", "skipped", ', '"failure", "error", '),
+                ("the default filter decides", 'run --locked --ignore-default-filter "${guard[@]}" --lib', 'run --locked "${guard[@]}" --lib')):
+            if core.count(before) != 1:
+                raise AssertionError(f"Rust parity evidence canary target drifted: {label}")
+            mutated.write_text(core.replace(before, after), encoding="utf-8")
+            validator.CORE_RUNNER = mutated
+            try:
+                validator.validate_workflow_integrity([])
+            except validator.InvalidCoverage as error:
+                if "cheap phase must require the two Rust concurrency parity tests" in str(error):
+                    continue
+                raise AssertionError(f"Rust parity evidence mutation ({label}) refused for another reason: {error}")
+            finally:
+                validator.CORE_RUNNER = ROOT / "scripts/ci/core.sh"
+            raise AssertionError(f"Rust parity evidence mutation passed: {label}")
+    # The helper itself, run on nextest-shaped reports: only both tests passing passes.
+    start = core.index("require_passed() {")
+    helper = core[start:core.index("\nPY\n}\n", start) + len("\nPY\n}\n")]
+    passed = f'<testcase name="{first}" classname="norn-skeleton-guard" time="0.1"/>'
+    other = f'<testcase name="{second}" classname="norn-skeleton-guard" time="0.1"/>'
+    with tempfile.TemporaryDirectory() as directory:
+        report = Path(directory) / "junit.xml"
+        for label, body, expected in (
+                ("both ran and passed", f'<testsuite name="norn-skeleton-guard">{passed}{other}</testsuite>', 0),
+                ("one ignored (absent)", f'<testsuite name="norn-skeleton-guard">{passed}</testsuite>', 1),
+                ("one skipped", f'<testsuite name="norn-skeleton-guard">{passed}<testcase name="{second}"><skipped/></testcase></testsuite>', 1),
+                ("one failed", f'<testsuite name="norn-skeleton-guard">{passed}<testcase name="{second}"><failure message="x"/></testcase></testsuite>', 1),
+                ("another binary's tests", f'<testsuite name="norn-skeleton-guard::provenance">{passed}{other}</testsuite>', 1),
+                ("one flaky", f'<testsuite name="norn-skeleton-guard">{passed}<testcase name="{second}"><flakyFailure message="x"/></testcase></testsuite>', 1),
+                ("one passed on a rerun", f'<testsuite name="norn-skeleton-guard">{passed}<testcase name="{second}"><rerunFailure message="x"/></testcase></testsuite>', 1),
+                ("an unreadable report", "not junit", 1),
+                ("no report file", None, 1)):
+            report.unlink(missing_ok=True)
+            if body is not None:
+                report.write_text(f"<testsuites>{body}</testsuites>" if body.startswith("<") else body, encoding="utf-8")
+            result = subprocess.run(["bash", "-c", helper + f'\nrequire_passed "$1" norn-skeleton-guard {first} {second}', "-", str(report)],
+                                    capture_output=True, text=True, timeout=30)
+            if (result.returncode == 0) != (expected == 0):
+                raise AssertionError(f"Rust parity evidence drift ({label}): {result.returncode} {result.stderr[-300:]}")
+
+
+def studio_browser_pin_canaries() -> None:
+    """Weakened browser phases are rejected by the coverage validator."""
+    validator = load_module("norn_browser_pin_canaries", VALIDATOR)
+    core = validator.CORE_RUNNER.read_text(encoding="utf-8")
+    with tempfile.TemporaryDirectory() as directory:
+        mutated = Path(directory) / "core.sh"
+        for label, before, after in (
+                ("passes with no tests", "bunx playwright test --reporter=list,json\n", "bunx playwright test --reporter=list,json --pass-with-no-tests\n"),
+                ("all skipped passes", "        [[ $ran -gt 0 ]] || { printf 'browser: Playwright ran no tests (every row skipped)\\n' >&2; exit 1; }\n", ""),
+                ("skips while tests exist", "          exit 1\n        fi\n        printf '::notice::browser", "        fi\n        printf '::notice::browser"),
+                ("no listing check", "        [[ ${listed:-0} -gt 0 ]] || { printf 'browser: Playwright lists no tests\\n' >&2; exit 1; }\n", ""),
+                ("not in the plan", " integration browser formal ", " integration formal "),
+                ("no checker-admission test", "        decision=$(NORN_CHECKER_WASM_REQUIRED=1 bun test test/decision.test.ts 2>&1) || { printf '%s\\n' \"$decision\"; exit 1; }\n", ""),
+                ("no named-case check", "        grep -qxE '\\(pass\\) the checker admits what a drawn decision lowers to \\[[0-9.]+m?s\\]' <<< \"$decision\" || { printf 'browser: the checker-admission case did not run and pass\\n' >&2; exit 1; }\n", ""),
+                ("named case matched as a substring", "grep -qxE '\\(pass\\) the checker admits", "grep -qE '\\(pass\\) the checker admits"),
+                ("checker-admission test may skip", "NORN_CHECKER_WASM_REQUIRED=1 bun test", "bun test")):
+            if core.count(before) != 1:
+                raise AssertionError(f"browser pin canary target drifted: {label}")
+            mutated.write_text(core.replace(before, after), encoding="utf-8")
+            validator.CORE_RUNNER = mutated
+            try:
+                validator.validate_workflow_integrity([])
+            except validator.InvalidCoverage as error:
+                if "browser phase must run the Studio Playwright rows" in str(error):
+                    continue
+                raise AssertionError(f"browser phase mutation ({label}) refused for another reason: {error}")
+            finally:
+                validator.CORE_RUNNER = ROOT / "scripts/ci/core.sh"
+            raise AssertionError(f"browser phase mutation passed: {label}")
+
+
 def workflow_cleanup_canaries(source: str) -> None:
     workflow = yaml.safe_load(source)
     for job in ("core", "test"):
@@ -647,95 +799,348 @@ sudo() {{
 
 
 
-def execute_rights_publisher(script: str) -> dict[str, Any]:
-    """Run the actual publisher with an independently fixed, fresh decision."""
+def studio_browser_phase_canaries() -> None:
+    """The browser phase never passes silently: missing or empty Studio browser tests fail."""
     with tempfile.TemporaryDirectory() as directory:
-        root = Path(directory)
-        root.joinpath("rights-authority.cjs").write_text(
-            "module.exports=async(g,c,k,p,probe)=>probe||({rights:{},"
-            "publication:{digest:'" + "a" * 64 + "',failure_version:0},authority_deadline:Date.now()+600000});")
-        root.joinpath("rights-parameters.json").write_text("{}")
-        root.joinpath("rights-decision.json").write_text(json.dumps({"digest": "a" * 64}))
-        harness = """const context={repo:{owner:'owner',repo:'repo'},payload:{issue:{number:7}},
-serverUrl:'https://example.invalid',runId:42,sha:'default-branch-head'};
-const core={warning:()=>{},setFailed:()=>{}};
-const github={rest:{pulls:{get:async()=>({data:{head:{sha:'head'}}})},
-repos:{getCommit:async()=>({data:{commit:{tree:{sha:'tree'}}}}),listCommitStatusesForRef:()=>{},
-createCommitStatus:async row=>console.log(JSON.stringify(row))}},
-paginate:async()=>[{id:1,state:'success',creator:{login:'github-actions[bot]'},
-context:'rights-checkpoint/publication/tree/42/1',description:JSON.stringify({d:'a'.repeat(64)})}]};
-(async()=>{
-""" + script + "\n})().catch(error=>{console.error(error);process.exit(1)});"
-        result = subprocess.run(["bun", "-e", harness], capture_output=True, text=True, timeout=10,
-                                env={**os.environ, "RUNNER_TEMP": directory}, check=True)
-    return json.loads(result.stdout)
+        tree, bin_dir = Path(directory) / "tree", Path(directory) / "bin"
+        (tree / "crates/norn-checker-wasm/scripts").mkdir(parents=True)
+        (tree / "apps/studio").mkdir(parents=True)
+        bin_dir.mkdir()
+        tools = {
+            "cargo": "exit 0",
+            "bun": 'if [ "$1" = test ]; then printf "%s\\n" "$BUN_TEST_OUTPUT"; exit "$BUN_TEST_STATUS"; fi; exit 0',
+            "rustc": 'if [ "$1" = --print ]; then echo "$WASM_LIBDIR"; else echo "rustc 1.98.0"; fi',
+            "bunx": 'if [ "$3" = --list ]; then echo "Total: $LISTED tests in 1 file"; exit 0; fi; '
+                    'printf "{\\"stats\\": {\\"expected\\": %s, \\"skipped\\": %s}}" "$RAN" "$SKIPPED" > "$PLAYWRIGHT_JSON_OUTPUT_NAME"; '
+                    'exit "$RUN_STATUS"',
+        }
+        for name, body in tools.items():
+            (bin_dir / name).write_text("#!/bin/sh\n" + body + "\n")
+            (bin_dir / name).chmod(0o755)
+        build = tree / "crates/norn-checker-wasm/scripts/build-pkg.sh"
+        build.write_text("#!/bin/sh\nmkdir -p \"$1\"\n")
+        build.chmod(0o755)
+        config, e2e = tree / "apps/studio/playwright.config.ts", tree / "apps/studio/e2e"
+        wasm_libdir = Path(directory) / "wasm32-lib"
+        wasm_libdir.mkdir()
+        for label, has_config, has_tests, listed, run_status, expected, libdir, ran in (
+                ("no config, no tests", False, False, "0", 0, 0, "", "0"),
+                ("tests without a config", False, True, "0", 0, 1, str(wasm_libdir), "0"),
+                ("config, no wasm32 target", True, True, "99", 0, 1, str(Path(directory) / "absent"), "0"),
+                ("config, no tests found", True, True, "0", 0, 1, str(wasm_libdir), "0"),
+                ("config, every row skipped", True, True, "99", 0, 1, str(wasm_libdir), "0"),
+                ("config, rows pass", True, True, "99", 0, 0, str(wasm_libdir), "99"),
+                ("config, a row fails", True, True, "99", 1, 1, str(wasm_libdir), "98"),
+                ("config, checker-admission test fails", True, True, "99", 0, 1, str(wasm_libdir), "99"),
+                ("config, checker-admission case skipped", True, True, "99", 0, 1, str(wasm_libdir), "99"),
+                ("config, checker-admission case missing", True, True, "99", 0, 1, str(wasm_libdir), "99"),
+                ("config, only a longer name passed", True, True, "99", 0, 1, str(wasm_libdir), "99")):
+            config.unlink(missing_ok=True)
+            if has_config:
+                config.write_text("export default {}\n")
+            if has_tests:
+                e2e.mkdir(exist_ok=True)
+                (e2e / "row.e2e.ts").write_text("")
+            elif e2e.exists():
+                for entry in e2e.iterdir():
+                    entry.unlink()
+                e2e.rmdir()
+            result = subprocess.run(["bash", str(ROOT / "scripts/ci/core.sh"), "browser"], cwd=tree, capture_output=True,
+                                    text=True, timeout=60, env={"PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+                                                                "CARGO_HOME": str(Path(directory) / "cargo-home"),
+                                                                "HOME": directory, "LISTED": listed, "RUN_STATUS": str(run_status),
+                                                                "WASM_LIBDIR": libdir, "RAN": ran,
+                                                                "BUN_TEST_STATUS": "1" if label.endswith("test fails") else "0",
+                                                                "BUN_TEST_OUTPUT": {
+                                                                    "config, checker-admission case skipped": "(skip) the checker admits what a drawn decision lowers to",
+                                                                    "config, checker-admission case missing": "(pass) the decider reads the real time limit",
+                                                                    "config, only a longer name passed": "(pass) the checker admits what a drawn decision lowers to, twice [1.00ms]",
+                                                                }.get(label, "(pass) the checker admits what a drawn decision lowers to [1.00ms]"),
+                                                                "SKIPPED": str(int(listed) - int(ran))})
+            if result.returncode != expected:
+                raise AssertionError(f"browser phase drift ({label}): {result.returncode} {result.stdout[-300:]} {result.stderr[-300:]}")
+            if label == "config, no wasm32 target" and "run under the pinned CI toolchain" not in result.stderr:
+                raise AssertionError(f"browser phase must name the pinned toolchain when wasm32 is missing: {result.stderr[-300:]}")
 
 
-def workflow_superseded_canaries(source: str) -> None:
-    """A superseded pull_request_target evaluation writes nothing; comment events never skip."""
+def workflow_expression_cap_canaries() -> None:
+    """An interpolated script over the expression cap is refused before GitHub silently rejects it."""
+    validator = load_module("norn_expression_cap_canaries", VALIDATOR)
+    if validator.actions_expression_length("a{b}'c ${{ x.y }} d") != len("format('a{{b}}''c {0} d', x.y)"):
+        raise AssertionError("expression length no longer models GitHub's format() escaping")
+    merge = (ROOT / ".github/workflows/trusted-merge-group.yml").read_text(encoding="utf-8")
+    source = (ROOT / ".github/workflows/ci-policy.yml").read_text(encoding="utf-8")
+    group = yaml.safe_load(merge)
+    name = "Record admin approvals of the queued heads"
+    collector = next(step for step in group["jobs"]["trusted-policy"]["steps"] if step.get("name") == name)
+    current = validator.actions_expression_length(collector["with"]["script"])
+    for target, refused in ((validator.EXPRESSION_CAP, False), (validator.EXPRESSION_CAP + 1, True), (21_034, True)):
+        # Pad with a comment of plain characters up to the target length.
+        document = copy.deepcopy(group)
+        step = next(step for step in document["jobs"]["trusted-policy"]["steps"] if step.get("name") == name)
+        step["with"]["script"] += "//" + "x" * (target - current - 3) + "\n"
+        if validator.actions_expression_length(step["with"]["script"]) != target:
+            raise AssertionError(f"expression cap canary padding drifted for {target}")
+        try:
+            validator.validate_expression_lengths({"trusted-merge-group.yml": yaml.safe_dump(document, sort_keys=False),
+                                                   "ci-policy.yml": source})
+        except validator.InvalidCoverage:
+            if not refused:
+                raise AssertionError(f"a {target}-character collector expression was refused")
+            continue
+        if refused:
+            raise AssertionError(f"a {target}-character collector expression passed the cap")
+
+
+def workflow_concurrency_canaries() -> None:
+    """A pull_request workflow cancels its own superseded PR runs and nothing else."""
+    validator = load_module("norn_workflow_concurrency_canaries", VALIDATOR)
+    workflows = ROOT / ".github/workflows"
+    sources = {f".github/workflows/{path.name}": path.read_text(encoding="utf-8")
+               for path in sorted([*workflows.glob("*.yml"), *workflows.glob("*.yaml")])}
+    # Every checked-in workflow passes, including the out-of-scope pull_request_target
+    # (cla.yml) and workflow_run (trusted-merge-group.yml) lanes.
+    validator.validate_pull_request_concurrency(sources)
+
+
+def workflow_concurrency_parity() -> None:
+    """validate.py reaches the shared verdicts the skeleton guard's own test asserts.
+
+    crates/norn-skeleton-guard/src/ci/mod.rs checks `concurrency_error` against the same
+    file, so the two implementations of the rule cannot drift apart unnoticed. The fixture
+    may gain cases anywhere; it cannot lose, flip or change a case validate.py pins.
+    """
+    validator = load_module("norn_workflow_concurrency_parity", VALIDATOR)
+    cases = json.loads(CONCURRENCY_CASES.read_text(encoding="utf-8"))["cases"]
+    check_concurrency_cases(validator, cases)
+    # Correct, unpinned cases added first and last still pass, and every canary below runs
+    # on that grown list too, choosing its case by name from the pin, never by position.
+    extra = {**cases[0], "name": "an unpinned case added later"}
+    grown = [extra, *cases, extra]
+    check_concurrency_cases(validator, grown)
+    for listed in (cases, grown):
+        for name in validator.PULL_REQUEST_CONCURRENCY_CASES:
+            def named(case: dict) -> bool:
+                return case.get("name") == name
+            for problem, mutated in (
+                    ("lost", [case for case in listed if not named(case)]),
+                    ("flipped", [{**case, "expect": "reject" if case["expect"] == "accept" else "accept"}
+                                 if named(case) else case for case in listed]),
+                    *(("input changed", [{**case, field: None if case.get(field) is not None else "changed\n"}
+                                         if named(case) else case for case in listed])
+                      for field in ("on", "concurrency", "source"))):
+                try:
+                    check_concurrency_cases(validator, mutated)
+                except PinnedConcurrencyCase as error:
+                    if error.problems == [f"{name}: {problem}"]:
+                        continue
+                    raise AssertionError(f"concurrency pin canary ({name}: {problem}) reported {error.problems}")
+                raise AssertionError(f"concurrency parity accepted a {problem} pinned case: {name}")
+
+
+class PinnedConcurrencyCase(AssertionError):
+    """The parity fixture lost, flipped or changed a case validate.py pins."""
+
+    def __init__(self, problems: list[str]) -> None:
+        super().__init__(f"concurrency parity fixture lost, flipped or changed gate-pinned cases: {problems}")
+        self.problems = problems
+
+
+def pinned_case_problems(validator, cases: list) -> list[str]:
+    """Each pinned case the fixture lost, flipped or changed; every copy of a pinned name must match."""
+    problems = []
+    for name, (expect, digest) in validator.PULL_REQUEST_CONCURRENCY_CASES.items():
+        found = [case for case in cases if isinstance(case, dict) and case.get("name") == name]
+        if not found:
+            problems.append(f"{name}: lost")
+        elif any(case.get("expect") != expect for case in found):
+            problems.append(f"{name}: flipped")
+        elif any(validator.concurrency_case_digest(case) != digest for case in found):
+            problems.append(f"{name}: input changed")
+    return problems
+
+
+def check_concurrency_cases(validator, cases: list) -> None:
+    """Every gate-pinned case is present unchanged, and every fixture case reaches its verdict."""
+    problems = pinned_case_problems(validator, cases)
+    if problems:
+        raise PinnedConcurrencyCase(problems)
+    verdicts = set()
+    for case in cases:
+        if (not isinstance(case, dict) or not set(case) <= {"name", "on", "concurrency", "expect", "source"}
+                or not case.get("name") or not isinstance(case.get("on"), str)
+                or not isinstance(case.get("concurrency", ""), (str, type(None)))
+                or case.get("expect") not in ("accept", "reject")):
+            raise AssertionError(f"malformed parity case: {case!r}")
+        concurrency = case.get("concurrency") or ""
+        if "source" in case:
+            checked_in = (ROOT / case["source"]).read_text(encoding="utf-8")
+            if case["on"] not in checked_in or concurrency not in checked_in:
+                raise AssertionError(f"{case['name']}: drifted from {case['source']}")
+        try:
+            validator.validate_pull_request_concurrency({case["name"]: case["on"] + concurrency})
+            verdict = "accept"
+        except validator.InvalidCoverage:
+            verdict = "reject"
+        if verdict != case["expect"]:
+            raise AssertionError(f"concurrency parity: {case['name']} was {verdict}ed, expected {case['expect']}")
+        verdicts.add(verdict)
+    if verdicts != {"accept", "reject"}:
+        raise AssertionError("the concurrency parity fixture needs accepted and rejected cases")
+
+
+def workflow_sccache_canaries(source: str) -> None:
+    """A dead cache backend never fails a build; a real compile error always does."""
     workflow = yaml.safe_load(source)
-    steps = workflow["jobs"]["trusted-policy"]["steps"]
-    resolve = next(step for step in steps if step.get("name") == "Resolve the pull request")
-
-    def outputs(script: str, event: str, payload: str, live: str) -> dict[str, str]:
-        harness = ("const out={};const core={setOutput:(k,v)=>{out[k]=v},notice:()=>{}};"
-                   f"const context={{eventName:{json.dumps(event)},repo:{{owner:'o',repo:'r'}},payload:{payload}}};"
-                   "const github={rest:{pulls:{get:async()=>({data:{number:7,base:{sha:'b'.repeat(40)},"
-                   "head:{sha:" + json.dumps(live) + ",repo:{full_name:'Norn-cloud/norn'}}}})}}};"
-                   "(async()=>{\n" + script + "\nconsole.log(JSON.stringify(out))})()"
-                   ".catch(error=>{console.error(error);process.exit(1)});")
-        result = subprocess.run(["bun", "-e", harness], capture_output=True, text=True, timeout=10, check=True)
-        return json.loads(result.stdout)
-
-    old, new = "a" * 40, "c" * 40
-    target = lambda head: "{pull_request:{number:7,head:{sha:'" + head + "'}}}"
-    for event, payload, live, expected in (
-            ("pull_request_target", target(old), new, "true"),
-            ("pull_request_target", target(new), new, "false"),
-            # Comment events re-evaluate the live head: approvals and revocations never skip.
-            ("issue_comment", "{issue:{number:7,pull_request:{}}}", new, "false"),
-            ("issue_comment", "{issue:{number:7,pull_request:{}},pull_request:{head:{sha:'" + old + "'}}}", new, "false")):
-        value = outputs(resolve["with"]["script"], event, payload, live)
-        if value.get("superseded") != expected or value.get("head_sha") != live:
-            raise AssertionError(f"superseded resolution drift: {event}/{payload}/{live}: {value}")
-
-    validator = load_module("norn_superseded_canaries", VALIDATOR)
-    guard = "steps.pr.outputs.superseded != 'true'"
-    with tempfile.TemporaryDirectory() as directory:
-        candidate = Path(directory) / "ci-policy.yml"
-
-        def rejected(label: str, document: dict[str, Any]) -> None:
-            candidate.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
-            try:
-                validator.validate_workflow_integrity([], formal_path=candidate)
-            except validator.InvalidCoverage:
-                return
-            raise AssertionError(f"superseded mutation passed: {label}")
-
-        for index, step in enumerate(steps[1:-1], start=1):
-            label = step.get("name") or step.get("uses")
-            for value in (None, "always()", "!cancelled()", guard.replace("!=", "=="),
-                          guard.replace("superseded", "head_sha")):
-                if value == step.get("if"):
+    for name in ("core", "test"):
+        job = workflow["jobs"][name]
+        if "RUSTC_WRAPPER" in job.get("env", {}) or job["env"].get("SCCACHE_IGNORE_SERVER_IO_ERROR") != "1":
+            raise AssertionError(f"{name}: sccache must be opt-in per run and tolerate server IO errors")
+        start = next(step for step in job["steps"] if step.get("name") == "Start sccache or compile without it")
+        for runner, starts in itertools.product(("github-hosted", "self-hosted"), (True, False)):
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "bin").mkdir()
+                (root / "tmp").mkdir()
+                # Fake sccache: `--start-server` succeeds or dies like the egress outage; a
+                # compile either dies like a server that cannot restart, or runs the compiler.
+                sccache = root / "bin" / "sccache"
+                sccache.write_text("#!/bin/sh\n"
+                    "if [ \"$1\" = --start-server ]; then\n"
+                    + ("  exit 0\n" if starts else
+                       "  echo 'sccache: error: Server startup failed: ServerBusy: Egress is over the account limit' >&2; exit 2\n")
+                    + "fi\n"
+                    "if [ \"$FAKE_SCCACHE\" = dead ]; then echo 'sccache: error: failed to start server: Address in use' >&2; exit 2; fi\n"
+                    # SCCACHE_IGNORE_SERVER_IO_ERROR: sccache warns, then compiles locally and
+                    # returns the compiler's own status.
+                    "if [ \"$FAKE_SCCACHE\" = warn ]; then echo 'sccache: warning: The server looks like it shut down unexpectedly, compiling locally instead' >&2; fi\n"
+                    "exec \"$@\"\n")
+                # Fake rustc: records each run; fails like a type error when asked to.
+                rustc = root / "bin" / "rustc"
+                rustc.write_text("#!/bin/sh\necho run >> \"$RUSTC_LOG\"\n"
+                    "if [ \"$FAKE_RUSTC\" = broken ]; then echo 'error[E0308]: mismatched types' >&2; exit 1; fi\necho compiled\n")
+                for tool in (sccache, rustc):
+                    tool.chmod(0o755)
+                github_env = root / "env"
+                github_env.write_text("")
+                base = {"PATH": f"{root / 'bin'}:{os.environ.get('PATH', '')}", "RUNNER_TEMP": str(root / "tmp")}
+                result = subprocess.run(["bash", "-c", start["run"]], capture_output=True, text=True, timeout=30,
+                                        env={**base, "RUNNER_ENVIRONMENT": runner, "GITHUB_ENV": str(github_env)})
+                exported = dict(line.split("=", 1) for line in github_env.read_text().splitlines() if line)
+                wrapper = str(root / "tmp" / "sccache-rustc")
+                expected = {"SCCACHE_GHA_ENABLED": "true" if runner == "github-hosted" else "false",
+                            **({"RUSTC_WRAPPER": wrapper} if starts else {})}
+                if result.returncode != 0 or exported != expected:
+                    raise AssertionError(f"{name}: sccache start drift on {runner}/{starts}: {result.returncode} {exported}")
+                if not starts:
                     continue
-                document = copy.deepcopy(workflow)
-                if value is None:
-                    document["jobs"]["trusted-policy"]["steps"][index].pop("if", None)
-                else:
-                    document["jobs"]["trusted-policy"]["steps"][index]["if"] = value
-                rejected(f"unguarded {label} after a superseded resolution: {value}", document)
-        document = copy.deepcopy(workflow)
-        document["jobs"]["trusted-policy"]["steps"].insert(2, {"name": "extra", "run": "true"})
-        rejected("unguarded step inserted after Resolve", document)
-        for before, after in (("context.eventName === 'pull_request_target' && ", ""),
-                              ("event.head.sha !== data.head.sha", "true"),
-                              ("String(superseded)", "'false'")):
-            if before not in resolve["with"]["script"]:
-                raise AssertionError(f"superseded canary target drifted: {before}")
-            document = copy.deepcopy(workflow)
-            changed = document["jobs"]["trusted-policy"]["steps"][0]
-            changed["with"]["script"] = changed["with"]["script"].replace(before, after)
-            rejected(f"superseded resolution mutation {before}", document)
+                # The wrapper's own bookkeeping never fails a build: without a temporary file
+                # (disk full), it compiles with plain rustc and keeps the compiler's status.
+                broken_tmp = root / "no-tmp"
+                broken_tmp.mkdir()
+                (broken_tmp / "mktemp").write_text("#!/bin/sh\necho 'mktemp: No space left on device' >&2\nexit 1\n")
+                (broken_tmp / "mktemp").chmod(0o755)
+                for compiler, status in (("ok", 0), ("broken", 1)):
+                    log = root / f"rustc-no-tmp-{compiler}.log"
+                    compiled = subprocess.run([wrapper, str(rustc), "--crate-name", "probe"], capture_output=True, text=True,
+                                              timeout=30, env={**base, "PATH": f"{broken_tmp}:{base['PATH']}",
+                                                               "FAKE_SCCACHE": "alive", "FAKE_RUSTC": compiler,
+                                                               "RUSTC_LOG": str(log)})
+                    calls = len(log.read_text().splitlines()) if log.exists() else 0
+                    if compiled.returncode != status or calls != 1:
+                        raise AssertionError(f"{name}: sccache wrapper without a temporary file drift {compiler}: "
+                                             f"{compiled.returncode} runs={calls} {compiled.stderr!r}")
+                for server, compiler, status, runs in (("alive", "ok", 0, 1), ("dead", "ok", 0, 1),
+                                                       ("alive", "broken", 1, 1), ("dead", "broken", 1, 1),
+                                                       ("warn", "ok", 0, 1), ("warn", "broken", 1, 1)):
+                    log = root / f"rustc-{server}-{compiler}.log"
+                    compiled = subprocess.run([wrapper, str(rustc), "--crate-name", "probe"], capture_output=True, text=True,
+                                              timeout=30, env={**base, "FAKE_SCCACHE": server, "FAKE_RUSTC": compiler,
+                                                               "RUSTC_LOG": str(log)})
+                    calls = len(log.read_text().splitlines()) if log.exists() else 0
+                    fell_back = "compiling with plain rustc" in compiled.stderr
+                    # A warned local compile is never rerun: its diagnostics and the warning survive.
+                    if compiled.returncode != status or calls != runs or fell_back != (server == "dead") \
+                            or (compiler == "broken" and "E0308" not in compiled.stderr) \
+                            or (server == "warn" and "sccache: warning:" not in compiled.stderr):
+                        raise AssertionError(f"{name}: sccache wrapper drift {server}/{compiler}: "
+                                             f"{compiled.returncode} runs={calls} {compiled.stderr!r}")
+
+
+def bundle_prune_drift(function: str) -> str | None:
+    """Run a `prune_target` definition against every CARGO_TARGET_DIR case; describe any drift.
+
+    Only the workspace's own target dir is touched, and inside it only Cargo build outputs
+    (profile and target-triple trees, `doc`); target/verification-* evidence and tools,
+    other content and symlinks survive.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        top = Path(directory).resolve()
+        home, workspace = top / "home", top / "home" / "work" / "norn"
+        outside = top / "outside"
+        target = workspace / "target"
+        cargo = [target / "debug", target / "wasm32-unknown-unknown", target / "doc"]
+        kept = [workspace, workspace / "src", home, home / ".cargo", outside, target,
+                target / "verification-results", target / "verification-tools", target / "norn-checker-wasm",
+                outside / ".fingerprint"]
+        for path in (workspace / "src", home / ".cargo", outside / ".fingerprint"):
+            path.mkdir(parents=True, exist_ok=True)
+        (workspace / "escape").symlink_to(outside)
+        (workspace / "target-link").symlink_to(outside)
+        cases = {
+            None: True, "": True, "target": True, "target/": True, str(target): True,
+            "target/../target": True,
+            "/": False, str(home): False, str(workspace): False, str(workspace.parent): False, ".": False, "..": False,
+            "../sibling": False, str(outside): False, "escape": False, "target-link": False, "target/debug": False,
+            "src/../../norn": False,
+        }
+        for value, deletes in cases.items():
+            for path in (target / "debug" / ".fingerprint", target / "wasm32-unknown-unknown" / "debug" / ".fingerprint",
+                         # Verification tools may be Cargo-built in place: still never pruned.
+                         target / "doc", target / "verification-results", target / "verification-tools" / "release" / ".fingerprint",
+                         target / "norn-checker-wasm" / "pkg"):
+                path.mkdir(parents=True, exist_ok=True)
+            # A symlinked profile-looking tree out of target must never be followed.
+            link = target / "linked"
+            if not link.is_symlink():
+                link.symlink_to(outside)
+            env = {"PATH": os.environ.get("PATH", ""), "HOME": str(home)}
+            if value is not None:
+                env["CARGO_TARGET_DIR"] = value
+            result = subprocess.run(["bash", "-c", function + "prune_target"], cwd=workspace, env=env,
+                                    capture_output=True, text=True, timeout=30)
+            if result.returncode:
+                return f"{value!r}: exit {result.returncode} {result.stderr!r}"
+            lost = [str(path) for path in kept + [link] if not (path.exists() or path.is_symlink())]
+            if lost:
+                return f"{value!r}: removed {lost}"
+            remaining = [path.exists() for path in cargo]
+            if remaining != [not deletes] * len(cargo):
+                return f"{value!r}: Cargo outputs {remaining}, expected {'pruned' if deletes else 'kept'}"
+            if not deletes and "refusing to prune" not in result.stdout:
+                return f"{value!r}: refused silently"
+    return None
+
+
+def bundle_prune_containment_canaries() -> None:
+    """The bundle prune deletes only Cargo build outputs in the workspace's own target dir."""
+    core = (ROOT / "scripts/ci/core.sh").read_text(encoding="utf-8")
+    start = core.index("prune_target() {\n")
+    function = core[start:core.index("\n}\n", start) + 3]
+    drift = bundle_prune_drift(function)
+    if drift is not None:
+        raise AssertionError(f"bundle prune containment drift: {drift}")
+    # Pruning all of target, or every directory in it, takes verification evidence and tools.
+    for label, before, after in (
+            ("whole target", 'rm -rf -- "$entry"', 'rm -rf -- "$target"'),
+            ("verification evidence", ' && $name != verification-*', ''),
+            ("any directory", 'if [[ $name == doc || -d $entry/.fingerprint ]] || compgen -G "$entry/*/.fingerprint" > /dev/null; then',
+             "if true; then"),
+            ("followed symlinks", ' && ! -L $entry', '')):
+        if function.count(before) != 1:
+            raise AssertionError(f"bundle prune containment canary target drifted: {label}")
+        if bundle_prune_drift(function.replace(before, after)) is None:
+            raise AssertionError(f"bundle prune mutation passed: {label}")
 
 
 def workflow_trusted_policy_canaries(source: str) -> None:
@@ -746,10 +1151,6 @@ def workflow_trusted_policy_canaries(source: str) -> None:
         ("issue_comment", "created", "/approve-gates head", "", True, True),
         ("issue_comment", "edited", "revoked", "/approve-gates head", True, True),
         ("issue_comment", "deleted", "/approve-gates head", "", True, True),
-        ("issue_comment", "created", "/ack-rights head", "", True, True),
-        ("issue_comment", "created", "/revoke-rights head", "", True, True),
-        ("issue_comment", "deleted", "/revoke-rights head", "", True, True),
-        ("issue_comment", "edited", "ordinary text", "/revoke-rights head", True, True),
         ("issue_comment", "created", "unrelated", "", True, False),
         ("issue_comment", "created", "/approve-gates head", "", False, False),
         ("pull_request", "synchronize", "", "", True, False),
@@ -764,7 +1165,7 @@ def workflow_trusted_policy_canaries(source: str) -> None:
                 condition = condition.replace(key, repr(value))
             condition = condition.replace("cancelled()", str(cancelled)).replace("&&", " and ").replace("||", " or ")
             condition = re.sub(r"!(?!=)", " not ", condition)
-            accepted = eval(condition, {"__builtins__": {}}, {"contains": lambda text, part: part in text})
+            accepted = condition_value(condition, {"contains": lambda text, part: part in text})
             if bool(accepted) != (expected and not cancelled):
                 raise AssertionError(f"trusted-policy event admission drift: {event}/{action}/{cancelled}")
 
@@ -774,7 +1175,15 @@ def workflow_trusted_policy_canaries(source: str) -> None:
     def report(status: str, *, resolved: bool = True) -> dict[str, Any]:
         script = reporter["with"]["script"].replace("${{ steps.pr.outputs.head_sha }}", "head" if resolved else "").replace(
             "${{ job.status }}", status)
-        value = execute_rights_publisher(script)
+        # Execute the actual workflow reporter against an API double. No API writes.
+        harness = """const context = {repo: {owner: 'owner', repo: 'repo'}, payload: {issue: {number: 7}},
+            serverUrl: 'https://example.invalid', runId: 42};
+const github = {rest: {pulls: {get: async () => ({data: {head: {sha: 'head'}}})},
+    repos: {createCommitStatus: async value => console.log(JSON.stringify(value))}}};
+(async () => {
+""" + script + "\n})().catch(error => { console.error(error); process.exit(1); });"
+        result = subprocess.run(["bun", "-e", harness], capture_output=True, text=True, timeout=10, check=True)
+        value = json.loads(result.stdout)
         if value["sha"] != "head" or value["context"] != "trusted-policy":
             raise AssertionError("reporter lost the required head/context binding")
         return value
@@ -824,9 +1233,9 @@ def workflow_merge_group_policy_canaries(source: str) -> None:
             expression = condition.replace("github.event.workflow_run.event", repr(event)).replace(
                 "github.event.workflow_run.head_repository.full_name", repr("owner/repo" if same_repository else "fork/repo")).replace(
                 "github.repository", repr("owner/repo")).replace("&&", " and ").replace("||", " or ")
-            if bool(eval(expression, {"__builtins__": {}}, {})) != (event == "merge_group" and same_repository):
+            if bool(condition_value(expression)) != (event == "merge_group" and same_repository):
                 raise AssertionError("merge-group publisher event/repository boundary drifted")
-        command = 'python3 trusted/scripts/ci/validate-runner-policy.py --root candidate --maintainer-evidence "$RUNNER_TEMP/maintainer-approval.json" --rights-evidence "$RUNNER_TEMP/maintainer-approval.json" --head "${{ github.event.workflow_run.head_sha }}" --repository "${{ github.repository }}"'
+        command = 'python3 -I -B -X pycache_prefix="$(mktemp -d)" trusted/scripts/ci/validate-runner-policy.py --root candidate --maintainer-evidence "$RUNNER_TEMP/maintainer-approval.json"'
         validators = [step for step in job["steps"] if step.get("run") == command]
         if len(validators) != 1 or any(validators[0].get(key) for key in ("if", "continue-on-error", "env", "shell")):
             raise AssertionError("merge-group status lost its unconditional base-owned validation")
@@ -841,7 +1250,15 @@ def workflow_merge_group_policy_canaries(source: str) -> None:
         for status in ("success", "failure", "cancelled", "skipped"):
             script = reporter["with"]["script"].replace("${{ github.event.workflow_run.head_sha }}", "group-head").replace(
                 "${{ github.sha }}", "default-branch-head").replace("${{ job.status }}", status)
-            value = execute_rights_publisher(script)
+            # workflow_run checks belong to the default branch. The actual JS
+            # must explicitly publish onto the triggering merge-group commit.
+            harness = """const context = {repo: {owner: 'owner', repo: 'repo'},
+    sha: 'default-branch-head', serverUrl: 'https://example.invalid', runId: 42};
+const github = {rest: {repos: {createCommitStatus: async value => console.log(JSON.stringify(value))}}};
+(async () => {
+""" + script + "\n})().catch(error => { console.error(error); process.exit(1); });"
+            result = subprocess.run(["bun", "-e", harness], check=True, capture_output=True, text=True, timeout=10)
+            value = json.loads(result.stdout)
             if (value["sha"] != "group-head" or value["context"] != "trusted-policy"
                     or value["state"] != ("success" if status == "success" else "failure")):
                 raise AssertionError("merge-group required context/head/fail-closed verdict was lost")
@@ -865,9 +1282,9 @@ def workflow_merge_group_policy_canaries(source: str) -> None:
             reporter["if"] = "success()"
         else:
             before, after = {
-                "context": ("context:'trusted-policy'", "context:'different-status'"),
+                "context": ("context: 'trusted-policy'", "context: 'different-status'"),
                 "head": ("${{ github.event.workflow_run.head_sha }}", "${{ github.sha }}"),
-                "state": ("'${{ job.status }}'==='success'", "true"),
+                "state": ("'${{ job.status }}' === 'success' ? 'success' : 'failure'", "'success'"),
             }[mutation]
             if before not in reporter["with"]["script"]:
                 raise AssertionError(f"merge-group mutation target drifted: {mutation}")
@@ -935,7 +1352,7 @@ def workflow_context_canaries(source: str) -> None:
                         candidate_expression = re.sub(r"!(?!=)", " not ", candidate_expression)
                         expected = event not in ("pull_request_target", "issue_comment") and not (
                             name == "plan" and event == "pull_request" and draft)
-                        if bool(eval(candidate_expression, {"__builtins__": {}}, {})) != expected:
+                        if bool(condition_value(candidate_expression)) != expected:
                             raise AssertionError(f"{name} admission drift: {event}/{action}/{draft}")
         for event in ("pull_request", "merge_group", "push", "workflow_dispatch"):
             for draft in (False, True):
@@ -943,7 +1360,7 @@ def workflow_context_canaries(source: str) -> None:
                     "github.event.pull_request.draft", str(draft)).replace(
                     "always()", "True").replace("cancelled()", "True").replace("&&", " and ")
                 expression = re.sub(r"!(?!=)", " not ", expression)
-                if bool(eval(expression, {"__builtins__": {}}, {})) != (event != "pull_request" or draft):
+                if bool(condition_value(expression)) != (event != "pull_request" or draft):
                     raise AssertionError(f"cancelled verdict scheduling drift: {event}/{draft}")
         document = copy.deepcopy(workflow)
         document["run-name"] = "${{ github.event.pull_request.title }}"
@@ -956,13 +1373,13 @@ def workflow_context_canaries(source: str) -> None:
             document = copy.deepcopy(workflow)
             trusted = document["jobs"]["trusted-policy"]
             if change == "concurrency":
-                trusted["concurrency"]["cancel-in-progress"] = True
+                trusted["concurrency"]["cancel-in-progress"] = False
             elif change == "if":
                 trusted["if"] = "!cancelled() && github.event_name == 'pull_request_target'"
             else:
                 reporter = next(step for step in trusted["steps"]
                                 if step.get("name") == "Report trusted policy on the exact PR head")
-                reporter["with"]["script"] = reporter["with"]["script"].replace("context:'trusted-policy'", "context:'different-status'")
+                reporter["with"]["script"] = reporter["with"]["script"].replace("context: 'trusted-policy'", "context: 'different-status'")
             rejected(f"trusted-policy {change} mutation", document)
         document = copy.deepcopy(workflow)
         document["jobs"]["trusted-policy"]["name"] = "trusted-policy"
@@ -999,43 +1416,186 @@ def workflow_context_canaries(source: str) -> None:
         document["jobs"]["core"]["steps"][0]["run"] = document["jobs"]["core"]["steps"][0]["run"].replace(
             'if [ "$(available)" -lt "$minimum" ]; then', "if true; then")
         rejected("unconditional core cleanup", document)
+        for name in ("core", "test"):
+            # The Boat reclaim runs only on self-hosted VMs, frees only named image content,
+            # and fails fast below 40 GiB: each weakening is rejected.
+            boat = next(i for i, step in enumerate(workflow["jobs"][name]["steps"])
+                        if step.get("name") == "Reclaim Boat runner disk space")
+            for label, key, before, after in (
+                    ("hosted", "if", "'self-hosted'", "'github-hosted'"),
+                    ("always", "if", "${{ runner.environment == 'self-hosted' }}", "${{ always() }}"),
+                    ("threshold", "run", "40 * 1024 * 1024", "1 * 1024 * 1024"),
+                    ("check", "run", '[ "$(available)" -ge "$minimum" ]', "true"),
+                    ("tolerated", "run", "docker system prune --all --force", "docker system prune --all --force || true"),
+                    ("broad", "run", "rustup toolchain uninstall stable nightly-2025-03-01", "sudo rm -rf /usr/local/rustup /var/lib")):
+                document = copy.deepcopy(workflow)
+                step = document["jobs"][name]["steps"][boat]
+                if before not in step[key]:
+                    raise AssertionError(f"Boat reclaim canary target drifted: {label}")
+                step[key] = step[key].replace(before, after)
+                rejected(f"{name} Boat reclaim {label}", document)
+            document = copy.deepcopy(workflow)
+            del document["jobs"][name]["steps"][boat]
+            rejected(f"{name} without Boat reclaim", document)
+            for label, change in (
+                    ("unconditional wrapper", lambda job: job["env"].__setitem__("RUSTC_WRAPPER", "sccache")),
+                    ("fatal server IO", lambda job: job["env"].pop("SCCACHE_IGNORE_SERVER_IO_ERROR")),
+                    ("unbounded local cache", lambda job: job["env"].pop("SCCACHE_CACHE_SIZE")),
+                    ("shared cache on Boat", lambda job: next(step for step in job["steps"]
+                        if step.get("name") == "Start sccache or compile without it").__setitem__("run",
+                        next(step for step in job["steps"] if step.get("name") == "Start sccache or compile without it")["run"]
+                        .replace("gha=false", "gha=true"))),
+                    ("masked compile failure", lambda job: next(step for step in job["steps"]
+                        if step.get("name") == "Start sccache or compile without it").__setitem__("run",
+                        next(step for step in job["steps"] if step.get("name") == "Start sccache or compile without it")["run"]
+                        .replace('exit "$status"', "exit 0"))),
+                    ("fallback without compiling", lambda job: next(step for step in job["steps"]
+                        if step.get("name") == "Start sccache or compile without it").__setitem__("run",
+                        next(step for step in job["steps"] if step.get("name") == "Start sccache or compile without it")["run"]
+                        .replace('  exec "$@"\n', "  exit 0\n"))),
+                    ("fatal temporary file", lambda job: next(step for step in job["steps"]
+                        if step.get("name") == "Start sccache or compile without it").__setitem__("run",
+                        next(step for step in job["steps"] if step.get("name") == "Start sccache or compile without it")["run"]
+                        .replace('log=$(mktemp) || exec "$@"', "log=$(mktemp)"))),
+                    # Any `sccache:` line (a warning before a local compile) would rerun a failing compiler.
+                    ("warnings as cache failures", lambda job: next(step for step in job["steps"]
+                        if step.get("name") == "Start sccache or compile without it").__setitem__("run",
+                        next(step for step in job["steps"] if step.get("name") == "Start sccache or compile without it")["run"]
+                        .replace("grep -q '^sccache: error: '", "grep -q '^sccache: '"))),
+                    # The action's post-job stats call setFailed when the stats request fails.
+                    ("fatal post-job stats", lambda job: next(step for step in job["steps"]
+                        if step.get("uses", "").startswith("mozilla-actions/sccache-action@"))["with"].pop("disable_annotations")),
+                    ("post-job stats re-enabled", lambda job: next(step for step in job["steps"]
+                        if step.get("uses", "").startswith("mozilla-actions/sccache-action@"))["with"].__setitem__(
+                        "disable_annotations", False)),
+                    ("fatal start", lambda job: next(step for step in job["steps"]
+                        if step.get("name") == "Start sccache or compile without it").__setitem__("run",
+                        "set -e\nsccache --start-server\necho RUSTC_WRAPPER=sccache >> \"$GITHUB_ENV\"\n"))):
+                document = copy.deepcopy(workflow)
+                change(document["jobs"][name])
+                rejected(f"{name} sccache {label}", document)
+        # The bundle may drop only the cargo target dir, between tasks, when disk is low.
+        source_runner = validator.CORE_RUNNER
+        core = source_runner.read_text(encoding="utf-8")
+        try:
+            for label, before, after in (
+                    ("broad", 'rm -rf -- "$entry"', 'rm -rf -- "$root"'),
+                    ("whole target", 'rm -rf -- "$entry"', 'rm -rf -- "$target"'),
+                    ("verification evidence", ' && $name != verification-*', ''),
+                    ("uncontained", 'if [[ $target != "$root/target" ]]; then', "if false; then"),
+                    ("uncanonical", 'target=$(realpath -m -- "${CARGO_TARGET_DIR:-$PWD/target}")', 'target=${CARGO_TARGET_DIR:-$PWD/target}'),
+                    ("unconditional", "if [[ -n $pruned ]] && ((", "if true || [[ -n $pruned ]] && (("),
+                    ("first task", "      pruned=1\n", ""),
+                    ("extra deletion", "        prune_target\n", '        prune_target; rm -rf -- "$HOME/.cargo"\n')):
+                if core.count(before) != 1:
+                    raise AssertionError(f"bundle prune canary target drifted: {label}")
+                mutated = Path(directory) / "core.sh"
+                mutated.write_text(core.replace(before, after), encoding="utf-8")
+                validator.CORE_RUNNER = mutated
+                document = copy.deepcopy(workflow)
+                rejected(f"{label} bundle prune", document)
+        finally:
+            validator.CORE_RUNNER = source_runner
+        for name in ("core", "test"):
+            # A Boat pull-request VM is self-hosted: cleanup keys on the hosted image alone.
+            for condition in ("${{ !(github.event_name == 'merge_group' && runner.environment == 'self-hosted') }}",
+                              "${{ runner.environment != 'self-hosted' }}",
+                              "${{ github.event_name != 'merge_group' }}"):
+                document = copy.deepcopy(workflow)
+                document["jobs"][name]["steps"][0]["if"] = condition
+                rejected(f"{name} cleanup keyed off the hosted image", document)
         document = copy.deepcopy(workflow)
         document["jobs"]["test"]["steps"][0]["run"] = workflow["jobs"]["core"]["steps"][0]["run"]
         rejected("threshold-only hosted bundle cleanup", document)
+        for name in ("core", "test"):
+            # Boat's base image needs libclang made loadable before any bindgen build.
+            document = copy.deepcopy(workflow)
+            document["jobs"][name]["steps"] = [step for step in document["jobs"][name]["steps"]
+                                               if step.get("name") != "Make libclang loadable on Boat runners"]
+            if len(document["jobs"][name]["steps"]) != len(workflow["jobs"][name]["steps"]) - 1:
+                raise AssertionError(f"{name}: libclang canary target drifted")
+            rejected(f"{name} without the Boat libclang step", document)
+        # A same-repository PR that fell back to hosted runners must say so on its checks.
+        document = copy.deepcopy(workflow)
+        document["jobs"]["core"]["steps"] = [step for step in document["jobs"]["core"]["steps"]
+                                             if step.get("name") != "Warn that pull request CI fell back to hosted runners"]
+        if len(document["jobs"]["core"]["steps"]) != len(workflow["jobs"]["core"]["steps"]) - 1:
+            raise AssertionError("core: hosted-fallback warning canary target drifted")
+        rejected("core without the hosted-fallback warning", document)
 
         def action_step(document: dict[str, Any], job: str, action: str) -> dict[str, Any]:
             return next(step for step in document["jobs"][job]["steps"]
                         if step.get("uses", "").startswith(action + "@"))
 
-        runner = "${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat' && 'boat' || 'ubuntu-24.04' }}"
+        runner = "${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}"
+        merge_only = "${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat' && 'boat' || 'ubuntu-24.04' }}"
+        same_repo = "github.event.pull_request.head.repo.full_name == github.repository && "
         legacy = '${{ github.event_name == \'merge_group\' && vars.NORN_MERGE_RUNNER == \'self-hosted\' && fromJSON(format(\'["self-hosted","norn-merge","norn-run-{0}"]\', github.run_id)) || \'ubuntu-24.04\' }}'
         expression = runner.removeprefix("${{ ").removesuffix(" }}")
+        boat_users = ("Youssef-Tarek-Ali-26", "dependabot[bot]", "other-maintainer")
         for event in ("merge_group", "pull_request", "pull_request_target", "issue_comment", "push", "workflow_dispatch"):
-            for variable in ("", "boat", "self-hosted", "other"):
-                concrete = expression.replace("github.event_name", repr(event)).replace(
-                    "vars.NORN_MERGE_RUNNER", repr(variable)).replace("&&", " and ").replace("||", " or ")
-                expected = "boat" if event == "merge_group" and variable == "boat" else "ubuntu-24.04"
-                if eval(concrete, {"__builtins__": {}}, {}) != expected:
-                    raise AssertionError(f"Boat runner evaluation drift: {event}/{variable}")
+            # Boat CI runs public-repository jobs only for its allowlisted user: any
+            # other PR author, actor or re-runner (Dependabot included) stays hosted.
+            for merge_variable, pr_variable, head_repository, author, actor, rerunner in itertools.product(
+                    ("", "boat", "self-hosted", "other"), ("", "boat", "self-hosted", "other"),
+                    ("Norn-cloud/norn", "attacker/norn", ""), *[boat_users] * 3):
+                concrete = (expression.replace("github.event_name", repr(event))
+                            .replace("vars.NORN_MERGE_RUNNER", repr(merge_variable))
+                            .replace("vars.NORN_PR_RUNNER", repr(pr_variable))
+                            .replace("github.event.pull_request.head.repo.full_name", repr(head_repository))
+                            .replace("github.event.pull_request.user.login", repr(author))
+                            .replace("github.triggering_actor", repr(rerunner))
+                            .replace("github.actor", repr(actor))
+                            .replace("github.repository", repr("Norn-cloud/norn"))
+                            .replace("&&", " and ").replace("||", " or "))
+                expected = ("boat" if (event == "merge_group" and merge_variable == "boat")
+                            or (event == "pull_request" and pr_variable == "boat"
+                                and head_repository == "Norn-cloud/norn"
+                                and author == actor == rerunner == "Youssef-Tarek-Ali-26") else "ubuntu-24.04")
+                if condition_value(concrete) != expected:
+                    raise AssertionError("Boat runner evaluation drift: " + "/".join(
+                        (event, merge_variable, pr_variable, head_repository, author, actor, rerunner)))
         for name in ("core", "plan", "test", "full", "trusted-policy"):
             unsafe = ["boat", "self-hosted", ["self-hosted", "norn-merge"], legacy,
                       "${{ vars.NORN_MERGE_RUNNER || 'ubuntu-24.04' }}",
+                      "${{ vars.NORN_PR_RUNNER || 'ubuntu-24.04' }}",
                       runner.replace("github.event_name == 'merge_group' && ", ""),
-                      runner.replace("vars.NORN_MERGE_RUNNER == 'boat' && ", ""),
+                      runner.replace("github.event_name == 'pull_request' && ", ""),
+                      runner.replace(" && vars.NORN_MERGE_RUNNER == 'boat'", ""),
+                      runner.replace(" && vars.NORN_PR_RUNNER == 'boat'", ""),
+                      # Fork pull requests must never reach a Boat VM.
+                      runner.replace(same_repo, ""),
+                      runner.replace(same_repo, "github.event.pull_request.head.repo.fork == false && "),
+                      runner.replace("== github.repository", "!= ''"),
+                      runner.replace("vars.NORN_PR_RUNNER", "vars.NORN_MERGE_RUNNER"),
+                      # Bot- or other-user-triggered pull requests would queue forever on Boat.
+                      runner.replace(" && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26'", ""),
+                      runner.replace(" && github.actor == 'Youssef-Tarek-Ali-26'", ""),
+                      runner.replace(" && github.triggering_actor == 'Youssef-Tarek-Ali-26'", ""),
+                      runner.replace("github.actor == 'Youssef-Tarek-Ali-26'", "github.actor != 'dependabot[bot]'"),
+                      runner.replace("github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26'",
+                                     "github.event.pull_request.user.type != 'Bot'"),
+                      runner.replace("'Youssef-Tarek-Ali-26'", "'dependabot[bot]'"),
                       runner.replace("== 'boat'", "== 'self-hosted'"),
                       runner.replace("|| 'ubuntu-24.04'", "|| 'boat'")]
             for event in ("pull_request", "pull_request_target", "issue_comment", "push", "workflow_dispatch"):
                 unsafe.append(runner.replace("'merge_group'", repr(event)))
-            if name in ("core", "test"):
-                unsafe.append("ubuntu-24.04")
+            for event in ("pull_request_target", "issue_comment", "push", "workflow_dispatch"):
+                unsafe.append(runner.replace("'pull_request'", repr(event)))
+            if name in ("core", "plan", "test"):
+                unsafe += ["ubuntu-24.04", merge_only]
             else:
-                unsafe.append(runner)
+                # The required verdict and the trusted-policy control jobs stay hosted in
+                # every form: a verdict queued for a Boat VM that cannot start would never report.
+                unsafe += [runner, merge_only]
             for value in unsafe:
+                if value == workflow["jobs"][name]["runs-on"]:
+                    raise AssertionError(f"{name}: runner mutation is a no-op: {value}")
                 document = copy.deepcopy(workflow)
                 document["jobs"][name]["runs-on"] = value
                 rejected(f"{name} unsafe runner routing", document)
         document = copy.deepcopy(workflow)
-        for name in ("core", "test"):
+        for name in ("core", "plan", "test"):
             document["jobs"][name]["runs-on"] = runner
         candidate.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
         validator.validate_workflow_integrity([], formal_path=candidate)
@@ -1102,6 +1662,8 @@ def workflow_canaries() -> None:
     workflow_verdict_canaries(source)
     workflow_context_canaries(source)
     workflow_cleanup_canaries(source)
+    workflow_concurrency_canaries()
+    workflow_concurrency_parity()
     workflow_trusted_policy_canaries(source)
     workflow_merge_group_policy_canaries(source)
     workflow_cache_canaries()
@@ -1783,412 +2345,27 @@ def evidence_inventory_canaries() -> None:
     )
 
 
-def rights_recovery_evidence(head: str, base: str, group_head: str, tree: str) -> dict:
-    if not all(re.fullmatch(r"[0-9a-f]{40}", value) for value in (head, base, group_head, tree)):
-        raise ValueError("full lowercase commit/tree identities required")
-    public = yaml.safe_load((ROOT / ".github/workflows/ci-policy.yml").read_text())
-    group = yaml.safe_load((ROOT / ".github/workflows/trusted-merge-group.yml").read_text())
-    def program(job: dict, name: str) -> str:
-        return next(step["with"]["script"] for step in job["steps"] if step.get("name") == name)
-    pr_job, group_job = public["jobs"]["trusted-policy"], group["jobs"]["trusted-policy"]
-    programs = {
-        "capture": public["jobs"]["rights-capture"]["steps"][0]["with"]["script"],
-        "writer": public["jobs"]["rights-revocation"]["steps"][0]["with"]["script"],
-        "pr": program(pr_job, "Record admin approvals of the exact PR head"),
-        "group": program(group_job, "Record admin approvals of the queued heads"),
-        "publisher": program(pr_job, "Report trusted policy on the exact PR head"),
-        "groupPublisher": program(group_job, "Report trusted policy on the group head"),
-    }
-    replacements = {"${{ steps.pr.outputs.number }}": "7", "${{ steps.pr.outputs.head_sha }}": head,
-                    "${{ steps.pr.outputs.base_sha }}": base,
-                    "${{ steps.pr.outputs.head_repository }}": "Norn-cloud/norn",
-                    "${{ steps.group.outputs.base_sha }}": base,
-                    "${{ github.event.workflow_run.head_sha }}": group_head,
-                    "${{ job.status }}": "failure"}
-    programs["prSuccess"] = programs["publisher"].replace("${{ job.status }}", "success")
-    programs["groupSuccess"] = programs["groupPublisher"].replace("${{ job.status }}", "success")
-    programs["prB"] = programs["pr"].replace("${{ steps.pr.outputs.number }}", "8")
-    for key, script in programs.items():
-        for before, after in replacements.items(): script = script.replace(before, after)
-        programs[key] = script
-    harness = r"""(async function harnessMain() {
-  const assert=require('assert'), fs=require('fs');
-  const {head,base,groupHead,tree,programs}=JSON.parse(process.env.RIGHTS_CASE);
-  const context={repo:{owner:'Norn-cloud',repo:'norn'},payload:{},runId:105,serverUrl:'https://github.com'};
-  process.env.GITHUB_WORKFLOW_SHA='e'.repeat(40);
-  const path=process.env.RUNNER_TEMP+'/maintainer-approval.json', evidence={};
-  let runs,jobs,history,live,payloads,clock,nextRun,modeShared,unavailable=false,readFailure=false,paging=false,shifted=false;
-  let outputs={}, admission=0, groupAdmission=0, virtualNow=0;
-  let objects,retained,objectCounter,jobReads=0,largeHistory=false,releasing=0,releaseReads=0;
-  Date.now=()=>virtualNow;
-  globalThis.setTimeout=(callback,ms)=>{virtualNow+=ms;queueMicrotask(callback);return 0};
-  const core={setOutput:(name,value)=>{outputs[name]=value},warning:()=>{},setFailed:()=>{}};
-  const oid=value=>{const sha=(++objectCounter).toString(16).padStart(40,'0');objects.set(sha,value);return sha};
-  const execute=code=>new (Object.getPrototypeOf(async function(){}).constructor)('github','context','core',code)(github,context,core);
-  const prA={number:7,head:{sha:head,repo:{full_name:'Norn-cloud/norn'}},base:{sha:base}};
-  const prB={...prA,number:8};
-  const makeRun=(id,event='issue_comment',epoch='protocol')=>({id,run_number:id,run_attempt:1,event,head_sha:epoch,
-    status:'completed',created_at:new Date(virtualNow).toISOString(),run_started_at:new Date(virtualNow).toISOString(),head_repository:{full_name:'Norn-cloud/norn'},repository:{full_name:'Norn-cloud/norn'}});
-  const github={rest:{repos:{
-    getCollaboratorPermissionLevel:async({username})=>({data:{permission:username==='owner'?'admin':'read'}}),
-    createCommitStatus:async value=>{
-      if(unavailable)throw {status:503};
-      history.push({...value,id:history.length+1,created_at:clock,creator:{login:'github-actions[bot]'}});
-    },
-    listCommitStatusesForRef:async({ref,page=1})=>({data:history.filter(row=>row.sha===ref).slice().reverse().slice((page-1)*100,page*100)}),
-    getContent:async({ref,path})=>{
-      let content;
-      if(objects.has(ref)){
-        const commit=objects.get(ref),files=objects.get(commit.tree.sha);
-        if(!files.has(path))throw {status:404};
-        content=objects.get(files.get(path));
-      }else content=ref==='legacy'?'name: Public core':'rights-authority-v4';
-      return {data:{type:'file',encoding:'base64',content:Buffer.from(content).toString('base64')}};
-    },
-    compareCommits:async()=>({data:{status:'ahead'}}),
-    getCommit:async({ref})=>({data:{commit:{tree:{sha:tree}},parents:ref===groupHead?[{sha:base},{sha:head}]:[{sha:base}]}}),
-    listPullRequestsAssociatedWithCommit:async()=>({data:[modeShared?prB:prA]})
-  },git:{
-    createBlob:async({content})=>({data:{sha:oid(content)}}),
-    createTree:async({base_tree,tree})=>{const files=new Map(base_tree?objects.get(base_tree):[]);for(const row of tree)files.set(row.path,row.sha);return {data:{sha:oid(files)}}},
-    createCommit:async({tree,parents})=>{const data={tree:{sha:tree},parents:parents.map(sha=>({sha}))};const sha=oid(data);data.sha=sha;return {data}},
-    getCommit:async({commit_sha})=>({data:objects.get(commit_sha)}),
-    getRef:async()=>{if(!retained)throw {status:404};return {data:{object:{sha:retained}}}},
-    createRef:async({sha})=>{assert(!retained);retained=sha},
-    updateRef:async({sha,force})=>{assert.equal(force,false);assert(objects.get(sha).parents.some(p=>p.sha===retained));retained=sha}
-  },pulls:{get:async()=>{throw Error('rights must not use a second PR snapshot')}},
-  issues:{listComments:function comments(){},getComment:async({comment_id})=>{if(!live.has(comment_id))throw {status:404};return {data:live.get(comment_id)}}},
-  actions:{
-    getWorkflowRun:async({run_id})=>{const run=runs.find(r=>r.id===run_id);if(!run)throw {status:404};return {data:run}},
-    getWorkflowRunAttempt:async({run_id,attempt_number})=>{const run=runs.find(r=>r.id===run_id);assert.equal(run?.run_attempt,attempt_number);return {data:run}},
-    listWorkflowRuns:async({page})=>{
-      if(readFailure)throw {status:503};
-      if(paging&&page===2&&!shifted){runs.unshift(makeRun(nextRun++,'push'));shifted=true}
-      const size=paging?2:100;
-      return {data:{workflow_runs:runs.slice((page-1)*size,page*size)}};
-    },
-    listJobsForWorkflowRunAttempt:function attemptJobs(){}
-  }},
-  paginate:async(method,args)=>{
-    if(method===github.rest.repos.listCommitStatusesForRef)return history.filter(row=>row.sha===args.ref).slice().reverse();
-    if(method===github.rest.actions.listJobsForWorkflowRunAttempt){
-      jobReads++;
-      if(args.run_id===releasing&&++releaseReads===2){
-        const value=jobs.get(releasing).get(1);
-        value[0].status='completed';value[1].status='completed';value[1].conclusion='success';
-        value[1].name='Rights ledger none comment 13';
-        runs.find(r=>r.id===releasing).status='completed';
-      }
-      return jobs.get(args.run_id)?.get(args.attempt_number)||[];
-    }
-    assert.equal(method,github.rest.issues.listComments);return [];
-  }};
-  const payload=(comment,action='created',pull=true,prior,number=7)=>({action,
-    issue:{number:pull?number:42,...(pull?{pull_request:{url:'synthetic'}}:{})},comment,
-    ...(prior?{changes:{body:{from:prior}}}:{})});
-  const comment=(id,body,created)=>({id,user:{login:'owner'},body,created_at:created,updated_at:created});
-  async function record(id,p,attempt=1,fail=false) {
-    context.payload=p;context.runId=id;outputs={};virtualNow=Math.max(virtualNow,Date.parse(clock));
-    process.env.GITHUB_RUN_ATTEMPT=String(attempt);process.env.GITHUB_TRIGGERING_ACTOR='owner';
-    await execute(programs.capture);
-    const data=JSON.parse(outputs.payload);
-    if(!payloads.has(id)){payloads.set(id,p);runs.unshift(makeRun(id));nextRun=Math.max(nextRun,id+1)}
-    runs.find(r=>r.id===id).run_attempt=attempt;
-    if(attempt>1)runs.find(r=>r.id===id).run_started_at=new Date(virtualNow).toISOString();
-    const possible=[p.comment.body,p.changes?.body?.from].some(body=>(body||'').includes('/ack-rights')||(body||'').includes('/revoke-rights'));
-    const capture={id:id*10+attempt,name:'Capture immutable rights event '+outputs.kind+' '+(possible?'possible':'none'),status:'completed',conclusion:'success',
-      steps:[{name:'Rights event '+outputs.heads+' comment '+outputs.comment,status:'completed',conclusion:'success'}]};
-    const journal={id:id*10+attempt+1,name:'Rights ledger '+outputs.heads+' comment '+outputs.comment,status:'completed',conclusion:'success'};
-    if(!jobs.has(id))jobs.set(id,new Map());
-    jobs.get(id).set(attempt,[capture,journal]);
-    if(outputs.kind==='issue'){
-      journal.name='Rights ledger ${{ needs.rights-capture.outputs.heads }} comment ${{ needs.rights-capture.outputs.comment }}';
-      journal.conclusion='skipped';return;
-    }
-    process.env.RIGHTS_EVENT=outputs.payload;
-    unavailable=fail;
-    if(fail){
-      for(let retry=0;retry<4;retry++)await assert.rejects(()=>execute(programs.writer));
-      journal.conclusion='failure';
-    } else await execute(programs.writer);
-    unavailable=false;
-  }
-  async function collect(kind) {
-    context.runId=admission;context.payload=kind==='group'?{workflow_run:{id:groupAdmission}}:{};
-    process.env.GITHUB_RUN_ATTEMPT='1';
-    jobReads=0;const hadCheckpoint=!!retained;
-    await execute(programs[kind==='pr'?modeShared?'prB':'pr':'group']);
-    if(largeHistory&&hadCheckpoint)assert(jobReads<50,'checkpoint must bound ordinary-comment history');
-    return JSON.parse(fs.readFileSync(path));
-  }
-  async function snapshot(name) {
-    virtualNow=Math.max(virtualNow,Date.parse(clock));admission=nextRun++;groupAdmission=nextRun++;runs.unshift(makeRun(groupAdmission,'merge_group'),makeRun(admission,'pull_request_target'));
-    const pr=await collect('pr'),group=await collect('group');
-    context.runId=admission;context.payload={};await execute(programs.pr);
-    const a=JSON.parse(fs.readFileSync(path));
-    const substantive=doc=>Object.fromEntries(Object.entries(doc.rights).map(([head,trees])=>[head,
-      Object.values(trees).map(row=>({head_sha:row.head_sha,tree_sha:row.tree_sha,pending:row.pending,entries:row.entries}))]));
-    assert.deepEqual(substantive(a),substantive(pr));assert.deepEqual(substantive(group),substantive(pr));
-    evidence[name]={pr,group,a};
-  }
-  function pending(doc){return doc.rights[head][tree].pending}
-  async function publishFailure(){context.runId=admission;context.payload={};await execute(programs.publisher)}
-  async function publishSaved(kind,doc,runId,groupId){
-    context.runId=runId;context.payload=kind==='group'?{workflow_run:{id:groupId}}:{};
-    process.env.GITHUB_RUN_ATTEMPT='1';
-    fs.writeFileSync(process.env.RUNNER_TEMP+'/rights-parameters.json',JSON.stringify(
-      {kind:kind==='group'?'group':'pr',head:kind==='group'?groupHead:head,base,repository:'Norn-cloud/norn',number:modeShared?8:7}));
-    fs.writeFileSync(process.env.RUNNER_TEMP+'/rights-decision.json',JSON.stringify(doc.publication));
-    await execute(kind==='group'?programs.groupSuccess:programs.prSuccess);
-    const row=history.filter(row=>row.sha===(kind==='group'?groupHead:head)&&row.context==='trusted-policy').at(-1);
-    assert.equal(row.state,'failure','stale or expired saved success must never replace failure');
-  }
-
-  for(const layout of ['single','shared'])for(const removal of ['edited','deleted']){
-    modeShared=layout==='shared';history=[];live=new Map();jobs=new Map();payloads=new Map();nextRun=101;
-    clock='2026-11-03T00:00:00Z';virtualNow=Date.parse(clock);objects=new Map();retained=null;objectCounter=10000;
-    largeHistory=layout==='single'&&removal==='edited';
-    runs=[makeRun(largeHistory?10000:100,'issue_comment','legacy')];
-    if(largeHistory){
-      for(let id=10001;id<=20000;id++){
-        runs.unshift(makeRun(id));
-        jobs.set(id,new Map([[1,[
-          {name:'Capture immutable rights event pull none',status:'completed',conclusion:'success'},
-          {name:'Rights ledger none comment '+id,status:'completed',conclusion:'success'}]]]));
-      }
-      nextRun=20001;paging=true;shifted=false;
-    }
-    const firstRun=nextRun;
-    const first=comment(1,'/ack-rights '+head,clock);live.set(1,first);await record(nextRun++,payload(first));
-    if(modeShared){clock='2026-11-03T00:00:02Z';const second=comment(2,'/ack-rights '+head,clock);live.set(2,second);await record(nextRun++,payload(second,'created',true,undefined,8))}
-
-    const revoke=comment(9,'/revoke-rights '+head,'2026-11-03T00:01:00Z');
-    // Admission and group runs are immutable fences, independent of the source PR.
-
-    const prefix=layout+'-'+removal+'-';
-    await snapshot(prefix+'initial');
-    if(largeHistory){assert(shifted);paging=false}
-    const savedAdmission=admission,savedGroup=groupAdmission,savedInitial=evidence[prefix+'initial'];
-    clock='2026-11-03T00:01:00Z';const revokeRun=nextRun++;await record(revokeRun,payload(revoke),1,true);await publishFailure();
-    const removed=removal==='edited'?payload({...revoke,body:'ordinary text'},'edited',true,revoke.body):payload(revoke,'deleted');
-    const removedRun=nextRun++;await record(removedRun,removed,1,true);await publishFailure();
-    runs.sort((a,b)=>b.run_number-a.run_number);
-    assert(!history.filter(s=>s.context.toLowerCase().startsWith('rights-ledger/')).some(s=>JSON.parse(s.description).k==='revoke'));
-    await publishSaved('pr',savedInitial.pr,savedAdmission,savedGroup);
-    await publishSaved('group',savedInitial.group,savedAdmission,savedGroup);
-    await snapshot(prefix+'interleaving');
-    await snapshot(prefix+'pending');assert.deepEqual(pending(evidence[prefix+'pending'].pr).sort(),[revokeRun,removedRun]);
-    clock='2026-11-03T00:01:30Z';
-    const premature=comment(3,'/ack-rights '+head,clock);live.set(3,premature);await record(nextRun++,payload(premature,'created',true,undefined,modeShared?8:7));
-    await snapshot(prefix+'premature');assert.equal(pending(evidence[prefix+'premature'].pr).length,2);
-    clock='2026-11-03T03:02:00Z';await record(revokeRun,payloads.get(revokeRun),2);
-    await snapshot(prefix+'partial');assert.deepEqual(pending(evidence[prefix+'partial'].pr),[removedRun]);
-    clock='2026-11-03T03:02:01Z';await record(removedRun,payloads.get(removedRun),2);
-    await snapshot(prefix+'reconciled');assert.deepEqual(pending(evidence[prefix+'reconciled'].pr),[]);
-    clock='2026-11-03T03:03:00Z';
-    const fresh=comment(4,'/ack-rights '+head,clock);live.set(4,fresh);await record(nextRun++,payload(fresh,'created',true,undefined,modeShared?8:7));
-    await snapshot(prefix+'fresh');
-    const freshAdmission=admission,freshGroup=groupAdmission,freshDocs=evidence[prefix+'fresh'];
-    const normalNow=virtualNow;virtualNow+=7200001;
-    await publishSaved('pr',freshDocs.pr,freshAdmission,freshGroup);
-    await publishSaved('group',freshDocs.group,freshAdmission,freshGroup);
-    virtualNow=normalNow;
-    const waitingRun=nextRun++;
-    await record(waitingRun,payload(comment(13,'ordinary mention of /revoke-rights, not a command',clock)));
-    const waitingJobs=jobs.get(waitingRun).get(1);
-    waitingJobs[0].status='queued';waitingJobs[1].status='queued';
-    waitingJobs[1].name='Rights ledger ${{ needs.rights-capture.outputs.heads }} comment ${{ needs.rights-capture.outputs.comment }}';
-    runs.find(r=>r.id===waitingRun).status='in_progress';
-    releasing=waitingRun;releaseReads=0;
-    await snapshot(prefix+'inflight');
-    assert(releaseReads>=2,'an in-flight capture must be awaited');
-    releasing=0;
-    // A failed cursor write leaves its retention commit unpublished. Recovery replays
-    // from the last authenticated cursor and advances the retention ref without force.
-    admission=nextRun++;groupAdmission=nextRun++;
-    runs.unshift(makeRun(groupAdmission,'merge_group'),makeRun(admission,'pull_request_target'));
-    unavailable=true;await assert.rejects(()=>collect('pr'));assert(!fs.existsSync(path));unavailable=false;
-    await collect('pr');
-    // A plain issue with a skipped, unexpanded journal is attributed by the saved capture payload.
-    await record(nextRun++,payload(comment(12,'/revoke-rights '+head,clock),'created',false));
-    await snapshot(prefix+'plain');assert.deepEqual(pending(evidence[prefix+'plain'].pr),[]);
-    paging=true;shifted=false;await snapshot(prefix+'paging');paging=false;
-    assert.deepEqual(pending(evidence[prefix+'paging'].pr),[]);
-    // The latest recorded acknowledgment remains the frontier after its comment disappears.
-    live.delete(4);await snapshot(prefix+'withdrawn');
-    live.set(4,fresh);
-    history.find(s=>s.context.startsWith('rights-ledger/')).context=
-      history.find(s=>s.context.startsWith('rights-ledger/')).context.toUpperCase();
-    await snapshot(prefix+'case');
-    // Runs created in the same second can list (newest id first) in an order that
-    // disagrees with run_number. The walk accepts any order but no missing number.
-    const swapA=nextRun++,swapB=nextRun++;
-    await record(swapA,payload(comment(14,'ordinary text',clock)));
-    await record(swapB,payload(comment(15,'ordinary text',clock)));
-    assert.deepEqual(runs.slice(0,2).map(r=>r.id),[swapB,swapA]);
-    [runs[0],runs[1]]=[runs[1],runs[0]];
-    const swapped=runs.find(r=>r.id===swapA);
-    runs=runs.filter(r=>r!==swapped);
-    for(const kind of ['pr','group']){await assert.rejects(()=>collect(kind),/Rights history checkpoint unavailable/);assert(!fs.existsSync(path))}
-    runs.splice(0,0,swapped);
-    await snapshot(prefix+'inverted');
-    // A run numbered above the cursor can also list after the cursor run itself (here
-    // a revocation whose ledger has not run). Each collector starts below its own one.
-    for(const [index,kind] of ['pr','group'].entries()){
-      const cursorRun=runs.reduce((a,b)=>b.run_number>a.run_number?b:a), straddle=nextRun++;
-      await record(straddle,payload(comment(16+index,'/revoke-rights '+head,clock)),1,true);
-      assert.equal(runs[0].id,straddle);
-      const moved=runs.shift();runs.splice(runs.indexOf(cursorRun)+1,0,moved);
-      // Its id sorts below the cursor run's id, as in a real id-ordered listing
-      // (harness ids start at 100, so 50 and 49 are unused).
-      const low=50-index;assert(low<cursorRun.id&&!runs.some(r=>r.id===low));jobs.set(low,jobs.get(moved.id));moved.id=low;
-      assert(pending(await collect(kind)).includes(low),'a run listed after the cursor run must be read');
-    }
-    await snapshot(prefix+'straddle');
-    // A complete first page is no upper bound: a run numbered above every run seen so
-    // far (here a revocation whose ledger has not run) can list on a later page.
-    paging=true;shifted=true;
-    for(const [index,kind] of ['pr','group'].entries()){
-      const lowA=nextRun++,lowB=nextRun++,high=nextRun++,ids=20+index*3;
-      await record(lowA,payload(comment(ids,'ordinary text',clock)));
-      await record(lowB,payload(comment(ids+1,'ordinary text',clock)));
-      await record(high,payload(comment(ids+2,'/revoke-rights '+head,clock)),1,true);
-      assert.deepEqual(runs.slice(0,3).map(r=>r.id),[high,lowB,lowA]);
-      runs.splice(2,0,runs.shift());
-      assert(pending(await collect(kind)).includes(high),'a later-page run above the first page must be read');
-    }
-    paging=false;
-    // A repeated run_number must not stand in for a missing one.
-    const n=Math.max(...runs.map(r=>r.run_number));
-    const dupes=[makeRun(nextRun++,'push'),makeRun(nextRun++,'push'),makeRun(nextRun++,'push')];
-    dupes[0].run_number=dupes[1].run_number=n+1;dupes[2].run_number=n+3;
-    runs.unshift(dupes[2],dupes[1],dupes[0]);
-    for(const kind of ['pr','group']){await assert.rejects(()=>collect(kind),/Incomplete rights event history/);assert(!fs.existsSync(path))}
-    runs=runs.filter(r=>!dupes.includes(r));nextRun-=3;
-    const complete=[...runs];
-    for(const id of [revokeRun,admission,firstRun]){
-      runs=complete.filter(r=>r.id!==id);
-      for(const kind of ['pr','group']){await assert.rejects(()=>collect(kind));assert(!fs.existsSync(path))}
-    }
-    runs=complete;readFailure=true;
-    for(const kind of ['pr','group']){await assert.rejects(()=>collect(kind));assert(!fs.existsSync(path))}
-    readFailure=false;
-    const original=jobs.get(removedRun).get(2);
-    jobs.get(removedRun).set(2,[original[0],{...original[1],conclusion:'skipped'}]);
-    assert(pending(await collect('pr')).includes(removedRun));
-    jobs.get(removedRun).set(2,original);
-  }
-  console.log(JSON.stringify(evidence));
-})().catch(error=>{console.error(error);process.exit(1)});"""
-    with tempfile.TemporaryDirectory() as directory:
-        result = subprocess.run(["bun", "-e", harness], capture_output=True, text=True,
-                                env={**os.environ, "RUNNER_TEMP": directory, "RIGHTS_CASE": json.dumps({
-                                    "head": head, "base": base, "groupHead": group_head, "tree": tree, "programs": programs})}, timeout=40)
-    if result.returncode:
-        raise AssertionError(result.stderr[-4000:])
-    return json.loads(result.stdout)
-
-
-def durable_rights_history_canaries(source: str, merge: str) -> None:
-    rights_recovery_evidence("1" * 40, "2" * 40, "3" * 40, "4" * 40)
-    print("global target ledger: single/shared SHA recovery, plain-issue payloads and offset paging passed")
-
-
-def rights_workflow_canaries() -> None:
-    coverage_validator = load_module("norn_rights_workflow_canary", VALIDATOR)
-    source = (ROOT / ".github/workflows/ci-policy.yml").read_text()
-    merge = (ROOT / ".github/workflows/trusted-merge-group.yml").read_text()
-    coverage_validator.validate_rights_contract(source, merge)
-    for label, before, after in [
-        ("missing rights evidence", '--rights-evidence "$RUNNER_TEMP/maintainer-approval.json"', ""),
-        ("stale PR binding", '--head "${{ steps.pr.outputs.head_sha }}"', '--head "old"'),
-        ("missing revocation", "(ack|revoke)", "(ack|ignored)"),
-        ("missing rights collector", "(ack|revoke)", "(ignored|revoke)"),
-        ("missing reviewer identity", "permission:await permission(live.user.login)", "permission:'admin'"),
-    ]:
-        if before not in source:
-            raise AssertionError(f"inactive rights canary: {label}")
-        try:
-            coverage_validator.validate_rights_contract(source.replace(before, after), merge)
-        except coverage_validator.InvalidCoverage:
-            pass
-        else:
-            raise AssertionError(f"accepted {label}")
-    for before in ['--rights-evidence "$RUNNER_TEMP/maintainer-approval.json"',
-                   '--head "${{ github.event.workflow_run.head_sha }}"']:
-        try:
-            coverage_validator.validate_rights_contract(source, merge.replace(before, ""))
-        except coverage_validator.InvalidCoverage:
-            pass
-        else:
-            raise AssertionError("accepted uncovered merge-group rights")
-    for which in ("pr", "group"):
-        for mutation in ("shell", "job-shell", "workflow-shell", "working-directory", "validator-env", "container",
-                         "success-reporter", "wrong-head", "disabled-reporter", "reporter-token",
-                         "latest-history", "missing-history", "collector-failure"):
-            public = yaml.safe_load(source)
-            group = yaml.safe_load(merge)
-            document = public if which == "pr" else group
-            job = document["jobs"]["trusted-policy"]
-            validator = next(step for step in job["steps"] if "--rights-evidence" in step.get("run", ""))
-            reporter = next(step for step in job["steps"] if step.get("name", "").startswith("Report trusted policy"))
-            collector = next(step for step in job["steps"] if step.get("name", "").startswith("Record admin approvals"))
-            if mutation == "collector-failure": collector["continue-on-error"] = True
-            elif mutation == "shell": validator["shell"] = "/usr/bin/true {0}"
-            elif mutation == "job-shell": job["defaults"] = {"run": {"shell": "/usr/bin/true {0}"}}
-            elif mutation == "workflow-shell": document["defaults"] = {"run": {"shell": "/usr/bin/true {0}"}}
-            elif mutation == "working-directory": validator["working-directory"] = "candidate"
-            elif mutation == "validator-env": validator["env"] = {"PATH": "candidate/bin"}
-            elif mutation == "container": job["container"] = "untrusted.invalid/skip-validation:latest"
-            elif mutation == "success-reporter": reporter["with"]["script"] = reporter["with"]["script"].replace("'${{ job.status }}'==='success'", "true")
-            elif mutation == "wrong-head": reporter["with"]["script"] = reporter["with"]["script"].replace("${{ steps.pr.outputs.head_sha }}" if which == "pr" else "${{ github.event.workflow_run.head_sha }}", "wrong-head")
-            elif mutation == "disabled-reporter": reporter["if"] = "false"
-            elif mutation == "reporter-token": reporter["with"]["github-token"] = "candidate-token"
-            elif mutation == "latest-history": collector["with"]["script"] = collector["with"]["script"].replace("listCommitStatusesForRef", "getCombinedStatusForRef")
-            elif mutation == "missing-history": collector["with"]["script"] = "const revocations = [];"
-            try:
-                coverage_validator.validate_rights_contract(yaml.safe_dump(public), yaml.safe_dump(group))
-            except coverage_validator.InvalidCoverage:
-                continue
-            raise AssertionError(f"accepted {which} {mutation}")
-    for mutation in ("cancel", "pending-cancel", "disabled", "failure-bypass", "before-resolve", "deleted-body"):
-        public = yaml.safe_load(source)
-        writer = public["jobs"]["rights-revocation"]
-        if mutation in {"cancel", "pending-cancel"}: writer["concurrency"] = {"group": "shared", "cancel-in-progress": mutation == "cancel"}
-        elif mutation == "disabled": writer["if"] = "false"
-        elif mutation == "failure-bypass": public["jobs"]["trusted-policy"]["steps"][1]["run"] = "true"
-        elif mutation == "before-resolve":
-            steps = public["jobs"]["trusted-policy"]["steps"]
-            steps[0], steps[1] = steps[1], steps[0]
-        elif mutation == "deleted-body": public["jobs"]["rights-capture"]["steps"][0]["with"]["script"] = "return;"
-        try:
-            coverage_validator.validate_rights_contract(yaml.safe_dump(public), merge)
-        except coverage_validator.InvalidCoverage:
-            continue
-        raise AssertionError(f"accepted revocation recorder {mutation}")
-    durable_rights_history_canaries(source, merge)
-    print("rights workflow canaries: missing/stale evidence, durable history and execution overrides refused")
-
-
 def main() -> int:
-    if len(sys.argv) == 6 and sys.argv[1] == "--rights-recovery":
-        print(json.dumps(rights_recovery_evidence(*sys.argv[2:])))
-        return 0
     if sys.argv[1:] == ["--workflow-contract"]:
         source = (ROOT / ".github/workflows/ci-policy.yml").read_text(encoding="utf-8")
         workflow_verdict_canaries(source)
         workflow_context_canaries(source)
         workflow_cleanup_canaries(source)
+        workflow_concurrency_canaries()
+        workflow_concurrency_parity()
+        bundle_prune_containment_canaries()
+        workflow_sccache_canaries(source)
+        studio_browser_phase_canaries()
+        studio_browser_pin_canaries()
+        rust_parity_evidence_canaries()
         workflow_trusted_policy_canaries(source)
-        workflow_superseded_canaries(source)
+        workflow_expression_cap_canaries()
         workflow_merge_group_policy_canaries(source)
         workflow_cache_canaries()
-        rights_workflow_canaries()
-        print("workflow contract: admission, verdict, rights and merge-group publisher canaries passed")
+        print("workflow contract: admission, verdict, context, concurrency and merge-group publisher canaries passed")
         return 0
     if len(sys.argv) != 1:
         raise SystemExit("usage: negative_canaries.py [--workflow-contract]")
-    rights_workflow_canaries()
     manifest_canaries()
     coverage_layout_canaries()
     central_obligation_closure_canaries()

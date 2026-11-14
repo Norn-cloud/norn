@@ -58,6 +58,9 @@ declare module "@norn/authoring" {
       | { readonly kind: "undeclared" | "additive" | "semi_additive" | "non_additive" }
       | { readonly kind: "ratio"; readonly numerator: string; readonly denominator: string }
 
+    /** Interface-only Decimal; members sharing a group require identical concrete unit and scale. */
+    function boundDecimal(group: string): Schema.Finite
+
     /**
      * Exact decimal value type (EntityIR `decimal`): every value is held at
      * `scale` fraction digits, optionally a quantity in `unit`, or money whose
@@ -92,6 +95,7 @@ declare module "@norn/authoring" {
       readonly to: V
       /** ZEN Expression guards, conjoined. */
       readonly guards?: ReadonlyArray<Expression<boolean>>
+      readonly guardRefusalCode?: string
     }
 
     /** A lifecycle over one enum property of `T`; its states are that property's values. */
@@ -128,9 +132,9 @@ declare module "@norn/authoring" {
     }
 
     /** Opaque object type definition; the syntax compiler lowers the call. */
-    interface TypeDefinition<T> {
+    interface TypeDefinition<T, L extends ReadonlyArray<LinkSpec> = ReadonlyArray<LinkSpec>> {
       readonly _tag: "NornType"
-      readonly __types?: { readonly type: T }
+      readonly __types?: { readonly type: T; readonly links?: L }
     }
 
     /** Candidate QuestionIR; the host must admit it with the selected metric definitions. */
@@ -176,7 +180,26 @@ declare module "@norn/authoring" {
     /** Canonical EntityIR v2 catalog; values are masked by runtime lenses. */
     function markings(meta: { readonly id: string; readonly title: string; readonly version: string; readonly markings: ReadonlyArray<MarkingSpec> }): { readonly _tag: "NornMarkings" }
 
-    interface InterfaceMeta<S extends Schema.Top> {
+    /**
+     * Localized labels (LABEL-LOCALE-1): BCP 47 tag → text. They lower to a
+     * separate `<artifact id>.labels` artifact, never into the definition, so
+     * they change no hash or evidence identity.
+     */
+    type LocaleText = import("../src/builder/labels.ts").LocaleText
+    interface Localized {
+      /** Short name per locale (`{ en: "Invoice", ar: "فاتورة" }`). */
+      readonly label?: LocaleText
+      /** Longer description per locale; `description` stays the canonical text. */
+      readonly localizedDescription?: LocaleText
+      /** Locales whose labels were proposed (for example machine-translated) and still need review. */
+      readonly needsReview?: ReadonlyArray<string>
+    }
+
+    interface InterfaceMeta<S extends Schema.Top> extends Localized {
+      /** Property labels, keyed by a declared property. */
+      readonly propertyLabels?: { readonly [P in keyof S["Type"]]?: LocaleText }
+      /** Enum value labels: declared enum property → stored value → label. */
+      readonly valueLabels?: { readonly [P in keyof S["Type"]]?: { readonly [value: string]: LocaleText } }
       readonly role?: "thing" | "happening"
       readonly dependencies?: ReadonlyArray<import("../src/builder/envelope.ts").DependencyPin>
       /** Classification inherited by all properties. */
@@ -223,12 +246,13 @@ declare module "@norn/authoring" {
       S extends Schema.Top,
       E extends TypeDefinition<unknown> | string | undefined = undefined,
       I extends ReadonlyArray<InterfaceDefinition<unknown> | string> = readonly [],
+      L extends ReadonlyArray<LinkSpec> = ReadonlyArray<LinkSpec>,
     > extends InterfaceMeta<S> {
       /** The one supertype, declared locally or named from the installed registry. */
       readonly extends?: E
       readonly implements?: I
       readonly pathEquations?: ReadonlyArray<import("../src/builder/entity.ts").PathEquation>
-      readonly links?: ReadonlyArray<LinkSpec>
+      readonly links?: L
       readonly identity?: ReadonlyArray<KeySpec<EffectiveProperties<E, I, S["Type"]>>>
       /** Literal defaults; numbers are exact decimal literals. */
       readonly defaults?: { readonly [P in keyof S["Type"]]?: S["Type"][P] }
@@ -240,9 +264,10 @@ declare module "@norn/authoring" {
       S extends Schema.Top,
       const E extends TypeDefinition<unknown> | string | undefined = undefined,
       const I extends ReadonlyArray<InterfaceDefinition<unknown> | string> = readonly [],
+      const L extends ReadonlyArray<LinkSpec> = readonly [],
     >(
-      meta: TypeMeta<S, E, I>,
-    ): TypeDefinition<EffectiveProperties<E, I, S["Type"]>>
+      meta: TypeMeta<S, E, I, L>,
+    ): TypeDefinition<EffectiveProperties<E, I, S["Type"]>, L>
 
     /** An EntityIR v2 interface (`interface` is a reserved word). */
     function interfaceType<
@@ -283,7 +308,7 @@ declare module "@norn/authoring" {
             | { readonly kind: "draft_only"; readonly lifecycle: string; readonly state: string }
         }
 
-    interface ActionMeta<I extends Schema.Top, O extends Schema.Top> {
+    interface ActionMeta<I extends Schema.Top, O extends Schema.Top> extends Localized {
       readonly dependencies?: ReadonlyArray<import("../src/builder/envelope.ts").DependencyPin>
       /** `actionId` (`commerce.sales_order.approve`). */
       readonly id: string
@@ -297,6 +322,17 @@ declare module "@norn/authoring" {
       /** Input and output: Effect Schema structs, lowered to closed schemas. */
       readonly input: I
       readonly output: O
+      /**
+       * Display-only labels for top-level input fields (D66): a title of 1 to
+       * 120 characters and an optional description. They change no admission
+       * semantics; forms show them.
+       */
+      readonly inputLabels?: { readonly [field in keyof I["Type"] & string]?: { readonly title?: string; readonly description?: string } }
+      /**
+       * Wizard steps over the input (D66): each field (an RFC 6901 pointer
+       * such as `/valuation_method`) in at most one group.
+       */
+      readonly inputGroups?: ReadonlyArray<{ readonly id: string; readonly title: string; readonly fields: ReadonlyArray<string> }>
       /** Ordered bounded reads, with property keys rooted at `from: "input"`. */
       readonly slice?: ReadonlyArray<SliceSpec>
       /** Ordered deterministic ZEN transformations before validation and preconditions. */
@@ -380,13 +416,79 @@ declare module "@norn/authoring" {
       readonly rules: ReadonlyArray<AccessRuleSpec>
     }): AccessDefinition
 
-    /** Data-only law over ontology-bound ZEN predicates. The Rust schema is authoritative. */
-    interface LawDefinition { readonly _tag: "NornLaw" }
-    function law(meta: {
+    /** One type's labels in a standalone catalog. */
+    interface TypeLabels extends Localized {
+      /** Property id → label. */
+      readonly properties?: { readonly [property: string]: LocaleText }
+      /** Enum property id → stored value → label. */
+      readonly values?: { readonly [property: string]: { readonly [value: string]: LocaleText } }
+    }
+    interface LabelsDefinition { readonly _tag: "NornLabels" }
+    /**
+     * A standalone labels catalog: a tenant or locale pack labels definitions another
+     * layer owns, without touching them (LABEL-LOCALE-1). Its labels replace the
+     * installed ones for the same target and locale; the Rust checker resolves targets.
+     */
+    function labels(meta: {
       readonly id: string
       readonly title: string
       readonly version: string
-      readonly law: import("../src/builder/law.ts").LawIR
+      /** Locales this layer serves; definitions with no label in one are listed as a warning. */
+      readonly requiredLocales?: ReadonlyArray<string>
+      /** Locales whose labels were proposed and still need review. */
+      readonly needsReview?: ReadonlyArray<string>
+      /** Object type or interface name → labels. */
+      readonly types?: { readonly [objectType: string]: TypeLabels }
+      /** Action id → labels. */
+      readonly actions?: { readonly [actionId: string]: Localized }
+    }): LabelsDefinition
+
+    /** Data-only law over ontology-bound ZEN predicates. The Rust schema is authoritative. */
+    interface LawDefinition { readonly _tag: "NornLaw" }
+    /** What a law lambda reads as `self`: the subject's properties and, one level deep, its links. */
+    type LinkTargetProperties<K> = K extends { readonly target: TypeDefinition<infer T, any> } ? T : {}
+    type LinkValues<L extends ReadonlyArray<LinkSpec>> = {
+      readonly [K in L[number] as K["id"]]: K["cardinality"]["to"] extends "many"
+        ? ReadonlyArray<LinkTargetProperties<K>>
+        : K["cardinality"] extends { readonly required: true } ? LinkTargetProperties<K> : LinkTargetProperties<K> | null
+    }
+    type SelfOf<D> = D extends TypeDefinition<infer T, infer L> ? T & LinkValues<L> : D extends InterfaceDefinition<infer T> ? T : never
+    type LawPredicate<D> = (self: SelfOf<NoInfer<D>>) => boolean
+    interface LawSpecBase<D> {
+      /** The subject: an object type or an interface (every implementation inherits the law). */
+      readonly on: D
+      /** Condition under which the law applies. */
+      readonly when?: LawPredicate<D>
+      /** `before` is a bare read of a timestamp property only (`self => self.due_at`). */
+      readonly within?: { readonly days?: number; readonly hours?: number } | { readonly before: (self: SelfOf<NoInfer<D>>) => string }
+      /** Default "error". */
+      readonly severity?: "error" | "warning"
+      /** Rationale, required. */
+      readonly because: string
+      /** Codemod only: keep an existing law id instead of `<namespace>.<Type>.<name>`. */
+      readonly id?: string
+    }
+    /** Exactly one of `must` / `never` / `eventually`. */
+    type LawSpec<D> = LawSpecBase<D> & (
+      | { readonly must: LawPredicate<D>; readonly never?: undefined; readonly eventually?: undefined }
+      | { readonly never: LawPredicate<D>; readonly must?: undefined; readonly eventually?: undefined }
+      | { readonly eventually: LawPredicate<D>; readonly must?: undefined; readonly never?: undefined }
+    )
+    /**
+     * A law over a subject type (dx-spec §4.5). Id, scope, `objectTypes`,
+     * `lawVersion`, owner, provenance and the entity dependency are inferred;
+     * the lambdas compile statically and never run.
+     */
+    function law<const D extends TypeDefinition<any, any> | InterfaceDefinition<any>>(name: string, spec: LawSpec<D>): LawDefinition
+    function law(meta: Localized & {
+      readonly id: string
+      readonly title: string
+      readonly version: string
+      /** `condition` and a predicate `response.expression` may be typed lambdas (`Norn.expression(Subject, self => ...)`). */
+      readonly law: Omit<import("../src/builder/law.ts").LawIR, "condition" | "response"> & {
+        readonly condition?: string | Expression<boolean>
+        readonly response: Exclude<import("../src/builder/law.ts").LawResponse, { readonly kind: "predicate" }> | { readonly kind: "predicate"; readonly expression: string | Expression<boolean> }
+      }
       readonly dependencies: import("../src/builder/law.ts").LawDef["dependencies"]
     }): LawDefinition
 
@@ -418,6 +520,7 @@ declare module "@norn/authoring" {
         | "triggerObject"
         | { readonly property: { readonly from: string; readonly property: string } }
         | { readonly link: { readonly from: string; readonly link: string } }
+        | { readonly parameter: { readonly from: string; readonly settingKey: string; readonly effectiveAt: string; readonly precedence: ReadonlyArray<Readonly<Partial<Record<`${ScopeDimension}Id`, string>>>>; readonly defaultFrom?: string } }
       readonly optional?: boolean
     }
 
@@ -433,7 +536,7 @@ declare module "@norn/authoring" {
       readonly settings?: JsonData
     }
 
-    interface DecisionMeta<I extends Schema.Top, O extends Schema.Top> {
+    interface DecisionMeta<I extends Schema.Top, O extends Schema.Top> extends Localized {
       /** `ruleId` (`commerce.rule.sales_order_credit_hold`). */
       readonly id: string
       /** The artifact id; defaults to `<id>.rule`. */
@@ -460,7 +563,7 @@ declare module "@norn/authoring" {
 
     interface Expression<T> { readonly _tag: "NornExpression"; readonly __type?: T }
     /** Syntax-only expression; the callback is never executed. */
-    function expression<S extends Schema.Top, T>(schema: S, body: (input: S["Type"]) => T): Expression<T>
+    function expression<S extends Schema.Top, T>(schema: S, body: (input: S["Type"]) => T, options?: { readonly root: "context" }): Expression<T>
     /** Explicit untyped escape hatch. Reported as a warning; Rust still checks admission. */
     function unsafeZen<T = string>(text: string): T & Expression<T>
     function unsafeZen(graph: JdmGraph): UnsafeJdmGraph
@@ -490,6 +593,12 @@ declare module "@norn/authoring" {
     function parseTimestamp(text: string): string
     /** UTF-8 byte count, matching the canonical ZEN profile. */
     function byteLength(text: string): number
+    /** Sum of a list of numbers (`sum`); an empty list sums to 0. */
+    function sum(values: ReadonlyArray<number>): number
+    /** Signed calendar days from `start` to `end` (`days_between`); raw date text is parsed. */
+    function daysBetween(start: string, end: string): number
+    /** The calendar date `days` after `date` (`add_days`); a parsed date, comparable with other parsed dates. */
+    function addDays(date: string, days: number): string
 
     interface SourceSchemaSpec {
       readonly id: string

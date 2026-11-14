@@ -283,22 +283,64 @@ fn exact_cycles_transitivity_and_protected_laws() {
     );
 }
 
-proptest::proptest! {
-    #[test]
-    fn declared_order_is_independent_of_catalog_permutation(swap in proptest::bool::ANY, reverse in proptest::bool::ANY) {
-        let mut norms = [norm(0, Obligation), norm(1, Prohibition)];
-        for n in &mut norms { n.authority = ("board".into(), "1".into()); n.authority_level = Some(0); }
-        if let Some(n) = norms.get_mut(1) { n.applicable.insert(1); n.enacted = u64::from(reverse); }
-        let mut edge = if reverse { (1, 0) } else { (0, 1) };
-        if swap { norms.swap(0, 1); edge = (1_usize.saturating_sub(edge.0), 1_usize.saturating_sub(edge.1)); }
-        proptest::prop_assert!(declared(&norms, &[Company; 2], &[edge], &[]).diagnosis.cores.is_empty());
-        let refusal = declared(&norms, &[Company; 2], &[], &[]);
-        proptest::prop_assert_eq!(refusal.diagnosis.cores.len(), 1);
-        proptest::prop_assert!(refusal.diagnostics.iter().any(|d| d.code.as_str() == "consistency.normative.legacy_resolution"));
-        proptest::prop_assert_eq!(declared(&norms, &[Company; 2], &[edge], &[edge.1]).diagnosis.cores.len(), 1);
-        proptest::prop_assert!(matches!(resolve(&norms, 2, &[]), Err(NormRefusal::Conflict(_))));
-        let resolved = resolve(&norms, 2, &[edge]).map_err(|e| proptest::test_runner::TestCaseError::fail(format!("{e:?}")))?;
-        proptest::prop_assert!(resolved.first().is_some_and(|c| c.survivors == vec![edge.0]));
+#[test]
+fn declared_order_is_independent_of_catalog_permutation() {
+    for swap in [false, true] {
+        for reverse in [false, true] {
+            let case = format!("swap {swap} reverse {reverse}");
+            let mut norms = [norm(0, Obligation), norm(1, Prohibition)];
+            for n in &mut norms {
+                n.authority = ("board".into(), "1".into());
+                n.authority_level = Some(0);
+            }
+            if let Some(n) = norms.get_mut(1) {
+                n.applicable.insert(1);
+                n.enacted = u64::from(reverse);
+            }
+            let mut edge = if reverse { (1, 0) } else { (0, 1) };
+            if swap {
+                norms.swap(0, 1);
+                edge = (
+                    1_usize.saturating_sub(edge.0),
+                    1_usize.saturating_sub(edge.1),
+                );
+            }
+            assert!(
+                declared(&norms, &[Company; 2], &[edge], &[])
+                    .diagnosis
+                    .cores
+                    .is_empty(),
+                "{case}"
+            );
+            let refusal = declared(&norms, &[Company; 2], &[], &[]);
+            assert_eq!(refusal.diagnosis.cores.len(), 1, "{case}");
+            assert!(
+                refusal
+                    .diagnostics
+                    .iter()
+                    .any(|d| d.code.as_str() == "consistency.normative.legacy_resolution"),
+                "{case}"
+            );
+            assert_eq!(
+                declared(&norms, &[Company; 2], &[edge], &[edge.1])
+                    .diagnosis
+                    .cores
+                    .len(),
+                1,
+                "{case}"
+            );
+            assert!(
+                matches!(resolve(&norms, 2, &[]), Err(NormRefusal::Conflict(_))),
+                "{case}"
+            );
+            let resolved = resolve(&norms, 2, &[edge]).unwrap_or_else(|e| panic!("{case}: {e:?}"));
+            assert!(
+                resolved
+                    .first()
+                    .is_some_and(|c| c.survivors == vec![edge.0]),
+                "{case}"
+            );
+        }
     }
 }
 

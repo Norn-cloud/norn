@@ -1,16 +1,35 @@
 import type { Schemas } from "../../../../packages/norn-sdk/src/index.ts"
 import type { Artifact } from "./transport.ts"
+import { labelIndex, pick } from "./labels.ts"
 
 type PropertyType = Schemas["NornIrPropertyType"]
 type PropertyTypeDef = Schemas["NornIrPropertyTypeDef"]
+export type Lifecycle = Schemas["NornIrLifecycle"]
 
 export interface Field {
   readonly id: string
+  /** The reader's label for the fact, or the id in words when it has none in their language. */
+  readonly label?: string
+  /** The language `label` is written in. */
+  readonly labelLang?: string
+  /**
+   * Enum values' labels in the reader's language, by stored value. It holds only the values that have
+   * one: a renderer walks `scalar.values` and shows every value, as its label or as stored.
+   */
+  readonly valueLabels?: ReadonlyMap<string, string>
   readonly type: string
   readonly optional: boolean
   /** Declared exact-decimal facts, with the unit or currency fact their type names. */
   readonly decimal: { readonly unit: string | undefined; readonly perUnit: string | undefined; readonly currencyFrom: string | undefined } | undefined
+  /** The declared value kind after resolving named property types; `enum` carries its declared values in order. */
+  readonly scalar: Scalar
 }
+
+/** A property's value kind as the admitted definition declares it, with named types resolved. */
+export type Scalar =
+  | { readonly kind: "text" | "integer" | "decimal" | "boolean" | "timestamp" | "date" | "duration" | "record" | "json-ext" | "decimal-binding" }
+  | { readonly kind: "enum"; readonly values: readonly string[] }
+  | { readonly kind: "unresolved"; readonly name: string }
 
 export interface Relationship {
   readonly id: string
@@ -49,16 +68,27 @@ export function sourceOf(expression: string): Source {
 export interface Concept {
   readonly name: string
   readonly title: string
+  /** The language `title` is written in: the reader's when the type has a label in it, else `en`. */
+  readonly titleLang: string
+  /** The label awaits a person's review (machine-proposed). */
+  readonly titleNeedsReview: boolean
   /** A concept some connected system feeds, or a core idea the concepts build on. */
   readonly kind: "concept" | "core idea"
   /** What the definition declares: an object type (it can have records) or a shared interface. Feed presence is `kind`. */
   readonly definition: "object type" | "interface"
+  /** The definition's one-line name when it says more than the title, e.g. "Owner and location partitioned holding". Business view. */
+  readonly summary: string | undefined
+  /** The language `summary` is written in: the label's tag when it is the label's description, else `en`. */
+  readonly summaryLang: string
+  /** The registry's full description; it may name fields and laws, so Studio shows it in the Technical view only. */
   readonly description: string | undefined
   readonly parents: readonly string[]
   readonly fields: readonly Field[]
   readonly relationships: readonly Relationship[]
   readonly rules: readonly string[]
   readonly feeds: readonly Feed[]
+  /** The lifecycles an object type declares; interfaces declare none. */
+  readonly lifecycles: readonly Lifecycle[]
 }
 
 export interface SourceSystem {
@@ -109,6 +139,15 @@ function typeText(type: PropertyType, types: ReadonlyMap<string, PropertyTypeDef
   }
 }
 
+function scalarOf(type: PropertyType, types: ReadonlyMap<string, PropertyTypeDef>, seen: ReadonlySet<string> = new Set()): Scalar {
+  if (type.kind === "ref") {
+    const def = types.get(type.name)
+    return def === undefined || seen.has(type.name) ? { kind: "unresolved", name: type.name } : scalarOf(def.type, types, new Set([...seen, type.name]))
+  }
+  if (type.kind === "enum") return { kind: "enum", values: type.values.map(({ value }) => value) }
+  return { kind: type.kind }
+}
+
 function decimalOf(type: PropertyType, types: ReadonlyMap<string, PropertyTypeDef>): Field["decimal"] {
   if (type.kind === "ref") {
     const def = types.get(type.name)
@@ -117,8 +156,12 @@ function decimalOf(type: PropertyType, types: ReadonlyMap<string, PropertyTypeDe
   return type.kind === "decimal" ? { unit: type.unit?.code, perUnit: type.perUnit?.code, currencyFrom: type.currencySource?.property } : undefined
 }
 
-/** Index the server's admitted artifacts; nothing is inferred beyond what they declare. */
-export function catalogOf(artifacts: readonly Artifact[]): Catalog {
+/**
+ * Index the server's admitted artifacts; nothing is inferred beyond what they declare.
+ * Titles and fact names come from `labels` artifacts in `locale` when they have one there.
+ */
+export function catalogOf(artifacts: readonly Artifact[], locale = "en"): Catalog {
+  const labels = labelIndex(artifacts)
   const types = new Map<string, PropertyTypeDef>()
   const rules = new Map<string, string[]>()
   const feeds = new Map<string, Feed[]>()
@@ -176,21 +219,36 @@ export function catalogOf(artifacts: readonly Artifact[]): Catalog {
       parents = def.extends ?? []
     } else continue
     const invariants = (def.invariants ?? []).map(({ description, message }) => description ?? message)
-    const title = conceptTitle(def.name)
+    const own = pick(labels, `objectType:${def.name}`, locale)
+    const title = own?.text ?? conceptTitle(def.name)
     const fed = feeds.get(def.name) ?? []
     concepts.push({
       name: def.name,
       title,
+      titleLang: own?.tag ?? "en",
+      titleNeedsReview: own?.needsReview ?? false,
       kind: fed.length > 0 ? "concept" : "core idea",
       definition: "objectType" in payload ? "object type" : "interface",
-      description: def.description ?? ([def.name, title].includes(artifact.name) ? undefined : artifact.name),
+      // The Business summary: the type's description in the reader's language when its label has one,
+      // else the definition's own one-line name when it says more than its title in any language.
+      summary: own?.description ?? ([def.name, conceptTitle(def.name), title].includes(artifact.name) ? undefined : artifact.name),
+      summaryLang: own?.description === undefined ? "en" : own.tag,
+      description: def.description,
       parents,
-      fields: (def.properties ?? []).map(({ id, type, constraints }) => ({ id, type: typeText(type, types), optional: constraints?.nullable === true, decimal: decimalOf(type, types) })),
+      fields: (def.properties ?? []).map(({ id, type, constraints }) => {
+        const label = pick(labels, `property:${def.name}.${id}`, locale)
+        const scalar = scalarOf(type, types)
+        const valueLabels = new Map(scalar.kind === "enum"
+          ? scalar.values.flatMap((value) => { const text = pick(labels, `enumValue:${def.name}.${id}=${value}`, locale)?.text; return text === undefined ? [] : [[value, text] as const] })
+          : [])
+        return { id, label: label?.text ?? id.replaceAll("_", " "), labelLang: label?.tag ?? "en", valueLabels, type: typeText(type, types), optional: constraints?.nullable === true, decimal: decimalOf(type, types), scalar }
+      }),
       relationships: (def.links ?? []).map(({ id, target, description, cardinality }) => ({ id, target, description, count: cardinality.to === "many" ? "many" : cardinality.required === true ? "one" : "at most one" })),
       rules: [...invariants, ...rules.get(def.name) ?? []],
       feeds: fed,
+      lifecycles: "lifecycles" in def ? def.lifecycles ?? [] : [],
     })
   }
-  concepts.sort((a, b) => a.title.localeCompare(b.title))
+  concepts.sort((a, b) => a.title.localeCompare(b.title, locale))
   return { concepts, systems, byName: new Map(concepts.map((concept) => [concept.name, concept])) }
 }

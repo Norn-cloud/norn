@@ -44,6 +44,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::OnceLock;
 
+use norn_checker::entity_instance::InstanceError;
 use norn_checker::entity_model::{EntityContext, EntityModel};
 use norn_checker::property_codec::{self, PropertyCodecError};
 use norn_checker::{
@@ -70,6 +71,9 @@ use crate::envelope::{EnvelopeCounts, TurnEnvelopeMeter, check_decision_envelope
 use crate::limits::EnvelopeLimits;
 use crate::observations::{LogicalTime, World};
 
+/// Stable platform rule for an exact retained property-domain declaration.
+pub const PROPERTY_DOMAIN_RULE_ID: &str = "norn.values.property_validity";
+
 /// The object types a cell knows, for resolving effective lifecycles and
 /// property defaults along `extends`.
 #[derive(Debug, Clone, Default)]
@@ -80,7 +84,7 @@ pub struct TypeCatalog<'a> {
     interfaces: BTreeMap<&'a str, &'a InterfaceDef>,
     extensions: Vec<&'a ObjectTypeExtension>,
     property_types: Option<&'a [PropertyTypeDef]>,
-    effective_model: OnceLock<EffectiveModel>,
+    effective_model: OnceLock<Result<EffectiveModel, norn_checker::EffectiveViewRefused>>,
 }
 
 /// The checker-derived effective object and link contracts for one catalog.
@@ -197,7 +201,7 @@ impl<'a> TypeCatalog<'a> {
         submitted: &JsonObject,
     ) -> Result<JsonObject, EffectiveValuesError> {
         let mut values = submitted.clone();
-        let Some(effective) = self.effective_model().object_types.get(object_type) else {
+        let Some(effective) = self.effective_model()?.object_types.get(object_type) else {
             return Ok(values);
         };
         for property in &effective.properties {
@@ -270,7 +274,7 @@ impl<'a> TypeCatalog<'a> {
         submitted: &JsonObject,
     ) -> Result<JsonObject, EffectiveValuesError> {
         let mut values = submitted.clone();
-        let Some(effective) = self.effective_model().object_types.get(object_type) else {
+        let Some(effective) = self.effective_model()?.object_types.get(object_type) else {
             return Ok(values);
         };
         for property in &effective.properties {
@@ -295,8 +299,8 @@ impl<'a> TypeCatalog<'a> {
     /// Build the complete stored values for one effective link instance:
     /// preserve submitted values and fill each effective stored property with
     /// its declared default or `null`. Computed properties are omitted.
-    /// Temporal values are checked against their declared type and valid
-    /// timestamps are canonicalized to UTC.
+    /// VAL-DECIMAL-SCALE-1: Decimal and Record domains, including defaults,
+    /// are checked before a link can commit. Valid timestamps normalize to UTC.
     ///
     /// An unknown source type or link returns `submitted` unchanged; callers
     /// that admit link facts must fail closed when the shared shape is absent.
@@ -306,7 +310,8 @@ impl<'a> TypeCatalog<'a> {
     /// Returns [`EffectiveValuesError::Runtime`] when a submitted typed value
     /// or effective default cannot be represented as an exact runtime value,
     /// and [`EffectiveValuesError::ValueType`] when its scalar encoding or
-    /// temporal form does not match the effective property.
+    /// domain does not match the effective property. Unsupported Record members
+    /// return [`EffectiveValuesError::Unsupported`].
     pub fn effective_link_values(
         &self,
         source: &ObjectTypeName,
@@ -314,7 +319,7 @@ impl<'a> TypeCatalog<'a> {
         submitted: &JsonObject,
     ) -> Result<JsonObject, EffectiveValuesError> {
         let Some(effective_link) = self
-            .effective_model()
+            .effective_model()?
             .links
             .get(source)
             .and_then(|links| links.iter().find(|candidate| candidate.id.as_str() == link))
@@ -342,13 +347,28 @@ impl<'a> TypeCatalog<'a> {
                 .map_err(|error| property_codec_error(name, error))?;
             let value = property_codec::decode(kind, &encoded)
                 .map_err(|error| property_codec_error(name, error))?;
-            if let Some(expected) = temporal_property_expected(property) {
-                property.check_runtime_value(&value).map_err(|_error| {
-                    EffectiveValuesError::ValueType {
-                        property: name.to_owned(),
-                        expected,
-                    }
-                })?;
+            let expected = match &property.kind {
+                EffectiveKind::Base(PropertyType::Decimal { .. }) => Some("valid decimal"),
+                EffectiveKind::Base(PropertyType::Record { .. }) => Some("valid record"),
+                EffectiveKind::Base(_) | EffectiveKind::Registry(_) | EffectiveKind::Unresolved => {
+                    temporal_property_expected(property)
+                }
+            };
+            if let Some(expected) = expected {
+                property
+                    .check_runtime_value(&value)
+                    .map_err(|error| match error {
+                        InstanceError::Unsupported(feature) => EffectiveValuesError::Unsupported {
+                            property: name.to_owned(),
+                            feature,
+                        },
+                        InstanceError::TypeMismatch(_) | InstanceError::ConstraintViolation(_) => {
+                            EffectiveValuesError::ValueType {
+                                property: name.to_owned(),
+                                expected,
+                            }
+                        }
+                    })?;
             }
             let value = property.canonical_runtime_value(&value);
             values.insert(name.to_owned(), value);
@@ -398,53 +418,94 @@ impl<'a> TypeCatalog<'a> {
     }
 
     /// The effective object type in this catalog, if it resolves.
+    ///
+    /// `None` is a refused view when the type is declared in this catalog
+    /// (see [`Self::effective_view_refused`]) and a plain absence otherwise.
+    /// Callers that gate a write or a check on a property of the view must
+    /// treat a refused view as a refusal, never as "no such property"; the
+    /// owned-row protection, `has_invariants` and the implicit typed-property
+    /// checks do. A few lookups only read optional metadata and treat `None`
+    /// as "nothing declared" by design. A catalog whose whole view was
+    /// refused (see [`Self::effective_refusal`]) resolves no type; the cell
+    /// never builds such a catalog because its model admission refuses the
+    /// same input first.
     pub(crate) fn effective_type(
         &self,
         object_type: &ObjectTypeName,
     ) -> Option<&EffectiveObjectType> {
-        self.effective_model().object_types.get(object_type)
+        self.effective_model().ok()?.object_types.get(object_type)
     }
 
-    fn effective_model(&self) -> &EffectiveModel {
-        self.effective_model.get_or_init(|| {
-            let object_types: Vec<_> = self
-                .types
-                .values()
-                .map(|object_type| (**object_type).clone())
-                .collect();
-            let interfaces: Vec<_> = self
-                .interfaces
-                .values()
-                .map(|interface| (**interface).clone())
-                .collect();
-            let extensions: Vec<_> = self
-                .extensions
-                .iter()
-                .map(|extension| (**extension).clone())
-                .collect();
-            let property_types = self.property_types.unwrap_or_default().to_vec();
-            let registry = BTreeSet::new();
-            let model = EntityModel {
-                interfaces: &interfaces,
-                object_types: &object_types,
-                extensions: &extensions,
-            };
-            let context = EntityContext {
-                catalog: &property_types,
-                registry: &registry,
-                base: EntityModel::EMPTY,
-                tenant: None,
-            };
-            let mut effective_model = EffectiveModel::default();
-            for (_, (object_type, links)) in effective_object_types(&model, &context) {
-                let name = object_type.name.clone();
-                effective_model
-                    .object_types
-                    .insert(name.clone(), object_type);
-                effective_model.links.insert(name, links);
-            }
+    /// Whether `object_type` is declared here but has no effective view, so
+    /// the checker refused to resolve it. Fail-closed callers refuse on this.
+    pub(crate) fn effective_view_refused(&self, object_type: &ObjectTypeName) -> bool {
+        self.contains(object_type) && self.effective_type(object_type).is_none()
+    }
+
+    /// Test hook: pin an empty effective model so every declared type has a
+    /// refused view. Returns whether the model was pinned.
+    #[cfg(test)]
+    pub(crate) fn refuse_effective_view_for_test(&self) -> bool {
+        self.effective_model
+            .set(Ok(EffectiveModel::default()))
+            .is_ok()
+    }
+
+    /// Why this catalog has no effective view: the bounded inheritance
+    /// classification was exhausted (for example more than 4,096 object
+    /// types). `None` when the view derives. A refused catalog must be
+    /// treated as unusable: effective reads fail with
+    /// [`EffectiveValuesError::ViewRefused`] and resolve no effective type.
+    #[must_use]
+    pub fn effective_refusal(&self) -> Option<norn_checker::EffectiveViewRefused> {
+        self.effective_model().err()
+    }
+
+    fn effective_model(&self) -> Result<&EffectiveModel, norn_checker::EffectiveViewRefused> {
+        self.effective_model
+            .get_or_init(|| self.derive_effective_model())
+            .as_ref()
+            .map_err(|refusal| *refusal)
+    }
+
+    fn derive_effective_model(&self) -> Result<EffectiveModel, norn_checker::EffectiveViewRefused> {
+        let object_types: Vec<_> = self
+            .types
+            .values()
+            .map(|object_type| (**object_type).clone())
+            .collect();
+        let interfaces: Vec<_> = self
+            .interfaces
+            .values()
+            .map(|interface| (**interface).clone())
+            .collect();
+        let extensions: Vec<_> = self
+            .extensions
+            .iter()
+            .map(|extension| (**extension).clone())
+            .collect();
+        let property_types = self.property_types.unwrap_or_default().to_vec();
+        let registry = BTreeSet::new();
+        let model = EntityModel {
+            interfaces: &interfaces,
+            object_types: &object_types,
+            extensions: &extensions,
+        };
+        let context = EntityContext {
+            catalog: &property_types,
+            registry: &registry,
+            base: EntityModel::EMPTY,
+            tenant: None,
+        };
+        let mut effective_model = EffectiveModel::default();
+        for (_, (object_type, links)) in effective_object_types(&model, &context)? {
+            let name = object_type.name.clone();
             effective_model
-        })
+                .object_types
+                .insert(name.clone(), object_type);
+            effective_model.links.insert(name, links);
+        }
+        Ok(effective_model)
     }
 
     /// Canonicalize one present temporal property value while preserving
@@ -474,19 +535,31 @@ impl<'a> TypeCatalog<'a> {
     /// supertype, or from an implemented interface, or has stored temporal
     /// properties that require implicit validity checks.
     ///
+    /// A declared type whose effective view is refused reports `true`, so the
+    /// caller keeps the implicit checks instead of skipping them.
+    ///
     /// # Errors
     ///
     /// Returns the name of an interface referenced by the object's lineage
     /// that is absent from this catalog.
     pub fn has_invariants(&self, object_type: &ObjectTypeName) -> Result<bool, ObjectTypeName> {
         let declared = !self.invariants(object_type)?.is_empty();
-        let temporal = self.effective_type(object_type).is_some_and(|object_type| {
-            object_type
-                .properties
-                .iter()
-                .any(|property| !property.computed && is_temporal_property(property))
-        });
+        let temporal = self.effective_type(object_type).map_or_else(
+            || self.effective_view_refused(object_type),
+            |object_type| {
+                object_type
+                    .properties
+                    .iter()
+                    .any(|property| !property.computed && is_temporal_property(property))
+            },
+        );
         Ok(declared || temporal)
+    }
+
+    pub(crate) fn immutable(&self, object_type: &ObjectTypeName) -> bool {
+        self.ancestry(object_type)
+            .iter()
+            .any(|definition| definition.immutable)
     }
 
     /// `object_type` and then its supertypes, nearest first. Bounded by the
@@ -652,6 +725,88 @@ impl<'a> TypeCatalog<'a> {
         }))
     }
 
+    /// PROPERTY-RULE-PIN-1 binds the property and its retained declaration closure,
+    /// including inherited, interface, extension and referenced type constraints.
+    /// The closure is conservative: unrelated shared declarations also invalidate it.
+    /// # Errors
+    /// Canonical serialization of the retained declarations failed.
+    pub fn property_domain_rule_ref(
+        &self,
+        object_type: &ObjectTypeName,
+        property: &PropertyId,
+    ) -> Result<Option<DataQualityRuleRef>, norn_ir::canonical::CanonicalJsonError> {
+        let Some(effective) = self.effective_property(object_type, property) else {
+            return Ok(None);
+        };
+        if effective.computed
+            || !matches!(
+                effective.kind,
+                EffectiveKind::Base(PropertyType::Decimal { .. } | PropertyType::Record { .. })
+            )
+        {
+            return Ok(None);
+        }
+        let mut property_types: Vec<_> = self.property_types.unwrap_or(&[]).iter().collect();
+        property_types.sort_by_key(|declaration| &declaration.name);
+        let mut extensions = self
+            .extensions
+            .iter()
+            .map(|declaration| {
+                Ok((
+                    (
+                        &declaration.target,
+                        &declaration.namespace,
+                        norn_ir::canonical::canonical_json_of(declaration)?,
+                    ),
+                    *declaration,
+                ))
+            })
+            .collect::<Result<Vec<_>, norn_ir::canonical::CanonicalJsonError>>()?;
+        extensions.sort_by(|left, right| left.0.cmp(&right.0));
+        let extensions: Vec<_> = extensions
+            .into_iter()
+            .map(|(_, declaration)| declaration)
+            .collect();
+        let declarations = (
+            PROPERTY_DOMAIN_RULE_ID,
+            1_u16,
+            object_type,
+            property,
+            self.ancestry(object_type),
+            self.interfaces.values().collect::<Vec<_>>(),
+            property_types,
+            extensions,
+        );
+        let bytes = norn_ir::canonical::canonical_json_of(&declarations)?;
+        Ok(Some(DataQualityRuleRef::Builtin {
+            id: PROPERTY_DOMAIN_RULE_ID.to_owned(),
+            version: format!(
+                "sha256:{}",
+                norn_ir::canonical::HashProfile::Norn1.hash_canonical_bytes(&bytes)
+            ),
+        }))
+    }
+
+    fn has_property_domain_rule(
+        &self,
+        rule: &DataQualityRuleRef,
+    ) -> Result<bool, norn_ir::canonical::CanonicalJsonError> {
+        for definition in self.types.values() {
+            if let Some(effective) = self.effective_type(&definition.name) {
+                for property in &effective.properties {
+                    if self
+                        .property_domain_rule_ref(&definition.name, &property.id)?
+                        .as_ref()
+                        == Some(rule)
+                    {
+                        return Ok(true);
+                    }
+                }
+            }
+        }
+        Ok(false)
+    }
+
     /// Resolve a finding's classification only when its pinned rule reference
     /// matches the typed owner definition in this catalog.
     ///
@@ -667,13 +822,15 @@ impl<'a> TypeCatalog<'a> {
     ) -> Result<DataQualityRuleClassification, norn_ir::canonical::CanonicalJsonError> {
         match rule_ref {
             DataQualityRuleRef::Law { .. } => Ok(crate::governing_laws::classify(self, rule_ref)),
-            DataQualityRuleRef::Builtin { id, version } => {
-                Ok(if is_supported_builtin_rule(id, version) {
+            DataQualityRuleRef::Builtin { id, version } => Ok(
+                if (id == PROPERTY_DOMAIN_RULE_ID && self.has_property_domain_rule(rule_ref)?)
+                    || is_supported_builtin_rule(id, version)
+                {
                     DataQualityRuleClassification::Builtin
                 } else {
                     DataQualityRuleClassification::Unverified
-                })
-            }
+                },
+            ),
             DataQualityRuleRef::Invariant {
                 owner,
                 invariant_id,
@@ -1470,6 +1627,14 @@ pub type PreparedDecision = CellCommit<FactEvent, JsonObject, JsonObject>;
 /// Why a complete effective object value could not be materialized.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum EffectiveValuesError {
+    /// A retained property uses semantics the value checker cannot evaluate.
+    #[error("unsupported effective property `{property}`: {feature}")]
+    Unsupported {
+        /// The effective property.
+        property: String,
+        /// The unsupported retained declaration feature.
+        feature: String,
+    },
     /// A submitted value or declared default is not an exact runtime value.
     #[error(transparent)]
     Runtime(#[from] RuntimeValueError),
@@ -1482,6 +1647,10 @@ pub enum EffectiveValuesError {
         /// The expected scalar encoding.
         expected: &'static str,
     },
+    /// The catalog has no effective view: the bounded inheritance
+    /// classification was exhausted. No value is materialized.
+    #[error(transparent)]
+    ViewRefused(#[from] norn_checker::EffectiveViewRefused),
 }
 
 fn is_temporal_property(property: &EffectiveProperty) -> bool {
@@ -1672,6 +1841,8 @@ pub enum DecisionRefusal<X> {
     /// A guard of the transition is false.
     #[error("{key}: guard `{guard}` of transition {transition} does not hold")]
     GuardFalse {
+        /// Registered guard diagnostic, preserving the underlying failure.
+        diagnostic: Option<&'static str>,
         /// The object.
         key: FactKey,
         /// The transition.
@@ -1684,8 +1855,10 @@ pub enum DecisionRefusal<X> {
         "{key}: guard `{guard}` of transition {transition} could not be evaluated ({reason}); refused fail-closed"
     )]
     GuardError {
+        /// Registered guard diagnostic, preserving the underlying failure.
+        diagnostic: Option<&'static str>,
         /// The object.
-        key: FactKey,
+        key: Box<FactKey>,
         /// The transition.
         transition: String,
         /// The guard source.
@@ -1805,8 +1978,12 @@ impl<X> DecisionRefusal<X> {
             Self::UnknownLifecycle { .. } => lifecycle_codes::NOT_A_LIFECYCLE,
             Self::UnresolvedLifecycle { .. } => "decision.unresolved_lifecycle",
             Self::UnknownTransition { .. } => lifecycle_codes::UNKNOWN_TRANSITION,
-            Self::GuardFalse { .. } => "decision.guard_false",
-            Self::GuardError { .. } => "decision.guard_error",
+            Self::GuardFalse { diagnostic, .. } => {
+                crate::guard_diagnostic::guard_failure_code(*diagnostic, false)
+            }
+            Self::GuardError { diagnostic, .. } => {
+                crate::guard_diagnostic::guard_failure_code(*diagnostic, true)
+            }
             Self::InvalidOutput { .. } => "decision.invalid_output",
             Self::Stale { .. } => "decision.stale_state",
             Self::NotPending { .. } => "decision.not_pending",
@@ -1838,15 +2015,14 @@ impl<X> DecisionRefusal<X> {
             | Self::UnresolvedLifecycle { key, .. }
             | Self::UnknownTransition { key, .. }
             | Self::GuardFalse { key, .. }
-            | Self::GuardError { key, .. }
             | Self::Stale { key, .. }
             | Self::AccountingPosting { key, .. }
             | Self::InvariantBudgetExceeded { key, .. }
             | Self::TraversalLimitExceeded { key, .. }
             | Self::AtomicBoundary { key } => Some(key),
-            Self::InvariantViolation { key, .. } | Self::NotFromState { key, .. } => {
-                Some(key.as_ref())
-            }
+            Self::InvariantViolation { key, .. }
+            | Self::NotFromState { key, .. }
+            | Self::GuardError { key, .. } => Some(key.as_ref()),
             Self::IdentityReuse
             | Self::IdentityCollision { .. }
             | Self::AtomicDeliveryBoundary { .. }
@@ -1866,7 +2042,11 @@ impl<X> DecisionRefusal<X> {
     pub(crate) fn from_commit(error: CommitError<X>) -> Self {
         use crate::cell_host::CommitError::{AccountingPosting, AtomicDeliveryBoundary};
 
-        let invalid = |reason| Self::InvalidOutput { reason };
+        // A decision prepares no link writes or set reads, so a link or
+        // read-set refusal means its commit was malformed.
+        if let Some(reason) = Self::read_set_reason(&error) {
+            return Self::InvalidOutput { reason };
+        }
         match error {
             CommitError::IdentityReuse => Self::IdentityReuse,
             CommitError::AtomicBoundary { key } => Self::AtomicBoundary { key },
@@ -1886,6 +2066,9 @@ impl<X> DecisionRefusal<X> {
                 actual_bytes,
                 max_bytes,
             } => Self::commit_identifier_refusal(field, actual_bytes, max_bytes),
+            CommitError::ImmutableObject { key } => Self::InvalidOutput {
+                reason: format!("{key} is immutable"),
+            },
             CommitError::NotPending { consumed } => Self::NotPending { consumed },
             CommitError::Conflict {
                 key,
@@ -1896,42 +2079,22 @@ impl<X> DecisionRefusal<X> {
                 expected,
                 current,
             },
-            // A decision writes no links; a link refusal is a malformed commit.
-            CommitError::DuplicateLink { key } => {
-                invalid(format!("link {key} appears twice in one commit"))
-            }
-            CommitError::LinkConflict { key, .. } => {
-                invalid(format!("link {key} changed since the turn read it"))
-            }
-            CommitError::LinkReadConflict { source_key, link } => invalid(format!(
-                "link targets for {source_key} -{link}-> changed since the turn read them"
-            )),
-            CommitError::UnsupportedLinkRead { source_key, link } => invalid(format!(
-                "host cannot verify link targets for {source_key} -{link}->"
-            )),
-            CommitError::DuplicateLinkRead { source_key, link } => invalid(format!(
-                "link targets for {source_key} -{link}-> appear more than once"
-            )),
-            CommitError::LinkReadTooLarge {
-                source_key,
-                link,
-                actual,
-                max,
-            } => Self::link_read_limit_refusal(&source_key, &link, actual, max),
-            CommitError::InvalidLinkRead { source_key, link } => Self::InvalidOutput {
-                reason: format!("link targets for {source_key} -{link}-> are malformed"),
-            },
-            CommitError::DanglingLink { key, missing } => Self::InvalidOutput {
-                reason: format!("link {key} would dangle: {missing} does not exist"),
-            },
-            CommitError::LinkTarget { key } => Self::InvalidOutput {
-                reason: format!("link {key} is not a declared link to an admitted target"),
-            },
-            CommitError::LinkCardinality { key, endpoint } => Self::InvalidOutput {
-                reason: format!("link {key} exceeds its cardinality at {endpoint}"),
-            },
-            CommitError::LinkRequired { parent, link } => Self::InvalidOutput {
-                reason: format!("{parent} has no required link {link}"),
+            // Mapped by `read_set_reason` above; the arm keeps the match exhaustive.
+            read_set @ (CommitError::DuplicateLink { .. }
+            | CommitError::LinkConflict { .. }
+            | CommitError::LinkReadConflict { .. }
+            | CommitError::UnsupportedLinkRead { .. }
+            | CommitError::DuplicateLinkRead { .. }
+            | CommitError::LinkReadTooLarge { .. }
+            | CommitError::InvalidLinkRead { .. }
+            | CommitError::PredicateReadConflict { .. }
+            | CommitError::UnsupportedPredicateRead { .. }
+            | CommitError::InvalidPredicateRead { .. }
+            | CommitError::DanglingLink { .. }
+            | CommitError::LinkTarget { .. }
+            | CommitError::LinkCardinality { .. }
+            | CommitError::LinkRequired { .. }) => Self::InvalidOutput {
+                reason: read_set.to_string(),
             },
             CommitError::TypeMismatch { key, concrete } => Self::InvalidOutput {
                 reason: format!("{key} is live as {}", concrete.as_str()),
@@ -1968,17 +2131,94 @@ impl<X> DecisionRefusal<X> {
         }
     }
 
-    fn link_read_limit_refusal(
+    /// The malformed-commit reason of a link or predicate read-set error;
+    /// `None` for every other commit error.
+    fn read_set_reason(error: &CommitError<X>) -> Option<String> {
+        match error {
+            CommitError::DuplicateLink { key } => {
+                Some(format!("link {key} appears twice in one commit"))
+            }
+            CommitError::LinkConflict { key, .. } => {
+                Some(format!("link {key} changed since the turn read it"))
+            }
+            CommitError::LinkReadConflict { source_key, link } => Some(format!(
+                "link targets for {source_key} -{link}-> changed since the turn read them"
+            )),
+            CommitError::UnsupportedLinkRead { source_key, link } => Some(format!(
+                "host cannot verify link targets for {source_key} -{link}->"
+            )),
+            CommitError::DuplicateLinkRead { source_key, link } => Some(format!(
+                "link targets for {source_key} -{link}-> appear more than once"
+            )),
+            CommitError::LinkReadTooLarge {
+                source_key,
+                link,
+                actual,
+                max,
+            } => Some(Self::link_read_limit_reason(
+                source_key, link, *actual, *max,
+            )),
+            CommitError::InvalidLinkRead { source_key, link } => Some(format!(
+                "link targets for {source_key} -{link}-> are malformed"
+            )),
+            CommitError::PredicateReadConflict { object_type } => Some(format!(
+                "objects matching a predicate over {object_type:?} changed since the turn read them"
+            )),
+            CommitError::UnsupportedPredicateRead { object_type } => Some(format!(
+                "host cannot verify a predicate read over {object_type:?}"
+            )),
+            CommitError::InvalidPredicateRead {
+                object_type,
+                reason,
+            } => Some(format!(
+                "predicate read over {object_type:?} is malformed: {reason}"
+            )),
+            CommitError::DanglingLink { key, missing } => {
+                Some(format!("link {key} would dangle: {missing} does not exist"))
+            }
+            CommitError::LinkTarget { key } => Some(format!(
+                "link {key} is not a declared link to an admitted target"
+            )),
+            CommitError::LinkCardinality { key, endpoint } => {
+                Some(format!("link {key} exceeds its cardinality at {endpoint}"))
+            }
+            CommitError::LinkRequired { parent, link } => {
+                Some(format!("{parent} has no required link {link}"))
+            }
+            CommitError::IdentityReuse
+            | CommitError::AtomicBoundary { .. }
+            | CommitError::AtomicDeliveryBoundary { .. }
+            | CommitError::Law { .. }
+            | CommitError::IdentityCollision { .. }
+            | CommitError::DuplicateKey { .. }
+            | CommitError::OwnedRowsProtected { .. }
+            | CommitError::IdentifierTooLong { .. }
+            | CommitError::ImmutableObject { .. }
+            | CommitError::NotPending { .. }
+            | CommitError::Conflict { .. }
+            | CommitError::TypeMismatch { .. }
+            | CommitError::AccountingPosting { .. }
+            | CommitError::InvariantViolation { .. }
+            | CommitError::InvariantBudgetExceeded { .. }
+            | CommitError::InvariantModel { .. }
+            | CommitError::EffectiveValues { .. }
+            | CommitError::TraversalLimitExceeded { .. }
+            | CommitError::ObservationAuthorization
+            | CommitError::EventLimitExceeded { .. }
+            | CommitError::Overflow
+            | CommitError::Host(_) => None,
+        }
+    }
+
+    fn link_read_limit_reason(
         source_key: &FactKey,
         link: &str,
         actual: usize,
         max: usize,
-    ) -> Self {
-        Self::InvalidOutput {
-            reason: format!(
-                "link targets for {source_key} -{link}-> exceed the {max} item/byte limit ({actual})"
-            ),
-        }
+    ) -> String {
+        format!(
+            "link targets for {source_key} -{link}-> exceed the {max} item/byte limit ({actual})"
+        )
     }
 
     fn commit_identifier_refusal(
@@ -2279,8 +2519,7 @@ fn prepare_decision_with_limits_for<X>(
         writes,
         events,
         effects,
-        links: Vec::new(),
-        link_reads: Vec::new(),
+        ..CellCommit::empty()
     })
 }
 
@@ -2401,6 +2640,7 @@ where
         effects: prepared.effects.into_iter().map(widen_effect).collect(),
         links: Vec::new(),
         link_reads: Vec::new(),
+        predicate_reads: Vec::new(),
     };
     match host.commit(commit) {
         Ok(receipt) => {
@@ -2581,10 +2821,21 @@ fn apply_change<X>(
     let Some(entry) = working.get_mut(&key) else {
         return Err(DecisionRefusal::NotInSlice { key });
     };
+    // A type with no effective view cannot prove which properties are
+    // protected, so every change to its rows (create, set, transition and
+    // delete) is refused. A type the catalog does not declare was already
+    // refused above as unknown, so here this is a declared type whose
+    // effective view is refused.
+    let Some(effective) = catalog.effective_type(&key.object_type) else {
+        return Err(DecisionRefusal::InvalidOutput {
+            reason: format!(
+                "{key} has no effective type view, so its protected properties cannot be checked"
+            ),
+        });
+    };
     let protected = |property: &str| {
-        catalog
-            .effective_type(&key.object_type)
-            .and_then(|effective| effective.property(property))
+        effective
+            .property(property)
             .is_some_and(norn_checker::EffectiveProperty::protected)
     };
     let forbidden = match change {
@@ -2594,20 +2845,22 @@ fn apply_change<X>(
         }
         FactChange::Set { property, .. } => protected(property.as_str()),
         FactChange::Transition { lifecycle, .. } => protected(lifecycle.as_str()),
-        FactChange::Delete { .. } => {
-            catalog
-                .effective_type(&key.object_type)
-                .is_some_and(|effective| {
-                    effective
-                        .properties
-                        .iter()
-                        .any(norn_checker::EffectiveProperty::protected)
-                })
-        }
+        FactChange::Delete { .. } => effective
+            .properties
+            .iter()
+            .any(norn_checker::EffectiveProperty::protected),
     };
     if forbidden {
         return Err(DecisionRefusal::InvalidOutput {
             reason: format!("{key} has protected properties writable only by rules"),
+        });
+    }
+    if slice.get(&key).is_some_and(|state| state.values.is_some())
+        && catalog.immutable(&key.object_type)
+        && !matches!(change, FactChange::Create { .. })
+    {
+        return Err(DecisionRefusal::InvalidOutput {
+            reason: format!("{key} is immutable"),
         });
     }
     let event = match change {
@@ -2840,8 +3093,14 @@ fn check_guards<X>(
     if declared.guards.is_empty() {
         return Ok(());
     }
+    let diagnostic = declared
+        .guard_refusal_code
+        .as_deref()
+        .and_then(norn_checker::codes::lookup)
+        .map(|entry| entry.code);
     let guard_error = |guard: &str, reason: String| DecisionRefusal::GuardError {
-        key: key.clone(),
+        diagnostic,
+        key: Box::new(key.clone()),
         transition: declared.id.as_str().to_owned(),
         guard: guard.to_owned(),
         reason,
@@ -2862,6 +3121,7 @@ fn check_guards<X>(
             Ok(true) => {}
             Ok(false) => {
                 return Err(DecisionRefusal::GuardFalse {
+                    diagnostic,
                     key: key.clone(),
                     transition: declared.id.as_str().to_owned(),
                     guard: guard.as_str().to_owned(),
@@ -2976,7 +3236,7 @@ fn timer<X>(
 mod field_authority_tests {
     use super::{
         AdmissionOrigin, BTreeMap, BTreeSet, FactChange, FactKey, FactSlice, FactVersion,
-        JsonObject, JsonValue, ObjectTypeDef, TypeCatalog, Working, apply_change,
+        JsonObject, JsonValue, ObjectTypeDef, ObjectTypeName, TypeCatalog, Working, apply_change,
     };
 
     #[test]
@@ -3042,5 +3302,110 @@ mod field_authority_tests {
                 assert!(!working[&key].written);
             }
         }
+    }
+
+    /// A catalog that declares `object` but whose effective view is refused:
+    /// the checker produced no effective type for it.
+    fn refused_catalog(object: &ObjectTypeDef) -> TypeCatalog<'_> {
+        let catalog = TypeCatalog::new([object]);
+        assert!(catalog.refuse_effective_view_for_test());
+        catalog
+    }
+
+    #[test]
+    #[allow(
+        clippy::unwrap_used,
+        clippy::indexing_slicing,
+        reason = "test fixtures and assertions require successful setup and existing keys"
+    )]
+    fn refused_effective_view_refuses_every_change_kind() {
+        let object: ObjectTypeDef = serde_json::from_value(serde_json::json!({
+            "name": "test.Counter", "properties": [{ "id": "total",
+                "type": { "kind": "integer" }, "protected": true }]
+        }))
+        .unwrap();
+        let catalog = refused_catalog(&object);
+        assert!(catalog.effective_view_refused(&object.name));
+        let key = FactKey::new("test.Counter", "one");
+        let values = Some(JsonObject::from([(
+            "total".to_owned(),
+            JsonValue::from(2_i64),
+        )]));
+        for change in [
+            FactChange::Delete {
+                object_type: key.object_type.clone(),
+                key: key.key.clone(),
+            },
+            FactChange::Create {
+                object_type: key.object_type.clone(),
+                key: key.key.clone(),
+                values: JsonObject::from([("total".to_owned(), JsonValue::from(1_i64))]),
+            },
+            FactChange::Set {
+                object_type: key.object_type.clone(),
+                key: key.key.clone(),
+                property: norn_ir::PropertyId("total".into()),
+                value: JsonValue::from(3_i64),
+            },
+            FactChange::Transition {
+                object_type: key.object_type.clone(),
+                key: key.key.clone(),
+                lifecycle: norn_ir::PropertyId("total".into()),
+                transition: norn_ir::TransitionId("close".into()),
+            },
+        ] {
+            let mut working = BTreeMap::from([(
+                key.clone(),
+                Working {
+                    expected: FactVersion(1),
+                    values: values.clone(),
+                    written: false,
+                },
+            )]);
+            let error = apply_change::<std::convert::Infallible>(
+                &catalog,
+                &FactSlice::new(),
+                &mut working,
+                &change,
+                AdmissionOrigin::Command,
+                &BTreeSet::new(),
+            )
+            .unwrap_err();
+            assert_eq!(error.code(), "decision.invalid_output", "{change:?}");
+            assert_eq!(working[&key].values, values);
+            assert!(!working[&key].written);
+        }
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used, reason = "test fixtures require successful setup")]
+    fn refused_effective_view_keeps_the_implicit_checks() {
+        let object: ObjectTypeDef = serde_json::from_value(serde_json::json!({
+            "name": "test.Counter", "properties": [{ "id": "total",
+                "type": { "kind": "integer" } }]
+        }))
+        .unwrap();
+        let resolved = TypeCatalog::new([&object]);
+        assert!(!resolved.has_invariants(&object.name).unwrap());
+        let refused = refused_catalog(&object);
+        assert!(refused.has_invariants(&object.name).unwrap());
+        let key = FactKey::new("test.Counter", "one");
+        let error = crate::commit_check::evaluate_invariants(
+            &refused,
+            &key,
+            &JsonObject::default(),
+            &mut 1_000,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            crate::commit_check::InvariantEvaluationError::InvalidEffectiveValues(
+                crate::EffectiveValuesError::Unsupported { .. }
+            )
+        ));
+        // A type that is not declared at all is not a refused view.
+        let unknown = ObjectTypeName("test.Missing".to_owned());
+        assert!(!refused.effective_view_refused(&unknown));
+        assert!(!refused.has_invariants(&unknown).unwrap());
     }
 }

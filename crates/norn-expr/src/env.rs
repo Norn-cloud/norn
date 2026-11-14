@@ -70,6 +70,8 @@ pub const SELF_VARIABLE: &str = "self";
 pub const INPUT_VARIABLE: &str = "input";
 /// The closed actor operand (#2419), always present.
 pub const ACTOR_VARIABLE: &str = "actor";
+/// Record name of the authenticated action principal.
+pub const ACTION_PRINCIPAL_RECORD: &str = "norn:ActionPrincipal";
 
 /// Record name of a bound `input` (outside the object type name grammar, so
 /// it never collides with a model type).
@@ -100,6 +102,11 @@ pub enum Type {
         per_unit: Option<UnitRef>,
         /// Effective destination mode; omitted declarations become Refuse.
         rounding: Rounding,
+    },
+    /// An interface Decimal whose unit and scale must be bound before use.
+    DecimalBinding {
+        /// Interface-local same-unit/scale group.
+        group: String,
     },
     /// Any exact decimal number (no declared scale).
     Number,
@@ -157,6 +164,7 @@ impl Type {
             | Self::Text { .. }
             | Self::Integer
             | Self::Decimal { .. }
+            | Self::DecimalBinding { .. }
             | Self::Number
             | Self::Timestamp { .. }
             | Self::Date
@@ -237,6 +245,7 @@ impl Type {
                 }
                 kind("decimal", fields)
             }
+            Self::DecimalBinding { group } => kind("decimal-binding", [("group", string(group))]),
             Self::Number => kind("number", []),
             Self::Timestamp { timezone } => {
                 kind("timestamp", [("timezone", string(tz_policy(*timezone)))])
@@ -266,6 +275,7 @@ impl Type {
             | Self::Text { .. }
             | Self::Integer
             | Self::Decimal { .. }
+            | Self::DecimalBinding { .. }
             | Self::Number
             | Self::Timestamp { .. }
             | Self::Date
@@ -286,6 +296,7 @@ impl fmt::Display for Type {
             } => write!(f, "text<{}>", text_format(*format)),
             Self::Integer => f.write_str("integer"),
             Self::Decimal { scale, .. } => write!(f, "decimal<{scale}>"),
+            Self::DecimalBinding { group } => write!(f, "decimal-binding<{group}>"),
             Self::Number => f.write_str("number"),
             Self::Timestamp { .. } => f.write_str("timestamp"),
             Self::Date => f.write_str("date"),
@@ -644,6 +655,29 @@ impl ZenTypeEnv {
             variables: BTreeMap::new(),
         }
         .bind_input(fields)
+    }
+
+    /// ACTION-ACTOR-1: the one action-derivation environment, shared by checker
+    /// admission and runtime evaluation so the two cannot drift. `actor` exposes
+    /// only `subjectId`, whose value comes from the authenticated call.
+    ///
+    /// # Errors
+    ///
+    /// [`EnvError::DuplicateName`] for a duplicate or reserved name;
+    /// [`EnvError::Unresolved`] for an unknown record reference.
+    pub fn action_derivation_with_records(
+        mut records: BTreeMap<String, BTreeMap<String, Type>>,
+        fields: BTreeMap<String, Type>,
+        options: EnvOptions,
+    ) -> Result<Self, EnvError> {
+        records.insert(
+            ACTION_PRINCIPAL_RECORD.to_owned(),
+            BTreeMap::from([("subjectId".to_owned(), Type::text())]),
+        );
+        Self::input_only_with_records(records, fields, options)?.bind_operand(
+            ACTOR_VARIABLE,
+            Type::Record(ACTION_PRINCIPAL_RECORD.to_owned()),
+        )
     }
 
     /// An actor-free environment that binds only `input`, with explicitly
@@ -1713,6 +1747,9 @@ impl<'d, 'e> Derivation<'d, 'e> {
                     rounding: Rounding::effective(*rounding),
                     currency_source: currency_source.clone(),
                     per_unit: per_unit.clone(),
+                },
+                PropertyType::DecimalBinding { group } => Type::DecimalBinding {
+                    group: group.clone(),
                 },
                 PropertyType::Boolean {} => Type::Bool,
                 PropertyType::Timestamp { timezone } => Type::Timestamp {
