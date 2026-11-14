@@ -92,7 +92,11 @@ def iso(text):
 
 
 def decimal_text(value, places):
-    return str(Decimal(str(value)).quantize(Decimal(1).scaleb(-places)))
+    """An exact decimal at `places`, as the JSON number the source schema's Decimal field takes."""
+    exact = Decimal(str(value)).quantize(Decimal(1).scaleb(-places))
+    number = float(exact)
+    assert Decimal(repr(number)).quantize(exact) == exact, f"{value} is not exact as a JSON number"
+    return int(number) if number.is_integer() else number
 
 
 def main():
@@ -168,6 +172,22 @@ def main():
                     row[created[1]] = iso(event["time"])
             if target["type"] == "purchase_order" and event["type"] == "Approve Purchase Order":
                 rows[target["id"]].setdefault("approved_at", iso(event["time"]))
+
+    # A payment's latest goods receipt: over every Execute Payment event that
+    # pays it, the latest creation time of the receipts that event names.
+    for event in events:
+        if event["type"] != "Execute Payment":
+            continue
+        related = [r["objectId"] for r in event.get("relationships", [])]
+        received = [rows[g].get("received_at") for g in related if g in rows and objects[g]["type"] == "goods receipt"]
+        received = [t for t in received if t]
+        for payment in (p for p in related if p in rows and objects[p]["type"] == "payment"):
+            if received:
+                latest = max(received + [rows[payment].get("goods_received_at") or ""])
+                rows[payment]["goods_received_at"] = latest
+    for o in objects.values():
+        if o["type"] == "payment" and not rows[o["id"]].get("goods_received_at"):
+            report["payment_without_goods_receipt"] += 1
 
     # Typed values, the invoice's vendor (from its order) and each line's amount.
     for o in objects.values():
