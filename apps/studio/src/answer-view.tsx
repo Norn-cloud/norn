@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { NO_DATA_CELL } from "@/lib/definitions"
 import { Link } from "@tanstack/react-router"
-import { useEffect, useState } from "react"
+import { useEffect, useState, type ReactNode } from "react"
 import { ChartLine, Clock, Cpu, Database, Ellipsis, GitCommitHorizontal, Info, Rows3, Split } from "lucide-react"
 import { Chip } from "@/components/chip"
 import { cn } from "@/lib/utils"
@@ -114,6 +114,18 @@ export function LiveRecords({ question, lineageRef, bucket, fetchTrace, onStale,
         ))}
       </TableBody>
     </Table></TableCard>
+  )
+}
+
+/** The traced records load when asked for: a trace is an analytics call, and the number does not wait on it. */
+function SourcesOnAsk({ count, children }: { readonly count: number; readonly children: () => ReactNode }) {
+  const [shown, setShown] = useState(false)
+  if (shown) return <>{children()}</>
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 px-2 py-3 text-meta text-muted-foreground">
+      <span>{count.toLocaleString("en")} {count === 1 ? "record" : "records"}, added up exactly.</span>
+      <Button type="button" size="sm" variant="outline" onClick={() => setShown(true)}>See the {count === 1 ? "record" : `${count.toLocaleString("en")} records`}</Button>
+    </div>
   )
 }
 
@@ -336,7 +348,7 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
       </Panel>
       {live && lead.bucket && !lead.bucket.suppressed && (
         <Panel icon={Split} label={`Where ${figure(lead.bucket, unit)} comes from`}>
-          <Well className="px-1.5"><LiveRecords question={question.name} lineageRef={answer.lineageRef} bucket={lead.bucket} fetchTrace={fetchTrace} onStale={onStale} compact /></Well>
+          <Well className="px-1.5"><SourcesOnAsk count={lead.bucket.members.length}>{() => <LiveRecords question={question.name} lineageRef={answer.lineageRef} bucket={lead.bucket!} fetchTrace={fetchTrace} onStale={onStale} compact />}</SourcesOnAsk></Well>
         </Panel>
       )}
       </div>
@@ -401,7 +413,7 @@ function DrillItems({ bucket, question, onDrill }: { readonly bucket: Bucket; re
  * A question asked of the cell as soon as it is shown, answered, refused, or why it was not run. The
  * answer is read with `declared`'s metric and type declarations.
  */
-export function AskedAnswer({ question, title, unit, declared, heading = "h3", total, onSettled }: {
+export function AskedAnswer({ question, title, unit, declared, heading = "h3", total, onSettled, placeholder }: {
   readonly question: Question
   readonly title: string
   readonly unit?: string | null
@@ -410,11 +422,13 @@ export function AskedAnswer({ question, title, unit, declared, heading = "h3", t
   readonly total?: { readonly label: string; readonly value: string }
   /** Called once the cell has answered (or refused): the page asks the next question only then. */
   readonly onSettled?: () => void
+  /** What shows while the cell answers (a figure the page already has), instead of "Asking the cell…". */
+  readonly placeholder?: ReactNode
 }) {
   const run = useQuery({ queryKey: ["asked", JSON.stringify(question)], queryFn: () => evaluateQuestion(question), retry: false, staleTime: 30_000 })
   useEffect(() => { if (!run.isPending) onSettled?.() }, [run.isPending, onSettled])
   const result = run.data
-  if (run.isPending) return <p className="text-sm text-muted-foreground">Asking the cell…</p>
+  if (run.isPending) return placeholder ?? <p className="text-sm text-muted-foreground">Asking the cell…</p>
   if (run.isError || result === undefined) return <p role="alert" className="text-sm text-destructive">Not run: {run.error instanceof Error ? run.error.message : "no answer"}</p>
   if (result.kind === "refused") return <RefusedNote refusal={result.refusal} />
   if (result.kind === "not-a-question") return <div role="status" className="space-y-1 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm">{result.findings.map(({ code, message }) => <div key={`${code}:${message}`}><span className="font-medium">{message}</span> <span className="font-mono text-xs text-muted-foreground">{code}</span></div>)}</div>

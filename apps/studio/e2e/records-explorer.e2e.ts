@@ -160,3 +160,28 @@ test("questions: the first question asks its own type's profile at once, gives u
   expect(order[0]).toBe("profile canon.Delivery")
   expect(order[1]).toBe("evaluate")
 })
+
+test("questions: after the profile, exactly one call comes before the first number (the window's total); the answer per week and the traced records come after", async ({ page }) => {
+  test.setTimeout(60_000)
+  await session(page)
+  await viewsCell(page)
+  await page.route("**/api/host/v1/questions:metrics**", (route) => route.fulfill({ json: { metrics: [{ name: "m.delivery", label: "quantity", kind: "simple", objectType: "canon.Delivery", expression: "quantity", timeProperty: "occurred_at", timeLinks: [], numerator: null, denominator: null, unitPartition: ["unit"] }] } }))
+  await page.route("**/api/host/v1/objects/*:profile**", (route) => route.fulfill({ json: { objectType: "canon.Delivery", rows: 954, withheldRows: 0, quarantinedRows: 0, properties: [] } }))
+  const answer = JSON.parse(readFileSync(new URL("../../../fixtures/demo/answers/scrap-yield.k1.answer.json", import.meta.url), "utf8")) as { rows: Record<string, unknown> }
+  const totals = { ...answer, rows: { '"g"': { bucket: "g", totals: [1399984], value: 1399984, members: { "demo/delivery/00001/line/1": { version: 1, amounts: [1399984] } } } } }
+  const answered: string[] = []
+  const traced: string[] = []
+  await page.route("**/api/host/v1/questions:trace**", (route) => { traced.push("trace"); return route.abort() })
+  // The window's totals per unit answer at once; the answer per week never comes back.
+  await page.route("**/api/host/v1/questions:evaluate**", (route) => {
+    const { question } = route.request().postDataJSON() as { question: { groupBy?: { grain?: string }[] } }
+    if ((question.groupBy ?? []).some(({ grain }) => grain !== undefined)) return new Promise<void>(() => {})
+    answered.push("totals")
+    return route.fulfill({ json: totals })
+  })
+  await page.goto("/questions")
+  const first = page.locator("[data-slot=answer-total]").first()
+  await expect(first).toContainText("1,399,984 g")
+  expect(answered).toEqual(["totals"])
+  expect(traced).toHaveLength(0)
+})
