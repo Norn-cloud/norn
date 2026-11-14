@@ -675,3 +675,183 @@ fn a_type_name_defined_in_another_scope_too_fails_closed() {
         at(SCOPE_REFUSED, "/payload/input/objectType")
     );
 }
+
+/// A tenant extension of `sales.Customer` adding `property`, scoped to
+/// `scope` (the pattern of the `acme-sku` extension fixture).
+fn customer_extension(scope: &Value, property: &Value) -> ArtifactEnvelope {
+    scoped(
+        envelope(
+            "acme.Customer.extension",
+            "entity",
+            &json!({ "entityVersion": "2.0", "objectTypeExtension": {
+                "namespace": "acme", "target": "sales.Customer",
+                "properties": [ property ]
+            } }),
+        ),
+        scope,
+    )
+}
+
+/// `sales.ChurnPrediction` extended with `property`, scoped to `scope`.
+fn prediction_extension(scope: &Value, property: &Value) -> ArtifactEnvelope {
+    scoped(
+        envelope(
+            "acme.ChurnPrediction.extension",
+            "entity",
+            &json!({ "entityVersion": "2.0", "objectTypeExtension": {
+                "namespace": "acme", "target": "sales.ChurnPrediction",
+                "properties": [ property ]
+            } }),
+        ),
+        scope,
+    )
+}
+
+/// `churn_payload` reading `acme__loyalty` as a feature as well.
+fn with_extension_feature() -> Value {
+    with(
+        "/features",
+        json!(["tenure_months", "monthly_spend", "plan", "region", "acme__loyalty"]),
+    )
+}
+
+fn loyalty() -> Value {
+    json!({ "id": "acme__loyalty", "type": { "kind": "integer" } })
+}
+
+/// The predictions column `acme__retained`, which only an extension declares.
+fn retained() -> Value {
+    json!({ "id": "acme__retained", "type": { "kind": "boolean" } })
+}
+
+/// `with_predictions` writing a fourth output, `acme__retained`.
+fn with_extension_output(mut payload: Value) -> Value {
+    payload["predictions"] = json!({ "objectType": "sales.ChurnPrediction" });
+    payload["outputs"]
+        .as_array_mut()
+        .expect("outputs")
+        .push(json!({ "id": "acme__retained", "type": { "kind": "boolean" }, "nullable": false }));
+    payload
+}
+
+#[test]
+fn a_feature_only_an_invisible_extension_declares_is_refused() {
+    for scope in invisible_scopes() {
+        let extension = customer_extension(&scope, &loyalty());
+        let model = scoped(model(&with_extension_feature()), &tenant_a());
+        // A candidate extension and an installed one alike.
+        assert_eq!(
+            model_findings(
+                &[account(), customer(), extension.clone(), model.clone()],
+                &[]
+            ),
+            at("model.admission.unknown_feature", "/payload/features/4"),
+            "candidate {scope}"
+        );
+        assert_eq!(
+            model_findings(&[model], &[account(), customer(), extension]),
+            at("model.admission.unknown_feature", "/payload/features/4"),
+            "installed {scope}"
+        );
+    }
+}
+
+#[test]
+fn a_predictions_column_only_an_invisible_extension_declares_is_refused() {
+    // `acme__retained` is a column of the predictions type only through the
+    // extension.
+    for scope in invisible_scopes() {
+        let extension = prediction_extension(&scope, &retained());
+        let predictions = churn_prediction(None);
+        let model = scoped(model(&with_extension_output(churn_payload())), &tenant_a());
+        assert_eq!(
+            model_findings(
+                &[
+                    account(),
+                    customer(),
+                    predictions.clone(),
+                    extension.clone(),
+                    model.clone()
+                ],
+                &[]
+            ),
+            at("model.admission.prediction_type_mismatch", "/payload/outputs/3"),
+            "candidate {scope}"
+        );
+        assert_eq!(
+            model_findings(&[model], &[account(), customer(), predictions, extension]),
+            at("model.admission.prediction_type_mismatch", "/payload/outputs/3"),
+            "installed {scope}"
+        );
+    }
+}
+
+#[test]
+fn an_extension_of_the_models_own_or_a_broader_scope_is_visible() {
+    let payload = with_extension_output(with_extension_feature());
+    for scope in visible_scopes() {
+        let model = scoped(model(&payload), &tenant_a());
+        let feature = customer_extension(&scope, &loyalty());
+        let output = prediction_extension(&scope, &retained());
+        let predictions = churn_prediction(None);
+        assert_eq!(
+            model_findings(
+                &[
+                    account(),
+                    customer(),
+                    predictions.clone(),
+                    feature.clone(),
+                    output.clone(),
+                    model.clone()
+                ],
+                &[]
+            ),
+            BTreeSet::new(),
+            "candidate {scope}"
+        );
+        assert_eq!(
+            model_findings(
+                &[model],
+                &[account(), customer(), predictions, feature, output]
+            ),
+            BTreeSet::new(),
+            "installed {scope}"
+        );
+    }
+}
+
+#[test]
+fn an_invisible_extension_of_a_supertype_adds_no_feature() {
+    let party = entity(
+        "sales.Party.entity",
+        &json!({ "name": "sales.Party", "properties": [ { "id": "score", "type": { "kind": "integer" } } ] }),
+    );
+    let lead = entity(
+        "sales.Customer.entity",
+        &json!({
+            "name": "sales.Customer", "extends": "sales.Party",
+            "properties": [
+                { "id": "tenure_months", "type": { "kind": "integer" } },
+                { "id": "monthly_spend", "type": { "kind": "decimal", "scale": 2 } },
+                { "id": "plan", "type": { "kind": "enum", "values": [ { "value": "basic" }, { "value": "pro" } ] } },
+                { "id": "region", "type": { "kind": "text" } },
+                { "id": "churned", "type": { "kind": "boolean" } }
+            ]
+        }),
+    );
+    let extension = scoped(
+        envelope(
+            "acme.Party.extension",
+            "entity",
+            &json!({ "entityVersion": "2.0", "objectTypeExtension": {
+                "namespace": "acme", "target": "sales.Party", "properties": [ loyalty() ]
+            } }),
+        ),
+        &json!({ "tenantId": "tenant_b" }),
+    );
+    let model = scoped(model(&with_extension_feature()), &tenant_a());
+    assert_eq!(
+        model_findings(&[model], &[party, lead, extension]),
+        at("model.admission.unknown_feature", "/payload/features/4")
+    );
+}
