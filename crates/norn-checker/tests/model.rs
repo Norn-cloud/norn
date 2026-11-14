@@ -175,7 +175,7 @@ fn inherited_extension_and_shared_ref_properties_are_features() {
         ] }),
     );
     let payload = json!({
-        "modelId": "sales.lead_model", "title": "Lead", "version": "0.1.0",
+        "modelId": "sales.lead_model", "title": "Lead", "version": "1.0.0",
         "input": { "kind": "objectType", "objectType": "sales.Lead" },
         "features": ["score", "grade"],
         "outputs": [ { "id": "won", "type": { "kind": "boolean" }, "nullable": false } ],

@@ -12,16 +12,20 @@
 //! `finite` to numeric outputs, `oneOf` to categorical ones and only with
 //! declared enum values).
 //!
-//! Over an artifact set (`check_model_set`): each candidate model's input
-//! object type resolves in the candidate set or the installed base, and every
+//! Over an artifact set (`check_model_set`): each candidate model's payload
+//! version is its envelope version; its input object type resolves in the
+//! candidate set or the installed base, is visible from the model's scope
+//! (every artifact defining that name is of the model's own or a broader
+//! scope, `artifact_set::scope_finding`), and every
 //! feature and the target names a property of it (own, inherited through
 //! `extends`, from an implemented interface, or from an extension) whose kind
 //! is admitted: numeric, boolean, `enum` or `text` for a feature, numeric,
 //! boolean or `enum` for the target. A `ref` property is resolved through the
 //! shared property types of the set and the base; one that does not resolve
 //! there is refused rather than guessed. A model that names a predictions
-//! type (#1171 M4) is admitted only when that type resolves, has text
-//! properties `subject` and `model_version`, and declares every output as a
+//! type (#1171 M4) is admitted only when that type resolves, is visible from
+//! the model's scope as the input type is, has non-nullable text properties
+//! `subject` and `model_version`, and declares every output as a
 //! property of the same type (a decimal's scale and unit, an enum's values
 //! as a superset) and the same nullability.
 use std::collections::{BTreeMap, BTreeSet};
@@ -502,17 +506,20 @@ const fn v1_class(field: &EntityFieldV1) -> Class {
 
 /// Object types, interfaces, extensions and shared property types of the
 /// candidate set and the installed base, by name. A candidate definition
-/// shadows an installed one of the same name.
+/// shadows an installed one of the same name for the members; every
+/// artifact that defines a name is kept for the scope check.
 #[derive(Default)]
-struct Catalog {
+struct Catalog<'a> {
     object_types: BTreeMap<String, EntityRoot>,
+    /// Every artifact defining an object type of this name, candidates first.
+    definers: BTreeMap<String, Vec<&'a ArtifactEnvelope>>,
     interfaces: BTreeMap<String, EntityRoot>,
     extensions: BTreeMap<String, Vec<EntityRoot>>,
     property_types: Vec<PropertyTypeDef>,
 }
 
-impl Catalog {
-    fn of<'a>(artifacts: impl IntoIterator<Item = &'a ArtifactEnvelope>) -> Self {
+impl<'a> Catalog<'a> {
+    fn of(artifacts: impl IntoIterator<Item = &'a ArtifactEnvelope>) -> Self {
         let mut catalog = Self::default();
         let roots = artifacts
             .into_iter()
@@ -521,15 +528,26 @@ impl Catalog {
                 serde_json::to_value(artifact.payload.to_json_value())
                     .ok()
                     .and_then(|value| serde_json::from_value::<EntityRoot>(value).ok())
+                    .map(|root| (artifact, root))
             });
-        for root in roots {
+        for (artifact, root) in roots {
             match &root {
                 EntityRoot::V2(def) => {
                     let name = def.object_type.name.as_str().to_owned();
+                    catalog
+                        .definers
+                        .entry(name.clone())
+                        .or_default()
+                        .push(artifact);
                     catalog.object_types.entry(name).or_insert(root);
                 }
                 EntityRoot::V1(def) => {
                     let name = def.object_kind.clone();
+                    catalog
+                        .definers
+                        .entry(name.clone())
+                        .or_default()
+                        .push(artifact);
                     catalog.object_types.entry(name).or_insert(root);
                 }
                 EntityRoot::V2Interface(def) => {
@@ -551,9 +569,28 @@ impl Catalog {
         catalog
     }
 
+    /// The finding for `model` naming object type `name` at `pointer` when
+    /// the model's scope cannot see the type: an artifact may reference only
+    /// artifacts of its own or a broader scope
+    /// (`artifact_set::scope_finding`, as the action write set
+    /// applies it). Every artifact defining `name` is checked, so a name
+    /// defined in another scope too fails closed rather than resolving to the
+    /// visible one.
+    fn scope_finding(
+        &self,
+        model: &ArtifactEnvelope,
+        name: &str,
+        pointer: &str,
+    ) -> Option<Diagnostic> {
+        self.definers
+            .get(name)?
+            .iter()
+            .find_map(|defining| crate::artifact_set::scope_finding(model, defining, pointer))
+    }
+
     /// The type a property's type resolves to: itself, or the shared
     /// property type a `ref` names; `None` for a `ref` that does not resolve.
-    fn resolve<'a>(&'a self, property_type: &'a PropertyType) -> Option<&'a PropertyType> {
+    fn resolve<'t>(&'t self, property_type: &'t PropertyType) -> Option<&'t PropertyType> {
         if matches!(property_type, PropertyType::Ref { .. }) {
             crate::property_types::resolved_property_type(property_type, &self.property_types)
         } else {
@@ -698,8 +735,20 @@ pub(crate) fn check_model_set(
     let catalog = Catalog::of(artifacts.iter().chain(base));
     let mut findings = Vec::new();
     for (artifact, root) in &models {
+        if root.version != artifact.version {
+            findings.push(finding(
+                INVALID_PAYLOAD,
+                format!(
+                    "the model payload is version {:?}, but its envelope is version {:?}; a model's payload version is its envelope version",
+                    root.version, artifact.version
+                ),
+                "/payload/version".into(),
+                artifact,
+            ));
+        }
         check_predictions(&catalog, root, artifact, &mut findings);
         let input = root.input.object_type().as_str();
+        findings.extend(catalog.scope_finding(artifact, input, "/payload/input/objectType"));
         let Some(members) = catalog.members(input) else {
             findings.push(finding(
                 UNKNOWN_INPUT,
@@ -773,7 +822,7 @@ pub(crate) fn check_model_set(
 /// properties and every output as a property of the same type and
 /// nullability (see [`norn_ir::ModelPredictions`]).
 fn check_predictions(
-    catalog: &Catalog,
+    catalog: &Catalog<'_>,
     root: &ModelRoot,
     artifact: &ArtifactEnvelope,
     findings: &mut Vec<Diagnostic>,
@@ -782,6 +831,7 @@ fn check_predictions(
         return;
     };
     let name = predictions.object_type.as_str();
+    findings.extend(catalog.scope_finding(artifact, name, "/payload/predictions/objectType"));
     let mut push = |message: String, pointer: String| {
         findings.push(finding(PREDICTION_TYPE, message, pointer, artifact));
     };
@@ -799,19 +849,30 @@ fn check_predictions(
         (PREDICTION_VERSION, "the ml.ModelVersion id"),
     ] {
         let text = match members.get(id) {
-            Some(Member::Property(property_type, _)) => matches!(
-                catalog.resolve(property_type),
-                Some(PropertyType::Text { .. })
-            ),
+            Some(Member::Property(property_type, nullable)) => {
+                !nullable
+                    && matches!(
+                        catalog.resolve(property_type),
+                        Some(PropertyType::Text { .. })
+                    )
+            }
             Some(Member::Field(field)) => matches!(
                 field,
-                EntityFieldV1::Text { .. } | EntityFieldV1::String { .. }
+                EntityFieldV1::Text {
+                    required: Some(true),
+                    ..
+                } | EntityFieldV1::String {
+                    required: Some(true),
+                    ..
+                }
             ),
             Some(Member::Link) | None => false,
         };
         if !text {
             push(
-                format!("{name} has no text property {id:?} ({holds}) for the model's predictions"),
+                format!(
+                    "{name} has no non-nullable text property {id:?} ({holds}) for the model's predictions"
+                ),
                 "/payload/predictions/objectType".into(),
             );
         }
