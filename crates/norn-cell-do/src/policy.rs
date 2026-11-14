@@ -20,15 +20,27 @@
 //! granted only to the table's declared provisioner roles: a scope with no
 //! cell has no definitions, so this one authority is the host's
 //! ([`Provisioners`] decides it before a cell exists, [`ReadPolicy`] after).
+//! A refusal's full detail (law, subject, values) is disclosed only under the
+//! declared [`REFUSAL_DISCLOSERS`] policy, decided by the same PDP; a scope
+//! with no cell has no governed action, so [`Provisioners`] discloses nothing.
 
 use std::sync::{Arc, Mutex, RwLock};
 
-use norn_api::authz::{AccessRequest, Authorizer, DenyAll, Operation, ReadCapability, ReadRequest};
+use norn_api::authz::{
+    AccessRequest, Authorizer, DenyAll, Operation, ReadCapability, ReadRequest,
+    RefusalDetailRequest,
+};
 use norn_api::refusal::Refusal;
 use norn_api::scope::CellScope;
-use norn_ir::access::{AccessIr, AccessRule, AccessScope, ScopeDimension};
-use norn_ir::{IrVersion01, ObjectTypeDef};
-use norn_kernel::authz::{self, ActorKind, AuthzSchema, CapabilityGrant, Pdp, ScopeKey};
+use norn_ir::access::{
+    AccessCondition, AccessIr, AccessRule, AccessScope, DISCLOSE_REFUSAL_DETAIL_ACTION,
+    REFUSAL_DETAIL_RESOURCE, RoleCondition, ScopeDimension,
+};
+use norn_ir::{IrVersion01, ObjectTypeDef, ObjectTypeName};
+use norn_kernel::authz::{
+    self, ActorKind, AttrValue, AuthzSchema, CapabilityGrant, Delegation, Pdp, PrincipalInput,
+    ResourceInput, ScopeKey,
+};
 use norn_kernel::{
     ActionAuthzRequest, ActionDenial, ActionReadAuthzRequest, ActionReadTypeAuthzRequest,
 };
@@ -177,6 +189,63 @@ impl RunStarters {
     }
 }
 
+/// Declared roles whose callers see the full refusal detail of a governed
+/// action they call (DIAG-DISCLOSE-1, #1353): the law, its subject and its
+/// values, which Studio's refusal card reads ("72 vs 70", "Use 72"). Any
+/// other caller gets the redacted refusal. A change is a new version.
+#[derive(Debug)]
+pub struct RefusalDisclosers {
+    /// Identity of this table; also the compiled policy's id.
+    pub version: &'static str,
+    /// Norn roles granted `norn.disclose_refusal_detail`.
+    pub roles: &'static [&'static str],
+}
+
+/// The demo cells' disclosers over `studio-roles/1`: admins and owners, the
+/// roles that author the cell's definitions and so already read its laws.
+pub const REFUSAL_DISCLOSERS: RefusalDisclosers = RefusalDisclosers {
+    version: "norn-cell-do-refusal-detail/1",
+    roles: &["admin", "owner"],
+};
+
+impl RefusalDisclosers {
+    /// This table as an `AccessIR` policy: one rule granting
+    /// `norn.disclose_refusal_detail` on `norn.RefusalDetail` to the declared
+    /// roles in the cell's org and environment.
+    #[must_use]
+    pub fn access_policy(&self) -> AccessIr {
+        AccessIr {
+            access_version: IrVersion01::V0_1,
+            policy_id: self.version.into(),
+            rules: vec![AccessRule {
+                rule_id: "refusal_detail".into(),
+                actions: vec![DISCLOSE_REFUSAL_DETAIL_ACTION.into()],
+                resource_type: ObjectTypeName(REFUSAL_DETAIL_RESOURCE.to_owned()),
+                scope: AccessScope {
+                    dimensions: vec![ScopeDimension::Org, ScopeDimension::Environment],
+                },
+                all_of: vec![AccessCondition::Role(RoleCondition {
+                    any_of: self.roles.iter().map(|role| (*role).to_owned()).collect(),
+                })],
+            }],
+            generic_rules: vec![],
+            extensions: None,
+        }
+    }
+
+    /// The compiled policy with no grant; each decision adds its caller's.
+    fn compile(&self) -> Result<Pdp, SeedError> {
+        let projection = norn_projections::project_cedar_schema(&[], &[], &[]);
+        let host = norn_projections::project_host_access_schema(&[]);
+        let schema =
+            AuthzSchema::from_projected_cedarschema_fragments(&[&projection.schema, &host])
+                .map_err(|e| SeedError(format!("refusal detail schema: {e}")))?;
+        let compiled = authz::compile(&schema, &self.access_policy())
+            .map_err(|e| SeedError(format!("refusal detail policy: {e}")))?;
+        Pdp::new(compiled, &[]).map_err(|e| SeedError(format!("refusal detail policy: {e}")))
+    }
+}
+
 /// The principal a resolver verified for the current request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Caller {
@@ -286,6 +355,8 @@ pub struct ReadPolicy {
     caller: Arc<CallerSlot>,
     actions: ActionSlot,
     reveal: RevealSlot,
+    /// [`REFUSAL_DISCLOSERS`] compiled, with no grant.
+    disclosure: Pdp,
 }
 
 /// The physical scope as the PDP's scope key.
@@ -317,6 +388,7 @@ impl ReadPolicy {
             caller: Arc::default(),
             actions: Arc::default(),
             reveal: Arc::default(),
+            disclosure: REFUSAL_DISCLOSERS.compile()?,
         })
     }
 
@@ -377,6 +449,61 @@ impl ReadPolicy {
             collection_access_key(&self.key, actor, ReadCapability::Values, object_type);
         id.clone_into(&mut request.resource.id);
         authz::authorize(&pdp, &request).is_ok()
+    }
+
+    /// The trusted disclosure request for `request`: the verified caller, its
+    /// declared roles and a `norn.disclose_refusal_detail` grant in this
+    /// cell's scope, asking for the diagnostic of an action the cell's policy
+    /// governs. `None` (deny) for any other caller or action.
+    fn disclosure_request(
+        &self,
+        request: &RefusalDetailRequest<'_>,
+    ) -> Option<(Pdp, authz::AccessRequest)> {
+        let caller = self.member(request.actor)?;
+        self.action_policy()
+            .filter(|policy| policy.callable(request.action_id))?;
+        let actor_kind = match caller.actor_kind {
+            "user" => ActorKind::User,
+            "service" => ActorKind::Service,
+            _ => return None,
+        };
+        let pdp = Pdp::new(
+            self.disclosure.policy_set().clone(),
+            &[CapabilityGrant {
+                subject_id: caller.subject_id.clone(),
+                actor_kind,
+                agent_session_id: None,
+                scope: Some(self.key.clone()),
+                capabilities: vec![DISCLOSE_REFUSAL_DETAIL_ACTION.to_owned()],
+                binding: None,
+            }],
+        )
+        .ok()?;
+        let access = authz::AccessRequest {
+            principal: PrincipalInput {
+                subject_id: caller.subject_id,
+                actor_kind,
+                agent_session_id: None,
+                roles: caller.roles,
+                attributes: std::collections::BTreeMap::new(),
+            },
+            scope: Some(self.key.clone()),
+            capability: DISCLOSE_REFUSAL_DETAIL_ACTION.to_owned(),
+            action_id: DISCLOSE_REFUSAL_DETAIL_ACTION.to_owned(),
+            resource: ResourceInput {
+                object_type: REFUSAL_DETAIL_RESOURCE.to_owned(),
+                id: request.action_id.to_owned(),
+                scope: self.key.clone(),
+                attributes: std::collections::BTreeMap::new(),
+            },
+            context: std::collections::BTreeMap::from([(
+                "governedAction".to_owned(),
+                AttrValue::String(request.action_id.into()),
+            )]),
+            binding: None,
+            delegation: Delegation::Direct,
+        };
+        Some((pdp, access))
     }
 
     /// Read the request's verified principal from `slot` instead of this
@@ -585,6 +712,17 @@ impl Authorizer for ReadPolicy {
             .ok()
             .and_then(|slot| slot.clone())
             .is_some_and(|policy| policy.reveals(&caller, marking_id))
+    }
+
+    fn disclose_refusal_detail(&self, request: &RefusalDetailRequest<'_>) -> bool {
+        // The host's scope is the request's: a refusal of another cell is
+        // never this policy's to disclose.
+        scope_key(request.scope) == self.key
+            && self
+                .disclosure_request(request)
+                .is_some_and(|(pdp, access)| {
+                    norn_api::refusal_disclosure::pdp_discloses(&pdp, request, &access)
+                })
     }
 
     fn read(&self, request: &ReadRequest<'_>) -> Result<(), Refusal> {

@@ -52,28 +52,53 @@ where
     ) -> Result<(), norn_kernel::ActionDenial> {
         self.inner.action_read_type(request)
     }
-    fn disclose_refusal_detail(&self, request: &RefusalDetailRequest<'_>) -> bool {
-        let Some(access) = (self.build_request)(request) else {
-            return false;
-        };
-        let scope = ScopeKey {
-            org: request.scope.org_id.clone(),
-            environment: Some(request.scope.environment_id.clone()),
-            tenant: None,
-            workspace: None,
-            business_unit: None,
-        };
-        access.principal.subject_id == request.actor
-            && access.action_id == DISCLOSE_REFUSAL_DETAIL_ACTION
-            && access.capability == DISCLOSE_REFUSAL_DETAIL_ACTION
-            && access.resource.object_type == REFUSAL_DETAIL_RESOURCE
-            && access.resource.id == request.action_id
-            && access.context.get("governedAction")
-                == Some(&AttrValue::String(request.action_id.into()))
-            && access.scope.as_ref() == Some(&scope)
-            && access.resource.scope == scope
-            && matches!(self.pdp.decide(&access), PdpDecision::Allow)
+    // Every other callback is the inner policy's: wrapping it adds the
+    // diagnostic decision and nothing else.
+    fn model_changed(&self, object_types: &[norn_ir::ObjectTypeDef]) {
+        self.inner.model_changed(object_types);
     }
+    fn verified_principal(&self, actor: &str) -> Option<norn_cell::flow_run::RunStarter> {
+        self.inner.verified_principal(actor)
+    }
+    fn admits_model(&self, object_types: &[norn_ir::ObjectTypeDef]) -> Result<(), Refusal> {
+        self.inner.admits_model(object_types)
+    }
+    fn reveal(&self, actor: &str, marking_id: &str) -> bool {
+        self.inner.reveal(actor, marking_id)
+    }
+    fn disclose_refusal_detail(&self, request: &RefusalDetailRequest<'_>) -> bool {
+        (self.build_request)(request)
+            .is_some_and(|access| pdp_discloses(&self.pdp, request, &access))
+    }
+}
+
+/// DIAG-DISCLOSE-1: whether `pdp` allows the trusted `access` request to
+/// disclose `request`'s refusal detail. The mapped request must ask exactly
+/// for the diagnostic of the admitted action, for the resolved actor, in the
+/// cell's own scope; anything else denies before the PDP is asked.
+#[must_use]
+pub fn pdp_discloses(
+    pdp: &Pdp,
+    request: &RefusalDetailRequest<'_>,
+    access: &authz::AccessRequest,
+) -> bool {
+    let scope = ScopeKey {
+        org: request.scope.org_id.clone(),
+        environment: Some(request.scope.environment_id.clone()),
+        tenant: None,
+        workspace: None,
+        business_unit: None,
+    };
+    access.principal.subject_id == request.actor
+        && access.action_id == DISCLOSE_REFUSAL_DETAIL_ACTION
+        && access.capability == DISCLOSE_REFUSAL_DETAIL_ACTION
+        && access.resource.object_type == REFUSAL_DETAIL_RESOURCE
+        && access.resource.id == request.action_id
+        && access.context.get("governedAction")
+            == Some(&AttrValue::String(request.action_id.into()))
+        && access.scope.as_ref() == Some(&scope)
+        && access.resource.scope == scope
+        && matches!(pdp.decide(access), PdpDecision::Allow)
 }
 
 /// Project the shared refusal@2 under the explicit diagnostic decision.
