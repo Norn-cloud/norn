@@ -1750,6 +1750,10 @@ fn no_listed_metric_names_an_internal_encoding_in_any_pack() {
 /// any value is read; the same question on a cell whose values carry no label
 /// is answered.
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one labeled and one unlabeled cell, each built in full"
+)]
 fn a_question_on_a_field_whose_values_carry_a_runtime_label_is_refused_at_answer_time() {
     let labeled = |labels: bool| {
         let (mut store, plan, mut context) = fixture();

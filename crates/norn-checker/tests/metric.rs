@@ -967,9 +967,10 @@ fn query_grain_refuses_expansion_implicit_keys_and_unsupported_semantics() {
     );
     let mut symmetric = definitions.clone();
     symmetric[0].norn.safe_aggregation = Some(norn_ir::metric::SafeAggregation::Symmetric);
+    // A traversal grouping is refused by name, at its path.
     assert_code(
         &admit(&symmetric, &expanded, &catalog, 100).expect_err("unqualified traversal"),
-        UNSUPPORTED_ENGINE,
+        codes::LINKED_PATH,
     );
     let mut duplicate = question.clone();
     duplicate.metrics.push(duplicate.metrics[0].clone());
@@ -1481,7 +1482,9 @@ fn a_question_cannot_group_or_filter_by_a_marked_field() {
 fn a_question_cannot_group_or_filter_across_a_link_except_by_its_linked_time() {
     use norn_checker::metric::compute::admit;
     let metric: MetricDefinition = decode(&serde_json::from_str::<Value>(SALES).expect("metric"));
-    let base: Value = serde_json::from_str(SALES_QUESTION).expect("question");
+    let mut base: Value = serde_json::from_str(SALES_QUESTION).expect("question");
+    // The fixture groups by the store across a link; the baseline groups by nothing.
+    base["groupBy"] = json!([]);
     let catalog = catalog_of(&serde_json::from_str::<Vec<Value>>(ONTOLOGY).expect("ontology"));
     let findings = |question: &Value| {
         admit(
@@ -1506,7 +1509,7 @@ fn a_question_cannot_group_or_filter_across_a_link_except_by_its_linked_time() {
 
     let customer = json!({ "links": ["parent_sales_invoice", "customer"], "property": "name" });
     let mut grouped = base.clone();
-    grouped["groupBy"][0] = json!({ "path": customer });
+    grouped["groupBy"] = json!([{ "path": customer }]);
     assert!(
         at(&findings(&grouped), "/questions/0/groupBy/0"),
         "{:?}",

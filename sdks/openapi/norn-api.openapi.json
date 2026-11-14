@@ -5033,14 +5033,40 @@
           "unchanged"
         ]
       },
+      "CatalogLink": {
+        "type": "object",
+        "description": "One link of a listed object type, to a readable target.",
+        "required": [
+          "id",
+          "target"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The link role, as a path's `links` names it."
+          },
+          "target": {
+            "type": "string",
+            "description": "The object type it reaches."
+          }
+        }
+      },
       "CatalogObjectType": {
         "type": "object",
         "description": "One object type an ad-hoc question may range over, with every effective\nproperty and its resolved type (`null` for a registry or unresolved type).",
         "required": [
           "name",
-          "properties"
+          "properties",
+          "links"
         ],
         "properties": {
+          "links": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CatalogLink"
+            },
+            "description": "Its one-hop links to object types the caller may read, so a client can\nsay what a question cannot group by yet (a question groups across a link\nonly by the linked time). A link to a type the caller may not read is\nleft out."
+          },
           "name": {
             "type": "string",
             "description": "The object type's name: a question's `objectSet`."
