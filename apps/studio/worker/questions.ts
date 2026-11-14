@@ -8,7 +8,11 @@ import type { Cell } from "./cell.ts"
  * question passes). Nothing is judged here, and no row value is read.
  */
 
-interface PropertyType { readonly kind?: string; readonly unit?: { readonly code?: string }; readonly values?: readonly string[] }
+interface PropertyType { readonly kind?: string; readonly unit?: { readonly code?: string }; readonly values?: readonly (string | { readonly value: string })[] }
+
+/** An enum's declared values as text: the cell sends each as `{ value }` (older documents as a bare string). */
+export const enumValues = (type: PropertyType | null | undefined): readonly string[] =>
+  (type?.values ?? []).flatMap((entry) => typeof entry === "string" ? [entry] : typeof entry?.value === "string" ? [entry.value] : [])
 export interface CellMetric {
   readonly name: string
   readonly label: string
@@ -176,7 +180,7 @@ export function recommendations(catalog: StudioCatalog, now: number) {
   ]
   const grains = Object.fromEntries(groupable.filter((property) => kindOf(property) === "timestamp").map((property) => [property.id, catalog.grains.map((grain, index) => ({ id: grain, label: grain.charAt(0).toUpperCase() + grain.slice(1), detail: `each ${grain} of ${words(property.id)}`, recommended: index === 0, value: { grain } }))]))
   const conditions = [
-    ...properties.flatMap((property) => (property.type?.values ?? []).map((value) => ({ id: `${property.id}:eq:${value}`, label: `${words(property.id)} is ${value}`, detail: "a declared value", recommended: false, value: { filter: [{ path: { property: property.id }, operator: "eq", value }] } }))),
+    ...properties.flatMap((property) => enumValues(property.type).map((value) => ({ id: `${property.id}:eq:${value}`, label: `${words(property.id)} is ${value}`, detail: "a declared value", recommended: false, value: { filter: [{ path: { property: property.id }, operator: "eq", value }] } }))),
     { id: "every", label: "Every record", detail: "no condition", recommended: true, value: { filter: [] } },
   ]
   return {
@@ -186,7 +190,7 @@ export function recommendations(catalog: StudioCatalog, now: number) {
     groupBy,
     grains,
     conditions,
-    filterable: properties.filter((property) => kindOf(property) !== "timestamp").map((property) => ({ name: property.id, kind: kindOf(property), unit: property.type?.unit?.code ?? null, values: property.type?.values ?? [] })),
+    filterable: properties.filter((property) => kindOf(property) !== "timestamp").map((property) => ({ name: property.id, kind: kindOf(property), unit: property.type?.unit?.code ?? null, values: enumValues(property.type) })),
     windows: windows(now),
   }
 }

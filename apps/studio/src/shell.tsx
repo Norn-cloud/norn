@@ -103,7 +103,10 @@ function useOpenWorkspace() {
   return { live, open }
 }
 
-/** The scope switcher: the open workspace, and the others with whether Studio has recorded documents for them. */
+/** A workspace entry that does something here: published results, or the recording while no cell is connected. */
+const real = (workspace: (typeof WORKSPACES)[number], live: boolean) => workspace.results !== undefined || (workspace.recorded && !live)
+
+/** The scope switcher: the open workspace, and the others that open from here. */
 function ScopeSwitcher() {
   const { live, open } = useOpenWorkspace()
   return (
@@ -116,12 +119,18 @@ function ScopeSwitcher() {
         <ChevronDown aria-hidden className="size-3.5 shrink-0 self-start mt-0.5 transition-transform group-data-open/scope:rotate-180" />
       </MenuTrigger>
       <KitMenuContent align="start" className="w-72">
-        <MenuRadioGroup value={live ? "" : open?.id ?? ""}>
-          {WORKSPACE_GROUPS.map((group, index) => (
+        <MenuRadioGroup value={live ? "live" : open?.id ?? ""}>
+          {live && open && (
+            <KitMenuRadioItem value="live" className="flex-col items-start gap-0">
+              <span>{open.name}</span><span className="text-xs text-muted-foreground">{open.detail}</span>
+            </KitMenuRadioItem>
+          )}
+          {/* Only what opens: the recorded workspace and published results; nothing greyed out or "coming soon". */}
+          {WORKSPACE_GROUPS.filter((group) => WORKSPACES.some((workspace) => workspace.group === group && real(workspace, live))).map((group, index) => (
             <div key={group} role="none">
-              {index > 0 && <KitMenuSeparator />}
+              {(index > 0 || live) && <KitMenuSeparator />}
               <KitMenuLabel>{group}</KitMenuLabel>
-              {WORKSPACES.filter((workspace) => workspace.group === group).map((workspace) => workspace.results !== undefined
+              {WORKSPACES.filter((workspace) => workspace.group === group && real(workspace, live)).map((workspace) => workspace.results !== undefined
                 ? (
                   <KitMenuItem key={workspace.id} value={workspace.id} label={workspace.name} render={<a href={workspace.results} target="_blank" rel="noreferrer" />} className="flex-col items-start gap-0">
                     <span>{workspace.name}</span><span className="text-xs text-muted-foreground">{workspace.detail} · results ↗</span>
