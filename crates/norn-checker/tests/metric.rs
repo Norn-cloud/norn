@@ -1372,3 +1372,103 @@ fn question_locale_identity_refuses_unknown_or_incomplete_wording_and_retains_de
         "law.wording.incomplete_locale"
     );
 }
+
+/// The metric ontology with `erpnext.Customer.customer_name` marked
+/// `pii.contact` and its catalog declared, as a privacy overlay declares it.
+fn marked_catalog() -> EffectiveCatalog {
+    let mut artifacts: Vec<Value> = serde_json::from_str(ONTOLOGY).expect("ontology");
+    let mut catalog = None;
+    for artifact in &mut artifacts {
+        if artifact["payload"]["objectType"]["name"] == "erpnext.Customer" {
+            let properties = artifact["payload"]["objectType"]["properties"]
+                .as_array_mut()
+                .expect("properties");
+            for property in properties {
+                if property["id"] == "customer_name" {
+                    property["markings"] = json!(["pii.contact"]);
+                }
+            }
+            let mut markings = artifact.clone();
+            markings["artifactId"] = json!("erpnext.markings.entity");
+            markings["name"] = json!("Markings");
+            markings["payload"] = json!({
+                "entityVersion": "2.0",
+                "markings": [{
+                    "id": "pii.contact", "label": "Contact", "severity": "high",
+                    "category": "pii.contact",
+                    "mask": { "kind": "pseudonym", "subject": "Customer" }
+                }]
+            });
+            catalog = Some(markings);
+        }
+    }
+    artifacts.push(catalog.expect("the Customer artifact"));
+    catalog_of(&artifacts)
+}
+
+fn catalog_of(artifacts: &[Value]) -> EffectiveCatalog {
+    let artifacts: Vec<ArtifactEnvelope> =
+        serde_json::from_value(Value::Array(artifacts.to_vec())).expect("ontology decodes");
+    let registry = BTreeSet::from([PropertyTypeName("iso4217.currency_code".into())]);
+    EffectiveCatalog::from_artifacts_with_registry(&artifacts, &registry)
+}
+
+/// PRIVACY-4: a question cannot group or filter by a property that carries a
+/// declared marking (its buckets or counts would show the value unmasked); an
+/// unmarked property on the same path still admits.
+#[test]
+fn a_question_cannot_group_or_filter_by_a_marked_field() {
+    let metric: MetricDefinition = decode(&serde_json::from_str::<Value>(SALES).expect("metric"));
+    let base: Value = serde_json::from_str(SALES_QUESTION).expect("question");
+    let catalog = marked_catalog();
+    let admit = |question: &Value| {
+        check_metrics_and_questions(
+            std::slice::from_ref(&metric),
+            &[decode::<QuestionIR>(question)],
+            &catalog,
+        )
+    };
+    assert!(admit(&base).is_empty(), "{:?}", admit(&base));
+
+    let mut grouped = base.clone();
+    grouped["groupBy"][0] = json!({
+        "path": { "links": ["parent_sales_invoice", "customer"], "property": "customer_name" }
+    });
+    let findings = admit(&grouped);
+    assert_code(&findings, codes::MARKED_FIELD);
+    assert!(
+        findings.iter().any(|d| d.code == codes::MARKED_FIELD
+            && d.span
+                .as_ref()
+                .is_some_and(|s| s.pointer == "/questions/0/groupBy/0")),
+        "{findings:?}"
+    );
+
+    let mut filtered = base.clone();
+    filtered["filter"] = json!([{
+        "path": { "links": ["parent_sales_invoice", "customer"], "property": "customer_name" },
+        "operator": "eq",
+        "value": "Ada"
+    }]);
+    let findings = admit(&filtered);
+    assert_code(&findings, codes::MARKED_FIELD);
+    assert_eq!(
+        findings
+            .iter()
+            .filter(|d| d.code == codes::MARKED_FIELD)
+            .count(),
+        1,
+        "one finding, and no repeated path error: {findings:?}"
+    );
+
+    let mut unmarked = base;
+    unmarked["groupBy"][0] = json!({
+        "path": { "links": ["parent_sales_invoice", "customer"], "property": "name" }
+    });
+    assert!(
+        admit(&unmarked)
+            .iter()
+            .all(|d| d.code != codes::MARKED_FIELD),
+        "an unmarked field on the same path is not refused for its marking"
+    );
+}

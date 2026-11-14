@@ -845,3 +845,95 @@ fn a_provisioned_privacy_set_pseudonymizes_a_party_name() {
         json!(["pii.contact"])
     );
 }
+
+/// PRIVACY-4 on the provisioned privacy set: a question over `canon.Holding`
+/// cannot group or filter by its owner's `display_name` (marked `pii.contact`
+/// by the overlay), for any caller, since the answer's buckets would carry the
+/// name unmasked; grouping by the owner's unmarked `kind` still admits. This is
+/// the admission `POST /v1/questions:evaluate` and saved question definitions
+/// both run (`norn_checker::metric::compute::admit`).
+#[test]
+fn a_question_cannot_group_or_filter_by_a_marked_party_name() {
+    use norn_ir::{ArtifactEnvelope, MetricDefinition, QuestionIR};
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let read = |path: &str| -> ArtifactEnvelope {
+        serde_json::from_str(&std::fs::read_to_string(root.join(path)).unwrap()).unwrap()
+    };
+    let mut artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(
+        &std::fs::read_to_string(
+            root.join("fixtures/demo/explorer/three-systems.definitions.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    for artifact in &mut artifacts {
+        if artifact.artifact_id == "canon.Party.entity" {
+            *artifact = read("registry/privacy/overlays/canon.Party.entity.json");
+        }
+    }
+    artifacts.push(read(
+        "registry/privacy/artifacts/privacy.markings.entity.json",
+    ));
+    let catalog =
+        norn_checker::EffectiveCatalog::from_artifacts_with_registry(&artifacts, &BTreeSet::new());
+    let metric: MetricDefinition = serde_json::from_value(json!({
+        "name": "demo.holdings",
+        "label": "demo.holdings",
+        "type": "simple",
+        "type_params": {
+            "expr": "resource_code",
+            "metric_aggregation_params": {
+                "semantic_model": "canon.Holding",
+                "agg": "count",
+                "agg_time_dimension": "observed_at"
+            }
+        },
+        "x-norn": {
+            "irVersion": "0.1",
+            "additivity": { "kind": "additive" },
+            "timeDimension": { "property": "observed_at" },
+            "owner": "demo",
+            "certified": false
+        }
+    }))
+    .unwrap();
+    let question = |group: Json, filter: Json| -> QuestionIR {
+        serde_json::from_value(json!({
+            "irVersion": "0.1",
+            "name": "adhoc.holdings_by_owner",
+            "objectSet": "canon.Holding",
+            "aggregate": [{ "metric": "demo.holdings" }],
+            "groupBy": group,
+            "filter": filter,
+            "window": { "start": "2026-01-01T00:00:00Z", "end": "2026-11-01T00:00:00Z" },
+            "freshness": { "kind": "live", "maxAgeMs": 5000 }
+        }))
+        .unwrap()
+    };
+    let admit = |question: &QuestionIR| {
+        norn_checker::metric::compute::admit(
+            std::slice::from_ref(&metric),
+            question,
+            &catalog,
+            10_000,
+        )
+    };
+    let refused = |question: &QuestionIR| match admit(question) {
+        Ok(_) => false,
+        Err(findings) => findings
+            .iter()
+            .any(|finding| finding.code.as_str() == "question.validation.marked_field"),
+    };
+    let owner = |property: &str| json!({ "links": ["owner"], "property": property });
+
+    let by_kind = question(json!([{ "path": owner("kind") }]), json!([]));
+    assert!(admit(&by_kind).is_ok(), "{:?}", admit(&by_kind).err());
+    assert!(refused(&question(
+        json!([{ "path": owner("display_name") }]),
+        json!([])
+    )));
+    assert!(refused(&question(
+        json!([{ "path": owner("kind") }]),
+        json!([{ "path": owner("display_name"), "operator": "eq", "value": "Ada" }])
+    )));
+}
