@@ -208,7 +208,7 @@ function Rail({ sections, account, onSignOut }: { readonly sections: readonly Se
   return (
     <Toolbar orientation="vertical" aria-label="Applets" className="flex h-full w-(--sidebar-width-icon) shrink-0 flex-col items-center gap-1 py-3">
       <Link to="/" aria-label="Norn Studio home" className="mb-2 flex size-9 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring">
-        <img src={nornMark} alt="" width={28} height={28} className="size-7 object-contain" />
+        <img src={nornMark} alt="" width={28} height={28} className="size-7 object-contain contrast-125 grayscale dark:brightness-150" />
       </Link>
       {groups.map((group, index) => (
         <div key={group ?? ""} role="group" aria-label={group} className="flex flex-col items-center gap-1">
@@ -236,8 +236,8 @@ function AppletPanel({ section, pathname }: { readonly section: Section; readonl
   const badge = shown((section.useBadge ?? none)())
   const groups = [...new Set(entries.map(({ group }) => group ?? ""))]
   const current = [...entries].filter(({ href }) => within(href, pathname)).sort((a, b) => b.href.length - a.href.length)[0]?.href ?? (pathname === section.path ? OVERVIEW : null)
-  // Groups start open and stay open unless the reader closes one; the current page's group never closes.
-  const [collapsed, setCollapsed] = useState<readonly string[]>([])
+  // The first group starts open and the rest closed, until the reader opens or closes one; the current page's group never closes.
+  const [chosen, setChosen] = useState<Readonly<Record<string, boolean>>>({})
   const values = groups.map((heading) => `group:${heading}`)
   const close = () => setOpenMobile(false)
   const label = "flex h-8 w-full min-w-0 items-center gap-2 rounded-lg px-2 text-sm text-sidebar-foreground/85 outline-none hover:bg-sidebar-accent hover:text-sidebar-foreground data-current:bg-sidebar-accent data-current:font-medium data-current:text-sidebar-foreground [&_svg]:size-4 [&_svg]:shrink-0"
@@ -255,7 +255,7 @@ function AppletPanel({ section, pathname }: { readonly section: Section; readonl
         )}
       </div>
       <nav aria-label={section.label} className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
-        <Tree aria-label={`${section.label} pages`} mode="none" current={current} expanded={values.filter((value) => !collapsed.includes(value) || holds(value, current, entries))} onExpandedChange={(next) => setCollapsed(values.filter((value) => !next.includes(value)))}>
+        <Tree aria-label={`${section.label} pages`} mode="none" current={current} expanded={values.filter((value, index) => (chosen[value] ?? index === 0) || holds(value, current, entries))} onExpandedChange={(next) => setChosen(Object.fromEntries(values.map((value) => [value, next.includes(value)])))}>
           <TreeItem value={OVERVIEW} label="Overview" className={focusRow}>
             <TreeItemLabel render={<Link to={section.path} onClick={close} />} className={cn(label, section.kind && KINDS[section.kind].svg)}>
               <section.icon aria-hidden /><span className="truncate">Overview</span>

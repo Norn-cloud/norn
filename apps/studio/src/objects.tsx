@@ -216,7 +216,7 @@ function KeyFacts({ concept, reads, onLineage }: { readonly concept: Concept; re
   const fields = keyFacts(concept, reads.object.document.values)
   if (fields.length === 0) return null
   return (
-    <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-border bg-border sm:grid-cols-3 xl:grid-cols-6">
+    <dl className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,10rem),1fr))] gap-px overflow-hidden rounded-xl border border-border bg-border">
       {fields.map((field) => (
         <div key={field.id} className="min-w-0 bg-card px-4 py-3">
           <dt className="truncate text-xs text-muted-foreground">{field.label ?? field.id.replaceAll("_", " ")}</dt>

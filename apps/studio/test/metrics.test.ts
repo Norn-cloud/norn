@@ -33,6 +33,9 @@ test("the assistant's suggested requests read a type's id in a metric label as i
   expect(inWords(AS_OF.label)).toBe("quantity, as of observed_at; last value per Holding at each period's end")
   const catalog = { objectSet: "canon.Holding", properties: [{ name: "vault", kind: "text", unit: null }], metrics: [{ name: "m", label: AS_OF.label, type: "simple" }], grains: [], operators: [], example: { irVersion: "0.1", calendar: "iso_utc", freshness: null }, declarations: { metrics: [], objectType: null } }
   for (const request of examples(catalog)) expect(request).not.toContain("canon.")
+  // The checker's display words, when it sends them, are how the request names the metric.
+  const spokenCatalog = { ...catalog, properties: [{ name: "cost_currency", kind: "text", unit: null }], metrics: [{ name: "m", label: AS_OF.label, display: "quantity at period end", type: "simple" }] }
+  expect(examples(spokenCatalog)).toEqual(["A weekly view of quantity at period end", "Which cost currency has the most quantity at period end?"])
 })
 
 test("a date's range sent as epoch milliseconds opens a window; with no range at all, the latest 52 ISO weeks are asked", async () => {
