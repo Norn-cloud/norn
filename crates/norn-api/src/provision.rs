@@ -43,6 +43,9 @@ use crate::{
 /// The provisioning route.
 pub const PROVISION_PATH: &str = "/v1/cell:provision";
 
+/// The path of the host's trusted-base digest ([`get_base`]).
+pub const BASE_PATH: &str = "/v1/cell:base";
+
 /// The largest provisioning body a host accepts, in bytes.
 pub const MAX_PROVISION_BYTES: usize = 1 << 20;
 
@@ -182,6 +185,35 @@ pub struct ProvisionReceipt {
     pub receipt_sha256: String,
     /// The trusted base the set was admitted against.
     pub base_sha256: String,
+}
+
+/// The trusted base a host provisions cells against.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct BaseDocument {
+    /// The digest a provisioning submission names as its `baseSha256`.
+    pub base_sha256: String,
+}
+
+/// `GET /v1/cell:base`: the digest of this host's trusted base, for anyone.
+/// It names artifacts the host's own build publishes (`core.`, `std.`), so
+/// it discloses nothing about any tenant, cell or caller; no scope is read.
+///
+/// # Errors
+/// Any method but `GET` (405).
+#[utoipa::path(get, path = "/v1/cell:base", responses((status = 200, description = "The digest of the trusted base this host provisions cells against: the baseSha256 a provisioning submission names.", body = BaseDocument), (status = 405, description = "The request was refused: the route takes GET.", body = Refusal)))]
+pub fn get_base(base: &TrustedBase, method: &str) -> Result<BaseDocument, Refusal> {
+    if method != "GET" {
+        return Err(Refusal::new(
+            StatusCode::METHOD_NOT_ALLOWED,
+            "route.method_not_allowed",
+            "the route does not accept this method",
+            "the trusted base is read with GET",
+        ));
+    }
+    Ok(BaseDocument {
+        base_sha256: base.sha256.clone(),
+    })
 }
 
 /// Decide [`Operation::ProvisionCell`] for `actor` on the physical scope

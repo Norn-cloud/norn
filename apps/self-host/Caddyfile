@@ -1,0 +1,8 @@
+# The only public listener. NORN_SITE is ":8080" for this machine, or a domain name, for which
+# Caddy obtains and renews a certificate itself. X-Real-Ip is always set from the connection, so a
+# client cannot choose the address Studio's sign-in rate limit counts.
+{$NORN_SITE::8080} {
+	reverse_proxy norn:8080 {
+		header_up X-Real-Ip {remote_host}
+	}
+}

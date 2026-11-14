@@ -85,6 +85,18 @@ test("a write that fails leaves no secret-bearing file behind", async () => {
   expect(existsSync(path)).toBe(true)
 })
 
+test("a self-host on this machine may use plain http on loopback only; it names the environment new workspaces get", () => {
+  for (const url of ["http://localhost:8080", "http://127.0.0.1:8080", "http://[::1]:8080", "http://localhost"]) {
+    expect(celldConfig(celldStudio({ ...BASE, BETTER_AUTH_URL: url })).vars).toMatchObject({ BETTER_AUTH_URL: url })
+  }
+  for (const url of ["http://studio.example.com", "http://localhost.example.com", "http://localhost:8080/x", "http://10.0.0.1:8080"]) {
+    expect(() => celldStudio({ ...BASE, BETTER_AUTH_URL: url })).toThrow("BETTER_AUTH_URL")
+  }
+  expect(celldConfig(celldStudio({ ...BASE, STUDIO_DEFAULT_ENVIRONMENT_ID: "prod" })).vars).toMatchObject({ STUDIO_DEFAULT_ENVIRONMENT_ID: "prod" })
+  expect(celldConfig(celldStudio(BASE)).vars).not.toHaveProperty("STUDIO_DEFAULT_ENVIRONMENT_ID")
+  expect(() => celldStudio({ ...BASE, STUDIO_DEFAULT_ENVIRONMENT_ID: "Prod env" })).toThrow("STUDIO_DEFAULT_ENVIRONMENT_ID")
+})
+
 test("a celld stage names the header its edge sets, and refuses without one", () => {
   expect(celldConfig(celldStudio({ ...BASE, STUDIO_CLIENT_IP_HEADER: "x-real-ip" })).vars).toMatchObject({ STUDIO_CLIENT_IP_HEADER: "x-real-ip" })
   // Unset never falls back to cf-connecting-ip: behind Traefik a client writes that header.

@@ -105,6 +105,8 @@ routes! {
     /// `POST /v1/cell:provision`, dispatched by the tenant before any cell
     /// route (HOST-PROVISION-1).
     Provision => ("POST", "/v1/cell:provision"),
+    /// `GET /v1/cell:base`: the host's trusted-base digest, for anyone.
+    Base => ("GET", "/v1/cell:base"),
     /// `POST /v1/actions/{actionId}`.
     Action => ("POST", "/v1/actions/{actionId}"),
     /// `GET /v1/definitions`.
@@ -144,6 +146,7 @@ impl Route {
         match path {
             "/v1/access" => return Some(Self::Access),
             norn_api::provision::PROVISION_PATH => return Some(Self::Provision),
+            norn_api::provision::BASE_PATH => return Some(Self::Base),
             "/v1/definitions" => return Some(Self::DefinitionsCatalog),
             "/v1/questions:evaluate" => return Some(Self::QuestionsEvaluate),
             "/v1/questions:trace" => return Some(Self::QuestionsTrace),
@@ -308,6 +311,8 @@ fn route<E: SqlEngine>(
         ))
     } else if route_of == Some(Route::Provision) {
         provisioned(host, actor, request)
+    } else if route_of == Some(Route::Base) {
+        base_document(method)
     } else if let Some(route) = definitions_route(path) {
         definitions(host, questions, kinds, actor, route, request)
     } else if let Some(action) = action {
@@ -374,6 +379,13 @@ fn route<E: SqlEngine>(
 /// verified.
 fn cell<E: SqlEngine>(host: Option<&DevHost<E>>) -> Result<&DevHost<E>, Refusal> {
     host.ok_or_else(norn_api::authz::read_denied)
+}
+
+/// `GET /v1/cell:base`: this host's trusted-base digest, answered the same
+/// to every caller on every scope, provisioned or not.
+pub(crate) fn base_document(method: &str) -> Result<String, Refusal> {
+    let base = crate::base::trusted_base().map_err(Refusal::host)?;
+    document_json(&norn_api::provision::get_base(&base, method)?)
 }
 
 /// `POST /v1/cell:provision` on a cell this dispatch already serves: a

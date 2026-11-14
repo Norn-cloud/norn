@@ -1,0 +1,90 @@
+# Norn, self-hosted: `docker compose up` from apps/self-host (see README.md).
+#   norn   celld serving the tenant cell Worker and Studio
+#   s3     the bundled fleet bucket (SeaweedFS); NORN_BUNDLED_STORE=0 and the NORN_S3_* settings
+#          replace it with any S3-compatible store (README: "Use your own storage")
+#   proxy  Caddy, the only published port (default)
+#   tunnel cloudflared, in place of Caddy when Cloudflare fronts the install (README: "Behind Cloudflare")
+name: norn
+
+services:
+  norn:
+    build:
+      context: ../..
+      dockerfile: apps/self-host/Dockerfile
+      args:
+        NORN_COMMIT: ${NORN_COMMIT:-}
+    environment:
+      NORN_PUBLIC_URL: ${NORN_PUBLIC_URL:-http://localhost:8080}
+      NORN_OWNER_EMAIL: ${NORN_OWNER_EMAIL:-owner@norn.localhost}
+      NORN_OWNER_PASSWORD: ${NORN_OWNER_PASSWORD:-}
+      # Which edge sets the client address Studio's sign-in limit counts: Caddy (x-real-ip) or
+      # Cloudflare's tunnel (cf-connecting-ip). start.sh refuses a mismatch.
+      NORN_CLIENT_IP_HEADER: ${NORN_CLIENT_IP_HEADER:-x-real-ip}
+      NORN_CADDY: ${NORN_CADDY:-1}
+      NORN_CLOUDFLARE_TUNNEL: ${NORN_CLOUDFLARE_TUNNEL:-0}
+      # The fleet bucket. The defaults are the bundled store, which has no accounts and is
+      # reachable only on the internal network.
+      CELLD_BUCKET: s3://${NORN_S3_BUCKET:-norn}
+      S3_ENDPOINT: ${NORN_S3_ENDPOINT:-http://s3:8333}
+      AWS_REGION: ${NORN_S3_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${NORN_S3_ACCESS_KEY_ID:-norn}
+      AWS_SECRET_ACCESS_KEY: ${NORN_S3_SECRET_ACCESS_KEY:-norn-local-store}
+    volumes:
+      - norn-data:/data
+    networks: [internal, edge]
+    # No start-order dependency on s3: the node's start waits for the bundled store itself, and
+    # your own storage has no container here.
+    restart: unless-stopped
+
+  s3:
+    image: chrislusf/seaweedfs:3.97
+    # 0 when your own storage is configured: the bundled store does not start.
+    deploy:
+      replicas: ${NORN_BUNDLED_STORE:-1}
+    command: server -dir=/data -s3 -s3.port=8333 -ip.bind=0.0.0.0
+    volumes:
+      - s3-data:/data
+    networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9333/cluster/status >/dev/null"]
+      interval: 3s
+      retries: 40
+    restart: unless-stopped
+
+  proxy:
+    image: caddy:2.10.2
+    # 0 behind Cloudflare: the tunnel is then the only way in, and nothing is published.
+    deploy:
+      replicas: ${NORN_CADDY:-1}
+    environment:
+      NORN_SITE: ${NORN_SITE:-:8080}
+    ports:
+      - "${NORN_PORT:-8080}:8080"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    networks: [edge]
+    depends_on: [norn]
+    restart: unless-stopped
+
+  tunnel:
+    # 2025.11.1, pinned by its index digest.
+    image: cloudflare/cloudflared:2025.11.1@sha256:89ee50efb1e9cb2ae30281a8a404fed95eb8f02f0a972617526f8c5b417acae2
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${NORN_CLOUDFLARE_TUNNEL_TOKEN:-}
+    deploy:
+      replicas: ${NORN_CLOUDFLARE_TUNNEL:-0}
+    networks: [edge]
+    depends_on: [norn]
+    restart: unless-stopped
+
+networks:
+  internal:
+    internal: true
+  edge: {}
+
+volumes:
+  norn-data:
+  s3-data:
+  caddy-data:

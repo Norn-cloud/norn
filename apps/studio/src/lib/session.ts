@@ -26,8 +26,9 @@ export function useAccount() {
 async function call(path: string, body: Record<string, string>): Promise<void> {
   const response = await fetch(`/api/auth${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
   if (response.ok) return
-  const reason = await response.json().catch(() => null) as { message?: string } | null
-  throw new AuthRefusal(response.status === 429 ? "Too many attempts. Wait a few minutes and try again." : reason?.message ?? `Sign-in failed (${response.status}).`)
+  // Better Auth's own refusals carry `message`; Studio's Worker refusals carry `error`.
+  const reason = await response.json().catch(() => null) as { message?: string; error?: string } | null
+  throw new AuthRefusal(response.status === 429 ? "Too many attempts. Wait a few minutes and try again." : reason?.message ?? reason?.error ?? `Sign-in failed (${response.status}).`)
 }
 
 export const authApi = {

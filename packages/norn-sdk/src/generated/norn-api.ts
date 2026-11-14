@@ -32,6 +32,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/cell:base": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /v1/cell:base`: the digest of this host's trusted base, for anyone.
+         *     It names artifacts the host's own build publishes (`core.`, `std.`), so
+         *     it discloses nothing about any tenant, cell or caller; no scope is read.
+         * @description # Errors
+         *     Any method but `GET` (405).
+         */
+        get: operations["get_base"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/cell:provision": {
         parameters: {
             query?: never;
@@ -470,6 +493,11 @@ export interface components {
             restatement: string | null;
             /** @description Lower-case hex SHA-256 of `restatement`; null with it. */
             restatementSha256: string | null;
+        };
+        /** @description The trusted base a host provisions cells against. */
+        BaseDocument: {
+            /** @description The digest a provisioning submission names as its `baseSha256`. */
+            baseSha256: string;
         };
         /** @description One version of one definition. */
         DefinitionDocument: {
@@ -9678,6 +9706,35 @@ export interface operations {
             };
             /** @description The request was refused: host failure. */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    get_base: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The digest of the trusted base this host provisions cells against: the baseSha256 a provisioning submission names. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BaseDocument"];
+                };
+            };
+            /** @description The request was refused: the route takes GET. */
+            405: {
                 headers: {
                     [name: string]: unknown;
                 };

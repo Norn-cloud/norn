@@ -20,6 +20,8 @@ export interface CelldStudio {
   readonly authUrl: string
   readonly authSecret: string
   readonly defaultOrg?: string
+  /** The data environment new workspaces get (their cell's scope); without it a workspace has no cell. */
+  readonly defaultEnvironment?: string
   /** The cell Worker's script name in the same fleet bucket, bound as NORN_HOST. */
   readonly host?: string
   /** The assistant's AI Gateway; without it the assistant is off. */
@@ -47,7 +49,10 @@ export function celldStudio(env: Readonly<Record<string, string | undefined>>): 
   const build = env.STUDIO_BUILD ?? ""
   if (!/^[0-9a-f]{40}$/.test(build)) throw new Error("STUDIO_BUILD must be the full commit the bundle was built from")
   const authUrl = env.BETTER_AUTH_URL ?? ""
-  if (!/^https:\/\/[a-z0-9.-]+$/.test(authUrl)) throw new Error("BETTER_AUTH_URL must be an https origin without a path")
+  // https, or plain http only on this machine's loopback (a local self-host), where browsers treat the origin as secure.
+  if (!/^https:\/\/[a-z0-9.-]+(:[0-9]{1,5})?$/.test(authUrl) && !/^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:[0-9]{1,5})?$/.test(authUrl)) throw new Error("BETTER_AUTH_URL must be an https origin without a path, or http://localhost[:port]")
+  const defaultEnvironment = env.STUDIO_DEFAULT_ENVIRONMENT_ID
+  if (defaultEnvironment !== undefined && !NAME.test(defaultEnvironment)) throw new Error(`STUDIO_DEFAULT_ENVIRONMENT_ID must be an environment name, got ${JSON.stringify(defaultEnvironment)}`)
   const authSecret = env.BETTER_AUTH_SECRET ?? ""
   if (authSecret.length < 32) throw new Error("BETTER_AUTH_SECRET must be at least 32 characters")
   if (env.EMAIL_FROM !== undefined) throw new Error("celld has no Email Service binding; unset EMAIL_FROM")
@@ -69,6 +74,7 @@ export function celldStudio(env: Readonly<Record<string, string | undefined>>): 
     stage, build, authUrl, authSecret,
     clientIpHeader: ipHeader,
     ...env.STUDIO_DEFAULT_ORG === undefined ? {} : { defaultOrg: env.STUDIO_DEFAULT_ORG },
+    ...defaultEnvironment === undefined ? {} : { defaultEnvironment },
     ...host === undefined ? {} : { host },
     ...gatewayUrl === undefined || gatewayToken === undefined ? {} : { agent: { gatewayUrl, gatewayToken } },
     ...!toolDeclared || toolUrl === undefined || toolClient === undefined || toolSecret === undefined ? {} : { toolGateway: { url: toolUrl, clientId: toolClient, clientSecret: toolSecret } },
@@ -80,6 +86,7 @@ export function celldConfig(studio: CelldStudio): Record<string, unknown> {
   // celld has no node:crypto.scrypt; AUTH_SCRYPT=js runs Better Auth's own hash in pure JS.
   const vars: Record<string, string> = { BETTER_AUTH_SECRET: studio.authSecret, BETTER_AUTH_URL: studio.authUrl, AUTH_SCRYPT: "js", STUDIO_BUILD: studio.build, STUDIO_CLIENT_IP_HEADER: studio.clientIpHeader }
   if (studio.defaultOrg !== undefined) vars.STUDIO_DEFAULT_ORG = studio.defaultOrg
+  if (studio.defaultEnvironment !== undefined) vars.STUDIO_DEFAULT_ENVIRONMENT_ID = studio.defaultEnvironment
   if (studio.agent !== undefined) Object.assign(vars, { AI_GATEWAY_URL: studio.agent.gatewayUrl, AI_GATEWAY_TOKEN: studio.agent.gatewayToken })
   if (studio.toolGateway !== undefined) Object.assign(vars, { TOOL_GATEWAY_URL: studio.toolGateway.url, TOOL_GATEWAY_CLIENT_ID: studio.toolGateway.clientId, TOOL_GATEWAY_CLIENT_SECRET: studio.toolGateway.clientSecret })
   return {

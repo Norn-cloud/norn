@@ -355,6 +355,71 @@
         }
       },
       "subcommands": {}
+    },
+    "workspace": {
+      "args": {},
+      "subcommands": {
+        "create": {
+          "args": {
+            "definitions": {
+              "long": "definitions",
+              "short": null,
+              "aliases": [],
+              "positional": false,
+              "takes_value": true,
+              "multiple": false,
+              "required": false,
+              "default": [],
+              "values": []
+            },
+            "email": {
+              "long": "email",
+              "short": null,
+              "aliases": [],
+              "positional": false,
+              "takes_value": true,
+              "multiple": false,
+              "required": true,
+              "default": [],
+              "values": []
+            },
+            "password_env": {
+              "long": "password-env",
+              "short": null,
+              "aliases": [],
+              "positional": false,
+              "takes_value": true,
+              "multiple": false,
+              "required": true,
+              "default": [],
+              "values": []
+            },
+            "studio": {
+              "long": "studio",
+              "short": null,
+              "aliases": [],
+              "positional": false,
+              "takes_value": true,
+              "multiple": false,
+              "required": true,
+              "default": [],
+              "values": []
+            },
+            "via": {
+              "long": "via",
+              "short": null,
+              "aliases": [],
+              "positional": false,
+              "takes_value": true,
+              "multiple": false,
+              "required": false,
+              "default": [],
+              "values": []
+            }
+          },
+          "subcommands": {}
+        }
+      }
     }
   },
   "format": "norn-cli-contract/1"
