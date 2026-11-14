@@ -31,6 +31,51 @@ use norn_ir::{Decimal, ObjectTypeName, RuntimeValue, UtcTimestamp};
 use norn_ir::{ResourceLimitProfile, metric::FreshnessPolicy};
 use serde::{Deserialize, Serialize};
 
+/// #1380: which records a question or profile reads. `Trusted` (the
+/// default) leaves out every record a governing law holds back, as answers
+/// always have; `HeldBack` reads only those records; `All` reads both. A
+/// held-back record is never mixed in silently: every answer states its
+/// population, and lists the held-back members it read. The choice selects
+/// records and grants nothing: each record passes the same read gates.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Population {
+    /// Records no governing law holds back.
+    #[default]
+    Trusted,
+    /// Only the records a governing law holds back.
+    HeldBack,
+    /// Trusted and held-back records together.
+    All,
+}
+impl Population {
+    /// Every population, in the order a chooser lists them.
+    pub const EVERY: [Self; 3] = [Self::Trusted, Self::HeldBack, Self::All];
+    /// The wire name: `trusted`, `held_back` or `all`.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Trusted => "trusted",
+            Self::HeldBack => "held_back",
+            Self::All => "all",
+        }
+    }
+    /// The population a wire name names, if any.
+    #[must_use]
+    pub fn parse(text: &str) -> Option<Self> {
+        Self::EVERY.into_iter().find(|population| population.as_str() == text)
+    }
+    /// Whether a record held back (`true`) or trusted belongs to it.
+    #[must_use]
+    pub const fn admits(self, held_back: bool) -> bool {
+        match self {
+            Self::Trusted => !held_back,
+            Self::HeldBack => held_back,
+            Self::All => true,
+        }
+    }
+}
+
 /// Connector instance → partition → opaque consumed cursor.
 pub type Frontier = BTreeMap<String, BTreeMap<String, String>>;
 /// Observed source progress, supplied by the trusted connector host.
@@ -76,22 +121,57 @@ impl QueryContext {
         finding_members: &mut BTreeSet<String>,
         visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
     ) -> Result<bool, CellError> {
+        let mut held = Held {
+            population: Population::Trusted,
+            exclusions,
+            held_back: &mut BTreeMap::new(),
+        };
+        self.include_in(reader, record, frontier, &mut held, finding_members, visible)
+    }
+
+    /// #1380: [`Self::include_record`] for `held.population`. A held-back
+    /// record the population reads is recorded in `held.held_back`; one it
+    /// leaves out is an exclusion only for the trusted population, whose
+    /// answer it would otherwise have counted.
+    fn include_in<E: SqlEngine>(
+        &self,
+        reader: &crate::StoreReader<'_, E>,
+        record: &ObjectRecord,
+        frontier: Option<u64>,
+        held: &mut Held<'_>,
+        finding_members: &mut BTreeSet<String>,
+        visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
+    ) -> Result<bool, CellError> {
         if record.scope != self.scope {
             return Err(refused("core.compute.stale_input"));
         }
         if !visible(record)? {
             return Ok(false);
         }
-        finding_members.insert(record.id.clone());
-        if let Some(finding) = reader
+        let finding = reader
             .question_findings(&self.world, record, frontier)?
             .first()
-        {
-            exclusions.insert(record.id.clone(), finding.id.clone());
+            .map(|finding| finding.id.clone());
+        if !held.population.admits(finding.is_some()) {
+            if let Some(finding) = finding {
+                finding_members.insert(record.id.clone());
+                held.exclusions.insert(record.id.clone(), finding);
+            }
             return Ok(false);
+        }
+        finding_members.insert(record.id.clone());
+        if let Some(finding) = finding {
+            held.held_back.insert(record.id.clone(), finding);
         }
         Ok(true)
     }
+}
+
+/// #1380: one read's population and the held-back records it met.
+struct Held<'a> {
+    population: Population,
+    exclusions: &'a mut BTreeMap<String, String>,
+    held_back: &'a mut BTreeMap<String, String>,
 }
 /// Declared execution strategy; qualification belongs to the producing evaluator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
