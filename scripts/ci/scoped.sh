@@ -14,6 +14,7 @@ failed=0
 step() { local n=$1 t=$SECONDS rc; shift; "$@" > "$out/$n.log" 2>&1; rc=$?; echo "$n rc=$rc $((SECONDS-t))s" | tee -a "$out/steps"; [[ $rc -eq 0 ]] || failed=1; }
 t0=$SECONDS
 changed=$(git -c core.quotePath=false diff --name-only --no-renames "$base" HEAD) || { echo "scoped: cannot diff against $base" >&2; exit 2; }
+added=$(git -c core.quotePath=false diff --name-only --no-renames --diff-filter=A "$base" HEAD) || { echo "scoped: cannot diff against $base" >&2; exit 2; }
 # Workspace-wide inputs reach every crate: such a unit needs the full gate, never a scoped one.
 if wide=$(grep -E '^(Cargo\.lock|Cargo\.toml|rust-toolchain(\.toml)?|\.cargo/.*)$' <<<"$changed"); then
   echo "scoped: workspace-wide change ($(tr '\n' ' ' <<<"$wide")); run the full gate: scripts/ci/core.sh all" >&2
@@ -47,6 +48,10 @@ if [[ ${outside%% *} != 0 ]]; then
 fi
 echo "touched=$touched dependents=$dependents" | tee -a "$out/steps"
 step fmt cargo fmt --all -- --check
+# A unit that adds a file must enroll it (2026-11-14: demo/robin's enrollment went red and five
+# later units added unregistered files, because this gate never ran the check). The check is the
+# one `core.sh cheap` runs; it reads the whole tree, so it also fails on an earlier unit's gap.
+[[ -z $added ]] || step enrollment python3 -I scripts/proof_enrollment.py
 if [[ $touched != - ]]; then
   p=(); for c in ${touched//,/ }; do p+=(-p "$c"); done
   step clippy cargo clippy --locked "${p[@]}" --all-targets -- -D warnings
