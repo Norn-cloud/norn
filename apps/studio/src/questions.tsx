@@ -26,7 +26,7 @@ import type { MenuEntry } from "./shell.tsx"
 
 import { AnswerView, AskedAnswer, RefusedNote } from "./answer-view.tsx"
 import { NotServed, useMode } from "./lib/live-transport.ts"
-import { metricHeading, metricQuestion, readMetrics, timeLabel, windowOf, type Condition, type MetricSummary, type Window } from "./lib/metrics.ts"
+import { metricHeading, metricQuestion, readMetrics, recentWindow, timeLabel, windowOf, type Condition, type MetricSummary, type Window } from "./lib/metrics.ts"
 import { figure, unitGroups, type UnitGroup } from "./lib/answer-anatomy.ts"
 import { evaluateQuestion } from "./lib/evaluate.ts"
 import { readDocument } from "./lib/exact.ts"
@@ -49,7 +49,10 @@ function MetricCard({ metric }: { readonly metric: MetricSummary }) {
     : (typeNamed(type) as { readonly links?: readonly { readonly id: string; readonly target: string }[] } | undefined)?.links?.find(({ id }) => id === link)?.target, metric.objectType)
   const timeProfile = useQuery({ queryKey: ["profile", timeType], queryFn: () => readProfile(timeType!), retry: false, enabled: timeType !== undefined && timeType !== metric.objectType })
   const timeDocument = timeType === metric.objectType ? profile.data?.document : timeProfile.data?.document
-  const window = timeDocument && metric.timeProperty !== null ? windowOf(timeDocument, metric.timeProperty) : undefined
+  const profiledWindow = timeDocument && metric.timeProperty !== null ? windowOf(timeDocument, metric.timeProperty) : undefined
+  // The profile sent no range for the time property (a hosted cell may withhold it): ask the latest 52 weeks, and say so.
+  const assumed = profiledWindow === undefined && metric.timeProperty !== null && (profile.data?.document.rows ?? 0) > 0 && (timeDocument !== undefined || timeProfile.isError)
+  const window = profiledWindow ?? (assumed ? recentWindow(Date.now()) : undefined)
   // The answer is read with the type's own declaration, as the cell admitted it.
   const objectType = typeNamed(metric.objectType)
   const declared = { metrics: readDocument<readonly Metric[]>("[]", "live"), objectType: readDocument<ObjectType>(JSON.stringify(objectType ?? { name: metric.objectType, properties: [] }), "live") }
@@ -78,7 +81,7 @@ function MetricCard({ metric }: { readonly metric: MetricSummary }) {
         {profile.data && profile.data.document.rows > 0 && window === undefined && <p className="text-sm text-muted-foreground">No {metric.timeProperty?.replaceAll("_", " ") ?? "date"} values to ask over yet.</p>}
         {window && <>
           <div className="flex flex-wrap items-start gap-2">
-            <FactChip icon={CalendarRange} label={`Per ${window.grain}`} className="h-8" title="Every date its records carry.">{day(window.start)} – {day(Date.parse(window.end) - 86_400_000)}</FactChip>
+            <FactChip icon={CalendarRange} label={`Per ${window.grain}`} className="h-8" title={assumed ? "The cell sent no range for this date, so Studio asks the latest 52 weeks." : "Every date its records carry."}>{assumed ? "Latest 52 weeks" : `${day(window.start)} – ${day(Date.parse(window.end) - 86_400_000)}`}</FactChip>
             <div className="min-w-0 flex-1"><Conditions fields={(objectType?.properties ?? []).map(({ id }) => id).filter((id) => id !== metric.expression && id !== metric.timeProperty)} conditions={conditions} onChange={change} /></div>
           </div>
           {sources.length === 0

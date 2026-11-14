@@ -83,13 +83,25 @@ const iso = (ms: number) => new Date(ms).toISOString().replace(".000Z", "Z")
  */
 export function windowOf(profile: ObjectProfile, property: string): Window | undefined {
   const profiled = profile.properties.find((candidate) => candidate.property === property)
-  const first = typeof profiled?.min === "string" ? dayOf(profiled.min) : undefined
-  const last = typeof profiled?.max === "string" ? dayOf(profiled.max) : undefined
+  // A cell sends a date's range as text (ISO) or, for a timestamp, as epoch milliseconds.
+  const at = (value: unknown) => typeof value === "string" ? dayOf(value) : typeof value === "number" && Number.isFinite(value) ? value : undefined
+  const first = at(profiled?.min)
+  const last = at(profiled?.max)
   if (first === undefined || last === undefined) return undefined
   // The bounded engine groups dates by ISO week today; day grain follows (L-port), and then short spans go by day.
   // 1970-01-01 was a Thursday: days since the epoch plus 3, mod 7, counts days since Monday.
   const monday = (at: number) => at - (((at / DAY + 3) % 7) * DAY)
   return { start: iso(monday(first)), end: iso(monday(last) + 7 * DAY), grain: "week" }
+}
+
+/**
+ * The window asked when the cell's profile sends no range for the time property (a hosted cell may
+ * withhold it): the 52 ISO weeks up to the week of `nowMs`. The page says the window was assumed.
+ */
+export function recentWindow(nowMs: number): Window {
+  const monday = (at: number) => at - (((Math.floor(at / DAY) + 3) % 7) * DAY) - (at % DAY)
+  const end = monday(nowMs) + 7 * DAY
+  return { start: iso(end - 52 * 7 * DAY), end: iso(end), grain: "week" }
 }
 
 /** One "only where" condition: a property equal to a value, or empty (`null`). */
