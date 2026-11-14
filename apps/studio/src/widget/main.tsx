@@ -1,5 +1,3 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { RouterProvider, createMemoryHistory, createRootRoute, createRouter } from "@tanstack/react-router"
 import { StrictMode, useEffect, useLayoutEffect } from "react"
 import { createRoot } from "react-dom/client"
 import { Bridge, type HostContext } from "./bridge"
@@ -11,7 +9,7 @@ import "../index.css"
  * view and Studio's origin in two meta tags; the host then delivers the tool's input and result.
  */
 const meta = (name: string) => document.querySelector(`meta[name="${name}"]`)?.getAttribute("content") ?? null
-const VIEWS: readonly View[] = ["answer", "lineage", "dashboard", "receipt"]
+const VIEWS: readonly View[] = ["answer", "lineage", "dashboard", "receipt", "records", "findings", "plan"]
 const named = meta("norn-view")
 const view: View = VIEWS.find((candidate) => candidate === named) ?? "answer"
 const studio = meta("norn-studio")
@@ -54,13 +52,8 @@ function Widget() {
   return <Frame><DeliveryView view={view} delivery={delivery} bridge={bridge} studio={studio} /></Frame>
 }
 
-// Studio's components link to Studio pages, so they render inside a router; it never navigates here.
-const router = createRouter({ routeTree: createRootRoute({ component: Widget }), history: createMemoryHistory() })
-
 createRoot(document.getElementById("root") as HTMLElement).render(
   <StrictMode>
-    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-      <RouterProvider router={router} />
-    </QueryClientProvider>
+    <Widget />
   </StrictMode>,
 )

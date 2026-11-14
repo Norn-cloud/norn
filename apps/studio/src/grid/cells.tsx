@@ -28,16 +28,16 @@ export const WITHHELD_PROPERTY_HINT = "The server withheld this value from your 
 export const isWithheld = (row: GridRow): boolean => rowWithheld(row.record) || row.record.values === null
 export const fieldWithheld = (row: GridRow, field: Field): boolean => isWithheld(row) || propertyWithheld(row.record, field.id)
 
-/** The canvas tints (D65, `--tint-*`), one per declared enum value by its position, so a value keeps its colour everywhere. */
-const TINTS = ["--tint-state", "--tint-tool", "--tint-route", "--tint-outcome", "--tint-agent", "--tint-ask", "--tint-wait", "--tint-law"] as const
 
-/** A choice as a chip in its value's colour; `label` is what the reader reads (its declared label in Business, the stored value in Technical). */
-export function EnumChip({ field, value, label = value }: { readonly field: Field; readonly value: string; readonly label?: string }) {
-  const index = field.scalar.kind === "enum" ? field.scalar.values.indexOf(value) : -1
-  const tint = TINTS[(index < 0 ? 0 : index) % TINTS.length] ?? TINTS[0]
+/**
+ * A choice as a neutral chip; `label` is what the reader reads (its declared label in Business, the stored value
+ * in Technical). A value's colour would have to say what it means, and a declaration says nothing of that yet, so
+ * no value is coloured: a colour picked by position once showed "failed" in green.
+ */
+export function EnumChip({ field: _field, value, label = value }: { readonly field: Field; readonly value: string; readonly label?: string }) {
   return (
-    <span title={value} style={{ "--tint": `var(${tint})` } as CSSProperties}
-      className="inline-block max-w-full truncate rounded-md bg-[color-mix(in_oklab,var(--tint)_14%,transparent)] px-1.5 py-0.5 text-xs leading-tight text-[color-mix(in_oklab,var(--tint)_80%,var(--foreground))] ring-1 ring-[color-mix(in_oklab,var(--tint)_22%,transparent)] ring-inset">
+    <span title={value}
+      className="inline-block max-w-full truncate rounded-md bg-muted px-1.5 py-0.5 text-xs leading-tight text-foreground ring-1 ring-border ring-inset">
       {label}
     </span>
   )

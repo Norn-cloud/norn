@@ -52,6 +52,9 @@ use crate::server::{self, Request, Response};
 /// for a provisioning attempt (a refused attempt consumes its engine).
 pub type OpenEngine<E> = Box<dyn Fn() -> Result<E, String>>;
 
+/// `POST /v1/access:decide`: Studio's connector permission checks (#1036).
+pub const ACCESS_DECIDE_PATH: &str = "/v1/access:decide";
+
 /// The retained-definition kinds every cell of this host admits.
 #[must_use]
 pub fn host_kinds(table: &'static GrantTable) -> DefinitionKinds {
@@ -276,6 +279,8 @@ pub struct Tenant<E: SqlEngine> {
     pseudonym_secret: Option<Vec<u8>>,
     /// D102: the link to the tenant analytics engine, once the host has one.
     engine: Option<crate::olap::Exchange>,
+    /// Studio's connector checks, decided by the PDP (#1036).
+    connectors: crate::policy::ConnectorPolicy,
 }
 
 impl<E: SqlEngine> Tenant<E> {
@@ -299,6 +304,7 @@ impl<E: SqlEngine> Tenant<E> {
         let derived = handle_key
             .and_then(|key| DerivedQuestions::keyed(key, scope.clone()))
             .map(|questions| questions.with_label("tenant"));
+        let connectors = crate::policy::CONNECTOR_GRANTS.compile(&scope)?;
         Ok(Self {
             base: crate::base::trusted_base()?,
             kinds: host_kinds(table),
@@ -311,6 +317,7 @@ impl<E: SqlEngine> Tenant<E> {
             derived,
             pseudonym_secret: handle_key.map(<[u8]>::to_vec),
             engine: None,
+            connectors,
         })
     }
 
@@ -327,6 +334,7 @@ impl<E: SqlEngine> Tenant<E> {
     ) -> Result<Self, SeedError> {
         let caller = Arc::<CallerSlot>::default();
         let serving = Serving::from_store(store, &scope, table, &caller, questions)?;
+        let connectors = crate::policy::CONNECTOR_GRANTS.compile(&scope)?;
         Ok(Self {
             base: crate::base::trusted_base()?,
             kinds: host_kinds(table),
@@ -339,6 +347,7 @@ impl<E: SqlEngine> Tenant<E> {
             derived: None,
             pseudonym_secret: None,
             engine: None,
+            connectors,
         })
     }
 
@@ -476,6 +485,9 @@ impl<E: SqlEngine> Tenant<E> {
             return self.vacant(principals, request, None);
         }
         match &self.state {
+            State::Serving(serving) if request.path == ACCESS_DECIDE_PATH => {
+                self.decide_access(&serving.host, principals, request)
+            }
             State::Serving(serving) if request.path == "/v1/access" => server::access(
                 &serving.host,
                 principals,
@@ -536,6 +548,94 @@ impl<E: SqlEngine> Tenant<E> {
         }
     }
 
+    /// `POST /v1/access:decide` (#1036): the connector checks Studio asks,
+    /// decided for the request's verified principal under the declared
+    /// [`crate::policy::CONNECTOR_GRANTS`], each check decided by the kernel
+    /// PDP: `{checks: [{action, resource: {type, id}}]}` to
+    /// `{decisions: [{action, resource, decision, rule}]}` in the same order.
+    /// `connector.run` reads the binding's `runRole` from its own active
+    /// cell definition, never from the request. A request outside this
+    /// cell's scope gets the shared 403, which Studio reads as deny-all.
+    fn decide_access(
+        &self,
+        host: &DevHost<E>,
+        principals: &dyn PrincipalResolver,
+        request: &Request<'_>,
+    ) -> Response {
+        const MAX_CHECKS: usize = 32;
+        if request.method != "POST" {
+            return server::respond(Err(Refusal::new(
+                StatusCode::METHOD_NOT_ALLOWED,
+                "route.method_not_allowed",
+                "the route does not accept this method",
+                "permission checks are asked with POST",
+            )));
+        }
+        let Some(caller) = self
+            .verified_member(principals, request)
+            .filter(|_| self.names_this_scope(request.query))
+        else {
+            return server::respond(Err(norn_api::authz::read_denied()));
+        };
+        let checks = match serde_json::from_str::<serde_json::Value>(request.body) {
+            Ok(body) => body
+                .get("checks")
+                .and_then(serde_json::Value::as_array)
+                .cloned(),
+            Err(_) => None,
+        };
+        let Some(checks) = checks.filter(|checks| checks.len() <= MAX_CHECKS) else {
+            return server::respond(Err(Refusal::invalid(format!(
+                "a permission check is {{\"checks\": [{{\"action\", \"resource\": {{\"type\", \"id\"}}}}]}}, at most {MAX_CHECKS}"
+            ))));
+        };
+        let mut decisions = Vec::with_capacity(checks.len());
+        for check in &checks {
+            let text = |value: Option<&serde_json::Value>| {
+                value
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned()
+            };
+            let action = text(check.get("action"));
+            let kind = text(check.get("resource").and_then(|r| r.get("type")));
+            let id = text(check.get("resource").and_then(|r| r.get("id")));
+            let run_role = if action == "connector.run" && kind == "studio.ToolBinding" {
+                match host.retained_definition(&id) {
+                    Ok(record) => record
+                        .filter(|record| {
+                            record.definition.kind == "binding"
+                                && record.definition.lifecycle
+                                    == norn_cell::retained::RetainedLifecycle::Active
+                        })
+                        .and_then(|record| {
+                            serde_json::from_str::<serde_json::Value>(&record.definition.payload)
+                                .ok()
+                        })
+                        .and_then(|payload| {
+                            payload
+                                .get("runRole")
+                                .and_then(serde_json::Value::as_str)
+                                .map(str::to_owned)
+                        }),
+                    Err(refusal) => return server::respond(Err(refusal)),
+                }
+            } else {
+                None
+            };
+            let rule = self
+                .connectors
+                .decide(&caller, &action, (&kind, &id), run_role.as_deref());
+            decisions.push(serde_json::json!({
+                "action": action,
+                "resource": { "type": kind, "id": id },
+                "decision": if rule.is_some() { "permit" } else { "deny" },
+                "rule": rule,
+            }));
+        }
+        server::respond(Ok(serde_json::json!({ "decisions": decisions }).to_string()))
+    }
+
     /// The request's verified principal, when the declared table grants it
     /// something in this cell's organization.
     fn verified_member(
@@ -578,6 +678,9 @@ impl<E: SqlEngine> Tenant<E> {
             server::respond(Err(refusal))
         } else if request.path == "/v1/access" {
             server::access_outside::<E>(principals, request)
+        } else if request.path == ACCESS_DECIDE_PATH {
+            // The shared refusal: a caller outside the cell is denied everything.
+            server::respond(Err(norn_api::authz::read_denied()))
         } else {
             // Served with what a provisioned cell of this host is served
             // with (its receipt handles, its kinds), so no route branches

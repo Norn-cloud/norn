@@ -37,6 +37,8 @@ pub mod flow_definitions;
 pub mod flow_driver;
 /// Shared cell and definition epoch.
 pub mod host;
+/// INBOX-1: what needs the caller's attention, one bounded work queue.
+pub mod inbox;
 /// RFC 8785 JSON canonicalization for connector manifest digests.
 pub mod jcs;
 /// Admission of a cell's full kernel artifact set.

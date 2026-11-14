@@ -160,6 +160,18 @@ pub fn admit(
     }) {
         findings.extend(refusal(AMBIGUOUS_GRAIN));
     }
+    // A path across a link is evaluated only as a linked time grouping: any
+    // other is refused by name, where it is, rather than as an unsupported profile.
+    for (index, dimension) in question.dimensions.iter().enumerate() {
+        if !dimension.path.links.is_empty() && dimension.grain.is_none() {
+            findings.push(linked_path(&format!("/questions/0/groupBy/{index}")));
+        }
+    }
+    for (index, filter) in question.filters.iter().enumerate() {
+        if !filter.path.links.is_empty() {
+            findings.push(linked_path(&format!("/questions/0/filter/{index}")));
+        }
+    }
     if !findings.is_empty() {
         return Err(findings);
     }
@@ -375,6 +387,14 @@ fn linked_time(
 
 fn unsupported_filter(filter: &MetricFilter) -> bool {
     !filter.path.links.is_empty() || !OPERATORS.contains(&filter.operator)
+}
+
+fn linked_path(pointer: &str) -> Diagnostic {
+    error(
+        super::codes::LINKED_PATH,
+        "a question can group across a link only by its linked time, and cannot filter across a link; grouping by another type's field is not supported yet".into(),
+        Span::pointer(pointer),
+    )
 }
 
 fn refusal(code: &str) -> Vec<Diagnostic> {

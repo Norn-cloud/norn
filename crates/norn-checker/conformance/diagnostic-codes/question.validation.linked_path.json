@@ -1,0 +1,7 @@
+{
+  "code": "question.validation.linked_path",
+  "message": "a question can group across a link only by its linked time, and cannot filter across a link; grouping by another type's field is not supported yet",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

@@ -370,3 +370,90 @@ fn a_reserved_or_empty_change_is_refused() {
     );
     assert_eq!(cell.version(), base);
 }
+
+impl Cell {
+    /// One MCP `tools/call` (or `tools/list`, with `name` empty) as `role`.
+    fn mcp(&mut self, role: &str, name: &str, arguments: &Value) -> Value {
+        let message = if name.is_empty() {
+            json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {"limit": 100}})
+        } else {
+            json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": name, "arguments": arguments}})
+        };
+        let response = self.call("POST", "/v1/mcp", Some(&user(role)), &message.to_string());
+        assert_eq!(response.status, 200, "{}", response.body);
+        json_of(&response)["result"].clone()
+    }
+}
+
+/// "Add gold trading" from an agent (#520): the pack planned and applied
+/// through MCP answers exactly what the routes answer, only a definition
+/// writer is offered the tools, and the pack's action is a tool afterwards.
+#[test]
+fn an_agent_plans_and_applies_a_pack_through_mcp() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut cell = provisioned(&directory.path().join("cell.sqlite"));
+    let base = cell.version();
+    let listed = cell.mcp("member", "", &json!({}));
+    assert!(
+        !listed.to_string().contains("norn_plan_definitions"),
+        "{listed}"
+    );
+
+    let planned = cell.mcp(
+        "owner",
+        "norn_plan_definitions",
+        &json!({"artifacts": jewelry()}),
+    );
+    assert_eq!(planned["isError"], false, "{planned}");
+    let route = json_of(&cell.change(PLAN_PATH, Some("owner"), &jewelry(), None));
+    assert_eq!(planned["structuredContent"], route);
+    assert_eq!(planned["structuredContent"]["baseVersion"], json!(base));
+
+    // A member calling the tool by name: it is not in their catalog, so the
+    // protocol refuses it before any route runs (no result, a JSON-RPC error).
+    let denied = cell.mcp(
+        "member",
+        "norn_apply_definitions",
+        &json!({"artifacts": jewelry(), "expectedVersion": base}),
+    );
+    assert!(denied.is_null(), "{denied}");
+    let broken = cell.mcp(
+        "owner",
+        "norn_plan_definitions",
+        &json!({"artifacts": with_law("self.input_fine_g == self.output_fine_g + self.loss_g")}),
+    );
+    assert_eq!(
+        broken["structuredContent"]["code"], "defs.refused",
+        "{broken}"
+    );
+    let stale = cell.mcp(
+        "owner",
+        "norn_apply_definitions",
+        &json!({"artifacts": jewelry()}),
+    );
+    assert_eq!(
+        stale["isError"], true,
+        "expectedVersion is required: {stale}"
+    );
+
+    let applied = cell.mcp(
+        "owner",
+        "norn_apply_definitions",
+        &json!({"artifacts": jewelry(), "expectedVersion": base}),
+    );
+    assert_eq!(applied["isError"], false, "{applied}");
+    assert_eq!(
+        applied["structuredContent"]["outcome"], "installed",
+        "{applied}"
+    );
+    assert!(cell.version() > base);
+    let after = cell.mcp("admin", "", &json!({}));
+    assert!(
+        after["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|tool| tool["_meta"]["norn/actionId"] == RECORD),
+        "the pack's action is a tool now"
+    );
+}

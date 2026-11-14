@@ -10,7 +10,7 @@
 //! exactly what the scanned rows hold, so never more than the true count, and
 //! never an estimate or an extrapolation.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use norn_cell::engine::SqlEngine;
 use norn_ir::RuntimeValue;
@@ -29,6 +29,32 @@ use crate::{
 
 /// Most values one facet names; the rows holding the others are counted together.
 pub const MAX_FACET_VALUES: usize = 20;
+
+/// A text value longer than this is prose (a message, a note), not a category.
+pub const MAX_CATEGORY_CHARS: usize = 64;
+
+/// Whether `property` holds free text over `rows` rather than categories: a value
+/// longer than [`MAX_CATEGORY_CHARS`], or, over three or more counted rows,
+/// a different value on every row that has one (an id, a name, a message). Its
+/// facet would list each row once and narrow nothing, so a type's default facets
+/// leave it out; a facet asked for by name is still counted.
+fn free_text(property: &str, rows: &[&BTreeMap<String, RuntimeValue>]) -> bool {
+    let mut seen = BTreeSet::new();
+    let mut present = 0_usize;
+    for values in rows {
+        match values.get(property) {
+            Some(RuntimeValue::String(text)) if text.chars().count() > MAX_CATEGORY_CHARS => {
+                return true;
+            }
+            None | Some(RuntimeValue::Null) => {}
+            Some(value) => {
+                present = present.saturating_add(1);
+                seen.insert(format!("{value:?}"));
+            }
+        }
+    }
+    rows.len() >= 3 && present >= 3 && seen.len() == present
+}
 
 /// The raw query string fields of `GET /v1/objects/{type}:facets`.
 #[derive(Debug, Default, Clone, utoipa::IntoParams)]
@@ -203,6 +229,7 @@ pub fn get_object_facets_within<E: SqlEngine>(
             .iter()
             .any(|(name, kind)| name == id && matches!(kind_of(kind.as_ref()), "text" | "boolean"))
     };
+    let by_name = params.properties.is_some();
     let asked: Vec<String> = match params.properties.as_deref() {
         None => properties
             .iter()
@@ -253,6 +280,7 @@ pub fn get_object_facets_within<E: SqlEngine>(
         scan_limit: count(max_scan),
         facets: asked
             .iter()
+            .filter(|property| by_name || !free_text(property, &counted))
             .map(|property| facet(property, &counted))
             .collect(),
     })
@@ -272,6 +300,21 @@ mod tests {
             .map(|status| (String::from("status"), RuntimeValue::String(status.into())))
             .into_iter()
             .collect()
+    }
+
+    proptest::proptest! {
+        /// A property is free text exactly when it has a long value, or when three or more
+        /// counted rows each hold a different value; any shared short value keeps it a category.
+        #[test]
+        fn free_text_is_long_or_one_value_per_row(values in proptest::collection::vec(proptest::option::of("[a-c]{1,2}"), 0..9), long in proptest::bool::ANY) {
+            let mut rows: Vec<BTreeMap<String, RuntimeValue>> = values.iter().map(|value| row(value.as_deref())).collect();
+            if long { rows.push(row(Some(&"x".repeat(MAX_CATEGORY_CHARS + 1)))); }
+            let refs: Vec<&BTreeMap<String, RuntimeValue>> = rows.iter().collect();
+            let present: Vec<&String> = values.iter().flatten().collect();
+            let distinct: BTreeSet<&String> = present.iter().copied().collect();
+            let expected = long || (rows.len() >= 3 && present.len() >= 3 && distinct.len() == present.len());
+            proptest::prop_assert_eq!(free_text("status", &refs), expected);
+        }
     }
 
     #[test]
