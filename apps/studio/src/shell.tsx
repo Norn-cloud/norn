@@ -6,7 +6,7 @@ import { PopoverTitle, PopoverTrigger } from "@ui-sdk/react/popover"
 import { Toolbar, ToolbarButton, ToolbarLink } from "@ui-sdk/react/toolbar"
 import { Tree, TreeGroup, TreeItem, TreeItemIndicator, TreeItemLabel } from "@ui-sdk/react/tree"
 import { Bell, ChevronDown, ChevronRight, ChevronsLeft, CloudOff, Keyboard, LogOut, Plus, Search, SlidersHorizontal, type LucideIcon } from "lucide-react"
-import { useState, type CSSProperties, type ReactNode } from "react"
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react"
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "@/components/ui/breadcrumb"
 import { Button } from "@/components/ui/button"
 import { Sidebar, SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar"
@@ -260,7 +260,7 @@ function AppletPanel({ section, pathname }: { readonly section: Section; readonl
         )}
       </div>
       <nav aria-label={section.label} className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
-        <Tree aria-label={`${section.label} pages`} mode="none" current={current} expanded={values.filter((value, index) => (chosen[value] ?? index === 0) || holds(value, current, entries))} onExpandedChange={(next) => setChosen(Object.fromEntries(values.map((value) => [value, next.includes(value)])))}>
+        <Tree aria-label={`${section.label} pages`} mode="none" expandOnPress current={current} expanded={values.filter((value, index) => (chosen[value] ?? index === 0) || holds(value, current, entries))} onExpandedChange={(next) => setChosen(Object.fromEntries(values.map((value) => [value, next.includes(value)])))}>
           <TreeItem value={OVERVIEW} label="Overview" className={focusRow}>
             <TreeItemLabel render={<Link to={section.path} onClick={close} />} className={cn(label, section.kind && KINDS[section.kind].svg)}>
               <section.icon aria-hidden /><span className="truncate">Overview</span>
@@ -449,11 +449,34 @@ export function Shell(props: { readonly sections: readonly Section[]; readonly t
   return <LocaleProvider><LocalizedShell {...props} /></LocaleProvider>
 }
 
+/**
+ * An entry that is an anchor on its applet's page (a workflow, a guarantee) scrolls to it on every
+ * hash change, also when it renders only after its data loads: the router scrolls only to an
+ * element that is already there.
+ */
+function useHashScroll() {
+  const hash = useRouterState({ select: (state) => state.location.hash })
+  const at = useRouterState({ select: (state) => state.location.state })
+  useEffect(() => {
+    if (hash === "") return
+    let frame = 0
+    const until = performance.now() + 2500
+    const find = () => {
+      const element = document.getElementById(decodeURIComponent(hash))
+      if (element) element.scrollIntoView({ block: "start" })
+      else if (performance.now() < until) frame = requestAnimationFrame(find)
+    }
+    find()
+    return () => cancelAnimationFrame(frame)
+  }, [hash, at])
+}
+
 /** The shell in the reader's direction: in Arabic the rail docks on the right. */
 function LocalizedShell({ sections, tools, account, onSignOut }: { readonly sections: readonly Section[]; readonly tools?: ReactNode; readonly account: Account; readonly onSignOut: () => void }) {
   const { locale } = useLocale()
   const pathname = useRouterState({ select: (state) => state.location.pathname })
   const current = sectionOf(sections, pathname)
+  useHashScroll()
   return (
     <ViewProvider><InspectorProvider><TooltipProvider>
       <SidebarProvider data-shell="rail" className="bg-shell has-data-[variant=inset]:bg-shell" style={{ "--sidebar-width": "20rem", "--sidebar-width-icon": "3.5rem" } as CSSProperties}>
