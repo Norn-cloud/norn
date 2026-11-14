@@ -14,6 +14,8 @@ export interface AssistantContent {
 }
 
 interface AssistantState {
+  /** Whether the shell mounts an assistant here at all (the server serves one). */
+  readonly available: boolean
   readonly open: boolean
   setOpen(next: boolean): void
   toggle(): void
@@ -36,7 +38,7 @@ const stored = () => {
   }
 }
 
-export function AssistantProvider({ children }: { readonly children: ReactNode }) {
+export function AssistantProvider({ available, children }: { readonly available: boolean; readonly children: ReactNode }) {
   const [open, setOpenState] = useState(stored)
   const [prompt, setPrompt] = useState<string | null>(null)
   const setOpen = useCallback((next: boolean) => {
@@ -46,6 +48,7 @@ export function AssistantProvider({ children }: { readonly children: ReactNode }
     } catch { /* storage blocked: the panel still opens */ }
   }, [])
   useEffect(() => {
+    if (!available) return
     const toggle = (event: KeyboardEvent) => {
       if (event.key.toLowerCase() === "j" && (event.metaKey || event.ctrlKey) && !event.altKey) {
         event.preventDefault()
@@ -59,21 +62,22 @@ export function AssistantProvider({ children }: { readonly children: ReactNode }
     }
     document.addEventListener("keydown", toggle)
     return () => document.removeEventListener("keydown", toggle)
-  }, [])
+  }, [available])
   const value = useMemo<AssistantState>(() => ({
+    available,
     open,
     setOpen,
     toggle: () => setOpen(!open),
     ask: (text) => { setPrompt(text); setOpen(true) },
     prompt,
     took: () => setPrompt(null),
-  }), [open, prompt, setOpen])
+  }), [available, open, prompt, setOpen])
   return <Context.Provider value={value}>{children}</Context.Provider>
 }
 
 /** The assistant's state; outside a shell it is closed and asks go nowhere. */
 export function useAssistant(): AssistantState {
-  return useContext(Context) ?? { open: false, setOpen: () => {}, toggle: () => {}, ask: () => {}, prompt: null, took: () => {} }
+  return useContext(Context) ?? { available: false, open: false, setOpen: () => {}, toggle: () => {}, ask: () => {}, prompt: null, took: () => {} }
 }
 
 /**
