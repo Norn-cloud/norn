@@ -740,3 +740,108 @@ fn the_privacy_pack_admits_over_the_three_systems_set() {
     .unwrap();
     assert!(checked.receipt.admitted, "{:#?}", checked.diagnostics);
 }
+
+/// The privacy pack as a hosted cell is provisioned with it: the registry
+/// packs with the canon.Party overlay, the markings catalog and the reveal
+/// policy, admitted by `admit_kernel_set` and served under `serving_model`.
+/// A member's read of `canon.Party.display_name` is the pseudonym, never the
+/// value, so the catalog the model skips does reach the projection.
+#[test]
+fn a_provisioned_privacy_set_pseudonymizes_a_party_name() {
+    use norn_ir::ArtifactEnvelope;
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let read = |path: &str| -> ArtifactEnvelope {
+        serde_json::from_str(&std::fs::read_to_string(root.join(path)).unwrap()).unwrap()
+    };
+    let mut artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(
+        &std::fs::read_to_string(
+            root.join("fixtures/demo/explorer/three-systems.definitions.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    for artifact in &mut artifacts {
+        if artifact.artifact_id == "canon.Party.entity" {
+            *artifact = read("registry/privacy/overlays/canon.Party.entity.json");
+        }
+    }
+    artifacts.push(read(
+        "registry/privacy/artifacts/privacy.markings.entity.json",
+    ));
+    artifacts.push(read(
+        "registry/privacy/artifacts/privacy.reveal.policy.json",
+    ));
+    let admitted = match norn_api::kernel_set::admit_kernel_set(&artifacts) {
+        Ok(admitted) => admitted,
+        Err(norn_api::kernel_set::KernelRefusal::Refused(found)) => panic!("refused: {found:#?}"),
+        Err(norn_api::kernel_set::KernelRefusal::Invalid(detail)) => panic!("invalid: {detail}"),
+    };
+    let model = norn_api::kernel_set::serving_model(&artifacts).expect("the set is served");
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("cell.sqlite");
+    let physical = CellScope {
+        org_id: "org_demo".into(),
+        environment_id: "dev".into(),
+    };
+    {
+        let mut store =
+            CellStore::open(&path, model.clone(), norn_cell::StoreOptions::default()).unwrap();
+        store
+            .install_definitions(
+                model.clone(),
+                norn_cell::InstalledDefinitionInput {
+                    canonical_set: admitted.canonical_set,
+                    registry: vec![],
+                    receipt_sha256: admitted.receipt_sha256,
+                    admission_receipt: None,
+                    readmission: None,
+                    diff: json!({}),
+                    installed_at: 1,
+                    layout: None,
+                },
+                Some(0),
+                &physical.key(),
+            )
+            .unwrap();
+        store
+            .commit(&CommitBatch {
+                world: MAIN_WORLD.into(),
+                scope: physical.key(),
+                logical_time: 2,
+                writes: vec![FactWriteRow::Put {
+                    object_type: PARTY.into(),
+                    key: "p1".into(),
+                    values: BTreeMap::from([
+                        ("display_name".to_owned(), V::from("Ada Lovelace")),
+                        ("kind".to_owned(), V::from("person")),
+                    ]),
+                }],
+                ..CommitBatch::default()
+            })
+            .unwrap();
+    }
+    let store = CellStore::open(&path, model, norn_cell::StoreOptions::default()).unwrap();
+    let cell = DevHost::from_store(store, physical, |command| command.payload.clone())
+        .unwrap()
+        .with_authorizer(Policy)
+        .with_pseudonym_secret(Some(&SECRET));
+    let scope = ScopeQuery {
+        org_id: Some("org_demo".into()),
+        environment_id: Some("dev".into()),
+    };
+    let record = get_queried_object(&cell, &scope, Some("member"), PARTY, "p1", &Mapping).unwrap();
+    let document = serde_json::to_value(&record).unwrap();
+    let name = document["values"]["display_name"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    assert!(!name.contains("Ada"), "the value never leaves: {document}");
+    assert_eq!(
+        document["masked"]["display_name"]["mode"], "pseudonym",
+        "{document}"
+    );
+    assert_eq!(
+        document["masked"]["display_name"]["markings"],
+        json!(["pii.contact"])
+    );
+}
