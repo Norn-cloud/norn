@@ -1,11 +1,13 @@
 {
   "sha256": "3efd6a25857c056ad4cab7436bc40e5d9525ecf33994f393d38e320430b563f9",
-  "origin": "authored",
-  "category": "code",
+  "origin": "derived",
+  "category": "generated",
   "license": "Apache-2.0",
   "sources": [],
   "analyzed_sources": [],
-  "parents": [],
+  "parents": [
+    "registry/packs/jewelry/jewelry.ts"
+  ],
   "rights_evidence": [
     {
       "path": "NOTICE",
