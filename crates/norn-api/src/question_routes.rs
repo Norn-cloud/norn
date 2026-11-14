@@ -469,6 +469,13 @@ fn allowed<E: SqlEngine>(
 /// never describe an ungranted resource. A question naming an undeclared
 /// metric reads, for this purpose, every declared metric (D62).
 pub trait AdHocQuestions<E: SqlEngine>: QuestionRuntime<E> {
+    /// Whether this runtime answers questions. A runtime that only keys
+    /// receipt handles (a tenant cell with no published questions) answers
+    /// none: a definition that names a question is then refused as
+    /// unavailable, as on a cell with no runtime at all.
+    fn publishes_questions(&self) -> bool {
+        true
+    }
     /// The cell's declared metric definitions; a question may name only these.
     fn definitions(&self) -> &[MetricDefinition];
     /// The effective catalog a question is admitted against.
@@ -488,7 +495,7 @@ pub trait AdHocQuestions<E: SqlEngine>: QuestionRuntime<E> {
 pub struct EvaluateRequest {
     /// The `QuestionIR` to admit against the cell's declared metrics. It is
     /// evaluated once and never installed.
-    #[schema(value_type = Object)]
+    #[schema(schema_with = evaluate_question_schema)]
     pub question: QuestionIR,
 }
 
@@ -497,12 +504,27 @@ pub struct EvaluateRequest {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AdHocTraceRequest {
     /// The same `QuestionIR` the answer was evaluated from.
-    #[schema(value_type = Object)]
+    #[schema(schema_with = trace_question_schema)]
     pub question: QuestionIR,
     /// The `lineageRef` handle that answer returned.
     pub lineage_ref: String,
     /// Canonical bucket key from that answer.
     pub bucket: String,
+}
+
+fn evaluate_question_schema() -> utoipa::openapi::schema::Object {
+    crate::objects::free_form(
+        "The `QuestionIR` to admit against the cell's declared metrics. It is evaluated once \
+         and never installed.",
+        false,
+    )
+}
+
+fn trace_question_schema() -> utoipa::openapi::schema::Object {
+    crate::objects::free_form(
+        "The same `QuestionIR` the answer was evaluated from.",
+        false,
+    )
 }
 
 fn bucket_bound_exceeded() -> Refusal {

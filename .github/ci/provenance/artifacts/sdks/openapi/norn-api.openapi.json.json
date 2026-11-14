@@ -1,5 +1,5 @@
 {
-  "sha256": "982fde7d0da5ef13d69214fcd1478530e0dbdf95cf832298854ab31783089da0",
+  "sha256": "6dad8c3ffc32fbaf71910a48e870c8686be589a6312e11d757ef1da0f3753cb6",
   "origin": "derived",
   "category": "generated",
   "license": "Apache-2.0",
@@ -13,6 +13,7 @@
     "crates/norn-api/src/contracts.rs",
     "crates/norn-api/src/lib.rs",
     "crates/norn-api/src/openapi.rs",
+    "crates/norn-api/src/provision.rs",
     "crates/norn-api/src/question_routes.rs",
     "crates/norn-api/src/refusal.rs",
     "crates/norn-api/src/scope.rs",

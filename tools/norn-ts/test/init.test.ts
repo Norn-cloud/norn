@@ -25,7 +25,7 @@ test("init_writes_exact_tree", async () => {
     expect(readdirSync(dir, { recursive: true }).sort()).toEqual([".gitignore", "AGENTS.md", "norn.json", "package.json", "src", "src/product.ts", "tsconfig.json"].sort())
     expect(readFileSync(join(dir, ".gitignore"), "utf8")).toBe(".norn/\nnode_modules/\n")
     expect(readFileSync(join(dir, "src/product.ts"), "utf8")).toBe(readFileSync(join(TOOL_ROOT, "templates/starter/src/product.ts"), "utf8").replaceAll("__NAMESPACE__", "shop"))
-    expect(readFileSync(join(dir, "AGENTS.md"), "utf8").split("\n")).toHaveLength(31)
+    expect(readFileSync(join(dir, "AGENTS.md"), "utf8").split("\n")).toHaveLength(30)
     expect(JSON.parse(readFileSync(join(dir, "tsconfig.json"), "utf8"))).toEqual({ extends: "@norn/cli/tsconfig.authoring.json", include: ["src/**/*.ts"] })
     expect(JSON.parse(readFileSync(join(dir, "package.json"), "utf8"))).toEqual({ name: "shop", private: true, type: "module", dependencies: projectDependencies() })
     expect(readProject(join(dir, "src")).root).toBe(dir)
@@ -96,5 +96,16 @@ test("repository_install_uses_local_packages", async () => {
     expect(pkg.dependencies["@norn/authoring"]).toBe(`file:${TOOL_ROOT}`)
     expect(pkg.dependencies["@norn/cli"]).toBe(`file:${TOOL_ROOT}`)
     expect(readFileSync(join(dir, "node_modules/@norn/cli/tsconfig.authoring.json"), "utf8")).toContain('"strict": true')
+  } finally { rmSync(root, { recursive: true }) }
+}, 60000)
+
+test("starter_is_formatted: a new project passes norn fmt --check", async () => {
+  const root = scratch()
+  try {
+    const dir = join(root, "shop")
+    expect((await run([dir, "--no-install"])).status).toBe(0)
+    const child = Bun.spawn([process.execPath, join(TOOL_ROOT, "src/cli.ts"), "fmt", "--check", "--json"], { cwd: dir, stdout: "pipe", stderr: "pipe" })
+    const [out, status] = await Promise.all([new Response(child.stdout).text(), child.exited])
+    expect({ status, out: JSON.parse(out) }).toEqual({ status: 0, out: { changed: [], check: true } })
   } finally { rmSync(root, { recursive: true }) }
 }, 60000)
