@@ -2016,6 +2016,364 @@
           }
         ]
       }
+    },
+    "/v1/transforms/{transform}/plan": {
+      "get": {
+        "tags": [
+          "crate::transform_routes"
+        ],
+        "summary": "A transform's admitted plan: inputs, typed nodes and column lineage.",
+        "description": "# Errors\nA denied gate (the opaque 403), an undeclared transform (404), a plan that\nno longer admits (422) or a host failure.",
+        "operationId": "get_transform_plan",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "transform",
+            "in": "path",
+            "description": "The transform's artifact id.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The plan the checker admits against the installed definitions now: every node's operator, inputs, grain and typed columns with their lineage.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NornTransformPlan"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied, with the same document whatever the reason.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The request was refused (`transform.not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request was refused (`core.compute.stale_input`): the transform no longer admits.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
+    "/v1/transforms/{transform}/rows": {
+      "get": {
+        "tags": [
+          "crate::transform_routes"
+        ],
+        "summary": "One page of a transform's rows, evaluated now under the reader's visibility.",
+        "description": "# Errors\nA denied gate (the opaque 403), an undeclared transform (404), an invalid\nlimit or cursor (400), a commit since the cursor (409\n`transform.snapshot_moved`), a bound (413), a stale or failed evaluation\n(422) or a host failure.",
+        "operationId": "get_transform_rows",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1 to 1,000; 100 when absent.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 1000,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "description": "The `nextAfter` of the previous page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "transform",
+            "in": "path",
+            "description": "The transform's artifact id.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of the transform's rows. Each input row enters only with Population and Values; a row the reader may only count is excluded, counted in `withheld`, and makes the page incomplete.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NornTransformPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid (`request.invalid`): an unknown or repeated parameter, a limit outside 1 to 1,000, or a cursor this transform did not issue.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied on the transform or on any object type it reads, with the same document whatever the reason.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The request was refused (`transform.not_found`): no installed relational transform has this id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request was refused (`transform.snapshot_moved`, retryable from the first page): the cell committed since the cursor was issued; a page is never assembled from two snapshots.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The request was refused (`core.compute.bound_exceeded`): the exact engine's row bound; no partial result is returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request was refused (`core.compute.stale_input` or `core.compute.expression_failed`): the transform no longer admits against the installed definitions, or an admitted expression failed on a row.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
+    "/v1/transforms/{transform}/rows/{row}/lineage": {
+      "get": {
+        "tags": [
+          "crate::transform_routes"
+        ],
+        "summary": "One row's lineage: the input rows it derives from (VIEW-LINEAGE-1).",
+        "description": "# Errors\nAs [`get_transform_rows`], and a row this reader does not see now (404\n`transform.row_not_found`).",
+        "operationId": "get_transform_row_lineage",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "transform",
+            "in": "path",
+            "description": "The transform's artifact id.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "row",
+            "in": "path",
+            "description": "A `rowId` from a page of the transform's rows.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The row and every input row it derives from, under the same visibility as its page.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NornTransformLineage"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied, with the same document whatever the reason.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The request was refused (`transform.not_found` or `transform.row_not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The request was refused (`core.compute.bound_exceeded`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request was refused (`core.compute.stale_input` or `core.compute.expression_failed`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
     }
   },
   "components": {
@@ -3669,6 +4027,24 @@
           "T6",
           "T7"
         ]
+      },
+      "NornColumnOrigin": {
+        "type": "object",
+        "description": "Where a column's value comes from: one stored property of one input.",
+        "required": [
+          "input",
+          "property"
+        ],
+        "properties": {
+          "input": {
+            "type": "string",
+            "description": "The input alias."
+          },
+          "property": {
+            "type": "string",
+            "description": "The stored property, or `id`."
+          }
+        }
       },
       "NornDefinitionsCatalog": {
         "type": "object",
@@ -5589,6 +5965,24 @@
           "The declared time dimension."
         ]
       },
+      "NornIrAggregateFn": {
+        "type": "string",
+        "description": "An aggregate function.",
+        "enum": [
+          "sum",
+          "count",
+          "count_distinct",
+          "min",
+          "max"
+        ],
+        "x-enumDescriptions": [
+          "Exact sum of an additive column.",
+          "Rows, or non-null values of `column`.",
+          "Distinct non-null values of `column`.",
+          "Least non-null value.",
+          "Greatest non-null value."
+        ]
+      },
       "NornIrAggregateFunction": {
         "oneOf": [
           {
@@ -5952,9 +6346,12 @@
           },
           {
             "$ref": "#/components/schemas/NornIrCalcExprOneOf1"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrCalcExprOneOf2"
           }
         ],
-        "description": "Serializable calc expression leaf for a Derived view.\n\nIn ViewIR v0 only the `field_projection` form is admitted. `effectful_ts`\nis decodable so the checker can reject it (IO belongs in an Effect\nartifact); `raw_promise` is never admitted."
+        "description": "Serializable calc expression leaf for a Derived view.\n\nViewIR v0 admits the `field_projection` form; ViewIR v1 adds `relational`\n(a closed, typed operator plan). `effectful_ts` is decodable so the checker\ncan reject it (IO belongs in an Effect artifact); `raw_promise` is never\nadmitted."
       },
       "NornIrCalcExprOneOf0": {
         "type": "object",
@@ -5998,6 +6395,38 @@
           "sourceRef": {
             "type": "string"
           }
+        }
+      },
+      "NornIrCalcExprOneOf2": {
+        "type": "object",
+        "description": "ViewIR v1 (VIEW-TYPE-1): a closed relational plan over the declared\ninputs. Every node is typed by the checker against the effective\ncatalog; nothing in it is executed raw.",
+        "required": [
+          "kind",
+          "nodes",
+          "output"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "relational"
+            ]
+          },
+          "nodes": {
+            "$ref": "#/components/schemas/NornIrCalcExprOneOf2PropertyNodes"
+          },
+          "output": {
+            "type": "string",
+            "description": "The node whose rows are the view's rows."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrCalcExprOneOf2PropertyNodes": {
+        "type": "object",
+        "description": "Operators by node id.",
+        "additionalProperties": {
+          "$ref": "#/components/schemas/NornIrViewNode"
         }
       },
       "NornIrCalendarDate": {
@@ -8778,6 +9207,18 @@
         "description": "An exact decimal number written as a JSON string: an optional `-`, an\ninteger part without leading zeros, and an optional fraction\n(`\"0\"`, `\"-12\"`, `\"19.990\"`). No exponent, no `+`.\n\nTrailing fraction zeros are kept: they carry the literal's scale.",
         "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]+)?$"
       },
+      "NornIrDedupeKeep": {
+        "type": "string",
+        "description": "Which row of a key a dedupe keeps.",
+        "enum": [
+          "first",
+          "last"
+        ],
+        "x-enumDescriptions": [
+          "The first row in order.",
+          "The last row in order."
+        ]
+      },
       "NornIrDefaultValue": {
         "anyOf": [
           {
@@ -11129,6 +11570,38 @@
         },
         "additionalProperties": false
       },
+      "NornIrGroupKey": {
+        "type": "object",
+        "description": "One grouping key.",
+        "required": [
+          "column"
+        ],
+        "properties": {
+          "column": {
+            "type": "string",
+            "description": "The grouped column."
+          },
+          "grain": {
+            "type": "string",
+            "description": "A calendar bucket for a date or timestamp column (ISO/UTC).",
+            "enum": [
+              "day",
+              "week",
+              "month",
+              "quarter",
+              "year"
+            ],
+            "x-enumDescriptions": [
+              "Day.",
+              "Week.",
+              "Month.",
+              "Quarter.",
+              "Year."
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrHelperLimits": {
         "type": "object",
         "description": "Limits for an inline custom helper (§1 row 6). D33 admits none in v1, so\nthese only bind a future admission; the helper's fuel is charged to the\nenclosing decision and turn budget.",
@@ -12384,6 +12857,55 @@
           "$ref": "#/components/schemas/NornIrZenExpression"
         }
       },
+      "NornIrJoinKind": {
+        "type": "string",
+        "description": "Inner or left outer.",
+        "enum": [
+          "inner",
+          "left"
+        ],
+        "x-enumDescriptions": [
+          "Only matched pairs.",
+          "Every left row; unmatched right columns are null."
+        ]
+      },
+      "NornIrJoinOn": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/NornIrJoinOnOneOf0"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrJoinOnOneOf1"
+          }
+        ],
+        "description": "How a join pairs rows. Ad-hoc joins on arbitrary columns do not exist."
+      },
+      "NornIrJoinOnOneOf0": {
+        "type": "object",
+        "description": "Along a declared link of the type whose ids a left column holds.",
+        "required": [
+          "link"
+        ],
+        "properties": {
+          "link": {
+            "$ref": "#/components/schemas/NornIrLinkJoin"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrJoinOnOneOf1": {
+        "type": "object",
+        "description": "A declared key equivalence: left columns equal, under the key's own\nnormalization, a declared unique key (or the id) of the right type.",
+        "required": [
+          "key"
+        ],
+        "properties": {
+          "key": {
+            "$ref": "#/components/schemas/NornIrKeyJoin"
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrJsonFalse": {
         "type": "boolean",
         "const": false
@@ -12415,6 +12937,28 @@
       "NornIrJsonValueAnyOf5": {
         "type": "object",
         "additionalProperties": {}
+      },
+      "NornIrKeyJoin": {
+        "type": "object",
+        "description": "A join on a declared key of the right type.",
+        "required": [
+          "left",
+          "right"
+        ],
+        "properties": {
+          "left": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Left columns, in the key's component order."
+          },
+          "right": {
+            "type": "string",
+            "description": "A key declared by the right type, or `id` for its identity."
+          }
+        },
+        "additionalProperties": false
       },
       "NornIrKeyName": {
         "type": "string",
@@ -14133,6 +14677,25 @@
         },
         "additionalProperties": false
       },
+      "NornIrLinkJoin": {
+        "type": "object",
+        "description": "A join along a declared forward link role.",
+        "required": [
+          "column",
+          "link"
+        ],
+        "properties": {
+          "column": {
+            "type": "string",
+            "description": "The left column holding the link's source object ids."
+          },
+          "link": {
+            "type": "string",
+            "description": "The declared forward link role."
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrLinkMap": {
         "type": "object",
         "description": "One link rule: the produced object links to the object another map\nproduces with this key (an RML referencing object map with its join).",
@@ -14750,6 +15313,43 @@
             "enum": [
               "null"
             ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrMeasure": {
+        "type": "object",
+        "description": "One measure of an aggregate.",
+        "required": [
+          "name",
+          "fn"
+        ],
+        "properties": {
+          "column": {
+            "type": "string",
+            "description": "The measured column; omitted only for a row `count`."
+          },
+          "fn": {
+            "type": "string",
+            "description": "The function.",
+            "enum": [
+              "sum",
+              "count",
+              "count_distinct",
+              "min",
+              "max"
+            ],
+            "x-enumDescriptions": [
+              "Exact sum of an additive column.",
+              "Rows, or non-null values of `column`.",
+              "Distinct non-null values of `column`.",
+              "Least non-null value.",
+              "Greatest non-null value."
+            ]
+          },
+          "name": {
+            "type": "string",
+            "description": "The output column name."
           }
         },
         "additionalProperties": false
@@ -16464,6 +17064,33 @@
           "superseded"
         ]
       },
+      "NornIrOrderKey": {
+        "type": "object",
+        "description": "One order key.",
+        "required": [
+          "column",
+          "direction"
+        ],
+        "properties": {
+          "column": {
+            "type": "string",
+            "description": "The ordered column."
+          },
+          "direction": {
+            "type": "string",
+            "description": "Its direction.",
+            "enum": [
+              "asc",
+              "desc"
+            ],
+            "x-enumDescriptions": [
+              "Ascending.",
+              "Descending."
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrOrderedFold": {
         "type": "object",
         "description": "A deterministic collection derivation through an existing RuleIR helper.\nThe helper's input is exactly `{accumulator, item, index}` and its output\nis the next accumulator. Residuals and provenance are ordinary declared\naccumulator fields; the evaluator does not interpret their names.",
@@ -16928,6 +17555,25 @@
           "Every row was read.",
           "A sample of rows was read."
         ]
+      },
+      "NornIrProjectColumn": {
+        "type": "object",
+        "description": "One output column of a projection.",
+        "required": [
+          "name",
+          "expression"
+        ],
+        "properties": {
+          "expression": {
+            "type": "string",
+            "description": "A ZEN expression over `input.<column>`; `input.c` alone passes the\ncolumn through with its full contract."
+          },
+          "name": {
+            "type": "string",
+            "description": "The output column name."
+          }
+        },
+        "additionalProperties": false
       },
       "NornIrProperty": {
         "type": "object",
@@ -21083,6 +21729,18 @@
           "More than one shortest declared transition path reaches the target."
         ]
       },
+      "NornIrSortDirection": {
+        "type": "string",
+        "description": "Sort direction. Nulls sort last in both directions.",
+        "enum": [
+          "asc",
+          "desc"
+        ],
+        "x-enumDescriptions": [
+          "Ascending.",
+          "Descending."
+        ]
+      },
       "NornIrSourceAdapter": {
         "type": "object",
         "description": "The adapter that produced a document.",
@@ -22184,6 +22842,321 @@
           null,
           "Reserved — not implemented. The checker rejects artifacts carrying this value."
         ]
+      },
+      "NornIrViewNode": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/NornIrViewNodeOneOf0"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrViewNodeOneOf1"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrViewNodeOneOf2"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrViewNodeOneOf3"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrViewNodeOneOf4"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrViewNodeOneOf5"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrViewNodeOneOf6"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrViewNodeOneOf7"
+          }
+        ],
+        "description": "One closed relational operator (VIEW-TYPE-1). No arbitrary function node."
+      },
+      "NornIrViewNodeOneOf0": {
+        "type": "object",
+        "description": "Every readable row of one declared input; its grain is the object id.",
+        "required": [
+          "op",
+          "input"
+        ],
+        "properties": {
+          "input": {
+            "type": "string",
+            "description": "The `inputs[].alias` read."
+          },
+          "op": {
+            "type": "string",
+            "enum": [
+              "scan"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrViewNodeOneOf1": {
+        "type": "object",
+        "description": "Rows whose ZEN predicate is `true`.",
+        "required": [
+          "op",
+          "input",
+          "predicate"
+        ],
+        "properties": {
+          "input": {
+            "type": "string",
+            "description": "The node filtered."
+          },
+          "op": {
+            "type": "string",
+            "enum": [
+              "filter"
+            ]
+          },
+          "predicate": {
+            "type": "string",
+            "description": "A Boolean ZEN expression over `input.<column>`."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrViewNodeOneOf2": {
+        "type": "object",
+        "description": "Exactly the listed columns, each a typed ZEN expression over the row.",
+        "required": [
+          "op",
+          "input",
+          "columns"
+        ],
+        "properties": {
+          "columns": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrProjectColumn"
+            },
+            "description": "The output columns, in order."
+          },
+          "input": {
+            "type": "string",
+            "description": "The node projected."
+          },
+          "op": {
+            "type": "string",
+            "enum": [
+              "project"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrViewNodeOneOf3": {
+        "type": "object",
+        "description": "A join along a declared link or a declared key equivalence (VIEW-JOIN-1).",
+        "required": [
+          "op",
+          "left",
+          "right",
+          "on",
+          "kind",
+          "prefix"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "description": "Inner or left.",
+            "enum": [
+              "inner",
+              "left"
+            ],
+            "x-enumDescriptions": [
+              "Only matched pairs.",
+              "Every left row; unmatched right columns are null."
+            ]
+          },
+          "left": {
+            "type": "string",
+            "description": "The left node."
+          },
+          "on": {
+            "$ref": "#/components/schemas/NornIrJoinOn",
+            "description": "The declared relationship."
+          },
+          "op": {
+            "type": "string",
+            "enum": [
+              "join"
+            ]
+          },
+          "prefix": {
+            "type": "string",
+            "description": "Prefix for every right column; output names must stay unique."
+          },
+          "right": {
+            "type": "string",
+            "description": "The right node: rows of one object type, at its identity grain."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrViewNodeOneOf4": {
+        "type": "object",
+        "description": "Grouped measures under the metric layer's additivity laws (VIEW-AGG-1).",
+        "required": [
+          "op",
+          "input",
+          "groupBy",
+          "measures"
+        ],
+        "properties": {
+          "groupBy": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrGroupKey"
+            },
+            "description": "Group keys; empty means one row over the whole input."
+          },
+          "input": {
+            "type": "string",
+            "description": "The node aggregated."
+          },
+          "measures": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrMeasure"
+            },
+            "description": "Non-empty measures."
+          },
+          "op": {
+            "type": "string",
+            "enum": [
+              "aggregate"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrViewNodeOneOf5": {
+        "type": "object",
+        "description": "Ranking, offsets and running totals over a total order (VIEW-ORDER-1).",
+        "required": [
+          "op",
+          "input",
+          "partitionBy",
+          "orderBy",
+          "columns"
+        ],
+        "properties": {
+          "columns": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrWindowColumn"
+            },
+            "description": "Non-empty window columns."
+          },
+          "input": {
+            "type": "string",
+            "description": "The node windowed."
+          },
+          "op": {
+            "type": "string",
+            "enum": [
+              "window"
+            ]
+          },
+          "orderBy": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrOrderKey"
+            },
+            "description": "Order keys; with the partition they must cover the input grain."
+          },
+          "partitionBy": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Partition columns."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrViewNodeOneOf6": {
+        "type": "object",
+        "description": "Same-shaped inputs, tagged by branch (VIEW-UNION-1).",
+        "required": [
+          "op",
+          "inputs",
+          "branch"
+        ],
+        "properties": {
+          "branch": {
+            "type": "string",
+            "description": "The output column holding each row's input node id."
+          },
+          "inputs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Two or more node ids."
+          },
+          "op": {
+            "type": "string",
+            "enum": [
+              "union"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrViewNodeOneOf7": {
+        "type": "object",
+        "description": "One row per key, chosen by a total order (VIEW-ORDER-1).",
+        "required": [
+          "op",
+          "input",
+          "key",
+          "orderBy",
+          "keep"
+        ],
+        "properties": {
+          "input": {
+            "type": "string",
+            "description": "The node deduplicated."
+          },
+          "keep": {
+            "type": "string",
+            "description": "Which row is kept.",
+            "enum": [
+              "first",
+              "last"
+            ],
+            "x-enumDescriptions": [
+              "The first row in order.",
+              "The last row in order."
+            ]
+          },
+          "key": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The key columns; the output grain."
+          },
+          "op": {
+            "type": "string",
+            "enum": [
+              "dedupe"
+            ]
+          },
+          "orderBy": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrOrderKey"
+            },
+            "description": "Order keys; with the key they must cover the input grain."
+          }
+        },
+        "additionalProperties": false
       },
       "NornIrWholeNumber": {
         "type": "integer",
@@ -24750,6 +25723,72 @@
           "Latest timestamp."
         ]
       },
+      "NornIrWindowColumn": {
+        "type": "object",
+        "description": "One window column.",
+        "required": [
+          "name",
+          "fn"
+        ],
+        "properties": {
+          "column": {
+            "type": "string",
+            "description": "The column read by `lag`, `lead` and `running_sum`."
+          },
+          "fn": {
+            "type": "string",
+            "description": "The function.",
+            "enum": [
+              "row_number",
+              "rank",
+              "dense_rank",
+              "lag",
+              "lead",
+              "running_sum"
+            ],
+            "x-enumDescriptions": [
+              "1, 2, 3, … in order.",
+              "Rank with gaps over equal order values.",
+              "Rank without gaps.",
+              "`column` of the row `offset` rows earlier; null before the first.",
+              "`column` of the row `offset` rows later; null after the last.",
+              "Exact sum of an additive column from the partition start to this row."
+            ]
+          },
+          "name": {
+            "type": "string",
+            "description": "The output column name."
+          },
+          "offset": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "Rows back or ahead for `lag`/`lead` (default 1).",
+            "maximum": 9007199254740992,
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrWindowFn": {
+        "type": "string",
+        "description": "A window function.",
+        "enum": [
+          "row_number",
+          "rank",
+          "dense_rank",
+          "lag",
+          "lead",
+          "running_sum"
+        ],
+        "x-enumDescriptions": [
+          "1, 2, 3, … in order.",
+          "Rank with gaps over equal order values.",
+          "Rank without gaps.",
+          "`column` of the row `offset` rows earlier; null before the first.",
+          "`column` of the row `offset` rows later; null after the last.",
+          "Exact sum of an additive column from the partition start to this row."
+        ]
+      },
       "NornIrWithinTiming": {
         "type": "object",
         "description": "Activation policy for `within`; the duration stays in `law.timing`.",
@@ -25727,6 +26766,361 @@
           "property": {
             "type": "string",
             "description": "The property sorted on."
+          }
+        }
+      },
+      "NornTransformColumn": {
+        "type": "object",
+        "description": "One typed column of a transform's row (VIEW-TYPE-1).",
+        "required": [
+          "name",
+          "type",
+          "nullable",
+          "additivity",
+          "identity",
+          "origins",
+          "markings"
+        ],
+        "properties": {
+          "additivity": {
+            "type": "string",
+            "description": "The aggregation contract: `undeclared`, `additive`, `semi_additive`,\n`non_additive` or `ratio`."
+          },
+          "identity": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The object type whose ids the column holds, if any."
+          },
+          "markings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Effective markings of the origins."
+          },
+          "name": {
+            "type": "string",
+            "description": "The column name."
+          },
+          "nullable": {
+            "type": "boolean",
+            "description": "Whether a value may be null."
+          },
+          "origins": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornColumnOrigin"
+            },
+            "description": "Column lineage: every stored property the value derives from."
+          },
+          "type": {
+            "type": "string",
+            "description": "The value type, as the checker names it (`decimal`, `text`, …)."
+          }
+        }
+      },
+      "NornTransformInput": {
+        "type": "object",
+        "description": "One declared input.",
+        "required": [
+          "alias",
+          "objectType",
+          "artifactId",
+          "version"
+        ],
+        "properties": {
+          "alias": {
+            "type": "string",
+            "description": "The alias the plan reads."
+          },
+          "artifactId": {
+            "type": "string",
+            "description": "The pinned artifact."
+          },
+          "objectType": {
+            "type": "string",
+            "description": "The object type."
+          },
+          "version": {
+            "type": "string",
+            "description": "Its exact version."
+          }
+        }
+      },
+      "NornTransformLineage": {
+        "type": "object",
+        "description": "One row's lineage: the input rows it derives from.",
+        "required": [
+          "transform",
+          "rowId",
+          "commits",
+          "values",
+          "members"
+        ],
+        "properties": {
+          "commits": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Commits in the cell when the row was read.",
+            "minimum": 0
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornTransformMember"
+            },
+            "description": "The input rows, ordered by input, then id."
+          },
+          "rowId": {
+            "type": "string",
+            "description": "The row."
+          },
+          "transform": {
+            "type": "string",
+            "description": "The transform."
+          },
+          "values": {
+            "type": "object",
+            "description": "Every column value by column name; decimals are exact JSON number tokens.",
+            "additionalProperties": true
+          }
+        }
+      },
+      "NornTransformMember": {
+        "type": "object",
+        "description": "One input row a transform row derives from (VIEW-LINEAGE-1).",
+        "required": [
+          "input",
+          "objectType",
+          "id",
+          "version"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The object id."
+          },
+          "input": {
+            "type": "string",
+            "description": "The input alias."
+          },
+          "objectType": {
+            "type": "string",
+            "description": "The object type."
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The version read.",
+            "minimum": 0
+          }
+        }
+      },
+      "NornTransformNode": {
+        "type": "object",
+        "description": "One admitted operator with its row schema.",
+        "required": [
+          "id",
+          "op",
+          "inputs",
+          "grain",
+          "columns"
+        ],
+        "properties": {
+          "columns": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornTransformColumn"
+            },
+            "description": "Its typed columns."
+          },
+          "grain": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Its row identity."
+          },
+          "id": {
+            "type": "string",
+            "description": "The node id."
+          },
+          "inputs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The nodes (or, for a scan, the input alias) it reads."
+          },
+          "op": {
+            "type": "string",
+            "description": "The operator: `scan`, `filter`, `project`, `join`, `aggregate`,\n`window`, `union` or `dedupe`."
+          }
+        }
+      },
+      "NornTransformPage": {
+        "type": "object",
+        "description": "One page of a transform's rows under the reader's visibility.",
+        "required": [
+          "transform",
+          "version",
+          "engine",
+          "commits",
+          "columns",
+          "grain",
+          "rows",
+          "totalRows",
+          "withheld",
+          "excluded",
+          "complete",
+          "nextAfter"
+        ],
+        "properties": {
+          "columns": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornTransformColumn"
+            },
+            "description": "Output columns, in schema order."
+          },
+          "commits": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Commits in the cell when the rows were read.",
+            "minimum": 0
+          },
+          "complete": {
+            "type": "boolean",
+            "description": "No input row was withheld or excluded."
+          },
+          "engine": {
+            "type": "string",
+            "description": "The evaluator: `cell` (exact) today."
+          },
+          "excluded": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Input rows excluded by open quarantining findings.",
+            "minimum": 0
+          },
+          "grain": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The columns that identify a row."
+          },
+          "nextAfter": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass as `after` for the next page; null on the last page."
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornTransformRow"
+            },
+            "description": "This page's rows, ordered by grain (nulls last)."
+          },
+          "totalRows": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Rows across all pages.",
+            "minimum": 0
+          },
+          "transform": {
+            "type": "string",
+            "description": "The transform (its artifact id)."
+          },
+          "version": {
+            "type": "string",
+            "description": "Its exact version."
+          },
+          "withheld": {
+            "type": "object",
+            "description": "Input rows the reader may count but not read, excluded, by input alias.",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "NornTransformPlan": {
+        "type": "object",
+        "description": "A transform's admitted plan: the definition graph Studio draws.",
+        "required": [
+          "transform",
+          "version",
+          "viewId",
+          "inputs",
+          "nodes",
+          "output"
+        ],
+        "properties": {
+          "inputs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornTransformInput"
+            },
+            "description": "The declared inputs."
+          },
+          "nodes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornTransformNode"
+            },
+            "description": "Every node, inputs first."
+          },
+          "output": {
+            "type": "string",
+            "description": "The output node."
+          },
+          "transform": {
+            "type": "string",
+            "description": "The transform."
+          },
+          "version": {
+            "type": "string",
+            "description": "Its exact version."
+          },
+          "viewId": {
+            "type": "string",
+            "description": "The view id."
+          }
+        }
+      },
+      "NornTransformRow": {
+        "type": "object",
+        "description": "One output row.",
+        "required": [
+          "rowId",
+          "values",
+          "memberCount"
+        ],
+        "properties": {
+          "memberCount": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many input rows the row derives from (its lineage).",
+            "minimum": 0
+          },
+          "rowId": {
+            "type": "string",
+            "description": "The row's stable id: the content hash of its grain values."
+          },
+          "values": {
+            "type": "object",
+            "description": "Every column value by column name; decimals are exact JSON number tokens.",
+            "additionalProperties": true
           }
         }
       },

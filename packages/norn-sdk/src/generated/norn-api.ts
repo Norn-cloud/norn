@@ -386,6 +386,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/transforms/{transform}/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A transform's admitted plan: inputs, typed nodes and column lineage.
+         * @description # Errors
+         *     A denied gate (the opaque 403), an undeclared transform (404), a plan that
+         *     no longer admits (422) or a host failure.
+         */
+        get: operations["get_transform_plan"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/transforms/{transform}/rows": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One page of a transform's rows, evaluated now under the reader's visibility.
+         * @description # Errors
+         *     A denied gate (the opaque 403), an undeclared transform (404), an invalid
+         *     limit or cursor (400), a commit since the cursor (409
+         *     `transform.snapshot_moved`), a bound (413), a stale or failed evaluation
+         *     (422) or a host failure.
+         */
+        get: operations["get_transform_rows"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/transforms/{transform}/rows/{row}/lineage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One row's lineage: the input rows it derives from (VIEW-LINEAGE-1).
+         * @description # Errors
+         *     As [`get_transform_rows`], and a row this reader does not see now (404
+         *     `transform.row_not_found`).
+         */
+        get: operations["get_transform_row_lineage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1073,6 +1141,13 @@ export interface components {
          * @enum {string}
          */
         NornCheckerTier: "T0" | "T1" | "T2" | "T3" | "T4" | "T5" | "T6" | "T7";
+        /** @description Where a column's value comes from: one stored property of one input. */
+        NornColumnOrigin: {
+            /** @description The input alias. */
+            input: string;
+            /** @description The stored property, or `id`. */
+            property: string;
+        };
         /** @description An admitted document; source and receipt travel as exact JSON text. */
         NornDefinitionsCatalog: {
             /**
@@ -1864,6 +1939,11 @@ export interface components {
          * @enum {string}
          */
         NornIrAdditivityAxis: "time";
+        /**
+         * @description An aggregate function.
+         * @enum {string}
+         */
+        NornIrAggregateFn: "sum" | "count" | "count_distinct" | "min" | "max";
         /** @description The fold computed over the matched objects. */
         NornIrAggregateFunction: components["schemas"]["NornIrAggregateFunctionOneOf0"] | components["schemas"]["NornIrAggregateFunctionOneOf1"];
         /**
@@ -1965,11 +2045,12 @@ export interface components {
         /**
          * @description Serializable calc expression leaf for a Derived view.
          *
-         *     In ViewIR v0 only the `field_projection` form is admitted. `effectful_ts`
-         *     is decodable so the checker can reject it (IO belongs in an Effect
-         *     artifact); `raw_promise` is never admitted.
+         *     ViewIR v0 admits the `field_projection` form; ViewIR v1 adds `relational`
+         *     (a closed, typed operator plan). `effectful_ts` is decodable so the checker
+         *     can reject it (IO belongs in an Effect artifact); `raw_promise` is never
+         *     admitted.
          */
-        NornIrCalcExpr: components["schemas"]["NornIrCalcExprOneOf0"] | components["schemas"]["NornIrCalcExprOneOf1"];
+        NornIrCalcExpr: components["schemas"]["NornIrCalcExprOneOf0"] | components["schemas"]["NornIrCalcExprOneOf1"] | components["schemas"]["NornIrCalcExprOneOf2"];
         /** @description Simple field projection: select a non-empty subset of named fields from the primary input. */
         NornIrCalcExprOneOf0: {
             fields: string[];
@@ -1983,6 +2064,22 @@ export interface components {
             /** @enum {string} */
             kind: "effectful_ts";
             sourceRef: string;
+        };
+        /**
+         * @description ViewIR v1 (VIEW-TYPE-1): a closed relational plan over the declared
+         *     inputs. Every node is typed by the checker against the effective
+         *     catalog; nothing in it is executed raw.
+         */
+        NornIrCalcExprOneOf2: {
+            /** @enum {string} */
+            kind: "relational";
+            nodes: components["schemas"]["NornIrCalcExprOneOf2PropertyNodes"];
+            /** @description The node whose rows are the view's rows. */
+            output: string;
+        };
+        /** @description Operators by node id. */
+        NornIrCalcExprOneOf2PropertyNodes: {
+            [key: string]: components["schemas"]["NornIrViewNode"];
         };
         /** @description An ISO 8601 calendar date `YYYY-MM-DD` with no time and no zone. */
         NornIrCalendarDate: string;
@@ -2970,6 +3067,11 @@ export interface components {
          */
         NornIrDecimalLiteral: string;
         /**
+         * @description Which row of a key a dedupe keeps.
+         * @enum {string}
+         */
+        NornIrDedupeKeep: "first" | "last";
+        /**
          * @description A literal default value of a property's type (any JSON except `null`).
          *
          *     The literal's shape per kind (checked by `norn-checker`): a string for
@@ -3866,6 +3968,16 @@ export interface components {
             /** @enum {string} */
             kind: "allAdmittedObjectTypes";
         };
+        /** @description One grouping key. */
+        NornIrGroupKey: {
+            /** @description The grouped column. */
+            column: string;
+            /**
+             * @description A calendar bucket for a date or timestamp column (ISO/UTC).
+             * @enum {string}
+             */
+            grain?: "day" | "week" | "month" | "quarter" | "year";
+        };
         /**
          * @description Limits for an inline custom helper (§1 row 6). D33 admits none in v1, so
          *     these only bind a future admission; the helper's fuel is charged to the
@@ -4368,11 +4480,36 @@ export interface components {
         } & {
             [key: string]: components["schemas"]["NornIrZenExpression"];
         };
+        /**
+         * @description Inner or left outer.
+         * @enum {string}
+         */
+        NornIrJoinKind: "inner" | "left";
+        /** @description How a join pairs rows. Ad-hoc joins on arbitrary columns do not exist. */
+        NornIrJoinOn: components["schemas"]["NornIrJoinOnOneOf0"] | components["schemas"]["NornIrJoinOnOneOf1"];
+        /** @description Along a declared link of the type whose ids a left column holds. */
+        NornIrJoinOnOneOf0: {
+            link: components["schemas"]["NornIrLinkJoin"];
+        };
+        /**
+         * @description A declared key equivalence: left columns equal, under the key's own
+         *     normalization, a declared unique key (or the id) of the right type.
+         */
+        NornIrJoinOnOneOf1: {
+            key: components["schemas"]["NornIrKeyJoin"];
+        };
         /** @constant */
         NornIrJsonFalse: false;
         NornIrJsonValue: null | boolean | number | string | unknown[] | components["schemas"]["NornIrJsonValueAnyOf5"];
         NornIrJsonValueAnyOf5: {
             [key: string]: unknown;
+        };
+        /** @description A join on a declared key of the right type. */
+        NornIrKeyJoin: {
+            /** @description Left columns, in the key's component order. */
+            left: string[];
+            /** @description A key declared by the right type, or `id` for its identity. */
+            right: string;
         };
         /**
          * @description Name of a [`KeySpec`] within its object type (`primary`, `by_email`),
@@ -5071,6 +5208,13 @@ export interface components {
             /** @description Forward source link IDs from the image of `concept`; empty is identity. */
             path: string[];
         };
+        /** @description A join along a declared forward link role. */
+        NornIrLinkJoin: {
+            /** @description The left column holding the link's source object ids. */
+            column: string;
+            /** @description The declared forward link role. */
+            link: string;
+        };
         /**
          * @description One link rule: the produced object links to the object another map
          *     produces with this key (an RML referencing object map with its join).
@@ -5331,6 +5475,18 @@ export interface components {
         NornIrMaskPolicyOneOf2: {
             /** @enum {string} */
             kind: "null";
+        };
+        /** @description One measure of an aggregate. */
+        NornIrMeasure: {
+            /** @description The measured column; omitted only for a row `count`. */
+            column?: string;
+            /**
+             * @description The function.
+             * @enum {string}
+             */
+            fn: "sum" | "count" | "count_distinct" | "min" | "max";
+            /** @description The output column name. */
+            name: string;
         };
         /**
          * @description Base aggregate operators. Count without a property counts objects.
@@ -6058,6 +6214,16 @@ export interface components {
          * @enum {string}
          */
         NornIrOntologyTermStatus: "active" | "deprecated" | "superseded";
+        /** @description One order key. */
+        NornIrOrderKey: {
+            /** @description The ordered column. */
+            column: string;
+            /**
+             * @description Its direction.
+             * @enum {string}
+             */
+            direction: "asc" | "desc";
+        };
         /**
          * @description A deterministic collection derivation through an existing RuleIR helper.
          *     The helper's input is exactly `{accumulator, item, index}` and its output
@@ -6219,6 +6385,16 @@ export interface components {
          * @enum {string}
          */
         NornIrProfileMethod: "full_scan" | "sample";
+        /** @description One output column of a projection. */
+        NornIrProjectColumn: {
+            /**
+             * @description A ZEN expression over `input.<column>`; `input.c` alone passes the
+             *     column through with its full contract.
+             */
+            expression: string;
+            /** @description The output column name. */
+            name: string;
+        };
         /** @description One property of an object type. */
         NornIrProperty: {
             /**
@@ -7695,6 +7871,11 @@ export interface components {
          * @enum {string}
          */
         NornIrSnapshotDeviationReason: "no_declared_path" | "ambiguous_shortest_path";
+        /**
+         * @description Sort direction. Nulls sort last in both directions.
+         * @enum {string}
+         */
+        NornIrSortDirection: "asc" | "desc";
         /** @description The adapter that produced a document. */
         NornIrSourceAdapter: {
             /** @description Adapter name (`norn.importers.frappe`). */
@@ -8172,6 +8353,100 @@ export interface components {
          * @enum {string}
          */
         NornIrViewMaintenance: "recompute_on_read" | "incremental";
+        /** @description One closed relational operator (VIEW-TYPE-1). No arbitrary function node. */
+        NornIrViewNode: components["schemas"]["NornIrViewNodeOneOf0"] | components["schemas"]["NornIrViewNodeOneOf1"] | components["schemas"]["NornIrViewNodeOneOf2"] | components["schemas"]["NornIrViewNodeOneOf3"] | components["schemas"]["NornIrViewNodeOneOf4"] | components["schemas"]["NornIrViewNodeOneOf5"] | components["schemas"]["NornIrViewNodeOneOf6"] | components["schemas"]["NornIrViewNodeOneOf7"];
+        /** @description Every readable row of one declared input; its grain is the object id. */
+        NornIrViewNodeOneOf0: {
+            /** @description The `inputs[].alias` read. */
+            input: string;
+            /** @enum {string} */
+            op: "scan";
+        };
+        /** @description Rows whose ZEN predicate is `true`. */
+        NornIrViewNodeOneOf1: {
+            /** @description The node filtered. */
+            input: string;
+            /** @enum {string} */
+            op: "filter";
+            /** @description A Boolean ZEN expression over `input.<column>`. */
+            predicate: string;
+        };
+        /** @description Exactly the listed columns, each a typed ZEN expression over the row. */
+        NornIrViewNodeOneOf2: {
+            /** @description The output columns, in order. */
+            columns: components["schemas"]["NornIrProjectColumn"][];
+            /** @description The node projected. */
+            input: string;
+            /** @enum {string} */
+            op: "project";
+        };
+        /** @description A join along a declared link or a declared key equivalence (VIEW-JOIN-1). */
+        NornIrViewNodeOneOf3: {
+            /**
+             * @description Inner or left.
+             * @enum {string}
+             */
+            kind: "inner" | "left";
+            /** @description The left node. */
+            left: string;
+            /** @description The declared relationship. */
+            on: components["schemas"]["NornIrJoinOn"];
+            /** @enum {string} */
+            op: "join";
+            /** @description Prefix for every right column; output names must stay unique. */
+            prefix: string;
+            /** @description The right node: rows of one object type, at its identity grain. */
+            right: string;
+        };
+        /** @description Grouped measures under the metric layer's additivity laws (VIEW-AGG-1). */
+        NornIrViewNodeOneOf4: {
+            /** @description Group keys; empty means one row over the whole input. */
+            groupBy: components["schemas"]["NornIrGroupKey"][];
+            /** @description The node aggregated. */
+            input: string;
+            /** @description Non-empty measures. */
+            measures: components["schemas"]["NornIrMeasure"][];
+            /** @enum {string} */
+            op: "aggregate";
+        };
+        /** @description Ranking, offsets and running totals over a total order (VIEW-ORDER-1). */
+        NornIrViewNodeOneOf5: {
+            /** @description Non-empty window columns. */
+            columns: components["schemas"]["NornIrWindowColumn"][];
+            /** @description The node windowed. */
+            input: string;
+            /** @enum {string} */
+            op: "window";
+            /** @description Order keys; with the partition they must cover the input grain. */
+            orderBy: components["schemas"]["NornIrOrderKey"][];
+            /** @description Partition columns. */
+            partitionBy: string[];
+        };
+        /** @description Same-shaped inputs, tagged by branch (VIEW-UNION-1). */
+        NornIrViewNodeOneOf6: {
+            /** @description The output column holding each row's input node id. */
+            branch: string;
+            /** @description Two or more node ids. */
+            inputs: string[];
+            /** @enum {string} */
+            op: "union";
+        };
+        /** @description One row per key, chosen by a total order (VIEW-ORDER-1). */
+        NornIrViewNodeOneOf7: {
+            /** @description The node deduplicated. */
+            input: string;
+            /**
+             * @description Which row is kept.
+             * @enum {string}
+             */
+            keep: "first" | "last";
+            /** @description The key columns; the output grain. */
+            key: string[];
+            /** @enum {string} */
+            op: "dedupe";
+            /** @description Order keys; with the key they must cover the input grain. */
+            orderBy: components["schemas"]["NornIrOrderKey"][];
+        };
         /**
          * Format: uint64
          * @description A non-negative integral JSON number.
@@ -9032,6 +9307,28 @@ export interface components {
          * @enum {string}
          */
         NornIrWindowChoice: "min" | "max";
+        /** @description One window column. */
+        NornIrWindowColumn: {
+            /** @description The column read by `lag`, `lead` and `running_sum`. */
+            column?: string;
+            /**
+             * @description The function.
+             * @enum {string}
+             */
+            fn: "row_number" | "rank" | "dense_rank" | "lag" | "lead" | "running_sum";
+            /** @description The output column name. */
+            name: string;
+            /**
+             * Format: uint64
+             * @description Rows back or ahead for `lag`/`lead` (default 1).
+             */
+            offset?: number;
+        };
+        /**
+         * @description A window function.
+         * @enum {string}
+         */
+        NornIrWindowFn: "row_number" | "rank" | "dense_rank" | "lag" | "lead" | "running_sum";
         /** @description Activation policy for `within`; the duration stays in `law.timing`. */
         NornIrWithinTiming: {
             /** @description Principal or role answerable for discharge; grants no authority. */
@@ -9437,6 +9734,152 @@ export interface components {
             direction: components["schemas"]["NornSortDirection"];
             /** @description The property sorted on. */
             property: string;
+        };
+        /** @description One typed column of a transform's row (VIEW-TYPE-1). */
+        NornTransformColumn: {
+            /**
+             * @description The aggregation contract: `undeclared`, `additive`, `semi_additive`,
+             *     `non_additive` or `ratio`.
+             */
+            additivity: string;
+            /** @description The object type whose ids the column holds, if any. */
+            identity: string | null;
+            /** @description Effective markings of the origins. */
+            markings: string[];
+            /** @description The column name. */
+            name: string;
+            /** @description Whether a value may be null. */
+            nullable: boolean;
+            /** @description Column lineage: every stored property the value derives from. */
+            origins: components["schemas"]["NornColumnOrigin"][];
+            /** @description The value type, as the checker names it (`decimal`, `text`, …). */
+            type: string;
+        };
+        /** @description One declared input. */
+        NornTransformInput: {
+            /** @description The alias the plan reads. */
+            alias: string;
+            /** @description The pinned artifact. */
+            artifactId: string;
+            /** @description The object type. */
+            objectType: string;
+            /** @description Its exact version. */
+            version: string;
+        };
+        /** @description One row's lineage: the input rows it derives from. */
+        NornTransformLineage: {
+            /**
+             * Format: int64
+             * @description Commits in the cell when the row was read.
+             */
+            commits: number;
+            /** @description The input rows, ordered by input, then id. */
+            members: components["schemas"]["NornTransformMember"][];
+            /** @description The row. */
+            rowId: string;
+            /** @description The transform. */
+            transform: string;
+            /** @description Every column value by column name; decimals are exact JSON number tokens. */
+            values: {
+                [key: string]: unknown;
+            };
+        };
+        /** @description One input row a transform row derives from (VIEW-LINEAGE-1). */
+        NornTransformMember: {
+            /** @description The object id. */
+            id: string;
+            /** @description The input alias. */
+            input: string;
+            /** @description The object type. */
+            objectType: string;
+            /**
+             * Format: int64
+             * @description The version read.
+             */
+            version: number;
+        };
+        /** @description One admitted operator with its row schema. */
+        NornTransformNode: {
+            /** @description Its typed columns. */
+            columns: components["schemas"]["NornTransformColumn"][];
+            /** @description Its row identity. */
+            grain: string[];
+            /** @description The node id. */
+            id: string;
+            /** @description The nodes (or, for a scan, the input alias) it reads. */
+            inputs: string[];
+            /**
+             * @description The operator: `scan`, `filter`, `project`, `join`, `aggregate`,
+             *     `window`, `union` or `dedupe`.
+             */
+            op: string;
+        };
+        /** @description One page of a transform's rows under the reader's visibility. */
+        NornTransformPage: {
+            /** @description Output columns, in schema order. */
+            columns: components["schemas"]["NornTransformColumn"][];
+            /**
+             * Format: int64
+             * @description Commits in the cell when the rows were read.
+             */
+            commits: number;
+            /** @description No input row was withheld or excluded. */
+            complete: boolean;
+            /** @description The evaluator: `cell` (exact) today. */
+            engine: string;
+            /**
+             * Format: int64
+             * @description Input rows excluded by open quarantining findings.
+             */
+            excluded: number;
+            /** @description The columns that identify a row. */
+            grain: string[];
+            /** @description Pass as `after` for the next page; null on the last page. */
+            nextAfter: string | null;
+            /** @description This page's rows, ordered by grain (nulls last). */
+            rows: components["schemas"]["NornTransformRow"][];
+            /**
+             * Format: int64
+             * @description Rows across all pages.
+             */
+            totalRows: number;
+            /** @description The transform (its artifact id). */
+            transform: string;
+            /** @description Its exact version. */
+            version: string;
+            /** @description Input rows the reader may count but not read, excluded, by input alias. */
+            withheld: {
+                [key: string]: number;
+            };
+        };
+        /** @description A transform's admitted plan: the definition graph Studio draws. */
+        NornTransformPlan: {
+            /** @description The declared inputs. */
+            inputs: components["schemas"]["NornTransformInput"][];
+            /** @description Every node, inputs first. */
+            nodes: components["schemas"]["NornTransformNode"][];
+            /** @description The output node. */
+            output: string;
+            /** @description The transform. */
+            transform: string;
+            /** @description Its exact version. */
+            version: string;
+            /** @description The view id. */
+            viewId: string;
+        };
+        /** @description One output row. */
+        NornTransformRow: {
+            /**
+             * Format: int64
+             * @description How many input rows the row derives from (its lineage).
+             */
+            memberCount: number;
+            /** @description The row's stable id: the content hash of its grain values. */
+            rowId: string;
+            /** @description Every column value by column name; decimals are exact JSON number tokens. */
+            values: {
+                [key: string]: unknown;
+            };
         };
         /** @description An execution world. */
         NornWorld: "main" | {
@@ -10905,6 +11348,240 @@ export interface operations {
                 };
             };
             /** @description The request was refused by a typed compute refusal. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    get_transform_plan: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path: {
+                /** @description The transform's artifact id. */
+                transform: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The plan the checker admits against the installed definitions now: every node's operator, inputs, grain and typed columns with their lineage. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NornTransformPlan"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied, with the same document whatever the reason. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused (`transform.not_found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused (`core.compute.stale_input`): the transform no longer admits. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    get_transform_rows: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+                /** @description Page size, 1 to 1,000; 100 when absent. */
+                limit?: number;
+                /** @description The `nextAfter` of the previous page. */
+                after?: string;
+            };
+            header?: never;
+            path: {
+                /** @description The transform's artifact id. */
+                transform: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of the transform's rows. Each input row enters only with Population and Values; a row the reader may only count is excluded, counted in `withheld`, and makes the page incomplete. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NornTransformPage"];
+                };
+            };
+            /** @description The request was refused as invalid (`request.invalid`): an unknown or repeated parameter, a limit outside 1 to 1,000, or a cursor this transform did not issue. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied on the transform or on any object type it reads, with the same document whatever the reason. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused (`transform.not_found`): no installed relational transform has this id. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused (`transform.snapshot_moved`, retryable from the first page): the cell committed since the cursor was issued; a page is never assembled from two snapshots. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused (`core.compute.bound_exceeded`): the exact engine's row bound; no partial result is returned. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused (`core.compute.stale_input` or `core.compute.expression_failed`): the transform no longer admits against the installed definitions, or an admitted expression failed on a row. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    get_transform_row_lineage: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path: {
+                /** @description The transform's artifact id. */
+                transform: string;
+                /** @description A `rowId` from a page of the transform's rows. */
+                row: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The row and every input row it derives from, under the same visibility as its page. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NornTransformLineage"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied, with the same document whatever the reason. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused (`transform.not_found` or `transform.row_not_found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused (`core.compute.bound_exceeded`). */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused (`core.compute.stale_input` or `core.compute.expression_failed`). */
             422: {
                 headers: {
                     [name: string]: unknown;

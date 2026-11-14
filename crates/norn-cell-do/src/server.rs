@@ -29,6 +29,9 @@ use norn_api::question_routes::{
 use norn_api::refusal::Refusal;
 use norn_api::routes::{DefinitionsQuery, get_defs};
 use norn_api::scope::ScopeQuery;
+use norn_api::transform_routes::{
+    TransformRowsParams, get_transform_plan, get_transform_row_lineage, get_transform_rows,
+};
 use norn_cell::engine::SqlEngine;
 
 use norn_api::authz::{ReadCapability, ReadRequest};
@@ -135,6 +138,12 @@ routes! {
     QuestionsEvaluate => ("POST", "/v1/questions:evaluate"),
     /// `POST /v1/questions:trace`.
     QuestionsTrace => ("POST", "/v1/questions:trace"),
+    /// `GET /v1/transforms/{transform}/rows`.
+    TransformRows => ("GET", "/v1/transforms/{transform}/rows"),
+    /// `GET /v1/transforms/{transform}/rows/{row}/lineage`.
+    TransformRowLineage => ("GET", "/v1/transforms/{transform}/rows/{row}/lineage"),
+    /// `GET /v1/transforms/{transform}/plan`.
+    TransformPlan => ("GET", "/v1/transforms/{transform}/plan"),
 }
 
 impl Route {
@@ -174,9 +183,112 @@ impl Route {
                 (Some(_), Some(_)) => return None,
             });
         }
+        if let Some((_, leaf)) = transform_path(path) {
+            return Some(match leaf {
+                TransformLeaf::Rows => Self::TransformRows,
+                TransformLeaf::Lineage(_) => Self::TransformRowLineage,
+                TransformLeaf::Plan => Self::TransformPlan,
+            });
+        }
         path.strip_prefix("/v1/actions/")
             .filter(|id| !id.is_empty() && !id.contains('/'))
             .map(|_| Self::Action)
+    }
+}
+
+/// What `/v1/transforms/{transform}/…` reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TransformLeaf<'p> {
+    Rows,
+    Lineage(&'p str),
+    Plan,
+}
+
+/// The transform id and leaf of a `/v1/transforms/...` path.
+fn transform_path(path: &str) -> Option<(&str, TransformLeaf<'_>)> {
+    let rest = path.strip_prefix("/v1/transforms/")?;
+    let mut segments = rest.split('/');
+    let transform = segments.next().filter(|id| !id.is_empty())?;
+    let leaf = match (
+        segments.next(),
+        segments.next(),
+        segments.next(),
+        segments.next(),
+    ) {
+        (Some("rows"), None, None, None) => TransformLeaf::Rows,
+        (Some("plan"), None, None, None) => TransformLeaf::Plan,
+        (Some("rows"), Some(row), Some("lineage"), None) if !row.is_empty() => {
+            TransformLeaf::Lineage(row)
+        }
+        _ => return None,
+    };
+    Some((transform, leaf))
+}
+
+/// `GET /v1/transforms/{transform}/rows`, `/rows/{row}/lineage` and `/plan`,
+/// scoped by the query string (VIEW-READ-1).
+fn transforms<E: SqlEngine>(
+    host: &DevHost<E>,
+    actor: Option<&str>,
+    (transform, leaf): (&str, TransformLeaf<'_>),
+    query: &str,
+) -> Result<String, Refusal> {
+    let decoded = |text: &str| {
+        percent_encoding::percent_decode_str(text)
+            .decode_utf8()
+            .map(std::borrow::Cow::into_owned)
+            .map_err(|_invalid| Refusal::invalid("a transform path segment is not UTF-8"))
+    };
+    let transform = decoded(transform)?;
+    match leaf {
+        TransformLeaf::Rows => {
+            let mut fields = parse(query, &["orgId", "environmentId", "limit", "after"])?;
+            let scope = ScopeQuery {
+                org_id: fields.remove("orgId"),
+                environment_id: fields.remove("environmentId"),
+            };
+            let params = TransformRowsParams {
+                limit: fields.remove("limit"),
+                after: fields.remove("after"),
+            };
+            document_json(&get_transform_rows(
+                host,
+                &scope,
+                actor,
+                &transform,
+                &params,
+                &CellObjectAccess,
+            )?)
+        }
+        TransformLeaf::Lineage(row) => {
+            let fields = parse(query, &["orgId", "environmentId"])?;
+            let scope = ScopeQuery {
+                org_id: fields.get("orgId").cloned(),
+                environment_id: fields.get("environmentId").cloned(),
+            };
+            document_json(&get_transform_row_lineage(
+                host,
+                &scope,
+                actor,
+                &transform,
+                &decoded(row)?,
+                &CellObjectAccess,
+            )?)
+        }
+        TransformLeaf::Plan => {
+            let fields = parse(query, &["orgId", "environmentId"])?;
+            let scope = ScopeQuery {
+                org_id: fields.get("orgId").cloned(),
+                environment_id: fields.get("environmentId").cloned(),
+            };
+            document_json(&get_transform_plan(
+                host,
+                &scope,
+                actor,
+                &transform,
+                &CellObjectAccess,
+            )?)
+        }
     }
 }
 
@@ -333,6 +445,10 @@ fn route<E: SqlEngine>(
             (None, _) if object.is_some() => object.map_or_else(
                 || Err(norn_api::authz::read_denied()),
                 |(kind, id, leaf)| objects(host, actor, (kind, id, leaf), query),
+            ),
+            (None, _) if transform_path(path).is_some() => transform_path(path).map_or_else(
+                || Err(norn_api::authz::read_denied()),
+                |target| transforms(cell(host)?, actor, target, query),
             ),
             (None, _) => definitions_query(query)
                 .and_then(|query| get_defs(cell(host)?, &query, actor))
