@@ -521,9 +521,12 @@ pub fn get_transform_plan<E: SqlEngine>(
     transform: &str,
     access: &dyn ObjectAccess,
 ) -> Result<NornTransformPlan, Refusal> {
-    let (_epoch, _actor) = collection(host, scope, actor, transform, access)?;
+    let (_epoch, actor) = collection(host, scope, actor, transform, access)?;
     let cell = host.cell()?;
     let plan = installed_plan(cell.store(), transform)?;
+    // VIEW-READ-1: the plan names every input type's properties, markings and
+    // links, so it is gated like the rows it describes.
+    input_gates(host, access, &actor, &plan)?;
     let nodes = plan
         .order
         .iter()

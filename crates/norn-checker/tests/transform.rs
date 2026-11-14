@@ -887,7 +887,10 @@ fn tagged_order() -> TransformInput {
                     row("t2", &[("label", s("gift"))]),
                 ],
             ),
-            ("line".to_owned(), vec![row("l1", &[("amount", num("80.00"))])]),
+            (
+                "line".to_owned(),
+                vec![row("l1", &[("amount", num("80.00"))])],
+            ),
         ]),
         links: BTreeMap::from([
             (
@@ -993,11 +996,13 @@ fn a_group_key_stays_repeated_unless_one_input_owns_the_keys() {
 #[test]
 fn a_measure_without_group_keys_may_be_null() {
     let plan = admitted(
-        with(json!({"a": {"op": "aggregate", "input": "order", "groupBy": [],
+        with(
+            json!({"a": {"op": "aggregate", "input": "order", "groupBy": [],
         "measures": [{"name": "total", "fn": "sum", "column": "flat"},
             {"name": "first", "fn": "min", "column": "placed_at"},
             {"name": "last", "fn": "max", "column": "placed_at"},
-            {"name": "orders", "fn": "count"}]}})),
+            {"name": "orders", "fn": "count"}]}}),
+        ),
         "a",
     );
     let schema = plan.output_schema();
@@ -1014,11 +1019,20 @@ fn a_measure_without_group_keys_may_be_null() {
     assert_eq!(out.rows[0].values["total"], RuntimeValue::Null);
     // Every group has a member, so a grouped measure keeps its type.
     let grouped = admitted(
-        with(json!({"a": {"op": "aggregate", "input": "order", "groupBy": [{"column": "currency"}],
-        "measures": [{"name": "total", "fn": "sum", "column": "flat"}]}})),
+        with(
+            json!({"a": {"op": "aggregate", "input": "order", "groupBy": [{"column": "currency"}],
+        "measures": [{"name": "total", "fn": "sum", "column": "flat"}]}}),
+        ),
         "a",
     );
-    assert!(!grouped.output_schema().column("total").expect("total").describe().0);
+    assert!(
+        !grouped
+            .output_schema()
+            .column("total")
+            .expect("total")
+            .describe()
+            .0
+    );
 }
 
 #[test]
@@ -1053,9 +1067,11 @@ fn a_computed_column_that_reads_the_whole_row_carries_every_column() {
     // A closure body is not a literal read path: the email it reads is
     // known only as "some of the row".
     documents.push(view(
-        with(json!({"p": {"op": "project", "input": "customer", "columns": [
+        with(
+            json!({"p": {"op": "project", "input": "customer", "columns": [
             {"name": "id", "expression": "input.id"},
-            {"name": "hit", "expression": "some([1], input.email == \"a@x\")"}]}})),
+            {"name": "hit", "expression": "some([1], input.email == \"a@x\")"}]}}),
+        ),
         "p",
     ));
     let pool = envelopes(documents);

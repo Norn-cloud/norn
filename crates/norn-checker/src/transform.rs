@@ -1005,6 +1005,9 @@ impl Builder<'_, '_> {
 
     fn read_columns(&mut self, schema: &NodeSchema, source: &str, at: &str) -> Vec<Column> {
         match norn_expr::expression_read_paths(source, ROW_ROOT) {
+            // An empty path is a read of unknown extent (the bare row, `$root`
+            // or a closure): it derives from every column.
+            Ok(paths) if paths.iter().any(Vec::is_empty) => schema.columns.clone(),
             Ok(paths) => paths
                 .iter()
                 .filter_map(|path| path.first())
@@ -1228,7 +1231,9 @@ impl Builder<'_, '_> {
                         right: right_id.clone(),
                     },
                     declared.cardinality.to == norn_ir::Multiplicity::Many,
-                    declared.cardinality.from == norn_ir::Multiplicity::Many,
+                    // Left rows that already repeat a source id reach its
+                    // targets once per repeat, whatever the link's inverse.
+                    declared.cardinality.from == norn_ir::Multiplicity::Many || column.fanned,
                 )
             }
             JoinOn::Key(key) => {
@@ -1473,6 +1478,12 @@ impl Builder<'_, '_> {
         let mut columns = Vec::new();
         let mut group_by = Vec::new();
         let mut keys = Vec::new();
+        // One group per owner row makes the owner's key values single; any
+        // other key value can sit in several groups and stays repeated.
+        let owner = key_owner(
+            &schema,
+            aggregate.group_by.iter().map(|key| key.column.as_str()),
+        );
         for (index, key) in aggregate.group_by.iter().enumerate() {
             let pointer = format!("{at}/groupBy/{index}");
             let Some(column) = schema.column(&key.column) else {
@@ -1492,7 +1503,7 @@ impl Builder<'_, '_> {
                 continue;
             }
             let mut output = Column {
-                fanned: false,
+                fanned: column.fanned && !owned_by(column, owner.as_deref()),
                 ..column.clone()
             };
             if let Some(grain) = key.grain {
@@ -1584,9 +1595,9 @@ impl Builder<'_, '_> {
                 continue;
             }
             let (ty, additivity) = match measure.function {
-                AggregateFn::Count | AggregateFn::CountDistinct => {
-                    (Type::Integer, PropertyAdditivity::Additive {})
-                }
+                AggregateFn::Count => (Type::Integer, PropertyAdditivity::Additive {}),
+                // Distinct counts of parts do not add up to the whole's.
+                AggregateFn::CountDistinct => (Type::Integer, PropertyAdditivity::NonAdditive {}),
                 AggregateFn::Sum => (column.ty.clone(), PropertyAdditivity::Additive {}),
                 AggregateFn::Min | AggregateFn::Max => {
                     if !orderable(&column.ty) {
@@ -1601,6 +1612,16 @@ impl Builder<'_, '_> {
                 }
             };
             let mut output = Column::derived(&measure.name, ty, additivity);
+            if aggregate.group_by.is_empty()
+                && matches!(
+                    measure.function,
+                    AggregateFn::Sum | AggregateFn::Min | AggregateFn::Max
+                )
+            {
+                // Without group keys the one row exists over no input rows,
+                // and these measures are null there.
+                output = output.nullable();
+            }
             output.origins.clone_from(&column.origins);
             output.markings.clone_from(&column.markings);
             if sum {
@@ -1939,28 +1960,14 @@ impl Builder<'_, '_> {
             }
         }
         let order_by = self.order(&schema, &dedupe.key, &dedupe.order_by, at)?;
-        // A value is no longer repeated once its owner's id is in the key.
-        let owners: BTreeSet<String> = dedupe
-            .key
-            .iter()
-            .filter_map(|key| schema.column(key))
-            .filter_map(|column| column.exact.as_ref())
-            .filter(|origin| origin.property == "id")
-            .map(|origin| origin.alias.clone())
-            .collect();
+        // A value is no longer repeated once its owner's rows are one per key.
+        let owner = key_owner(&schema, dedupe.key.iter().map(String::as_str));
         let columns = schema
             .columns
             .iter()
-            .map(|column| {
-                let owned = !column.origins.is_empty()
-                    && column
-                        .origins
-                        .iter()
-                        .all(|origin| owners.contains(&origin.alias));
-                Column {
-                    fanned: column.fanned && !owned,
-                    ..column.clone()
-                }
+            .map(|column| Column {
+                fanned: column.fanned && !owned_by(column, owner.as_deref()),
+                ..column.clone()
             })
             .collect();
         Some(AdmittedNode {
@@ -1976,6 +1983,35 @@ impl Builder<'_, '_> {
             },
         })
     }
+}
+
+/// The input whose rows a key makes one per key: its id is in the key and
+/// every key column derives from that input alone. Keys mixing inputs (an
+/// order id with a tag id) leave each input's rows repeated.
+fn key_owner<'k>(schema: &NodeSchema, keys: impl IntoIterator<Item = &'k str>) -> Option<String> {
+    let mut owner: Option<&str> = None;
+    let mut has_id = false;
+    for key in keys {
+        let column = schema.column(key)?;
+        let mut aliases = column.origins.iter().map(|origin| origin.alias.as_str());
+        let alias = aliases.next()?;
+        if aliases.any(|other| other != alias) || owner.is_some_and(|owner| owner != alias) {
+            return None;
+        }
+        owner = Some(alias);
+        has_id |= column
+            .exact
+            .as_ref()
+            .is_some_and(|origin| origin.alias == alias && origin.property == "id");
+    }
+    owner.filter(|_| has_id).map(str::to_owned)
+}
+
+/// Whether every stored property `column` derives from belongs to `owner`.
+fn owned_by(column: &Column, owner: Option<&str>) -> bool {
+    owner.is_some_and(|owner| {
+        !column.origins.is_empty() && column.origins.iter().all(|origin| origin.alias == owner)
+    })
 }
 
 /// `input.<column>` exactly, with optional surrounding whitespace.
