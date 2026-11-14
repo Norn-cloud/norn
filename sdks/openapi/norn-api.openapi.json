@@ -9001,11 +9001,18 @@
             "type": "string",
             "description": "The concrete object type."
           },
+          "otherFindings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornInboxFinding"
+            },
+            "description": "The record's other open findings, under other rules, in the same words\nand the same gate as `finding`: when present the laws disagree and the\nrecord needs review, not a one-click fix."
+          },
           "suggestedFix": {
             "oneOf": [
               {
                 "$ref": "#/components/schemas/NornSuggestedFix",
-                "description": "The correction the server derived, when the caller may make it."
+                "description": "The correction the server derived, when the caller may make it and no\nother open law finding holds the record: a fix one law suggests could be\nrefused by another, so a record two laws hold is offered none."
               },
               {
                 "type": "null"

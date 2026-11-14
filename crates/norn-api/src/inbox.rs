@@ -712,8 +712,8 @@ fn dry_run(
     definitions: &Definitions,
     review: &Review,
     finding: &DataQualityFinding,
-    property: &str,
-    value: &RuntimeValue,
+    agreeing: &BTreeSet<String>,
+    (property, value): (&str, &RuntimeValue),
 ) -> Vec<NornInboxFinding> {
     let current = match &finding.rule_ref {
         DataQualityRuleRef::Law { artifact_id, .. } => Some(artifact_id.as_str()),
@@ -763,7 +763,8 @@ fn dry_run(
     }
     let mut broken = Vec::new();
     for id in &review.applicable {
-        if Some(id.as_str()) == current {
+        // This finding's own law, and laws whose open findings expect this same fix.
+        if Some(id.as_str()) == current || agreeing.contains(id) {
             continue;
         }
         let Some((_, law)) = definitions.laws.get(id) else {
@@ -997,29 +998,35 @@ fn record<E: SqlEngine>(
         (compared, derived, said)
     };
     let (compared, derived, words) = read(finding);
-    // The record's open findings under other rules: their laws may refuse what this
-    // one suggests, so the record is offered no fix and says why.
-    let others: Vec<NornInboxFinding> = open
-        .iter()
-        .filter(|other| other.rule_ref != finding.rule_ref)
-        .map(|other| {
-            let (compared, _, words) = read(other);
-            NornInboxFinding {
+    // The record's open findings under other rules. One that expects the same
+    // property to take the same value agrees with this fix (two laws, one
+    // correction); any other disagrees, and the record needs review.
+    let mut agreeing = BTreeSet::new();
+    let mut others: Vec<NornInboxFinding> = Vec::new();
+    for other in open.iter().filter(|other| other.rule_ref != finding.rule_ref) {
+        let (compared, wants, words) = read(other);
+        let agrees = matches!((&derived, &wants), (Some((property, value)), Some((wanted, expected)))
+            if property == wanted && same_number(value, expected));
+        if agrees {
+            if let DataQualityRuleRef::Law { artifact_id, .. } = &other.rule_ref {
+                agreeing.insert(artifact_id.clone());
+            }
+        } else {
+            others.push(NornInboxFinding {
                 id: other.id.clone(),
                 words,
                 message: other.message.clone(),
                 compared,
-            }
-        })
-        .collect();
+            });
+        }
+    }
     // The fix, tried against every other law that takes the record and reads the
     // property it sets: a law it would break (or one this cannot decide) means
     // the record needs review, not a one-click fix.
-    let mut others = others;
     if let Some((property, value)) = &derived
         && others.is_empty()
     {
-        others.extend(dry_run(definitions, &review, finding, property, value));
+        others.extend(dry_run(definitions, &review, finding, &agreeing, (property, value)));
     }
     if let Some((property, value)) = derived
         && others.is_empty()
