@@ -44,6 +44,18 @@ test("home: a member's inbox names the held record with no finding words and no 
   await expect(page.getByRole("link", { name: /Use / })).toHaveCount(0)
 })
 
+test("home: a record two laws disagree on offers no fix and names both laws", async ({ page }) => {
+  await cell(page, { scanLimit: 10000, sections, items: [group([{
+    objectType: "docs.ScannedDocument", id: "SCAN-INV-0043", target: "/sources/docs.ScannedDocument/SCAN-INV-0043", values: { doc_number: "INV-0043" },
+    finding: { id: "f2", words: "total 720.00 ≠ ledger entry 72.00", message: "m", compared: {} },
+    otherFindings: [{ id: "lines", words: "total 72.00 ≠ lines 720.00", message: "m", compared: {} }],
+  }])] })
+  await page.goto("/")
+  await expect(page.getByText("Needs review: 2 laws disagree")).toBeVisible()
+  await expect(page.getByText("total 72.00 ≠ lines 720.00")).toBeVisible()
+  await expect(page.getByRole("link", { name: /Use / })).toHaveCount(0)
+})
+
 test("home: nothing to do says so", async ({ page }) => {
   await cell(page, { scanLimit: 10000, sections: sections.map((entry) => ({ ...entry, count: 0, shown: 0 })), items: [] })
   await page.goto("/")

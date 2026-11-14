@@ -109,10 +109,18 @@ function HeldBack({ group }: { readonly group: Group }) {
           <CardContent className="divide-y">
             {group.records.map((record) => {
               const name = text(record.values?.doc_number) ?? text(record.values?.label) ?? record.id
+              // The record's other open findings, or laws a fix would break: the server offers no fix then.
+              const others = (record as { readonly otherFindings?: readonly Schemas["NornInboxFinding"][] }).otherFindings ?? []
               return (
                 <div key={`${record.objectType}:${record.id}`} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2 text-sm">
                   <RouteLink to={record.target} className="font-medium underline-offset-4 hover:underline">{name}</RouteLink>
                   {record.finding && <span className="min-w-0 flex-1 text-muted-foreground">{record.finding.words}</span>}
+                  {others.length > 0 && (
+                    <div className="basis-full space-y-0.5 ps-3 text-xs text-muted-foreground">
+                      <Badge variant="outline">Needs review: {others.length + 1} laws disagree</Badge>
+                      {others.map((other) => <p key={other.id}>{other.words}</p>)}
+                    </div>
+                  )}
                   {record.suggestedFix && (
                     <Button asChild size="sm" variant="secondary" className="ms-auto" title={record.suggestedFix.title}>
                       <RouteLink to={record.target}><Wand2 aria-hidden />{record.suggestedFix.label}</RouteLink>
