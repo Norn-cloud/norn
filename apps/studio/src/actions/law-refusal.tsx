@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { ShieldX } from "lucide-react"
 import { Chip, FactChip } from "@/components/chip"
+import { Button } from "@/components/ui/button"
 import { transport, type Artifact } from "@/lib/transport"
 import type { RefusalReason } from "../lib/actions.ts"
 
@@ -32,7 +33,9 @@ function atDeclared(value: unknown, scale: number | undefined): string {
  * the law's own sentence, the values it checked, and what to do. Technical view adds the code, the
  * subject and the law's pin, and the cell's own message.
  */
-export function LawRefusal({ code, reason, explanation, fields, technical }: { readonly code: string; readonly reason: RefusalReason; readonly explanation: string; readonly fields: Readonly<Record<string, InputField>>; readonly technical: boolean }) {
+export function LawRefusal({ code, reason, explanation, fields, technical, onUse }: { readonly code: string; readonly reason: RefusalReason; readonly explanation: string; readonly fields: Readonly<Record<string, InputField>>; readonly technical: boolean
+  /** Put a value the record holds into the form's field (the cell checks it again on the next submit). */
+  readonly onUse?: (path: string, text: string) => void }) {
   const catalog = useQuery({ queryKey: ["catalog"], queryFn: transport.catalog })
   const rationale = rationaleOf(catalog.data?.document ?? [], reason.pin?.artifactId)
   const checked = Object.entries(reason.values)
@@ -50,7 +53,19 @@ export function LawRefusal({ code, reason, explanation, fields, technical }: { r
       </div>
       <div className="grid gap-2.5 px-3 py-3">
         {rationale !== undefined && <p className="font-medium text-pretty text-foreground">{rationale}</p>}
-        {checked.length > 0 && (
+        {checked.length === 2 && held.length === 1 ? (() => {
+          // Two values the law holds equal: the one the record holds against the one this form set.
+          const [[heldPath, heldValue]] = held as [[string, unknown]]
+          const [setPath, setValue] = checked.find(([path]) => path !== heldPath)!
+          return <>
+            <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 tabular-nums" aria-label="The values it checked">
+              <div className="rounded-lg bg-muted px-3 py-2"><div className="text-xs text-muted-foreground">{sentence(label(heldPath))}</div><div className="pt-0.5 text-lg font-light tracking-tight">{shown(heldPath, heldValue)}</div></div>
+              <span aria-label="does not equal" className="flex size-7 items-center justify-center rounded-full bg-tone-red/12 text-sm text-tone-red">≠</span>
+              <div className="rounded-lg bg-muted px-3 py-2"><div className="text-xs text-muted-foreground">{sentence(label(setPath))}</div><div className="pt-0.5 text-lg font-light tracking-tight text-tone-red">{shown(setPath, setValue)}</div></div>
+            </div>
+            {onUse && Object.hasOwn(fields, setPath) && <div><Button type="button" size="sm" variant="outline" onClick={() => onUse(setPath, shown(setPath, heldValue))}>Use {shown(setPath, heldValue)}</Button></div>}
+          </>
+        })() : checked.length > 0 && (
           <div className="flex flex-wrap items-center gap-1.5" aria-label="The values it checked">
             {checked.map(([path, value], index) => <span key={path} className="contents">
               {index > 0 && <span className="text-meta text-muted-foreground">{index === checked.length - 1 ? "vs" : "·"}</span>}

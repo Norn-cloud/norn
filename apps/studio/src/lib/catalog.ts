@@ -112,6 +112,15 @@ export interface Law {
   readonly modality: string
   readonly response: string
   readonly owner: string
+  /** The two facts a predicate law holds equal, when it reads `self.a == self.b` (or `self.a == (self.b ?? …)`): what a broken record shows side by side. */
+  readonly compares?: readonly [string, string]
+}
+
+/** The two facts an equality law compares, read from its declared predicate; anything else compares nothing. */
+export function comparedFacts(expression: unknown): readonly [string, string] | undefined {
+  if (typeof expression !== "string") return undefined
+  const match = /^\s*self\.([A-Za-z_][A-Za-z0-9_]*)\s*==\s*\(?\s*self\.([A-Za-z_][A-Za-z0-9_]*)\b/.exec(expression)
+  return match ? [match[1]!, match[2]!] : undefined
 }
 
 export interface SourceSystem {
@@ -222,7 +231,7 @@ export function catalogOf(artifacts: readonly Artifact[], locale = "en"): Catalo
     if (artifact.kind === "law") {
       const law = artifact.payload
       for (const target of law.scope.objectTypes) rules.set(target, [...rules.get(target) ?? [], law.rationale])
-      const declared: Law = { id: law.id, subject: law.subject, rationale: law.rationale, severity: law.severity, modality: String((law.modality as { kind?: unknown }).kind ?? ""), response: String((law.response as { kind?: unknown }).kind ?? ""), owner: law.owner }
+      const declared: Law = { id: law.id, subject: law.subject, rationale: law.rationale, severity: law.severity, modality: String((law.modality as { kind?: unknown }).kind ?? ""), response: String((law.response as { kind?: unknown }).kind ?? ""), owner: law.owner, ...(comparedFacts((law.response as { expression?: unknown }).expression) ? { compares: comparedFacts((law.response as { expression?: unknown }).expression)! } : {}) }
       for (const target of new Set([law.subject, ...law.scope.objectTypes])) laws.set(target, [...laws.get(target) ?? [], declared])
     }
   }
