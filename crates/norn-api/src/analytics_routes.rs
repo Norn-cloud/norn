@@ -1057,6 +1057,21 @@ fn page_clause(
     })
 }
 
+/// Whether every live row of `object_type` has a complete marking snapshot
+/// with no label on any of its properties. An unknown type, an incomplete
+/// snapshot or an unbounded summary counts as labeled: it fails closed to the
+/// native profile.
+fn unlabeled<E: SqlEngine>(reader: &norn_cell::StoreReader<'_, E>, object_type: &str) -> bool {
+    let Ok(properties) = reader.model().effective_property_types(object_type) else {
+        return false;
+    };
+    properties.iter().all(|(property, _)| {
+        reader
+            .property_marking_summary(norn_cell::MAIN_WORLD, object_type, property)
+            .is_ok_and(|labels| labels.is_some_and(|labels| labels.is_empty()))
+    })
+}
+
 /// HOST-READ-5 on the engine (D102): the profile of every row of
 /// `object_type` the caller may read, in the exact profile's shape and
 /// semantics (nearest-rank quantiles, equal-population bins, calendar labels,
@@ -1076,10 +1091,13 @@ pub fn profile_objects<E: SqlEngine>(
 ) -> Result<crate::object_profile::NornObjectProfile, Refusal> {
     use norn_cell::analytics::{ProfileRequest, ProfileResponse};
     // PRIVACY-1: the engine mirror holds stored values; a cell that declares
-    // markings profiles natively, over projected values.
+    // markings profiles natively, over projected values, unless no live row
+    // of this type carries a label on any of its properties. Then every value
+    // projects as itself and the engine's profile is the native one.
     let marked = {
         let guard = host.cell()?;
-        !host.marking_catalog(&guard.store().read())?.is_empty()
+        let reader = guard.store().read();
+        !host.marking_catalog(&reader)?.is_empty() && !unlabeled(&reader, object_type)
     };
     if marked {
         return crate::object_profile::get_object_profile(host, scope, actor, object_type, access);
