@@ -190,7 +190,7 @@ export function RecordsGrid({ concept, read = readRecords, initial, onQuery }: {
   const facets = page?.origin === "live" && <FacetsRail objectType={name} fields={fields} filter={filter} onFilter={(next) => { setDraft(fromPredicate(next)); changeQuery({ filter: next }) }} />
   return (
     <Shell>
-      <div className="grid gap-4 xl:grid-cols-[15rem_minmax(0,1fr)]">
+      <div className={cn("grid gap-4", facets && "xl:grid-cols-[15rem_minmax(0,1fr)]")}>
       {facets && <aside className="hidden max-h-[70vh] overflow-y-auto pe-1 xl:block">{facets}</aside>}
       {/* content-start: beside a taller facets rail, the rows keep their own height (no band between them). */}
       <div className="grid min-w-0 content-start gap-3">

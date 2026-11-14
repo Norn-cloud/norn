@@ -246,6 +246,218 @@ impl RefusalDisclosers {
     }
 }
 
+/// Declared connector grants over `studio-roles/1` (#1036): who may see a
+/// workspace's connectors, who may bind a tool, and who may run a binding of
+/// each `runRole`. Studio asks through `POST /v1/access:decide` and holds no
+/// role logic; a change is a new version.
+#[derive(Debug)]
+pub struct ConnectorGrants {
+    /// Identity of this table.
+    pub version: &'static str,
+    /// Roles that may see the workspace's connectors and bindings.
+    pub read: &'static [&'static str],
+    /// Roles that may add, edit and remove tool bindings.
+    pub bind: &'static [&'static str],
+    /// For each binding `runRole`, the roles that may run it.
+    pub run: &'static [(&'static str, &'static [&'static str])],
+}
+
+/// The demo cells' connector grants: every member reads, admins and owners
+/// bind, and a binding runs for its `runRole` and the roles above it.
+pub const CONNECTOR_GRANTS: ConnectorGrants = ConnectorGrants {
+    version: "norn-cell-do-connector-grants/1",
+    read: &["viewer", "member", "admin", "owner"],
+    bind: &["admin", "owner"],
+    run: &[
+        ("member", &["member", "admin", "owner"]),
+        ("admin", &["admin", "owner"]),
+    ],
+};
+
+/// The host's Cedar fragment for connector checks: Studio's workspace and
+/// tool-binding resources and the three connector actions, alongside the
+/// projected `Norn` base (actor, scope, roles).
+const CONNECTOR_SCHEMA: &str = "namespace studio {\n  entity Workspace = {\n    scope: Norn::Scope\n  };\n  entity ToolBinding = {\n    scope: Norn::Scope\n  };\n}\nnamespace Norn {\n  action \"connector.read\" appliesTo {\n    principal: [Actor],\n    resource: [studio::Workspace],\n    context: {\n      scope: Scope\n    }\n  };\n  action \"connector.bind\" appliesTo {\n    principal: [Actor],\n    resource: [studio::Workspace],\n    context: {\n      scope: Scope\n    }\n  };\n  action \"connector.run\" appliesTo {\n    principal: [Actor],\n    resource: [studio::ToolBinding],\n    context: {\n      scope: Scope,\n      runRole: String\n    }\n  };\n}\n";
+
+/// The `AccessIR` resource type of a workspace's connector checks.
+pub const WORKSPACE_RESOURCE: &str = "studio.Workspace";
+/// The `AccessIR` resource type of a tool binding's run check.
+pub const TOOL_BINDING_RESOURCE: &str = "studio.ToolBinding";
+
+impl ConnectorGrants {
+    /// This table as an `AccessIR` policy: one rule per action (and per
+    /// binding `runRole`), each a role condition in the cell's org and
+    /// environment; a run rule also requires the binding's `runRole`.
+    #[must_use]
+    pub fn access_policy(&self) -> AccessIr {
+        let granted_to = |granted: &[&str]| {
+            AccessCondition::Role(RoleCondition {
+                any_of: granted.iter().map(|role| (*role).to_owned()).collect(),
+            })
+        };
+        let scope = || AccessScope {
+            dimensions: vec![ScopeDimension::Org, ScopeDimension::Environment],
+        };
+        let mut rules = vec![
+            AccessRule {
+                rule_id: "connector_read".into(),
+                actions: vec!["connector.read".into()],
+                resource_type: ObjectTypeName(WORKSPACE_RESOURCE.to_owned()),
+                scope: scope(),
+                all_of: vec![granted_to(self.read)],
+            },
+            AccessRule {
+                rule_id: "connector_bind".into(),
+                actions: vec!["connector.bind".into()],
+                resource_type: ObjectTypeName(WORKSPACE_RESOURCE.to_owned()),
+                scope: scope(),
+                all_of: vec![granted_to(self.bind)],
+            },
+        ];
+        for (run_role, granted) in self.run {
+            rules.push(AccessRule {
+                rule_id: format!("run_{run_role}"),
+                actions: vec!["connector.run".into()],
+                resource_type: ObjectTypeName(TOOL_BINDING_RESOURCE.to_owned()),
+                scope: scope(),
+                all_of: vec![
+                    granted_to(granted),
+                    AccessCondition::Context(norn_ir::access::ContextCondition {
+                        name: "runRole".into(),
+                        op: norn_ir::access::CompareOp::Eq,
+                        value: norn_ir::access::AccessLiteral::String((*run_role).to_owned()),
+                    }),
+                ],
+            });
+        }
+        AccessIr {
+            access_version: IrVersion01::V0_1,
+            policy_id: self.version.into(),
+            rules,
+            generic_rules: vec![],
+            extensions: None,
+        }
+    }
+
+    /// The compiled policy for the cell of `scope`, with no grant.
+    ///
+    /// # Errors
+    /// The schema or the policy does not compile.
+    pub fn compile(&'static self, scope: &CellScope) -> Result<ConnectorPolicy, SeedError> {
+        let projection = norn_projections::project_cedar_schema(&[], &[], &[]);
+        let schema = AuthzSchema::from_projected_cedarschema_fragments(&[
+            &projection.schema,
+            CONNECTOR_SCHEMA,
+        ])
+        .map_err(|e| SeedError(format!("connector schema: {e}")))?;
+        let compiled = authz::compile(&schema, &self.access_policy())
+            .map_err(|e| SeedError(format!("connector policy: {e}")))?;
+        Ok(ConnectorPolicy {
+            base: Pdp::new(compiled, &[])
+                .map_err(|e| SeedError(format!("connector policy: {e}")))?,
+            key: scope_key(scope),
+            grants: self,
+        })
+    }
+}
+
+/// [`CONNECTOR_GRANTS`] compiled for one cell: Studio's connector checks
+/// (`POST /v1/access:decide`), each decided by the kernel PDP for the
+/// request's verified principal and its own declared roles.
+pub struct ConnectorPolicy {
+    base: Pdp,
+    key: ScopeKey,
+    grants: &'static ConnectorGrants,
+}
+
+impl std::fmt::Debug for ConnectorPolicy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConnectorPolicy")
+            .field("version", &self.grants.version)
+            .finish_non_exhaustive()
+    }
+}
+
+impl ConnectorPolicy {
+    /// The rule that permits `caller` to take `action` on the resource
+    /// `(kind, id)`, or `None` (deny). Fails closed before the PDP for an
+    /// action or resource type the policy does not declare, a workspace other
+    /// than this cell's organization, and a run whose binding names no
+    /// declared `runRole` (`run_role`, read by the host from the binding's
+    /// own definition). Otherwise the PDP decides, with only `action` as the
+    /// capability and only the caller's own roles.
+    #[must_use]
+    pub fn decide(
+        &self,
+        caller: &Caller,
+        action: &str,
+        (kind, id): (&str, &str),
+        run_role: Option<&str>,
+    ) -> Option<String> {
+        let (rule, context) = match (action, kind) {
+            ("connector.read" | "connector.bind", WORKSPACE_RESOURCE) if id == self.key.org => (
+                if action == "connector.read" {
+                    "connector_read".to_owned()
+                } else {
+                    "connector_bind".to_owned()
+                },
+                std::collections::BTreeMap::new(),
+            ),
+            ("connector.run", TOOL_BINDING_RESOURCE) => {
+                let run_role = run_role
+                    .filter(|role| self.grants.run.iter().any(|(declared, _)| declared == role))?;
+                (
+                    format!("run_{run_role}"),
+                    std::collections::BTreeMap::from([(
+                        "runRole".to_owned(),
+                        AttrValue::String(run_role.to_owned()),
+                    )]),
+                )
+            }
+            _ => return None,
+        };
+        let actor_kind = match caller.actor_kind {
+            "user" => ActorKind::User,
+            "service" => ActorKind::Service,
+            _ => return None,
+        };
+        let pdp = Pdp::new(
+            self.base.policy_set().clone(),
+            &[CapabilityGrant {
+                subject_id: caller.subject_id.clone(),
+                actor_kind,
+                agent_session_id: None,
+                scope: Some(self.key.clone()),
+                capabilities: vec![action.to_owned()],
+                binding: None,
+            }],
+        )
+        .ok()?;
+        let request = authz::AccessRequest {
+            principal: PrincipalInput {
+                subject_id: caller.subject_id.clone(),
+                actor_kind,
+                agent_session_id: None,
+                roles: caller.roles.clone(),
+                attributes: std::collections::BTreeMap::new(),
+            },
+            scope: Some(self.key.clone()),
+            capability: action.to_owned(),
+            action_id: action.to_owned(),
+            resource: ResourceInput {
+                object_type: kind.to_owned(),
+                id: id.to_owned(),
+                scope: self.key.clone(),
+                attributes: std::collections::BTreeMap::new(),
+            },
+            context,
+            binding: None,
+            delegation: Delegation::Direct,
+        };
+        matches!(pdp.decide(&request), norn_kernel::authz::PdpDecision::Allow).then_some(rule)
+    }
+}
+
 /// The principal a resolver verified for the current request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Caller {

@@ -69,3 +69,10 @@ test("recommended windows are whole weeks ending on the coming Monday", () => {
   // On a Monday the window ends a week later, never today.
   expect(windows(Date.UTC(2026, 10, 16))[0]?.value.window.end).toBe("2026-11-23T00:00:00Z")
 })
+
+test("an enum's declared values read as their text in the tree's conditions and its filters, as the cell sends them ({ value })", async () => {
+  const { enumValues } = await import("../questions.ts")
+  expect(enumValues({ kind: "enum", values: [{ value: "USD" }, { value: "EGP" }] })).toEqual(["USD", "EGP"])
+  expect(enumValues({ kind: "enum", values: ["USD"] })).toEqual(["USD"])
+  expect(enumValues(null)).toEqual([])
+})

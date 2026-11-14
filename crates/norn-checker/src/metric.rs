@@ -94,6 +94,10 @@ pub mod codes {
     /// PRIVACY-4: a question may not group or filter by a property that carries
     /// a declared marking; its buckets would show the value unmasked.
     pub const MARKED_FIELD: &str = "question.validation.marked_field";
+    /// A question may group by a linked path only for the linked time, and
+    /// may not filter across a link: grouping or filtering by another type's
+    /// field (an order line's customer) is not evaluated yet.
+    pub const LINKED_PATH: &str = "question.validation.linked_path";
     /// Question names must be unique.
     pub const DUPLICATE_QUESTION: &str = "question.validation.duplicate_question";
     /// Questions require at least one metric.

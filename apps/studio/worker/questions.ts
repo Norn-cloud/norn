@@ -8,7 +8,11 @@ import type { Cell } from "./cell.ts"
  * question passes). Nothing is judged here, and no row value is read.
  */
 
-interface PropertyType { readonly kind?: string; readonly unit?: { readonly code?: string }; readonly values?: readonly string[] }
+interface PropertyType { readonly kind?: string; readonly unit?: { readonly code?: string }; readonly values?: readonly (string | { readonly value: string })[] }
+
+/** An enum's declared values as text: the cell sends each as `{ value }` (older documents as a bare string). */
+export const enumValues = (type: PropertyType | null | undefined): readonly string[] =>
+  (type?.values ?? []).flatMap((entry) => typeof entry === "string" ? [entry] : typeof entry?.value === "string" ? [entry.value] : [])
 export interface CellMetric {
   readonly name: string
   readonly label: string
@@ -19,7 +23,12 @@ export interface CellMetric {
 }
 /** The cell's `GET /v1/questions:catalog` document. */
 export interface CellCatalog {
-  readonly objectTypes: readonly { readonly name: string; readonly properties: readonly { readonly id: string; readonly type: PropertyType | null }[] }[]
+  readonly objectTypes: readonly {
+    readonly name: string
+    readonly properties: readonly { readonly id: string; readonly type: PropertyType | null }[]
+    /** One-hop links to types the caller may read; a question cannot group or filter across them yet (only a linked time). */
+    readonly links?: readonly { readonly id: string; readonly target: string }[]
+  }[]
   readonly metrics: readonly CellMetric[]
   readonly grains: readonly string[]
   readonly operators: readonly string[]
@@ -32,7 +41,8 @@ const strings = (value: unknown): value is readonly string[] => Array.isArray(va
 
 export function cellCatalogOf(value: unknown): CellCatalog | undefined {
   if (!isRecord(value) || !Array.isArray(value.objectTypes) || !Array.isArray(value.metrics) || !strings(value.grains) || !strings(value.operators)) return undefined
-  if (!value.objectTypes.every((type) => isRecord(type) && typeof type.name === "string" && Array.isArray(type.properties) && type.properties.every((property) => isRecord(property) && typeof property.id === "string"))) return undefined
+  if (!value.objectTypes.every((type) => isRecord(type) && typeof type.name === "string" && Array.isArray(type.properties) && type.properties.every((property) => isRecord(property) && typeof property.id === "string")
+    && (type.links === undefined || (Array.isArray(type.links) && type.links.every((link) => isRecord(link) && typeof link.id === "string" && typeof link.target === "string"))))) return undefined
   if (!value.metrics.every((metric) => isRecord(metric) && typeof metric.name === "string" && typeof metric.label === "string" && typeof metric.type === "string")) return undefined
   return value as unknown as CellCatalog
 }
@@ -178,7 +188,7 @@ export function recommendations(catalog: StudioCatalog, now: number) {
   ]
   const grains = Object.fromEntries(groupable.filter((property) => kindOf(property) === "timestamp").map((property) => [property.id, catalog.grains.map((grain, index) => ({ id: grain, label: grain.charAt(0).toUpperCase() + grain.slice(1), detail: `each ${grain} of ${words(property.id)}`, recommended: index === 0, value: { grain } }))]))
   const conditions = [
-    ...properties.flatMap((property) => (property.type?.values ?? []).map((value) => ({ id: `${property.id}:eq:${value}`, label: `${words(property.id)} is ${value}`, detail: "a declared value", recommended: false, value: { filter: [{ path: { property: property.id }, operator: "eq", value }] } }))),
+    ...properties.flatMap((property) => enumValues(property.type).map((value) => ({ id: `${property.id}:eq:${value}`, label: `${words(property.id)} is ${value}`, detail: "a declared value", recommended: false, value: { filter: [{ path: { property: property.id }, operator: "eq", value }] } }))),
     { id: "every", label: "Every record", detail: "no condition", recommended: true, value: { filter: [] } },
   ]
   return {
@@ -188,7 +198,7 @@ export function recommendations(catalog: StudioCatalog, now: number) {
     groupBy,
     grains,
     conditions,
-    filterable: properties.filter((property) => kindOf(property) !== "timestamp").map((property) => ({ name: property.id, kind: kindOf(property), unit: property.type?.unit?.code ?? null, values: property.type?.values ?? [] })),
+    filterable: properties.filter((property) => kindOf(property) !== "timestamp").map((property) => ({ name: property.id, kind: kindOf(property), unit: property.type?.unit?.code ?? null, values: enumValues(property.type) })),
     windows: windows(now),
   }
 }

@@ -1095,11 +1095,25 @@ export interface components {
          * @enum {string}
          */
         ApplyOutcome: "installed" | "unchanged";
+        /** @description One link of a listed object type, to a readable target. */
+        CatalogLink: {
+            /** @description The link role, as a path's `links` names it. */
+            id: string;
+            /** @description The object type it reaches. */
+            target: string;
+        };
         /**
          * @description One object type an ad-hoc question may range over, with every effective
          *     property and its resolved type (`null` for a registry or unresolved type).
          */
         CatalogObjectType: {
+            /**
+             * @description Its one-hop links to object types the caller may read, so a client can
+             *     say what a question cannot group by yet (a question groups across a link
+             *     only by the linked time). A link to a type the caller may not read is
+             *     left out.
+             */
+            links: components["schemas"]["CatalogLink"][];
             /** @description The object type's name: a question's `objectSet`. */
             name: string;
             /** @description Its effective properties, in declaration order. */
@@ -2262,6 +2276,16 @@ export interface components {
              * @description Editor sidecar revision.
              */
             layoutRevision: number;
+            /**
+             * @description Live record counts by object type, under the caller's own visibility:
+             *     each is the total `GET /v1/objects/{type}` reports on its first page,
+             *     through the same gates, counted to at most 500 visible records
+             *     (`approximate`, and the count 500, past it). A type the caller may not
+             *     list has no entry, never a zero.
+             */
+            objectCounts: {
+                [key: string]: components["schemas"]["NornQueryTotal"];
+            };
             /** @description The original checker receipt, without host reinterpretation. */
             receipt: {
                 [key: string]: unknown;

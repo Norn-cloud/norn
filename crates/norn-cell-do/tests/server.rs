@@ -188,6 +188,16 @@ fn demo_rows_are_withheld_for_a_viewer_and_read_by_an_admin() {
     assert_eq!(ids(&viewer), expected);
     assert_eq!(ids(&admin), expected);
     assert_eq!(viewer["total"], admin["total"]);
+    // The catalog counts each type as its list does, for the same caller;
+    // an anonymous caller is refused the catalog, counts and all.
+    for (auth, page) in [(guest, &viewer), (VIEWER, &admin)] {
+        let (status, catalog) = get(&demo, "/v1/definitions", SCOPE, auth);
+        assert_eq!(status, 200, "{catalog}");
+        assert_eq!(catalog["objectCounts"]["canon.Party"], page["total"]);
+    }
+    let (status, refused) = get(&demo, "/v1/definitions", SCOPE, None);
+    assert_eq!(status, 403);
+    assert!(refused.get("objectCounts").is_none());
     for record in viewer["records"].as_array().unwrap() {
         assert_eq!(record["withheld"], Value::Bool(true));
         assert!(record["values"].is_null() && record["version"].is_null());

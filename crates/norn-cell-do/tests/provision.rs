@@ -741,6 +741,88 @@ fn a_provisioned_cell_serves_its_connections_from_the_start() {
     assert_eq!(definitions(&mut cell, Some(&owner)), installed);
 }
 
+/// #1036: Studio's connector page asks the cell `POST /v1/access:decide`,
+/// and the kernel PDP decides each check under the cell's declared connector
+/// grants, for the caller's own roles. An admin reads and binds; a member
+/// and a viewer read but may not bind (a connector write); an action or a
+/// resource type the policy does not declare, another workspace, and a
+/// binding the cell does not hold are denied; a caller outside the cell gets
+/// the shared 403 Studio reads as deny-all. Before this route existed every
+/// hosted cell answered 404, and Studio's Connections page showed
+/// `connectors.access_unavailable`.
+#[test]
+fn the_cell_decides_connector_checks_for_its_members() {
+    let directory = tempfile::tempdir().unwrap();
+    let scope = scope("org_a", "prod");
+    let mut cell = provisioned(&file(&directory, "a"), &scope, &plain());
+    let query = query(&scope);
+    let body = json!({ "checks": [
+        { "action": "connector.read", "resource": { "type": "studio.Workspace", "id": "org_a" } },
+        { "action": "connector.bind", "resource": { "type": "studio.Workspace", "id": "org_a" } },
+        { "action": "connector.run", "resource": { "type": "studio.ToolBinding", "id": "binding.none" } },
+        { "action": "connector.read", "resource": { "type": "studio.Workspace", "id": "org_b" } },
+        { "action": "connector.delete", "resource": { "type": "studio.Workspace", "id": "org_a" } },
+        { "action": "connector.read", "resource": { "type": "studio.Anything", "id": "org_a" } },
+    ] })
+    .to_string();
+    let decide = |cell: &mut Cell<NativeEngine>, role: &str| -> Vec<(String, Value)> {
+        let response = call(
+            cell,
+            "POST",
+            "/v1/access:decide",
+            &query,
+            Some(&user("org_a", role)),
+            &body,
+        );
+        assert_eq!(response.status, 200, "{role}: {}", response.body);
+        let answer = json_of(&response);
+        assert_eq!(answer["decisions"][1]["action"], "connector.bind");
+        assert_eq!(
+            answer["decisions"][1]["resource"]["type"],
+            "studio.Workspace"
+        );
+        answer["decisions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| {
+                (
+                    d["decision"].as_str().unwrap().to_owned(),
+                    d["rule"].clone(),
+                )
+            })
+            .collect()
+    };
+    let deny = || ("deny".to_owned(), Value::Null);
+    let denied_rest = [deny(), deny(), deny(), deny()];
+    let admin = decide(&mut cell, "admin");
+    assert_eq!(admin[0], ("permit".to_owned(), json!("connector_read")));
+    assert_eq!(admin[1], ("permit".to_owned(), json!("connector_bind")));
+    assert_eq!(admin[2..], denied_rest);
+    // A member is denied the connector write an admin is allowed.
+    for role in ["member", "viewer"] {
+        let decided = decide(&mut cell, role);
+        assert_eq!(
+            decided[0],
+            ("permit".to_owned(), json!("connector_read")),
+            "{role}"
+        );
+        assert_eq!(decided[1], deny(), "{role}: no connector write");
+        assert_eq!(decided[2..], denied_rest, "{role}");
+    }
+    let outsider = call(
+        &mut cell,
+        "POST",
+        "/v1/access:decide",
+        &query,
+        Some(&user("org_b", "owner")),
+        &body,
+    );
+    assert_eq!(outsider.status, 403, "{}", outsider.body);
+    let anonymous = call(&mut cell, "POST", "/v1/access:decide", &query, None, &body);
+    assert_eq!(anonymous.status, 403, "{}", anonymous.body);
+}
+
 // ------------------------------------------------------------ unprovisioned
 
 /// Requests no verified principal makes, across the host's routes.
