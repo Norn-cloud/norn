@@ -1905,7 +1905,7 @@ macro_rules! check_root {
 
 /// Check that a payload its kind validator accepted decodes into the strict
 /// typed root of an Access, Widget, Connector, Customization, View, Setting,
-/// `BusinessPack`, Entity, Relation, `DefinedConcept` or `Labels` artifact. See the module docs.
+/// `BusinessPack`, Entity, Relation, `DefinedConcept`, `Labels` or `Model` artifact. See the module docs.
 pub(crate) fn check_typed_root(
     payload: &ArtifactPayload,
     diagnostics: &mut Vec<Diagnostic>,
@@ -2002,6 +2002,7 @@ pub(crate) fn check_typed_root(
             }
         }
         ArtifactPayload::Labels(_) => crate::labels::check_local(payload, diagnostics, artifact_id),
+        ArtifactPayload::Model(_) => crate::model::check_local(payload, diagnostics, artifact_id),
         ArtifactPayload::Action(_) | ArtifactPayload::Rule(_) | ArtifactPayload::Law(_) => {}
     }
 }

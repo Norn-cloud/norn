@@ -1,0 +1,7 @@
+{
+  "code": "model.admission.feature_kind",
+  "message": "a model's feature or target property has a kind a model cannot read",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

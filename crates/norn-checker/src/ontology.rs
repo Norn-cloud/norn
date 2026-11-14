@@ -723,7 +723,7 @@ fn valid_dotted_name(value: &str) -> bool {
 
 /// A strict SemVer 2.0.0 version: `MAJOR.MINOR.PATCH` without leading
 /// zeroes, with optional pre-release and build identifiers.
-fn valid_semver(value: &str) -> bool {
+pub(crate) fn valid_semver(value: &str) -> bool {
     let (rest, build) = match value.split_once('+') {
         Some((rest, build)) => (rest, Some(build)),
         None => (value, None),

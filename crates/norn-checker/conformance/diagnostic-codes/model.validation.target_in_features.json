@@ -1,0 +1,7 @@
+{
+  "code": "model.validation.target_in_features",
+  "message": "a model's target is also one of its features",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}

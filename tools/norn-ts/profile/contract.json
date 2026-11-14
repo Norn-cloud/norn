@@ -28,6 +28,7 @@
     "`@norn/authoring#Norn.mapping`",
     "`@norn/authoring#Norn.law`",
     "`@norn/authoring#Norn.labels`",
+    "`@norn/authoring#Norn.model`",
     "`@norn/authoring#Norn.decimal`",
     "`@norn/authoring#Norn.boundDecimal`",
     "`@norn/authoring#Norn.rate`",

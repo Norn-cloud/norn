@@ -1,0 +1,7 @@
+{
+  "code": "model.validation.trust_without_contract",
+  "message": "a contract_checked model declares no contract",
+  "severity": "error",
+  "since": "0.1.0",
+  "tier": "T2"
+}
