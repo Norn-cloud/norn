@@ -2725,6 +2725,12 @@ export interface components {
             };
             /** @description The concrete object type. */
             objectType: string;
+            /**
+             * @description The record's other open findings, under other rules, in the same words
+             *     and the same gate as `finding`: when present the laws disagree and the
+             *     record needs review, not a one-click fix.
+             */
+            otherFindings?: components["schemas"]["NornInboxFinding"][];
             suggestedFix?: components["schemas"]["NornSuggestedFix"] | null;
             /** @description The Studio route that reviews it. */
             target: string;
