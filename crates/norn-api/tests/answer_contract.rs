@@ -56,20 +56,12 @@ fn retained_answer_documents_validate_against_their_projected_schemas() {
 
 /// Every engine the cell can answer with is one the contract names: an
 /// answer from `DuckDB` validates as a `NornQueryResult`, so an enum-checking
-/// client (the generated Python and TypeScript SDKs) accepts it. The match
-/// makes a new runtime engine a compile error here until the contract names it.
+/// client (the generated Python and TypeScript SDKs) accepts it. A new runtime
+/// engine joins this list with its contract entry.
 #[test]
 fn every_runtime_engine_validates_against_the_contract() {
     use norn_cell::compute::Engine;
-    // An exhaustive match: a new engine is a compile error until it is listed.
-    fn listed(engine: Engine) -> Engine {
-        match engine {
-            Engine::Ivm => Engine::Ivm,
-            Engine::Cell => Engine::Cell,
-            Engine::Duckdb => Engine::Duckdb,
-        }
-    }
-    let engines = || [Engine::Ivm, Engine::Cell, Engine::Duckdb];
+    let engines = [Engine::Ivm, Engine::Cell, Engine::Duckdb];
     let contract: Value =
         serde_json::from_str(&norn_api::openapi::openapi_json().expect("contract"))
             .expect("contract JSON");
@@ -85,9 +77,9 @@ fn every_runtime_engine_validates_against_the_contract() {
             .expect("retained answer"),
     )
     .expect("answer JSON");
-    for engine in engines() {
+    for engine in engines {
         let mut document = answer.clone();
-        document["engine"] = serde_json::to_value(listed(engine)).expect("engine");
+        document["engine"] = serde_json::to_value(engine).expect("engine");
         let errors: Vec<String> = validator
             .iter_errors(&document)
             .map(|error| error.to_string())
