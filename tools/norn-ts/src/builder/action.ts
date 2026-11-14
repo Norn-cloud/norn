@@ -98,6 +98,8 @@ export interface ActionDef extends Localized {
   readonly createLinks?: ReadonlyArray<ActionCreateLink>
   readonly writes: ReadonlyArray<{ readonly entityKind: string; readonly change: WriteChange }>
   readonly effect?: ActionEffect
+  /** ActionIR `access`: the policy artifact that authorizes calls. */
+  readonly access?: { readonly artifactId: string; readonly version?: string }
   /** The compensating action's id. */
   readonly compensation?: string
   readonly at?: SourceLocation
@@ -182,6 +184,7 @@ export function lowerAction(def: ActionDef, options: EnvelopeOptions): ActionBui
     effectProgram: def.effect,
     synchronousRule: def.synchronousRule,
     compensation: def.compensation === undefined ? undefined : { actionId: def.compensation },
+    access: def.access,
   }
   const artifact = envelope(
     { kind: "action", dependencies: [...pinnedDependencies(def.dependencies, "entity"), ...(def.synchronousRule ? [{ ...def.synchronousRule, kind: "rule", required: true }] : [])], artifactId: `${def.id}.action`, namespace: def.id.slice(0, def.id.indexOf(".")), name: def.title, version: def.version },
