@@ -1,0 +1,7 @@
+{
+  "code": "lifecycle.soundness.wait_without_deadline",
+  "message": "a lifecycle state only waits on external events and has no deadline: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

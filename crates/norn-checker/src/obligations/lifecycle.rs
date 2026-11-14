@@ -3,6 +3,8 @@
 pub mod finite;
 /// Complete law-filtered transition relations, without solver authority.
 pub mod graph;
+/// LIFE-SOUND-4: option to complete and law-blocked exits over the bounded relation.
+pub mod soundness;
 
 use super::ChallengeError;
 use crate::{EffectiveCatalog, EffectiveObjectType};

@@ -26,7 +26,7 @@
 use std::collections::BTreeSet;
 use std::rc::Rc;
 
-use norn_ir::{JsonValue, Lifecycle, ObjectTypeDef, ObjectTypeName, PropertyType};
+use norn_ir::{JsonValue, Lifecycle, ObjectTypeDef, ObjectTypeName, PropertyType, TransitionMode};
 
 use super::{Checker, Table};
 use crate::lifecycles::{Machine, Machines, codes};
@@ -108,8 +108,23 @@ impl<'a> Checker<'a, '_> {
                             machine.path_properties.push(property);
                         }
                     }
+                    for (state, outcome) in &wide.endings {
+                        if machine.states.contains(state)
+                            && !machine.endings.iter().any(|(own, _)| own == state)
+                        {
+                            machine.endings.push((state, *outcome));
+                        }
+                    }
+                    for event in &wide.events {
+                        if !machine.events.iter().any(|own| own.id == event.id) {
+                            machine.events.push(event.clone());
+                        }
+                    }
                     for edge in &mut machine.transitions {
                         if let Some(parent) = wide.transitions.iter().find(|p| p.id == edge.id) {
+                            edge.trigger = edge.trigger.or(parent.trigger);
+                            edge.mode = edge.mode.or(parent.mode);
+                            edge.compensated_by = edge.compensated_by.or(parent.compensated_by);
                             if parent.guard_refusal_code.is_some() {
                                 edge.guard_refusal_code = parent.guard_refusal_code;
                             }
@@ -204,14 +219,26 @@ impl<'a> Checker<'a, '_> {
                 continue;
             };
             let clean = self.check_declaration(&at, lifecycle, &states);
+            if clean {
+                // The declaration's own shape; malformed members are local.
+                let findings = crate::lifecycle_soundness::check_declaration(lifecycle, &states);
+                self.soundness(&at, findings);
+            }
             let machine = Machine::declared(lifecycle, states);
             if let Some(member) = table.get(&lifecycle.property) {
                 self.check_default(&at, &["initial"], lifecycle, member, &machine);
             }
             if clean {
-                self.check_structure(&at, &machine);
+                // Soundness and structure hold of the effective machine: the
+                // inherited triggers, modes, guards, endings, events and
+                // compensation apply with the redeclaration's own.
                 let effective = self.machines(&def.name);
-                if let Some(machine) = effective.get(&lifecycle.property) {
+                let machine = effective.get(&lifecycle.property).unwrap_or(&machine);
+                let findings =
+                    crate::lifecycle_soundness::check_effective_transitions(lifecycle, machine);
+                self.soundness(&at, findings);
+                self.check_structure(&at, machine);
+                if effective.contains_key(&lifecycle.property) {
                     self.check_path_properties(&at, machine);
                 }
             }
@@ -458,11 +485,26 @@ impl<'a> Checker<'a, '_> {
         }
     }
 
-    /// Reachability from the initial states, and no dead ends.
+    /// LIFE-SOUND findings as diagnostics at `at` plus each finding's member path.
+    fn soundness(&mut self, at: &[&str], findings: Vec<crate::lifecycle_soundness::Finding>) {
+        for finding in findings {
+            let path: Vec<&str> = finding.path.iter().map(String::as_str).collect();
+            let mut diagnostic = error(finding.code, finding.message, span_at(at, &path));
+            if finding.info {
+                diagnostic.severity = norn_ir::DiagnosticSeverity::Info;
+            }
+            self.out.push(diagnostic);
+        }
+    }
+
+    /// Reachability from the initial states, no dead ends, and soundness
+    /// (LIFE-SOUND-1..8): option to complete, events, deadlines, compensation.
     fn check_structure(&mut self, at: &[&str], machine: &Machine<'a>) {
         if machine.initial.is_empty() {
             return;
         }
+        let findings = crate::lifecycle_soundness::check_machine(machine);
+        self.soundness(at, findings);
         for state in machine.unreachable() {
             self.out.push(error(
                 codes::UNREACHABLE_STATE,
@@ -526,6 +568,7 @@ impl<'a> Checker<'a, '_> {
                 ));
             }
         }
+        self.check_narrowed_endings(at, lifecycle, wide);
         for (position, transition) in lifecycle.transitions.iter().enumerate() {
             let position = position.to_string();
             let at = [at, &["transitions", position.as_str()]].concat();
@@ -565,6 +608,22 @@ impl<'a> Checker<'a, '_> {
                     ));
                 }
             }
+            // A fact stays a fact and a request stays a request (LIFE-SOUND-5);
+            // a trigger makes the inherited transition a fact.
+            if let Some(mode) = transition.mode {
+                let fact =
+                    inherited.trigger.is_some() || inherited.mode == Some(TransitionMode::Fact);
+                if (mode == TransitionMode::Fact) != fact {
+                    self.out.push(error(
+                        codes::WIDENS_TRANSITION,
+                        format!(
+                            "transition {id:?} is declared {mode:?}, but the inherited transition is {}; a subtype keeps every inherited transition's mode",
+                            if fact { "a fact" } else { "a request" }
+                        ),
+                        span_at(&at, &["mode"]),
+                    ));
+                }
+            }
             if transition
                 .guard_refusal_code
                 .as_deref()
@@ -590,6 +649,29 @@ impl<'a> Checker<'a, '_> {
                         span_at(&at, &["id"]),
                     ));
                 }
+            }
+        }
+    }
+
+    /// An inherited ending keeps its outcome: re-labelling it would let a
+    /// subtype escape the soundness findings the supertype's outcome owes.
+    fn check_narrowed_endings(&mut self, at: &[&str], lifecycle: &Lifecycle, wide: &Machine<'a>) {
+        for (index, ending) in lifecycle.endings.iter().enumerate() {
+            if let Some((_, outcome)) = wide
+                .endings
+                .iter()
+                .find(|(state, _)| *state == ending.state.as_str())
+                && *outcome != ending.outcome
+            {
+                let index = index.to_string();
+                self.out.push(error(
+                    codes::WIDENS_TRANSITION,
+                    format!(
+                        "ending {:?} is {:?}, but the inherited lifecycle declares it {outcome:?}; a subtype keeps every inherited ending's outcome",
+                        ending.state, ending.outcome
+                    ),
+                    span_at(at, &["endings", index.as_str(), "outcome"]),
+                ));
             }
         }
     }
