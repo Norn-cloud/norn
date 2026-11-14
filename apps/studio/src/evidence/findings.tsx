@@ -1,10 +1,15 @@
-import { Chip } from "@/components/chip"
+import { Chip, FactChip } from "@/components/chip"
 import { useQuery } from "@tanstack/react-query"
 import type { ReactNode } from "react"
 import { CircleAlert, CircleCheck, CircleDashed, CircleDot, ShieldAlert, ShieldCheck, type LucideIcon } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Panel, Well } from "@/components/panel"
 import { CellRefusal, NotServed } from "../lib/live-transport.ts"
+import { useLocale } from "@/lib/locale"
+import { transport } from "@/lib/transport"
+import { catalogOf } from "../lib/catalog.ts"
+import { compared, isList, roleOf } from "../lib/law-values.ts"
+import { atScale } from "../lib/objects.ts"
 import { EvidenceList } from "./evidence-crop.tsx"
 import { readFindings, type Evidence, type Finding, type RuleRef } from "./review.ts"
 
@@ -26,6 +31,40 @@ const STATUS: Record<Finding["status"], { readonly label: string; readonly varia
 function StatusBadge({ status }: { readonly status: Finding["status"] }) {
   const { label, variant, icon: Icon } = STATUS[status]
   return <Badge variant={variant}><Icon aria-hidden />{label}</Badge>
+}
+
+/**
+ * DIAG-REASON-1: the values a law finding compared, as the cell recorded them when the law read
+ * them (never the record's current values), in the order the law states them. A list is every
+ * line the law summed, shown as its exact sum and its parts: "72.00 = 30.00 + 40.00 + 2.00".
+ */
+function ComparedValues({ objectType, finding }: { readonly objectType: string; readonly finding: Finding }) {
+  const { locale } = useLocale()
+  const catalog = useQuery({ queryKey: ["catalog"], queryFn: transport.catalog })
+  const values = finding.values
+  if (values === undefined || Object.keys(values).length === 0) return null
+  const concept = catalog.data ? catalogOf(catalog.data.document, locale).byName.get(objectType) : undefined
+  const ref = finding.ruleRef
+  const law = ref.kind === "law" ? concept?.laws.find(({ id }) => id === ref.lawId) : undefined
+  const paths = law?.compares?.every((path) => Object.hasOwn(values, path)) ? [...law.compares] : Object.keys(values).sort()
+  const fieldOf = (path: string) => concept?.fields.find(({ id }) => id === path)
+  const scale = paths.map((path) => fieldOf(path)?.decimal?.scale).find((found) => found !== undefined)
+  const sides = paths.map((path) => {
+    const value = compared(values[path])
+    const field = fieldOf(path)
+    const label = field?.label ?? (isList(values[path]) ? `sum of ${roleOf(path).replaceAll("_", " ")}` : path.replaceAll(".", " ").replaceAll("_", " "))
+    const text = atScale(value.text, field?.decimal?.scale ?? scale)
+    const parts = value.parts && value.parts.length > 1 ? ` = ${value.parts.map((part) => atScale(part, scale)).join(" + ")}` : ""
+    return { path, label, shown: `${text}${parts}` }
+  })
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 pt-1 tabular-nums" aria-label="The values the law compared">
+      {sides.map(({ path, label, shown }, index) => <span key={path} className="contents">
+        {index > 0 && <span aria-label={sides.length === 2 ? "does not equal" : undefined} className="text-meta text-muted-foreground">{sides.length === 2 ? "≠" : "·"}</span>}
+        <FactChip label={label} className={index === 0 && finding.status === "open" ? "[&>span:last-child]:text-tone-red" : undefined}>{shown}</FactChip>
+      </span>)}
+    </div>
+  )
 }
 
 /**
@@ -54,6 +93,7 @@ export function Findings({ objectType, id, actionFor }: { readonly objectType: s
               <span className="text-meta text-muted-foreground">{finding.severity} · first seen {finding.firstSeen}</span>
             </div>
             <p className="text-sm">{finding.message}</p>
+            <ComparedValues objectType={objectType} finding={finding} />
           </article>
         ))}
         {evidence.length > 0 && <div className="space-y-2"><div className="text-meta font-medium text-muted-foreground">Where its values were read</div><EvidenceList refs={evidence} record={{ objectType, id }} {...actionFor ? { actionFor } : {}} /></div>}
