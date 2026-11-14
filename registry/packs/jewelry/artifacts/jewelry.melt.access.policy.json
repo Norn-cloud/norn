@@ -1,0 +1,45 @@
+{
+  "artifactId": "jewelry.melt.access.policy",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "policy",
+  "lifecycle": "active",
+  "name": "Melt recorders",
+  "namespace": "jewelry",
+  "payload": {
+    "accessVersion": "0.1",
+    "policyId": "jewelry.melt.access",
+    "rules": [
+      {
+        "actions": [
+          "jewelry.melt.record"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "member",
+                "admin",
+                "owner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "jewelry.Melt",
+        "ruleId": "recorders",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/jewelry/artifacts/jewelry.melt.access.policy.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

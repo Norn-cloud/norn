@@ -262,6 +262,240 @@
         ]
       }
     },
+    "/v1/cell/definitions:apply": {
+      "post": {
+        "tags": [
+          "crate::cell_definitions"
+        ],
+        "summary": "`POST /v1/cell/definitions:apply`: install the submission over the active\ndefinitions as the next version, compare-and-set on `expectedVersion`.",
+        "description": "# Errors\nAs [`plan_definitions`]; 400 without `expectedVersion`; 409 `defs.stale`\nwhen the active version is no longer the planned one.",
+        "operationId": "apply_cell_definitions",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DefinitionsChangeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The definitions were installed, or already are the active set.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DefinitionsApplied"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid: no `expectedVersion`, a reserved or repeated artifact.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied, with the same document whatever the reason.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request was refused: the definitions changed since the plan (`defs.stale`), stored objects break the candidate laws (`defs.live_data_refused`), or the live data cannot be migrated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The request was refused: the body exceeds the host bound.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request was refused (`defs.refused`): the definitions are not admissible over the active set.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
+    "/v1/cell/definitions:plan": {
+      "post": {
+        "tags": [
+          "crate::cell_definitions"
+        ],
+        "summary": "`POST /v1/cell/definitions:plan`: what applying the submission over the\nactive definitions would change. Never writes.",
+        "description": "# Errors\nThe opaque 403; 400 for a body that is not a change or names a reserved\nor repeated artifact; 413 over the bound; 422 `defs.refused` with the\nchecker's findings; 409 `defs.live_data_refused` with the stored objects\nthe candidate laws refuse, `defs.migration_refused`, or\n`defs.not_installed`.",
+        "operationId": "plan_cell_definitions",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DefinitionsChangeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "What applying the submission would change.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DefinitionsPlan"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid, or names an artifact in a reserved namespace.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied, with the same document whatever the reason.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request was refused: stored objects break the candidate laws (`defs.live_data_refused`), the live data cannot be migrated, or the cell has no definitions.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The request was refused: the body exceeds the host bound.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request was refused (`defs.refused`): the definitions are not admissible over the active set.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
     "/v1/cell:provision": {
       "post": {
         "tags": [
@@ -4781,6 +5015,14 @@
           }
         }
       },
+      "ApplyOutcome": {
+        "type": "string",
+        "description": "Whether an apply installed a new version.",
+        "enum": [
+          "installed",
+          "unchanged"
+        ]
+      },
       "CatalogObjectType": {
         "type": "object",
         "description": "One object type an ad-hoc question may range over, with every effective\nproperty and its resolved type (`null` for a registry or unresolved type).",
@@ -5618,6 +5860,155 @@
             "format": "int64",
             "description": "Its current version.",
             "minimum": 0
+          }
+        }
+      },
+      "DefinitionsApplied": {
+        "type": "object",
+        "description": "The installed definitions.",
+        "required": [
+          "outcome",
+          "definitionsVersion",
+          "previousVersion",
+          "receiptSha256",
+          "commitSeq",
+          "plan"
+        ],
+        "properties": {
+          "commitSeq": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The ledger commit that installed it.",
+            "minimum": 0
+          },
+          "definitionsVersion": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The active definitions version now.",
+            "minimum": 0
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/ApplyOutcome",
+            "description": "Whether this call installed a version."
+          },
+          "plan": {
+            "$ref": "#/components/schemas/DefinitionsPlan",
+            "description": "What the change added, replaced and found identical."
+          },
+          "previousVersion": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The version the change was applied over.",
+            "minimum": 0
+          },
+          "receiptSha256": {
+            "type": "string",
+            "description": "The installed set's admission receipt digest."
+          }
+        }
+      },
+      "DefinitionsChangeRequest": {
+        "type": "object",
+        "description": "`POST /v1/cell/definitions:plan` and `:apply`.",
+        "required": [
+          "artifacts"
+        ],
+        "properties": {
+          "artifacts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornArtifactEnvelope"
+            },
+            "description": "The pack's artifact envelopes; none in a reserved namespace (core., std.). Each one is added, or replaces the active artifact of its id."
+          },
+          "expectedVersion": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The active definitions version the change was planned against.\nRequired by apply; a plan reports the version it planned against.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "DefinitionsPlan": {
+        "type": "object",
+        "description": "What applying the submission would change.",
+        "required": [
+          "baseVersion",
+          "nextVersion",
+          "unchanged",
+          "added",
+          "changed",
+          "same",
+          "newObjectTypes",
+          "checkedObjects",
+          "diagnostics",
+          "receiptSha256"
+        ],
+        "properties": {
+          "added": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlannedArtifact"
+            },
+            "description": "Artifacts the change adds."
+          },
+          "baseVersion": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The active definitions version the plan was made against: apply's\n`expectedVersion`.",
+            "minimum": 0
+          },
+          "changed": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlannedArtifact"
+            },
+            "description": "Artifacts the change replaces."
+          },
+          "checkedObjects": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Stored objects evaluated under the candidate laws.",
+            "minimum": 0
+          },
+          "diagnostics": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RefusalDiagnostic"
+            },
+            "description": "The checker's non-blocking findings and live-data warnings."
+          },
+          "newObjectTypes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Object types the installed set would serve that the active one does not."
+          },
+          "nextVersion": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The definitions version an apply would install, or the active one when\nnothing changes.",
+            "minimum": 0
+          },
+          "receiptSha256": {
+            "type": "string",
+            "description": "The candidate set's admission receipt digest."
+          },
+          "same": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Submitted artifacts identical to the active ones."
+          },
+          "unchanged": {
+            "type": "boolean",
+            "description": "Whether the submission is already the active set (apply writes nothing)."
           }
         }
       },
@@ -33883,6 +34274,36 @@
           "id": {
             "type": "string",
             "description": "The decision id (`POST /v1/decisions/{id}:decide`)."
+          }
+        }
+      },
+      "PlannedArtifact": {
+        "type": "object",
+        "description": "One artifact the change adds or replaces.",
+        "required": [
+          "artifactId",
+          "kind",
+          "toVersion"
+        ],
+        "properties": {
+          "artifactId": {
+            "type": "string",
+            "description": "The artifact id."
+          },
+          "fromVersion": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The active artifact's version, when the change replaces one."
+          },
+          "kind": {
+            "type": "string",
+            "description": "The artifact kind (`entity`, `law`, `action`, …)."
+          },
+          "toVersion": {
+            "type": "string",
+            "description": "The submitted artifact's version."
           }
         }
       },

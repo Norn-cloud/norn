@@ -309,3 +309,53 @@ fn a_property_carries_only_the_markings_of_the_values_it_was_computed_from() {
     assert_eq!(observed["min"], "2026-11-01T00:00:00Z", "{profile}");
     assert_eq!(observed["max"], "2026-11-01T00:00:00Z", "{profile}");
 }
+
+/// PRIVACY-1 on the engine: a type none of whose live rows carries a label
+/// profiles on `DuckDB`, exactly as natively; a type with a marked property
+/// keeps the native profile over projected values.
+#[cfg(feature = "duckdb")]
+#[test]
+fn an_unlabeled_type_profiles_on_the_engine_and_a_marked_one_natively() {
+    use norn_cell::analytics::engine::{Engine, Settings};
+    use norn_cell_do::olap::InProcess;
+    let directory = tempfile::tempdir().unwrap();
+    let mut cell = loaded(&directory.path().join("a.sqlite"));
+    let transport = InProcess(
+        Engine::new(Settings {
+            root: directory.path().join("olap"),
+            memory_limit: "256MB".into(),
+            threads: 1,
+        })
+        .unwrap(),
+    );
+    let without = |document: &Value| {
+        let mut document = document.clone();
+        let object = document.as_object_mut().unwrap();
+        object.remove("engine");
+        object.remove("scanLimit");
+        document
+    };
+    let member = user("member");
+    for (object_type, engine) in [("canon.Holding", "duckdb"), ("canon.Party", "cell")] {
+        let path = format!("/v1/objects/{object_type}:profile");
+        let native = cell.call("GET", &path, &member, "");
+        assert_eq!(native.status, 200, "{}", native.body);
+        let native: Value = serde_json::from_str(&native.body).unwrap();
+        let request = Request {
+            method: "GET",
+            path: &path,
+            query: QUERY,
+            authorization: Some(&member),
+            now: NOW,
+            body: "",
+        };
+        let host = cell.tenant.serving_host().expect("serving");
+        let answered =
+            norn_cell_do::server::analytics(host, &cell.tokens, &transport, None, &request)
+                .expect("an engine route");
+        assert_eq!(answered.status, 200, "{}", answered.body);
+        let answered: Value = serde_json::from_str(&answered.body).unwrap();
+        assert_eq!(answered["engine"], engine, "{object_type}: {answered}");
+        assert_eq!(without(&answered), without(&native), "{object_type}");
+    }
+}
