@@ -1709,6 +1709,9 @@
     "question.validation.invalid_window": {
       "message": "The time window must be an ordered half-open UTC interval."
     },
+    "question.validation.marked_field": {
+      "message": "a question cannot group or filter by a field that carries a declared marking (for example pii.contact)"
+    },
     "question.validation.mixed_axis_rollup": {
       "message": "Simultaneous time and non-time reductions require an ordered reduction contract."
     },

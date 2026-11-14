@@ -91,6 +91,9 @@ pub mod codes {
     pub const COMPLEXITY_LIMIT: &str = "metric.validation.complexity_limit";
     /// Question names must be dotted lower-case identifiers.
     pub const QUESTION_NAME: &str = "question.validation.invalid_name";
+    /// PRIVACY-4: a question may not group or filter by a property that carries
+    /// a declared marking; its buckets would show the value unmasked.
+    pub const MARKED_FIELD: &str = "question.validation.marked_field";
     /// Question names must be unique.
     pub const DUPLICATE_QUESTION: &str = "question.validation.duplicate_question";
     /// Questions require at least one metric.
@@ -1005,11 +1008,9 @@ impl<'a> Checker<'a> {
                 self.reject(codes::UNKNOWN_PATH, &format!("{at}/searchAround"));
             }
             for (filter_index, filter) in question.filters.iter().enumerate() {
-                self.filter(
-                    question.object_set.as_str(),
-                    filter,
-                    &format!("{at}/filter/{filter_index}"),
-                );
+                let filter_at = format!("{at}/filter/{filter_index}");
+                self.filter(question.object_set.as_str(), filter, &filter_at);
+                self.unmarked(question.object_set.as_str(), &filter.path, &filter_at);
             }
             let mut dimensions = BTreeSet::new();
             for (dimension_index, dimension) in question.dimensions.iter().enumerate() {
@@ -1312,7 +1313,23 @@ impl<'a> Checker<'a> {
                 {
                     self.reject(codes::INVALID_DIMENSION, &dimension_at);
                 }
+                if path.properties.iter().any(|p| !p.markings.is_empty()) {
+                    self.reject(codes::MARKED_FIELD, &dimension_at);
+                }
             }
+        }
+    }
+
+    /// PRIVACY-4: a question filter on a property with a declared marking is
+    /// refused, since an answer's count would confirm a guessed value. The path
+    /// was already resolved by `filter`, which reported its errors.
+    fn unmarked(&mut self, root: &str, path: &DimensionPath, at: &str) {
+        let before = self.out.len();
+        let resolved = self.path(root, path, &format!("{at}/path"));
+        // `filter` already reported any path error; report none twice.
+        self.out.truncate(before);
+        if resolved.is_some_and(|path| path.properties.iter().any(|p| !p.markings.is_empty())) {
+            self.reject(codes::MARKED_FIELD, at);
         }
     }
 

@@ -2276,6 +2276,10 @@
     "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
   },
   {
+    "code": "question.validation.marked_field",
+    "fix": "Group or filter by an unmarked field instead. A marked field (such as a person's name) can be counted but not used as a group label or filter; read it per row, where it is masked."
+  },
+  {
     "code": "question.validation.mixed_axis_rollup",
     "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },

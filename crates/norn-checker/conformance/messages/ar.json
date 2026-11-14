@@ -2278,6 +2278,10 @@
       "message": "نافذة الزمن يجب أن تكون فترة UTC مرتبة نصف مفتوحة.",
       "review": "needs_review"
     },
+    "question.validation.marked_field": {
+      "message": "لا يمكن للسؤال أن يجمّع أو يرشّح حسب حقل يحمل وسماً معلناً (مثل pii.contact)",
+      "review": "needs_review"
+    },
     "question.validation.mixed_axis_rollup": {
       "message": "الاختزالات المتزامنة الزمنية وغير الزمنية تتطلب عقد اختزال مرتبًا.",
       "review": "needs_review"
