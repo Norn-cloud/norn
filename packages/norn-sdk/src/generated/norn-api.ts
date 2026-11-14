@@ -11587,7 +11587,10 @@ export interface components {
              *     read, and every count is a lower bound.
              */
             approximate: boolean;
-            /** @description The engine that computed the profile: `cell`, the native exact engine. */
+            /**
+             * @description The engine that computed the profile: `cell`, the native exact engine,
+             *     or `duckdb`, the tenant analytics engine.
+             */
             engine: string;
             /** @description The concept profiled; rows may be of its subtypes. */
             objectType: string;
@@ -11826,7 +11829,7 @@ export interface components {
          * @description The evaluator that produced an answer.
          * @enum {string}
          */
-        NornQueryEngine: "ivm" | "cell";
+        NornQueryEngine: "ivm" | "cell" | "duckdb";
         /**
          * @description Snapshot freshness, independent of source cursor ordering.
          * @enum {string}
