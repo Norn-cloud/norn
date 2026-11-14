@@ -1,3 +1,4 @@
+@layer ui-sdk;
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "./components/ui/shadcn.css";
@@ -73,6 +74,8 @@
   --sidebar-accent-foreground: #0a0a0a;
   --sidebar-border: #e8e8e8;
   --sidebar-ring: #737373;
+  /* The ground the rail and the two cards sit on (app shell). */
+  --shell: #f2f2f2;
   --elevation-1: 0 1px 2px rgb(0 0 0 / 0.04), 0 12px 32px -18px rgb(0 0 0 / 0.18);
   /*
    * Depth model for things that float on a canvas (canvas nodes, the question tree, floating toolbars):
@@ -166,6 +169,7 @@
   --sidebar-accent-foreground: #fafafa;
   --sidebar-border: #212121;
   --sidebar-ring: #8a8a8a;
+  --shell: #000000;
   --elevation-1: inset 0 1px 0 rgb(255 255 255 / 0.04), 0 20px 50px -24px rgb(0 0 0 / 0.8);
   --elevation-node: 0 1px 1px rgb(0 0 0 / 0.5), 0 2px 4px rgb(0 0 0 / 0.35), 0 14px 32px -10px rgb(0 0 0 / 0.6);
   --elevation-node-hover: 0 1px 2px rgb(0 0 0 / 0.55), 0 4px 8px rgb(0 0 0 / 0.4), 0 20px 44px -12px rgb(0 0 0 / 0.7);
@@ -274,6 +278,7 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+  --color-shell: var(--shell);
   --font-heading: var(--font-sans);
   --font-sans: "Geist Variable", -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", sans-serif;
   --font-mono: "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;

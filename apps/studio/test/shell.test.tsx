@@ -29,7 +29,8 @@ test("the open section lists its entries under their heading, the open entry mar
   const html = await at("/sources/canon.Holding", () => <Shell sections={[sources, questions]} account={account} onSignOut={() => {}} />)
   expect(html).toContain("Object types")
   expect(html).toContain('href="/sources/canon.Holding"')
-  expect(html).toMatch(/data-sidebar="menu-sub-button"[^>]*data-active="true"/)
+  // The current page's item carries aria-current, and its row links to the page.
+  expect(html).toMatch(/role="treeitem"[^>]*aria-current="page"[^>]*>\s*<a[^>]*href="\/sources\/canon.Holding"/)
   expect(html).toContain("[&amp;&gt;svg]:text-muted-foreground")
 })
 
@@ -74,19 +75,22 @@ test("only the recorded jewelry world opens; the NC benchmark points to its offl
   expect(WORKSPACES.find(({ group }) => group === "Class demos")?.detail).toBe("Coming soon")
 })
 
-test("a long section shows six entries and offers the rest, keeping the open one in view", async () => {
-  const many: Section = { ...sources, useMenu: () => Array.from({ length: 9 }, (_, index) => ({ href: `/sources/t${index}`, label: `Type ${index}`, group: "Object types" })) }
-  const html = await at("/sources/t8", () => <Shell sections={[many]} account={account} onSignOut={() => {}} />)
-  expect(html).toContain("Type 5")
-  expect(html).not.toContain(">Type 6<")
+test("the applet sidebar names the applet, offers its action, and counts each group; the rail lists every applet", async () => {
+  const acting: Section = { ...sources, action: { label: "Connect a source", to: "/connections" } }
+  const many: Section = { ...acting, useMenu: () => Array.from({ length: 9 }, (_, index) => ({ href: `/sources/t${index}`, label: `Type ${index}`, group: "Object types" })) }
+  const html = await at("/sources/t8", () => <Shell sections={[many, questions]} account={account} onSignOut={() => {}} />)
+  expect(html).toMatch(/<h2[^>]*>Sources<\/h2>/)
+  expect(html).toMatch(/href="\/connections"[^>]*>[\s\S]*?Connect a source/)
+  expect(html).toMatch(/>Object types<\/span><span[^>]*>9<\/span>/)
   expect(html).toContain("Type 8")
-  expect(html).toContain("Show 2 more")
+  expect(html).toMatch(/role="toolbar"[^>]*aria-label="Applets"|aria-label="Applets"[^>]*role="toolbar"/)
+  expect(html).toContain('aria-label="Questions"')
 })
 
 test("a section's count sits in the theme's destructive pair", async () => {
   const counted: Section = { ...questions, useBadge: () => 3 }
   const html = await at("/sources", () => <Shell sections={[sources, counted]} account={account} onSignOut={() => {}} />)
-  const badge = html.match(/<span class="[^"]*bg-destructive[^"]*"[^>]*>3<\/span>/)?.[0] ?? ""
+  const badge = html.match(/<span[^>]*class="[^"]*bg-destructive[^"]*"[^>]*>3<\/span>/)?.[0] ?? ""
   expect(badge).toContain("text-destructive-foreground")
   expect(badge).not.toContain("text-white")
 })

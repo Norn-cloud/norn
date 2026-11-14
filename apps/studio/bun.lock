@@ -20,6 +20,7 @@
         "@tanstack/react-table": "8.21.3",
         "@tanstack/react-virtual": "3.14.22",
         "@ui-sdk/core": "0.1.0-beta.1",
+        "@ui-sdk/react": "0.1.0-beta.1",
         "@ui-sdk/web": "0.1.0-beta.1",
         "@xyflow/react": "12.12.1",
         "ai": "7.0.162",
@@ -632,6 +633,8 @@
     "@types/use-sync-external-store": ["@types/use-sync-external-store@0.0.6", "", {}, "sha512-zFDAD+tlpf2r4asuHEj0XH6pY6i0g5NeAHPn+15wk3BV6JA69eERFXC1gyGThDkVa1zCyKr5jox1+2LbV/AMLg=="],
 
     "@ui-sdk/core": ["@ui-sdk/core@0.1.0-beta.1", "", {}, "sha512-sWsZW8RN6Gviir7REQYuDIafm9hierHQE31OJ+2g+1Pp3lDVKp/dk0+0dxFvqOQRmBveRvlE9FiARgNlQ9dMFw=="],
+
+    "@ui-sdk/react": ["@ui-sdk/react@0.1.0-beta.1", "", { "peerDependencies": { "@types/react": ">=19.2.10", "@ui-sdk/core": "^0.1.0-beta.1", "react": ">=19", "react-dom": ">=19" }, "optionalPeers": ["@types/react"] }, "sha512-7wcUsZI+WoG2uo3N+PHrWntk97qI9ez2cUrHV9H507FiL118Pi4tuhWUCMDtWwEUCNQLybpBm1QRLkEXVOPAUg=="],
 
     "@ui-sdk/web": ["@ui-sdk/web@0.1.0-beta.1", "", { "peerDependencies": { "@ui-sdk/core": "^0.1.0-beta.1" } }, "sha512-PnlZD27q90B+vNbGcOYhpFjdCaguYqZoYnslgDL+KLYNTqzKgE64eUKp9IfawMpcosKOnk8aGPiaw3uaOTHMpQ=="],
 

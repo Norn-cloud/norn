@@ -29,6 +29,7 @@
     "@tanstack/react-table": "8.21.3",
     "@tanstack/react-virtual": "3.14.22",
     "@ui-sdk/core": "0.1.0-beta.1",
+    "@ui-sdk/react": "0.1.0-beta.1",
     "@ui-sdk/web": "0.1.0-beta.1",
     "@xyflow/react": "12.12.1",
     "ai": "7.0.162",
