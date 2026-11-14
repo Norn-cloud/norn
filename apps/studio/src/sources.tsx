@@ -13,6 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { useView, type View } from "@/lib/view"
 import { catalogOf, cellOwned, conceptTitle, type Catalog, type Concept, type Source } from "./lib/catalog.ts"
 import { transport } from "./lib/transport.ts"
+import type { Total } from "./lib/records-query.ts"
 import { LawsPanel } from "./laws.tsx"
 import { SourceConnections } from "./source-connections.tsx"
 import { ModelGraph } from "./model-graph.tsx"
@@ -270,9 +271,15 @@ export function useSourcesMenu(): readonly MenuEntry[] | undefined {
   const read = useQuery({ queryKey: ["catalog"], queryFn: transport.catalog })
   const { locale } = useLocale()
   const catalog = useMemo(() => read.data && catalogOf(read.data.document, locale), [read.data, locale])
+  // The cell counts each type for this caller; a type it may not list has no count, and the recording has none.
+  const counts = useQuery({ queryKey: ["catalog", "counts"], queryFn: transport.objectCounts }).data
   return catalog && (["object type", "interface"] as const).flatMap((definition) => catalog.concepts.filter((concept) => concept.definition === definition)
-    .map((concept) => ({ href: `/sources/${concept.name}`, label: concept.title, group: definition === "object type" ? "Object types" : "Shared interfaces", icon: definition === "object type" ? Box : Layers, kind: "objectType" as const })))
+    .map((concept): MenuEntry => ({ href: `/sources/${concept.name}`, label: concept.title, group: definition === "object type" ? "Object types" : "Shared interfaces", icon: definition === "object type" ? Box : Layers, kind: "objectType", count: menuCount(counts?.[concept.name]) })))
 }
+
+/** A menu entry's count: exact, or the server's lower bound as text ("500+"); none when the cell sent none. */
+export const menuCount = (total: Total | undefined): number | string | undefined =>
+  total === undefined ? undefined : total.approximate ? `${total.count.toLocaleString("en-US")}+` : total.count
 
 /** The admitted catalog, indexed once per read. */
 export function useCatalog() {

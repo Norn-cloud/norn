@@ -7785,7 +7785,8 @@
           "diagnostics",
           "registry",
           "baseArtifactIds",
-          "artifacts"
+          "artifacts",
+          "objectCounts"
         ],
         "properties": {
           "admitted": {
@@ -7827,6 +7828,16 @@
             "format": "int64",
             "description": "Editor sidecar revision.",
             "minimum": 0
+          },
+          "objectCounts": {
+            "type": "object",
+            "description": "Live record counts by object type, under the caller's own visibility:\neach is the total `GET /v1/objects/{type}` reports on its first page,\nthrough the same gates, counted to at most 500 visible records\n(`approximate`, and the count 500, past it). A type the caller may not\nlist has no entry, never a zero.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/NornQueryTotal"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
           },
           "receipt": {
             "type": "object",
