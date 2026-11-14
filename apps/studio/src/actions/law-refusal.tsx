@@ -2,8 +2,8 @@ import { useQuery } from "@tanstack/react-query"
 import { useLocale } from "@/lib/locale"
 import { useView } from "@/lib/view"
 import { catalogOf } from "../lib/catalog.ts"
-import { factDisplay } from "../lib/objects.ts"
-import { readFindings } from "../evidence/review.ts"
+import { atScale, factDisplay } from "../lib/objects.ts"
+import { readFindings, readHistory, versionValue } from "../evidence/review.ts"
 import { ShieldX } from "lucide-react"
 import { Chip, FactChip } from "@/components/chip"
 import { Button } from "@/components/ui/button"
@@ -108,13 +108,22 @@ export function RedactedLawRefusal({ objectType, id, code, message, technical }:
   const catalog = useQuery({ queryKey: ["catalog"], queryFn: transport.catalog })
   const findings = useQuery({ queryKey: ["findings", objectType, id], queryFn: () => readFindings(objectType, id!), enabled: id !== undefined, retry: false })
   const object = useQuery({ queryKey: ["object", objectType, id], queryFn: () => transport.object(objectType, id!), enabled: id !== undefined, retry: false })
+  // A record held in quarantine is not served by the object route; its history (the same read its page shows) still is.
+  const history = useQuery({ queryKey: ["history", objectType, id], queryFn: () => readHistory(objectType, id!), enabled: id !== undefined && object.isSuccess && object.data === null, retry: false })
   const concept = catalog.data ? catalogOf(catalog.data.document, locale).byName.get(objectType) : undefined
   const open = findings.data?.document.findings.filter(({ status }) => status === "open") ?? []
   const record = object.data ?? undefined
   const fact = (fieldId: string) => {
     const field = concept?.fields.find(({ id: candidate }) => candidate === fieldId)
     if (field === undefined) return { label: fieldId.replaceAll("_", " "), value: undefined }
-    return { label: field.label ?? field.id.replaceAll("_", " "), value: record ? factDisplay(field, record.object.document, record.object.numbers, "", view) : undefined }
+    const label = field.label ?? field.id.replaceAll("_", " ")
+    if (record) return { label, value: factDisplay(field, record.object.document, record.object.numbers, "", view) }
+    // Newest version first; a value the reader may not see stays a dash.
+    if (history.data && history.data.document.versions.length > 0) {
+      const text = versionValue(history.data, 0, fieldId)
+      return { label, value: text === "—" ? undefined : atScale(text, field.decimal?.scale) }
+    }
+    return { label, value: undefined }
   }
   return (
     <div role="alert" data-refusal="redacted" className="overflow-hidden rounded-xl border border-border bg-card text-sm">

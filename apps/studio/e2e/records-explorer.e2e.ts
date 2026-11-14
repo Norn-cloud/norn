@@ -82,3 +82,23 @@ test("views: save, open, update, rename and delete with undo; an opened view has
   await expect(page.getByRole("tab", { name: "North FIFO holdings" })).toBeVisible()
   expect([...definitions.views.values()].some(({ retired }) => !retired)).toBe(true)
 })
+
+test("facets that never arrive: the rail stops counting after its deadline, says the counts aren't available, and counts again on request", async ({ page }) => {
+  test.setTimeout(60_000)
+  await session(page)
+  await objectCell(page, population(30))
+  await viewsCell(page)
+  // The first counts never come back (a cold or busy cell); the next ask is answered by the stand-in.
+  let held = true
+  await page.route("**/v1/objects/canon.Holding:facets**", (route) => held ? new Promise<void>(() => {}) : route.fallback())
+  await page.goto("/objects/canon.Holding")
+  await expect(page.getByText("30 records", { exact: true })).toBeVisible()
+  // The rail renders twice (the side panel, and a disclosure for narrow screens); the side panel is read.
+  const side = page.locator("aside")
+  await expect(side.getByText("Counting values…")).toBeVisible()
+  await expect(side.getByText("Counts aren't available right now.")).toBeVisible({ timeout: 25_000 })
+  await expect(side.getByText("Counting values…")).toHaveCount(0)
+  held = false
+  await side.getByRole("button", { name: "Count again" }).click()
+  await expect(rail(page)).toContainText("30 records, counted by the cell")
+})

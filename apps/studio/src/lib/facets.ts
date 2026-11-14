@@ -1,4 +1,5 @@
 import { cellRead } from "./live-transport.ts"
+import type { Read } from "./exact.ts"
 import type { Clause, Predicate } from "./records-query.ts"
 
 /** One value of a property and the counted rows holding it (`GET /v1/objects/{type}:facets`). */
@@ -23,12 +24,26 @@ export interface Facets {
 }
 
 /** The cell's facets for `filter`, of every categorical property or of `properties` only. */
-export async function readFacets(objectType: string, filter: Predicate | null, properties?: readonly string[]) {
+/** How long the rail waits for the cell's counts before it says they did not arrive (a cold or busy cell). */
+export const FACETS_DEADLINE_MS = 15_000
+
+/** The counts did not arrive in time: the rail says so and offers to ask again, rather than counting forever. */
+export class FacetsTimedOut extends Error {
+  constructor() { super(`The cell didn't send the counts within ${FACETS_DEADLINE_MS / 1000} seconds.`) }
+}
+
+export async function readFacets(objectType: string, filter: Predicate | null, properties?: readonly string[], deadlineMs: number = FACETS_DEADLINE_MS) {
   const query = new URLSearchParams()
   if (filter !== null && filter.all.length > 0) query.set("filter", JSON.stringify(filter))
   if (properties !== undefined) query.set("properties", properties.join(","))
   const search = query.toString()
-  const read = await cellRead<Facets>(`/v1/objects/${encodeURIComponent(objectType)}:facets${search === "" ? "" : `?${search}`}`, "Facets are")
+  let read: Read<Facets>
+  try {
+    read = await cellRead<Facets>(`/v1/objects/${encodeURIComponent(objectType)}:facets${search === "" ? "" : `?${search}`}`, "Facets are", { signal: AbortSignal.timeout(deadlineMs) })
+  } catch (error) {
+    if (error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError")) throw new FacetsTimedOut()
+    throw error
+  }
   // An answer that is not a facets document is not counted from: it reads as not served.
   if (!isFacets(read.document)) throw new Error("The cell's answer is not a facets document, so nothing is counted here.")
   return read
