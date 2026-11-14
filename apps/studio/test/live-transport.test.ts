@@ -33,6 +33,10 @@ test("no session, no cell, no host or a page that is not a document reads the re
   expect(await readMode(server({}, [200, "<!doctype html>"]).fetcher)).toEqual({ kind: "recorded" })
   expect(await readMode(server({ "/v1/definitions": [503, '{"error":"No Norn host is connected to this deployment."}'] }).fetcher)).toEqual({ kind: "recorded" })
   expect(await readMode(server({ "/v1/definitions": [200, "<!doctype html>"] }).fetcher)).toEqual({ kind: "recorded" })
+  // An outage is not "nothing connected": a session server that fails (5xx) or cannot be reached is raised, and retried.
+  await expect(readMode(server({}, [503, { error: "upstream unavailable" }]).fetcher)).rejects.toThrow("did not answer (503)")
+  await expect(readMode(async () => { throw new TypeError("Failed to fetch") })).rejects.toThrow("did not answer (network)")
+  await expect(readMode(server({ "/v1/definitions": [503, '{"error":"norn dev at http://127.0.0.1:4174 did not answer; is it still running?"}'] }).fetcher)).rejects.toThrow("did not answer")
   await expect(readMode(server({ "/v1/definitions": [403, '{"code":"authz.denied","message":"the read request is not authorized"}'] }).fetcher)).rejects.toThrow("the read request is not authorized")
 })
 

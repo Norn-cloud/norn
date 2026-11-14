@@ -228,6 +228,8 @@ export function GuaranteesPage() {
       <LiveLaws />
     </section>
   )
+  // The recording shows only once Studio has decided there is no cell: never while it is still connecting.
+  if (mode.data?.kind !== "recorded") return mode.isError ? <p role="alert" className="text-destructive">{mode.error.message}</p> : <p className="text-muted-foreground">Connecting to the cell…</p>
   return <RecordedGuarantees />
 }
 

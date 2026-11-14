@@ -1,5 +1,5 @@
 import { Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router"
-import { Bell, ChevronRight, ChevronsUpDown, Keyboard, LogOut, Search, SlidersHorizontal, type LucideIcon } from "lucide-react"
+import { Bell, ChevronRight, CloudOff, ChevronsUpDown, Keyboard, LogOut, Search, SlidersHorizontal, type LucideIcon } from "lucide-react"
 import { Fragment, useEffect, useState, type ReactNode } from "react"
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "@/components/ui/breadcrumb"
 import { Button } from "@/components/ui/button"
@@ -78,9 +78,12 @@ function WorkspaceSwitcher() {
   const live = mode.data?.kind === "live"
   const recorded = WORKSPACES.find(({ recorded }) => recorded)
   // A connected cell is the open workspace: its scope, as the server reported it.
+  // Until the mode is decided (or while the cell does not answer) the switcher says so: it never names the recording then.
   const open = live
     ? { name: account.data?.organization?.name ?? scope.data?.orgId ?? "Connected cell", detail: `Live cell · ${scope.data ? `${scope.data.orgId}/${scope.data.environmentId}` : ""}` }
-    : recorded
+    : mode.data?.kind !== "recorded"
+      ? { name: account.data?.organization?.name ?? scope.data?.orgId ?? "Workspace", detail: mode.isError || mode.failureCount > 0 ? "Can't reach the cell · retrying" : "Connecting…" }
+      : recorded
   return (
     <SidebarMenu><SidebarMenuItem>
       <DropdownMenu>
@@ -294,6 +297,23 @@ function CommandMenu({ sections }: { readonly sections: readonly Section[] }) {
   )
 }
 
+/**
+ * The cell did not answer the mode read (a network error or a 5xx): say so above the page and keep
+ * retrying; nothing is shown from the recording meanwhile.
+ */
+function ConnectionBanner() {
+  const mode = useMode()
+  if (mode.data !== undefined || (mode.failureCount === 0 && !mode.isError)) return null
+  return (
+    <div role="status" data-connection="retrying" className="flex flex-wrap items-center gap-2 border-b border-tone-amber/30 bg-tone-amber/10 px-4 py-2 text-sm text-tone-amber md:px-8">
+      <CloudOff aria-hidden className="size-4 shrink-0" />
+      <span className="font-medium">Couldn't reach the cell.</span>
+      <span className="text-foreground/80">{mode.isError ? "It didn't answer after several tries." : "Retrying…"}</span>
+      <Button type="button" variant="outline" size="xs" className="ms-auto" disabled={mode.isFetching} onClick={() => void mode.refetch()}>Retry now</Button>
+    </div>
+  )
+}
+
 /** The page bar's right-hand buttons: the view, the page's own tools, then shortcuts and notifications. */
 function BarButtons({ tools }: { readonly tools?: ReactNode }) {
   const { view, setView } = useView()
@@ -369,6 +389,7 @@ function LocalizedShell({ sections, tools, account, onSignOut }: { readonly sect
               <CommandMenu sections={sections} />
               <BarButtons tools={tools} />
             </header>
+            <ConnectionBanner />
             <div className="mx-auto w-full max-w-6xl px-4 py-6 md:px-8"><Outlet /></div>
           </div>
           <Inspector />

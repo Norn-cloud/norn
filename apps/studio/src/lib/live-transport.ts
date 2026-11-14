@@ -40,18 +40,26 @@ export type Mode = { readonly kind: "live"; readonly catalog: Read<readonly Arti
  * or no host connected (a 503, a 404, or a page that is not a document) Studio shows the recording,
  * and every recorded read says it is one. Any other answer is the cell's and is shown as an error.
  */
+/** What the Studio Worker answers when this deployment has no Norn host configured (worker/index.ts). */
+const NO_HOST = "No Norn host is connected to this deployment."
+
 export async function readMode(fetcher: Fetch): Promise<Mode> {
   let scope: StudioScope | null
   try { scope = await readStudioScope(fetcher) } catch (error) {
-    // No session server answered (a preview without the Worker, or one that reports no scope): nothing is connected.
+    // No session server (a preview without the Worker, one that reports no scope, or no session): nothing is connected.
+    // A session server that failed to answer (a network error or a 5xx) is not "nothing connected": it is an
+    // outage, raised so Studio says it is reconnecting and retries, never swapping a live cell for the recording.
+    if (error instanceof CellUnavailable && (error.status === 0 || error.status >= 500)) throw error
     if (error instanceof CellUnavailable || error instanceof StudioScopeError) return { kind: "recorded" }
     throw error
   }
   if (scope === null) return { kind: "recorded" }
   const active = scope
   const response = await scopedHostFetch(fetcher, "/api/host", async () => active)("/v1/definitions", { headers: { accept: "application/json" } })
-  if (response.status === 404 || response.status === 503) return { kind: "recorded" }
   const text = await response.text()
+  // Only this deployment's own "no host connected" answer means there is no cell; any other 503 is a cell that
+  // did not answer (a busy or restarting host), raised and retried rather than replaced by the recording.
+  if (response.status === 404 || (response.status === 503 && (() => { try { return (JSON.parse(text) as { error?: unknown }).error === NO_HOST } catch { return false } })())) return { kind: "recorded" }
   let parsed: unknown
   try { parsed = JSON.parse(text) } catch { return { kind: "recorded" } }
   if (!response.ok) throw new CellUnavailable(response.status, (parsed as { message?: unknown } | null)?.message as string | undefined)
@@ -130,7 +138,8 @@ export async function cellRead<T>(path: string, what: string, init: RequestInit 
 }
 
 /** Where this page load reads from, for a page that shows something only a connected cell has. */
-export const useMode = () => useQuery({ queryKey: ["studio-mode"], queryFn: () => currentMode(), retry: false, staleTime: Infinity })
+/** The mode, retried while the session server or the cell does not answer (backing off to 8 s); its error is shown, never replaced by the recording. */
+export const useMode = () => useQuery({ queryKey: ["studio-mode"], queryFn: () => currentMode(), retry: 6, retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 8000), staleTime: Infinity })
 
 /** Forget the decided mode, so the next read takes the cell's current catalog (after a load installs a new type). */
 export function refreshMode(): void { mode = undefined }
