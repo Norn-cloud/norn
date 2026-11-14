@@ -12,7 +12,7 @@ function stage(): Env {
   db.exec(MIGRATION)
   db.exec(readFileSync(join(import.meta.dir, "../migrations/0002_workspace_provisioning.sql"), "utf8"))
   const assets = { fetch: async () => new Response("<!doctype html>studio") } as unknown as Fetcher
-  return { ASSETS: assets, AUTH_DB: db as unknown as D1Database, BETTER_AUTH_SECRET: "t".repeat(40), BETTER_AUTH_URL: ORIGIN }
+  return { ASSETS: assets, AUTH_DB: db as unknown as D1Database, BETTER_AUTH_SECRET: "t".repeat(40), BETTER_AUTH_URL: ORIGIN, STUDIO_CLIENT_IP_HEADER: "cf-connecting-ip" }
 }
 
 let address = 0
@@ -139,6 +139,58 @@ test("repeated password guesses from one address are rate limited", async () => 
   expect(statuses.at(-1)).toBe(429)
 })
 
+/** Twelve wrong passwords for one account, each with `header: address` plus the client-written headers `spoof` returns for that guess. */
+async function guesses(env: Env, header: string, address: string, spoof: (attempt: number) => Record<string, string>) {
+  const statuses: number[] = []
+  for (let attempt = 0; attempt < 12; attempt++) {
+    statuses.push((await post(env, "/api/auth/sign-in/email", { email: "cy@example.com", password: "wrong password!" }, { [header]: address, ...spoof(attempt) })).status)
+  }
+  return statuses
+}
+
+test("behind Traefik, the rate limit keys on X-Real-Ip: other addresses get their own bucket, client-written headers are ignored", async () => {
+  const env: Env = { ...stage(), STUDIO_CLIENT_IP_HEADER: "x-real-ip" }
+  await post(env, "/api/auth/sign-up/email", { email: "cy@example.com", password: "correct horse battery", name: "Cy" }, { "x-real-ip": "192.0.2.1" })
+  // A guesser rotating X-Forwarded-For and cf-connecting-ip is still one address.
+  const one = await guesses(env, "x-real-ip", "203.0.113.7", (attempt) => ({ "x-forwarded-for": `198.51.100.${attempt}`, "cf-connecting-ip": `198.51.100.${attempt}` }))
+  expect(one.slice(0, 10).every((status) => status === 401)).toBe(true)
+  expect(one.at(-1)).toBe(429)
+  // Another address is not locked out by the first one's guesses.
+  const other = await post(env, "/api/auth/sign-in/email", { email: "cy@example.com", password: "wrong password!" }, { "x-real-ip": "203.0.113.8" })
+  expect(other.status).toBe(401)
+})
+
+test("an IPv6 client is one /64: rotating within it is one bucket, another /64 is not locked out", async () => {
+  const env: Env = { ...stage(), STUDIO_CLIENT_IP_HEADER: "x-real-ip" }
+  await post(env, "/api/auth/sign-up/email", { email: "cy@example.com", password: "correct horse battery", name: "Cy" }, { "x-real-ip": "2001:db8:ffff::1" })
+  // Twelve guesses, each from another address in 2001:db8:1:2::/64. They differ in the fifth group
+  // (bits 64 to 79), so any prefix longer than /64 would give each its own bucket.
+  const statuses: number[] = []
+  for (let attempt = 0; attempt < 12; attempt++) {
+    statuses.push((await post(env, "/api/auth/sign-in/email", { email: "cy@example.com", password: "wrong password!" }, { "x-real-ip": `2001:db8:1:2:${(attempt + 1).toString(16)}::1` })).status)
+  }
+  expect(statuses.slice(0, 10).every((status) => status === 401)).toBe(true)
+  expect(statuses.at(-1)).toBe(429)
+  const neighbour = await post(env, "/api/auth/sign-in/email", { email: "cy@example.com", password: "wrong password!" }, { "x-real-ip": "2001:db8:1:3::1" })
+  expect(neighbour.status).toBe(401)
+})
+
+test("on Cloudflare (cf-connecting-ip), X-Real-Ip is client-written and ignored", async () => {
+  const env = stage()
+  await post(env, "/api/auth/sign-up/email", { email: "cy@example.com", password: "correct horse battery", name: "Cy" })
+  const statuses = await guesses(env, "cf-connecting-ip", "203.0.113.7", (attempt) => ({ "x-real-ip": `198.51.100.${attempt}` }))
+  expect(statuses.slice(0, 10).every((status) => status === 401)).toBe(true)
+  expect(statuses.at(-1)).toBe(429)
+})
+
+test("an unknown or missing client-address header refuses auth rather than defaulting", async () => {
+  const env: Env = { ...stage(), STUDIO_CLIENT_IP_HEADER: "x-forwarded-for" }
+  await expect(post(env, "/api/auth/sign-in/email", { email: "cy@example.com", password: "wrong password!" })).rejects.toThrow("STUDIO_CLIENT_IP_HEADER")
+  // A stale or hand-written config without the variable never falls back to cf-connecting-ip.
+  const { STUDIO_CLIENT_IP_HEADER: _unset, ...missing } = stage()
+  await expect(post(missing, "/api/auth/sign-in/email", { email: "cy@example.com", password: "wrong password!" })).rejects.toThrow("STUDIO_CLIENT_IP_HEADER is required")
+})
+
 test("magic links refuse when the deployment has no mail sender", async () => {
   const env = stage()
   const response = await post(env, "/api/auth/sign-in/magic-link", { email: "di@example.com" })
@@ -202,6 +254,22 @@ test("sign-up answers a registered address byte for byte like a new one, apart f
   expect((await post(env, "/api/auth/sign-in/email", { email: "gi@example.com", password: "another horse battery" })).status).toBe(401)
   expect((await post(env, "/api/auth/sign-in/email", { email: "gi@example.com", password: "correct horse battery" })).status).toBe(200)
   expect((await post(env, "/api/auth/sign-in/email", { email: "ha@example.com", password: "another horse battery" })).status).toBe(200)
+})
+
+test("a failed padding write leaves the sign-up answer unchanged and at most expired rows behind", async () => {
+  const env = stage()
+  const db = env.AUTH_DB as unknown as Database
+  await post(env, "/api/auth/sign-up/email", { email: "ka@example.com", password: "correct horse battery", name: "Ka" })
+  db.run("create trigger refuse_pad_delete before delete on verification when old.identifier like 'signup-pad:%' begin select raise(abort, 'delete refused'); end")
+  const duplicate = await post(env, "/api/auth/sign-up/email", { email: "ka@example.com", password: "another horse battery", name: "Ka" })
+  expect(duplicate.status).toBe(200)
+  expect((await duplicate.text()).replace(/"id":"[0-9a-f-]{36}"/, '"id":"ID"')).toBe('{"token":null,"user":{"id":"ID","email":"ka@example.com","name":"Ka","emailVerified":false}}')
+  const left = db.query("select value, expiresAt <= ? as expired from verification where identifier like 'signup-pad:%'").all(new Date().toISOString()) as { value: string; expired: number }[]
+  expect(left).toHaveLength(2)
+  expect(left.every((row) => row.value === "" && row.expired === 1)).toBe(true)
+  db.run("drop trigger refuse_pad_delete")
+  db.run("create trigger refuse_pad_insert before insert on verification when new.identifier like 'signup-pad:%' begin select raise(abort, 'insert refused'); end")
+  expect((await post(env, "/api/auth/sign-up/email", { email: "ka@example.com", password: "another horse battery", name: "Ka" })).status).toBe(200)
 })
 
 

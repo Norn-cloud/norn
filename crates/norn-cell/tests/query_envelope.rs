@@ -24,10 +24,13 @@ fn query_envelope_preserves_exact_contributions_and_unavailable_ratios() {
             },
         )]),
         suppressed: false,
+        null_counts: Vec::new(),
     };
     let wire = serde_json::to_string(&row).expect("exact transport");
     assert!(wire.contains("9007199254740993.125"));
     assert!(wire.contains("\"value\":null"));
+    // No null skipped: no `nullCounts` on the wire, so complete-data answers are unchanged.
+    assert!(!wire.contains("nullCounts"));
     assert_eq!(
         serde_json::from_str::<QueryRow>(&wire).expect("decode"),
         row

@@ -8,6 +8,7 @@ import { magicLink } from "better-auth/plugins/magic-link"
 import { organization } from "better-auth/plugins/organization"
 import { adminAc, defaultStatements, memberAc, ownerAc } from "better-auth/plugins/organization/access"
 import { hashPassword, verifyPassword, type PasswordScrypt } from "./password.ts"
+import type { ClientIpHeader } from "./client-ip.ts"
 
 /**
  * Better Auth for the hosted Studio: email + password, email magic link,
@@ -57,6 +58,8 @@ export interface AuthConfig {
   readonly scrypt?: PasswordScrypt
   /** The tool gateway (#772) people link to their Norn account; absent on stages without one. */
   readonly gateway?: GatewayClient
+  /** The header the edge sets to the client's address (rate limits); never defaulted. */
+  readonly clientIpHeader: ClientIpHeader
 }
 
 /** Studio's OAuth client at the tool gateway (Executor v2). The secret comes from the operator's secret store by name. */
@@ -225,14 +228,20 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
       maxPasswordLength: 128,
       // Better Auth's own hash, computed in pure JS: byte-identical, so accounts move between runtimes.
       ...config.scrypt === "js" ? { password: { hash: hashPassword, verify: verifyPassword } } : {},
-      // A registered address skips the four writes a new account makes (user, credential,
-      // organization, member); make the same number of database writes so latency does not tell them apart.
+      // Timing mitigation (live measurement pending, #817): a registered address skips the four
+      // writes a new account makes (user, credential, organization, member), so it makes four too.
+      // Best-effort: a failed write never changes the answer. A failed delete leaves one already
+      // expired `signup-pad:` verification row behind; nothing reads it, and it holds no user data.
       onExistingUserSignUp: async () => {
-        const adapter = await getCurrentAdapter((await self.auth?.$context)?.adapter as never)
-        for (let pair = 0; pair < 2; pair++) {
-          const now = new Date()
-          const row = await adapter.create<{ id: string }>({ model: "verification", data: { identifier: `signup-pad:${crypto.randomUUID()}`, value: "", expiresAt: now, createdAt: now, updatedAt: now } })
-          await adapter.delete({ model: "verification", where: [{ field: "id", value: row.id }] })
+        try {
+          const adapter = await getCurrentAdapter((await self.auth?.$context)?.adapter as never)
+          for (let pair = 0; pair < 2; pair++) {
+            const now = new Date()
+            const row = await adapter.create<{ id: string }>({ model: "verification", data: { identifier: `signup-pad:${crypto.randomUUID()}`, value: "", expiresAt: now, createdAt: now, updatedAt: now } })
+            await adapter.delete({ model: "verification", where: [{ field: "id", value: row.id }] }).catch(() => undefined)
+          }
+        } catch {
+          // The padding is a mitigation, not part of sign-up.
         }
       },
     },
@@ -265,8 +274,8 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
       // The same cookie prefix as Norn's other Better Auth apps; host-only, never shared across subdomains.
       cookiePrefix: "norn",
       defaultCookieAttributes: { httpOnly: true, secure: true, sameSite: "lax" },
-      // Cloudflare sets this header itself; X-Forwarded-For is client-controlled.
-      ipAddress: { ipAddressHeaders: ["cf-connecting-ip"] },
+      // Only the header this deployment's edge sets itself (client-ip.ts); X-Forwarded-For is client-controlled.
+      ipAddress: { ipAddressHeaders: [config.clientIpHeader] },
     },
     plugins: [
       // Only a verified address may accept an invitation (GHSA-fmh4-wcc4-5jm3): until a mail
