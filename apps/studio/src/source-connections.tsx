@@ -7,6 +7,7 @@ import { TableCard } from "@/components/table-card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import type { Read } from "@/lib/exact"
 import { CellRefusal, NotServed, cellRead } from "@/lib/live-transport"
+import { transport, type Artifact } from "@/lib/transport"
 import { systemName } from "./lib/catalog.ts"
 import { watermarkText } from "./lib/format.ts"
 import { UploadCsv } from "./upload-csv.tsx"
@@ -73,8 +74,17 @@ const failure = (error: Error) => error.name === "TimeoutError" || error.name ==
   ? `The cell did not answer within ${READ_DEADLINE_MS / 1000} seconds.`
   : error.message
 
+/** Whether the cell's admitted definitions (the catalog Studio already reads) declare the connection type. */
+export const declaresConnections = (artifacts: readonly Artifact[]): boolean =>
+  artifacts.some((artifact) => artifact.kind === "entity" && "objectType" in artifact.payload && artifact.payload.objectType.name === CONNECTION_TYPE)
+
 export function SourceConnections() {
+  // The cell installs its sources pack (and so this type) with the first connection or upload: until then
+  // there is nothing to read, and the panel says so instead of asking for a type the cell does not have.
+  const catalog = useQuery({ queryKey: ["catalog"], queryFn: transport.catalog })
+  const installed = catalog.data === undefined ? undefined : declaresConnections(catalog.data.document)
   const connections = useQuery({
+    enabled: installed === true,
     queryKey: ["source-connections"],
     queryFn: () => cellRead<Page>(`/v1/objects/${CONNECTION_TYPE}?limit=200`, "Source connections are", { signal: AbortSignal.timeout(READ_DEADLINE_MS) }),
     retry: false,
@@ -84,12 +94,14 @@ export function SourceConnections() {
   const notInstalled = connections.error instanceof CellRefusal && connections.error.status === 404
   return (
     <Panel icon={Cable} label="Connections" action={<UploadCsv />}>
-      {connections.isPending && <p className="px-4 py-3 text-sm text-muted-foreground">Reading connections…</p>}
+      {installed === false && <Well><EmptyState icon={Cable} title="No connections yet" next={<UploadCsv />}>No system is connected to this cell yet. Upload a CSV to start, or ask an admin to connect a system.</EmptyState></Well>}
+      {(installed === undefined || (installed && connections.isPending)) && <p className="px-4 py-3 text-sm text-muted-foreground">Reading connections…</p>}
       {connections.isError && (connections.error instanceof NotServed || notInstalled
         ? <Well className="flex items-center gap-3 px-4 py-3 text-sm"><span className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border bg-surface-subtle"><Cable aria-hidden className="size-4 text-muted-foreground" /></span><span className="min-w-0"><span className="block font-medium">No connections</span><span className="block text-meta text-muted-foreground">{notInstalled ? "This cell has no source connections installed." : connections.error.message}</span></span></Well>
         : (
-          <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
-            <p role="alert" className="text-sm text-destructive">The connections could not be read. {failure(connections.error)}</p>
+          // The type is installed and the read failed (a refusal included): said plainly, quietly, with a way to try again.
+          <div role="status" data-connections="unread" className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+            <p className="min-w-0 text-sm"><span className="font-medium">Couldn't read the connections.</span> <span className="text-muted-foreground">{failure(connections.error)}</span></p>
             <Button type="button" size="sm" variant="outline" disabled={connections.isFetching} onClick={() => void connections.refetch()}><RefreshCw />Read again</Button>
           </div>
         ))}
