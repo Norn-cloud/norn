@@ -683,6 +683,7 @@ impl<E: SqlEngine> Tenant<E> {
                 let serving =
                     Serving::from_store(store, &self.scope, self.table, &self.caller, None)
                         .map_err(Refusal::host)?;
+                install_sources_pack(&serving.host, request.now);
                 self.state = State::Serving(Box::new(serving));
                 return server::document_json(&receipt);
             }
@@ -690,8 +691,25 @@ impl<E: SqlEngine> Tenant<E> {
         let State::Serving(serving) = &self.state else {
             return Err(Refusal::host("the provisioned cell did not open"));
         };
-        server::document_json(&provision::replay(&serving.host, &self.base, &admitted)?)
+        let replayed = provision::replay(&serving.host, &self.base, &admitted)?;
+        // A replay of the same set also completes a cell whose pack install
+        // was interrupted, or that was provisioned before it was installed.
+        install_sources_pack(&serving.host, request.now);
+        server::document_json(&replayed)
     }
+}
+
+/// #1358: install the cell's own sources pack (`source.Connection`,
+/// `source.SyncRun`, `source.Upload` and the mapping that lands the cell's
+/// reports) as the governed revision after the provisioned one, so a new cell
+/// answers "which connections?" with an empty list, never a refusal. The
+/// provisioned revision, and so the provisioning receipt and its replay, are
+/// unchanged. Idempotent: a cell that already serves the types installs
+/// nothing. A refused install leaves the cell as provisioned; its first
+/// connection or upload then installs the pack, or refuses there.
+fn install_sources_pack<E: SqlEngine>(host: &DevHost<E>, now_s: u64) {
+    let _installed_or_left_to_first_use =
+        norn_api::sources::ensure_upload_records(host, now_s.saturating_mul(1000));
 }
 
 /// The receipt handles keyed by `key`; none without a key.
