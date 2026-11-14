@@ -316,11 +316,54 @@ fn a_tool_answers_exactly_what_its_route_answers_the_same_caller() {
             &json!({"question": QUESTION, "lineageRef": lineage, "bucket": bucket}),
         );
         assert_eq!(traced["structuredContent"], trace);
+        // The bucket's plain value, as an agent reads it off a label, is the same bucket.
+        if let Ok(plain) = serde_json::from_str::<String>(&bucket) {
+            let traced = call_tool(
+                &cell,
+                auth,
+                "norn_trace_answer",
+                &json!({"question": QUESTION, "lineageRef": lineage, "bucket": plain}),
+            );
+            assert_eq!(traced["structuredContent"], trace);
+        }
 
+        // The catalog's summary names what the route declares; detail full
+        // is the route's own artifacts, only those named.
         let (_, catalog) = direct(&cell, "/v1/definitions", SCOPE, auth);
+        let summary =
+            call_tool(&cell, auth, "norn_catalog", &json!({}))["structuredContent"].clone();
+        assert_eq!(summary["version"], catalog["version"]);
+        assert_eq!(summary["types"][0]["name"], analytics::TYPE);
+        assert_eq!(summary["questions"], json!([QUESTION]));
+        let full = call_tool(
+            &cell,
+            auth,
+            "norn_catalog",
+            &json!({"detail": "full", "names": [analytics::TYPE]}),
+        )["structuredContent"]
+            .clone();
+        let named: Vec<&Value> = catalog["artifacts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|artifact| {
+                artifact["artifactId"]
+                    .as_str()
+                    .unwrap()
+                    .contains(analytics::TYPE)
+            })
+            .collect();
         assert_eq!(
-            call_tool(&cell, auth, "norn_catalog", &json!({}))["structuredContent"],
-            catalog
+            full["artifacts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .collect::<Vec<_>>(),
+            named
+        );
+        assert_eq!(
+            call_tool(&cell, auth, "norn_catalog", &json!({"detail": "full"}))["isError"],
+            true
         );
     }
 }
@@ -328,11 +371,19 @@ fn a_tool_answers_exactly_what_its_route_answers_the_same_caller() {
 #[test]
 fn refusals_come_back_as_tool_errors_with_the_routes_own_refusal() {
     let cell = cell();
-    let (status, refusal) = direct(&cell, "/v1/questions/nope/answer", SCOPE, VIEWER);
+    // An unknown question is named as such, with the admitted ones, to a
+    // caller who may read the question catalog.
+    let (status, _) = direct(&cell, "/v1/questions/nope/answer", SCOPE, VIEWER);
     assert_ne!(status, 200);
     let called = call_tool(&cell, VIEWER, "norn_answer", &json!({"question": "nope"}));
     assert_eq!(called["isError"], true);
-    assert_eq!(called["structuredContent"], refusal);
+    assert_eq!(called["structuredContent"]["code"], "question.not_found");
+    assert!(
+        called["structuredContent"]["explanation"]
+            .as_str()
+            .unwrap()
+            .contains(QUESTION)
+    );
 
     let (_, refusal) = direct(&cell, "/v1/objects/demo.Nothing", SCOPE, VIEWER);
     let called = call_tool(

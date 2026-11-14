@@ -518,8 +518,17 @@ fn server_filled_fields_leave_the_caller_schema() {
     .expect("derivations decode");
     let tool = serde_json::to_value(action_tool(&action).expect("projects")).expect("encodes");
     let schema = &tool["inputSchema"];
-    assert!(schema["properties"].get("corrected_by").is_none(), "the actor is the server's to fill");
+    assert!(
+        schema["properties"].get("corrected_by").is_none(),
+        "the actor is the server's to fill"
+    );
     assert_eq!(schema["required"], json!(["id"]));
-    assert!(schema["properties"]["brand"]["anyOf"].is_array(), "a default over input stays the caller's");
-    assert_eq!(tool["_meta"]["norn/inputDerivations"][0]["field"], "corrected_by");
+    assert!(
+        schema["properties"]["brand"]["anyOf"].is_array(),
+        "a default over input stays the caller's"
+    );
+    assert_eq!(
+        tool["_meta"]["norn/inputDerivations"][0]["field"],
+        "corrected_by"
+    );
 }

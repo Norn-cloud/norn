@@ -275,12 +275,7 @@ impl Catalog {
             norn_api::authz::Operation::WriteDefinitions,
         )
         .is_ok();
-        let mut tools = generic_tools(
-            &object_types,
-            &question_names,
-            questions.is_some(),
-            writer,
-        )?;
+        let mut tools = generic_tools(&object_types, &question_names, questions.is_some(), writer)?;
         let query = ActionQuery {
             org_id: Some(scope.org_id.clone()),
             environment_id: Some(scope.environment_id.clone()),
@@ -820,7 +815,9 @@ impl<E: SqlEngine> Loopback<'_, E> {
             ),
             "norn_plan_definitions" | "norn_apply_definitions" => {
                 let Some(artifacts @ RuntimeValue::Array(_)) = arguments.get("artifacts") else {
-                    return Err(Refusal::invalid("artifacts must be an array of artifact envelopes"));
+                    return Err(Refusal::invalid(
+                        "artifacts must be an array of artifact envelopes",
+                    ));
                 };
                 let mut body = vec![("artifacts", artifacts.clone())];
                 let path = if name == "norn_apply_definitions" {
@@ -991,21 +988,41 @@ fn words(name: &str) -> String {
 
 /// A human title for a derived metric, from its declared parts (never its
 /// encoded name): `Holding stock cost, latest by observed at`.
-fn metric_title(model: &str, expression: &str, time: &str, links: &[String], latest: bool) -> String {
-    let path: Vec<String> = links.iter().map(|link| words(link)).chain([words(time)]).collect();
+fn metric_title(
+    model: &str,
+    expression: &str,
+    time: &str,
+    links: &[String],
+    latest: bool,
+) -> String {
+    let path: Vec<String> = links
+        .iter()
+        .map(|link| words(link))
+        .chain([words(time)])
+        .collect();
     let how = if latest { "latest by" } else { "by" };
-    format!("{} {}, {how} {}", words(model), words(expression), path.join(" "))
+    format!(
+        "{} {}, {how} {}",
+        words(model),
+        words(expression),
+        path.join(" ")
+    )
 }
 
 /// `norn_list_metrics` and `norn_question_catalog` with a `title` on each
 /// metric: the same metrics, named for a person.
 fn titled_metrics(mut value: RuntimeValue) -> RuntimeValue {
-    let Some(RuntimeValue::Array(metrics)) = value.as_object_mut().and_then(|root| root.get_mut("metrics")) else {
+    let Some(RuntimeValue::Array(metrics)) = value
+        .as_object_mut()
+        .and_then(|root| root.get_mut("metrics"))
+    else {
         return value;
     };
     for metric in metrics.iter_mut() {
         let snapshot = metric.clone();
-        let Some(entry) = metric.as_object_mut() else { continue };
+        let Some(entry) = metric.as_object_mut() else {
+            continue;
+        };
         if entry.contains_key("title") {
             continue;
         }
@@ -1014,26 +1031,50 @@ fn titled_metrics(mut value: RuntimeValue) -> RuntimeValue {
             let links: Vec<String> = snapshot
                 .get("timeLinks")
                 .and_then(RuntimeValue::as_array)
-                .map(|links| links.iter().filter_map(|link| link.as_str().map(str::to_owned)).collect())
+                .map(|links| {
+                    links
+                        .iter()
+                        .filter_map(|link| link.as_str().map(str::to_owned))
+                        .collect()
+                })
                 .unwrap_or_default();
-            let latest = snapshot.pointer("/additivity/aggregate").and_then(RuntimeValue::as_str) == Some("last");
-            metric_title(model, field(&snapshot, "expression").unwrap_or_default(), field(&snapshot, "timeProperty").unwrap_or_default(), &links, latest)
+            let latest = snapshot
+                .pointer("/additivity/aggregate")
+                .and_then(RuntimeValue::as_str)
+                == Some("last");
+            metric_title(
+                model,
+                field(&snapshot, "expression").unwrap_or_default(),
+                field(&snapshot, "timeProperty").unwrap_or_default(),
+                &links,
+                latest,
+            )
         } else if let Some(params) = snapshot.pointer("/type_params/metric_aggregation_params") {
             // norn_question_catalog: MetricFlow-shaped type_params and x-norn.
             let links: Vec<String> = snapshot
                 .pointer("/x-norn/timeDimension/links")
                 .and_then(RuntimeValue::as_array)
-                .map(|links| links.iter().filter_map(|link| link.as_str().map(str::to_owned)).collect())
+                .map(|links| {
+                    links
+                        .iter()
+                        .filter_map(|link| link.as_str().map(str::to_owned))
+                        .collect()
+                })
                 .unwrap_or_default();
             let time = snapshot
                 .pointer("/x-norn/timeDimension/property")
                 .and_then(RuntimeValue::as_str)
                 .or_else(|| field(params, "agg_time_dimension"))
                 .unwrap_or_default();
-            let latest = params.get("non_additive_dimension").is_some_and(|value| !value.is_null());
+            let latest = params
+                .get("non_additive_dimension")
+                .is_some_and(|value| !value.is_null());
             metric_title(
                 field(params, "semantic_model").unwrap_or_default(),
-                snapshot.pointer("/type_params/expr").and_then(RuntimeValue::as_str).unwrap_or_default(),
+                snapshot
+                    .pointer("/type_params/expr")
+                    .and_then(RuntimeValue::as_str)
+                    .unwrap_or_default(),
                 time,
                 &links,
                 latest,
@@ -1046,54 +1087,91 @@ fn titled_metrics(mut value: RuntimeValue) -> RuntimeValue {
     value
 }
 
+/// One declared type, one line: its name, what it is, its properties and links.
+fn type_summary(id: &str, payload: &RuntimeValue) -> Option<RuntimeValue> {
+    let declared = payload
+        .get("interface")
+        .or_else(|| payload.get("objectType"))
+        .or_else(|| payload.get("entity"))?;
+    let properties: Vec<RuntimeValue> = declared
+        .get("properties")
+        .and_then(RuntimeValue::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|property| field(property, "id").map(string))
+        .collect();
+    let links: Vec<RuntimeValue> = declared
+        .get("links")
+        .and_then(RuntimeValue::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|link| {
+            Some(string(&format!(
+                "{} -> {}",
+                field(link, "id")?,
+                field(link, "target")?
+            )))
+        })
+        .collect();
+    Some(object(vec![
+        ("name", string(field(declared, "name").unwrap_or(id))),
+        ("artifactId", string(id)),
+        (
+            "about",
+            string(&line(field(declared, "description").unwrap_or_default())),
+        ),
+        ("properties", RuntimeValue::Array(properties)),
+        ("links", RuntimeValue::Array(links)),
+    ]))
+}
+
 /// `norn_catalog`'s default answer: every declared type, law, action and
 /// question, one line each, with the version; the full artifacts stay behind
 /// `detail: full`.
-fn catalog_summary(catalog: &RuntimeValue, question_names: &[String], tools: &BTreeMap<String, String>) -> RuntimeValue {
+fn catalog_summary(
+    catalog: &RuntimeValue,
+    question_names: &[String],
+    tools: &BTreeMap<String, String>,
+) -> RuntimeValue {
     let mut types = Vec::new();
     let mut laws = Vec::new();
     let mut actions = Vec::new();
-    let tool_of = |action_id: &str| tools.iter().find(|(_, id)| id.as_str() == action_id).map(|(tool, _)| tool.clone());
-    for artifact in catalog.get("artifacts").and_then(RuntimeValue::as_array).into_iter().flatten() {
+    let tool_of = |action_id: &str| {
+        tools
+            .iter()
+            .find(|(_, id)| id.as_str() == action_id)
+            .map(|(tool, _)| tool.clone())
+    };
+    for artifact in catalog
+        .get("artifacts")
+        .and_then(RuntimeValue::as_array)
+        .into_iter()
+        .flatten()
+    {
         let kind = field(artifact, "kind").unwrap_or_default();
         let id = field(artifact, "artifactId").unwrap_or_default();
         let payload = artifact.get("payload").cloned().unwrap_or_default();
         match kind {
-            "entity" => {
-                let Some(declared) = payload.get("interface").or_else(|| payload.get("objectType")).or_else(|| payload.get("entity")) else {
-                    continue;
-                };
-                let properties: Vec<RuntimeValue> = declared
-                    .get("properties")
-                    .and_then(RuntimeValue::as_array)
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|property| field(property, "id").map(string))
-                    .collect();
-                let links: Vec<RuntimeValue> = declared
-                    .get("links")
-                    .and_then(RuntimeValue::as_array)
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|link| Some(string(&format!("{} -> {}", field(link, "id")?, field(link, "target")?))))
-                    .collect();
-                types.push(object(vec![
-                    ("name", string(field(declared, "name").unwrap_or(id))),
-                    ("artifactId", string(id)),
-                    ("about", string(&line(field(declared, "description").unwrap_or_default()))),
-                    ("properties", RuntimeValue::Array(properties)),
-                    ("links", RuntimeValue::Array(links)),
-                ]));
-            }
+            "entity" => types.extend(type_summary(id, &payload)),
             "law" => laws.push(object(vec![
                 ("id", string(field(&payload, "id").unwrap_or(id))),
-                ("about", string(&line(field(&payload, "description").or_else(|| field(&payload, "rationale")).unwrap_or_default()))),
+                (
+                    "about",
+                    string(&line(
+                        field(&payload, "description")
+                            .or_else(|| field(&payload, "rationale"))
+                            .unwrap_or_default(),
+                    )),
+                ),
             ])),
             "action" => {
                 let action_id = field(&payload, "actionId").unwrap_or(id);
                 let mut entry = vec![
                     ("id", string(action_id)),
-                    ("title", string(field(&payload, "title").unwrap_or_default())),
+                    (
+                        "title",
+                        string(field(&payload, "title").unwrap_or_default()),
+                    ),
                 ];
                 if let Some(tool) = tool_of(action_id) {
                     entry.push(("tool", RuntimeValue::String(tool)));
@@ -1104,24 +1182,43 @@ fn catalog_summary(catalog: &RuntimeValue, question_names: &[String], tools: &BT
         }
     }
     object(vec![
-        ("version", catalog.get("version").cloned().unwrap_or_default()),
-        ("admitted", catalog.get("admitted").cloned().unwrap_or_default()),
+        (
+            "version",
+            catalog.get("version").cloned().unwrap_or_default(),
+        ),
+        (
+            "admitted",
+            catalog.get("admitted").cloned().unwrap_or_default(),
+        ),
         ("types", RuntimeValue::Array(types)),
         ("laws", RuntimeValue::Array(laws)),
         ("actions", RuntimeValue::Array(actions)),
-        ("questions", RuntimeValue::Array(question_names.iter().map(|name| string(name)).collect())),
-        ("more", string("Actions without a tool are not callable by you. For an artifact's full definition call norn_catalog with detail \"full\" and its names; for what can be asked, norn_question_catalog.")),
+        (
+            "questions",
+            RuntimeValue::Array(question_names.iter().map(|name| string(name)).collect()),
+        ),
+        (
+            "more",
+            string(
+                "Actions without a tool are not callable by you. For an artifact's full definition call norn_catalog with detail \"full\" and its names; for what can be asked, norn_question_catalog.",
+            ),
+        ),
     ])
 }
 
 /// `norn_catalog` with `detail: full`: the route's document with only the
 /// artifacts the caller named.
 fn catalog_full(mut catalog: RuntimeValue, names: &[String]) -> RuntimeValue {
-    if let Some(RuntimeValue::Array(artifacts)) = catalog.as_object_mut().and_then(|root| root.get_mut("artifacts")) {
+    if let Some(RuntimeValue::Array(artifacts)) = catalog
+        .as_object_mut()
+        .and_then(|root| root.get_mut("artifacts"))
+    {
         artifacts.retain(|artifact| {
             let id = field(artifact, "artifactId").unwrap_or_default();
             let name = field(artifact, "name").unwrap_or_default();
-            names.iter().any(|wanted| id.contains(wanted.as_str()) || name.contains(wanted.as_str()))
+            names
+                .iter()
+                .any(|wanted| id.contains(wanted.as_str()) || name.contains(wanted.as_str()))
         });
     }
     if let Some(root) = catalog.as_object_mut() {
@@ -1134,18 +1231,66 @@ fn catalog_full(mut catalog: RuntimeValue, names: &[String]) -> RuntimeValue {
 /// Guidance for runtime refusal codes, which the checker's registry does not
 /// carry (it holds authoring diagnostics).
 const RUNTIME_GUIDANCE: &[(&str, &str, &str)] = &[
-    ("core.laws.violated", "A law of the workspace refused the change: the record would break it.", "Read the refusal's reason (the law and the values it compared); correct the input so the law holds and call again. norn_get_findings shows the law and values for a held record."),
-    ("authz.denied", "Your role may not do this here, or the request names a scope you are not in.", "Do not retry. Ask an owner or admin of the workspace; the policy decides who may call each action."),
-    ("action.invalid_input", "The input does not match the action's declared schema.", "Read the path in the explanation, fix that field (decimals are exact strings like \"72.00\") and call again; do not send fields the schema does not list."),
-    ("object.not_found", "No record of that type and id is readable by you.", "Check the type and id. A record a law holds back is not returned by norn_get_object; look for it with norn_list_held."),
-    ("question.not_found", "No admitted question has that name.", "Pick a name from norn_question_catalog, or ask a new question with norn_evaluate."),
-    ("request.invalid", "The request is malformed: a required field is missing or has the wrong type.", "Read the explanation for the field, supply it and call again."),
-    ("core.projection.lineage_incomplete", "The trace cannot be computed for that lineageRef and bucket.", "Pass the lineageRef from the answer you are tracing and a bucket key that answer returned."),
-    ("action.receipts_unconfigured", "The cell cannot commit governed actions now: its host has no receipt key.", "Retry later; the operator must configure the host."),
-    ("defs.refused", "The checker refused the definitions change; nothing was written.", "Fix each diagnostic in the refusal (norn_explain explains each code), recompile and plan again."),
-    ("defs.live_data_refused", "Stored records would break the new laws, so the change is held back.", "Correct those records first (each finding names the object and law), or change the law, then plan again."),
-    ("defs.live_data_unbounded", "Too many stored records to check the new laws in one plan.", "Split the change so fewer types' laws change at once."),
-    ("defs.not_installed", "The workspace has no active definitions to change.", "Install the workspace's first definitions from Norn Studio."),
+    (
+        "core.laws.violated",
+        "A law of the workspace refused the change: the record would break it.",
+        "Read the refusal's reason (the law and the values it compared); correct the input so the law holds and call again. norn_get_findings shows the law and values for a held record.",
+    ),
+    (
+        "authz.denied",
+        "Your role may not do this here, or the request names a scope you are not in.",
+        "Do not retry. Ask an owner or admin of the workspace; the policy decides who may call each action.",
+    ),
+    (
+        "action.invalid_input",
+        "The input does not match the action's declared schema.",
+        "Read the path in the explanation, fix that field (decimals are exact strings like \"72.00\") and call again; do not send fields the schema does not list.",
+    ),
+    (
+        "object.not_found",
+        "No record of that type and id is readable by you.",
+        "Check the type and id. A record a law holds back is not returned by norn_get_object; look for it with norn_list_held.",
+    ),
+    (
+        "question.not_found",
+        "No admitted question has that name.",
+        "Pick a name from norn_question_catalog, or ask a new question with norn_evaluate.",
+    ),
+    (
+        "request.invalid",
+        "The request is malformed: a required field is missing or has the wrong type.",
+        "Read the explanation for the field, supply it and call again.",
+    ),
+    (
+        "core.projection.lineage_incomplete",
+        "The trace cannot be computed for that lineageRef and bucket.",
+        "Pass the lineageRef from the answer you are tracing and a bucket key that answer returned.",
+    ),
+    (
+        "action.receipts_unconfigured",
+        "The cell cannot commit governed actions now: its host has no receipt key.",
+        "Retry later; the operator must configure the host.",
+    ),
+    (
+        "defs.refused",
+        "The checker refused the definitions change; nothing was written.",
+        "Fix each diagnostic in the refusal (norn_explain explains each code), recompile and plan again.",
+    ),
+    (
+        "defs.live_data_refused",
+        "Stored records would break the new laws, so the change is held back.",
+        "Correct those records first (each finding names the object and law), or change the law, then plan again.",
+    ),
+    (
+        "defs.live_data_unbounded",
+        "Too many stored records to check the new laws in one plan.",
+        "Split the change so fewer types' laws change at once.",
+    ),
+    (
+        "defs.not_installed",
+        "The workspace has no active definitions to change.",
+        "Install the workspace's first definitions from Norn Studio.",
+    ),
 ];
 
 /// `norn_explain`: a code's meaning and next step, from the checker's
@@ -1157,7 +1302,10 @@ fn explain(code: &str) -> RuntimeValue {
             ("known", RuntimeValue::Bool(true)),
             ("source", string("checker")),
             ("tier", string(entry.tier.as_str())),
-            ("severity", string(norn_checker::codes::severity_str(&entry.severity))),
+            (
+                "severity",
+                string(norn_checker::codes::severity_str(&entry.severity)),
+            ),
             ("meaning", string(entry.message)),
         ];
         if let Some(fix) = entry.fix {
@@ -1180,7 +1328,12 @@ fn explain(code: &str) -> RuntimeValue {
     object(vec![
         ("code", string(code)),
         ("known", RuntimeValue::Bool(false)),
-        ("fix", string("No guidance is recorded for this code; the refusal's message and explanation say what was refused.")),
+        (
+            "fix",
+            string(
+                "No guidance is recorded for this code; the refusal's message and explanation say what was refused.",
+            ),
+        ),
     ])
 }
 
@@ -1246,19 +1399,32 @@ impl<E: SqlEngine> Loopback<'_, E> {
             "no admitted question has this name",
             format!(
                 "{question} is not an admitted question; the admitted ones are: {}. Ask a new one with norn_evaluate.",
-                if self.question_names.is_empty() { "none".to_owned() } else { self.question_names.join(", ") }
+                if self.question_names.is_empty() {
+                    "none".to_owned()
+                } else {
+                    self.question_names.join(", ")
+                }
             ),
         )))
     }
 
     /// The held records with a one-line summary of each one's open findings.
-    fn held(&self, arguments: &RuntimeObject, mut listed: RuntimeValue) -> Result<RuntimeValue, Refusal> {
+    fn held(
+        &self,
+        arguments: &RuntimeObject,
+        mut listed: RuntimeValue,
+    ) -> Result<RuntimeValue, Refusal> {
         let kind = required(arguments, "type")?;
-        let Some(RuntimeValue::Array(items)) = listed.as_object_mut().and_then(|root| root.get_mut("items")) else {
+        let Some(RuntimeValue::Array(items)) = listed
+            .as_object_mut()
+            .and_then(|root| root.get_mut("items"))
+        else {
             return Ok(listed);
         };
         for item in items.iter_mut().take(HELD_SUMMARIES) {
-            let Some(id) = field(item, "id").map(str::to_owned) else { continue };
+            let Some(id) = field(item, "id").map(str::to_owned) else {
+                continue;
+            };
             let path = format!("/v1/objects/{}/{}/findings", segment(&kind), segment(&id));
             let (ok, findings) = self.send(&self.get(path))?;
             if !ok {
@@ -1272,8 +1438,17 @@ impl<E: SqlEngine> Loopback<'_, E> {
                 .filter(|finding| field(finding, "status") != Some("resolved"))
                 .map(|finding| {
                     object(vec![
-                        ("law", finding.pointer("/ruleRef/lawId").cloned().unwrap_or_default()),
-                        ("message", finding.get("message").cloned().unwrap_or_default()),
+                        (
+                            "law",
+                            finding
+                                .pointer("/ruleRef/lawId")
+                                .cloned()
+                                .unwrap_or_default(),
+                        ),
+                        (
+                            "message",
+                            finding.get("message").cloned().unwrap_or_default(),
+                        ),
                         ("values", finding.get("values").cloned().unwrap_or_default()),
                     ])
                 })
@@ -1300,7 +1475,11 @@ impl<E: SqlEngine> Loopback<'_, E> {
     }
 
     /// A record's findings with the action tools that may correct it.
-    fn findings(&self, arguments: &RuntimeObject, mut found: RuntimeValue) -> Result<RuntimeValue, Refusal> {
+    fn findings(
+        &self,
+        arguments: &RuntimeObject,
+        mut found: RuntimeValue,
+    ) -> Result<RuntimeValue, Refusal> {
         let kind = required(arguments, "type")?;
         if let Some(root) = found.as_object_mut() {
             root.insert("remedies".into(), self.remedies_for(&kind));
@@ -1336,7 +1515,11 @@ impl<E: SqlEngine> Backend for Loopback<'_, E> {
             None | Some(RuntimeValue::Null) => Vec::new(),
             Some(RuntimeValue::Array(names)) => names
                 .iter()
-                .map(|name| name.as_str().map(str::to_owned).ok_or_else(|| Refusal::invalid("names must be strings")))
+                .map(|name| {
+                    name.as_str()
+                        .map(str::to_owned)
+                        .ok_or_else(|| Refusal::invalid("names must be strings"))
+                })
                 .collect::<Result<_, _>>()?,
             Some(_) => return Err(Refusal::invalid("names must be an array of strings")),
         };
@@ -1348,7 +1531,10 @@ impl<E: SqlEngine> Backend for Loopback<'_, E> {
         let routed = self.route(name, &arguments, &metadata)?;
         let (ok, value) = self.send(&routed)?;
         if !ok {
-            return Ok(CallOutput { value, is_error: true });
+            return Ok(CallOutput {
+                value,
+                is_error: true,
+            });
         }
         let value = match name {
             "norn_catalog" if full => catalog_full(value, &names),
@@ -1358,6 +1544,9 @@ impl<E: SqlEngine> Backend for Loopback<'_, E> {
             "norn_get_findings" => self.findings(&arguments, value)?,
             _ => value,
         };
-        Ok(CallOutput { value, is_error: false })
+        Ok(CallOutput {
+            value,
+            is_error: false,
+        })
     }
 }

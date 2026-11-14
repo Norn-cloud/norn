@@ -184,7 +184,11 @@ fn caller_input_schema(action: &ActionRoot) -> JsonObject {
         properties.retain(|field, _| !filled.contains(field.as_str()));
     }
     if let Some(JsonValue::Array(required)) = input_schema.get_mut("required") {
-        required.retain(|field| field.as_string().is_none_or(|field| !filled.contains(field)));
+        required.retain(|field| {
+            field
+                .as_string()
+                .is_none_or(|field| !filled.contains(field))
+        });
     }
     if let Some(JsonValue::Object(properties)) = input_schema.get_mut("properties") {
         let mut projected = std::collections::BTreeSet::new();

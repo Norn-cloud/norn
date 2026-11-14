@@ -1,20 +1,12 @@
-import { ChartLine, Clock, FileCheck2, Radio, Rows3, Sigma } from "lucide-react"
 import { useEffect, useState, type ReactNode } from "react"
-import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts"
-import { LiveRecords, RefusedNote, type FetchTrace } from "@/answer-view"
-import { CopyId } from "@/components/copy-id"
-import { KpiTile, StatStrip } from "@/components/kpi-tile"
-import { EmptyState, Panel, Well } from "@/components/panel"
-import { ProvenanceChain } from "@/components/provenance"
-import { TableCard } from "@/components/table-card"
+import type { FetchTrace } from "@/answer-view"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
+import { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { SUPPRESSED, fraction, shown, type Bucket } from "@/lib/answer"
-import { chartEmpty, chartFrame } from "@/lib/chart"
+import { SUPPRESSED, type Bucket } from "@/lib/answer"
 import { member, readDocument, type Read } from "@/lib/exact"
-import { FRESHNESS, day } from "@/lib/format"
+import { FRESHNESS } from "@/lib/format"
 import type { Refusal, Trace } from "@/lib/live"
 import type { Answer, SourceLineage } from "@/lib/transport"
 import { documentText, type Bridge, type ToolResult } from "./bridge"
@@ -25,7 +17,7 @@ import { documentText, type Bridge, type ToolResult } from "./bridge"
  * a refusal is shown in the server's words; more detail is asked of the same server tools.
  */
 
-export type View = "answer" | "lineage" | "dashboard" | "receipt"
+export type View = "answer" | "lineage" | "dashboard" | "receipt" | "records" | "findings" | "plan"
 
 /** The tool's input and result as the host delivered them. */
 export interface Delivery {
@@ -93,98 +85,333 @@ export function traceThrough(bridge: Bridge, input: Record<string, unknown> | un
   }
 }
 
-function AnswerCard({ read, input, bridge }: { readonly read: Read<Answer>; readonly input?: Record<string, unknown>; readonly bridge: Bridge }) {
-  const [open, setOpen] = useState<Bucket>()
-  const answer = read.document
-  const rows = answerBuckets(read)
-  const latest = rows.at(-1)
-  const freshness = FRESHNESS[answer.freshness]
-  const frame = chartFrame(rows)
-  const title = typeof input?.question === "string" ? input.question : "Answer"
-  const fetchTrace = traceThrough(bridge, input)
+/** A status chip: neutral, with colour only in its dot. */
+function Chip({ tone, children, title }: { readonly tone?: "ok" | "bad" | "warn"; readonly children: ReactNode; readonly title?: string }) {
+  const dot = tone === "ok" ? "bg-success" : tone === "bad" ? "bg-destructive" : tone === "warn" ? "bg-warning" : null
   return (
-    <section className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2 px-1">
-        <h2 className="text-section font-medium">{title}</h2>
-        <Badge variant={answer.freshness === "exact" || answer.freshness === "fresh" ? "secondary" : "destructive"} title={freshness.meaning}>{freshness.label}</Badge>
-        <Badge variant="success" title="Read now from the cell as your account."><Radio aria-hidden />Live</Badge>
-      </div>
-      {latest && (
-        <StatStrip>
-          <button type="button" className="block h-full rounded-lg text-start outline-none focus-visible:ring-3 focus-visible:ring-ring/30" onClick={() => setOpen(latest)}>
-            <KpiTile icon={Sigma} label={latest.label} value={shown(latest)} sub={latest.totals.length > 1 ? `${fraction(latest.totals)} = ${latest.value} exactly` : undefined} />
-          </button>
-          <KpiTile icon={Rows3} label="Records counted" value={latest.members.length} sub={latest.label} />
-          <KpiTile icon={Clock} label="Freshness" value={freshness.label} sub={`Read ${day(answer.nowMs)}, after ${answer.knownAsOf} committed changes`} />
-        </StatStrip>
-      )}
-      <Panel icon={ChartLine} label={title}>
-        <Well className="px-2 pt-4 pb-1">
-          {frame ? (
-            <ChartContainer config={{ position: { label: title, color: "var(--chart-1)" } }} className="h-48 w-full">
-              <AreaChart data={[...frame.points]} margin={{ left: 8, right: 8 }}>
-                <CartesianGrid vertical={false} strokeDasharray="2 4" />
-                <XAxis dataKey="label" tickLine={false} axisLine={false} minTickGap={24} />
-                <YAxis domain={[...frame.scale]} allowDataOverflow tickLine={false} axisLine={false} width={48} tickFormatter={(tick: number) => `${tick}${frame.unit}`} />
-                <ChartTooltip content={<ChartTooltipContent formatter={(_value, _name, item) => <span className="font-mono tabular-nums">{String(item.payload?.shown)}</span>} />} />
-                <Area dataKey="position" type="monotone" stroke="var(--color-position)" strokeWidth={1.5} fill="var(--color-position)" fillOpacity={0.08} dot={false} isAnimationActive={false} />
-              </AreaChart>
-            </ChartContainer>
-          ) : <EmptyState icon={ChartLine}>{chartEmpty(rows)}</EmptyState>}
-        </Well>
-      </Panel>
-      <Panel icon={Rows3} label="Every bucket" action="Select one to see its records">
-        <TableCard><Table>
-          <TableHeader><TableRow><TableHead>Bucket</TableHead><TableHead className="text-right">Answer</TableHead><TableHead className="text-right">Records</TableHead></TableRow></TableHeader>
-          <TableBody>
-            {rows.map((bucket) => (
-              <TableRow key={bucket.key} className="cursor-pointer" data-state={open?.key === bucket.key ? "selected" : undefined} onClick={() => setOpen(bucket)}>
-                <TableCell>{bucket.label}</TableCell>
-                <TableCell className="text-right font-medium tabular-nums">{shown(bucket)}</TableCell>
-                <TableCell className="text-right tabular-nums">{bucket.members.length}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table></TableCard>
-      </Panel>
-      {open && (
-        <Panel icon={Rows3} label={`${open.label}: the records behind ${shown(open)}`}>
-          <LiveRecords question={title} lineageRef={answer.lineageRef} bucket={open} fetchTrace={fetchTrace} />
-        </Panel>
-      )}
-    </section>
+    <Badge variant="outline" className="gap-1.5 font-normal text-muted-foreground" title={title}>
+      {dot && <span aria-hidden className={`size-1.5 rounded-full ${dot}`} />}
+      {children}
+    </Badge>
   )
 }
 
-/** One bucket's records exactly as the trace tool returned them, through Studio's own records table. */
+/** Exact decimal text with thousands grouped; the digits are the server's, never re-rounded. */
+export function grouped(text: string): string {
+  const match = /^(-?)(\d+)(\.\d+)?$/.exec(text)
+  if (match === null) return text
+  const [, sign, whole, fraction = ""] = match
+  return `${sign}${(whole as string).replace(/\B(?=(\d{3})+(?!\d))/g, ",")}${fraction}`
+}
+
+/** A member key (`demo/holding/owner/east/gold`) as its last two segments: `east / gold`. */
+const memberLabel = (id: string) => id.split("/").filter(Boolean).slice(-2).join(" / ") || id
+const short = (hash: string | null | undefined) => (hash ? `${hash.slice(0, 8)}…` : "—")
+
+/** A bar table: label, a monochrome bar scaled to the largest value, and the exact value. */
+function BarTable({ rows, label, valueLabel, onSelect }: { readonly rows: readonly { readonly key: string; readonly label: string; readonly value: string }[]; readonly label: string; readonly valueLabel: string; readonly onSelect?: (key: string) => void }) {
+  const max = Math.max(0, ...rows.map((row) => Math.abs(Number(row.value)) || 0))
+  return (
+    <Table>
+      <TableHeader><TableRow><TableHead>{label}</TableHead><TableHead className="w-[45%]" /><TableHead className="text-right">{valueLabel}</TableHead></TableRow></TableHeader>
+      <TableBody>
+        {rows.map((row) => (
+          <TableRow key={row.key} className={onSelect ? "cursor-pointer" : undefined} onClick={onSelect ? () => onSelect(row.key) : undefined}>
+            <TableCell>{row.label}</TableCell>
+            <TableCell><div className="h-1.5 rounded-full bg-foreground/70" style={{ width: `${max > 0 ? Math.max(2, (Math.abs(Number(row.value)) / max) * 100) : 0}%` }} /></TableCell>
+            <TableCell className="text-right tabular-nums">{grouped(row.value)}</TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  )
+}
+
+function AnswerCard({ read, input, bridge }: { readonly read: Read<Answer>; readonly input?: Record<string, unknown>; readonly bridge: Bridge }) {
+  const [traced, setTraced] = useState<{ readonly bucket: string; readonly read: Read<Trace> } | { readonly bucket: string; readonly refusal: Refusal } | null>(null)
+  const answer = read.document
+  const buckets = answerBuckets(read)
+  const latest = buckets.at(-1)
+  const freshness = FRESHNESS[answer.freshness]
+  const engine = (answer as { engine?: unknown }).engine
+  const question = input?.question
+  const title = typeof question === "string" ? question : typeof (question as { name?: unknown } | undefined)?.name === "string" ? String((question as { name: string }).name) : "Answer"
+  const fetchTrace = traceThrough(bridge, input)
+  const trace = async (bucket: string) => {
+    const result = await fetchTrace(answer.lineageRef, bucket)
+    if (result.kind === "read") setTraced({ bucket, read: result.read })
+    else if (result.kind === "refused") setTraced({ bucket, refusal: result.refusal })
+  }
+  // One bucket: its members are the breakdown. Several (a series): the buckets are.
+  const rows = buckets.length === 1 && latest
+    ? latest.members.map((entry) => ({ key: latest.key, label: memberLabel(entry.id), value: entry.amounts?.[0] ?? "—" })).sort((a, b) => Number(b.value) - Number(a.value))
+    : buckets.map((bucket) => ({ key: bucket.key, label: bucket.label, value: bucket.suppressed ? SUPPRESSED : bucket.value }))
+  return (
+    <Card size="sm">
+      <CardHeader>
+        <CardDescription>{title}{latest && buckets.length === 1 ? `, ${latest.label}` : ""}</CardDescription>
+        <CardTitle className="text-3xl font-semibold tracking-tight tabular-nums">{latest ? (latest.suppressed ? SUPPRESSED : grouped(latest.value)) : "—"}</CardTitle>
+        <CardAction className="flex flex-wrap justify-end gap-1">
+          <Chip tone={answer.freshness === "exact" || answer.freshness === "fresh" ? "ok" : "warn"} title={freshness.meaning}>{answer.freshness}</Chip>
+          {typeof engine === "string" && <Chip>{engine}</Chip>}
+          {latest && <Chip>{latest.members.length} records</Chip>}
+          <Chip>as of commit {answer.knownAsOf}</Chip>
+        </CardAction>
+      </CardHeader>
+      <CardContent>
+        {rows.length > 0 ? <BarTable rows={rows} label={buckets.length === 1 ? "Record" : "Bucket"} valueLabel="Value" onSelect={(key) => void trace(key)} /> : <p className="text-sm text-muted-foreground">No records in this answer.</p>}
+      </CardContent>
+      {traced && "read" in traced && <CardContent><LineageTable read={traced.read} /></CardContent>}
+      {traced && "refusal" in traced && <CardContent><RefusalBody refusal={traced.refusal} /></CardContent>}
+      <CardFooter className="text-xs text-muted-foreground">Select a row to trace it to its source records.</CardFooter>
+    </Card>
+  )
+}
+
+/** One bucket's contributions: value, source system, source record, receipt. */
+function LineageTable({ read }: { readonly read: Read<Trace> }) {
+  const contributions = read.document.contributions
+  const text = (index: number) => read.numbers.get(`/contributions/${index}/amounts/0`) ?? "—"
+  const mapping = contributions.flatMap((contribution) => {
+    const provenance = contribution.source.status === "resolved" ? contribution.source.provenance : undefined
+    const fields = (provenance as { fieldProvenance?: Record<string, { mappingVersion?: string; sourceFields?: string[] }> } | undefined)?.fieldProvenance
+    return fields ? Object.entries(fields).slice(0, 1).map(([name, field]) => `${name} ← ${field.mappingVersion ?? "mapping"} (${(field.sourceFields ?? []).join(", ")})`) : []
+  })[0]
+  return (
+    <div className="space-y-2">
+      <Table>
+        <TableHeader><TableRow><TableHead className="text-right">Value</TableHead><TableHead>Source system</TableHead><TableHead>Source record</TableHead><TableHead>Receipt</TableHead></TableRow></TableHeader>
+        <TableBody>
+          {contributions.map((contribution, index) => {
+            const ref = contribution.source.status === "resolved" ? (contribution.source.provenance as { documentRef?: { system?: string; record?: string } } | undefined)?.documentRef : undefined
+            return (
+              <TableRow key={`${contribution.fact.key}-${index}`}>
+                <TableCell className="text-right tabular-nums">{contribution.restricted ? "withheld" : grouped(text(index))}</TableCell>
+                <TableCell>{ref?.system ?? contribution.source.status}</TableCell>
+                <TableCell className="font-mono text-xs">{ref?.record ?? contribution.fact.key}</TableCell>
+                <TableCell className="font-mono text-xs" title={contribution.receiptHash ?? undefined}>{short(contribution.receiptHash)}</TableCell>
+              </TableRow>
+            )
+          })}
+        </TableBody>
+      </Table>
+      {mapping && <p className="text-xs text-muted-foreground">Each field carries its mapping version and source fields, e.g. {mapping}.</p>}
+    </div>
+  )
+}
+
 function TraceCard({ read, input }: { readonly read: Read<Trace>; readonly input?: Record<string, unknown> }) {
   const bucket = typeof input?.bucket === "string" ? input.bucket : read.document.bucket
-  const fetchTrace: FetchTrace = async () => ({ kind: "read", read })
-  const asBucket: Bucket = { key: bucket, label: bucketTitle(bucket), value: "", totals: [], members: [] }
   const restricted = read.document.contributions.filter((contribution) => contribution.restricted).length
   return (
-    <section className="space-y-3">
-      <div className="space-y-1 px-1">
-        <h2 className="text-section font-medium">Where {bucketTitle(bucket)} comes from</h2>
-        <p className="text-meta text-muted-foreground">
-          {read.document.contributions.length} records, each with the commit and receipt that recorded it{restricted > 0 ? `; ${restricted} withheld from your role` : ""}.
-        </p>
-      </div>
-      <LiveRecords question={typeof input?.question === "string" ? input.question : "trace"} lineageRef={typeof input?.lineageRef === "string" ? input.lineageRef : ""} bucket={asBucket} fetchTrace={fetchTrace} />
-    </section>
+    <Card size="sm">
+      <CardHeader>
+        <CardTitle>Lineage of {bucketTitle(bucket)}: every value traced to a source record</CardTitle>
+        <CardAction><Chip>{read.document.contributions.length} contributions{restricted > 0 ? `, ${restricted} withheld` : ""}</Chip></CardAction>
+      </CardHeader>
+      <CardContent><LineageTable read={read} /></CardContent>
+    </Card>
   )
 }
 
-/** One record's source lineage: for each recorded value, the source row, mapping and digests. */
+/** One record's source lineage: for each recorded value, the source record, mapping and fields. */
 function ObjectLineage({ read }: { readonly read: Read<SourceLineage> }) {
-  const facts = Object.keys(read.document.fieldProvenance)
-  if (facts.length === 0) return <EmptyState icon={Rows3}>The server recorded no source for this record.</EmptyState>
+  const lineage = read.document as SourceLineage & { readonly documentRef?: { readonly system?: string; readonly record?: string } }
+  const fields = Object.entries(lineage.fieldProvenance as Record<string, { mappingVersion?: string; transform?: string; sourceFields?: string[]; source?: { system?: string; record?: string } }>)
   return (
-    <section className="space-y-3">
-      {facts.map((fact) => (
-        <Panel key={fact} icon={Rows3} label={fact}><div className="p-3"><ProvenanceChain lineage={read.document} fact={fact} /></div></Panel>
-      ))}
-    </section>
+    <Card size="sm">
+      <CardHeader>
+        <CardTitle>Where this record comes from</CardTitle>
+        <CardDescription className="font-mono text-xs">{lineage.documentRef?.system} · {lineage.documentRef?.record}</CardDescription>
+      </CardHeader>
+      <CardContent>
+        {fields.length === 0 ? <p className="text-sm text-muted-foreground">The server recorded no source for this record.</p> : (
+          <Table>
+            <TableHeader><TableRow><TableHead>Field</TableHead><TableHead>Source fields</TableHead><TableHead>Mapping</TableHead></TableRow></TableHeader>
+            <TableBody>{fields.map(([name, field]) => (
+              <TableRow key={name}><TableCell>{name}</TableCell><TableCell className="font-mono text-xs">{(field.sourceFields ?? []).join(", ")}</TableCell><TableCell className="font-mono text-xs">{field.mappingVersion}</TableCell></TableRow>
+            ))}</TableBody>
+          </Table>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+interface RecordsPage {
+  readonly objectType: string
+  readonly records: readonly { readonly id: string; readonly values: Record<string, unknown>; readonly masked?: Record<string, { readonly mode?: string; readonly markings?: readonly string[]; readonly revealable?: boolean }>; readonly withheldProperties?: readonly string[] }[]
+  readonly total?: { readonly count?: number; readonly approximate?: boolean }
+  readonly quarantineCount?: number
+  readonly next?: string | null
+}
+
+/** A page of records: a table of their visible values; masked fields are the server's pseudonyms. */
+function RecordsCard({ read }: { readonly read: Read<RecordsPage> }) {
+  const page = read.document
+  const columns = [...new Set(page.records.flatMap((record) => Object.keys(record.values)))].filter((column) => column !== "id").slice(0, 6)
+  const masked = new Map<string, { readonly markings: readonly string[]; readonly revealable: boolean }>()
+  for (const record of page.records) for (const [name, mask] of Object.entries(record.masked ?? {})) masked.set(name, { markings: mask.markings ?? [], revealable: mask.revealable === true })
+  const cell = (index: number, column: string, value: unknown) => {
+    if (value === null || value === undefined) return "—"
+    if (typeof value === "number") return grouped(read.numbers.get(`/records/${index}/values/${member(column)}`) ?? String(value))
+    return typeof value === "object" ? JSON.stringify(value) : String(value)
+  }
+  return (
+    <Card size="sm">
+      <CardHeader>
+        <CardTitle>{page.objectType}</CardTitle>
+        <CardAction className="flex flex-wrap justify-end gap-1">
+          <Chip>{page.total?.count ?? page.records.length}{page.total?.approximate ? "+" : ""} records</Chip>
+          {(page.quarantineCount ?? 0) > 0 && <Chip tone="bad">{page.quarantineCount} held back</Chip>}
+        </CardAction>
+      </CardHeader>
+      <CardContent>
+        <Table>
+          <TableHeader><TableRow><TableHead>Id</TableHead>{columns.map((column) => <TableHead key={column}>{column.replaceAll("_", " ")}</TableHead>)}</TableRow></TableHeader>
+          <TableBody>{page.records.map((record, index) => (
+            <TableRow key={record.id}>
+              <TableCell className="font-mono text-xs">{record.id}</TableCell>
+              {columns.map((column) => <TableCell key={column} className={typeof record.values[column] === "number" ? "text-right tabular-nums" : undefined}>{record.withheldProperties?.includes(column) ? "withheld" : cell(index, column, record.values[column])}</TableCell>)}
+            </TableRow>
+          ))}</TableBody>
+        </Table>
+      </CardContent>
+      {masked.size > 0 && (
+        <CardFooter className="flex-col items-start gap-1 text-xs text-muted-foreground">
+          {[...masked].map(([name, mask]) => (
+            <span key={name}>{name.replaceAll("_", " ")} is a pseudonym ({mask.markings.join(", ")}) · reveal: <b className="text-foreground">{mask.revealable ? "allowed" : "not allowed"}</b>{mask.revealable ? ", and every reveal leaves a receipt" : ""}</span>
+          ))}
+        </CardFooter>
+      )}
+    </Card>
+  )
+}
+
+interface Finding {
+  readonly id?: string
+  readonly law?: string
+  readonly ruleRef?: { readonly lawId?: string }
+  readonly message?: string
+  readonly status?: string
+  readonly severity?: string
+  readonly firstSeen?: string
+  readonly values?: Record<string, unknown>
+}
+interface Findings {
+  readonly objectType: string
+  readonly id?: string
+  readonly quarantined?: boolean
+  readonly findings?: readonly Finding[]
+  readonly items?: readonly { readonly id: string; readonly openFindings?: number; readonly findings?: readonly Finding[] }[]
+  readonly remedies?: readonly string[]
+}
+
+/** The values a law compared, exactly as the server sent them. */
+function Compared({ read, pointer, values }: { readonly read: Read<unknown>; readonly pointer: string; readonly values: Record<string, unknown> }) {
+  const shownValue = (key: string, value: unknown, path: string): string => Array.isArray(value)
+    ? value.map((item, index) => shownValue(key, item, `${path}/${index}`)).join(" + ")
+    : typeof value === "number" ? grouped(read.numbers.get(path) ?? String(value)) : String(value)
+  return (
+    <span className="tabular-nums">{Object.entries(values).map(([key, value], index) => (
+      <span key={key}>{index > 0 ? " · " : ""}{key} <b>{shownValue(key, value, `${pointer}/${member(key)}`)}</b></span>
+    ))}</span>
+  )
+}
+
+/** Held-back records, or one record's findings: the law, its message, the values it compared and the remedy. */
+function FindingsCard({ read }: { readonly read: Read<Findings> }) {
+  const document = read.document
+  const remedies = document.remedies ?? []
+  if (document.items !== undefined) {
+    return (
+      <Card size="sm">
+        <CardHeader>
+          <CardTitle>Held back: {document.objectType}</CardTitle>
+          <CardAction><Chip tone={document.items.length > 0 ? "bad" : "ok"}>{document.items.length} held</Chip></CardAction>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader><TableRow><TableHead>Record</TableHead><TableHead>Law</TableHead><TableHead>Values compared</TableHead></TableRow></TableHeader>
+            <TableBody>{document.items.map((item, index) => {
+              const finding = item.findings?.[0]
+              return (
+                <TableRow key={item.id}>
+                  <TableCell className="font-mono text-xs">{item.id}</TableCell>
+                  <TableCell className="font-mono text-xs">{finding?.law ?? `${item.openFindings ?? 0} open`}</TableCell>
+                  <TableCell>{finding?.values ? <Compared read={read as Read<unknown>} pointer={`/items/${index}/findings/0/values`} values={finding.values} /> : "—"}</TableCell>
+                </TableRow>
+              )
+            })}</TableBody>
+          </Table>
+        </CardContent>
+        {remedies.length > 0 && <CardFooter className="text-xs text-muted-foreground">Fix with {remedies.join(", ")}; the laws decide again.</CardFooter>}
+      </Card>
+    )
+  }
+  const findings = document.findings ?? []
+  return (
+    <Card size="sm">
+      <CardHeader>
+        <CardDescription className="font-mono text-xs">{document.objectType} · {document.id}</CardDescription>
+        <CardTitle>{document.quarantined ? "Held back by law" : findings.length > 0 ? "Findings" : "No findings"}</CardTitle>
+        <CardAction><Chip tone={document.quarantined ? "bad" : "ok"}>{document.quarantined ? "held" : "released"}</Chip></CardAction>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {findings.map((finding, index) => (
+          <div key={finding.id ?? index} className="space-y-1 text-sm">
+            <div className="font-mono text-xs text-muted-foreground">{finding.ruleRef?.lawId ?? finding.law}</div>
+            {finding.values && <div><Compared read={read as Read<unknown>} pointer={`/findings/${index}/values`} values={finding.values} /></div>}
+            <div className="text-muted-foreground">{finding.message?.replace(/^[^:]+:\s*/, "")}</div>
+            <div className="text-xs text-muted-foreground">{finding.status ?? "open"}{finding.firstSeen ? ` since ${finding.firstSeen.slice(0, 10)}` : ""}</div>
+          </div>
+        ))}
+      </CardContent>
+      {remedies.length > 0 && <CardFooter className="text-xs text-muted-foreground">Fix with {remedies.join(", ")}: the laws decide again, and answer with a receipt or the reason.</CardFooter>}
+    </Card>
+  )
+}
+
+interface Planned { readonly artifactId: string; readonly kind: string; readonly fromVersion?: string; readonly toVersion: string }
+interface Plan {
+  readonly baseVersion: number
+  readonly nextVersion: number
+  readonly unchanged: boolean
+  readonly added: readonly Planned[]
+  readonly changed: readonly Planned[]
+  readonly same: readonly string[]
+  readonly newObjectTypes: readonly string[]
+  readonly checkedObjects: number
+  readonly diagnostics: readonly { readonly code: string; readonly message: string }[]
+}
+
+/** A planned definitions change: what it adds and replaces, what it found, and the version apply would install. */
+function PlanCard({ plan, title }: { readonly plan: Plan; readonly title?: string }) {
+  const rows = [...plan.added.map((artifact) => ({ artifact, change: "add" })), ...plan.changed.map((artifact) => ({ artifact, change: "replace" }))]
+  return (
+    <Card size="sm">
+      <CardHeader>
+        <CardTitle>{title ?? (plan.unchanged ? "Nothing to change" : `Plan: version ${plan.baseVersion} → ${plan.nextVersion}`)}</CardTitle>
+        <CardAction className="flex flex-wrap justify-end gap-1">
+          <Chip>{plan.added.length} added</Chip>
+          <Chip>{plan.changed.length} replaced</Chip>
+          <Chip tone={plan.diagnostics.length > 0 ? "warn" : "ok"}>{plan.checkedObjects} records checked</Chip>
+        </CardAction>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {plan.newObjectTypes.length > 0 && <p className="text-sm">New types: {plan.newObjectTypes.join(", ")}</p>}
+        {rows.length > 0 && (
+          <Table>
+            <TableHeader><TableRow><TableHead>Change</TableHead><TableHead>Artifact</TableHead><TableHead>Kind</TableHead><TableHead>Version</TableHead></TableRow></TableHeader>
+            <TableBody>{rows.map(({ artifact, change }) => (
+              <TableRow key={artifact.artifactId}><TableCell>{change}</TableCell><TableCell className="font-mono text-xs">{artifact.artifactId}</TableCell><TableCell>{artifact.kind}</TableCell><TableCell className="font-mono text-xs">{artifact.fromVersion ? `${artifact.fromVersion} → ` : ""}{artifact.toVersion}</TableCell></TableRow>
+            ))}</TableBody>
+          </Table>
+        )}
+        {plan.diagnostics.map((diagnostic, index) => <p key={`${diagnostic.code}-${index}`} className="text-sm"><span className="font-mono text-xs text-muted-foreground">{diagnostic.code}</span> {diagnostic.message}</p>)}
+      </CardContent>
+      {!plan.unchanged && title === undefined && <CardFooter className="text-xs text-muted-foreground">Nothing is installed yet. Apply with expectedVersion {plan.baseVersion}.</CardFooter>}
+    </Card>
   )
 }
 
@@ -200,23 +427,27 @@ function ProposalCard({ read, input, studio, bridge }: { readonly read: Read<Adm
   const { admitted, diagnostics = [], restatement } = read.document
   const kind = typeof input?.kind === "string" ? input.kind : "definition"
   return (
-    <section className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2 px-1">
-        <h2 className="text-section font-medium">{typeof input?.id === "string" ? input.id : `Proposed ${kind}`}</h2>
-        <Badge variant={admitted ? "secondary" : "destructive"}>{admitted ? "The checker admits it" : "The checker refuses it"}</Badge>
-      </div>
-      {restatement && <Panel icon={FileCheck2} label="What it says, in plain words"><p className="whitespace-pre-wrap p-3 text-sm">{restatement}</p></Panel>}
-      {diagnostics.length > 0 && (
-        <TableCard><Table>
-          <TableHeader><TableRow><TableHead>Finding</TableHead><TableHead>Where</TableHead></TableRow></TableHeader>
-          <TableBody>{diagnostics.map((diagnostic, index) => (
-            <TableRow key={`${diagnostic.code}-${index}`}><TableCell><div>{diagnostic.message}</div><div className="font-mono text-xs text-muted-foreground">{diagnostic.code}</div></TableCell><TableCell className="font-mono text-xs">{diagnostic.span?.pointer ?? ""}</TableCell></TableRow>
-          ))}</TableBody>
-        </Table></TableCard>
-      )}
-      <p className="px-1 text-sm text-muted-foreground">Nothing is saved yet. A person installs it in Norn Studio by signing this restatement.</p>
-      {admitted && studio !== null && <Button variant="outline" onClick={() => bridge.openLink(new URL("/dashboards", studio).href)}>Open Norn Studio</Button>}
-    </section>
+    <Card size="sm">
+      <CardHeader>
+        <CardTitle>{typeof input?.id === "string" ? input.id : `Proposed ${kind}`}</CardTitle>
+        <CardAction><Chip tone={admitted ? "ok" : "bad"}>{admitted ? "admitted" : "refused"}</Chip></CardAction>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {restatement && <p className="whitespace-pre-wrap text-sm">{restatement}</p>}
+        {diagnostics.length > 0 && (
+          <Table>
+            <TableHeader><TableRow><TableHead>Finding</TableHead><TableHead>Where</TableHead></TableRow></TableHeader>
+            <TableBody>{diagnostics.map((diagnostic, index) => (
+              <TableRow key={`${diagnostic.code}-${index}`}><TableCell><div>{diagnostic.message}</div><div className="font-mono text-xs text-muted-foreground">{diagnostic.code}</div></TableCell><TableCell className="font-mono text-xs">{diagnostic.span?.pointer ?? ""}</TableCell></TableRow>
+            ))}</TableBody>
+          </Table>
+        )}
+      </CardContent>
+      <CardFooter className="justify-between gap-2 text-xs text-muted-foreground">
+        <span>Nothing is saved yet. A person installs it in Norn Studio by signing this restatement.</span>
+        {admitted && studio !== null && <Button size="sm" variant="outline" onClick={() => bridge.openLink(new URL("/dashboards", studio).href)}>Open Studio</Button>}
+      </CardFooter>
+    </Card>
   )
 }
 
@@ -226,32 +457,60 @@ interface Receipt {
   readonly objectId?: string
   readonly version?: number
   readonly receipt?: { readonly receiptHash: string; readonly commitSeq: number; readonly recordedAtMs: number }
+  readonly definitionsVersion?: number
+  readonly previousVersion?: number
+  readonly receiptSha256?: string
+  readonly commitSeq?: number
+  readonly plan?: Plan
 }
 
-/** A governed action's answer: accepted with its receipt, or refused with the server's reason and no effects. */
+/** A governed action's answer, or an installed definitions version: what changed, and its receipt. */
 function ReceiptCard({ read, tool }: { readonly read: Read<Receipt>; readonly tool?: string }) {
-  const { outcome, objectType, objectId, version, receipt } = read.document
+  const document = read.document
+  if (document.definitionsVersion !== undefined && document.plan !== undefined) {
+    return <PlanCard plan={document.plan} title={document.outcome === "unchanged" ? "Already installed: nothing changed" : `Installed: version ${document.previousVersion} → ${document.definitionsVersion} · commit ${document.commitSeq} · receipt ${short(document.receiptSha256)}`} />
+  }
+  const { outcome, objectType, objectId, version, receipt } = document
   return (
-    <section className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2 px-1">
-        <h2 className="text-section font-medium">{tool ?? "Action"}</h2>
-        <Badge variant="secondary">{outcome === "replayed" ? "Already done: the original receipt" : "Accepted"}</Badge>
-      </div>
-      <StatStrip>
-        {objectId !== undefined && <KpiTile icon={Rows3} label={objectType ?? "Record"} value={<span className="font-mono text-base">{objectId}</span>} sub={version === undefined ? undefined : `version ${version}`} />}
-        {receipt && <KpiTile icon={FileCheck2} label="Receipt" value={<CopyId value={receipt.receiptHash} short={10} />} sub={`commit ${receipt.commitSeq} · ${day(receipt.recordedAtMs)}`} />}
-      </StatStrip>
-    </section>
+    <Card size="sm">
+      <CardHeader>
+        <CardTitle>{outcome === "replayed" ? "Already done" : outcome === "pending_approval" || outcome === "held" ? "Waiting for approval" : "Accepted"}</CardTitle>
+        <CardAction><Chip tone={outcome === "committed" || outcome === "replayed" ? "ok" : "warn"}>{outcome}</Chip></CardAction>
+      </CardHeader>
+      <CardContent className="text-sm text-muted-foreground">
+        <span className="font-mono text-xs text-foreground">{objectId ?? tool ?? objectType}</span>
+        {version !== undefined && ` → version ${version}`}
+        {receipt && <> · commit {receipt.commitSeq} · receipt <span className="font-mono text-xs" title={receipt.receiptHash}>{short(receipt.receiptHash)}</span></>}
+      </CardContent>
+    </Card>
+  )
+}
+
+/** A refusal in the server's words: the law and the values it compared when it says them. */
+function RefusalBody({ refusal }: { readonly refusal: Refusal }) {
+  const reason = (refusal as { reason?: { law?: string; values?: Record<string, unknown> } | null }).reason
+  const explanation = (refusal as { explanation?: string }).explanation
+  return (
+    <div className="space-y-1 text-sm">
+      {reason?.law && <div className="font-mono text-xs text-muted-foreground">{reason.law}</div>}
+      {reason?.values && <div className="tabular-nums">{Object.entries(reason.values).map(([key, value], index) => <span key={key}>{index > 0 ? " · " : ""}{key} <b>{grouped(String(value))}</b></span>)}</div>}
+      <div className="text-muted-foreground">{explanation ?? refusal.message}</div>
+    </div>
   )
 }
 
 /** Refusals keep the server's words and code; nothing was changed. */
 function Refused({ refusal, action }: { readonly refusal: Refusal; readonly action: boolean }) {
+  const reason = (refusal as { reason?: { law?: string } | null }).reason
   return (
-    <section className="space-y-2">
-      <RefusedNote refusal={refusal} />
-      {action && <p className="px-1 text-sm text-muted-foreground">Nothing was changed.</p>}
-    </section>
+    <Card size="sm">
+      <CardHeader>
+        <CardTitle>{reason?.law ? "Refused by law" : "Refused"}</CardTitle>
+        <CardAction><Chip tone="bad">{refusal.code}</Chip></CardAction>
+      </CardHeader>
+      <CardContent><RefusalBody refusal={refusal} /></CardContent>
+      {action && <CardFooter className="text-xs text-muted-foreground">The agent asked; the workspace's laws and policy decided. Nothing was written.</CardFooter>}
+    </Card>
   )
 }
 
@@ -270,6 +529,9 @@ export function DeliveryView({ view, delivery, bridge, studio, tool }: { readonl
   if (view === "lineage" && typeof document.fieldProvenance === "object") return <ObjectLineage read={read as Read<SourceLineage>} />
   if (view === "dashboard" && typeof document.admitted === "boolean") return <ProposalCard read={read as Read<Admission>} input={input} studio={studio} bridge={bridge} />
   if (view === "receipt" && typeof document.outcome === "string") return <ReceiptCard read={read as Read<Receipt>} tool={tool} />
+  if (view === "records" && Array.isArray(document.records)) return <RecordsCard read={read as Read<RecordsPage>} />
+  if (view === "findings" && (Array.isArray(document.findings) || Array.isArray(document.items))) return <FindingsCard read={read as Read<Findings>} />
+  if (view === "plan" && typeof document.baseVersion === "number") return <PlanCard plan={document as unknown as Plan} />
   return <p className="p-3 text-sm text-muted-foreground">Norn answered with a document this view does not draw.</p>
 }
 
