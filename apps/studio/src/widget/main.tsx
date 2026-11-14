@@ -1,5 +1,3 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { RouterProvider, createMemoryHistory, createRootRoute, createRouter } from "@tanstack/react-router"
 import { StrictMode, useEffect, useLayoutEffect } from "react"
 import { createRoot } from "react-dom/client"
 import { Bridge, type HostContext } from "./bridge"
@@ -54,13 +52,8 @@ function Widget() {
   return <Frame><DeliveryView view={view} delivery={delivery} bridge={bridge} studio={studio} /></Frame>
 }
 
-// Studio's components link to Studio pages, so they render inside a router; it never navigates here.
-const router = createRouter({ routeTree: createRootRoute({ component: Widget }), history: createMemoryHistory() })
-
 createRoot(document.getElementById("root") as HTMLElement).render(
   <StrictMode>
-    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-      <RouterProvider router={router} />
-    </QueryClientProvider>
+    <Widget />
   </StrictMode>,
 )
