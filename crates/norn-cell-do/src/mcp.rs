@@ -80,6 +80,7 @@ impl View {
 /// What the model is told about this server in `initialize`.
 const INSTRUCTIONS: &str = "Norn is the system of record for this workspace. \
 Read it only through these tools: norn_catalog describes its object types, questions and actions; \
+norn_inbox lists what needs the caller's attention (held-back records with their fixes, decisions, failing sources); \
 norn_query_objects, norn_get_object and norn_profile_type read records the caller may see; norn_answer \
 answers an admitted question with its freshness, and norn_question_catalog says what else can be asked; norn_trace_answer and norn_trace_object trace a value to its source records. \
 Actions change state only through their own tools: each call is decided by the workspace's laws and \
@@ -380,6 +381,16 @@ fn generic_tools(
         )?,
         tool(
             json!({
+                "name": "norn_inbox",
+                "title": "What needs attention",
+                "description": "The caller's work queue: records a law holds back, grouped by the law with counts (each record with the finding in plain words and, when the caller may make it, the fix the server computed: the governed action and its arguments), decisions waiting on the caller, and connected sources whose last sync failed. Every item is what the caller may read, and each names the Studio page to act at. Apply a fix only through its action tool.",
+                "inputSchema": {"type": "object", "additionalProperties": false, "properties": {}},
+                "annotations": read_only(),
+            }),
+            None,
+        )?,
+        tool(
+            json!({
                 "name": "norn_list_definitions",
                 "title": "List saved definitions",
                 "description": "Saved dashboards, questions, agents and bindings of this workspace, newest version of each.",
@@ -653,6 +664,7 @@ impl<E: SqlEngine> Loopback<'_, E> {
         };
         Ok(match name {
             "norn_catalog" => get("/v1/definitions".into(), scoped),
+            "norn_inbox" => get("/v1/inbox".into(), scoped),
             "norn_list_definitions" => {
                 optional(&mut scoped, "kind", "kind")?;
                 optional(&mut scoped, "limit", "limit")?;

@@ -398,6 +398,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/inbox": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /v1/inbox`: the held-back records, decisions and failing sources the
+         *     caller may act on, each under its own read's gates. `decisions` is false
+         *     on a cell that decides nothing (no disclosure authority), which then lists
+         *     none, as `GET /v1/decisions` refuses there.
+         * @description # Errors
+         *     Missing or foreign scope, or a caller nobody verified (one opaque 403);
+         *     a commit between the reads (409 `object.snapshot_moved`); a host failure.
+         */
+        get: operations["get_inbox"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/mcp": {
         parameters: {
             query?: never;
@@ -2667,6 +2692,50 @@ export interface components {
             /** @description Fields withheld from the model, as `type/id.property`. */
             withheld: string[];
         };
+        /** @description The records one rule holds back in one type. */
+        NornHeldBackGroup: {
+            /** @description `count` is a lower bound: the scan bound was reached. */
+            approximate: boolean;
+            /**
+             * Format: int64
+             * @description How many of its records the caller may review are held by it.
+             */
+            count: number;
+            /** @description The type whose records it holds. */
+            objectType: string;
+            /** @description A law's rationale, when it declares one. */
+            rationale?: string | null;
+            /** @description At most [`MAX_GROUP_RECORDS`] of them, in id order. */
+            records: components["schemas"]["NornHeldBackRecord"][];
+            /** @description The rule the findings pin. */
+            ruleRef: components["schemas"]["NornIrDataQualityRuleRef"];
+            /** @description The Studio route that reviews them: the type's held-back records. */
+            target: string;
+            /** @description The rule in words: a law's name, or the rule id. */
+            title: string;
+        };
+        /** @description One held-back record. */
+        NornHeldBackRecord: {
+            finding?: components["schemas"]["NornInboxFinding"] | null;
+            /** @description The object id. */
+            id: string;
+            /** @description PRIVACY-1: how each marked property was projected; omitted when none is. */
+            masked?: {
+                [key: string]: components["schemas"]["NornMaskedProperty"];
+            };
+            /** @description The concrete object type. */
+            objectType: string;
+            suggestedFix?: components["schemas"]["NornSuggestedFix"] | null;
+            /** @description The Studio route that reviews it. */
+            target: string;
+            /**
+             * @description Its stored values, projected through the cell's markings; absent
+             *     under the same condition as `finding`.
+             */
+            values?: {
+                [key: string]: unknown;
+            } | null;
+        };
         /** @description A histogram. */
         NornHistogram: {
             /** @description Bins in ascending order. */
@@ -2689,6 +2758,96 @@ export interface components {
             result: components["schemas"]["NornQueryResult"];
             /** @description Historical commit authority; source world and scope remain in the result. */
             world: components["schemas"]["NornWorld"];
+        };
+        /** @description `GET /v1/inbox`: what needs the caller's attention. */
+        NornInbox: {
+            /**
+             * @description Held-back groups (largest first), then decisions (soonest deadline
+             *     first), then sources with errors.
+             */
+            items: components["schemas"]["NornInboxItem"][];
+            /**
+             * Format: int64
+             * @description The held-back scan bound, in rows.
+             */
+            scanLimit: number;
+            /** @description Each section's size, in that order. */
+            sections: components["schemas"]["NornInboxSection"][];
+        };
+        /** @description A decision waiting on the caller. */
+        NornInboxDecision: {
+            /** @description The decision, as `GET /v1/decisions` lists it. */
+            decision: components["schemas"]["DecisionDocument"];
+            /** @description The Studio route that decides it. */
+            target: string;
+        };
+        /** @description What a finding says about one held-back record. */
+        NornInboxFinding: {
+            /**
+             * @description DIAG-REASON-1: the values the law compared, by path, as it read them,
+             *     projected through the cell's markings. A path whose values are not
+             *     disclosed to the caller is left out.
+             */
+            compared: {
+                [key: string]: unknown;
+            };
+            /** @description The finding id. */
+            id: string;
+            /** @description The finding's message. */
+            message: string;
+            /**
+             * @description The finding in plain words: `total 720.00 ≠ lines 72.00`, or the
+             *     finding's own message when its compared values are not disclosed.
+             */
+            words: string;
+        };
+        /** @description One inbox item. */
+        NornInboxItem: (components["schemas"]["NornHeldBackGroup"] & {
+            /** @enum {string} */
+            kind: "held_back";
+        }) | (components["schemas"]["NornInboxDecision"] & {
+            /** @enum {string} */
+            kind: "decision";
+        }) | (components["schemas"]["NornInboxSource"] & {
+            /** @enum {string} */
+            kind: "source_error";
+        });
+        /**
+         * @description What one inbox section summarizes.
+         * @enum {string}
+         */
+        NornInboxKind: "held_back" | "decision" | "source_error";
+        /** @description One section's size. */
+        NornInboxSection: {
+            /** @description `count` is a lower bound: a scan bound was reached. */
+            approximate: boolean;
+            /**
+             * Format: int64
+             * @description Everything the section found for the caller: held-back records (a
+             *     record held by two rules counts once per rule), decisions or sources.
+             */
+            count: number;
+            /** @description The section. */
+            kind: components["schemas"]["NornInboxKind"];
+            /**
+             * Format: int64
+             * @description The items of this kind listed in `items`.
+             */
+            shown: number;
+        };
+        /** @description A connection whose last sync failed or was partial. */
+        NornInboxSource: {
+            /** @description The connection id. */
+            id: string;
+            /** @description The Studio route that shows it. */
+            target: string;
+            /**
+             * @description The connection record's values, as `GET /v1/objects/source.Connection`
+             *     serves them (projected): its label, status, last error and counts.
+             */
+            values: {
+                [key: string]: unknown;
+            };
         };
         /** @description Exact origin of a law inherited from an installed composition pack. */
         NornInheritedLawOrigin: {
@@ -12297,6 +12456,29 @@ export interface components {
             /** @description One entry per partition source with at least one disputed member. */
             groups: components["schemas"]["NornSourceDisagreementGroup"][];
         };
+        /** @description The suggested correction of one held-back record, as the server computed it. */
+        NornSuggestedFix: {
+            /** @description The governed action to call (`POST /v1/actions/{actionId}`). */
+            actionId: string;
+            /**
+             * @description The call's input as far as the server derives it: the record id, the
+             *     property, required inputs the record holds unmarked, and the evidence
+             *     the property was read from. Decimals are exact strings.
+             */
+            arguments: {
+                [key: string]: unknown;
+            };
+            /** @description What the fix does, in words: `Use 72.00`. */
+            label: string;
+            /** @description Required inputs the caller still supplies (a reason, for example). */
+            needs: string[];
+            /** @description The property the fix sets. */
+            property: string;
+            /** @description The action's title. */
+            title: string;
+            /** @description The value the law expects, at the property's declared scale. */
+            value: string;
+        };
         /** @description One typed column of a transform's row (VIEW-TYPE-1). */
         NornTransformColumn: {
             /**
@@ -14085,6 +14267,67 @@ export interface operations {
             };
             /** @description The request was refused (`object.not_found`): a context record is absent or not readable. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    get_inbox: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description What needs the caller's attention: held-back records grouped by the rule that holds them (with the fix the server derives, when the caller may make it), decisions waiting on the caller and sources with sync errors, each filtered by the gates of the read it summarizes and bounded. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NornInbox"];
+                };
+            };
+            /** @description The request was refused as invalid: an unknown or repeated query parameter. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied, with the same document whatever the reason. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused (`object.snapshot_moved`, retryable): the cell committed between the reads. */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -1890,6 +1890,93 @@
         ]
       }
     },
+    "/v1/inbox": {
+      "get": {
+        "tags": [
+          "crate::inbox"
+        ],
+        "summary": "`GET /v1/inbox`: the held-back records, decisions and failing sources the\ncaller may act on, each under its own read's gates. `decisions` is false\non a cell that decides nothing (no disclosure authority), which then lists\nnone, as `GET /v1/decisions` refuses there.",
+        "description": "# Errors\nMissing or foreign scope, or a caller nobody verified (one opaque 403);\na commit between the reads (409 `object.snapshot_moved`); a host failure.",
+        "operationId": "get_inbox",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "What needs the caller's attention: held-back records grouped by the rule that holds them (with the fix the server derives, when the caller may make it), decisions waiting on the caller and sources with sync errors, each filtered by the gates of the read it summarizes and bounded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NornInbox"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid: an unknown or repeated query parameter.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied, with the same document whatever the reason.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request was refused (`object.snapshot_moved`, retryable): the cell committed between the reads.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
     "/v1/mcp": {
       "post": {
         "tags": [
@@ -8821,6 +8908,127 @@
           }
         }
       },
+      "NornHeldBackGroup": {
+        "type": "object",
+        "description": "The records one rule holds back in one type.",
+        "required": [
+          "ruleRef",
+          "title",
+          "objectType",
+          "count",
+          "approximate",
+          "target",
+          "records"
+        ],
+        "properties": {
+          "approximate": {
+            "type": "boolean",
+            "description": "`count` is a lower bound: the scan bound was reached."
+          },
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many of its records the caller may review are held by it.",
+            "minimum": 0
+          },
+          "objectType": {
+            "type": "string",
+            "description": "The type whose records it holds."
+          },
+          "rationale": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A law's rationale, when it declares one."
+          },
+          "records": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornHeldBackRecord"
+            },
+            "description": "At most [`MAX_GROUP_RECORDS`] of them, in id order."
+          },
+          "ruleRef": {
+            "$ref": "#/components/schemas/NornIrDataQualityRuleRef",
+            "description": "The rule the findings pin."
+          },
+          "target": {
+            "type": "string",
+            "description": "The Studio route that reviews them: the type's held-back records."
+          },
+          "title": {
+            "type": "string",
+            "description": "The rule in words: a law's name, or the rule id."
+          }
+        }
+      },
+      "NornHeldBackRecord": {
+        "type": "object",
+        "description": "One held-back record.",
+        "required": [
+          "objectType",
+          "id",
+          "target"
+        ],
+        "properties": {
+          "finding": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NornInboxFinding",
+                "description": "What the finding says; absent unless the caller may read the record's\nfindings (Population, Values and Sources on it)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "type": "string",
+            "description": "The object id."
+          },
+          "masked": {
+            "type": "object",
+            "description": "PRIVACY-1: how each marked property was projected; omitted when none is.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/NornMaskedProperty"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "objectType": {
+            "type": "string",
+            "description": "The concrete object type."
+          },
+          "suggestedFix": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NornSuggestedFix",
+                "description": "The correction the server derived, when the caller may make it."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "target": {
+            "type": "string",
+            "description": "The Studio route that reviews it."
+          },
+          "values": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Its stored values, projected through the cell's markings; absent\nunder the same condition as `finding`.",
+            "additionalProperties": {},
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "NornHistogram": {
         "type": "object",
         "description": "A histogram.",
@@ -8867,6 +9075,229 @@
           }
         },
         "additionalProperties": false
+      },
+      "NornInbox": {
+        "type": "object",
+        "description": "`GET /v1/inbox`: what needs the caller's attention.",
+        "required": [
+          "items",
+          "sections",
+          "scanLimit"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornInboxItem"
+            },
+            "description": "Held-back groups (largest first), then decisions (soonest deadline\nfirst), then sources with errors."
+          },
+          "scanLimit": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The held-back scan bound, in rows.",
+            "minimum": 0
+          },
+          "sections": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornInboxSection"
+            },
+            "description": "Each section's size, in that order."
+          }
+        }
+      },
+      "NornInboxDecision": {
+        "type": "object",
+        "description": "A decision waiting on the caller.",
+        "required": [
+          "target",
+          "decision"
+        ],
+        "properties": {
+          "decision": {
+            "$ref": "#/components/schemas/DecisionDocument",
+            "description": "The decision, as `GET /v1/decisions` lists it."
+          },
+          "target": {
+            "type": "string",
+            "description": "The Studio route that decides it."
+          }
+        }
+      },
+      "NornInboxFinding": {
+        "type": "object",
+        "description": "What a finding says about one held-back record.",
+        "required": [
+          "id",
+          "words",
+          "message",
+          "compared"
+        ],
+        "properties": {
+          "compared": {
+            "type": "object",
+            "description": "DIAG-REASON-1: the values the law compared, by path, as it read them,\nprojected through the cell's markings. A path whose values are not\ndisclosed to the caller is left out.",
+            "additionalProperties": {},
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "id": {
+            "type": "string",
+            "description": "The finding id."
+          },
+          "message": {
+            "type": "string",
+            "description": "The finding's message."
+          },
+          "words": {
+            "type": "string",
+            "description": "The finding in plain words: `total 720.00 ≠ lines 72.00`, or the\nfinding's own message when its compared values are not disclosed."
+          }
+        }
+      },
+      "NornInboxItem": {
+        "oneOf": [
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/NornHeldBackGroup",
+                "description": "Records one rule holds back."
+              },
+              {
+                "type": "object",
+                "required": [
+                  "kind"
+                ],
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "held_back"
+                    ]
+                  }
+                }
+              }
+            ],
+            "description": "Records one rule holds back."
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/NornInboxDecision",
+                "description": "A decision waiting on the caller."
+              },
+              {
+                "type": "object",
+                "required": [
+                  "kind"
+                ],
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "decision"
+                    ]
+                  }
+                }
+              }
+            ],
+            "description": "A decision waiting on the caller."
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/NornInboxSource",
+                "description": "A connection with sync errors."
+              },
+              {
+                "type": "object",
+                "required": [
+                  "kind"
+                ],
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "source_error"
+                    ]
+                  }
+                }
+              }
+            ],
+            "description": "A connection with sync errors."
+          }
+        ],
+        "description": "One inbox item."
+      },
+      "NornInboxKind": {
+        "type": "string",
+        "description": "What one inbox section summarizes.",
+        "enum": [
+          "held_back",
+          "decision",
+          "source_error"
+        ]
+      },
+      "NornInboxSection": {
+        "type": "object",
+        "description": "One section's size.",
+        "required": [
+          "kind",
+          "count",
+          "shown",
+          "approximate"
+        ],
+        "properties": {
+          "approximate": {
+            "type": "boolean",
+            "description": "`count` is a lower bound: a scan bound was reached."
+          },
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Everything the section found for the caller: held-back records (a\nrecord held by two rules counts once per rule), decisions or sources.",
+            "minimum": 0
+          },
+          "kind": {
+            "$ref": "#/components/schemas/NornInboxKind",
+            "description": "The section."
+          },
+          "shown": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The items of this kind listed in `items`.",
+            "minimum": 0
+          }
+        }
+      },
+      "NornInboxSource": {
+        "type": "object",
+        "description": "A connection whose last sync failed or was partial.",
+        "required": [
+          "id",
+          "target",
+          "values"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The connection id."
+          },
+          "target": {
+            "type": "string",
+            "description": "The Studio route that shows it."
+          },
+          "values": {
+            "type": "object",
+            "description": "The connection record's values, as `GET /v1/objects/source.Connection`\nserves them (projected): its label, status, last error and counts.",
+            "additionalProperties": {},
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        }
       },
       "NornInheritedLawOrigin": {
         "type": "object",
@@ -33737,6 +34168,56 @@
           }
         },
         "additionalProperties": false
+      },
+      "NornSuggestedFix": {
+        "type": "object",
+        "description": "The suggested correction of one held-back record, as the server computed it.",
+        "required": [
+          "actionId",
+          "title",
+          "label",
+          "property",
+          "value",
+          "arguments",
+          "needs"
+        ],
+        "properties": {
+          "actionId": {
+            "type": "string",
+            "description": "The governed action to call (`POST /v1/actions/{actionId}`)."
+          },
+          "arguments": {
+            "type": "object",
+            "description": "The call's input as far as the server derives it: the record id, the\nproperty, required inputs the record holds unmarked, and the evidence\nthe property was read from. Decimals are exact strings.",
+            "additionalProperties": {},
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "label": {
+            "type": "string",
+            "description": "What the fix does, in words: `Use 72.00`."
+          },
+          "needs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Required inputs the caller still supplies (a reason, for example)."
+          },
+          "property": {
+            "type": "string",
+            "description": "The property the fix sets."
+          },
+          "title": {
+            "type": "string",
+            "description": "The action's title."
+          },
+          "value": {
+            "type": "string",
+            "description": "The value the law expects, at the property's declared scale."
+          }
+        }
       },
       "NornTransformColumn": {
         "type": "object",
