@@ -33,7 +33,7 @@ export function TransformsPage() {
   return (
     <div className="space-y-4">
       <header className="space-y-1">
-        <h1 className="text-xl font-medium">Transforms</h1>
+        <h1 className="text-title font-semibold tracking-tight">Transforms</h1>
         <p className="text-muted-foreground">Derived datasets the cell's checker admits: every column typed, every join declared, every row traced to the records it comes from.</p>
       </header>
       {read.isPending && <p className="text-muted-foreground">Reading definitions…</p>}

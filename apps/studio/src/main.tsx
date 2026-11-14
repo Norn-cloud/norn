@@ -1,4 +1,4 @@
-import { AgentButton } from "./agent/panel.tsx"
+import { AgentAssistant, useAgentServed } from "./agent/panel.tsx"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { RouterProvider, createRootRoute, createRouter } from "@tanstack/react-router"
 import { Blend, ChartLine, Database, Inbox, LayoutDashboard, Network, Plug, ShieldCheck, Workflow } from "lucide-react"
@@ -36,7 +36,9 @@ const SECTIONS: readonly Section[] = [
 function Root() {
   const account = useAccount()
   const refresh = useRefreshAccount()
-  if (account.data != null) return <Shell sections={SECTIONS} tools={<AgentButton />} account={account.data} onSignOut={() => void signOut(refresh)} />
+  // The assistant is offered only where the server serves it; until then the rail shows no entry for it.
+  const agent = useAgentServed()
+  if (account.data != null) return <Shell sections={SECTIONS} assistant={agent ? { title: "Assistant", content: <AgentAssistant /> } : undefined} account={account.data} onSignOut={() => void signOut(refresh)} />
   if (account.isPending) return null
   if (account.isError) {
     return (

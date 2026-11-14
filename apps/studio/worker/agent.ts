@@ -1,6 +1,6 @@
 import type { Cell } from "./cell.ts"
 import type { Answer, Ask, Model } from "./model.ts"
-import { QUESTION_DEFAULTS, populationOf, readCellCatalog, type CellCatalog, type CellMetric } from "./questions.ts"
+import { QUESTION_DEFAULTS, enumValues, populationOf, readCellCatalog, type CellCatalog, type CellMetric } from "./questions.ts"
 
 /**
  * The dashboard assistant (server side). It reads the cell's catalog as the
@@ -104,7 +104,7 @@ export function systemPrompt(catalog: CellCatalog, now: number): string {
       "Metrics:",
       ...metrics.map((metric) => metricWords(metric, catalog.metrics)),
       "Properties:",
-      ...properties.map(({ id, type }) => `- ${id}: ${type?.kind ?? "unknown"}${type?.unit?.code ? ` in ${type.unit.code}` : ""}${type?.values?.length ? ` (one of ${type.values.join(", ")})` : ""}`),
+      ...properties.map(({ id, type }) => `- ${id}: ${type?.kind ?? "unknown"}${type?.unit?.code ? ` in ${type.unit.code}` : ""}${enumValues(type).length > 0 ? ` (one of ${enumValues(type).join(", ")})` : ""}`),
       "",
     ]
   })
