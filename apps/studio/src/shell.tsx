@@ -51,6 +51,8 @@ export interface MenuEntry {
   readonly icon?: LucideIcon
   /** The kind of artefact the entry is, which colours its icon. */
   readonly kind?: Kind
+  /** How many records the entry holds, as the server counted them; text (e.g. "500+") is the server's lower bound. */
+  readonly count?: number | string
 }
 
 const none = () => undefined
@@ -152,7 +154,7 @@ function NavSection({ section, pathname }: { readonly section: Section; readonly
                     {heading && <li className="px-2 pt-2 pb-1 text-xs text-muted-foreground">{entry.group}</li>}
                     <SidebarMenuSubItem>
                       <SidebarMenuSubButton asChild isActive={within(entry.href, pathname)} className={entry.kind && KINDS[entry.kind].svg}>
-                        <Link {...target(section, entry.href)} onClick={() => setOpenMobile(false)}>{EntryIcon && <EntryIcon />}<span>{entry.label}</span></Link>
+                        <Link {...target(section, entry.href)} onClick={() => setOpenMobile(false)}>{EntryIcon && <EntryIcon />}<span>{entry.label}</span>{entry.count !== undefined && <span className="ms-auto text-meta text-muted-foreground tabular-nums">{typeof entry.count === "string" ? entry.count : entry.count.toLocaleString("en-US")}</span>}</Link>
                       </SidebarMenuSubButton>
                     </SidebarMenuSubItem>
                   </Fragment>

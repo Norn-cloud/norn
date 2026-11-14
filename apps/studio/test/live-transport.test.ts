@@ -27,6 +27,16 @@ test("a cell that answers its definitions is live, with the artifacts and their 
   expect(calls).toEqual(["/api/host/v1/definitions?orgId=local&environmentId=dev"])
 })
 
+test("the catalog's per-type counts are the cell's, kept only when well formed; none when it sends none", async () => {
+  const counted = '{"admitted":true,"version":3,"artifacts":[],"objectCounts":{"shop.Product":{"count":12,"approximate":false},"shop.Order":{"count":500,"approximate":true},"shop.Bad":{"count":-1,"approximate":false},"shop.Odd":{"count":3}}}'
+  const mode = await readMode(server({ "/v1/definitions": [200, counted] }).fetcher)
+  if (mode.kind !== "live") throw new Error("expected live")
+  expect(mode.counts).toEqual({ "shop.Product": { count: 12, approximate: false }, "shop.Order": { count: 500, approximate: true } })
+  expect(await liveTransport(mode.catalog, server({}).fetcher, mode.counts).objectCounts()).toEqual(mode.counts)
+  const plain = await readMode(server({ "/v1/definitions": [200, DEFINITIONS] }).fetcher)
+  expect(plain.kind === "live" && plain.counts).toEqual({})
+})
+
 test("no session, no cell, no host or a page that is not a document reads the recording; a refusal is the cell's error", async () => {
   expect(await readMode(server({}, [401, { error: "Sign in first." }]).fetcher)).toEqual({ kind: "recorded" })
   expect(await readMode(server({}, [200, { ...ME, environmentId: null }]).fetcher)).toEqual({ kind: "recorded" })
