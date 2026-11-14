@@ -229,6 +229,7 @@ fn answer_plan<E: SqlEngine>(
     if snapshot.context.scope != host.scope().key() {
         return Err(read_denied());
     }
+    refuse_labeled_paths(host, cell.store(), plan, &snapshot.context.world)?;
     let permits = |row: &ObjectRecord, grant| allowed(host, runtime, actor, question, row, grant);
     let mut withheld = BTreeSet::new();
     let mut visible = |row: &ObjectRecord| visible_recording(row, &permits, &mut withheld);
@@ -424,6 +425,83 @@ pub fn get_numeric_trace<E: SqlEngine>(
     )
 }
 
+/// PRIVACY-4 at answer time. Admission refuses a group-by or filter on a
+/// property with a DECLARED marking; a value can also carry a label no
+/// declaration names (a runtime-classified source field, or a computed value
+/// that inherits one). So before any answer or trace, every grouped or
+/// filtered property must have no label on any live row of the answer's
+/// world. A summary the store
+/// cannot prove complete refuses too (fail closed). A cell that declares no
+/// marking has none to find.
+fn refuse_labeled_paths<E: SqlEngine>(
+    host: &DevHost<E>,
+    store: &CellStore<E>,
+    plan: &QuestionPlan,
+    world: &str,
+) -> Result<(), Refusal> {
+    let question = plan.question();
+    if question.dimensions.is_empty() && question.filters.is_empty() {
+        return Ok(());
+    }
+    let reader = store.read();
+    if host.marking_catalog(&reader)?.is_empty() {
+        return Ok(());
+    }
+    let paths = question
+        .dimensions
+        .iter()
+        .enumerate()
+        .map(|(index, dimension)| (format!("/groupBy/{index}"), &dimension.path))
+        .chain(
+            question
+                .filters
+                .iter()
+                .enumerate()
+                .map(|(index, filter)| (format!("/filter/{index}"), &filter.path)),
+        );
+    for (pointer, path) in paths {
+        let property = path.property.as_str();
+        // An own path is read on the grain; a linked one (admitted only for a
+        // linked time) on every type declaring the property: more to check,
+        // never less.
+        let types: Vec<String> = if path.links.is_empty() {
+            vec![plan.grain().as_str().to_owned()]
+        } else {
+            reader
+                .model()
+                .object_types()
+                .map(|definition| definition.name.as_str().to_owned())
+                .filter(|name| {
+                    reader
+                        .model()
+                        .effective_property_types(name)
+                        .is_ok_and(|properties| properties.iter().any(|(id, _)| id == property))
+                })
+                .collect()
+        };
+        for object_type in types {
+            let labels = reader
+                .property_marking_summary(world, &object_type, property)
+                .map_err(Refusal::host)?;
+            if !labels.is_some_and(|labels| labels.is_empty()) {
+                let mut refusal = Refusal::new(
+                    http::StatusCode::UNPROCESSABLE_ENTITY,
+                    "question.refused",
+                    "the question is not admissible",
+                    "each diagnostic names the rule and where in the question it applies",
+                );
+                refusal.diagnostics = vec![crate::refusal::RefusalDiagnostic::error(
+                    norn_checker::metric::codes::MARKED_FIELD,
+                    "this question groups or filters by a field whose values are marked",
+                    format!("/question{pointer}"),
+                )];
+                return Err(refusal);
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Trace one bucket of an admitted `plan`'s current exact result, named by
 /// its keyed handle, after the caller's collection access was decided.
 #[allow(clippy::too_many_arguments, reason = "one trace's fixed coordinates")]
@@ -443,6 +521,7 @@ fn trace_plan<E: SqlEngine>(
     if snapshot.context.scope != host.scope().key() {
         return Err(read_denied());
     }
+    refuse_labeled_paths(host, cell.store(), plan, &snapshot.context.world)?;
     if snapshot.cutoff.is_some() {
         return Err(Refusal::from_compute(CellError::ComputeRefused(
             "core.compute.unsupported_engine",
@@ -1011,6 +1090,21 @@ pub struct CatalogObjectType {
     pub name: String,
     /// Its effective properties, in declaration order.
     pub properties: Vec<CatalogProperty>,
+    /// Its one-hop links to object types the caller may read, so a client can
+    /// say what a question cannot group by yet (a question groups across a link
+    /// only by the linked time). A link to a type the caller may not read is
+    /// left out.
+    pub links: Vec<CatalogLink>,
+}
+
+/// One link of a listed object type, to a readable target.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogLink {
+    /// The link role, as a path's `links` names it.
+    pub id: String,
+    /// The object type it reaches.
+    pub target: String,
 }
 
 /// One effective property: its id and its resolved type, as declared.
@@ -1150,7 +1244,22 @@ pub fn question_catalog<E: SqlEngine>(
                     .into_iter()
                     .map(|(id, property_type)| CatalogProperty { id, property_type })
                     .collect();
-                Ok(CatalogObjectType { name, properties })
+                let catalog = runtime.catalog();
+                let links = catalog
+                    .links_for_object_type(&name)
+                    .into_iter()
+                    .flatten()
+                    .flat_map(|link| {
+                        catalog
+                            .target_types(link.target.as_str())
+                            .into_iter()
+                            .flatten()
+                            .map(move |target| (link.id.as_str().to_owned(), target))
+                    })
+                    .filter(|(_, target)| readable(target, &|governed| governed == target.as_str()))
+                    .map(|(id, target)| CatalogLink { id, target })
+                    .collect();
+                Ok(CatalogObjectType { name, properties, links })
             })
             .collect::<Result<Vec<_>, Refusal>>()?
     };

@@ -96,7 +96,7 @@ function metricWords(metric: CellMetric, metrics: readonly CellMetric[]): string
 
 /** The system prompt: the rules of a typed dashboard and the catalog in words, by object type. Stable for a catalog and day, so it caches. */
 export function systemPrompt(catalog: CellCatalog, now: number): string {
-  const sections = catalog.objectTypes.flatMap(({ name, properties }) => {
+  const sections = catalog.objectTypes.flatMap(({ name, properties, links = [] }) => {
     const metrics = catalog.metrics.filter((metric) => populationOf(metric, catalog.metrics) === name)
     if (metrics.length === 0) return []
     return [
@@ -105,6 +105,7 @@ export function systemPrompt(catalog: CellCatalog, now: number): string {
       ...metrics.map((metric) => metricWords(metric, catalog.metrics)),
       "Properties:",
       ...properties.map(({ id, type }) => `- ${id}: ${type?.kind ?? "unknown"}${type?.unit?.code ? ` in ${type.unit.code}` : ""}${type?.values?.length ? ` (one of ${type.values.join(", ")})` : ""}`),
+      ...(links.length > 0 ? ["Links (not groupable or filterable yet):", ...links.map(({ id, target }) => `- ${id} → ${target}`)] : []),
       "",
     ]
   })
@@ -112,6 +113,7 @@ export function systemPrompt(catalog: CellCatalog, now: number): string {
     "You design dashboards for Norn Studio. A dashboard is a typed definition, not free text: a title and tiles; each tile is one question over the data and a view that draws its answer.",
     "Propose only what the catalog below can answer. Every name you use must come from it. If part of the request cannot be answered, leave it out and say so in the note; never invent a metric or property.",
     "Each question measures one metric over that metric's object type, optionally grouped by one property of the same type (a time property needs a grain), optionally filtered on properties of the same type (all filters must hold), over a window of whole days.",
+    "A question cannot group or filter across a link yet. When the request needs another type's field through a link (for example ranking customers, when the customer is a linked party), leave that part out and say so in the note in these words: \"ranking by <what> needs grouping across the <type> → <target> link, which this cell's questions don't support yet\", naming the link from the catalog. Never say the catalog has no such property when a link reaches it.",
     "Views must fit the answer, and the server's checker refuses those that do not:",
     "- number: one value, so the tile has no group-by.",
     "- line or area: a time series, so group by a time property with a grain.",

@@ -17,7 +17,12 @@ export interface CellMetric {
 }
 /** The cell's `GET /v1/questions:catalog` document. */
 export interface CellCatalog {
-  readonly objectTypes: readonly { readonly name: string; readonly properties: readonly { readonly id: string; readonly type: PropertyType | null }[] }[]
+  readonly objectTypes: readonly {
+    readonly name: string
+    readonly properties: readonly { readonly id: string; readonly type: PropertyType | null }[]
+    /** One-hop links to types the caller may read; a question cannot group or filter across them yet (only a linked time). */
+    readonly links?: readonly { readonly id: string; readonly target: string }[]
+  }[]
   readonly metrics: readonly CellMetric[]
   readonly grains: readonly string[]
   readonly operators: readonly string[]
@@ -30,7 +35,8 @@ const strings = (value: unknown): value is readonly string[] => Array.isArray(va
 
 export function cellCatalogOf(value: unknown): CellCatalog | undefined {
   if (!isRecord(value) || !Array.isArray(value.objectTypes) || !Array.isArray(value.metrics) || !strings(value.grains) || !strings(value.operators)) return undefined
-  if (!value.objectTypes.every((type) => isRecord(type) && typeof type.name === "string" && Array.isArray(type.properties) && type.properties.every((property) => isRecord(property) && typeof property.id === "string"))) return undefined
+  if (!value.objectTypes.every((type) => isRecord(type) && typeof type.name === "string" && Array.isArray(type.properties) && type.properties.every((property) => isRecord(property) && typeof property.id === "string")
+    && (type.links === undefined || (Array.isArray(type.links) && type.links.every((link) => isRecord(link) && typeof link.id === "string" && typeof link.target === "string"))))) return undefined
   if (!value.metrics.every((metric) => isRecord(metric) && typeof metric.name === "string" && typeof metric.label === "string" && typeof metric.type === "string")) return undefined
   return value as unknown as CellCatalog
 }

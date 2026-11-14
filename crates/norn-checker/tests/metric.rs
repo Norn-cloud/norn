@@ -1472,3 +1472,39 @@ fn a_question_cannot_group_or_filter_by_a_marked_field() {
         "an unmarked field on the same path is not refused for its marking"
     );
 }
+
+/// A path across a link is evaluated only as a linked time grouping. Grouping
+/// by a linked type's field (a sales item's customer name) or filtering across
+/// a link is refused by name, at the path, before any evaluation, so no answer
+/// can read another type's values through a question.
+#[test]
+fn a_question_cannot_group_or_filter_across_a_link_except_by_its_linked_time() {
+    use norn_checker::metric::compute::admit;
+    let metric: MetricDefinition = decode(&serde_json::from_str::<Value>(SALES).expect("metric"));
+    let base: Value = serde_json::from_str(SALES_QUESTION).expect("question");
+    let catalog = catalog_of(&serde_json::from_str::<Vec<Value>>(ONTOLOGY).expect("ontology"));
+    let findings = |question: &Value| {
+        admit(std::slice::from_ref(&metric), &decode::<QuestionIR>(question), &catalog, 10_000)
+            .err()
+            .unwrap_or_default()
+    };
+    let at = |findings: &[norn_checker::Diagnostic], pointer: &str| {
+        findings.iter().any(|d| {
+            d.code == codes::LINKED_PATH && d.span.as_ref().is_some_and(|s| s.pointer == pointer)
+        })
+    };
+    assert!(
+        findings(&base).iter().all(|d| d.code != codes::LINKED_PATH),
+        "an own-field question is not refused for a link: {:?}",
+        findings(&base)
+    );
+
+    let customer = json!({ "links": ["parent_sales_invoice", "customer"], "property": "name" });
+    let mut grouped = base.clone();
+    grouped["groupBy"][0] = json!({ "path": customer });
+    assert!(at(&findings(&grouped), "/questions/0/groupBy/0"), "{:?}", findings(&grouped));
+
+    let mut filtered = base;
+    filtered["filter"] = json!([{ "path": customer, "operator": "eq", "value": "CUST-1" }]);
+    assert!(at(&findings(&filtered), "/questions/0/filter/0"), "{:?}", findings(&filtered));
+}

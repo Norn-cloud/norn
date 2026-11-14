@@ -1742,3 +1742,106 @@ fn no_listed_metric_names_an_internal_encoding_in_any_pack() {
     // The posting and settlement sums of the three systems take their event's time.
     assert!(linked > 0);
 }
+
+/// PRIVACY-4 at answer time. `metal` declares no marking, so admission admits
+/// the question that filters by it; but a source classified the conversions'
+/// `metal` at runtime (`pii.contact`), so its values carry that label. The
+/// answer and its trace refuse with `question.validation.marked_field` before
+/// any value is read; the same question on a cell whose values carry no label
+/// is answered.
+#[test]
+fn a_question_on_a_field_whose_values_carry_a_runtime_label_is_refused_at_answer_time() {
+    let labeled = |labels: bool| {
+        let (mut store, plan, mut context) = fixture();
+        context.scope = physical().key();
+        let model = store.model().clone();
+        let artifacts = serde_json::json!([
+            {"irVersion":"0.1","artifactId":"demo.Conversion.entity","kind":"entity","namespace":"demo","name":"Conversion","version":"0.1.0","lifecycle":"draft","scope":{"orgId":"org_demo","environmentId":"dev"},"dependencies":[],"provenance":{"source":"authoring_sdk"},"payload":{"entityVersion":"2.0","objectType":object_type()}},
+            {"irVersion":"0.1","artifactId":"demo.markings.entity","kind":"entity","namespace":"demo","name":"Markings","version":"0.1.0","lifecycle":"draft","scope":{"orgId":"org_demo","environmentId":"dev"},"dependencies":[],"provenance":{"source":"authoring_sdk"},"payload":{"entityVersion":"2.0","markings":[{"id":"pii.contact","label":"Contact","severity":"high","category":"pii.contact","mask":{"kind":"pseudonym","subject":"Conversion"}}]}}
+        ]);
+        store
+            .install_definitions(
+                model,
+                norn_cell::InstalledDefinitionInput {
+                    canonical_set: serde_json::to_string(&artifacts).expect("set"),
+                    registry: vec![],
+                    receipt_sha256: "runtime-labels".into(),
+                    admission_receipt: None,
+                    readmission: None,
+                    diff: serde_json::json!({}),
+                    installed_at: 1,
+                    layout: None,
+                },
+                Some(0),
+                &context.scope,
+            )
+            .expect("definitions with a marking catalog");
+        let writes = fixture_writes();
+        let keys: Vec<String> = writes
+            .iter()
+            .filter_map(|write| match write {
+                FactWriteRow::Put { key, .. } => Some(key.clone()),
+                _ => None,
+            })
+            .collect();
+        let events = if labels {
+            vec![
+                norn_ir::RuntimeValue::from_json(serde_json::json!({
+                    "type": "observation.recorded",
+                    "mapped": keys.iter().map(|key| serde_json::json!({
+                        "objectType": TYPE,
+                        "key": key,
+                        "propertyProvenance": {"metal": {"markings": ["pii.contact"]}}
+                    })).collect::<Vec<_>>()
+                }))
+                .expect("event"),
+            ]
+        } else {
+            vec![]
+        };
+        store
+            .commit(&CommitBatch {
+                world: WORLD.into(),
+                scope: context.scope.clone(),
+                logical_time: CLOCK,
+                writes,
+                events,
+                ..CommitBatch::default()
+            })
+            .expect("K1");
+        let host = DevHost::from_store(store, physical(), |_| BTreeMap::new())
+            .expect("host")
+            .with_authorizer(Policy);
+        let runtime = Runtime {
+            bad_row: false,
+            plan,
+            context,
+            cutoff: None,
+            cutoff_receipt: None,
+            resolved: Arc::new(AtomicUsize::new(0)),
+            min_disclosed: norn_api::question_routes::DEFAULT_MIN_DISCLOSED_BUCKET,
+        };
+        (host, runtime)
+    };
+
+    let (host, runtime) = labeled(true);
+    let refused = get_answer(&host, &scope(), Some("reader"), QUESTION, &runtime)
+        .expect_err("a labeled filter field is refused");
+    assert_eq!(refused.status, 422, "{refused:?}");
+    assert!(
+        refused.diagnostics.iter().any(|d| d.code == "question.validation.marked_field"),
+        "{refused:?}"
+    );
+    let traced = get_numeric_trace(&host, &trace_query("any"), Some("reader"), QUESTION, &runtime)
+        .expect_err("its trace is refused too");
+    assert!(
+        traced.diagnostics.iter().any(|d| d.code == "question.validation.marked_field"),
+        "{traced:?}"
+    );
+
+    let (host, runtime) = labeled(false);
+    assert!(
+        get_answer(&host, &scope(), Some("reader"), QUESTION, &runtime).is_ok(),
+        "an unlabeled field answers"
+    );
+}
