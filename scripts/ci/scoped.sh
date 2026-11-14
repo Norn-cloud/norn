@@ -21,7 +21,7 @@ if wide=$(grep -E '^(Cargo\.lock|Cargo\.toml|rust-toolchain(\.toml)?|\.cargo/.*)
 fi
 read -r touched dependents outside < <(python3 -I - "$changed" <<'PY'
 import json, subprocess, sys
-changed = sys.argv[1].split()
+changed = sys.argv[1].splitlines()
 meta = json.loads(subprocess.check_output(["cargo", "metadata", "--locked", "--format-version", "1", "--no-deps"]))
 root = meta["workspace_root"]
 pkgs = {p["name"]: p["manifest_path"][len(root) + 1:].rsplit("/", 1)[0] for p in meta["packages"]}
@@ -30,17 +30,19 @@ deps = {n for p in meta["packages"] for n in [p["name"]]
         if any(d["name"] in touched and d.get("path") for d in p["dependencies"])} - touched
 # The planner's rule (core.sh plan --affected): a path outside every member crate is
 # unplannable, except provenance records and top-level or docs/ Markdown. Studio has its own
-# steps below. Crate tests read fixtures/, registry/ and the like, so such a unit needs the full gate.
+# steps below, except apps/studio/test/fixtures/: crate tests read those documents too. Crate
+# tests read fixtures/, registry/ and the like, so such a unit needs the full gate.
 dirs = sorted(pkgs.values())
 outside = [f for f in changed if not any(f.startswith(d + "/") for d in dirs)
-           and not f.startswith(("apps/studio/", ".github/ci/provenance/"))
+           and not (f.startswith("apps/studio/") and not f.startswith("apps/studio/test/fixtures/"))
+           and not f.startswith(".github/ci/provenance/")
            and not (f.endswith(".md") and (f.startswith("docs/") or "/" not in f))]
-print(",".join(sorted(touched)) or "-", ",".join(sorted(deps)) or "-", outside[0] if outside else "-", len(outside))
+print(",".join(sorted(touched)) or "-", ",".join(sorted(deps)) or "-", len(outside), outside[0] if outside else "")
 PY
 )
 [[ -n ${touched:-} && -n ${dependents:-} && -n ${outside:-} ]] || { echo "could not derive the touched crates" >&2; exit 2; }
-if [[ ${outside%% *} != - ]]; then
-  echo "scoped: ${outside##* } changed path(s) outside the crates and apps/studio, e.g. ${outside%% *}; run the full gate: scripts/ci/core.sh all" >&2
+if [[ ${outside%% *} != 0 ]]; then
+  echo "scoped: ${outside%% *} changed path(s) outside the crates and apps/studio, e.g. ${outside#* }; run the full gate: scripts/ci/core.sh all" >&2
   exit 3
 fi
 echo "touched=$touched dependents=$dependents" | tee -a "$out/steps"
