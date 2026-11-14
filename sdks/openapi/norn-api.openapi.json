@@ -20592,6 +20592,10 @@
           "x-norn"
         ],
         "properties": {
+          "display": {
+            "type": "string",
+            "description": "How a person would name the metric in a sentence (\"quantity on hand\"), for\nprompts and suggestions. Generated metrics set it; it never changes what the metric means."
+          },
           "label": {
             "type": "string",
             "description": "Human-readable MetricFlow label."
