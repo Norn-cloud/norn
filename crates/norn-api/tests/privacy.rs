@@ -1026,6 +1026,7 @@ fn an_applied_pack_keeps_the_privacy_markings() {
     };
     let pack: Vec<Json> = [
         "jewelry.Melt.entity",
+        "jewelry.melt.access.policy",
         "jewelry.melt.fine_mass_conserved.law",
         "jewelry.melt.record.action",
     ]

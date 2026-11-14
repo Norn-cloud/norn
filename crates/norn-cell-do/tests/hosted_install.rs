@@ -42,11 +42,11 @@ const HANDLE_KEY: [u8; 32] = [7; 32];
 const QUERY: &str = "orgId=org_a&environmentId=prod";
 const MELT: &str = "jewelry.Melt";
 const RECORD: &str = "jewelry.melt.record";
-const POLICY: &str = "jewelry.melt.access.policy";
 const RECORDED: &str =
     include_str!("../../../fixtures/demo/explorer/three-systems.definitions.json");
-const JEWELRY: [&str; 3] = [
+const JEWELRY: [&str; 4] = [
     include_str!("../../../registry/packs/jewelry/artifacts/jewelry.Melt.entity.json"),
+    include_str!("../../../registry/packs/jewelry/artifacts/jewelry.melt.access.policy.json"),
     include_str!(
         "../../../registry/packs/jewelry/artifacts/jewelry.melt.fine_mass_conserved.law.json"
     ),
@@ -98,37 +98,19 @@ fn tenant_set() -> Vec<Value> {
         .collect()
 }
 
-/// Who may record a melt on a tenant cell: an action is callable only
-/// through the policy its `access` names.
-fn policy() -> Value {
-    json!({
-        "artifactId": POLICY, "dependencies": [], "irVersion": "0.1", "kind": "policy",
-        "lifecycle": "active", "name": "Who records melts", "namespace": "jewelry",
-        "payload": { "accessVersion": "0.1", "policyId": "jewelry.melt.access", "rules": [{
-            "ruleId": "recorders", "actions": [RECORD], "resourceType": MELT,
-            "scope": { "dimensions": ["org", "environment"] },
-            "allOf": [{ "role": { "anyOf": ["member", "admin", "owner"] } }] }] },
-        "provenance": { "source": "authoring_sdk", "sourcePath": "crates/norn-cell-do/tests/hosted_install.rs" },
-        "scope": {},
-        "version": "0.1.0"
-    })
-}
-
-/// The jewelry pack, its action callable through [`policy`].
+/// The jewelry pack as the registry carries it: its action callable on a
+/// tenant cell through the pack's own access policy.
 fn jewelry() -> Vec<Value> {
-    let mut artifacts: Vec<Value> = JEWELRY
+    JEWELRY
         .iter()
         .map(|text| serde_json::from_str(text).unwrap())
-        .collect();
-    artifacts[2]["payload"]["access"] = json!({ "artifactId": POLICY, "version": "0.1.0" });
-    artifacts.push(policy());
-    artifacts
+        .collect()
 }
 
 /// The pack with its law's predicate replaced by `expression`.
 fn with_law(expression: &str) -> Vec<Value> {
     let mut artifacts = jewelry();
-    artifacts[1]["payload"]["response"]["expression"] = json!(expression);
+    artifacts[2]["payload"]["response"]["expression"] = json!(expression);
     artifacts
 }
 
@@ -234,7 +216,7 @@ fn a_pack_is_planned_and_applied_on_a_running_cell() {
     assert!(
         diagnostics.iter().any(|d| d["span"]["pointer"]
             .as_str()
-            .is_some_and(|pointer| pointer.starts_with("/artifacts/1"))),
+            .is_some_and(|pointer| pointer.starts_with("/artifacts/2"))),
         "the finding names the broken law: {refusal}"
     );
     let applied = cell.change(APPLY_PATH, Some("owner"), &broken, Some(1));

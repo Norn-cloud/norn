@@ -190,6 +190,7 @@ fn conflict(code: &str, message: &str, explanation: String) -> Refusal {
 }
 
 /// The refusal of a store preflight, as a definitions install words it.
+#[allow(clippy::needless_pass_by_value, reason = "`map_err` hands the error over by value")]
 fn preflight_refusal(error: CellError) -> Refusal {
     if let CellError::DefinitionVersionConflict { expected, actual } = &error {
         return conflict(
