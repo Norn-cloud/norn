@@ -490,3 +490,114 @@ jobs:
             if (!pr.mergeQueueEntry || pr.headRefOid !== '${{ steps.pr.outputs.head_sha }}') return;
             await github.graphql('mutation($id: ID!) { dequeuePullRequest(input: { id: $id }) { clientMutationId } }', { id: pr.id });
             core.notice(`Removed #${number} from the merge queue: trusted-policy failed on its head.`);
+  # D43, D47: base-owned wrappers run Kani and hax on the candidate. Those tools
+  # compile candidate code, so this job is candidate-influenced: it holds no
+  # secrets, a read-only token, no OIDC token and no cache (a cached tool
+  # directory would let one candidate poison the tools of the next run), and
+  # every receipt it writes is candidate-reported. Candidate builds share
+  # this runner's UID with the wrapper and the receipt writer; isolating them,
+  # and the runner token, is #969. The trusted bootstrap
+  # installs the pinned tools only when the pull request changes an
+  # implementation claim or an input of one.
+  implementation-receipts:
+    name: implementation receipts
+    if: github.event_name == 'pull_request_target'
+    permissions:
+      contents: read
+    concurrency:
+      group: implementation-receipts-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    outputs:
+      base_sha: ${{ steps.pr.outputs.base_sha }}
+      head_sha: ${{ steps.pr.outputs.head_sha }}
+    steps:
+      - name: Resolve the pull request
+        id: pr
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          retries: 3
+          script: |
+            const { data } = await github.rest.pulls.get({ owner: context.repo.owner, repo: context.repo.repo, pull_number: context.payload.pull_request.number });
+            core.setOutput('base_sha', data.base.sha);
+            core.setOutput('head_sha', data.head.sha);
+            core.setOutput('head_repository', data.head.repo ? data.head.repo.full_name : '');
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.pr.outputs.base_sha }}
+          path: trusted
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ steps.pr.outputs.head_repository }}
+          ref: ${{ steps.pr.outputs.head_sha }}
+          path: candidate
+          persist-credentials: false
+      - name: Decide whether any implementation claim or input changed
+        id: scope
+        run: python3 trusted/scripts/ci/implementation_receipts.py scope --root candidate >> "$GITHUB_OUTPUT"
+      - name: Run base-owned implementation wrappers
+        env:
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+        run: python3 trusted/scripts/ci/implementation_receipts.py run --root candidate --head "$HEAD_SHA" --receipts "$RUNNER_TEMP/implementation-receipts"
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: implementation-receipts
+          path: ${{ runner.temp }}/implementation-receipts
+          if-no-files-found: ignore
+          retention-days: 30
+  # A fresh runner that executes no candidate code re-checks what it can
+  # itself (F* over the uploaded model, with its own pinned F*), labels the
+  # rest candidate-reported, and reports the verdict on the head. No claim is
+  # admitted as implementation_proved until #969 isolates the producer. A
+  # producer that did not succeed fails this check.
+  implementation-receipt-check:
+    name: implementation receipt check
+    needs: [implementation-receipts]
+    if: "!cancelled() && github.event_name == 'pull_request_target'"
+    permissions:
+      contents: read
+      statuses: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Reject a receipt producer that did not succeed
+        if: needs.implementation-receipts.result != 'success'
+        run: exit 1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.implementation-receipts.outputs.base_sha }}
+          path: trusted
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ needs.implementation-receipts.outputs.head_sha }}
+          path: candidate
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        continue-on-error: true
+        with:
+          name: implementation-receipts
+          path: ${{ runner.temp }}/implementation-receipts
+      - name: Verify receipts with the base-owned verifier
+        env:
+          HEAD_SHA: ${{ needs.implementation-receipts.outputs.head_sha }}
+        run: python3 trusted/scripts/ci/implementation_receipts.py verify --root candidate --head "$HEAD_SHA" --receipts "$RUNNER_TEMP/implementation-receipts"
+      - name: Report implementation receipts on the exact PR head
+        if: always()
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          retries: 3
+          script: |
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: '${{ needs.implementation-receipts.outputs.head_sha }}' || context.payload.pull_request.head.sha,
+              state: '${{ job.status }}' === 'success' ? 'success' : 'failure',
+              context: 'implementation-receipts',
+              description: 'Base-owned implementation-proof receipts',
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+            });

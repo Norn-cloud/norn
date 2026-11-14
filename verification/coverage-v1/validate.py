@@ -598,8 +598,11 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
     require(workflow.get("run-name") == "${{ github.event_name == 'pull_request' && github.event.action == 'ready_for_review' && format('READY {0} {1} {2}', github.event.pull_request.head.sha, github.event.pull_request.updated_at, github.sha) || github.event_name }}",
             "run name must attribute READY to the triggering event and head")
     jobs = workflow["jobs"]
-    require(set(jobs) == {"core", "plan", "test", "full", "trusted-policy"}, "workflow job inventory changed")
-    check_names = {"core": "core", "plan": "plan", "full": "full", "trusted-policy": "trusted-policy evaluation"}
+    require(set(jobs) == {"core", "plan", "test", "full", "trusted-policy",
+                          "implementation-receipts", "implementation-receipt-check"}, "workflow job inventory changed")
+    check_names = {"core": "core", "plan": "plan", "full": "full", "trusted-policy": "trusted-policy evaluation",
+                   "implementation-receipts": "implementation receipts",
+                   "implementation-receipt-check": "implementation receipt check"}
     require(all(jobs[name].get("name", name) == expected for name, expected in check_names.items()),
             "control and required check names must remain stable")
     require(not workflow.get("env"), "workflow must not inherit an execution environment")
@@ -658,6 +661,42 @@ await github.rest.repos.createCommitStatus({
         return any(key in step or key in job.get("defaults", {}).get("run", {})
                    or key in workflow.get("defaults", {}).get("run", {})
                    for key in ("shell", "working-directory"))
+    # D43, D47: receipt jobs run only base-owned code, from the trusted checkout,
+    # with the candidate checked out as data beside it. The producer compiles
+    # candidate code, so it gets a read-only token, no secrets, no OIDC token
+    # and no cache; the checker uses no cache either and fails when the
+    # producer did not succeed. No executable step may be skipped or tolerated.
+    wrapper = 'python3 trusted/scripts/ci/implementation_receipts.py {} --root candidate --head "$HEAD_SHA" ' \
+              '--receipts "$RUNNER_TEMP/implementation-receipts"'
+    scope = 'python3 trusted/scripts/ci/implementation_receipts.py scope --root candidate >> "$GITHUB_OUTPUT"'
+    for name, runs, permissions, base in (
+            ("implementation-receipts", [scope, wrapper.format("run")], {"contents": "read"},
+             "${{ steps.pr.outputs.base_sha }}"),
+            ("implementation-receipt-check", ["exit 1", wrapper.format("verify")],
+             {"contents": "read", "statuses": "write"}, "${{ needs.implementation-receipts.outputs.base_sha }}")):
+        job = jobs[name]
+        steps = job.get("steps", [])
+        caches = [step for step in steps if step.get("uses", "").startswith("actions/cache")]
+        require("secrets." not in json.dumps(job) and "environment" not in job and "container" not in job
+                and "services" not in job, f"{name}: no secrets, environment, container or service")
+        require(caches == [], f"{name}: candidate-influenced tools and receipts are never cached")
+        if name == "implementation-receipt-check":
+            require(steps[0] == {"name": "Reject a receipt producer that did not succeed",
+                                 "if": "needs.implementation-receipts.result != 'success'", "run": "exit 1"},
+                    f"{name}: a producer that did not succeed must fail the check first")
+        checkouts = [step.get("with", {}) for step in steps if step.get("uses", "").startswith("actions/checkout@")]
+        require(job.get("permissions") == permissions and not job.get("continue-on-error")
+                and "github.event_name == 'pull_request_target'" in job.get("if", "")
+                and [step["run"].strip() for step in steps if "run" in step] == runs
+                and all("if" not in step and not step.get("continue-on-error")
+                        for step in steps if "run" in step and step["run"].strip() != "exit 1")
+                and all(not has_execution_override(job, step) for step in steps)
+                and [c.get("path") for c in checkouts] == ["trusted", "candidate"]
+                and checkouts[0].get("ref") == base and set(checkouts[0]) == {"ref", "path", "persist-credentials"}
+                and all(c.get("persist-credentials") is False for c in checkouts),
+                f"{name}: only the base-owned wrapper may execute, least-privileged, beside candidate data")
+    require("norn-verification-tools" not in json.dumps(jobs),
+            "no job may cache the candidate-influenced verification tool directory")
     required_runs = {
         "core": "bash scripts/ci/core.sh cheap",
         "plan": '''if [ -n "$BASE" ]; then plan=$(bash scripts/ci/core.sh plan --affected "$BASE" "$HEAD_SHA"); else plan=$(bash scripts/ci/core.sh plan); fi
