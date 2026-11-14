@@ -43,7 +43,9 @@ fn free_text(property: &str, rows: &[&BTreeMap<String, RuntimeValue>]) -> bool {
     let mut present = 0_usize;
     for values in rows {
         match values.get(property) {
-            Some(RuntimeValue::String(text)) if text.chars().count() > MAX_CATEGORY_CHARS => return true,
+            Some(RuntimeValue::String(text)) if text.chars().count() > MAX_CATEGORY_CHARS => {
+                return true;
+            }
             None | Some(RuntimeValue::Null) => {}
             Some(value) => {
                 present = present.saturating_add(1);
@@ -227,7 +229,7 @@ pub fn get_object_facets_within<E: SqlEngine>(
             .iter()
             .any(|(name, kind)| name == id && matches!(kind_of(kind.as_ref()), "text" | "boolean"))
     };
-    let named = params.properties.is_some();
+    let by_name = params.properties.is_some();
     let asked: Vec<String> = match params.properties.as_deref() {
         None => properties
             .iter()
@@ -278,7 +280,7 @@ pub fn get_object_facets_within<E: SqlEngine>(
         scan_limit: count(max_scan),
         facets: asked
             .iter()
-            .filter(|property| named || !free_text(property, &counted))
+            .filter(|property| by_name || !free_text(property, &counted))
             .map(|property| facet(property, &counted))
             .collect(),
     })
