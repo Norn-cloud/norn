@@ -26,6 +26,17 @@ test("the proposal schema draws every name from the catalog, so a metric or prop
   expect(prompt).toContain("demo.yield (\"Yield\"): ratio of Recovered to Input (not summable)")
 })
 
+test("the prompt names each readable link and how to say that grouping across it is not supported yet, so the note never denies a property a link reaches", () => {
+  const [conversion] = cellCatalog.objectTypes
+  if (conversion === undefined) throw new Error("fixture")
+  const linked: CellCatalog = { ...cellCatalog, objectTypes: [{ ...conversion, links: [{ id: "customer", target: "canon.Party" }] }] }
+  const prompt = systemPrompt(linked, NOW)
+  expect(prompt).toContain("Links (not groupable or filterable yet):\n- customer → canon.Party")
+  expect(prompt).toContain("needs grouping across the <type> → <target> link, which this cell's questions don't support yet")
+  expect(prompt).toContain("Never say the catalog has no such property when a link reaches it.")
+  expect(systemPrompt(cellCatalog, NOW)).not.toContain("Links (not groupable")
+})
+
 test("a proposal compiles to the cell's dashboard payload: the builder's question members, numeric filters as numbers, tiles in reading order, and its origin", () => {
   let n = 0
   const definition = compile(proposed([tile({ view: "number", groupBy: "", grain: "", width: "half" }), tile({ filters: [{ property: "input", operator: "eq", value: "50.5" }] }), tile({ metric: "demo.recovered", groupBy: "metal", grain: "", view: "pie", width: "half" })]), catalog, { proposal: "prop_1", model: "claude-sonnet-5-5", request: "Weekly gold yield" }, () => `t${++n}`)
