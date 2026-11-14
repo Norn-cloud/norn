@@ -70,6 +70,10 @@
       "summary": "An argument that must be a compile-time literal is not (step id, error tag, duration, recurs count).",
       "fix": "Write the literal inline."
     },
+    "NORN-MACHINE-EVENT-CONFLICT": {
+      "summary": "One machine event moves differently (target, guards, mode or compensation) from different states.",
+      "fix": "A transition has one target and one guard set: name two events."
+    },
     "NORN-FLOW-ROUTE": {
       "summary": "switch without a literal-union discriminant, with fall-through, with non-literal cases, or not exhaustive.",
       "fix": "Switch on a literal union, cover every member (or add default), and end each clause with return or break."
@@ -156,6 +160,10 @@
     { "symbol": "@norn/authoring#Norn.connector", "probe": "norn.Norn.connector", "row": "ontology", "use": "call", "context": "definition" },
     { "symbol": "@norn/authoring#Norn.mapping", "probe": "norn.Norn.mapping", "row": "ontology", "use": "call", "context": "definition" },
     { "symbol": "@norn/authoring#Norn.law", "probe": "norn.Norn.law", "row": "ontology", "use": "call", "context": "definition" },
+    { "symbol": "@norn/authoring#Norn.obligation", "probe": "norn.Norn.obligation", "row": "ontology", "use": "call", "context": "definition", "note": "A norm over a type in the same module, lowered into its normative slot (#1176)" },
+    { "symbol": "@norn/authoring#Norn.prohibition", "probe": "norn.Norn.prohibition", "row": "ontology", "use": "call", "context": "definition", "note": "A norm over a type in the same module, lowered into its normative slot (#1176)" },
+    { "symbol": "@norn/authoring#Norn.permission", "probe": "norn.Norn.permission", "row": "ontology", "use": "call", "context": "definition", "note": "A defeater norm over a type in the same module; grants nothing (#1176)" },
+    { "symbol": "@norn/authoring#Norn.example", "probe": "norn.Norn.example", "row": "ontology", "use": "call", "context": "definition", "note": "A checked case of a law or norm, run by norn check with the checker's law semantics (LAW-EXAMPLE-1)" },
     { "symbol": "@norn/authoring#Norn.labels", "probe": "norn.Norn.labels", "row": "ontology", "use": "call", "context": "definition", "note": "A standalone labels catalog: a tenant or locale pack labels definitions another layer owns (LABEL-LOCALE-1)" },
     { "symbol": "@norn/authoring#Norn.decimal", "probe": "norn.Norn.decimal", "row": "schema", "use": "call", "context": "definition", "note": "Norn value type: exact decimal with a declared scale (EntityIR `decimal`); Effect has no exact fixed-scale number" },
     { "symbol": "@norn/authoring#Norn.boundDecimal", "probe": "norn.Norn.boundDecimal", "row": "schema", "use": "call", "context": "definition", "note": "Interface-only exact Decimal group; the implementor must declare identical units and scales" },

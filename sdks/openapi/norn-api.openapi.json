@@ -11853,12 +11853,23 @@
         "additionalProperties": false
       },
       "NornIrJdmHitPolicy": {
-        "type": "string",
-        "description": "JDM hit policy shared by decision tables and switch nodes.\n\nDMN policies other than `first` and `collect` translate or are rejected at\nDMN ingress (T3-DEC-4); they have no JDM representation.",
-        "enum": [
-          "first",
-          "collect"
-        ]
+        "oneOf": [
+          {
+            "type": "string",
+            "enum": [
+              "first",
+              "collect"
+            ]
+          },
+          {
+            "type": "string",
+            "description": "DMN `unique`, decision tables only (TABLE-UNIQUE-1, #1176): admission\nproves no two rows match one input, so evaluation selects at most one\nrow and row order never decides. A table the checker cannot prove\ndisjoint is refused, never admitted on trust.",
+            "enum": [
+              "unique"
+            ]
+          }
+        ],
+        "description": "JDM hit policy shared by decision tables and switch nodes.\n\nDMN policies other than `first`, `collect` and `unique` translate or are\nrejected at DMN ingress (T3-DEC-4); they have no JDM representation."
       },
       "NornIrJdmNode": {
         "oneOf": [
@@ -12269,12 +12280,8 @@
         ],
         "properties": {
           "hitPolicy": {
-            "type": "string",
-            "description": "Absent means `first` (the `zen-engine` default).",
-            "enum": [
-              "first",
-              "collect"
-            ]
+            "$ref": "#/components/schemas/NornIrJdmHitPolicy",
+            "description": "Absent means `first` (the `zen-engine` default)."
           },
           "statements": {
             "type": "array",

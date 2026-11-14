@@ -93,13 +93,72 @@ declare module "@norn/authoring" {
       readonly description?: string
       readonly from: ReadonlyArray<V>
       readonly to: V
-      /** ZEN Expression guards, conjoined. */
+      /** ZEN Expression guards, conjoined. A fact (`mode: "fact"`, `after` or `on`) takes none. */
       readonly guards?: ReadonlyArray<Expression<boolean>>
       readonly guardRefusalCode?: string
+      /** LIFE-SOUND-3: a deadline. The transition fires once the object has been in a source state this long. */
+      readonly after?: Duration
+      /** LIFE-SOUND-3: a declared external event of the lifecycle fires it. */
+      readonly on?: string
+      /** LIFE-SOUND-5: a fact is never refused; a request may be. Default "request" (a timer or event is a fact). */
+      readonly mode?: "fact" | "request"
+      /** LIFE-SOUND-8: the transition that compensates the irreversible effect this one dispatches. */
+      readonly compensatedBy?: string
     }
 
+    /** A whole-unit duration; the parts add up. */
+    interface Duration {
+      readonly days?: number
+      readonly hours?: number
+      readonly minutes?: number
+    }
+
+    /** LIFE-SOUND-1: how a run ending in a state ended. `resting` is a non-terminal state a perpetual object may stay in. */
+    type Outcome = "completed" | "compensated" | "cancelled" | "breached_visible" | "resting"
+
+    /** LIFE-SOUND-6: an external event kind; every reachable live state handles it or ignores it with a reason. */
+    interface EventSpec<V extends string> {
+      readonly ignoredIn?: ReadonlyArray<{ readonly states: ReadonlyArray<V>; readonly because: string }>
+    }
+
+    /** One event's move in a machine state: a target state, or a target with a guard, mode or compensation. */
+    type MachineMove<V extends string> = V | {
+      readonly to: V
+      readonly guards?: ReadonlyArray<Expression<boolean>>
+      readonly guardRefusalCode?: string
+      readonly mode?: "fact" | "request"
+      readonly compensatedBy?: string
+      readonly description?: string
+    }
+    /** One state of a machine (XState shape). `final` makes it terminal with that outcome; `resting` a perpetual ending. */
+    interface MachineState<V extends string> {
+      readonly description?: string
+      /** Event → move. An event named in the machine's `events` is an external event; any other is an action. */
+      readonly on?: { readonly [event: string]: MachineMove<V> }
+      /** A deadline: after this long in the state, move to `to` (transition id `id`, default `<state>_timeout`). */
+      readonly after?: Duration & { readonly to: V; readonly id?: string }
+      readonly final?: Exclude<Outcome, "resting">
+      readonly resting?: true
+      readonly immutable?: true
+    }
+    /**
+     * A lifecycle in machine shape (dx-spec §4.4): every state of the property is listed once,
+     * and the same event from several states lowers to one transition. It lowers to the same
+     * IR as the flat form; the checker proves no dead ends (LIFE-SOUND-1..8).
+     */
+    type MachineSpec<T> = {
+      readonly [P in keyof T & string]: {
+        readonly property: P
+        readonly description?: string
+        readonly initial: Extract<T[P], string> | ReadonlyArray<Extract<T[P], string>>
+        readonly states: { readonly [S in Extract<T[P], string>]: MachineState<Extract<T[P], string>> }
+        /** External event kinds; `ignore` names why every state that does not handle it ignores it. */
+        readonly events?: { readonly [id: string]: { readonly ignore?: string } }
+      }
+    }[keyof T & string]
+
     /** A lifecycle over one enum property of `T`; its states are that property's values. */
-    type LifecycleSpec<T> = {
+    type LifecycleSpec<T> = MachineSpec<T> | {
       readonly [P in keyof T & string]: {
         readonly property: P
         readonly description?: string
@@ -107,6 +166,10 @@ declare module "@norn/authoring" {
         readonly terminal?: ReadonlyArray<Extract<T[P], string>>
         readonly immutable?: ReadonlyArray<Extract<T[P], string>>
         readonly transitions: ReadonlyArray<TransitionSpec<Extract<T[P], string>>>
+        /** LIFE-SOUND-1: the endings and their outcomes. A terminal state left out is an unclassified good ending. */
+        readonly endings?: { readonly [S in Extract<T[P], string>]?: Outcome }
+        /** LIFE-SOUND-6: external event kinds by id. */
+        readonly events?: { readonly [id: string]: EventSpec<Extract<T[P], string>> }
       }
     }[keyof T & string]
 
@@ -467,7 +530,14 @@ declare module "@norn/authoring" {
       readonly because: string
       /** Codemod only: keep an existing law id instead of `<namespace>.<Type>.<name>`. */
       readonly id?: string
+      /**
+       * Labelled exceptions (#1126): when an exception's `when` holds and nothing nested under it
+       * applies, the law does not apply. A nested `unless` re-applies what its parent lifted.
+       * Only the law's owner adds exceptions; the checker refuses a malformed tree.
+       */
+      readonly unless?: Exceptions<D>
     }
+    type Exceptions<D> = { readonly [label: string]: { readonly when: LawPredicate<D>; readonly because: string; readonly unless?: Exceptions<D> } }
     /** Exactly one of `must` / `never` / `eventually`. */
     type LawSpec<D> = LawSpecBase<D> & (
       | { readonly must: LawPredicate<D>; readonly never?: undefined; readonly eventually?: undefined }
@@ -480,6 +550,37 @@ declare module "@norn/authoring" {
      * the lambdas compile statically and never run.
      */
     function law<const D extends TypeDefinition<any, any> | InterfaceDefinition<any>>(name: string, spec: LawSpec<D>): LawDefinition
+
+    /** A norm: an obligation, prohibition or permission over one object type (#1176 unit B). */
+    interface NormDefinition { readonly _tag: "NornNorm" }
+    interface NormSpecBase<D> {
+      /** The subject: an object type declared in this module; the norm lowers into its artifact. */
+      readonly on: D
+      readonly when?: LawPredicate<D>
+      /** The authority and version the norm comes from (one per document, not signed per rule). */
+      readonly cite: { readonly authority: string; readonly version: string }
+      /** Declared precedence: this norm is defeated by these (never a numeric priority). */
+      readonly yieldsTo?: ReadonlyArray<NormDefinition>
+      readonly unless?: Exceptions<D>
+      readonly because: string
+    }
+    /** What must hold. */
+    function obligation<const D extends TypeDefinition<any, any>>(name: string, spec: NormSpecBase<D> & { readonly must: LawPredicate<D> }): NormDefinition
+    /** What must not hold. */
+    function prohibition<const D extends TypeDefinition<any, any>>(name: string, spec: NormSpecBase<D> & { readonly never: LawPredicate<D> }): NormDefinition
+    /**
+     * LAW-EXAMPLE-1: a checked case of a law or a norm. `norn check` evaluates it with the
+     * checker's own law semantics (condition, exception tree, response) and reports a
+     * mismatch as `law.example.mismatch`. Evidence about one value only; it proves nothing else.
+     */
+    function example(name: string, spec: {
+      readonly of: LawDefinition | NormDefinition
+      readonly given: { readonly [property: string]: unknown }
+      readonly expect: "holds" | "violated" | "not_applicable" | { readonly excepted: ReadonlyArray<string> }
+    }): ExampleDefinition
+    interface ExampleDefinition { readonly _tag: "NornExample" }
+    /** A defeater: where `may` holds, a prohibition that yields to it does not apply. Grants nothing. */
+    function permission<const D extends TypeDefinition<any, any>>(name: string, spec: NormSpecBase<D> & { readonly may: LawPredicate<D> }): NormDefinition
     function law(meta: Localized & {
       readonly id: string
       readonly title: string
@@ -553,12 +654,26 @@ declare module "@norn/authoring" {
       readonly output: O
       readonly scopeRequired: ReadonlyArray<string>
       readonly graph?: UnsafeJdmGraph
+      /**
+       * TABLE-UNIQUE-1: with table rows, "unique" has the checker prove the rows disjoint over
+       * the finite input (overlap is refused with a witness; an undecidable table is Unknown
+       * and refused); "first" tries them in order. A callback's branches are always in order.
+       */
+      readonly hit?: "first" | "unique"
     }
 
     /** A RuleIR v2 decision (T7-TS-3). */
     function decision<I extends Schema.Top, O extends Schema.Top, const Result extends O["Type"] = O["Type"]>(
       meta: DecisionMeta<I, O>,
       body?: (input: I["Type"]) => Result,
+    ): DecisionDefinition<I["Type"], O["Type"]>
+    /**
+     * A decision table as rows (TABLE-UNIQUE-1). Each row's `when` stands alone: under
+     * `hit: "unique"` the checker proves no two rows match one input, or refuses the table.
+     */
+    function decision<I extends Schema.Top, O extends Schema.Top>(
+      meta: DecisionMeta<I, O>,
+      rows: ReadonlyArray<{ readonly when: (input: I["Type"]) => boolean; readonly then: (input: I["Type"]) => O["Type"] }>,
     ): DecisionDefinition<I["Type"], O["Type"]>
 
     interface Expression<T> { readonly _tag: "NornExpression"; readonly __type?: T }

@@ -66,6 +66,13 @@ pub fn check_expression(
     .map_err(JsError::from)
 }
 
+/// `evaluateLaw(lawJson, subjectJson)`: see [`crate::evaluate_law_json`].
+#[wasm_bindgen(js_name = evaluateLaw)]
+#[must_use]
+pub fn evaluate_law(law_json: &str, subject_json: &str) -> String {
+    crate::evaluate_law_json(law_json, subject_json)
+}
+
 /// `evaluateExpression(expr, inputJson, profile?)`: see
 /// [`crate::evaluate_expression_json`]. `inputJson` is raw JSON text so decimal
 /// tokens keep their exact values in JavaScript.

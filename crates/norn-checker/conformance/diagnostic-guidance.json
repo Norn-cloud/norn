@@ -872,6 +872,14 @@
     "fix": "Add a label for the locale the description or review state names, or remove that locale."
   },
   {
+    "code": "law.example.mismatch",
+    "fix": "Fix the law, its exceptions or the example's expectation so they agree."
+  },
+  {
+    "code": "law.example.unsupported",
+    "fix": "Give examples only for untimed always or never laws with predicate responses, and subject values of the law's type."
+  },
+  {
     "code": "law.exception.cycle",
     "fix": "Remove the reported cyclic dependency or reference; declare an acyclic graph and recheck the complete definition set."
   },
@@ -2234,6 +2242,14 @@
   {
     "code": "rule.validation.jdm_switch_unconnected_branch",
     "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+  },
+  {
+    "code": "rule.validation.jdm_unique_overlap",
+    "fix": "Make the rows disjoint over the input, or use first for a classification table or collect to keep every match."
+  },
+  {
+    "code": "rule.validation.jdm_unique_unproved",
+    "fix": "Give the table a finite closed input it reads directly, or use first for a classification table."
   },
   {
     "code": "rule.validation.jdm_unknown_column",

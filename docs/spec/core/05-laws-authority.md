@@ -713,6 +713,35 @@ Named scenarios: `a_planted_trap_is_found_though_every_state_has_an_exit`,
 `a_deadline_into_a_trap_has_no_remedy`,
 `a_cancel_after_dispatch_must_run_the_compensation`.
 
+### Unique tables and checked examples (TABLE-UNIQUE-1, LAW-EXAMPLE-1, #1176)
+
+**TABLE-UNIQUE-1.** `JdmHitPolicy` gains `unique` (additive, D84), for
+decision tables only; a switch still admits `first` and `collect`. A unique
+table is admitted only when the exhaustive finite analysis
+(`table_analysis::analyze_table`) over the rule's closed `inputSchema` finds no
+input that two rows match. That analysis covers a table whose only incoming
+edge comes from the input node. An overlap is refused with
+`rule.validation.jdm_unique_overlap`, naming the rows and a witness input. An
+input that is not the rule input, an unbounded domain, an exhausted budget or a
+cell that does not evaluate to a Boolean is Unknown and refused with
+`rule.validation.jdm_unique_unproved`, never admitted on trust. Evaluation of
+an admitted unique table therefore sees at most one matching row, and selects
+it as `first` would. A normative table uses `unique` or `collect`; `first` is
+for classification. In authoring, `Norn.decision({ hit: "unique" })` makes each
+branch a row, and the final fallthrough is the complement of the branches.
+
+**LAW-EXAMPLE-1.** `Norn.example(name, { of, given, expect })` is a checked
+case of a law or a norm. `of` compiles to where its `LawIR` lives: the law
+artifact, or the norm's slot in its subject's entity artifact. `norn check`
+evaluates each case with the checker's law semantics
+(`law_examples::evaluate`: the condition, then the exception tree's fold, then
+the response under `always`/`never`). The verdict is `not_applicable`,
+`excepted` (with the applied exception ids), `holds` or `violated`. A
+mismatch is `law.example.mismatch` at the example's line. A timed or
+progress law, a non-predicate response, a malformed tree or a non-Boolean
+expression is `law.example.unsupported`. An example is evidence about one
+value; it proves nothing about other values and grants nothing.
+
 ### Observed conservation suggestions (MINE-CONS-1, #736)
 
 The runtime `norn_cell::mining::suggest_conservation` question discovers one

@@ -656,6 +656,12 @@
     "labels.validation.unlabelled_locale": {
       "message": "a description or review state names a locale that has no label"
     },
+    "law.example.mismatch": {
+      "message": "a law example's verdict differs from its expectation: {$detail}"
+    },
+    "law.example.unsupported": {
+      "message": "a law example cannot be evaluated on one value: {$detail}"
+    },
     "law.exception.cycle": {
       "message": "law exception overrides chain never reaches its law"
     },
@@ -1678,6 +1684,12 @@
     },
     "rule.validation.jdm_switch_unconnected_branch": {
       "message": "branch {$statementId} of switch {$nodeId} has no outgoing edge, so an event that takes it reaches no node"
+    },
+    "rule.validation.jdm_unique_overlap": {
+      "message": "two rows of a unique decision table match the same input: {$detail}"
+    },
+    "rule.validation.jdm_unique_unproved": {
+      "message": "the checker cannot prove a unique decision table's rows disjoint, so it is refused: {$detail}"
     },
     "rule.validation.jdm_unknown_column": {
       "message": "row {$rowId} has a cell for {$columnId}, which is not a column of the table"

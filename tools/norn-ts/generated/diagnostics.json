@@ -1745,6 +1745,22 @@
       "no_fix": null
     },
     {
+      "code": "law.example.mismatch",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a law example's verdict differs from its expectation: {detail}",
+      "fix": "Fix the law, its exceptions or the example's expectation so they agree.",
+      "no_fix": null
+    },
+    {
+      "code": "law.example.unsupported",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a law example cannot be evaluated on one value: {detail}",
+      "fix": "Give examples only for untimed always or never laws with predicate responses, and subject values of the law's type.",
+      "no_fix": null
+    },
+    {
       "code": "law.exception.cycle",
       "tier": "T3",
       "severity": "error",
@@ -4471,6 +4487,22 @@
       "message": "branch {statementId} of switch {nodeId} has no outgoing edge, so an event that takes it reaches no node",
       "fix": null,
       "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
+    },
+    {
+      "code": "rule.validation.jdm_unique_overlap",
+      "tier": "T2",
+      "severity": "error",
+      "message": "two rows of a unique decision table match the same input: {detail}",
+      "fix": "Make the rows disjoint over the input, or use first for a classification table or collect to keep every match.",
+      "no_fix": null
+    },
+    {
+      "code": "rule.validation.jdm_unique_unproved",
+      "tier": "T2",
+      "severity": "error",
+      "message": "the checker cannot prove a unique decision table's rows disjoint, so it is refused: {detail}",
+      "fix": "Give the table a finite closed input it reads directly, or use first for a classification table.",
+      "no_fix": null
     },
     {
       "code": "rule.validation.jdm_unknown_column",
