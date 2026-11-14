@@ -3,7 +3,7 @@ import { Check, ListFilter, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import type { Field } from "../lib/catalog.ts"
-import { chosen, countText, readFacets, toggled, without, type Facet } from "../lib/facets.ts"
+import { FacetsTimedOut, chosen, countText, readFacets, toggled, without, type Facet } from "../lib/facets.ts"
 import { displayOf } from "../lib/objects.ts"
 import type { Clause, Predicate } from "../lib/records-query.ts"
 
@@ -36,7 +36,13 @@ export function FacetsRail({ objectType, fields, filter, onFilter }: {
     }),
   })
   if (base.isPending) return <p className="px-1 text-meta text-muted-foreground">Counting values…</p>
-  if (base.isError) return <p className="px-1 text-meta text-muted-foreground">{base.error.message}</p>
+  if (base.isError) return (
+    <div role="status" className="grid gap-1.5 px-1 text-meta text-muted-foreground">
+      <p>{base.error instanceof FacetsTimedOut ? "Counts aren't available right now." : base.error.message}</p>
+      {base.error instanceof FacetsTimedOut && <p>{base.error.message} The records are still listed.</p>}
+      <div><Button type="button" variant="outline" size="xs" disabled={base.isFetching} onClick={() => void base.refetch()}>Count again</Button></div>
+    </div>
+  )
   const document = base.data.document
   const facetOf = (property: string): Facet | undefined => {
     const at = narrowed.indexOf(property)

@@ -256,3 +256,24 @@ test("an English summary under an Arabic title is marked lang=en; an Arabic one 
   expect(arabic.byName.get("core.Agent")).toMatchObject({ titleLang: "ar", summaryLang: "en" })
   expect(catalogOf(document, "en").byName.get("canon.Holding")).toMatchObject({ titleLang: "en", summary: "Owner and location partitioned holding", summaryLang: "en" })
 })
+
+test("a refusal with no detail lists the record's open law finding with its compared facts, read from the record's history when the record is held in quarantine", async () => {
+  const { RedactedLawRefusal } = await import("../src/actions/law-refusal.tsx")
+  const artifact = (file: string) => JSON.parse(readFileSync(join(import.meta.dir, "../../../registry/packs/documents/artifacts", file), "utf8")) as unknown
+  const client = new QueryClient()
+  client.setQueryData(["catalog"], readDocument(JSON.stringify([artifact("docs.ScannedDocument.entity.json"), artifact("docs.ScannedDocument.total_matches_lines.law.json")]), "live"))
+  const id = "SCAN-INV-0042"
+  client.setQueryData(["findings", "docs.ScannedDocument", id], readDocument(JSON.stringify({ objectType: "docs.ScannedDocument", id, quarantined: true, evidence: [],
+    findings: [{ id: "f-1", ruleRef: { kind: "law", artifactId: "docs.ScannedDocument.total_matches_lines.law", lawId: "docs.ScannedDocument.total_matches_lines", version: "0.1" }, severity: "error", message: "total 720 vs lines 72", status: "open", firstSeen: "", lastSeen: "" }] }), "live"))
+  // Quarantined: the object route serves nothing; the history still carries the stored values.
+  client.setQueryData(["object", "docs.ScannedDocument", id], null)
+  client.setQueryData(["history", "docs.ScannedDocument", id], readDocument(JSON.stringify({ objectType: "docs.ScannedDocument", id, truncated: false,
+    versions: [{ version: 1, commit: 2975, logicalTime: 0, values: { total: 720, lines_total: 72 }, writer: { kind: "other" } }] }), "live"))
+  const html = renderToStaticMarkup(<QueryClientProvider client={client}><ViewProvider><RedactedLawRefusal objectType="docs.ScannedDocument" id={id} code="core.laws.violated" message="a declared precondition does not hold" technical={false} /></ViewProvider></QueryClientProvider>)
+  expect(html).toContain("Refused by a law. Nothing was written.")
+  expect(html).toContain("Open findings on this record")
+  expect(html).toContain("printed total must equal the sum of its printed lines")
+  expect(html).toMatch(/720\.00/)
+  expect(html).toMatch(/72\.00/)
+  expect(html).not.toContain(">—<")
+})
