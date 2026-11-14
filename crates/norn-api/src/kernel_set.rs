@@ -67,6 +67,12 @@ pub fn base_ids(receipt: Option<&str>) -> Result<BTreeSet<String>, String> {
 /// Admit the full set `artifacts` from trusted provisioning code, its base
 /// partitioned by reserved namespace.
 ///
+/// Trusted input only (a compiled-in seed, the local dev host): an artifact
+/// named `core.` or `std.` is taken as base, unchecked as a candidate. A
+/// request's artifacts never come here; network provisioning supplies the
+/// host's own base ([`crate::provision::admit_submission`]) and refuses a
+/// reserved id in the submission.
+///
 /// # Errors
 /// The checker's findings, or a set that cannot be encoded or projected.
 pub fn admit_kernel_set(artifacts: &[ArtifactEnvelope]) -> Result<AdmittedSet, KernelRefusal> {

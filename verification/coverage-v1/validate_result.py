@@ -17,15 +17,36 @@ import jsonschema
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = Path(__file__).with_name("result.schema.json")
 IGNORED_EVIDENCE_DIRS = {".git", ".turbo", "__pycache__", "node_modules", "target"}
-sys.path.insert(0, str(ROOT / "scripts"))
-import coverage_manifest  # noqa: E402
-from verification_attestation import (  # noqa: E402
-    canonical_command,
-    collect_git_identity,
-    collect_tool_versions,
-    expected_evidence_paths,
-    selector_is_declared,
-)
+
+def _sibling(name, directory=None):
+    """Load sibling module `name` from its source by explicit path: never through sys.path,
+    never from a bytecode cache, never a same-named module loaded some other way (#513)."""
+    import pathlib
+    import sys
+    import types
+
+    path = (directory or pathlib.Path(__file__).resolve().parent) / f"{name}.py"
+    loaded = sys.modules.get(name)
+    if getattr(loaded, "__norn_sibling__", None) == str(path):
+        return loaded
+    module = types.ModuleType(name)
+    module.__file__ = str(path)
+    module.__norn_sibling__ = str(path)
+    sys.modules[name] = module
+    try:
+        exec(compile(path.read_bytes(), str(path), "exec", dont_inherit=True), module.__dict__)
+    except BaseException:
+        del sys.modules[name]
+        raise
+    return module
+
+coverage_manifest = _sibling("coverage_manifest", ROOT / "scripts")
+_verification_attestation = _sibling("verification_attestation", ROOT / "scripts")
+canonical_command = _verification_attestation.canonical_command
+collect_git_identity = _verification_attestation.collect_git_identity
+collect_tool_versions = _verification_attestation.collect_tool_versions
+expected_evidence_paths = _verification_attestation.expected_evidence_paths
+selector_is_declared = _verification_attestation.selector_is_declared
 
 
 def sha256(path: Path) -> str:

@@ -13,13 +13,35 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-import coverage_manifest
-from verification_attestation import (
-    canonical_command,
-    collect_git_identity,
-    collect_tool_versions,
-    expected_evidence_paths,
-)
+
+def _sibling(name, directory=None):
+    """Load sibling module `name` from its source by explicit path: never through sys.path,
+    never from a bytecode cache, never a same-named module loaded some other way (#513)."""
+    import pathlib
+    import sys
+    import types
+
+    path = (directory or pathlib.Path(__file__).resolve().parent) / f"{name}.py"
+    loaded = sys.modules.get(name)
+    if getattr(loaded, "__norn_sibling__", None) == str(path):
+        return loaded
+    module = types.ModuleType(name)
+    module.__file__ = str(path)
+    module.__norn_sibling__ = str(path)
+    sys.modules[name] = module
+    try:
+        exec(compile(path.read_bytes(), str(path), "exec", dont_inherit=True), module.__dict__)
+    except BaseException:
+        del sys.modules[name]
+        raise
+    return module
+
+coverage_manifest = _sibling("coverage_manifest")
+_verification_attestation = _sibling("verification_attestation")
+canonical_command = _verification_attestation.canonical_command
+collect_git_identity = _verification_attestation.collect_git_identity
+collect_tool_versions = _verification_attestation.collect_tool_versions
+expected_evidence_paths = _verification_attestation.expected_evidence_paths
 
 
 ROOT = Path(__file__).resolve().parents[1]
