@@ -296,7 +296,9 @@ fn held_back_records_are_grouped_by_law_with_the_fix_only_for_who_may_make_it() 
     // "Use 72.00" under the ledger law would break the lines law (its line still reads
     // 720): the server tries the fix against the record's other laws and offers none.
     assert!(disputed.get("suggestedFix").is_none(), "{disputed}");
-    let others = disputed["otherFindings"].as_array().expect("the laws that disagree");
+    let others = disputed["otherFindings"]
+        .as_array()
+        .expect("the laws that disagree");
     assert!(!others.is_empty(), "{disputed}");
     // INV-0042's fix keeps every other law it takes, so it is still offered (above).
     let held = section(&inbox, "held_back");

@@ -691,7 +691,11 @@ fn neighbors<E: SqlEngine>(
             }
         }
     }
-    Ok((complete.then_some(rows), evidence, complete.then_some(outbound)))
+    Ok((
+        complete.then_some(rows),
+        evidence,
+        complete.then_some(outbound),
+    ))
 }
 
 /// The other laws a fix `property := value` would have to keep, tried on the
@@ -700,6 +704,10 @@ fn neighbors<E: SqlEngine>(
 /// break is returned in words; one this cannot decide (an unreadable value, a
 /// condition other than `self.role != null`, a link past the bound) is
 /// returned as its rationale, so no fix is offered either way.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one dry run: the values it tries, then each other law in turn"
+)]
 fn dry_run(
     definitions: &Definitions,
     review: &Review,
@@ -713,24 +721,36 @@ fn dry_run(
     };
     let Some(outbound) = &review.outbound else {
         // Past the link bound nothing can be decided: no other law is checked, so no fix.
-        return vec![undecided(finding.id.as_str(), "This record has too many links to check a fix against its other laws.")];
+        return vec![undecided(
+            finding.id.as_str(),
+            "This record has too many links to check a fix against its other laws.",
+        )];
     };
     let marked_linked: BTreeSet<(String, String)> = review
         .neighbors
         .iter()
         .flatten()
-        .flat_map(|(row, marked)| marked.iter().map(|property| (row.id.clone(), property.clone())))
+        .flat_map(|(row, marked)| {
+            marked
+                .iter()
+                .map(|property| (row.id.clone(), property.clone()))
+        })
         .collect();
     let mut values = review.values.clone();
     values.insert(property.to_owned(), value.clone());
     for (path, compared) in &finding.values {
-        values.entry(path.clone()).or_insert_with(|| compared.clone());
+        values
+            .entry(path.clone())
+            .or_insert_with(|| compared.clone());
     }
     let mut linked: BTreeMap<String, Vec<RuntimeValue>> = BTreeMap::new();
     for (role, row) in outbound {
         for (name, held) in &row.values {
             if !marked_linked.contains(&(row.id.clone(), name.clone())) {
-                linked.entry(format!("{role}.{name}")).or_default().push(held.clone());
+                linked
+                    .entry(format!("{role}.{name}"))
+                    .or_default()
+                    .push(held.clone());
             }
         }
     }
@@ -746,21 +766,37 @@ fn dry_run(
         if Some(id.as_str()) == current {
             continue;
         }
-        let Some((_, law)) = definitions.laws.get(id) else { continue };
-        let LawResponse::Predicate { expression } = &law.response else { continue };
-        let condition = law.condition.as_ref().map(|condition| condition.as_str().to_owned());
-        if !reads(expression.as_str(), property) && !condition.as_deref().is_some_and(|text| reads(text, property)) {
+        let Some((_, law)) = definitions.laws.get(id) else {
+            continue;
+        };
+        let LawResponse::Predicate { expression } = &law.response else {
+            continue;
+        };
+        let condition = law
+            .condition
+            .as_ref()
+            .map(|condition| condition.as_str().to_owned());
+        if !reads(expression.as_str(), property)
+            && !condition
+                .as_deref()
+                .is_some_and(|text| reads(text, property))
+        {
             continue;
         }
         let undecidable = || undecided(id, &law.rationale);
         // A condition this can decide: `self.role != null`.
         if let Some(text) = &condition {
             let compact = normalized(text);
-            let Some(role) = compact.strip_prefix("self.").and_then(|rest| rest.strip_suffix("!=null")) else {
+            let Some(role) = compact
+                .strip_prefix("self.")
+                .and_then(|rest| rest.strip_suffix("!=null"))
+            else {
                 broken.push(undecidable());
                 continue;
             };
-            let held = values.get(role).is_some_and(|held| !matches!(held, RuntimeValue::Null))
+            let held = values
+                .get(role)
+                .is_some_and(|held| !matches!(held, RuntimeValue::Null))
                 || outbound.iter().any(|(link, _)| link == role);
             if !held {
                 continue;
@@ -791,18 +827,29 @@ fn dry_run(
 /// Two values equal as exact numbers (`72` and `72.00`), or as themselves.
 fn same_number(left: &RuntimeValue, right: &RuntimeValue) -> bool {
     match (left, right) {
-        (RuntimeValue::Number(a), RuntimeValue::Number(b)) => a.canonical() == b.canonical() || a == b,
+        (RuntimeValue::Number(a), RuntimeValue::Number(b)) => {
+            a.canonical() == b.canonical() || a == b
+        }
         _ => left == right,
     }
 }
 
 fn undecided(id: &str, words: &str) -> NornInboxFinding {
-    NornInboxFinding { id: id.to_owned(), words: words.to_owned(), message: words.to_owned(), compared: BTreeMap::new() }
+    NornInboxFinding {
+        id: id.to_owned(),
+        words: words.to_owned(),
+        message: words.to_owned(),
+        compared: BTreeMap::new(),
+    }
 }
 
 /// A record's linked rows (either way, `None` past the bound), the evidence
 /// among them, and its outgoing links by role (`None` past the bound).
-type Neighborhood = (Option<Vec<ObjectRecord>>, Vec<ObjectRecord>, Option<Vec<(String, ObjectRecord)>>);
+type Neighborhood = (
+    Option<Vec<ObjectRecord>>,
+    Vec<ObjectRecord>,
+    Option<Vec<(String, ObjectRecord)>>,
+);
 
 /// One record of a group: its id and route for every caller who may list it;
 /// its finding, values and fix only under the findings read's gate.
@@ -845,21 +892,26 @@ fn record<E: SqlEngine>(
                     .collect()
             })
             .unwrap_or_default();
-        let (neighbors, evidence, outbound) = if finding.values.keys().any(|path| path.contains('.'))
-            || !definitions.callable.is_empty()
-        {
-            neighbors(reader, row)?
-        } else {
-            (Some(Vec::new()), Vec::new(), Some(Vec::new()))
-        };
+        let (neighbors, evidence, outbound) =
+            if finding.values.keys().any(|path| path.contains('.'))
+                || !definitions.callable.is_empty()
+            {
+                neighbors(reader, row)?
+            } else {
+                (Some(Vec::new()), Vec::new(), Some(Vec::new()))
+            };
         // The laws whose scope takes this record's type (its own, a supertype or an interface).
         let applicable = definitions
             .laws
             .iter()
             .filter(|(_, (_, law))| {
-                law.scope.object_types.iter().chain(std::iter::once(&law.subject)).any(|scoped| {
-                    scoped == &row.object_type || reader.model().is_a(&row.object_type, scoped)
-                })
+                law.scope
+                    .object_types
+                    .iter()
+                    .chain(std::iter::once(&law.subject))
+                    .any(|scoped| {
+                        scoped == &row.object_type || reader.model().is_a(&row.object_type, scoped)
+                    })
             })
             .map(|(id, _)| id.clone())
             .collect();
@@ -952,7 +1004,12 @@ fn record<E: SqlEngine>(
         .filter(|other| other.rule_ref != finding.rule_ref)
         .map(|other| {
             let (compared, _, words) = read(other);
-            NornInboxFinding { id: other.id.clone(), words, message: other.message.clone(), compared }
+            NornInboxFinding {
+                id: other.id.clone(),
+                words,
+                message: other.message.clone(),
+                compared,
+            }
         })
         .collect();
     // The fix, tried against every other law that takes the record and reads the
