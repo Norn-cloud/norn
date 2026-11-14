@@ -1259,7 +1259,11 @@ pub fn question_catalog<E: SqlEngine>(
                     .filter(|(_, target)| readable(target, &|governed| governed == target.as_str()))
                     .map(|(id, target)| CatalogLink { id, target })
                     .collect();
-                Ok(CatalogObjectType { name, properties, links })
+                Ok(CatalogObjectType {
+                    name,
+                    properties,
+                    links,
+                })
             })
             .collect::<Result<Vec<_>, Refusal>>()?
     };

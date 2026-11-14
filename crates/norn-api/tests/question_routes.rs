@@ -1779,9 +1779,12 @@ fn a_question_on_a_field_whose_values_carry_a_runtime_label_is_refused_at_answer
         let writes = fixture_writes();
         let keys: Vec<String> = writes
             .iter()
-            .filter_map(|write| match write {
-                FactWriteRow::Put { key, .. } => Some(key.clone()),
-                _ => None,
+            .filter_map(|write| {
+                if let FactWriteRow::Put { key, .. } = write {
+                    Some(key.clone())
+                } else {
+                    None
+                }
             })
             .collect();
         let events = if labels {
@@ -1829,13 +1832,25 @@ fn a_question_on_a_field_whose_values_carry_a_runtime_label_is_refused_at_answer
         .expect_err("a labeled filter field is refused");
     assert_eq!(refused.status, 422, "{refused:?}");
     assert!(
-        refused.diagnostics.iter().any(|d| d.code == "question.validation.marked_field"),
+        refused
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "question.validation.marked_field"),
         "{refused:?}"
     );
-    let traced = get_numeric_trace(&host, &trace_query("any"), Some("reader"), QUESTION, &runtime)
-        .expect_err("its trace is refused too");
+    let traced = get_numeric_trace(
+        &host,
+        &trace_query("any"),
+        Some("reader"),
+        QUESTION,
+        &runtime,
+    )
+    .expect_err("its trace is refused too");
     assert!(
-        traced.diagnostics.iter().any(|d| d.code == "question.validation.marked_field"),
+        traced
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "question.validation.marked_field"),
         "{traced:?}"
     );
 

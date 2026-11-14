@@ -1484,9 +1484,14 @@ fn a_question_cannot_group_or_filter_across_a_link_except_by_its_linked_time() {
     let base: Value = serde_json::from_str(SALES_QUESTION).expect("question");
     let catalog = catalog_of(&serde_json::from_str::<Vec<Value>>(ONTOLOGY).expect("ontology"));
     let findings = |question: &Value| {
-        admit(std::slice::from_ref(&metric), &decode::<QuestionIR>(question), &catalog, 10_000)
-            .err()
-            .unwrap_or_default()
+        admit(
+            std::slice::from_ref(&metric),
+            &decode::<QuestionIR>(question),
+            &catalog,
+            10_000,
+        )
+        .err()
+        .unwrap_or_default()
     };
     let at = |findings: &[norn_checker::Diagnostic], pointer: &str| {
         findings.iter().any(|d| {
@@ -1502,9 +1507,17 @@ fn a_question_cannot_group_or_filter_across_a_link_except_by_its_linked_time() {
     let customer = json!({ "links": ["parent_sales_invoice", "customer"], "property": "name" });
     let mut grouped = base.clone();
     grouped["groupBy"][0] = json!({ "path": customer });
-    assert!(at(&findings(&grouped), "/questions/0/groupBy/0"), "{:?}", findings(&grouped));
+    assert!(
+        at(&findings(&grouped), "/questions/0/groupBy/0"),
+        "{:?}",
+        findings(&grouped)
+    );
 
     let mut filtered = base;
     filtered["filter"] = json!([{ "path": customer, "operator": "eq", "value": "CUST-1" }]);
-    assert!(at(&findings(&filtered), "/questions/0/filter/0"), "{:?}", findings(&filtered));
+    assert!(
+        at(&findings(&filtered), "/questions/0/filter/0"),
+        "{:?}",
+        findings(&filtered)
+    );
 }
