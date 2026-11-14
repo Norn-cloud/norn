@@ -147,7 +147,8 @@ pub use entity_v2::extension::{
 pub use entity_v2::interface::{InterfaceDef, InterfaceName, InterfaceProperty};
 pub use entity_v2::invariant::{ConstraintClass, Invariant, InvariantId};
 pub use entity_v2::lifecycle::{
-    FiringRefusal, Lifecycle, LifecyclePathProperty, Transition, TransitionId,
+    FiringRefusal, Lifecycle, LifecycleEnding, LifecycleEvent, LifecycleIgnore, LifecycleOutcome,
+    LifecyclePathProperty, Transition, TransitionId, TransitionMode, TransitionTrigger,
     codes as lifecycle_codes, declared_lifecycle_properties, effective_lifecycles,
 };
 pub use entity_v2::link::{InterfaceLink, Link, LinkCardinality, LinkId, Multiplicity};

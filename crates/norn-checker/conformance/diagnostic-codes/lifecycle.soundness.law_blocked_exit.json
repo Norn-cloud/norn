@@ -1,0 +1,7 @@
+{
+  "code": "lifecycle.soundness.law_blocked_exit",
+  "message": "governing laws refuse every exit of a reachable lifecycle state: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

@@ -1,0 +1,7 @@
+{
+  "code": "lifecycle.soundness.cancellation_dead_end",
+  "message": "an exception could cancel a deadline where no declared good or compensated ending is proved reachable: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}
