@@ -1,4 +1,5 @@
 import { expect, mock, test } from "bun:test"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { renderToStaticMarkup } from "react-dom/server"
@@ -59,7 +60,7 @@ test("a built question's records are traced with its lineage handle passed back 
 test("a run answer renders like a published one, without a link to a published page", () => {
   const recorded = (name: string) => readDocument(text(name), "recorded")
   const read = { question: readDocument(JSON.stringify({ ...question, name: "studio.gold_yield" }), "live"), answer: readDocument(answerText, "live"), metrics: recorded("scrap-yield.metrics.json"), objectType: recorded("scrap-yield.object-type.json") } as Parameters<typeof AnswerView>[0]["read"]
-  const html = renderToStaticMarkup(<AnswerView read={read} heading="h3" />)
+  const html = renderToStaticMarkup(<QueryClientProvider client={new QueryClient()}><AnswerView read={read} heading="h3" /></QueryClientProvider>)
   expect(html).toContain("<h3")
   expect(html).toContain(">Live<")
   expect(html).not.toContain('href="/questions/')
