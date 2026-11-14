@@ -292,7 +292,13 @@ fn held_back_records_are_grouped_by_law_with_the_fix_only_for_who_may_make_it() 
     );
     assert_eq!(fix["needs"], json!(["correction_reason"]), "{record}");
     let ledger = group(&inbox, LEDGER_LAW).expect("the ledger law's group");
-    assert!(listed(ledger, "SCAN-INV-0043").is_some(), "{ledger}");
+    let disputed = listed(ledger, "SCAN-INV-0043").expect("INV-0043 is held by the ledger law");
+    // "Use 72.00" under the ledger law would break the lines law (its line still reads
+    // 720): the server tries the fix against the record's other laws and offers none.
+    assert!(disputed.get("suggestedFix").is_none(), "{disputed}");
+    let others = disputed["otherFindings"].as_array().expect("the laws that disagree");
+    assert!(!others.is_empty(), "{disputed}");
+    // INV-0042's fix keeps every other law it takes, so it is still offered (above).
     let held = section(&inbox, "held_back");
     assert!(held["count"].as_u64().unwrap() >= 2, "{held}");
     assert_eq!(held["approximate"], false, "{held}");

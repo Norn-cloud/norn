@@ -41,7 +41,7 @@
 //! at most [`MAX_INBOX_DECISIONS`] decisions and [`MAX_INBOX_SOURCES`]
 //! sources.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use norn_cell::read::LinkDirection;
 use norn_cell::{MAIN_WORLD, ObjectRecord, StoreReader, engine::SqlEngine};
@@ -188,9 +188,16 @@ pub struct NornHeldBackRecord {
     /// PRIVACY-1: how each marked property was projected; omitted when none is.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub masked: BTreeMap<String, NornMaskedProperty>,
-    /// The correction the server derived, when the caller may make it.
+    /// The correction the server derived, when the caller may make it and no
+    /// other open law finding holds the record: a fix one law suggests could be
+    /// refused by another, so a record two laws hold is offered none.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub suggested_fix: Option<NornSuggestedFix>,
+    /// The record's other open findings, under other rules, in the same words
+    /// and the same gate as `finding`: when present the laws disagree and the
+    /// record needs review, not a one-click fix.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub other_findings: Vec<NornInboxFinding>,
 }
 
 /// The records one rule holds back in one type.
@@ -570,7 +577,7 @@ fn held_back<E: SqlEngine>(
                 listed.push(record(
                     (host, access, actor),
                     &definitions,
-                    (&held.row, finding),
+                    (&held.row, finding, &held.open),
                     &mut start,
                 )?);
             }
@@ -634,14 +641,20 @@ struct Review {
     properties: Vec<(String, Option<PropertyType>)>,
     /// Evidence objects linked to the record: their rows.
     evidence: Vec<ObjectRecord>,
+    /// The record's outgoing links by role, each with its target row; `None`
+    /// past the bound.
+    outbound: Option<Vec<(String, ObjectRecord)>>,
+    /// The laws (by artifact id) whose scope takes the record's type.
+    applicable: Vec<String>,
 }
 
 fn neighbors<E: SqlEngine>(
     reader: &StoreReader<'_, E>,
     row: &ObjectRecord,
-) -> Result<(Option<Vec<ObjectRecord>>, Vec<ObjectRecord>), Refusal> {
+) -> Result<Neighborhood, Refusal> {
     let mut rows = Vec::new();
     let mut evidence = Vec::new();
+    let mut outbound = Vec::new();
     let mut complete = true;
     for direction in [LinkDirection::In, LinkDirection::Out] {
         let page = reader
@@ -671,12 +684,125 @@ fn neighbors<E: SqlEngine>(
                 {
                     evidence.push(found.clone());
                 }
+                if direction == LinkDirection::Out {
+                    outbound.push((edge.edge.link.clone(), found.clone()));
+                }
                 rows.push(found);
             }
         }
     }
-    Ok((complete.then_some(rows), evidence))
+    Ok((complete.then_some(rows), evidence, complete.then_some(outbound)))
 }
+
+/// The other laws a fix `property := value` would have to keep, tried on the
+/// record's values with the fix applied, the finding's compared values and
+/// the record's outgoing links by role (`role.property`). Each law it would
+/// break is returned in words; one this cannot decide (an unreadable value, a
+/// condition other than `self.role != null`, a link past the bound) is
+/// returned as its rationale, so no fix is offered either way.
+fn dry_run(
+    definitions: &Definitions,
+    review: &Review,
+    finding: &DataQualityFinding,
+    property: &str,
+    value: &RuntimeValue,
+) -> Vec<NornInboxFinding> {
+    let current = match &finding.rule_ref {
+        DataQualityRuleRef::Law { artifact_id, .. } => Some(artifact_id.as_str()),
+        DataQualityRuleRef::Invariant { .. } | DataQualityRuleRef::Builtin { .. } => None,
+    };
+    let Some(outbound) = &review.outbound else {
+        // Past the link bound nothing can be decided: no other law is checked, so no fix.
+        return vec![undecided(finding.id.as_str(), "This record has too many links to check a fix against its other laws.")];
+    };
+    let marked_linked: BTreeSet<(String, String)> = review
+        .neighbors
+        .iter()
+        .flatten()
+        .flat_map(|(row, marked)| marked.iter().map(|property| (row.id.clone(), property.clone())))
+        .collect();
+    let mut values = review.values.clone();
+    values.insert(property.to_owned(), value.clone());
+    for (path, compared) in &finding.values {
+        values.entry(path.clone()).or_insert_with(|| compared.clone());
+    }
+    let mut linked: BTreeMap<String, Vec<RuntimeValue>> = BTreeMap::new();
+    for (role, row) in outbound {
+        for (name, held) in &row.values {
+            if !marked_linked.contains(&(row.id.clone(), name.clone())) {
+                linked.entry(format!("{role}.{name}")).or_default().push(held.clone());
+            }
+        }
+    }
+    for (path, held) in linked {
+        let entry = match <[RuntimeValue; 1]>::try_from(held) {
+            Ok([one]) => one,
+            Err(many) => RuntimeValue::Array(many),
+        };
+        values.entry(path).or_insert(entry);
+    }
+    let mut broken = Vec::new();
+    for id in &review.applicable {
+        if Some(id.as_str()) == current {
+            continue;
+        }
+        let Some((_, law)) = definitions.laws.get(id) else { continue };
+        let LawResponse::Predicate { expression } = &law.response else { continue };
+        let condition = law.condition.as_ref().map(|condition| condition.as_str().to_owned());
+        if !reads(expression.as_str(), property) && !condition.as_deref().is_some_and(|text| reads(text, property)) {
+            continue;
+        }
+        let undecidable = || undecided(id, &law.rationale);
+        // A condition this can decide: `self.role != null`.
+        if let Some(text) = &condition {
+            let compact = normalized(text);
+            let Some(role) = compact.strip_prefix("self.").and_then(|rest| rest.strip_suffix("!=null")) else {
+                broken.push(undecidable());
+                continue;
+            };
+            let held = values.get(role).is_some_and(|held| !matches!(held, RuntimeValue::Null))
+                || outbound.iter().any(|(link, _)| link == role);
+            if !held {
+                continue;
+            }
+        }
+        let Some((left, right)) = split_equality(expression.as_str()) else {
+            broken.push(undecidable());
+            continue;
+        };
+        let Some(own) = own_property(left) else {
+            broken.push(undecidable());
+            continue;
+        };
+        match (values.get(own), right_value(right, &values)) {
+            (Some(actual), Some(want)) if same_number(actual, &want) => {}
+            (Some(_), Some(want)) => broken.push(NornInboxFinding {
+                id: id.clone(),
+                words: words(own, &want, &values, &review.properties),
+                message: law.rationale.clone(),
+                compared: BTreeMap::new(),
+            }),
+            _ => broken.push(undecidable()),
+        }
+    }
+    broken
+}
+
+/// Two values equal as exact numbers (`72` and `72.00`), or as themselves.
+fn same_number(left: &RuntimeValue, right: &RuntimeValue) -> bool {
+    match (left, right) {
+        (RuntimeValue::Number(a), RuntimeValue::Number(b)) => a.canonical() == b.canonical() || a == b,
+        _ => left == right,
+    }
+}
+
+fn undecided(id: &str, words: &str) -> NornInboxFinding {
+    NornInboxFinding { id: id.to_owned(), words: words.to_owned(), message: words.to_owned(), compared: BTreeMap::new() }
+}
+
+/// A record's linked rows (either way, `None` past the bound), the evidence
+/// among them, and its outgoing links by role (`None` past the bound).
+type Neighborhood = (Option<Vec<ObjectRecord>>, Vec<ObjectRecord>, Option<Vec<(String, ObjectRecord)>>);
 
 /// One record of a group: its id and route for every caller who may list it;
 /// its finding, values and fix only under the findings read's gate.
@@ -687,7 +813,7 @@ fn neighbors<E: SqlEngine>(
 fn record<E: SqlEngine>(
     (host, access, actor): (&DevHost<E>, &dyn ObjectAccess, &str),
     definitions: &Definitions,
-    (row, finding): (&ObjectRecord, &DataQualityFinding),
+    (row, finding, open): (&ObjectRecord, &DataQualityFinding, &[DataQualityFinding]),
     start: &mut Option<(u64, Option<(u64, u64)>)>,
 ) -> Result<NornHeldBackRecord, Refusal> {
     let mut listed = NornHeldBackRecord {
@@ -698,6 +824,7 @@ fn record<E: SqlEngine>(
         values: None,
         masked: BTreeMap::new(),
         suggested_fix: None,
+        other_findings: Vec::new(),
     };
     if !permitted(host, access, actor, row, Sources) {
         return Ok(listed);
@@ -718,13 +845,24 @@ fn record<E: SqlEngine>(
                     .collect()
             })
             .unwrap_or_default();
-        let (neighbors, evidence) = if finding.values.keys().any(|path| path.contains('.'))
+        let (neighbors, evidence, outbound) = if finding.values.keys().any(|path| path.contains('.'))
             || !definitions.callable.is_empty()
         {
             neighbors(reader, row)?
         } else {
-            (Some(Vec::new()), Vec::new())
+            (Some(Vec::new()), Vec::new(), Some(Vec::new()))
         };
+        // The laws whose scope takes this record's type (its own, a supertype or an interface).
+        let applicable = definitions
+            .laws
+            .iter()
+            .filter(|(_, (_, law))| {
+                law.scope.object_types.iter().chain(std::iter::once(&law.subject)).any(|scoped| {
+                    scoped == &row.object_type || reader.model().is_a(&row.object_type, scoped)
+                })
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
         // Each linked row with the properties the cell marks on it; a row
         // whose marking snapshot is unavailable discloses no linked value.
         let neighbors = match neighbors {
@@ -760,6 +898,8 @@ fn record<E: SqlEngine>(
                 .effective_property_types(&row.object_type)
                 .map_err(Refusal::host)?,
             evidence,
+            outbound,
+            applicable,
         })
     })?;
     if review.unavailable {
@@ -782,24 +922,50 @@ fn record<E: SqlEngine>(
             })
             .collect()
     });
-    let compared = disclosed(&finding.values, &review, readable.as_deref());
-    // A fix is computed from raw values: only when every one is disclosed as is.
-    let complete = compared.len() == finding.values.len()
-        && !compared.keys().any(|path| review.marked.contains(path));
-    let law = match &finding.rule_ref {
-        DataQualityRuleRef::Law { artifact_id, .. } => {
-            definitions.laws.get(artifact_id).map(|(_, law)| law)
-        }
-        DataQualityRuleRef::Invariant { .. } | DataQualityRuleRef::Builtin { .. } => None,
+    // One finding in words: what its law expected, when every value it compared
+    // is disclosed as is; otherwise its own message.
+    let read = |finding: &DataQualityFinding| {
+        let compared = disclosed(&finding.values, &review, readable.as_deref());
+        // A fix is computed from raw values: only when every one is disclosed as is.
+        let complete = compared.len() == finding.values.len()
+            && !compared.keys().any(|path| review.marked.contains(path));
+        let law = match &finding.rule_ref {
+            DataQualityRuleRef::Law { artifact_id, .. } => {
+                definitions.laws.get(artifact_id).map(|(_, law)| law)
+            }
+            DataQualityRuleRef::Invariant { .. } | DataQualityRuleRef::Builtin { .. } => None,
+        };
+        let derived = law
+            .filter(|_| complete)
+            .and_then(|law| expected(law, &finding.values));
+        let said = derived.as_ref().map_or_else(
+            || finding.message.clone(),
+            |(property, value)| words(property, value, &finding.values, &review.properties),
+        );
+        (compared, derived, said)
     };
-    let derived = law
-        .filter(|_| complete)
-        .and_then(|law| expected(law, &finding.values));
-    let words = derived.as_ref().map_or_else(
-        || finding.message.clone(),
-        |(property, value)| words(property, value, &finding.values, &review.properties),
-    );
+    let (compared, derived, words) = read(finding);
+    // The record's open findings under other rules: their laws may refuse what this
+    // one suggests, so the record is offered no fix and says why.
+    let others: Vec<NornInboxFinding> = open
+        .iter()
+        .filter(|other| other.rule_ref != finding.rule_ref)
+        .map(|other| {
+            let (compared, _, words) = read(other);
+            NornInboxFinding { id: other.id.clone(), words, message: other.message.clone(), compared }
+        })
+        .collect();
+    // The fix, tried against every other law that takes the record and reads the
+    // property it sets: a law it would break (or one this cannot decide) means
+    // the record needs review, not a one-click fix.
+    let mut others = others;
+    if let Some((property, value)) = &derived
+        && others.is_empty()
+    {
+        others.extend(dry_run(definitions, &review, finding, property, value));
+    }
     if let Some((property, value)) = derived
+        && others.is_empty()
         && !review.marked.contains(&property)
     {
         listed.suggested_fix = fix(
@@ -816,6 +982,7 @@ fn record<E: SqlEngine>(
         message: finding.message.clone(),
         compared,
     });
+    listed.other_findings = others;
     listed.values = Some(review.values);
     listed.masked = review.masked;
     Ok(listed)
