@@ -204,7 +204,7 @@ function RailLink({ section }: { readonly section: Section }) {
   return (
     <Hint label={section.label}>
       <ToolbarLink
-        render={<Link to={section.path} onClick={() => setOpenMobile(false)} />}
+        render={<Link to={section.path} activeOptions={{ exact: section.path === "/" }} onClick={() => setOpenMobile(false)} />}
         aria-label={count ? `${section.label}, ${count} open` : section.label}
         className="relative flex size-9 items-center justify-center rounded-lg text-muted-foreground outline-none hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-[status=active]:bg-background data-[status=active]:text-foreground data-[status=active]:shadow-sm data-[status=active]:ring-1 data-[status=active]:ring-border [&_svg]:size-[1.15rem]"
       >
@@ -470,7 +470,7 @@ function BarButtons({ tools }: { readonly tools?: ReactNode }) {
  * rounded card beside them, and the inspector docked on its right.
  */
 export function Shell(props: { readonly sections: readonly Section[]; readonly tools?: ReactNode; readonly assistant?: AssistantContent; readonly account: Account; readonly onSignOut: () => void }) {
-  return <LocaleProvider><AssistantProvider><LocalizedShell {...props} /></AssistantProvider></LocaleProvider>
+  return <LocaleProvider><AssistantProvider available={props.assistant !== undefined}><LocalizedShell {...props} /></AssistantProvider></LocaleProvider>
 }
 
 /**

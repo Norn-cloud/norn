@@ -1,5 +1,6 @@
-import { createRoute, redirect, type AnyRootRoute, type RouteComponent } from "@tanstack/react-router"
+import { createRoute, type AnyRootRoute, type RouteComponent } from "@tanstack/react-router"
 import { QuestionBuilderPage } from "./builder.tsx"
+import { HomePage } from "./home.tsx"
 import { CanvasPage } from "./canvas.tsx"
 import { ConnectionsPage } from "./connections.tsx"
 import { QuestionTreePage } from "./question-tree.tsx"
@@ -21,6 +22,7 @@ const ConnectionsWithBindings = () => <ConnectionsPage><ToolBindings /></Connect
 
 /** Every page's component: one for each entry of PAGES, and no other (checked by the type). */
 export const COMPONENTS: { readonly [P in PagePath]: RouteComponent } = {
+  "/": HomePage,
   "/sources": SourcesPage,
   "/sources/$concept": ObjectTypePage,
   "/sources/$concept/$": SourcesItemPage,
@@ -44,10 +46,9 @@ export const COMPONENTS: { readonly [P in PagePath]: RouteComponent } = {
   "/connections": ConnectionsWithBindings,
 }
 
-/** The app's routes under `root`: "/" opens Questions, then every page. */
+/** The app's routes under `root`: Home at "/", then every page. */
 export function routeTree<R extends AnyRootRoute>(root: R) {
   return root.addChildren([
-    createRoute({ getParentRoute: () => root, path: "/", beforeLoad: () => { throw redirect({ to: "/questions" }) } }),
     ...(Object.keys(PAGES) as PagePath[]).map((path) => createRoute({ getParentRoute: () => root, path, component: COMPONENTS[path] })),
   ])
 }

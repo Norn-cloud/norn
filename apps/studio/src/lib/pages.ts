@@ -5,6 +5,7 @@
  * test/e2e/pages.ts opens every one in a browser on a deployment.
  */
 export const PAGES = {
+  "/": "/",
   "/sources": "/sources",
   "/sources/$concept": "/sources/canon.Item",
   "/sources/$concept/$": "/sources/canon.Item/demo/item/gold",
