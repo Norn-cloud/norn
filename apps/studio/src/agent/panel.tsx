@@ -276,6 +276,21 @@ export function AgentPanel({ state }: { readonly state: AgentState }) {
   )
 }
 
+/** The assistant as the shell's panel content (the slot owns opening and closing). */
+export function AgentAssistant() {
+  const state = useAgentState()
+  return (
+    <div className="flex h-full flex-col">
+      <div className="space-y-2 border-b px-4 py-3">
+        <p className="text-sm text-muted-foreground">Proposes changes to the Jewelry world's definitions: melts of gold scrap and the law that fine mass is conserved. The server's checker admits or refuses each one; nothing is installed.</p>
+        {/* The world the server's checker loads (worker/world.ts). */}
+        <Badge variant="outline" className="w-fit">World · Jewelry (synthetic)</Badge>
+      </div>
+      <AgentPanel state={state} />
+    </div>
+  )
+}
+
 /** The page bar's assistant button and its side sheet. */
 export function AgentButton() {
   // Radix unmounts the sheet's content when it closes; the state lives here, where it stays mounted.

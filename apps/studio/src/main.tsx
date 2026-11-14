@@ -1,4 +1,4 @@
-import { AgentButton } from "./agent/panel.tsx"
+import { AgentAssistant } from "./agent/panel.tsx"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { RouterProvider, createRootRoute, createRouter } from "@tanstack/react-router"
 import { Blend, ChartLine, Database, Inbox, LayoutDashboard, Network, Plug, ShieldCheck, Workflow } from "lucide-react"
@@ -36,7 +36,7 @@ const SECTIONS: readonly Section[] = [
 function Root() {
   const account = useAccount()
   const refresh = useRefreshAccount()
-  if (account.data != null) return <Shell sections={SECTIONS} tools={<AgentButton />} account={account.data} onSignOut={() => void signOut(refresh)} />
+  if (account.data != null) return <Shell sections={SECTIONS} assistant={{ title: "Assistant", content: <AgentAssistant /> }} account={account.data} onSignOut={() => void signOut(refresh)} />
   if (account.isPending) return null
   if (account.isError) {
     return (
