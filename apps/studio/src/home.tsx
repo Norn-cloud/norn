@@ -60,7 +60,7 @@ function AskBar() {
 /** Why the server gave no number, in its own words: the checker's findings, the read gate's refusal, or its bound. */
 function refusalReason(result: Exclude<Evaluation, { kind: "answer" }>): string {
   switch (result.kind) {
-    case "not-a-question": return result.findings.map(({ message }) => message).join(" ") || "The server's checker refused it."
+    case "not-a-question": return result.findings.map(({ message }) => message).filter(Boolean).join(" ") || "The server's checker refused it."
     case "refused": return result.refusal.message
     case "too-large": case "bad-request": return result.message || "The server refused it."
     default: return "The cell did not answer."

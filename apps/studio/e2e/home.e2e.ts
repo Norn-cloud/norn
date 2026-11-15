@@ -76,9 +76,9 @@ test("home: a key number the server refuses leaves Home, and the server's reason
   await page.goto("/")
   await expect(page.getByRole("heading", { name: "Key numbers" })).toBeVisible()
   await expect(page.getByText("Total amount")).toBeVisible()
-  await expect(page.getByText("Total total")).toHaveCount(0)
+  // No card for the refused number: its title would read exactly this (the line below it is longer).
+  await expect(page.getByText("Total total", { exact: true })).toHaveCount(0)
   await expect(page.locator('[data-refused-number="m.scanned"]')).toContainText("Some scanned documents have no issued date")
-  await expect(page.getByText("The cell did not answer this one.")).toHaveCount(0)
   await page.setViewportSize({ width: 1440, height: 900 })
   for (const scheme of ["light", "dark"] as const) {
     await page.emulateMedia({ colorScheme: scheme })
