@@ -236,7 +236,7 @@ function Rail({ sections, account, onSignOut, assistant }: { readonly sections: 
   return (
     <Toolbar orientation="vertical" aria-label="Applets" className="flex h-full w-(--sidebar-width-icon) shrink-0 flex-col items-center gap-1 py-3">
       <Link to="/" aria-label="Norn Studio home" className="mb-2 flex size-9 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring">
-        <img src={nornMark} alt="" width={28} height={28} className="size-7 object-contain contrast-125 grayscale dark:brightness-150" />
+        <img src={nornMark} alt="" width={28} height={28} className="size-7 object-contain" />
       </Link>
       {groups.map((group, index) => (
         <div key={group ?? ""} role="group" aria-label={group} className="flex flex-col items-center gap-1">
