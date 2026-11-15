@@ -441,6 +441,60 @@ fn mit_software_requires_source_notice_and_hash() {
 }
 
 #[test]
+fn apache_software_requires_its_licence_notice_and_a_modifications_statement() {
+    let revision = "0123456789012345678901234567890123456789";
+    let mut f = Fixture::new();
+    f.add("pin.json", b"Norn factual toy software pin", "code");
+    f.add(
+        "APACHE-LICENSE",
+        b"Copyright Toy. Licensed under the Apache License, Version 2.0 (the License)",
+        "code",
+    );
+    f.add(
+        "OTHER-NOTICE",
+        b"Copyright Toy. All rights reserved.",
+        "code",
+    );
+    let evidence = f.reference("pin.json");
+    f.software.push(json!({"id":"software.toy-apache","revision":revision,"license":"Apache-2.0","evidence":evidence,"modifications":"imports rewritten to the app's aliases"}));
+    let i = f.add(
+        "vendor/toy.tsx",
+        b"// toy Apache software stand-in",
+        "software",
+    );
+    f.records[i]["origin"] = json!("derived");
+    f.records[i]["sources"] =
+        json!([{"id":"software.toy-apache","revision":revision,"evidence":evidence}]);
+    f.records[i]["notices"] = json!([f.reference("APACHE-LICENSE")]);
+    f.passes();
+    // The licence text itself must ship beside the code; any other notice does not count.
+    f.records[i]["notices"] = json!([f.reference("OTHER-NOTICE")]);
+    f.rejects("Apache-2.0 licence notice missing");
+    f.records[i]["notices"] = json!([]);
+    f.rejects("notice");
+    f.records[i]["notices"] = json!([f.reference("APACHE-LICENSE")]);
+    // An Apache-2.0 source states its modifications (section 4(b)); absent or blank is refused.
+    for modifications in [None, Some("  ")] {
+        let mut entry = f.software[0].clone();
+        match modifications {
+            None => {
+                entry.as_object_mut().unwrap().remove("modifications");
+            }
+            Some(text) => entry["modifications"] = json!(text),
+        }
+        let saved = std::mem::replace(&mut f.software[0], entry);
+        f.rejects("invalid software provenance software.toy-apache");
+        f.software[0] = saved;
+    }
+    f.passes();
+    // Copyleft and unknown licences stay refused, with or without a statement.
+    for license in ["GPL-3.0", "LGPL-2.1", "WTFPL", "LicenseRef-Custom", ""] {
+        f.software[0]["license"] = json!(license);
+        f.rejects("invalid software provenance software.toy-apache");
+    }
+}
+
+#[test]
 fn mapping_requires_versions_sparse_fields_terms_and_install_validation() {
     let mut f = Fixture::new();
     let source = f.source("GPL-3.0", "license-conditions");
