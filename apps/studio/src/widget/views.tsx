@@ -9,7 +9,7 @@ import { member, readDocument, type Read } from "@/lib/exact"
 import { FRESHNESS } from "@/lib/format"
 import type { Refusal, Trace } from "@/lib/live"
 import type { Answer, SourceLineage } from "@/lib/transport"
-import { documentText, type Bridge, type ToolResult } from "./bridge"
+import { documentText, type Bridge, type ToolHost, type ToolResult } from "./bridge"
 
 /**
  * What Norn renders inside a chat: one tool result, drawn with Studio's own components from the
@@ -70,7 +70,7 @@ export function answerBuckets(read: Read<Answer>): Bucket[] {
 }
 
 /** Trace one bucket through the server tool that answered it: the named question's, or the ad-hoc one's. */
-export function traceThrough(bridge: Bridge, input: Record<string, unknown> | undefined): FetchTrace {
+export function traceThrough(bridge: ToolHost, input: Record<string, unknown> | undefined): FetchTrace {
   return async (lineageRef, bucket) => {
     const question = input?.question
     const result = typeof question === "string"
@@ -127,7 +127,7 @@ function BarTable({ rows, label, valueLabel, onSelect }: { readonly rows: readon
   )
 }
 
-function AnswerCard({ read, input, bridge }: { readonly read: Read<Answer>; readonly input?: Record<string, unknown>; readonly bridge: Bridge }) {
+function AnswerCard({ read, input, bridge }: { readonly read: Read<Answer>; readonly input?: Record<string, unknown>; readonly bridge: ToolHost }) {
   const [traced, setTraced] = useState<{ readonly bucket: string; readonly read: Read<Trace> } | { readonly bucket: string; readonly refusal: Refusal } | null>(null)
   const answer = read.document
   const buckets = answerBuckets(read)
@@ -477,7 +477,7 @@ interface Admission {
 }
 
 /** A proposed dashboard or question: the checker's verdict, its plain-words restatement and every finding. */
-function ProposalCard({ read, input, studio, bridge }: { readonly read: Read<Admission>; readonly input?: Record<string, unknown>; readonly studio: string | null; readonly bridge: Bridge }) {
+function ProposalCard({ read, input, studio, bridge }: { readonly read: Read<Admission>; readonly input?: Record<string, unknown>; readonly studio: string | null; readonly bridge: ToolHost }) {
   const { admitted, diagnostics = [], restatement } = read.document
   const kind = typeof input?.kind === "string" ? input.kind : "definition"
   return (
@@ -569,7 +569,7 @@ function Refused({ refusal, action }: { readonly refusal: Refusal; readonly acti
 }
 
 /** The view for one delivery, chosen by the template the host loaded and the document's own shape. */
-export function DeliveryView({ view, delivery, bridge, studio, tool }: { readonly view: View; readonly delivery: Delivery; readonly bridge: Bridge; readonly studio: string | null; readonly tool?: string }) {
+export function DeliveryView({ view, delivery, bridge, studio, tool }: { readonly view: View; readonly delivery: Delivery; readonly bridge: ToolHost; readonly studio: string | null; readonly tool?: string }) {
   const { input, result } = delivery
   if (result === undefined) return <p className="p-3 text-sm text-muted-foreground">Asking Norn…</p>
   const read = exactDocument<unknown>(result)

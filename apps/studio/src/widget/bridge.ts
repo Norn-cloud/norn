@@ -94,6 +94,9 @@ export class Bridge {
   }
 }
 
+/** What a view needs from its host: the same server's tools, and opening a link. A chat host's {@link Bridge} is one; Studio's Sidekick panel is another. */
+export type ToolHost = Pick<Bridge, "callTool" | "openLink">
+
 /** The exact JSON text of a tool's document: its first text block, which carries every decimal as the server wrote it. */
 export function documentText(result: ToolResult): string | null {
   const text = result.content?.find((block) => block.type === "text" && typeof block.text === "string")?.text

@@ -160,6 +160,19 @@ export default {
       if (env.NORN_HOST === undefined) return refuse(503, "No Norn host is connected to this deployment.")
       return questions(request, cellFor(env.NORN_HOST, auth(env), actor), pathname.slice("/api/questions".length))
     }
+    // Sidekick's grant: the signed-in person's own /mcp access for the in-app agent (sidekick.ts).
+    if (pathname === "/api/sidekick/grant") {
+      if (request.method !== "POST") return refuse(405, "POST only.", { allow: "POST" })
+      if (!mcpOn(env)) return refuse(404, "No such endpoint.")
+      const actor = await resolveActor(request, auth(env))
+      if (actor === null) return refuse(401, "Sign in first.")
+      if (actor.actorKind !== "user") return refuse(403, "Sidekick acts for a signed-in person only.")
+      if (!originAllowed(request, actor, trustedOrigins(env))) return refuse(403, "Cross-origin request refused.")
+      if ((await cellScope(auth(env), actor.orgId)).environmentId === null) return refuse(409, "This workspace has no data cell yet.")
+      const { grantAllowed, sidekickGrant } = await import("./sidekick.ts")
+      if (!grantAllowed(actor.subjectId)) return refuse(429, "Too many Sidekick grants; wait a few minutes.", { "retry-after": "60" })
+      return Response.json(await sidekickGrant(auth(env), env.BETTER_AUTH_URL, actor), { headers: { "cache-control": "no-store" } })
+    }
     // The dashboard assistant: it acts only as the signed-in person, through the cell's own admission.
     if (pathname === "/api/agent/dashboards" || pathname.startsWith("/api/agent/dashboards/")) {
       const actor = await resolveActor(request, auth(env))
