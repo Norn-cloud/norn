@@ -5,10 +5,12 @@
 #   docker exec -i <odoo> odoo shell -d <db> --no-http < demo/sandboxes/odoo/seed.py
 # The export is `python3 demo/data/generate.py OUT` -> OUT/odoo.json, the
 # registry/packs/odoo/synthetic.json shape. Re-running is idempotent: every
-# record is found by its canonical reference before it is created, and a found record
-# whose values differ from the export is updated to them (the seed converges, so a
-# sandbox seeded from an older export ends equal to the current one). With
-# NORN_SEED_DRY_RUN=1 it only counts what it would create or change, and writes nothing.
+# record is found by its canonical reference before it is created, and a found record's
+# fields the feeds read (and the connector maps) are updated to the export's, so a
+# sandbox seeded from an older export reads the same as the current one. A quant's
+# product, location and owner and an order's commitment date are not moved. With
+# NORN_SEED_DRY_RUN=1 it counts the records it would create or change and rolls the
+# records back; the custom fields are still created first, as on any run.
 #
 # What lands where (native Odoo records and relations wherever the export has them):
 #   res.partner     -> res.partner (name; x_norn_ref, x_norn_role)
@@ -117,11 +119,13 @@ for ref, record in holdings.items():
              "x_cost_currency": record.get("cost_currency", "USD"), "x_valuation_method": record.get("valuation_method", "moving_average")}
     quant = find("stock.quant", ref)
     if quant:
-        if round(quant.quantity, 2) != round(record["quantity"], 2):
-            changed["stock.quant"] = changed.get("stock.quant", 0) + 1
-            if not DRY:
-                env["stock.quant"]._update_available_quantity(quant.product_id, quant.location_id, record["quantity"] - quant.quantity, owner_id=quant.owner_id)
+        moved = round(quant.quantity, 2) != round(record["quantity"], 2)
+        if moved and not DRY:
+            env["stock.quant"]._update_available_quantity(quant.product_id, quant.location_id, record["quantity"] - quant.quantity, owner_id=quant.owner_id)
+        before = changed.get("stock.quant", 0)
         converge(quant, costs)
+        if moved and changed.get("stock.quant", 0) == before:  # one quant counts once
+            changed["stock.quant"] = before + 1
         continue
     new("stock.quant")
     if DRY:

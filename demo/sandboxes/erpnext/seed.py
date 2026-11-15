@@ -9,10 +9,12 @@
 # statements one cell at a time.)
 # The export is `python3 demo/data/generate.py OUT` -> OUT/erpnext.json, the
 # registry/packs/erpnext/synthetic.json shape. Re-running is idempotent: every
-# record is found by its canonical reference before it is created, and a found record
-# whose values differ from the export is updated to them (the seed converges, so a
-# sandbox seeded from an older export ends equal to the current one). With
-# NORN_SEED_DRY_RUN=1 it only counts what it would create or change, and writes nothing.
+# record is found by its canonical reference before it is created, and a found record's
+# fields the feeds read (and the connector maps) are set to the export's, so a sandbox
+# seeded from an older export reads the same as the current one. Fields are set in
+# place on draft orders: amounts, names and totals derived from them are not
+# recomputed. With NORN_SEED_DRY_RUN=1 it counts the records it would create or change
+# and rolls them back; the custom fields, DocType and UOM are still set up first.
 #
 # What lands where (native ERPNext records wherever the export has a native meaning):
 #   Party                 -> Customer (custom_norn_ref, custom_norn_role)
@@ -147,6 +149,9 @@ for record in by.get("Sales Order Item", []):
     holding = holdings[record["holding_ref"]]
     due = record["due_at"][:10]
     row = existing.get(record["custom_norn_ref"])
+    if row and (DRY and (not customers.get(record["receiver_ref"]) or not items.get(holding["item_ref"]))):
+        changed["Sales Order Item"] = changed.get("Sales Order Item", 0) + 1  # its party or item is new
+        continue
     if row:
         converge("Sales Order", row.parent, {"customer": customers[record["receiver_ref"]]})
         converge("Sales Order Item", row.name, {
