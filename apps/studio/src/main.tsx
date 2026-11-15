@@ -1,7 +1,7 @@
 import { AgentAssistant, useAgentServed } from "./agent/panel.tsx"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { RouterProvider, createRootRoute, createRouter } from "@tanstack/react-router"
-import { Blend, ChartLine, Database, House, Inbox, LayoutDashboard, Network, Plug, ShieldCheck, Workflow } from "lucide-react"
+import { Blend, ChartLine, Database, Fingerprint, House, Inbox, LayoutDashboard, Network, Plug, ShieldCheck, Workflow } from "lucide-react"
 import { StrictMode } from "react"
 import { Button } from "@/components/ui/button"
 import { authApi, useAccount, useRefreshAccount } from "@/lib/session"
@@ -27,6 +27,7 @@ const SECTIONS: readonly Section[] = [
   { path: "/workflows", label: "Workflows", icon: Workflow, summary: "How each business process moves, and which rules allow or refuse every step.", kind: "workflow", useMenu: useWorkflowsMenu, group: "Rules", paths: ["/runs"], action: { label: "Open the canvas", to: "/canvas" } },
   { path: "/canvas", label: "Canvas", icon: Network, summary: "Draw and change a process, with every edit checked as you make it.", group: "Rules" },
   { path: "/rules", label: "Rules", icon: ShieldCheck, summary: "What each rule protects, the records it holds back now, and how to fix them.", kind: "guarantee", useMenu: useGuaranteesMenu, group: "Rules" },
+  { path: "/markings", label: "Markings", icon: Fingerprint, summary: "Personal data: how each marking is shown, the facts that carry it, and who may reveal it.", group: "Rules" },
   { path: "/connections", label: "Connections", icon: Plug, summary: "Apps and tools from your tool gateway, run through Norn's policy.", group: "System" },
 ]
 

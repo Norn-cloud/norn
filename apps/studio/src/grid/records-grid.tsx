@@ -1,4 +1,5 @@
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query"
+import { MarkingChips, useMarkingCatalog } from "@/components/marking-chip"
 import { Link, useNavigate } from "@tanstack/react-router"
 import { useVirtualizer } from "@tanstack/react-virtual"
 import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, Columns3, ExternalLink, Filter, Play, Plus, RefreshCw, Rows3 } from "lucide-react"
@@ -73,6 +74,9 @@ export function RecordsGrid({ concept, read = readRecords, initial, onQuery }: {
 }) {
   const name = concept.name
   const fields = useMemo(() => concept.fields.filter(({ id }) => !HIDDEN_FIELDS.has(id)), [concept])
+  const markings = useMarkingCatalog()
+  // The Record column shows the record's name: the markings of the name facts it is read from.
+  const nameMarkings = useMemo(() => [...new Set(concept.fields.filter(({ id }) => HIDDEN_FIELDS.has(id)).flatMap(({ markings: marked }) => marked ?? []))], [concept])
   const [sort, setSort] = useState<readonly SortKey[]>(initial?.sort ?? [])
   const [filter, setFilter] = useState<Predicate | null>(initial?.filter ?? null)
   // An opened view's filter is the draft too, so the editor opens on it with nothing unapplied.
@@ -268,7 +272,7 @@ export function RecordsGrid({ concept, read = readRecords, initial, onQuery }: {
             className={cn("max-h-[60vh] overflow-auto text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset", result.isFetching && "opacity-70")}>
             <div style={{ minWidth: width }}>
               <div role="row" aria-rowindex={1} className="sticky top-0 z-20 grid border-b border-node-border bg-muted" style={{ gridTemplateColumns: template }}>
-                <div role="columnheader" className={cn(STICKY, "bg-muted px-3 py-2 font-medium")}>Record</div>
+                <div role="columnheader" className={cn(STICKY, "flex items-center gap-1.5 bg-muted px-3 py-2 font-medium")}>Record<MarkingChips markings={nameMarkings} catalog={markings} className="inline-flex items-center gap-1 font-normal" /></div>
                 {columns.map((field: Field) => {
                   const key = sort.find(({ property }) => property === field.id)
                   const can = canQuery && sortable(field)
@@ -281,6 +285,7 @@ export function RecordsGrid({ concept, read = readRecords, initial, onQuery }: {
                         <span className="truncate">{label}</span>{can && <SortMark direction={key?.direction} />}
                         {sort.length > 1 && key && <sup className="tabular-nums" aria-hidden>{sort.indexOf(key) + 1}</sup>}
                       </button>
+                      <MarkingChips markings={field.markings} catalog={markings} className="ms-1 inline-flex shrink-0 items-center gap-1 font-normal" />
                     </div>
                   )
                 })}
@@ -358,6 +363,7 @@ function RecordDrawer({ concept, fields, row, origin, actions, actionsOff, onClo
   readonly actions: readonly ActionSummary[]; readonly actionsOff: string | undefined; readonly onAction: (action: ActionSummary, id: string) => void
 }) {
   const record = row?.record
+  const markings = useMarkingCatalog()
   const object = useQuery({
     queryKey: ["object", record?.objectType, record?.id],
     queryFn: () => record ? transport.object(record.objectType, record.id) : null,
@@ -376,7 +382,7 @@ function RecordDrawer({ concept, fields, row, origin, actions, actionsOff, onClo
             {isWithheld(row)
               ? <p className="rounded-lg border border-node-border bg-muted/50 p-3 text-sm"><WithheldMark title={WITHHELD_HINT}>{WITHHELD_ROW}</WithheldMark></p>
               : <dl className="grid grid-cols-[minmax(8rem,auto)_1fr] gap-x-4 gap-y-2 text-sm">
-                {fields.map((field) => <div key={field.id} className="contents"><dt className="text-muted-foreground">{field.id.replaceAll("_", " ")}</dt><dd className="min-w-0 break-words"><TracedCell field={field} row={row} live={origin === "live"} lineage={object.data?.source?.document ?? null} variant="inline" /></dd></div>)}
+                {fields.map((field) => <div key={field.id} className="contents"><dt className="flex flex-wrap items-center gap-1 text-muted-foreground">{field.id.replaceAll("_", " ")}<MarkingChips markings={field.markings} catalog={markings} /></dt><dd className="min-w-0 break-words"><TracedCell field={field} row={row} live={origin === "live"} lineage={object.data?.source?.document ?? null} variant="inline" /></dd></div>)}
                 <dt className="text-muted-foreground">version</dt><dd className="tabular-nums">{record.version}</dd>
               </dl>}
             {!isWithheld(row) && <section className="grid gap-2">

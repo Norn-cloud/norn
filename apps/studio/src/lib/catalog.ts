@@ -30,6 +30,8 @@ export interface Field {
   } | undefined
   /** The declared value kind after resolving named property types; `enum` carries its declared values in order. */
   readonly scalar: Scalar
+  /** PRIVACY-1 markings the definition declares on this fact: its own, then its named type's. */
+  readonly markings?: readonly string[]
 }
 
 /** A property's value kind as the admitted definition declares it, with named types resolved. */
@@ -218,6 +220,19 @@ function decimalOf(type: PropertyType, types: ReadonlyMap<string, PropertyTypeDe
   return { unit: type.unit?.code, perUnit: type.perUnit?.code, currencyFrom: type.currencySource?.property, ...typeof scale === "number" ? { scale } : {} }
 }
 
+/** A declaration's `markings` list (a property's, or a named property type's). */
+const markingsOf = (declared: unknown): readonly string[] => {
+  const markings = (declared as { markings?: unknown } | null)?.markings
+  return Array.isArray(markings) ? markings.filter((marking): marking is string => typeof marking === "string") : []
+}
+
+/** The markings a property inherits from its named type, following named types to their end. */
+function typeMarkings(type: PropertyType, types: ReadonlyMap<string, PropertyTypeDef>, seen: ReadonlySet<string> = new Set()): readonly string[] {
+  if (type.kind !== "ref" || seen.has(type.name)) return []
+  const def = types.get(type.name)
+  return def === undefined ? [] : [...markingsOf(def), ...typeMarkings(def.type, types, new Set([...seen, type.name]))]
+}
+
 /**
  * Index the server's admitted artifacts; nothing is inferred beyond what they declare.
  * Titles and fact names come from `labels` artifacts in `locale` when they have one there.
@@ -306,13 +321,15 @@ export function catalogOf(artifacts: readonly Artifact[], locale = "en"): Catalo
       summaryLang: own?.description === undefined ? "en" : own.tag,
       description: def.description,
       parents,
-      fields: (def.properties ?? []).map(({ id, type, constraints }) => {
+      fields: (def.properties ?? []).map((property) => {
+        const { id, type, constraints } = property
         const label = pick(labels, `property:${def.name}.${id}`, locale)
         const scalar = scalarOf(type, types)
         const valueLabels = new Map(scalar.kind === "enum"
           ? scalar.values.flatMap((value) => { const text = pick(labels, `enumValue:${def.name}.${id}=${value}`, locale)?.text; return text === undefined ? [] : [[value, text] as const] })
           : [])
-        return { id, label: label?.text ?? id.replaceAll("_", " "), labelLang: label?.tag ?? "en", valueLabels, type: typeText(type, types), optional: constraints?.nullable === true, decimal: decimalOf(type, types), scalar }
+        const markings = [...new Set([...markingsOf(property), ...typeMarkings(type, types)])]
+        return { id, label: label?.text ?? id.replaceAll("_", " "), labelLang: label?.tag ?? "en", valueLabels, type: typeText(type, types), optional: constraints?.nullable === true, decimal: decimalOf(type, types), scalar, ...markings.length > 0 ? { markings } : {} }
       }),
       relationships: (def.links ?? []).map(({ id, target, description, cardinality }) => ({ id, target, description, count: cardinality.to === "many" ? "many" : cardinality.required === true ? "one" : "at most one" })),
       rules: [...invariants, ...rules.get(def.name) ?? []],

@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
+import { MarkingChips, useMarkingCatalog } from "@/components/marking-chip"
 import { Link, useParams } from "@tanstack/react-router"
 import { LifecycleStepper } from "@/components/lifecycle-stepper"
 import { Clock, GitCommitHorizontal, Pause, ShieldX } from "lucide-react"
@@ -229,12 +230,13 @@ function Broken({ concept, reads, finding, heldBack }: { readonly concept: Conce
 /** The record's key facts, in its definition's presentation order, each opening where it came from. */
 function KeyFacts({ concept, reads, onLineage }: { readonly concept: Concept; readonly reads: ObjectReads; readonly onLineage: () => void }) {
   const fields = keyFacts(concept, reads.object.document.values)
+  const markings = useMarkingCatalog()
   if (fields.length === 0) return null
   return (
     <dl className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,10rem),1fr))] gap-px overflow-hidden rounded-xl border border-border bg-border">
       {fields.map((field) => (
         <div key={field.id} className="min-w-0 bg-card px-4 py-3">
-          <dt className="truncate text-xs text-muted-foreground">{field.label ?? field.id.replaceAll("_", " ")}</dt>
+          <dt className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground"><span className="truncate">{field.label ?? field.id.replaceAll("_", " ")}</span><MarkingChips markings={field.markings} catalog={markings} /></dt>
           <dd className={cn("truncate pt-1 text-section font-semibold tracking-tight", field.decimal && "tabular-nums")}><FactValue field={field} reads={reads} onLineage={onLineage} /></dd>
         </div>
       ))}
@@ -363,6 +365,7 @@ function Lineage({ lineage, evidence = [], actionFor }: { readonly lineage: Sour
 function Facts({ concept, reads, onLineage }: { readonly concept: Concept; readonly reads: ObjectReads; readonly onLineage: () => void }) {
   const { view } = useView()
   const { catalog } = useCatalog()
+  const markings = useMarkingCatalog()
   // Scan provenance (the bytes a record was read from and the extractor) is not what the record
   // says: the evidence beside each value and the Technical view carry it.
   const provenance = new Set(concept.parents.includes(SOURCE_DOCUMENT) ? catalog?.byName.get(SOURCE_DOCUMENT)?.fields.map((field) => field.id) ?? [] : [])
@@ -374,7 +377,7 @@ function Facts({ concept, reads, onLineage }: { readonly concept: Concept; reado
       <dl className="divide-y divide-border/60 text-sm">
         {concept.fields.filter((field) => !provenance.has(field.id)).map((field) => (
           <div key={field.id} className="grid min-h-row-read grid-cols-[minmax(0,10rem)_minmax(0,1fr)] items-center gap-3 px-2">
-            <dt className="truncate text-muted-foreground" title={field.id}>{field.label ?? field.id.replaceAll("_", " ")}</dt>
+            <dt className="flex min-w-0 items-center gap-1.5 text-muted-foreground" title={field.id}><span className="truncate">{field.label ?? field.id.replaceAll("_", " ")}</span><MarkingChips markings={field.markings} catalog={markings} /></dt>
             <dd className={cn("min-w-0 truncate", field.decimal && "tabular-nums")}><FactValue field={field} reads={reads} onLineage={onLineage} /></dd>
           </div>
         ))}

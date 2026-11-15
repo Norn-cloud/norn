@@ -26,6 +26,7 @@ export const PAGES = {
   "/workflows": "/workflows",
   "/canvas": "/canvas",
   "/rules": "/rules",
+  "/markings": "/markings",
   "/connections": "/connections",
 } as const
 
