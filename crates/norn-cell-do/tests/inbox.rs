@@ -415,7 +415,8 @@ fn a_connection_whose_connector_is_not_installed_is_not_a_failed_source() {
           "instance": "sandbox", "baseUrl": "https://erp.example.test" },
     ])
     .to_string();
-    let connector = artifact(&root().join("registry/packs/documents-pull/artifacts/docs.scans.connector.json"));
+    let connector =
+        artifact(&root().join("registry/packs/documents-pull/artifacts/docs.scans.connector.json"));
     let (mut cell, mut connect) = loaded_with(
         &directory.path().join("a.sqlite"),
         false,
@@ -434,7 +435,12 @@ fn a_connection_whose_connector_is_not_installed_is_not_a_failed_source() {
             body: "",
         };
         let routed = connect
-            .route(cell.tenant.serving_host(), &cell.tokens, &request, NOW * 1000)
+            .route(
+                cell.tenant.serving_host(),
+                &cell.tokens,
+                &request,
+                NOW * 1000,
+            )
             .expect("a connect route");
         assert_eq!(routed.response.status, 202, "{}", routed.response.body);
         let mut answer: Value = serde_json::from_str(&connect.step(
@@ -467,7 +473,10 @@ fn a_connection_whose_connector_is_not_installed_is_not_a_failed_source() {
         .collect();
     assert_eq!(failed.len(), 1, "{inbox}");
     assert_eq!(failed[0]["id"], "docs.scans", "{inbox}");
-    assert_eq!(failed[0]["values"]["last_error_code"], "source.http_status", "{inbox}");
+    assert_eq!(
+        failed[0]["values"]["last_error_code"], "source.http_status",
+        "{inbox}"
+    );
     let section = section(&inbox, "source_error");
     assert_eq!(section["count"], 1, "{section}");
     assert_eq!(section["shown"], 1, "{section}");
