@@ -1,12 +1,17 @@
 import { useMutation, useQuery } from "@tanstack/react-query"
-import { ChartLine, Plus } from "lucide-react"
+import { ChartLine, CircleCheck, Play, Plus } from "lucide-react"
 import { useEffect, useState, type ReactNode } from "react"
 import { DirtyGuard, EditorToolbar, RowActions, ValidationPanel, useEditor } from "@/components/editor"
 import { EmptyState, Panel } from "@/components/panel"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { list, modKey, sameValue, type Issue } from "@/lib/editor"
-import { QuestionCard, questionVerdictOf, type QuestionVerdict } from "./agent/question.tsx"
+import { questionVerdictOf, type QuestionVerdict } from "./agent/question.tsx"
+import { readDocument } from "./lib/exact.ts"
+import { readMetrics, recentWindow } from "./lib/metrics.ts"
+import type { UnitGroup } from "./lib/answer-anatomy.ts"
+import type { Question } from "./lib/transport.ts"
+import { UnitGroups } from "./questions.tsx"
 import { RunQuestion } from "./run.tsx"
 
 /** What a question can be built from, as the Worker serves it (`GET /api/questions/catalog`). */
@@ -35,6 +40,11 @@ export interface Draft {
 
 export const OPERATOR_WORDS: Record<string, string> = { eq: "is", ne: "is not", lt: "is below", le: "is at most", gt: "is above", ge: "is at least" }
 const words = (name: string) => name.replaceAll("_", " ")
+const sentence = (text: string) => text.charAt(0).toUpperCase() + text.slice(1)
+/** A measure as a person names it: the server's display words (the checker derives them), else its label. */
+export const measureText = (metric: { readonly label: string; readonly display?: string }) => sentence(metric.display ?? metric.label)
+/** A property in words: "observed_at" reads "Observed at". */
+export const fieldText = (name: string) => sentence(words(name))
 const slug = (title: string) => title.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "untitled"
 const NUMERIC = new Set(["decimal", "integer"])
 
@@ -166,9 +176,14 @@ export function draftOf(question: Partial<QuestionIR> & { readonly name?: string
   }
 }
 
-export function initialDraft(catalog: QuestionCatalog): Draft {
+/**
+ * A new question: the first measure, by week of the first date, over the latest 52 whole weeks
+ * (Monday to Monday), so the first Run answers without a date to fill in.
+ */
+export function initialDraft(catalog: QuestionCatalog, now = Date.now()): Draft {
   const time = catalog.properties.find(({ kind }) => kind === "timestamp")?.name ?? ""
-  return { title: "", measures: catalog.metrics[0] ? [catalog.metrics[0].name] : [], by: time, grain: catalog.grains.includes("week") ? "week" : catalog.grains[0] ?? "", filters: [], start: "", end: "" }
+  const window = recentWindow(now)
+  return { title: "", measures: catalog.metrics[0] ? [catalog.metrics[0].name] : [], by: time, grain: catalog.grains.includes("week") ? "week" : catalog.grains[0] ?? "", filters: [], start: window.start.slice(0, 10), end: window.end.slice(0, 10) }
 }
 
 /** The checker route is missing (404), has no host bound (503), or cannot be reached: nothing can be checked here. */
@@ -218,9 +233,11 @@ export function QuestionBuilder({ catalog, guard, initial, onUse, unsupported, c
   const issues = issuesOf(checked.data)
   const invalid = (field: string) => issues.some((issue) => issue.field === field)
   const property = catalog.properties.find(({ name }) => name === draft.by)
-  const propertyOptions = catalog.properties.map(({ name }) => [name, words(name)] as const)
-  const metricOptions = catalog.metrics.map(({ name, label }) => [name, label] as const)
-  const record = words(catalog.objectSet?.split(".").pop() ?? "record")
+  const propertyOptions = catalog.properties.map(({ name }) => [name, fieldText(name)] as const)
+  const metricOptions = catalog.metrics.map((metric) => [metric.name, measureText(metric)] as const)
+  const record = words(catalog.objectSet?.split(".").pop() ?? "record").toLowerCase()
+  // What the answer measures, in words: the one measure's display words, or the name given.
+  const titleOf = (asked: Draft) => asked.title.trim() || (asked.measures.length === 1 ? metricOptions.find(([name]) => name === asked.measures[0])?.[1] : undefined) || "Answer"
   if (catalog.metrics.length === 0) return <EmptyState icon={ChartLine}>This world declares no measures yet, so there is nothing to build a question from.</EmptyState>
   return (
     <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
@@ -247,7 +264,7 @@ export function QuestionBuilder({ catalog, guard, initial, onUse, unsupported, c
           </div>
           <div className="grid gap-2" data-field="filters">
             <span className={invalid("filters") ? "text-sm text-destructive" : "text-sm text-muted-foreground"}>Only where</span>
-            {draft.filters.length === 0 && <p className="text-sm text-muted-foreground">Every {record} record.</p>}
+            {draft.filters.length === 0 && <p className="text-sm text-muted-foreground">No conditions: every {record} counts.</p>}
             {draft.filters.map((filter, index) => (
               <div key={index} className="grid grid-cols-[1fr_1fr_1fr_auto] items-end gap-2" data-field={`filter.${index}`}>
                 <Choice label={`Field ${index + 1}`} invalid={invalid(`filter.${index}`)} value={filter.property} onChange={(next) => setFilter(index, { property: next })} options={propertyOptions} />
@@ -262,20 +279,19 @@ export function QuestionBuilder({ catalog, guard, initial, onUse, unsupported, c
             <Field label="From" invalid={invalid("window")}><Input type="date" value={draft.start} aria-invalid={invalid("window") || undefined} onChange={(event) => patch({ start: event.target.value })} /></Field>
             <Field label="Until" invalid={invalid("window")}><Input type="date" value={draft.end} aria-invalid={invalid("window") || undefined} onChange={(event) => patch({ end: event.target.value })} /></Field>
           </div>
-          <Button type="submit" className="justify-self-start" title={`Check (${modKey()}Enter)`} disabled={check.isPending || served === false}>{check.isPending ? "Checking…" : "Check with the server"}</Button>
+          <Button type="submit" className="justify-self-start" title={`Run (${modKey()}Enter): the server checks the question, then answers it`} disabled={check.isPending || served === false}><Play />{check.isPending ? "Checking…" : "Run"}</Button>
           </fieldset>
         </form>
       </Panel>
       <div className="space-y-3">
         {unsupported && <p role="status" className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm">{unsupported}</p>}
-        {checked.data === undefined && checked.error === null && !(check.isPending && check.variables === draft) && <EmptyState icon={ChartLine}>The server's checker admits the question or names what is wrong. Nothing is run yet.</EmptyState>}
+        {checked.data === undefined && checked.error === null && !(check.isPending && check.variables === draft) && <EmptyState icon={ChartLine} title="Pick a measure, then Run">The server checks the question, then answers it. Every number opens to the records behind it.</EmptyState>}
         {checked.error && <p role="alert" className="text-destructive">{checked.error.message}</p>}
         {/* One place for a refusal: the panel links each finding to its field; its codes are under Details. */}
         {checked.data && !checked.data.admitted && <ValidationPanel issues={issues} title="The checker refused this question" details={<div className="space-y-1 font-mono break-all">{checked.data.findings.map(({ code }, index) => <div key={`${code}:${index}`}>{code}</div>)}</div>} />}
-        {checked.data?.admitted && <QuestionCard verdict={checked.data} />}
-        {/* Only the question the checker admitted, and only while the form still shows it. */}
-        {/* Run: the question exactly as the checker admitted it, while the form still shows it. */}
-        {checked.data?.admitted && check.variables && <RunQuestion key={JSON.stringify(check.variables)} question={buildQuestion(check.variables, catalog)} catalog={catalog} />}
+        {checked.data?.admitted && <Checked verdict={checked.data} />}
+        {/* The question exactly as the checker admitted it, answered at once, while the form still shows it. */}
+        {checked.data?.admitted && check.variables && <BuiltAnswer key={JSON.stringify(check.variables)} question={buildQuestion(check.variables, catalog)} catalog={catalog} title={titleOf(check.variables)} />}
         {onUse && checked.data?.admitted && check.variables && <Button type="button" disabled={unsupported !== undefined} onClick={() => onUse(buildQuestion(check.variables as Draft, catalog), (check.variables as Draft).title)}>Use this question</Button>}
         {onUse && check.data?.admitted && !checked.data && <p className="text-sm text-muted-foreground">Changed since the check: check again to use it.</p>}
       </div>
@@ -283,13 +299,41 @@ export function QuestionBuilder({ catalog, guard, initial, onUse, unsupported, c
   )
 }
 
+/** The checker's admission, quietly: its own restatement is one click away. */
+function Checked({ verdict }: { readonly verdict: QuestionVerdict }) {
+  return (
+    <details className="group text-meta text-muted-foreground">
+      <summary className="flex cursor-pointer list-none items-center gap-1.5"><CircleCheck aria-hidden className="size-3.5 text-success" />Checked by the server<span className="underline-offset-4 group-open:hidden hover:underline">· what it read</span></summary>
+      <p className="mt-1.5 max-w-[72ch] text-pretty">{verdict.restatement?.text ?? "The checker admitted this question."}</p>
+    </details>
+  )
+}
+
+/**
+ * An admitted question, answered. A measure whose values come in several units (the cell names
+ * them in the metric's unitPartition) is read one unit group at a time, as the Metrics board
+ * reads it, so a chart never mixes grams with pieces; any other question is answered as asked.
+ */
+function BuiltAnswer({ question, catalog, title }: { readonly question: QuestionIR; readonly catalog: QuestionCatalog; readonly title: string }) {
+  const metrics = useQuery({ queryKey: ["metrics"], queryFn: readMetrics, retry: false, staleTime: 60_000 })
+  const [picked, setPicked] = useState<UnitGroup | null>(null)
+  if (metrics.isPending) return <p className="text-sm text-muted-foreground">Asking the cell…</p>
+  const partitions = question.aggregate.map(({ metric }) => metrics.data?.document.metrics.find(({ name }) => name === metric)?.unitPartition ?? [])
+  const sources = partitions[0] ?? []
+  const shared = partitions.every((partition) => partition.length === sources.length && partition.every((property, index) => property === sources[index]))
+  if (sources.length === 0 || !shared) return <RunQuestion question={question} catalog={catalog} title={title} auto />
+  const declared = { metrics: readDocument(JSON.stringify(catalog.declarations.metrics), "live"), objectType: readDocument(JSON.stringify(catalog.declarations.objectType), "live") } as Parameters<typeof UnitGroups>[0]["declared"]
+  return <UnitGroups asked={question as unknown as Question} grain={question.groupBy[0]?.grain ?? "group"} sources={sources} title={title} declared={declared} picked={picked} onPick={setPicked} onSettled={settled} />
+}
+const settled = () => {}
+
 export function QuestionBuilderPage() {
   const catalog = useQuery({ queryKey: ["question-catalog"], queryFn: readCatalog, retry: false, staleTime: Infinity })
   return (
     <section className="space-y-6">
       <div className="space-y-2">
-        <h1 className="text-title font-semibold tracking-tight">New question</h1>
-        <p className="max-w-2xl text-muted-foreground">Pick what to measure, how to group it, which records count and over which dates. The server checks it before anything is run.</p>
+        <h1 className="text-title font-semibold tracking-tight">Explore a metric</h1>
+        <p className="max-w-2xl text-muted-foreground">Pick what to measure, how to group it, which records count and over which dates, then Run. The server checks the question before it answers.</p>
       </div>
       {catalog.isPending && <p className="text-muted-foreground">Reading the catalogue…</p>}
       {catalog.isError && <EmptyState icon={ChartLine}>{catalog.error.message}</EmptyState>}

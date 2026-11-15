@@ -151,7 +151,7 @@ test("questions: the first question asks its own type's profile at once, gives u
   const answer = JSON.parse(readFileSync(new URL("../../../fixtures/demo/answers/scrap-yield.k1.answer.json", import.meta.url), "utf8")) as unknown
   await page.route("**/api/host/v1/questions:evaluate**", (route) => { order.push("evaluate"); return route.fulfill({ json: answer }) })
   const started = Date.now()
-  await page.goto("/questions")
+  await page.goto("/metrics")
   const first = page.locator("[data-slot=panel]").first()
   await expect(first.locator("[data-slot=answer-lead]")).toBeVisible({ timeout: 10_000 })
   expect(Date.now() - started).toBeLessThan(10_000)
@@ -179,7 +179,7 @@ test("questions: after the profile, exactly one call comes before the first numb
     answered.push("totals")
     return route.fulfill({ json: totals })
   })
-  await page.goto("/questions")
+  await page.goto("/metrics")
   const first = page.locator("[data-slot=answer-total]").first()
   await expect(first).toContainText("1,399,984 g")
   expect(answered).toEqual(["totals"])

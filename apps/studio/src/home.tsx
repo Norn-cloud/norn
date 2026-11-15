@@ -32,7 +32,7 @@ export function HomePage() {
   )
 }
 
-/** One field for a question or an instruction: the assistant takes it where the server serves one, else Questions. */
+/** One field for a question or an instruction: the assistant takes it where the server serves one, else Metrics. */
 function AskBar() {
   const [text, setText] = useState("")
   const assistant = useAssistant()
@@ -41,7 +41,7 @@ function AskBar() {
     const request = text.trim()
     if (request === "") return
     if (assistant.available) assistant.ask(request)
-    else void navigate({ to: "/questions" })
+    else void navigate({ to: "/metrics" })
     setText("")
   }
   return (
@@ -104,7 +104,7 @@ function KeyNumbers() {
                   {answer?.data && answer.data.kind !== "answer" && <p className="text-sm text-muted-foreground">The cell did not answer this one.</p>}
                 </CardContent>
                 <CardFooter>
-                  <Button asChild variant="link" size="sm" className="h-auto px-0"><Link to="/questions">Why this number<ArrowRight aria-hidden /></Link></Button>
+                  <Button asChild variant="link" size="sm" className="h-auto px-0"><Link to="/metrics">Why this number<ArrowRight aria-hidden /></Link></Button>
                 </CardFooter>
               </Card>
             )

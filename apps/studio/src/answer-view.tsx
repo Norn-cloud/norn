@@ -260,7 +260,7 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
       <div className="space-y-2 px-1">
         {heading === "none" ? null : heading === "h1" ? <h1 className="text-title font-normal tracking-[-0.025em]">{named}</h1>
           : heading === "h3" ? <h3 className="font-medium">{named}</h3>
-          : <h2 className="text-section font-medium">{link ? <Link to="/questions/$name" params={{ name: question.name }} className="underline-offset-4 hover:underline">{named}</Link> : named}</h2>}
+          : <h2 className="text-section font-medium">{link ? <Link to="/metrics/$name" params={{ name: question.name }} className="underline-offset-4 hover:underline">{named}</Link> : named}</h2>}
         {/* A condition that a value is empty only says what the group label already does: it is not repeated. */}
         <p className="text-muted-foreground">{scope({ ...question, filter: (question.filter ?? []).filter(({ value }) => value !== null) })} · {period(question.window)}</p>
         <div className="flex flex-wrap items-center gap-1.5 pt-1">

@@ -11,6 +11,8 @@ export interface QuestionVerdict {
   readonly plan: { readonly grain: string; readonly question: QuestionShape; readonly sums: readonly { readonly metric: string; readonly property: string }[]; readonly metrics: readonly { readonly name: string; readonly label: string }[] } | null
   /** Each finding as the checker wrote it, with its JSON pointer into the checked document when it names one. */
   readonly findings: readonly { readonly code: string; readonly message: string; readonly pointer?: string | null }[]
+  /** The checker's own words for an admitted question, with their digest (absent from older Workers). */
+  readonly restatement?: { readonly text: string; readonly sha256: string } | null
 }
 
 interface QuestionShape {
