@@ -13,6 +13,8 @@
 //!   nothing either.
 //! - With the vendor marked `pii.contact`, every caller sees the vendor's
 //!   pseudonym, never its name.
+//! - A connection whose connector is not installed is not set up, so it is
+//!   not a failed source: only a genuinely failed sync is listed and counted.
 //!
 //! Correspondence pins on the route (D79): each names one gate the inbox
 //! summarizes; the fix's arithmetic is a property test in `norn-api`.
@@ -180,6 +182,12 @@ impl Cell {
 /// A tenant cell provisioned by its owner with the documents pack, its scans
 /// loaded by an admin through the cell's own mapping.
 fn loaded(path: &Path, marked: bool) -> Cell {
+    loaded_with(path, marked, "[]", &[]).0
+}
+
+/// [`loaded`] with the connections `sources` (`NORN_SOURCES`) and `extra`
+/// artifacts provisioned after the pack; the cell's connect module too.
+fn loaded_with(path: &Path, marked: bool, sources: &str, extra: &[Value]) -> (Cell, Connect) {
     let file = path.to_owned();
     let tenant = Tenant::open(
         scope(),
@@ -194,7 +202,7 @@ fn loaded(path: &Path, marked: bool) -> Cell {
     let mut cell = Cell { tenant, tokens };
     let body = json!({
         "baseSha256": base::trusted_base().unwrap().sha256(),
-        "artifacts": documents(marked),
+        "artifacts": documents(marked).into_iter().chain(extra.iter().cloned()).collect::<Vec<_>>(),
     })
     .to_string();
     let provisioned = cell.send("POST", PROVISION_PATH, &user("owner"), &body);
@@ -206,7 +214,7 @@ fn loaded(path: &Path, marked: bool) -> Cell {
         "NORN_SECRET_S3_ACCESS_KEY_ID": "key-id",
         "NORN_SECRET_S3_SECRET_ACCESS_KEY": "secret",
     });
-    let mut connect = Connect::new("[]", &vars.to_string()).expect("configuration");
+    let mut connect = Connect::new(sources, &vars.to_string()).expect("configuration");
     let scans = std::fs::read_to_string(root().join("fixtures/documents/scans.snapshot.json"))
         .expect("snapshot");
     let admin = user("admin");
@@ -227,7 +235,7 @@ fn loaded(path: &Path, marked: bool) -> Cell {
         )
         .expect("a connect route");
     assert_eq!(routed.response.status, 200, "{}", routed.response.body);
-    cell
+    (cell, connect)
 }
 
 /// The held-back group of `law` in an inbox.
@@ -389,4 +397,78 @@ fn a_marked_name_is_a_pseudonym_for_every_caller_and_the_fix_stays() {
         record["suggestedFix"]["arguments"]["total"], "72.00",
         "{record}"
     );
+}
+
+/// INBOX-SOURCES-1: a connection whose connector is not installed is not set
+/// up (Studio's Sources page says so); it has not failed, so the inbox
+/// neither lists nor counts it. A connection whose read was refused has
+/// failed and stays listed, with the section's count matching.
+#[test]
+fn a_connection_whose_connector_is_not_installed_is_not_a_failed_source() {
+    let directory = tempfile::tempdir().unwrap();
+    let sources = json!([
+        { "id": "docs.scans", "system": "extractor", "label": "Scanned documents",
+          "connector": "docs.scans.connector", "mapping": "docs.scans.mapping",
+          "instance": "demo", "baseUrl": "https://extractor.example.test" },
+        { "id": "erpnext.sandbox", "system": "erpnext", "label": "ERPNext sandbox",
+          "connector": "erpnext.sandbox.connector", "mapping": "erpnext.sandbox.mapping",
+          "instance": "sandbox", "baseUrl": "https://erp.example.test" },
+    ])
+    .to_string();
+    let connector = artifact(&root().join("registry/packs/documents-pull/artifacts/docs.scans.connector.json"));
+    let (mut cell, mut connect) = loaded_with(
+        &directory.path().join("a.sqlite"),
+        false,
+        &sources,
+        &[connector],
+    );
+    let admin = user("admin");
+    for id in ["docs.scans", "erpnext.sandbox"] {
+        let path = format!("/v1/sources/{id}:sync");
+        let request = Request {
+            method: "POST",
+            path: &path,
+            query: QUERY,
+            authorization: Some(&admin),
+            now: NOW,
+            body: "",
+        };
+        let routed = connect
+            .route(cell.tenant.serving_host(), &cell.tokens, &request, NOW * 1000)
+            .expect("a connect route");
+        assert_eq!(routed.response.status, 202, "{}", routed.response.body);
+        let mut answer: Value = serde_json::from_str(&connect.step(
+            cell.tenant.serving_host(),
+            id,
+            None,
+            (NOW * 1000, None),
+        ))
+        .unwrap();
+        // The installed connector asks the extractor, which refuses the read.
+        if answer.get("request").is_some() {
+            answer = serde_json::from_str(&connect.step(
+                cell.tenant.serving_host(),
+                id,
+                Some((401, b"{}")),
+                (NOW * 1000, None),
+            ))
+            .unwrap();
+        }
+        assert_eq!(answer["done"]["outcome"], "failed", "{id}: {answer}");
+    }
+
+    let (status, inbox, _) = cell.inbox("admin");
+    assert_eq!(status, 200, "{inbox}");
+    let failed: Vec<&Value> = inbox["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|item| item["kind"] == "source_error")
+        .collect();
+    assert_eq!(failed.len(), 1, "{inbox}");
+    assert_eq!(failed[0]["id"], "docs.scans", "{inbox}");
+    assert_eq!(failed[0]["values"]["last_error_code"], "source.http_status", "{inbox}");
+    let section = section(&inbox, "source_error");
+    assert_eq!(section["count"], 1, "{section}");
+    assert_eq!(section["shown"], 1, "{section}");
 }
