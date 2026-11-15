@@ -496,7 +496,29 @@ impl CallerSlot {
 /// model. They are recompiled when an install changes the model
 /// ([`Authorizer::model_changed`]), so a type added after the cell opened (a
 /// flow's Run type) is decided like every other; until then it is denied.
-struct ReadRules(RwLock<Pdp>);
+///
+/// Each read decision asks for the PDP of its caller's grant. Building one
+/// clones the compiled rules and compiles the grant (it parses the
+/// capability schema), a few milliseconds; a list or the catalog's counts
+/// decide twice per row, so the PDP of each grant is built once per rules
+/// revision and kept in `granted` (#1385). A PDP is a pure value of the
+/// rules and the grant, so a kept one decides exactly as a fresh one would.
+struct ReadRules {
+    rules: RwLock<Pdp>,
+    /// The PDP of each grant over the current `rules`, emptied under the
+    /// rules' write lock whenever they are replaced.
+    granted: Mutex<GrantedPdps>,
+}
+
+/// One grant: its subject and the capability names the table gives its roles.
+type GrantKey = (String, Vec<&'static str>);
+
+/// The kept PDPs by grant; at most [`GRANTED_PDPS`] are kept at once.
+type GrantedPdps = std::collections::HashMap<GrantKey, Arc<Pdp>>;
+
+/// Grants whose PDP is kept at once. A cell has a handful of active callers;
+/// past this many the kept PDPs are dropped and rebuilt on demand.
+const GRANTED_PDPS: usize = 256;
 
 impl ReadRules {
     fn compile<'a>(
@@ -542,11 +564,67 @@ impl ReadRules {
     ) -> Result<(), SeedError> {
         let compiled = Self::compile(object_types)?;
         let mut rules = self
-            .0
+            .rules
             .write()
             .map_err(|_poisoned| SeedError("read rules: poisoned".to_owned()))?;
         *rules = compiled;
+        // Emptied while the write lock is held: a reader holds the read lock
+        // from reading the rules until it keeps their PDP, so no PDP of the
+        // replaced rules is kept past this point.
+        self.granted
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
         Ok(())
+    }
+
+    fn new(rules: Pdp) -> Self {
+        Self {
+            rules: RwLock::new(rules),
+            granted: Mutex::default(),
+        }
+    }
+
+    /// The PDP of `subject`'s grant of `capabilities` in `key`, over the
+    /// current rules: the kept one, or built and kept. `None` (deny) when the
+    /// rules are poisoned or the grant does not compile.
+    fn granted(
+        &self,
+        key: &ScopeKey,
+        subject: &str,
+        capabilities: &[ReadCapability],
+    ) -> Option<Arc<Pdp>> {
+        let rules = self.rules.read().ok()?;
+        let grant: GrantKey = (
+            subject.to_owned(),
+            capabilities.iter().copied().map(capability_name).collect(),
+        );
+        let mut granted = self
+            .granted
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(pdp) = granted.get(&grant) {
+            return Some(Arc::clone(pdp));
+        }
+        let pdp = Arc::new(
+            Pdp::new(
+                rules.policy_set().clone(),
+                &[CapabilityGrant {
+                    subject_id: grant.0.clone(),
+                    actor_kind: ActorKind::User,
+                    agent_session_id: None,
+                    scope: Some(key.clone()),
+                    capabilities: grant.1.iter().map(|&name| name.to_owned()).collect(),
+                    binding: None,
+                }],
+            )
+            .ok()?,
+        );
+        if granted.len() >= GRANTED_PDPS {
+            granted.clear();
+        }
+        granted.insert(grant, Arc::clone(&pdp));
+        Some(pdp)
     }
 }
 
@@ -594,7 +672,7 @@ impl ReadPolicy {
         table: &'static GrantTable,
     ) -> Result<Self, SeedError> {
         Ok(Self {
-            base: ReadRules(RwLock::new(ReadRules::compile(object_types)?)),
+            base: ReadRules::new(ReadRules::compile(object_types)?),
             key: scope_key(scope),
             table,
             caller: Arc::default(),
@@ -735,7 +813,7 @@ impl ReadPolicy {
 
     /// The PDP for this request's verified caller, holding exactly the grant
     /// the table gives its roles.
-    fn pdp_for(&self, subject: &str) -> Option<Pdp> {
+    fn pdp_for(&self, subject: &str) -> Option<Arc<Pdp>> {
         let caller = self
             .caller
             .current()
@@ -744,21 +822,8 @@ impl ReadPolicy {
         if capabilities.is_empty() {
             return None;
         }
-        Pdp::new(
-            self.base.0.read().ok()?.policy_set().clone(),
-            &[CapabilityGrant {
-                subject_id: caller.subject_id,
-                actor_kind: ActorKind::User,
-                agent_session_id: None,
-                scope: Some(self.key.clone()),
-                capabilities: capabilities
-                    .into_iter()
-                    .map(|c| capability_name(c).to_owned())
-                    .collect(),
-                binding: None,
-            }],
-        )
-        .ok()
+        self.base
+            .granted(&self.key, &caller.subject_id, &capabilities)
     }
 }
 
