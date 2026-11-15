@@ -456,4 +456,26 @@ fn an_agent_plans_and_applies_a_pack_through_mcp() {
             .any(|tool| tool["_meta"]["norn/actionId"] == RECORD),
         "the pack's action is a tool now"
     );
+    // An agent whose tool list predates the install calls the new action by id,
+    // through the same route and policy: the law refuses, then commits.
+    let melt = |id: &str, loss: &str| {
+        json!({"action": RECORD, "input": {"id": id, "metal": "gold",
+            "input_fine_g": "100.000", "output_fine_g": "99.000", "loss_fine_g": loss, "loss_reason": "crucible"}})
+    };
+    let refused = cell.mcp("member", "norn_call_action", &melt("melt-mcp-1", "0.000"));
+    assert_eq!(
+        refused["structuredContent"]["code"], "core.laws.violated",
+        "{refused}"
+    );
+    let committed = cell.mcp("member", "norn_call_action", &melt("melt-mcp-2", "1.000"));
+    assert_eq!(
+        committed["structuredContent"]["outcome"], "committed",
+        "{committed}"
+    );
+    let unknown = cell.mcp(
+        "member",
+        "norn_call_action",
+        &json!({"action": "jewelry.melt.erase", "input": {}}),
+    );
+    assert_eq!(unknown["isError"], true, "{unknown}");
 }
