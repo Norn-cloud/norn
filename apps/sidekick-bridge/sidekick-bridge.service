@@ -1,0 +1,31 @@
+# systemd --user unit for the Sidekick bridge (relay.ts). Install the package into
+# %h/.local/share/norn-sidekick (bun install --frozen-lockfile), write the environment file, then
+# `systemctl --user enable --now sidekick-bridge`. The environment file names only origins, logins,
+# addresses and paths; the Claude login stays in CLAUDE_CONFIG_DIR on this host.
+#
+#   SIDEKICK_STUDIO_ORIGIN=https://studio.example      Studio: grant issuer and /mcp
+#   SIDEKICK_ALLOWED_ORIGINS=https://a:9441,...         page origins allowed to open a socket
+#   SIDEKICK_LOGIN_HEADER=x-user-login  SIDEKICK_ALLOWED_LOGINS=login@github   the proxy's login header and who may connect
+#   SIDEKICK_LISTEN_HOST=10.0.0.2  SIDEKICK_LISTEN_PORT=17950  SIDEKICK_MCP_PORT=17951
+#   SIDEKICK_ADAPTER=/usr/bin/node %h/.local/share/norn-sidekick/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js
+#   SIDEKICK_SCRATCH=%h/.cache/agent-scratch/sidekick/sessions
+#   CLAUDE_CONFIG_DIR=%h/.claude
+[Unit]
+Description=Norn Studio Sidekick bridge (ACP relay, Norn MCP tools only)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/.local/share/norn-sidekick
+EnvironmentFile=%h/.config/norn-sidekick/relay.env
+ExecStart=%h/.bun/bin/bun relay.ts
+Restart=on-failure
+RestartSec=5
+# Bounded: one relay, at most SIDEKICK_MAX_CONNECTIONS agent processes.
+MemoryMax=2G
+TasksMax=256
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target

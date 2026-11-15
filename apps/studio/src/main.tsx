@@ -1,4 +1,3 @@
-import { AgentAssistant, useAgentServed } from "./agent/panel.tsx"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { RouterProvider, createRootRoute, createRouter } from "@tanstack/react-router"
 import { Blend, ChartLine, Database, Fingerprint, House, Inbox, LayoutDashboard, Network, Plug, ShieldCheck, Workflow } from "lucide-react"
@@ -12,6 +11,7 @@ import { useDecisionBadge } from "./decisions/inbox.tsx"
 import { useGuaranteesMenu } from "./guarantees.tsx"
 import { useQuestionsMenu } from "./questions.tsx"
 import { routeTree } from "./routes.tsx"
+import { Sidekick, useSidekickServed } from "./sidekick/panel.tsx"
 import { Shell, type Section } from "./shell.tsx"
 import { useSourcesMenu } from "./sources.tsx"
 import { useWorkflowsMenu } from "./workflows.tsx"
@@ -38,9 +38,9 @@ const SECTIONS: readonly Section[] = [
 function Root() {
   const account = useAccount()
   const refresh = useRefreshAccount()
-  // The assistant is offered only where the server serves it; until then the rail shows no entry for it.
-  const agent = useAgentServed()
-  if (account.data != null) return <Shell sections={SECTIONS} assistant={agent ? { title: "Assistant", content: <AgentAssistant /> } : undefined} account={account.data} onSignOut={() => void signOut(refresh)} />
+  // Sidekick is offered only where a bridge serves it (a private deployment); elsewhere the rail shows no entry for it.
+  const sidekick = useSidekickServed()
+  if (account.data != null) return <Shell sections={SECTIONS} assistant={sidekick ? { title: "Sidekick", content: <Sidekick /> } : undefined} account={account.data} onSignOut={() => void signOut(refresh)} />
   if (account.isPending) return null
   if (account.isError) {
     return (

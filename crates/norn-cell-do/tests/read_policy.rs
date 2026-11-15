@@ -350,3 +350,94 @@ fn a_request_s_caller_is_forgotten_when_the_request_ends() {
         assert_eq!(denied.err().map(|r| r.status), Some(403), "{path}");
     }
 }
+
+/// The policy keeps one PDP per grant (#1385); a kept PDP decides exactly as a
+/// fresh one. Another subject, or the same subject with other roles, never
+/// reuses it: each is decided by its own grant.
+#[test]
+fn a_kept_grant_is_never_another_caller_s() {
+    let host = host();
+    let scope = host.scope().clone();
+    let values = ReadCapability::Values;
+    for _round in 0..3 {
+        assert_eq!(
+            gate(&host, &access("admin@demo", values, &scope), values),
+            None
+        );
+        assert_eq!(
+            gate(&host, &access("guest@demo", values, &scope), values),
+            Some(403)
+        );
+        // admin@demo's subject, verified this time with only the viewer role.
+        host.slot.record(Some(Caller {
+            subject_id: "admin@demo".into(),
+            roles: vec!["viewer".into()],
+            actor_kind: "user",
+            role_table: "fixtures/1",
+        }));
+        let request = ReadRequest {
+            capability: values,
+            access: &access("admin@demo", values, &scope),
+        };
+        assert_eq!(
+            host.read_access(&explicit(&scope), &request)
+                .err()
+                .map(|refusal| refusal.status),
+            Some(403)
+        );
+        // A request naming the kept subject while another caller is verified.
+        host.as_caller("guest@demo");
+        let request = ReadRequest {
+            capability: values,
+            access: &access("admin@demo", values, &scope),
+        };
+        assert_eq!(
+            host.read_access(&explicit(&scope), &request)
+                .err()
+                .map(|refusal| refusal.status),
+            Some(403)
+        );
+    }
+}
+
+/// An install that changes the model replaces the kept PDPs with the new
+/// rules (#1385): a type added is readable at once, and a type removed is
+/// denied even to a caller whose PDP was kept before the change.
+#[test]
+fn a_model_change_replaces_every_kept_grant() {
+    use norn_api::authz::Authorizer;
+    let scope = seed::demo_scope();
+    let store = seed::provision(NativeEngine::open_in_memory().unwrap(), &scope).unwrap();
+    let types: Vec<_> = store.model().object_types().cloned().collect();
+    let policy = ReadPolicy::compile(&types, &scope, &DEMO_GRANTS).unwrap();
+    policy.caller().record(caller("admin@demo"));
+    let reads = |object_type: &str| {
+        let mut request = access("admin@demo", ReadCapability::Values, &scope);
+        object_type.clone_into(&mut request.resource.object_type);
+        object_type.clone_into(&mut request.resource.id);
+        policy
+            .read(&ReadRequest {
+                capability: ReadCapability::Values,
+                access: &request,
+            })
+            .is_ok()
+    };
+    let mut added = types
+        .iter()
+        .find(|object_type| object_type.name.as_str() == "canon.Item")
+        .cloned()
+        .unwrap();
+    added.name = norn_ir::ObjectTypeName("canon.Added".into());
+    assert!(reads("canon.Item"));
+    assert!(!reads("canon.Added"));
+    let mut grown = types.clone();
+    grown.push(added);
+    policy.model_changed(&grown);
+    assert!(reads("canon.Added"));
+    assert!(reads("canon.Item"));
+    // The PDP kept under the grown rules allows canon.Added; it must not
+    // outlive them.
+    policy.model_changed(&types);
+    assert!(!reads("canon.Added"));
+    assert!(reads("canon.Item"));
+}

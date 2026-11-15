@@ -90,6 +90,10 @@ test("the applet sidebar names the applet, offers its action, and counts each gr
   expect(html).toContain("Type 8")
   expect(html).toMatch(/role="toolbar"[^>]*aria-label="Applets"|aria-label="Applets"[^>]*role="toolbar"/)
   expect(html).toContain('aria-label="Questions"')
+  // The Norn knot is the one coloured mark (Nov 8 design): the rail never desaturates it.
+  const logo = /<a[^>]*aria-label="Norn Studio home"[^>]*>\s*<img[^>]*class="([^"]*)"/.exec(html)?.[1]
+  expect(logo).toBeDefined()
+  expect(logo).not.toMatch(/grayscale|saturate|brightness|contrast/)
 })
 
 test("a section's count sits in the theme's destructive pair", async () => {

@@ -1,0 +1,84 @@
+import { expect, test } from "bun:test"
+import { SignJWT, createLocalJWKSet, exportJWK, generateKeyPair } from "jose"
+import { BUILT_IN_TOOLS, MCP_SERVER_NAME, configFromEnv, forwardedUpdate, SIDEKICK_CLIENT, permissionAnswer, rewriteInitialize, rewriteNewSession, rewritePrompt, scrub, verifyGrant, viewOf } from "./relay.ts"
+
+const STUDIO = "https://studio.norn.test"
+
+async function keys() {
+  const { publicKey, privateKey } = await generateKeyPair("EdDSA", { crv: "Ed25519" })
+  const jwk = { ...(await exportJWK(publicKey)), kid: "k1", alg: "EdDSA" }
+  const sign = (claims: Record<string, unknown>, exp = Math.floor(Date.now() / 1000) + 600) =>
+    new SignJWT(claims).setProtectedHeader({ alg: "EdDSA", kid: "k1" }).setIssuedAt().setExpirationTime(exp).sign(privateKey)
+  return { set: createLocalJWKSet({ keys: [jwk] }), sign }
+}
+
+const GRANT = { iss: STUDIO, aud: `${STUDIO}/mcp`, sub: "user-1", azp: SIDEKICK_CLIENT }
+
+test("only a Sidekick grant from Studio's own keys, for its /mcp, unexpired, is accepted", async () => {
+  const { set, sign } = await keys()
+  const good = await verifyGrant(await sign(GRANT), set, STUDIO)
+  expect(good?.subject).toBe("user-1")
+  // An assistant's OAuth token (another client), a host token, another issuer, an expired grant, a foreign key: refused.
+  expect(await verifyGrant(await sign({ ...GRANT, azp: "claude-connector" }), set, STUDIO)).toBeNull()
+  expect(await verifyGrant(await sign({ ...GRANT, aud: "norn-host" }), set, STUDIO)).toBeNull()
+  expect(await verifyGrant(await sign({ ...GRANT, iss: "https://elsewhere.test" }), set, STUDIO)).toBeNull()
+  expect(await verifyGrant(await sign(GRANT, Math.floor(Date.now() / 1000) - 5), set, STUDIO)).toBeNull()
+  const other = await keys()
+  expect(await verifyGrant(await other.sign(GRANT), set, STUDIO)).toBeNull()
+  expect(await verifyGrant(undefined, set, STUDIO)).toBeNull()
+  expect(await verifyGrant("not a token", set, STUDIO)).toBeNull()
+})
+
+test("the agent gets no client file system or terminal, whatever the browser declares", () => {
+  expect(rewriteInitialize({ protocolVersion: 1, clientCapabilities: { fs: { readTextFile: true, writeTextFile: true }, terminal: true } })).toEqual({
+    protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false }, clientInfo: { name: "norn-studio-sidekick", version: "1" },
+  })
+})
+
+test("a session has only the relay's Norn server, no built-in tools, settings, skills or persistence, in the scratch cwd", () => {
+  const session = rewriteNewSession("/scratch/c1", "http://127.0.0.1:17951/mcp/cap", "claude-sonnet-5-5") as { cwd: string; mcpServers: unknown[]; _meta: { claudeCode: { options: Record<string, unknown> } } }
+  expect(session.cwd).toBe("/scratch/c1")
+  expect(session.mcpServers).toEqual([{ type: "http", name: MCP_SERVER_NAME, url: "http://127.0.0.1:17951/mcp/cap", headers: [] }])
+  const options = session._meta.claudeCode.options
+  expect(options).toMatchObject({ tools: [], settingSources: [], strictMcpConfig: true, skills: [], plugins: [], persistSession: false, allowedTools: ["mcp__norn"], model: "claude-sonnet-5-5" })
+  for (const tool of ["Bash", "Edit", "Write", "Read", "WebFetch", "WebSearch", "Task", "Agent", "Glob", "Grep", "NotebookEdit", "Skill"]) expect(options.disallowedTools as string[]).toContain(tool)
+  expect(BUILT_IN_TOOLS.length).toBeGreaterThan(20)
+})
+
+test("only text reaches the agent", () => {
+  expect(rewritePrompt({ sessionId: "s", prompt: [{ type: "text", text: "what's our stock worth" }, { type: "resource_link", uri: "file:///etc/passwd", name: "x" }, { type: "image", data: "", mimeType: "image/png" }] })).toEqual({ sessionId: "s", prompt: [{ type: "text", text: "what's our stock worth" }] })
+  expect(rewritePrompt({ sessionId: "s", prompt: [{ type: "resource_link", uri: "file:///etc/passwd", name: "x" }] })).toBeNull()
+  expect(rewritePrompt({ prompt: [] })).toBeNull()
+})
+
+test("a Norn tool is allowed once; any other tool's permission request is rejected", () => {
+  const options = [{ optionId: "a", kind: "allow_always", name: "Always" }, { optionId: "o", kind: "allow_once", name: "Once" }, { optionId: "r", kind: "reject_once", name: "No" }]
+  expect(permissionAnswer({ toolCall: { toolCallId: "t", _meta: { claudeCode: { toolName: "mcp__norn__norn_answer" } } }, options })).toEqual({ outcome: { outcome: "selected", optionId: "o" } })
+  expect(permissionAnswer({ toolCall: { toolCallId: "t", _meta: { claudeCode: { toolName: "Bash" } } }, options })).toEqual({ outcome: { outcome: "selected", optionId: "r" } })
+  expect(permissionAnswer({ toolCall: { toolCallId: "t", title: "mcp__other__norn_answer" }, options })).toEqual({ outcome: { outcome: "selected", optionId: "r" } })
+  expect(permissionAnswer({ toolCall: { toolCallId: "t" }, options: [{ optionId: "a", kind: "allow_once" }] })).toEqual({ outcome: { outcome: "cancelled" } })
+})
+
+test("a forwarded message never carries the grant", () => {
+  const grant = "eyJhbGciOiJFZERTQSJ9.eyJzdWIiOiJ1In0.c2lnbmF0dXJl"
+  expect(scrub(JSON.stringify({ text: `token ${grant} again ${grant}` }), [grant])).toBe(JSON.stringify({ text: "token [redacted] again [redacted]" }))
+})
+
+test("a tool's MCP Apps view is read from its listing", () => {
+  expect(viewOf({ _meta: { ui: { resourceUri: "ui://norn/answer.html" } } })).toBe("answer")
+  expect(viewOf({ _meta: { "openai/outputTemplate": "ui://norn/lineage.html" } })).toBe("lineage")
+  expect(viewOf({ _meta: { ui: { resourceUri: "ui://other/answer.html" } } })).toBeNull()
+  expect(viewOf(undefined)).toBeNull()
+})
+
+test("the browser sees the session's updates, never the host login's status, quota or raw SDK messages", () => {
+  expect(forwardedUpdate({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "s", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "hi" } } } })).toBe(true)
+  expect(forwardedUpdate({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "s", update: { sessionUpdate: "usage_update" } } })).toBe(false)
+  for (const method of ["_auth/status_update", "auth/status_update", "_claude/sdkMessage"]) expect(forwardedUpdate({ jsonrpc: "2.0", method, params: {} })).toBe(false)
+})
+
+test("the relay does not start without the proxy's login header", () => {
+  const env = { SIDEKICK_STUDIO_ORIGIN: STUDIO, SIDEKICK_ADAPTER: "/bin/node adapter.js", SIDEKICK_SCRATCH: "/scratch", SIDEKICK_ALLOWED_LOGINS: "me@example" }
+  expect(() => configFromEnv(env)).toThrow("SIDEKICK_LOGIN_HEADER")
+  expect(configFromEnv({ ...env, SIDEKICK_LOGIN_HEADER: "X-User-Login" })).toMatchObject({ loginHeader: "x-user-login", adapter: ["/bin/node", "adapter.js"], listenHost: "127.0.0.1" })
+})
