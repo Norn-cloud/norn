@@ -76,12 +76,12 @@ test("sidekick: Home's Ask bar opens Sidekick, which answers through a Norn tool
   await page.screenshot({ path: "test-results/sidekick-dark.png" })
 })
 
-test("sidekick: where no bridge serves it, the rail has no Sidekick and Ask goes to Questions", async ({ page }) => {
+test("sidekick: where no bridge serves it, the rail has no Sidekick and Ask goes to Metrics", async ({ page }) => {
   await studio(page, false)
   await page.goto("/")
   await expect(page.getByLabel("Ask or tell Norn anything")).toBeVisible()
   await expect(page.getByRole("button", { name: "Sidekick" })).toHaveCount(0)
   await page.getByLabel("Ask or tell Norn anything").fill("What's our stock worth?")
   await page.getByRole("button", { name: "Ask" }).click()
-  await expect(page).toHaveURL(/\/questions$/)
+  await expect(page).toHaveURL(/\/metrics$/)
 })
