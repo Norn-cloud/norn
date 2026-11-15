@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
+import { MarkingChips, useMarkingCatalog } from "@/components/marking-chip"
 import { Link, useParams } from "@tanstack/react-router"
 import { ArrowRight, Box, Database, Layers, Search, Shapes } from "lucide-react"
 import { useMemo, useState, type ReactNode } from "react"
@@ -168,6 +169,7 @@ function SourceMatrix({ concept }: { readonly concept: Concept }) {
 export function FactsTable({ concept, technical }: { readonly concept: Concept; readonly technical: boolean }) {
   const { locale } = useLocale()
   const comma = locale === "ar" ? "، " : ", "
+  const markings = useMarkingCatalog()
   return (
     <DenseTable head={<TableRow><TableHead>Fact</TableHead><TableHead>Kind of value</TableHead></TableRow>}>
       {concept.fields.map((field) => (
@@ -176,6 +178,7 @@ export function FactsTable({ concept, technical }: { readonly concept: Concept; 
             <span lang={field.labelLang ?? "en"}>{field.label ?? field.id.replaceAll("_", " ")}</span>
             {field.optional && <span className="text-muted-foreground"> (optional)</span>}
             {technical && <> <Iso className="font-mono text-xs text-muted-foreground">{field.id}</Iso></>}
+            <MarkingChips markings={field.markings} catalog={markings} className="ms-2 inline-flex flex-wrap items-center gap-1 align-middle" />
           </TableCell>
           <TableCell className="whitespace-normal text-muted-foreground">
             {field.scalar.kind === "enum" && field.valueLabels !== undefined && field.valueLabels.size > 0

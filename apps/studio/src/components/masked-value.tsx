@@ -12,6 +12,10 @@ import { maskHint, revealProperty, type Masked, type RevealReceipt } from "../li
 const shown = (masked: Masked, projected: unknown): string =>
   masked.mode === "refuse" || projected === undefined ? "Withheld" : projected === null ? "—" : typeof projected === "string" ? projected : JSON.stringify(projected)
 
+/** The small word beside a projected value: how it was projected and under which marking ("pseudonymised: pii.contact"). */
+export const maskWord = (masked: Masked): string =>
+  `${masked.mode === "pseudonym" ? "pseudonymised" : masked.mode === "refuse" ? "withheld" : "masked"}${masked.markings.length > 0 ? `: ${masked.markings.join(", ")}` : ""}`
+
 const valueText = (value: unknown): string => (typeof value === "string" ? value : JSON.stringify(value))
 
 /**
@@ -50,6 +54,7 @@ export function MaskedValue({ objectType, id, property, masked, projected, class
       <Icon className="size-3 shrink-0" aria-hidden />
       <span className={cn("truncate font-mono", masked.revealable && "blur-[3px] select-none")} aria-hidden={masked.revealable || undefined}>{shown(masked, projected)}</span>
       {masked.revealable && <span className="sr-only">Masked; you may reveal it</span>}
+      <span data-mask-hint="" className="shrink-0 text-[10px] font-normal opacity-75">{maskWord(masked)}</span>
     </span>
   )
   if (!masked.revealable) return <span className={cn("inline-flex min-w-0", className)}>{chip}</span>

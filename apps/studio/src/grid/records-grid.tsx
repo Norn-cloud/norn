@@ -1,4 +1,5 @@
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query"
+import { MarkingChips, useMarkingCatalog } from "@/components/marking-chip"
 import { Link, useNavigate } from "@tanstack/react-router"
 import { useVirtualizer } from "@tanstack/react-virtual"
 import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, Columns3, ExternalLink, Filter, Play, Plus, RefreshCw, Rows3 } from "lucide-react"
@@ -73,6 +74,7 @@ export function RecordsGrid({ concept, read = readRecords, initial, onQuery }: {
 }) {
   const name = concept.name
   const fields = useMemo(() => concept.fields.filter(({ id }) => !HIDDEN_FIELDS.has(id)), [concept])
+  const markings = useMarkingCatalog()
   const [sort, setSort] = useState<readonly SortKey[]>(initial?.sort ?? [])
   const [filter, setFilter] = useState<Predicate | null>(initial?.filter ?? null)
   // An opened view's filter is the draft too, so the editor opens on it with nothing unapplied.
@@ -279,6 +281,7 @@ export function RecordsGrid({ concept, read = readRecords, initial, onQuery }: {
                       <button type="button" disabled={!can} title={can ? `${label}: sort (Shift adds a key)` : `${label}: ${off ?? "this kind of value can't be sorted"}`}
                         className="inline-flex min-w-0 items-center gap-1 whitespace-nowrap disabled:cursor-default" onClick={(event) => changeQuery({ sort: cycleSort(sort, field.id, event.shiftKey) })}>
                         <span className="truncate">{label}</span>{can && <SortMark direction={key?.direction} />}
+                        <MarkingChips markings={field.markings} catalog={markings} className="inline-flex items-center gap-1 font-normal" />
                         {sort.length > 1 && key && <sup className="tabular-nums" aria-hidden>{sort.indexOf(key) + 1}</sup>}
                       </button>
                     </div>
@@ -358,6 +361,7 @@ function RecordDrawer({ concept, fields, row, origin, actions, actionsOff, onClo
   readonly actions: readonly ActionSummary[]; readonly actionsOff: string | undefined; readonly onAction: (action: ActionSummary, id: string) => void
 }) {
   const record = row?.record
+  const markings = useMarkingCatalog()
   const object = useQuery({
     queryKey: ["object", record?.objectType, record?.id],
     queryFn: () => record ? transport.object(record.objectType, record.id) : null,
@@ -376,7 +380,7 @@ function RecordDrawer({ concept, fields, row, origin, actions, actionsOff, onClo
             {isWithheld(row)
               ? <p className="rounded-lg border border-node-border bg-muted/50 p-3 text-sm"><WithheldMark title={WITHHELD_HINT}>{WITHHELD_ROW}</WithheldMark></p>
               : <dl className="grid grid-cols-[minmax(8rem,auto)_1fr] gap-x-4 gap-y-2 text-sm">
-                {fields.map((field) => <div key={field.id} className="contents"><dt className="text-muted-foreground">{field.id.replaceAll("_", " ")}</dt><dd className="min-w-0 break-words"><TracedCell field={field} row={row} live={origin === "live"} lineage={object.data?.source?.document ?? null} variant="inline" /></dd></div>)}
+                {fields.map((field) => <div key={field.id} className="contents"><dt className="flex flex-wrap items-center gap-1 text-muted-foreground">{field.id.replaceAll("_", " ")}<MarkingChips markings={field.markings} catalog={markings} /></dt><dd className="min-w-0 break-words"><TracedCell field={field} row={row} live={origin === "live"} lineage={object.data?.source?.document ?? null} variant="inline" /></dd></div>)}
                 <dt className="text-muted-foreground">version</dt><dd className="tabular-nums">{record.version}</dd>
               </dl>}
             {!isWithheld(row) && <section className="grid gap-2">
