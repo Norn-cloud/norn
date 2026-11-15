@@ -141,7 +141,7 @@ export function ObjectPage() {
           <TabsContent value="guarantees" className="pt-4">
             <Panel icon={ShieldCheck} label="Laws over this object type"><Well className="p-3">
               {concept.rules.length === 0
-                ? <Empty icon={ShieldCheck} action={<Button asChild variant="outline" size="sm"><Link to="/guarantees">See every guarantee</Link></Button>}>No law is declared over {concept.title.toLowerCase()} records.</Empty>
+                ? <Empty icon={ShieldCheck} action={<Button asChild variant="outline" size="sm"><Link to="/rules">See every rule</Link></Button>}>No law is declared over {concept.title.toLowerCase()} records.</Empty>
                 : <ul className="space-y-2 text-sm">{concept.rules.map((rule) => <li key={rule} className="flex gap-2"><ShieldCheck className={cn("mt-0.5 size-4 shrink-0", KINDS.guarantee.text)} />{rule}</li>)}</ul>}
             </Well></Panel>
           </TabsContent>
@@ -159,7 +159,7 @@ export function ObjectPage() {
   )
 }
 
-const TABS = [["overview", "Overview"], ["lineage", "Lineage"], ["guarantees", "Guarantees"], ["access", "Access"]] as const
+const TABS = [["overview", "Overview"], ["lineage", "Lineage"], ["guarantees", "Rules"], ["access", "Access"]] as const
 
 /**
  * Which read this page shows: the version and, live, the commit that wrote it and when, from the

@@ -12,14 +12,14 @@ import { conceptTitle } from "./lib/catalog.ts"
 import { cellRead, NotServed, useMode } from "./lib/live-transport.ts"
 import type { Schemas } from "./lib/transport.ts"
 
-type Inbox = Schemas["NornInbox"]
+export type Inbox = Schemas["NornInbox"]
 type Item = Schemas["NornInboxItem"]
-type Group = Extract<Item, { kind: "held_back" }>
+export type Group = Extract<Item, { kind: "held_back" }>
 type Decision = Extract<Item, { kind: "decision" }>
 type Source = Extract<Item, { kind: "source_error" }>
 
 /** A server-given Studio route (it may carry a query), followed in the app; a modified click keeps the browser's own. */
-function RouteLink({ to, children, className }: { readonly to: string; readonly children: ReactNode; readonly className?: string }) {
+export function RouteLink({ to, children, className }: { readonly to: string; readonly children: ReactNode; readonly className?: string }) {
   const router = useRouter()
   const follow = (event: MouseEvent<HTMLAnchorElement>) => {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return

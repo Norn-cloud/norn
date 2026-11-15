@@ -26,7 +26,7 @@ const SECTIONS: readonly Section[] = [
   { path: "/dashboards", label: "Dashboards", icon: LayoutDashboard, summary: "Saved sets of questions, each a definition the cell checks before it is kept.", group: "Model", action: { label: "New dashboard", to: "/dashboards/new" } },
   { path: "/workflows", label: "Workflows", icon: Workflow, summary: "How each business process moves, and which rules allow or refuse every step.", kind: "workflow", useMenu: useWorkflowsMenu, group: "Rules", paths: ["/runs"], action: { label: "Open the canvas", to: "/canvas" } },
   { path: "/canvas", label: "Canvas", icon: Network, summary: "Draw and change a process, with every edit checked as you make it.", group: "Rules" },
-  { path: "/guarantees", label: "Guarantees", icon: ShieldCheck, summary: "The recorded law, and how strongly it is checked.", kind: "guarantee", useMenu: useGuaranteesMenu, group: "Rules" },
+  { path: "/rules", label: "Rules", icon: ShieldCheck, summary: "What each rule protects, the records it holds back now, and how to fix them.", kind: "guarantee", useMenu: useGuaranteesMenu, group: "Rules" },
   { path: "/connections", label: "Connections", icon: Plug, summary: "Apps and tools from your tool gateway, run through Norn's policy.", group: "System" },
 ]
 
