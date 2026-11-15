@@ -62,7 +62,7 @@ test("home: nothing to do says so", async ({ page }) => {
   await expect(page.getByText("Nothing needs you")).toBeVisible()
 })
 
-test("home: a key number the server refuses leaves Home, and the server's reason says why", async ({ page }) => {
+test("home: a key number the server refuses leaves Home, and the server's reason says why", async ({ page }, info) => {
   await cell(page, { scanLimit: 10000, sections: sections.map((entry) => ({ ...entry, count: 0, shown: 0 })), items: [] })
   const metric = (name: string, objectType: string, expression: string, timeProperty: string) => ({ name, label: `sum(${expression}); conservation []`, kind: "simple", objectType, expression, timeProperty, timeLinks: [], numerator: null, denominator: null, unitPartition: [], additivity: { kind: "additive" } })
   const answered = JSON.parse(readFileSync(new URL("../test/fixtures/metrics-builder/unit-groups.json", import.meta.url), "utf8")) as unknown
@@ -79,4 +79,11 @@ test("home: a key number the server refuses leaves Home, and the server's reason
   await expect(page.getByText("Total total")).toHaveCount(0)
   await expect(page.locator('[data-refused-number="m.scanned"]')).toContainText("Some scanned documents have no issued date")
   await expect(page.getByText("The cell did not answer this one.")).toHaveCount(0)
+  await page.setViewportSize({ width: 1440, height: 900 })
+  for (const scheme of ["light", "dark"] as const) {
+    await page.emulateMedia({ colorScheme: scheme })
+    await page.waitForTimeout(300)
+    await page.getByRole("heading", { name: "Key numbers" }).scrollIntoViewIfNeeded()
+    await page.screenshot({ path: info.outputPath(`home-refused-number-${scheme}.png`) })
+  }
 })
