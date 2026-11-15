@@ -243,7 +243,7 @@ test("LABEL-LOCALE-1: a partially labelled enum shows every declared value, labe
     expect(html).not.toMatch(/lang="en"[^>]*>مُرحّلة/)
   }
   // With no label at all in the reader's language, the type's own description lists every value.
-  const english = renderToStaticMarkup(<FactsTable concept={catalogOf(artifacts, "en").byName.get("sales.Invoice")!} technical={false} />)
+  const english = renderToStaticMarkup(<QueryClientProvider client={new QueryClient()}><FactsTable concept={catalogOf(artifacts, "en").byName.get("sales.Invoice")!} technical={false} /></QueryClientProvider>)
   expect(english).toContain("One of: draft, posted, on hold, void")
 })
 
