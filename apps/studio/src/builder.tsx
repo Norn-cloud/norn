@@ -293,7 +293,7 @@ export function QuestionBuilder({ catalog, guard, initial, onUse, unsupported, c
         {/* The question exactly as the checker admitted it, answered at once, while the form still shows it. */}
         {checked.data?.admitted && check.variables && <BuiltAnswer key={JSON.stringify(check.variables)} question={buildQuestion(check.variables, catalog)} catalog={catalog} title={titleOf(check.variables)} />}
         {onUse && checked.data?.admitted && check.variables && <Button type="button" disabled={unsupported !== undefined} onClick={() => onUse(buildQuestion(check.variables as Draft, catalog), (check.variables as Draft).title)}>Use this question</Button>}
-        {onUse && check.data?.admitted && !checked.data && <p className="text-sm text-muted-foreground">Changed since the check: check again to use it.</p>}
+        {onUse && check.data?.admitted && !checked.data && <p className="text-sm text-muted-foreground">Changed since it ran: Run again to use it.</p>}
       </div>
     </div>
   )

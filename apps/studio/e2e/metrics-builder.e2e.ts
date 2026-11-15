@@ -64,6 +64,20 @@ for (const scheme of ["light", "dark"] as const) {
   })
 }
 
+test("metrics: a measure in one unit is answered as asked, at once and once", async ({ page }) => {
+  test.skip(Boolean(process.env.E2E_BASE), "this row uses the recorded alpha answers as a stand-in")
+  const asked = await holdingsCell(page)
+  // The same metrics, declared without a unit partition: the question is answered exactly as asked.
+  const metrics = fixture("metrics") as { metrics: Record<string, unknown>[] }
+  await page.route("**/api/host/v1/questions:metrics**", (route) => route.fulfill({ json: { metrics: metrics.metrics.map((metric) => ({ ...metric, unitPartition: [] })) } }))
+  await page.goto("/metrics/new")
+  await page.getByRole("button", { name: "Run", exact: true }).click()
+  await expect(page.locator('[data-slot="answer-lead"]')).toBeVisible()
+  await expect(page.getByRole("button", { name: "Run again" })).toBeVisible()
+  expect(asked).toHaveLength(1)
+  expect(asked[0]?.filter).toEqual([])
+})
+
 test("metrics: the rail says Metrics and its page offers Explore a metric", async ({ page }) => {
   test.skip(Boolean(process.env.E2E_BASE), "this row uses the recorded world")
   await holdingsCell(page)
