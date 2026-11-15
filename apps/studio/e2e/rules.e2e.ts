@@ -20,7 +20,9 @@ const held = {
     suggestedFix: { actionId: "docs.scanned_document.correct", title: "Correct an extracted total", label: "Use 72.00", property: "total", value: "72.00", arguments: {}, needs: ["correction_reason"] },
   }],
 }
-const inbox = { scanLimit: 10000, items: [held], sections: [{ kind: "held_back", count: 1, shown: 1, approximate: false }, { kind: "decision", count: 0, shown: 0, approximate: false }, { kind: "source_error", count: 0, shown: 0, approximate: false }] }
+// The same inherited law over another type: the server holds each type's records apart, so each type reads its own count.
+const elsewhere = { ...held, objectType: "docs.LedgerEntry", count: 5, target: "/objects/docs.LedgerEntry?population=held_back", records: [] }
+const inbox = { scanLimit: 10000, items: [elsewhere, held], sections: [{ kind: "held_back", count: 1, shown: 1, approximate: false }, { kind: "decision", count: 0, shown: 0, approximate: false }, { kind: "source_error", count: 0, shown: 0, approximate: false }] }
 
 async function cell(page: Page) {
   await session(page)

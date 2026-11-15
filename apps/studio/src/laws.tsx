@@ -34,7 +34,7 @@ function LawRow({ law, held }: { readonly law: Law; readonly held: Group | undef
           <Chip tone="gray" title={law.response ? `as a ${law.response}` : undefined}>{FORM[law.modality] ?? law.modality}</Chip>
           {law.inheritedFrom && <Chip tone="gray" title="Declared on a kind of record this one is">from {conceptTitle(law.inheritedFrom)}</Chip>}
           {held && <Chip tone="amber" dot data-held={held.count}>{held.count}{held.approximate ? "+" : ""} held back</Chip>}
-          {view === "technical" && <code className="font-mono text-xs text-muted-foreground">{law.id}</code>}
+          {view === "technical" && <><Chip tone="violet" title="The pack or module that owns this law">{law.owner}</Chip><code className="font-mono text-xs text-muted-foreground">{law.id}</code></>}
         </div>
         {held && held.records.length > 0 && (
           <div className="mt-1 divide-y rounded-lg border bg-card">
@@ -64,9 +64,12 @@ const recordName = (record: Group["records"][number]) => {
   return typeof named === "string" ? named : record.id
 }
 
-/** The held-back group the inbox reports for `law`: the one whose rule is that law's artifact. */
-export const heldBy = (groups: readonly Group[], law: Law): Group | undefined =>
-  groups.find(({ ruleRef }) => ruleRef.kind === "law" && (ruleRef.artifactId === law.artifactId || ruleRef.lawId === law.id))
+/**
+ * The held-back group the inbox reports for `law` over `objectType`: the server groups by rule and
+ * type, so an inherited law (one declared on an interface) holds each implementer's records apart.
+ */
+export const heldBy = (groups: readonly Group[], law: Law, objectType: string): Group | undefined =>
+  groups.find(({ ruleRef, objectType: held }) => held === objectType && ruleRef.kind === "law" && (ruleRef.artifactId === law.artifactId || ruleRef.lawId === law.id))
 
 /** The cell's held-back groups for this reader, live only (the same inbox read Home makes). */
 export function useHeldBack(): readonly Group[] {
@@ -98,7 +101,7 @@ export function LawsPanel({ concept, label = "Rules it must keep", enforced = tr
     <Panel icon={Scale} label={label}>
       <Well className="divide-y">
         {concept.laws.length === 0 && invariants.length === 0 && <EmptyState icon={Scale}>No law is declared on this object type itself.</EmptyState>}
-        {concept.laws.map((law) => <LawRow key={law.id} law={law} held={heldBy(held, law)} />)}
+        {concept.laws.map((law) => <LawRow key={law.id} law={law} held={heldBy(held, law, concept.name)} />)}
         {invariants.map((rule) => <div key={rule} className="flex gap-3 px-4 py-3 text-sm"><span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg bg-tone-green/10 text-tone-green dark:bg-tone-green/15"><ShieldCheck aria-hidden className="size-4" /></span><p className="min-w-0 flex-1 font-medium text-pretty">{rule}</p></div>)}
         {enforced && (concept.laws.length > 0 || invariants.length > 0) && <p className="px-4 py-3 text-meta text-muted-foreground">{ENFORCED}</p>}
         {live && concept.definition === "object type" && <Quarantined objectType={concept.name} />}

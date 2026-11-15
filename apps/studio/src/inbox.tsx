@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { useRouter } from "@tanstack/react-router"
 import { ChevronRight, CircleAlert, Inbox as InboxIcon, Plug, ShieldAlert, Wand2 } from "lucide-react"
-import type { MouseEvent, ReactNode } from "react"
+import type { ComponentProps, MouseEvent, ReactNode } from "react"
 import { EmptyState } from "@/components/panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -19,14 +19,15 @@ type Decision = Extract<Item, { kind: "decision" }>
 type Source = Extract<Item, { kind: "source_error" }>
 
 /** A server-given Studio route (it may carry a query), followed in the app; a modified click keeps the browser's own. */
-export function RouteLink({ to, children, className }: { readonly to: string; readonly children: ReactNode; readonly className?: string }) {
+export function RouteLink({ to, children, className, ...rest }: { readonly to: string; readonly children: ReactNode; readonly className?: string } & Omit<ComponentProps<"a">, "href" | "onClick" | "children" | "className">) {
   const router = useRouter()
   const follow = (event: MouseEvent<HTMLAnchorElement>) => {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
     event.preventDefault()
     router.history.push(to)
   }
-  return <a href={to} onClick={follow} className={className}>{children}</a>
+  // The rest (a title, a Button's data-slot when it is the button's child) reaches the anchor.
+  return <a {...rest} href={to} onClick={follow} className={className}>{children}</a>
 }
 
 const text = (value: unknown) => typeof value === "string" && value !== "" ? value : undefined
