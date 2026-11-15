@@ -180,14 +180,11 @@ pub fn derive_metric_space(
         };
         let dimensions = dimensions(object, &catalog);
         // METRIC-GRAIN-LINK-1: an object with no time of its own takes its
-        // to-one links' times. METRIC-DERIVE-TIME-1: a time axis is
-        // single-valued, so a nullable or computed time is no grain here,
-        // exactly as for a linked time: a sum over it would be refused
-        // (`metric.validation.invalid_time`) when it is asked.
+        // to-one links' times.
         let mut times: Vec<DimensionPath> = object
             .properties
             .iter()
-            .filter(|property| super::is_time(property) && !property.nullable && !property.computed)
+            .filter(|property| super::is_time(property))
             .map(|time| direct(&time.id))
             .collect();
         if times.is_empty() {

@@ -602,54 +602,6 @@ fn three_systems_derive_exactly_the_canon_flow_sums() {
     }
 }
 
-/// METRIC-DERIVE-TIME-1: every metric derived from the demo cell's packs
-/// (the three systems and the scanned documents) is admitted when it is asked:
-/// a nullable time (a scan's `issued_on`) is never a grain, so a cell never
-/// offers a total it then refuses as `metric.validation.invalid_time`.
-#[test]
-fn every_metric_derived_from_the_demo_packs_is_admitted() {
-    let mut artifacts = artifacts();
-    artifacts.extend(
-        fs::read_dir(root().join("registry/packs/documents/artifacts"))
-            .expect("directory")
-            .map(|entry| {
-                serde_json::from_str::<ArtifactEnvelope>(
-                    &fs::read_to_string(entry.expect("entry").path()).expect("artifact"),
-                )
-                .expect("envelope")
-            }),
-    );
-    for root_type in ["canon.Delivery", "docs.ScannedDocument"] {
-        let space = norn_checker::metric::derive::derive_metric_space(
-            &artifacts,
-            &BTreeSet::new(),
-            &norn_ir::LawRoot::Entity(root_type.to_owned()),
-        )
-        .unwrap_or_else(|d| panic!("{d:#?}"));
-        let definitions: Vec<_> = space
-            .candidates()
-            .iter()
-            .map(|candidate| candidate.definition.clone())
-            .collect();
-        assert!(!definitions.is_empty(), "{root_type}: no derived metric");
-        let refused: Vec<_> =
-            norn_checker::metric::check_metrics_and_questions(&definitions, &[], space.catalog())
-                .into_iter()
-                .filter(|d| d.severity == norn_ir::DiagnosticSeverity::Error)
-                .map(|d| format!("{} at {:?}: {}", d.code, d.path, d.message))
-                .collect();
-        assert_eq!(refused, Vec::<String>::new(), "{root_type}");
-        assert!(
-            definitions.iter().all(|d| d
-                .norn
-                .time_dimension
-                .as_ref()
-                .is_none_or(|time| time.property.as_str() != "issued_on")),
-            "{root_type}: a nullable time is a grain"
-        );
-    }
-}
-
 /// Every canon currency enum and every pack's currency code set is the one
 /// ISO 4217 list (canon's `ISO_4217`), so a copy cannot drift and a real
 /// source's EGP maps like its USD.
