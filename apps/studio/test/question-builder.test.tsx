@@ -41,9 +41,21 @@ test("the builder writes what was picked and judges nothing: grains only on time
 test("the form offers the catalogue in Business words and starts on the time property by week", () => {
   expect(initialDraft(catalog)).toMatchObject({ measures: ["demo.input"], by: "occurred_at", grain: "week", filters: [] })
   const html = renderToStaticMarkup(<QueryClientProvider client={new QueryClient()}><QuestionBuilder catalog={catalog} /></QueryClientProvider>)
-  for (const text of [">Input<", ">Recovered<", ">Yield<", ">occurred at<", ">Week<", ">Quarter<", "Check with the server", "Nothing is run yet", 'aria-label="Undo"', 'aria-label="Redo"', "All changes saved", "Add measure", "Add condition", 'aria-label="Duplicate measure 1"', 'data-field="window"']) expect(html).toContain(text)
+  for (const text of [">Input<", ">Recovered<", ">Yield<", ">Occurred at<", ">Week<", ">Quarter<", "Run</button>", "Pick a measure, then Run", 'aria-label="Undo"', 'aria-label="Redo"', "All changes saved", "Add measure", "Add condition", 'aria-label="Duplicate measure 1"', 'data-field="window"']) expect(html).toContain(text)
   // Ids stay in option values; the reader sees labels.
   expect(html).not.toMatch(/>demo\.[a-z_]+</)
+})
+
+test("a new question runs at once: the latest 52 whole weeks, Monday to Monday, and the server's own words for each measure", () => {
+  // Sunday 15 Nov 2026: the window ends on the coming Monday and starts 52 weeks before it.
+  const draft = initialDraft(catalog, Date.parse("2026-11-15T09:00:00Z"))
+  expect([draft.start, draft.end]).toEqual(["2025-11-17", "2026-11-16"])
+  expect(buildQuestion(draft, catalog).window).toEqual({ start: "2025-11-17T00:00:00Z", end: "2026-11-16T00:00:00Z" })
+  const shown = { ...catalog, metrics: [{ name: "m.q", label: "quantity, as of observed_at; last value per canon.Holding at each period's end", display: "quantity on hand", type: "simple" }] }
+  const html = renderToStaticMarkup(<QueryClientProvider client={new QueryClient()}><QuestionBuilder catalog={shown} /></QueryClientProvider>)
+  expect(html).toContain(">Quantity on hand<")
+  expect(html).not.toContain("last value per")
+  expect(html).toContain("every conversion counts")
 })
 
 test("an admitted plan reads the IR's own operators in words, never the code", () => {
@@ -73,7 +85,7 @@ test("a checker finding lands on the field its pointer names, or on the question
 test("a world without measures shows the empty state, not an empty form", () => {
   const html = renderToStaticMarkup(<QueryClientProvider client={new QueryClient()}><QuestionBuilder catalog={{ ...catalog, metrics: [] }} /></QueryClientProvider>)
   expect(html).toContain("declares no measures yet")
-  expect(html).not.toContain("Check with the server")
+  expect(html).not.toContain("Run</button>")
 })
 
 test("a checker response with a malformed finding is not a verdict", () => {

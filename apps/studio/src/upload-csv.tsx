@@ -153,7 +153,7 @@ export function UploadCsv() {
             )}
             <DialogFooter className="flex-wrap gap-2">
               <Button asChild variant="outline"><Link to="/objects/$type" params={{ type: outcome.objectType }} onClick={() => setOpen(false)}><Rows3 />Open the type</Link></Button>
-              <Button asChild><Link to="/questions" onClick={() => setOpen(false)}><ChartLine />Ask a question</Link></Button>
+              <Button asChild><Link to="/metrics" onClick={() => setOpen(false)}><ChartLine />See the metrics</Link></Button>
             </DialogFooter>
           </div>
         )}

@@ -57,7 +57,7 @@ async function page(live: unknown) {
   client.setQueryData(["question-board"], [{ question: recorded("scrap-yield.question.json"), answer: recorded("scrap-yield.k1.answer.json"), metrics: recorded("scrap-yield.metrics.json"), objectType: recorded("scrap-yield.object-type.json") }])
   client.setQueryData(["live-answer", "demo.yield_week"], live)
   const root = createRootRoute()
-  const router = createRouter({ routeTree: root.addChildren([createRoute({ getParentRoute: () => root, path: "/questions/$name", component: QuestionPage })]), history: createMemoryHistory({ initialEntries: ["/questions/demo.yield_week"] }) })
+  const router = createRouter({ routeTree: root.addChildren([createRoute({ getParentRoute: () => root, path: "/metrics/$name", component: QuestionPage })]), history: createMemoryHistory({ initialEntries: ["/metrics/demo.yield_week"] }) })
   await router.load()
   return renderToStaticMarkup(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>)
 }
@@ -92,7 +92,7 @@ test("a contribution the server withholds (amounts: null) has no amount; none is
 
 /** A node rendered inside a router: each traced record links to its own page. */
 async function routed(node: ReactNode) {
-  const router = createRouter({ routeTree: createRootRoute({ component: () => node }), history: createMemoryHistory({ initialEntries: ["/questions"] }) })
+  const router = createRouter({ routeTree: createRootRoute({ component: () => node }), history: createMemoryHistory({ initialEntries: ["/metrics"] }) })
   await router.load()
   return renderToStaticMarkup(<RouterProvider router={router} />)
 }
