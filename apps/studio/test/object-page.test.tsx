@@ -231,7 +231,7 @@ test("LABEL-LOCALE-1: a partially labelled enum shows every declared value, labe
   ] as unknown as Parameters<typeof catalogOf>[0]
   const concept = catalogOf(artifacts, "ar").byName.get("sales.Invoice")!
   for (const technical of [false, true]) {
-    const html = renderToStaticMarkup(<LocaleProvider initial="ar"><FactsTable concept={concept} technical={technical} /></LocaleProvider>)
+    const html = renderToStaticMarkup(<QueryClientProvider client={new QueryClient()}><LocaleProvider initial="ar"><FactsTable concept={concept} technical={technical} /></LocaleProvider></QueryClientProvider>)
     // Every declared value is on the page, in declaration order: nothing is hidden for lack of a label.
     const shown = ["draft", "مُرحّلة", technical ? "on_hold" : "on hold", "ملغاة"]
     const at = shown.map((text) => html.indexOf(text))
@@ -243,7 +243,7 @@ test("LABEL-LOCALE-1: a partially labelled enum shows every declared value, labe
     expect(html).not.toMatch(/lang="en"[^>]*>مُرحّلة/)
   }
   // With no label at all in the reader's language, the type's own description lists every value.
-  const english = renderToStaticMarkup(<FactsTable concept={catalogOf(artifacts, "en").byName.get("sales.Invoice")!} technical={false} />)
+  const english = renderToStaticMarkup(<QueryClientProvider client={new QueryClient()}><FactsTable concept={catalogOf(artifacts, "en").byName.get("sales.Invoice")!} technical={false} /></QueryClientProvider>)
   expect(english).toContain("One of: draft, posted, on hold, void")
 })
 

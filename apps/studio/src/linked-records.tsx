@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
+import { MarkingChips, useMarkingCatalog } from "@/components/marking-chip"
 import { Link } from "@tanstack/react-router"
 import { TableCard } from "@/components/table-card"
 import { Badge } from "@/components/ui/badge"
@@ -18,6 +19,7 @@ const SHOWN = 60
  */
 export function LinkedRecords({ from, ids, parent }: { readonly from: Concept; readonly ids: readonly string[]; readonly parent: string }) {
   const shown = ids.slice(0, SHOWN)
+  const markings = useMarkingCatalog()
   const records = useQuery({
     queryKey: ["linked-records", from.name, shown],
     queryFn: () => Promise.all(shown.map((id) => cellRead<ObjectRecord>(`/v1/objects/${encodeURIComponent(from.name)}/${encodeURIComponent(id)}`, "Records are"))),
@@ -34,7 +36,7 @@ export function LinkedRecords({ from, ids, parent }: { readonly from: Concept; r
       <TableCard className="overflow-x-auto"><Table>
         <TableHeader><TableRow>
           <TableHead>Record</TableHead>
-          {fields.map((field) => <TableHead key={field.id} lang={field.labelLang}>{field.label ?? field.id}</TableHead>)}
+          {fields.map((field) => <TableHead key={field.id} lang={field.labelLang}><span className="inline-flex items-center gap-1.5">{field.label ?? field.id}<MarkingChips markings={field.markings} catalog={markings} /></span></TableHead>)}
         </TableRow></TableHeader>
         <TableBody>
           {records.data.map((read: Read<ObjectRecord>) => (
