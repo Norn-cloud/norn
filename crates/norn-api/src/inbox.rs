@@ -1522,55 +1522,90 @@ fn offer<E: SqlEngine>(
     })
 }
 
+/// The error code of a sync whose connector is not installed: that
+/// connection is not set up yet, which is not a failure (Studio's Sources
+/// page reads it as "Not set up").
+const CONNECTOR_MISSING: &str = "source.connector_missing";
+
 /// Connections whose last sync failed or was partial, through the
 /// connection type's own grid query; nothing when the caller may not list
-/// them or the cell declares no connections.
+/// them or the cell declares no connections. A connection whose connector
+/// is not installed is not set up, so it is neither listed nor counted.
 fn failing_sources<E: SqlEngine>(
     host: &DevHost<E>,
     scope: &ScopeQuery,
     actor: &str,
     access: &dyn ObjectAccess,
 ) -> (Vec<NornInboxSource>, u64, bool) {
-    let filter = serde_json::json!({ "all": [
-        { "property": "status", "op": "in", "value": ["failed", "partial"] }
-    ] });
-    let params = ObjectQueryParams {
-        limit: Some(MAX_INBOX_SOURCES.to_string()),
-        filter: Some(filter.to_string()),
-        ..ObjectQueryParams::default()
+    let query = |clauses: Vec<serde_json::Value>, limit: usize| {
+        let params = ObjectQueryParams {
+            limit: Some(limit.to_string()),
+            filter: Some(serde_json::json!({ "all": clauses }).to_string()),
+            ..ObjectQueryParams::default()
+        };
+        get_object_query_within(
+            host,
+            (scope, Some(actor)),
+            CONNECTION_TYPE,
+            &params,
+            access,
+            SOURCE_SCAN_BOUND,
+        )
     };
-    let page = match get_object_query_within(
-        host,
-        (scope, Some(actor)),
-        CONNECTION_TYPE,
-        &params,
-        access,
-        SOURCE_SCAN_BOUND,
-    ) {
-        Ok(page) => page,
+    let totals = |page: &crate::objects::NornObjectQueryPage| {
+        page.total.as_ref().map_or_else(
+            || (count_of(page.records.len()), false),
+            |total| (total.count, total.approximate),
+        )
+    };
+    let failing =
+        || serde_json::json!({ "property": "status", "op": "in", "value": ["failed", "partial"] });
+    // A failed sync always carries its error code and a partial one never
+    // does; the filter grammar has no "or", so the not-set-up connections
+    // are counted apart and subtracted, and skipped in the listed page.
+    let not_set_up = query(
+        vec![
+            failing(),
+            serde_json::json!({ "property": "last_error_code", "op": "eq", "value": CONNECTOR_MISSING }),
+        ],
+        1,
+    );
+    let skipped = not_set_up.as_ref().map_or((0, false), totals);
+    let limit = usize::try_from(skipped.0)
+        .unwrap_or(usize::MAX)
+        .saturating_add(MAX_INBOX_SOURCES)
+        .min(crate::object_query::MAX_LIMIT);
+    let page = match (query(vec![failing()], limit), not_set_up) {
+        (Ok(page), Ok(_)) => page,
         // Past the scan bound: there are more connections than one scan.
-        Err(refusal) if refusal.code == "object.scan_bound_exceeded" => {
+        (Err(refusal), _) | (_, Err(refusal)) if refusal.code == "object.scan_bound_exceeded" => {
             return (Vec::new(), 0, true);
         }
-        Err(_refused) => return (Vec::new(), 0, false),
+        _ => return (Vec::new(), 0, false),
     };
-    let (count, approximate) = page.total.map_or_else(
-        || (count_of(page.records.len()), false),
-        |total| (total.count, total.approximate),
-    );
+    let (count, approximate) = totals(&page);
     let items = page
         .records
         .into_iter()
         .filter_map(|record| {
             let values = record.values?;
-            Some(NornInboxSource {
+            let not_set_up = matches!(
+                values.get("last_error_code"),
+                Some(RuntimeValue::String(code)) if code == CONNECTOR_MISSING
+            );
+            (!not_set_up).then(|| NornInboxSource {
                 target: record_target(&record.object_type, &record.id),
                 id: record.id,
                 values,
             })
         })
+        .take(MAX_INBOX_SOURCES)
         .collect();
-    (items, count, approximate)
+    (
+        items,
+        count.saturating_sub(skipped.0),
+        approximate || skipped.1,
+    )
 }
 
 #[cfg(test)]

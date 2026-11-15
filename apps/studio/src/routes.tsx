@@ -1,4 +1,4 @@
-import { createRoute, type AnyRootRoute, type RouteComponent } from "@tanstack/react-router"
+import { createRoute, redirect, type AnyRootRoute, type RouteComponent } from "@tanstack/react-router"
 import { QuestionBuilderPage } from "./builder.tsx"
 import { HomePage } from "./home.tsx"
 import { CanvasPage } from "./canvas.tsx"
@@ -33,10 +33,10 @@ export const COMPONENTS: { readonly [P in PagePath]: RouteComponent } = {
   "/decisions": DecisionsPage,
   "/runs/$id": RunPage,
   "/episodes/$id": EpisodePage,
-  "/questions": QuestionsPage,
-  "/questions/new": QuestionBuilderPage,
-  "/questions/build": QuestionTreePage,
-  "/questions/$name": QuestionPage,
+  "/metrics": QuestionsPage,
+  "/metrics/new": QuestionBuilderPage,
+  "/metrics/build": QuestionTreePage,
+  "/metrics/$name": QuestionPage,
   "/dashboards": DashboardsPage,
   "/dashboards/new": DashboardEditorPage,
   "/dashboards/$id": DashboardBoardPage,
@@ -48,9 +48,24 @@ export const COMPONENTS: { readonly [P in PagePath]: RouteComponent } = {
   "/connections": ConnectionsWithBindings,
 }
 
-/** The app's routes under `root`: Home at "/", then every page. */
+/** Where an old address now lives: Questions became Metrics, and a saved link still opens its page. */
+export const MOVED = { "/questions": "/metrics" } as const
+
+/** `/questions/new#x` → `/metrics/new#x`: the same page under its new prefix, nothing else changed. */
+export function movedTo(pathname: string): string | undefined {
+  for (const [from, to] of Object.entries(MOVED)) if (pathname === from || pathname.startsWith(`${from}/`)) return `${to}${pathname.slice(from.length)}`
+  return undefined
+}
+
+/** The app's routes under `root`: Home at "/", then every page, then the old addresses that redirect. */
 export function routeTree<R extends AnyRootRoute>(root: R) {
   return root.addChildren([
     ...(Object.keys(PAGES) as PagePath[]).map((path) => createRoute({ getParentRoute: () => root, path, component: COMPONENTS[path] })),
+    // One splat per old prefix: it matches the prefix itself and everything under it.
+    ...Object.keys(MOVED).map((from) => createRoute({
+      getParentRoute: () => root,
+      path: `${from}/$`,
+      beforeLoad: ({ location }) => { throw redirect({ href: `${movedTo(location.pathname) ?? "/"}${location.searchStr}${location.hash ? `#${location.hash}` : ""}`, replace: true }) },
+    })),
   ])
 }

@@ -63,7 +63,7 @@ test("a run answer renders like a published one, without a link to a published p
   const html = renderToStaticMarkup(<QueryClientProvider client={new QueryClient()}><AnswerView read={read} heading="h3" /></QueryClientProvider>)
   expect(html).toContain("<h3")
   expect(html).toContain(">Live<")
-  expect(html).not.toContain('href="/questions/')
+  expect(html).not.toContain('href="/metrics/')
   expect(html).toMatch(/Every week|The latest 8 weeks/)
 })
 

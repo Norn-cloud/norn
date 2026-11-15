@@ -82,7 +82,7 @@ test("question row: create, validate, sign, save, reopen, edit, undo, redo, remo
     if (stored) return route.fulfill({ json: { id: stored.id, kind: "question", version: stored.version, payload: stored.payload, restatement: returnedWords ?? stored.text, restatementSha256: digest(returnedWords ?? stored.text), signoff: { signer: "user:analyst-id", displayName: "you", signedAtMs: 1794000000000, restatementSha256: stored.sha256 } } })
     return refuse(route, "notFound")
   })
-  await page.goto("/questions/build")
+  await page.goto("/metrics/build")
   await expect(page.getByLabel("Question name")).toHaveValue("Yield")
   await expect(page.getByRole("button", { name: "Save question" })).toBeDisabled()
   await expect(page.getByText("Sign off on the plain words first.")).toBeVisible()
@@ -168,7 +168,7 @@ test("a workspace without a data cell cannot call definitions", async ({ page })
   await page.route("**/api/questions/catalog", (route) => route.fulfill({ json: catalog }))
   await page.route("**/api/questions/recommendations", (route) => route.fulfill({ json: tree }))
   await page.route("**/api/questions/check", (route) => route.fulfill({ json: { kind: "question", admitted: true, findings: [], plan: { grain: "week", question: {}, sums: [], metrics: [] }, restatement: { text: "The checked question.", sha256: "a".repeat(64) } } }))
-  await page.goto("/questions/build")
+  await page.goto("/metrics/build")
   await expect(page.getByText("This workspace has no data cell yet.")).toBeVisible()
   await expect(page.getByRole("button", { name: "This is what I asked for" })).toHaveCount(0)
   await expect(page.getByRole("button", { name: "Save question" })).toBeDisabled()
@@ -180,7 +180,7 @@ test("live signed question is retired after the row", async ({ page }) => {
   const title = `E2E question ${Date.now()} ${Math.floor(Math.random() * 1_000_000)}`
   const id = `studio.${title.toLowerCase().replace(/[^a-z0-9]+/g, "_")}`
   try {
-    await page.goto("/questions/build")
+    await page.goto("/metrics/build")
     await page.getByLabel("Question name").fill(title)
     await page.getByRole("button", { name: "This is what I asked for" }).click()
     await page.getByRole("button", { name: "Save question" }).click()

@@ -26,7 +26,7 @@ import type { MenuEntry } from "./shell.tsx"
 
 import { AnswerView, AskedAnswer, RefusedNote } from "./answer-view.tsx"
 import { NotServed, useMode } from "./lib/live-transport.ts"
-import { metricHeading, metricQuestion, readMetrics, recentWindow, timeLabel, windowOf, type Condition, type MetricSummary, type Window } from "./lib/metrics.ts"
+import { metricHeading, metricQuestion, readMetrics, recentWindow, timeLabel, windowOf, type Condition, type MetricSummary } from "./lib/metrics.ts"
 import { figure, unitGroups, type UnitGroup } from "./lib/answer-anatomy.ts"
 import { evaluateQuestion } from "./lib/evaluate.ts"
 import { readDocument } from "./lib/exact.ts"
@@ -113,7 +113,7 @@ function MetricCard({ metric, turn, onSettled }: {
           </div>
           {sources.length === 0
             ? <AskedAnswer question={metricQuestion(metric, window, conditions) as Question} title={what} declared={declared} heading="none" onSettled={onSettled} />
-            : <UnitGroups metric={metric} window={window} conditions={conditions} sources={sources} title={what} declared={declared} picked={picked} onPick={setPicked} onSettled={onSettled} />}
+            : <UnitGroups asked={metricQuestion(metric, window, conditions) as Question} grain={window.grain} sources={sources} title={what} declared={declared} picked={picked} onPick={setPicked} onSettled={onSettled} />}
         </>}
       </div>
     </section>
@@ -123,12 +123,14 @@ function MetricCard({ metric, turn, onSettled }: {
 /**
  * A metric whose values are in several units, asked at once: one exact total per unit group the cell
  * returns (it groups by the unit sources itself), labelled by its unit, most records first; the
- * conditions narrow it. A group opens its answer per period.
+ * question's own conditions narrow it. A group opens the question as asked, held to that group.
  */
-function UnitGroups({ metric, window, conditions, sources, title, declared, picked, onPick, onSettled }: {
-  readonly metric: MetricSummary
-  readonly window: Window
-  readonly conditions: readonly Condition[]
+export function UnitGroups({ asked, grain, sources, title, declared, picked, onPick, onSettled }: {
+  /** The question as asked: its window, conditions and grouping; the unit groups are read over the same window. */
+  readonly asked: Question
+  /** The period the opened group's answer is read by, in words ("week"); the question's own when it groups by a time. */
+  readonly grain: string
+  /** The properties the cell names as the metric's units (its unitPartition). */
   readonly sources: readonly string[]
   readonly title: string
   readonly declared: Pick<QuestionAnswer, "metrics" | "objectType">
@@ -136,7 +138,6 @@ function UnitGroups({ metric, window, conditions, sources, title, declared, pick
   readonly onPick: (group: UnitGroup | null) => void
   readonly onSettled: () => void
 }) {
-  const asked = metricQuestion(metric, window, conditions) as Question
   const totals: Question = { ...asked, groupBy: sources.map((property) => ({ path: { property } })) }
   const run = useQuery({ queryKey: ["unit-groups", JSON.stringify(totals)], queryFn: () => evaluateQuestion(totals), retry: false, staleTime: 30_000 })
   const result = run.data
@@ -156,13 +157,13 @@ function UnitGroups({ metric, window, conditions, sources, title, declared, pick
     <div className="space-y-4">
       {groups.length === 0 ? <EmptyState icon={Sigma}>No records in this window match.</EmptyState> : groups.length === 1 ? null : (
         <div className="space-y-2">
-          <p className={groups.length === 1 ? "sr-only" : "text-meta text-muted-foreground"}>{groups.length === 1 ? `In one unit, ${period(totals.window)}.` : `In ${groups.length} units, ${period(totals.window)}; most records first. Choose one to see it per ${window.grain}.`}</p>
+          <p className={groups.length === 1 ? "sr-only" : "text-meta text-muted-foreground"}>{groups.length === 1 ? `In one unit, ${period(totals.window)}.` : `In ${groups.length} units, ${period(totals.window)}; most records first. Choose one to see it per ${grain}.`}</p>
           <TableCard><Table>
             <TableHeader><TableRow><TableHead>Unit</TableHead><TableHead className="text-right">{title}</TableHead><TableHead className="text-right">Records</TableHead></TableRow></TableHeader>
             <TableBody>
               {groups.map((group) => (
                 <TableRow key={group.key} data-state={open?.key === group.key ? "selected" : undefined} className="cursor-pointer" onClick={() => onPick(open?.key === group.key ? null : group)}>
-                  <TableCell><button type="button" aria-pressed={open?.key === group.key} className="rounded-sm font-medium underline-offset-4 hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none" onClick={(event) => { event.stopPropagation(); onPick(open?.key === group.key ? null : group) }}>{group.unit ?? "No unit"}</button></TableCell>
+                  <TableCell><Button type="button" variant="link" size="sm" className="h-auto px-0 font-medium text-foreground" aria-pressed={open?.key === group.key} onClick={(event) => { event.stopPropagation(); onPick(open?.key === group.key ? null : group) }}>{group.unit ?? "No unit"}</Button></TableCell>
                   <TableCell className="text-right font-medium tabular-nums">{figure(group.bucket, group.unit)}</TableCell>
                   <TableCell className="text-right tabular-nums">{group.bucket.members.length.toLocaleString("en")}</TableCell>
                 </TableRow>
@@ -176,7 +177,7 @@ function UnitGroups({ metric, window, conditions, sources, title, declared, pick
         placeholder={groups.length === 1 ? <div data-slot="answer-total" className="rounded-2xl bg-card p-5 shadow-[var(--elevation-1)] ring-1 ring-foreground/5 sm:p-7">
           <div className="text-meta text-muted-foreground">Total, {period(totals.window)}</div>
           <div className="pt-2 text-[3rem] leading-none font-light tracking-[-0.045em] tabular-nums">{figure(open.bucket, open.unit)}</div>
-          <div className="pt-3 text-meta text-muted-foreground">{open.bucket.members.length.toLocaleString("en")} records · reading each {window.grain}…</div>
+          <div className="pt-3 text-meta text-muted-foreground">{open.bucket.members.length.toLocaleString("en")} records · reading each {grain}…</div>
         </div> : undefined}
         total={{ label: `Total, ${period(totals.window)}`, value: figure(open.bucket, open.unit) }} />}
     </div>
@@ -293,7 +294,7 @@ function QuestionCard({ read: recorded, heading = "h2" }: { readonly read: Quest
 export function useQuestionsMenu(): readonly MenuEntry[] | undefined {
   const board = useQuery({ queryKey: ["question-board"], queryFn: transport.questionBoard })
   return board.data && [
-    ...board.data.map((read) => ({ href: `/questions/${read.question.document.name}`, label: headline(read.question.document), group: subject(read) })),
+    ...board.data.map((read) => ({ href: `/metrics/${read.question.document.name}`, label: headline(read.question.document), group: subject(read) })),
     { href: "#corrections", label: "Corrections", group: "Corrections" },
   ]
 }
@@ -303,14 +304,14 @@ const subject = ({ objectType }: QuestionAnswer) => conceptTitle(objectType.docu
 
 /** One question as a record page; the submenu lists the others by the object type they count. */
 export function QuestionPage() {
-  const { name } = useParams({ from: "/questions/$name" })
+  const { name } = useParams({ from: "/metrics/$name" })
   const board = useQuery({ queryKey: ["question-board"], queryFn: transport.questionBoard })
   const read = board.data?.find(({ question }) => question.document.name === name)
   return (
     <>
       {board.isPending && <p className="text-muted-foreground">Reading answers…</p>}
       {board.isError && <p className="text-destructive">{board.error.message}</p>}
-      {board.data && (read ? <QuestionCard read={read} heading="h1" /> : <EmptyState icon={ChartLine}>No question named {name} is on the board.</EmptyState>)}
+      {board.data && (read ? <QuestionCard read={read} heading="h1" /> : <EmptyState icon={ChartLine}>No metric named {name} is on the board.</EmptyState>)}
     </>
   )
 }
@@ -321,8 +322,8 @@ export function QuestionsPage() {
   const board = useQuery({ queryKey: ["question-board"], queryFn: transport.questionBoard, enabled: mode.data?.kind === "recorded" })
   return (
     <section className="space-y-6">
-      <PageHeader title="Questions" description="Business questions answered exactly by the server. Every number opens to the records it was added up from."
-        actions={<><Button asChild variant="outline" size="sm"><Link to="/questions/new"><Plus />New question (form)</Link></Button><Button asChild size="sm"><Link to="/questions/build"><Plus />Build a question</Link></Button></>} />
+      <PageHeader title="Metrics" description="The numbers your records add up to, answered exactly by the server. Every number opens to the records behind it."
+        actions={<><Button asChild variant="outline" size="sm"><Link to="/metrics/build">Step by step</Link></Button><Button asChild size="sm"><Link to="/metrics/new"><Plus />Explore a metric</Link></Button></>} />
       {mode.isError && <p className="text-destructive">{mode.error.message}</p>}
       {live ? <LiveQuestionsBoard /> : mode.data && <>
         {board.isPending && <p className="text-muted-foreground">Reading answers…</p>}

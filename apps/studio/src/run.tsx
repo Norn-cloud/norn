@@ -1,4 +1,5 @@
 import { useMutation } from "@tanstack/react-query"
+import { useEffect, useRef } from "react"
 import { Play } from "lucide-react"
 import { ValidationPanel } from "@/components/editor"
 import { Button } from "@/components/ui/button"
@@ -44,19 +45,25 @@ export const answerRead = (question: unknown, catalog: QuestionCatalog, result: 
  * Run one admitted question in the cell: its answer, as a published one reads
  * (withheld and suppressed values included), or why there is none.
  */
-export function RunQuestion({ question, catalog, label = "Run", compact = false, title }: {
+export function RunQuestion({ question, catalog, label = "Run", compact = false, title, auto = false }: {
   readonly question: unknown
   readonly catalog: QuestionCatalog
   readonly label?: string
   readonly compact?: boolean
   /** What the answer measures, in words, for its heading and its numbers' cards. */
   readonly title?: string
+  /** Run once as soon as it is shown (the question was just admitted): the button then reads "Run again". */
+  readonly auto?: boolean
 }) {
   const run = useMutation({ mutationFn: () => evaluateQuestion(question) })
+  const { mutate } = run
+  // Once per mount: StrictMode replays effects in development, and a second evaluate would be a second read of the cell.
+  const asked = useRef(false)
+  useEffect(() => { if (auto && !asked.current) { asked.current = true; mutate() } }, [auto, mutate])
   const result = run.data
   return (
     <div className="space-y-3">
-      <Button type="button" size="sm" variant={compact ? "outline" : "default"} disabled={run.isPending} onClick={() => run.mutate()}><Play />{run.isPending ? "Running…" : result ? "Run again" : label}</Button>
+      <Button type="button" size="sm" variant={compact ? "outline" : "default"} disabled={run.isPending} onClick={() => run.mutate()}><Play />{run.isPending ? "Running…" : result || auto ? "Run again" : label}</Button>
       {run.isError && <p role="alert" className="text-sm text-destructive">Not run: {run.error instanceof Error ? run.error.message : String(run.error)}</p>}
       {result?.kind === "answer" && <AnswerView read={answerRead(question, catalog, result)} title={title} heading="h3" fetchTrace={(lineageRef, bucket) => traceQuestion(question, lineageRef, bucket, undefined, answeredAt(result.read.document))} onStale={() => run.mutate()} />}
       {result?.kind === "not-a-question" && <ValidationPanel title="The cell refused this question" issues={result.findings.map(({ code, message, pointer }) => ({ code, message, field: fieldOf(pointer) }))} />}
