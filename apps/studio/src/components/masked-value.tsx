@@ -54,7 +54,7 @@ export function MaskedValue({ objectType, id, property, masked, projected, class
       <Icon className="size-3 shrink-0" aria-hidden />
       <span className={cn("truncate font-mono", masked.revealable && "blur-[3px] select-none")} aria-hidden={masked.revealable || undefined}>{shown(masked, projected)}</span>
       {masked.revealable && <span className="sr-only">Masked; you may reveal it</span>}
-      <span data-mask-hint="" className="shrink-0 text-[10px] font-normal opacity-75">{maskWord(masked)}</span>
+      <span data-mask-hint="" className="min-w-0 shrink-[4] truncate text-[10px] font-normal opacity-75">{maskWord(masked)}</span>
     </span>
   )
   if (!masked.revealable) return <span className={cn("inline-flex min-w-0", className)}>{chip}</span>

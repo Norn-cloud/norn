@@ -283,9 +283,9 @@ export function RecordsGrid({ concept, read = readRecords, initial, onQuery }: {
                       <button type="button" disabled={!can} title={can ? `${label}: sort (Shift adds a key)` : `${label}: ${off ?? "this kind of value can't be sorted"}`}
                         className="inline-flex min-w-0 items-center gap-1 whitespace-nowrap disabled:cursor-default" onClick={(event) => changeQuery({ sort: cycleSort(sort, field.id, event.shiftKey) })}>
                         <span className="truncate">{label}</span>{can && <SortMark direction={key?.direction} />}
-                        <MarkingChips markings={field.markings} catalog={markings} className="inline-flex items-center gap-1 font-normal" />
                         {sort.length > 1 && key && <sup className="tabular-nums" aria-hidden>{sort.indexOf(key) + 1}</sup>}
                       </button>
+                      <MarkingChips markings={field.markings} catalog={markings} className="ms-1 inline-flex shrink-0 items-center gap-1 font-normal" />
                     </div>
                   )
                 })}
