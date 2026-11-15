@@ -2,10 +2,17 @@
 #
 # Run inside the site's bench console, with the export copied into the container:
 #   docker cp erpnext.json <backend>:/tmp/norn-erpnext.json
-#   docker exec -i <backend> bench --site <site> console < demo/sandboxes/erpnext/seed.py
+#   docker cp demo/sandboxes/erpnext/seed.py <backend>:/tmp/norn-seed.py
+#   echo 'exec(open("/tmp/norn-seed.py").read(), {"__name__": "__main__"})' \
+#     | docker exec -i <backend> bench --site <site> console
+# (one exec, so the helpers see the module's globals; IPython reads piped
+# statements one cell at a time.)
 # The export is `python3 demo/data/generate.py OUT` -> OUT/erpnext.json, the
 # registry/packs/erpnext/synthetic.json shape. Re-running is idempotent: every
-# record is found by its canonical reference before it is created.
+# record is found by its canonical reference before it is created, and a found record
+# whose values differ from the export is updated to them (the seed converges, so a
+# sandbox seeded from an older export ends equal to the current one). With
+# NORN_SEED_DRY_RUN=1 it only counts what it would create or change, and writes nothing.
 #
 # What lands where (native ERPNext records wherever the export has a native meaning):
 #   Party                 -> Customer (custom_norn_ref, custom_norn_role)
@@ -18,6 +25,7 @@
 # three-systems contract names; ERPNext's own names stay the source identities.
 # The last step creates a read-only API user and prints only its user id.
 import json
+import os
 
 import frappe
 from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
@@ -57,8 +65,28 @@ if not frappe.db.exists("DocType", "Warehouse Lot Balance"):
         "permissions": [{"role": r, "read": 1, "write": 1 if r == "System Manager" else 0, "create": 1 if r == "System Manager" else 0} for r in ("System Manager", "Stock User")],
     }).insert()
 
+DRY = os.environ.get("NORN_SEED_DRY_RUN") == "1"
+created, changed = {}, {}
+
 def find(doctype, ref):
     return frappe.db.get_value(doctype, {"custom_norn_ref": ref}, "name")
+
+def converge(doctype, name, values):
+    """Set the VALUES that differ from the stored row's (floats to the cent); count the change."""
+    stored = frappe.db.get_value(doctype, name, list(values), as_dict=True)
+    def same(a, b):
+        if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+            return round(float(a), 2) == round(float(b), 2)
+        return str(a or "") == str(b or "")  # a stored date reads back as a date
+    diff = {k: v for k, v in values.items() if not same(stored[k], v)}
+    if diff:
+        changed[doctype] = changed.get(doctype, 0) + 1
+        if not DRY:
+            frappe.db.set_value(doctype, name, diff)
+
+def new(doctype):
+    created[doctype] = created.get(doctype, 0) + 1
+    return not DRY
 
 company = frappe.defaults.get_global_default("company") or frappe.get_all("Company", pluck="name")[0]
 warehouse = frappe.get_all("Warehouse", filters={"company": company, "is_group": 0}, pluck="name", order_by="name")[0]
@@ -74,7 +102,9 @@ for name in frappe.get_all("Sales Order Item", filters={"custom_norn_ref": ["is"
 items = {}
 for record in by.get("Item", []):
     name = find("Item", record["custom_norn_ref"])
-    if not name:
+    if name:
+        converge("Item", name, {"item_name": record["label"], "standard_rate": record["price"], "custom_sku": record["sku"]})
+    elif new("Item"):
         name = frappe.get_doc({
             "doctype": "Item", "item_code": record["code"], "item_name": record["label"], "item_group": "Products",
             "stock_uom": "g", "is_stock_item": 1, "standard_rate": record["price"],
@@ -87,7 +117,9 @@ customer_group, territory = leaf("Customer Group"), leaf("Territory")
 customers = {}
 for record in by.get("Party", []):
     name = find("Customer", record["custom_norn_ref"])
-    if not name:
+    if name:
+        converge("Customer", name, {"customer_name": record["label"], "custom_norn_role": record["role"]})
+    elif new("Customer"):
         name = frappe.get_doc({
             "doctype": "Customer", "customer_name": record["label"], "customer_type": "Company",
             "customer_group": customer_group, "territory": territory,
@@ -97,21 +129,33 @@ for record in by.get("Party", []):
 
 holdings = {}
 for record in by.get("Warehouse Lot Balance", []):
+    # The export carries a balance once per change; its last row is the balance now.
     holdings[record["custom_norn_ref"]] = record
-    if not find("Warehouse Lot Balance", record["custom_norn_ref"]):
-        cost = record["quantity"] * COST_PER_GRAM[record["item_ref"]]
-        frappe.get_doc({
-            "doctype": "Warehouse Lot Balance", **{k: record[k] for k in (
-                "custom_norn_ref", "resource_code", "quantity", "unit", "location", "item_ref", "owner_ref", "custodian_ref")},
-            "stock_cost": round(cost, 2), "cost_currency": "USD", "valuation_method": "moving_average",
-        }).insert()
+for ref, record in holdings.items():
+    values = {k: record[k] for k in ("resource_code", "quantity", "unit", "location", "item_ref", "owner_ref", "custodian_ref")}
+    values.update({"stock_cost": record.get("stock_cost", round(record["quantity"] * COST_PER_GRAM[record["item_ref"]], 2)),
+                   "cost_currency": record.get("cost_currency", "USD"), "valuation_method": record.get("valuation_method", "moving_average")})
+    name = find("Warehouse Lot Balance", ref)
+    if name:
+        converge("Warehouse Lot Balance", name, values)
+    elif new("Warehouse Lot Balance"):
+        frappe.get_doc({"doctype": "Warehouse Lot Balance", "custom_norn_ref": ref, **values}).insert()
 
-existing = set(frappe.get_all("Sales Order Item", filters={"custom_norn_ref": ["is", "set"]}, pluck="custom_norn_ref"))
+existing = {row.custom_norn_ref: row for row in frappe.get_all(
+    "Sales Order Item", filters={"custom_norn_ref": ["is", "set"]}, fields=["name", "parent", "custom_norn_ref"])}
 for record in by.get("Sales Order Item", []):
-    if record["custom_norn_ref"] in existing:
-        continue
     holding = holdings[record["holding_ref"]]
     due = record["due_at"][:10]
+    row = existing.get(record["custom_norn_ref"])
+    if row:
+        converge("Sales Order", row.parent, {"customer": customers[record["receiver_ref"]]})
+        converge("Sales Order Item", row.name, {
+            "item_code": items[holding["item_ref"]], "qty": record["quantity"], "delivery_date": due,
+            "custom_provider_ref": record["provider_ref"], "custom_receiver_ref": record["receiver_ref"],
+            "custom_holding_ref": record["holding_ref"], "custom_due_at": record["due_at"]})
+        continue
+    if not new("Sales Order Item"):
+        continue
     frappe.get_doc({
         "doctype": "Sales Order", "company": company, "customer": customers[record["receiver_ref"]],
         "transaction_date": due, "delivery_date": due, "set_warehouse": warehouse,
@@ -123,6 +167,12 @@ for record in by.get("Sales Order Item", []):
             "custom_due_at": record["due_at"],
         }],
     }).insert()
+
+if DRY:
+    frappe.db.rollback()
+    print("dry run: would create", created, "and change", changed)
+    raise SystemExit(0)
+print("created", created, "changed", changed)
 
 if not frappe.db.exists("Role", "Norn Reader"):
     frappe.get_doc({"doctype": "Role", "role_name": "Norn Reader", "desk_access": 0}).insert()
