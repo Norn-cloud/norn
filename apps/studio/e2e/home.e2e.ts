@@ -61,3 +61,22 @@ test("home: nothing to do says so", async ({ page }) => {
   await page.goto("/")
   await expect(page.getByText("Nothing needs you")).toBeVisible()
 })
+
+test("home: a key number the server refuses leaves Home, and the server's reason says why", async ({ page }) => {
+  await cell(page, { scanLimit: 10000, sections: sections.map((entry) => ({ ...entry, count: 0, shown: 0 })), items: [] })
+  const metric = (name: string, objectType: string, expression: string, timeProperty: string) => ({ name, label: `sum(${expression}); conservation []`, kind: "simple", objectType, expression, timeProperty, timeLinks: [], numerator: null, denominator: null, unitPartition: [], additivity: { kind: "additive" } })
+  const answered = JSON.parse(readFileSync(new URL("../test/fixtures/metrics-builder/unit-groups.json", import.meta.url), "utf8")) as unknown
+  await page.route("**/api/host/v1/questions:metrics**", (route) => route.fulfill({ json: { metrics: [metric("m.posted", "docs.LedgerEntry", "amount", "posted_on"), metric("m.scanned", "docs.ScannedDocument", "total", "issued_on")] } }))
+  await page.route("**/api/host/v1/questions:evaluate**", (route) => {
+    const { question } = route.request().postDataJSON() as { question: { aggregate: { metric: string }[] } }
+    return question.aggregate[0]?.metric === "m.scanned"
+      ? route.fulfill({ status: 422, json: { code: "question.refused", message: "refused", diagnostics: [{ code: "metric.validation.invalid_time", severity: "error", message: "Some scanned documents have no issued date, so they cannot be totalled by it.", span: null }] } })
+      : route.fulfill({ json: answered })
+  })
+  await page.goto("/")
+  await expect(page.getByRole("heading", { name: "Key numbers" })).toBeVisible()
+  await expect(page.getByText("Total amount")).toBeVisible()
+  await expect(page.getByText("Total total")).toHaveCount(0)
+  await expect(page.locator('[data-refused-number="m.scanned"]')).toContainText("Some scanned documents have no issued date")
+  await expect(page.getByText("The cell did not answer this one.")).toHaveCount(0)
+})
