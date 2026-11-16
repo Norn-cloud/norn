@@ -14,6 +14,7 @@ uv add https://github.com/Norn-cloud/norn/releases/download/TAG/norn_client-VERS
 npm i https://github.com/Norn-cloud/norn/releases/download/TAG/norn-sdk-VERSION.tgz
 ```
 
+The macOS binaries are cross-built on Linux and have not been run natively yet; treat them as experimental.
 `VERSION` is `0.0.N` for `drop-N`. Every release lists its files and their SHA-256 sums in `SHA256SUMS`;
 `install.sh` checks the one it downloads. Set `NORN_VERSION=TAG` to install a specific release.
 `norn check` below also needs the TypeScript authoring tools, which still run from this checkout.

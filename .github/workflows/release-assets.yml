@@ -55,7 +55,7 @@ jobs:
         run: scripts/release/assets.sh tools "$RUNNER_TEMP/tools" | tail -n 1 >> "$GITHUB_PATH"
       - name: Emulator for the arm64 smoke test
         if: ${{ matrix.platform == 'linux-arm64' }}
-        run: sudo apt-get install -y --no-install-recommends qemu-user-static
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends qemu-user-static
       - name: Build norn
         run: scripts/release/assets.sh cli ${{ matrix.platform }} dist
       - name: Run it, or for macOS inspect it
@@ -121,6 +121,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          tagged=$(gh api "repos/$REPOSITORY/commits/$TAG" --jq .sha)
+          [ "$tagged" = "$GITHUB_SHA" ] || { echo "::error::$TAG now names $tagged, not the $GITHUB_SHA these files were built from"; exit 1; }
           cp scripts/release/install.sh dist/install.sh
           scripts/release/assets.sh sums dist
           gh release upload "$TAG" dist/* --repo "$REPOSITORY" --clobber
@@ -134,7 +136,7 @@ jobs:
       REPOSITORY: ${{ github.repository }}
     steps:
       - name: Emulator for the arm64 container
-        run: sudo apt-get install -y --no-install-recommends qemu-user-static
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends qemu-user-static
       # What a user runs, in containers that start with nothing installed:
       # curl on Debian, busybox wget on Alpine, and both again on arm64.
       - name: curl on Debian, x64 and arm64

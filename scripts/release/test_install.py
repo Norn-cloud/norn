@@ -94,6 +94,7 @@ class InstallTest(unittest.TestCase):
         result = self.run_install()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("norn-macos-arm64", result.stdout)
+        self.assertIn("experimental", result.stderr)
 
     def test_a_checksum_mismatch_installs_nothing(self):
         self.platform("Linux", "x86_64")

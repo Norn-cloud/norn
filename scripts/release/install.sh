@@ -95,6 +95,9 @@ main() {
 
   printf 'installed %s\n' "$("$dir/norn" --version)"
   printf 'at %s/norn\n' "$dir"
+  if [ "$os" = macos ]; then
+    printf 'note: the macOS binaries are cross-built on Linux and have not been run natively yet (experimental)\n' >&2
+  fi
   case ":$PATH:" in
     *":$dir:"*) ;;
     *) printf 'add it to your PATH:  export PATH="%s:$PATH"\n' "$dir" ;;
