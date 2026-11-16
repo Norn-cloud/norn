@@ -53,6 +53,28 @@ python_version_of() {
   echo "${version/-/+}"
 }
 
+# A macOS build needs an SDK for the system libraries it links. The only framework norn's
+# dependencies use is CoreFoundation, for the system time zone (iana-time-zone, through
+# chrono). Rather than download Apple's SDK, write a text stub that names the symbols
+# those crates import; the real framework supplies them when the binary runs on a Mac.
+# A new import fails the link and is added here.
+macos_sdk() {
+  local frameworks=$1/System/Library/Frameworks/CoreFoundation.framework
+  mkdir -p "$frameworks" "$1/usr/lib"
+  cat > "$frameworks/CoreFoundation.tbd" << 'TBD'
+--- !tapi-tbd
+tbd-version:     4
+targets:         [ x86_64-macos, arm64-macos ]
+install-name:    '/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation'
+current-version: 1
+exports:
+  - targets:         [ x86_64-macos, arm64-macos ]
+    symbols:         [ _CFRelease, _CFStringGetBytes, _CFStringGetCStringPtr, _CFStringGetLength,
+                       _CFTimeZoneCopySystem, _CFTimeZoneGetName, _CFTimeZoneResetSystem ]
+...
+TBD
+}
+
 commit_time() {
   git log -1 --format=%ct HEAD
 }
@@ -99,12 +121,17 @@ case "$cmd" in
     out=${2:?usage: assets.sh cli PLATFORM OUT}
     target=$(target_of "$platform")
     export RUSTUP_TOOLCHAIN=$TOOLCHAIN CARGO_INCREMENTAL=0
+    if [[ $platform == macos-* ]]; then
+      sdk=$(mktemp -d)
+      macos_sdk "$sdk"
+      export SDKROOT=$sdk
+    fi
     cargo zigbuild --locked --release -p norn-cli --target "$target"
     stage=$(mktemp -d)
     cp "${CARGO_TARGET_DIR:-target}/$target/release/norn" LICENSE NOTICE "$stage/"
     mkdir -p "$out"
     archive "$out/norn-$platform.tar.gz" "$stage" norn LICENSE NOTICE
-    rm -rf "$stage"
+    rm -rf "$stage" "${sdk:-}"
     ;;
 
   smoke)
@@ -127,14 +154,19 @@ magic, cpu, _sub, _type, ncmds, _size, _flags, _reserved = struct.unpack_from("<
 expected = {"macos-arm64": 0x0100000C, "macos-x64": 0x01000007}[platform]
 assert magic == 0xFEEDFACF, f"not a 64-bit Mach-O: {magic:#x}"
 assert cpu == expected, f"cpu {cpu:#x}, expected {expected:#x}"
-offset, commands = 32, []
+offset, commands, dylibs = 32, [], []
 for _ in range(ncmds):
     cmd, size = struct.unpack_from("<II", data, offset)
     commands.append(cmd)
+    if cmd in (0xC, 0x80000018):  # LC_LOAD_DYLIB, LC_LOAD_WEAK_DYLIB
+        name_at = offset + struct.unpack_from("<I", data, offset + 8)[0]
+        dylibs.append(data[name_at : data.index(b"\0", name_at)].decode())
     offset += size
 signed = 0x1D in commands
 assert signed or platform == "macos-x64", "arm64 binary has no LC_CODE_SIGNATURE"
-print(f"{platform}: Mach-O cpu {cpu:#x}, {ncmds} load commands, code signature: {signed}")
+framework = "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation"
+assert framework in dylibs, f"CoreFoundation is not linked from its system path: {dylibs}"
+print(f"{platform}: Mach-O cpu {cpu:#x}, code signature: {signed}, links {dylibs}")
 PY
         rm -rf "$stage"
         exit 0
