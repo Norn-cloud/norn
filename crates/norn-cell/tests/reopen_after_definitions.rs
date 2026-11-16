@@ -251,11 +251,11 @@ proptest! {
 /// The operator path for a cell whose open refuses, whatever the cause: the
 /// diagnosis names the first refused entry without writing the file, and the
 /// restore rebuilds the proven prefix into a new file that opens. A journal
-/// or receipt table that lost its tail reads as a cut too, never as a fully
-/// proven history.
+/// or receipt table that lost its tail, or all three logs at once, reads as a
+/// cut too, never as a fully proven history.
 #[tokio::test]
 async fn a_refused_cell_is_diagnosed_and_restored_to_its_proven_prefix() {
-    for damage in ["snapshot", "journal", "receipt"] {
+    for damage in ["snapshot", "journal", "receipt", "all-logs"] {
         refused_cell_restores(damage).await;
     }
 }
@@ -289,10 +289,16 @@ async fn refused_cell_restores(damage: &str) {
     } else if damage == "journal" {
         raw.execute("DELETE FROM _norn_export_journal WHERE commit_seq = 4", [])
             .expect("tamper");
-    } else {
+    } else if damage == "receipt" {
         // Or the receipts lost their last row.
         raw.execute("DELETE FROM _norn_receipt WHERE commit_seq = 4", [])
             .expect("tamper");
+    } else {
+        // Or all three logs lost commit 4 together; the clock still names it.
+        for table in ["_norn_receipt", "_norn_ledger", "_norn_export_journal"] {
+            raw.execute(&format!("DELETE FROM {table} WHERE commit_seq = 4"), [])
+                .expect("tamper");
+        }
     }
     drop(raw);
     if damage == "snapshot" {
@@ -303,7 +309,7 @@ async fn refused_cell_restores(damage: &str) {
     let diagnosis = CellStore::diagnose_history(&path).expect("diagnosis");
     assert_eq!(diagnosis.head_commit, 4, "{damage}");
     assert_eq!(diagnosis.proven_through, 3, "{damage}");
-    if damage == "journal" {
+    if damage == "journal" || damage == "all-logs" {
         assert_eq!(diagnosis.journal_commits, 3);
         assert_eq!(diagnosis.first_unproven, None);
     } else {

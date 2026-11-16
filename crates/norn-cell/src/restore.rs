@@ -228,8 +228,9 @@ impl CellStore<NativeEngine> {
 /// its ledger is proven, and the first entry that is not.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HistoryDiagnosis {
-    /// The cell's head: the highest commit its receipts, export journal or
-    /// ledger name, so losing the tail of any one of them reads as a cut.
+    /// The cell's head: the highest commit its receipts, export journal,
+    /// ledger or commit clock name, so losing the tail of any of them, or of
+    /// all three logs together, reads as a cut.
     pub head_commit: u64,
     /// Consecutive export journal records from commit 1; a restore can
     /// rebuild no further than this.
@@ -357,14 +358,16 @@ fn diagnose(engine: &NativeEngine) -> Result<(HistoryDiagnosis, Vec<ExportRecord
         let pass = std::cell::RefCell::default();
         let reader =
             crate::read::StoreReader::new(engine, &model).with_transaction_verified_receipts(&pass);
-        // The head is the highest commit any of the three records names: a
-        // tail lost from one of them must read as a cut, never as a fully
-        // proven history.
+        // The head is the highest commit any record names: a tail lost from
+        // any of them must read as a cut, never as a fully proven history.
         let mut head_commit = 0_u64;
         for table in [
             crate::system::RECEIPT,
             crate::system::LEDGER,
             "_norn_export_journal",
+            // The single clock row, updated in place by every commit: it still
+            // names the head when all three tails above are lost together.
+            "_norn_clock",
         ] {
             let highest: Option<i64> = engine.query_optional(
                 &format!("SELECT COALESCE(MAX(\"commit_seq\"), 0) FROM \"{table}\""),
