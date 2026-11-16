@@ -10,7 +10,7 @@ import { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader,
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group"
 import { Skeleton } from "@/components/ui/skeleton"
 import { conceptTitle } from "./lib/catalog.ts"
-import { evaluateQuestion } from "./lib/evaluate.ts"
+import { evaluateQuestion, type Evaluation } from "./lib/evaluate.ts"
 import { member } from "./lib/exact.ts"
 import { FRESHNESS, groupDigits } from "./lib/format.ts"
 import { useMode } from "./lib/live-transport.ts"
@@ -57,6 +57,16 @@ function AskBar() {
   )
 }
 
+/** Why the server gave no number, in its own words: the checker's findings, the read gate's refusal, or its bound. */
+function refusalReason(result: Exclude<Evaluation, { kind: "answer" }>): string {
+  switch (result.kind) {
+    case "not-a-question": return result.findings.map(({ message }) => message).filter(Boolean).join(" ") || "The server's checker refused it."
+    case "refused": return result.refusal.message
+    case "too-large": case "bad-request": return result.message || "The server refused it."
+    default: return "The cell did not answer."
+  }
+}
+
 /** A metric this page can total on its own: additive, over one unit, with a time to bound it. */
 const totalable = (metric: MetricSummary) => metric.timeProperty !== null && (metric.unitPartition ?? []).length === 0 && metric.numerator === null && metric.additivity?.kind !== "non_additive"
 
@@ -78,16 +88,19 @@ function KeyNumbers() {
     })),
   })
   if (!live) return null
+  // A key number the server refused (or did not answer) leaves Home; its reason, in the server's words, is listed below.
+  const refused = picked.flatMap((metric, index) => { const data = answers[index]?.data; return data !== undefined && data.kind !== "answer" ? [{ metric, reason: refusalReason(data) }] : [] })
+  const shown = picked.filter((metric) => !refused.some((entry) => entry.metric === metric))
   return (
     <section aria-labelledby="key-numbers" className="space-y-3">
       <h2 id="key-numbers" className="text-section font-medium">Key numbers</h2>
       {metrics.isPending && <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{Array.from({ length: KEY_NUMBERS }, (_, index) => <Skeleton key={index} className="h-32 rounded-xl" />)}</div>}
       {metrics.isError && <p className="text-sm text-muted-foreground">{metrics.error.message}</p>}
       {metrics.data && picked.length === 0 && <EmptyState icon={Sigma}>No admitted measure adds up on its own yet.</EmptyState>}
-      {picked.length > 0 && (
+      {shown.length > 0 && (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          {picked.map((metric, index) => {
-            const answer = answers[index]
+          {shown.map((metric) => {
+            const answer = answers[picked.indexOf(metric)]
             const result = answer?.data?.kind === "answer" ? answer.data.read : undefined
             const [key] = Object.keys(result?.document.rows ?? {})
             const value = key === undefined ? undefined : result?.numbers.get(`/rows/${member(key)}/value`)
@@ -101,7 +114,6 @@ function KeyNumbers() {
                 <CardContent>
                   {answer?.isPending && <Skeleton className="h-8 w-24" />}
                   {result && <p className="text-2xl font-semibold tracking-tight tabular-nums">{value === undefined ? "—" : groupDigits(value)}</p>}
-                  {answer?.data && answer.data.kind !== "answer" && <p className="text-sm text-muted-foreground">The cell did not answer this one.</p>}
                 </CardContent>
                 <CardFooter>
                   <Button asChild variant="link" size="sm" className="h-auto px-0"><Link to="/metrics">Why this number<ArrowRight aria-hidden /></Link></Button>
@@ -110,6 +122,11 @@ function KeyNumbers() {
             )
           })}
         </div>
+      )}
+      {refused.length > 0 && (
+        <ul className="space-y-0.5 text-meta text-muted-foreground" aria-label="Key numbers not shown">
+          {refused.map(({ metric, reason }) => <li key={metric.name} data-refused-number={metric.name}>{conceptTitle(metric.objectType)}, {metricHeading(metric).toLowerCase()}: not shown. {reason}</li>)}
+        </ul>
       )}
     </section>
   )
