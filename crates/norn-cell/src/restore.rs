@@ -345,8 +345,8 @@ fn diagnose(engine: &NativeEngine) -> Result<(HistoryDiagnosis, Vec<ExportRecord
         let records = journal(engine)?;
         let model = latest_model(&records)?;
         let pass = std::cell::RefCell::default();
-        let reader = crate::read::StoreReader::new(engine, &model)
-            .with_transaction_verified_receipts(&pass);
+        let reader =
+            crate::read::StoreReader::new(engine, &model).with_transaction_verified_receipts(&pass);
         let head_commit = records.len().try_into().unwrap_or(u64::MAX);
         let diagnosis = match reader.first_unproven_entry()? {
             None => HistoryDiagnosis {

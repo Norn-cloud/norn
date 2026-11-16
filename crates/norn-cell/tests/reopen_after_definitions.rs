@@ -15,7 +15,8 @@
 use std::collections::BTreeMap;
 
 use norn_cell::{
-    CellStore, RestoreError, CommitBatch, FactWriteRow, InstalledDefinitionInput, MAIN_WORLD, Model, StoreOptions,
+    CellStore, CommitBatch, FactWriteRow, InstalledDefinitionInput, MAIN_WORLD, Model,
+    RestoreError, StoreOptions,
 };
 use norn_ir::{ObjectTypeDef, RuntimeValue as Value};
 use norn_testkit::proptest::prelude::*;
@@ -313,10 +314,15 @@ async fn a_refused_cell_is_diagnosed_and_restored_to_its_proven_prefix() {
         );
     }
     assert!(!target.exists());
-    let restored =
-        CellStore::restore_proven_prefix(&path, &target, &staging, Some(3), StoreOptions::default())
-            .await
-            .expect("restore");
+    let restored = CellStore::restore_proven_prefix(
+        &path,
+        &target,
+        &staging,
+        Some(3),
+        StoreOptions::default(),
+    )
+    .await
+    .expect("restore");
     assert_eq!(restored.diagnosis, diagnosis);
     assert_eq!(restored.report.ledger_head.commits, 3);
     assert_eq!(
