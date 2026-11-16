@@ -1756,7 +1756,10 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         let emissions = self.event_emissions(&entry.world, entry.commit_seq, &key)?;
         // The declaration is the one the writer pinned (#1423): a later
         // install never masks a transition its own commit proved.
-        let Some(writer) = emissions.first().map(|snapshot| snapshot.model_hash.clone()) else {
+        let Some(writer) = emissions
+            .first()
+            .map(|snapshot| snapshot.model_hash.clone())
+        else {
             return Ok(None);
         };
         let retained;

@@ -3468,7 +3468,9 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
     /// # Errors
     /// SQL engine or decode errors.
     #[cfg(feature = "native")]
-    pub(crate) fn first_unproven_entry(&self) -> Result<Option<(LedgerEntry, CellError)>, CellError> {
+    pub(crate) fn first_unproven_entry(
+        &self,
+    ) -> Result<Option<(LedgerEntry, CellError)>, CellError> {
         const PAGE: usize = 512;
         let mut from = 1_u64;
         loop {
@@ -4518,15 +4520,15 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
 /// operator the `cell.unopenable` reason reaches can find it. The fact key
 /// is not repeated: the sequence and commit locate it.
 fn unproven_at(entry: &LedgerEntry, error: CellError) -> CellError {
-    match error {
-        CellError::HistoricalValueUnproven(reason) => CellError::HistoricalValueUnproven(format!(
-            "{reason} (ledger seq {}, commit {}, op {})",
-            entry.seq,
-            entry.commit_seq,
-            entry.event.get("op").and_then(Value::as_str).unwrap_or("-")
-        )),
-        other => other,
-    }
+    let CellError::HistoricalValueUnproven(reason) = error else {
+        return error;
+    };
+    CellError::HistoricalValueUnproven(format!(
+        "{reason} (ledger seq {}, commit {}, op {})",
+        entry.seq,
+        entry.commit_seq,
+        entry.event.get("op").and_then(Value::as_str).unwrap_or("-")
+    ))
 }
 
 #[cfg(all(test, feature = "native"))]

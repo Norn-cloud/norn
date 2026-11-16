@@ -339,7 +339,9 @@ fn journal(engine: &NativeEngine) -> Result<(Vec<ExportRecord>, Model), CellErro
     let mut records = Vec::new();
     while let Some(record) = crate::export_journal::read_record(
         engine,
-        u64::try_from(records.len()).unwrap_or(u64::MAX).saturating_add(1),
+        u64::try_from(records.len())
+            .unwrap_or(u64::MAX)
+            .saturating_add(1),
     )? {
         records.push(record);
     }

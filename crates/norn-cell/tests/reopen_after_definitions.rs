@@ -13,8 +13,7 @@
 use std::collections::BTreeMap;
 
 use norn_cell::{
-    CellStore, CommitBatch, FactWriteRow, InstalledDefinitionInput, MAIN_WORLD, Model,
-    StoreOptions,
+    CellStore, CommitBatch, FactWriteRow, InstalledDefinitionInput, MAIN_WORLD, Model, StoreOptions,
 };
 use norn_ir::{ObjectTypeDef, RuntimeValue as Value};
 use norn_testkit::proptest::prelude::*;
@@ -99,11 +98,15 @@ fn a_creation_stays_provable_after_an_install_changes_the_model() {
     store
         .install_definitions(first, input(&first_set, 10), Some(0), SCOPE)
         .expect("first definitions");
-    store.commit(&create("a", 15)).expect("created under the first model");
+    store
+        .commit(&create("a", 15))
+        .expect("created under the first model");
     store
         .install_definitions(second.clone(), input(&second_set, 20), Some(1), SCOPE)
         .expect("second definitions");
-    store.commit(&create("b", 25)).expect("created under the second model");
+    store
+        .commit(&create("b", 25))
+        .expect("created under the second model");
     drop(store);
 
     let reopened = CellStore::open(&path, second, StoreOptions::default())
@@ -274,8 +277,14 @@ async fn a_refused_cell_is_diagnosed_and_restored_to_its_proven_prefix() {
     let diagnosis = CellStore::diagnose_history(&path, StoreOptions::default()).expect("diagnosis");
     assert_eq!(diagnosis.head_commit, 4);
     assert_eq!(diagnosis.proven_through, 3);
-    let unproven = diagnosis.first_unproven.as_ref().expect("the refused entry");
-    assert_eq!((unproven.commit_seq, unproven.op.as_deref()), (4, Some("created")));
+    let unproven = diagnosis
+        .first_unproven
+        .as_ref()
+        .expect("the refused entry");
+    assert_eq!(
+        (unproven.commit_seq, unproven.op.as_deref()),
+        (4, Some("created"))
+    );
 
     let target = directory.path().join("restored.sqlite");
     let staging = directory.path().join("staging");
@@ -285,13 +294,20 @@ async fn a_refused_cell_is_diagnosed_and_restored_to_its_proven_prefix() {
             .expect("restore");
     assert_eq!(restored.diagnosis, diagnosis);
     assert_eq!(restored.report.ledger_head.commits, 3);
-    assert_eq!(std::fs::read(&path).expect("source bytes"), before, "the source is only read");
+    assert_eq!(
+        std::fs::read(&path).expect("source bytes"),
+        before,
+        "the source is only read"
+    );
 
-    let reopened = CellStore::open(&target, model, StoreOptions::default()).expect("the restored prefix opens");
+    let reopened = CellStore::open(&target, model, StoreOptions::default())
+        .expect("the restored prefix opens");
     let read = reopened.read();
     for (key, present) in [("a", true), ("b", true), ("c", false)] {
         assert_eq!(
-            read.object(MAIN_WORLD, "install.Item", key).expect("read").is_some(),
+            read.object(MAIN_WORLD, "install.Item", key)
+                .expect("read")
+                .is_some(),
             present,
             "{key}"
         );

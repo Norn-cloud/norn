@@ -151,7 +151,10 @@ fn submission() -> String {
         let path = repo().join("registry/core/artifacts").join(name);
         let artifact: Value =
             serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
-        if !base.ids().contains(&artifact["artifactId"].as_str().unwrap().to_owned()) {
+        if !base
+            .ids()
+            .contains(&artifact["artifactId"].as_str().unwrap().to_owned())
+        {
             artifacts.push(artifact);
         }
     }
@@ -273,7 +276,10 @@ impl Cell {
                            "snapshot": snapshot })
         .to_string();
         let owner = user("owner");
-        let host = self.tenant.serving_host().expect("a provisioned cell serves");
+        let host = self
+            .tenant
+            .serving_host()
+            .expect("a provisioned cell serves");
         let routed = self
             .connect
             .route(
