@@ -81,7 +81,7 @@ jobs:
         run: |
           set -euo pipefail
           scripts/release/assets.sh sdk "$TAG" dist
-          scripts/release/assets.sh python "$TAG" dist
+          scripts/release/assets.sh pyclient "$TAG" dist
           ls -l dist
       - name: Install both from the built files
         run: |
@@ -89,9 +89,9 @@ jobs:
           dir=$(mktemp -d)
           (cd "$dir" && npm init -y > /dev/null && npm install --ignore-scripts "$GITHUB_WORKSPACE"/dist/norn-sdk-*.tgz > /dev/null)
           test -f "$dir"/node_modules/@norn/sdk/src/index.ts
-          python3 -m venv "$dir/venv"
+          python3 -I -m venv "$dir/venv"
           "$dir/venv/bin/pip" install --disable-pip-version-check -q "$GITHUB_WORKSPACE"/dist/norn_client-*.whl
-          "$dir/venv/bin/python" -c 'import norn_client; print("norn_client", norn_client.__file__)'
+          "$dir/venv/bin/python" -I -c 'import norn_client; print("norn_client", norn_client.__file__)'
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: asset-sdks

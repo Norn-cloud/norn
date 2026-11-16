@@ -7,7 +7,7 @@
 #   assets.sh cli PLATFORM OUT     OUT/norn-PLATFORM.tar.gz (the norn binary, LICENSE, NOTICE)
 #   assets.sh smoke PLATFORM OUT   run, or for macOS inspect, what `cli` built
 #   assets.sh sdk TAG OUT          OUT/norn-sdk-VERSION.tgz (packages/norn-sdk)
-#   assets.sh python TAG OUT       OUT/norn_client-VERSION.tar.gz and the wheel
+#   assets.sh pyclient TAG OUT       OUT/norn_client-VERSION.tar.gz and the wheel
 #   assets.sh sums OUT             OUT/SHA256SUMS over every file in OUT
 #
 # PLATFORM is linux-x64, linux-arm64, macos-arm64 or macos-x64. Every build is
@@ -201,9 +201,9 @@ PY
     rm -rf "$stage"
     ;;
 
-  python)
-    tag=${1:?usage: assets.sh python TAG OUT}
-    out=${2:?usage: assets.sh python TAG OUT}
+  pyclient)
+    tag=${1:?usage: assets.sh pyclient TAG OUT}
+    out=${2:?usage: assets.sh pyclient TAG OUT}
     version=$(python_version_of "$tag")
     mkdir -p "$out" && out=$(cd "$out" && pwd)
     work=$(mktemp -d)
