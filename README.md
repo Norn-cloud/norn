@@ -5,7 +5,7 @@ Every performance and quality number Norn has measured, one JSON record per line
 `scripts/metrics/` on `main`. This page and [`index.html`](index.html) are regenerated
 on every append.
 
-2,603 records across 165 metrics (aliases folded, re-reports of one commit's value shown once). Each series runs in the order of the
+2,604 records across 166 metrics (aliases folded, re-reports of one commit's value shown once). Each series runs in the order of the
 measured commits' dates, then measurement time; the trend shows the last 40. *est.* marks an
 estimate; runner `boat` series are the only ones the nightly ratchet gates.
 
@@ -31,6 +31,12 @@ estimate; runner `boat` series are the only ones the nightly ratchet gates.
 |---|---:|---|---|---:|---|---|---|---|
 | `boat.libclang_step_s` | 58 | s (single) | boat | 1 | 58 / 58 | ▁ | `959458e889` | [link](https://github.com/Norn-cloud/norn/pull/1250) |
 | `boat.starts.used_24h` | 544 | count (single) | local | 5 | 410 / 544 | ▁▁▅▆█ | none named | [link](https://github.com/Norn-cloud/norn/blob/main/scripts/metrics/boat_nightly.py) |
+
+## cell
+
+| Metric | Latest | Unit (stat) | Runner | n | Min / max | Trend | Commit | Source |
+|---|---:|---|---|---:|---|---|---|---|
+| `cell.open.cold.retained_model_4k.ms` | 877 | ms (single) | boat | 1 | 877 / 877 | ▁ | `c30b663fd2` | [link](https://github.com/Norn-cloud/norn/pull/1425#issuecomment-6917311943) |
 
 ## Checker test suite
 
@@ -236,6 +242,7 @@ What limits each metric's latest value, in the measurer's words.
 - `authz.read_decision.dev.us`: dev profile (opt-level 0), native, demo model with 11 types; kept PDP, so per decision = Cedar eval only after the first
 - `boat.libclang_step_s`: one run on a default Boat VM from snapshot norn-ci-main-a8c384a14d-v1; includes apt-get update over the network; reused runners skip it (0 s)
 - `boat.starts.used_24h`: Account-wide: every project on this Boat account, not only Norn. Rolling 24-hour window from `boat limits --json`, read before this run's own start. Not tied to a commit.
+- `cell.open.cold.retained_model_4k.ms`: native SQLite, one run; 4000 creations with normalised payloads proven under a retained model (the single-migration backfill cap is 4096); wasm DO slower by an unmeasured factor
 - `checker.test.cut2_four_serial_s`: The four tests cut 2 changed most, run serially on one VM. measured_at is when the PR body stated it. The head sha is #1231's head; the body does not restate it.
 - `checker.test.cut_delta_s`: Author's net estimate: the serial four-test delta (14.4 s) plus two tests from a parallel run that was about 16% slower. Whole-suite wall time is unusable for this: untouched tests varied by up to 41 s (incremental 68 s, then 109 s).
 - `checker.test.nextest_exec_s`: Noisy: about half the crate's test time is two long property tests (incremental about 52–55 s, three_systems about 9–11 s) that the cut does not touch. 4 tests fail on base and head alike (they need CI's prepare_inputs). measured_at is when the PR body stated it.
