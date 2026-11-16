@@ -115,7 +115,7 @@ fn original() -> Vec<Value> {
                 .unwrap();
             properties.retain(|p| !ADDED.contains(&p["property"].as_str().unwrap()));
         }
-        if id != MAPPING && id.starts_with(APPLICATION) && id.ends_with(".law") {
+        if id != MAPPING && id.starts_with(APPLICATION) && id.strip_suffix(".law").is_some() {
             artifact["version"] = json!("0.3.0");
         }
         for dependency in artifact["dependencies"].as_array_mut().unwrap() {
@@ -173,7 +173,7 @@ fn row(n: usize) -> Value {
     ];
     let channel = ["Mobile app", "Web", "Assisted"][n % 3];
     let customer = ["New", "Returning"][n % 2];
-    let minutes = if n % 5 == 0 {
+    let minutes = if n.is_multiple_of(5) {
         Value::Null
     } else {
         json!(f64::from(u8::try_from(n % 90).unwrap()) / 10.0)
@@ -187,15 +187,15 @@ fn row(n: usize) -> Value {
         "customer_type": customer,
         "steps_completed_10m": n % 8,
         "validation_errors_10m": n % 5,
-        "document_upload_attempted_10m": yes_no(n % 2 == 0),
-        "document_upload_success_10m": yes_no(n % 4 == 0),
+        "document_upload_attempted_10m": yes_no(n.is_multiple_of(2)),
+        "document_upload_success_10m": yes_no(n.is_multiple_of(4)),
         "active_minutes_10m": minutes,
-        "returned_after_exit_10m": yes_no(n % 3 == 0),
+        "returned_after_exit_10m": yes_no(n.is_multiple_of(3)),
         "network_interruptions_10m": n % 6,
-        "support_opened_10m": yes_no(n % 7 == 0),
+        "support_opened_10m": yes_no(n.is_multiple_of(7)),
         "start_hour": n % 24,
-        "weekend_start": yes_no(n % 6 == 0),
-        "completed_within_24_hours": yes_no(n % 3 != 0),
+        "weekend_start": yes_no(n.is_multiple_of(6)),
+        "completed_within_24_hours": yes_no(!n.is_multiple_of(3)),
     })
 }
 
