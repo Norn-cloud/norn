@@ -102,6 +102,8 @@ const VERIFIED_RECEIPTS: usize = 1_024;
 pub(crate) struct VerifiedReceipts {
     revision: Option<(u64, u64)>,
     receipts: BTreeMap<u64, Arc<Receipt>>,
+    /// Retained writer models proven at this revision, by definitions version.
+    models: BTreeMap<u64, Arc<Model>>,
 }
 
 impl<S: SqlEngine> HistoryRead<'_, '_, S> {
@@ -343,6 +345,54 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         Ok(snapshot)
     }
 
+    /// #1423: the model that wrote a snapshot of `commit_seq` whose hash is
+    /// `model_hash`, when it is not today's: the retained install that the
+    /// commit's hashed receipt pins. A writer model no retained install proves
+    /// is `None`; event bytes never choose the model.
+    fn retained_writer_model(
+        &self,
+        commit_seq: u64,
+        model_hash: &str,
+    ) -> Result<Option<Arc<Model>>, CellError> {
+        let Some(version) = self.definitions_version_at(commit_seq)? else {
+            return Ok(None);
+        };
+        let revision = if self.verified_receipts_transaction {
+            Some((0, 0))
+        } else {
+            self.conn.read_cache_revision()?
+        };
+        if let (Some(cache), Some(revision)) = (self.verified_receipts, revision) {
+            let cache = cache.borrow();
+            if cache.revision == Some(revision)
+                && let Some(model) = cache.models.get(&version)
+            {
+                return Ok((model.model_hash() == model_hash).then(|| Arc::clone(model)));
+            }
+        }
+        let Some(installed) = self.installed_definitions(Some(version))? else {
+            return Ok(None);
+        };
+        if installed.model_hash != model_hash {
+            return Ok(None);
+        }
+        let installation = self.retained_definition_install(&installed)?;
+        let model = Arc::new(Self::retained_model_from(&installed, &installation)?);
+        if let (Some(cache), Some(revision)) = (self.verified_receipts, revision)
+            && (self.verified_receipts_transaction
+                || self.conn.read_cache_revision()? == Some(revision))
+        {
+            let mut cache = cache.borrow_mut();
+            if cache.revision != Some(revision) {
+                cache.revision = Some(revision);
+                cache.receipts.clear();
+                cache.models.clear();
+            }
+            cache.models.insert(version, Arc::clone(&model));
+        }
+        Ok(Some(model))
+    }
+
     /// The receipt at `commit`, its body hash checked. A commit that writes
     /// many facts is read once per fact proven from it; the check is reused
     /// while the connection's read revision is unchanged (no write between),
@@ -378,6 +428,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             if cache.revision != Some(revision) || cache.receipts.len() >= VERIFIED_RECEIPTS {
                 cache.revision = Some(revision);
                 cache.receipts.clear();
+                cache.models.clear();
             }
             cache.receipts.insert(commit, Arc::clone(&receipt));
         }
@@ -1091,7 +1142,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             norn_kernel::FactEvent::Created { key, values } => {
                 let seq = commit_seq.ok_or_else(unproven_event)?;
                 let snapshot = self.unique_event_emission(world, seq, &key, |snapshot| {
-                    self.created_values_proven(snapshot, &values)
+                    self.created_values_proven(seq, snapshot, &values)
                 })?;
                 self.verify_prior_absence(&snapshot)?;
             }
@@ -1102,11 +1153,11 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             } => {
                 let seq = commit_seq.ok_or_else(unproven_event)?;
                 self.unique_event_emission(world, seq, &key, |snapshot| {
-                    snapshot
+                    Ok(snapshot
                         .values
                         .as_ref()
                         .and_then(|values| values.get(property.as_str()))
-                        == Some(&value)
+                        == Some(&value))
                 })?;
             }
             norn_kernel::FactEvent::CommandEnqueued { .. }
@@ -1182,7 +1233,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 .unwrap_or(key.object_type.as_str());
             let mut candidates = Vec::new();
             for snapshot in self.event_emissions(world, commit_seq, &key)? {
-                if self.native_event_matches_emission(event, op, &snapshot)? {
+                if self.native_event_matches_emission(commit_seq, event, op, &snapshot)? {
                     candidates.push((
                         op.to_owned(),
                         root.to_owned(),
@@ -1209,15 +1260,16 @@ impl<E: SqlEngine> StoreReader<'_, E> {
 
     fn native_event_matches_emission(
         &self,
+        commit_seq: u64,
         event: &Value,
         op: &str,
         snapshot: &FactSnapshot,
     ) -> Result<bool, CellError> {
         let matches = match op {
-            "created" => event
-                .get("values")
-                .and_then(Value::as_object)
-                .is_some_and(|values| self.created_values_proven(snapshot, values)),
+            "created" => match event.get("values").and_then(Value::as_object) {
+                Some(values) => self.created_values_proven(commit_seq, snapshot, values)?,
+                None => false,
+            },
             "modified" => {
                 event
                     .get("afterVersion")
@@ -1272,24 +1324,39 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         Ok(matches)
     }
 
+    /// A creation payload is proven by the writer's effective-value contract
+    /// under the model that wrote its snapshot: today's, or the retained
+    /// install its commit pins (#1423), so an install after the creation's
+    /// own does not unprove it. Writes before any install (definitions
+    /// version 0) still prove only under today's model (#1426).
     fn created_values_proven(
         &self,
+        commit_seq: u64,
         snapshot: &FactSnapshot,
         supplied: &BTreeMap<String, Value>,
-    ) -> bool {
+    ) -> Result<bool, CellError> {
         let Some(stored) = &snapshot.values else {
-            return false;
+            return Ok(false);
         };
         if stored == supplied {
-            return true;
+            return Ok(true);
         }
-        if snapshot.model_hash != self.model().model_hash() {
-            return false;
-        }
-        let definitions = self.model().object_types().cloned().collect::<Vec<_>>();
+        let retained;
+        let model = if snapshot.model_hash == self.model().model_hash() {
+            self.model()
+        } else {
+            match self.retained_writer_model(commit_seq, &snapshot.model_hash)? {
+                Some(writer) => {
+                    retained = writer;
+                    &*retained
+                }
+                None => return Ok(false),
+            }
+        };
+        let definitions = model.object_types().cloned().collect::<Vec<_>>();
         let catalog = norn_kernel::TypeCatalog::new(&definitions)
-            .with_interfaces(self.model().interfaces())
-            .with_property_types(self.model().property_types());
+            .with_interfaces(model.interfaces())
+            .with_property_types(model.property_types());
         // Use the writer's effective-value contract, including defaults, nullable
         // fields and scalar normalization. Event bytes still prove nothing until
         // the complete normalized value matches an independent snapshot.
@@ -1297,18 +1364,18 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             &norn_ir::ObjectTypeName(snapshot.object_type.clone()),
             supplied,
         ) else {
-            return false;
+            return Ok(false);
         };
         if stored.len() != effective.len() {
-            return false;
+            return Ok(false);
         }
         // Creation during observation reconciliation uses declared initial
         // lifecycle states before the final source state is materialized.
-        effective.iter().all(|(property, value)| {
+        Ok(effective.iter().all(|(property, value)| {
             stored.get(property).is_some_and(|actual| {
                 actual == value
                     || value.as_str().is_some_and(|state| {
-                        self.model()
+                        model
                             .lifecycle(&snapshot.object_type, property)
                             .is_ok_and(|declaration| {
                                 declaration.is_some_and(|declaration| {
@@ -1317,7 +1384,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                             })
                     })
             })
-        })
+        }))
     }
 
     fn event_emissions(
@@ -1391,17 +1458,15 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         world: &str,
         commit_seq: u64,
         key: &norn_kernel::FactKey,
-        matches: impl Fn(&FactSnapshot) -> bool,
+        matches: impl Fn(&FactSnapshot) -> Result<bool, CellError>,
     ) -> Result<FactSnapshot, CellError> {
-        let mut matching = self
-            .event_emissions(world, commit_seq, key)?
-            .into_iter()
-            .filter(matches);
-        let snapshot = matching.next().ok_or_else(unproven_event)?;
-        if matching.next().is_some() {
-            return Err(unproven_event());
+        let mut unique = None;
+        for snapshot in self.event_emissions(world, commit_seq, key)? {
+            if matches(&snapshot)? && unique.replace(snapshot).is_some() {
+                return Err(unproven_event());
+            }
         }
-        Ok(snapshot)
+        unique.ok_or_else(unproven_event)
     }
 
     /// The only accessor for ledger-derived payloads before disclosure or rule lineage.

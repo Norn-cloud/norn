@@ -2446,10 +2446,14 @@ impl<E: SqlEngine> CellStore<E> {
         // Chain, receipts and all quantity caches share one open snapshot.
         // Successful verification is retained by this store's head/boundary
         // caches; ordinary admission does not repeat the startup fold.
+        // One proof cache for this read-only pass (#1423): receipts and the
+        // retained writer models are proven once per pass, not once per event.
+        let pass = RefCell::default();
         let (head, boundary) = store.conn.transaction(|| {
             crate::cell_identity::verify_history(&store.conn)?;
             let verified = store
                 .read()
+                .with_transaction_verified_receipts(&pass)
                 .verify_ledger_with_boundary(&LedgerHead::genesis())?;
             store.verify_definition_history()?;
             store.read().verify_value_history()?;
@@ -3016,7 +3020,8 @@ impl<E: SqlEngine> CellStore<E> {
                         return Err(CellError::IdempotencyConflict("tenant provisioning".to_owned()).into());
                     }
                     crate::cell_identity::verify_history(&self.conn)?;
-                    let (head, boundary) = self.read().verify_ledger_with_boundary(&LedgerHead::genesis())?;
+                    let pass = RefCell::default();
+                    let (head, boundary) = self.read().with_transaction_verified_receipts(&pass).verify_ledger_with_boundary(&LedgerHead::genesis())?;
                     self.verify_definition_history()?;
                     self.read().verify_value_history()?;
                     crate::identity::validate(&self.read())?;

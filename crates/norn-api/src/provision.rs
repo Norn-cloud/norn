@@ -231,7 +231,7 @@ pub fn unopenable(reason: Option<&str>) -> Refusal {
     Refusal::new(
         StatusCode::SERVICE_UNAVAILABLE,
         codes::UNOPENABLE,
-        "the cell cannot be opened; an operator must restore it",
+        "the cell cannot be opened; an operator must restore it (norn-cell-restore)",
         reason.unwrap_or("the cell's stored layout is not the one its definitions rebuild"),
     )
 }
