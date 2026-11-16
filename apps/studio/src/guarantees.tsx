@@ -203,17 +203,31 @@ function LiveLaws() {
   const { read, catalog } = useCatalog()
   if (read.isPending) return <p className="text-muted-foreground">Reading definitions…</p>
   if (read.isError) return <p className="text-destructive">{read.error.message}</p>
-  const governed = catalog?.concepts.filter(({ laws, rules, definition }) => (laws.length > 0 || rules.length > 0) && definition === "object type") ?? []
+  const all = catalog?.concepts.filter(({ laws, rules, definition }) => (laws.length > 0 || rules.length > 0) && definition === "object type") ?? []
+  // The platform's own types (core.*) keep rules a business reader never acts on: they fold under System.
+  const governed = all.filter(({ name }) => !name.startsWith("core."))
+  const system = all.filter(({ name }) => name.startsWith("core."))
   return (
     <div className="space-y-5">
-      {governed.length === 0 && <EmptyState icon={Scale}>No admitted law governs a type in this cell.</EmptyState>}
+      {all.length === 0 && <EmptyState icon={Scale}>No admitted law governs a type in this cell.</EmptyState>}
       {governed.length > 0 && <StatStrip>
         <KpiTile icon={Scale} label="Laws in force" value={governed.reduce((sum, { laws, rules }) => sum + laws.length + rules.filter((rule) => !laws.some(({ rationale }) => rationale === rule)).length, 0)} sub={`over ${governed.length} ${governed.length === 1 ? "type" : "types"}`} />
         <KpiTile icon={ShieldCheck} label="Refuse a breaking write" value={governed.reduce((sum, { laws }) => sum + laws.filter(({ severity }) => severity === "error").length, 0)} sub="checked on every write" />
       </StatStrip>}
       <p className="flex items-start gap-2 text-meta text-muted-foreground"><ShieldCheck aria-hidden className="mt-0.5 size-3.5 shrink-0" />{ENFORCED}</p>
       {governed.map((concept) => <LawsPanel key={concept.name} concept={concept} enforced={false}
-        label={<Link to="/sources/$concept" params={{ concept: concept.name }} className="underline-offset-4 hover:underline">{concept.title}</Link>} />)}
+        label={<Link to="/objects/$type" params={{ type: concept.name }} className="underline-offset-4 hover:underline">{concept.title}</Link>} />)}
+      {system.length > 0 && (
+        <details className="group/system">
+          <summary className="flex w-fit cursor-pointer list-none items-center gap-1.5 rounded-md text-sm font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/30 [&::-webkit-details-marker]:hidden">
+            <ChevronRight aria-hidden className="size-4 transition-transform group-open/system:rotate-90" />System rules ({system.reduce((sum, { laws }) => sum + laws.length, 0)}): how the platform keeps its own records
+          </summary>
+          <div className="space-y-5 pt-4">
+            {system.map((concept) => <LawsPanel key={concept.name} concept={concept} enforced={false} label={concept.title} />)}
+          </div>
+        </details>
+      )}
+      <p className="text-meta text-muted-foreground">Proof status per rule (what the model checker proved, within which bounds) is not served by this cell yet.</p>
     </div>
   )
 }
@@ -222,7 +236,7 @@ export function GuaranteesPage() {
   const mode = useMode()
   if (mode.data?.kind === "live") return (
     <section className="space-y-5">
-      <PageHeader title="Guarantees" description="The laws this cell admitted, type by type. Try to break one: the cell refuses the change and names the law." />
+      <PageHeader title="Rules" description="What each rule protects, the records it is holding back right now and the fix the server suggests for each. A change that would break a rule is refused, naming it." />
       <LiveLaws />
     </section>
   )
@@ -247,7 +261,7 @@ function RecordedGuarantees() {
   return (
     <section className="space-y-8">
       <div className="space-y-2">
-        <h1 className="text-title font-semibold tracking-tight">Guarantees</h1>
+        <h1 className="text-title font-semibold tracking-tight">Rules</h1>
         <p className="max-w-2xl text-muted-foreground">The recorded law, and how strongly it is checked. The model checker explores every case within stated bounds; a broken copy of the definition shows it catches a real mistake.</p>
       </div>
       {read.isPending && <p className="text-muted-foreground">Reading guarantees…</p>}

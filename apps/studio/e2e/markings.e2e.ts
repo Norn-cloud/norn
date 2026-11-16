@@ -17,11 +17,20 @@ const recorded = (name: string): string => readFileSync(new URL(`../../../fixtur
 async function privacyCell(page: Page, reader: "viewer" | "auditor") {
   await page.route("**/api/**", (route) => route.fulfill({ status: 404, json: { error: "not found" } }))
   await session(page)
-  await page.route("**/api/host/v1/definitions**", (route) => route.fulfill({ json: { artifacts } }))
+  await page.route("**/api/host/v1/definitions**", (route) => new URL(route.request().url()).pathname.endsWith(":list")
+    // The type's saved views: none.
+    ? route.fulfill({ json: { items: [], nextCursor: null } })
+    : route.fulfill({ json: { artifacts } }))
   await page.route("**/api/host/v1/objects/**", async (route) => {
     const url = new URL(route.request().url())
     const party = JSON.parse(recorded(`canon.Party.${reader}.page.json`)) as { records: { id: string }[] }
     if (url.pathname.endsWith("/v1/objects/canon.Party")) return route.fulfill({ json: party })
+    // HOST-READ-7 over the same page: counts of its categorical property, as the cell would give them.
+    if (url.pathname.endsWith("/v1/objects/canon.Party:facets")) {
+      const counts = new Map<string, number>()
+      for (const record of party.records as unknown as { values: Record<string, string> }[]) counts.set(record.values["kind"] ?? "", (counts.get(record.values["kind"] ?? "") ?? 0) + 1)
+      return route.fulfill({ json: { objectType: "canon.Party", rows: party.records.length, withheldRows: 0, quarantinedRows: 0, lowerBound: false, scanLimit: 10000, facets: [{ property: "kind", values: [...counts].map(([value, count]) => ({ value, count })), otherRows: 0, nulls: 0 }] } })
+    }
     const one = /\/v1\/objects\/canon\.Party\/(.+?)(\/links|\/lineage|\/history|\/findings)?$/.exec(url.pathname)
     if (one !== null && one[2] === undefined) {
       const record = party.records.find(({ id }) => id === decodeURIComponent(one[1] ?? ""))

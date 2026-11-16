@@ -122,6 +122,10 @@ export interface Law {
   readonly compares?: readonly [string, string]
   /** The concept that declares the law, when a concept inherits it (an interface it implements, a supertype). */
   readonly inheritedFrom?: string
+  /** The law's name in plain words, as its author gave it on the artifact ("A booked document's total equals its journal entry"). */
+  readonly title?: string
+  /** The artifact that carries the law: what a held-back finding's rule names. */
+  readonly artifactId?: string
 }
 
 const IDENT = "[A-Za-z_][A-Za-z0-9_]*"
@@ -258,7 +262,7 @@ export function catalogOf(artifacts: readonly Artifact[], locale = "en"): Catalo
     if (artifact.kind === "law") {
       const law = artifact.payload
       for (const target of law.scope.objectTypes) rules.set(target, [...rules.get(target) ?? [], law.rationale])
-      const declared: Law = { id: law.id, subject: law.subject, rationale: law.rationale, severity: law.severity, modality: String((law.modality as { kind?: unknown }).kind ?? ""), response: String((law.response as { kind?: unknown }).kind ?? ""), owner: law.owner, ...(comparedFacts((law.response as { expression?: unknown }).expression) ? { compares: comparedFacts((law.response as { expression?: unknown }).expression)! } : {}) }
+      const declared: Law = { id: law.id, title: pick(labels, `law:${law.id}`, locale)?.text ?? artifact.name, artifactId: artifact.artifactId, subject: law.subject, rationale: law.rationale, severity: law.severity, modality: String((law.modality as { kind?: unknown }).kind ?? ""), response: String((law.response as { kind?: unknown }).kind ?? ""), owner: law.owner, ...(comparedFacts((law.response as { expression?: unknown }).expression) ? { compares: comparedFacts((law.response as { expression?: unknown }).expression)! } : {}) }
       for (const target of new Set([law.subject, ...law.scope.objectTypes])) laws.set(target, [...laws.get(target) ?? [], declared])
     }
   }

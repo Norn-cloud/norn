@@ -42,6 +42,8 @@ test("the cell's route: admit, install, retire as CELL-DO documents them; anythi
   await expect(testDefinitions(async () => { throw new TypeError("network") }).install("x", dashboard)).rejects.toBeInstanceOf(CellUnavailable)
   expect(new CellUnavailable(404).message).toBe("The cell's definition route isn't connected yet; nothing was read or saved.")
   expect(new CellUnavailable(502).message).toBe("The cell did not answer (502); nothing was read or saved.")
+  // A 200 is an answer: one Studio cannot read never reads as "did not answer".
+  expect(new CellUnavailable(200).message).toBe("The cell answered with a document Studio could not read; nothing was read or saved.")
   const reads: string[] = []
   const reader = (status: number, body: unknown) => async (path: string) => { reads.push(path); return new Response(JSON.stringify(body), { status }) }
   expect(await testDefinitions(reader(200, { items: [{ id: "studio.dashboard.refinery", kind: "dashboard", title: "Refinery", version: 3, lifecycle: "active", updatedAtMs: 5 }], cursor: "c2" })).list())

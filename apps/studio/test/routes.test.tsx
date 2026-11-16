@@ -32,4 +32,6 @@ test("an old Questions address is matched by the redirect to the same page under
     expect({ from, route: router.matchRoutes(from).at(-1)?.routeId }).toEqual({ from, route: "/questions/$" })
   }
   expect(router.matchRoutes("/metrics/new").at(-1)?.routeId).toBe("/metrics/new")
+  expect(movedTo("/guarantees")).toBe("/rules")
+  expect(router.matchRoutes("/guarantees").at(-1)?.routeId).toBe("/guarantees/$")
 })

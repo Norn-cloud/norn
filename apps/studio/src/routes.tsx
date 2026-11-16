@@ -43,13 +43,13 @@ export const COMPONENTS: { readonly [P in PagePath]: RouteComponent } = {
   "/dashboards/$id/edit": DashboardEditorPage,
   "/workflows": WorkflowsPage,
   "/canvas": CanvasPage,
-  "/guarantees": GuaranteesPage,
+  "/rules": GuaranteesPage,
   "/markings": MarkingsPage,
   "/connections": ConnectionsWithBindings,
 }
 
-/** Where an old address now lives: Questions became Metrics, and a saved link still opens its page. */
-export const MOVED = { "/questions": "/metrics" } as const
+/** Where an old address now lives: Questions became Metrics, Guarantees became Rules; a saved link still opens its page. */
+export const MOVED = { "/questions": "/metrics", "/guarantees": "/rules" } as const
 
 /** `/questions/new#x` → `/metrics/new#x`: the same page under its new prefix, nothing else changed. */
 export function movedTo(pathname: string): string | undefined {
