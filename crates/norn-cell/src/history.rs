@@ -1325,9 +1325,10 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     }
 
     /// A creation payload is proven by the writer's effective-value contract
-    /// under the model that wrote its snapshot: today's, or the retained one
-    /// its commit pins. A later install never makes an admitted creation
-    /// unprovable (#1423).
+    /// under the model that wrote its snapshot: today's, or the retained
+    /// install its commit pins (#1423), so an install after the creation's
+    /// own does not unprove it. Writes before any install (definitions
+    /// version 0) still prove only under today's model (#1426).
     fn created_values_proven(
         &self,
         commit_seq: u64,
@@ -1753,31 +1754,12 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         else {
             return Ok(None);
         };
-        let emissions = self.event_emissions(&entry.world, entry.commit_seq, &key)?;
-        // The declaration is the one the writer pinned (#1423): a later
-        // install never masks a transition its own commit proved.
-        let Some(writer) = emissions
-            .first()
-            .map(|snapshot| snapshot.model_hash.clone())
-        else {
-            return Ok(None);
-        };
-        let retained;
-        let model = if writer == self.model().model_hash() {
-            self.model()
-        } else {
-            match self.retained_writer_model(entry.commit_seq, &writer)? {
-                Some(model) => {
-                    retained = model;
-                    &*retained
-                }
-                None => return Ok(None),
-            }
-        };
-        if !model.has_type(key.object_type.as_str()) {
+        if !self.model().has_type(key.object_type.as_str()) {
             return Ok(None);
         }
-        let Some(declaration) = model.lifecycle(key.object_type.as_str(), lifecycle.as_str())?
+        let Some(declaration) = self
+            .model()
+            .lifecycle(key.object_type.as_str(), lifecycle.as_str())?
         else {
             return Ok(None);
         };
@@ -1788,9 +1770,10 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         {
             return Ok(None);
         }
+        let emissions = self.event_emissions(&entry.world, entry.commit_seq, &key)?;
         let mut proven = 0_usize;
         for snapshot in &emissions {
-            if snapshot.model_hash != writer
+            if snapshot.model_hash != self.model().model_hash()
                 || snapshot
                     .values
                     .as_ref()

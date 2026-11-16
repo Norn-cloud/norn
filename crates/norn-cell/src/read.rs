@@ -3462,11 +3462,12 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
     }
 
     /// #1423: the first ledger entry, in sequence order, whose committed value
-    /// proof does not hold, with its refusal; `None` when every entry is
-    /// proven. Read-only: an operator's diagnosis of a cell its open refuses.
+    /// proof the store refuses ([`CellError::HistoricalValueUnproven`] or
+    /// [`CellError::LedgerCorrupt`]), with its refusal; `None` when every entry
+    /// is proven. Read-only: an operator's diagnosis of a cell its open refuses.
     ///
     /// # Errors
-    /// SQL engine or decode errors.
+    /// SQL engine or decode errors, which are never read as a refusal.
     #[cfg(feature = "native")]
     pub(crate) fn first_unproven_entry(
         &self,
@@ -3482,7 +3483,16 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
                 if let Err(error) =
                     self.verify_durable_event(&entry.world, entry.commit_seq, &entry.event)
                 {
-                    return Ok(Some((entry, error)));
+                    // Only a refused proof marks the entry; an engine or
+                    // decode failure is no verdict and propagates.
+                    return if matches!(
+                        error,
+                        CellError::HistoricalValueUnproven(_) | CellError::LedgerCorrupt { .. }
+                    ) {
+                        Ok(Some((entry, error)))
+                    } else {
+                        Err(error)
+                    };
                 }
             }
             from = last.saturating_add(1);

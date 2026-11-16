@@ -531,6 +531,41 @@ impl NativeEngine {
         Self::configured(conn)
     }
 
+    /// Open an existing file read-only, for an operator's diagnosis (#1423):
+    /// no file is created, the journal mode is left as stored, and a hot
+    /// journal is refused rather than rolled back.
+    ///
+    /// # Errors
+    /// SQLite open or configuration errors.
+    pub fn open_read_only(path: &std::path::Path) -> Result<Self, CellError> {
+        let conn = rusqlite::Connection::open_with_flags(
+            path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        Self::configured(conn)
+    }
+
+    /// Run `f` in one deferred read transaction, then end it without
+    /// committing anything: one snapshot for a read-only pass.
+    ///
+    /// # Errors
+    /// A nested call, SQLite errors, or `f`'s own.
+    pub(crate) fn read_transaction<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        if !self.conn.is_autocommit() {
+            return Err(CellError::Engine("nested transaction refused".to_owned()));
+        }
+        let tx = rusqlite::Transaction::new_unchecked(
+            &self.conn,
+            rusqlite::TransactionBehavior::Deferred,
+        )?;
+        let out = f();
+        tx.rollback()?;
+        out
+    }
+
     /// Open an in-memory database with foreign keys enforced.
     ///
     /// # Errors

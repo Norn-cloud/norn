@@ -6,15 +6,16 @@
     missing_docs,
     reason = "integration-test assertions"
 )]
-//! #1423: no admitted sequence of definition installs and writes may leave a
-//! cell that its own open refuses. A creation's ledger payload is proven
-//! against the stored snapshot under the model that wrote it, never only
-//! under today's model.
+//! #1423: once a cell has installed definitions, later installs and the
+//! writes between them never leave a cell its own open refuses. A creation's
+//! ledger payload is proven against the stored snapshot under the model its
+//! commit pins, never only under today's model. (Writes before the first
+//! install, deletes, type removal and transitions are #1426.)
 
 use std::collections::BTreeMap;
 
 use norn_cell::{
-    CellStore, CommitBatch, FactWriteRow, InstalledDefinitionInput, MAIN_WORLD, Model, StoreOptions,
+    CellStore, RestoreError, CommitBatch, FactWriteRow, InstalledDefinitionInput, MAIN_WORLD, Model, StoreOptions,
 };
 use norn_ir::{ObjectTypeDef, RuntimeValue as Value};
 use norn_testkit::proptest::prelude::*;
@@ -159,9 +160,10 @@ fn event(value: &serde_json::Value) -> Value {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(48))]
 
-    /// Any interleaving of admitted creations, modifications, definition
-    /// installs and reopens leaves a cell that opens, with every creation and
-    /// modification still proven by the shared history accessor.
+    /// After the first install, any interleaving of admitted creations,
+    /// modifications, definition installs and reopens leaves a cell that
+    /// opens, with every creation and modification still proven by the shared
+    /// history accessor.
     #[test]
     fn every_admitted_interleaving_reopens(steps in prop::collection::vec(step(), 1..24)) {
         let directory = tempfile::tempdir().expect("directory");
@@ -275,7 +277,7 @@ async fn a_refused_cell_is_diagnosed_and_restored_to_its_proven_prefix() {
     assert!(CellStore::open(&path, model.clone(), StoreOptions::default()).is_err());
     let before = std::fs::read(&path).expect("source bytes");
 
-    let diagnosis = CellStore::diagnose_history(&path, StoreOptions::default()).expect("diagnosis");
+    let diagnosis = CellStore::diagnose_history(&path).expect("diagnosis");
     assert_eq!(diagnosis.head_commit, 4);
     assert_eq!(diagnosis.proven_through, 3);
     let unproven = diagnosis
@@ -289,8 +291,30 @@ async fn a_refused_cell_is_diagnosed_and_restored_to_its_proven_prefix() {
 
     let target = directory.path().join("restored.sqlite");
     let staging = directory.path().join("staging");
+    // A cut the operator has not named is refused, whatever else holds.
+    for through in [None, Some(4), Some(2)] {
+        let refused = CellStore::restore_proven_prefix(
+            &path,
+            &target,
+            &staging,
+            through,
+            StoreOptions::default(),
+        )
+        .await;
+        assert!(
+            matches!(
+                refused,
+                Err(RestoreError::PrefixNotAcknowledged {
+                    proven_through: 3,
+                    head_commit: 4
+                })
+            ),
+            "{through:?}: {refused:?}"
+        );
+    }
+    assert!(!target.exists());
     let restored =
-        CellStore::restore_proven_prefix(&path, &target, &staging, StoreOptions::default())
+        CellStore::restore_proven_prefix(&path, &target, &staging, Some(3), StoreOptions::default())
             .await
             .expect("restore");
     assert_eq!(restored.diagnosis, diagnosis);

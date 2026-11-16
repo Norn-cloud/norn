@@ -4,13 +4,15 @@
 //! - `norn-cell-restore diagnose <cell.sqlite>` reads the file and prints how
 //!   far its history is proven and the first ledger entry the store's own
 //!   value proofs refuse.
-//! - `norn-cell-restore restore <cell.sqlite> <target.sqlite> <staging-dir>`
-//!   rebuilds the proven prefix of the cell's own export journal into the
-//!   absent target, through the typed replay a restore uses. Commits after
-//!   the prefix are not restored; the printed diagnosis names them.
+//! - `norn-cell-restore restore <cell.sqlite> <target.sqlite> <staging-dir>
+//!   [--through N]` rebuilds the proven prefix of the cell's own export
+//!   journal into the absent target, through the typed replay a restore uses.
+//!   A prefix shorter than the journal drops commits, so it needs
+//!   `--through N` with N exactly the diagnosed `provenThrough`; a fully
+//!   proven journal restores whole without it.
 //!
-//! The source is only read. Run either on a copy of the cell's file, with the
-//! cell not serving, and keep the printed report with the incident.
+//! The source is opened read-only. Run either on a copy of the cell's file,
+//! with the cell not serving, and keep the printed report with the incident.
 
 use std::io::Write as _;
 use std::path::Path;
@@ -19,7 +21,7 @@ use std::process::ExitCode;
 use norn_cell::{CellStore, HistoryDiagnosis, StoreOptions};
 use serde_json::{Value, json};
 
-const USAGE: &str = "usage: norn-cell-restore diagnose <cell.sqlite>\n       norn-cell-restore restore <cell.sqlite> <target.sqlite> <staging-dir>";
+const USAGE: &str = "usage: norn-cell-restore diagnose <cell.sqlite>\n       norn-cell-restore restore <cell.sqlite> <target.sqlite> <staging-dir> [--through N]";
 
 fn diagnosis(found: &HistoryDiagnosis) -> Value {
     json!({
@@ -35,11 +37,19 @@ fn run(args: &[String]) -> Result<Value, String> {
     let options = StoreOptions::default();
     match args {
         [command, source] if command == "diagnose" => {
-            CellStore::diagnose_history(Path::new(source), options)
+            CellStore::diagnose_history(Path::new(source))
                 .map(|found| diagnosis(&found))
                 .map_err(|error| error.to_string())
         }
-        [command, source, target, staging] if command == "restore" => {
+        [command, source, target, staging, rest @ ..] if command == "restore" => {
+            let through = match rest {
+                [] => None,
+                [flag, cut] if flag == "--through" => Some(
+                    cut.parse::<u64>()
+                        .map_err(|error| format!("--through {cut}: {error}"))?,
+                ),
+                _ => return Err(USAGE.to_owned()),
+            };
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
@@ -49,6 +59,7 @@ fn run(args: &[String]) -> Result<Value, String> {
                     Path::new(source),
                     Path::new(target),
                     Path::new(staging),
+                    through,
                     options,
                 ))
                 .map_err(|error| error.to_string())?;
