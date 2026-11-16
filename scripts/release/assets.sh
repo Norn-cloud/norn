@@ -183,6 +183,7 @@ PY
     tag=${1:?usage: assets.sh sdk TAG OUT}
     out=${2:?usage: assets.sh sdk TAG OUT}
     version=$(version_of "$tag")
+    mkdir -p "$out" && out=$(cd "$out" && pwd)
     stage=$(mktemp -d)
     git archive HEAD packages/norn-sdk LICENSE NOTICE | tar -x -C "$stage"
     package="$stage/packages/norn-sdk"
@@ -204,6 +205,7 @@ PY
     tag=${1:?usage: assets.sh python TAG OUT}
     out=${2:?usage: assets.sh python TAG OUT}
     version=$(python_version_of "$tag")
+    mkdir -p "$out" && out=$(cd "$out" && pwd)
     work=$(mktemp -d)
     python3 -m venv "$work/venv"
     "$work/venv/bin/python" -m pip install --disable-pip-version-check --no-input -q --require-hashes \
@@ -230,13 +232,14 @@ description = "Python client for a Norn cell, generated from its OpenAPI documen
 requires-python = ">=3.11"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
-dependencies = ["httpx>=0.23.0,<0.29.0", "attrs>=22.2.0", "python-dateutil>=2.8.0"]
+dependencies = ["httpx2>=2.16.0,<3", "attrs>=22.2.0"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["norn_client"]
 TOML
     mkdir -p "$out"
-    (cd "$work/project" && SOURCE_DATE_EPOCH=$(commit_time) "$work/venv/bin/python" -m build --no-isolation --sdist --wheel --outdir "$out")
+    epoch=$(commit_time)
+    (cd "$work/project" && SOURCE_DATE_EPOCH=$epoch "$work/venv/bin/python" -m build --no-isolation --sdist --wheel --outdir "$out")
     rm -rf "$work"
     ;;
 
