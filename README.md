@@ -5,7 +5,7 @@ Every performance and quality number Norn has measured, one JSON record per line
 `scripts/metrics/` on `main`. This page and [`index.html`](index.html) are regenerated
 on every append.
 
-2,604 records across 166 metrics (aliases folded, re-reports of one commit's value shown once). Each series runs in the order of the
+2,605 records across 166 metrics (aliases folded, re-reports of one commit's value shown once). Each series runs in the order of the
 measured commits' dates, then measurement time; the trend shows the last 40. *est.* marks an
 estimate; runner `boat` series are the only ones the nightly ratchet gates.
 
@@ -36,7 +36,7 @@ estimate; runner `boat` series are the only ones the nightly ratchet gates.
 
 | Metric | Latest | Unit (stat) | Runner | n | Min / max | Trend | Commit | Source |
 |---|---:|---|---|---:|---|---|---|---|
-| `cell.open.cold.retained_model_4k.ms` | 877 | ms (single) | boat | 1 | 877 / 877 | ▁ | `c30b663fd2` | [link](https://github.com/Norn-cloud/norn/pull/1425#issuecomment-6917311943) |
+| `cell.open.cold.retained_model_4k.ms` | 877 | ms (single) | boat | 2 | 877 / 2,952 | █▁ | `c30b663fd2` | [link](https://github.com/Norn-cloud/norn/pull/1425#issuecomment-6917311943) |
 
 ## Checker test suite
 
