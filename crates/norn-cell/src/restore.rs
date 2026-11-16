@@ -212,6 +212,158 @@ impl CellStore<NativeEngine> {
     }
 }
 
+/// What a read-only check of a stored cell's history found (#1423): how far
+/// its ledger is proven, and the first entry that is not.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HistoryDiagnosis {
+    /// Commits in the stored export journal.
+    pub head_commit: u64,
+    /// The last commit through which every ledger entry is proven.
+    pub proven_through: u64,
+    /// The first unproven entry, when there is one.
+    pub first_unproven: Option<UnprovenEntry>,
+}
+
+/// One ledger entry the store's own value proofs refuse.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnprovenEntry {
+    /// Its ledger sequence.
+    pub seq: u64,
+    /// The commit it belongs to.
+    pub commit_seq: u64,
+    /// The event's `op`, when it names one.
+    pub op: Option<String>,
+    /// The refusal.
+    pub reason: String,
+}
+
+/// A proven-prefix restore: what was found, and what the new file holds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrefixRestore {
+    /// The source's diagnosis; commits after `proven_through` are not restored.
+    pub diagnosis: HistoryDiagnosis,
+    /// The restored file's verified boundary.
+    pub report: RestoreReport,
+}
+
+impl CellStore<NativeEngine> {
+    /// Diagnose a stored cell file its open refuses, without opening it as a
+    /// store: no schema step, no repair, no row written. Every ledger entry is
+    /// checked against the store's own value proofs, under the models its
+    /// export journal retains; the first entry they refuse is named.
+    ///
+    /// # Errors
+    /// An unreadable file or a journal record that does not verify.
+    pub fn diagnose_history(
+        source: &Path,
+        options: StoreOptions,
+    ) -> Result<HistoryDiagnosis, CellError> {
+        let engine = NativeEngine::open(source, options)?;
+        let (records, model) = journal(&engine)?;
+        let reader = crate::read::StoreReader::new(&engine, &model);
+        let head_commit = records.len().try_into().unwrap_or(u64::MAX);
+        Ok(match reader.first_unproven_entry()? {
+            None => HistoryDiagnosis {
+                head_commit,
+                proven_through: head_commit,
+                first_unproven: None,
+            },
+            Some((entry, error)) => HistoryDiagnosis {
+                head_commit,
+                proven_through: entry.commit_seq.saturating_sub(1),
+                first_unproven: Some(UnprovenEntry {
+                    seq: entry.seq,
+                    commit_seq: entry.commit_seq,
+                    op: entry
+                        .event
+                        .get("op")
+                        .and_then(norn_ir::RuntimeValue::as_str)
+                        .map(str::to_owned),
+                    reason: error.to_string(),
+                }),
+            },
+        })
+    }
+
+    /// The operator restore of a cell its open refuses (#1423): rebuild, into
+    /// the absent `target`, the longest prefix of the source's own export
+    /// journal whose history is proven, through the same typed replay as
+    /// [`Self::restore_from`]. `source` is only read; `staging` (an empty
+    /// directory the operator owns) receives the prefix's export objects.
+    /// Commits after the prefix are not restored: the diagnosis names the
+    /// first refused entry, so the operator records what was rolled back.
+    ///
+    /// # Errors
+    /// [`RestoreError`] for a refused, unverifiable or unpublishable restore.
+    pub async fn restore_proven_prefix(
+        source: &Path,
+        target: &Path,
+        staging: &Path,
+        options: StoreOptions,
+    ) -> Result<PrefixRestore, RestoreError> {
+        let diagnosis = Self::diagnose_history(source, options)?;
+        if diagnosis.proven_through == 0 {
+            return Err(RestoreError::EmptyExport);
+        }
+        let engine = NativeEngine::open(source, options)?;
+        let (records, _) = journal(&engine)?;
+        drop(engine);
+        let prefix = records
+            .get(..usize::try_from(diagnosis.proven_through).unwrap_or(usize::MAX))
+            .ok_or(RestoreError::EmptyExport)?;
+        let mut exporter = Exporter::local(staging)?;
+        for record in prefix {
+            exporter.append(record).await?;
+        }
+        let manifest = exporter.verify().await?;
+        let model = latest_model(prefix)?;
+        if model.model_hash() != manifest.model_hash {
+            return Err(RestoreError::ModelDefinitionsMismatch);
+        }
+        let report = Self::restore_from(
+            &mut exporter,
+            target,
+            model,
+            &manifest.scope,
+            &manifest.bindings,
+            options,
+        )
+        .await?;
+        Ok(PrefixRestore { diagnosis, report })
+    }
+}
+
+/// Every verified export journal record in commit order, and the model the
+/// last retained install (or the initial snapshot) pins.
+fn journal(engine: &NativeEngine) -> Result<(Vec<ExportRecord>, Model), CellError> {
+    let mut records = Vec::new();
+    while let Some(record) = crate::export_journal::read_record(
+        engine,
+        u64::try_from(records.len()).unwrap_or(u64::MAX).saturating_add(1),
+    )? {
+        records.push(record);
+    }
+    let model = latest_model(&records)?;
+    Ok((records, model))
+}
+
+fn latest_model(records: &[ExportRecord]) -> Result<Model, CellError> {
+    let snapshot = records
+        .iter()
+        .rev()
+        .find_map(|record| {
+            record
+                .definition_install
+                .as_ref()
+                .map(|install| &install.model)
+                .or(record.initial_model.as_ref())
+        })
+        .ok_or_else(|| {
+            CellError::HistoricalValueUnproven("the journal retains no model".to_owned())
+        })?;
+    Model::from_retained_snapshot(snapshot)
+}
+
 fn refuse_existing(path: &Path) -> Result<(), RestoreError> {
     for suffix in ["", "-wal", "-shm", "-journal"] {
         let mut name = path.as_os_str().to_owned();

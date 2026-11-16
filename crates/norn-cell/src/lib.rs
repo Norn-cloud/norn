@@ -89,7 +89,7 @@ pub use read::{
     PendingTimer, RunRecord, StoreReader,
 };
 #[cfg(feature = "native")]
-pub use restore::{RestoreError, RestoreReport};
+pub use restore::{HistoryDiagnosis, PrefixRestore, RestoreError, RestoreReport, UnprovenEntry};
 pub use store::{
     CellStore, CommitBatch, CommitOutcome, CommitPoint, Consumption, DefinitionInstallRecord,
     DefinitionReadmission, EffectRow, FactWriteRow, GuardedError, InstalledDefinitionInput,

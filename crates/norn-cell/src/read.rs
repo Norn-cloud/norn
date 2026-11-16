@@ -3397,6 +3397,15 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
     }
 
     fn ledger_range(&self, from: u64, limit: Option<usize>) -> Result<Vec<LedgerEntry>, CellError> {
+        self.ledger_range_with(from, limit, true)
+    }
+
+    fn ledger_range_with(
+        &self,
+        from: u64,
+        limit: Option<usize>,
+        verify: bool,
+    ) -> Result<Vec<LedgerEntry>, CellError> {
         // SQLite: a negative LIMIT is no limit.
         let limit = match limit {
             Some(limit) => i64::try_from(limit)
@@ -3443,10 +3452,39 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
                     reason: "command result payload does not verify".to_owned(),
                 });
             }
-            self.verify_durable_event(&entry.world, entry.commit_seq, &entry.event)?;
+            if verify {
+                self.verify_durable_event(&entry.world, entry.commit_seq, &entry.event)
+                    .map_err(|error| unproven_at(&entry, error))?;
+            }
             out.push(entry);
         }
         Ok(out)
+    }
+
+    /// #1423: the first ledger entry, in sequence order, whose committed value
+    /// proof does not hold, with its refusal; `None` when every entry is
+    /// proven. Read-only: an operator's diagnosis of a cell its open refuses.
+    ///
+    /// # Errors
+    /// SQL engine or decode errors.
+    #[cfg(feature = "native")]
+    pub(crate) fn first_unproven_entry(&self) -> Result<Option<(LedgerEntry, CellError)>, CellError> {
+        const PAGE: usize = 512;
+        let mut from = 1_u64;
+        loop {
+            let page = self.ledger_range_with(from, Some(PAGE), false)?;
+            let Some(last) = page.last().map(|entry| entry.seq) else {
+                return Ok(None);
+            };
+            for entry in page {
+                if let Err(error) =
+                    self.verify_durable_event(&entry.world, entry.commit_seq, &entry.event)
+                {
+                    return Ok(Some((entry, error)));
+                }
+            }
+            from = last.saturating_add(1);
+        }
     }
 
     /// Every receipt, in commit order.
@@ -4473,6 +4511,21 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             out.insert(name, rendered);
         }
         Ok(out)
+    }
+}
+
+/// A history refusal names the ledger entry it stopped at (#1423), so the
+/// operator the `cell.unopenable` reason reaches can find it. The fact key
+/// is not repeated: the sequence and commit locate it.
+fn unproven_at(entry: &LedgerEntry, error: CellError) -> CellError {
+    match error {
+        CellError::HistoricalValueUnproven(reason) => CellError::HistoricalValueUnproven(format!(
+            "{reason} (ledger seq {}, commit {}, op {})",
+            entry.seq,
+            entry.commit_seq,
+            entry.event.get("op").and_then(Value::as_str).unwrap_or("-")
+        )),
+        other => other,
     }
 }
 

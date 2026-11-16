@@ -1,0 +1,1523 @@
+[
+ {
+  "artifactId": "rehearsal.ApplicationRecord.interface",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "draft",
+  "name": "Application at minute 10",
+  "namespace": "rehearsal",
+  "payload": {
+   "entityVersion": "2.0",
+   "interface": {
+    "name": "rehearsal.ApplicationRecord",
+    "properties": [
+     {
+      "id": "application_id",
+      "type": {
+       "kind": "text"
+      }
+     },
+     {
+      "id": "application_start_time",
+      "type": {
+       "kind": "text"
+      }
+     },
+     {
+      "id": "application_channel",
+      "type": {
+       "kind": "enum",
+       "values": [
+        {
+         "value": "Mobile app"
+        },
+        {
+         "value": "Web"
+        },
+        {
+         "value": "Assisted"
+        }
+       ]
+      }
+     },
+     {
+      "constraints": {
+       "nullable": true
+      },
+      "id": "device_type",
+      "type": {
+       "kind": "enum",
+       "values": [
+        {
+         "value": "Android"
+        },
+        {
+         "value": "iOS"
+        },
+        {
+         "value": "Desktop"
+        },
+        {
+         "value": "Staff device"
+        }
+       ]
+      }
+     },
+     {
+      "id": "customer_type",
+      "type": {
+       "kind": "enum",
+       "values": [
+        {
+         "value": "New"
+        },
+        {
+         "value": "Returning"
+        }
+       ]
+      }
+     },
+     {
+      "id": "steps_completed_10m",
+      "type": {
+       "kind": "integer"
+      }
+     },
+     {
+      "id": "validation_errors_10m",
+      "type": {
+       "kind": "integer"
+      }
+     },
+     {
+      "id": "document_upload_attempted_10m",
+      "type": {
+       "kind": "enum",
+       "values": [
+        {
+         "value": "Yes"
+        },
+        {
+         "value": "No"
+        }
+       ]
+      }
+     },
+     {
+      "id": "document_upload_success_10m",
+      "type": {
+       "kind": "enum",
+       "values": [
+        {
+         "value": "Yes"
+        },
+        {
+         "value": "No"
+        }
+       ]
+      }
+     },
+     {
+      "constraints": {
+       "nullable": true
+      },
+      "id": "active_minutes_10m",
+      "type": {
+       "kind": "decimal",
+       "scale": 1
+      }
+     },
+     {
+      "id": "returned_after_exit_10m",
+      "type": {
+       "kind": "enum",
+       "values": [
+        {
+         "value": "Yes"
+        },
+        {
+         "value": "No"
+        }
+       ]
+      }
+     },
+     {
+      "id": "network_interruptions_10m",
+      "type": {
+       "kind": "integer"
+      }
+     },
+     {
+      "id": "support_opened_10m",
+      "type": {
+       "kind": "enum",
+       "values": [
+        {
+         "value": "Yes"
+        },
+        {
+         "value": "No"
+        }
+       ]
+      }
+     },
+     {
+      "id": "start_hour",
+      "type": {
+       "kind": "integer"
+      }
+     },
+     {
+      "id": "weekend_start",
+      "type": {
+       "kind": "enum",
+       "values": [
+        {
+         "value": "Yes"
+        },
+        {
+         "value": "No"
+        }
+       ]
+      }
+     },
+     {
+      "id": "completed_within_24_hours",
+      "type": {
+       "kind": "enum",
+       "values": [
+        {
+         "value": "Yes"
+        },
+        {
+         "value": "No"
+        }
+       ]
+      }
+     }
+    ]
+   }
+  },
+  "provenance": {
+   "source": "authoring_sdk",
+   "sourcePath": "rehearsal/application.ts"
+  },
+  "scope": {
+   "environmentId": "prod",
+   "orgId": "org_a"
+  },
+  "version": "0.2.0"
+ },
+ {
+  "artifactId": "rehearsal.Application.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "draft",
+  "name": "Application",
+  "namespace": "rehearsal",
+  "payload": {
+   "entityVersion": "2.0",
+   "objectType": {
+    "identity": [
+     {
+      "name": "primary",
+      "properties": [
+       "application_id"
+      ]
+     }
+    ],
+    "implements": [
+     "rehearsal.ApplicationRecord"
+    ],
+    "lifecycles": [
+     {
+      "initial": [
+       "Started",
+       "Stalled"
+      ],
+      "property": "status",
+      "terminal": [
+       "Completed",
+       "Approved",
+       "Declined",
+       "Priced"
+      ],
+      "transitions": [
+       {
+        "from": [
+         "Started"
+        ],
+        "id": "stall",
+        "to": "Stalled"
+       },
+       {
+        "from": [
+         "Stalled"
+        ],
+        "id": "assist",
+        "to": "Assisted"
+       },
+       {
+        "from": [
+         "Started",
+         "Stalled",
+         "Assisted"
+        ],
+        "id": "complete",
+        "to": "Completed"
+       },
+       {
+        "from": [
+         "Started",
+         "Stalled",
+         "Assisted"
+        ],
+        "id": "approve",
+        "to": "Approved"
+       },
+       {
+        "from": [
+         "Started",
+         "Stalled",
+         "Assisted"
+        ],
+        "id": "decline",
+        "to": "Declined"
+       },
+       {
+        "from": [
+         "Started",
+         "Stalled",
+         "Assisted"
+        ],
+        "id": "price",
+        "to": "Priced"
+       }
+      ]
+     }
+    ],
+    "name": "rehearsal.Application",
+    "properties": [
+     {
+      "id": "application_id",
+      "type": {
+       "kind": "text"
+      }
+     },
+     {
+      "id": "application_start_time",
+      "type": {
+       "kind": "text"
+      }
+     },
+     {
+      "id": "application_channel",
+      "type": {
+       "kind": "enum",
+       "values": [
+        {
+         "value": "Mobile app"
+        },
+        {
+         "value": "Web"
+        },
+        {
+         "value": "Assisted"
+        }
+       ]
+      }
+     },
+     {
+      "constraints": {
+       "nullable": true
+      },
+      "id": "device_type",
+      "type": {
+       "kind": "enum",
+       "values": [
+        {
+         "value": "Android"
+        },
+        {
+         "value": "iOS"
+        },
+        {
+         "value": "Desktop"
+        },
+        {
+         "value": "Staff device"
+        }
+       ]
+      }
+     },
+     {
+      "id": "customer_type",
+      "type": {
+       "kind": "enum",
+       "values": [
+        {
+         "value": "New"
+        },
+        {
+         "value": "Returning"
+        }
+       ]
+      }
+     },
+     {
+      "id": "steps_completed_10m",
+      "type": {
+       "kind": "integer"
+      }
+     },
+     {
+      "id": "validation_errors_10m",
+      "type": {
+       "kind": "integer"
+      }
+     },
+     {
+      "id": "document_upload_attempted_10m",
+      "type": {
+       "kind": "enum",
+       "values": [
+        {
+         "value": "Yes"
+        },
+        {
+         "value": "No"
+        }
+       ]
+      }
+     },
+     {
+      "id": "document_upload_success_10m",
+      "type": {
+       "kind": "enum",
+       "values": [
+        {
+         "value": "Yes"
+        },
+        {
+         "value": "No"
+        }
+       ]
+      }
+     },
+     {
+      "constraints": {
+       "nullable": true
+      },
+      "id": "active_minutes_10m",
+      "type": {
+       "kind": "decimal",
+       "scale": 1
+      }
+     },
+     {
+      "id": "returned_after_exit_10m",
+      "type": {
+       "kind": "enum",
+       "values": [
+        {
+         "value": "Yes"
+        },
+        {
+         "value": "No"
+        }
+       ]
+      }
+     },
+     {
+      "id": "network_interruptions_10m",
+      "type": {
+       "kind": "integer"
+      }
+     },
+     {
+      "id": "support_opened_10m",
+      "type": {
+       "kind": "enum",
+       "values": [
+        {
+         "value": "Yes"
+        },
+        {
+         "value": "No"
+        }
+       ]
+      }
+     },
+     {
+      "id": "start_hour",
+      "type": {
+       "kind": "integer"
+      }
+     },
+     {
+      "id": "weekend_start",
+      "type": {
+       "kind": "enum",
+       "values": [
+        {
+         "value": "Yes"
+        },
+        {
+         "value": "No"
+        }
+       ]
+      }
+     },
+     {
+      "id": "completed_within_24_hours",
+      "type": {
+       "kind": "enum",
+       "values": [
+        {
+         "value": "Yes"
+        },
+        {
+         "value": "No"
+        }
+       ]
+      }
+     },
+     {
+      "default": "1970-01-01T00:00:00Z",
+      "id": "started_on",
+      "type": {
+       "kind": "timestamp",
+       "timezone": "utc"
+      }
+     },
+     {
+      "default": "0",
+      "id": "completed_count",
+      "type": {
+       "additivity": {
+        "kind": "additive"
+       },
+       "kind": "decimal",
+       "scale": 0
+      }
+     },
+     {
+      "default": "1",
+      "id": "application_count",
+      "type": {
+       "additivity": {
+        "kind": "additive"
+       },
+       "kind": "decimal",
+       "scale": 0
+      }
+     },
+     {
+      "default": "0",
+      "id": "completion_rate",
+      "type": {
+       "additivity": {
+        "denominator": "application_count",
+        "kind": "ratio",
+        "numerator": "completed_count"
+       },
+       "kind": "decimal",
+       "scale": 4
+      }
+     },
+     {
+      "default": "assist-threshold",
+      "id": "assist_policy",
+      "type": {
+       "kind": "text"
+      }
+     },
+     {
+      "default": "Started",
+      "id": "status",
+      "type": {
+       "kind": "enum",
+       "values": [
+        {
+         "value": "Started"
+        },
+        {
+         "value": "Stalled"
+        },
+        {
+         "value": "Assisted"
+        },
+        {
+         "value": "Completed"
+        },
+        {
+         "value": "Approved"
+        },
+        {
+         "value": "Declined"
+        },
+        {
+         "value": "Priced"
+        }
+       ]
+      }
+     }
+    ]
+   }
+  },
+  "provenance": {
+   "source": "authoring_sdk",
+   "sourcePath": "rehearsal/application.ts"
+  },
+  "scope": {
+   "environmentId": "prod",
+   "orgId": "org_a"
+  },
+  "version": "0.4.0"
+ },
+ {
+  "artifactId": "rehearsal.Application.steps_in_range.law",
+  "dependencies": [
+   {
+    "artifactId": "rehearsal.Application.entity",
+    "kind": "entity",
+    "required": true,
+    "version": "0.4.0"
+   }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "draft",
+  "name": "Steps completed in the first 10 minutes run from 0 to 7.",
+  "namespace": "rehearsal",
+  "payload": {
+   "id": "rehearsal.Application.steps_in_range",
+   "lawVersion": "0.1",
+   "modality": {
+    "kind": "always"
+   },
+   "owner": "rehearsal",
+   "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "rehearsal/application.ts"
+   },
+   "rationale": "Steps completed in the first 10 minutes run from 0 to 7.",
+   "response": {
+    "expression": "(self.steps_completed_10m >= 0) and (self.steps_completed_10m <= 7)",
+    "kind": "predicate"
+   },
+   "scope": {
+    "objectTypes": [
+     "rehearsal.Application"
+    ],
+    "root": {
+     "id": "rehearsal.Application",
+     "kind": "entity"
+    }
+   },
+   "severity": "error",
+   "subject": "rehearsal.Application"
+  },
+  "provenance": {
+   "source": "authoring_sdk",
+   "sourcePath": "rehearsal/application.ts"
+  },
+  "scope": {
+   "environmentId": "prod",
+   "orgId": "org_a"
+  },
+  "version": "0.4.0"
+ },
+ {
+  "artifactId": "rehearsal.Application.interruptions_in_range.law",
+  "dependencies": [
+   {
+    "artifactId": "rehearsal.Application.entity",
+    "kind": "entity",
+    "required": true,
+    "version": "0.4.0"
+   }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "draft",
+  "name": "Observed network interruptions in the first 10 minutes run from 0 to 5.",
+  "namespace": "rehearsal",
+  "payload": {
+   "id": "rehearsal.Application.interruptions_in_range",
+   "lawVersion": "0.1",
+   "modality": {
+    "kind": "always"
+   },
+   "owner": "rehearsal",
+   "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "rehearsal/application.ts"
+   },
+   "rationale": "Observed network interruptions in the first 10 minutes run from 0 to 5.",
+   "response": {
+    "expression": "(self.network_interruptions_10m >= 0) and (self.network_interruptions_10m <= 5)",
+    "kind": "predicate"
+   },
+   "scope": {
+    "objectTypes": [
+     "rehearsal.Application"
+    ],
+    "root": {
+     "id": "rehearsal.Application",
+     "kind": "entity"
+    }
+   },
+   "severity": "error",
+   "subject": "rehearsal.Application"
+  },
+  "provenance": {
+   "source": "authoring_sdk",
+   "sourcePath": "rehearsal/application.ts"
+  },
+  "scope": {
+   "environmentId": "prod",
+   "orgId": "org_a"
+  },
+  "version": "0.4.0"
+ },
+ {
+  "artifactId": "rehearsal.Application.start_hour_in_range.law",
+  "dependencies": [
+   {
+    "artifactId": "rehearsal.Application.entity",
+    "kind": "entity",
+    "required": true,
+    "version": "0.4.0"
+   }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "draft",
+  "name": "The start hour is an hour of the day.",
+  "namespace": "rehearsal",
+  "payload": {
+   "id": "rehearsal.Application.start_hour_in_range",
+   "lawVersion": "0.1",
+   "modality": {
+    "kind": "always"
+   },
+   "owner": "rehearsal",
+   "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "rehearsal/application.ts"
+   },
+   "rationale": "The start hour is an hour of the day.",
+   "response": {
+    "expression": "(self.start_hour >= 0) and (self.start_hour <= 23)",
+    "kind": "predicate"
+   },
+   "scope": {
+    "objectTypes": [
+     "rehearsal.Application"
+    ],
+    "root": {
+     "id": "rehearsal.Application",
+     "kind": "entity"
+    }
+   },
+   "severity": "error",
+   "subject": "rehearsal.Application"
+  },
+  "provenance": {
+   "source": "authoring_sdk",
+   "sourcePath": "rehearsal/application.ts"
+  },
+  "scope": {
+   "environmentId": "prod",
+   "orgId": "org_a"
+  },
+  "version": "0.4.0"
+ },
+ {
+  "artifactId": "rehearsal.Application.validation_errors_plausible.law",
+  "dependencies": [
+   {
+    "artifactId": "rehearsal.Application.entity",
+    "kind": "entity",
+    "required": true,
+    "version": "0.4.0"
+   }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "draft",
+  "name": "More than 12 validation errors in 10 minutes is an outlier to review, not to drop.",
+  "namespace": "rehearsal",
+  "payload": {
+   "id": "rehearsal.Application.validation_errors_plausible",
+   "lawVersion": "0.1",
+   "modality": {
+    "kind": "always"
+   },
+   "owner": "rehearsal",
+   "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "rehearsal/application.ts"
+   },
+   "rationale": "More than 12 validation errors in 10 minutes is an outlier to review, not to drop.",
+   "response": {
+    "expression": "(self.validation_errors_10m >= 0) and (self.validation_errors_10m <= 12)",
+    "kind": "predicate"
+   },
+   "scope": {
+    "objectTypes": [
+     "rehearsal.Application"
+    ],
+    "root": {
+     "id": "rehearsal.Application",
+     "kind": "entity"
+    }
+   },
+   "severity": "warning",
+   "subject": "rehearsal.Application"
+  },
+  "provenance": {
+   "source": "authoring_sdk",
+   "sourcePath": "rehearsal/application.ts"
+  },
+  "scope": {
+   "environmentId": "prod",
+   "orgId": "org_a"
+  },
+  "version": "0.4.0"
+ },
+ {
+  "artifactId": "rehearsal.Application.device_known.law",
+  "dependencies": [
+   {
+    "artifactId": "rehearsal.Application.entity",
+    "kind": "entity",
+    "required": true,
+    "version": "0.4.0"
+   }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "draft",
+  "name": "Flag, don't fill: a missing device type is reported, never imputed.",
+  "namespace": "rehearsal",
+  "payload": {
+   "condition": "self.device_type != null",
+   "id": "rehearsal.Application.device_known",
+   "lawVersion": "0.1",
+   "modality": {
+    "kind": "always"
+   },
+   "owner": "rehearsal",
+   "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "rehearsal/application.ts"
+   },
+   "rationale": "Flag, don't fill: a missing device type is reported, never imputed.",
+   "response": {
+    "expression": "self.device_type != null",
+    "kind": "predicate"
+   },
+   "scope": {
+    "objectTypes": [
+     "rehearsal.Application"
+    ],
+    "root": {
+     "id": "rehearsal.Application",
+     "kind": "entity"
+    }
+   },
+   "severity": "warning",
+   "subject": "rehearsal.Application"
+  },
+  "provenance": {
+   "source": "authoring_sdk",
+   "sourcePath": "rehearsal/application.ts"
+  },
+  "scope": {
+   "environmentId": "prod",
+   "orgId": "org_a"
+  },
+  "version": "0.4.0"
+ },
+ {
+  "artifactId": "rehearsal.Application.active_minutes_known.law",
+  "dependencies": [
+   {
+    "artifactId": "rehearsal.Application.entity",
+    "kind": "entity",
+    "required": true,
+    "version": "0.4.0"
+   }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "draft",
+  "name": "Flag, don't fill: missing active minutes are reported, never imputed.",
+  "namespace": "rehearsal",
+  "payload": {
+   "condition": "self.active_minutes_10m != null",
+   "id": "rehearsal.Application.active_minutes_known",
+   "lawVersion": "0.1",
+   "modality": {
+    "kind": "always"
+   },
+   "owner": "rehearsal",
+   "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "rehearsal/application.ts"
+   },
+   "rationale": "Flag, don't fill: missing active minutes are reported, never imputed.",
+   "response": {
+    "expression": "self.active_minutes_10m != null",
+    "kind": "predicate"
+   },
+   "scope": {
+    "objectTypes": [
+     "rehearsal.Application"
+    ],
+    "root": {
+     "id": "rehearsal.Application",
+     "kind": "entity"
+    }
+   },
+   "severity": "warning",
+   "subject": "rehearsal.Application"
+  },
+  "provenance": {
+   "source": "authoring_sdk",
+   "sourcePath": "rehearsal/application.ts"
+  },
+  "scope": {
+   "environmentId": "prod",
+   "orgId": "org_a"
+  },
+  "version": "0.4.0"
+ },
+ {
+  "artifactId": "rehearsal.Application.assist_only.law",
+  "dependencies": [
+   {
+    "artifactId": "rehearsal.Application.entity",
+    "kind": "entity",
+    "required": true,
+    "version": "0.4.0"
+   }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "draft",
+  "name": "Automation may only offer assistance; approving, declining and pricing stay human credit decisions outside this system.",
+  "namespace": "rehearsal",
+  "payload": {
+   "id": "rehearsal.Application.assist_only",
+   "lawVersion": "0.1",
+   "modality": {
+    "kind": "never"
+   },
+   "owner": "rehearsal",
+   "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "rehearsal/application.ts"
+   },
+   "rationale": "Automation may only offer assistance; approving, declining and pricing stay human credit decisions outside this system.",
+   "response": {
+    "expression": "((self.status == 'Approved') or (self.status == 'Declined')) or (self.status == 'Priced')",
+    "kind": "predicate"
+   },
+   "scope": {
+    "objectTypes": [
+     "rehearsal.Application"
+    ],
+    "root": {
+     "id": "rehearsal.Application",
+     "kind": "entity"
+    }
+   },
+   "severity": "error",
+   "subject": "rehearsal.Application"
+  },
+  "provenance": {
+   "source": "authoring_sdk",
+   "sourcePath": "rehearsal/application.ts"
+  },
+  "scope": {
+   "environmentId": "prod",
+   "orgId": "org_a"
+  },
+  "version": "0.4.0"
+ },
+ {
+  "artifactId": "rehearsal.applications.mapping",
+  "dependencies": [
+   {
+    "artifactId": "rehearsal.applications.source",
+    "kind": "source_schema",
+    "required": true,
+    "version": "0.1.0"
+   },
+   {
+    "artifactId": "rehearsal.ApplicationRecord.interface",
+    "kind": "entity",
+    "required": true,
+    "version": "0.2.0"
+   },
+   {
+    "artifactId": "rehearsal.Application.entity",
+    "kind": "entity",
+    "required": true,
+    "version": "0.4.0"
+   }
+  ],
+  "irVersion": "0.1",
+  "kind": "mapping",
+  "lifecycle": "draft",
+  "name": "Minute-10 export to Application",
+  "namespace": "rehearsal",
+  "payload": {
+   "extensions": {
+    "norn.mapping.generic/1.0.0": {
+     "parity": "unqualified"
+    }
+   },
+   "format": "norn.mapping/1",
+   "interfaces": [
+    "rehearsal.ApplicationRecord.interface"
+   ],
+   "maps": [
+    {
+     "id": "application",
+     "lifecycles": [
+      {
+       "property": "status",
+       "state": "input.steps_completed_10m < 4 ? 'Stalled' : 'Started'"
+      }
+     ],
+     "properties": [
+      {
+       "property": "application_id",
+       "value": "input.application_id"
+      },
+      {
+       "property": "application_start_time",
+       "value": "input.application_start_time"
+      },
+      {
+       "property": "application_channel",
+       "value": "input.application_channel"
+      },
+      {
+       "property": "device_type",
+       "value": "input.device_type"
+      },
+      {
+       "property": "customer_type",
+       "value": "input.customer_type"
+      },
+      {
+       "property": "steps_completed_10m",
+       "value": "input.steps_completed_10m"
+      },
+      {
+       "property": "validation_errors_10m",
+       "value": "input.validation_errors_10m"
+      },
+      {
+       "property": "document_upload_attempted_10m",
+       "value": "input.document_upload_attempted_10m"
+      },
+      {
+       "property": "document_upload_success_10m",
+       "value": "input.document_upload_success_10m"
+      },
+      {
+       "property": "active_minutes_10m",
+       "value": "input.active_minutes_10m"
+      },
+      {
+       "property": "returned_after_exit_10m",
+       "value": "input.returned_after_exit_10m"
+      },
+      {
+       "property": "network_interruptions_10m",
+       "value": "input.network_interruptions_10m"
+      },
+      {
+       "property": "support_opened_10m",
+       "value": "input.support_opened_10m"
+      },
+      {
+       "property": "start_hour",
+       "value": "input.start_hour"
+      },
+      {
+       "property": "weekend_start",
+       "value": "input.weekend_start"
+      },
+      {
+       "property": "completed_within_24_hours",
+       "value": "input.completed_within_24_hours"
+      },
+      {
+       "property": "started_on",
+       "value": "timestamp(take(input.application_start_time, 10) + 'T00:00:00Z')"
+      },
+      {
+       "property": "completed_count",
+       "value": "input.completed_within_24_hours == 'Yes' ? 1 : 0"
+      },
+      {
+       "property": "application_count",
+       "value": "1"
+      },
+      {
+       "property": "completion_rate",
+       "value": "input.completed_within_24_hours == 'Yes' ? 1 : 0"
+      }
+     ],
+     "source": {
+      "dataset": "applications"
+     },
+     "sourceRecord": "'csv/dogfood/applications/' + input.application_id",
+     "subject": "input.application_id",
+     "target": {
+      "entity": "rehearsal.Application.entity",
+      "interface": "rehearsal.ApplicationRecord.interface"
+     }
+    }
+   ],
+   "source": {
+    "schemaId": "rehearsal.applications.source",
+    "sha256": "5ad7cbe2b68bab46ebae388aabdad9f453dbd4d95b1b563d0c429032c070ef0a",
+    "version": "0.1.0"
+   }
+  },
+  "provenance": {
+   "source": "authoring_sdk",
+   "sourcePath": "rehearsal/application.ts"
+  },
+  "scope": {
+   "environmentId": "prod",
+   "orgId": "org_a"
+  },
+  "version": "0.5.0"
+ },
+ {
+  "artifactId": "rehearsal.applications.source",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "source_schema",
+  "lifecycle": "draft",
+  "name": "Application activity at minute 10",
+  "namespace": "rehearsal",
+  "payload": {
+   "adapter": {
+    "name": "csv-upload",
+    "version": "1"
+   },
+   "codeSets": [
+    {
+     "dataset": "applications",
+     "field": "application_channel",
+     "id": "channel",
+     "origin": "declared",
+     "values": [
+      {
+       "value": "Mobile app"
+      },
+      {
+       "value": "Web"
+      },
+      {
+       "value": "Assisted"
+      }
+     ]
+    },
+    {
+     "dataset": "applications",
+     "field": "customer_type",
+     "id": "customer",
+     "origin": "declared",
+     "values": [
+      {
+       "value": "New"
+      },
+      {
+       "value": "Returning"
+      }
+     ]
+    },
+    {
+     "dataset": "applications",
+     "field": "document_upload_attempted_10m",
+     "id": "document_upload_attempted_10m",
+     "origin": "declared",
+     "values": [
+      {
+       "value": "Yes"
+      },
+      {
+       "value": "No"
+      }
+     ]
+    },
+    {
+     "dataset": "applications",
+     "field": "document_upload_success_10m",
+     "id": "document_upload_success_10m",
+     "origin": "declared",
+     "values": [
+      {
+       "value": "Yes"
+      },
+      {
+       "value": "No"
+      }
+     ]
+    },
+    {
+     "dataset": "applications",
+     "field": "returned_after_exit_10m",
+     "id": "returned_after_exit_10m",
+     "origin": "declared",
+     "values": [
+      {
+       "value": "Yes"
+      },
+      {
+       "value": "No"
+      }
+     ]
+    },
+    {
+     "dataset": "applications",
+     "field": "support_opened_10m",
+     "id": "support_opened_10m",
+     "origin": "declared",
+     "values": [
+      {
+       "value": "Yes"
+      },
+      {
+       "value": "No"
+      }
+     ]
+    },
+    {
+     "dataset": "applications",
+     "field": "weekend_start",
+     "id": "weekend_start",
+     "origin": "declared",
+     "values": [
+      {
+       "value": "Yes"
+      },
+      {
+       "value": "No"
+      }
+     ]
+    },
+    {
+     "dataset": "applications",
+     "field": "completed_within_24_hours",
+     "id": "completed_within_24_hours",
+     "origin": "declared",
+     "values": [
+      {
+       "value": "Yes"
+      },
+      {
+       "value": "No"
+      }
+     ]
+    },
+    {
+     "dataset": "applications",
+     "field": "device_type",
+     "id": "device",
+     "origin": "declared",
+     "values": [
+      {
+       "value": "Android"
+      },
+      {
+       "value": "iOS"
+      },
+      {
+       "value": "Desktop"
+      },
+      {
+       "value": "Staff device"
+      }
+     ]
+    }
+   ],
+   "constraints": [
+    {
+     "dataset": "applications",
+     "fields": [
+      "application_id"
+     ],
+     "id": "application_pk",
+     "kind": "primary_key",
+     "origin": "declared"
+    },
+    {
+     "dataset": "scores",
+     "fields": [
+      "application_id"
+     ],
+     "id": "score_pk",
+     "kind": "primary_key",
+     "origin": "declared"
+    }
+   ],
+   "datasets": [
+    {
+     "id": "applications",
+     "kind": "file",
+     "nativeName": "synthetic_application_activity_raw.csv"
+    },
+    {
+     "id": "scores",
+     "kind": "file",
+     "nativeName": "scores.csv"
+    }
+   ],
+   "fields": [
+    {
+     "dataset": "applications",
+     "name": "application_id",
+     "nativeType": "csv",
+     "ordinal": 0,
+     "required": true,
+     "typeCandidate": {
+      "origin": "declared",
+      "type": "string"
+     }
+    },
+    {
+     "dataset": "applications",
+     "name": "application_start_time",
+     "nativeType": "csv",
+     "ordinal": 1,
+     "required": true,
+     "typeCandidate": {
+      "origin": "declared",
+      "type": "string"
+     }
+    },
+    {
+     "dataset": "applications",
+     "name": "application_channel",
+     "nativeType": "csv",
+     "ordinal": 2,
+     "required": true,
+     "typeCandidate": {
+      "origin": "declared",
+      "type": "string"
+     }
+    },
+    {
+     "dataset": "applications",
+     "name": "device_type",
+     "nativeType": "csv",
+     "ordinal": 3,
+     "required": false,
+     "typeCandidate": {
+      "origin": "declared",
+      "type": "string"
+     }
+    },
+    {
+     "dataset": "applications",
+     "name": "customer_type",
+     "nativeType": "csv",
+     "ordinal": 4,
+     "required": true,
+     "typeCandidate": {
+      "origin": "declared",
+      "type": "string"
+     }
+    },
+    {
+     "dataset": "applications",
+     "name": "steps_completed_10m",
+     "nativeType": "csv",
+     "ordinal": 5,
+     "required": true,
+     "typeCandidate": {
+      "origin": "declared",
+      "type": "integer"
+     }
+    },
+    {
+     "dataset": "applications",
+     "name": "validation_errors_10m",
+     "nativeType": "csv",
+     "ordinal": 6,
+     "required": true,
+     "typeCandidate": {
+      "origin": "declared",
+      "type": "integer"
+     }
+    },
+    {
+     "dataset": "applications",
+     "name": "document_upload_attempted_10m",
+     "nativeType": "csv",
+     "ordinal": 7,
+     "required": true,
+     "typeCandidate": {
+      "origin": "declared",
+      "type": "string"
+     }
+    },
+    {
+     "dataset": "applications",
+     "name": "document_upload_success_10m",
+     "nativeType": "csv",
+     "ordinal": 8,
+     "required": true,
+     "typeCandidate": {
+      "origin": "declared",
+      "type": "string"
+     }
+    },
+    {
+     "dataset": "applications",
+     "name": "active_minutes_10m",
+     "nativeType": "csv",
+     "ordinal": 9,
+     "required": false,
+     "typeCandidate": {
+      "origin": "declared",
+      "type": "decimal"
+     }
+    },
+    {
+     "dataset": "applications",
+     "name": "returned_after_exit_10m",
+     "nativeType": "csv",
+     "ordinal": 10,
+     "required": true,
+     "typeCandidate": {
+      "origin": "declared",
+      "type": "string"
+     }
+    },
+    {
+     "dataset": "applications",
+     "name": "network_interruptions_10m",
+     "nativeType": "csv",
+     "ordinal": 11,
+     "required": true,
+     "typeCandidate": {
+      "origin": "declared",
+      "type": "integer"
+     }
+    },
+    {
+     "dataset": "applications",
+     "name": "support_opened_10m",
+     "nativeType": "csv",
+     "ordinal": 12,
+     "required": true,
+     "typeCandidate": {
+      "origin": "declared",
+      "type": "string"
+     }
+    },
+    {
+     "dataset": "applications",
+     "name": "start_hour",
+     "nativeType": "csv",
+     "ordinal": 13,
+     "required": true,
+     "typeCandidate": {
+      "origin": "declared",
+      "type": "integer"
+     }
+    },
+    {
+     "dataset": "applications",
+     "name": "weekend_start",
+     "nativeType": "csv",
+     "ordinal": 14,
+     "required": true,
+     "typeCandidate": {
+      "origin": "declared",
+      "type": "string"
+     }
+    },
+    {
+     "dataset": "applications",
+     "name": "completed_within_24_hours",
+     "nativeType": "csv",
+     "ordinal": 15,
+     "required": true,
+     "typeCandidate": {
+      "origin": "declared",
+      "type": "string"
+     }
+    },
+    {
+     "dataset": "scores",
+     "name": "application_id",
+     "nativeType": "csv",
+     "ordinal": 0,
+     "required": true,
+     "typeCandidate": {
+      "origin": "declared",
+      "type": "string"
+     }
+    },
+    {
+     "dataset": "scores",
+     "name": "completion_score",
+     "nativeType": "csv",
+     "ordinal": 1,
+     "required": true,
+     "typeCandidate": {
+      "origin": "declared",
+      "type": "decimal"
+     }
+    },
+    {
+     "dataset": "scores",
+     "name": "model_version",
+     "nativeType": "csv",
+     "ordinal": 2,
+     "required": true,
+     "typeCandidate": {
+      "origin": "declared",
+      "type": "string"
+     }
+    }
+   ],
+   "format": "norn.source-schema/1",
+   "observedAt": "2026-11-15T00:00:00Z",
+   "rawMetadata": {
+    "sha256": "c8d08d0ccdb691f0500850ff907781de877ab510b2d05c0cc9a6ae75e72d0437",
+    "uri": "upload://synthetic_application_activity_raw.csv"
+   },
+   "source": {
+    "instance": "dogfood",
+    "system": "csv",
+    "version": "1"
+   }
+  },
+  "provenance": {
+   "source": "authoring_sdk",
+   "sourcePath": "rehearsal/source.ts"
+  },
+  "scope": {
+   "environmentId": "prod",
+   "orgId": "org_a"
+  },
+  "version": "0.1.0"
+ }
+]
