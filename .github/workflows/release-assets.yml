@@ -1,0 +1,163 @@
+name: Release assets
+# When a `drop-*` release is published, build the files people install from and attach
+# them to that release: the `norn` command line for Linux and macOS on x64 and arm64, the
+# TypeScript SDK as a .tgz, the Python client as a wheel and sdist, install.sh, and
+# SHA256SUMS over all of them. Nothing goes to npm, PyPI or crates.io.
+#
+# Every build runs on a hosted Linux runner and cross-compiles with zig (scripts/release/
+# assets.sh). A failed run is re-run from the Actions page; uploads replace earlier files.
+on:
+  release:
+    types: [published]
+permissions:
+  contents: read
+concurrency:
+  group: release-assets-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+jobs:
+  plan:
+    if: ${{ startsWith(github.event.release.tag_name, 'drop-') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: The tag still names the commit this run builds
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+          REPOSITORY: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          scripts/release/assets.sh version "$TAG"
+          tagged=$(gh api "repos/$REPOSITORY/commits/$TAG" --jq .sha)
+          [ "$tagged" = "$GITHUB_SHA" ] || { echo "::error::$TAG now names $tagged, not the $GITHUB_SHA this run was started for"; exit 1; }
+      - name: Test the installer
+        run: python3 -I scripts/release/test_install.py
+
+  cli:
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [linux-x64, linux-arm64, macos-arm64, macos-x64]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          toolchain: 1.98.0
+      - name: Install zig and cargo-zigbuild
+        run: scripts/release/assets.sh tools "$RUNNER_TEMP/tools" | tail -n 1 >> "$GITHUB_PATH"
+      - name: Emulator for the arm64 smoke test
+        if: ${{ matrix.platform == 'linux-arm64' }}
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends qemu-user-static
+      - name: Build norn
+        run: scripts/release/assets.sh cli ${{ matrix.platform }} dist
+      - name: Run it, or for macOS inspect it
+        run: scripts/release/assets.sh smoke ${{ matrix.platform }} dist
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: asset-cli-${{ matrix.platform }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  sdks:
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build the TypeScript SDK and the Python client
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          scripts/release/assets.sh sdk "$TAG" dist
+          scripts/release/assets.sh pyclient "$TAG" dist
+          ls -l dist
+      - name: Install both from the built files
+        run: |
+          set -euo pipefail
+          dir=$(mktemp -d)
+          (cd "$dir" && npm init -y > /dev/null && npm install --ignore-scripts "$GITHUB_WORKSPACE"/dist/norn-sdk-*.tgz > /dev/null)
+          test -f "$dir"/node_modules/@norn/sdk/src/index.ts
+          python3 -I -m venv "$dir/venv"
+          "$dir/venv/bin/pip" install --disable-pip-version-check -q "$GITHUB_WORKSPACE"/dist/norn_client-*.whl
+          "$dir/venv/bin/python" -I -c 'import norn_client; print("norn_client", norn_client.__file__)'
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: asset-sdks
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: [cli, sdks]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: asset-*
+          path: dist
+          merge-multiple: true
+      - name: Attach the files to the release
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+          REPOSITORY: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tagged=$(gh api "repos/$REPOSITORY/commits/$TAG" --jq .sha)
+          [ "$tagged" = "$GITHUB_SHA" ] || { echo "::error::$TAG now names $tagged, not the $GITHUB_SHA these files were built from"; exit 1; }
+          cp scripts/release/install.sh dist/install.sh
+          scripts/release/assets.sh sums dist
+          gh release upload "$TAG" dist/* --repo "$REPOSITORY" --clobber
+
+  installs:
+    needs: publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      TAG: ${{ github.event.release.tag_name }}
+      REPOSITORY: ${{ github.repository }}
+    steps:
+      - name: Emulator for the arm64 container
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends qemu-user-static
+      # What a user runs, in containers that start with nothing installed:
+      # curl on Debian, busybox wget on Alpine, and both again on arm64.
+      - name: curl on Debian, x64 and arm64
+        run: |
+          set -euo pipefail
+          for platform in linux/amd64 linux/arm64; do
+            docker run --rm --platform "$platform" -e NORN_VERSION="$TAG" -e REPOSITORY="$REPOSITORY" debian:12-slim sh -c '
+              set -eu
+              apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates > /dev/null
+              curl -fsSL "https://github.com/$REPOSITORY/releases/download/$NORN_VERSION/install.sh" | sh
+              ~/.local/bin/norn --version
+              ~/.local/bin/norn openapi | head -c 200; echo'
+          done
+      - name: wget on Alpine, x64 and arm64
+        run: |
+          set -euo pipefail
+          for platform in linux/amd64 linux/arm64; do
+            docker run --rm --platform "$platform" -e NORN_VERSION="$TAG" -e REPOSITORY="$REPOSITORY" alpine:3 sh -c '
+              set -eu
+              apk add --no-cache ca-certificates > /dev/null
+              wget -q -O - "https://github.com/$REPOSITORY/releases/download/$NORN_VERSION/install.sh" | sh
+              ~/.local/bin/norn --version
+              ~/.local/bin/norn openapi | head -c 200; echo'
+          done
