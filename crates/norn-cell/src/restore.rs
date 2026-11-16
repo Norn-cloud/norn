@@ -45,15 +45,16 @@ pub enum RestoreError {
     /// Full rebuilt ledger verification or manifest-head equality failed.
     #[error("restore rebuilt head mismatch")]
     HeadMismatch,
-    /// The proven prefix is shorter than the journal and the operator did
-    /// not name it: a restore never drops commits unacknowledged.
+    /// The proven prefix is shorter than the cell's head, or the history has
+    /// a refused entry, and the operator did not name the cut: a restore never
+    /// drops commits unacknowledged.
     #[error(
         "restore would keep commits 1..={proven_through} of {head_commit}; pass the cut ({proven_through}) to accept it"
     )]
     PrefixNotAcknowledged {
         /// The last commit the diagnosis proves.
         proven_through: u64,
-        /// Commits in the source's journal.
+        /// The cell's head commit (see [`HistoryDiagnosis::head_commit`]).
         head_commit: u64,
     },
     /// Typed store apply, serialization, or engine failure.
@@ -227,7 +228,8 @@ impl CellStore<NativeEngine> {
 /// its ledger is proven, and the first entry that is not.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HistoryDiagnosis {
-    /// Commits the cell's receipts record: its real head.
+    /// The cell's head: the highest commit its receipts, export journal or
+    /// ledger name, so losing the tail of any one of them reads as a cut.
     pub head_commit: u64,
     /// Consecutive export journal records from commit 1; a restore can
     /// rebuild no further than this.
@@ -285,11 +287,11 @@ impl CellStore<NativeEngine> {
     /// empty directory the operator owns) receives the prefix's export
     /// objects.
     ///
-    /// A prefix shorter than the journal drops commits, so it is restored only
-    /// when `through` names exactly the diagnosed `proven_through`: the
+    /// A prefix shorter than the cell's head drops commits, so it is restored
+    /// only when `through` names exactly the diagnosed `proven_through`: the
     /// operator acknowledges the cut they read from [`Self::diagnose_history`].
-    /// A fully proven journal restores whole with `through` absent or equal to
-    /// its head.
+    /// A history proven through its head, with no refused entry, restores
+    /// whole with `through` absent or equal to its head.
     ///
     /// # Errors
     /// [`RestoreError`] for an unacknowledged cut, or a refused, unverifiable
@@ -305,7 +307,10 @@ impl CellStore<NativeEngine> {
         let (diagnosis, records) = diagnose(&engine)?;
         drop(engine);
         let acknowledged = match through {
-            None => diagnosis.proven_through == diagnosis.head_commit,
+            None => {
+                diagnosis.proven_through == diagnosis.head_commit
+                    && diagnosis.first_unproven.is_none()
+            }
             Some(cut) => cut == diagnosis.proven_through,
         };
         if !acknowledged {
@@ -352,17 +357,22 @@ fn diagnose(engine: &NativeEngine) -> Result<(HistoryDiagnosis, Vec<ExportRecord
         let pass = std::cell::RefCell::default();
         let reader =
             crate::read::StoreReader::new(engine, &model).with_transaction_verified_receipts(&pass);
-        // The head is the receipts', not the journal's: a journal that stops
-        // early must read as a cut, never as a fully proven history.
-        let receipts: Option<i64> = engine.query_optional(
-            &format!(
-                "SELECT COALESCE(MAX(\"commit_seq\"), 0) FROM \"{}\"",
-                crate::system::RECEIPT
-            ),
-            params![],
-            |row| row.get(0),
-        )?;
-        let head_commit = crate::read::to_u64(receipts.unwrap_or(0), "commit_seq")?;
+        // The head is the highest commit any of the three records names: a
+        // tail lost from one of them must read as a cut, never as a fully
+        // proven history.
+        let mut head_commit = 0_u64;
+        for table in [
+            crate::system::RECEIPT,
+            crate::system::LEDGER,
+            "_norn_export_journal",
+        ] {
+            let highest: Option<i64> = engine.query_optional(
+                &format!("SELECT COALESCE(MAX(\"commit_seq\"), 0) FROM \"{table}\""),
+                params![],
+                |row| row.get(0),
+            )?;
+            head_commit = head_commit.max(crate::read::to_u64(highest.unwrap_or(0), "commit_seq")?);
+        }
         let journal_commits: u64 = records.len().try_into().unwrap_or(u64::MAX);
         let diagnosis = match reader.first_unproven_entry()? {
             None => HistoryDiagnosis {

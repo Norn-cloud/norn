@@ -250,11 +250,11 @@ proptest! {
 /// The operator path for a cell whose open refuses, whatever the cause: the
 /// diagnosis names the first refused entry without writing the file, and the
 /// restore rebuilds the proven prefix into a new file that opens. A journal
-/// that stops before the receipts' head reads as a cut too, never as a fully
+/// or receipt table that lost its tail reads as a cut too, never as a fully
 /// proven history.
 #[tokio::test]
 async fn a_refused_cell_is_diagnosed_and_restored_to_its_proven_prefix() {
-    for damage in ["snapshot", "journal"] {
+    for damage in ["snapshot", "journal", "receipt"] {
         refused_cell_restores(damage).await;
     }
 }
@@ -285,8 +285,12 @@ async fn refused_cell_restores(damage: &str) {
             [&"0".repeat(64)],
         )
         .expect("tamper");
-    } else {
+    } else if damage == "journal" {
         raw.execute("DELETE FROM _norn_export_journal WHERE commit_seq = 4", [])
+            .expect("tamper");
+    } else {
+        // Or the receipts lost their last row.
+        raw.execute("DELETE FROM _norn_receipt WHERE commit_seq = 4", [])
             .expect("tamper");
     }
     drop(raw);
@@ -298,7 +302,7 @@ async fn refused_cell_restores(damage: &str) {
     let diagnosis = CellStore::diagnose_history(&path).expect("diagnosis");
     assert_eq!(diagnosis.head_commit, 4, "{damage}");
     assert_eq!(diagnosis.proven_through, 3, "{damage}");
-    if damage == "snapshot" {
+    if damage != "journal" {
         assert_eq!(diagnosis.journal_commits, 4);
         let unproven = diagnosis
             .first_unproven
