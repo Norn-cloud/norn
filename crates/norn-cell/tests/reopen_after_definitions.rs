@@ -3,6 +3,7 @@
     clippy::expect_used,
     clippy::indexing_slicing,
     clippy::panic,
+    clippy::too_many_lines,
     missing_docs,
     reason = "integration-test assertions"
 )]
@@ -302,7 +303,10 @@ async fn refused_cell_restores(damage: &str) {
     let diagnosis = CellStore::diagnose_history(&path).expect("diagnosis");
     assert_eq!(diagnosis.head_commit, 4, "{damage}");
     assert_eq!(diagnosis.proven_through, 3, "{damage}");
-    if damage != "journal" {
+    if damage == "journal" {
+        assert_eq!(diagnosis.journal_commits, 3);
+        assert_eq!(diagnosis.first_unproven, None);
+    } else {
         assert_eq!(diagnosis.journal_commits, 4);
         let unproven = diagnosis
             .first_unproven
@@ -312,9 +316,6 @@ async fn refused_cell_restores(damage: &str) {
             (unproven.commit_seq, unproven.op.as_deref()),
             (4, Some("created"))
         );
-    } else {
-        assert_eq!(diagnosis.journal_commits, 3);
-        assert_eq!(diagnosis.first_unproven, None);
     }
 
     let target = directory.path().join("restored.sqlite");
