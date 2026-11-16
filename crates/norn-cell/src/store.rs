@@ -2456,10 +2456,7 @@ impl<E: SqlEngine> CellStore<E> {
                 .with_transaction_verified_receipts(&pass)
                 .verify_ledger_with_boundary(&LedgerHead::genesis())?;
             store.verify_definition_history()?;
-            store
-                .read()
-                .with_transaction_verified_receipts(&pass)
-                .verify_value_history()?;
+            store.read().verify_value_history()?;
             crate::identity::validate(&store.read())?;
             Ok::<_, CellError>(verified)
         })?;
@@ -3026,7 +3023,7 @@ impl<E: SqlEngine> CellStore<E> {
                     let pass = RefCell::default();
                     let (head, boundary) = self.read().with_transaction_verified_receipts(&pass).verify_ledger_with_boundary(&LedgerHead::genesis())?;
                     self.verify_definition_history()?;
-                    self.read().with_transaction_verified_receipts(&pass).verify_value_history()?;
+                    self.read().verify_value_history()?;
                     crate::identity::validate(&self.read())?;
                     self.verified.replace(head);
                     admitted_boundary.set(boundary);

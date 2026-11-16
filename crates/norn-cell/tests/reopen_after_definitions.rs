@@ -249,9 +249,17 @@ proptest! {
 
 /// The operator path for a cell whose open refuses, whatever the cause: the
 /// diagnosis names the first refused entry without writing the file, and the
-/// restore rebuilds the proven prefix into a new file that opens.
+/// restore rebuilds the proven prefix into a new file that opens. A journal
+/// that stops before the receipts' head reads as a cut too, never as a fully
+/// proven history.
 #[tokio::test]
 async fn a_refused_cell_is_diagnosed_and_restored_to_its_proven_prefix() {
+    for damage in ["snapshot", "journal"] {
+        refused_cell_restores(damage).await;
+    }
+}
+
+async fn refused_cell_restores(damage: &str) {
     let directory = tempfile::tempdir().expect("directory");
     let path = directory.path().join("cell.sqlite");
     let (model, set) = migrated(0);
@@ -268,27 +276,42 @@ async fn a_refused_cell_is_diagnosed_and_restored_to_its_proven_prefix() {
     drop(store);
     // Stand-in for any unprovable commit: the last creation's snapshot no
     // longer matches its commitment.
+    // Or: the journal lost its last record, so a restore can rebuild no
+    // further than commit 3.
     let raw = rusqlite::Connection::open(&path).expect("operator seam");
-    raw.execute(
-        "UPDATE _norn_fact_values SET hash = ?1 WHERE commit_seq = 4",
-        [&"0".repeat(64)],
-    )
-    .expect("tamper");
+    if damage == "snapshot" {
+        raw.execute(
+            "UPDATE _norn_fact_values SET hash = ?1 WHERE commit_seq = 4",
+            [&"0".repeat(64)],
+        )
+        .expect("tamper");
+    } else {
+        raw.execute("DELETE FROM _norn_export_journal WHERE commit_seq = 4", [])
+            .expect("tamper");
+    }
     drop(raw);
-    assert!(CellStore::open(&path, model.clone(), StoreOptions::default()).is_err());
+    if damage == "snapshot" {
+        assert!(CellStore::open(&path, model.clone(), StoreOptions::default()).is_err());
+    }
     let before = std::fs::read(&path).expect("source bytes");
 
     let diagnosis = CellStore::diagnose_history(&path).expect("diagnosis");
-    assert_eq!(diagnosis.head_commit, 4);
-    assert_eq!(diagnosis.proven_through, 3);
-    let unproven = diagnosis
-        .first_unproven
-        .as_ref()
-        .expect("the refused entry");
-    assert_eq!(
-        (unproven.commit_seq, unproven.op.as_deref()),
-        (4, Some("created"))
-    );
+    assert_eq!(diagnosis.head_commit, 4, "{damage}");
+    assert_eq!(diagnosis.proven_through, 3, "{damage}");
+    if damage == "snapshot" {
+        assert_eq!(diagnosis.journal_commits, 4);
+        let unproven = diagnosis
+            .first_unproven
+            .as_ref()
+            .expect("the refused entry");
+        assert_eq!(
+            (unproven.commit_seq, unproven.op.as_deref()),
+            (4, Some("created"))
+        );
+    } else {
+        assert_eq!(diagnosis.journal_commits, 3);
+        assert_eq!(diagnosis.first_unproven, None);
+    }
 
     let target = directory.path().join("restored.sqlite");
     let staging = directory.path().join("staging");
@@ -313,7 +336,7 @@ async fn a_refused_cell_is_diagnosed_and_restored_to_its_proven_prefix() {
             "{through:?}: {refused:?}"
         );
     }
-    assert!(!target.exists());
+    assert!(!target.exists() && !staging.exists(), "{damage}");
     let restored = CellStore::restore_proven_prefix(
         &path,
         &target,

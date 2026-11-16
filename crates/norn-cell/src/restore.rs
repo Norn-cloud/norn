@@ -227,9 +227,13 @@ impl CellStore<NativeEngine> {
 /// its ledger is proven, and the first entry that is not.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HistoryDiagnosis {
-    /// Commits in the stored export journal.
+    /// Commits the cell's receipts record: its real head.
     pub head_commit: u64,
-    /// The last commit through which every ledger entry is proven.
+    /// Consecutive export journal records from commit 1; a restore can
+    /// rebuild no further than this.
+    pub journal_commits: u64,
+    /// The last commit through which every ledger entry is proven and the
+    /// journal can rebuild it: never past `journal_commits`.
     pub proven_through: u64,
     /// The first unproven entry, when there is one.
     pub first_unproven: Option<UnprovenEntry>,
@@ -260,7 +264,8 @@ pub struct PrefixRestore {
 impl CellStore<NativeEngine> {
     /// Diagnose a stored cell file its open refuses, without opening it as a
     /// store: the file is opened read-only (no schema step, no journal-mode
-    /// change, no hot-journal rollback, no file created), and every ledger
+    /// change, no hot-journal rollback; the main file is never written, though
+    /// SQLite may create `-wal`/`-shm` sidecars for a WAL file), and every ledger
     /// entry is checked against the store's own value proofs, under the models
     /// its export journal retains, in one read transaction. The first entry
     /// they refuse is named; any other failure is an error, never a verdict.
@@ -347,16 +352,29 @@ fn diagnose(engine: &NativeEngine) -> Result<(HistoryDiagnosis, Vec<ExportRecord
         let pass = std::cell::RefCell::default();
         let reader =
             crate::read::StoreReader::new(engine, &model).with_transaction_verified_receipts(&pass);
-        let head_commit = records.len().try_into().unwrap_or(u64::MAX);
+        // The head is the receipts', not the journal's: a journal that stops
+        // early must read as a cut, never as a fully proven history.
+        let receipts: Option<i64> = engine.query_optional(
+            &format!(
+                "SELECT COALESCE(MAX(\"commit_seq\"), 0) FROM \"{}\"",
+                crate::system::RECEIPT
+            ),
+            params![],
+            |row| row.get(0),
+        )?;
+        let head_commit = crate::read::to_u64(receipts.unwrap_or(0), "commit_seq")?;
+        let journal_commits: u64 = records.len().try_into().unwrap_or(u64::MAX);
         let diagnosis = match reader.first_unproven_entry()? {
             None => HistoryDiagnosis {
                 head_commit,
-                proven_through: head_commit,
+                journal_commits,
+                proven_through: head_commit.min(journal_commits),
                 first_unproven: None,
             },
             Some((entry, error)) => HistoryDiagnosis {
                 head_commit,
-                proven_through: entry.commit_seq.saturating_sub(1),
+                journal_commits,
+                proven_through: entry.commit_seq.saturating_sub(1).min(journal_commits),
                 first_unproven: Some(UnprovenEntry {
                     seq: entry.seq,
                     commit_seq: entry.commit_seq,

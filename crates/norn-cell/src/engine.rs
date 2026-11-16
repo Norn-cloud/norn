@@ -532,8 +532,9 @@ impl NativeEngine {
     }
 
     /// Open an existing file read-only, for an operator's diagnosis (#1423):
-    /// no file is created, the journal mode is left as stored, and a hot
-    /// journal is refused rather than rolled back.
+    /// the main file is never written and a missing one is not created, the
+    /// journal mode is left as stored, and a hot journal is refused rather
+    /// than rolled back. A WAL file may still get `-wal`/`-shm` sidecars.
     ///
     /// # Errors
     /// SQLite open or configuration errors.
@@ -562,8 +563,11 @@ impl NativeEngine {
             rusqlite::TransactionBehavior::Deferred,
         )?;
         let out = f();
-        tx.rollback()?;
-        out
+        let ended = tx.rollback();
+        // `f`'s own error wins over a failure to end the read.
+        let value = out?;
+        ended?;
+        Ok(value)
     }
 
     /// Open an in-memory database with foreign keys enforced.

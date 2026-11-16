@@ -11,8 +11,10 @@
 //!   `--through N` with N exactly the diagnosed `provenThrough`; a fully
 //!   proven journal restores whole without it.
 //!
-//! The source is opened read-only. Run either on a copy of the cell's file,
-//! with the cell not serving, and keep the printed report with the incident.
+//! The source is opened read-only. Run either on a copy of the cell's file
+//! taken with the cell not serving, together with its `-wal` and `-shm`
+//! sidecars when present (a WAL tail left behind is a cut no check can see),
+//! and keep the printed report with the incident.
 
 use std::io::Write as _;
 use std::path::Path;
@@ -26,6 +28,7 @@ const USAGE: &str = "usage: norn-cell-restore diagnose <cell.sqlite>\n       nor
 fn diagnosis(found: &HistoryDiagnosis) -> Value {
     json!({
         "headCommit": found.head_commit,
+        "journalCommits": found.journal_commits,
         "provenThrough": found.proven_through,
         "firstUnproven": found.first_unproven.as_ref().map(|entry| json!({
             "seq": entry.seq, "commitSeq": entry.commit_seq, "op": entry.op, "reason": entry.reason,
