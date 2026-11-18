@@ -144,6 +144,15 @@ fn commit_counters_by_size() {
         let counts = measure(laws, 10);
         lines.push(json!({"axis": "laws", "rows": 10, "laws": laws, "invariants": INVARIANTS, "counts": json_counts(&counts)}));
     }
+    // P5: definition-derived work is done once per commit, not once per row.
+    for name in ["expression_compiles", "expression_environment_builds", "law_decodes"] {
+        let by_rows: Vec<_> = lines
+            .iter()
+            .filter(|line| line["axis"] == "rows")
+            .map(|line| line["counts"][name].clone())
+            .collect();
+        assert!(by_rows.windows(2).all(|pair| pair[0] == pair[1]), "{name} grows with rows: {by_rows:?}");
+    }
     for line in &lines {
         println!("COMMIT-COUNTERS {line}");
         let counts = &line["counts"];

@@ -18,7 +18,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use norn_checker::EffectiveKind;
-use norn_expr::{EvaluationBudget, ExprError, Expression, Value as ExprValue};
+use norn_expr::{EvaluationBudget, ExprError, Value as ExprValue};
 use norn_ir::identifier_limits::{
     MAX_ACTION_CALL_ID_BYTES, MAX_LINK_NAME_BYTES, MAX_OBJECT_KEY_BYTES,
     MAX_OBJECT_TYPE_NAME_BYTES, MAX_TOMBSTONE_KEY_BYTES,
@@ -992,7 +992,7 @@ fn evaluate_invariants_for_class(
         }
     };
     let context = ExprValue::object([("self", ExprValue::Object(object))]);
-    let environment = catalog.expression_environment(&key.object_type);
+    let environment = catalog.shared_expression_environment(&key.object_type);
 
     for effective in invariants {
         // Charge one deterministic unit to dispatch each declaration. This
@@ -1001,16 +1001,14 @@ fn evaluate_invariants_for_class(
             return Err(InvariantEvaluationError::BudgetExceeded);
         }
         *remaining = (*remaining).saturating_sub(1);
-        let expression = match Expression::compile(effective.invariant.expression.as_str()) {
+        let expression = match catalog.compiled_expression(effective.invariant.expression.as_str()) {
             Ok(expression) => expression,
-            Err(error) => {
+            Err(reason) => {
                 failures.push(InvariantFailure {
                     owner: effective.owner,
                     id: effective.id,
                     message: effective.invariant.message.clone(),
-                    outcome: DataQualityOutcome::EvaluationFailed {
-                        reason: error.to_string(),
-                    },
+                    outcome: DataQualityOutcome::EvaluationFailed { reason },
                     classification: effective.invariant.classification,
                     finding_outcome: None,
                 });
