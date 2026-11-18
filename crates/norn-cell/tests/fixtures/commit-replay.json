@@ -183,12 +183,12 @@
   ],
   "receipts": [
     {
-      "hash": "cdf8022f6c4787b2d0268375f28a4dac6aa730e5f4df4627eaa9886f8f9df126",
+      "hash": "fe1d4dd9c7eb6c70c4abe411c9a3b1303bc3442e7cadd5fbddf398ed64a01e9a",
       "body": {
         "commitSeq": 1,
         "world": "main",
         "logicalTime": 0,
-        "requestHash": "44097b2634ce1e6999bf51ef8fa4a65797bf1442c0586a23200848157a165de9",
+        "requestHash": "85154b7ba1a708ca7b112fa56f2363d2fe6ac6495554b8b9444faa7c12723c81",
         "written": [
           {
             "objectType": "bench.Item",
@@ -252,14 +252,14 @@
           }
         ],
         "firstEventSeq": 1,
-        "eventCount": 0,
-        "ledgerHead": "0000000000000000000000000000000000000000000000000000000000000000",
+        "eventCount": 10,
+        "ledgerHead": "619294fea85761bdf35d53198cc14b7e1f07c7370a003d7496f6fc242d660c30",
         "enqueued": [],
         "scheduled": []
       }
     },
     {
-      "hash": "1984c0e528da256ed8681f9d931e8978d8ef7d565b898ae166bc7bb0b226a5f5",
+      "hash": "93e8804af55f4239e409813571b4cf2a569334b24f6a20553a5186e7dfcc705a",
       "body": {
         "commitSeq": 2,
         "world": "main",
@@ -297,15 +297,15 @@
             "snapshotSha256": "85bacec5604afe737aee4b8915217ac73d4b1867e455903a7d8d8cb7cf9be277"
           }
         ],
-        "firstEventSeq": 1,
+        "firstEventSeq": 11,
         "eventCount": 0,
-        "ledgerHead": "0000000000000000000000000000000000000000000000000000000000000000",
+        "ledgerHead": "619294fea85761bdf35d53198cc14b7e1f07c7370a003d7496f6fc242d660c30",
         "enqueued": [],
         "scheduled": []
       }
     },
     {
-      "hash": "b8fdb8bc7ff341f078ed822e8bf142f7614b2d7677208003c6633165f92afbec",
+      "hash": "8ed25875e77cc444cc1d0b2c58bcc2f15eeb8f20d9440f3a0a6e4547bd935c5b",
       "body": {
         "commitSeq": 3,
         "world": "main",
@@ -319,20 +319,20 @@
             "snapshotSha256": "3247734dfc7439af8e3c0a761560b7e5d7ee71325e1e514502a6e950759ea242"
           }
         ],
-        "firstEventSeq": 1,
+        "firstEventSeq": 11,
         "eventCount": 0,
-        "ledgerHead": "0000000000000000000000000000000000000000000000000000000000000000",
+        "ledgerHead": "619294fea85761bdf35d53198cc14b7e1f07c7370a003d7496f6fc242d660c30",
         "enqueued": [],
         "scheduled": []
       }
     },
     {
-      "hash": "e70d08a98cb661907f05e2264f32a5f580ca10300e1428d35bc88ae56d2c6161",
+      "hash": "7a44082bab35437d9a1cf718a458a6e1c846913fcd7096e0c6e005a87885f446",
       "body": {
         "commitSeq": 4,
         "world": "main",
         "logicalTime": 0,
-        "requestHash": "ae0ee20077575ec9c9f4410b75a0ec706c792ea999a2ef13940b481a9c0155e5",
+        "requestHash": "6329a7eb826fed41c22d0d9b80a59ce534fdf8ddea9d965c75a65bc2c9155b8f",
         "written": [
           {
             "objectType": "bench.Item",
@@ -359,13 +359,248 @@
             "snapshotSha256": "10b574a822996ad95372b1d4f10df637858228174ea1bd8025351289a2401775"
           }
         ],
-        "firstEventSeq": 1,
-        "eventCount": 0,
-        "ledgerHead": "0000000000000000000000000000000000000000000000000000000000000000",
+        "firstEventSeq": 11,
+        "eventCount": 3,
+        "ledgerHead": "d79de8326588429257c4047d0c779f56cc93f0ce5f20d3730544af127e35acf1",
         "enqueued": [],
         "scheduled": []
       }
     }
   ],
-  "ledger": []
+  "ledger": [
+    {
+      "seq": 1,
+      "commitSeq": 1,
+      "world": "main",
+      "event": {
+        "key": {
+          "key": "a0000",
+          "objectType": "bench.Item"
+        },
+        "op": "created",
+        "values": {
+          "label": "item",
+          "qty": 1
+        }
+      },
+      "prevHash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "hash": "1a992b6e28f4ed9b5611c0018d303dc6e56bbd81c54a6622d2bbf97f0858ae56"
+    },
+    {
+      "seq": 2,
+      "commitSeq": 1,
+      "world": "main",
+      "event": {
+        "key": {
+          "key": "a0001",
+          "objectType": "bench.Item"
+        },
+        "op": "created",
+        "values": {
+          "label": "item",
+          "qty": 1
+        }
+      },
+      "prevHash": "1a992b6e28f4ed9b5611c0018d303dc6e56bbd81c54a6622d2bbf97f0858ae56",
+      "hash": "e346bb52d214f761ee74b70150db1b905ccc3fa8166c684a668002dbe87bf881"
+    },
+    {
+      "seq": 3,
+      "commitSeq": 1,
+      "world": "main",
+      "event": {
+        "key": {
+          "key": "a0002",
+          "objectType": "bench.Item"
+        },
+        "op": "created",
+        "values": {
+          "label": "item",
+          "qty": 1
+        }
+      },
+      "prevHash": "e346bb52d214f761ee74b70150db1b905ccc3fa8166c684a668002dbe87bf881",
+      "hash": "90ef3705ae26a97f264b4493f1c12eb26794e0398bd405cead705adbdd12ea22"
+    },
+    {
+      "seq": 4,
+      "commitSeq": 1,
+      "world": "main",
+      "event": {
+        "key": {
+          "key": "a0003",
+          "objectType": "bench.Item"
+        },
+        "op": "created",
+        "values": {
+          "label": "item",
+          "qty": 1
+        }
+      },
+      "prevHash": "90ef3705ae26a97f264b4493f1c12eb26794e0398bd405cead705adbdd12ea22",
+      "hash": "db8d5dd237b1b508e828857b4bf519838498de26c12a6912954df4a920d1311c"
+    },
+    {
+      "seq": 5,
+      "commitSeq": 1,
+      "world": "main",
+      "event": {
+        "key": {
+          "key": "a0004",
+          "objectType": "bench.Item"
+        },
+        "op": "created",
+        "values": {
+          "label": "item",
+          "qty": 1
+        }
+      },
+      "prevHash": "db8d5dd237b1b508e828857b4bf519838498de26c12a6912954df4a920d1311c",
+      "hash": "58d05aac32fc003c7ea8d2890369f0b3912207f8930fd5d2e216962e5418e2a7"
+    },
+    {
+      "seq": 6,
+      "commitSeq": 1,
+      "world": "main",
+      "event": {
+        "key": {
+          "key": "a0005",
+          "objectType": "bench.Item"
+        },
+        "op": "created",
+        "values": {
+          "label": "item",
+          "qty": 1
+        }
+      },
+      "prevHash": "58d05aac32fc003c7ea8d2890369f0b3912207f8930fd5d2e216962e5418e2a7",
+      "hash": "bc965b10fccd80c62479b69984e11f97ed7f82c029c7ed6ff9f4dbbeeba38a03"
+    },
+    {
+      "seq": 7,
+      "commitSeq": 1,
+      "world": "main",
+      "event": {
+        "key": {
+          "key": "a0006",
+          "objectType": "bench.Item"
+        },
+        "op": "created",
+        "values": {
+          "label": "item",
+          "qty": 1
+        }
+      },
+      "prevHash": "bc965b10fccd80c62479b69984e11f97ed7f82c029c7ed6ff9f4dbbeeba38a03",
+      "hash": "e8faf2602a88b5e5c1b2d5dc7849cec859269d268d13cc87349bf9bd564f52dd"
+    },
+    {
+      "seq": 8,
+      "commitSeq": 1,
+      "world": "main",
+      "event": {
+        "key": {
+          "key": "a0007",
+          "objectType": "bench.Item"
+        },
+        "op": "created",
+        "values": {
+          "label": "item",
+          "qty": 1
+        }
+      },
+      "prevHash": "e8faf2602a88b5e5c1b2d5dc7849cec859269d268d13cc87349bf9bd564f52dd",
+      "hash": "0ebf1040f4f2e61545afb18500bd7c3cf3fa160b483f6d6729f4ac8f9f9bedfd"
+    },
+    {
+      "seq": 9,
+      "commitSeq": 1,
+      "world": "main",
+      "event": {
+        "key": {
+          "key": "a0008",
+          "objectType": "bench.Item"
+        },
+        "op": "created",
+        "values": {
+          "label": "item",
+          "qty": 1
+        }
+      },
+      "prevHash": "0ebf1040f4f2e61545afb18500bd7c3cf3fa160b483f6d6729f4ac8f9f9bedfd",
+      "hash": "83a5ddab449f8b96e777f798bf97ab703bef1cd25a19b9c3cec23824d03a5c54"
+    },
+    {
+      "seq": 10,
+      "commitSeq": 1,
+      "world": "main",
+      "event": {
+        "key": {
+          "key": "a0009",
+          "objectType": "bench.Item"
+        },
+        "op": "created",
+        "values": {
+          "label": "item",
+          "qty": 1
+        }
+      },
+      "prevHash": "83a5ddab449f8b96e777f798bf97ab703bef1cd25a19b9c3cec23824d03a5c54",
+      "hash": "619294fea85761bdf35d53198cc14b7e1f07c7370a003d7496f6fc242d660c30"
+    },
+    {
+      "seq": 11,
+      "commitSeq": 4,
+      "world": "main",
+      "event": {
+        "key": {
+          "key": "b0000",
+          "objectType": "bench.Item"
+        },
+        "op": "created",
+        "values": {
+          "label": "item",
+          "qty": 1
+        }
+      },
+      "prevHash": "619294fea85761bdf35d53198cc14b7e1f07c7370a003d7496f6fc242d660c30",
+      "hash": "d4c7e4e23dfd1034af71ebaec0b32a3069afb9986daead8b823b05d0144ff42f"
+    },
+    {
+      "seq": 12,
+      "commitSeq": 4,
+      "world": "main",
+      "event": {
+        "key": {
+          "key": "b0001",
+          "objectType": "bench.Item"
+        },
+        "op": "created",
+        "values": {
+          "label": "item",
+          "qty": 1
+        }
+      },
+      "prevHash": "d4c7e4e23dfd1034af71ebaec0b32a3069afb9986daead8b823b05d0144ff42f",
+      "hash": "4d4a9a612725140f23f74392062cb42f00ae9cc61efe21005fc196aa3345d30b"
+    },
+    {
+      "seq": 13,
+      "commitSeq": 4,
+      "world": "main",
+      "event": {
+        "key": {
+          "key": "b0002",
+          "objectType": "bench.Item"
+        },
+        "op": "created",
+        "values": {
+          "label": "item",
+          "qty": 1
+        }
+      },
+      "prevHash": "4d4a9a612725140f23f74392062cb42f00ae9cc61efe21005fc196aa3345d30b",
+      "hash": "d79de8326588429257c4047d0c779f56cc93f0ce5f20d3730544af127e35acf1"
+    }
+  ]
 }
