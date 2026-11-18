@@ -273,7 +273,7 @@ PY
       crates/norn-skeleton-guard/scripts/baseline-shrink-only.sh "${NORN_CI_BASE:-HEAD}"
       crates/norn-checker/scripts/non-code-literals-shrink-only.sh "${NORN_CI_BASE:-HEAD}"
       rustup toolchain install nightly-2026-08-18 --profile minimal --no-self-update
-      CARGO_TARGET_DIR="$upstream/cargo-install" cargo install --locked cargo-public-api --version 0.52.0
+      ensure_tool cargo-public-api 0.52.0 cargo-public-api
       crates/norn-skeleton-guard/scripts/public-api-boundary.sh nightly-2026-08-18
       # Proof enrollment and its tests run in `cheap`, which every CI run and `all` include.
       ensure_nextest
