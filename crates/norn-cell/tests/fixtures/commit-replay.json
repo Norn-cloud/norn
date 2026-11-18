@@ -1,1 +1,371 @@
-{}
+{
+  "steps": [
+    {
+      "ok": {
+        "seq": 1,
+        "written": [
+          {
+            "key": {
+              "objectType": "bench.Item",
+              "key": "a0000"
+            },
+            "version": 1
+          },
+          {
+            "key": {
+              "objectType": "bench.Item",
+              "key": "a0001"
+            },
+            "version": 1
+          },
+          {
+            "key": {
+              "objectType": "bench.Item",
+              "key": "a0002"
+            },
+            "version": 1
+          },
+          {
+            "key": {
+              "objectType": "bench.Item",
+              "key": "a0003"
+            },
+            "version": 1
+          },
+          {
+            "key": {
+              "objectType": "bench.Item",
+              "key": "a0004"
+            },
+            "version": 1
+          },
+          {
+            "key": {
+              "objectType": "bench.Item",
+              "key": "a0005"
+            },
+            "version": 1
+          },
+          {
+            "key": {
+              "objectType": "bench.Item",
+              "key": "a0006"
+            },
+            "version": 1
+          },
+          {
+            "key": {
+              "objectType": "bench.Item",
+              "key": "a0007"
+            },
+            "version": 1
+          },
+          {
+            "key": {
+              "objectType": "bench.Item",
+              "key": "a0008"
+            },
+            "version": 1
+          },
+          {
+            "key": {
+              "objectType": "bench.Item",
+              "key": "a0009"
+            },
+            "version": 1
+          }
+        ]
+      }
+    },
+    {
+      "ok": {
+        "seq": 2,
+        "written": [
+          {
+            "key": {
+              "objectType": "bench.Item",
+              "key": "a0000"
+            },
+            "version": 2
+          },
+          {
+            "key": {
+              "objectType": "bench.Item",
+              "key": "a0001"
+            },
+            "version": 2
+          },
+          {
+            "key": {
+              "objectType": "bench.Item",
+              "key": "a0002"
+            },
+            "version": 2
+          },
+          {
+            "key": {
+              "objectType": "bench.Item",
+              "key": "a0003"
+            },
+            "version": 2
+          },
+          {
+            "key": {
+              "objectType": "bench.Item",
+              "key": "a0004"
+            },
+            "version": 2
+          }
+        ]
+      }
+    },
+    {
+      "refused": "commit.invariant_violation",
+      "message": "bench.Item/bad: invariant floor_1 on Object(ObjectTypeName(\"bench.Item\")) was refused: qty is at least -1"
+    },
+    {
+      "refused": "core.laws.violated",
+      "message": "bench.Item/over: core.laws.violated: bench.ceiling_0000: A purchase promises a positive quantity."
+    },
+    {
+      "ok": {
+        "seq": 3,
+        "written": [
+          {
+            "key": {
+              "objectType": "bench.Item",
+              "key": "a0009"
+            },
+            "version": 2
+          }
+        ]
+      }
+    },
+    {
+      "ok": {
+        "seq": 4,
+        "written": [
+          {
+            "key": {
+              "objectType": "bench.Item",
+              "key": "b0000"
+            },
+            "version": 1
+          },
+          {
+            "key": {
+              "objectType": "bench.Item",
+              "key": "b0001"
+            },
+            "version": 1
+          },
+          {
+            "key": {
+              "objectType": "bench.Item",
+              "key": "b0002"
+            },
+            "version": 1
+          },
+          {
+            "key": {
+              "objectType": "bench.Item",
+              "key": "a0005"
+            },
+            "version": 2
+          }
+        ]
+      }
+    },
+    {
+      "refused": "commit.conflict",
+      "message": "fact bench.Item/a0001 version conflict: expected v0, current v2"
+    }
+  ],
+  "receipts": [
+    {
+      "hash": "cdf8022f6c4787b2d0268375f28a4dac6aa730e5f4df4627eaa9886f8f9df126",
+      "body": {
+        "commitSeq": 1,
+        "world": "main",
+        "logicalTime": 0,
+        "requestHash": "44097b2634ce1e6999bf51ef8fa4a65797bf1442c0586a23200848157a165de9",
+        "written": [
+          {
+            "objectType": "bench.Item",
+            "key": "a0000",
+            "version": 1,
+            "snapshotSha256": "855b07eb2f265e59424b412a2cc471413431f627c3ec5dad9ade190699330beb"
+          },
+          {
+            "objectType": "bench.Item",
+            "key": "a0001",
+            "version": 1,
+            "snapshotSha256": "f783328643a00c5f1180c925cc1e07ba7ec0c07526c0f500d653074772b1d920"
+          },
+          {
+            "objectType": "bench.Item",
+            "key": "a0002",
+            "version": 1,
+            "snapshotSha256": "ea5a5f9b925a361a884299d55325648ab5e9345de7c23e9160c1fd50edfb10a3"
+          },
+          {
+            "objectType": "bench.Item",
+            "key": "a0003",
+            "version": 1,
+            "snapshotSha256": "b31d76d879a8ff430361e06868b5f052241098d0941bd1dcc6220e7be45fb3ab"
+          },
+          {
+            "objectType": "bench.Item",
+            "key": "a0004",
+            "version": 1,
+            "snapshotSha256": "9e6c8a548155f228b25d860ad698f4919caea865709f03dc22691a3196252196"
+          },
+          {
+            "objectType": "bench.Item",
+            "key": "a0005",
+            "version": 1,
+            "snapshotSha256": "3122f349461f35eded2c5438f7651b9f135576e139fe3d26a4a242a06cd81856"
+          },
+          {
+            "objectType": "bench.Item",
+            "key": "a0006",
+            "version": 1,
+            "snapshotSha256": "b4af5b3f39a5a4327541cc6cf71125442bfe6ea3d8c6bae9bd3b9ce348107e91"
+          },
+          {
+            "objectType": "bench.Item",
+            "key": "a0007",
+            "version": 1,
+            "snapshotSha256": "65d8e7039cdc203cf443b46138ca09a6bc8866f740de949e6ca58dbac7302625"
+          },
+          {
+            "objectType": "bench.Item",
+            "key": "a0008",
+            "version": 1,
+            "snapshotSha256": "efb23e0004a7eb30e4c7bae27d81c5dbce0e3a4b927a127d81f7f67a4933fea4"
+          },
+          {
+            "objectType": "bench.Item",
+            "key": "a0009",
+            "version": 1,
+            "snapshotSha256": "636ec4f0e128f303d6478caa13e315a1bce01ab713438612a1c948f330748557"
+          }
+        ],
+        "firstEventSeq": 1,
+        "eventCount": 0,
+        "ledgerHead": "0000000000000000000000000000000000000000000000000000000000000000",
+        "enqueued": [],
+        "scheduled": []
+      }
+    },
+    {
+      "hash": "1984c0e528da256ed8681f9d931e8978d8ef7d565b898ae166bc7bb0b226a5f5",
+      "body": {
+        "commitSeq": 2,
+        "world": "main",
+        "logicalTime": 0,
+        "requestHash": "636bd22453f62b0b11433fc8276488c5a309d58427e74ed780805eb27d54a753",
+        "written": [
+          {
+            "objectType": "bench.Item",
+            "key": "a0000",
+            "version": 2,
+            "snapshotSha256": "38922fe393a8212c81817dc61ba33d902a6e62bf2fe2d76ae6adbedd13609d06"
+          },
+          {
+            "objectType": "bench.Item",
+            "key": "a0001",
+            "version": 2,
+            "snapshotSha256": "ba0293060da7be5826e6ba29f9286192edbfd87fcbbacb0575b4519c5a11db94"
+          },
+          {
+            "objectType": "bench.Item",
+            "key": "a0002",
+            "version": 2,
+            "snapshotSha256": "7d2ae8033a7f84238ab163490f2d4531a62343f5cb8964c08e2cd4510de53120"
+          },
+          {
+            "objectType": "bench.Item",
+            "key": "a0003",
+            "version": 2,
+            "snapshotSha256": "6732cecddeae178e2fc9e2554348988269cf4bdf8ce98c479bba41fe5508d089"
+          },
+          {
+            "objectType": "bench.Item",
+            "key": "a0004",
+            "version": 2,
+            "snapshotSha256": "85bacec5604afe737aee4b8915217ac73d4b1867e455903a7d8d8cb7cf9be277"
+          }
+        ],
+        "firstEventSeq": 1,
+        "eventCount": 0,
+        "ledgerHead": "0000000000000000000000000000000000000000000000000000000000000000",
+        "enqueued": [],
+        "scheduled": []
+      }
+    },
+    {
+      "hash": "b8fdb8bc7ff341f078ed822e8bf142f7614b2d7677208003c6633165f92afbec",
+      "body": {
+        "commitSeq": 3,
+        "world": "main",
+        "logicalTime": 0,
+        "requestHash": "dde8dd1024c8cba8cb3976f98371df197ee0f1c35f0a3501197de76ef8881a9b",
+        "written": [
+          {
+            "objectType": "bench.Item",
+            "key": "a0009",
+            "version": 2,
+            "snapshotSha256": "3247734dfc7439af8e3c0a761560b7e5d7ee71325e1e514502a6e950759ea242"
+          }
+        ],
+        "firstEventSeq": 1,
+        "eventCount": 0,
+        "ledgerHead": "0000000000000000000000000000000000000000000000000000000000000000",
+        "enqueued": [],
+        "scheduled": []
+      }
+    },
+    {
+      "hash": "e70d08a98cb661907f05e2264f32a5f580ca10300e1428d35bc88ae56d2c6161",
+      "body": {
+        "commitSeq": 4,
+        "world": "main",
+        "logicalTime": 0,
+        "requestHash": "ae0ee20077575ec9c9f4410b75a0ec706c792ea999a2ef13940b481a9c0155e5",
+        "written": [
+          {
+            "objectType": "bench.Item",
+            "key": "b0000",
+            "version": 1,
+            "snapshotSha256": "ed2f43679f96a961e1ef920bf457ba92ab01e53209485aeabe2fd9e3d5dd707b"
+          },
+          {
+            "objectType": "bench.Item",
+            "key": "b0001",
+            "version": 1,
+            "snapshotSha256": "912f587be11f5e6238fdbb87a82d0d287428379d972d18d7cea1923028d36ed4"
+          },
+          {
+            "objectType": "bench.Item",
+            "key": "b0002",
+            "version": 1,
+            "snapshotSha256": "07af5ff6c64b623f9d352428c9b0f32d9c6247804ef3469de6a1f23cf539d866"
+          },
+          {
+            "objectType": "bench.Item",
+            "key": "a0005",
+            "version": 2,
+            "snapshotSha256": "10b574a822996ad95372b1d4f10df637858228174ea1bd8025351289a2401775"
+          }
+        ],
+        "firstEventSeq": 1,
+        "eventCount": 0,
+        "ledgerHead": "0000000000000000000000000000000000000000000000000000000000000000",
+        "enqueued": [],
+        "scheduled": []
+      }
+    }
+  ],
+  "ledger": []
+}

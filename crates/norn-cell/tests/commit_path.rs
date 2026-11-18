@@ -13,6 +13,7 @@
 #![allow(
     clippy::arithmetic_side_effects,
     clippy::expect_used,
+    clippy::indexing_slicing,
     clippy::panic,
     clippy::print_stdout,
     missing_docs,
@@ -94,7 +95,7 @@ fn values(qty: i64) -> JsonObject {
     serde_json::from_value(json!({"qty": qty})).expect("values")
 }
 
-fn put(key: &str, expected: FactVersion, qty: i64) -> FactWrite<JsonObject> {
+fn put(key: &str, expected: FactVersion, qty: i64) -> FactWrite {
     FactWrite {
         key: FactKey::new(OBJECT_TYPE, key),
         expected,
@@ -127,17 +128,19 @@ fn json_counts(counts: &Counts) -> Value {
 fn measure(laws: usize, rows: usize) -> Counts {
     let mut cell = cell(laws);
     cell.commit(creates("warm", 1)).expect("warm-up commit");
-    let _ = counters::take();
+    let _warm_up = counters::take();
     cell.commit(creates("row", rows)).expect("measured commit");
     counters::take()
 }
 
 #[test]
 fn commit_counters_by_size() {
-    assert!(
-        counters::ENABLED,
-        "norn-cell tests enable the counters feature"
-    );
+    const {
+        assert!(
+            counters::ENABLED,
+            "norn-cell tests enable the counters feature"
+        );
+    }
     let mut lines = Vec::new();
     for rows in [10, 100, 1_000] {
         let counts = measure(4, rows);
