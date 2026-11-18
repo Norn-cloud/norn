@@ -277,9 +277,11 @@ PY
       ;;
     duckdb)
       # The workspace never enables the optional DuckDB backend, so a change that breaks it
-      # compiles everywhere else (#513, #1152). Build it and run its integration test; full
-      # plans run this phase, and affected plans run it whenever norn-cell is reached.
-      cargo test --locked -p norn-cell --features duckdb --test duckdb_question
+      # compiles everywhere else (#513, #1152). Build it and run its integration tests (the
+      # tenant engine's correspondence suite and the transform backend); full plans run this
+      # phase, and affected plans run it whenever norn-cell is reached. The in-process
+      # `duckdb_question` target was retired with the SQL question path (#1395).
+      cargo test --locked -p norn-cell --features duckdb --test analytics_engine --test duckdb_transform
       ;;
     wasm)
       cargo check --locked --target wasm32-unknown-unknown -p norn-canonical -p norn-ir -p norn-expr -p norn-checker -p norn-graph -p norn-datalog -p norn-authz -p norn-kernel -p norn-builtins -p norn-projections -p norn-decisions -p norn-api
