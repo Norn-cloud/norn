@@ -1001,7 +1001,8 @@ fn evaluate_invariants_for_class(
             return Err(InvariantEvaluationError::BudgetExceeded);
         }
         *remaining = (*remaining).saturating_sub(1);
-        let expression = match catalog.compiled_expression(effective.invariant.expression.as_str()) {
+        let expression = match catalog.compiled_expression(effective.invariant.expression.as_str())
+        {
             Ok(expression) => expression,
             Err(reason) => {
                 failures.push(InvariantFailure {

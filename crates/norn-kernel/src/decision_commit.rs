@@ -96,7 +96,9 @@ struct DefinitionMemo {
     expressions: Mutex<BTreeMap<String, Result<Arc<Expression>, String>>>,
     base_environment: OnceLock<Result<Arc<norn_expr::ZenTypeEnv>, String>>,
     environments: Mutex<BTreeMap<ObjectTypeName, Result<Arc<norn_expr::ZenTypeEnv>, String>>>,
-    laws: OnceLock<BTreeMap<usize, Result<norn_ir::LawIR, crate::governing_laws::LawEvaluationError>>>,
+    laws: OnceLock<
+        BTreeMap<usize, Result<norn_ir::LawIR, crate::governing_laws::LawEvaluationError>>,
+    >,
 }
 
 impl Clone for DefinitionMemo {
@@ -292,9 +294,7 @@ impl<'a> TypeCatalog<'a> {
             .map(|environment| (*environment).clone())
     }
 
-    fn shared_base_expression_environment(
-        &self,
-    ) -> Result<Arc<norn_expr::ZenTypeEnv>, String> {
+    fn shared_base_expression_environment(&self) -> Result<Arc<norn_expr::ZenTypeEnv>, String> {
         self.memo
             .base_environment
             .get_or_init(|| self.derive_base_expression_environment().map(Arc::new))
