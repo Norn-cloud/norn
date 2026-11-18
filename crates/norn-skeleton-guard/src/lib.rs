@@ -48,9 +48,12 @@
 //!
 //! [`ratchet`] holds per-file counts (test honesty, `too_many_lines` allows)
 //! in `baseline.json` `ratchets`; a count can only go down, and it must be
-//! lowered in the same PR that removes a violation.
+//! lowered in the same PR that removes a violation. [`lint_pin`] holds the
+//! lint set (`[workspace.lints]`, `clippy.toml`, crate-root levels) to the
+//! floor in `lint-pin.json`.
 
 pub mod ci;
+pub mod lint_pin;
 pub mod ratchet;
 
 use std::collections::{BTreeMap, BTreeSet};

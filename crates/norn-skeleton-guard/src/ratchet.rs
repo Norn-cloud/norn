@@ -41,6 +41,9 @@ pub const TEST_SLEEP: &str = "test-sleep";
 pub const TEST_WITHOUT_ASSERTION: &str = "test-without-assertion";
 /// An `allow` or `expect` of `clippy::too_many_lines`.
 pub const TOO_MANY_LINES_ALLOW: &str = "too-many-lines-allow";
+/// A lint allowed by an inner attribute (`#![allow(..)]`), counted per file
+/// and lint: its baseline keys are `<path>: <lint>`.
+pub const INNER_ALLOW: &str = "inner-allow";
 
 /// Every ratchet rule, with the counted violation and its fix.
 pub const RULES: &[(&str, &str)] = &[
@@ -68,6 +71,12 @@ pub const RULES: &[(&str, &str)] = &[
         TOO_MANY_LINES_ALLOW,
         "an `allow` or `expect` of `clippy::too_many_lines` (outer, inner or in `cfg_attr`). Fix: \
          split the function into named steps instead of allowing the lint.",
+    ),
+    (
+        INNER_ALLOW,
+        "a lint allowed for a whole crate or module by an inner attribute (`#![allow(..)]`, \
+         `#![expect(..)]`, also in `cfg_attr`), counted per file and lint. Fix: fix what the lint \
+         reports, or put an `#[allow(lint, reason = \"..\")]` on the one item that needs it.",
     ),
 ];
 
@@ -224,6 +233,43 @@ fn count_meta(meta: &syn::Meta, counts: &mut BTreeMap<&'static str, usize>) {
             }
         }
     }
+}
+
+/// Every lint an `allow`/`expect`/`warn`/`deny`/`forbid` attribute meta names,
+/// with that level (`expect` reads as `allow`), looking through `cfg_attr`.
+pub(crate) fn lint_levels(meta: &syn::Meta) -> Vec<(&'static str, String)> {
+    let syn::Meta::List(list) = meta else {
+        return Vec::new();
+    };
+    if list.path.is_ident("cfg_attr") {
+        return nested_metas(list)
+            .iter()
+            .skip(1)
+            .flat_map(lint_levels)
+            .collect();
+    }
+    let level = match last_segment(&list.path).as_str() {
+        "allow" | "expect" => "allow",
+        "warn" => "warn",
+        "deny" => "deny",
+        "forbid" => "forbid",
+        _ => return Vec::new(),
+    };
+    nested_metas(list)
+        .iter()
+        .filter_map(|nested| match nested {
+            syn::Meta::Path(path) => Some((level, lint_name(path))),
+            syn::Meta::List(_) | syn::Meta::NameValue(_) => None,
+        })
+        .collect()
+}
+
+fn lint_name(path: &syn::Path) -> String {
+    path.segments
+        .iter()
+        .map(|segment| segment.ident.to_string())
+        .collect::<Vec<_>>()
+        .join("::")
 }
 
 /// Counts what a macro body hides from the syntax tree: `#[ignore]`s,
@@ -411,6 +457,7 @@ struct RuleCounter {
     test_depth: usize,
     sleep_aliases: BTreeSet<String>,
     counts: BTreeMap<&'static str, usize>,
+    inner_allows: BTreeMap<String, usize>,
 }
 
 impl RuleCounter {
@@ -432,6 +479,14 @@ impl RuleCounter {
 impl<'ast> Visit<'ast> for RuleCounter {
     fn visit_attribute(&mut self, node: &'ast syn::Attribute) {
         count_meta(&node.meta, &mut self.counts);
+        if matches!(node.style, syn::AttrStyle::Inner(_)) {
+            for (level, lint) in lint_levels(&node.meta) {
+                if level == "allow" {
+                    let count = self.inner_allows.entry(lint).or_insert(0);
+                    *count = count.saturating_add(1);
+                }
+            }
+        }
     }
 
     fn visit_item_mod(&mut self, node: &'ast syn::ItemMod) {
@@ -501,19 +556,30 @@ pub fn count_source(
     test_file: bool,
 ) -> Result<BTreeMap<&'static str, usize>, syn::Error> {
     let file = syn::parse_file(source)?;
-    Ok(count_file(&file, test_file))
+    let (mut counts, inner_allows) = count_file(&file, test_file);
+    let total = inner_allows
+        .values()
+        .fold(0_usize, |sum, n| sum.saturating_add(*n));
+    if total > 0 {
+        counts.insert(INNER_ALLOW, total);
+    }
+    Ok(counts)
 }
 
-fn count_file(file: &syn::File, test_file: bool) -> BTreeMap<&'static str, usize> {
+/// Rule counts and, per lint, the inner allows of one file.
+type FileCounts = (BTreeMap<&'static str, usize>, BTreeMap<String, usize>);
+
+fn count_file(file: &syn::File, test_file: bool) -> FileCounts {
     let mut imports = SleepImports::default();
     imports.visit_file(file);
     let mut counter = RuleCounter {
         test_depth: usize::from(test_file),
         sleep_aliases: imports.aliases,
         counts: BTreeMap::new(),
+        inner_allows: BTreeMap::new(),
     };
     counter.visit_file(file);
-    counter.counts
+    (counter.counts, counter.inner_allows)
 }
 
 /// A `mod name;` declaration: its resolved file candidates and whether it is
@@ -693,10 +759,16 @@ pub fn ratchet_counts(workspace_root: &Path) -> Result<RatchetCounts, ScanError>
         .collect();
     for (path, file) in &files {
         let key = path.to_string_lossy().replace('\\', "/");
-        for (rule, count) in count_file(file, test_files.contains(path)) {
+        let (counts, inner_allows) = count_file(file, test_files.contains(path));
+        for (rule, count) in counts {
             out.entry(rule.to_owned())
                 .or_default()
                 .insert(key.clone(), count);
+        }
+        for (lint, count) in inner_allows {
+            out.entry(INNER_ALLOW.to_owned())
+                .or_default()
+                .insert(format!("{key}: {lint}"), count);
         }
     }
     Ok(out)
