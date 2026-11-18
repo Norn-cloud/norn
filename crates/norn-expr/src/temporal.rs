@@ -9,13 +9,21 @@
 //! instant; no clock or locale is consulted.
 
 use std::fmt;
+use std::ops::Range;
 
-use chrono::{DateTime, Datelike, NaiveDate, Offset, SecondsFormat, Utc};
-use chrono_tz::Tz;
+use jiff::civil::{Date, DateTime, Time};
+use jiff::tz::TimeZone;
+use jiff::{Span, Timestamp};
 
-/// IANA timezone database version embedded by the exact-pinned
-/// `chrono-tz` dependency, for naming-series allocation provenance.
-pub const NAMING_SERIES_TZDB_VERSION: &str = chrono_tz::IANA_TZDB_VERSION;
+/// IANA timezone database release of the exact-pinned `jiff-tzdb` data (the
+/// only timezone data used here), for naming-series allocation provenance.
+/// It is the release `chrono-tz` 0.10.4 had; moving it is #1440.
+pub const NAMING_SERIES_TZDB_VERSION: &str = "2025b";
+
+/// The one zone name `jiff-tzdb` 0.1.4 carries that `chrono-tz` 0.10.4 did
+/// not (tzdb's `factory` file). Refusing it keeps the accepted names exactly
+/// `chrono-tz` 0.10.4's 597.
+const NOT_A_CHRONO_TZ_ZONE: &str = "Factory";
 
 /// A temporal value did not satisfy the supported wire representation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -67,10 +75,21 @@ pub struct NamingSeriesDate {
 /// Returns [`TemporalError::InvalidTimezone`] when the timezone is not
 /// present in that database.
 pub fn validate_timezone(timezone: &str) -> Result<(), TemporalError> {
-    timezone
-        .parse::<Tz>()
-        .map(|_| ())
-        .map_err(|_parse_error| TemporalError::InvalidTimezone)
+    pinned_timezone(timezone).map(|_| ())
+}
+
+/// The pinned database's zone with exactly this identifier. `jiff_tzdb::get`
+/// ignores ASCII case, so the canonical name must match byte for byte, as
+/// `chrono-tz`'s `FromStr` required. The data is read from `jiff-tzdb`
+/// directly: `jiff::tz::db()` would consult the host's zoneinfo when another
+/// crate enables that feature.
+fn pinned_timezone(name: &str) -> Result<TimeZone, TemporalError> {
+    match jiff_tzdb::get(name) {
+        Some((canonical, data)) if canonical == name && name != NOT_A_CHRONO_TZ_ZONE => {
+            TimeZone::tzif(name, data).map_err(|_parse_error| TemporalError::InvalidTimezone)
+        }
+        Some(_) | None => Err(TemporalError::InvalidTimezone),
+    }
 }
 
 /// Converts a supplied Unix epoch-millisecond commit instant to a local date.
@@ -87,17 +106,8 @@ pub fn naming_series_date_at(
     epoch_millis: i64,
     timezone: &str,
 ) -> Result<NamingSeriesDate, TemporalError> {
-    let timezone = timezone
-        .parse::<Tz>()
-        .map_err(|_parse_error| TemporalError::InvalidTimezone)?;
-    let instant = DateTime::<Utc>::from_timestamp_millis(epoch_millis)
-        .ok_or(TemporalError::InstantOutOfRange)?;
-    let local = instant.with_timezone(&timezone);
-    let date = local
-        .naive_utc()
-        .checked_add_offset(local.offset().fix())
-        .ok_or(TemporalError::InstantOutOfRange)?
-        .date();
+    let timezone = pinned_timezone(timezone)?;
+    let date = local_date(epoch_millis, &timezone)?;
     let year = date.year();
     if !(0..=9_999).contains(&year) {
         return Err(TemporalError::InstantOutOfRange);
@@ -107,6 +117,33 @@ pub fn naming_series_date_at(
         month: u8::try_from(date.month()).map_err(|_error| TemporalError::InstantOutOfRange)?,
         day: u8::try_from(date.day()).map_err(|_error| TemporalError::InstantOutOfRange)?,
     })
+}
+
+/// The local calendar date of an epoch-millisecond instant. The zone's offset
+/// is the one at the whole second containing the instant (rounded toward
+/// negative infinity, as chrono-tz did; jiff's own lookup truncates a
+/// pre-1970 fractional second toward zero, one second late), or at the
+/// nearest representable instant beyond either end of `jiff::Timestamp`
+/// (which stops a day short of the civil range). Only whole days are added to
+/// a date, which is exact over the whole civil range.
+fn local_date(epoch_millis: i64, timezone: &TimeZone) -> Result<Date, TemporalError> {
+    const OUT: TemporalError = TemporalError::InstantOutOfRange;
+    let instant =
+        Timestamp::from_second(epoch_millis.div_euclid(1_000)).unwrap_or(if epoch_millis < 0 {
+            Timestamp::MIN
+        } else {
+            Timestamp::MAX
+        });
+    let offset_millis = i64::from(timezone.to_offset(instant).seconds())
+        .checked_mul(1_000)
+        .ok_or(OUT)?;
+    let local_millis = epoch_millis.checked_add(offset_millis).ok_or(OUT)?;
+    let days = Span::new()
+        .try_days(local_millis.div_euclid(86_400_000))
+        .map_err(|_error| OUT)?;
+    Date::constant(1970, 1, 1)
+        .checked_add(days)
+        .map_err(|_error| OUT)
 }
 
 /// Validates the exact `EntityIR` calendar-date representation.
@@ -131,9 +168,9 @@ pub fn validate_date(value: &str) -> Result<(), TemporalError> {
         return Err(TemporalError::InvalidDate);
     }
 
-    NaiveDate::parse_from_str(value, "%Y-%m-%d")
+    calendar_date(value.as_bytes())
         .map(|_| ())
-        .map_err(|_parse_error| TemporalError::InvalidDate)
+        .ok_or(TemporalError::InvalidDate)
 }
 
 /// Parses an RFC 3339 timestamp and returns its canonical UTC instant.
@@ -150,12 +187,7 @@ pub fn validate_date(value: &str) -> Result<(), TemporalError> {
 /// value, offset, precision, or normalized UTC year is unsupported.
 pub fn canonical_timestamp(value: &str) -> Result<String, TemporalError> {
     timestamp_shape(value)?;
-
-    let parsed = DateTime::parse_from_rfc3339(value)
-        .map_err(|_parse_error| TemporalError::InvalidTimestamp)?;
-    let canonical = parsed
-        .with_timezone(&Utc)
-        .to_rfc3339_opts(SecondsFormat::AutoSi, true);
+    let canonical = rfc3339_utc(&utc_reading(value)?)?;
 
     // UTC conversion near the supported year boundaries can produce a signed
     // or five-digit year. Such an instant cannot be stored in our admitted
@@ -172,17 +204,151 @@ pub fn canonical_timestamp(value: &str) -> Result<String, TemporalError> {
 /// Returns [`TemporalError::InvalidTimestamp`] for unsupported timestamps.
 pub fn timestamp_ordering_key(value: &str) -> Result<(i64, u32), TemporalError> {
     let canonical = canonical_timestamp(value)?;
-    let parsed = DateTime::parse_from_rfc3339(&canonical)
-        .map_err(|_error| TemporalError::InvalidTimestamp)?;
-    Ok((parsed.timestamp(), parsed.timestamp_subsec_nanos()))
+    let utc = utc_reading(&canonical)?;
+    let since_epoch = utc.duration_since(DateTime::constant(1970, 1, 1, 0, 0, 0, 0));
+    let seconds = since_epoch
+        .as_secs()
+        .checked_sub(i64::from(since_epoch.subsec_nanos() < 0))
+        .ok_or(TemporalError::InvalidTimestamp)?;
+    let nanos =
+        u32::try_from(utc.subsec_nanosecond()).map_err(|_error| TemporalError::InvalidTimestamp)?;
+    Ok((seconds, nanos))
+}
+
+/// The value of an all-ASCII-digit field, or `None` when absent or not digits.
+fn number(bytes: &[u8], range: Range<usize>) -> Option<i32> {
+    let field = bytes.get(range)?;
+    if !digits(field) {
+        return None;
+    }
+    field.iter().try_fold(0_i32, |value, digit| {
+        value
+            .checked_mul(10)?
+            .checked_add(i32::from(digit.checked_sub(b'0')?))
+    })
+}
+
+/// The proleptic-Gregorian day a `YYYY-MM-DD` prefix names, if it is real.
+fn calendar_date(bytes: &[u8]) -> Option<Date> {
+    let year = i16::try_from(number(bytes, 0..4)?).ok()?;
+    let month = i8::try_from(number(bytes, 5..7)?).ok()?;
+    let day = i8::try_from(number(bytes, 8..10)?).ok()?;
+    Date::new(year, month, day).ok()
+}
+
+/// The UTC wall-clock reading of a value that passed [`timestamp_shape`].
+/// RFC 3339 ranges: hour 00-23, minute and second 00-59, offset hour 00-23
+/// and offset minute 00-59.
+fn utc_reading(value: &str) -> Result<DateTime, TemporalError> {
+    const INVALID: TemporalError = TemporalError::InvalidTimestamp;
+    let bytes = value.as_bytes();
+    let field = |range: Range<usize>| number(bytes, range).ok_or(INVALID);
+    let (hour, minute, second) = (field(11..13)?, field(14..16)?, field(17..19)?);
+    let zone_start = if value.ends_with('Z') {
+        bytes.len().checked_sub(1)
+    } else {
+        bytes.len().checked_sub(6)
+    }
+    .ok_or(INVALID)?;
+    let nanos = if bytes.get(19) == Some(&b'.') {
+        let digits = zone_start.checked_sub(20).ok_or(INVALID)?;
+        let scale = 10_i32
+            .checked_pow(
+                u32::try_from(9_usize.checked_sub(digits).ok_or(INVALID)?)
+                    .map_err(|_error| INVALID)?,
+            )
+            .ok_or(INVALID)?;
+        field(20..zone_start)?.checked_mul(scale).ok_or(INVALID)?
+    } else {
+        0
+    };
+    let offset_seconds = if value.ends_with('Z') {
+        0
+    } else {
+        let start = |at: usize| zone_start.checked_add(at).ok_or(INVALID);
+        let hours = field(start(1)?..start(3)?)?;
+        let minutes = field(start(4)?..start(6)?)?;
+        if hours > 23 || minutes > 59 {
+            return Err(INVALID);
+        }
+        let magnitude = hours
+            .checked_mul(3600)
+            .and_then(|seconds| seconds.checked_add(minutes.checked_mul(60)?))
+            .ok_or(INVALID)?;
+        if bytes.get(zone_start) == Some(&b'-') {
+            magnitude.checked_neg().ok_or(INVALID)?
+        } else {
+            magnitude
+        }
+    };
+    let time = Time::new(
+        i8::try_from(hour).map_err(|_error| INVALID)?,
+        i8::try_from(minute).map_err(|_error| INVALID)?,
+        i8::try_from(second).map_err(|_error| INVALID)?,
+        nanos,
+    )
+    .map_err(|_error| INVALID)?;
+    let date = calendar_date(bytes).ok_or(INVALID)?;
+    shift(
+        date.to_datetime(time),
+        offset_seconds.checked_neg().ok_or(INVALID)?.into(),
+    )
+    .ok_or(INVALID)
+}
+
+/// `reading` moved by `seconds`, using integer seconds-of-day and whole-day
+/// date arithmetic only (exact over the whole civil range, unlike jiff's
+/// civil time arithmetic near its upper end).
+fn shift(reading: DateTime, seconds: i64) -> Option<DateTime> {
+    let of_day = i64::from(reading.hour())
+        .checked_mul(3_600)?
+        .checked_add(i64::from(reading.minute()).checked_mul(60)?)?
+        .checked_add(i64::from(reading.second()))?
+        .checked_add(seconds)?;
+    let days = Span::new().try_days(of_day.div_euclid(86_400)).ok()?;
+    let of_day = of_day.rem_euclid(86_400);
+    let time = Time::new(
+        i8::try_from(of_day / 3_600).ok()?,
+        i8::try_from(of_day % 3_600 / 60).ok()?,
+        i8::try_from(of_day % 60).ok()?,
+        reading.subsec_nanosecond(),
+    )
+    .ok()?;
+    Some(reading.date().checked_add(days).ok()?.to_datetime(time))
+}
+
+/// RFC 3339 with `Z` and the shortest exact fraction of 0, 3, 6 or 9 digits.
+fn rfc3339_utc(utc: &DateTime) -> Result<String, TemporalError> {
+    if !(0..=9_999).contains(&utc.year()) {
+        return Err(TemporalError::InvalidTimestamp);
+    }
+    let nanos = utc.subsec_nanosecond();
+    let fraction = if nanos == 0 {
+        String::new()
+    } else if nanos % 1_000_000 == 0 {
+        format!(".{:03}", nanos / 1_000_000)
+    } else if nanos % 1_000 == 0 {
+        format!(".{:06}", nanos / 1_000)
+    } else {
+        format!(".{nanos:09}")
+    };
+    Ok(format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}{fraction}Z",
+        utc.year(),
+        utc.month(),
+        utc.day(),
+        utc.hour(),
+        utc.minute(),
+        utc.second()
+    ))
 }
 
 fn digits(bytes: &[u8]) -> bool {
     !bytes.is_empty() && bytes.iter().all(u8::is_ascii_digit)
 }
 
-/// Checks the RFC 3339 spelling constraints chrono intentionally leaves
-/// broader, while delegating calendar, time, and offset validity to chrono.
+/// Checks the RFC 3339 spelling constraints; [`utc_reading`] then checks
+/// calendar, time, and offset validity.
 fn timestamp_shape(value: &str) -> Result<(), TemporalError> {
     let bytes = value.as_bytes();
     if !(20..=35).contains(&bytes.len())
@@ -286,6 +452,80 @@ mod tests {
     }
 
     #[test]
+    fn a_pre_1970_fractional_ordering_key_floors_the_second() {
+        assert_eq!(
+            timestamp_ordering_key("1969-12-31T23:59:59.9Z"),
+            Ok((-1, 900_000_000))
+        );
+        assert_eq!(
+            timestamp_ordering_key("1969-12-31T23:59:59.000000001Z"),
+            Ok((-1, 1))
+        );
+        assert_eq!(
+            timestamp_ordering_key("1970-01-01T05:29:59.5+05:30"),
+            Ok((-1, 500_000_000))
+        );
+    }
+
+    fn ymd(year: u16, month: u8, day: u8) -> NamingSeriesDate {
+        NamingSeriesDate { year, month, day }
+    }
+
+    #[test]
+    fn spring_forward_and_fall_back_move_the_local_date() {
+        let ny = "America/New_York";
+        // 2024-03-10 spring forward: 04:30Z is 23:30 EST the day before, and
+        // a day later 04:30Z is 00:30 EDT.
+        assert_eq!(
+            naming_series_date_at(1_710_045_000_000, ny),
+            Ok(ymd(2024, 3, 9))
+        );
+        assert_eq!(
+            naming_series_date_at(1_710_131_400_000, ny),
+            Ok(ymd(2024, 3, 11))
+        );
+        // 2024-11-03 fall back: 04:30Z is 00:30 EDT, a day later 23:30 EST.
+        assert_eq!(
+            naming_series_date_at(1_730_608_200_000, ny),
+            Ok(ymd(2024, 11, 3))
+        );
+        assert_eq!(
+            naming_series_date_at(1_730_694_600_000, ny),
+            Ok(ymd(2024, 11, 3))
+        );
+
+        // America/Sao_Paulo moved its clocks at local midnight. Spring forward
+        // 2018-11-04T03:00Z: 23:59:59.999 on 3 November, then 01:00 on the 4th.
+        let sp = "America/Sao_Paulo";
+        assert_eq!(
+            naming_series_date_at(1_541_300_399_999, sp),
+            Ok(ymd(2018, 11, 3))
+        );
+        assert_eq!(
+            naming_series_date_at(1_541_300_400_000, sp),
+            Ok(ymd(2018, 11, 4))
+        );
+        // Fall back 2019-02-17T02:00Z: midnight of the 17th becomes 23:00 on
+        // the 16th again, so the 16th lasts until 03:00Z.
+        assert_eq!(
+            naming_series_date_at(1_550_368_799_999, sp),
+            Ok(ymd(2019, 2, 16))
+        );
+        assert_eq!(
+            naming_series_date_at(1_550_368_800_000, sp),
+            Ok(ymd(2019, 2, 16))
+        );
+        assert_eq!(
+            naming_series_date_at(1_550_372_399_999, sp),
+            Ok(ymd(2019, 2, 16))
+        );
+        assert_eq!(
+            naming_series_date_at(1_550_372_400_000, sp),
+            Ok(ymd(2019, 2, 17))
+        );
+    }
+
+    #[test]
     fn dates_require_exact_shape_and_a_real_proleptic_gregorian_day() {
         for date in [
             "0000-02-29",
@@ -371,11 +611,13 @@ mod tests {
     fn naming_series_date_refuses_extreme_instants_without_panicking() {
         for (epoch_millis, timezone) in [
             (
-                chrono::DateTime::<chrono::Utc>::MAX_UTC.timestamp_millis(),
+                // chrono 0.4's `DateTime::<Utc>::MAX_UTC`, the old upper bound.
+                8_210_266_876_799_999,
                 "Etc/GMT-14",
             ),
             (
-                chrono::DateTime::<chrono::Utc>::MIN_UTC.timestamp_millis(),
+                // chrono 0.4's `DateTime::<Utc>::MIN_UTC`, the old lower bound.
+                -8_334_601_315_200_000,
                 "Etc/GMT+12",
             ),
             (i64::MAX, "UTC"),
@@ -385,6 +627,77 @@ mod tests {
                 naming_series_date_at(epoch_millis, timezone),
                 Err(TemporalError::InstantOutOfRange),
                 "{epoch_millis} in {timezone}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_pre_1970_instant_just_before_a_transition_keeps_the_earlier_offset() {
+        // Africa/Addis_Ababa moved from UTC+2:45 to UTC+3 at local midnight
+        // 1942-08-01, i.e. 1942-07-31T21:15:00Z. One millisecond earlier the
+        // old offset still applies: it is 23:59:59.999 on 31 July locally.
+        assert_eq!(
+            naming_series_date_at(-865_305_900_001, "Africa/Addis_Ababa"),
+            naming_series_date_at(-865_305_901_000, "Africa/Addis_Ababa"),
+        );
+        assert_eq!(
+            naming_series_date_at(-865_305_900_001, "Africa/Addis_Ababa"),
+            Ok(NamingSeriesDate {
+                year: 1942,
+                month: 7,
+                day: 31,
+            })
+        );
+    }
+
+    #[test]
+    fn the_named_tzdb_version_is_the_pinned_data() {
+        assert_eq!(jiff_tzdb::VERSION, Some(NAMING_SERIES_TZDB_VERSION));
+        // tzdb 2026c moved America/Edmonton to year-round UTC-6 from
+        // 2026-12-01; in 2025b it is back on MST (UTC-7) that winter, so
+        // 2027-01-01T06:30Z is still 2026-12-31 there. A data bump fails here.
+        assert_eq!(
+            naming_series_date_at(1_798_785_000_000, "America/Edmonton"),
+            Ok(NamingSeriesDate {
+                year: 2026,
+                month: 12,
+                day: 31,
+            })
+        );
+    }
+
+    #[test]
+    fn the_zone_names_are_exactly_chrono_tz_0_10_4s() {
+        let names: Vec<&str> = jiff_tzdb::available()
+            .filter(|name| *name != "Factory")
+            .collect();
+        assert_eq!(names.len(), 597);
+        for name in &names {
+            assert_eq!(validate_timezone(name), Ok(()), "{name}");
+        }
+        // Links from `backward` and `etcetera` are names in their own right.
+        for name in ["US/Eastern", "Etc/GMT+5", "UTC", "Zulu", "Asia/Calcutta"] {
+            assert!(names.contains(&name), "{name}");
+        }
+        // `Factory` (tzdb's `factory` file) was never part of chrono-tz, the
+        // lookup is case-sensitive as chrono-tz's `FromStr` was, and only
+        // whole names match.
+        for name in [
+            "Factory",
+            "factory",
+            "america/new_york",
+            "AMERICA/NEW_YORK",
+            "America/New_York ",
+            "America",
+            "",
+            "localtime",
+            "posixrules",
+            "EST5EDT,M3.2.0,M11.1.0",
+        ] {
+            assert_eq!(
+                validate_timezone(name),
+                Err(TemporalError::InvalidTimezone),
+                "{name:?}"
             );
         }
     }
