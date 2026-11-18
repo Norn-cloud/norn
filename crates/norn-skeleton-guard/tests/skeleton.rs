@@ -422,10 +422,14 @@ fn guard_refuses_temporal_clock_and_locale_features() {
     let rule = "norn-expr-temporal-features";
     for (defaults, features) in [
         (true, vec!["std".to_owned()]),
-        (false, vec!["std".to_owned(), "clock".to_owned()]),
-        (false, vec!["std".to_owned(), "unstable-locales".to_owned()]),
+        (false, vec!["std".to_owned(), "tz-system".to_owned()]),
+        (false, vec!["std".to_owned(), "tzdb-zoneinfo".to_owned()]),
+        (
+            false,
+            vec!["std".to_owned(), "tzdb-bundle-always".to_owned()],
+        ),
     ] {
-        let changed = edit_dependency(&base, package_name, "chrono", |dependency| {
+        let changed = edit_dependency(&base, package_name, "jiff", |dependency| {
             dependency["uses_default_features"] = json!(defaults);
             dependency["features"] = json!(features);
         });
@@ -438,25 +442,64 @@ fn guard_refuses_temporal_clock_and_locale_features() {
     }
 }
 
+/// jiff's `std` feature, the only one the guard admits, still compiles its
+/// clock and host-tz entry points, and jiff calls `SystemTime::now` inside the
+/// dependency where that ban cannot see it. The root `clippy.toml` bans the
+/// five entry points directly; this pins that the bans stay in place.
 #[test]
-fn guard_requires_pinned_std_only_timezone_data() {
+fn clippy_bans_jiff_clock_and_host_tz() {
+    let text = std::fs::read_to_string(workspace_root().join("clippy.toml")).expect("clippy.toml");
+    let config: toml::Table = text.parse().expect("clippy.toml parses");
+    let banned: Vec<&str> = config["disallowed-methods"]
+        .as_array()
+        .expect("disallowed-methods is an array")
+        .iter()
+        .filter_map(|entry| entry.get("path").and_then(toml::Value::as_str))
+        .collect();
+    for path in [
+        "std::time::SystemTime::now",
+        "jiff::Timestamp::now",
+        "jiff::Zoned::now",
+        "jiff::tz::TimeZone::system",
+        "jiff::tz::TimeZone::try_system",
+        "jiff::tz::db",
+    ] {
+        assert!(
+            banned.contains(&path),
+            "clippy.toml must ban `{path}`: {banned:?}"
+        );
+    }
+}
+
+#[test]
+fn guard_requires_pinned_std_only_timezone_reader() {
     let base = metadata();
     assert!(check_dependencies(&base).is_empty());
 
-    let defaults_on = edit_dependency(&base, "norn-expr", "chrono-tz", |dependency| {
+    let defaults_on = edit_dependency(&base, "norn-expr", "jiff", |dependency| {
         dependency["uses_default_features"] = json!(true);
     });
-    assert!(rules_of(&check_dependencies(&defaults_on)).contains(&"norn-expr-timezone-features"));
+    assert!(rules_of(&check_dependencies(&defaults_on)).contains(&"norn-expr-temporal-features"));
 
-    let extra_feature = edit_dependency(&base, "norn-expr", "chrono-tz", |dependency| {
+    let extra_feature = edit_dependency(&base, "norn-expr", "jiff", |dependency| {
         dependency["features"] = json!(["std", "serde"]);
     });
-    assert!(rules_of(&check_dependencies(&extra_feature)).contains(&"norn-expr-timezone-features"));
+    assert!(rules_of(&check_dependencies(&extra_feature)).contains(&"norn-expr-temporal-features"));
 
-    let floating_pin = edit_dependency(&base, "norn-expr", "chrono-tz", |dependency| {
-        dependency["req"] = json!("^0.10.4");
+    let floating_pin = edit_dependency(&base, "norn-expr", "jiff", |dependency| {
+        dependency["req"] = json!("^0.2.37");
     });
     assert!(rules_of(&check_dependencies(&floating_pin)).contains(&"norn-expr-timezone-features"));
+
+    for req in ["^0.1.4", "=0.1.8", "0.1"] {
+        let moved_data = edit_dependency(&base, "norn-expr", "jiff-tzdb", |dependency| {
+            dependency["req"] = json!(req);
+        });
+        assert!(
+            rules_of(&check_dependencies(&moved_data)).contains(&"norn-expr-timezone-features"),
+            "{req}"
+        );
+    }
 }
 
 #[test]
