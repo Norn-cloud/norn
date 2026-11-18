@@ -111,6 +111,7 @@ impl<'a> TypeCatalog<'a> {
     /// A catalog over `types` (an admitted artifact set's object types).
     #[must_use]
     pub fn new(types: impl IntoIterator<Item = &'a ObjectTypeDef>) -> Self {
+        norn_ir::counters::bump(norn_ir::counters::Counter::TypeCatalogBuilds);
         Self {
             action_rules: &[],
             types: types
@@ -240,6 +241,7 @@ impl<'a> TypeCatalog<'a> {
     }
 
     pub(crate) fn base_expression_environment(&self) -> Result<norn_expr::ZenTypeEnv, String> {
+        norn_ir::counters::bump(norn_ir::counters::Counter::ExpressionEnvironmentBuilds);
         let objects: Vec<_> = self.types.values().map(|d| (*d).clone()).collect();
         let interfaces: Vec<_> = self.interfaces.values().map(|d| (*d).clone()).collect();
         let extensions: Vec<_> = self.extensions.iter().map(|d| (*d).clone()).collect();
@@ -469,6 +471,7 @@ impl<'a> TypeCatalog<'a> {
     }
 
     fn derive_effective_model(&self) -> Result<EffectiveModel, norn_checker::EffectiveViewRefused> {
+        norn_ir::counters::bump(norn_ir::counters::Counter::EffectiveModelBuilds);
         let object_types: Vec<_> = self
             .types
             .values()

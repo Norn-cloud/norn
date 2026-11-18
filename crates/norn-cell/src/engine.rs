@@ -601,6 +601,65 @@ impl rusqlite::types::ToSql for SqlValue {
     }
 }
 
+/// Counts one native statement for the commit-path counters (#1421): the
+/// statement, the rows it changed, and its bound bytes when it changed any.
+/// A zero-sized no-op without the `counters` feature.
+#[cfg(feature = "native")]
+struct StatementCount<'a> {
+    #[cfg(feature = "counters")]
+    conn: &'a rusqlite::Connection,
+    #[cfg(feature = "counters")]
+    before: u64,
+    #[cfg(feature = "counters")]
+    bytes: u64,
+    #[cfg(not(feature = "counters"))]
+    conn: std::marker::PhantomData<&'a rusqlite::Connection>,
+}
+
+#[cfg(feature = "native")]
+impl<'a> StatementCount<'a> {
+    #[inline]
+    #[cfg_attr(
+        not(feature = "counters"),
+        allow(unused_variables, reason = "counting is compiled out")
+    )]
+    fn start(conn: &'a rusqlite::Connection, params: &[SqlValue]) -> Self {
+        #[cfg(feature = "counters")]
+        {
+            norn_ir::counters::bump(norn_ir::counters::Counter::SqlStatements);
+            let bytes = params
+                .iter()
+                .map(|value| match value {
+                    SqlValue::Null => 0,
+                    SqlValue::Integer(_) | SqlValue::Real(_) => 8,
+                    SqlValue::Text(text) => u64::try_from(text.len()).unwrap_or(u64::MAX),
+                    SqlValue::Blob(blob) => u64::try_from(blob.len()).unwrap_or(u64::MAX),
+                })
+                .fold(0_u64, u64::saturating_add);
+            Self {
+                conn,
+                before: conn.total_changes(),
+                bytes,
+            }
+        }
+        #[cfg(not(feature = "counters"))]
+        Self {
+            conn: std::marker::PhantomData,
+        }
+    }
+}
+
+#[cfg(all(feature = "native", feature = "counters"))]
+impl Drop for StatementCount<'_> {
+    fn drop(&mut self) {
+        let rows = self.conn.total_changes().saturating_sub(self.before);
+        norn_ir::counters::add(norn_ir::counters::Counter::RowsWritten, rows);
+        if rows > 0 {
+            norn_ir::counters::add(norn_ir::counters::Counter::BytesWritten, self.bytes);
+        }
+    }
+}
+
 #[cfg(feature = "native")]
 impl SqlEngine for NativeEngine {
     fn read_isolation(&self) -> ReadIsolation {
@@ -620,6 +679,7 @@ impl SqlEngine for NativeEngine {
     }
 
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
+        let _counted = StatementCount::start(&self.conn, params);
         validate_bindings(sql, params)?;
         let _user_sql = UserSql::enter(&self.user_sql);
         self.conn.execute(sql, rusqlite::params_from_iter(params))?;
@@ -627,6 +687,7 @@ impl SqlEngine for NativeEngine {
     }
 
     fn query(&self, sql: &str, params: &[SqlValue]) -> Result<Vec<Vec<SqlValue>>, CellError> {
+        let _counted = StatementCount::start(&self.conn, params);
         validate_bindings(sql, params)?;
         let _user_sql = UserSql::enter(&self.user_sql);
         let mut statement = self.conn.prepare(sql)?;
@@ -657,6 +718,7 @@ impl SqlEngine for NativeEngine {
     }
 
     fn execute_batch(&self, sql: &str) -> Result<(), CellError> {
+        let _counted = StatementCount::start(&self.conn, &[]);
         validate_bindings(sql, &[])?;
         let _user_sql = UserSql::enter(&self.user_sql);
         self.conn.execute_batch(sql)?;

@@ -252,6 +252,10 @@ pub use widget_ux::{
 /// direct `norn-canonical` edge.
 pub use norn_canonical::{JsonNumber, JsonNumberKind, json_tree_from_value};
 
+/// Deterministic per-thread work counters, re-exported so ring-0 and ring-1
+/// crates count commit-path work without a direct `norn-canonical` edge.
+pub use norn_canonical::counters;
+
 /// Norn1 canonical JSON and hash profiles, re-exported so ring-0 crates that
 /// content-address their own declarative data (the `norn-expr` type
 /// environment, T1-EXPR-2) use the one canonical form without a direct

@@ -23,6 +23,147 @@ use unicode_normalization::UnicodeNormalization;
 
 pub mod number;
 
+/// Deterministic per-thread work counters for the commit path (#1421, #1417 T0).
+///
+/// Counts, never timings: each counter is the number of times a piece of work
+/// ran on the current thread since the last [`counters::take`]. Without the
+/// `counters` feature every function is an empty inline body and [`counters::take`]
+/// returns zeros, so production builds pay nothing.
+pub mod counters {
+    /// One counted kind of work.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum Counter {
+        /// `norn_expr` expression or unary-test compilations.
+        ExpressionCompiles,
+        /// Typed expression environments derived from a type catalog.
+        ExpressionEnvironmentBuilds,
+        /// Governing-law payloads decoded from their artifact JSON.
+        LawDecodes,
+        /// `TypeCatalog` constructions.
+        TypeCatalogBuilds,
+        /// Effective object models derived by a `TypeCatalog`.
+        EffectiveModelBuilds,
+        /// SQL statements sent to the storage engine.
+        SqlStatements,
+        /// Rows inserted, updated or deleted by those statements.
+        RowsWritten,
+        /// Parameter bytes bound to statements that write.
+        BytesWritten,
+        /// SHA-256 identities computed through this crate.
+        Hashes,
+    }
+
+    /// A snapshot of every counter.
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+    pub struct Counts {
+        /// See [`Counter::ExpressionCompiles`].
+        pub expression_compiles: u64,
+        /// See [`Counter::ExpressionEnvironmentBuilds`].
+        pub expression_environment_builds: u64,
+        /// See [`Counter::LawDecodes`].
+        pub law_decodes: u64,
+        /// See [`Counter::TypeCatalogBuilds`].
+        pub type_catalog_builds: u64,
+        /// See [`Counter::EffectiveModelBuilds`].
+        pub effective_model_builds: u64,
+        /// See [`Counter::SqlStatements`].
+        pub sql_statements: u64,
+        /// See [`Counter::RowsWritten`].
+        pub rows_written: u64,
+        /// See [`Counter::BytesWritten`].
+        pub bytes_written: u64,
+        /// See [`Counter::Hashes`].
+        pub hashes: u64,
+    }
+
+    impl Counts {
+        /// Every counter as a `(name, value)` pair, in declaration order.
+        #[must_use]
+        pub const fn entries(&self) -> [(&'static str, u64); 9] {
+            [
+                ("expression_compiles", self.expression_compiles),
+                (
+                    "expression_environment_builds",
+                    self.expression_environment_builds,
+                ),
+                ("law_decodes", self.law_decodes),
+                ("type_catalog_builds", self.type_catalog_builds),
+                ("effective_model_builds", self.effective_model_builds),
+                ("sql_statements", self.sql_statements),
+                ("rows_written", self.rows_written),
+                ("bytes_written", self.bytes_written),
+                ("hashes", self.hashes),
+            ]
+        }
+
+        #[cfg(feature = "counters")]
+        const fn slot(&mut self, counter: Counter) -> &mut u64 {
+            match counter {
+                Counter::ExpressionCompiles => &mut self.expression_compiles,
+                Counter::ExpressionEnvironmentBuilds => &mut self.expression_environment_builds,
+                Counter::LawDecodes => &mut self.law_decodes,
+                Counter::TypeCatalogBuilds => &mut self.type_catalog_builds,
+                Counter::EffectiveModelBuilds => &mut self.effective_model_builds,
+                Counter::SqlStatements => &mut self.sql_statements,
+                Counter::RowsWritten => &mut self.rows_written,
+                Counter::BytesWritten => &mut self.bytes_written,
+                Counter::Hashes => &mut self.hashes,
+            }
+        }
+    }
+
+    /// Whether this build counts.
+    pub const ENABLED: bool = cfg!(feature = "counters");
+
+    #[cfg(feature = "counters")]
+    std::thread_local! {
+        static COUNTS: std::cell::Cell<Counts> = const { std::cell::Cell::new(Counts {
+            expression_compiles: 0,
+            expression_environment_builds: 0,
+            law_decodes: 0,
+            type_catalog_builds: 0,
+            effective_model_builds: 0,
+            sql_statements: 0,
+            rows_written: 0,
+            bytes_written: 0,
+            hashes: 0,
+        }) };
+    }
+
+    /// Add `amount` to `counter` on this thread.
+    #[inline]
+    pub fn add(counter: Counter, amount: u64) {
+        #[cfg(feature = "counters")]
+        COUNTS.with(|counts| {
+            let mut current = counts.get();
+            let slot = current.slot(counter);
+            *slot = slot.saturating_add(amount);
+            counts.set(current);
+        });
+        #[cfg(not(feature = "counters"))]
+        let _ = (counter, amount);
+    }
+
+    /// Add one to `counter` on this thread.
+    #[inline]
+    pub fn bump(counter: Counter) {
+        add(counter, 1);
+    }
+
+    /// Return this thread's counts and reset them to zero.
+    #[must_use]
+    pub fn take() -> Counts {
+        #[cfg(feature = "counters")]
+        {
+            COUNTS.with(|counts| counts.replace(Counts::default()))
+        }
+        #[cfg(not(feature = "counters"))]
+        {
+            Counts::default()
+        }
+    }
+}
+
 use number::NumberOrigin;
 pub use number::{
     JsonNumber, JsonNumberKind, JsonTree, deserialize_json_tree, json_tree_from_value,
@@ -140,6 +281,7 @@ impl HashProfile {
     /// this profile.
     #[must_use]
     pub fn digest_canonical_bytes(self, bytes: &[u8]) -> [u8; 32] {
+        counters::bump(counters::Counter::Hashes);
         let mut hasher = Sha256::new();
         if let Some(domain_tag) = self.domain_tag() {
             hasher.update(domain_tag);
@@ -200,6 +342,7 @@ impl LegacyStableHasher {
     /// Finish the commitment as lower-case hexadecimal SHA-256.
     #[must_use]
     pub fn finish(self) -> String {
+        counters::bump(counters::Counter::Hashes);
         lower_hex(self.hasher.finalize().into())
     }
 
@@ -575,6 +718,7 @@ pub fn domain_hash_hex<T: Serialize + ?Sized>(
     value: &T,
 ) -> Result<String, CanonicalJsonError> {
     let bytes = canonical_json_of(value)?;
+    counters::bump(counters::Counter::Hashes);
     let mut hasher = Sha256::new();
     hasher.update(domain);
     hasher.update(bytes.as_slice());
