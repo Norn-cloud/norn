@@ -146,6 +146,38 @@ use_jsonschema() {
   export PATH="$upstream/venv/bin:$PATH"
   python3 -m pip install --disable-pip-version-check --no-input jsonschema==4.25.1 PyYAML==6.0.3
 }
+# Workflow lint (#1348 CI-R2): pinned actionlint and zizmor release binaries, checked against
+# their sha256 (a matching binary already on PATH is used as is). Their configs live in the gated
+# guard directory and are passed explicitly, so no config elsewhere in the tree can loosen them.
+# actionlint's shellcheck/pyflakes hooks are off: they would depend on whatever the runner has.
+lint_workflows() {
+  local dir="$upstream/workflow-lint" actionlint=actionlint zizmor=zizmor
+  mkdir -p "$dir"
+  fetch() {
+    [[ $(uname -sm) == 'Linux x86_64' ]] || { printf 'workflow lint: no pinned %s for %s\n' "$1" "$(uname -sm)" >&2; exit 1; }
+    curl -fsSL --retry 3 -o "$dir/$1.tar.gz" "$2"
+    printf '%s  %s\n' "$3" "$dir/$1.tar.gz" | sha256sum -c --quiet -
+    tar -xzf "$dir/$1.tar.gz" -C "$dir" "$1"
+  }
+  [[ $(actionlint -version 2> /dev/null | head -n 1) == 1.7.12 ]] || {
+    fetch actionlint https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+      8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+    actionlint="$dir/actionlint"
+  }
+  [[ $(zizmor --version 2> /dev/null) == 'zizmor 1.32.0' ]] || {
+    fetch zizmor https://github.com/zizmorcore/zizmor/releases/download/v1.32.0/zizmor-x86_64-unknown-linux-gnu.tar.gz \
+      bb110cc765eca9cd7efb2e284a956be5974c60027b0970f16397d86208a9957b
+    zizmor="$dir/zizmor"
+  }
+  "$actionlint" -config-file crates/norn-skeleton-guard/actionlint.yaml -no-color -shellcheck= -pyflakes= .github/workflows/*.yml
+  "$zizmor" --quiet --quiet --offline --config crates/norn-skeleton-guard/zizmor.yml --no-progress --format plain .github/workflows
+  # The baseline only shrinks: every ignore must still cover a finding of the unfiltered report.
+  # zizmor exits 10 or more when it reports findings, and below 10 only on its own errors.
+  local status=0
+  "$zizmor" --quiet --quiet --offline --no-config --no-ignores --format json .github/workflows > "$dir/findings.json" || status=$?
+  ((status == 0 || status >= 10)) || { printf 'workflow lint: zizmor failed (%s)\n' "$status" >&2; exit 1; }
+  cargo xtask ci workflow-lint --findings "$dir/findings.json"
+}
 run_phase() {
   if [[ $1 != cheap && $1 != test-shards && $1 != browser && $1 != duckdb && " ${phases[*]} " == *" $1 "* ]]; then prepare_inputs; fi
   case "$1" in
@@ -173,6 +205,7 @@ run_phase() {
       python3 scripts/standards_atlas.py --check
       python3 scripts/test_standards_atlas.py
       python3 scripts/metrics/test_metrics.py
+      lint_workflows
       cargo xtask ci policy
       cargo xtask ci provenance
       # The Rust half of the concurrency parity check runs on every plan, whatever packages the
