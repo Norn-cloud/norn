@@ -120,17 +120,20 @@ pub fn naming_series_date_at(
 }
 
 /// The local calendar date of an epoch-millisecond instant. The zone's offset
-/// is the one at the instant, or at the nearest representable instant beyond
-/// either end of `jiff::Timestamp` (which stops a day short of the civil
-/// range). Only whole days are added to a date, which is exact over the whole
-/// civil range.
+/// is the one at the whole second containing the instant (rounded toward
+/// negative infinity, as chrono-tz did; jiff's own lookup truncates a
+/// pre-1970 fractional second toward zero, one second late), or at the
+/// nearest representable instant beyond either end of `jiff::Timestamp`
+/// (which stops a day short of the civil range). Only whole days are added to
+/// a date, which is exact over the whole civil range.
 fn local_date(epoch_millis: i64, timezone: &TimeZone) -> Result<Date, TemporalError> {
     const OUT: TemporalError = TemporalError::InstantOutOfRange;
-    let instant = Timestamp::from_millisecond(epoch_millis).unwrap_or(if epoch_millis < 0 {
-        Timestamp::MIN
-    } else {
-        Timestamp::MAX
-    });
+    let instant =
+        Timestamp::from_second(epoch_millis.div_euclid(1_000)).unwrap_or(if epoch_millis < 0 {
+            Timestamp::MIN
+        } else {
+            Timestamp::MAX
+        });
     let offset_millis = i64::from(timezone.to_offset(instant).seconds())
         .checked_mul(1_000)
         .ok_or(OUT)?;
@@ -552,6 +555,25 @@ mod tests {
                 "{epoch_millis} in {timezone}"
             );
         }
+    }
+
+    #[test]
+    fn a_pre_1970_instant_just_before_a_transition_keeps_the_earlier_offset() {
+        // Africa/Addis_Ababa moved from UTC+2:45 to UTC+3 at local midnight
+        // 1942-08-01, i.e. 1942-07-31T21:15:00Z. One millisecond earlier the
+        // old offset still applies: it is 23:59:59.999 on 31 July locally.
+        assert_eq!(
+            naming_series_date_at(-865_305_900_001, "Africa/Addis_Ababa"),
+            naming_series_date_at(-865_305_901_000, "Africa/Addis_Ababa"),
+        );
+        assert_eq!(
+            naming_series_date_at(-865_305_900_001, "Africa/Addis_Ababa"),
+            Ok(NamingSeriesDate {
+                year: 1942,
+                month: 7,
+                day: 31,
+            })
+        );
     }
 
     #[test]
