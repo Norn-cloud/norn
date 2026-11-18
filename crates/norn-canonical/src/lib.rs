@@ -45,6 +45,8 @@ pub mod counters {
         EffectiveModelBuilds,
         /// Calls into the storage engine: one per statement, and one per
         /// `execute_batch` script (schema setup, never on the commit path).
+        /// Transaction control (`BEGIN`, `COMMIT`, `ROLLBACK`) is excluded:
+        /// it is a constant two statements per committed transaction.
         SqlStatements,
         /// Rows inserted, updated or deleted by those statements.
         RowsWritten,
