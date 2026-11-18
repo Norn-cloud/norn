@@ -23,9 +23,7 @@ use norn_cell::{CellStore, Model, SqliteCell};
 use norn_ir::counters::{self, Counts};
 use norn_ir::{ArtifactEnvelope, ObjectTypeDef};
 use norn_kernel::cell_host::JsonObject;
-use norn_kernel::{
-    CellCommit, CellHost, FactEvent, FactKey, FactMutation, FactVersion, FactWrite,
-};
+use norn_kernel::{CellCommit, CellHost, FactEvent, FactKey, FactMutation, FactVersion, FactWrite};
 use serde_json::{Value, json};
 
 type Cell = SqliteCell<FactEvent, JsonObject, JsonObject>;
@@ -100,7 +98,9 @@ fn put(key: &str, expected: FactVersion, qty: i64) -> FactWrite<JsonObject> {
     FactWrite {
         key: FactKey::new(OBJECT_TYPE, key),
         expected,
-        mutation: FactMutation::Put { values: values(qty) },
+        mutation: FactMutation::Put {
+            values: values(qty),
+        },
     }
 }
 
@@ -134,7 +134,10 @@ fn measure(laws: usize, rows: usize) -> Counts {
 
 #[test]
 fn commit_counters_by_size() {
-    assert!(counters::ENABLED, "norn-cell tests enable the counters feature");
+    assert!(
+        counters::ENABLED,
+        "norn-cell tests enable the counters feature"
+    );
     let mut lines = Vec::new();
     for rows in [10, 100, 1_000] {
         let counts = measure(4, rows);
@@ -147,8 +150,17 @@ fn commit_counters_by_size() {
     for line in &lines {
         println!("COMMIT-COUNTERS {line}");
         let counts = &line["counts"];
-        for name in ["sql_statements", "rows_written", "bytes_written", "hashes", "expression_compiles"] {
-            assert!(counts[name].as_u64().is_some_and(|n| n > 0), "{name} counted: {line}");
+        for name in [
+            "sql_statements",
+            "rows_written",
+            "bytes_written",
+            "hashes",
+            "expression_compiles",
+        ] {
+            assert!(
+                counts[name].as_u64().is_some_and(|n| n > 0),
+                "{name} counted: {line}"
+            );
         }
     }
 }
@@ -173,7 +185,13 @@ fn replay_transcript() -> Value {
             put(&key.key, version, 2 + i)
         })
         .collect();
-    record(&mut cell, CellCommit { writes: updates, ..CellCommit::empty() });
+    record(
+        &mut cell,
+        CellCommit {
+            writes: updates,
+            ..CellCommit::empty()
+        },
+    );
     record(
         &mut cell,
         CellCommit {
@@ -240,7 +258,8 @@ fn recorded_commit_sequence_replays_identical_receipts() {
         serde_json::to_string_pretty(&replay_transcript()).expect("transcript") + "\n",
         "one sequence gives one transcript"
     );
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/commit-replay.json");
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/commit-replay.json");
     if std::env::var_os("NORN_RECORD_COMMIT_REPLAY").is_some() {
         std::fs::write(&path, &transcript).expect("record transcript");
     }
