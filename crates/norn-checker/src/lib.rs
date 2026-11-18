@@ -72,6 +72,7 @@ pub mod interfaces;
 pub mod jdm_profile;
 pub mod labels;
 pub mod layout;
+pub mod lifecycle_soundness;
 pub mod lifecycle_writes;
 pub mod lifecycles;
 pub mod lint;
@@ -94,6 +95,7 @@ pub mod metric_interchange;
     clippy::large_futures
 )]
 pub mod posting;
+mod soundness;
 pub mod table_analysis;
 pub mod tool_effect;
 mod unit_admission;

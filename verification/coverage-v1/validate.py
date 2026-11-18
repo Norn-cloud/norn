@@ -788,9 +788,9 @@ df -h /
                 f"{name}: only a push to main may enter the cache-writer environment")
         job_steps = job.get("steps", [])
         preparation = [checkout] + ([] if name == "plan" else copy.deepcopy(setup))
-        if name == "test":
-            preparation.append(nextest)
         if name != "plan":
+            # Pinned, checksummed release binaries: no job compiles a tool from source (#1348).
+            preparation.append(nextest)
             reclaim = copy.deepcopy(cleanup)
             if name == "test":
                 reclaim["run"] = reclaim["run"].replace('if [ "$(available)" -lt "$minimum" ]; then\n  ', '').replace('\nfi\ndf -h /', '\ndf -h /')
@@ -877,8 +877,9 @@ echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN"
                 for step in full.get("steps", [])), "full: every dependency must succeed")
     runner = CORE_RUNNER.read_text()
     # Bundles may drop only Cargo build outputs, between tasks and when disk is low;
-    # target/verification-* evidence and tools and any other target content stay.
-    prune = '    pruned=\'\'\n    while IFS=/ read -r kind item; do\n      task="$kind/$item"\n      # Bundle tasks never share build outputs (the planner packs them freely), so\n      # a task may drop the previous task\'s target dir when disk runs low (#1059).\n      if [[ -n $pruned ]] && (( $(df -Pk / | awk \'NR == 2 {print $4}\') < 40 * 1024 * 1024 )); then\n        prune_target\n        printf \'::notice::pruned target before %s; %s KiB free\\n\' "$task" "$(df -Pk / | awk \'NR == 2 {print $4}\')"\n      fi\n      pruned=1\n'
+    # target/verification-* evidence and tools and any other target content stay. Tasks that
+    # share one test build run back to back with no prune between them (#1348 CI2).
+    prune = '    shares_build() { [[ $1 == test/* || ( $1 == phase/test-shards && -z ${NORN_CI_PACKAGES:-} ) ]]; }\n    task_lines=$(while read -r task; do if shares_build "$task"; then echo "$task"; fi; done <<<"$task_lines"\n                 while read -r task; do if ! shares_build "$task"; then echo "$task"; fi; done <<<"$task_lines")\n    pruned=\'\' previous=\'\'\n    while IFS=/ read -r kind item; do\n      task="$kind/$item"\n      # Other bundle tasks never share build outputs (the planner packs them freely), so a\n      # task may drop the previous task\'s target dir when disk runs low (#1059).\n      if [[ -n $pruned ]] && ! { shares_build "$previous" && shares_build "$task"; } && (( $(df -Pk / | awk \'NR == 2 {print $4}\') < 40 * 1024 * 1024 )); then\n        prune_target\n        printf \'::notice::pruned target before %s; %s KiB free\\n\' "$task" "$(df -Pk / | awk \'NR == 2 {print $4}\')"\n      fi\n      pruned=1 previous=$task\n'
     contained = 'prune_target() {\n  local root target entry name\n  root=$(realpath -m -- "$PWD") && target=$(realpath -m -- "${CARGO_TARGET_DIR:-$PWD/target}") || return 0\n  if [[ $target != "$root/target" ]]; then\n    printf \'::warning::refusing to prune %s: only %s/target may be pruned\\n\' "$target" "$root"\n    return 0\n  fi\n  for entry in "$target"/*; do\n    name=${entry##*/}\n    [[ -d $entry && ! -L $entry && $name != verification-* ]] || continue\n    if [[ $name == doc || -d $entry/.fingerprint ]] || compgen -G "$entry/*/.fingerprint" > /dev/null; then\n      rm -rf -- "$entry"\n    fi\n  done\n}\n'
     require(runner.count(prune) == 1 and runner.count(contained) == 1 and runner.count("rm -rf") == 2,
             "bundle may prune only Cargo build outputs, between tasks and when disk is low")

@@ -25,4 +25,11 @@ disallowed-methods = [
   # ambient authority must flow through capability impls, not be grabbed inline.
   { path = "std::process::Command::new", reason = "spawning processes is a capability; use a capability wrapper once norn-caps lands" },
   { path = "std::time::SystemTime::now", reason = "ambient wall-clock reads break replay/determinism; inject a Clock capability" },
+  # jiff's `std` feature alone compiles its clock and host-tz entry points
+  # (the call to SystemTime::now sits inside jiff, out of the ban above).
+  { path = "jiff::Timestamp::now", reason = "ambient wall-clock reads break replay/determinism; inject a Clock capability" },
+  { path = "jiff::Zoned::now", reason = "ambient wall-clock and host tz reads break replay/determinism; inject a Clock capability" },
+  { path = "jiff::tz::TimeZone::system", reason = "the host time zone breaks replay/determinism; resolve zones from the pinned jiff-tzdb" },
+  { path = "jiff::tz::TimeZone::try_system", reason = "the host time zone breaks replay/determinism; resolve zones from the pinned jiff-tzdb" },
+  { path = "jiff::tz::db", reason = "the global tz database can read host zoneinfo, breaking replay/determinism; resolve zones from the pinned jiff-tzdb" },
 ]

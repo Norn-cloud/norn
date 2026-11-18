@@ -18,6 +18,20 @@ pub struct Edge {
     /// Effective declaration member identity.
     pub transition: String,
 }
+/// A guard-enabled declared transition whose post-state governing laws refuse
+/// (LIFE-SOUND-4): the exit exists in the chart but not in the lawful relation.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Blocked {
+    /// Index of the pre-state row.
+    pub from: usize,
+    /// Index of the refused post-state row.
+    pub to: usize,
+    /// Effective declaration member identity.
+    pub transition: String,
+    /// Identities of the governing laws that the post-state violates, in
+    /// snapshot order. Lifting all of them (and only them) admits the step.
+    pub laws: Vec<String>,
+}
 /// Conditional native relation, without evidence or discharge authority.
 #[derive(Debug)]
 pub struct Graph {
@@ -28,6 +42,8 @@ pub struct Graph {
     /// Guard-enabled steps whose post-state satisfies every governing law.
     /// Unreachable pre-states remain available for local native correspondence.
     pub edges: Vec<Edge>,
+    /// Guard-enabled steps refused by post-state governing laws.
+    pub blocked: Vec<Blocked>,
 }
 /// Fresh challenge and pinned graph limits; unsupported profiles remain Unknown.
 #[derive(Debug)]
@@ -152,9 +168,18 @@ fn compile_laws<'a>(inputs: &'a Snapshot, work: &mut u64) -> Result<Vec<Predicat
     }
     Ok(laws)
 }
+#[cfg(test)]
 fn lawful(laws: &[Predicate<'_>], context: &Value, work: &mut u64) -> Result<bool, String> {
+    violated(laws, context, work).map(|failing| failing.is_empty())
+}
+/// The identities of the laws a row violates; every law is evaluated, as a native write does.
+fn violated<'a>(
+    laws: &[Predicate<'a>],
+    context: &Value,
+    work: &mut u64,
+) -> Result<Vec<&'a str>, String> {
     let mut native = EvaluationBudget::default().units();
-    let mut accepted = true;
+    let mut failing = Vec::new();
     for law in laws {
         let identity = law.identity;
         let activated = law
@@ -164,13 +189,15 @@ fn lawful(laws: &[Predicate<'_>], context: &Value, work: &mut u64) -> Result<boo
             .transpose()
             .map_err(|error| format!("law {identity}: {error}"))?
             .unwrap_or(true);
-        if activated {
-            accepted &= law_boolean(&law.response, context, work, &mut native)
+        if activated
+            && law_boolean(&law.response, context, work, &mut native)
                 .map_err(|error| format!("law {identity}: {error}"))?
-                == law.expected;
+                != law.expected
+        {
+            failing.push(identity);
         }
     }
-    Ok(accepted)
+    Ok(failing)
 }
 fn build(inputs: Snapshot, property: &str) -> Result<Graph, String> {
     let mut work = WORK;
@@ -201,12 +228,14 @@ fn build(inputs: Snapshot, property: &str) -> Result<Graph, String> {
             .map_err(|error| error.to_string())?;
         contexts.push(Value::object([("self", value)]));
     }
-    let legal = contexts
+    let failing = contexts
         .iter()
-        .map(|context| lawful(&laws, context, &mut work))
+        .map(|context| violated(&laws, context, &mut work))
         .collect::<Result<Vec<_>, _>>()?;
+    let legal: Vec<bool> = failing.iter().map(Vec::is_empty).collect();
     let mut initial = Vec::new();
     let mut edges = Vec::new();
+    let mut blocked = Vec::new();
     for (from, ((row, context), allowed)) in
         inputs.nodes.iter().zip(&contexts).zip(&legal).enumerate()
     {
@@ -231,6 +260,20 @@ fn build(inputs: Snapshot, property: &str) -> Result<Graph, String> {
                 .get(&key(&after)?)
                 .ok_or("transition leaves the declared bounds")?;
             if !*legal.get(to).ok_or("missing post-state law assessment")? {
+                if blocked.len() == EDGES {
+                    return Err("finite graph edge cap exceeded".into());
+                }
+                blocked.push(Blocked {
+                    from,
+                    to,
+                    transition: transition.id.as_str().into(),
+                    laws: failing
+                        .get(to)
+                        .into_iter()
+                        .flatten()
+                        .map(|law| (*law).to_owned())
+                        .collect(),
+                });
                 continue;
             }
             if edges.len() == EDGES {
@@ -247,6 +290,7 @@ fn build(inputs: Snapshot, property: &str) -> Result<Graph, String> {
         inputs,
         initial,
         edges,
+        blocked,
     })
 }
 

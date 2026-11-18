@@ -2457,6 +2457,126 @@
       "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
     },
     {
+      "code": "lifecycle.soundness.cancellation_dead_end",
+      "tier": "T2",
+      "severity": "error",
+      "message": "an exception could cancel a deadline where no declared good or compensated ending is proved reachable: {detail}",
+      "fix": "Add an unguarded path from each listed state to a completed, compensated or resting ending, or drop the exception and keep the deadline strict.",
+      "no_fix": null
+    },
+    {
+      "code": "lifecycle.soundness.compensation_not_closed",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a lifecycle run can end cancelled, compensated or breached without compensating a dispatched effect: {detail}",
+      "fix": "Route every path from the dispatching transition to that ending through its compensating transition.",
+      "no_fix": null
+    },
+    {
+      "code": "lifecycle.soundness.completion_unknown",
+      "tier": "T2",
+      "severity": "info",
+      "message": "a lifecycle ending is reachable from a state only through a guarded transition: {detail}",
+      "fix": "Add an unguarded exit, or check the bounded lifecycle graph, which decides the guards.",
+      "no_fix": null
+    },
+    {
+      "code": "lifecycle.soundness.deadline_without_remedy",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a lifecycle timer leads to a state from which no ending is reachable: {detail}",
+      "fix": "Route the deadline to a remedy, a compensation or an ending.",
+      "no_fix": null
+    },
+    {
+      "code": "lifecycle.soundness.fact_guarded",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a fact transition has a guard, so it could be refused: {detail}",
+      "fix": "Remove the guard: a fact commits, posts a variance or shortfall, or is quarantined. Make it a request if it may be refused.",
+      "no_fix": null
+    },
+    {
+      "code": "lifecycle.soundness.fact_refused",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a governing law refuses a fact transition: {detail}",
+      "fix": "Post the excess to a variance or shortfall bucket instead of refusing, or make the transition a request with a non-request exit.",
+      "no_fix": null
+    },
+    {
+      "code": "lifecycle.soundness.invalid_ending",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a lifecycle ending is malformed: {detail}",
+      "fix": "Name each ending once, give final outcomes only to terminal states and the resting outcome only to non-terminal ones.",
+      "no_fix": null
+    },
+    {
+      "code": "lifecycle.soundness.invalid_event",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a lifecycle external event is malformed: {detail}",
+      "fix": "Use a lowercase unique event id, and ignore an event only in listed states, with a reason, where no transition handles it.",
+      "no_fix": null
+    },
+    {
+      "code": "lifecycle.soundness.invalid_trigger",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a lifecycle transition trigger or compensation is invalid: {detail}",
+      "fix": "Give timers positive canonical milliseconds, trigger only on declared events, leave triggered transitions as facts, and compensate with another declared transition.",
+      "no_fix": null
+    },
+    {
+      "code": "lifecycle.soundness.law_blocked_exit",
+      "tier": "T2",
+      "severity": "error",
+      "message": "governing laws refuse every exit of a reachable lifecycle state: {detail}",
+      "fix": "Add an exit the laws allow, an exception to the blocking law (owner only), a remedy, or declare the state an ending.",
+      "no_fix": null
+    },
+    {
+      "code": "lifecycle.soundness.no_ending",
+      "tier": "T2",
+      "severity": "info",
+      "message": "a lifecycle declares no terminal or resting state: {detail}",
+      "fix": "Declare the lifecycle's endings: terminal states with outcomes, or resting states for a perpetual object.",
+      "no_fix": null
+    },
+    {
+      "code": "lifecycle.soundness.timer_cycle",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a lifecycle cycle fires on timers alone: {detail}",
+      "fix": "Break the cycle with an action or an event, or give it an exit to an ending.",
+      "no_fix": null
+    },
+    {
+      "code": "lifecycle.soundness.trap",
+      "tier": "T2",
+      "severity": "error",
+      "message": "no lifecycle ending is reachable from a reachable state: {detail}",
+      "fix": "Add an exit transition, a remedy or compensation, or declare an ending with an outcome.",
+      "no_fix": null
+    },
+    {
+      "code": "lifecycle.soundness.unhandled_event",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a reachable lifecycle state neither handles nor ignores a declared event: {detail}",
+      "fix": "Add a transition the event triggers from the state, or list the state in the event's ignoredIn with a reason.",
+      "no_fix": null
+    },
+    {
+      "code": "lifecycle.soundness.wait_without_deadline",
+      "tier": "T2",
+      "severity": "error",
+      "message": "a lifecycle state only waits on external events and has no deadline: {detail}",
+      "fix": "Add a timer transition out of the state that leads to a remedy or an ending.",
+      "no_fix": null
+    },
+    {
       "code": "lifecycle.validation.dead_end_state",
       "tier": "T2",
       "severity": "error",

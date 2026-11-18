@@ -273,11 +273,9 @@ PY
       crates/norn-skeleton-guard/scripts/baseline-shrink-only.sh "${NORN_CI_BASE:-HEAD}"
       crates/norn-checker/scripts/non-code-literals-shrink-only.sh "${NORN_CI_BASE:-HEAD}"
       rustup toolchain install nightly-2026-08-18 --profile minimal --no-self-update
-      CARGO_TARGET_DIR="$upstream/cargo-install" cargo install --locked cargo-public-api --version 0.52.0
+      ensure_tool cargo-public-api 0.52.0 cargo-public-api
       crates/norn-skeleton-guard/scripts/public-api-boundary.sh nightly-2026-08-18
-      use_jsonschema
-      python3 scripts/proof_enrollment.py
-      python3 scripts/test_proof_enrollment.py
+      # Proof enrollment and its tests run in `cheap`, which every CI run and `all` include.
       ensure_nextest
       python3 scripts/check_demo_scenarios.py
       ensure_tool cargo-deny 0.19.0 cargo-deny
@@ -303,14 +301,18 @@ PY
       cargo test --locked -p norn-checker-wasm --test parity -- --test-threads=1
       node crates/norn-checker-wasm/tests/parity/parity.mjs "$NORN_CHECKER_WASM_PKG" "$NORN_CHECKER_WASM_PARITY_OUT"
       (cd tools/norn-ts && bun install --frozen-lockfile --backend copyfile && bun run typecheck && bun test --timeout 60000)
-      (cd packages/norn-sdk && bun install --frozen-lockfile --backend copyfile && bun run typecheck && bun test --timeout 60000)
+      # The SDK and demo UI typecheck and tests run in `cheap`; the diff below proves
+      # the regenerated SDK is the committed one those runs checked.
+      (cd packages/norn-sdk && bun install --frozen-lockfile --backend copyfile)
       cargo run --locked -p norn-cli -- openapi > sdks/openapi/norn-api.openapi.json
       (cd packages/norn-sdk && bun run generate)
-      (cd packages/norn-demo-ui && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun run typecheck && bun test)
       python3 -m venv "$upstream/openapi-venv"
       "$upstream/openapi-venv/bin/python" -m pip install --disable-pip-version-check --no-input openapi-spec-validator==0.9.0
       "$upstream/openapi-venv/bin/python" -m openapi_spec_validator sdks/openapi/norn-api.openapi.json
       git diff --exit-code -- sdks/openapi/norn-api.openapi.json packages/norn-sdk/src/generated/norn-api.ts
+      # The Python client is generated here from the checked document, never checked in;
+      # the demo runs it against a dev host (#521).
+      bash sdks/python/run-demo.sh "$upstream/python-client"
       ;;
     browser)
       # Studio browser rows (#1113): Playwright against `vite preview` of this build, with the
@@ -579,16 +581,23 @@ PY
     [[ $# -eq 3 ]] || run_phase usage
     task_lines=$(bundle_plan tasks "$2" "$3")
     [[ $task_lines == phase/test-shards ]] || prepare_inputs
-    pruned=''
+    # One test build per bundle (#1348 CI2): every test shard of a plan builds the same test
+    # binaries (same packages, same features), and so does `test-shards` in a plan that
+    # names no packages. Those tasks run first and back to back, and no prune separates
+    # them, so the first builds and the rest reuse it. Same tasks, only their order changes.
+    shares_build() { [[ $1 == test/* || ( $1 == phase/test-shards && -z ${NORN_CI_PACKAGES:-} ) ]]; }
+    task_lines=$(while read -r task; do if shares_build "$task"; then echo "$task"; fi; done <<<"$task_lines"
+                 while read -r task; do if ! shares_build "$task"; then echo "$task"; fi; done <<<"$task_lines")
+    pruned='' previous=''
     while IFS=/ read -r kind item; do
       task="$kind/$item"
-      # Bundle tasks never share build outputs (the planner packs them freely), so
-      # a task may drop the previous task's target dir when disk runs low (#1059).
-      if [[ -n $pruned ]] && (( $(df -Pk / | awk 'NR == 2 {print $4}') < 40 * 1024 * 1024 )); then
+      # Other bundle tasks never share build outputs (the planner packs them freely), so a
+      # task may drop the previous task's target dir when disk runs low (#1059).
+      if [[ -n $pruned ]] && ! { shares_build "$previous" && shares_build "$task"; } && (( $(df -Pk / | awk 'NR == 2 {print $4}') < 40 * 1024 * 1024 )); then
         prune_target
         printf '::notice::pruned target before %s; %s KiB free\n' "$task" "$(df -Pk / | awk 'NR == 2 {print $4}')"
       fi
-      pruned=1
+      pruned=1 previous=$task
       printf '::group::%s\n' "$task"
       (
         task_start=$SECONDS
