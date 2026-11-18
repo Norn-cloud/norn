@@ -16,6 +16,7 @@ function stage(invited?: string) {
     AUTH_DB: db as unknown as D1Database,
     BETTER_AUTH_SECRET: "t".repeat(40),
     BETTER_AUTH_URL: ORIGIN,
+    STUDIO_CLIENT_IP_HEADER: "cf-connecting-ip",
     ...invited === undefined ? {} : { STUDIO_SIGNUP_EMAILS: invited },
   }
   return { db, env }
