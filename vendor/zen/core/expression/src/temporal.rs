@@ -10,8 +10,8 @@ use crate::functions::defs::{FunctionDefinition, FunctionSignature, StaticFuncti
 use crate::functions::InternalFunction;
 use crate::variable::{DynamicVariable, VariableType};
 use crate::Variable;
-use jiff::civil::{Date, DateTime};
-use jiff::{SignedDuration, Span};
+use jiff::civil::{Date, DateTime, Time};
+use jiff::Span;
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 use serde_json::Value;
@@ -110,11 +110,7 @@ impl Temporal {
         }
         // RFC 3339 field ranges: hour 00-23, minute 00-59 and second 00-59 (second
         // 60, a leap second, is refused), offset hour 00-23 and minute 00-59.
-        let (hour, minute, second) = (
-            digits(&b[11..13]),
-            digits(&b[14..16]),
-            digits(&b[17..19]),
-        );
+        let (hour, minute, second) = (digits(&b[11..13]), digits(&b[14..16]), digits(&b[17..19]));
         let nanos = if zone > 20 {
             let fraction = &b[20..zone];
             digits(fraction) * 10_i32.pow(9 - fraction.len() as u32)
@@ -139,9 +135,7 @@ impl Temporal {
             return Err(TemporalError::InvalidTimestamp);
         }
         let local = date.at(hour as i8, minute as i8, second as i8, nanos);
-        let utc = local
-            .checked_sub(SignedDuration::from_secs(i64::from(offset_seconds)))
-            .map_err(|_| TemporalError::OutOfRange)?;
+        let utc = shift(local, -i64::from(offset_seconds)).ok_or(TemporalError::OutOfRange)?;
         if !in_range(utc.year()) {
             return Err(TemporalError::OutOfRange);
         }
@@ -171,6 +165,26 @@ fn digits(bytes: &[u8]) -> i32 {
     bytes
         .iter()
         .fold(0, |value, digit| value * 10 + i32::from(digit - b'0'))
+}
+
+/// `reading` moved by `seconds`, using integer seconds-of-day and whole-day
+/// date arithmetic only: exact over the whole civil range, where jiff's civil
+/// time arithmetic refuses results near its upper end and long durations.
+fn shift(reading: DateTime, seconds: i64) -> Option<DateTime> {
+    let of_day = i64::from(reading.hour()) * 3_600
+        + i64::from(reading.minute()) * 60
+        + i64::from(reading.second());
+    let of_day = of_day.checked_add(seconds)?;
+    let days = Span::new().try_days(of_day.div_euclid(86_400)).ok()?;
+    let of_day = of_day.rem_euclid(86_400);
+    let time = Time::new(
+        (of_day / 3_600) as i8,
+        (of_day % 3_600 / 60) as i8,
+        (of_day % 60) as i8,
+        reading.subsec_nanosecond(),
+    )
+    .ok()?;
+    Some(reading.date().checked_add(days).ok()?.to_datetime(time))
 }
 
 /// Whole seconds since the Unix epoch (floored) and the nanosecond of the
@@ -210,7 +224,13 @@ impl Display for Temporal {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match &self.0 {
             Kind::Date(date) => {
-                write!(f, "{:04}-{:02}-{:02}", date.year(), date.month(), date.day())
+                write!(
+                    f,
+                    "{:04}-{:02}-{:02}",
+                    date.year(),
+                    date.month(),
+                    date.day()
+                )
             }
             Kind::Timestamp(utc) => write_utc(f, utc),
         }
@@ -304,9 +324,7 @@ pub(crate) fn definition(kind: InternalFunction) -> Rc<dyn FunctionDefinition> {
                     let Kind::Timestamp(dt) = &args.dynamic::<Temporal>(0)?.0 else {
                         return Err(TemporalError::MixedKinds.into());
                     };
-                    let result = dt
-                        .checked_add(SignedDuration::from_secs(integer(&args, 1)?))
-                        .map_err(|_| TemporalError::OutOfRange)?;
+                    let result = shift(*dt, integer(&args, 1)?).ok_or(TemporalError::OutOfRange)?;
                     anyhow::ensure!(in_range(result.year()), TemporalError::OutOfRange);
                     Ok(Temporal(Kind::Timestamp(result)).into_variable())
                 }

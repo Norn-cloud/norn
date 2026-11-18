@@ -354,7 +354,9 @@ impl From<&InternalFunction> for Rc<dyn FunctionDefinition> {
             // the signatures stay for the analyser and the call is refused.
             IF::Date => Rc::new(CompositeFunction {
                 implementation: Rc::new(|_| {
-                    Err(anyhow::anyhow!("`d` is not part of the Norn temporal profile"))
+                    Err(anyhow::anyhow!(
+                        "`d` is not part of the Norn temporal profile"
+                    ))
                 }),
                 signatures: vec![
                     FunctionSignature {
