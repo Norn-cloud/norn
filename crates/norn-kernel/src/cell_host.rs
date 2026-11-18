@@ -985,7 +985,7 @@ enum Admission<'c> {
     /// An ordinary commit: [`check_commit`].
     Plain,
     /// A kernel-prepared parent and owned-row commit: [`check_commit_owned_rows`].
-    OwnedRows(OwnedRowsCommitProof),
+    OwnedRows(Box<OwnedRowsCommitProof>),
     /// A sealed observation: [`crate::check_commit_observed`].
     Observed(&'c ObservationAuthorization),
 }
@@ -1030,7 +1030,7 @@ impl<'c, E, C, T> Proposed<'c, E, C, T> {
     ) -> Result<Authorized<'c, E, C, T>, CommitError<X>> {
         let admission = match (authorization, owned_rows) {
             (None, None) => Admission::Plain,
-            (None, Some(proof)) => Admission::OwnedRows(proof),
+            (None, Some(proof)) => Admission::OwnedRows(Box::new(proof)),
             (Some(authorization), None) => Admission::Observed(authorization),
             (Some(_), Some(_)) => return Err(CommitError::ObservationAuthorization),
         };
@@ -1054,7 +1054,9 @@ impl<'c, E, C, T: Serialize> Authorized<'c, E, C, T> {
     ) -> Result<Checked<'c, E, C, T>, CommitError<V::Error>> {
         let versions = match self.admission {
             Admission::Plain => check_commit(self.commit, model, view),
-            Admission::OwnedRows(proof) => check_commit_owned_rows(self.commit, model, view, proof),
+            Admission::OwnedRows(proof) => {
+                check_commit_owned_rows(self.commit, model, view, *proof)
+            }
             Admission::Observed(authorization) => {
                 crate::check_commit_observed(self.commit, model, view, authorization)
             }
