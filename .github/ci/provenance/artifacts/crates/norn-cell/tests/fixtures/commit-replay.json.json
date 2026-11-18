@@ -6,8 +6,7 @@
   "sources": [],
   "analyzed_sources": [],
   "parents": [
-    "crates/norn-cell/tests/commit_path.rs",
-    "fixtures/stress/purchase.json"
+    "crates/norn-cell/tests/commit_path.rs"
   ],
   "rights_evidence": [
     {

@@ -43,7 +43,8 @@ pub mod counters {
         TypeCatalogBuilds,
         /// Effective object models derived by a `TypeCatalog`.
         EffectiveModelBuilds,
-        /// SQL statements sent to the storage engine.
+        /// Calls into the storage engine: one per statement, and one per
+        /// `execute_batch` script (schema setup, never on the commit path).
         SqlStatements,
         /// Rows inserted, updated or deleted by those statements.
         RowsWritten,

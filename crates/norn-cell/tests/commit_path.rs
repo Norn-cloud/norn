@@ -114,6 +114,20 @@ fn creates(prefix: &str, rows: usize) -> CellCommit<FactEvent, JsonObject, JsonO
     }
 }
 
+/// `creates`, with the `Created` ledger event of each object.
+fn creates_with_events(prefix: &str, rows: usize) -> CellCommit<FactEvent, JsonObject, JsonObject> {
+    let mut commit = creates(prefix, rows);
+    commit.events = commit
+        .writes
+        .iter()
+        .map(|write| FactEvent::Created {
+            key: write.key.clone(),
+            values: serde_json::from_value(json!({"qty": 1, "label": "item"})).expect("values"),
+        })
+        .collect();
+    commit
+}
+
 fn json_counts(counts: &Counts) -> Value {
     counts
         .entries()
@@ -196,7 +210,7 @@ fn replay_transcript() -> Value {
         };
         steps.push(result);
     };
-    record(&mut cell, creates("a", 10));
+    record(&mut cell, creates_with_events("a", 10));
     let updates = (0_i64..5)
         .map(|i| {
             let key = FactKey::new(OBJECT_TYPE, format!("a{i:04}"));
@@ -238,7 +252,7 @@ fn replay_transcript() -> Value {
             ..CellCommit::empty()
         },
     );
-    let mut mixed = creates("b", 3);
+    let mut mixed = creates_with_events("b", 3);
     let key = FactKey::new(OBJECT_TYPE, "a0005");
     let version = cell.load(&key).expect("load").version;
     mixed.writes.push(put("a0005", version, 7));
@@ -266,6 +280,7 @@ fn replay_transcript() -> Value {
                 "event": entry.event, "prevHash": entry.prev_hash, "hash": entry.hash})
         })
         .collect();
+    assert!(!ledger.is_empty(), "the sequence exercises ledger chaining");
     json!({"steps": steps, "receipts": receipts, "ledger": ledger})
 }
 
