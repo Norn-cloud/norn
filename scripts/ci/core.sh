@@ -581,16 +581,23 @@ PY
     [[ $# -eq 3 ]] || run_phase usage
     task_lines=$(bundle_plan tasks "$2" "$3")
     [[ $task_lines == phase/test-shards ]] || prepare_inputs
-    pruned=''
+    # One test build per bundle (#1348 CI2): every test shard of a plan builds the same test
+    # binaries (same packages, same features), and so does `test-shards` in a plan that
+    # names no packages. Those tasks run first and back to back, and no prune separates
+    # them, so the first builds and the rest reuse it. Same tasks, only their order changes.
+    shares_build() { [[ $1 == test/* || ( $1 == phase/test-shards && -z ${NORN_CI_PACKAGES:-} ) ]]; }
+    task_lines=$(while read -r task; do if shares_build "$task"; then echo "$task"; fi; done <<<"$task_lines"
+                 while read -r task; do if ! shares_build "$task"; then echo "$task"; fi; done <<<"$task_lines")
+    pruned='' previous=''
     while IFS=/ read -r kind item; do
       task="$kind/$item"
-      # Bundle tasks never share build outputs (the planner packs them freely), so
-      # a task may drop the previous task's target dir when disk runs low (#1059).
-      if [[ -n $pruned ]] && (( $(df -Pk / | awk 'NR == 2 {print $4}') < 40 * 1024 * 1024 )); then
+      # Other bundle tasks never share build outputs (the planner packs them freely), so a
+      # task may drop the previous task's target dir when disk runs low (#1059).
+      if [[ -n $pruned ]] && ! { shares_build "$previous" && shares_build "$task"; } && (( $(df -Pk / | awk 'NR == 2 {print $4}') < 40 * 1024 * 1024 )); then
         prune_target
         printf '::notice::pruned target before %s; %s KiB free\n' "$task" "$(df -Pk / | awk 'NR == 2 {print $4}')"
       fi
-      pruned=1
+      pruned=1 previous=$task
       printf '::group::%s\n' "$task"
       (
         task_start=$SECONDS
