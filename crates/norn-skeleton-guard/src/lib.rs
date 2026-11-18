@@ -1035,31 +1035,44 @@ pub fn check_dependencies(metadata: &Metadata) -> Vec<Violation> {
 
 fn check_calendar_dependencies(name: &str, dep: &Dependency, out: &mut Vec<Violation>) {
     let dep_name = dep.name.as_str();
-    if matches!(name, "norn-expr" | "norn-importers")
+    if name == "norn-importers"
         && dep_name == "chrono"
         && dep.kind != DependencyKind::Development
         && (dep.uses_default_features || dep.features != ["std"])
     {
         out.push(violation(
-            if name == "norn-expr" {
-                "norn-expr-temporal-features"
-            } else {
-                "norn-importers-calendar-features"
-            },
+            "norn-importers-calendar-features",
             format!("`{name}` must use chrono with default features off and only `std`"),
         ));
     }
+    if name == "norn-expr" && dep_name == "jiff" && dep.kind != DependencyKind::Development {
+        // Any feature beyond `std` admits another timezone source: the host's
+        // zoneinfo (`tz-system`, `tzdb-zoneinfo`), a bundled database other
+        // than the pinned `jiff-tzdb` below (`tzdb-*`), or serde/logging.
+        if dep.uses_default_features || dep.features != ["std"] {
+            out.push(violation(
+                "norn-expr-temporal-features",
+                format!("`{name}` must use jiff with default features off and only `std`"),
+            ));
+        }
+        if dep.req.to_string() != "=0.2.37" {
+            out.push(violation(
+                "norn-expr-timezone-features",
+                "`norn-expr` must pin jiff = 0.2.37 (its TZif reader renders naming-series dates)"
+                    .to_owned(),
+            ));
+        }
+    }
+    // The naming-series timezone data: IANA tzdb 2025b, recorded in events as
+    // `NAMING_SERIES_TZDB_VERSION`. A new release is a versioned change (#1440).
     if name == "norn-expr"
-        && dep_name == "chrono-tz"
+        && dep_name == "jiff-tzdb"
         && dep.kind != DependencyKind::Development
-        && (dep.req.to_string() != "=0.10.4"
-            || dep.uses_default_features
-            || dep.features != ["std"])
+        && (dep.req.to_string() != "=0.1.4" || !dep.features.is_empty())
     {
         out.push(violation(
             "norn-expr-timezone-features",
-            "`norn-expr` must use chrono-tz = 0.10.4 with default features off and only `std`"
-                .to_owned(),
+            "`norn-expr` must pin jiff-tzdb = 0.1.4 (tzdb 2025b) with no features".to_owned(),
         ));
     }
 }

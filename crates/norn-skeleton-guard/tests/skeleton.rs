@@ -422,10 +422,14 @@ fn guard_refuses_temporal_clock_and_locale_features() {
     let rule = "norn-expr-temporal-features";
     for (defaults, features) in [
         (true, vec!["std".to_owned()]),
-        (false, vec!["std".to_owned(), "clock".to_owned()]),
-        (false, vec!["std".to_owned(), "unstable-locales".to_owned()]),
+        (false, vec!["std".to_owned(), "tz-system".to_owned()]),
+        (false, vec!["std".to_owned(), "tzdb-zoneinfo".to_owned()]),
+        (
+            false,
+            vec!["std".to_owned(), "tzdb-bundle-always".to_owned()],
+        ),
     ] {
-        let changed = edit_dependency(&base, package_name, "chrono", |dependency| {
+        let changed = edit_dependency(&base, package_name, "jiff", |dependency| {
             dependency["uses_default_features"] = json!(defaults);
             dependency["features"] = json!(features);
         });
@@ -439,24 +443,34 @@ fn guard_refuses_temporal_clock_and_locale_features() {
 }
 
 #[test]
-fn guard_requires_pinned_std_only_timezone_data() {
+fn guard_requires_pinned_std_only_timezone_reader() {
     let base = metadata();
     assert!(check_dependencies(&base).is_empty());
 
-    let defaults_on = edit_dependency(&base, "norn-expr", "chrono-tz", |dependency| {
+    let defaults_on = edit_dependency(&base, "norn-expr", "jiff", |dependency| {
         dependency["uses_default_features"] = json!(true);
     });
-    assert!(rules_of(&check_dependencies(&defaults_on)).contains(&"norn-expr-timezone-features"));
+    assert!(rules_of(&check_dependencies(&defaults_on)).contains(&"norn-expr-temporal-features"));
 
-    let extra_feature = edit_dependency(&base, "norn-expr", "chrono-tz", |dependency| {
+    let extra_feature = edit_dependency(&base, "norn-expr", "jiff", |dependency| {
         dependency["features"] = json!(["std", "serde"]);
     });
-    assert!(rules_of(&check_dependencies(&extra_feature)).contains(&"norn-expr-timezone-features"));
+    assert!(rules_of(&check_dependencies(&extra_feature)).contains(&"norn-expr-temporal-features"));
 
-    let floating_pin = edit_dependency(&base, "norn-expr", "chrono-tz", |dependency| {
-        dependency["req"] = json!("^0.10.4");
+    let floating_pin = edit_dependency(&base, "norn-expr", "jiff", |dependency| {
+        dependency["req"] = json!("^0.2.37");
     });
     assert!(rules_of(&check_dependencies(&floating_pin)).contains(&"norn-expr-timezone-features"));
+
+    for req in ["^0.1.4", "=0.1.8", "0.1"] {
+        let moved_data = edit_dependency(&base, "norn-expr", "jiff-tzdb", |dependency| {
+            dependency["req"] = json!(req);
+        });
+        assert!(
+            rules_of(&check_dependencies(&moved_data)).contains(&"norn-expr-timezone-features"),
+            "{req}"
+        );
+    }
 }
 
 #[test]

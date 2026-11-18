@@ -10,16 +10,20 @@
 
 use std::fmt;
 use std::ops::Range;
-use std::sync::OnceLock;
 
 use jiff::civil::{Date, DateTime, Time};
-use jiff::tz::{TimeZone, TimeZoneDatabase};
+use jiff::tz::TimeZone;
 use jiff::{Span, Timestamp};
 
-/// IANA timezone database version bundled by the exact-pinned `jiff-tzdb`
-/// dependency (the only database `jiff` is built with here), for
-/// naming-series allocation provenance.
-pub const NAMING_SERIES_TZDB_VERSION: &str = "2026c";
+/// IANA timezone database release of the exact-pinned `jiff-tzdb` data (the
+/// only timezone data used here), for naming-series allocation provenance.
+/// It is the release `chrono-tz` 0.10.4 had; moving it is #1440.
+pub const NAMING_SERIES_TZDB_VERSION: &str = "2025b";
+
+/// The one zone name `jiff-tzdb` 0.1.4 carries that `chrono-tz` 0.10.4 did
+/// not (tzdb's `factory` file). Refusing it keeps the accepted names exactly
+/// `chrono-tz` 0.10.4's 597.
+const NOT_A_CHRONO_TZ_ZONE: &str = "Factory";
 
 /// A temporal value did not satisfy the supported wire representation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -74,20 +78,17 @@ pub fn validate_timezone(timezone: &str) -> Result<(), TemporalError> {
     pinned_timezone(timezone).map(|_| ())
 }
 
-/// The pinned database's zone with exactly this identifier. The database
-/// lookup ignores ASCII case, so the canonical name must match byte for byte.
-/// The bundled database is named explicitly: `jiff::tz::db()` would consult
-/// the host's zoneinfo when another crate enables that feature.
+/// The pinned database's zone with exactly this identifier. `jiff_tzdb::get`
+/// ignores ASCII case, so the canonical name must match byte for byte, as
+/// `chrono-tz`'s `FromStr` required. The data is read from `jiff-tzdb`
+/// directly: `jiff::tz::db()` would consult the host's zoneinfo when another
+/// crate enables that feature.
 fn pinned_timezone(name: &str) -> Result<TimeZone, TemporalError> {
-    static PINNED: OnceLock<TimeZoneDatabase> = OnceLock::new();
-    let timezone = PINNED
-        .get_or_init(TimeZoneDatabase::bundled)
-        .get(name)
-        .map_err(|_lookup_error| TemporalError::InvalidTimezone)?;
-    if timezone.iana_name() == Some(name) {
-        Ok(timezone)
-    } else {
-        Err(TemporalError::InvalidTimezone)
+    match jiff_tzdb::get(name) {
+        Some((canonical, data)) if canonical == name && name != NOT_A_CHRONO_TZ_ZONE => {
+            TimeZone::tzif(name, data).map_err(|_parse_error| TemporalError::InvalidTimezone)
+        }
+        Some(_) | None => Err(TemporalError::InvalidTimezone),
     }
 }
 
@@ -249,7 +250,10 @@ fn utc_reading(value: &str) -> Result<DateTime, TemporalError> {
     let nanos = if bytes.get(19) == Some(&b'.') {
         let digits = zone_start.checked_sub(20).ok_or(INVALID)?;
         let scale = 10_i32
-            .checked_pow(u32::try_from(9_usize.checked_sub(digits).ok_or(INVALID)?).map_err(|_error| INVALID)?)
+            .checked_pow(
+                u32::try_from(9_usize.checked_sub(digits).ok_or(INVALID)?)
+                    .map_err(|_error| INVALID)?,
+            )
             .ok_or(INVALID)?;
         field(20..zone_start)?.checked_mul(scale).ok_or(INVALID)?
     } else {
@@ -282,8 +286,11 @@ fn utc_reading(value: &str) -> Result<DateTime, TemporalError> {
     )
     .map_err(|_error| INVALID)?;
     let date = calendar_date(bytes).ok_or(INVALID)?;
-    shift(date.to_datetime(time), offset_seconds.checked_neg().ok_or(INVALID)?.into())
-        .ok_or(INVALID)
+    shift(
+        date.to_datetime(time),
+        offset_seconds.checked_neg().ok_or(INVALID)?.into(),
+    )
+    .ok_or(INVALID)
 }
 
 /// `reading` moved by `seconds`, using integer seconds-of-day and whole-day
@@ -548,8 +555,55 @@ mod tests {
     }
 
     #[test]
-    fn the_named_tzdb_version_is_the_bundled_one() {
+    fn the_named_tzdb_version_is_the_pinned_data() {
         assert_eq!(jiff_tzdb::VERSION, Some(NAMING_SERIES_TZDB_VERSION));
+        // tzdb 2026c moved America/Edmonton to year-round UTC-6 from
+        // 2026-12-01; in 2025b it is back on MST (UTC-7) that winter, so
+        // 2027-01-01T06:30Z is still 2026-12-31 there. A data bump fails here.
+        assert_eq!(
+            naming_series_date_at(1_798_785_000_000, "America/Edmonton"),
+            Ok(NamingSeriesDate {
+                year: 2026,
+                month: 12,
+                day: 31,
+            })
+        );
+    }
+
+    #[test]
+    fn the_zone_names_are_exactly_chrono_tz_0_10_4s() {
+        let names: Vec<&str> = jiff_tzdb::available()
+            .filter(|name| *name != "Factory")
+            .collect();
+        assert_eq!(names.len(), 597);
+        for name in &names {
+            assert_eq!(validate_timezone(name), Ok(()), "{name}");
+        }
+        // Links from `backward` and `etcetera` are names in their own right.
+        for name in ["US/Eastern", "Etc/GMT+5", "UTC", "Zulu", "Asia/Calcutta"] {
+            assert!(names.contains(&name), "{name}");
+        }
+        // `Factory` (tzdb's `factory` file) was never part of chrono-tz, the
+        // lookup is case-sensitive as chrono-tz's `FromStr` was, and only
+        // whole names match.
+        for name in [
+            "Factory",
+            "factory",
+            "america/new_york",
+            "AMERICA/NEW_YORK",
+            "America/New_York ",
+            "America",
+            "",
+            "localtime",
+            "posixrules",
+            "EST5EDT,M3.2.0,M11.1.0",
+        ] {
+            assert_eq!(
+                validate_timezone(name),
+                Err(TemporalError::InvalidTimezone),
+                "{name:?}"
+            );
+        }
     }
 
     #[test]
