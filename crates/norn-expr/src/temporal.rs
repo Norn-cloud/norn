@@ -13,8 +13,8 @@ use std::ops::Range;
 use std::sync::OnceLock;
 
 use jiff::civil::{Date, DateTime, Time};
-use jiff::tz::{Offset, TimeZone, TimeZoneDatabase};
-use jiff::{SignedDuration, Timestamp};
+use jiff::tz::{TimeZone, TimeZoneDatabase};
+use jiff::{Span, Timestamp};
 
 /// IANA timezone database version bundled by the exact-pinned `jiff-tzdb`
 /// dependency (the only database `jiff` is built with here), for
@@ -106,11 +106,7 @@ pub fn naming_series_date_at(
     timezone: &str,
 ) -> Result<NamingSeriesDate, TemporalError> {
     let timezone = pinned_timezone(timezone)?;
-    let local = match Timestamp::from_millisecond(epoch_millis) {
-        Ok(instant) => timezone.to_offset(instant).to_datetime(instant),
-        Err(_range_error) => local_after_last_instant(epoch_millis, &timezone)?,
-    };
-    let date = local.date();
+    let date = local_date(epoch_millis, &timezone)?;
     let year = date.year();
     if !(0..=9_999).contains(&year) {
         return Err(TemporalError::InstantOutOfRange);
@@ -122,26 +118,28 @@ pub fn naming_series_date_at(
     })
 }
 
-/// `jiff::Timestamp` ends a day before the last civil date-time, so an instant
-/// in that final stretch is converted on the civil scale with the zone's
-/// offset at the last representable instant. Earlier instants are refused.
-fn local_after_last_instant(
-    epoch_millis: i64,
-    timezone: &TimeZone,
-) -> Result<DateTime, TemporalError> {
-    let last_millis = Timestamp::MAX.as_millisecond();
-    let excess = epoch_millis
-        .checked_sub(last_millis)
-        .filter(|excess| *excess > 0)
-        .ok_or(TemporalError::InstantOutOfRange)?;
-    let last = Timestamp::from_millisecond(last_millis)
-        .map_err(|_error| TemporalError::InstantOutOfRange)?;
-    let offset = timezone.to_offset(Timestamp::MAX);
-    Offset::UTC
-        .to_datetime(last)
-        .checked_add(SignedDuration::from_millis(excess))
-        .and_then(|utc| utc.checked_add(SignedDuration::from_secs(i64::from(offset.seconds()))))
-        .map_err(|_error| TemporalError::InstantOutOfRange)
+/// The local calendar date of an epoch-millisecond instant. The zone's offset
+/// is the one at the instant, or at the nearest representable instant beyond
+/// either end of `jiff::Timestamp` (which stops a day short of the civil
+/// range). Only whole days are added to a date, which is exact over the whole
+/// civil range.
+fn local_date(epoch_millis: i64, timezone: &TimeZone) -> Result<Date, TemporalError> {
+    const OUT: TemporalError = TemporalError::InstantOutOfRange;
+    let instant = Timestamp::from_millisecond(epoch_millis).unwrap_or(if epoch_millis < 0 {
+        Timestamp::MIN
+    } else {
+        Timestamp::MAX
+    });
+    let offset_millis = i64::from(timezone.to_offset(instant).seconds())
+        .checked_mul(1_000)
+        .ok_or(OUT)?;
+    let local_millis = epoch_millis.checked_add(offset_millis).ok_or(OUT)?;
+    let days = Span::new()
+        .try_days(local_millis.div_euclid(86_400_000))
+        .map_err(|_error| OUT)?;
+    Date::constant(1970, 1, 1)
+        .checked_add(days)
+        .map_err(|_error| OUT)
 }
 
 /// Validates the exact `EntityIR` calendar-date representation.
@@ -283,11 +281,30 @@ fn utc_reading(value: &str) -> Result<DateTime, TemporalError> {
         nanos,
     )
     .map_err(|_error| INVALID)?;
-    calendar_date(bytes)
-        .ok_or(INVALID)?
-        .to_datetime(time)
-        .checked_sub(SignedDuration::from_secs(i64::from(offset_seconds)))
-        .map_err(|_error| INVALID)
+    let date = calendar_date(bytes).ok_or(INVALID)?;
+    shift(date.to_datetime(time), offset_seconds.checked_neg().ok_or(INVALID)?.into())
+        .ok_or(INVALID)
+}
+
+/// `reading` moved by `seconds`, using integer seconds-of-day and whole-day
+/// date arithmetic only (exact over the whole civil range, unlike jiff's
+/// civil time arithmetic near its upper end).
+fn shift(reading: DateTime, seconds: i64) -> Option<DateTime> {
+    let of_day = i64::from(reading.hour())
+        .checked_mul(3_600)?
+        .checked_add(i64::from(reading.minute()).checked_mul(60)?)?
+        .checked_add(i64::from(reading.second()))?
+        .checked_add(seconds)?;
+    let days = Span::new().try_days(of_day.div_euclid(86_400)).ok()?;
+    let of_day = of_day.rem_euclid(86_400);
+    let time = Time::new(
+        i8::try_from(of_day / 3_600).ok()?,
+        i8::try_from(of_day % 3_600 / 60).ok()?,
+        i8::try_from(of_day % 60).ok()?,
+        reading.subsec_nanosecond(),
+    )
+    .ok()?;
+    Some(reading.date().checked_add(days).ok()?.to_datetime(time))
 }
 
 /// RFC 3339 with `Z` and the shortest exact fraction of 0, 3, 6 or 9 digits.
