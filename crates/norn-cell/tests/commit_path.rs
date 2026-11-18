@@ -78,8 +78,8 @@ fn laws(count: usize) -> Vec<ArtifactEnvelope> {
         .collect()
 }
 
-fn cell(laws: usize) -> Cell {
-    let model = Model::from_definitions(&[object_type(INVARIANTS)], &[])
+fn cell(invariants: usize, laws: usize) -> Cell {
+    let model = Model::from_definitions(&[object_type(invariants)], &[])
         .expect("model")
         .with_governing_laws(&self::laws(laws))
         .expect("laws");
@@ -139,8 +139,8 @@ fn json_counts(counts: &Counts) -> Value {
 
 /// The counts of one checked commit of `rows` fresh objects, after one warm-up
 /// commit on the same cell.
-fn measure(laws: usize, rows: usize) -> Counts {
-    let mut cell = cell(laws);
+fn measure(invariants: usize, laws: usize, rows: usize) -> Counts {
+    let mut cell = cell(invariants, laws);
     cell.commit(creates("warm", 1)).expect("warm-up commit");
     let _warm_up = counters::take();
     cell.commit(creates("row", rows)).expect("measured commit");
@@ -156,28 +156,39 @@ fn commit_counters_by_size() {
         );
     }
     let mut lines = Vec::new();
+    let mut sample = |axis: &str, invariants: usize, laws: usize, rows: usize| {
+        let counts = measure(invariants, laws, rows);
+        lines.push(json!({"axis": axis, "rows": rows, "laws": laws, "invariants": invariants, "counts": json_counts(&counts)}));
+    };
     for rows in [10, 100, 1_000] {
-        let counts = measure(4, rows);
-        lines.push(json!({"axis": "rows", "rows": rows, "laws": 4, "invariants": INVARIANTS, "counts": json_counts(&counts)}));
+        sample("rows", INVARIANTS, 4, rows);
     }
     for laws in [10, 100, 1_000] {
-        let counts = measure(laws, 10);
-        lines.push(json!({"axis": "laws", "rows": 10, "laws": laws, "invariants": INVARIANTS, "counts": json_counts(&counts)}));
+        sample("laws", INVARIANTS, laws, 10);
     }
-    // P5: definition-derived work is done once per commit, not once per row.
-    for name in [
-        "expression_compiles",
-        "expression_environment_builds",
-        "law_decodes",
-    ] {
-        let by_rows: Vec<_> = lines
-            .iter()
-            .filter(|line| line["axis"] == "rows")
-            .map(|line| line["counts"][name].clone())
-            .collect();
-        assert!(
-            by_rows.windows(2).all(|pair| pair[0] == pair[1]),
-            "{name} grows with rows: {by_rows:?}"
+    for invariants in [10, 100, 1_000] {
+        sample("invariants", invariants, 4, 10);
+    }
+    // P5: definition-derived work is done once per commit: one compile per
+    // declared invariant and law, one decode per law and one typed
+    // environment, whatever the row count.
+    for line in &lines {
+        let declared = |name: &str| line[name].as_u64().expect("size");
+        let counts = &line["counts"];
+        assert_eq!(
+            counts["expression_compiles"],
+            json!(declared("invariants") + declared("laws")),
+            "compiles: {line}"
+        );
+        assert_eq!(
+            counts["law_decodes"],
+            json!(declared("laws")),
+            "decodes: {line}"
+        );
+        assert_eq!(
+            counts["expression_environment_builds"],
+            json!(1),
+            "environments: {line}"
         );
     }
     for line in &lines {
@@ -198,10 +209,67 @@ fn commit_counters_by_size() {
     }
 }
 
+/// A type whose invariant reads a declared decimal, so it runs on the exact
+/// profile: typed check and lowering, now prepared once per catalog.
+fn decimal_cell() -> Cell {
+    let object_type: ObjectTypeDef = serde_json::from_value(json!({
+        "name": "bench.Priced",
+        "properties": [{"id": "amount", "type": {"kind": "decimal", "scale": 2, "unit": {"system": "ucum", "code": "1"}}}],
+        "invariants": [{"id": "nonnegative", "expression": "self.amount >= 0", "message": "amount is not negative"}]
+    }))
+    .expect("decimal type");
+    let model = Model::from_definitions(&[object_type], &[]).expect("model");
+    Cell::new(
+        CellStore::open_in_memory(model).expect("SQLite"),
+        "org_demo/dev",
+        |command| command.payload.clone(),
+    )
+    .expect("cell")
+}
+
+fn decimal_creates(prefix: &str, rows: usize) -> CellCommit<FactEvent, JsonObject, JsonObject> {
+    let amount = norn_ir::RuntimeValue::from(norn_ir::Decimal::parse("1.25").expect("decimal"));
+    CellCommit {
+        writes: (0..rows)
+            .map(|i| FactWrite {
+                key: FactKey::new("bench.Priced", format!("{prefix}{i:04}")),
+                expected: FactVersion::ABSENT,
+                mutation: FactMutation::Put {
+                    values: JsonObject::from([("amount".to_owned(), amount.clone())]),
+                },
+            })
+            .collect(),
+        ..CellCommit::empty()
+    }
+}
+
+#[test]
+fn decimal_invariants_prepare_once_per_commit() {
+    let mut by_rows = Vec::new();
+    for rows in [10, 100] {
+        let mut cell = decimal_cell();
+        cell.commit(decimal_creates("warm", 1))
+            .expect("warm-up commit");
+        let _warm_up = counters::take();
+        cell.commit(decimal_creates("row", rows))
+            .expect("measured commit");
+        let counts = counters::take();
+        println!(
+            "COMMIT-COUNTERS {}",
+            json!({"axis": "decimal-rows", "rows": rows, "counts": json_counts(&counts)})
+        );
+        by_rows.push(counts.expression_compiles);
+    }
+    assert_eq!(
+        by_rows[0], by_rows[1],
+        "decimal compiles grow with rows: {by_rows:?}"
+    );
+}
+
 /// One recorded commit sequence: every kernel result, then every stored
 /// receipt and ledger entry, as one JSON document.
 fn replay_transcript() -> Value {
-    let mut cell = cell(3);
+    let mut cell = cell(INVARIANTS, 3);
     let mut steps = Vec::new();
     let mut record = |cell: &mut Cell, commit| {
         let result = match cell.commit(commit) {

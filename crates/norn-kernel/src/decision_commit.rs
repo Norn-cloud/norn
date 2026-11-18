@@ -96,6 +96,7 @@ struct DefinitionMemo {
     expressions: Mutex<BTreeMap<String, Result<Arc<Expression>, String>>>,
     base_environment: OnceLock<Result<Arc<norn_expr::ZenTypeEnv>, String>>,
     environments: Mutex<BTreeMap<ObjectTypeName, Result<Arc<norn_expr::ZenTypeEnv>, String>>>,
+    admissions: Mutex<BTreeMap<(ObjectTypeName, String), Arc<norn_expr::PreparedAdmission>>>,
     laws: OnceLock<
         BTreeMap<usize, Result<norn_ir::LawIR, crate::governing_laws::LawEvaluationError>>,
     >,
@@ -317,6 +318,29 @@ impl<'a> TypeCatalog<'a> {
             .map_err(|error| error.to_string());
         expressions.insert(source.to_owned(), compiled.clone());
         compiled
+    }
+
+    /// How the invariant `expression` on `object_type` runs as a Boolean in
+    /// `env` (that type's [`Self::shared_expression_environment`]), decided
+    /// once per catalog.
+    pub(crate) fn prepared_invariant(
+        &self,
+        object_type: &ObjectTypeName,
+        expression: &Expression,
+        env: &norn_expr::ZenTypeEnv,
+    ) -> Arc<norn_expr::PreparedAdmission> {
+        let mut admissions = self
+            .memo
+            .admissions
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        Arc::clone(
+            admissions
+                .entry((object_type.clone(), expression.source().to_owned()))
+                .or_insert_with(|| {
+                    Arc::new(expression.prepare_admitted(env, &norn_expr::Type::Bool))
+                }),
+        )
     }
 
     /// Every retained law artifact's decoded declaration, decoded once per

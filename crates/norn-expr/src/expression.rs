@@ -104,10 +104,81 @@ impl Expression {
         env: &crate::ZenTypeEnv,
         expected: &crate::Type,
     ) -> EvaluationAttempt {
+        self.evaluate_prepared(
+            &self.prepare_admitted(env, expected),
+            context,
+            budget,
+            env,
+            expected,
+        )
+    }
+
+    /// Decide once how [`Self::evaluate_admitted_metered`] runs this expression
+    /// in `env` for `expected`: the exact-profile test, the typed check and the
+    /// lowering depend only on those three, not on the evaluated values.
+    #[must_use]
+    pub fn prepare_admitted(
+        &self,
+        env: &crate::ZenTypeEnv,
+        expected: &crate::Type,
+    ) -> PreparedAdmission {
         if crate::check::requires_exact_profile(self, env, expected) {
-            self.evaluate_typed_metered(context, budget, env, expected)
+            self.prepare_typed(env, expected)
         } else {
-            self.evaluate_metered(context, budget)
+            PreparedAdmission::Plain
+        }
+    }
+
+    /// Evaluate with a [`PreparedAdmission`] this expression produced for the
+    /// same `env` and `expected`. Equal to [`Self::evaluate_admitted_metered`]
+    /// or [`Self::evaluate_typed_metered`], whichever prepared it.
+    #[must_use]
+    pub fn evaluate_prepared(
+        &self,
+        prepared: &PreparedAdmission,
+        context: &Value,
+        budget: EvaluationBudget,
+        env: &crate::ZenTypeEnv,
+        expected: &crate::Type,
+    ) -> EvaluationAttempt {
+        match prepared {
+            PreparedAdmission::Plain => self.evaluate_metered(context, budget),
+            PreparedAdmission::Refused(error) => EvaluationAttempt {
+                result: Err(error.clone()),
+                units_used: 0,
+            },
+            PreparedAdmission::Exact(lowered) => {
+                let mut attempt = lowered.evaluate_exact_site(context, budget, None, false);
+                if let Ok(evaluation) = &mut attempt.result
+                    && let Err(error) = materialize(expected, env, &mut evaluation.value)
+                {
+                    attempt.result = Err(error);
+                }
+                attempt
+            }
+        }
+    }
+
+    fn prepare_typed(&self, env: &crate::ZenTypeEnv, expected: &crate::Type) -> PreparedAdmission {
+        let checked = match self.check_typed(env, expected) {
+            Ok(checked) => checked,
+            Err(found) => {
+                return PreparedAdmission::Refused(ExprError::Compile {
+                    message: found
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join("; "),
+                });
+            }
+        };
+        if checked.uses_exact_arithmetic() {
+            match Self::compile(checked.runtime_source()) {
+                Ok(lowered) => PreparedAdmission::Exact(Box::new(lowered)),
+                Err(error) => PreparedAdmission::Refused(error),
+            }
+        } else {
+            PreparedAdmission::Plain
         }
     }
 
@@ -121,41 +192,13 @@ impl Expression {
         env: &crate::ZenTypeEnv,
         expected: &crate::Type,
     ) -> EvaluationAttempt {
-        let checked = match self.check_typed(env, expected) {
-            Ok(checked) => checked,
-            Err(found) => {
-                return EvaluationAttempt {
-                    result: Err(ExprError::Compile {
-                        message: found
-                            .iter()
-                            .map(ToString::to_string)
-                            .collect::<Vec<_>>()
-                            .join("; "),
-                    }),
-                    units_used: 0,
-                };
-            }
-        };
-        if checked.uses_exact_arithmetic() {
-            let lowered = match Self::compile(checked.runtime_source()) {
-                Ok(lowered) => lowered,
-                Err(error) => {
-                    return EvaluationAttempt {
-                        result: Err(error),
-                        units_used: 0,
-                    };
-                }
-            };
-            let mut attempt = lowered.evaluate_exact_site(context, budget, None, false);
-            if let Ok(evaluation) = &mut attempt.result
-                && let Err(error) = materialize(expected, env, &mut evaluation.value)
-            {
-                attempt.result = Err(error);
-            }
-            attempt
-        } else {
-            self.evaluate_metered(context, budget)
-        }
+        self.evaluate_prepared(
+            &self.prepare_typed(env, expected),
+            context,
+            budget,
+            env,
+            expected,
+        )
     }
 
     /// VAL-EXACT-1 / VAL-ROUND: use exact intermediates and an optional destination.
@@ -370,6 +413,19 @@ impl fmt::Debug for UnaryTest {
             .field("source", &self.source)
             .finish_non_exhaustive()
     }
+}
+
+/// How an admitted expression runs in one environment for one expected type
+/// ([`Expression::prepare_admitted`]).
+#[derive(Clone, Debug)]
+pub enum PreparedAdmission {
+    /// The plain metered evaluator.
+    Plain,
+    /// The exact profile, with the lowered expression it runs.
+    Exact(Box<Expression>),
+    /// The typed check or lowering refused; every evaluation returns this
+    /// error and charges nothing.
+    Refused(ExprError),
 }
 
 impl fmt::Debug for Expression {
