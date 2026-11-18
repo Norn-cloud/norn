@@ -1,6 +1,7 @@
 //! Public-core CI: candidate checks and base-owned policy over candidate data.
 pub mod git;
 pub mod provenance;
+pub mod workflow_lint;
 pub mod yaml;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;

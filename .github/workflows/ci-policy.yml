@@ -107,7 +107,8 @@ jobs:
           version: v0.19.0
           disable_annotations: true
       - name: Start sccache or compile without it
-        run: |
+        # Writes only constants this step computes (true/false, a path under RUNNER_TEMP).
+        run: | # zizmor: ignore[github-env]
           set -uo pipefail
           # Hosted runners share the GitHub Actions cache; a disposable Boat VM keeps a local
           # cache bounded by SCCACHE_CACHE_SIZE, off the shared egress limit.
@@ -258,7 +259,8 @@ jobs:
           version: v0.19.0
           disable_annotations: true
       - name: Start sccache or compile without it
-        run: |
+        # Writes only constants this step computes (true/false, a path under RUNNER_TEMP).
+        run: | # zizmor: ignore[github-env]
           set -uo pipefail
           # Hosted runners share the GitHub Actions cache; a disposable Boat VM keeps a local
           # cache bounded by SCCACHE_CACHE_SIZE, off the shared egress limit.
