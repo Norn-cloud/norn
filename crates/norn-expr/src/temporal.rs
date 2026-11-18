@@ -452,6 +452,80 @@ mod tests {
     }
 
     #[test]
+    fn a_pre_1970_fractional_ordering_key_floors_the_second() {
+        assert_eq!(
+            timestamp_ordering_key("1969-12-31T23:59:59.9Z"),
+            Ok((-1, 900_000_000))
+        );
+        assert_eq!(
+            timestamp_ordering_key("1969-12-31T23:59:59.000000001Z"),
+            Ok((-1, 1))
+        );
+        assert_eq!(
+            timestamp_ordering_key("1970-01-01T05:29:59.5+05:30"),
+            Ok((-1, 500_000_000))
+        );
+    }
+
+    fn ymd(year: u16, month: u8, day: u8) -> NamingSeriesDate {
+        NamingSeriesDate { year, month, day }
+    }
+
+    #[test]
+    fn spring_forward_and_fall_back_move_the_local_date() {
+        let ny = "America/New_York";
+        // 2024-03-10 spring forward: 04:30Z is 23:30 EST the day before, and
+        // a day later 04:30Z is 00:30 EDT.
+        assert_eq!(
+            naming_series_date_at(1_710_045_000_000, ny),
+            Ok(ymd(2024, 3, 9))
+        );
+        assert_eq!(
+            naming_series_date_at(1_710_131_400_000, ny),
+            Ok(ymd(2024, 3, 11))
+        );
+        // 2024-11-03 fall back: 04:30Z is 00:30 EDT, a day later 23:30 EST.
+        assert_eq!(
+            naming_series_date_at(1_730_608_200_000, ny),
+            Ok(ymd(2024, 11, 3))
+        );
+        assert_eq!(
+            naming_series_date_at(1_730_694_600_000, ny),
+            Ok(ymd(2024, 11, 3))
+        );
+
+        // America/Sao_Paulo moved its clocks at local midnight. Spring forward
+        // 2018-11-04T03:00Z: 23:59:59.999 on 3 November, then 01:00 on the 4th.
+        let sp = "America/Sao_Paulo";
+        assert_eq!(
+            naming_series_date_at(1_541_300_399_999, sp),
+            Ok(ymd(2018, 11, 3))
+        );
+        assert_eq!(
+            naming_series_date_at(1_541_300_400_000, sp),
+            Ok(ymd(2018, 11, 4))
+        );
+        // Fall back 2019-02-17T02:00Z: midnight of the 17th becomes 23:00 on
+        // the 16th again, so the 16th lasts until 03:00Z.
+        assert_eq!(
+            naming_series_date_at(1_550_368_799_999, sp),
+            Ok(ymd(2019, 2, 16))
+        );
+        assert_eq!(
+            naming_series_date_at(1_550_368_800_000, sp),
+            Ok(ymd(2019, 2, 16))
+        );
+        assert_eq!(
+            naming_series_date_at(1_550_372_399_999, sp),
+            Ok(ymd(2019, 2, 16))
+        );
+        assert_eq!(
+            naming_series_date_at(1_550_372_400_000, sp),
+            Ok(ymd(2019, 2, 17))
+        );
+    }
+
+    #[test]
     fn dates_require_exact_shape_and_a_real_proleptic_gregorian_day() {
         for date in [
             "0000-02-29",
