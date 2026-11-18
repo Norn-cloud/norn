@@ -4,6 +4,7 @@
 //! The differential run (old and new side by side, case by case) is recorded
 //! on #1436; this test keeps the result.
 
+#[path = "temporal_corpus/corpus.rs"]
 mod corpus;
 
 use std::collections::BTreeMap;

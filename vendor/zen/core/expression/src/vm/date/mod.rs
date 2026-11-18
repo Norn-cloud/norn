@@ -1,7 +1,8 @@
-//! Norn (#3404): the legacy date value of upstream's `d()`/`date()` builtins and
-//! date methods. None of them is registered (`FunctionRegistry`,
-//! `MethodRegistry`), so no expression can build one: the type has no values.
-//! The VM's date branches stay for upstream cherry-picks and are unreachable.
+//! Norn (#3404, #1436): the legacy date value of upstream's `d()`/`date()`
+//! builtins and date methods. None of them is registered (`FunctionRegistry`,
+//! `MethodRegistry`), so nothing constructs one: the field is private and no
+//! constructor exists. The VM's date branches stay for upstream cherry-picks
+//! and never match.
 //! The pure temporal values live in `crate::temporal`.
 
 use crate::variable::DynamicVariable;
@@ -10,7 +11,8 @@ use std::any::Any;
 use std::fmt::{Display, Formatter};
 
 #[derive(Debug, Clone, PartialOrd, PartialEq, Ord, Eq)]
-pub(crate) enum VmDate {}
+#[allow(dead_code, reason = "never constructed; see the module documentation")]
+pub(crate) struct VmDate(());
 
 impl DynamicVariable for VmDate {
     fn type_name(&self) -> &'static str {
@@ -22,13 +24,13 @@ impl DynamicVariable for VmDate {
     }
 
     fn to_value(&self) -> Value {
-        match *self {}
+        unreachable!("no legacy date value is ever constructed")
     }
 }
 
 impl Display for VmDate {
     fn fmt(&self, _f: &mut Formatter<'_>) -> std::fmt::Result {
-        match *self {}
+        unreachable!("no legacy date value is ever constructed")
     }
 }
 
