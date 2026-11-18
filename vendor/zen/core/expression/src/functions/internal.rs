@@ -350,8 +350,14 @@ impl From<&InternalFunction> for Rc<dyn FunctionDefinition> {
             | IF::SecondsBetween
             | IF::AddSeconds => crate::temporal::definition(*value),
 
+            // Norn (#3404): `d()` is never registered (`FunctionRegistry` skips it);
+            // the signatures stay for the analyser and the call is refused.
             IF::Date => Rc::new(CompositeFunction {
-                implementation: Rc::new(imp::date),
+                implementation: Rc::new(|_| {
+                    Err(anyhow::anyhow!(
+                        "`d` is not part of the Norn temporal profile"
+                    ))
+                }),
                 signatures: vec![
                     FunctionSignature {
                         parameters: vec![],
@@ -380,7 +386,6 @@ pub(crate) mod imp {
     use crate::vm::VmDate;
     use crate::{Variable as V, Variable};
     use anyhow::{anyhow, Context};
-    use chrono_tz::Tz;
     // Norn (#3404): `regex-lite` is the only regex backend.
     use regex_lite::Regex;
     use rust_decimal::prelude::{FromPrimitive, ToPrimitive};
@@ -388,7 +393,6 @@ pub(crate) mod imp {
     use rust_decimal_macros::dec;
     use std::collections::BTreeMap;
     use std::rc::Rc;
-    use std::str::FromStr;
 
     fn bounded_integer(value: Decimal, name: &str, max: usize) -> anyhow::Result<usize> {
         anyhow::ensure!(value.fract().is_zero(), "{name} must be an integer");
@@ -1029,20 +1033,5 @@ pub(crate) mod imp {
         let values: Vec<_> = obj.values().cloned().collect();
 
         Ok(V::from_array(values))
-    }
-
-    pub fn date(args: Arguments) -> anyhow::Result<V> {
-        let provided = args.ovar(0);
-        let tz = args
-            .ostr(1)?
-            .map(|v| Tz::from_str(v).context("Invalid timezone"))
-            .transpose()?;
-
-        let date_time = match provided {
-            Some(v) => VmDate::new(v.clone(), tz),
-            None => VmDate::now(),
-        };
-
-        Ok(V::Dynamic(Rc::new(date_time)))
     }
 }

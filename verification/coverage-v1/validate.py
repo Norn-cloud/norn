@@ -751,9 +751,9 @@ df -h /
                 f"{name}: environment must bind the gate plan")
         job_steps = job.get("steps", [])
         preparation = [checkout] + ([] if name == "plan" else copy.deepcopy(setup))
-        if name == "test":
-            preparation.append(nextest)
         if name != "plan":
+            # Pinned, checksummed release binaries: no job compiles a tool from source (#1348).
+            preparation.append(nextest)
             reclaim = copy.deepcopy(cleanup)
             if name == "test":
                 reclaim["run"] = reclaim["run"].replace('if [ "$(available)" -lt "$minimum" ]; then\n  ', '').replace('\nfi\ndf -h /', '\ndf -h /')
