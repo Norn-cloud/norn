@@ -89,9 +89,8 @@ use norn_kernel::{
     FactState, FactVersion, FactWrite, FreshnessPolicy, Generation, IdempotencyKey, LedgerSeq,
     LinkKey, LinkMutation, LinkReadTarget, LinkState, LinkWrite, LogicalTime,
     ObservationAuthorization, ObservationEvent, ObservationId, Observed, OwnedRowsCommitProof,
-    Performed, PredicateObject, PredicateQuery, PredicateReadMember, Provenance, Timer, TimerId,
-    TypeCatalog, WrittenLinkVersion, WrittenVersion, check_commit, check_commit_observed,
-    check_commit_owned_rows,
+    Performed, PredicateObject, PredicateQuery, PredicateReadMember, Proposed, Provenance, Timer,
+    TimerId, TypeCatalog, WrittenLinkVersion, WrittenVersion,
 };
 use proptest::prelude::*;
 use proptest::strategy::Union;
@@ -537,16 +536,10 @@ impl<E, C, I: Clone + norn_kernel::serde::Serialize> MemoryCell<E, C, I> {
                     *stored = values;
                 }
             }
-            let versions = match (authorization, owned_rows) {
-                (Some(authorization), None) => {
-                    check_commit_observed(&commit, &model, &MemoryView(self), authorization)?
-                }
-                (None, Some(proof)) => {
-                    check_commit_owned_rows(&commit, &model, &MemoryView(self), proof)?
-                }
-                (None, None) => check_commit(&commit, &model, &MemoryView(self))?,
-                (Some(_), Some(_)) => return Err(CommitError::ObservationAuthorization),
-            };
+            let versions = Proposed::new(&commit)
+                .authorize(authorization, owned_rows)?
+                .check(&model, &MemoryView(self))?
+                .into_versions();
             let fact_keys: Vec<FactKey> = commit
                 .writes
                 .iter()
