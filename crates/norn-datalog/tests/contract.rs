@@ -223,6 +223,18 @@ fn structural_and_shared_traversal_budgets_fail_closed() {
             ..Budget::default()
         },
         Budget {
+            max_arity: 0,
+            ..Budget::default()
+        },
+        Budget {
+            max_rule_variables: 0,
+            ..Budget::default()
+        },
+        Budget {
+            max_body_atoms: 0,
+            ..Budget::default()
+        },
+        Budget {
             max_work: 0,
             ..Budget::default()
         },
@@ -330,6 +342,9 @@ fn registered_inheritance_step_is_admitted_bounded_nonrecursive_shared_ast() {
             max_rules: 2,
             max_atoms: 6,
             max_terms: 16,
+            max_arity: 3,
+            max_rule_variables: 3,
+            max_body_atoms: 2,
             max_text_bytes: 1_024,
             max_work: 20_000,
         },

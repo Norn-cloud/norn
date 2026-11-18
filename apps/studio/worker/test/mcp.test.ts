@@ -207,7 +207,7 @@ test("a code is never sent to a callback outside the known assistants", async ()
 test("tokens for another audience, foreign origins and other methods are refused", async () => {
   const env = stage()
   const { cookie, user, org } = await person(env, "di@example.com")
-  const auth = createAuth({ database: env.AUTH_DB, secret: env.BETTER_AUTH_SECRET, baseURL: ORIGIN, mcp: true })
+  const auth = createAuth({ clientIpHeader: "cf-connecting-ip", database: env.AUTH_DB, secret: env.BETTER_AUTH_SECRET, baseURL: ORIGIN, mcp: true })
   // A host token is signed by the same keys but for the cell, not for /mcp.
   const forCell = await hostToken(auth, { actorKind: "user", subjectId: user, orgId: org, role: "owner", authMethod: "password" })
   expect((await mcp(env, forCell, INIT)).status).toBe(401)

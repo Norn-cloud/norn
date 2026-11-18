@@ -318,6 +318,47 @@ fn refusal(bytes: &[u8]) -> String {
     diagnostic.message.clone()
 }
 
+/// Malformed references and bytes are refused with the typed `format.xsd.invalid` code
+/// (`refusal` asserts it), in attributes and in text alike.
+#[test]
+fn xsd_unknown_entities_bad_character_references_and_non_utf8_are_refused() {
+    let enumeration = |value: &str| {
+        schema_with(&format!(
+            r#"<xs:simpleType name="S"><xs:restriction base="xs:string"><xs:enumeration value="{value}"/></xs:restriction></xs:simpleType>"#
+        ))
+    };
+    let documentation = |text: &str| {
+        schema_with(&format!(
+            "<xs:annotation><xs:documentation>{text}</xs:documentation></xs:annotation>"
+        ))
+    };
+    for (label, bytes) in [
+        ("unknown entity in an attribute", enumeration("a&nbsp;b")),
+        ("unknown entity in text", documentation("a&nbsp;b")),
+        (
+            "surrogate character reference in an attribute",
+            enumeration("&#xD800;"),
+        ),
+        (
+            "surrogate character reference in text",
+            documentation("&#xD800;"),
+        ),
+        (
+            "NUL character reference in an attribute",
+            enumeration("&#0;"),
+        ),
+        ("NUL character reference in text", documentation("&#0;")),
+    ] {
+        let message = refusal(&bytes);
+        assert!(!message.is_empty(), "{label}");
+    }
+    let mut latin1 =
+        schema_with("<xs:annotation><xs:documentation>caf</xs:documentation></xs:annotation>");
+    let at = latin1.windows(3).position(|w| w == b"caf").unwrap() + 3;
+    latin1.insert(at, 0xE9);
+    assert!(!refusal(&latin1).is_empty(), "non-UTF-8 bytes");
+}
+
 fn schema_with(body: &str) -> Vec<u8> {
     format!(r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">{body}</xs:schema>"#)
         .into_bytes()

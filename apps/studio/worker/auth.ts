@@ -70,8 +70,8 @@ export interface AuthConfig {
    * their OAuth 2.1 authorization server. Needs migration 0007_oauth_provider.
    */
   readonly mcp?: boolean
-  /** The header the edge sets to the client's address (rate limits); `cf-connecting-ip` when absent. */
-  readonly clientIpHeader?: ClientIpHeader
+  /** The header the edge sets to the client's address (rate limits); never defaulted. */
+  readonly clientIpHeader: ClientIpHeader
 }
 
 /** Where assistants reach Norn, and the resource their access tokens are bound to (RFC 8707). */
@@ -321,14 +321,20 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
       maxPasswordLength: 128,
       // Better Auth's own hash, computed in pure JS: byte-identical, so accounts move between runtimes.
       ...config.scrypt === "js" ? { password: { hash: hashPassword, verify: verifyPassword } } : {},
-      // A registered address skips the four writes a new account makes (user, credential,
-      // organization, member); make the same number of database writes so latency does not tell them apart.
+      // Timing mitigation (live measurement pending, #817): a registered address skips the four
+      // writes a new account makes (user, credential, organization, member), so it makes four too.
+      // Best-effort: a failed write never changes the answer. A failed delete leaves one already
+      // expired `signup-pad:` verification row behind; nothing reads it, and it holds no user data.
       onExistingUserSignUp: async () => {
-        const adapter = await getCurrentAdapter((await self.auth?.$context)?.adapter as never)
-        for (let pair = 0; pair < 2; pair++) {
-          const now = new Date()
-          const row = await adapter.create<{ id: string }>({ model: "verification", data: { identifier: `signup-pad:${crypto.randomUUID()}`, value: "", expiresAt: now, createdAt: now, updatedAt: now } })
-          await adapter.delete({ model: "verification", where: [{ field: "id", value: row.id }] })
+        try {
+          const adapter = await getCurrentAdapter((await self.auth?.$context)?.adapter as never)
+          for (let pair = 0; pair < 2; pair++) {
+            const now = new Date()
+            const row = await adapter.create<{ id: string }>({ model: "verification", data: { identifier: `signup-pad:${crypto.randomUUID()}`, value: "", expiresAt: now, createdAt: now, updatedAt: now } })
+            await adapter.delete({ model: "verification", where: [{ field: "id", value: row.id }] }).catch(() => undefined)
+          }
+        } catch {
+          // The padding is a mitigation, not part of sign-up.
         }
       },
     },
@@ -364,7 +370,7 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
       cookiePrefix: "norn",
       defaultCookieAttributes: { httpOnly: true, secure: true, sameSite: "lax" },
       // Only the header this deployment's edge sets itself (client-ip.ts); X-Forwarded-For is client-controlled.
-      ipAddress: { ipAddressHeaders: [config.clientIpHeader ?? "cf-connecting-ip"] },
+      ipAddress: { ipAddressHeaders: [config.clientIpHeader] },
     },
     plugins: [
       // Only a verified address may accept an invitation (GHSA-fmh4-wcc4-5jm3): until a mail

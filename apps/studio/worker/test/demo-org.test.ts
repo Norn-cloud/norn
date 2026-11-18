@@ -19,6 +19,7 @@ function stage() {
     AUTH_DB: db as unknown as D1Database,
     BETTER_AUTH_SECRET: "t".repeat(40),
     BETTER_AUTH_URL: ORIGIN,
+    STUDIO_CLIENT_IP_HEADER: "cf-connecting-ip",
     STUDIO_DEFAULT_ORG: DEMO_ORG.id,
   }
   const binding = {
@@ -27,7 +28,7 @@ function stage() {
   } as unknown as import("../../scripts/seed-demo-org-core.ts").SeedDatabase
   const seed = (members = ["viewer@demo.norn.cloud=viewer", "analyst@demo.norn.cloud=member"]) => seedDemoOrg(binding, parseMembers(members), new Date())
   const verify = (email: string) => db.prepare(`update "user" set "emailVerified" = 1 where "email" = ?`).run(email)
-  return { db, env, seed, verify, auth: createAuth({ database: db, secret: env.BETTER_AUTH_SECRET, baseURL: ORIGIN, defaultOrganizationId: DEMO_ORG.id }) }
+  return { db, env, seed, verify, auth: createAuth({ clientIpHeader: "cf-connecting-ip", database: db, secret: env.BETTER_AUTH_SECRET, baseURL: ORIGIN, defaultOrganizationId: DEMO_ORG.id }) }
 }
 
 let address = 0

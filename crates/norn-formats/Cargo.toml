@@ -11,7 +11,7 @@ path = "src/lib.rs"
 
 [dependencies]
 # Namespace-aware streaming XML reader for the XSD reader; DTDs are rejected.
-quick-xml = "=0.41.0"
+quick-xml = "=0.42.0"
 # Type tables are RuleIR v2 decision tables evaluated in the pinned Norn ZEN
 # profile; both ring 0, pure, wasm32-buildable.
 norn-decisions = { path = "../norn-decisions" }
