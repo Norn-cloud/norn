@@ -124,7 +124,7 @@ pub type Responder<C, I> = Box<dyn FnMut(&Command<C>) -> I>;
 /// The in-memory reference [`CellHost`].
 ///
 /// Every verb is a plain collection operation; [`CellHost::commit`] runs
-/// [`check_commit`] and then applies everything, so it is atomic by
+/// [`norn_kernel::check_commit`] and then applies everything, so it is atomic by
 /// construction. Time and external observations are injected by the test
 /// ([`MemoryCell::advance_to`], [`MemoryCell::inject`]).
 ///
@@ -384,7 +384,7 @@ impl<E, C, I> MemoryCell<E, C, I> {
     }
 }
 
-/// What a [`MemoryCell`] has committed, as [`check_commit`] reads it.
+/// What a [`MemoryCell`] has committed, as [`norn_kernel::check_commit`] reads it.
 struct MemoryView<'c, E, C, I>(&'c MemoryCell<E, C, I>);
 
 impl<E, C, I> CommitView for MemoryView<'_, E, C, I> {
