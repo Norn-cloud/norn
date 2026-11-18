@@ -404,20 +404,23 @@ plan = json.loads(raw)
 known = {"test/" + shard for shard in shards.split()} | {
     "phase/" + phase for phase in phases.split() + ["test-shards"]
     if phase not in {"cheap", "test", "formal"}}
-# Task seconds: p50 of green hosted tasks over 78 recorded runs, 2026-11-11..13 (#1348;
-# refit with the recorded task spans). They include each task's compile through the shared
-# sccache, so a bundle's first test task is charged only the residual cold compile below.
+# Task seconds on Boat, where merge groups and allowlisted pull requests run (#1348): p50 of
+# green tasks over 24 recorded runs with all 20 tasks, 2026-11-14..18, net of the test build.
+# Each Boat VM starts with an empty compiler cache, so a test task that builds alone carries
+# that build: heavy-1 p50 230 s on its own build, 31 s on a build an earlier task made (n=4).
+# The hosted p50s these replace (warm shared cache) packed 2071 s of tasks into one bundle.
 weights = {
-    "test/heavy-1": 90, "test/heavy-2": 653, "test/heavy-3": 158,
-    "test/heavy-4": 99, "test/heavy-5": 66, "test/heavy-6": 85,
-    "test/rest-1": 1158, "test/rest-2": 513, "test/rest-3": 319,
-    "phase/doctest": 31, "phase/features": 788, "phase/duckdb": 565, "phase/wasm": 137,
-    "phase/clippy": 94, "phase/doc": 44, "phase/guards": 735,
-    "phase/integration": 924, "phase/provenance": 12, "phase/test-shards": 13,
-    "phase/browser": 403,
+    "test/heavy-1": 31, "test/heavy-2": 293, "test/heavy-3": 203,
+    "test/heavy-4": 142, "test/heavy-5": 32, "test/heavy-6": 47,
+    "test/rest-1": 656, "test/rest-2": 315, "test/rest-3": 165,
+    "phase/doctest": 26, "phase/features": 618, "phase/duckdb": 363, "phase/wasm": 139,
+    "phase/clippy": 81, "phase/doc": 56, "phase/guards": 434,
+    "phase/integration": 920, "phase/provenance": 10, "phase/test-shards": 10,
+    "phase/browser": 304,
 }
-# A bundle's first test task observed at 66 s (heavy-5, n=47): the residual cold compile.
-compile_seconds = 60
+# A bundle's test build on a cold Boat VM: p50 of a test task on its own build minus the
+# same task on a shared one (heavy-1 199 s, heavy-5 190 s, heavy-6 167 s, test-shards 184 s).
+compile_seconds = 190
 def compiles_tests(task):
     return task.startswith("test/") or task == "phase/test-shards"
 def cold_cost(task):
