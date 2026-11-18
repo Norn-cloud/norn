@@ -78,7 +78,7 @@ async function stage(page: Page) {
         state: refused ? "refused" : "pending",
         verdict: refused
           ? { admitted: false, findings: [{ code: "definition.view_invalid", message: "a pie shows the parts of one whole, so its question sums one additive, non-ratio measure over one category without a time grain", pointer: "/tiles/0/view" }], restatement: null, restatementSha256: null, note: "Yield is a ratio, so it cannot be shown as parts of a whole." }
-          : { admitted: true, findings: [], restatement: words.replace("%", request), restatementSha256: "c".repeat(64), note: "A headline yield, how recovered metal splits by metal, and the weekly yield trend.", ...guarded },
+          : { admitted: true, findings: [], restatement: words.replaceAll("%", request), restatementSha256: "c".repeat(64), note: "A headline yield, how recovered metal splits by metal, and the weekly yield trend.", ...guarded },
       }
       proposals.push(proposal)
       return route.fulfill({ json: proposal })

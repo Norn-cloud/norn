@@ -185,10 +185,10 @@ export function sheetMarkup(document: SheetDocument, decision: SheetDecision, lo
         <h2 class="norn-title" data-region="question">${escape(decision.question)}</h2>
         <p class="norn-meta">${escape(flowName(decision.flow))} · ${escape(decision.step.label ?? decision.step.id)}</p>
         <div class="norn-actions">
-          <span class="norn-chip" data-tone="risk-${decision.risk}">${escape(w[`risk.${decision.risk}`])}</span>
+          <span class="norn-chip" data-tone="risk-${escape(decision.risk)}">${escape(w[`risk.${decision.risk}`])}</span>
           <span class="norn-meta" data-region="countdown"></span>
           <span class="norn-spacer"></span>
-          <a class="norn-link" href="/runs/${encodeURIComponent(decision.run.id)}" data-link>${escape(w.openRun)}</a>
+          <a class="norn-link" href="/runs/${escape(encodeURIComponent(decision.run.id))}" data-link>${escape(w.openRun)}</a>
         </div>
       </header>
       <div class="norn-status" role="alert" data-region="status" hidden></div>
