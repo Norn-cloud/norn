@@ -1639,7 +1639,7 @@ fn without_receipt_handles<E: SqlEngine>(
     refusal
 }
 
-/// The code of [`without_receipt_handles`]: the host keys no receipt handles.
+/// The code of `without_receipt_handles`: the host keys no receipt handles.
 pub const ACTION_RECEIPTS_UNCONFIGURED: &str = "action.receipts_unconfigured";
 
 fn named<E: SqlEngine>(runtime: &dyn AdHocQuestions<E>) -> &dyn QuestionRuntime<E> {

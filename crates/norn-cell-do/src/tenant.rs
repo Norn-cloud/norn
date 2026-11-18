@@ -424,7 +424,7 @@ impl<E: SqlEngine> Tenant<E> {
     pub fn action_policy_version(&self) -> Option<u64> {
         match &self.state {
             State::Serving(serving) => serving.compiled,
-            State::Vacant => None,
+            State::Vacant | State::Unopenable(_) => None,
         }
     }
 
@@ -434,7 +434,7 @@ impl<E: SqlEngine> Tenant<E> {
     pub fn action_policy_compiles(&self) -> u64 {
         match &self.state {
             State::Serving(serving) => serving.policy_compiles,
-            State::Vacant => 0,
+            State::Vacant | State::Unopenable(_) => 0,
         }
     }
 

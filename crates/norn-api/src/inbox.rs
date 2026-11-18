@@ -35,10 +35,10 @@
 //! per-target authorization admit it; the call is still decided again, by the
 //! kernel's laws, when it is made.
 //!
-//! Bounds: at most [`INBOX_SCAN_BOUND`] rows are scanned for held-back
+//! Bounds: at most [`INBOX_SCAN_BOUND`](crate::inbox::INBOX_SCAN_BOUND) rows are scanned for held-back
 //! records across all types (`approximate` past it), at most
-//! [`MAX_INBOX_GROUPS`] groups of at most [`MAX_GROUP_RECORDS`] records, and
-//! at most [`MAX_INBOX_DECISIONS`] decisions and [`MAX_INBOX_SOURCES`]
+//! [`MAX_INBOX_GROUPS`](crate::inbox::MAX_INBOX_GROUPS) groups of at most [`MAX_GROUP_RECORDS`](crate::inbox::MAX_GROUP_RECORDS) records, and
+//! at most [`MAX_INBOX_DECISIONS`](crate::inbox::MAX_INBOX_DECISIONS) decisions and [`MAX_INBOX_SOURCES`](crate::inbox::MAX_INBOX_SOURCES)
 //! sources.
 
 use std::collections::{BTreeMap, BTreeSet};

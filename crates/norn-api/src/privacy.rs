@@ -19,7 +19,7 @@
 //! snapshot is unavailable, fails closed: the property (or every property)
 //! is refused. The document says how each property was projected and whether
 //! the caller may reveal it; the reveal itself is a governed action with a
-//! ledger receipt ([`reveal`]). Nothing here trusts the client.
+//! ledger receipt ([`reveal`](crate::privacy::reveal)). Nothing here trusts the client.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;

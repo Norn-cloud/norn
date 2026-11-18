@@ -7,7 +7,7 @@
 //! re-admitted whole on the base the retained receipt records. Nothing is
 //! removed through this path.
 //!
-//! - **Authority** is [`Operation::WriteDefinitions`] (the grant table's
+//! - **Authority** is [`Operation::WriteDefinitions`](crate::authz::Operation::WriteDefinitions) (the grant table's
 //!   definition writers: owner and admin), decided with the explicit scope
 //!   before the body is read. Anyone else gets the one opaque 403.
 //! - **A refused set** (the checker's findings, a set the cell cannot serve,
