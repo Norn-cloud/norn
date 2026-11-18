@@ -947,6 +947,9 @@
     "lifecycle.soundness.invalid_event": {
       "message": "a lifecycle external event is malformed: {$detail}"
     },
+    "lifecycle.soundness.invalid_module_name": {
+      "message": "a generated Quint module name is not a plain identifier: {$detail}"
+    },
     "lifecycle.soundness.invalid_trigger": {
       "message": "a lifecycle transition trigger or compensation is invalid: {$detail}"
     },
@@ -955,6 +958,12 @@
     },
     "lifecycle.soundness.no_ending": {
       "message": "a lifecycle declares no terminal or resting state: {$detail}"
+    },
+    "lifecycle.soundness.product_limit": {
+      "message": "the composed UI and lifecycle machine exceeds its state bound: {$detail}"
+    },
+    "lifecycle.soundness.sync_conflict": {
+      "message": "a UI and lifecycle sync table names one UI edge twice: {$detail}"
     },
     "lifecycle.soundness.timer_cycle": {
       "message": "a lifecycle cycle fires on timers alone: {$detail}"

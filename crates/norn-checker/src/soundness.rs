@@ -29,6 +29,13 @@
 
 use std::collections::{BTreeSet, VecDeque};
 
+/// A UI machine composed with a backend lifecycle (#1236).
+#[allow(
+    dead_code,
+    reason = "the UI-MACHINE-1 composition (#1236) calls it; L-ui lands the caller"
+)]
+pub(crate) mod compose;
+
 /// What reaching a state means for a run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Ending {

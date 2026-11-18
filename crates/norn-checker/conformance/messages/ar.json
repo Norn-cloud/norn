@@ -1262,6 +1262,10 @@
       "message": "حدث خارجي في دورة الحياة غير سليم البنية: {$detail}",
       "review": "needs_review"
     },
+    "lifecycle.soundness.invalid_module_name": {
+      "message": "اسم وحدة Quint المولّدة ليس معرّفًا بسيطًا: {$detail}",
+      "review": "needs_review"
+    },
     "lifecycle.soundness.invalid_trigger": {
       "message": "مُطلِق انتقال أو تعويضه في دورة الحياة غير صالح: {$detail}",
       "review": "needs_review"
@@ -1272,6 +1276,14 @@
     },
     "lifecycle.soundness.no_ending": {
       "message": "دورة الحياة لا تعلن أي حالة نهائية أو حالة سكون: {$detail}",
+      "review": "needs_review"
+    },
+    "lifecycle.soundness.product_limit": {
+      "message": "الآلة المركّبة من الواجهة ودورة الحياة تتجاوز حدّ عدد حالاتها: {$detail}",
+      "review": "needs_review"
+    },
+    "lifecycle.soundness.sync_conflict": {
+      "message": "جدول مزامنة الواجهة ودورة الحياة يذكر حافة الواجهة نفسها مرتين: {$detail}",
       "review": "needs_review"
     },
     "lifecycle.soundness.timer_cycle": {
