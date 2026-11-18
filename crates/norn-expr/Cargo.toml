@@ -10,10 +10,11 @@ description = "ZEN Expression type environment + static checker (ring 0; see AGE
 path = "src/lib.rs"
 
 [dependencies]
-# Pure calendar/RFC 3339 parsing and the pinned IANA timezone database used by
-# EntityIR naming-series date rendering. No clock or locale is consulted.
-chrono = { version = "0.4.45", default-features = false, features = ["std"] }
-chrono-tz = { version = "=0.10.4", default-features = false, features = ["std"] }
+# Pure calendar/RFC 3339 arithmetic and the pinned IANA timezone database
+# (bundled `jiff-tzdb`, never the host's zoneinfo) used by EntityIR
+# naming-series date rendering. No clock or locale is consulted.
+jiff = { version = "=0.2.37", default-features = false, features = ["std", "tzdb-bundle-always"] }
+jiff-tzdb = "=0.1.8"
 # EntityIR v2 types the type environment is derived from, and the Norn1
 # canonical form (re-exported) it is content-addressed with.
 norn-ir = { path = "../norn-ir" }

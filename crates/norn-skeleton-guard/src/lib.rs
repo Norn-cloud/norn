@@ -135,7 +135,7 @@ pub const CRATES: &[CrateRule] = &[
     r0(
         "norn-expr",
         &["norn-ir"],
-        &["zen-expression", "chrono", "chrono-tz"],
+        &["zen-expression", "jiff", "jiff-tzdb"],
     ),
     // Bounded inheritance classification: Ascent (vendored, clock-free profile)
     // at runtime; norn-datalog and quote only at build time.

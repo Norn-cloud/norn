@@ -9,13 +9,17 @@
 //! instant; no clock or locale is consulted.
 
 use std::fmt;
+use std::ops::Range;
+use std::sync::OnceLock;
 
-use chrono::{DateTime, Datelike, NaiveDate, Offset, SecondsFormat, Utc};
-use chrono_tz::Tz;
+use jiff::civil::{Date, DateTime, Time};
+use jiff::tz::{Offset, TimeZone, TimeZoneDatabase};
+use jiff::{SignedDuration, Timestamp};
 
-/// IANA timezone database version embedded by the exact-pinned
-/// `chrono-tz` dependency, for naming-series allocation provenance.
-pub const NAMING_SERIES_TZDB_VERSION: &str = chrono_tz::IANA_TZDB_VERSION;
+/// IANA timezone database version bundled by the exact-pinned `jiff-tzdb`
+/// dependency (the only database `jiff` is built with here), for
+/// naming-series allocation provenance.
+pub const NAMING_SERIES_TZDB_VERSION: &str = "2026c";
 
 /// A temporal value did not satisfy the supported wire representation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -67,10 +71,24 @@ pub struct NamingSeriesDate {
 /// Returns [`TemporalError::InvalidTimezone`] when the timezone is not
 /// present in that database.
 pub fn validate_timezone(timezone: &str) -> Result<(), TemporalError> {
-    timezone
-        .parse::<Tz>()
-        .map(|_| ())
-        .map_err(|_parse_error| TemporalError::InvalidTimezone)
+    pinned_timezone(timezone).map(|_| ())
+}
+
+/// The pinned database's zone with exactly this identifier. The database
+/// lookup ignores ASCII case, so the canonical name must match byte for byte.
+/// The bundled database is named explicitly: `jiff::tz::db()` would consult
+/// the host's zoneinfo when another crate enables that feature.
+fn pinned_timezone(name: &str) -> Result<TimeZone, TemporalError> {
+    static PINNED: OnceLock<TimeZoneDatabase> = OnceLock::new();
+    let timezone = PINNED
+        .get_or_init(TimeZoneDatabase::bundled)
+        .get(name)
+        .map_err(|_lookup_error| TemporalError::InvalidTimezone)?;
+    if timezone.iana_name() == Some(name) {
+        Ok(timezone)
+    } else {
+        Err(TemporalError::InvalidTimezone)
+    }
 }
 
 /// Converts a supplied Unix epoch-millisecond commit instant to a local date.
@@ -87,17 +105,12 @@ pub fn naming_series_date_at(
     epoch_millis: i64,
     timezone: &str,
 ) -> Result<NamingSeriesDate, TemporalError> {
-    let timezone = timezone
-        .parse::<Tz>()
-        .map_err(|_parse_error| TemporalError::InvalidTimezone)?;
-    let instant = DateTime::<Utc>::from_timestamp_millis(epoch_millis)
-        .ok_or(TemporalError::InstantOutOfRange)?;
-    let local = instant.with_timezone(&timezone);
-    let date = local
-        .naive_utc()
-        .checked_add_offset(local.offset().fix())
-        .ok_or(TemporalError::InstantOutOfRange)?
-        .date();
+    let timezone = pinned_timezone(timezone)?;
+    let local = match Timestamp::from_millisecond(epoch_millis) {
+        Ok(instant) => timezone.to_offset(instant).to_datetime(instant),
+        Err(_range_error) => local_after_last_instant(epoch_millis, &timezone)?,
+    };
+    let date = local.date();
     let year = date.year();
     if !(0..=9_999).contains(&year) {
         return Err(TemporalError::InstantOutOfRange);
@@ -107,6 +120,28 @@ pub fn naming_series_date_at(
         month: u8::try_from(date.month()).map_err(|_error| TemporalError::InstantOutOfRange)?,
         day: u8::try_from(date.day()).map_err(|_error| TemporalError::InstantOutOfRange)?,
     })
+}
+
+/// `jiff::Timestamp` ends a day before the last civil date-time, so an instant
+/// in that final stretch is converted on the civil scale with the zone's
+/// offset at the last representable instant. Earlier instants are refused.
+fn local_after_last_instant(
+    epoch_millis: i64,
+    timezone: &TimeZone,
+) -> Result<DateTime, TemporalError> {
+    let last_millis = Timestamp::MAX.as_millisecond();
+    let excess = epoch_millis
+        .checked_sub(last_millis)
+        .filter(|excess| *excess > 0)
+        .ok_or(TemporalError::InstantOutOfRange)?;
+    let last = Timestamp::from_millisecond(last_millis)
+        .map_err(|_error| TemporalError::InstantOutOfRange)?;
+    let offset = timezone.to_offset(Timestamp::MAX);
+    Offset::UTC
+        .to_datetime(last)
+        .checked_add(SignedDuration::from_millis(excess))
+        .and_then(|utc| utc.checked_add(SignedDuration::from_secs(i64::from(offset.seconds()))))
+        .map_err(|_error| TemporalError::InstantOutOfRange)
 }
 
 /// Validates the exact `EntityIR` calendar-date representation.
@@ -131,9 +166,9 @@ pub fn validate_date(value: &str) -> Result<(), TemporalError> {
         return Err(TemporalError::InvalidDate);
     }
 
-    NaiveDate::parse_from_str(value, "%Y-%m-%d")
+    calendar_date(value.as_bytes())
         .map(|_| ())
-        .map_err(|_parse_error| TemporalError::InvalidDate)
+        .ok_or(TemporalError::InvalidDate)
 }
 
 /// Parses an RFC 3339 timestamp and returns its canonical UTC instant.
@@ -150,12 +185,7 @@ pub fn validate_date(value: &str) -> Result<(), TemporalError> {
 /// value, offset, precision, or normalized UTC year is unsupported.
 pub fn canonical_timestamp(value: &str) -> Result<String, TemporalError> {
     timestamp_shape(value)?;
-
-    let parsed = DateTime::parse_from_rfc3339(value)
-        .map_err(|_parse_error| TemporalError::InvalidTimestamp)?;
-    let canonical = parsed
-        .with_timezone(&Utc)
-        .to_rfc3339_opts(SecondsFormat::AutoSi, true);
+    let canonical = rfc3339_utc(&utc_reading(value)?)?;
 
     // UTC conversion near the supported year boundaries can produce a signed
     // or five-digit year. Such an instant cannot be stored in our admitted
@@ -172,17 +202,126 @@ pub fn canonical_timestamp(value: &str) -> Result<String, TemporalError> {
 /// Returns [`TemporalError::InvalidTimestamp`] for unsupported timestamps.
 pub fn timestamp_ordering_key(value: &str) -> Result<(i64, u32), TemporalError> {
     let canonical = canonical_timestamp(value)?;
-    let parsed = DateTime::parse_from_rfc3339(&canonical)
-        .map_err(|_error| TemporalError::InvalidTimestamp)?;
-    Ok((parsed.timestamp(), parsed.timestamp_subsec_nanos()))
+    let utc = utc_reading(&canonical)?;
+    let since_epoch = utc.duration_since(DateTime::constant(1970, 1, 1, 0, 0, 0, 0));
+    let seconds = since_epoch
+        .as_secs()
+        .checked_sub(i64::from(since_epoch.subsec_nanos() < 0))
+        .ok_or(TemporalError::InvalidTimestamp)?;
+    let nanos =
+        u32::try_from(utc.subsec_nanosecond()).map_err(|_error| TemporalError::InvalidTimestamp)?;
+    Ok((seconds, nanos))
+}
+
+/// The value of an all-ASCII-digit field, or `None` when absent or not digits.
+fn number(bytes: &[u8], range: Range<usize>) -> Option<i32> {
+    let field = bytes.get(range)?;
+    if !digits(field) {
+        return None;
+    }
+    field.iter().try_fold(0_i32, |value, digit| {
+        value
+            .checked_mul(10)?
+            .checked_add(i32::from(digit.checked_sub(b'0')?))
+    })
+}
+
+/// The proleptic-Gregorian day a `YYYY-MM-DD` prefix names, if it is real.
+fn calendar_date(bytes: &[u8]) -> Option<Date> {
+    let year = i16::try_from(number(bytes, 0..4)?).ok()?;
+    let month = i8::try_from(number(bytes, 5..7)?).ok()?;
+    let day = i8::try_from(number(bytes, 8..10)?).ok()?;
+    Date::new(year, month, day).ok()
+}
+
+/// The UTC wall-clock reading of a value that passed [`timestamp_shape`].
+/// RFC 3339 ranges: hour 00-23, minute and second 00-59, offset hour 00-23
+/// and offset minute 00-59.
+fn utc_reading(value: &str) -> Result<DateTime, TemporalError> {
+    const INVALID: TemporalError = TemporalError::InvalidTimestamp;
+    let bytes = value.as_bytes();
+    let field = |range: Range<usize>| number(bytes, range).ok_or(INVALID);
+    let (hour, minute, second) = (field(11..13)?, field(14..16)?, field(17..19)?);
+    let zone_start = if value.ends_with('Z') {
+        bytes.len().checked_sub(1)
+    } else {
+        bytes.len().checked_sub(6)
+    }
+    .ok_or(INVALID)?;
+    let nanos = if bytes.get(19) == Some(&b'.') {
+        let digits = zone_start.checked_sub(20).ok_or(INVALID)?;
+        let scale = 10_i32
+            .checked_pow(u32::try_from(9_usize.checked_sub(digits).ok_or(INVALID)?).map_err(|_error| INVALID)?)
+            .ok_or(INVALID)?;
+        field(20..zone_start)?.checked_mul(scale).ok_or(INVALID)?
+    } else {
+        0
+    };
+    let offset_seconds = if value.ends_with('Z') {
+        0
+    } else {
+        let start = |at: usize| zone_start.checked_add(at).ok_or(INVALID);
+        let hours = field(start(1)?..start(3)?)?;
+        let minutes = field(start(4)?..start(6)?)?;
+        if hours > 23 || minutes > 59 {
+            return Err(INVALID);
+        }
+        let magnitude = hours
+            .checked_mul(3600)
+            .and_then(|seconds| seconds.checked_add(minutes.checked_mul(60)?))
+            .ok_or(INVALID)?;
+        if bytes.get(zone_start) == Some(&b'-') {
+            magnitude.checked_neg().ok_or(INVALID)?
+        } else {
+            magnitude
+        }
+    };
+    let time = Time::new(
+        i8::try_from(hour).map_err(|_error| INVALID)?,
+        i8::try_from(minute).map_err(|_error| INVALID)?,
+        i8::try_from(second).map_err(|_error| INVALID)?,
+        nanos,
+    )
+    .map_err(|_error| INVALID)?;
+    calendar_date(bytes)
+        .ok_or(INVALID)?
+        .to_datetime(time)
+        .checked_sub(SignedDuration::from_secs(i64::from(offset_seconds)))
+        .map_err(|_error| INVALID)
+}
+
+/// RFC 3339 with `Z` and the shortest exact fraction of 0, 3, 6 or 9 digits.
+fn rfc3339_utc(utc: &DateTime) -> Result<String, TemporalError> {
+    if !(0..=9_999).contains(&utc.year()) {
+        return Err(TemporalError::InvalidTimestamp);
+    }
+    let nanos = utc.subsec_nanosecond();
+    let fraction = if nanos == 0 {
+        String::new()
+    } else if nanos % 1_000_000 == 0 {
+        format!(".{:03}", nanos / 1_000_000)
+    } else if nanos % 1_000 == 0 {
+        format!(".{:06}", nanos / 1_000)
+    } else {
+        format!(".{nanos:09}")
+    };
+    Ok(format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}{fraction}Z",
+        utc.year(),
+        utc.month(),
+        utc.day(),
+        utc.hour(),
+        utc.minute(),
+        utc.second()
+    ))
 }
 
 fn digits(bytes: &[u8]) -> bool {
     !bytes.is_empty() && bytes.iter().all(u8::is_ascii_digit)
 }
 
-/// Checks the RFC 3339 spelling constraints chrono intentionally leaves
-/// broader, while delegating calendar, time, and offset validity to chrono.
+/// Checks the RFC 3339 spelling constraints; [`utc_reading`] then checks
+/// calendar, time, and offset validity.
 fn timestamp_shape(value: &str) -> Result<(), TemporalError> {
     let bytes = value.as_bytes();
     if !(20..=35).contains(&bytes.len())
@@ -371,11 +510,13 @@ mod tests {
     fn naming_series_date_refuses_extreme_instants_without_panicking() {
         for (epoch_millis, timezone) in [
             (
-                chrono::DateTime::<chrono::Utc>::MAX_UTC.timestamp_millis(),
+                // chrono 0.4's `DateTime::<Utc>::MAX_UTC`, the old upper bound.
+                8_210_266_876_799_999,
                 "Etc/GMT-14",
             ),
             (
-                chrono::DateTime::<chrono::Utc>::MIN_UTC.timestamp_millis(),
+                // chrono 0.4's `DateTime::<Utc>::MIN_UTC`, the old lower bound.
+                -8_334_601_315_200_000,
                 "Etc/GMT+12",
             ),
             (i64::MAX, "UTC"),
@@ -387,6 +528,11 @@ mod tests {
                 "{epoch_millis} in {timezone}"
             );
         }
+    }
+
+    #[test]
+    fn the_named_tzdb_version_is_the_bundled_one() {
+        assert_eq!(jiff_tzdb::VERSION, Some(NAMING_SERIES_TZDB_VERSION));
     }
 
     #[test]
