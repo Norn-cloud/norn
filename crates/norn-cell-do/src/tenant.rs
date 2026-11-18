@@ -200,6 +200,7 @@ impl<E: SqlEngine> Serving<E> {
         let version = match self.host.active_definitions_version() {
             Ok(version) => version,
             Err(refusal) => {
+                self.clear_reveal();
                 self.install_actions(None, None, Some(refusal.explanation));
                 return;
             }
@@ -207,6 +208,9 @@ impl<E: SqlEngine> Serving<E> {
         if version == self.compiled && version.is_some() {
             return;
         }
+        // A changed or unreadable version reveals nothing until its own reveal
+        // policy compiles: the previous version's grants never outlive it.
+        self.clear_reveal();
         let active = match self.host.active_definitions() {
             Ok(active) => active,
             Err(refusal) => {
@@ -223,9 +227,11 @@ impl<E: SqlEngine> Serving<E> {
             // The read rules follow the install itself (the host tells the
             // read policy its model changed); the access collections follow
             // here.
-            if let Ok(served) = norn_api::action_admission::prepare_action_model(&model) {
-                self.object_types = collections(served.object_types());
-            }
+            // Not marked compiled on failure: the next request tries again,
+            // so `/v1/access` never keeps the previous version's collections.
+            let served = norn_api::action_admission::prepare_action_model(&model)
+                .map_err(|refusal| refusal.explanation)?;
+            self.object_types = collections(served.object_types());
             let reveal = RevealPolicy::compile(&model, &artifacts, self.host.scope())
                 .map_err(|error| error.0)?;
             if let Ok(mut slot) = self.reveal.write() {
@@ -244,6 +250,12 @@ impl<E: SqlEngine> Serving<E> {
             // Not marked compiled: the next request tries again.
             Some(Err(reason)) => self.install_actions(None, None, Some(reason)),
             None => self.install_actions(None, version, None),
+        }
+    }
+
+    fn clear_reveal(&self) {
+        if let Ok(mut slot) = self.reveal.write() {
+            *slot = None;
         }
     }
 
