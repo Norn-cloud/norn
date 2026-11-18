@@ -194,8 +194,11 @@ fn quotable(text: &str) -> bool {
     !text.contains('\'') && !text.contains('\\')
 }
 
-/// Whether the old (and new) engine admits the literal, decided by the
-/// literal's shape alone so the corpus does not depend on the engine.
+/// A conservative sampling filter, not the engine's admission rule: it keeps
+/// `YYYY-MM-DD` literals with months 1 to 12, days 1 to 28 and a non-zero year,
+/// which every engine version accepts, so the random arithmetic and comparison
+/// pool never depends on month lengths. Valid dates such as `2024-02-29` are
+/// still covered by the boundary cases, just not drawn into this pool.
 fn plausible_date(text: &str) -> bool {
     let b = text.as_bytes();
     b.len() == 10
