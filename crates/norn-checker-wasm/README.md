@@ -73,7 +73,9 @@ units; runtime failures retain the charged units.
 | `expr.budget.exhausted` | `limit`, `used`, `message` — the attempted charge exceeds the fixed budget; top-level `unitsUsed` remains capped at the limit |
 | `expr.number.invalid` | `input`, `reason` |
 | `expr.result.unsupported` | `typeName` |
-| `expr.output.invalid`, `expr.error.unknown` | `message` (and `argument` for output failures) — reserved for an output conversion failure or a future unclassified evaluator error |
+| `expr.error.unknown` | `message` — reserved for a future unclassified evaluator error |
+
+`expr.output.invalid` is retired (D113): evaluation no longer issues a receipt, so no output conversion step can fail.
 
 ## Build the npm package
 
