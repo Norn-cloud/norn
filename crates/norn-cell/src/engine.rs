@@ -670,6 +670,7 @@ impl SqlEngine for NativeEngine {
         if !self.conn.is_autocommit() {
             return Ok(None);
         }
+        let _counted = StatementCount::start(&self.conn, &[]);
         let external: i64 = self
             .conn
             .query_row("PRAGMA data_version", [], |row| row.get(0))?;
