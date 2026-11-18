@@ -442,6 +442,35 @@ fn guard_refuses_temporal_clock_and_locale_features() {
     }
 }
 
+/// jiff's `std` feature, the only one the guard admits, still compiles its
+/// clock and host-tz entry points, and jiff calls `SystemTime::now` inside the
+/// dependency where that ban cannot see it. The root `clippy.toml` bans the
+/// five entry points directly; this pins that the bans stay in place.
+#[test]
+fn clippy_bans_jiff_clock_and_host_tz() {
+    let text = std::fs::read_to_string(workspace_root().join("clippy.toml")).expect("clippy.toml");
+    let config: toml::Table = text.parse().expect("clippy.toml parses");
+    let banned: Vec<&str> = config["disallowed-methods"]
+        .as_array()
+        .expect("disallowed-methods is an array")
+        .iter()
+        .filter_map(|entry| entry.get("path").and_then(toml::Value::as_str))
+        .collect();
+    for path in [
+        "std::time::SystemTime::now",
+        "jiff::Timestamp::now",
+        "jiff::Zoned::now",
+        "jiff::tz::TimeZone::system",
+        "jiff::tz::TimeZone::try_system",
+        "jiff::tz::db",
+    ] {
+        assert!(
+            banned.contains(&path),
+            "clippy.toml must ban `{path}`: {banned:?}"
+        );
+    }
+}
+
 #[test]
 fn guard_requires_pinned_std_only_timezone_reader() {
     let base = metadata();

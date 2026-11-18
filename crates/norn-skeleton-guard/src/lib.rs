@@ -1049,6 +1049,12 @@ fn check_calendar_dependencies(name: &str, dep: &Dependency, out: &mut Vec<Viola
         // Any feature beyond `std` admits another timezone source: the host's
         // zoneinfo (`tz-system`, `tzdb-zoneinfo`), a bundled database other
         // than the pinned `jiff-tzdb` below (`tzdb-*`), or serde/logging.
+        // `std` alone does NOT keep the clock out: it compiles
+        // `Timestamp::now`, `Zoned::now`, `TimeZone::system`/`try_system` and
+        // `tz::db`, and feature unification (serde_with turns on `tz-system`
+        // and `tzdb-zoneinfo`) can point `tz::db` at host zoneinfo. Those five
+        // are banned in the root `clippy.toml` `disallowed-methods` instead;
+        // `clippy_bans_jiff_clock_and_host_tz` in tests/skeleton.rs pins that.
         if dep.uses_default_features || dep.features != ["std"] {
             out.push(violation(
                 "norn-expr-temporal-features",
