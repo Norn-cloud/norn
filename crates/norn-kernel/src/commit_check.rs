@@ -1017,7 +1017,8 @@ fn evaluate_invariants_for_class(
             }
         };
         let attempt = match &environment {
-            Ok(env) => expression.evaluate_admitted_metered(
+            Ok(env) => expression.evaluate_prepared(
+                &catalog.prepared_invariant(&key.object_type, &expression, env),
                 &context,
                 EvaluationBudget::new(*remaining),
                 env,
