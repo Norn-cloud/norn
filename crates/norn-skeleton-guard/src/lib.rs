@@ -45,8 +45,13 @@
 //! baseline may only lose entries: CI (`skeleton-guard` job,
 //! `scripts/baseline-shrink-only.sh`) rejects a PR whose baseline gains an
 //! entry relative to the base branch.
+//!
+//! [`ratchet`] holds per-file counts (test honesty, `too_many_lines` allows)
+//! in `baseline.json` `ratchets`; a count can only go down, and it must be
+//! lowered in the same PR that removes a violation.
 
 pub mod ci;
+pub mod ratchet;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
