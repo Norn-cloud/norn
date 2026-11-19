@@ -17,7 +17,8 @@ Some but not all of them refuses to start. Limits are enforced on the server onl
 | `POLAR_PLANS` | the plan table as JSON: product ids and limits (below) |
 
 Webhook endpoint to register in Polar: `<studio origin>/api/auth/polar/webhooks` (subscription events).
-`null` is unlimited; `cells` counts the workspaces a person owns, `members` a workspace's members and pending invitations.
+`null` is unlimited; `cells` counts the workspaces a person pays for (the first owner, fixed at creation), `members` a workspace's members and unexpired pending invitations.
+A downgrade keeps existing workspaces and members over the new limit; it refuses new ones until usage is back under it.
 PLACEHOLDER plan table (not decided prices or limits; the product ids are not real):
 
 ```json

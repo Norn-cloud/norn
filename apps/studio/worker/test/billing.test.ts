@@ -4,9 +4,10 @@ import { readFileSync, readdirSync } from "node:fs"
 import { join } from "node:path"
 import { getMigrations } from "better-auth/db/migration"
 import worker, { type Env } from "../index.ts"
-import { authOptions } from "../auth.ts"
+import { authOptions, createAuth } from "../auth.ts"
+import { forgetPolarCustomer } from "../polar.ts"
 import {
-  applySubscription, billingConfig, BILLING_ENV, entitlementOf, parsePlans, PLACEHOLDER_PLANS, statusOf, UNLIMITED,
+  admitCreatedCell, admitCreatedInvitation, applySubscription, billingConfig, BILLING_ENV, entitlementOf, parsePlans, PLACEHOLDER_PLANS, statusOf, UNLIMITED, workspaceSeats,
   type BillingConfig, type BillingDb, type PlanTable, type PolarSubscription,
 } from "../billing.ts"
 import { celldConfig, celldStudio } from "../../celld-config.ts"
@@ -160,8 +161,9 @@ test("Polar's plugin adds no Better Auth tables: 0001 and 0009 are the whole sch
 
 test("Polar statuses map to active, past due or canceled; nothing unknown is granted", () => {
   expect(["active", "trialing"].map(statusOf)).toEqual(["active", "active"])
-  expect(["past_due", "unpaid"].map(statusOf)).toEqual(["past_due", "past_due"])
-  expect(["canceled", "incomplete", "incomplete_expired", "paused", "something_new"].map(statusOf)).toEqual(Array(5).fill("canceled"))
+  // Only past due is grace; unpaid means Polar's retries are exhausted.
+  expect(statusOf("past_due")).toBe("past_due")
+  expect(["unpaid", "canceled", "incomplete", "incomplete_expired", "paused", "something_new"].map(statusOf)).toEqual(Array(6).fill("canceled"))
 })
 
 test("a subscription moves free → active → past due → canceled, and an older event never rolls it back", async () => {
@@ -242,11 +244,35 @@ test("a replayed delivery inside the window is acknowledged without being applie
 // ===============================================================================================
 // Enforcement where workspaces (hosted cells) and members are created
 
-test("sign-up creates the person's Polar customer under their user id", async () => {
+test("an unpaid subscription drops to the free plan", async () => {
   const env = stage(true)
-  const { userId } = await enroll(env, "cora@example.com")
-  const created = polarCalls.find((entry) => entry.method === "POST" && entry.path === "/v1/customers/")
-  expect(created?.body).toMatchObject({ email: "cora@example.com", external_id: userId })
+  await webhook(env, "subscription.active", subscription({ modified_at: "2026-11-19T10:00:00Z" }))
+  await webhook(env, "subscription.updated", subscription({ status: "unpaid", modified_at: "2026-11-19T11:00:00Z" }))
+  expect(row(env)).toMatchObject({ status: "canceled", polar_status: "unpaid" })
+  expect(await entitlementOf(env.AUTH_DB as unknown as BillingDb, CONFIG, "user_1")).toMatchObject({ plan: "free", status: "canceled" })
+})
+
+test("sign-up makes no Polar call: an existing Polar customer with the same email is never linked to a new account", async () => {
+  const env = stage(true)
+  const { cookie, userId } = await enroll(env, "cora@example.com")
+  expect(polarCalls).toEqual([])
+  // The customer is made at checkout, under the account's own id, not looked up by email.
+  expect((await call(env, "/api/billing/checkout?plan=pro", { headers: { cookie } })).status).toBe(303)
+  expect(polarCalls.map((entry) => `${entry.method} ${entry.path}`)).toEqual(["POST /v1/checkouts/"])
+  expect(polarCalls[0]?.body).toMatchObject({ external_customer_id: userId })
+})
+
+test("deleting an account deletes its Polar customer, best effort", async () => {
+  const db = database()
+  const billing = { config: CONFIG, db: db as unknown as BillingDb }
+  const auth = createAuth({ clientIpHeader: "cf-connecting-ip", database: db, secret: "t".repeat(40), baseURL: ORIGIN, billing })
+  const context = await auth.$context
+  const user = { id: "user_del" }
+  db.run(`insert into user (id, name, email, emailVerified, createdAt, updatedAt) values ('user_del', 'del', 'del@example.com', 0, ?, ?)`, [new Date().toISOString(), new Date().toISOString()])
+  await context.internalAdapter.deleteUser(user.id)
+  expect(polarCalls.map((entry) => `${entry.method} ${entry.path}`)).toEqual([`DELETE /v1/customers/external/${user.id}`])
+  // Polar answering 404 (never checked out) or failing never blocks the deletion.
+  await forgetPolarCustomer(billing)({ id: "user_without_customer" })
 })
 
 test("a workspace over the plan's cell limit is refused with a typed refusal and an upgrade link, and admitted after upgrading", async () => {
@@ -257,7 +283,7 @@ test("a workspace over the plan's cell limit is refused with a typed refusal and
   expect(refused.status).toBe(403)
   const body = await refused.json() as { code: string; message: string; refusal: Record<string, unknown> }
   expect(body.code).toBe("PLAN_LIMIT")
-  expect(body.refusal).toEqual({ kind: "plan-limit", limit: "cells", plan: "free", allowed: 1, used: 1, upgradeUrl: `${ORIGIN}/api/billing/checkout?plan=pro` })
+  expect(body.refusal).toEqual({ kind: "plan-limit", limit: "cells", plan: "free", allowed: 1, used: 1, upgradeUrl: `${ORIGIN}/api/billing/checkout?plan=pro`, upgradeBy: "you" })
   expect(sql(env).query("select count(*) as n from organization").get()).toEqual({ n: 1 })
   // Polar reports the subscription; the same request is now admitted.
   expect((await webhook(env, "subscription.active", subscription({ external_id: userId }))).status).toBe(200)
@@ -276,7 +302,99 @@ test("invitations past the workspace owner's member limit are refused", async ()
   expect((await post(env, "/api/auth/organization/invite-member", { email: "one@example.com", role: "member", organizationId }, { cookie })).status).toBe(200)
   const refused = await post(env, "/api/auth/organization/invite-member", { email: "two@example.com", role: "member", organizationId }, { cookie })
   expect(refused.status).toBe(403)
-  expect(((await refused.json()) as { refusal: { limit: string } }).refusal).toMatchObject({ kind: "plan-limit", limit: "members", allowed: 2, used: 2 })
+  expect(((await refused.json()) as { refusal: { limit: string } }).refusal).toMatchObject({ kind: "plan-limit", limit: "members", allowed: 2, used: 2, upgradeBy: "you", upgradeUrl: `${ORIGIN}/api/billing/checkout?plan=pro` })
+})
+
+/** Put a second person into a workspace directly (accepting an invitation needs a verified address). */
+function join_(env: Env, organizationId: string, userId: string, role: string): string {
+  const id = `mem_${crypto.randomUUID()}`
+  sql(env).run(`insert into member (id, organizationId, userId, role, createdAt) values (?, ?, ?, ?, ?)`, [id, organizationId, userId, role, new Date().toISOString()])
+  return id
+}
+const firstWorkspace = (env: Env, userId: string) => (sql(env).query("select organizationId as id from member where userId = ? order by createdAt limit 1").get(userId) as { id: string }).id
+
+test("handing the owner role to someone else and stepping down does not free a workspace: the payer is fixed at creation", async () => {
+  const env = stage(true)
+  const ada = await enroll(env, "ada2@example.com")
+  const bo = await enroll(env, "bo@example.com")
+  const workspace = firstWorkspace(env, ada.userId)
+  const boMember = join_(env, workspace, bo.userId, "member")
+  const adaMember = (sql(env).query("select id from member where organizationId = ? and userId = ?").get(workspace, ada.userId) as { id: string }).id
+  // Ada promotes Bo to owner; Bo demotes Ada. Ada no longer owns anything by role.
+  expect((await post(env, "/api/auth/organization/update-member-role", { memberId: boMember, role: "owner", organizationId: workspace }, { cookie: ada.cookie })).status).toBe(200)
+  expect((await post(env, "/api/auth/organization/update-member-role", { memberId: adaMember, role: "member", organizationId: workspace }, { cookie: bo.cookie })).status).toBe(200)
+  expect(sql(env).query(`select count(*) as n from member where userId = ? and role like '%owner%'`).get(ada.userId)).toEqual({ n: 0 })
+  // She still pays for it: a second workspace is refused, and her billing document still counts it.
+  const refused = await post(env, "/api/auth/organization/create", { name: "Again", slug: "again" }, { cookie: ada.cookie })
+  expect(refused.status).toBe(403)
+  expect(((await refused.json()) as { refusal: unknown }).refusal).toMatchObject({ limit: "cells", allowed: 1, used: 1 })
+  expect(((await (await call(env, "/api/billing", { headers: { cookie: ada.cookie } })).json()) as { usage: unknown }).usage).toEqual({ cells: 1 })
+  // Bo's new owner role adds nothing to what he pays for: still his own workspace only.
+  expect(((await (await call(env, "/api/billing", { headers: { cookie: bo.cookie } })).json()) as { usage: unknown }).usage).toEqual({ cells: 1 })
+})
+
+test("concurrent workspace creations cannot pass the cell limit together: the later ones are undone", async () => {
+  const env = stage(true)
+  const { cookie, userId } = await enroll(env, "rush@example.com")
+  await webhook(env, "subscription.active", subscription({ external_id: userId }))
+  // Pro allows 3; one exists. Four at once: exactly two fit.
+  const responses = await Promise.all(["a", "b", "c", "d"].map((name) => post(env, "/api/auth/organization/create", { name, slug: `rush-${name}` }, { cookie })))
+  expect(responses.map((response) => response.status).sort()).toEqual([200, 200, 403, 403])
+  for (const response of responses.filter((one) => one.status === 403)) expect(((await response.json()) as { code: string }).code).toBe("PLAN_LIMIT")
+  expect(sql(env).query("select count(*) as n from billing_workspace where payer_id = ?").get(userId)).toEqual({ n: 3 })
+  expect(sql(env).query("select count(*) as n from organization").get()).toEqual({ n: 3 })
+  expect(sql(env).query("select count(*) as n from member where userId = ?").get(userId)).toEqual({ n: 3 })
+})
+
+test("the after-creation recount keeps exactly the earliest workspaces and invitations that fit", async () => {
+  const env = stage(true)
+  const db = env.AUTH_DB as unknown as BillingDb
+  // Two workspaces that both slipped past the before-check for a free person (one allowed).
+  for (const id of ["org_1", "org_2"]) sql(env).run(`insert into billing_workspace (organization_id, payer_id) values (?, 'user_x')`, [id])
+  expect(await admitCreatedCell(db, CONFIG, ORIGIN, "org_1")).toEqual({ kind: "admitted" })
+  expect(await admitCreatedCell(db, CONFIG, ORIGIN, "org_2")).toMatchObject({ kind: "plan-limit", limit: "cells", allowed: 1, used: 1, upgradeBy: "you" })
+  // Invitations: the payer's seat plus the first invitation fill the free plan's two.
+  const { userId } = await enroll(env, "cap@example.com")
+  const workspace = firstWorkspace(env, userId)
+  const future = new Date(Date.now() + 86_400_000).toISOString()
+  for (const id of ["inv_1", "inv_2"]) sql(env).run(`insert into invitation (id, organizationId, email, role, status, expiresAt, createdAt, inviterId) values (?, ?, ?, 'member', 'pending', ?, ?, ?)`, [id, workspace, `${id}@example.com`, future, future, userId])
+  expect(await admitCreatedInvitation(db, CONFIG, ORIGIN, workspace, "inv_1", userId)).toEqual({ kind: "admitted" })
+  expect(await admitCreatedInvitation(db, CONFIG, ORIGIN, workspace, "inv_2", userId)).toMatchObject({ kind: "plan-limit", limit: "members", allowed: 2, used: 2 })
+})
+
+test("concurrent invitations cannot pass the member limit together", async () => {
+  const env = stage(true)
+  const { cookie, userId } = await enroll(env, "many@example.com")
+  const organizationId = firstWorkspace(env, userId)
+  const responses = await Promise.all(["x", "y", "z"].map((name) => post(env, "/api/auth/organization/invite-member", { email: `${name}@example.com`, role: "member", organizationId }, { cookie })))
+  expect(responses.map((response) => response.status).sort()).toEqual([200, 403, 403])
+  expect(sql(env).query("select count(*) as n from invitation").get()).toEqual({ n: 1 })
+})
+
+test("a member-limit refusal sends someone who is not the payer to the workspace's owner, never to a checkout billed to them", async () => {
+  const env = stage(true)
+  const owner = await enroll(env, "own@example.com")
+  const admin = await enroll(env, "adm@example.com")
+  const organizationId = firstWorkspace(env, owner.userId)
+  join_(env, organizationId, admin.userId, "admin")
+  // Owner and admin fill the free plan's two seats.
+  const refused = await post(env, "/api/auth/organization/invite-member", { email: "new@example.com", role: "member", organizationId }, { cookie: admin.cookie })
+  expect(refused.status).toBe(403)
+  const body = await refused.json() as { message: string; refusal: unknown }
+  expect(body.refusal).toEqual({ kind: "plan-limit", limit: "members", plan: "free", allowed: 2, used: 2, upgradeUrl: null, upgradeBy: "workspace-owner" })
+  expect(body.message).toContain("ask the workspace's owner to upgrade")
+})
+
+test("expired pending invitations hold no seat", async () => {
+  const env = stage(true)
+  const { cookie, userId } = await enroll(env, "exp@example.com")
+  const organizationId = firstWorkspace(env, userId)
+  const past = new Date(Date.now() - 60_000)
+  // One expiry written as an ISO string (Better Auth's SQLite form), one as epoch milliseconds.
+  sql(env).run(`insert into invitation (id, organizationId, email, role, status, expiresAt, createdAt, inviterId) values ('inv_iso', ?, 'old1@example.com', 'member', 'pending', ?, ?, ?)`, [organizationId, past.toISOString(), past.toISOString(), userId])
+  sql(env).run(`insert into invitation (id, organizationId, email, role, status, expiresAt, createdAt, inviterId) values ('inv_ms', ?, 'old2@example.com', 'member', 'pending', ?, ?, ?)`, [organizationId, past.getTime(), past.toISOString(), userId])
+  expect(await workspaceSeats(env.AUTH_DB as unknown as BillingDb, organizationId)).toBe(1)
+  expect((await post(env, "/api/auth/organization/invite-member", { email: "fresh@example.com", role: "member", organizationId }, { cookie })).status).toBe(200)
 })
 
 // ===============================================================================================
@@ -313,6 +431,36 @@ test("the billing document is the server's: entitlement, usage and the actions i
   })
   await webhook(env, "subscription.active", subscription({ external_id: userId }))
   expect(((await (await call(env, "/api/billing", { headers: { cookie } })).json()) as { actions: unknown }).actions).toEqual([{ kind: "portal", label: "Manage billing", href: `${ORIGIN}/api/billing/portal` }])
+})
+
+test("the plugin's own checkout and portal are refused from outside, whatever the caller sends", async () => {
+  const env = stage(true)
+  const { cookie } = await enroll(env, "eve@example.com")
+  const shaped = { slug: "pro", products: ["prod_team"], allow_trial: true, trial_interval: "year", trial_interval_count: 5, discount_id: "d_1", discount_code: "FREE", metadata: { plan: "team" }, success_url: "https://evil.example/x", return_url: "https://evil.example/y", redirect: false }
+  for (const path of ["/api/auth/checkout", "/api/auth/checkout/", "/api/auth/Checkout", "/api/auth/customer/portal"]) {
+    const response = await post(env, path, shaped, { cookie })
+    expect({ path, status: response.status }).toEqual({ path, status: 404 })
+  }
+  expect((await call(env, "/api/auth/customer/portal", { headers: { cookie } })).status).toBe(404)
+  expect(polarCalls).toEqual([])
+  // /api/billing/checkout stays the way in, with the server's fixed body: the configured product, no trial or discount.
+  expect((await call(env, "/api/billing/checkout?plan=pro", { headers: { cookie } })).status).toBe(303)
+  const [checkout] = polarCalls
+  expect(checkout?.body).toMatchObject({ products: ["prod_pro"] })
+  for (const field of ["trial_interval", "trial_interval_count", "allow_trial", "discount_id", "metadata"]) expect((checkout?.body as Record<string, unknown>)[field] ?? null).toBeNull()
+})
+
+test("another site cannot start a checkout or portal session with the person's cookie", async () => {
+  const env = stage(true)
+  const { cookie } = await enroll(env, "csrf@example.com")
+  for (const site of ["cross-site", "same-site"]) expect((await call(env, "/api/billing/checkout?plan=pro", { headers: { cookie, "sec-fetch-site": site } })).status).toBe(403)
+  expect((await call(env, "/api/billing/portal", { headers: { cookie, "sec-fetch-site": "cross-site" } })).status).toBe(403)
+  expect(polarCalls).toEqual([])
+  // Studio's own links (same-origin) and a typed address (none) work.
+  expect((await call(env, "/api/billing/checkout?plan=pro", { headers: { cookie, "sec-fetch-site": "same-origin" } })).status).toBe(303)
+  expect((await call(env, "/api/billing/checkout?plan=pro", { headers: { cookie, "sec-fetch-site": "none" } })).status).toBe(303)
+  // The document itself is read by the shell's fetch and stays readable.
+  expect((await call(env, "/api/billing", { headers: { cookie, "sec-fetch-site": "same-origin" } })).status).toBe(200)
 })
 
 test("checkout sends a free person to Polar for the configured product under their own id; a paying person goes to the portal", async () => {

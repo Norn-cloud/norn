@@ -11,8 +11,8 @@ import { organization } from "better-auth/plugins/organization"
 import { adminAc, defaultStatements, memberAc, ownerAc } from "better-auth/plugins/organization/access"
 import { hashPassword, verifyPassword, type PasswordScrypt } from "./password.ts"
 import type { ClientIpHeader } from "./client-ip.ts"
-import { admitCell, admitMember, refusalMessage, type Admission, type BillingDb } from "./billing.ts"
-import { polarPlugin, type PolarBilling } from "./polar.ts"
+import { admitCell, admitCreatedCell, admitCreatedInvitation, admitMember, refusalMessage, removeInvitation, removeWorkspace, type Admission, type BillingDb } from "./billing.ts"
+import { forgetPolarCustomer, polarPlugin, type PolarBilling } from "./polar.ts"
 
 /**
  * Better Auth for the hosted Studio: email + password, email magic link,
@@ -395,8 +395,22 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
             enforce(await admitCell(config.database as unknown as BillingDb, config.billing?.config, config.baseURL, user.id))
             return { data: { ...organization, ...organization.metadata === undefined ? {} : { metadata: publicMetadata(organization.metadata) } } }
           },
-          beforeCreateInvitation: async ({ organization }) => enforce(await admitMember(config.database as unknown as BillingDb, config.billing?.config, config.baseURL, organization.id)),
-          beforeAddMember: async ({ organization }) => enforce(await admitMember(config.database as unknown as BillingDb, config.billing?.config, config.baseURL, organization.id)),
+          // Concurrent creations can all pass the check above before any is written: recount with the
+          // new workspace in place and undo it when it is past the limit.
+          afterCreateOrganization: async ({ organization }) => {
+            const db = config.database as unknown as BillingDb
+            const admission = await admitCreatedCell(db, config.billing?.config, config.baseURL, organization.id)
+            if (admission.kind !== "admitted") await removeWorkspace(db, organization.id)
+            enforce(admission)
+          },
+          beforeCreateInvitation: async ({ organization, inviter }) => enforce(await admitMember(config.database as unknown as BillingDb, config.billing?.config, config.baseURL, organization.id, inviter.id)),
+          afterCreateInvitation: async ({ organization, invitation, inviter }) => {
+            const db = config.database as unknown as BillingDb
+            const admission = await admitCreatedInvitation(db, config.billing?.config, config.baseURL, organization.id, invitation.id, inviter.id)
+            if (admission.kind !== "admitted") await removeInvitation(db, invitation.id)
+            enforce(admission)
+          },
+          beforeAddMember: async ({ organization, user }) => enforce(await admitMember(config.database as unknown as BillingDb, config.billing?.config, config.baseURL, organization.id, user.id)),
           beforeUpdateOrganization: async ({ organization, member }) => {
             if (organization.metadata === undefined) return
             const adapter = await getCurrentAdapter((await self.auth?.$context)?.adapter as never)
@@ -449,6 +463,8 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
             if (ctx !== null) await provisionWorkspace(config.database as unknown as ProvisionDb, config.secret, user, config.defaultEnvironmentId)
           },
         },
+        // A deleted account's Polar customer (if they ever checked out) goes too; best effort, never blocks the deletion.
+        ...config.billing === undefined ? {} : { delete: { after: forgetPolarCustomer(config.billing) } },
       },
       session: {
         create: {

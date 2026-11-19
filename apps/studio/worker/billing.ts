@@ -8,12 +8,13 @@
  * it renders the document `/api/billing` returns and the refusals the server sends.
  *
  * The billed subject is a person (Better Auth user id = Polar customer `external_id`). Each workspace
- * a person owns is one hosted cell; a workspace's member limit comes from its owner's plan.
+ * a person pays for (its first owner, recorded at creation: migration 0010) is one hosted cell; a
+ * workspace's member limit comes from its payer's plan.
  */
 
 /** null = unlimited. */
 export interface Limits {
-  /** Workspaces (each with its hosted cell) one person may own. */
+  /** Workspaces (each with its hosted cell) one person may pay for. */
   readonly cells: number | null
   /** Members (plus pending invitations) one workspace may hold. */
   readonly members: number | null
@@ -110,13 +111,14 @@ export function billingConfig(env: BillingEnv | Readonly<Record<string, string |
 export type SubscriptionStatus = "active" | "past_due" | "canceled"
 
 /**
- * Polar's subscription status, as entitlement: trialing counts as active; unpaid as past due (Polar is
- * still collecting); everything that is not being paid for (incomplete, expired, paused, canceled) as
- * canceled. Unknown future statuses are canceled, never granted.
+ * Polar's subscription status, as entitlement: trialing counts as active; past due keeps the plan
+ * while Polar retries the payment (the only grace); unpaid (retries exhausted) and everything else not
+ * being paid for (incomplete, expired, paused, canceled) is canceled. Unknown future statuses are
+ * canceled, never granted.
  */
 export function statusOf(polarStatus: string): SubscriptionStatus {
   if (polarStatus === "active" || polarStatus === "trialing") return "active"
-  if (polarStatus === "past_due" || polarStatus === "unpaid") return "past_due"
+  if (polarStatus === "past_due") return "past_due"
   return "canceled"
 }
 
@@ -217,19 +219,31 @@ export async function entitlementOf(db: BillingDb, billing: BillingConfig | unde
   return { billing: "enabled", plan: "free", status: subscriptions.some((row) => row.status === "canceled") ? "canceled" : "none", limits: billing.table.free }
 }
 
-/** The workspaces a person owns: each is one hosted cell. */
+/**
+ * The workspaces a person pays for: each is one hosted cell. Counted by the payer recorded at creation,
+ * not by today's owner role, so handing the owner role around never frees a cell.
+ */
 export async function ownedWorkspaces(db: BillingDb, subjectId: string): Promise<number> {
-  const [row] = await rows<{ n: number }>(db, `select count(*) as "n" from "member" where "userId" = ? and (',' || replace("role", ' ', '') || ',') like '%,owner,%'`, subjectId)
+  const [row] = await rows<{ n: number }>(db, `select count(*) as "n" from "billing_workspace" where "payer_id" = ?`, subjectId)
   return row?.n ?? 0
 }
-/** Members and still-pending invitations of a workspace. */
-export async function workspaceSeats(db: BillingDb, organizationId: string): Promise<number> {
+/** Members and still-pending, unexpired invitations of a workspace. */
+export async function workspaceSeats(db: BillingDb, organizationId: string, now = Date.now()): Promise<number> {
   const [members] = await rows<{ n: number }>(db, `select count(*) as "n" from "member" where "organizationId" = ?`, organizationId)
-  const [invited] = await rows<{ n: number }>(db, `select count(*) as "n" from "invitation" where "organizationId" = ? and "status" = 'pending'`, organizationId)
+  const [invited] = await rows<{ n: number }>(db, `select count(*) as "n" from "invitation" where "organizationId" = ? and "status" = 'pending' and ${UNEXPIRED}`, organizationId, ...unexpired(now))
   return (members?.n ?? 0) + (invited?.n ?? 0)
 }
-/** Who pays for a workspace: its earliest owner. */
+/**
+ * Better Auth writes dates to SQLite/D1 as ISO strings; a row written as epoch milliseconds compares
+ * as a number. Either way an invitation whose expiry has passed holds no seat.
+ */
+const UNEXPIRED = `(case when typeof("expiresAt") in ('integer', 'real') then "expiresAt" > ? else "expiresAt" > ? end)`
+const unexpired = (now: number) => [now, new Date(now).toISOString()]
+
+/** Who pays for a workspace: the payer recorded at its creation, else (a workspace from before that record) its earliest owner. */
 export async function workspaceOwner(db: BillingDb, organizationId: string): Promise<string | null> {
+  const [payer] = await rows<{ payer_id: string }>(db, `select "payer_id" from "billing_workspace" where "organization_id" = ?`, organizationId)
+  if (payer !== undefined) return payer.payer_id
   const [row] = await rows<{ userId: string }>(db, `select "userId" from "member" where "organizationId" = ? and (',' || replace("role", ' ', '') || ',') like '%,owner,%' order by "createdAt" asc limit 1`, organizationId)
   return row?.userId ?? null
 }
@@ -245,6 +259,8 @@ export interface PlanLimitRefusal {
   readonly used: number
   /** Where the person can raise the limit: a checkout for the next plan that allows more, else null. */
   readonly upgradeUrl: string | null
+  /** Who can raise it: the caller, or (a member limit refused to someone else) the workspace's payer, whose plan it is; then upgradeUrl is null. */
+  readonly upgradeBy: "you" | "workspace-owner"
 }
 export type Admission = { readonly kind: "admitted" } | PlanLimitRefusal
 
@@ -261,32 +277,78 @@ export function upgradeUrl(billing: BillingConfig, baseURL: string, entitlement:
   return plan === undefined ? null : new URL(`/api/billing/checkout?plan=${encodeURIComponent(plan.id)}`, baseURL).href
 }
 
-async function admit(db: BillingDb, billing: BillingConfig | undefined, baseURL: string, subjectId: string, name: LimitName, used: () => Promise<number>): Promise<Admission> {
+/** `used` counts what the new workspace or seat comes after; it is admitted while that is under the limit. */
+async function admit(db: BillingDb, billing: BillingConfig | undefined, baseURL: string, payerId: string, callerId: string, name: LimitName, used: () => Promise<number>): Promise<Admission> {
   if (billing === undefined) return { kind: "admitted" }
-  const entitlement = await entitlementOf(db, billing, subjectId)
+  const entitlement = await entitlementOf(db, billing, payerId)
   const allowed = entitlement.limits[name]
   if (allowed === null) return { kind: "admitted" }
   const count = await used()
   if (count < allowed) return { kind: "admitted" }
-  return { kind: "plan-limit", limit: name, plan: entitlement.plan, allowed, used: count, upgradeUrl: upgradeUrl(billing, baseURL, entitlement, name, count) }
+  // Only the payer can raise their own plan; a link would otherwise bill the caller for someone else's workspace.
+  const payer = payerId === callerId
+  return { kind: "plan-limit", limit: name, plan: entitlement.plan, allowed, used: count, upgradeUrl: payer ? upgradeUrl(billing, baseURL, entitlement, name, count) : null, upgradeBy: payer ? "you" : "workspace-owner" }
 }
 
 /** May this person create one more workspace (and its hosted cell)? Every creation path asks this first. */
 export const admitCell = (db: BillingDb, billing: BillingConfig | undefined, baseURL: string, subjectId: string) =>
-  admit(db, billing, baseURL, subjectId, "cells", () => ownedWorkspaces(db, subjectId))
+  admit(db, billing, baseURL, subjectId, subjectId, "cells", () => ownedWorkspaces(db, subjectId))
 
-/** May this workspace take one more member or invitation? Its owner's plan decides; an ownerless workspace is not limited. */
-export async function admitMember(db: BillingDb, billing: BillingConfig | undefined, baseURL: string, organizationId: string): Promise<Admission> {
+/**
+ * After a workspace is created: is it within its payer's limit? Concurrent creations can all pass
+ * admitCell before any is written; this recounts with the new row in place. Workspaces are ranked by
+ * creation order, so of a racing burst exactly the earliest ones that fit stay and the rest are undone.
+ */
+export async function admitCreatedCell(db: BillingDb, billing: BillingConfig | undefined, baseURL: string, organizationId: string): Promise<Admission> {
   if (billing === undefined) return { kind: "admitted" }
-  const owner = await workspaceOwner(db, organizationId)
-  if (owner === null) return { kind: "admitted" }
-  return admit(db, billing, baseURL, owner, "members", () => workspaceSeats(db, organizationId))
+  const [created] = await rows<{ payer_id: string; seq: number }>(db, `select "payer_id", "seq" from "billing_workspace" where "organization_id" = ?`, organizationId)
+  if (created === undefined) return { kind: "admitted" }
+  return admit(db, billing, baseURL, created.payer_id, created.payer_id, "cells", async () => {
+    const [earlier] = await rows<{ n: number }>(db, `select count(*) as "n" from "billing_workspace" where "payer_id" = ? and "seq" < ?`, created.payer_id, created.seq)
+    return earlier?.n ?? 0
+  })
 }
 
-export const refusalMessage = (refusal: PlanLimitRefusal) =>
-  refusal.limit === "cells"
-    ? `Your ${refusal.plan} plan allows ${refusal.allowed} workspace${refusal.allowed === 1 ? "" : "s"}; upgrade to create another.`
-    : `This workspace's ${refusal.plan} plan allows ${refusal.allowed} member${refusal.allowed === 1 ? "" : "s"} (including pending invitations); upgrade to add another.`
+/** May this workspace take one more member or invitation? Its payer's plan decides; a workspace without one is not limited. */
+export async function admitMember(db: BillingDb, billing: BillingConfig | undefined, baseURL: string, organizationId: string, callerId: string): Promise<Admission> {
+  if (billing === undefined) return { kind: "admitted" }
+  const payer = await workspaceOwner(db, organizationId)
+  if (payer === null) return { kind: "admitted" }
+  return admit(db, billing, baseURL, payer, callerId, "members", () => workspaceSeats(db, organizationId))
+}
+
+/**
+ * After an invitation is created: is it within the payer's member limit? Members hold their seats
+ * first, then pending invitations in creation order, so of concurrent invitations exactly the earliest
+ * ones that fit stay and the rest are undone.
+ */
+export async function admitCreatedInvitation(db: BillingDb, billing: BillingConfig | undefined, baseURL: string, organizationId: string, invitationId: string, callerId: string, now = Date.now()): Promise<Admission> {
+  if (billing === undefined) return { kind: "admitted" }
+  const payer = await workspaceOwner(db, organizationId)
+  if (payer === null) return { kind: "admitted" }
+  return admit(db, billing, baseURL, payer, callerId, "members", async () => {
+    const [members] = await rows<{ n: number }>(db, `select count(*) as "n" from "member" where "organizationId" = ?`, organizationId)
+    const [earlier] = await rows<{ n: number }>(db,
+      `select count(*) as "n" from "invitation" where "organizationId" = ? and "status" = 'pending' and ${UNEXPIRED} and "rowid" < (select "rowid" from "invitation" where "id" = ?)`,
+      organizationId, ...unexpired(now), invitationId)
+    return (members?.n ?? 0) + (earlier?.n ?? 0)
+  })
+}
+
+/** Undo a workspace created past its payer's limit (its members, invitations and payer record go with it). */
+export async function removeWorkspace(db: BillingDb, organizationId: string): Promise<void> {
+  for (const table of ["invitation", "member"]) await run(db, `delete from "${table}" where "organizationId" = ?`, organizationId)
+  await run(db, `delete from "organization" where "id" = ?`, organizationId)
+  await run(db, `delete from "billing_workspace" where "organization_id" = ?`, organizationId)
+}
+/** Undo an invitation created past the workspace's member limit. */
+export const removeInvitation = (db: BillingDb, invitationId: string) => run(db, `delete from "invitation" where "id" = ?`, invitationId)
+
+export function refusalMessage(refusal: PlanLimitRefusal): string {
+  if (refusal.limit === "cells") return `Your ${refusal.plan} plan allows ${refusal.allowed} workspace${refusal.allowed === 1 ? "" : "s"}; upgrade to create another.`
+  const allows = `This workspace's ${refusal.plan} plan allows ${refusal.allowed} member${refusal.allowed === 1 ? "" : "s"} (including pending invitations)`
+  return refusal.upgradeBy === "you" ? `${allows}; upgrade to add another.` : `${allows}; ask the workspace's owner to upgrade.`
+}
 
 // ---------------------------------------------------------------------------------------------
 // The billing document the shell renders.

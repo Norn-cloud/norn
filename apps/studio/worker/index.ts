@@ -135,6 +135,16 @@ async function polarWebhook(request: Request, env: Env): Promise<Response> {
   return response
 }
 
+/**
+ * The Polar plugin's checkout and portal endpoints. The plugin forwards whatever the caller sends
+ * (trial length, products, discounts, metadata, success and return URLs) to Polar, so a caller could
+ * shape their own checkout, e.g. a years-long free trial that reads as an active plan. They are refused
+ * from outside; /api/billing/* is the only way in and calls them with a fixed body.
+ */
+export const PLUGIN_BILLING_PATHS = new Set(["/api/auth/checkout", "/api/auth/customer/portal"])
+/** Matched as Better Auth's router could: any case, with or without a trailing slash. */
+const pluginBillingPath = (pathname: string) => PLUGIN_BILLING_PATHS.has(pathname.toLowerCase().replace(/\/+$/, ""))
+
 /** A Polar page (checkout, portal) the plugin minted for this person; refused unless it is https. */
 async function toPolar(response: Response): Promise<Response> {
   if (!response.ok) return refuse(response.status === 401 ? 401 : 502, response.status === 401 ? "Sign in first." : "Billing is unavailable right now; try again shortly.")
@@ -150,6 +160,9 @@ async function toPolar(response: Response): Promise<Response> {
  */
 async function billingRoute(request: Request, env: Env, billing: BillingConfig | undefined, pathname: string): Promise<Response> {
   if (request.method !== "GET") return refuse(405, "GET only.", { allow: "GET" })
+  // Checkout and portal are plain links in Studio's own pages; another site must not start one with the person's cookie.
+  const site = request.headers.get("sec-fetch-site")
+  if (pathname !== "/api/billing" && site !== null && site !== "same-origin" && site !== "none") return refuse(403, "Cross-site billing request refused.")
   const session = await auth(env).api.getSession({ headers: request.headers })
   if (session === null) return refuse(401, "Sign in first.")
   const db = env.AUTH_DB as unknown as BillingDb
@@ -157,6 +170,8 @@ async function billingRoute(request: Request, env: Env, billing: BillingConfig |
   if (billing === undefined) return refuse(404, "Billing is not enabled on this deployment.")
   const internal = (path: string, body: unknown) => auth(env).handler(new Request(new URL(`/api/auth${path}`, env.BETTER_AUTH_URL), {
     method: "POST",
+    // Only the cookie: getSession above resolves a person from the session cookie alone (no bearer plugin;
+    // API keys belong to workspaces, not people), so the plugin acts for exactly the person this route resolved.
     headers: { "content-type": "application/json", cookie: request.headers.get("cookie") ?? "", origin: new URL(env.BETTER_AUTH_URL).origin, [clientIpHeader(env.STUDIO_CLIENT_IP_HEADER)]: request.headers.get(clientIpHeader(env.STUDIO_CLIENT_IP_HEADER)) ?? "" },
     body: JSON.stringify(body),
   }))
@@ -201,6 +216,7 @@ export default {
     // The gateway provider is link-only: refuse every sign-in that could start from it (social and
     // generic OAuth), so a linked gateway identity never yields a Studio session. Linking stays.
     if (SIGN_IN_ELSEWHERE.has(pathname)) return refuse(403, "Studio sign-in is by email and password or magic link.")
+    if (pluginBillingPath(pathname)) return refuse(404, "No such endpoint; billing starts at /api/billing.")
     if (pathname.startsWith("/api/auth/")) return auth(env).handler(request)
     if (pathname === "/api/me") return me(request, env)
     if (pathname === "/api/billing" || pathname.startsWith("/api/billing/")) return billingRoute(request, env, billingConfig(env), pathname)
