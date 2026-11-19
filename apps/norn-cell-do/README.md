@@ -84,7 +84,7 @@ Build into a directory outside the checkout, then smoke it:
 ```sh
 export NORN_CELL_DO_PROJECT="${CARGO_TARGET_DIR:?}/norn-cell-do"
 mkdir -p "$NORN_CELL_DO_PROJECT"
-cp apps/norn-cell-do/{worker.mjs,subscribe.mjs,wrangler.json} "$NORN_CELL_DO_PROJECT/"
+cp apps/norn-cell-do/{worker.mjs,subscribe.mjs,telemetry.mjs,otlp.mjs,wrangler.json} "$NORN_CELL_DO_PROJECT/"
 cargo build --locked -p norn-cell-do --features fixtures --target wasm32-unknown-unknown --profile wasm-release
 wasm-bindgen "$CARGO_TARGET_DIR/wasm32-unknown-unknown/wasm-release/norn_cell_do.wasm" \
   --target web --out-name norn_cell_do --out-dir "$NORN_CELL_DO_PROJECT/pkg"
@@ -141,3 +141,56 @@ traces are never served unkeyed.
 | Atomic commit (TXN-ATOMIC-1) | `BEGIN IMMEDIATE` | `storage.transactionSync` |
 | Durability | `synchronous=FULL` fsync | DO storage; output gates hold replies until durable |
 | Ledger, receipts, transparency | shared `norn-cell` store | the same store over `WorkersEngine` |
+
+## Telemetry
+
+`telemetry.mjs` exports what the host does over OpenTelemetry (OTLP/HTTP, JSON
+encoding) through `otlp.mjs`, a dependency-free exporter Studio's Worker shares.
+It is off unless the Worker has `OTEL_EXPORTER_OTLP_ENDPOINT` (OTEL-OFF-1):
+without it every wrapped method calls straight through and nothing is sent. Set:
+
+| var | value |
+|---|---|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | the collector's base URL; OpenObserve: `https://<host>/api/<org>` |
+| `OTEL_EXPORTER_OTLP_HEADERS` | `Authorization=Basic%20<base64 user:password>` (a secret) |
+| `OTEL_RESOURCE_ATTRIBUTES` | `deployment.environment=<stage>` |
+| `OTEL_TRACES_SAMPLER_ARG` | fraction of spans kept (default 1) |
+| `NORN_OTEL_INTERVAL_MS` | export interval (default 10000) |
+
+Misconfiguration turns export off rather than failing a request: an endpoint
+that is not an http(s) URL or carries userinfo, a header that is not a valid
+HTTP field, or credentials sent over plain HTTP to anything but loopback
+(OTEL-TLS-1). Telemetry never delays or replaces a handler's result
+(OTEL-NEVER-FAILS-1): the wrappers read only the status and a refusal's body
+text the host already holds (`noteRefusal`), and recording and export run in a
+background task handed to `waitUntil`. The first observation in a quiet isolate
+schedules one flush within the interval (at most 20 s).
+
+Metrics are delta counters and histograms:
+
+| metric | attributes |
+|---|---|
+| `norn_cell_requests_total`, `norn_cell_request_duration_ms` | route template, method, kind (action, decision, provision, plan, apply, admission, install, sync, load, question, read, subscribe, write, other), outcome, status class, environment |
+| `norn_cell_definitions_stage_ms` | stage: provision, admission, plan, apply, install |
+| `norn_cell_refusals_total` | refusal code, route, kind |
+| `norn_cell_actions_total`, `norn_cell_decisions_total` | outcome: ok, pending (parked for approval), refused, error |
+| `norn_cell_sync_runs_total`, `norn_cell_sync_duration_ms` (the sync lag: start to rows committed), `norn_cell_sync_rows_{read,landed,quarantined}_total` | outcome (ok, partial, failed), failure code |
+| `norn_cell_alarm_lag_ms`, `norn_cell_alarms_total` | retry; lag is fired minus armed deadline (TIMER-ALARM-1, once `alarm()` exists) |
+| `norn_cell_live_publishes_total`, `norn_cell_live_fanout` (sockets per publish), `norn_cell_live_snapshots_total` (changed snapshots sent) | none |
+
+Each request, sync and alarm is also a span (`cell <kind> <route template>`).
+Every attribute comes from a fixed table (OTEL-NO-TENANT-1): routes are the
+templates in `otlp.mjs` `CELL_ROUTES` (`/v1/objects/{type}/{id}/history`; any
+other path is `other`), methods, environments and refusal codes are
+allowlisted (anything else is `other`), and nothing from a path segment, the
+scope, a principal or a body is kept. The per-commit work counters (#1421,
+`counters` feature) stay test-only.
+
+`probe/golden-path.mjs` is the synthetic probe (`probe/dev.sh` runs it against a
+fresh `norn dev`). It prints fixed diagnostic codes only, sends tokens only over
+HTTPS or to loopback, checks every credential before its first write, and
+writes into fixed slots (PROBE-BOUNDED-1). A hosted probe needs a cell dedicated
+to it: the probe refuses to write into a cell holding non-probe definitions.
+There is no cell deprovision or object delete API, so a hosted probe cell keeps
+each run's ledger entries, receipts and parked decision. Dashboards and alerts
+live in Norn-cloud/norn-ops `observability/`.
