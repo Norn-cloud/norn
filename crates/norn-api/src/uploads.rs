@@ -501,7 +501,7 @@ fn classify(value: &str) -> ColumnKind {
         }
     } else if value.eq_ignore_ascii_case("true") || value.eq_ignore_ascii_case("false") {
         ColumnKind::Boolean
-    } else if norn_expr::temporal::canonical_timestamp(value).is_ok() {
+    } else if norn_checker::is_canonical_timestamp(value) {
         // The engine's own grammar: a column is Datetime only when every
         // value survives the mapping's `timestamp(...)`.
         ColumnKind::Datetime

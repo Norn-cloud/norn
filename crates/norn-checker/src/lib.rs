@@ -304,3 +304,12 @@ pub fn check_artifact_json(value: &serde_json::Value) -> Vec<Diagnostic> {
 
 /// Single-cell execution diagnostic shared with runtime admission.
 pub mod execution_profile;
+
+/// Whether `text` is a timestamp the engine admits: the RFC 3339 subset that
+/// the mapping's `timestamp(...)` coercion and stored timestamps accept.
+/// Callers outside the admission path (upload column typing) classify with
+/// this instead of a looser parser of their own.
+#[must_use]
+pub fn is_canonical_timestamp(text: &str) -> bool {
+    norn_expr::temporal::canonical_timestamp(text).is_ok()
+}
