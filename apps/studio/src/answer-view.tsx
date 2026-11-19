@@ -398,7 +398,8 @@ function DrillMenu({ bucket, question, live, onRecords, onDrill }: {
 
 /** The questions derived from one bucket, read from the cell's catalog only once its menu opens. */
 function DrillItems({ bucket, question, onDrill }: { readonly bucket: Bucket; readonly question: Question; readonly onDrill: (drill: Drill) => void }) {
-  const catalog = useQuery({ queryKey: ["question-catalog"], queryFn: readQuestionCatalog, retry: false, staleTime: 60_000 })
+  // Its own key: ["question-catalog"] is the Worker's builder catalog, a different document.
+  const catalog = useQuery({ queryKey: ["cell-question-catalog"], queryFn: readQuestionCatalog, retry: false, staleTime: 60_000 })
   const properties = catalog.data?.document.objectTypes.find(({ name }) => name === question.objectSet)?.properties ?? []
   const drills = bucket.suppressed ? [] : breakOuts(question, bucket, properties)
   return <>

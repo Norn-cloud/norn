@@ -4,6 +4,8 @@
 import { initSync, NornCell } from "./pkg/norn_cell_do.js";
 import module from "./pkg/norn_cell_do_bg.wasm";
 import * as live from "./subscribe.mjs";
+import { Wake } from "./wake.mjs";
+import { instrument, noteRefusal, syncFinished } from "./telemetry.mjs";
 initSync({ module });
 
 // The demo cell, as [orgId, environmentId]: where a request that names no well-formed scope lands.
@@ -45,6 +47,8 @@ const FIXTURE_STAGES = new Set(["smoke", "test"]);
 const ENGINE_STEPS = 64;
 // A hung engine call must not hold the object.
 const ENGINE_TIMEOUT_MS = 120_000;
+// TIMER-ALARM-1: the scope this object serves, kept so an alarm (which carries no request) can open its cell.
+const SCOPE_KEY = "norn.cell.scope";
 
 export class Cell {
   constructor(ctx, env) {
@@ -54,6 +58,10 @@ export class Cell {
     this.opening = null;
     // The last failed cold open and when it failed (see open()).
     this.openFailure = null;
+    // TIMER-ALARM-1: the object's alarm follows the cell's deadlines (wake.mjs).
+    this.wake = new Wake(ctx.storage);
+    // Whether this instance has stored the scope it serves.
+    this.scopeKept = false;
   }
   /** The pinned JWKS document and when it was fetched. The URL is configuration, never taken from a token. `reuse` accepts this isolate's last document while it is younger than OPEN_RETRY_MS (cold opens only). */
   async jwks(reuse) {
@@ -102,6 +110,10 @@ export class Cell {
       }
       // D102: questions are answered on the tenant analytics engine when the Worker has one.
       if (this.env.NORN_OLAP_URL !== undefined) this.cell.enableAnalytics();
+      // TIMER-ALARM-1: a serving cell keeps its scope for alarms, and arms for whatever was
+      // already due when it opened (a cell from before alarms, a lost alarm).
+      await this.keepScope(scope);
+      await this.wake.opened(this.cell, Date.now());
     })().catch((error) => {
       this.opening = null;
       this.openFailure = { error, at: Date.now() };
@@ -109,6 +121,12 @@ export class Cell {
       throw error;
     });
     return this.opening;
+  }
+  /** TIMER-ALARM-1: store the scope only for a serving cell, never for an open of a vacant scope. */
+  async keepScope(scope) {
+    if (this.scopeKept || !this.cell.serving()) return;
+    if (JSON.stringify(await this.ctx.storage.get(SCOPE_KEY)) !== JSON.stringify(scope)) await this.ctx.storage.put(SCOPE_KEY, scope);
+    this.scopeKept = true;
   }
   serve(request, body) {
     const url = new URL(request.url);
@@ -210,10 +228,13 @@ export class Cell {
       // Already closed.
     }
   }
-  /** After a commit, every live subscription on this object is answered again. */
+  /** After a commit, every live subscription on this object is answered again; resolves to the changed snapshots sent. */
   publish() {
-    if (this.ctx.getWebSockets().length === 0) return;
-    live.publish(this.ctx, (path, query, authorization) => this.ask(path, query, authorization)).catch((error) => console.error(`live publish failed: ${error}`));
+    if (this.ctx.getWebSockets().length === 0) return Promise.resolve(0);
+    return live.publish(this.ctx, (path, query, authorization) => this.ask(path, query, authorization)).catch((error) => {
+      console.error(`live publish failed: ${error}`);
+      return 0;
+    });
   }
   async fetch(request) {
     const url = new URL(request.url);
@@ -235,10 +256,25 @@ export class Cell {
     if (body === null) {
       return Response.json({ format: "norn/refusal@2", retryable: false, reason: null, code: "request.too_large", category: "limit", message: "the request body is too large", explanation: `submissions are at most ${limit} bytes` }, { status: 413 });
     }
-    await this.open(Cell.scopeOf(request));
+    const scope = Cell.scopeOf(request);
+    await this.open(scope);
     // Keys at their maximum age are refetched before serving, whether or not any
     // token names an unknown key id, so a removed key stops verifying.
     if (this.cell.jwksDue(Date.now())) await this.refreshJwks();
+    // TIMER-ALARM-1: a request that may write is guarded by a durable wake before it runs,
+    // and the alarm follows the cell's next deadline after it, whatever its reply.
+    if (request.method === "GET") return this.respond(request, body);
+    await this.wake.beforeWrite(this.cell, Date.now());
+    try {
+      return await this.respond(request, body);
+    } finally {
+      await this.wake.afterWrite(this.cell, Date.now());
+      // A provisioning request makes the cell serving: keep its scope from then on.
+      await this.keepScope(scope);
+    }
+  }
+  /** Serve one request on the opened cell. */
+  async respond(request, body) {
     let reply = this.serve(request, body);
     // An unknown key id, at most once per retry interval: refetch the pinned JWKS and retry once.
     if (reply.refreshJwks && (await this.refreshJwks())) reply = this.serve(request, body);
@@ -261,10 +297,24 @@ export class Cell {
     if (reply instanceof Response) return reply;
     // After a commit, every live subscription on this object is answered again.
     if (request.method !== "GET" && reply.status < 400) this.publish();
-    return new Response(reply.body, { status: reply.status, headers: { "content-type": "application/json" } });
+    // A refusal's text is noted for its code's count (telemetry.mjs), so telemetry never reads the reply.
+    return noteRefusal(this.env, new Response(reply.body, { status: reply.status, headers: { "content-type": "application/json" } }), reply.body);
   }
   /** Run one claimed sync to its end: every step is the cell's, every fetch its plan. */
   async runSync(id) {
+    // TIMER-ALARM-1: a sync writes; it is guarded like a request, and re-arms at its end.
+    await this.wake.beforeWrite(this.cell, Date.now());
+    try {
+      await this.syncRun(id);
+    } catch (error) {
+      // A failed sync ends as a failed run; the schedule retries it.
+      console.error(`source sync failed: ${error}`);
+    } finally {
+      // A scheduling error propagates.
+      await this.wake.afterWrite(this.cell, Date.now());
+    }
+  }
+  async syncRun(id) {
     // The runtime's clock stands still inside a synchronous call, so each step
     // is timed across a timer turn: cellMs is the cell's own work (mapping and
     // the commit's statements); fetchMs is each request, including any wait for
@@ -316,8 +366,33 @@ export class Cell {
     const done = step.done ?? {};
     const wallMs = Date.now() - started;
     console.log(JSON.stringify({ sync: id, outcome: done.outcome, rowsRead: done.rowsRead, rowsLanded: done.rowsLanded, rowsQuarantined: done.rowsQuarantined, steps, fetches, wallMs, cellMs, fetchMs, maxCellMs, maxFetchMs, slow }));
+    syncFinished(this.env, { ...done, wallMs }, this.ctx);
     // A sync commits as it goes; live subscriptions are answered again once it ends.
     if ((done.rowsLanded ?? 0) > 0) this.publish();
+  }
+  /**
+   * TIMER-ALARM-1: the cell's clock. The wake (wake.mjs) sets a recovery
+   * wake, runs everything due now through the cell (reservation expiries,
+   * flow timers, decision deadlines), claims a due sync, and sets the alarm
+   * to the next deadline, all before any external I/O; then the claimed sync
+   * runs. Delivery is at least once: a repeated alarm finds nothing due. A
+   * failure throws, so the runtime retries, and the recovery wake stays.
+   */
+  async alarm() {
+    const scope = await this.ctx.storage.get(SCOPE_KEY);
+    // An object no serving cell ever opened holds nothing to wake.
+    if (scope === undefined) return;
+    await this.open(scope);
+    if (!this.cell.serving()) {
+      // A scope kept by an earlier build for a vacant cell: forget it.
+      await this.ctx.storage.delete(SCOPE_KEY);
+      return;
+    }
+    const { committed, failed, sync } = await this.wake.alarm(this.cell, Date.now());
+    // The operator sees what stayed due and why; it is retried after its backoff.
+    if (failed !== null) console.error(`due work not handled: ${failed}`);
+    if (committed) this.publish();
+    if (sync) await this.runSync(sync);
   }
   /** Keep background work alive past the reply where the runtime offers it. */
   keep(promise) {
@@ -325,6 +400,9 @@ export class Cell {
     if (typeof this.ctx.waitUntil === "function") this.ctx.waitUntil(guarded);
   }
 }
+
+// OTEL-OFF-1: request, sync, alarm and live publish telemetry, exported only when configured (telemetry.mjs).
+instrument(Cell);
 
 // SYNC-YIELD-2: a sync step aims to hold the cell about this long (NORN_SYNC_STEP_MS, 250 ms to 30 s); rows per step follow from the last step's time per row.
 const STEP_BUDGET_MS = 1500;

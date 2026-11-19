@@ -186,6 +186,13 @@ impl<E: SqlEngine> DevHost<E> {
     pub const fn scope(&self) -> &CellScope {
         &self.scope
     }
+    /// The cell's verified ledger head: what a host conformance run compares
+    /// across runtimes. Never a request route; the trusted host asks it.
+    /// # Errors
+    /// The cell is unavailable or its ledger does not verify.
+    pub fn verified_head(&self) -> Result<norn_cell::LedgerHead, Refusal> {
+        self.cell()?.store().verified_head().map_err(Refusal::host)
+    }
     /// Hold the epoch through authorization and projection.
     /// # Errors
     /// Poisoned synchronization refuses closed.
@@ -499,6 +506,11 @@ impl<E: SqlEngine> DevHost<E> {
         let installed = cell
             .install_definitions(candidate_model, input, expected_version)
             .map_err(|error| {
+                // HOST-INSTALL-LIVE-1: every install path refuses live data the
+                // candidate's laws break with the same typed 409.
+                if let Some(refusal) = crate::cell_definitions::live_law_refusal(&error) {
+                    return refusal;
+                }
                 if let CellError::DefinitionVersionConflict { expected, actual } = &error {
                     return Refusal::new(
                         StatusCode::CONFLICT,

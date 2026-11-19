@@ -1,10 +1,15 @@
 import { execFileSync, spawnSync } from "node:child_process"
+import { billingModeStatement } from "../worker/billing.ts"
 
 // Apply a commit's Studio D1 migrations where the stage's database lives: the celld node on the
 // host, through its operator project, over the controller's existing SSH. Run it on the
 // controller BEFORE the deploy (expand first), so the deploy VM needs no host access.
 //
-//   bun scripts/celld-migrate.ts --commit <app commit> --stage next [--host <ssh host>] (default: $NORN_CELLD_SSH)
+//   bun scripts/celld-migrate.ts --commit <app commit> --stage next --billing on|off [--host <ssh host>] (default: $NORN_CELLD_SSH)
+//
+// --billing is the deployment's billing setting (on: POLAR_* configured). After the migrations it is
+// written once as the database's billing mode (worker/billing.ts billingModeStatement), which the
+// Worker and the limit triggers both read; no request writes it.
 //
 // Migration files come from the app commit (`apps/studio/worker/migrations/NNNN_*.sql`). A file
 // the operator project already holds must be byte-identical: an applied migration is never
@@ -28,11 +33,11 @@ export class D1Unreachable extends Error {}
 const unreachable = (output: string) => /connection refused|could not resolve|no route to host|timed out|no node|connection reset/i.test(output)
 
 /**
- * Copy each migration into the stage's operator project (refusing a changed one), then apply.
- * Returns the apply's report. Throws D1Unreachable when the database cannot be reached, and an
+ * Copy each migration into the stage's operator project (refusing a changed one), apply, then write
+ * the billing mode. Returns the apply's report. Throws D1Unreachable when the database cannot be reached, and an
  * Error for any other failure; the caller must not deploy after either.
  */
-export function migrate(remote: Remote, stage: string, migrations: readonly Migration[]): string {
+export function migrate(remote: Remote, stage: string, migrations: readonly Migration[], billing: boolean): string {
   const ops = STAGES[stage]
   if (ops === undefined) throw new Error(`no operator project for stage ${JSON.stringify(stage)}; known: ${Object.keys(STAGES).join(", ")}`)
   for (const migration of migrations) {
@@ -56,7 +61,12 @@ export function migrate(remote: Remote, stage: string, migrations: readonly Migr
     throw (unreachable(apply.output) ? new D1Unreachable(`the ${stage} D1 is unreachable: ${apply.output.trim().split("\n").at(-1) ?? ""}`) : new Error(`migrations apply failed: ${apply.output.trim()}`))
   }
   if (!/Applied |No migrations to apply/.test(apply.output)) throw new Error(`migrations apply gave no result: ${apply.output.trim()}`)
-  return apply.output.trim()
+  // One statement, no single quotes in it, so it travels quoted as is.
+  const mode = remote(`${ops.d1} execute norn-studio-auth-${stage} --command '${billingModeStatement(billing)}' 2>&1`)
+  if (mode.status !== 0 || unreachable(mode.output)) {
+    throw (unreachable(mode.output) ? new D1Unreachable(`the ${stage} D1 is unreachable: ${mode.output.trim().split("\n").at(-1) ?? ""}`) : new Error(`writing the billing mode failed: ${mode.output.trim()}`))
+  }
+  return `${apply.output.trim()}\nbilling mode: ${billing ? "on" : "off"}`
 }
 
 /** The commit's migration files, read from git without checking it out. */
@@ -71,8 +81,8 @@ export function commitMigrations(commit: string, git: (...args: string[]) => str
 if (import.meta.main) {
   const argv = process.argv.slice(2)
   const value = (flag: string) => { const at = argv.indexOf(flag); return at < 0 ? undefined : argv[at + 1] }
-  const commit = value("--commit"), stage = value("--stage"), host = value("--host") ?? process.env.NORN_CELLD_SSH
-  if (commit === undefined || !/^[0-9a-f]{40}$/.test(commit) || stage === undefined || host === undefined || host === "") throw new Error("usage: celld-migrate.ts --commit <full sha> --stage <stage> [--host <ssh host>], with --host or NORN_CELLD_SSH set")
+  const commit = value("--commit"), stage = value("--stage"), billing = value("--billing"), host = value("--host") ?? process.env.NORN_CELLD_SSH
+  if (commit === undefined || !/^[0-9a-f]{40}$/.test(commit) || stage === undefined || (billing !== "on" && billing !== "off") || host === undefined || host === "") throw new Error("usage: celld-migrate.ts --commit <full sha> --stage <stage> --billing on|off [--host <ssh host>], with --host or NORN_CELLD_SSH set")
   // Keep the exact bytes git holds (git show adds no newline of its own).
   const git = (...args: string[]) => execFileSync("git", args, { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 })
   const remote: Remote = (command, input) => {
@@ -80,7 +90,7 @@ if (import.meta.main) {
     return { status: done.status ?? 255, output: `${done.stdout ?? ""}${done.stderr ?? ""}${done.error === undefined ? "" : done.error.message}` }
   }
   try {
-    console.log(`norn-studio-auth-${stage}: ${migrate(remote, stage, commitMigrations(commit, git)).split("\n").join("; ")}`)
+    console.log(`norn-studio-auth-${stage}: ${migrate(remote, stage, commitMigrations(commit, git), billing === "on").split("\n").join("; ")}`)
   } catch (error) {
     console.error(`${error instanceof D1Unreachable ? "unreachable" : "failed"}: ${error instanceof Error ? error.message : String(error)}`)
     process.exit(error instanceof D1Unreachable ? 3 : 1)

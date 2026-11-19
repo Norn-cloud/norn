@@ -1,7 +1,8 @@
 import { closeSync, fchmodSync, openSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { clientIpHeader, type ClientIpHeader } from "./worker/client-ip.ts"
-import { billingConfig, type BillingConfig } from "./worker/billing.ts"
+import { otelSettings, type OtelSettings } from "./deploy-target.ts"
+import { polarConfig, type PolarConfig } from "./worker/polar-config.ts"
 
 // The self-hosted Studio: the same Worker, assets and bindings that alchemy.run.ts
 // declares on Cloudflare, written as the wrangler.json `celld deploy` reads (#728, D55).
@@ -35,8 +36,10 @@ export interface CelldStudio {
   readonly defaultEnvironmentId?: string
   /** The header the stage's edge sets to the client's address: required, never defaulted (#1328). */
   readonly clientIpHeader: ClientIpHeader
+  /** OpenTelemetry export (worker/telemetry.ts); absent leaves it off. */
+  readonly otel?: OtelSettings
   /** Hosted billing through Polar (POLAR_*, all four or none); without it nothing is billed or limited. */
-  readonly billing?: BillingConfig
+  readonly billing?: PolarConfig
 }
 
 const NAME = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/
@@ -75,8 +78,10 @@ export function celldStudio(env: Readonly<Record<string, string | undefined>>): 
   // defaulted cf-connecting-ip would be a header the client writes, and its guesses unlimited.
   if (env.STUDIO_CLIENT_IP_HEADER === undefined) throw new Error("STUDIO_CLIENT_IP_HEADER is required on celld: the header this stage's edge sets to the client's address (x-real-ip behind Traefik, cf-connecting-ip behind Cloudflare)")
   const ipHeader = clientIpHeader(env.STUDIO_CLIENT_IP_HEADER)
-  const billing = billingConfig(env)
+  const otel = otelSettings(env)
+  const billing = polarConfig(env)
   return {
+    ...otel === undefined ? {} : { otel },
     ...billing === undefined ? {} : { billing },
     ...env.STUDIO_MCP === "on" ? { mcp: true as const } : {},
     stage, build, authUrl, authSecret,
@@ -100,6 +105,11 @@ export function celldConfig(studio: CelldStudio): Record<string, unknown> {
   if (studio.mcp === true) vars.STUDIO_MCP = "on"
   if (studio.signUpEmails !== undefined) vars.STUDIO_SIGNUP_EMAILS = studio.signUpEmails
   if (studio.defaultEnvironmentId !== undefined) vars.STUDIO_DEFAULT_ENVIRONMENT_ID = studio.defaultEnvironmentId
+  if (studio.otel !== undefined) {
+    vars.OTEL_EXPORTER_OTLP_ENDPOINT = studio.otel.endpoint
+    if (studio.otel.headers !== undefined) vars.OTEL_EXPORTER_OTLP_HEADERS = studio.otel.headers
+    if (studio.otel.resourceAttributes !== undefined) vars.OTEL_RESOURCE_ATTRIBUTES = studio.otel.resourceAttributes
+  }
   if (studio.billing !== undefined) Object.assign(vars, { POLAR_ACCESS_TOKEN: studio.billing.accessToken, POLAR_WEBHOOK_SECRET: studio.billing.webhookSecret, POLAR_SERVER: studio.billing.server, POLAR_PLANS: JSON.stringify(studio.billing.table) })
   return {
     name: `norn-studio-${studio.stage}`,

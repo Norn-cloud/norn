@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, readdirSync, type Dirent } from "node:fs"
 import { join } from "node:path"
+import { exportConfig } from "../norn-cell-do/otlp.mjs"
 
 /** Where one deploy goes: production keeps the live Worker and domains; any other stage gets its own Worker and must name its domains. */
 export interface DeployTarget {
@@ -58,9 +59,37 @@ export function authDeploy(env: Readonly<Record<string, string | undefined>>, ta
   return { secret, url: `https://${target.domains[0]}`, origins: target.domains.map((domain) => `https://${domain}`), ...emailFrom === undefined ? {} : { emailFrom }, ...defaultOrg === undefined ? {} : { defaultOrg } }
 }
 
+/** The OpenTelemetry export a deploy passes to the Worker (worker/telemetry.ts); none when the endpoint is unset. */
+export interface OtelSettings {
+  readonly endpoint: string
+  /** "name=value,..."; holds the collector's credentials, so it is deployed as a secret. */
+  readonly headers?: string
+  readonly resourceAttributes?: string
+}
+
+/** OTEL_EXPORTER_OTLP_ENDPOINT (an http(s) URL), its headers and resource attributes, or undefined when export is off. */
+export function otelSettings(env: Readonly<Record<string, string | undefined>>): OtelSettings | undefined {
+  const endpoint = env.OTEL_EXPORTER_OTLP_ENDPOINT
+  if (endpoint === undefined || endpoint === "") {
+    if (env.OTEL_EXPORTER_OTLP_HEADERS !== undefined) throw new Error("OTEL_EXPORTER_OTLP_HEADERS is set without OTEL_EXPORTER_OTLP_ENDPOINT")
+    return undefined
+  }
+  let url: URL
+  try { url = new URL(endpoint) } catch { throw new Error("OTEL_EXPORTER_OTLP_ENDPOINT must be an http(s) URL") }
+  if ((url.protocol !== "https:" && url.protocol !== "http:") || url.username !== "" || url.password !== "") throw new Error("OTEL_EXPORTER_OTLP_ENDPOINT must be an http(s) URL without credentials; put them in OTEL_EXPORTER_OTLP_HEADERS")
+  // OTEL-TLS-1: refuse at deploy what the Worker would silently turn off (malformed headers, credentials over plain HTTP to a remote host).
+  if (exportConfig(env, "norn-studio") === null) throw new Error("OTEL_EXPORTER_OTLP_HEADERS must be name=value pairs of valid HTTP fields, and credentials need an https endpoint (or a loopback one)")
+  return {
+    endpoint,
+    ...env.OTEL_EXPORTER_OTLP_HEADERS === undefined ? {} : { headers: env.OTEL_EXPORTER_OTLP_HEADERS },
+    ...env.OTEL_RESOURCE_ATTRIBUTES === undefined ? {} : { resourceAttributes: env.OTEL_RESOURCE_ATTRIBUTES },
+  }
+}
+
 /** Environment variable names whose values are credentials. */
 // Not a bare AUTH: AUTH_URL or AUTH_MODE hold plain settings that would fail deploys falsely.
-export const SECRET_NAME = /TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|PRIVATE|AUTH_CONFIG/i
+// OTLP_HEADERS carries the telemetry collector's credentials (otelSettings).
+export const SECRET_NAME = /TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|PRIVATE|AUTH_CONFIG|OTLP_HEADERS/i
 
 /**
  * Which credential-named variables' values appear in a text (a state file), by

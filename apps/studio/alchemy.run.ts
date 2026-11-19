@@ -1,8 +1,9 @@
 import alchemy from "alchemy"
-import { D1Database, EmailSender, Vite, WorkerRef } from "alchemy/cloudflare"
+import { createCloudflareApi, D1Database, EmailSender, Vite, WorkerRef } from "alchemy/cloudflare"
 import { FileSystemStateStore } from "alchemy/state"
-import { authDeploy, cellHost, deployTarget, requireWorkerScript, scanState } from "./deploy-target.ts"
-import { billingConfig } from "./worker/billing.ts"
+import { authDeploy, cellHost, deployTarget, otelSettings, requireWorkerScript, scanState } from "./deploy-target.ts"
+import { billingModeStatement } from "./worker/billing.ts"
+import { polarConfig } from "./worker/polar-config.ts"
 
 // The recorded Studio: `vite build` output (synthetic recorded engine documents
 // only) served as static assets on the custom domains in STUDIO_DOMAINS
@@ -29,9 +30,12 @@ if (host !== undefined) await requireWorkerScript(host, process.env)
 // The scan below must see the secret's value, so keep a copy before taking it out of the environment.
 const scanEnv = { ...process.env }
 delete process.env.BETTER_AUTH_SECRET
-// Hosted billing (worker/billing.ts): POLAR_ACCESS_TOKEN, POLAR_WEBHOOK_SECRET, POLAR_SERVER and
+// OpenTelemetry export (worker/telemetry.ts): off unless OTEL_EXPORTER_OTLP_ENDPOINT is set; its headers become a Worker secret.
+const otel = otelSettings(process.env)
+delete process.env.OTEL_EXPORTER_OTLP_HEADERS
+// Hosted billing (worker/polar-config.ts): POLAR_ACCESS_TOKEN, POLAR_WEBHOOK_SECRET, POLAR_SERVER and
 // POLAR_PLANS together, or none (billing off). The token and webhook secret become encrypted Worker secrets.
-const billing = billingConfig(process.env)
+const billing = polarConfig(process.env)
 delete process.env.POLAR_ACCESS_TOKEN
 delete process.env.POLAR_WEBHOOK_SECRET
 const stateDir = process.env.ALCHEMY_STATE_DIR ?? ".alchemy"
@@ -48,6 +52,13 @@ const authDb = await D1Database("auth-db", {
   migrationsDir: "./worker/migrations",
   adopt: true,
 })
+
+// The database's billing mode (worker/billing.ts billingModeStatement), written once here, after the
+// migrations, from this deployment's billing settings; no request writes it. Billing off writes off.
+const cloudflare = await createCloudflareApi()
+const mode = await cloudflare.post(`/accounts/${cloudflare.accountId}/d1/database/${authDb.id}/query`, { sql: billingModeStatement(billing !== undefined) })
+if (!mode.ok) throw new Error(`writing the billing mode failed: ${mode.status} ${await mode.text()}`)
+console.log(`Billing mode: ${billing === undefined ? "off" : "on"}`)
 
 export const studio = await Vite("studio", {
   name: target.worker,
@@ -66,6 +77,11 @@ export const studio = await Vite("studio", {
     ...auth.defaultOrg === undefined ? {} : { STUDIO_DEFAULT_ORG: auth.defaultOrg },
     ...host === undefined ? {} : { NORN_HOST: WorkerRef({ service: host }) },
     BETTER_AUTH_TRUSTED_ORIGINS: JSON.stringify(auth.origins),
+    ...otel === undefined ? {} : {
+      OTEL_EXPORTER_OTLP_ENDPOINT: otel.endpoint,
+      ...otel.headers === undefined ? {} : { OTEL_EXPORTER_OTLP_HEADERS: alchemy.secret(otel.headers) },
+      ...otel.resourceAttributes === undefined ? {} : { OTEL_RESOURCE_ATTRIBUTES: otel.resourceAttributes },
+    },
     ...billing === undefined ? {} : {
       POLAR_ACCESS_TOKEN: alchemy.secret(billing.accessToken),
       POLAR_WEBHOOK_SECRET: alchemy.secret(billing.webhookSecret),

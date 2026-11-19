@@ -1,6 +1,6 @@
 import { Schema } from "effect"
 import { Norn } from "@norn/authoring"
-import { Agent, AgentRole, Resource, EconomicEvent, Commitment, LedgerEffect } from "../../core/src/physics.ts"
+import { Agent, AgentRole, Resource, EconomicEvent, Commitment, LedgerEffect } from "../../core/src/rea.ts"
 
 export const Catalog = Norn.interfaceType({
   name: "canon.Catalog", title: "Catalog metadata, never stock", version: "0.1.0",

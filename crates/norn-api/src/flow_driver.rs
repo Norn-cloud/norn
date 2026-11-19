@@ -224,6 +224,50 @@ fn pending_step<E: SqlEngine>(
     Ok(None)
 }
 
+/// The action call `run_id`'s pending `norn.action@1` step makes, as its
+/// recorded starter: what an approval of that call approved.
+pub(crate) struct WaitingCall {
+    pub(crate) starter: RunStarter,
+    pub(crate) action: String,
+    pub(crate) input: RuntimeObject,
+    pub(crate) idempotency_key: String,
+}
+
+/// The call `run_id`'s pending action step waits to make, read under the
+/// definitions epoch and the cell; `None` when no well-formed step with a
+/// recorded starter waits.
+///
+/// # Errors
+/// A host failure.
+pub(crate) fn waiting_call<E: SqlEngine>(
+    host: &DevHost<E>,
+    run_id: &str,
+) -> Result<Option<WaitingCall>, Refusal> {
+    let _epoch = host.definition_read()?;
+    let cell = host.cell()?;
+    let Some(step) = pending_step(&cell, run_id)? else {
+        return Ok(None);
+    };
+    let Some(starter) = cell
+        .store()
+        .read()
+        .run_start(MAIN_WORLD, run_id)
+        .map_err(Refusal::host)?
+        .and_then(|start| start.started_by)
+    else {
+        return Ok(None);
+    };
+    let Ok(action) = norn_cell::flow_run::parse_action_step(&step.input) else {
+        return Ok(None);
+    };
+    Ok(Some(WaitingCall {
+        starter,
+        action: action.action,
+        input: action.input,
+        idempotency_key: step_call_key(&step.idempotency_key, &step.attempt)?,
+    }))
+}
+
 fn failure(tag: &str, code: Option<&str>) -> StepOutcome {
     let mut failure: RuntimeObject = std::collections::BTreeMap::from([(
         "_tag".to_owned(),

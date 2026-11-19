@@ -366,6 +366,25 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
     /// # Errors
     /// Corrupt timer/reservation correspondence or normal commit refusals.
     pub fn expire_quantity_due(&mut self) -> Result<bool, CellError> {
+        let Some(pending) = self.store.read().due_quantity_timer(self.now.as_millis())? else {
+            return Ok(false);
+        };
+        self.expire_quantity(&pending)?;
+        Ok(true)
+    }
+
+    /// TIMER-RETRY-1: submit the quantity Expire of exactly `pending` (a
+    /// due quantity timer the host selected) through the ordinary atomic
+    /// commit path, consuming that timer incarnation with the release. One
+    /// reservation that cannot expire never blocks another's expiry.
+    ///
+    /// # Errors
+    /// Corrupt timer/reservation correspondence or normal commit refusals;
+    /// nothing is committed.
+    pub fn expire_quantity(
+        &mut self,
+        pending: &crate::read::PendingTimer,
+    ) -> Result<(), CellError> {
         #[derive(serde::Deserialize)]
         #[serde(deny_unknown_fields)]
         struct Deadline {
@@ -374,9 +393,6 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             reservation: String,
             due: u64,
         }
-        let Some(pending) = self.store.read().due_quantity_timer(self.now.as_millis())? else {
-            return Ok(false);
-        };
         let deadline: Deadline = from_runtime(&pending.timer.timer)?;
         let id = crate::quantity::expiry_timer_id(
             &deadline.world,
@@ -419,7 +435,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             quantity: Some(request.into()),
             ..CommitBatch::default()
         })?;
-        Ok(true)
+        Ok(())
     }
 
     /// The driver's current logical time.

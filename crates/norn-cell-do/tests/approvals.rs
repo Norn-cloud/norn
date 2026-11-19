@@ -24,10 +24,16 @@ const APPROVAL_ID: &str = "ops.melt_approval";
 /// Install the approval gating the melt action, deciders `admin`, signed by
 /// the operator.
 fn gate(cell: &Cell, expires_in_ms: Option<u64>) {
+    gate_asking(cell, expires_in_ms, "Convert this melt?", None);
+}
+
+/// [`gate`], asking `question`, replacing revision `replaces` when given:
+/// installing it again with another question is a new definitions version.
+fn gate_asking(cell: &Cell, expires_in_ms: Option<u64>, question: &str, replaces: Option<u64>) {
     let mut payload = json!({
         "action": MELT_ACTION,
         "decider": { "roles": ["admin"] },
-        "question": "Convert this melt?",
+        "question": question,
         "risk": "high",
     });
     if let Some(ms) = expires_in_ms {
@@ -43,6 +49,9 @@ fn gate(cell: &Cell, expires_in_ms: Option<u64>) {
     );
     assert_eq!(status, 200, "{admitted}");
     body["signoff"] = json!({ "restatementSha256": admitted["restatementSha256"] });
+    if let Some(revision) = replaces {
+        body["expectedVersion"] = json!(revision);
+    }
     let (status, installed) = call(
         cell,
         "POST",
@@ -161,6 +170,83 @@ fn an_approved_call_commits_for_its_requester() {
     assert_eq!(cell.caller.current(), None);
 }
 
+/// The active definitions version.
+fn definitions_version(cell: &Cell) -> u64 {
+    let (status, catalog) = call_with(cell, "GET", "/v1/definitions", SCOPE, OPERATOR, "");
+    assert_eq!(status, 200, "{catalog}");
+    catalog["version"].as_u64().unwrap()
+}
+
+/// Park the melt call pinned to `version` (`?version=`).
+fn convert_pinned(cell: &Cell, version: u64, body: &str) -> (u16, Value) {
+    let query = format!("{SCOPE}&version={version}");
+    let path = format!("/v1/actions/{MELT_ACTION}");
+    call_with(cell, "POST", &path, &query, OPERATOR, body)
+}
+
+/// APPROVAL-PIN-1: a call pinned to a definitions version commits on approval
+/// only while that version is active: a catalog that changed between parking
+/// and approval refuses the commit (`defs.stale`) and commits nothing, and
+/// the requester's retry under the current catalog parks for a fresh
+/// decision instead of reusing that approval.
+#[test]
+fn an_approval_keeps_the_callers_definitions_pin() {
+    let cell = cell();
+    gate(&cell, None);
+    let pinned = definitions_version(&cell);
+    let (status, parked) = convert_pinned(&cell, pinned, &melt7("operator-pin"));
+    assert_eq!(status, 202, "{parked}");
+    let id = parked["decision"]["id"].as_str().unwrap().to_owned();
+    gate_asking(&cell, None, "Convert this melt now?", Some(1));
+    assert_ne!(definitions_version(&cell), pinned, "the catalog changed");
+    let (status, decided) = decide(&cell, APPROVER, &id, "approve");
+    assert_eq!(status, 200, "{decided}");
+    assert_eq!(
+        decided["call"],
+        json!({ "committed": false, "code": "defs.stale" }),
+        "{decided}"
+    );
+    assert_eq!(melt_status(&cell), 404, "nothing committed");
+
+    // The requester's retry under the current catalog is another call: it
+    // never finds the earlier approval, and parks for a fresh decision.
+    let current = definitions_version(&cell);
+    let (status, retried) = convert_pinned(&cell, current, &melt7("operator-pin"));
+    assert_eq!(status, 202, "{retried}");
+    let fresh = retried["decision"]["id"].as_str().unwrap().to_owned();
+    assert_ne!(fresh, id, "a fresh decision");
+    let (status, unpinned) = convert(&cell, OPERATOR, &melt7("operator-pin"));
+    assert_eq!(status, 202, "{unpinned}");
+    assert_ne!(unpinned["decision"]["id"], json!(id), "{unpinned}");
+    assert_eq!(
+        melt_status(&cell),
+        404,
+        "no commit without a fresh decision"
+    );
+    // The original pin stays stale.
+    let (status, stale) = convert_pinned(&cell, pinned, &melt7("operator-pin"));
+    assert_ne!(status, 200, "{stale}");
+    assert_eq!(stale["code"], json!("defs.stale"), "{stale}");
+    assert_eq!(melt_status(&cell), 404);
+    // The fresh decision approved, the retry commits.
+    let (status, decided) = decide(&cell, APPROVER, &fresh, "approve");
+    assert_eq!(status, 200, "{decided}");
+    assert_eq!(decided["call"], json!({ "committed": true }), "{decided}");
+    assert_eq!(melt_status(&cell), 200);
+
+    // Unchanged between parking and approval, the pinned call commits.
+    let cell = step_cell::cell();
+    gate(&cell, None);
+    let pinned = definitions_version(&cell);
+    let (status, parked) = convert_pinned(&cell, pinned, &melt7("operator-pin"));
+    assert_eq!(status, 202, "{parked}");
+    let id = parked["decision"]["id"].as_str().unwrap().to_owned();
+    let (status, decided) = decide(&cell, APPROVER, &id, "approve");
+    assert_eq!(status, 200, "{decided}");
+    assert_eq!(decided["call"], json!({ "committed": true }), "{decided}");
+    assert_eq!(melt_status(&cell), 200);
+}
+
 /// APPROVAL-BINDS-INPUT: an approval approves exactly the call it was asked about: the same key
 /// with another input is another call, and parks on its own.
 #[test]
@@ -270,8 +356,9 @@ fn a_rejected_step_call_fails_the_run() {
 }
 
 /// APPROVAL-MCP-PARKS: a gated action's MCP tool parks exactly like the
-/// HTTP call. MCP's loopback goes through the same dispatch, so the tool
-/// answers the same pending decision, not an error, and commits nothing.
+/// HTTP call pinned to the catalog version the tool came from. MCP's loopback
+/// goes through the same dispatch, so the tool answers the same pending
+/// decision, not an error, and commits nothing.
 #[test]
 fn an_mcp_tool_call_parks_like_http() {
     let cell = cell();
@@ -302,8 +389,348 @@ fn an_mcp_tool_call_parks_like_http() {
     let parked = called["result"]["structuredContent"].clone();
     assert_eq!(parked["outcome"], json!("pending"), "{called}");
     assert_eq!(melt_status(&cell), 404);
-    // The same call over HTTP is the same parked call.
-    let (status, direct) = convert(&cell, OPERATOR, &melt7(key));
+    // MCP calls an action pinned to the catalog it listed (APPROVAL-PIN-1):
+    // the same call over HTTP pinned to that version is the same parked call.
+    let version = definitions_version(&cell);
+    let (status, direct) = convert_pinned(&cell, version, &melt7(key));
     assert_eq!((status, &direct), (202, &parked));
     assert_eq!(pending(&cell, APPROVER)["total"], json!(1));
+}
+
+/// Install the fixture's `set` as the cell's next definitions revision.
+fn revise(cell: &Cell, set: &str) {
+    // After every commit so far: the cell's clock never runs backwards.
+    revise_at(cell, set, NOW * 1000 + 1);
+}
+
+/// [`revise`], installed at logical time `at`.
+fn revise_at(cell: &Cell, set: &str, at: u64) {
+    let version = cell.host.active_definitions_version().unwrap();
+    let (model, input) = step_cell::action_cell::melt_install(
+        set,
+        norn_api::action_admission::prepare_action_model,
+        at,
+    );
+    cell.host
+        .install_definitions(model, input, version)
+        .expect("the next revision installs");
+    assert_ne!(cell.host.active_definitions_version().unwrap(), version);
+}
+
+/// APPROVAL-REVISION-1: an approval given for a call parked under revision N
+/// never executes it under N+1 when N+1 changed the action: approving it is
+/// refused `approval.definition_changed` and commits nothing, and the
+/// requester's call under the new action parks anew for a fresh approval.
+#[test]
+fn an_approval_never_executes_a_changed_action() {
+    let cell = cell();
+    gate(&cell, None);
+    let body = melt7("operator-rev");
+    let (status, parked) = convert(&cell, OPERATOR, &body);
+    assert_eq!(status, 202, "{parked}");
+    let id = parked["decision"]["id"].as_str().unwrap().to_owned();
+
+    // N+1: the action's writer no longer derives the loss.
+    revise(&cell, step_cell::action_cell::OMITS_LOSS);
+    let (status, decided) = decide(&cell, APPROVER, &id, "approve");
+    assert_eq!(status, 200, "{decided}");
+    assert_eq!(
+        decided["call"],
+        json!({ "committed": false, "code": "approval.definition_changed" }),
+        "{decided}"
+    );
+    assert_eq!(melt_status(&cell), 404, "nothing ran under the new action");
+
+    // The same call under the new action asks for a new approval.
+    let (status, again) = convert(&cell, OPERATOR, &body);
+    assert_eq!(status, 202, "{again}");
+    assert_ne!(again["decision"]["id"], json!(id), "{again}");
+    assert_eq!(melt_status(&cell), 404);
+}
+
+/// APPROVAL-REVISION-1: a later revision that leaves the action as it was
+/// keeps the approval: the approved call executes.
+#[test]
+fn an_approval_survives_a_revision_that_keeps_the_action() {
+    let cell = cell();
+    gate(&cell, None);
+    let (status, parked) = convert(&cell, OPERATOR, &melt7("operator-same"));
+    assert_eq!(status, 202, "{parked}");
+    let id = parked["decision"]["id"].as_str().unwrap().to_owned();
+    revise(&cell, step_cell::DERIVES_LOSS);
+    let (status, decided) = decide(&cell, APPROVER, &id, "approve");
+    assert_eq!(status, 200, "{decided}");
+    assert_eq!(decided["call"], json!({ "committed": true }), "{decided}");
+    assert_eq!(melt_status(&cell), 200);
+}
+
+/// APPROVAL-REVISION-1: the digest an approval binds covers what the action
+/// writes. A revision that changes only a default of the type the action
+/// writes (the facts a call commits change) makes the approval stale.
+#[test]
+fn an_approval_never_executes_under_a_changed_default() {
+    let cell = cell();
+    gate(&cell, None);
+    let (status, parked) = convert(&cell, OPERATOR, &melt7("operator-default"));
+    assert_eq!(status, 202, "{parked}");
+    let id = parked["decision"]["id"].as_str().unwrap().to_owned();
+
+    let version = cell.host.active_definitions_version().unwrap();
+    let (model, input) = step_cell::action_cell::melt_install_edited(
+        step_cell::DERIVES_LOSS,
+        |documents| {
+            let melt = documents
+                .iter_mut()
+                .find(|document| document["artifactId"] == "constitution.Melt.entity")
+                .unwrap();
+            let properties = melt["payload"]["objectType"]["properties"]
+                .as_array_mut()
+                .unwrap();
+            let loss = properties
+                .iter_mut()
+                .find(|property| property["id"] == "loss_fine_g")
+                .unwrap();
+            loss["default"] = json!("1");
+        },
+        norn_api::action_admission::prepare_action_model,
+        NOW * 1000 + 1,
+    );
+    cell.host
+        .install_definitions(model, input, version)
+        .expect("the default-only revision installs");
+
+    let (status, decided) = decide(&cell, APPROVER, &id, "approve");
+    assert_eq!(status, 200, "{decided}");
+    assert_eq!(
+        decided["call"],
+        json!({ "committed": false, "code": "approval.definition_changed" }),
+        "{decided}"
+    );
+    assert_eq!(melt_status(&cell), 404);
+}
+
+/// APPROVAL-REVISION-1: an approval is bound to the gate revision whose
+/// decider roles it was asked under: a new gate revision (here, more
+/// decider roles) makes the approval stale, and the call asks anew.
+#[test]
+fn an_approval_never_executes_under_a_changed_gate() {
+    let cell = cell();
+    gate(&cell, None);
+    let body = melt7("operator-gate");
+    let (status, parked) = convert(&cell, OPERATOR, &body);
+    assert_eq!(status, 202, "{parked}");
+    let id = parked["decision"]["id"].as_str().unwrap().to_owned();
+
+    let mut revised = json!({ "kind": "approval", "id": APPROVAL_ID,
+        "payload": { "action": MELT_ACTION, "decider": { "roles": ["admin", "member"] },
+                     "question": "Convert this melt?", "risk": "high" } });
+    let (status, admitted) = call(
+        &cell,
+        "POST",
+        "/v1/definitions:admit",
+        OPERATOR,
+        &revised.to_string(),
+    );
+    assert_eq!(status, 200, "{admitted}");
+    revised["signoff"] = json!({ "restatementSha256": admitted["restatementSha256"] });
+    revised["expectedVersion"] = json!(1);
+    let (status, installed) = call(
+        &cell,
+        "POST",
+        "/v1/definitions:install",
+        OPERATOR,
+        &revised.to_string(),
+    );
+    assert_eq!(status, 200, "{installed}");
+
+    let (status, decided) = decide(&cell, APPROVER, &id, "approve");
+    assert_eq!(status, 200, "{decided}");
+    assert_eq!(
+        decided["call"],
+        json!({ "committed": false, "code": "approval.definition_changed" }),
+        "{decided}"
+    );
+    assert_eq!(melt_status(&cell), 404);
+    let (status, again) = convert(&cell, OPERATOR, &body);
+    assert_eq!(status, 202, "{again}");
+    assert_ne!(again["decision"]["id"], json!(id), "{again}");
+}
+
+/// APPROVAL-REVISION-1 on the hosted path: an approved step call refused
+/// `approval.definition_changed` drives nothing. The run's waiting step is
+/// not called again under the changed action (no new approval parks), and
+/// the run stays where it was.
+#[test]
+fn a_stale_approval_never_drives_its_flow_step() {
+    let cell = cell();
+    gate(&cell, None);
+    let approval = start_gated_run(&cell, "melt-run-stale");
+    // The action's next revision, over the active set (the flow stays).
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../norn-cell/tests/fixtures/constitution.json"
+    ))
+    .unwrap();
+    let without: Vec<norn_ir::ArtifactEnvelope> =
+        serde_json::from_value(fixture[step_cell::action_cell::OMITS_LOSS].clone()).unwrap();
+    cell.host
+        .install_artifacts(&without, NOW * 1000 + 10)
+        .expect("the action's next revision installs");
+    let (status, decided) = decide(&cell, APPROVER, &approval, "approve");
+    assert_eq!(status, 200, "{decided}");
+    assert_eq!(
+        decided["call"]["code"],
+        json!("approval.definition_changed"),
+        "{decided}"
+    );
+    assert_eq!(
+        decided["run"]["state"],
+        json!("awaiting_perform_convert"),
+        "{decided}"
+    );
+    assert_eq!(
+        pending(&cell, APPROVER)["total"],
+        json!(0),
+        "nothing parked anew"
+    );
+    assert_eq!(melt_status(&cell), 404);
+}
+
+/// APPROVAL-REVISION-1 (round 2 S6): a replayed approval is fenced like the
+/// first dispatch. The gate is retired after the step's call parked; the
+/// approval's first dispatch is refused stale, and its identical replay is
+/// refused the same way: the waiting step is never driven, so the action
+/// never executes ungated.
+#[test]
+fn a_replayed_approval_never_drives_a_step_past_a_retired_gate() {
+    let cell = cell();
+    gate(&cell, None);
+    let approval = start_gated_run(&cell, "melt-run-retired");
+    let (status, retired) = call(
+        &cell,
+        "POST",
+        &format!("/v1/definitions/{APPROVAL_ID}:retire"),
+        OPERATOR,
+        &json!({ "expectedVersion": 1 }).to_string(),
+    );
+    assert_eq!(status, 200, "{retired}");
+    let stale = json!({ "committed": false, "code": "approval.definition_changed" });
+    let (status, decided) = decide(&cell, APPROVER, &approval, "approve");
+    assert_eq!(status, 200, "{decided}");
+    assert_eq!(decided["call"], stale, "{decided}");
+    // The same key and body: a replay.
+    let (status, replayed) = decide(&cell, APPROVER, &approval, "approve");
+    assert_eq!(status, 200, "{replayed}");
+    assert_eq!(replayed["outcome"], json!("replayed"), "{replayed}");
+    assert_eq!(replayed["call"], stale, "{replayed}");
+    assert_eq!(
+        replayed["run"]["state"],
+        json!("awaiting_perform_convert"),
+        "{replayed}"
+    );
+    assert_eq!(melt_status(&cell), 404, "the action never ran ungated");
+}
+
+/// A replay of an approval whose call already committed drives nothing new
+/// and answers the committed call again.
+#[test]
+fn a_replayed_approval_of_a_committed_step_replays() {
+    let cell = cell();
+    gate(&cell, None);
+    let approval = start_gated_run(&cell, "melt-run-replay");
+    let (status, decided) = decide(&cell, APPROVER, &approval, "approve");
+    assert_eq!(status, 200, "{decided}");
+    assert_eq!(decided["run"]["state"], json!("completed"), "{decided}");
+    let (status, replayed) = decide(&cell, APPROVER, &approval, "approve");
+    assert_eq!(status, 200, "{replayed}");
+    assert_eq!(replayed["outcome"], json!("replayed"), "{replayed}");
+    assert_eq!(replayed["run"]["state"], json!("completed"), "{replayed}");
+    assert_eq!(melt_status(&cell), 200);
+}
+
+/// APPROVAL-REVISION-1, the race: a revision installed after the approval is
+/// recorded and before its call is dispatched (natively, between the two)
+/// is caught by the dispatch's own fence, inside its definitions epoch and
+/// before anything parks or writes: the call is refused, nothing commits,
+/// and no new approval parks.
+#[test]
+fn a_revision_racing_the_approved_dispatch_is_fenced() {
+    use norn_cell_do::policy::Caller;
+    let cell = cell();
+    gate(&cell, None);
+    let (status, parked) = convert(&cell, OPERATOR, &melt7("operator-race"));
+    assert_eq!(status, 202, "{parked}");
+    let id = parked["decision"]["id"].as_str().unwrap().to_owned();
+
+    let as_caller = |subject: &str, roles: &[String], table: &str| Caller {
+        subject_id: subject.to_owned(),
+        roles: roles.to_vec(),
+        actor_kind: "user",
+        role_table: Box::leak(table.to_owned().into_boxed_str()),
+    };
+    cell.caller.record(Some(as_caller(
+        "approver@steps",
+        &["admin".to_owned()],
+        norn_cell_do::principal::FIXTURE_ROLES,
+    )));
+    let scope = norn_api::scope::ScopeQuery {
+        org_id: Some("org_demo".into()),
+        environment_id: Some("dev".into()),
+    };
+    let body = norn_api::decisions::DecideRequest {
+        choice: "approve".into(),
+        note: None,
+        idempotency_key: "race-1".into(),
+    };
+    let reads = |capability: norn_api::authz::ReadCapability, object_type: &str| {
+        norn_cell_do::policy::collection_access(
+            cell.host.scope(),
+            "approver@steps",
+            capability,
+            object_type,
+        )
+    };
+    let raced = std::cell::Cell::new(false);
+    let as_requester = |requester: &norn_cell::flow_run::RunStarter,
+                        dispatch: &mut dyn FnMut() -> Result<
+        norn_api::actions::ActionAnswer,
+        norn_api::refusal::Refusal,
+    >| {
+        // The concurrent revision lands here: after the approval is
+        // recorded, before its call is dispatched.
+        revise_at(&cell, step_cell::action_cell::OMITS_LOSS, NOW * 1000 + 10);
+        raced.set(true);
+        cell.caller.record(Some(as_caller(
+            &requester.subject,
+            &requester.roles,
+            &requester.role_table,
+        )));
+        Some(dispatch())
+    };
+    let decided = norn_api::decisions::decide(
+        &cell.host,
+        &norn_api::decisions::DecideCall {
+            scope: &scope,
+            actor: Some("approver@steps"),
+            id: &id,
+            body: &body,
+            now: norn_kernel::LogicalTime::from_millis(NOW * 1000 + 2),
+        },
+        &reads,
+        &cell.handles,
+        &as_requester,
+    )
+    .unwrap();
+    cell.caller.record(None);
+    assert!(raced.get());
+    let dispatched = decided.call.expect("the approved call was dispatched");
+    assert_eq!(
+        (dispatched.committed, dispatched.code.as_deref()),
+        (false, Some("approval.definition_changed"))
+    );
+    assert_eq!(melt_status(&cell), 404, "nothing ran under the new action");
+    assert_eq!(
+        pending(&cell, APPROVER)["total"],
+        json!(0),
+        "nothing parked anew"
+    );
 }

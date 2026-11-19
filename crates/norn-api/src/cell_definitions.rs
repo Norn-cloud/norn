@@ -13,10 +13,15 @@
 //! - **A refused set** (the checker's findings, a set the cell cannot serve,
 //!   or live data the new laws break) answers the same refusal from plan and
 //!   apply, and apply writes nothing.
-//! - **Live data** (HOST-INSTALL-LIVE-1): every stored object of a type whose
-//!   governing laws or declaration change is evaluated under the candidate
-//!   laws. A violation is a finding naming the object and the law, and the
-//!   set is held back: it is never installed over data it would refuse.
+//! - **Live data** (HOST-INSTALL-LIVE-1): the store checks it on every
+//!   install, whatever path installs (this route, the dev host's reload,
+//!   source and upload packs, a seed upgrade). Every stored object whose
+//!   effective law dependencies the candidate changes (its declaration or
+//!   laws, a type it extends, a type a link its laws read reaches) is
+//!   evaluated under the candidate laws on the migration candidate's view
+//!   (materialized defaults, the stored links). A violation, or an object no
+//!   law could be evaluated on, is a finding naming the object, and the set
+//!   is held back: it is never installed over data it would refuse.
 //! - **Apply** is compare-and-set on the planned `expectedVersion` and
 //!   installs atomically (`CellStore::install_definitions`: the version, its
 //!   receipt and the ledger event in one transaction) under the model a
@@ -27,7 +32,7 @@ use std::collections::BTreeMap;
 
 use http::StatusCode;
 use norn_cell::engine::SqlEngine;
-use norn_cell::{CellError, CellStore, InstalledDefinitionInput, InstalledDefinitionSet, Model};
+use norn_cell::{CellError, InstalledDefinitionInput, InstalledDefinitionSet, Model};
 use norn_ir::{ArtifactEnvelope, RuntimeValue};
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
@@ -45,11 +50,9 @@ pub const PLAN_PATH: &str = "/v1/cell/definitions:plan";
 pub const APPLY_PATH: &str = "/v1/cell/definitions:apply";
 
 /// The most stored objects one plan evaluates under the candidate laws; a
-/// change that would need more is refused rather than checked in part.
+/// change that would need more is refused rather than checked in part (the
+/// store's `MAX_LAW_CHECKED_OBJECTS`, which enforces it).
 pub const MAX_CHECKED_OBJECTS: usize = 50_000;
-const PAGE: usize = 500;
-/// Evaluation fuel per stored object, as a commit's law check spends it.
-const LAW_FUEL: u64 = 1_000_000;
 
 /// Stable refusal and finding codes.
 pub mod codes {
@@ -60,7 +63,8 @@ pub mod codes {
     pub const LIVE_DATA_VIOLATION: &str = "defs.live_data_violation";
     /// Stored objects the candidate laws refuse: the set is held back (409).
     pub const LIVE_DATA_REFUSED: &str = "defs.live_data_refused";
-    /// A stored object a candidate law could not be evaluated on (a finding).
+    /// A stored object a candidate law could not be evaluated on (a finding
+    /// of [`LIVE_DATA_REFUSED`]): unchecked is refused, never admitted.
     pub const LIVE_DATA_UNCHECKED: &str = "defs.live_data_unchecked";
     /// More stored objects than one plan evaluates (409).
     pub const LIVE_DATA_UNBOUNDED: &str = "defs.live_data_unbounded";
@@ -195,6 +199,9 @@ fn conflict(code: &str, message: &str, explanation: String) -> Refusal {
     reason = "`map_err` hands the error over by value"
 )]
 fn preflight_refusal(error: CellError) -> Refusal {
+    if let Some(refusal) = live_law_refusal(&error) {
+        return refusal;
+    }
     if let CellError::DefinitionVersionConflict { expected, actual } = &error {
         return conflict(
             "defs.stale",
@@ -337,23 +344,26 @@ fn candidate<E: SqlEngine>(
     })?;
     let (added, changed, same) = diff(&tenant, &active)?;
     let unchanged = admitted.canonical_set == active.canonical_set;
-    let (model, new_object_types, next_version) = {
+    let (model, new_object_types, next_version, checked_objects) = {
         let cell = host.cell()?;
         let store = cell.store();
         let serving = serves_actions(store.model());
         let model = reopen_model(&admitted.canonical_set, serving)
             .map_err(|refusal| unservable(refusal.explanation))?;
-        let next_version = if unchanged {
-            active.version
+        let (next_version, checked) = if unchanged {
+            (active.version, 0)
         } else {
-            store
+            // HOST-INSTALL-LIVE-1: the store's preflight runs the live-law
+            // check every install runs, on the migration candidate's view.
+            let version = store
                 .check_definitions(
                     &model,
                     &install_input(&admitted, &active, 0),
                     Some(active.version),
                 )
                 .map_err(preflight_refusal)?
-                .version
+                .version;
+            (version, store.live_law_checked())
         };
         let served: std::collections::BTreeSet<&str> = store
             .model()
@@ -366,7 +376,7 @@ fn candidate<E: SqlEngine>(
             .filter(|name| !served.contains(name))
             .map(str::to_owned)
             .collect();
-        (model, new_object_types, next_version)
+        (model, new_object_types, next_version, checked)
     };
     Ok((
         Candidate {
@@ -378,7 +388,7 @@ fn candidate<E: SqlEngine>(
                 changed,
                 same,
                 new_object_types,
-                checked_objects: 0,
+                checked_objects,
                 diagnostics: Vec::new(),
                 receipt_sha256: admitted.receipt_sha256.clone(),
             },
@@ -408,111 +418,64 @@ fn install_input(
     }
 }
 
-/// HOST-INSTALL-LIVE-1: evaluate every stored object of a type whose
-/// governing laws or declaration the candidate changes under the candidate's
-/// laws. Returns how many objects were evaluated and the findings: a
-/// violation is an error, a law that cannot be evaluated on stored values
-/// alone (one that reads a link) a warning.
-fn live_findings<E: SqlEngine>(
-    store: &CellStore<E>,
-    candidate: &Model,
-) -> Result<(u64, Vec<RefusalDiagnostic>), Refusal> {
-    let current = store.model();
-    let catalog = norn_kernel::TypeCatalog::new(candidate.object_types())
-        .with_interfaces(candidate.interfaces())
-        .with_governing_laws(candidate.law_artifacts());
-    let reader = store.read();
-    let mut checked: u64 = 0;
-    let mut findings = Vec::new();
-    for object_type in current.object_types() {
-        let name = object_type.name.as_str();
-        let Some(next) = candidate.object_types().find(|t| t.name.as_str() == name) else {
-            continue;
-        };
-        let laws_now = current.governing_laws(name).unwrap_or_default();
-        let laws_next = candidate.governing_laws(name).unwrap_or_default();
-        if laws_next.is_empty() || (laws_now == laws_next && next == object_type) {
-            continue;
-        }
-        let mut after: Option<String> = None;
-        loop {
-            let page = reader
-                .list_after(norn_cell::MAIN_WORLD, name, after.as_deref(), PAGE)
-                .map_err(Refusal::host)?;
-            for record in &page {
-                // `list_after` includes subtypes: each is checked as itself.
-                if record.object_type != name {
-                    continue;
-                }
-                checked = checked.saturating_add(1);
-                if usize::try_from(checked).unwrap_or(usize::MAX) > MAX_CHECKED_OBJECTS {
-                    return Err(conflict(
-                        codes::LIVE_DATA_UNBOUNDED,
-                        "the change would need more stored objects checked than one plan evaluates",
-                        format!(
-                            "a change that alters the laws of {name} is checked against at most {MAX_CHECKED_OBJECTS} stored objects"
-                        ),
-                    ));
-                }
-                let key = norn_kernel::FactKey::new(name, record.id.clone());
-                let mut budget = LAW_FUEL;
-                match norn_kernel::governing_laws::evaluate(
-                    &catalog,
-                    &key,
-                    &record.values,
-                    &mut budget,
-                ) {
-                    Ok(failures) => {
-                        for failure in failures {
-                            let law = match &failure.rule_ref {
-                                norn_ir::DataQualityRuleRef::Law { law_id, .. } => law_id.clone(),
-                                norn_ir::DataQualityRuleRef::Invariant { invariant_id, .. } => {
-                                    invariant_id.0.clone()
-                                }
-                                norn_ir::DataQualityRuleRef::Builtin { id, .. } => id.clone(),
-                            };
-                            findings.push(RefusalDiagnostic {
-                                code: codes::LIVE_DATA_VIOLATION.to_owned(),
-                                severity: "error".to_owned(),
-                                message: format!(
-                                    "{name} {} breaks {law}: {}",
-                                    record.id, failure.message
-                                ),
-                                law: Some(law),
-                                span: Some(RefusalSpan {
-                                    pointer: format!("/objects/{name}/{}", record.id),
-                                }),
-                            });
-                        }
-                    }
-                    Err(reason) => findings.push(RefusalDiagnostic {
-                        code: codes::LIVE_DATA_UNCHECKED.to_owned(),
-                        severity: "warning".to_owned(),
-                        message: format!(
-                            "{name} {} was not evaluated under the candidate laws: {reason}",
-                            record.id
-                        ),
-                        law: None,
-                        span: Some(RefusalSpan {
-                            pointer: format!("/objects/{name}/{}", record.id),
-                        }),
-                    }),
-                }
-            }
-            match page.last() {
-                Some(last) if page.len() == PAGE => after = Some(last.id.clone()),
-                _ => break,
-            }
-        }
+/// HOST-INSTALL-LIVE-1: the definitions refusal of a store's live-law
+/// check, which every install runs at the shared install boundary
+/// (`norn_cell`'s migration preflight, over the migration candidate's view):
+/// a violation is an error finding naming the object and the law; an object
+/// no candidate law could be evaluated on is a `defs.live_data_unchecked`
+/// finding (published as a warning) that holds the set back by its code; too
+/// many objects to check is `defs.live_data_unbounded`. `None` for any other
+/// error.
+#[must_use]
+pub fn live_law_refusal(error: &CellError) -> Option<Refusal> {
+    if let CellError::DefinitionLawUnbounded { object_type, limit } = error {
+        return Some(conflict(
+            codes::LIVE_DATA_UNBOUNDED,
+            "the change would need more stored objects checked than one plan evaluates",
+            format!(
+                "a change that alters the laws of {object_type} is checked against at most {limit} stored objects"
+            ),
+        ));
     }
-    Ok((checked, findings))
+    let CellError::DefinitionLawRefused { findings, .. } = error else {
+        return None;
+    };
+    let diagnostics: Vec<RefusalDiagnostic> = findings
+        .iter()
+        .map(|finding| RefusalDiagnostic {
+            code: if finding.unchecked {
+                codes::LIVE_DATA_UNCHECKED
+            } else {
+                codes::LIVE_DATA_VIOLATION
+            }
+            .to_owned(),
+            severity: if finding.unchecked {
+                "warning"
+            } else {
+                "error"
+            }
+            .to_owned(),
+            message: finding.message.clone(),
+            law: finding.law.clone(),
+            span: Some(RefusalSpan {
+                pointer: format!("/objects/{}/{}", finding.object_type, finding.id),
+            }),
+        })
+        .collect();
+    // Nothing is admitted over a finding, whatever its severity.
+    Some(
+        held_back(&diagnostics)
+            .unwrap_or_else(|| Refusal::host("a refused live-law check carried no finding")),
+    )
 }
 
-/// The live-data refusal of `findings`, if any is an error.
+/// The live-data refusal of `findings`, if any is an error: a violation or
+/// an object no candidate law could be evaluated on.
 fn held_back(findings: &[RefusalDiagnostic]) -> Option<Refusal> {
     let errors: Vec<RefusalDiagnostic> = findings
         .iter()
-        .filter(|finding| finding.severity == "error")
+        // LIVE-FAIL-CLOSED-1: unchecked is refused whatever its severity says.
+        .filter(|finding| finding.severity == "error" || finding.code == codes::LIVE_DATA_UNCHECKED)
         .cloned()
         .collect();
     if errors.is_empty() {
@@ -547,17 +510,7 @@ pub fn plan_definitions<E: SqlEngine>(
     body: &str,
 ) -> Result<DefinitionsPlan, Refusal> {
     crate::definition_routes::authorize(host, scope, actor, Operation::WriteDefinitions)?;
-    let (mut candidate, _expected) = candidate(host, body)?;
-    if !candidate.plan.unchanged {
-        let _epoch = host.definition_read()?;
-        let cell = host.cell()?;
-        let (checked, findings) = live_findings(cell.store(), &candidate.model)?;
-        if let Some(refusal) = held_back(&findings) {
-            return Err(refusal);
-        }
-        candidate.plan.checked_objects = checked;
-        candidate.plan.diagnostics.extend(findings);
-    }
+    let (candidate, _expected) = candidate(host, body)?;
     Ok(candidate.plan)
 }
 
@@ -602,18 +555,14 @@ pub fn apply_definitions<E: SqlEngine>(
             plan,
         });
     }
-    let mut live = (0, Vec::new());
-    let installed = host.install_definitions_checked(
+    // HOST-INSTALL-LIVE-1: the install itself runs the live-law check, under
+    // the write epoch, on the migration candidate's view.
+    let installed = host.install_definitions(
         model,
         install_input(&admitted, &active, now_ms),
         Some(expected),
-        |store| {
-            live = live_findings(store, &install_model(store, &admitted)?)?;
-            held_back(&live.1).map_or(Ok(()), Err)
-        },
     )?;
-    plan.checked_objects = live.0;
-    plan.diagnostics.extend(live.1);
+    plan.checked_objects = host.cell()?.store().live_law_checked();
     Ok(DefinitionsApplied {
         outcome: ApplyOutcome::Installed,
         definitions_version: installed.version,
@@ -624,12 +573,38 @@ pub fn apply_definitions<E: SqlEngine>(
     })
 }
 
-/// The candidate's serving model, rebuilt under the write epoch (the moved
-/// model goes to the install itself).
-fn install_model<E: SqlEngine>(
-    store: &CellStore<E>,
-    admitted: &AdmittedSet,
-) -> Result<Model, Refusal> {
-    reopen_model(&admitted.canonical_set, serves_actions(store.model()))
-        .map_err(|refusal| unservable(refusal.explanation))
+#[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::expect_used,
+    reason = "test assertions"
+)]
+mod tests {
+    use super::{RefusalDiagnostic, RefusalSpan, codes, held_back};
+
+    fn finding(code: &str, severity: &str) -> RefusalDiagnostic {
+        RefusalDiagnostic {
+            code: code.to_owned(),
+            severity: severity.to_owned(),
+            message: "m".to_owned(),
+            law: None,
+            span: Some(RefusalSpan {
+                pointer: "/objects/t/1".to_owned(),
+            }),
+        }
+    }
+
+    /// LIVE-FAIL-CLOSED-1: an object no candidate law could be evaluated on
+    /// holds the definitions back, as a violation does; it is never admitted.
+    #[test]
+    fn an_unchecked_object_holds_the_definitions_back() {
+        for severity in ["error", "warning"] {
+            let refusal = held_back(&[finding(codes::LIVE_DATA_UNCHECKED, severity)])
+                .expect("unchecked is refused");
+            assert_eq!(refusal.code, codes::LIVE_DATA_REFUSED);
+            assert_eq!(refusal.diagnostics.len(), 1);
+            assert_eq!(refusal.diagnostics[0].code, codes::LIVE_DATA_UNCHECKED);
+        }
+        assert!(held_back(&[]).is_none());
+    }
 }

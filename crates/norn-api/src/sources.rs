@@ -230,6 +230,9 @@ struct ConnectionState {
     mapped: usize,
     last_end_ms: Option<u64>,
     watermarks: Option<BTreeMap<String, Watermark>>,
+    /// The schedule was read back from the cell's durable sync record
+    /// (TIMER-ALARM-1), so an evicted host never resyncs early.
+    restored: bool,
 }
 
 /// Every configured connection of one cell and its running syncs.
@@ -413,6 +416,95 @@ impl Sources {
         self.claim(&id, Trigger::Schedule, &format!("connection:{id}"), now_ms)
             .ok()
             .map(|_| id)
+    }
+
+    /// TIMER-ALARM-1: read each scheduled connection's last sync end back
+    /// from the cell's durable connection record (SYNC-REPORT-1), once per
+    /// host instance, so a host that was evicted keeps the schedule the
+    /// cell recorded instead of syncing every connection at once. A
+    /// connection the cell holds no ended sync for stays never synced.
+    ///
+    /// # Errors
+    /// The cell could not be read: nothing is restored, and the host claims
+    /// nothing on the schedule until it can be.
+    pub fn restore_schedule<E: SqlEngine>(&mut self, host: &DevHost<E>) -> Result<(), String> {
+        let pending = |state: Option<&ConnectionState>| !state.is_some_and(|s| s.restored);
+        if !self
+            .connections
+            .iter()
+            .any(|c| c.every_minutes > 0 && pending(self.state.get(&c.id)))
+        {
+            return Ok(());
+        }
+        // A cell from before connection records has no such type: no
+        // recorded schedule, not a restore error.
+        let recorded = host
+            .object_type_names()
+            .map_err(|refusal| format!("{}: {}", refusal.code, refusal.message))?
+            .iter()
+            .any(|name| name == CONNECTION_TYPE);
+        for connection in &self.connections {
+            let state = self.state.entry(connection.id.clone()).or_default();
+            // Only a scheduled connection has a schedule to restore.
+            if state.restored || connection.every_minutes == 0 || !recorded {
+                state.restored = true;
+                continue;
+            }
+            let ended = host
+                .host_object(CONNECTION_TYPE, &connection.id)
+                .map_err(|refusal| format!("{}: {}", refusal.code, refusal.message))?
+                .and_then(|record| {
+                    record
+                        .get("last_sync_ended_at")
+                        .and_then(RuntimeValue::as_str)
+                        .and_then(|text| text.parse::<jiff::Timestamp>().ok())
+                        .and_then(|at| u64::try_from(at.as_millisecond()).ok())
+                });
+            if let Some(ended) = ended {
+                state.last_end_ms = Some(state.last_end_ms.map_or(ended, |known| known.max(ended)));
+            }
+            state.restored = true;
+        }
+        Ok(())
+    }
+
+    /// TIMER-ALARM-1: when the next scheduled sync falls due, at or after
+    /// `now_ms` (the host wakes then and claims it with [`Self::due`]): a
+    /// connection never synced is due now, and any other one `every_minutes`
+    /// after its last run ended. While any connection's sync holds the cell
+    /// (SYNC-SERIAL-1), no other can be claimed, so the next is when that
+    /// run's lease lapses (SYNC-LEASE-1); its end re-arms the host. `None`
+    /// when no connection is scheduled.
+    #[must_use]
+    pub fn next_due(&self, now_ms: u64) -> Option<u64> {
+        let lease = self
+            .state
+            .values()
+            .filter_map(|s| s.run.as_ref())
+            .filter(|run| held(run, now_ms))
+            .map(|run| run.stepped_ms.saturating_add(RUN_LEASE_MS))
+            .min();
+        if lease.is_some() && self.connections.iter().any(|c| c.every_minutes > 0) {
+            return lease;
+        }
+        self.connections
+            .iter()
+            .filter(|c| c.every_minutes > 0)
+            .map(|c| {
+                let state = self.state.get(&c.id);
+                if let Some(run) = state
+                    .and_then(|s| s.run.as_ref())
+                    .filter(|run| held(run, now_ms))
+                {
+                    return run.stepped_ms.saturating_add(RUN_LEASE_MS);
+                }
+                let every = u64::from(c.every_minutes).saturating_mul(60_000);
+                state
+                    .and_then(|s| s.last_end_ms)
+                    .map_or(now_ms, |last| last.saturating_add(every))
+                    .max(now_ms)
+            })
+            .min()
     }
 
     /// Advance the claimed sync of `id`: `None` begins it; otherwise
@@ -846,8 +938,11 @@ fn http(config: &ConnectionConfig, auth: &[(String, String)], request: Request) 
 /// entry, rather than leaving the operator's host silently unlisted. The raw
 /// entry is checked before URL parsing, because parsing drops a default port
 /// (`127.0.0.1:443`) and empty userinfo (`@127.0.0.1`) and would list the bare
-/// host on every port and scheme.
-fn allowed_host_list(value: &str) -> Result<Vec<String>, String> {
+/// host on every port and scheme. Connection egress reads the same list.
+///
+/// # Errors
+/// An entry that is not a bare host, named.
+pub fn allowed_host_list(value: &str) -> Result<Vec<String>, String> {
     value
         .split(',')
         .map(str::trim)
@@ -913,60 +1008,7 @@ fn allowed_base(base: &str, allowed_hosts: &[String]) -> bool {
     if allowed_hosts.iter().any(|allowed| allowed == name) {
         return matches!(parsed.scheme(), "https" | "http");
     }
-    parsed.scheme() == "https" && !internal_host(&host)
-}
-
-/// A host that names the cell's own machine or network rather than a public
-/// service.
-fn internal_host(host: &url::Host<&str>) -> bool {
-    match host {
-        url::Host::Domain(domain) => {
-            let domain = domain.trim_end_matches('.');
-            domain == "localhost" || domain.ends_with(".localhost") || !domain.contains('.')
-        }
-        url::Host::Ipv4(ip) => internal_ipv4(*ip),
-        url::Host::Ipv6(ip) => internal_ipv6(*ip),
-    }
-}
-
-fn internal_ipv4(ip: std::net::Ipv4Addr) -> bool {
-    let [a, b, c, _] = ip.octets();
-    ip.is_unspecified()
-        || ip.is_loopback()
-        || ip.is_private()
-        || ip.is_link_local()
-        || ip.is_broadcast()
-        || ip.is_multicast()
-        // 0.0.0.0/8 ("this network") and 100.64.0.0/10 (shared address space).
-        || a == 0
-        || (a == 100 && (b & 0xc0) == 64)
-        // 192.0.0.0/24 (protocol assignments), 198.18.0.0/15 (benchmarking)
-        // and 240.0.0.0/4 (reserved).
-        || (a == 192 && b == 0 && c == 0)
-        || (a == 198 && (b & 0xfe) == 18)
-        || a >= 240
-}
-
-fn internal_ipv6(ip: std::net::Ipv6Addr) -> bool {
-    let segments = ip.segments();
-    let [first, second, third, ..] = segments;
-    // Addresses that carry or reach an IPv4 destination are refused whatever
-    // the IPv4 part: IPv4-mapped (::ffff:0:0/96), IPv4-compatible (::/96),
-    // NAT64 (64:ff9b::/96 and the local-use 64:ff9b:1::/48), 6to4
-    // (2002::/16) and Teredo (2001::/32).
-    let carries_ipv4 = matches!(segments, [0, 0, 0, 0, 0, 0xffff | 0, _, _])
-        || matches!(segments, [0x64, 0xff9b, 0, 0, 0, 0, _, _])
-        || (first == 0x64 && second == 0xff9b && third == 1)
-        || first == 0x2002
-        || (first == 0x2001 && second == 0);
-    ip.is_unspecified()
-        || ip.is_loopback()
-        || ip.is_multicast()
-        || carries_ipv4
-        // fc00::/7 unique-local, fe80::/10 link-local, fec0::/10 site-local.
-        || (first & 0xfe00) == 0xfc00
-        || (first & 0xffc0) == 0xfe80
-        || (first & 0xffc0) == 0xfec0
+    parsed.scheme() == "https" && !crate::net::internal_host(&host)
 }
 
 fn watermark_text(watermarks: &BTreeMap<String, Watermark>) -> String {
