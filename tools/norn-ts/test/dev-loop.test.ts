@@ -196,10 +196,12 @@ test("three_systems_dev_load: the packs' synthetic exports load whole, at startu
     }
     const first = await load()
     expect(first).toMatchObject({ status: [200, 200], rows, quarantined: 0 })
-    // Each slice lands its own rows: the incremental changes are new versions,
-    // never reported as already landed behind the snapshot.
-    expect(first.landedBySlice[0]).toBeGreaterThan(0)
-    expect(first.landedBySlice[1]).toBeGreaterThan(0)
+    // Each slice lands its own rows: all 7 snapshot rows, then 5 of the 6
+    // incremental rows. The sixth is the export's deliberate replay of the
+    // delivery, so it alone is already landed. The north holding's 200 -> 180
+    // update must land as a new version, never as already landed.
+    expect(first.landedBySlice).toEqual([7, 5])
+    expect(first.alreadyLanded).toBe(1)
     expect(first.landed + first.alreadyLanded).toBe(rows)
     const again = await load()
     expect(again).toMatchObject({ status: [200, 200], rows, landed: 0, alreadyLanded: rows, quarantined: 0 })
