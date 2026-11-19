@@ -266,6 +266,40 @@ fn decimal_invariants_prepare_once_per_commit() {
     );
 }
 
+fn decimal_put(key: &str, amount: &str) -> CellCommit<FactEvent, JsonObject, JsonObject> {
+    let amount = norn_ir::RuntimeValue::from(norn_ir::Decimal::parse(amount).expect("decimal"));
+    CellCommit {
+        writes: vec![FactWrite {
+            key: FactKey::new("bench.Priced", key),
+            expected: FactVersion::ABSENT,
+            mutation: FactMutation::Put {
+                values: JsonObject::from([("amount".to_owned(), amount)]),
+            },
+        }],
+        ..CellCommit::empty()
+    }
+}
+
+/// The prepared exact path decides a decimal invariant as per-row evaluation
+/// did: the boundary `0.00` holds, one cent below it is refused with the
+/// invariant's code and message.
+#[test]
+fn a_prepared_decimal_invariant_holds_at_zero_and_refuses_one_cent_below() {
+    let mut cell = decimal_cell();
+    cell.commit(decimal_creates("warm", 1))
+        .expect("warm-up commit");
+    cell.commit(decimal_put("zero", "0.00"))
+        .expect("0.00 meets `self.amount >= 0`");
+    let refused = cell
+        .commit(decimal_put("negative", "-0.01"))
+        .expect_err("-0.01 breaks `self.amount >= 0`");
+    assert_eq!(refused.code(), "commit.invariant_violation");
+    assert!(
+        refused.to_string().contains("amount is not negative"),
+        "{refused}"
+    );
+}
+
 /// One recorded commit sequence: every kernel result, then every stored
 /// receipt and ledger entry, as one JSON document.
 fn replay_transcript() -> Value {

@@ -122,10 +122,14 @@ impl Expression {
         env: &crate::ZenTypeEnv,
         expected: &crate::Type,
     ) -> PreparedAdmission {
-        if crate::check::requires_exact_profile(self, env, expected) {
+        let kind = if crate::check::requires_exact_profile(self, env, expected) {
             self.prepare_typed(env, expected)
         } else {
-            PreparedAdmission::Plain
+            Prepared::Plain
+        };
+        PreparedAdmission {
+            source: self.source.clone(),
+            kind,
         }
     }
 
@@ -141,13 +145,24 @@ impl Expression {
         env: &crate::ZenTypeEnv,
         expected: &crate::Type,
     ) -> EvaluationAttempt {
-        match prepared {
-            PreparedAdmission::Plain => self.evaluate_metered(context, budget),
-            PreparedAdmission::Refused(error) => EvaluationAttempt {
+        if prepared.source != self.source {
+            return EvaluationAttempt {
+                result: Err(ExprError::Compile {
+                    message: format!(
+                        "the prepared admission is for `{}`, not `{}`",
+                        prepared.source, self.source
+                    ),
+                }),
+                units_used: 0,
+            };
+        }
+        match &prepared.kind {
+            Prepared::Plain => self.evaluate_metered(context, budget),
+            Prepared::Refused(error) => EvaluationAttempt {
                 result: Err(error.clone()),
                 units_used: 0,
             },
-            PreparedAdmission::Exact(lowered) => {
+            Prepared::Exact(lowered) => {
                 let mut attempt = lowered.evaluate_exact_site(context, budget, None, false);
                 if let Ok(evaluation) = &mut attempt.result
                     && let Err(error) = materialize(expected, env, &mut evaluation.value)
@@ -159,11 +174,11 @@ impl Expression {
         }
     }
 
-    fn prepare_typed(&self, env: &crate::ZenTypeEnv, expected: &crate::Type) -> PreparedAdmission {
+    fn prepare_typed(&self, env: &crate::ZenTypeEnv, expected: &crate::Type) -> Prepared {
         let checked = match self.check_typed(env, expected) {
             Ok(checked) => checked,
             Err(found) => {
-                return PreparedAdmission::Refused(ExprError::Compile {
+                return Prepared::Refused(ExprError::Compile {
                     message: found
                         .iter()
                         .map(ToString::to_string)
@@ -174,11 +189,11 @@ impl Expression {
         };
         if checked.uses_exact_arithmetic() {
             match Self::compile(checked.runtime_source()) {
-                Ok(lowered) => PreparedAdmission::Exact(Box::new(lowered)),
-                Err(error) => PreparedAdmission::Refused(error),
+                Ok(lowered) => Prepared::Exact(Box::new(lowered)),
+                Err(error) => Prepared::Refused(error),
             }
         } else {
-            PreparedAdmission::Plain
+            Prepared::Plain
         }
     }
 
@@ -415,10 +430,20 @@ impl fmt::Debug for UnaryTest {
     }
 }
 
-/// How an admitted expression runs in one environment for one expected type
-/// ([`Expression::prepare_admitted`]).
+/// How an admitted expression runs in one environment for one expected type.
+///
+/// Only [`Expression::prepare_admitted`] makes one, so its choice of evaluator
+/// cannot be forged, and it remembers the source it was prepared from:
+/// [`Expression::evaluate_prepared`] refuses one prepared from a different
+/// expression (VAL-EXACT-1).
 #[derive(Clone, Debug)]
-pub enum PreparedAdmission {
+pub struct PreparedAdmission {
+    source: String,
+    kind: Prepared,
+}
+
+#[derive(Clone, Debug)]
+enum Prepared {
     /// The plain metered evaluator.
     Plain,
     /// The exact profile, with the lowered expression it runs.
