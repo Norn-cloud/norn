@@ -21,7 +21,7 @@ The type environment and checker (T1-EXPR-2):
 
 ## Profile `norn-zen/6` (structural grammar `norn-expr/4`)
 
-The published, versioned profile is [`PROFILE.md`](PROFILE.md) (`norn-zen/6`, bounded string normalization follow-up to #3116): the structural grammar, engine pin, and error, ordering, numeric, temporal, and string contracts. `CHECKER_PROFILE` is `norn-zen/6`; `tests/profile_conformance.rs` is its conformance suite. The fork enables `deterministic-temporal` and `bounded-strings` alongside the explicit no-default-features profile. The qualified source pin is `norn-v2.0.1-12`; its C12 zip 9 archive-loader update preserves the `norn-zen/6` semantics and explicit features.
+The published, versioned profile is the [profile section of this README](#norn-zen-expression--jdm-profile-norn-zen6), between the `profile:start` and `profile:end` markers (`norn-zen/6`, bounded string normalization follow-up to #3116): the structural grammar, engine pin, and error, ordering, numeric, temporal, and string contracts. `CHECKER_PROFILE` is `norn-zen/6`; `tests/profile_conformance.rs` is its conformance suite. The fork enables `deterministic-temporal` and `bounded-strings` alongside the explicit no-default-features profile. The qualified source pin is `norn-v2.0.1-12`; its C12 zip 9 archive-loader update preserves the `norn-zen/6` semantics and explicit features.
 
 Naming-series dates (`naming_series_date_at`) read only IANA tzdb 2025b from the exact-pinned `jiff-tzdb` 0.1.4 (the release `chrono-tz` 0.10.4 had; `NAMING_SERIES_TZDB_VERSION`) through jiff's TZif reader, and accept exactly `chrono-tz` 0.10.4's 597 zone names (`Factory` is refused). After 2099 the zones' DST rules keep applying, where chrono-tz stopped generating transitions.
 
@@ -102,7 +102,7 @@ This is the versioned contract for every ZEN Expression and every JDM decision t
 
 `norn-zen/2` (2026-10-02, #2770) supersedes `norn-zen/1`: decision outputs are exact runtime values (an output decimal that `f64` cannot hold, which `/1` refused, is now carried exactly), and numeric output defaults are admitted from the artifact's exact source text. Grammar, bounds, arithmetic, and the engine pin are unchanged.
 
-Enforcement is Norn's: the `norn-expr` checker (T2 admission), the `norn-checker` JDM profile, and `norn-decisions` admission. The `Norn-cloud/zen` fork carries only engine-internal patches (D32).
+Enforcement is Norn's: the `norn-expr` checker (T2 admission), the `norn-checker` JDM profile, and `norn-decisions` admission. The `Norn-cloud/zen` fork carries only engine-internal patches.
 
 ## Engine
 
@@ -144,7 +144,7 @@ Bounded string controls are source literals even at syntax-only JDM sites; dynam
 
 **JDM nodes** (enforced by the `norn-checker` JDM profile and re-checked by `norn-decisions`):
 - Admitted: `inputNode`, `outputNode`, `expressionNode`, `decisionTableNode` (`first`/`collect`), `switchNode` (`first`/`collect`), and `decisionNode` (a bounded sub-decision closure).
-- Rejected: `functionNode` and `customNode`, including custom-node template fields, which are never decoded (`rule.validation.jdm_custom_node_rejected`, D33 v1). Graph imports and node-level schemas are also rejected.
+- Rejected: `functionNode` and `customNode`, including custom-node template fields, which are never decoded (`rule.validation.jdm_custom_node_rejected`, v1). Graph imports and node-level schemas are also rejected.
 
 ## Types
 
@@ -186,7 +186,7 @@ Bounded string controls are source literals even at syntax-only JDM sites; dynam
 - **Errors:** overflow in `+`, `-`, `*` and `sum` is a typed evaluation error.
 - **Wire:**
   - Inside the kernel boundary, numbers travel as exact decimal text: Norn1 canonical JSON, via `value_from_canonical` / `value_to_canonical`.
-  - The canonical `norn_ir::DecisionOutput` carries exact runtime values (`norn_ir::RuntimeValue`, #2770): an output decimal is never narrowed or rounded. The same exact values carry facts, the cell store, ledger events, commands and timers, and the dev host's HTTP JSON (exact number tokens). Definition IR keeps `f64` `JsonValue` and its hashes (D37).
+  - The canonical `norn_ir::DecisionOutput` carries exact runtime values (`norn_ir::RuntimeValue`, #2770): an output decimal is never narrowed or rounded. The same exact values carry facts, the cell store, ledger events, commands and timers, and the dev host's HTTP JSON (exact number tokens). Definition IR keeps `f64` `JsonValue` so its historical hashes stay stable.
   - Runtime decimals are this profile's numbers: 96-bit mantissa, scale ≤ 28, refused (never rounded) outside. Canonical form and hashing are Norn1's number form (`1.50` → `1.5`, `-0` → `0`); the golden corpus is `crates/norn-ir/tests/golden/runtime-decimals.json`, and the checker ABI's `canonicalRuntimeValue` is byte-identical natively and on `wasm32` (CI `checker-wasm`).
   - Numeric RuleIR output `defaults` are admitted from the artifact's exact source text (`AdmittedDecision::admit_with_defaults`; `norn dev` passes it); without the source text they are refused, because IR JSON is `f64`. EntityIR numeric property defaults are exact decimal strings (the checker refuses JSON numbers there).
 

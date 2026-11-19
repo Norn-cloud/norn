@@ -1,4 +1,4 @@
-// One evaluator (D105): the engine package (this crate without its `checker` feature,
+// One evaluator (#1325): the engine package (this crate without its `checker` feature,
 // NORN_WASM_ENGINE=1) and the checker package answer every evaluation byte for byte the same.
 //
 // Usage: node engine-parity.mjs <checker-pkg-dir> <engine-pkg-dir>

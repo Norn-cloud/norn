@@ -24,8 +24,8 @@ SQL or table access.
 3. Choose **Connect**. A Norn page opens: sign in with your Studio email and password. If you are
    already signed in to Studio in this browser, Norn skips this step.
 4. Norn shows which application is asking and the workspace it will act in. Choose **Allow**.
-5. In a chat, turn Norn on from the tools menu and ask, for example: "Using Norn, why is last
-   week's gold yield an outlier?"
+5. In a chat, turn Norn on from the tools menu and ask, for example: "Using Norn, which batches
+   recorded a loss?"
 
 Claude renders Norn's views inline on every plan. On Team and Enterprise plans an owner can turn
 interactive views off; Norn's answers then arrive as text.
@@ -40,13 +40,20 @@ interactive views off; Norn's answers then arrive as text.
 
 ## What you can ask
 
+The examples assume a workspace with the `batches` pack installed
+([`fixtures/packs/batches`](../../fixtures/packs/batches/batches.ts): a `lab.Batch` type, its
+mass-conservation law and the `lab.batch.record` action). The pack declares no metric, and a
+question or dashboard can aggregate only over declared metrics, so the loss and mass-out examples
+below also need a metric over `lab.Batch` (for example, the sum of `loss_g` or `output_g` by
+`material`) declared in the workspace. The catalog question and the action work with the pack alone.
+
 - "What does this workspace hold?" The assistant reads the catalog: object types, their
   properties, the admitted questions and the actions you may call.
-- "Show weekly gold yield" or "Which records are behind week 41?" You get an answer card with
+- "Show recorded loss by material" or "Which batches are behind that total?" You get an answer card with
   the exact values and the records and receipts behind each one.
-- "Propose a dashboard of yield by week." Norn's checker reads the proposal and says in plain words
+- "Propose a dashboard of mass out by material." Norn's checker reads the proposal and says in plain words
   what it means. Nothing is saved until a person installs it in Studio by signing that restatement.
-- "Record a melt of 12 g in, 10 g out." The action is decided by the workspace's laws and comes
+- "Record batch B-7: 12 g of copper in, 10 g out, 2 g lost." The action is decided by the workspace's laws and comes
   back as a receipt or as a refusal with the reason. A retried call returns the original receipt.
 
 ## Disconnect

@@ -1,7 +1,7 @@
 //! Exact runtime values (#2770, T3-NUM-1).
 //!
 //! Definition IR keeps [`crate::JsonValue`] (an `f64` number) and its
-//! historical hashes (D37). Values that flow through a running cell (fact
+//! historical hashes, which stay stable. Values that flow through a running cell (fact
 //! values, decision outputs, command and timer records, the store, the ABI,
 //! and the API) are [`RuntimeValue`]s instead, whose numbers are exact
 //! [`Decimal`]s: money and quantities never pass through `f64`.
@@ -10,7 +10,7 @@
 //!
 //! A [`Decimal`] is the expression engine's decimal (`rust_decimal`): a 96-bit
 //! integer mantissa with a scale of at most 28 fractional digits, the
-//! `norn-zen/6` profile's number (`crates/norn-expr/PROFILE.md`). A value
+//! `norn-zen/6` profile's number (`crates/norn-expr/README.md`). A value
 //! outside that range is refused, never rounded. There is one numeric kind:
 //! an integer is a decimal of scale 0.
 //!
@@ -23,8 +23,8 @@
 //!
 //! With `serde_json` a decimal is written as a JSON number token with its
 //! exact canonical text, and read back from the exact token text, through
-//! `serde_json`'s raw-value support (not `arbitrary_precision`, which D37
-//! keeps out of the kernel). Parsing JSON text with
+//! `serde_json`'s raw-value support (not `arbitrary_precision`, which stays
+//! out of the kernel). Parsing JSON text with
 //! [`RuntimeValue::from_json_text`] or `serde_json::from_str`/`from_slice`
 //! is exact. Converting an in-memory `serde_json::Value` (for example from the
 //! `json!` macro) reads each number from `serde_json`'s own rendering, which is
@@ -324,7 +324,7 @@ fn builds_serde_json_value<S>() -> bool {
 impl Serialize for Decimal {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         // An in-memory `serde_json::Value` holds numbers as `f64`/`u64`/`i64`
-        // (without `arbitrary_precision`, D37): a decimal it cannot hold is
+        // (without `arbitrary_precision`): a decimal it cannot hold is
         // an error, never a silent rounding. Text serialization is exact.
         if builds_serde_json_value::<S>() {
             return self.serialize_binary(serializer);
