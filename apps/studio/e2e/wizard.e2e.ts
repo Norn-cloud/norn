@@ -153,5 +153,5 @@ test("edit: from a record's drawer the wizard carries its id, locked, through to
   await form.locator('button[type="submit"]', { hasText: "Review" }).click()
   await expect(form.getByRole("region", { name: "Review" }).getByLabel("This record")).toBeVisible()
   await form.getByRole("button", { name: "Open a holding" }).click()
-  await expect(form.getByRole("status")).toHaveText("Holding demo/holding/0005 created · just now")
+  await expect(form.getByRole("status")).toHaveText("Holding demo/holding/0005 updated · just now")
 })

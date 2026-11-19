@@ -262,7 +262,7 @@ test("undo: a lost answer reads as unconfirmed, Retry undo re-sends it under the
   await fillHolding(page, "demo/holding/9101", "2.000")
   await sheet(page).getByRole("button", { name: "Open a holding" }).click()
   const form = sheet(page)
-  await expect(form.getByRole("status")).toHaveText(/^Holding demo\/holding\/9101 opened/)
+  await expect(form.getByRole("status")).toHaveText(/^Holding demo\/holding\/9101 created/)
   actions.failNext()
   await form.getByRole("button", { name: "Undo" }).click()
   await expect(form.getByRole("alert")).toContainText("Couldn't confirm the undo")
