@@ -238,7 +238,7 @@ checks the runner's own rules with a stub host: the supplied project stays
 byte-identical, a reset without a marker kills nothing, and waitUntil does not
 pass when the reply came after the work.
 
-`--host celld` runs `celld dev --no-watch --logs` (0.6.3). Host state and logs go beside the project (`--state`), never inside it. `--host rivet` runs the Rivet Engine
+`--host celld` runs `celld dev --no-watch --logs` (0.6.3). Host state and logs go to a fresh temporary directory (or an empty, real `--state` directory outside the project), never into the project. `--host rivet` runs the Rivet Engine
 (`rivetdev/engine` 3.1.2-rc.1, pinned by digest, in Docker) with two
 `orange serve` runners from the locked install (`conformance/package.json`
 and `bun.lock`, with integrity hashes); `ORANGE` may name another binary, and
