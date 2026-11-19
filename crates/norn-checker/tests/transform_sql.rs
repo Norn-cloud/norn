@@ -364,3 +364,121 @@ fn real_world_sql_outside_the_dialect_refuses_cleanly() {
         );
     }
 }
+
+/// Runs `sql` through the dialect on a thread with a bounded stack (4 MiB, or
+/// `SQL_STACK_KIB`): the bounds must refuse deep input before the parser or the
+/// lowering recurse far. A debug build needs about 2 MiB for the deepest
+/// nesting the dialect admits; without the bounds, these inputs overflow it.
+fn refused_on_a_small_stack(sql: String) -> Vec<norn_checker::Diagnostic> {
+    std::thread::Builder::new()
+        .stack_size(
+            std::env::var("SQL_STACK_KIB")
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(4096)
+                .saturating_mul(1024),
+        )
+        .spawn(move || compile(&sql).expect_err("refused"))
+        .expect("spawn")
+        .join()
+        .expect("no stack overflow")
+}
+
+#[track_caller]
+fn refused_saying(found: &[norn_checker::Diagnostic], words: &str) {
+    assert!(
+        found
+            .iter()
+            .any(|d| d.code == SQL_UNSUPPORTED && d.message.contains(words)),
+        "expected {SQL_UNSUPPORTED} saying {words:?}, found {found:#?}"
+    );
+}
+
+fn filtered(condition: &str) -> String {
+    format!("SELECT o.amount AS amount FROM \"shop.Order\" o WHERE {condition}")
+}
+
+#[test]
+fn deeply_nested_parentheses_are_refused_by_the_depth_bound() {
+    let condition = format!("{}o.amount > 0{}", "(".repeat(5000), ")".repeat(5000));
+    refused_saying(
+        &refused_on_a_small_stack(filtered(&condition)),
+        "too deeply",
+    );
+}
+
+#[test]
+fn a_deep_not_chain_is_refused_by_the_depth_bound() {
+    let condition = format!("{}o.amount > 0", "NOT ".repeat(3000));
+    refused_saying(
+        &refused_on_a_small_stack(filtered(&condition)),
+        "too deeply",
+    );
+}
+
+#[test]
+fn a_deep_negation_chain_is_refused_by_the_depth_bound() {
+    let condition = format!("{}o.amount > 0", "- ".repeat(5000));
+    refused_saying(
+        &refused_on_a_small_stack(filtered(&condition)),
+        "too deeply",
+    );
+}
+
+#[test]
+fn a_long_operator_chain_is_refused_by_the_depth_bound() {
+    let condition = format!("o.amount{} > 0", " + o.amount".repeat(500));
+    refused_saying(
+        &refused_on_a_small_stack(filtered(&condition)),
+        "too deeply",
+    );
+    let condition = vec!["o.amount > 0"; 500].join(" AND ");
+    refused_saying(
+        &refused_on_a_small_stack(filtered(&condition)),
+        "too deeply",
+    );
+}
+
+#[test]
+fn source_past_the_size_bound_is_refused_before_it_is_read() {
+    let condition = format!("{}o.amount > 0{}", "(".repeat(40_000), ")".repeat(40_000));
+    refused_saying(
+        &refused_on_a_small_stack(filtered(&condition)),
+        "bytes, more than",
+    );
+}
+
+#[test]
+fn nesting_within_the_bounds_still_compiles() {
+    let condition = format!("{}o.amount > 0{}", "(".repeat(20), ")".repeat(20));
+    compile(&filtered(&condition)).expect("admitted");
+    compile(&filtered(&format!("{}o.amount > 0", "NOT ".repeat(20)))).expect("admitted");
+    compile(&filtered(&vec!["o.amount > 0"; 60].join(" AND "))).expect("admitted");
+}
+
+#[test]
+fn the_depth_bound_admits_its_limit_and_refuses_one_past_it() {
+    let nested = |levels: usize| {
+        // Inside WHERE the condition is already one nested level.
+        let condition = format!(
+            "{}o.amount > 0{}",
+            "(".repeat(levels.saturating_sub(1)),
+            ")".repeat(levels.saturating_sub(1))
+        );
+        std::thread::Builder::new()
+            .stack_size(4096 * 1024)
+            .spawn(move || compile(&filtered(&condition)).map(|_| ()))
+            .expect("spawn")
+            .join()
+            .expect("no stack overflow")
+    };
+    // The parse admits 64 nested levels; whatever refuses it after that is
+    // not the dialect's depth bound.
+    if let Err(found) = nested(64) {
+        assert!(
+            found.iter().all(|d| !d.message.contains("too deeply")),
+            "{found:#?}"
+        );
+    }
+    refused_saying(&nested(65).expect_err("refused"), "too deeply");
+}

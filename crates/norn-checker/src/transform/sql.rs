@@ -34,6 +34,21 @@ use crate::{Diagnostic, DiagnosticCode, DiagnosticRemediation, DiagnosticSeverit
 /// The refusal of anything this dialect does not lower to a typed operator.
 pub const SQL_UNSUPPORTED: &str = "derived.validation.sql_unsupported";
 
+/// The longest SQL source the dialect reads, in bytes: the expression
+/// profile's source bound, checked before tokenizing.
+const MAX_SOURCE_BYTES: usize = 16_384;
+
+/// The deepest expression the parser builds: the expression profile's
+/// nesting bound. A nested level (a parenthesis, `NOT`, unary minus, a call
+/// argument or `CASE` branch) counts [`NESTED`], since the parser recurses
+/// through every precedence level for it; an operator chained onto a left
+/// operand counts 1. So at most 64 levels nest, which bounds the parser's
+/// stack, and the tree the lowering walks is at most 128 deep.
+const MAX_DEPTH: usize = 128;
+
+/// What one nested level counts towards [`MAX_DEPTH`].
+const NESTED: usize = 2;
+
 /// A lowered SQL transform: its inputs and the relational plan.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SqlPlan {
@@ -241,9 +256,27 @@ struct Parser {
     tokens: Vec<(Token, usize)>,
     position: usize,
     end: usize,
+    /// The expression depth at the current position; see [`MAX_DEPTH`].
+    depth: usize,
 }
 
 impl Parser {
+    /// `by` deeper, refused past [`MAX_DEPTH`]. The caller restores `depth`
+    /// when its level is done; a refusal ends the parse.
+    fn deeper(&mut self, by: usize) -> Result<(), Refusal> {
+        self.depth = self.depth.saturating_add(by);
+        if self.depth > MAX_DEPTH {
+            return Err(refusal(
+                format!(
+                    "the expression is nested or chained too deeply: at most {} levels nest and {MAX_DEPTH} operators chain",
+                    MAX_DEPTH / NESTED
+                ),
+                self.at(),
+            ));
+        }
+        Ok(())
+    }
+
     fn at(&self) -> usize {
         self.tokens
             .get(self.position)
@@ -484,24 +517,35 @@ impl Parser {
     }
 
     fn expression(&mut self) -> Result<Ex, Refusal> {
+        let depth = self.depth;
+        self.deeper(NESTED)?;
         let mut left = self.conjunction()?;
         while self.eat_keyword("or") {
+            self.deeper(1)?;
             left = Ex::Binary("or", Box::new(left), Box::new(self.conjunction()?));
         }
+        self.depth = depth;
         Ok(left)
     }
 
     fn conjunction(&mut self) -> Result<Ex, Refusal> {
+        let depth = self.depth;
         let mut left = self.negation()?;
         while self.eat_keyword("and") {
+            self.deeper(1)?;
             left = Ex::Binary("and", Box::new(left), Box::new(self.negation()?));
         }
+        self.depth = depth;
         Ok(left)
     }
 
     fn negation(&mut self) -> Result<Ex, Refusal> {
         if self.eat_keyword("not") {
-            return Ok(Ex::Not(Box::new(self.negation()?)));
+            let depth = self.depth;
+            self.deeper(NESTED)?;
+            let inner = self.negation()?;
+            self.depth = depth;
+            return Ok(Ex::Not(Box::new(inner)));
         }
         self.comparison()
     }
@@ -544,22 +588,28 @@ impl Parser {
     }
 
     fn sum(&mut self) -> Result<Ex, Refusal> {
+        let depth = self.depth;
         let mut left = self.product()?;
         loop {
             if self.eat_symbol("+") {
+                self.deeper(1)?;
                 left = Ex::Binary("+", Box::new(left), Box::new(self.product()?));
             } else if self.eat_symbol("-") {
+                self.deeper(1)?;
                 left = Ex::Binary("-", Box::new(left), Box::new(self.product()?));
             } else {
+                self.depth = depth;
                 return Ok(left);
             }
         }
     }
 
     fn product(&mut self) -> Result<Ex, Refusal> {
+        let depth = self.depth;
         let mut left = self.unary()?;
         loop {
             if self.eat_symbol("*") {
+                self.deeper(1)?;
                 left = Ex::Binary("*", Box::new(left), Box::new(self.unary()?));
             } else if self.symbol("/") {
                 return Err(refusal(
@@ -567,6 +617,7 @@ impl Parser {
                     self.at(),
                 ));
             } else {
+                self.depth = depth;
                 return Ok(left);
             }
         }
@@ -574,7 +625,11 @@ impl Parser {
 
     fn unary(&mut self) -> Result<Ex, Refusal> {
         if self.eat_symbol("-") {
-            return Ok(Ex::Negate(Box::new(self.unary()?)));
+            let depth = self.depth;
+            self.deeper(NESTED)?;
+            let inner = self.unary()?;
+            self.depth = depth;
+            return Ok(Ex::Negate(Box::new(inner)));
         }
         self.primary()
     }
@@ -847,10 +902,20 @@ fn constant(ex: &Ex) -> bool {
 
 /// The dialect's syntax tree of one query: its `UNION ALL` branches.
 fn parse(source: &str) -> Result<Vec<Select>, Refusal> {
+    if source.len() > MAX_SOURCE_BYTES {
+        return Err(refusal(
+            format!(
+                "the SQL is {} bytes, more than {MAX_SOURCE_BYTES}",
+                source.len()
+            ),
+            0,
+        ));
+    }
     Parser {
         tokens: tokenize(source)?,
         position: 0,
         end: source.len(),
+        depth: 0,
     }
     .query()
 }

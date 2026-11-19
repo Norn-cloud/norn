@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { cellStage, probeServesNewBuild, studioPointer } from "../scripts/celld-deploy-cell.ts"
+import { assertDeployableBuild, cellStage, probeServesNewBuild, studioPointer } from "../scripts/celld-deploy-cell.ts"
 
 test("a cell deploy targets one named stage with its own bucket", () => {
   expect(cellStage("next", "s3://norn-next-celld")).toEqual({
@@ -37,4 +37,13 @@ test("the probe passes on any answer from the new build's route, and fails on th
   expect(probeServesNewBuild(403, "<html>forbidden</html>")).toBe(false)
   expect(probeServesNewBuild(401, "{}")).toBe(false)
   expect(probeServesNewBuild(302, "")).toBe(false)
+})
+
+test("a fixtures build deploys only to a smoke or test stage", () => {
+  expect(() => assertDeployableBuild("next", true)).toThrow("fixtures build")
+  expect(() => assertDeployableBuild("demo", true)).toThrow("fixtures build")
+  expect(() => assertDeployableBuild("alpha", true)).toThrow("fixtures build")
+  expect(() => assertDeployableBuild("smoke", true)).not.toThrow()
+  expect(() => assertDeployableBuild("test", true)).not.toThrow()
+  expect(() => assertDeployableBuild("next", false)).not.toThrow()
 })
