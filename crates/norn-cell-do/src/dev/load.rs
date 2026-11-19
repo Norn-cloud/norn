@@ -221,13 +221,18 @@ mod tests {
             .collect()
     }
 
-    /// The template's core is the hosted trusted base plus the cell-owned
-    /// `norn.` evidence types, so a project admits what a hosted tenant does.
+    /// The template is what a hosted tenant provisions: its core is the
+    /// hosted trusted base plus the cell-owned `norn.` evidence types, and its
+    /// packs are the tenant's packs, so a project admits what a hosted tenant
+    /// does.
     #[test]
-    fn the_template_core_is_the_hosted_base_and_the_cell_owned_types() {
+    fn the_template_is_the_hosted_base_cell_owned_types_and_tenant_packs() {
         let base = crate::base::trusted_base().unwrap();
-        let core = names(&template()["core"]);
-        let mut ids: Vec<String> = core
+        let template = template();
+        let (mut owned, reserved): (Vec<String>, Vec<String>) = names(&template["core"])
+            .into_iter()
+            .partition(|name| name.starts_with("norn."));
+        let mut ids: Vec<String> = reserved
             .iter()
             .map(|name| {
                 let path = repo().join(format!("registry/core/artifacts/{name}.json"));
@@ -235,12 +240,14 @@ mod tests {
                     serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
                 artifact["artifactId"].as_str().unwrap().to_owned()
             })
-            .filter(|id| !id.starts_with("norn."))
             .collect();
         ids.sort();
         let mut expected: Vec<String> = base.ids().iter().cloned().collect();
         expected.sort();
         assert_eq!(ids, expected);
+        owned.sort();
+        assert_eq!(owned, crate::base::CELL_OWNED);
+        assert_eq!(names(&template["packs"]), crate::base::TENANT_PACKS);
     }
 
     #[test]

@@ -390,6 +390,18 @@ mod tests {
         assert_eq!(status, 200, "{decided}");
         assert_eq!(decided["call"], json!({ "committed": true }), "{decided}");
         assert_eq!(melt(&dev), 200);
+
+        // The approved call committed as its requester, never as the
+        // reviewer who approved it: the version's writer names the developer.
+        let path = "/v1/objects/constitution.Melt/melt-7/history";
+        let (status, history) = call(&dev, Some(DEVELOPER_TOKEN), ("GET", path, SCOPE), "");
+        assert_eq!(status, 200, "{history}");
+        let writer = &history["versions"][0]["writer"];
+        assert_eq!(
+            (&writer["kind"], &writer["actionId"], &writer["actor"]),
+            (&json!("action"), &json!(MELT_ACTION), &json!(DEVELOPER)),
+            "{history}"
+        );
     }
 
     #[test]
@@ -441,8 +453,16 @@ mod tests {
             anonymous,
             (outside.status, serde_json::from_str(&outside.body).unwrap())
         );
-        // The developer reaches the loader: this mapping is not admitted here.
+        // The developer reaches the loader, which refuses a load with no rows
+        // before it looks up the mapping. A real load is driven end to end in
+        // norn-ts `three_systems_dev_load`.
         let (status, refused) = call(&dev, Some(DEVELOPER_TOKEN), ("POST", path, SCOPE), &body);
         assert_eq!(status, 400, "{refused}");
+        assert!(
+            refused["explanation"]
+                .as_str()
+                .is_some_and(|detail| detail.contains("at least one row")),
+            "{refused}"
+        );
     }
 }

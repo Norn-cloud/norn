@@ -119,9 +119,6 @@ struct ManifestDev {
     actor: String,
 }
 
-/// A `--load` the cell refused: fatal, with exit 3 (DEV-LOAD-REFUSED-1).
-const LOAD_REFUSED: &str = "norn.dev.load_refused";
-
 /// A setup or usage failure: a stable code, an actionable message and the
 /// shared exit status (2 usage, 3 setup).
 #[derive(Debug)]
@@ -663,13 +660,13 @@ impl Session<'_> {
                 // DEV-LOAD-REFUSED-1: a `--load` the cell refuses ends the
                 // session with that refusal; it never waits unserved for a
                 // source save that cannot change the snapshot.
-                if refusal.get("code").and_then(Value::as_str) == Some(LOAD_REFUSED) {
+                if refusal.get("code").and_then(Value::as_str) == Some("norn.dev.load_refused") {
                     let message = refusal
                         .get("message")
                         .and_then(Value::as_str)
                         .unwrap_or("a recorded snapshot was refused")
                         .to_owned();
-                    return Err(Failure::setup(LOAD_REFUSED, message));
+                    return Err(Failure::setup("norn.dev.load_refused", message));
                 }
                 Ok(None)
             }
@@ -697,7 +694,7 @@ impl Session<'_> {
             store
         } else {
             let (store, loaded) = load::load(store, &self.scope.key(), self.loads).map_err(
-                |message| json!({ "code": LOAD_REFUSED, "severity": "error", "message": message }),
+                |message| json!({ "code": "norn.dev.load_refused", "severity": "error", "message": message }),
             )?;
             self.loaded.replace(Some(loaded));
             store
@@ -764,7 +761,7 @@ fn reopen(
         (store, None)
     } else {
         let (store, loaded) = load::load(store, &scope.key(), loads)
-            .map_err(|message| Failure::setup(LOAD_REFUSED, message))?;
+            .map_err(|message| Failure::setup("norn.dev.load_refused", message))?;
         (store, Some(loaded))
     };
     let host = DevHost::from_store(store, scope.clone(), |command| command.payload.clone())

@@ -162,9 +162,10 @@ export function liveUpgrade(request: Request, port: number): Response | null {
 
 /** A path a subscription may name: one of the cell's GET routes, never the live route itself. */
 export function subscribable(path: unknown): string | null {
-  if (typeof path !== "string" || path.length > 512 || !path.startsWith("/v1/") || path.startsWith("/v1/subscribe")) return null
+  if (typeof path !== "string" || path.length > 512 || !path.startsWith("/v1/")) return null
+  // Decided on the normalised path, so a dot segment (`..`, `%2e%2e`) cannot leave `/v1/` or reach the live route.
   const url = new URL(path, "http://cell")
-  if (url.pathname.includes("..")) return null
+  if (url.origin !== "http://cell" || !url.pathname.startsWith("/v1/") || url.pathname.startsWith("/v1/subscribe")) return null
   return `${url.pathname}${url.search}`
 }
 

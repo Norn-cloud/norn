@@ -152,20 +152,53 @@ test("developer_loop_roundtrip: author, observe, break, repair and restart throu
   }
 }, 240_000)
 
-test("three_systems_dev_load: the packs' synthetic exports load whole, and a refused load exits with its reason", async () => {
+test("three_systems_dev_load: the packs' synthetic exports load whole, at startup and over observations:load, and a refused load exits with its reason", async () => {
   if (!native) return
   const root = mkdtempSync(join(tmpdir(), "norn-dev-packs-"))
   const dir = join(root, "packs")
   let dev: Dev | undefined
   try {
     expect(spawnSync(process.execPath, [CLI, "init", dir, "--template", "three-systems", "--no-install"], { env }).status).toBe(0)
-    const data = ["erpnext", "shopify", "odoo"].flatMap((system) => ["--load", `data/${system}.json`])
+    // Two exports load at startup (`--load`); the third arrives while serving.
+    const data = ["shopify", "odoo"].flatMap((system) => ["--load", `data/${system}.json`])
     dev = new Dev(dir, data)
     const loaded = await dev.next("loaded", 0, 180_000)
-    expect(loaded.files.map((file: Event) => file.rows)).toEqual([13, 11, 13])
+    expect(loaded.files.map((file: Event) => file.rows)).toEqual([11, 13])
     const ready = await dev.next("ready", 0, 180_000)
     const token = readFileSync(join(dir, ".norn/dev.token"), "utf8").trim()
     const scope = "orgId=local&environmentId=dev"
+    // POST /v1/observations:load with the developer's token: the ERPNext
+    // export, in two slices under the route's commit bound (its snapshot rows,
+    // then its incremental rows), lands whole through the mapping, and loading
+    // it again lands nothing.
+    const erpnext = JSON.parse(readFileSync(join(dir, "data/erpnext.json"), "utf8")) as { snapshot: unknown[]; incremental: unknown[] }
+    expect(erpnext.incremental.length).toBeGreaterThan(0)
+    const slices = [{ ...erpnext, incremental: [] }, { ...erpnext, snapshot: [] }]
+    const rows = erpnext.snapshot.length + erpnext.incremental.length
+    const load = async () => {
+      const total = { status: [] as number[], rows: 0, landed: 0, alreadyLanded: 0, quarantined: 0 }
+      for (const slice of slices) {
+        const response = await fetch(`${ready.url}/v1/observations:load?${scope}`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+          body: JSON.stringify(slice),
+        })
+        const body = await response.json() as { rows: number; landed: number; alreadyLanded: number; quarantined: number }
+        expect({ status: response.status, body }).toMatchObject({ status: 200 })
+        total.status.push(response.status)
+        total.rows += body.rows
+        total.landed += body.landed
+        total.alreadyLanded += body.alreadyLanded
+        total.quarantined += body.quarantined
+      }
+      return total
+    }
+    const first = await load()
+    expect(first).toMatchObject({ status: [200, 200], rows, quarantined: 0 })
+    expect(first.landed).toBeGreaterThan(0)
+    expect(first.landed + first.alreadyLanded).toBe(rows)
+    const again = await load()
+    expect(again).toMatchObject({ status: [200, 200], rows, landed: 0, alreadyLanded: rows, quarantined: 0 })
     for (const type of ["canon.Holding", "canon.OrderLine", "canon.Delivery", "canon.Posting", "canon.SettlementObservation"]) {
       const response = await fetch(`${ready.url}/v1/objects/${type}?${scope}`, { headers: { authorization: `Bearer ${token}` } })
       const body = await response.json() as { records?: unknown[]; quarantineCount?: number }
@@ -182,9 +215,9 @@ test("three_systems_dev_load: the packs' synthetic exports load whole, and a ref
     const fresh = join(root, "fresh")
     expect(spawnSync(process.execPath, [CLI, "init", fresh, "--template", "three-systems", "--no-install"], { env }).status).toBe(0)
     writeFileSync(join(fresh, "data/broken.json"), JSON.stringify({ rows: [] }))
-    const first = spawnSync(process.execPath, [CLI, "dev", "--json", "--port", "0", "--load", "data/broken.json"], { cwd: fresh, env, encoding: "utf8", timeout: 180_000 })
-    expect(first.status).toBe(3)
-    expect(first.stdout).toContain("norn.dev.load_refused")
+    const refusedFirst = spawnSync(process.execPath, [CLI, "dev", "--json", "--port", "0", "--load", "data/broken.json"], { cwd: fresh, env, encoding: "utf8", timeout: 180_000 })
+    expect(refusedFirst.status).toBe(3)
+    expect(refusedFirst.stdout).toContain("norn.dev.load_refused")
   } finally {
     await dev?.stop()
     rmSync(root, { recursive: true, force: true })

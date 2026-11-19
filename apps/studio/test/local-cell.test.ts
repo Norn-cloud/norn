@@ -132,7 +132,13 @@ test("live reads: a subscription gets the dev host's GET answer, then only a cha
 test("live reads refuse what the hosted cell refuses, and close on an expired token", async () => {
   expect(subscribable("/v1/subscribe?x=1")).toBeNull()
   expect(subscribable("/api/me")).toBeNull()
-  expect(subscribable("/v1/objects/a/../../x")).not.toContain("..")
+  expect(subscribable("/v1/objects/a/../../x")).toBe("/v1/x")
+  // Dot segments are resolved before the path is decided.
+  expect(subscribable("/v1/x/../subscribe")).toBeNull()
+  expect(subscribable("/v1/../../api/me")).toBeNull()
+  expect(subscribable("/v1/%2e%2e/api/me")).toBeNull()
+  expect(subscribable("/v1/%2E%2E/subscribe")).toBeNull()
+  expect(subscribable("/v1/..\\api/me")).toBeNull()
   const hub = new LiveHub(async () => ({ status: 401, body: "{}" }))
   const { ws, sent, closed } = socket()
   hub.open(ws)
