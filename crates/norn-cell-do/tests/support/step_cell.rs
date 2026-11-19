@@ -16,7 +16,7 @@ use norn_api::host::DevHost;
 use norn_api::question_routes::{AdHocQuestions, QuestionRuntime, QuestionSnapshot};
 use norn_api::refusal::Refusal;
 use norn_api::scope::CellScope;
-use norn_cell::engine::NativeEngine;
+use norn_cell::engine::{NativeEngine, SqlEngine};
 use norn_cell::flow_run::RunStarter;
 use norn_cell::{CellStore, ObjectRecord};
 use norn_cell_do::policy::CallerSlot;
@@ -40,7 +40,7 @@ use serde_json::{Value, json};
     reason = "the shared fixture module serves the action tests too"
 )]
 pub(crate) mod action_cell;
-pub(crate) use action_cell::{DERIVES_LOSS, MELT, MELT_ACTION, melt_body, melt_store};
+pub(crate) use action_cell::{DERIVES_LOSS, MELT, MELT_ACTION, melt_body, melt_store, melt_store_on};
 
 pub(crate) const SCOPE: &str = "orgId=org_demo&environmentId=dev";
 /// May convert melts; starts runs and installs flows.
@@ -82,7 +82,7 @@ struct StepPolicy {
 }
 
 impl StepPolicy {
-    fn compile(store: &CellStore<NativeEngine>, caller: Arc<CallerSlot>) -> Self {
+    fn compile<E: SqlEngine>(store: &CellStore<E>, caller: Arc<CallerSlot>) -> Self {
         let types: Vec<_> = store
             .model()
             .object_types()
@@ -241,13 +241,13 @@ impl Authorizer for StepPolicy {
 /// The cell's disclosure runtime: its handle key only.
 pub(crate) struct Handles(EffectiveCatalog);
 
-impl QuestionRuntime<NativeEngine> for Handles {
+impl<E: SqlEngine> QuestionRuntime<E> for Handles {
     fn plan(&self, _question: &str) -> Result<QuestionPlan, Refusal> {
         Err(norn_api::authz::read_denied())
     }
     fn snapshot(
         &self,
-        _store: &CellStore<NativeEngine>,
+        _store: &CellStore<E>,
         _plan: &QuestionPlan,
         _actor: &str,
     ) -> Result<QuestionSnapshot, Refusal> {
@@ -271,7 +271,7 @@ impl QuestionRuntime<NativeEngine> for Handles {
     }
 }
 
-impl AdHocQuestions<NativeEngine> for Handles {
+impl<E: SqlEngine> AdHocQuestions<E> for Handles {
     fn definitions(&self) -> &[MetricDefinition] {
         &[]
     }
@@ -289,15 +289,15 @@ impl AdHocQuestions<NativeEngine> for Handles {
         question: &norn_ir::QuestionIR,
         max_rows: u32,
     ) -> Result<norn_checker::metric::compute::QuestionPlan, Vec<norn_checker::Diagnostic>> {
-        norn_api::question_routes::admit_declared::<NativeEngine>(self, question, max_rows)
+        norn_api::question_routes::admit_declared::<E>(self, question, max_rows)
     }
     fn unit_partition(&self, _metric: &str) -> Vec<String> {
         Vec::new()
     }
 }
 
-pub(crate) struct Cell {
-    pub(crate) host: DevHost<NativeEngine>,
+pub(crate) struct Cell<E: SqlEngine = NativeEngine> {
+    pub(crate) host: DevHost<E>,
     pub(crate) principals: FixturePrincipals,
     pub(crate) caller: Arc<CallerSlot>,
     pub(crate) handles: Handles,
@@ -305,10 +305,29 @@ pub(crate) struct Cell {
 }
 
 pub(crate) fn cell() -> Cell {
-    let store = melt_store(
+    let cell = serve(melt_store(
         DERIVES_LOSS,
         norn_api::action_admission::prepare_action_model,
-    );
+    ));
+    install(&cell);
+    cell
+}
+
+/// The melt cell on `engine`, the flow installed when `fresh`: a file
+/// reopened this way is the same cell after a restart.
+pub(crate) fn cell_on<E: SqlEngine>(engine: E, fresh: bool) -> Cell<E> {
+    let cell = serve(melt_store_on(
+        engine,
+        DERIVES_LOSS,
+        norn_api::action_admission::prepare_action_model,
+    ));
+    if fresh {
+        install(&cell);
+    }
+    cell
+}
+
+fn serve<E: SqlEngine>(store: CellStore<E>) -> Cell<E> {
     let caller = Arc::new(CallerSlot::default());
     let policy = StepPolicy::compile(&store, Arc::clone(&caller));
     let scope = CellScope {
@@ -327,15 +346,13 @@ pub(crate) fn cell() -> Cell {
             .with_roles(["viewer", "member", "admin", "owner"])
             .with_restater(norn_api::definition_routes::checker_restatement)
             .with_builtins(norn_cell::builtin_registered),
-    };
-    install(&cell);
-    cell
+    }
 }
 
 /// One request through the published dispatch; its resolver carries the
 /// cell's caller slot.
-pub(crate) fn call(
-    cell: &Cell,
+pub(crate) fn call<E: SqlEngine>(
+    cell: &Cell<E>,
     method: &str,
     path: &str,
     auth: Option<&str>,
@@ -344,8 +361,8 @@ pub(crate) fn call(
     call_with(cell, method, path, SCOPE, auth, body)
 }
 
-pub(crate) fn call_with(
-    cell: &Cell,
+pub(crate) fn call_with<E: SqlEngine>(
+    cell: &Cell<E>,
     method: &str,
     path: &str,
     query: &str,
@@ -356,8 +373,8 @@ pub(crate) fn call_with(
 }
 
 /// [`call_with`] at `now` (Unix seconds).
-pub(crate) fn call_at(
-    cell: &Cell,
+pub(crate) fn call_at<E: SqlEngine>(
+    cell: &Cell<E>,
     (method, path, query): (&str, &str, &str),
     auth: Option<&str>,
     body: &str,
@@ -381,7 +398,7 @@ pub(crate) fn call_at(
     (status, serde_json::from_str(&body).unwrap())
 }
 
-pub(crate) fn install(cell: &Cell) {
+pub(crate) fn install<E: SqlEngine>(cell: &Cell<E>) {
     let artifacts: Vec<Value> = serde_json::from_str::<Vec<Value>>(LOWERED)
         .unwrap()
         .into_iter()

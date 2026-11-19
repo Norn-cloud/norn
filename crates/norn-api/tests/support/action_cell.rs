@@ -59,14 +59,29 @@ where
     P: FnOnce(&Model) -> Result<Model, X>,
     X: std::fmt::Debug,
 {
+    admitted_store_on(NativeEngine::open_in_memory().unwrap(), documents, prepare)
+}
+
+/// [`melt_store`] on `engine`: a file reopened this way keeps its ledger.
+#[allow(dead_code, reason = "only the crash tests open a melt cell on a file")]
+pub(crate) fn melt_store_on<E, P, X>(engine: E, set: &str, prepare: P) -> CellStore<E>
+where
+    E: norn_cell::engine::SqlEngine,
+    P: FnOnce(&Model) -> Result<Model, X>,
+    X: std::fmt::Debug,
+{
+    admitted_store_on(engine, &documents(set), prepare)
+}
+
+/// [`admitted_store`] on `engine`.
+fn admitted_store_on<E, P, X>(engine: E, documents: &[Value], prepare: P) -> CellStore<E>
+where
+    E: norn_cell::engine::SqlEngine,
+    P: FnOnce(&Model) -> Result<Model, X>,
+    X: std::fmt::Debug,
+{
     let (model, input) = admitted_install(documents, prepare, 1);
-    CellStore::provision_definitions(
-        NativeEngine::open_in_memory().unwrap(),
-        model,
-        &input,
-        "org_demo/dev",
-    )
-    .unwrap()
+    CellStore::provision_definitions(engine, model, &input, "org_demo/dev").unwrap()
 }
 
 /// The model and install input of the fixture's `set`, admitted by the
