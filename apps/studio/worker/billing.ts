@@ -1,15 +1,17 @@
 /**
- * Hosted billing: what each person's plan allows, decided on the server. Polar (polar.ts) sells the
- * plans and reports subscriptions by signed webhook; this module keeps the entitlement record those
- * webhooks write and answers "may this person create another hosted cell / add another member".
+ * Hosted billing: what each person's plan allows, decided on the server. A payment provider sells the
+ * plans and reports them by signed webhook; its adapter (today Polar, polar.ts) turns each event into
+ * the payer's limits (applyLimits). This module keeps that per-payer record and answers "may this
+ * person create another hosted cell / add another member". Nothing here or in the record is specific
+ * to a provider.
  *
  * Billing is off unless the deployment configures Polar. Off, every entitlement is unlimited and no
  * check refuses anything, so self-hosted Studio behaves exactly as before. The browser never decides:
  * it renders the document `/api/billing` returns and the refusals the server sends.
  *
- * The billed subject is a person (Better Auth user id = Polar customer `external_id`). Each workspace
+ * The billed subject is a person (Better Auth user id; Polar's customer `external_id`). Each workspace
  * a person pays for (its creator, recorded at creation: migrations 0010, 0011) is one hosted cell; a
- * workspace's member limit comes from its payer's plan.
+ * billed workspace's member limit comes from its payer's plan.
  *
  * The limits are enforced by the database, in the statement that writes the workspace or the member
  * (migration 0011's triggers), so no request can pass one and nothing is reserved or undone. The checks
@@ -23,19 +25,22 @@ export interface Limits {
   /** Members one workspace may hold; its first member, the creator, is always admitted. */
   readonly members: number | null
 }
+/**
+ * A plan Studio offers at checkout. Its limits are not here: they come with the provider's event for
+ * the product a person subscribes to (polar.ts), so the provider is the one place they are set.
+ */
 export interface Plan {
   /** The checkout slug, e.g. `pro`. */
   readonly id: string
   readonly name: string
   /** The Polar product this plan is sold as. */
   readonly productId: string
-  readonly limits: Limits
 }
 export interface PlanTable {
-  /** What a person without a paid plan gets. */
-  readonly free: Limits
   readonly plans: readonly Plan[]
 }
+/** What a person without a paid plan (or whose plan was canceled) gets; migration 0011's billing_allowance holds the same constants. */
+export const FREE_LIMITS: Limits = { cells: 1, members: 3 }
 export type PolarServer = "sandbox" | "production"
 export interface BillingConfig {
   readonly accessToken: string
@@ -45,14 +50,13 @@ export interface BillingConfig {
 }
 
 /**
- * PLACEHOLDER plans: the shape POLAR_PLANS takes, not decided prices or limits. The product ids are
- * not real; an operator replaces them with the ids of products created in Polar.
+ * PLACEHOLDER plans: the shape POLAR_PLANS takes, not decided prices. The product ids are not real; an
+ * operator replaces them with the ids of products created in Polar.
  */
 export const PLACEHOLDER_PLANS: PlanTable = {
-  free: { cells: 1, members: 3 },
   plans: [
-    { id: "pro", name: "Pro (placeholder)", productId: "00000000-0000-0000-0000-000000000001", limits: { cells: 5, members: 25 } },
-    { id: "team", name: "Team (placeholder)", productId: "00000000-0000-0000-0000-000000000002", limits: { cells: 20, members: null } },
+    { id: "pro", name: "Pro (placeholder)", productId: "00000000-0000-0000-0000-000000000001" },
+    { id: "team", name: "Team (placeholder)", productId: "00000000-0000-0000-0000-000000000002" },
   ],
 }
 
@@ -64,35 +68,27 @@ export type BillingEnv = Partial<Record<(typeof BILLING_ENV)[number], string>>
 const RESERVED_PLANS = new Set(["free", "unlimited"])
 const SLUG = /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/
 
-function limit(value: unknown, where: string): number | null {
-  if (value === null) return null
-  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) return value
-  throw new Error(`POLAR_PLANS: ${where} must be a non-negative integer or null (unlimited)`)
-}
-function limits(value: unknown, where: string): Limits {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error(`POLAR_PLANS: ${where} must be an object`)
-  const record = value as Record<string, unknown>
-  return { cells: limit(record.cells, `${where}.cells`), members: limit(record.members, `${where}.members`) }
-}
-
 /** Parse and check POLAR_PLANS; anything malformed refuses rather than guessing a limit. */
 export function parsePlans(text: string): PlanTable {
   let raw: unknown
   try { raw = JSON.parse(text) } catch { throw new Error("POLAR_PLANS must be JSON") }
-  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) throw new Error("POLAR_PLANS must be an object with free and plans")
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) throw new Error("POLAR_PLANS must be an object with plans")
   const record = raw as Record<string, unknown>
+  // Limits moved to the product (polar.ts): a table still carrying them would be silently ignored.
+  if ("free" in record) throw new Error(`POLAR_PLANS: "free" is gone; the free limits are fixed (billing.ts FREE_LIMITS) and a plan's come from its Polar product's metadata`)
   if (!Array.isArray(record.plans)) throw new Error("POLAR_PLANS: plans must be an array")
   const plans = record.plans.map((entry: unknown, index): Plan => {
     const plan = (entry ?? {}) as Record<string, unknown>
     if (typeof plan.id !== "string" || !SLUG.test(plan.id)) throw new Error(`POLAR_PLANS: plans[${index}].id must be a lowercase slug`)
     if (RESERVED_PLANS.has(plan.id)) throw new Error(`POLAR_PLANS: plans[${index}].id "${plan.id}" is reserved`)
     if (typeof plan.productId !== "string" || plan.productId.trim() === "") throw new Error(`POLAR_PLANS: plans[${index}].productId must be a Polar product id`)
+    if ("limits" in plan) throw new Error(`POLAR_PLANS: plans[${index}].limits is gone; set norn_cells and norn_members in the Polar product's metadata`)
     const name = typeof plan.name === "string" && plan.name.trim() !== "" ? plan.name : plan.id
-    return { id: plan.id, name, productId: plan.productId, limits: limits(plan.limits, `plans[${index}].limits`) }
+    return { id: plan.id, name, productId: plan.productId }
   })
   if (new Set(plans.map((plan) => plan.id)).size !== plans.length) throw new Error("POLAR_PLANS: plan ids must be unique")
   if (new Set(plans.map((plan) => plan.productId)).size !== plans.length) throw new Error("POLAR_PLANS: product ids must be unique")
-  return { free: limits(record.free, "free"), plans }
+  return { plans }
 }
 
 /**
@@ -111,33 +107,11 @@ export function billingConfig(env: BillingEnv | Readonly<Record<string, string |
 }
 
 // ---------------------------------------------------------------------------------------------
-// The entitlement record (migration 0009_billing): one row per Polar subscription.
+// The per-payer limits record (migration 0011): written only by a provider adapter, from signed events.
 
 export type SubscriptionStatus = "active" | "past_due" | "canceled"
 
-/**
- * Polar's subscription status, as entitlement: trialing counts as active; past due keeps the plan
- * while Polar retries the payment (the only grace); unpaid (retries exhausted) and everything else not
- * being paid for (incomplete, expired, paused, canceled) is canceled. Unknown future statuses are
- * canceled, never granted.
- */
-export function statusOf(polarStatus: string): SubscriptionStatus {
-  if (polarStatus === "active" || polarStatus === "trialing") return "active"
-  if (polarStatus === "past_due") return "past_due"
-  return "canceled"
-}
-
-/** The fields of a Polar `subscription.*` webhook payload this module reads (SDK v1 snake_case). */
-export interface PolarSubscription {
-  readonly id: string
-  readonly status: string
-  readonly product_id: string
-  readonly created_at: string
-  readonly modified_at: string | null
-  readonly customer: { readonly external_id?: string | null }
-}
-
-/** bun:sqlite (tests, schema scripts) or D1: the same two calls. */
+/** bun:sqlite (tests, schema scripts) or D1: the same calls. */
 type Bound = { all<T>(): Promise<{ results: T[] }>; run(): Promise<unknown> }
 type Statement = {
   bind?: (...params: unknown[]) => Bound
@@ -158,25 +132,38 @@ async function run(db: BillingDb, sql: string, ...params: unknown[]): Promise<vo
 }
 export type WebhookOutcome = "applied" | "stale" | "ignored"
 
+/** What a provider event grants a payer: the plan's label, its status, and (while it is live) its limits. */
+export interface Grant {
+  readonly plan: string
+  readonly status: SubscriptionStatus
+  readonly limits: Limits
+}
+/** The provider record that decided a grant, and its modification time (epoch ms). */
+export interface GrantSource {
+  readonly provider: string
+  readonly ref: string
+  readonly version: number
+}
+
 /**
- * Record one subscription event. Webhooks may arrive late, twice or out of order: a row only moves to
- * a version at least as new as the one it holds (Polar's `modified_at`), so a replayed or reordered
- * older event can never restore a canceled plan or cancel a renewed one.
+ * Record a payer's limits from one provider event, in one statement. Events may arrive late, twice or
+ * out of order: the row only moves to a version at least as new as the one it holds. A payer has one
+ * live plan (Studio sends a paying person to the provider's portal, never a second checkout), so the
+ * newest event decides, except that ending some other record (a canceled one the row no longer comes
+ * from) never takes away the live plan.
  */
-export async function applySubscription(db: BillingDb, subscription: PolarSubscription, now: number): Promise<WebhookOutcome> {
-  const subject = subscription.customer.external_id
-  // A customer with no external id was not created by this Studio; nothing here can be entitled.
-  if (typeof subject !== "string" || subject === "") return "ignored"
-  const version = Date.parse(subscription.modified_at ?? subscription.created_at)
-  if (!Number.isFinite(version)) return "ignored"
-  const before = await rows<{ version: number }>(db, `select "version" from "billing_subscription" where "id" = ?`, subscription.id)
-  await run(db,
-    `insert into "billing_subscription" ("id", "subject_id", "product_id", "status", "polar_status", "version", "updated_at") values (?, ?, ?, ?, ?, ?, ?)
-     on conflict ("id") do update set "subject_id" = excluded."subject_id", "product_id" = excluded."product_id", "status" = excluded."status",
-       "polar_status" = excluded."polar_status", "version" = excluded."version", "updated_at" = excluded."updated_at"
-     where excluded."version" >= "billing_subscription"."version"`,
-    subscription.id, subject, subscription.product_id, statusOf(subscription.status), subscription.status, version, now)
-  return before[0] !== undefined && before[0].version > version ? "stale" : "applied"
+export async function applyLimits(db: BillingDb, payerId: string, grant: Grant, source: GrantSource, now: number): Promise<WebhookOutcome> {
+  if (payerId === "" || !Number.isSafeInteger(source.version)) return "ignored"
+  const written = await rows(db,
+    `insert into "billing_limit" ("payer_id", "plan", "status", "cells", "members", "provider", "provider_ref", "version", "updated_at") values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     on conflict ("payer_id") do update set "plan" = excluded."plan", "status" = excluded."status", "cells" = excluded."cells", "members" = excluded."members",
+       "provider" = excluded."provider", "provider_ref" = excluded."provider_ref", "version" = excluded."version", "updated_at" = excluded."updated_at"
+     where excluded."version" >= "billing_limit"."version"
+       and (excluded."status" <> 'canceled' or "billing_limit"."status" = 'canceled'
+         or ("billing_limit"."provider" = excluded."provider" and "billing_limit"."provider_ref" = excluded."provider_ref"))
+     returning 1 as "applied"`,
+    payerId, grant.plan, grant.status, grant.limits.cells, grant.limits.members, source.provider, source.ref, source.version, now)
+  return written.length > 0 ? "applied" : "stale"
 }
 
 /** A webhook delivery id seen before (Polar retries and attackers replay); kept a day, past the signature's 5-minute window. */
@@ -202,30 +189,16 @@ export interface Entitlement {
 
 export const UNLIMITED: Entitlement = { billing: "disabled", plan: "unlimited", status: "active", limits: { cells: null, members: null } }
 
-const roomy = (value: number | null) => value ?? Number.POSITIVE_INFINITY
-const richer = (a: Limits, b: Limits) => roomy(a.cells) - roomy(b.cells) || roomy(a.members) - roomy(b.members)
-
 /**
- * A person's entitlement: the most generous plan among their active or past-due subscriptions (past
- * due keeps the plan while Polar retries the payment; Polar cancels it if that fails), else the free
- * limits. A subscription to a product the plan table does not name (one an operator since replaced)
- * grants no limits, but it is still a live subscription: the free entitlement then carries its status,
- * so `subscribed` sends that person to the portal and never to a second checkout.
+ * A person's entitlement, from their limits record: its plan and limits while active or past due (past
+ * due keeps the plan while the provider retries the payment), else the free limits.
  */
 export async function entitlementOf(db: BillingDb, billing: BillingConfig | undefined, subjectId: string): Promise<Entitlement> {
   if (billing === undefined) return UNLIMITED
-  const subscriptions = await rows<{ product_id: string; status: SubscriptionStatus }>(db, `select "product_id", "status" from "billing_subscription" where "subject_id" = ? order by "version" desc`, subjectId)
-  let best: Entitlement | undefined
-  for (const subscription of subscriptions) {
-    if (subscription.status === "canceled") continue
-    const plan = billing.table.plans.find((candidate) => candidate.productId === subscription.product_id)
-    if (plan === undefined) continue
-    if (best === undefined || richer(plan.limits, best.limits) > 0) best = { billing: "enabled", plan: plan.id, status: subscription.status, limits: plan.limits }
-  }
-  if (best !== undefined) return best
-  const live = subscriptions.find((row) => row.status !== "canceled")
-  const status = live?.status ?? (subscriptions.length > 0 ? "canceled" : "none")
-  return { billing: "enabled", plan: "free", status, limits: billing.table.free }
+  const [row] = await rows<{ plan: string; status: SubscriptionStatus; cells: number | null; members: number | null }>(db, `select "plan", "status", "cells", "members" from "billing_limit" where "payer_id" = ?`, subjectId)
+  if (row === undefined) return { billing: "enabled", plan: "free", status: "none", limits: FREE_LIMITS }
+  if (row.status === "canceled") return { billing: "enabled", plan: "free", status: "canceled", limits: FREE_LIMITS }
+  return { billing: "enabled", plan: row.plan, status: row.status, limits: { cells: row.cells, members: row.members } }
 }
 
 /** The workspaces a person pays for: each is one hosted cell. Counted by the payer recorded at creation, not by today's owner role, so handing the owner role around never frees a cell. */
@@ -248,9 +221,9 @@ export async function workspaceMembers(db: BillingDb, organizationId: string, in
   return row?.n ?? 0
 }
 
-/** Who pays for a workspace: the payer recorded at its creation (migrations 0010, 0011), or null (not billed). */
+/** Who pays for a billed workspace: the payer recorded at its creation (migrations 0010, 0011), or null (not billed, so not limited). */
 export async function workspaceOwner(db: BillingDb, organizationId: string): Promise<string | null> {
-  const [payer] = await rows<{ payer_id: string }>(db, `select "payer_id" from "billing_workspace" where "organization_id" = ?`, organizationId)
+  const [payer] = await rows<{ payer_id: string }>(db, `select "payer_id" from "billing_workspace" where "organization_id" = ? and "billed" = 1`, organizationId)
   return payer?.payer_id ?? null
 }
 
@@ -277,12 +250,12 @@ export type Admission = { readonly kind: "admitted" } | PlanLimitRefusal
 export const subscribed = (entitlement: Entitlement) => entitlement.billing === "enabled" && (entitlement.status === "active" || entitlement.status === "past_due")
 
 /**
- * Where a person can raise a limit: their customer portal when they already pay (Polar changes the
- * plan there), else a checkout for the first plan (in POLAR_PLANS order) that admits one more, else null.
+ * Where a person can raise a limit: their customer portal when they already pay (the provider changes
+ * the plan there), else a checkout for the first plan in POLAR_PLANS order, else null.
  */
-export function upgradeUrl(billing: BillingConfig, baseURL: string, entitlement: Entitlement, name: LimitName, used: number): string | null {
+export function upgradeUrl(billing: BillingConfig, baseURL: string, entitlement: Entitlement): string | null {
   if (subscribed(entitlement)) return new URL("/api/billing/portal", baseURL).href
-  const plan = billing.table.plans.find((candidate) => roomy(candidate.limits[name]) > used)
+  const plan = billing.table.plans[0]
   return plan === undefined ? null : new URL(`/api/billing/checkout?plan=${encodeURIComponent(plan.id)}`, baseURL).href
 }
 
@@ -293,7 +266,7 @@ async function admit(db: BillingDb, billing: BillingConfig, baseURL: string, pay
   if (allowed === null || used < allowed) return { kind: "admitted" }
   // Only the payer can raise their own plan; a link would otherwise bill the caller for someone else's workspace.
   const payer = payerId === callerId
-  return { kind: "plan-limit", limit: name, plan: entitlement.plan, allowed, used, upgradeUrl: payer ? upgradeUrl(billing, baseURL, entitlement, name, used) : null, upgradeBy: payer ? "you" : "workspace-owner" }
+  return { kind: "plan-limit", limit: name, plan: entitlement.plan, allowed, used, upgradeUrl: payer ? upgradeUrl(billing, baseURL, entitlement) : null, upgradeBy: payer ? "you" : "workspace-owner" }
 }
 
 /** May this person create another workspace? Unbilled, always. */
@@ -314,43 +287,12 @@ export async function admitMember(db: BillingDb, billing: BillingConfig | undefi
   return admit(db, billing, baseURL, payer, callerId, "members", await workspaceMembers(db, organizationId, invitations))
 }
 
-/** The workspace an invitation is for, or null. */
-export async function invitationWorkspace(db: BillingDb, invitationId: string): Promise<string | null> {
-  const [row] = await rows<{ organizationId: string }>(db, `select "organizationId" from "invitation" where "id" = ?`, invitationId)
-  return row?.organizationId ?? null
-}
-
 /** The limit a database refusal names (migration 0011's RAISE), or null for any other error. */
 export function limitRaised(error: unknown): LimitName | null {
   const message = error instanceof Error ? error.message : typeof error === "string" ? error : ""
   if (message.includes("billing.cells_limit")) return "cells"
   if (message.includes("billing.members_limit")) return "members"
   return null
-}
-
-/**
- * Write the deployment's plan table where the limit triggers read it (migration 0011): each product's
- * limits, the free limits under product id '', nothing at all with billing off. Rows are upserted
- * before stale ones are removed, so the table is never empty while billing is on. Reads first and
- * writes only when it differs, so a starting Worker usually only reads. With billing off, a database
- * without the table (before migration 0011) has no limit triggers either, so there is nothing to clear.
- */
-export async function syncPlans(db: BillingDb, billing: BillingConfig | undefined): Promise<void> {
-  if (billing === undefined && (await rows(db, `select 1 from "sqlite_master" where "type" = 'table' and "name" = 'billing_plan'`)).length === 0) return
-  const want = billing === undefined ? [] : [
-    { product_id: "", cells: billing.table.free.cells, members: billing.table.free.members },
-    ...billing.table.plans.map((plan) => ({ product_id: plan.productId, cells: plan.limits.cells, members: plan.limits.members })),
-  ]
-  const key = (row: { product_id: string; cells: number | null; members: number | null }) => JSON.stringify([row.product_id, row.cells, row.members])
-  const have = await rows<{ product_id: string; cells: number | null; members: number | null }>(db, `select "product_id", "cells", "members" from "billing_plan"`)
-  const wanted = new Set(want.map(key))
-  if (have.length === want.length && have.every((row) => wanted.has(key(row)))) return
-  for (const row of want) {
-    await run(db, `insert into "billing_plan" ("product_id", "cells", "members") values (?, ?, ?)
-      on conflict ("product_id") do update set "cells" = excluded."cells", "members" = excluded."members"`, row.product_id, row.cells, row.members)
-  }
-  if (want.length === 0) await run(db, `delete from "billing_plan"`)
-  else await run(db, `delete from "billing_plan" where "product_id" not in (${want.map(() => "?").join(", ")})`, ...want.map((row) => row.product_id))
 }
 
 export function refusalMessage(refusal: PlanLimitRefusal): string {
@@ -380,7 +322,6 @@ export async function billingDocument(db: BillingDb, billing: BillingConfig | un
   if (billing === undefined) return { entitlement, usage, actions: [] }
   // A paying person changes plan in the portal; a second checkout would bill them twice.
   const actions: BillingAction[] = subscribed(entitlement) ? [] : billing.table.plans
-    .filter((plan) => richer(plan.limits, entitlement.limits) > 0)
     .map((plan) => ({ kind: "checkout", label: `Upgrade to ${plan.name}`, href: new URL(`/api/billing/checkout?plan=${encodeURIComponent(plan.id)}`, baseURL).href }))
   // Anyone billed once has a Polar customer and can manage it; a person never billed has nothing to manage.
   if (entitlement.status !== "none") actions.push({ kind: "portal", label: "Manage billing", href: new URL("/api/billing/portal", baseURL).href })

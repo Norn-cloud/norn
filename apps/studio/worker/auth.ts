@@ -256,9 +256,10 @@ export async function verifyMagicLinkOrigin(request: Request, secret: string, tr
 /** The running instance, for hooks that need its database outside an endpoint context. */
 interface Self { auth?: { readonly $context: Promise<{ adapter: unknown }> } }
 
-type SqlStatement = { readonly sql: string; readonly params: readonly string[] }
-type ProvisionDb = {
-  prepare(sql: string): { bind?: (...params: string[]) => { first<T>(): Promise<T | null> }; get?: (...params: string[]) => unknown; run?: (...params: string[]) => unknown }
+type SqlParam = string | null
+export type SqlStatement = { readonly sql: string; readonly params: readonly SqlParam[] }
+export type ProvisionDb = {
+  prepare(sql: string): { bind?: (...params: SqlParam[]) => { first<T>(): Promise<T | null> }; get?: (...params: SqlParam[]) => unknown; run?: (...params: SqlParam[]) => unknown }
   batch?: (statements: unknown[]) => Promise<unknown>
   transaction?: (fn: () => void) => () => void
 }
@@ -269,8 +270,8 @@ async function stateOf(db: ProvisionDb, userId: string): Promise<string | undefi
   return row?.status
 }
 
-/** Execute all workspace writes and completion in one database transaction. */
-async function provisionBatch(db: ProvisionDb, statements: readonly SqlStatement[]): Promise<void> {
+/** Execute the statements in one database transaction (a D1 batch): all of them commit, or none. */
+export async function atomically(db: ProvisionDb, statements: readonly SqlStatement[]): Promise<void> {
   if (db.batch) {
     const prepared = statements.map(({ sql, params }) => {
       const statement = db.prepare(sql)
@@ -283,13 +284,14 @@ async function provisionBatch(db: ProvisionDb, statements: readonly SqlStatement
   } else throw new Error("Atomic provisioning is unavailable")
 }
 
-async function provisionWorkspace(db: ProvisionDb, secret: string, user: { id: string; name: string; email: string }, defaultEnvironmentId?: string) {
+async function provisionWorkspace(db: ProvisionDb, secret: string, user: { id: string; name: string; email: string }, defaultEnvironmentId?: string, billed = false) {
   if (await stateOf(db, user.id) !== "pending") return
   const identity = await workspaceIdentity(secret, user.id)
-  const metadata = JSON.stringify({ ...JSON.parse(identity.metadata), ...defaultEnvironmentId ? { environmentId: defaultEnvironmentId } : {} })
+  // With billing on, the workspace is billed to its owner (migration 0011 reads the mark).
+  const metadata = JSON.stringify({ ...JSON.parse(identity.metadata), ...defaultEnvironmentId ? { environmentId: defaultEnvironmentId } : {}, ...billed ? { [BILLED]: true } : {} })
   const at = new Date().toISOString()
   const pending = `exists (select 1 from "workspace_provisioning" where "userId" = ? and "status" = 'pending')`
-  await provisionBatch(db, [
+  await atomically(db, [
     { sql: `insert into "organization" ("id", "name", "slug", "metadata", "createdAt") select ?, ?, ?, ?, ? where ${pending} on conflict ("id") do nothing`, params: [identity.id, `${user.name || user.email}'s workspace`, `u-${identity.id.slice(10)}`, metadata, at, user.id] },
     { sql: `insert into "member" ("id", "organizationId", "userId", "role", "createdAt") select ?, ?, ?, 'owner', ? where ${pending} and exists (select 1 from "organization" where "id" = ? and json_extract("metadata", '$."norn.provisioningProof"') = ?) on conflict ("organizationId", "userId") do nothing`, params: [crypto.randomUUID(), identity.id, user.id, at, user.id, identity.id, JSON.parse(identity.metadata)["norn.provisioningProof"]] },
     { sql: `update "workspace_provisioning" set "status" = 'complete' where "userId" = ? and "status" = 'pending' and exists (select 1 from "member" where "organizationId" = ? and "userId" = ? and "role" = 'owner')`, params: [user.id, identity.id, user.id] },
@@ -305,15 +307,17 @@ async function workspaceIdentity(secret: string, userId: string) {
   return { id, metadata: JSON.stringify({ "norn.provisioningProof": await sign(`owner:${userId}:${id}`) }) }
 }
 
+/** The workspace's payer, set at creation while billing is on (workspaces.ts) and read by migration 0011's triggers. */
+export const BILLING_PAYER = "norn.billingPayer"
+/** Set on workspaces created while billing is on: only those are limited (migration 0011). */
+export const BILLED = "norn.billed"
 /** Reserved metadata is assigned only by server-side provisioning. */
-/** The workspace's payer, set at creation (beforeCreateOrganization) and read by migration 0011's triggers. */
-const BILLING_PAYER = "norn.billingPayer"
 const reservedMetadata = (key: string) => key === "environmentId" || key.startsWith("norn.")
 function metadataObject(value: unknown): Record<string, unknown> {
   if (typeof value === "string") { try { return metadataObject(JSON.parse(value)) } catch { return {} } }
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}
 }
-const publicMetadata = (value: unknown) => Object.fromEntries(Object.entries(metadataObject(value)).filter(([key]) => !reservedMetadata(key)))
+export const publicMetadata = (value: unknown) => Object.fromEntries(Object.entries(metadataObject(value)).filter(([key]) => !reservedMetadata(key)))
 
 export function authOptions(config: AuthConfig, self: Self = {}) {
   return {
@@ -323,7 +327,7 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
     baseURL: config.baseURL,
     basePath: "/api/auth",
     // An error that is not Better Auth's own (a database refusal) is thrown to the Worker, which turns a
-    // plan-limit trigger's refusal into the typed PLAN_LIMIT answer (index.ts authHandler) and anything
+    // plan-limit trigger's refusal into the typed PLAN_LIMIT answer (index.ts guarded) and anything
     // else into a bare 500, as Better Auth would.
     onAPIError: { throw: true },
     // Better Auth refuses state-changing requests whose Origin is not listed (its CSRF check).
@@ -396,11 +400,10 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
       // sender verifies addresses, nobody can join an organization by claiming an invited email.
       organization({ ac, roles: ORG_ROLES, creatorRole: "owner", allowUserToCreateOrganization: true, requireEmailVerificationOnInvitation: true,
         organizationHooks: {
-          // Each workspace a person pays for is a hosted cell (billing.ts). The workspace names its payer,
-          // the creator, in server-only metadata; the database refuses it over the payer's cell limit
-          // (migration 0011) and records the payer in the same write. Clients cannot set "norn." keys.
+          // Clients cannot set "norn." keys. With billing on, the HTTP route is refused (index.ts) and
+          // workspaces.ts creates workspaces; a server-side creation is billed to its creator the same way.
           beforeCreateOrganization: async ({ organization, user }) =>
-            ({ data: { ...organization, metadata: { ...publicMetadata(organization.metadata), [BILLING_PAYER]: user.id } } }),
+            ({ data: { ...organization, metadata: { ...publicMetadata(organization.metadata), ...config.billing === undefined ? {} : { [BILLING_PAYER]: user.id, [BILLED]: true } } } }),
           // Advisory: an admin is told before inviting someone the workspace could not take (members and
           // pending invitations). Invitations hold nothing; the member limit is enforced when one joins.
           beforeCreateInvitation: async ({ organization, inviter }) => enforce(await admitMember(config.database as unknown as BillingDb, config.billing?.config, config.baseURL, organization.id, inviter.id, true)),
@@ -453,7 +456,7 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
           },
           // The user-insert trigger commits the pending marker with the user; session creation retries incomplete provisioning.
           after: async (user, ctx) => {
-            if (ctx !== null) await provisionWorkspace(config.database as unknown as ProvisionDb, config.secret, user, config.defaultEnvironmentId)
+            if (ctx !== null) await provisionWorkspace(config.database as unknown as ProvisionDb, config.secret, user, config.defaultEnvironmentId, config.billing !== undefined)
           },
         },
         // A deleted account's Polar customer (if they ever checked out) goes too; best effort, never blocks the deletion.
@@ -467,7 +470,7 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
             if (adapter !== undefined && await stateOf(config.database as unknown as ProvisionDb, session.userId) === "pending") {
               const user = await adapter.findOne<{ id: string; name: string; email: string }>({ model: "user", where: [{ field: "id", value: session.userId }] })
               if (user === null) throw new Error("Cannot provision a workspace for a missing user")
-              await provisionWorkspace(config.database as unknown as ProvisionDb, config.secret, user, config.defaultEnvironmentId)
+              await provisionWorkspace(config.database as unknown as ProvisionDb, config.secret, user, config.defaultEnvironmentId, config.billing !== undefined)
             }
             const first = (where: { field: string; value: string }[]) => adapter === undefined ? Promise.resolve([]) : adapter.findMany<{ organizationId: string }>({
               model: "member",

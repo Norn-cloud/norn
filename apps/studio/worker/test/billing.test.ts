@@ -5,10 +5,10 @@ import { join } from "node:path"
 import { getMigrations } from "better-auth/db/migration"
 import worker, { type Env } from "../index.ts"
 import { authOptions, createAuth } from "../auth.ts"
-import { forgetPolarCustomer } from "../polar.ts"
+import { applySubscription, forgetPolarCustomer, grantOf, statusOf, type PolarSubscription } from "../polar.ts"
 import {
-  applySubscription, billingConfig, BILLING_ENV, entitlementOf, limitRaised, ownedWorkspaces, parsePlans, PLACEHOLDER_PLANS, statusOf, syncPlans, UNLIMITED, workspaceMembers,
-  type BillingConfig, type BillingDb, type PlanTable, type PolarSubscription,
+  applyLimits, billingConfig, BILLING_ENV, entitlementOf, FREE_LIMITS, limitRaised, ownedWorkspaces, parsePlans, PLACEHOLDER_PLANS, UNLIMITED, workspaceMembers,
+  type BillingConfig, type BillingDb, type PlanTable,
 } from "../billing.ts"
 import { celldConfig, celldStudio } from "../../celld-config.ts"
 import { README, withBillingSection } from "../../scripts/billing-readme.ts"
@@ -19,12 +19,19 @@ import { README, withBillingSection } from "../../scripts/billing-readme.ts"
 const ORIGIN = "https://studio-preview.norn.cloud"
 const MIGRATIONS = join(import.meta.dir, "../migrations")
 const PLANS: PlanTable = {
-  free: { cells: 1, members: 2 },
   plans: [
-    { id: "pro", name: "Pro", productId: "prod_pro", limits: { cells: 3, members: 10 } },
-    { id: "team", name: "Team", productId: "prod_team", limits: { cells: null, members: null } },
+    { id: "pro", name: "Pro", productId: "prod_pro" },
+    { id: "team", name: "Team", productId: "prod_team" },
   ],
 }
+/** The products' limits as Polar holds them, in each product's metadata (polar.ts LIMIT_METADATA). */
+const PRODUCT_METADATA: Record<string, Record<string, unknown>> = {
+  prod_pro: { norn_cells: 3, norn_members: "10" },
+  prod_team: { norn_cells: "unlimited", norn_members: "unlimited" },
+  prod_solo: { norn_cells: 3, norn_members: 0 },
+  prod_seats: { norn_cells: 2 },
+}
+const FREE = FREE_LIMITS
 // A Standard Webhooks secret as Polar issues it: `whsec_` + base64 key bytes.
 const KEY = new TextEncoder().encode("polar-webhook-test-key-0123456789")
 const WEBHOOK_SECRET = `whsec_${btoa(String.fromCharCode(...KEY))}`
@@ -36,9 +43,9 @@ function database(): Database {
   for (const file of readdirSync(MIGRATIONS).filter((name) => name.endsWith(".sql")).sort()) db.exec(readFileSync(join(MIGRATIONS, file), "utf8"))
   return db
 }
-function stage(billing: boolean, plans: PlanTable = PLANS): Env {
+function stage(billing: boolean): Env {
   const assets = { fetch: async () => new Response("<!doctype html>studio") } as unknown as Fetcher
-  return { ASSETS: assets, AUTH_DB: database() as unknown as D1Database, BETTER_AUTH_SECRET: "t".repeat(40), BETTER_AUTH_URL: ORIGIN, STUDIO_CLIENT_IP_HEADER: "cf-connecting-ip", ...billing ? { ...POLAR_ENV, POLAR_PLANS: JSON.stringify(plans) } : {} }
+  return { ASSETS: assets, AUTH_DB: database() as unknown as D1Database, BETTER_AUTH_SECRET: "t".repeat(40), BETTER_AUTH_URL: ORIGIN, STUDIO_CLIENT_IP_HEADER: "cf-connecting-ip", ...billing ? POLAR_ENV : {} }
 }
 const sql = (env: Env) => env.AUTH_DB as unknown as Database
 
@@ -89,10 +96,12 @@ async function sign(id: string, timestamp: number, body: string, key: Uint8Array
   const signature = new Uint8Array(await crypto.subtle.sign("HMAC", hmac, new TextEncoder().encode(`${id}.${timestamp}.${body}`)))
   return `v1,${btoa(String.fromCharCode(...signature))}`
 }
-function subscription(overrides: Partial<{ id: string; status: string; product_id: string; modified_at: string; external_id: string | null }>): Record<string, unknown> {
+function subscription(overrides: Partial<{ id: string; status: string; product_id: string; modified_at: string; external_id: string | null; seats: number | null }>): Record<string, unknown> {
   const at = overrides.modified_at ?? "2026-11-19T10:00:00Z"
+  const product = overrides.product_id ?? "prod_pro"
   return {
-    id: overrides.id ?? "sub_1", status: overrides.status ?? "active", product_id: overrides.product_id ?? "prod_pro",
+    id: overrides.id ?? "sub_1", status: overrides.status ?? "active", product_id: product, seats: overrides.seats ?? null,
+    product: { id: product, name: product, metadata: PRODUCT_METADATA[product] ?? {} },
     created_at: "2026-11-19T09:00:00Z", modified_at: at, amount: 2000, currency: "usd", recurring_interval: "month", recurring_interval_count: 1,
     current_period_start: at, current_period_end: "2026-12-19T09:00:00Z", cancel_at_period_end: false, customer_id: "cus_1",
     customer: { id: "cus_1", external_id: overrides.external_id === undefined ? "user_1" : overrides.external_id, type: "individual" },
@@ -105,7 +114,10 @@ async function webhook(env: Env, type: string, data: Record<string, unknown>, op
   const at = options.at ?? Math.floor(Date.now() / 1000)
   return call(env, "/api/auth/polar/webhooks", { method: "POST", body, headers: { "content-type": "application/json", "webhook-id": id, "webhook-timestamp": String(at), "webhook-signature": await sign(id, at, body, options.key) } })
 }
-const row = (env: Env, id = "sub_1") => sql(env).query(`select subject_id, product_id, status, polar_status, version, updated_at from billing_subscription where id = ?`).get(id) as { subject_id: string; product_id: string; status: string; polar_status: string; version: number; updated_at: number } | null
+const row = (env: Env, payer = "user_1") => sql(env).query(`select plan, status, cells, members, provider, provider_ref, version, updated_at from billing_limit where payer_id = ?`).get(payer) as { plan: string; status: string; cells: number | null; members: number | null; provider: string; provider_ref: string; version: number; updated_at: number } | null
+/** Studio's own workspace writes (workspaces.ts); Better Auth's are refused with billing on. */
+const CREATE = "/api/workspaces"
+const ACCEPT = "/api/workspaces/invitations/accept"
 
 // ===============================================================================================
 // Configuration
@@ -126,12 +138,13 @@ test("a declared but empty billing setting refuses instead of turning billing of
   expect(() => billingConfig({ ...POLAR_ENV, POLAR_ACCESS_TOKEN: "  " })).toThrow("POLAR_ACCESS_TOKEN")
 })
 
-test("the plan table refuses anything it would have to guess", () => {
+test("the plan table names checkout plans only, and refuses limits it would silently ignore", () => {
   expect(parsePlans(JSON.stringify(PLACEHOLDER_PLANS))).toEqual(PLACEHOLDER_PLANS)
   expect(() => parsePlans("{")).toThrow("JSON")
-  expect(() => parsePlans(JSON.stringify({ free: { cells: 1, members: 1 } }))).toThrow("plans")
-  expect(() => parsePlans(JSON.stringify({ free: { cells: -1, members: 1 }, plans: [] }))).toThrow("free.cells")
-  expect(() => parsePlans(JSON.stringify({ free: { cells: 1 }, plans: [] }))).toThrow("free.members")
+  expect(() => parsePlans(JSON.stringify({}))).toThrow("plans")
+  // The old shape: its limits now live in each Polar product's metadata.
+  expect(() => parsePlans(JSON.stringify({ free: { cells: 1, members: 1 }, plans: [] }))).toThrow("free")
+  expect(() => parsePlans(JSON.stringify({ plans: [{ ...PLANS.plans[0], limits: { cells: 1, members: 1 } }] }))).toThrow("norn_cells")
   expect(() => parsePlans(JSON.stringify({ ...PLANS, plans: [{ ...PLANS.plans[0], id: "Pro!" }] }))).toThrow("slug")
   expect(() => parsePlans(JSON.stringify({ ...PLANS, plans: [{ ...PLANS.plans[0], id: "free" }] }))).toThrow("reserved")
   expect(() => parsePlans(JSON.stringify({ ...PLANS, plans: [{ ...PLANS.plans[0], productId: "" }] }))).toThrow("productId")
@@ -173,34 +186,71 @@ test("Polar statuses map to active, past due or canceled; nothing unknown is gra
   expect(["unpaid", "canceled", "incomplete", "incomplete_expired", "paused", "something_new"].map(statusOf)).toEqual(Array(6).fill("canceled"))
 })
 
+const sub = (overrides: Parameters<typeof subscription>[0]) => subscription(overrides) as unknown as PolarSubscription
+
 test("a subscription moves free → active → past due → canceled, and an older event never rolls it back", async () => {
   const db = database() as unknown as BillingDb
-  const sub = (status: string, modified_at: string, product_id = "prod_pro") => subscription({ status, modified_at, product_id }) as unknown as PolarSubscription
-  expect(await entitlementOf(db, CONFIG, "user_1")).toEqual({ billing: "enabled", plan: "free", status: "none", limits: PLANS.free })
-  expect(await applySubscription(db, sub("active", "2026-11-19T10:00:00Z"), 1)).toBe("applied")
+  const at = (status: string, modified_at: string, product_id = "prod_pro") => sub({ status, modified_at, product_id })
+  expect(await entitlementOf(db, CONFIG, "user_1")).toEqual({ billing: "enabled", plan: "free", status: "none", limits: FREE })
+  expect(await applySubscription(db, CONFIG, at("active", "2026-11-19T10:00:00Z"), 1)).toBe("applied")
   expect(await entitlementOf(db, CONFIG, "user_1")).toEqual({ billing: "enabled", plan: "pro", status: "active", limits: { cells: 3, members: 10 } })
   // Past due keeps the plan while Polar retries the payment.
-  expect(await applySubscription(db, sub("past_due", "2026-11-19T11:00:00Z"), 2)).toBe("applied")
+  expect(await applySubscription(db, CONFIG, at("past_due", "2026-11-19T11:00:00Z"), 2)).toBe("applied")
   expect(await entitlementOf(db, CONFIG, "user_1")).toMatchObject({ plan: "pro", status: "past_due" })
-  expect(await applySubscription(db, sub("canceled", "2026-11-19T12:00:00Z"), 3)).toBe("applied")
-  expect(await entitlementOf(db, CONFIG, "user_1")).toEqual({ billing: "enabled", plan: "free", status: "canceled", limits: PLANS.free })
+  expect(await applySubscription(db, CONFIG, at("canceled", "2026-11-19T12:00:00Z"), 3)).toBe("applied")
+  expect(await entitlementOf(db, CONFIG, "user_1")).toEqual({ billing: "enabled", plan: "free", status: "canceled", limits: FREE })
   // The earlier "active" event delivered again (or late) is stale: the plan stays canceled.
-  expect(await applySubscription(db, sub("active", "2026-11-19T10:00:00Z"), 4)).toBe("stale")
+  expect(await applySubscription(db, CONFIG, at("active", "2026-11-19T10:00:00Z"), 4)).toBe("stale")
   expect(await entitlementOf(db, CONFIG, "user_1")).toMatchObject({ plan: "free", status: "canceled" })
   // A newer renewal reinstates it.
-  expect(await applySubscription(db, sub("active", "2026-11-20T10:00:00Z"), 5)).toBe("applied")
+  expect(await applySubscription(db, CONFIG, at("active", "2026-11-20T10:00:00Z"), 5)).toBe("applied")
   expect(await entitlementOf(db, CONFIG, "user_1")).toMatchObject({ plan: "pro", status: "active" })
 })
 
-test("the richest live plan decides; unknown products and customers without our id grant nothing", async () => {
+test("limits come from the subscribed product's metadata; seats set the member limit; anything unreadable grants the free limits", () => {
+  expect(grantOf(sub({}), CONFIG)).toEqual({ plan: "pro", status: "active", limits: { cells: 3, members: 10 } })
+  expect(grantOf(sub({ product_id: "prod_team" }), CONFIG)).toEqual({ plan: "team", status: "active", limits: { cells: null, members: null } })
+  // A seat-based product: the seats bought are the member limit, whatever the metadata says.
+  expect(grantOf(sub({ product_id: "prod_seats", seats: 7 }), CONFIG)).toEqual({ plan: "prod_seats", status: "active", limits: { cells: 2, members: 7 } })
+  expect(grantOf(sub({ seats: 4 }), CONFIG).limits).toEqual({ cells: 3, members: 4 })
+  // A product without readable limits grants the free ones; the live status stays, so its payer goes to the portal.
+  for (const metadata of [{}, { norn_cells: -1, norn_members: 2 }, { norn_cells: "lots", norn_members: 2 }, { norn_cells: 1.5, norn_members: 2 }, { norn_cells: 2 }]) {
+    const grant = grantOf({ ...sub({ product_id: "prod_odd" }), product: { metadata } }, CONFIG)
+    expect({ metadata, grant }).toEqual({ metadata, grant: { plan: "prod_odd", status: "active", limits: FREE } })
+  }
+  expect(grantOf(sub({ status: "canceled" }), CONFIG)).toEqual({ plan: "free", status: "canceled", limits: FREE })
+})
+
+test("out-of-order webhooks never regress limits, a seat change moves the member limit, and a cancel returns to the free limits", async () => {
   const db = database() as unknown as BillingDb
-  await applySubscription(db, subscription({ id: "sub_pro" }) as unknown as PolarSubscription, 1)
-  await applySubscription(db, subscription({ id: "sub_team", product_id: "prod_team" }) as unknown as PolarSubscription, 1)
-  expect(await entitlementOf(db, CONFIG, "user_1")).toMatchObject({ plan: "team", limits: { cells: null, members: null } })
-  expect(await applySubscription(db, subscription({ id: "sub_x", product_id: "prod_unknown", external_id: "user_2" }) as unknown as PolarSubscription, 1)).toBe("applied")
-  expect(await entitlementOf(db, CONFIG, "user_2")).toMatchObject({ plan: "free", limits: PLANS.free })
-  expect(await applySubscription(db, subscription({ id: "sub_y", external_id: null }) as unknown as PolarSubscription, 1)).toBe("ignored")
+  const seats = (n: number, modified_at: string, status = "active") => sub({ product_id: "prod_seats", seats: n, modified_at, status })
+  // Delivered out of order: 5 seats (10:00), then 9 seats (12:00) arrives before 7 seats (11:00).
+  expect(await applySubscription(db, CONFIG, seats(5, "2026-11-19T10:00:00Z"), 1)).toBe("applied")
+  expect(await applySubscription(db, CONFIG, seats(9, "2026-11-19T12:00:00Z"), 2)).toBe("applied")
+  expect(await applySubscription(db, CONFIG, seats(7, "2026-11-19T11:00:00Z"), 3)).toBe("stale")
+  expect((await entitlementOf(db, CONFIG, "user_1")).limits).toEqual({ cells: 2, members: 9 })
+  // The seat count drops: the member limit follows.
+  expect(await applySubscription(db, CONFIG, seats(3, "2026-11-19T13:00:00Z"), 4)).toBe("applied")
+  expect((await entitlementOf(db, CONFIG, "user_1")).limits).toEqual({ cells: 2, members: 3 })
+  // Canceled: the free limits, and the earlier events replayed after it change nothing.
+  expect(await applySubscription(db, CONFIG, seats(3, "2026-11-19T14:00:00Z", "canceled"), 5)).toBe("applied")
+  expect(await entitlementOf(db, CONFIG, "user_1")).toEqual({ billing: "enabled", plan: "free", status: "canceled", limits: FREE })
+  for (const late of [seats(9, "2026-11-19T12:00:00Z"), seats(5, "2026-11-19T10:00:00Z")]) expect(await applySubscription(db, CONFIG, late, 6)).toBe("stale")
+  expect((await entitlementOf(db, CONFIG, "user_1")).limits).toEqual(FREE)
+})
+
+test("ending some other subscription never takes away the live plan; customers without our id are ignored", async () => {
+  const db = database() as unknown as BillingDb
+  await applySubscription(db, CONFIG, sub({ id: "sub_team", product_id: "prod_team", modified_at: "2026-11-19T10:00:00Z" }), 1)
+  // An old subscription's late cancellation, newer than the live one's last change: the team plan stays.
+  expect(await applySubscription(db, CONFIG, sub({ id: "sub_old", status: "canceled", modified_at: "2026-11-19T11:00:00Z" }), 2)).toBe("stale")
+  expect(await entitlementOf(db, CONFIG, "user_1")).toMatchObject({ plan: "team", status: "active", limits: { cells: null, members: null } })
+  expect(await applySubscription(db, CONFIG, sub({ id: "sub_y", external_id: null }), 1)).toBe("ignored")
   expect(await entitlementOf(db, undefined, "user_1")).toEqual(UNLIMITED)
+  // The record names its provider apart from its limits, and the core takes no provider shape.
+  expect(sql({ AUTH_DB: db } as unknown as Env).query("select plan, provider, provider_ref from billing_limit").all()).toEqual([{ plan: "team", provider: "polar", provider_ref: "sub_team" }])
+  expect(await applyLimits(db, "user_2", { plan: "custom", status: "active", limits: { cells: 4, members: 4 } }, { provider: "paymob", ref: "ord_9", version: 5 }, 1)).toBe("applied")
+  expect((await entitlementOf(db, CONFIG, "user_2")).limits).toEqual({ cells: 4, members: 4 })
 })
 
 // ===============================================================================================
@@ -210,7 +260,7 @@ test("a correctly signed subscription webhook updates the entitlement record", a
   const env = stage(true)
   const response = await webhook(env, "subscription.active", subscription({}))
   expect(response.status).toBe(200)
-  expect(row(env)).toMatchObject({ subject_id: "user_1", product_id: "prod_pro", status: "active", polar_status: "active" })
+  expect(row(env)).toMatchObject({ plan: "pro", status: "active", cells: 3, members: 10, provider: "polar", provider_ref: "sub_1" })
   // Other event types are acknowledged and change nothing.
   expect((await webhook(env, "order.paid", { id: "ord_1" })).status).toBeLessThan(500)
 })
@@ -238,14 +288,14 @@ test("a replayed delivery inside the window is acknowledged without being applie
   const env = stage(true)
   const at = Math.floor(Date.now() / 1000)
   expect((await webhook(env, "subscription.active", subscription({}), { id: "msg_once", at })).status).toBe(200)
-  sql(env).run("update billing_subscription set updated_at = 0")
+  sql(env).run("update billing_limit set updated_at = 0")
   const replay = await webhook(env, "subscription.active", subscription({}), { id: "msg_once", at })
   expect(replay.status).toBe(200)
   expect(row(env)?.updated_at).toBe(0)
   // Reordered deliveries: the newer cancel arrives first; the older activation that follows is stale.
-  await webhook(env, "subscription.canceled", subscription({ id: "sub_2", status: "canceled", modified_at: "2026-11-19T12:00:00Z" }))
-  await webhook(env, "subscription.active", subscription({ id: "sub_2", status: "active", modified_at: "2026-11-19T11:00:00Z" }))
-  expect(row(env, "sub_2")?.status).toBe("canceled")
+  await webhook(env, "subscription.canceled", subscription({ id: "sub_1", status: "canceled", modified_at: "2026-11-19T12:00:00Z" }))
+  await webhook(env, "subscription.active", subscription({ id: "sub_1", status: "active", modified_at: "2026-11-19T11:00:00Z" }))
+  expect(row(env)?.status).toBe("canceled")
 })
 
 // ===============================================================================================
@@ -255,7 +305,7 @@ test("an unpaid subscription drops to the free plan", async () => {
   const env = stage(true)
   await webhook(env, "subscription.active", subscription({ modified_at: "2026-11-19T10:00:00Z" }))
   await webhook(env, "subscription.updated", subscription({ status: "unpaid", modified_at: "2026-11-19T11:00:00Z" }))
-  expect(row(env)).toMatchObject({ status: "canceled", polar_status: "unpaid" })
+  expect(row(env)).toMatchObject({ status: "canceled", plan: "free" })
   expect(await entitlementOf(env.AUTH_DB as unknown as BillingDb, CONFIG, "user_1")).toMatchObject({ plan: "free", status: "canceled" })
 })
 
@@ -286,7 +336,7 @@ test("a workspace over the plan's cell limit is refused with a typed refusal and
   const env = stage(true)
   const { cookie, userId } = await enroll(env, "ada@example.com")
   // Sign-up provisioned one owned workspace: the free plan's one hosted cell.
-  const refused = await post(env, "/api/auth/organization/create", { name: "Second", slug: "second" }, { cookie })
+  const refused = await post(env, CREATE, { name: "Second", slug: "second" }, { cookie })
   expect(refused.status).toBe(403)
   const body = await refused.json() as { code: string; message: string; refusal: Record<string, unknown> }
   expect(body.code).toBe("PLAN_LIMIT")
@@ -294,10 +344,10 @@ test("a workspace over the plan's cell limit is refused with a typed refusal and
   expect(sql(env).query("select count(*) as n from organization").get()).toEqual({ n: 1 })
   // Polar reports the subscription; the same request is now admitted.
   expect((await webhook(env, "subscription.active", subscription({ external_id: userId }))).status).toBe(200)
-  expect((await post(env, "/api/auth/organization/create", { name: "Second", slug: "second" }, { cookie })).status).toBe(200)
+  expect((await post(env, CREATE, { name: "Second", slug: "second" }, { cookie })).status).toBe(200)
   // And canceled again, the third is refused; a paying person's upgrade link was the portal, a free one's a checkout.
-  expect((await post(env, "/api/auth/organization/create", { name: "Third", slug: "third" }, { cookie })).status).toBe(200)
-  const atLimit = await (await post(env, "/api/auth/organization/create", { name: "Fourth", slug: "fourth" }, { cookie })).json() as { refusal: { upgradeUrl: string; plan: string } }
+  expect((await post(env, CREATE, { name: "Third", slug: "third" }, { cookie })).status).toBe(200)
+  const atLimit = await (await post(env, CREATE, { name: "Fourth", slug: "fourth" }, { cookie })).json() as { refusal: { upgradeUrl: string; plan: string } }
   expect(atLimit.refusal).toMatchObject({ plan: "pro", upgradeUrl: `${ORIGIN}/api/billing/portal` })
 })
 
@@ -305,11 +355,11 @@ test("invitations past the workspace owner's member limit are refused", async ()
   const env = stage(true)
   const { cookie } = await enroll(env, "lea@example.com")
   const { id: organizationId } = sql(env).query("select organizationId as id from member").get() as { id: string }
-  // Free: two seats, the owner holds one.
-  expect((await post(env, "/api/auth/organization/invite-member", { email: "one@example.com", role: "member", organizationId }, { cookie })).status).toBe(200)
-  const refused = await post(env, "/api/auth/organization/invite-member", { email: "two@example.com", role: "member", organizationId }, { cookie })
+  // Free: three seats, the owner holds one.
+  for (const email of ["one@example.com", "two@example.com"]) expect((await post(env, "/api/auth/organization/invite-member", { email, role: "member", organizationId }, { cookie })).status).toBe(200)
+  const refused = await post(env, "/api/auth/organization/invite-member", { email: "three@example.com", role: "member", organizationId }, { cookie })
   expect(refused.status).toBe(403)
-  expect(((await refused.json()) as { refusal: { limit: string } }).refusal).toMatchObject({ kind: "plan-limit", limit: "members", allowed: 2, used: 2, upgradeBy: "you", upgradeUrl: `${ORIGIN}/api/billing/checkout?plan=pro` })
+  expect(((await refused.json()) as { refusal: { limit: string } }).refusal).toMatchObject({ kind: "plan-limit", limit: "members", allowed: 3, used: 3, upgradeBy: "you", upgradeUrl: `${ORIGIN}/api/billing/checkout?plan=pro` })
 })
 
 /** Put a second person into a workspace directly (accepting an invitation needs a verified address). */
@@ -332,7 +382,7 @@ test("handing the owner role to someone else and stepping down does not free a w
   expect((await post(env, "/api/auth/organization/update-member-role", { memberId: adaMember, role: "member", organizationId: workspace }, { cookie: bo.cookie })).status).toBe(200)
   expect(sql(env).query(`select count(*) as n from member where userId = ? and role like '%owner%'`).get(ada.userId)).toEqual({ n: 0 })
   // She still pays for it: a second workspace is refused, and her billing document still counts it.
-  const refused = await post(env, "/api/auth/organization/create", { name: "Again", slug: "again" }, { cookie: ada.cookie })
+  const refused = await post(env, CREATE, { name: "Again", slug: "again" }, { cookie: ada.cookie })
   expect(refused.status).toBe(403)
   expect(((await refused.json()) as { refusal: unknown }).refusal).toMatchObject({ limit: "cells", allowed: 1, used: 1 })
   expect(((await (await call(env, "/api/billing", { headers: { cookie: ada.cookie } })).json()) as { usage: unknown }).usage).toEqual({ cells: 1 })
@@ -345,7 +395,7 @@ test("concurrent workspace creations cannot pass the cell limit together: the on
   const { cookie, userId } = await enroll(env, "rush@example.com")
   await webhook(env, "subscription.active", subscription({ external_id: userId }))
   // Pro allows 3; one exists. Four at once: exactly two fit.
-  const responses = await Promise.all(["a", "b", "c", "d"].map((name) => post(env, "/api/auth/organization/create", { name, slug: `rush-${name}` }, { cookie })))
+  const responses = await Promise.all(["a", "b", "c", "d"].map((name) => post(env, CREATE, { name, slug: `rush-${name}` }, { cookie })))
   expect(responses.map((response) => response.status).sort()).toEqual([200, 200, 403, 403])
   for (const response of responses.filter((one) => one.status === 403)) {
     expect(((await response.json()) as { code: string; refusal: unknown })).toMatchObject({ code: "PLAN_LIMIT", refusal: { limit: "cells", plan: "pro", allowed: 3, used: 3, upgradeBy: "you" } })
@@ -364,7 +414,7 @@ test("a workspace over the cell limit is never written, so nothing has to be und
   sql(env).run(`delete from organization where id = ?`, [provisioned])
   // Nothing can be deleted: a creation that wrote and then undid a workspace would leave it behind.
   for (const table of ["organization", "member", "billing_workspace", "invitation"]) sql(env).run(`create trigger no_delete_${table} before delete on "${table}" begin select raise(abort, 'no deletes'); end`)
-  const responses = await Promise.all(["a", "b", "c"].map((name) => post(env, "/api/auth/organization/create", { name, slug: `nounder-${name}` }, { cookie })))
+  const responses = await Promise.all(["a", "b", "c"].map((name) => post(env, CREATE, { name, slug: `nounder-${name}` }, { cookie })))
   expect(responses.map((response) => response.status).sort()).toEqual([200, 403, 403])
   expect(sql(env).query("select count(*) as n from organization").get()).toEqual({ n: 1 })
   expect(sql(env).query("select count(*) as n from member where userId = ?").get(userId)).toEqual({ n: 1 })
@@ -401,7 +451,7 @@ test("a client cannot name another payer: the payer key is server-only and survi
   const { cookie, userId } = await enroll(env, "named@example.com")
   const victim = await enroll(env, "victim@example.com")
   await webhook(env, "subscription.active", subscription({ external_id: userId }))
-  const created = await post(env, "/api/auth/organization/create", { name: "Mine", slug: "mine", metadata: { "norn.billingPayer": victim.userId, theme: "dark" } }, { cookie })
+  const created = await post(env, CREATE, { name: "Mine", slug: "mine", metadata: { "norn.billingPayer": victim.userId, theme: "dark" } }, { cookie })
   expect(created.status).toBe(200)
   const { id } = (await created.json()) as { id: string }
   expect(sql(env).query("select payer_id from billing_workspace where organization_id = ?").get(id)).toEqual({ payer_id: userId })
@@ -411,9 +461,10 @@ test("a client cannot name another payer: the payer key is server-only and survi
 })
 
 test("a plan with members: 0 still gives a new workspace its owner: no ownerless workspace is billed", async () => {
-  const env = stage(true, { free: { cells: 3, members: 0 }, plans: PLANS.plans })
+  const env = stage(true)
   const { cookie, userId } = await enroll(env, "solo@example.com")
-  const created = await post(env, "/api/auth/organization/create", { name: "Solo", slug: "solo" }, { cookie })
+  await webhook(env, "subscription.active", subscription({ external_id: userId, product_id: "prod_solo" }))
+  const created = await post(env, CREATE, { name: "Solo", slug: "solo" }, { cookie })
   expect(created.status).toBe(200)
   const { id } = (await created.json()) as { id: string }
   expect(sql(env).query("select userId, role from member where organizationId = ?").all(id)).toEqual([{ userId, role: "owner" }])
@@ -450,24 +501,25 @@ test("concurrent acceptances at the limit: exactly the limit joins, the rest are
   const env = stage(true)
   const owner = await enroll(env, "busy@example.com")
   const organizationId = firstWorkspace(env, owner.userId)
-  // Free: two members, the owner is one. Three accept at once.
-  const people = await invitees(env, organizationId, owner.userId, ["p", "q", "r"])
-  const responses = await Promise.all(people.map((person) => post(env, "/api/auth/organization/accept-invitation", { invitationId: person.invitationId }, { cookie: person.cookie })))
-  expect(responses.map((response) => response.status).sort()).toEqual([200, 403, 403])
-  expect(members(env, organizationId)).toBe(2)
+  // Free: three members, the owner is one. Four accept at once.
+  const people = await invitees(env, organizationId, owner.userId, ["p", "q", "r", "s"])
+  const responses = await Promise.all(people.map((person) => post(env, ACCEPT, { invitationId: person.invitationId }, { cookie: person.cookie })))
+  expect(responses.map((response) => response.status).sort()).toEqual([200, 200, 403, 403])
+  expect(members(env, organizationId)).toBe(3)
   for (const response of responses.filter((one) => one.status === 403)) {
     const body = (await response.json()) as { code: string; message: string; refusal: unknown }
-    expect(body).toMatchObject({ code: "PLAN_LIMIT", refusal: { kind: "plan-limit", limit: "members", plan: "free", allowed: 2, used: 2, upgradeUrl: null, upgradeBy: "workspace-owner" } })
+    expect(body).toMatchObject({ code: "PLAN_LIMIT", refusal: { kind: "plan-limit", limit: "members", plan: "free", allowed: 3, used: 3, upgradeUrl: null, upgradeBy: "workspace-owner" } })
     expect(body.message).toContain("ask the workspace's owner to upgrade")
   }
-  // Better Auth reopened the refused invitations; nothing else was written. Once a member leaves, a retry joins.
+  // The refusal rolled each acceptance back whole: the invitations are still pending. Once a member leaves, a retry joins.
   const refused = people.filter((_, index) => responses[index]?.status === 403)
   expect(refused.map((person) => (sql(env).query("select status from invitation where id = ?").get(person.invitationId) as { status: string }).status)).toEqual(["pending", "pending"])
   const joined = people.find((_, index) => responses[index]?.status === 200)
   sql(env).run("delete from member where organizationId = ? and userId = ?", [organizationId, joined?.userId ?? ""])
   const retry = refused[0] as Invitee
-  expect((await post(env, "/api/auth/organization/accept-invitation", { invitationId: retry.invitationId }, { cookie: retry.cookie })).status).toBe(200)
-  expect(members(env, organizationId)).toBe(2)
+  expect((await post(env, ACCEPT, { invitationId: retry.invitationId }, { cookie: retry.cookie })).status).toBe(200)
+  expect(members(env, organizationId)).toBe(3)
+  expect((sql(env).query("select status from invitation where id = ?").get(retry.invitationId) as { status: string }).status).toBe("accepted")
 })
 
 test("canceling or rejecting while others accept cannot put a workspace over its limit: invitations hold nothing", async () => {
@@ -475,16 +527,17 @@ test("canceling or rejecting while others accept cannot put a workspace over its
   const owner = await enroll(env, "mixed@example.com")
   const organizationId = firstWorkspace(env, owner.userId)
   for (let round = 0; round < 3; round++) {
-    const [a, b, c] = await invitees(env, organizationId, owner.userId, [`a${round}`, `b${round}`, `c${round}`]) as [Invitee, Invitee, Invitee]
-    // A cancel of A, B's rejection and three acceptances race; whatever wins, only the free seat is filled.
+    const [a, b, c, d] = await invitees(env, organizationId, owner.userId, [`a${round}`, `b${round}`, `c${round}`, `d${round}`]) as [Invitee, Invitee, Invitee, Invitee]
+    // A cancel of A, B's rejection and four acceptances race; whatever wins, only the two free seats are filled.
     await Promise.all([
-      post(env, "/api/auth/organization/accept-invitation", { invitationId: a.invitationId }, { cookie: a.cookie }),
+      post(env, ACCEPT, { invitationId: d.invitationId }, { cookie: d.cookie }),
+      post(env, ACCEPT, { invitationId: a.invitationId }, { cookie: a.cookie }),
       post(env, "/api/auth/organization/cancel-invitation", { invitationId: a.invitationId }, { cookie: owner.cookie }),
-      post(env, "/api/auth/organization/accept-invitation", { invitationId: b.invitationId }, { cookie: b.cookie }),
+      post(env, ACCEPT, { invitationId: b.invitationId }, { cookie: b.cookie }),
       post(env, "/api/auth/organization/reject-invitation", { invitationId: b.invitationId }, { cookie: b.cookie }),
-      post(env, "/api/auth/organization/accept-invitation", { invitationId: c.invitationId }, { cookie: c.cookie }),
+      post(env, ACCEPT, { invitationId: c.invitationId }, { cookie: c.cookie }),
     ])
-    expect(members(env, organizationId)).toBe(2)
+    expect(members(env, organizationId)).toBe(3)
     sql(env).run(`delete from member where organizationId = ? and role <> 'owner'`, [organizationId])
   }
 })
@@ -498,57 +551,56 @@ test("a downgrade from an unlimited plan counts the members already there: they 
   expect(members(env, organizationId)).toBe(5)
   await webhook(env, "subscription.canceled", subscription({ external_id: owner.userId, product_id: "prod_team", status: "canceled", modified_at: "2026-11-19T11:00:00Z" }))
   const [late] = await invitees(env, organizationId, owner.userId, ["late5"]) as [Invitee]
-  const accept = await post(env, "/api/auth/organization/accept-invitation", { invitationId: late.invitationId }, { cookie: late.cookie })
+  const accept = await post(env, ACCEPT, { invitationId: late.invitationId }, { cookie: late.cookie })
   expect(accept.status).toBe(403)
-  expect(((await accept.json()) as { refusal: unknown }).refusal).toMatchObject({ limit: "members", plan: "free", allowed: 2, used: 5 })
+  expect(((await accept.json()) as { refusal: unknown }).refusal).toMatchObject({ limit: "members", plan: "free", allowed: 3, used: 5 })
   expect(members(env, organizationId)).toBe(5)
   expect(await workspaceMembers(env.AUTH_DB as unknown as BillingDb, organizationId, true)).toBe(6)
   // Pro (ten) has room again.
   await webhook(env, "subscription.active", subscription({ id: "sub_2", external_id: owner.userId, product_id: "prod_pro", modified_at: "2026-11-19T12:00:00Z" }))
-  expect((await post(env, "/api/auth/organization/accept-invitation", { invitationId: late.invitationId }, { cookie: late.cookie })).status).toBe(200)
+  expect((await post(env, ACCEPT, { invitationId: late.invitationId }, { cookie: late.cookie })).status).toBe(200)
   expect(members(env, organizationId)).toBe(6)
 })
 
-test("the database's limits are the entitlement's, and the plan table follows the deployment", async () => {
+test("the database's limits are the entitlement's", async () => {
   const env = stage(true)
   const db = env.AUTH_DB as unknown as BillingDb
   const { userId } = await enroll(env, "agree@example.com")
-  const limitsInDb = () => sql(env).query("select cells, members from billing_limit where subject_id = ?").get(userId)
-  const cases: { id: string; product: string; status: string }[][] = [
-    [],
-    [{ id: "s1", product: "prod_pro", status: "active" }],
-    [{ id: "s1", product: "prod_pro", status: "past_due" }],
-    [{ id: "s1", product: "prod_pro", status: "canceled" }],
-    [{ id: "s1", product: "prod_retired", status: "active" }],
-    [{ id: "s1", product: "prod_pro", status: "active" }, { id: "s2", product: "prod_team", status: "active" }],
-    [{ id: "s1", product: "prod_team", status: "canceled" }, { id: "s2", product: "prod_pro", status: "past_due" }],
+  const limitsInDb = () => sql(env).query("select cells, members from billing_allowance where subject_id = ?").get(userId)
+  const cases: ({ status: string; cells: number | null; members: number | null } | null)[] = [
+    null,
+    { status: "active", cells: 3, members: 10 },
+    { status: "past_due", cells: 3, members: 10 },
+    { status: "canceled", cells: 3, members: 10 },
+    { status: "active", cells: null, members: null },
+    { status: "active", cells: 0, members: 0 },
   ]
-  for (const subscriptions of cases) {
-    sql(env).run("delete from billing_subscription")
-    for (const one of subscriptions) sql(env).run(`insert into billing_subscription (id, subject_id, product_id, status, polar_status, version, updated_at) values (?, ?, ?, ?, ?, 1, 1)`, [one.id, userId, one.product, one.status, one.status])
-    expect({ subscriptions, limits: limitsInDb() }).toEqual({ subscriptions, limits: (await entitlementOf(db, CONFIG, userId)).limits })
+  for (const limits of cases) {
+    sql(env).run("delete from billing_limit")
+    if (limits !== null) sql(env).run(`insert into billing_limit (payer_id, plan, status, cells, members, provider, provider_ref, version, updated_at) values (?, 'p', ?, ?, ?, 'test', 'r', 1, 1)`, [userId, limits.status, limits.cells, limits.members])
+    expect({ limits, db: limitsInDb() }).toEqual({ limits, db: (await entitlementOf(db, CONFIG, userId)).limits })
   }
-  // The Worker wrote the table at its first request; turning billing off empties it, so nothing is limited.
-  expect(sql(env).query("select product_id, cells, members from billing_plan order by product_id").all()).toEqual([
-    { product_id: "", cells: 1, members: 2 }, { product_id: "prod_pro", cells: 3, members: 10 }, { product_id: "prod_team", cells: null, members: null },
-  ])
-  await syncPlans(db, undefined)
-  expect(sql(env).query("select count(*) as n from billing_plan").get()).toEqual({ n: 0 })
-  // Billing off on a database from before migration 0011: no plan table, no triggers, nothing to clear.
-  const before = new Database(":memory:")
-  before.exec(readFileSync(join(MIGRATIONS, "0001_better_auth.sql"), "utf8"))
-  await syncPlans(before as unknown as BillingDb, undefined)
-  expect(limitsInDb()).toEqual({ cells: null, members: null })
-  // A changed table replaces the old one's rows.
-  await syncPlans(db, { ...CONFIG, table: { free: { cells: 2, members: 4 }, plans: [{ id: "pro", name: "Pro", productId: "prod_pro2", limits: { cells: 9, members: 9 } }] } })
-  expect(sql(env).query("select product_id, cells, members from billing_plan order by product_id").all()).toEqual([{ product_id: "", cells: 2, members: 4 }, { product_id: "prod_pro2", cells: 9, members: 9 }])
 })
 
-test("a live subscription to a product the plan table no longer names grants no limits, but goes to the portal, never a second checkout", async () => {
+test("no request writes the limits: there is no plan table, and only a signed provider event changes a payer's row", async () => {
+  const env = stage(true)
+  const { cookie, userId } = await enroll(env, "quiet@example.com")
+  expect(sql(env).query(`select name from sqlite_master where name in ('billing_plan', 'billing_subscription')`).all()).toEqual([])
+  for (const path of ["/api/me", "/api/billing"]) expect((await call(env, path, { headers: { cookie } })).status).toBe(200)
+  expect((await post(env, CREATE, { name: "Over", slug: "over" }, { cookie })).status).toBe(403)
+  expect(sql(env).query("select count(*) as n from billing_limit").get()).toEqual({ n: 0 })
+  await webhook(env, "subscription.active", subscription({ external_id: userId }))
+  expect(row(env, userId)).toMatchObject({ plan: "pro", cells: 3, members: 10 })
+  // Nothing in the Worker's request handling can write it: only the provider adapter calls applyLimits.
+  const source = readFileSync(join(import.meta.dir, "../index.ts"), "utf8") + readFileSync(join(import.meta.dir, "../workspaces.ts"), "utf8")
+  expect(source).not.toMatch(/applyLimits|billing_limit|applySubscription/)
+})
+
+test("a live subscription to a product without limits grants the free ones, but goes to the portal, never a second checkout", async () => {
   const env = stage(true)
   const { cookie, userId } = await enroll(env, "old@example.com")
   await webhook(env, "subscription.past_due", subscription({ external_id: userId, product_id: "prod_retired", status: "past_due" }))
-  expect(await entitlementOf(env.AUTH_DB as unknown as BillingDb, CONFIG, userId)).toEqual({ billing: "enabled", plan: "free", status: "past_due", limits: PLANS.free })
+  expect(await entitlementOf(env.AUTH_DB as unknown as BillingDb, CONFIG, userId)).toEqual({ billing: "enabled", plan: "prod_retired", status: "past_due", limits: FREE })
   polarCalls = []
   const checkout = await call(env, "/api/billing/checkout?plan=pro", { headers: { cookie } })
   expect(checkout.status).toBe(303)
@@ -564,7 +616,7 @@ test("accepting a withdrawn invitation says what to do, not just that it is miss
   const { id } = (await (await post(env, "/api/auth/organization/invite-member", { email: "late@example.com", role: "member", organizationId }, { cookie })).json()) as { id: string }
   sql(env).run("delete from invitation where id = ?", [id])
   const late = await enroll(env, "late@example.com")
-  const accept = await post(env, "/api/auth/organization/accept-invitation", { invitationId: id }, { cookie: late.cookie })
+  const accept = await post(env, ACCEPT, { invitationId: id }, { cookie: late.cookie })
   expect(accept.status).toBe(400)
   const body = (await accept.json()) as { code: string; message: string }
   expect(body.code).toBe("INVITATION_NOT_FOUND")
@@ -577,11 +629,12 @@ test("a member-limit refusal sends someone who is not the payer to the workspace
   const admin = await enroll(env, "adm@example.com")
   const organizationId = firstWorkspace(env, owner.userId)
   join_(env, organizationId, admin.userId, "admin")
-  // Owner and admin fill the free plan's two seats.
+  join_(env, organizationId, (await enroll(env, "third@example.com")).userId, "member")
+  // Owner, admin and a member fill the free plan's three seats.
   const refused = await post(env, "/api/auth/organization/invite-member", { email: "new@example.com", role: "member", organizationId }, { cookie: admin.cookie })
   expect(refused.status).toBe(403)
   const body = await refused.json() as { message: string; refusal: unknown }
-  expect(body.refusal).toEqual({ kind: "plan-limit", limit: "members", plan: "free", allowed: 2, used: 2, upgradeUrl: null, upgradeBy: "workspace-owner" })
+  expect(body.refusal).toEqual({ kind: "plan-limit", limit: "members", plan: "free", allowed: 3, used: 3, upgradeUrl: null, upgradeBy: "workspace-owner" })
   expect(body.message).toContain("ask the workspace's owner to upgrade")
 })
 
@@ -598,9 +651,10 @@ test("without Polar settings, nothing is billed, limited or called", async () =>
   expect(document).toEqual({ entitlement: UNLIMITED, usage: { cells: 4 }, actions: [] })
   expect((await call(env, "/api/billing/checkout?plan=pro", { headers: { cookie } })).status).toBe(404)
   expect((await webhook(env, "subscription.active", subscription({ external_id: userId }))).status).toBe(404)
-  expect(sql(env).query("select count(*) as n from billing_subscription").get()).toEqual({ n: 0 })
-  // The limit triggers refuse nothing: the plan table they read is empty.
-  expect(sql(env).query("select count(*) as n from billing_plan").get()).toEqual({ n: 0 })
+  expect(sql(env).query("select count(*) as n from billing_limit").get()).toEqual({ n: 0 })
+  // The limit triggers refuse nothing: no workspace is marked billed, Studio's own route included.
+  expect((await post(env, CREATE, { name: "Five", slug: "five" }, { cookie })).status).toBe(200)
+  expect(sql(env).query("select count(*) as n from billing_workspace where billed = 1").get()).toEqual({ n: 0 })
   for (let n = 0; n < 5; n++) join_(env, organizationId, `user_many_${n}`, "member")
   expect(sql(env).query("select count(*) as n from member where organizationId = ?").get(organizationId)).toEqual({ n: 6 })
   expect(polarCalls).toEqual([])
@@ -614,7 +668,7 @@ test("the billing document is the server's: entitlement, usage and the actions i
   const { cookie, userId } = await enroll(env, "ivy@example.com")
   expect((await call(env, "/api/billing")).status).toBe(401)
   expect(await (await call(env, "/api/billing", { headers: { cookie } })).json() as unknown).toEqual({
-    entitlement: { billing: "enabled", plan: "free", status: "none", limits: PLANS.free },
+    entitlement: { billing: "enabled", plan: "free", status: "none", limits: FREE },
     usage: { cells: 1 },
     actions: [
       { kind: "checkout", label: "Upgrade to Pro", href: `${ORIGIN}/api/billing/checkout?plan=pro` },
@@ -685,4 +739,91 @@ test("no client code decides billing: the browser bundle imports neither Polar n
     const text = readFileSync(join(root, path), "utf8")
     expect({ path, polar: /@polar-sh\//.test(text), model: /worker\/(billing|polar)(\.ts)?["']/.test(text), settings: /POLAR_(PLANS|ACCESS_TOKEN|WEBHOOK_SECRET)/.test(text) }).toEqual({ path, polar: false, model: false, settings: false })
   }
+})
+
+// ===============================================================================================
+// Creating a workspace and accepting an invitation are each one transaction (workspaces.ts)
+
+test("with billing on, Better Auth's own create and accept routes are refused: Studio's are the one way in", async () => {
+  const env = stage(true)
+  const { cookie } = await enroll(env, "route@example.com")
+  for (const path of ["/api/auth/organization/create", "/api/auth/organization/create/", "/api/auth/Organization/Create", "/api/auth/organization/accept-invitation"]) {
+    const response = await post(env, path, { name: "X", slug: "route-x", invitationId: "inv_x" }, { cookie })
+    expect({ path, status: response.status, body: await response.json() }).toMatchObject({ path, status: 404, body: { code: "USE_STUDIO_ROUTE" } })
+  }
+  expect(sql(env).query("select count(*) as n from organization where slug = 'route-x'").get()).toEqual({ n: 0 })
+  // Studio's own refuse what Better Auth's refuse: no session, another origin.
+  expect((await post(env, CREATE, { name: "X", slug: "route-x" })).status).toBe(401)
+  expect((await post(env, CREATE, { name: "X", slug: "route-x" }, { cookie, origin: "https://evil.example" })).status).toBe(403)
+})
+
+test("a failure writing the owner leaves no workspace: the workspace, its payer and its owner commit together", async () => {
+  const env = stage(true)
+  const { cookie, userId } = await enroll(env, "half@example.com")
+  await webhook(env, "subscription.active", subscription({ external_id: userId }))
+  // The owner's insert fails (any reason but a plan limit): nothing of the workspace may stay.
+  sql(env).run(`create trigger owner_fails before insert on member when new.userId = '${userId}' begin select raise(abort, 'injected fault'); end`)
+  await expect(post(env, CREATE, { name: "Half", slug: "half" }, { cookie }).then((response) => response.status)).resolves.toBe(500)
+  expect(sql(env).query("select count(*) as n from organization where slug = 'half'").get()).toEqual({ n: 0 })
+  expect(await ownedWorkspaces(env.AUTH_DB as unknown as BillingDb, userId)).toBe(1)
+  // No cell was used up: once the fault is gone, both of Pro's remaining cells are there.
+  sql(env).run("drop trigger owner_fails")
+  for (const slug of ["half", "half-2"]) expect((await post(env, CREATE, { name: slug, slug }, { cookie })).status).toBe(200)
+  expect(sql(env).query("select count(*) as n from member m join organization o on o.id = m.organizationId where o.slug like 'half%' and m.role = 'owner'").get()).toEqual({ n: 2 })
+  expect(sql(env).query("select activeOrganizationId as id from session where userId = ? order by createdAt desc limit 1").get(userId)).toEqual({ id: (sql(env).query("select id from organization where slug = 'half-2'").get() as { id: string }).id })
+})
+
+test("an acceptance interrupted after the invitation turns accepted leaves it pending, and a retry joins", async () => {
+  const env = stage(true)
+  const owner = await enroll(env, "intr@example.com")
+  const organizationId = firstWorkspace(env, owner.userId)
+  const [person] = await invitees(env, organizationId, owner.userId, ["interrupted"]) as [Invitee]
+  sql(env).run(`create trigger join_fails before insert on member when new.userId = '${person.userId}' begin select raise(abort, 'injected fault'); end`)
+  expect((await post(env, ACCEPT, { invitationId: person.invitationId }, { cookie: person.cookie })).status).toBe(500)
+  expect(sql(env).query("select status from invitation where id = ?").get(person.invitationId)).toEqual({ status: "pending" })
+  sql(env).run("drop trigger join_fails")
+  expect((await post(env, ACCEPT, { invitationId: person.invitationId }, { cookie: person.cookie })).status).toBe(200)
+  expect(sql(env).query("select status from invitation where id = ?").get(person.invitationId)).toEqual({ status: "accepted" })
+  // Accepted once: the same invitation never adds the person again, even after they leave.
+  sql(env).run("delete from member where organizationId = ? and userId = ?", [organizationId, person.userId])
+  expect((await post(env, ACCEPT, { invitationId: person.invitationId }, { cookie: person.cookie })).status).toBe(400)
+  expect(members(env, organizationId)).toBe(1)
+})
+
+test("acceptance keeps Better Auth's checks: the recipient only, a verified address, an open invitation", async () => {
+  const env = stage(true)
+  const owner = await enroll(env, "chk@example.com")
+  const organizationId = firstWorkspace(env, owner.userId)
+  const [invited] = await invitees(env, organizationId, owner.userId, ["chk1"]) as [Invitee]
+  const stranger = await enroll(env, "stranger@example.com")
+  verify(env, stranger.userId)
+  expect(await (await post(env, ACCEPT, { invitationId: invited.invitationId }, { cookie: stranger.cookie })).json()).toMatchObject({ code: "YOU_ARE_NOT_THE_RECIPIENT_OF_THE_INVITATION" })
+  sql(env).run("update user set emailVerified = 0 where id = ?", [invited.userId])
+  expect(await (await post(env, ACCEPT, { invitationId: invited.invitationId }, { cookie: invited.cookie })).json()).toMatchObject({ code: "EMAIL_VERIFICATION_REQUIRED_BEFORE_ACCEPTING_OR_REJECTING_INVITATION" })
+  verify(env, invited.userId)
+  sql(env).run("update invitation set expiresAt = ? where id = ?", [new Date(Date.now() - 1000).toISOString(), invited.invitationId])
+  expect(await (await post(env, ACCEPT, { invitationId: invited.invitationId }, { cookie: invited.cookie })).json()).toMatchObject({ code: "INVITATION_NOT_FOUND" })
+  expect(members(env, organizationId)).toBe(1)
+})
+
+test("a refusal explains only the workspace the server authorized: a request naming another workspace learns nothing of it", async () => {
+  const env = stage(true)
+  // A rich workspace the caller does not belong to: its plan, limit and member count must not leak.
+  const rich = await enroll(env, "rich@example.com")
+  await webhook(env, "subscription.active", subscription({ external_id: rich.userId, product_id: "prod_pro" }))
+  const richWorkspace = firstWorkspace(env, rich.userId)
+  for (let n = 0; n < 6; n++) join_(env, richWorkspace, (await enroll(env, `rich${n}@example.com`)).userId, "member")
+  // The caller's own invitation is to a full free workspace.
+  const owner = await enroll(env, "small@example.com")
+  const small = firstWorkspace(env, owner.userId)
+  for (const name of ["s1", "s2"]) join_(env, small, (await enroll(env, `${name}@example.com`)).userId, "member")
+  const [caller] = await invitees(env, small, owner.userId, ["nosy"]) as [Invitee]
+  const response = await call(env, `${ACCEPT}?organizationId=${richWorkspace}`, { method: "POST", body: JSON.stringify({ invitationId: caller.invitationId, organizationId: richWorkspace }), headers: { "content-type": "application/json", origin: ORIGIN, cookie: caller.cookie } })
+  expect(response.status).toBe(403)
+  const text = await response.text()
+  expect(JSON.parse(text).refusal).toEqual({ kind: "plan-limit", limit: "members", plan: "free", allowed: 3, used: 3, upgradeUrl: null, upgradeBy: "workspace-owner" })
+  expect(text).not.toContain("pro")
+  // A database refusal on any other route is answered without details: nothing in the request is read.
+  const guarded = readFileSync(join(import.meta.dir, "../index.ts"), "utf8")
+  expect(guarded).not.toMatch(/invitationWorkspace|request\.json\(\)\.catch/)
 })

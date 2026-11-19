@@ -41,40 +41,31 @@ Any of them set, even empty, needs all four with values, or Studio refuses to st
 | `POLAR_ACCESS_TOKEN` | Organization Access Token (Polar → Settings → Developers); a Worker secret |
 | `POLAR_WEBHOOK_SECRET` | the webhook endpoint's signing secret (Polar → Settings → Webhooks); a Worker secret |
 | `POLAR_SERVER` | `sandbox` or `production`; tokens and products are separate per server |
-| `POLAR_PLANS` | the plan table as JSON: product ids and limits (below) |
+| `POLAR_PLANS` | the plans offered at checkout as JSON: slug, name and Polar product id (below); no limits |
 
 Webhook endpoint to register in Polar: `<studio origin>/api/auth/polar/webhooks` (subscription events).
-`null` is unlimited; `cells` counts the workspaces a person pays for (the creator, fixed at creation), `members` a workspace's members, its creator included and always admitted (so `0` means the creator alone).
+Limits come from Polar: each product's metadata sets `norn_cells` and `norn_members` (a non-negative integer, or `unlimited`), and a seat-based subscription's seats are its member limit.
+Each subscription event becomes its payer's limits in one write, never older than the one held; a product without valid limits, a canceled subscription and a person who never paid get the free limits: 1 workspace, 3 members.
+`cells` counts the workspaces a person pays for (the creator, fixed at creation), `members` a workspace's members, its creator included and always admitted (so `0` means the creator alone).
+Only workspaces created while billing is on are billed. With billing on, workspaces are created at `POST /api/workspaces` and invitations accepted at `POST /api/workspaces/invitations/accept`, each in one transaction; Better Auth's own routes for both are refused.
 The database enforces both, in the statement that writes the workspace or the member (migration 0011's triggers), so concurrent requests cannot pass a limit together and nothing is reserved or undone.
 Invitations hold no seat: sending one is refused when members plus pending invitations reach the limit, but only joining is enforced. An acceptance past the limit is refused (`PLAN_LIMIT`) and the invitation stays pending, so it can be accepted once a seat frees.
 The workspace made at sign-up is always created.
 A downgrade keeps existing workspaces and members over the new limit; it refuses new ones until usage is back under it.
-PLACEHOLDER plan table (not decided prices or limits; the product ids are not real):
+PLACEHOLDER plans (not decided; the product ids are not real):
 
 ```json
 {
-  "free": {
-    "cells": 1,
-    "members": 3
-  },
   "plans": [
     {
       "id": "pro",
       "name": "Pro (placeholder)",
-      "productId": "00000000-0000-0000-0000-000000000001",
-      "limits": {
-        "cells": 5,
-        "members": 25
-      }
+      "productId": "00000000-0000-0000-0000-000000000001"
     },
     {
       "id": "team",
       "name": "Team (placeholder)",
-      "productId": "00000000-0000-0000-0000-000000000002",
-      "limits": {
-        "cells": 20,
-        "members": null
-      }
+      "productId": "00000000-0000-0000-0000-000000000002"
     }
   ]
 }

@@ -6,7 +6,8 @@ import { connectors } from "./connectors.ts"
 import { MCP_PATH, serveMcp } from "./mcp.ts"
 import { cellFor } from "./cell.ts"
 import { questions } from "./questions.ts"
-import { admitCell, admitMember, billingConfig, billingDocument, entitlementOf, invitationWorkspace, limitRaised, recordWebhook, refusalMessage, subscribed, syncPlans, webhookSeen, type Admission, type BillingConfig, type BillingDb, type LimitName } from "./billing.ts"
+import { billingConfig, billingDocument, entitlementOf, limitRaised, recordWebhook, subscribed, webhookSeen, type BillingConfig, type BillingDb } from "./billing.ts"
+import { acceptWorkspaceInvitation, createWorkspace } from "./workspaces.ts"
 import { cellScope } from "./scope.ts"
 
 /** The Studio Worker: Better Auth under /api/auth, authenticated /api/*, static assets for everything else. */
@@ -50,7 +51,7 @@ export interface Env {
   /**
    * Hosted billing through Polar (worker/billing.ts); all four or none. None: billing is off and
    * every limit is unlimited (self-hosting). POLAR_SERVER is "sandbox" or "production"; POLAR_PLANS
-   * is the plan table as JSON (billing.ts PLACEHOLDER_PLANS shows its shape).
+   * is the checkout plans as JSON (billing.ts PLACEHOLDER_PLANS shows its shape); limits come from Polar.
    */
   readonly POLAR_ACCESS_TOKEN?: string
   readonly POLAR_WEBHOOK_SECRET?: string
@@ -93,17 +94,18 @@ function auth(env: Env): Auth {
   const billing = billingConfig(env)
   const instance = createAuth({ ...billing === undefined ? {} : { billing: { config: billing, db: env.AUTH_DB as unknown as BillingDb } }, mcp: mcpOn(env), database: env.AUTH_DB, secret: env.BETTER_AUTH_SECRET, baseURL: env.BETTER_AUTH_URL, trustedOrigins: trustedOrigins(env), defaultEnvironmentId: env.STUDIO_DEFAULT_ENVIRONMENT_ID?.trim() || undefined, scrypt: passwordScrypt(env.AUTH_SCRYPT), clientIpHeader: clientIpHeader(env.STUDIO_CLIENT_IP_HEADER), ...signUpEmails(env) === undefined ? {} : { signUpEmails: signUpEmails(env) }, ...sendMagicLink === undefined ? {} : { sendMagicLink }, ...env.STUDIO_DEFAULT_ORG === undefined ? {} : { defaultOrganizationId: env.STUDIO_DEFAULT_ORG }, ...gateway === undefined ? {} : { gateway } })
   const handle = instance.handler
-  instance.handler = (request: Request) => guarded(env, handle, request)
+  instance.handler = (request: Request) => guarded(handle, request)
   instances.set(env.AUTH_DB, instance)
   return instance
 }
 
 /**
  * Better Auth's handler, with the errors it throws (auth.ts onAPIError) answered: a plan-limit
- * trigger's refusal (migration 0011) as the typed PLAN_LIMIT refusal, anything else as a bare 500.
+ * trigger's refusal (migration 0011) as PLAN_LIMIT, anything else as a bare 500. Nothing in the request
+ * is read to explain it; the routes that can meet a limit with billing on are Studio's own
+ * (workspaces.ts), which explain it from what the server authorized.
  */
-async function guarded(env: Env, handle: (request: Request) => Promise<Response>, request: Request): Promise<Response> {
-  const copy = request.method === "POST" ? request.clone() : request
+async function guarded(handle: (request: Request) => Promise<Response>, request: Request): Promise<Response> {
   try {
     return await handle(request)
   } catch (error) {
@@ -112,45 +114,38 @@ async function guarded(env: Env, handle: (request: Request) => Promise<Response>
       console.error(error)
       return new Response(null, { status: 500, statusText: "Internal Server Error" })
     }
-    return planLimit(env, copy, limit)
+    const message = limit === "cells" ? "Your plan's workspace limit is reached." : "This workspace's member limit is reached."
+    return Response.json({ code: "PLAN_LIMIT", message }, { status: 403, headers: { "cache-control": "no-store" } })
   }
 }
 
 /**
- * The database refused a workspace or member past its payer's limit. Explain it as the checks would:
- * creating a workspace is the caller's own cell limit; joining (accepting an invitation) is the
- * invitation's workspace's member limit. Counts are read again now; if the limit no longer refuses
- * (someone left meanwhile) the answer is still PLAN_LIMIT, without details, and a retry may pass.
+ * Better Auth's routes that write a workspace and its owner, or an accepted invitation and its member,
+ * in separate statements. With billing on they are refused: Studio's own (workspaces.ts) do each in one
+ * transaction, so a plan-limit refusal or an interruption never leaves half of one.
  */
-async function planLimit(env: Env, request: Request, limit: LimitName): Promise<Response> {
-  const db = env.AUTH_DB as unknown as BillingDb
-  const billing = billingConfig(env)
-  const session = await auth(env).api.getSession({ headers: request.headers }).catch(() => null)
-  let admission: Admission | undefined
-  if (session !== null && billing !== undefined) {
-    if (limit === "cells") admission = await admitCell(db, billing, env.BETTER_AUTH_URL, session.user.id)
-    else {
-      const body = (await request.json().catch(() => null)) as { invitationId?: unknown; organizationId?: unknown } | null
-      const organizationId = typeof body?.organizationId === "string" ? body.organizationId
-        : typeof body?.invitationId === "string" ? await invitationWorkspace(db, body.invitationId) : null
-      if (organizationId !== null) admission = await admitMember(db, billing, env.BETTER_AUTH_URL, organizationId, session.user.id)
-    }
-  }
-  const refusal = admission?.kind === "plan-limit" ? admission : undefined
-  const message = refusal !== undefined ? refusalMessage(refusal) : limit === "cells" ? "Your plan's workspace limit is reached." : "This workspace's member limit is reached."
-  return Response.json({ code: "PLAN_LIMIT", message, ...refusal === undefined ? {} : { refusal } }, { status: 403, headers: { "cache-control": "no-store" } })
-}
+export const SPLIT_WRITE_PATHS: ReadonlyMap<string, string> = new Map([
+  ["/api/auth/organization/create", "/api/workspaces"],
+  ["/api/auth/organization/accept-invitation", "/api/workspaces/invitations/accept"],
+])
+/** Matched as Better Auth's router could: any case, with or without a trailing slash. */
+const routePath = (pathname: string) => pathname.toLowerCase().replace(/\/+$/, "")
 
-/** The plan table the limit triggers read (billing.ts syncPlans), written once per database binding per isolate. */
-const plans = new WeakMap<object, Promise<void>>()
-function plansSynced(env: Env): Promise<void> {
-  const known = plans.get(env.AUTH_DB)
-  if (known !== undefined) return known
-  const synced = syncPlans(env.AUTH_DB as unknown as BillingDb, billingConfig(env))
-  // A failed write is retried by the next request, never remembered as done.
-  synced.catch(() => plans.delete(env.AUTH_DB))
-  plans.set(env.AUTH_DB, synced)
-  return synced
+/** Studio's workspace writes: POST from a trusted origin, as Better Auth's own origin check requires. */
+async function workspaceRoute(request: Request, env: Env, pathname: string): Promise<Response> {
+  if (request.method !== "POST") return refuse(405, "POST only.", { allow: "POST" })
+  const origin = request.headers.get("origin")
+  if (origin === null || !trustedOrigins(env).includes(origin)) return refuse(403, "Cross-origin request refused.")
+  const context = { auth: auth(env), db: env.AUTH_DB, billing: billingConfig(env), baseURL: env.BETTER_AUTH_URL }
+  const handle = pathname === "/api/workspaces" ? createWorkspace : pathname === "/api/workspaces/invitations/accept" ? acceptWorkspaceInvitation : undefined
+  if (handle === undefined) return refuse(404, "No such endpoint.")
+  try {
+    return await handle(request, context)
+  } catch (error) {
+    // Rolled back whole (workspaces.ts); a bare 500, as Better Auth answers a database failure.
+    console.error(error)
+    return new Response(null, { status: 500, statusText: "Internal Server Error" })
+  }
 }
 
 /**
@@ -167,8 +162,7 @@ export async function publicSignUp(response: Response): Promise<Response> {
 
 /**
  * Accepting an invitation that is no longer pending: it expired or an admin withdrew it; Better Auth
- * says only "Invitation not found", so say what the person can do about it. (One the member limit
- * refuses at acceptance stays pending and is refused as PLAN_LIMIT instead: guarded.)
+ * says only "Invitation not found", so say what the person can do about it.
  */
 export async function acceptInvitation(response: Response): Promise<Response> {
   if (response.status !== 400) return response
@@ -290,7 +284,6 @@ export default {
     }
     if (mcpOn(env) && OAUTH_DISCOVERY.has(pathname)) return auth(env).handler(request)
     if (!pathname.startsWith("/api/")) return env.ASSETS.fetch(request)
-    await plansSynced(env)
     if (ACTOR_HEADERS.some((name) => request.headers.has(name))) return refuse(400, "Identity comes from the signed-in session, not a request header.")
     if (pathname === "/api/auth/sign-in/magic-link" || pathname === "/api/auth/magic-link/verify") {
       const host = new URL(request.url).host
@@ -303,7 +296,10 @@ export default {
     // generic OAuth), so a linked gateway identity never yields a Studio session. Linking stays.
     if (SIGN_IN_ELSEWHERE.has(pathname)) return refuse(403, "Studio sign-in is by email and password or magic link.")
     if (pluginBillingPath(pathname)) return refuse(404, "No such endpoint; billing starts at /api/billing.")
+    const moved = SPLIT_WRITE_PATHS.get(routePath(pathname))
+    if (moved !== undefined && billingConfig(env) !== undefined) return Response.json({ code: "USE_STUDIO_ROUTE", message: `With billing on, this goes through ${moved}.`, route: moved }, { status: 404, headers: { "cache-control": "no-store" } })
     if (pathname === "/api/auth/organization/accept-invitation") return acceptInvitation(await auth(env).handler(request))
+    if (pathname === "/api/workspaces" || pathname.startsWith("/api/workspaces/")) return workspaceRoute(request, env, pathname)
     if (pathname.startsWith("/api/auth/")) return auth(env).handler(request)
     if (pathname === "/api/me") return me(request, env)
     if (pathname === "/api/billing" || pathname.startsWith("/api/billing/")) return billingRoute(request, env, billingConfig(env), pathname)
