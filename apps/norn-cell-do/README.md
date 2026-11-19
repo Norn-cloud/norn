@@ -92,7 +92,10 @@ python3 apps/norn-cell-do/smoke.py celld   # or: wrangler
 ```
 
 The smoke build enables `fixtures` (`Bearer fixture:admin@demo`, `guest@demo`);
-a deployable build omits it and then requires a verified host token.
+a deployable build omits it and then requires a verified host token. A
+`fixtures` build opens no cell unless `NORN_STAGE` is `smoke` or `test` (the
+smoke sets it), and `apps/studio/scripts/celld-deploy-cell.ts` refuses to
+deploy one.
 
 Pins: celld v0.6.3 and Wrangler 4.157.0, as in `crates/norn-cell/README.md`.
 

@@ -36,7 +36,7 @@ const REFUSAL_CODES = new Set(Object.entries({
     "receipt_not_pending receipt_reference_invalid receipt_replayed receipt_result_type " +
     "receipt_run_mismatch receipt_unknown receipts_unconfigured slice_object_missing " +
     "slice_unavailable target_not_found transition_binding_mismatch transition_protocol_conflict " +
-    "unsupported_effect write_mode_failed",
+    "unsupported_effect write_mode_failed effect_kind_mismatch",
   analytics:
     "engine frontier_behind frontier_moved invalid too_large unauthorized unavailable unconfigured " +
     "unknown unsettled",

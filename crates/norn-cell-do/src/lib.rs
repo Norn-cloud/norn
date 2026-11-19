@@ -49,3 +49,20 @@ pub mod server;
 pub mod tenant;
 #[cfg(target_arch = "wasm32")]
 mod wasm;
+
+/// Whether this build accepts fixture principals (the `fixtures` feature,
+/// local smoke builds only). The Worker and the deploy script read it from the
+/// built Wasm (`NornCell.fixturesEnabled`) and refuse such a build outside a smoke or
+/// test stage.
+#[must_use]
+pub const fn fixtures_enabled() -> bool {
+    cfg!(feature = "fixtures")
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn fixtures_enabled_reports_the_feature() {
+        assert_eq!(super::fixtures_enabled(), cfg!(feature = "fixtures"));
+    }
+}

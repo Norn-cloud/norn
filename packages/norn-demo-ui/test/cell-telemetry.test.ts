@@ -5,10 +5,10 @@
 // result), OTEL-TLS-1 (credentials only over HTTPS or loopback) and OTEL-BOUNDED-1.
 
 import { expect, test } from "bun:test"
-import { readFileSync } from "node:fs"
+import { readFileSync, readdirSync } from "node:fs"
 import { CELL_ROUTES, Telemetry, cellRoute, exportConfig, methodOf, telemetry } from "../../../apps/norn-cell-do/otlp.mjs"
 // @ts-expect-error: the host module is plain JavaScript without declarations.
-import { instrument, kindOf, noteRefusal, outcomeOf, refusalCode, syncFinished } from "../../../apps/norn-cell-do/telemetry.mjs"
+import { instrument, kindOf, noteRefusal, outcomeOf, refusalCode, refusalCodeOf, syncFinished } from "../../../apps/norn-cell-do/telemetry.mjs"
 
 const ON = { OTEL_EXPORTER_OTLP_ENDPOINT: "https://collector.test/api/norn/", OTEL_EXPORTER_OTLP_HEADERS: "Authorization=Basic%20abc,stream-name=norn", NORN_OTEL_INTERVAL_MS: "1000" }
 
@@ -129,6 +129,17 @@ test("refusal codes are allowlisted: a known code is kept, anything else is othe
   expect(refusalCode('{"code":"acme customer 42"}')).toBe("other")
   expect(refusalCode("<html>")).toBe("other")
   expect(refusalCode(`{"code":"authz.denied","pad":"${"x".repeat(9000)}"}`)).toBe("other")
+})
+
+test("the refusal allowlist holds every refusal-family code the host and kernel write", () => {
+  const root = new URL("../../../", import.meta.url)
+  const families = /^(action|analytics|approval|artifact_set|authn|authz|bulk|cell|commit|connector|dataset|decision|definition|entitlement|guard|ingress|lifecycle|live|object|observations|query|question|request|reveal|route|run|scope|source|subscription|transform|upload)\./
+  const sources = ["crates/norn-kernel/src", "crates/norn-cell-do/src", "crates/norn-cell/src", "crates/norn-api/src", "crates/norn-authz/src", "crates/norn-decisions/src"]
+    .flatMap((dir) => readdirSync(new URL(dir, root), { recursive: true, encoding: "utf8" }).filter((file) => file.endsWith(".rs") && !file.includes("tests")).map((file) => new URL(`${dir}/${file}`, root)))
+  sources.push(...["worker.mjs", "subscribe.mjs"].map((file) => new URL(`apps/norn-cell-do/${file}`, root)))
+  const written = new Set(sources.flatMap((file) => [...readFileSync(file, "utf8").matchAll(/"([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+)"/g)].map((m) => m[1]!)).filter((code) => families.test(code)))
+  expect(written.size).toBeGreaterThan(250)
+  expect([...written].filter((code) => refusalCodeOf(code) === "other")).toEqual([])
 })
 
 test("OTEL-NO-TENANT-1: lowercase slugs, ids and colon suffixes never reach an attribute or span name, refused requests included", async () => {
