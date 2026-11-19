@@ -26,8 +26,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from norn import Norn, rss_kb  # noqa: E402
 
 TYPES = ["canon.Party", "canon.PartyRole", "canon.Item", "canon.Holding", "canon.OrderLine", "canon.Delivery", "canon.Posting", "canon.SettlementObservation",
-         "distributor.CustomerProfile", "distributor.SalesInvoice", "distributor.CustomerOrder", "distributor.DocumentLine", "distributor.BankReceipt",
-         "distributor.StockLedger", "distributor.StockMove", "distributor.PriceListEntry", "distributor.ReceivableBalance", "distributor.CreditRequest", "p2p.Case", "p2p.Event"]
+         "distributor.CustomerProfile", "distributor.SalesInvoice", "distributor.CustomerOrder", "distributor.InvoiceLine", "distributor.CustomerOrderLine", "distributor.BankReceipt",
+         "distributor.StockLedger", "distributor.StockMove", "distributor.Reconciliation", "distributor.PriceListEntry", "distributor.ReceivableBalance", "distributor.CreditRequest", "p2p.Case", "p2p.Event"]
 
 
 def props(o: dict) -> dict:
@@ -217,15 +217,15 @@ def mcp_agent(n: Norn, world: dict, native: dict) -> dict:
             stats["no_unique_candidate" if cands else "no_candidate"] += 1
             continue
         inv = cands[0]
-        res, err = m.tool("norn_call_action", {"action": "distributor.receipt.reconcile", "input": {**{k: p.get(k) for k in ("receipt_id", "bank", "booked_at", "currency", "amount", "remittance")},
-                                                                                                  "matched": True, "invoice_id": inv["invoice_id"]}})
+        res, err = m.tool("norn_call_action", {"action": "distributor.receipt.reconcile", "input": {"reconciliation_id": f"rec/{p.get('receipt_id')}", "receipt_id": p.get("receipt_id"),
+                                                                                                  "invoice_id": inv["invoice_id"], "matcher": "mcp:amount+date", "currency": p.get("currency"), "amount": str(p.get("amount"))}})
         stats["action_refused" if err else "reconciled"] += 1
         if err and stats["action_refused"] <= 3:
             stats[f"refusal:{json.dumps(res)[:160]}"] += 1
         wid = p.get("receipt_id", "").split("-", 1)[-1]
         if not err and truth.get(wid):
             stats["correct" if inv["invoice_id"].endswith(truth[wid]) else "wrong_match"] += 1
-    findings, _ = m.tool("norn_list_held", {"type": "distributor.BankReceipt"}) if "norn_list_held" in tools else ({}, False)
+    findings, _ = m.tool("norn_list_held", {"type": "distributor.Reconciliation"}) if "norn_list_held" in tools else ({}, False)
     return {"initialize": bool(init.get("result")), "tools": len(tools), "receipts": len(receipts), "invoices": len(invoices), "outcome": dict(stats),
             "heldReceipts": json.dumps(findings)[:600], "seconds": round(time.time() - t0, 1)}
 

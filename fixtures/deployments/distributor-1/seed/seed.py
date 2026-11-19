@@ -156,7 +156,7 @@ class Odoo:
         r = self.c.post("/jsonrpc", {"jsonrpc": "2.0", "method": "call", "params": {"service": service, "method": method, "args": args}, "id": 1})
         if r.get("error"):
             raise RuntimeError(json.dumps(r["error"])[:500])
-        return r["result"]
+        return r.get("result")  # Odoo omits `result` for a method that returns None
 
     def x(self, model: str, method: str, args: list, kw: dict | None = None):
         return self.rpc("object", "execute_kw", ["d1", self.uid, "admin", model, method, args, kw or {}])
@@ -265,7 +265,7 @@ SALEOR_WH = ("WH-CAI", "WH-GIZ")
 
 @step("saleor.masters")
 def saleor_masters(s: Saleor, w: dict, xw: dict, webhook_url: str):
-    ch = s.q("mutation{channelCreate(input:{name:\"d1 B2B\",slug:\"d1-b2b\",currencyCode:\"EGP\",defaultCountry:EG}){channel{id} errors{message}}}")["channelCreate"]["channel"]["id"]
+    ch = s.q("mutation{channelCreate(input:{name:\"d1 B2B\",slug:\"d1-b2b\",currencyCode:\"EGP\",defaultCountry:EG,isActive:true}){channel{id} errors{message}}}")["channelCreate"]["channel"]["id"]
     xw["saleor_channel"] = ch
     for code in SALEOR_WH:
         wh = s.q("mutation($n:String!,$s:String!){createWarehouse(input:{name:$n,slug:$s,address:{streetAddress1:\"1 Synthetic St\",city:\"CAIRO\",country:EG,postalCode:\"11511\"}}){warehouse{id} errors{message}}}",
@@ -283,7 +283,7 @@ def saleor_masters(s: Saleor, w: dict, xw: dict, webhook_url: str):
             p = s.q("mutation($t:ID!,$c:ID!,$n:String!){productCreate(input:{productType:$t,category:$c,name:$n}){product{id} errors{message}}}",
                     {"t": pt, "c": cats[it["group"]], "n": it["name_en"]})["productCreate"]["product"]["id"]
             s.q("mutation($p:ID!,$c:ID!){productChannelListingUpdate(id:$p,input:{updateChannels:[{channelId:$c,isPublished:true,isAvailableForPurchase:true,visibleInListings:true}]}){errors{message}}}", {"p": p, "c": ch})
-            stocks = [{"warehouse": xw["saleor_wh"][wh], "quantity": max(0, stock.get((it["id"], wh), 0))} for wh in SALEOR_WH]
+            stocks = [{"warehouse": xw["saleor_wh"][wh], "quantity": 100000} for wh in SALEOR_WH]  # set to closing after the orders
             v = s.q("mutation($p:ID!,$sku:String!,$st:[StockInput!]){productVariantCreate(input:{product:$p,sku:$sku,attributes:[],trackInventory:true,stocks:$st}){productVariant{id} errors{message}}}",
                     {"p": p, "sku": it.get("saleor_sku_alias_of") and it["saleor_sku"] + "-B" or it["saleor_sku"], "st": stocks})["productVariantCreate"]["productVariant"]["id"]
             s.q("mutation($v:ID!,$c:ID!,$pr:PositiveDecimal!){productVariantChannelListingUpdate(id:$v,input:[{channelId:$c,price:$pr}]){errors{message}}}", {"v": v, "c": ch, "pr": str(it["web_price"])})
@@ -312,7 +312,7 @@ def saleor_sales(s: Saleor, w: dict, xw: dict):
     for so in [x for x in w["orders"] if x["system"] == "saleor" and x["customer"] in xw["saleor_user"]]:
         def one(so=so):
             lines = [{"variantId": xw["saleor_variant"][l["item"]], "quantity": l["qty"]} for l in so["lines"] if l["item"] in xw["saleor_variant"]]
-            d = s.q("mutation($u:ID!,$c:ID!,$l:[OrderLineCreateInput!]){draftOrderCreate(input:{user:$u,channelId:$c,lines:$l}){order{id} errors{message}}}",
+            d = s.q("mutation($u:ID!,$c:ID!,$l:[OrderLineCreateInput!]){draftOrderCreate(input:{user:$u,channelId:$c,lines:$l,billingAddress:{firstName:\"Buyer\",streetAddress1:\"1 Synthetic St\",city:\"CAIRO\",country:EG,postalCode:\"11511\"}}){order{id} errors{message}}}",
                     {"u": xw["saleor_user"][so["customer"]], "c": xw["saleor_channel"], "l": lines})["draftOrderCreate"]["order"]["id"]
             o = s.q("mutation($id:ID!){draftOrderComplete(id:$id){order{id number lines{id quantity}} errors{message}}}", {"id": d})["draftOrderComplete"]["order"]
             xw["saleor_order"][so["id"]] = o["number"]
@@ -325,13 +325,46 @@ def saleor_sales(s: Saleor, w: dict, xw: dict):
             return o
         if tolerant("saleor.order_chain", one):
             yield so["id"]
+    # the shop's stock: the world's closing balance per variant and warehouse
+    stock = {(x["item"], x["wh"]): x["qty"] for x in w["closing_stock"]}
+    for iid, v in xw["saleor_variant"].items():
+        tolerant("saleor.stock_set", s.q, "mutation($v:ID!,$st:[StockInput!]!){productVariantStocksUpdate(variantId:$v,stocks:$st){errors{message}}}",
+                 {"v": v, "st": [{"warehouse": xw["saleor_wh"][wh], "quantity": max(0, stock.get((iid, wh), 0))} for wh in SALEOR_WH]})
+
+
+def saleor_lookup(s: "Saleor", w: dict, xw: dict) -> None:
+    """Re-seeding orders only: find the channel, warehouses, variants and users a first pass created."""
+    xw["saleor_channel"] = s.q("{channel(slug:\"d1-b2b\"){id}}")["channel"]["id"]
+    s.q("mutation($c:ID!){channelUpdate(id:$c,input:{isActive:true}){errors{message}}}", {"c": xw["saleor_channel"]})
+    for e in s.q("{warehouses(first:20){edges{node{id name}}}}")["warehouses"]["edges"]:
+        xw["saleor_wh"][e["node"]["name"]] = e["node"]["id"]
+    sku = {i["saleor_sku"]: i["id"] for i in w["items"]}
+    after = None
+    while True:
+        r = s.q("query($a:String){productVariants(first:100,after:$a){pageInfo{hasNextPage endCursor} edges{node{id sku}}}}", {"a": after})["productVariants"]
+        for e in r["edges"]:
+            if e["node"]["sku"] in sku:
+                xw["saleor_variant"][sku[e["node"]["sku"]]] = e["node"]["id"]
+        if not r["pageInfo"]["hasNextPage"]:
+            break
+        after = r["pageInfo"]["endCursor"]
+    email = {c["email"]: c["id"] for c in w["customers"]}
+    r = s.q("{customers(first:100){edges{node{id email}}}}")["customers"]["edges"]
+    for e in r:
+        if e["node"]["email"] in email:
+            xw["saleor_user"][email[e["node"]["email"]]] = e["node"]["id"]
 
 
 def main() -> None:
     world = json.loads(Path(sys.argv[1]).read_text())
     out = Path(sys.argv[2])
     which = set(sys.argv[3:]) or {"erpnext", "odoo", "saleor"}
+    prior = out / "native-ids.json"
     xw = {k: {} for k in ("erpnext_so", "erpnext_dn", "erpnext_si", "erpnext_pe", "odoo_wh", "odoo_product", "odoo_partner", "odoo_so", "odoo_inv", "saleor_wh", "saleor_variant", "saleor_user", "saleor_order")}
+    if prior.exists():  # keep the ids of systems seeded by an earlier pass
+        for k, v in json.loads(prior.read_text()).items():
+            if v and not xw.get(k):
+                xw[k] = v
     t0 = time.time()
     if "erpnext" in which:
         c = Client("http://127.0.0.1:8000", "erpnext-seed", {"Host": "d1.localhost"})
@@ -347,15 +380,23 @@ def main() -> None:
             odoo_sales(o, world, xw)
         except Exception as e:
             REPORT["errors"].append({"step": "odoo.login", "error": str(e)[:500]})
-    if "saleor" in which:
+    if "saleor" in which or "saleor-orders" in which:
         try:
             s = Saleor("http://127.0.0.1:8001", "admin@d1.example", "d1-admin")
-            saleor_masters(s, world, xw, "http://host.docker.internal:18900/")
+            if "saleor-orders" in which:
+                saleor_lookup(s, world, xw)
+            else:
+                saleor_masters(s, world, xw, "http://host.docker.internal:18900/")
             saleor_sales(s, world, xw)
         except Exception as e:
             REPORT["errors"].append({"step": "saleor.login", "error": str(e)[:500]})
     REPORT["seconds"] = round(time.time() - t0, 1)
     REPORT["http"] = STATS
+    prev = out / "seed-report.json"
+    if prev.exists():  # one report across passes: earlier steps stay, a re-run step replaces its entry
+        old = json.loads(prev.read_text())
+        REPORT["steps"] = {**old.get("steps", {}), **REPORT["steps"]}
+        REPORT["passes"] = old.get("passes", [{"seconds": old.get("seconds"), "errors": old.get("errors", [])[:20]}]) + [{"which": sorted(which), "seconds": REPORT.get("seconds")}]
     (out / "seed-report.json").write_text(json.dumps(REPORT, indent=1))
     (out / "native-ids.json").write_text(json.dumps(xw, indent=1))
     print(json.dumps({k: v for k, v in REPORT["steps"].items()}))

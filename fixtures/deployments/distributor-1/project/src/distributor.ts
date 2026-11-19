@@ -48,7 +48,6 @@ export const SalesInvoice = Norn.type({
   identity: [{ name: "primary", properties: ["invoice_id"] }],
   links: [
     { id: "customer", target: Party, cardinality: { to: "one", from: "many", required: true } },
-    { id: "lines", target: "distributor.DocumentLine", cardinality: { to: "many", from: "one" } },
   ],
 })
 
@@ -62,20 +61,38 @@ export const CustomerOrder = Norn.type({
   identity: [{ name: "primary", properties: ["order_id"] }],
   links: [
     { id: "customer", target: Party, cardinality: { to: "one", from: "many" } },
-    { id: "lines", target: "distributor.DocumentLine", cardinality: { to: "many", from: "one" } },
   ],
 })
 
-/** One line of an invoice or a customer order (canon.LineItem). */
-export const DocumentLine = Norn.type({
-  name: "distributor.DocumentLine", title: "Document line", version: "0.1.0", implements: ["canon.LineItem"],
-  properties: Schema.Struct({
-    line_id: Schema.String, quantity: Norn.decimal(3), rate: Norn.decimal(2),
-    currency: Currency, amount: Norn.decimal(2, { currency: "currency", additivity: { kind: "additive" } }),
-  }),
+/**
+ * Lines (canon.LineItem). canon.ItemizedDocument's `lines` must be met by the
+ * inverse role of the line's link to the concrete document type: a line type
+ * whose link targets the interface would add a foreign member to it
+ * (object_type.validation.foreign_inverse). So each document type needs its
+ * own line type, identical but for the link target: a deployment cost the
+ * concept could carry once.
+ */
+const LineProperties = Schema.Struct({
+  line_id: Schema.String, quantity: Norn.decimal(3), rate: Norn.decimal(2),
+  currency: Currency, amount: Norn.decimal(2, { currency: "currency", additivity: { kind: "additive" } }),
+})
+
+export const InvoiceLine = Norn.type({
+  name: "distributor.InvoiceLine", title: "Invoice line", version: "0.1.0", implements: ["canon.LineItem"],
+  properties: LineProperties,
   identity: [{ name: "primary", properties: ["line_id"] }],
   links: [
-    { id: "document", target: "canon.ItemizedDocument", cardinality: { to: "one", from: "many", required: true } },
+    { id: "document", target: SalesInvoice, cardinality: { to: "one", from: "many", required: true }, inverse: "lines" },
+    { id: "item", target: Item, cardinality: { to: "one", from: "many" } },
+  ],
+})
+
+export const CustomerOrderLine = Norn.type({
+  name: "distributor.CustomerOrderLine", title: "Customer order line", version: "0.1.0", implements: ["canon.LineItem"],
+  properties: LineProperties,
+  identity: [{ name: "primary", properties: ["line_id"] }],
+  links: [
+    { id: "document", target: CustomerOrder, cardinality: { to: "one", from: "many", required: true }, inverse: "lines" },
     { id: "item", target: Item, cardinality: { to: "one", from: "many" } },
   ],
 })
@@ -97,25 +114,6 @@ export const BankReceipt = Norn.type({
 })
 
 /**
- * Settlement matching: a receipt reconciled to an invoice pays exactly its
- * total. A nullable link cannot be narrowed in a law lambda (NORN-FLOW-TYPE),
- * so this is the IR form, guarded by the extractor's `matched` flag.
- */
-export const ReceiptMatchesInvoice = Norn.law({
-  id: "distributor.BankReceipt.pays_its_invoice.law", title: "A reconciled receipt pays its invoice in full", version: "0.1.0",
-  dependencies: [{ artifactId: "distributor.BankReceipt.entity", kind: "entity", version: "0.1.0", required: true }],
-  law: {
-    lawVersion: "0.1", id: "distributor.BankReceipt.pays_its_invoice", owner: "distributor",
-    severity: "warning", rationale: "A receipt reconciled to an invoice pays exactly its total in its currency; anything else is a short payment or a wrong match.",
-    provenance: { source: "authoring_sdk", sourcePath: "fixtures/deployments/distributor-1/project/src/distributor.ts" },
-    subject: "distributor.BankReceipt",
-    scope: { root: { kind: "entity", id: "distributor.BankReceipt" }, objectTypes: ["distributor.BankReceipt"] },
-    condition: "self.matched",
-    modality: { kind: "always" }, response: { kind: "predicate", expression: "self.amount == self.invoice.total && self.currency == self.invoice.currency" },
-  },
-})
-
-/**
  * GAP canon.Holding: a balance at one instant, with no opening, no movements
  * and no conservation law. A stock ledger per item and location carries them.
  */
@@ -128,7 +126,6 @@ export const StockLedger = Norn.type({
   identity: [{ name: "primary", properties: ["ledger_id"] }],
   links: [
     { id: "item", target: Item, cardinality: { to: "one", from: "many", required: true } },
-    { id: "moves", target: "distributor.StockMove", cardinality: { to: "many", from: "one" } },
   ],
 })
 
@@ -138,7 +135,7 @@ export const StockMove = Norn.type({
     move_id: Schema.String, quantity: Norn.decimal(3, { additivity: { kind: "additive" } }), occurred_at: Norn.ref("iso8601.timestamp"), reference: Schema.String,
   }),
   identity: [{ name: "primary", properties: ["move_id"] }],
-  links: [{ id: "ledger", target: StockLedger, cardinality: { to: "one", from: "many", required: true } }],
+  links: [{ id: "ledger", target: StockLedger, cardinality: { to: "one", from: "many", required: true }, inverse: "moves" }],
 })
 
 export const StockConserves = Norn.law({
@@ -156,24 +153,52 @@ export const StockConserves = Norn.law({
 })
 
 /**
- * Settlement matching as a governed action: a mapping links only within one
- * source, so a bank receipt (files) reaches an invoice (an ERP) only here.
- * The caller restates the receipt; the effect upserts it with the link, and
- * the pays_its_invoice law then judges the match.
+ * Settlement matching as a governed action. A mapping links only within one
+ * source, and an action's createLinks only links an object it creates
+ * (artifact_set.action.create_link), so a match is its own record: the
+ * reconciliation, linking the receipt and the invoice it pays.
  */
+export const Reconciliation = Norn.type({
+  name: "distributor.Reconciliation", implements: [Observed], title: "Receipt reconciliation", version: "0.1.0",
+  properties: Schema.Struct({
+    reconciliation_id: Schema.String, receipt_id: Schema.String, invoice_id: Schema.String, matcher: Schema.String,
+    currency: Currency, amount: Norn.decimal(2, { currency: "currency", additivity: { kind: "additive" } }),
+  }),
+  identity: [{ name: "primary", properties: ["reconciliation_id"] }],
+  links: [
+    { id: "receipt", target: BankReceipt, cardinality: { to: "one", from: "many", required: true } },
+    { id: "invoice", target: SalesInvoice, cardinality: { to: "one", from: "many", required: true } },
+  ],
+})
+
+export const ReconcileMatches = Norn.law({
+  id: "distributor.Reconciliation.pays_its_invoice.law", title: "A reconciled receipt pays its invoice in full", version: "0.1.0",
+  dependencies: [{ artifactId: "distributor.Reconciliation.entity", kind: "entity", version: "0.1.0", required: true }],
+  law: {
+    lawVersion: "0.1", id: "distributor.Reconciliation.pays_its_invoice", owner: "distributor",
+    severity: "warning", rationale: "A receipt reconciled to an invoice pays exactly its total in its currency; anything else is a short payment or a wrong match.",
+    provenance: { source: "authoring_sdk", sourcePath: "fixtures/deployments/distributor-1/project/src/distributor.ts" },
+    subject: "distributor.Reconciliation",
+    scope: { root: { kind: "entity", id: "distributor.Reconciliation" }, objectTypes: ["distributor.Reconciliation"] },
+    modality: { kind: "always" }, response: { kind: "predicate", expression: "self.amount == self.invoice.total and self.currency == self.invoice.currency and self.amount == self.receipt.amount" },
+  },
+})
+
 export const ReconcileReceipt = Norn.action({
   id: "distributor.receipt.reconcile", title: "Reconcile a receipt to an invoice", version: "0.1.0",
   scopeRequired: ["orgId", "environmentId"], idempotent: true, ledgered: true,
-  input: Schema.Struct({
-    // GAP: action inputs cannot be timestamps (Norn.ref has no closed-schema type), so booked_at is text.
-    receipt_id: Schema.String, bank: Schema.Literals(["BANK-A", "BANK-B"]), booked_at: Schema.String, currency: Currency,
-    amount: Norn.decimal(2), remittance: Schema.String, matched: Schema.Boolean, invoice_id: Schema.String,
-  }),
-  output: Schema.Struct({ receipt_id: Schema.String }),
-  slice: [{ name: "invoice", type: SalesInvoice, key: { property: { from: "input", property: "invoice_id" } } }],
-  createLinks: [{ link: "invoice", targetType: SalesInvoice, targetIdField: "invoice_id" }],
-  writes: [{ type: BankReceipt, change: "modified" }, { type: BankReceipt, change: "created" }],
-  effect: { kind: "upsert_input_object", type: BankReceipt, objectIdField: "receipt_id" },
+  input: Schema.Struct({ reconciliation_id: Schema.String, receipt_id: Schema.String, invoice_id: Schema.String, matcher: Schema.String, currency: Currency, amount: Norn.decimal(2) }),
+  output: Schema.Struct({ reconciliation_id: Schema.String }),
+  slice: [
+    { name: "receipt", type: BankReceipt, key: { property: { from: "input", property: "receipt_id" } } },
+    { name: "invoice", type: SalesInvoice, key: { property: { from: "input", property: "invoice_id" } } },
+  ],
+  createLinks: [
+    { link: "receipt", targetType: BankReceipt, targetIdField: "receipt_id" },
+    { link: "invoice", targetType: SalesInvoice, targetIdField: "invoice_id" },
+  ],
+  writes: [{ type: Reconciliation, change: "created" }],
+  effect: { kind: "upsert_input_object", type: Reconciliation, objectIdField: "reconciliation_id", writeMode: { kind: "create_only" } },
 })
 
 /** The web and list prices of an item (xlsx price list). */

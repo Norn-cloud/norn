@@ -109,7 +109,7 @@ SPEC: dict[str, dict] = {
             {"id": "invoice", "dataset": "Sales Invoice", "type": "SalesInvoice", "iface": "ItemizedDocument", "subject": "'erpnext/' + input.name", "uses": ["name", "customer_ref", "posting_date", "currency", "grand_total", "territory"],
              "props": {"invoice_id": "'erpnext/' + input.name", "posted_at": "timestamp(input.posting_date)", "region": "input.territory", "currency": "input.currency", "total": "input.grand_total", "source_system": "'erpnext'"},
              "links": [("customer", "party", "input.customer_ref")]},
-            {"id": "line", "dataset": "Sales Invoice Item", "type": "DocumentLine", "iface": "LineItem", "subject": "'erpnext/' + input.name", "uses": ["name", "parent", "item_ref", "qty", "rate", "amount", "currency"],
+            {"id": "line", "dataset": "Sales Invoice Item", "type": "InvoiceLine", "iface": "LineItem", "subject": "'erpnext/' + input.name", "uses": ["name", "parent", "item_ref", "qty", "rate", "amount", "currency"],
              "props": {"line_id": "'erpnext/' + input.name", "quantity": "input.qty", "rate": "input.rate", "amount": "input.amount", "currency": "input.currency"},
              "links": [("document", "invoice", "'erpnext/' + input.parent")], "externalLinks": [("item", "input.item_ref")]},
             {"id": "ledger", "dataset": "Stock Ledger", "type": "StockLedger", "subject": "'erpnext/' + input.name", "uses": ["name", "item_ref", "warehouse", "opening_qty", "closing_qty", "as_of"],
@@ -141,7 +141,7 @@ SPEC: dict[str, dict] = {
             {"id": "invoice", "dataset": "account.move", "type": "SalesInvoice", "iface": "ItemizedDocument", "subject": "'odoo/' + input.name", "uses": ["id", "name", "partner_ref", "invoice_date", "currency", "amount_total", "region"],
              "props": {"invoice_id": "'odoo/' + input.name", "posted_at": "timestamp(input.invoice_date)", "region": "input.region", "currency": "input.currency", "total": "input.amount_total", "source_system": "'odoo'"},
              "links": [("customer", "party", "input.partner_ref")]},
-            {"id": "line", "dataset": "account.move.line", "type": "DocumentLine", "iface": "LineItem", "subject": "'odoo/' + input.id", "uses": ["id", "move_id", "item_ref", "quantity", "price_unit", "price_subtotal", "currency"],
+            {"id": "line", "dataset": "account.move.line", "type": "InvoiceLine", "iface": "LineItem", "subject": "'odoo/' + input.id", "uses": ["id", "move_id", "item_ref", "quantity", "price_unit", "price_subtotal", "currency"],
              "props": {"line_id": "'odoo/' + input.id", "quantity": "input.quantity", "rate": "input.price_unit", "amount": "input.price_subtotal", "currency": "input.currency"},
              "links": [("document", "invoice", "'odoo/' + input.move_id")], "externalLinks": [("item", "input.item_ref")]},
         ],
@@ -160,7 +160,7 @@ SPEC: dict[str, dict] = {
             {"id": "invoice", "dataset": "Order", "type": "SalesInvoice", "iface": "ItemizedDocument", "subject": "'saleor/' + input.number", "uses": ["id", "number", "user_ref", "created", "currency", "total_gross", "region"],
              "props": {"invoice_id": "'saleor/' + input.number", "posted_at": "timestamp(input.created)", "region": "input.region", "currency": "input.currency", "total": "input.total_gross", "source_system": "'saleor'"},
              "links": [("customer", "party", "input.user_ref")]},
-            {"id": "line", "dataset": "OrderLine", "type": "DocumentLine", "iface": "LineItem", "subject": "'saleor/' + input.id", "uses": ["id", "order_id", "item_ref", "quantity", "unit_price_gross", "total_price_gross", "currency"],
+            {"id": "line", "dataset": "OrderLine", "type": "InvoiceLine", "iface": "LineItem", "subject": "'saleor/' + input.id", "uses": ["id", "order_id", "item_ref", "quantity", "unit_price_gross", "total_price_gross", "currency"],
              "props": {"line_id": "'saleor/' + input.id", "quantity": "input.quantity", "rate": "input.unit_price_gross", "amount": "input.total_price_gross", "currency": "input.currency"},
              "links": [("document", "invoice", "'saleor/' + input.order_id")], "externalLinks": [("item", "input.item_ref")]},
         ],
@@ -185,7 +185,7 @@ SPEC: dict[str, dict] = {
              "props": {"resource_code": "input.itm_cd", "quantity": "input.qty", "observed_at": "timestamp(input.upd_dt)", "unit": "input.unit", "currency": "null", "valuation_method": "null",
                        "location": "input.whs_cd", "quantity_basis": "'on_hand'", "stock_cost": "null", "cost_currency": "null"},
              "links": [("item", "item", "input.item_ref"), ("owner", None, "input.owner_ref")],
-             "gaps": [("custodian", "not_in_source", "The WMS records no custodian."), ("stock_cost", "not_in_source", "No valuation in the WMS.")]},
+             "gaps": [("custodian", "not_in_source", "The WMS records no custodian.")]},
             {"id": "ledger", "dataset": "wms.ledger", "type": "StockLedger", "subject": "'legacy/' + input.id", "uses": ["id", "item_ref", "whs_cd", "opening_qty", "closing_qty", "upd_dt"],
              "props": {"ledger_id": "'legacy/' + input.id", "location": "input.whs_cd", "opening_qty": "input.opening_qty", "closing_qty": "input.closing_qty", "observed_at": "timestamp(input.upd_dt)", "source_system": "'legacy-wms'"},
              "links": [("item", "item", "input.item_ref")]},
@@ -216,7 +216,7 @@ SPEC: dict[str, dict] = {
             {"id": "po", "dataset": "edi.850", "type": "CustomerOrder", "iface": "ItemizedDocument", "subject": "'edi/' + input.po_number", "uses": ["id", "po_number", "buyer_ref", "po_date", "stated_total", "currency"],
              "props": {"order_id": "'edi/' + input.po_number", "ordered_at": "timestamp(input.po_date)", "currency": "input.currency", "total": "input.stated_total", "source_system": "'edi-x12'"},
              "externalLinks": [("customer", "input.buyer_ref")]},
-            {"id": "po_line", "dataset": "edi.850.line", "type": "DocumentLine", "iface": "LineItem", "subject": "'edi/' + input.id", "uses": ["id", "po_id", "item_ref", "qty", "price", "amount", "currency"],
+            {"id": "po_line", "dataset": "edi.850.line", "type": "CustomerOrderLine", "iface": "LineItem", "subject": "'edi/' + input.id", "uses": ["id", "po_id", "item_ref", "qty", "price", "amount", "currency"],
              "props": {"line_id": "'edi/' + input.id", "quantity": "input.qty", "rate": "input.price", "amount": "input.amount", "currency": "input.currency"},
              "links": [("document", "po", "'edi/' + input.po_id")], "externalLinks": [("item", "input.item_ref")]},
             {"id": "price", "dataset": "pricelist", "type": "PriceListEntry", "subject": "'xlsx/' + input.id", "uses": ["id", "item_ref", "list_price", "web_price"],
@@ -254,7 +254,7 @@ SPEC["bpic"] = {
     ],
 }
 
-IFACE = {"Party": "Agent", "Item": "Catalog", "Holding": "Resource", "SalesInvoice": "ItemizedDocument", "CustomerOrder": "ItemizedDocument", "DocumentLine": "LineItem"}
+IFACE = {"Party": "Agent", "Item": "Catalog", "Holding": "Resource", "SalesInvoice": "ItemizedDocument", "CustomerOrder": "ItemizedDocument", "InvoiceLine": "LineItem", "CustomerOrderLine": "LineItem"}
 CANON = {"Party", "Item", "Holding"}
 TYPES = {"s": "string", "d": "decimal", "b": "boolean"}
 

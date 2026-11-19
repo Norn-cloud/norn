@@ -47,7 +47,9 @@ services:
     <<: *small
   odoo:
     image: odoo:${ODOO_TAG:-17.0}
-    command: ["--db_host=odoo-db", "--db_user=odoo", "--db_password=odoo", "-d", "d1", "-i", "sale_management,stock,account", "--without-demo=all", "--load-language=ar_001"]
+    # the image's entrypoint passes --db_host etc. from these, overriding any flag
+    environment: { HOST: odoo-db, USER: odoo, PASSWORD: odoo }
+    command: ["-d", "d1", "-i", "sale_management,stock,account", "--without-demo=all", "--load-language=ar_001"]
     depends_on: { odoo-db: { condition: service_healthy } }
     ports: ["127.0.0.1:8069:8069"]
     deploy: { resources: { limits: { memory: 1024m } } }

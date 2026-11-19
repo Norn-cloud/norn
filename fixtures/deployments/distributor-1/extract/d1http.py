@@ -25,7 +25,8 @@ class Client:
         data = None if body is None else (body if isinstance(body, bytes) else json.dumps(body).encode())
         delay = 0.25
         for attempt in range(self.retries + 1):
-            req = urllib.request.Request(self.base + path, data=data, method=method, headers={**self.headers, **(headers or {})})
+            # ERPNext doctypes have spaces ("Sales Order"); urllib refuses a raw space in a URL
+            req = urllib.request.Request(self.base + path.replace(" ", "%20"), data=data, method=method, headers={**self.headers, **(headers or {})})
             try:
                 with self.opener.open(req, timeout=120) as r:
                     out = r.read()
