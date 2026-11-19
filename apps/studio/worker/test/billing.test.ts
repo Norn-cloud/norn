@@ -434,8 +434,9 @@ const invitationRow = (env: Env, id: string, organizationId: string, email: stri
   sql(env).run(`insert into invitation (id, organizationId, email, role, status, expiresAt, createdAt, inviterId) values (?, ?, ?, 'member', ?, ?, ?, ?)`, [id, organizationId, email, status, future, future, inviterId])
 }
 const members = (env: Env, organizationId: string) => (sql(env).query("select count(*) as n from member where organizationId = ?").get(organizationId) as { n: number }).n
+interface Invitee { readonly cookie: string; readonly userId: string; readonly invitationId: string }
 /** Invitees with verified addresses, one invitation each, to a workspace. */
-async function invitees(env: Env, organizationId: string, inviterId: string, names: readonly string[]) {
+async function invitees(env: Env, organizationId: string, inviterId: string, names: readonly string[]): Promise<Invitee[]> {
   return Promise.all(names.map(async (name) => {
     const email = `${name}@example.com`
     invitationRow(env, `inv_${name}`, organizationId, email, inviterId)
@@ -464,8 +465,8 @@ test("concurrent acceptances at the limit: exactly the limit joins, the rest are
   expect(refused.map((person) => (sql(env).query("select status from invitation where id = ?").get(person.invitationId) as { status: string }).status)).toEqual(["pending", "pending"])
   const joined = people.find((_, index) => responses[index]?.status === 200)
   sql(env).run("delete from member where organizationId = ? and userId = ?", [organizationId, joined?.userId ?? ""])
-  const retry = refused[0]
-  expect((await post(env, "/api/auth/organization/accept-invitation", { invitationId: retry?.invitationId }, { cookie: retry?.cookie })).status).toBe(200)
+  const retry = refused[0] as Invitee
+  expect((await post(env, "/api/auth/organization/accept-invitation", { invitationId: retry.invitationId }, { cookie: retry.cookie })).status).toBe(200)
   expect(members(env, organizationId)).toBe(2)
 })
 
@@ -474,14 +475,14 @@ test("canceling or rejecting while others accept cannot put a workspace over its
   const owner = await enroll(env, "mixed@example.com")
   const organizationId = firstWorkspace(env, owner.userId)
   for (let round = 0; round < 3; round++) {
-    const [a, b, c] = await invitees(env, organizationId, owner.userId, [`a${round}`, `b${round}`, `c${round}`])
+    const [a, b, c] = await invitees(env, organizationId, owner.userId, [`a${round}`, `b${round}`, `c${round}`]) as [Invitee, Invitee, Invitee]
     // A cancel of A, B's rejection and three acceptances race; whatever wins, only the free seat is filled.
     await Promise.all([
-      post(env, "/api/auth/organization/accept-invitation", { invitationId: a?.invitationId }, { cookie: a?.cookie }),
-      post(env, "/api/auth/organization/cancel-invitation", { invitationId: a?.invitationId }, { cookie: owner.cookie }),
-      post(env, "/api/auth/organization/accept-invitation", { invitationId: b?.invitationId }, { cookie: b?.cookie }),
-      post(env, "/api/auth/organization/reject-invitation", { invitationId: b?.invitationId }, { cookie: b?.cookie }),
-      post(env, "/api/auth/organization/accept-invitation", { invitationId: c?.invitationId }, { cookie: c?.cookie }),
+      post(env, "/api/auth/organization/accept-invitation", { invitationId: a.invitationId }, { cookie: a.cookie }),
+      post(env, "/api/auth/organization/cancel-invitation", { invitationId: a.invitationId }, { cookie: owner.cookie }),
+      post(env, "/api/auth/organization/accept-invitation", { invitationId: b.invitationId }, { cookie: b.cookie }),
+      post(env, "/api/auth/organization/reject-invitation", { invitationId: b.invitationId }, { cookie: b.cookie }),
+      post(env, "/api/auth/organization/accept-invitation", { invitationId: c.invitationId }, { cookie: c.cookie }),
     ])
     expect(members(env, organizationId)).toBe(2)
     sql(env).run(`delete from member where organizationId = ? and role <> 'owner'`, [organizationId])
@@ -496,15 +497,15 @@ test("a downgrade from an unlimited plan counts the members already there: they 
   for (let n = 0; n < 4; n++) join_(env, organizationId, `user_team_${n}`, "member")
   expect(members(env, organizationId)).toBe(5)
   await webhook(env, "subscription.canceled", subscription({ external_id: owner.userId, product_id: "prod_team", status: "canceled", modified_at: "2026-11-19T11:00:00Z" }))
-  const [late] = await invitees(env, organizationId, owner.userId, ["late5"])
-  const accept = await post(env, "/api/auth/organization/accept-invitation", { invitationId: late?.invitationId }, { cookie: late?.cookie })
+  const [late] = await invitees(env, organizationId, owner.userId, ["late5"]) as [Invitee]
+  const accept = await post(env, "/api/auth/organization/accept-invitation", { invitationId: late.invitationId }, { cookie: late.cookie })
   expect(accept.status).toBe(403)
   expect(((await accept.json()) as { refusal: unknown }).refusal).toMatchObject({ limit: "members", plan: "free", allowed: 2, used: 5 })
   expect(members(env, organizationId)).toBe(5)
   expect(await workspaceMembers(env.AUTH_DB as unknown as BillingDb, organizationId, true)).toBe(6)
   // Pro (ten) has room again.
   await webhook(env, "subscription.active", subscription({ id: "sub_2", external_id: owner.userId, product_id: "prod_pro", modified_at: "2026-11-19T12:00:00Z" }))
-  expect((await post(env, "/api/auth/organization/accept-invitation", { invitationId: late?.invitationId }, { cookie: late?.cookie })).status).toBe(200)
+  expect((await post(env, "/api/auth/organization/accept-invitation", { invitationId: late.invitationId }, { cookie: late.cookie })).status).toBe(200)
   expect(members(env, organizationId)).toBe(6)
 })
 
