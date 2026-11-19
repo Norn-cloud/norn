@@ -66,6 +66,7 @@ pub struct BoundInvariantFailure {
     pub version: String,
 }
 fn decode(artifact: &ArtifactEnvelope) -> Result<LawIR, LawEvaluationError> {
+    norn_ir::counters::bump(norn_ir::counters::Counter::LawDecodes);
     let decoded: Result<LawIR, serde::de::value::Error> =
         LawIR::deserialize(artifact.payload.to_json_value().into_deserializer());
     decoded.map_err(|error| LawEvaluationError::Invalid(error.to_string()))

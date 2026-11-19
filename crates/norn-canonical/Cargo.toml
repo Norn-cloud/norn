@@ -16,6 +16,9 @@ unicode-normalization = "0.1.25"
 # hash goldens run under both map backends (`cedar-policy` turns it on in any
 # build that links norn-authz). Never enabled by a dependent crate.
 preserve-order-probe = ["serde_json/preserve_order"]
+# Deterministic per-thread work counters (`counters` module, #1421). Enabled
+# only by test and benchmark harnesses; off in every shipped build.
+counters = []
 
 [dev-dependencies]
 proptest = "1.11.0"

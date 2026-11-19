@@ -32,6 +32,7 @@ impl Expression {
     /// [`ExprError::Compile`] if `source` does not lex, parse, or compile, or
     /// exceeds the `norn-expr/4` source bounds (16 KiB, brackets 128 deep).
     pub fn compile(source: &str) -> Result<Self, ExprError> {
+        norn_ir::counters::bump(norn_ir::counters::Counter::ExpressionCompiles);
         source_bounds(source, false)?;
         let compiled = compile_expression(source).map_err(map_isolate_error)?;
         Ok(Self {
@@ -301,6 +302,7 @@ impl UnaryTest {
     /// source bounds or does not lex, parse, or
     /// compile as a unary test.
     pub fn compile(source: &str) -> Result<Self, ExprError> {
+        norn_ir::counters::bump(norn_ir::counters::Counter::ExpressionCompiles);
         let compiled = if source.is_empty() {
             None
         } else {
