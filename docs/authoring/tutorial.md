@@ -22,7 +22,7 @@ Two programs are called `norn` (renaming one is [#1451](https://github.com/Norn-
 
 No release carries the TypeScript CLI, the checker WASM or the dev host yet. From `drop-29` on, a `drop-*` release attaches the Rust `norn` for Linux and macOS, the TypeScript SDK, the Python client, `install.sh` and `SHA256SUMS` (what [`scripts/release/assets.sh`](../../scripts/release/assets.sh) builds); none of these is needed for this tutorial.
 
-You need Rust 1.98.0 with the `wasm32-unknown-unknown` target, `wasm-bindgen-cli` 0.2.129, Bun 1.3.14, and Node with `npx` (the checker build runs binaryen's `wasm-opt` through it). Build in a checkout of the repository:
+You need Rust 1.98.0 with the `wasm32-unknown-unknown` target, `wasm-bindgen-cli` 0.2.129, Bun 1.3.14, Node with `npx` (the checker build runs binaryen's `wasm-opt` through it), and `sha256sum` (the checker build prints checksums with it; on macOS it comes with GNU coreutils, `brew install coreutils`). Build in a checkout of the repository:
 
 ```sh
 git clone https://github.com/Norn-cloud/norn && cd norn
@@ -32,9 +32,11 @@ cargo install --locked wasm-bindgen-cli --version 0.2.129
 crates/norn-checker-wasm/scripts/build-pkg.sh
 cargo build --locked --release -p norn-cell-do --bin norn-dev-host
 (cd tools/norn-ts && bun install --frozen-lockfile)
-export NORN_CHECKER_WASM_PKG="$NORN/target/norn-checker-wasm/pkg"
-export NORN_DEV_HOST_BIN="$NORN/target/release/norn-dev-host"
+export NORN_CHECKER_WASM_PKG="${CARGO_TARGET_DIR:-$NORN/target}/norn-checker-wasm/pkg"
+export NORN_DEV_HOST_BIN="${CARGO_TARGET_DIR:-$NORN/target}/release/norn-dev-host"
 ```
+
+Both builds write under `CARGO_TARGET_DIR` when it is set, so the two paths follow it.
 
 `NORN_CHECKER_WASM_PKG` is the checker that `norn check` and `norn dev` load; `NORN_DEV_HOST_BIN` is the native host that `norn dev` runs. Keep both set in every terminal you use below. The [quickstart](../../QUICK_START.md) has the same build and the release path.
 

@@ -42,7 +42,10 @@ interactive views off; Norn's answers then arrive as text.
 
 The examples assume a workspace with the `batches` pack installed
 ([`fixtures/packs/batches`](../../fixtures/packs/batches/batches.ts): a `lab.Batch` type, its
-mass-conservation law and the `lab.batch.record` action).
+mass-conservation law and the `lab.batch.record` action). The pack declares no metric, and a
+question or dashboard can aggregate only over declared metrics, so the loss and mass-out examples
+below also need a metric over `lab.Batch` (for example, the sum of `loss_g` or `output_g` by
+`material`) declared in the workspace. The catalog question and the action work with the pack alone.
 
 - "What does this workspace hold?" The assistant reads the catalog: object types, their
   properties, the admitted questions and the actions you may call.

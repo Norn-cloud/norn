@@ -26,8 +26,9 @@ bun relay.ts      # or: bun run start
 
 Configuration is read from the environment (`configFromEnv` in `relay.ts`).
 Required: `SIDEKICK_STUDIO_ORIGIN`, `SIDEKICK_LOGIN_HEADER`, `SIDEKICK_ADAPTER`
-(the adapter command), `SIDEKICK_SCRATCH`. Optional: `SIDEKICK_ALLOWED_ORIGINS`,
-`SIDEKICK_ALLOWED_LOGINS`, `SIDEKICK_LISTEN_HOST` (default `127.0.0.1`),
+(the adapter command), `SIDEKICK_SCRATCH`, and `SIDEKICK_ALLOWED_LOGINS` (comma-separated;
+without it the relay still starts but answers every request with 403).
+Optional: `SIDEKICK_ALLOWED_ORIGINS`, `SIDEKICK_LISTEN_HOST` (default `127.0.0.1`),
 `SIDEKICK_LISTEN_PORT` (default `17950`), `SIDEKICK_MCP_PORT` (default `17951`),
 `SIDEKICK_MAX_CONNECTIONS` (default `3`), `SIDEKICK_MODEL`.
 
