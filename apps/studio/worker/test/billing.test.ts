@@ -425,11 +425,11 @@ test("seats are counted from one snapshot: an invitation accepted between two re
 test("an accepted invitation keeps its seat until its member exists, and is not counted twice after", async () => {
   const env = stage(true)
   const { userId } = await enroll(env, "hold@example.com")
-  const joiner = await enroll(env, "Held@Example.com")
+  const joiner = await enroll(env, "held@example.com")
   const workspace = firstWorkspace(env, userId)
   const future = new Date(Date.now() + 86_400_000).toISOString()
   // Better Auth has marked it accepted and not yet inserted the member.
-  sql(env).run(`insert into invitation (id, organizationId, email, role, status, expiresAt, createdAt, inviterId) values ('inv_h', ?, 'held@example.com', 'member', 'accepted', ?, ?, ?)`, [workspace, future, future, userId])
+  sql(env).run(`insert into invitation (id, organizationId, email, role, status, expiresAt, createdAt, inviterId) values ('inv_h', ?, 'Held@Example.com', 'member', 'accepted', ?, ?, ?)`, [workspace, future, future, userId])
   expect(await workspaceSeats(env.AUTH_DB as unknown as BillingDb, workspace)).toBe(2)
   // The free plan's two seats are taken: a new invitation is refused in that interval.
   sql(env).run(`insert into invitation (id, organizationId, email, role, status, expiresAt, createdAt, inviterId) values ('inv_new', ?, 'new@example.com', 'member', 'pending', ?, ?, ?)`, [workspace, future, future, userId])
