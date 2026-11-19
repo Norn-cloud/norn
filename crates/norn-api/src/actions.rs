@@ -274,7 +274,7 @@ pub fn call_action<E: SqlEngine>(
             consumes: None,
         },
     };
-    let outcome = match through_gate(host, &mut cell, &catalog, &kernel_call)? {
+    let outcome = match through_gate(host, &mut cell, &catalog, &kernel_call, query.version)? {
         Gated::Pending(pending) => return Ok(ActionAnswer::Pending(pending)),
         Gated::Replayed(outcome) => *outcome,
         Gated::Commit => norn_kernel::commit_action(
@@ -346,6 +346,7 @@ fn through_gate<E: SqlEngine>(
     cell: &mut crate::host::ActionCell<E>,
     catalog: &TypeCatalog<'_>,
     kernel_call: &norn_kernel::ActionCall<'_>,
+    definitions_version: Option<u64>,
 ) -> Result<Gated, Refusal> {
     let action_id = kernel_call.action.action_id.as_str();
     let Some(gate) = crate::approvals::gate(cell, action_id)? else {
@@ -369,6 +370,7 @@ fn through_gate<E: SqlEngine>(
                 input: kernel_call.input.clone(),
                 idempotency_key: kernel_call.idempotency_key.clone(),
                 requester,
+                definitions_version,
             };
             Ok(
                 match crate::approvals::hold(cell, &gate, &parked, kernel_call.turn.now)? {
