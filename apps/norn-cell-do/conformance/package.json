@@ -1,0 +1,9 @@
+{
+  "name": "norn-cell-conformance-host",
+  "private": true,
+  "description": "Test-only: the OpenOrange host the conformance suite runs the cell on (never a production dependency).",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "open-orange": "1.0.3"
+  }
+}

@@ -24,7 +24,7 @@ function fromModule(compiled: ReturnType<typeof pack>, module: string) {
 const PRIMITIVES = ["core.Agent", "core.AgentRole", "core.Claim", "core.Commitment", "core.Conversion", "core.EconomicEvent", "core.Exchange", "core.Hold", "core.LedgerEffect", "core.Process", "core.Resource"]
 
 test("the core physics pack declares exactly its primitives", () => {
-  const ids = fromModule(pack(), "physics.ts").map((artifact) => (artifact as { artifactId: string }).artifactId).sort()
+  const ids = fromModule(pack(), "rea.ts").map((artifact) => (artifact as { artifactId: string }).artifactId).sort()
   expect(ids).toEqual(PRIMITIVES.map((name) => `${name}.interface`))
 })
 
@@ -44,7 +44,7 @@ test.skipIf(!checker)("Rust admits the core physics interfaces over the shared v
   const compiled = pack()
   const base = compiled.baseArtifacts.filter((artifact) => VALUE_TYPES.has((artifact as { artifactId: string }).artifactId))
   expect(base.length).toBe(VALUE_TYPES.size)
-  const report = checkPack(checker!, JSON.parse(JSON.stringify(fromModule(compiled, "physics.ts"))), JSON.parse(JSON.stringify(base)))
+  const report = checkPack(checker!, JSON.parse(JSON.stringify(fromModule(compiled, "rea.ts"))), JSON.parse(JSON.stringify(base)))
   expect(report.diagnostics.diagnostics).toEqual([])
   expect(report.admitted).toBe(true)
 })
