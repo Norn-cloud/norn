@@ -34,7 +34,7 @@ DROP TABLE "billing_subscription";
 -- Deliveries no longer need remembering: a webhook only triggers a reconcile, which is idempotent.
 DROP TABLE "billing_webhook";
 
--- Whether billing is on, as the Worker last saw its settings (billing.ts syncBillingMode). Off, no
+-- Whether billing is on, as the deploy wrote it (billing.ts billingModeStatement; requests only read it). Off, no
 -- trigger below refuses anything, matching the API, which reports every limit unlimited: turning
 -- billing off frees workspaces billed while it was on. Off until a Worker with billing on says so.
 CREATE TABLE "billing_mode" (
