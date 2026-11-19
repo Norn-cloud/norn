@@ -206,7 +206,9 @@ test("a tile's details sheet: its menu and popover open above it, take the point
   await drill.click()
   const menu = sheet.getByRole("menu")
   await expect(menu).toBeVisible()
-  await menu.evaluate((el) => Promise.all(el.getAnimations().map((animation) => animation.finished)))
+  // Settled once nothing runs: Popper moves the menu as it opens, which retargets its transform-origin
+  // transition, and a retargeted transition's `finished` rejects, so waiting on each one would fail.
+  await expect.poll(() => menu.evaluate((el) => el.getAnimations().filter((animation) => animation.playState === "running").length)).toBe(0)
   await page.screenshot({ path: `${SHOTS}/tile-sheet-menu.png` })
   await page.keyboard.press("Escape")
   await expect(menu).toBeHidden()
@@ -223,26 +225,40 @@ test("a tile's details sheet: its menu and popover open above it, take the point
   await expect(page.getByText(/records the server added up, exactly as it counted them/)).toBeVisible()
 })
 
-test("a press on blank space in a tile's sheet closes only its open menu; a press outside then closes the sheet", async ({ page }) => {
-  test.skip(Boolean(process.env.E2E_BASE), "this row uses deterministic stand-ins for the assistant and the cell")
-  await board(page)
-  const sheet = page.getByRole("dialog", { name: "Yield, weekly" })
-  await page.getByRole("button", { name: "Details" }).nth(2).click()
-  await expect(sheet).toBeVisible()
-  await sheet.getByRole("button", { name: /^Drill into / }).first().click()
-  const menu = sheet.getByRole("menu")
-  await expect(menu).toBeVisible()
+test.describe("on a touch screen too", () => {
+  test.use({ hasTouch: true })
 
-  // Real pointer presses at coordinates, as a person clicks: the sheet's blank bottom-left corner.
-  const box = await sheet.boundingBox()
-  if (box === null) throw new Error("the sheet has no box")
-  await page.mouse.click(box.x + 12, box.y + box.height - 12)
-  await expect(menu).toBeHidden()
-  await expect(sheet).toBeVisible()
+  test("a press on blank space in a tile's sheet closes only its open menu; a press outside then closes the sheet", async ({ page }) => {
+    test.skip(Boolean(process.env.E2E_BASE), "this row uses deterministic stand-ins for the assistant and the cell")
+    await board(page)
+    const sheet = page.getByRole("dialog", { name: "Yield, weekly" })
+    const drill = sheet.getByRole("button", { name: /^Drill into / }).first()
+    const menu = sheet.getByRole("menu")
+    await page.getByRole("button", { name: "Details" }).nth(2).click()
+    await expect(sheet).toBeVisible()
+    const box = await sheet.boundingBox()
+    if (box === null) throw new Error("the sheet has no box")
+    // Presses at coordinates, as a person makes them: the sheet's blank bottom-left corner.
+    const blank = { x: box.x + 12, y: box.y + box.height - 12 }
 
-  // Left of the sheet is outside it.
-  await page.mouse.click(Math.max(4, box.x - 40), box.y + box.height / 2)
-  await expect(sheet).toBeHidden()
+    // A mouse press, then a tap: each closes the menu and leaves the sheet open. (A tap reaches the
+    // UI SDK as a click whose press began on whatever was under it; while a modal Radix menu had the
+    // body's pointer events off, that was <html>, so the sheet closed too.)
+    await drill.click()
+    await expect(menu).toBeVisible()
+    await page.mouse.click(blank.x, blank.y)
+    await expect(menu).toBeHidden()
+    await expect(sheet).toBeVisible()
+    await drill.click()
+    await expect(menu).toBeVisible()
+    await page.touchscreen.tap(blank.x, blank.y)
+    await expect(menu).toBeHidden()
+    await expect(sheet).toBeVisible()
+
+    // Left of the sheet is outside it.
+    await page.mouse.click(Math.max(4, box.x - 40), box.y + box.height / 2)
+    await expect(sheet).toBeHidden()
+  })
 })
 
 test("a sheet closed by Escape while it is still opening lets the next click through at once", async ({ page }) => {
