@@ -6,7 +6,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use norn_expr::{RowComparison, RowExpr};
-use norn_ir::UnitRef;
+use norn_ir::{ActionRoot, UnitRef, ZenExpression};
 
 /// The extracted, proved acceptance decision for one writer (#718 U5).
 pub mod decision;
@@ -57,7 +57,8 @@ pub struct Cell {
 pub enum CellKey {
     /// A constant canonical key.
     Fixed(String),
-    /// The action input field `input.<field>`, used verbatim as the
+    /// The effective action input field `input.<field>` (after the action's
+    /// derivations, as its preconditions see it), used verbatim as the
     /// canonical key. A repeated field is one key. A key that normalizes,
     /// converts or looks up its input is [`CellKey::Computed`].
     Input(String),
@@ -106,13 +107,48 @@ pub struct Writer {
     /// write to the same cell. Every coordinate with a nonzero delta row must
     /// be listed.
     pub assigns: Vec<String>,
-    /// The writer's executable Boolean preconditions (ZEN source over
-    /// `input`), all of which hold whenever it writes. The checker lowers them
-    /// itself and only excludes a key-equality case when a top-level conjunct
-    /// `input.a != input.b` (or `not (input.a == input.b)`) separates the two
-    /// input keys. Anything else, including source it cannot lower, excludes
-    /// nothing.
-    pub preconditions: Vec<String>,
+    /// The executable definition this writer was lowered from. Only a bound
+    /// action's own preconditions can exclude a key-equality case.
+    pub source: WriterSource,
+}
+
+/// The executable writer a [`Writer`]'s delta was lowered from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WriterSource {
+    /// No executable definition is bound (mined observations, discovery
+    /// candidates): every key-equality case stays possible.
+    Unbound,
+    /// The action definition the kernel runs. Its id must be the writer's.
+    Action(BoundAction),
+}
+
+/// The guards of one executable action, read from its definition.
+///
+/// It has no public constructor other than [`BoundAction::of`], so no caller
+/// can attach a precondition the kernel does not evaluate: whatever excludes
+/// a key-equality case is a precondition of the [`ActionRoot`] itself, which
+/// the kernel checks over the effective input before any effect.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BoundAction {
+    action_id: String,
+    preconditions: Vec<ZenExpression>,
+}
+
+impl BoundAction {
+    /// Binds the action definition the kernel executes.
+    #[must_use]
+    pub fn of(action: &ActionRoot) -> Self {
+        Self {
+            action_id: action.action_id.clone(),
+            preconditions: action.preconditions.clone(),
+        }
+    }
+
+    /// The bound action's id.
+    #[must_use]
+    pub fn action_id(&self) -> &str {
+        &self.action_id
+    }
 }
 
 /// A refusal explains exactly which symbolic coefficient did not balance.
@@ -212,6 +248,7 @@ fn validate(
         let mut assigned = BTreeSet::new();
         if writer.id.is_empty()
             || !writer_ids.insert(&writer.id)
+            || matches!(&writer.source, WriterSource::Action(action) if action.action_id != writer.id)
             || writer
                 .assigns
                 .iter()
@@ -223,10 +260,11 @@ fn validate(
     Ok(())
 }
 
-/// Input-field pairs, ordered, that the preconditions prove unequal. Only
-/// top-level conjuncts `input.a != input.b` and `not (input.a == input.b)`
-/// count; source outside the lowerable subset proves nothing.
-fn proved_unequal(preconditions: &[String]) -> BTreeSet<(String, String)> {
+/// Input-field pairs, ordered, that a bound action's preconditions prove
+/// unequal. Only top-level conjuncts `input.a != input.b` and
+/// `not (input.a == input.b)` count; source outside the lowerable subset, and
+/// any unbound writer, prove nothing.
+fn proved_unequal(source: &WriterSource) -> BTreeSet<(String, String)> {
     fn pair(a: &RowExpr, b: &RowExpr, out: &mut BTreeSet<(String, String)>) {
         if let (RowExpr::Column(a), RowExpr::Column(b)) = (a, b)
             && a != b
@@ -262,8 +300,11 @@ fn proved_unequal(preconditions: &[String]) -> BTreeSet<(String, String)> {
         }
     }
     let mut out = BTreeSet::new();
-    for source in preconditions {
-        if let Ok(Some(tree)) = norn_expr::row_expression(source, INPUT_ROOT) {
+    let WriterSource::Action(action) = source else {
+        return out;
+    };
+    for precondition in &action.preconditions {
+        if let Ok(Some(tree)) = norn_expr::row_expression(precondition.as_str(), INPUT_ROOT) {
             conjuncts(&tree, &mut out);
         }
     }
@@ -373,30 +414,6 @@ fn group_partitions(
         };
         matches!((key(a), key(b)), (Some(a), Some(b)) if never_same_key(a, b, unequal))
     };
-    // Coordinates that may be one row must count that row the same way.
-    for (x, left) in atoms.iter().enumerate() {
-        for (y, right) in atoms.iter().enumerate().skip(x) {
-            if x != y && apart(x, y) {
-                continue;
-            }
-            for &i in left {
-                for &j in right {
-                    let (Some(a), Some(b)) = (coordinates.get(i), coordinates.get(j)) else {
-                        continue;
-                    };
-                    if (a.weight, &a.scope, &a.unit) != (b.weight, &b.scope, &b.unit) {
-                        return Err((
-                            ALIAS_UNLOWERABLE_CODE,
-                            format!(
-                                "{} and {} may be one row but differ in weight, scope or unit",
-                                a.id, b.id
-                            ),
-                        ));
-                    }
-                }
-            }
-        }
-    }
     let indices: Vec<usize> = (0..atoms.len()).collect();
     let partitions = key_partitions(&indices, &apart, MAX_ALIAS_CASES).ok_or_else(|| {
         (
@@ -428,28 +445,67 @@ fn group_partitions(
 /// The aliasing cases of one writer beyond the all-distinct one: each case is
 /// a list of merged cells (coordinate indices, at least two) with the choice of
 /// how they combine (`Some(i)`: index `i` of the cell survives; `None`: the
-/// writes accumulate). Only assigned coordinates take part: a zero-delta
+/// writes accumulate). Only assigned coordinates write: a zero-delta
 /// assignment may still be the write that survives.
+///
+/// A write also changes every coordinate of the functional, assigned or not,
+/// that may name its row. Each merged case lands the row's delta on one of
+/// its coordinates and counts the row once, which is faithful only while
+/// every coordinate that may name an assigned row carries that row's weight,
+/// scope and unit; otherwise the writer is unlowerable.
 fn alias_cases(
     coordinates: &[Coordinate],
     footprint: &BTreeSet<usize>,
     unequal: &BTreeSet<(String, String)>,
 ) -> Result<Vec<AliasCase>, AliasLimit> {
     let bound = |why: String| (ALIAS_BOUND_CODE, why);
-    let cell = |i: usize| coordinates.get(i).and_then(|c| c.cell.as_ref());
-    // Assigned coordinates grouped by canonical storage: root and member.
-    let mut groups: BTreeMap<(&str, &str), Vec<usize>> = BTreeMap::new();
-    for &index in footprint {
-        if let Some(cell) = cell(index) {
-            groups
+    // Every stored coordinate grouped by canonical storage: root and member.
+    let mut storage: BTreeMap<(&str, &str), Vec<usize>> = BTreeMap::new();
+    for (index, coordinate) in coordinates.iter().enumerate() {
+        if let Some(cell) = &coordinate.cell {
+            storage
                 .entry((&cell.root, &cell.member))
                 .or_default()
                 .push(index);
         }
     }
-    // Merged-cell sets per combination of group partitions.
+    // Each assigned row is counted the same way by every coordinate that may
+    // name it, whether or not the writer assigns that coordinate.
+    for group in storage.values() {
+        for &i in group.iter().filter(|i| footprint.contains(i)) {
+            for &j in group.iter().filter(|&&j| j != i) {
+                let (Some(a), Some(b)) = (coordinates.get(i), coordinates.get(j)) else {
+                    continue;
+                };
+                let (Some(left), Some(right)) = (&a.cell, &b.cell) else {
+                    continue;
+                };
+                if !never_same_key(&left.key, &right.key, unequal)
+                    && (a.weight, &a.scope, &a.unit) != (b.weight, &b.scope, &b.unit)
+                {
+                    return Err((
+                        ALIAS_UNLOWERABLE_CODE,
+                        format!(
+                            "{} is assigned and may be the row of {}, which differs in weight, scope or unit",
+                            a.id, b.id
+                        ),
+                    ));
+                }
+            }
+        }
+    }
+    // Merged-cell sets per combination of the assigned coordinates' partitions.
     let mut merges: Vec<Vec<Vec<usize>>> = vec![Vec::new()];
-    for group in groups.into_values().filter(|g| g.len() > 1) {
+    let assigned = storage
+        .into_values()
+        .map(|group| -> Vec<usize> {
+            group
+                .into_iter()
+                .filter(|i| footprint.contains(i))
+                .collect()
+        })
+        .filter(|g| g.len() > 1);
+    for group in assigned {
         if group.len() > MAX_ALIASED_KEYS {
             return Err(bound(format!(
                 "{} assigned coordinates of one stored member (limit {MAX_ALIASED_KEYS})",
@@ -613,7 +669,7 @@ pub fn check(
         // Assigned cells the preconditions do not prove distinct may be one
         // row at run time; the writer must balance in every such case too.
         // A case set that cannot be built faithfully is unknown first.
-        let unequal = proved_unequal(&writer.preconditions);
+        let unequal = proved_unequal(&writer.source);
         let cases = alias_cases(coordinates, &footprint, &unequal)
             .map_err(|(code, why)| Failure::Unknown(format!("{code}: {}: {why}", writer.id)))?;
         decide(rows)?;
@@ -742,7 +798,7 @@ mod tests {
                 vec![q(1), q(-1), q(0)],
             ]),
             assigns: vec!["input".into(), "output".into(), "loss".into()],
-            preconditions: Vec::new(),
+            source: WriterSource::Unbound,
         };
         (coordinates, vec![writer])
     }
@@ -826,12 +882,26 @@ mod tests {
             })
             .collect()
     }
+    /// The executable action `id` with exactly these preconditions.
+    fn action(id: &str, guard: &[&str]) -> ActionRoot {
+        serde_json::from_value(serde_json::json!({
+            "actionId": id,
+            "scopeRequired": [],
+            "idempotent": false,
+            "ledgered": false,
+            "inputSchema": {"type": "object"},
+            "outputSchema": {"type": "object"},
+            "preconditions": guard,
+        }))
+        .unwrap()
+    }
+    /// A writer lowered from the action `id` whose preconditions are `guard`.
     fn writer(id: &str, rows: Vec<Vec<Rational>>, c: &[Coordinate], guard: &[&str]) -> Writer {
         Writer {
             id: id.into(),
             delta: Delta::Affine(rows),
             assigns: c.iter().map(|c| c.id.clone()).collect(),
-            preconditions: guard.iter().map(|g| (*g).into()).collect(),
+            source: WriterSource::Action(BoundAction::of(&action(id, guard))),
         }
     }
     /// `Bal[from] := Bal[from] - amount; Bal[to] := Bal[to] + amount`.
@@ -951,6 +1021,121 @@ mod tests {
                 &[q(1); 2]
             ),
             Err(Failure::Aliased { .. })
+        ));
+    }
+
+    #[test]
+    fn cons_guards_come_only_from_the_bound_action() {
+        // The executable transfer has no guard. Nothing a caller says about
+        // it can exclude from == to: the writer carries no precondition of
+        // its own, only the action it was lowered from.
+        let c = keyed(&["from", "to"]);
+        let unguarded = transfer(&c, &[]);
+        assert!(matches!(
+            check(&c, std::slice::from_ref(&unguarded), &[q(1); 2]),
+            Err(Failure::Aliased { .. })
+        ));
+        // Binding another action that does carry the guard is malformed:
+        // the bound action must be the writer's own.
+        let mut borrowed = unguarded.clone();
+        borrowed.source = WriterSource::Action(BoundAction::of(&action(
+            "guarded_transfer",
+            &["input.from != input.to"],
+        )));
+        assert_eq!(check(&c, &[borrowed], &[q(1); 2]), Err(Failure::Malformed));
+        // An unbound writer keeps every equality case.
+        let mut unbound = unguarded;
+        unbound.source = WriterSource::Unbound;
+        assert!(matches!(
+            check(&c, &[unbound], &[q(1); 2]),
+            Err(Failure::Aliased { .. })
+        ));
+        // The genuinely guarded action is admitted.
+        let guarded = transfer(&c, &["input.from != input.to"]);
+        assert_eq!(
+            BoundAction::of(&action("transfer", &[])).action_id(),
+            "transfer"
+        );
+        assert_eq!(check(&c, &[guarded], &[q(1); 2]), Ok(()));
+    }
+
+    #[test]
+    fn cons_unassigned_alias_cannot_escape() {
+        // Sol round 2: two labels on one fixed row, weights [0, 1], and the
+        // writer assigns only the zero-weight label. The physical write
+        // raises the weight-1 label too, so the total changes by 1.
+        let one_row = || {
+            vec![
+                stored("cash", "Account", "Account", CellKey::Fixed("cash".into())),
+                stored(
+                    "wallet_cash",
+                    "Wallet",
+                    "Account",
+                    CellKey::Fixed("cash".into()),
+                ),
+            ]
+        };
+        let raise = |c: &[Coordinate]| Writer {
+            id: "raise".into(),
+            delta: Delta::Affine(vec![vec![q(1)], vec![q(0)]]),
+            assigns: vec![c[0].id.clone()],
+            source: WriterSource::Action(BoundAction::of(&action("raise", &[]))),
+        };
+        let mut c = one_row();
+        c[0].weight = q(0);
+        let unlowerable = |c: &[Coordinate]| {
+            matches!(
+                check(c, &[raise(c)], &[c[0].weight, c[1].weight]),
+                Err(Failure::Unknown(why)) if why.starts_with(ALIAS_UNLOWERABLE_CODE)
+            )
+        };
+        assert!(unlowerable(&c));
+        // A computed key that may reach the row escapes no better, from
+        // either side.
+        let mut reach = c.clone();
+        reach[1].cell.as_mut().unwrap().key = CellKey::Computed("route(input.to)".into());
+        assert!(unlowerable(&reach));
+        let mut reach = c.clone();
+        reach[0].cell.as_mut().unwrap().key = CellKey::Computed("route(input.to)".into());
+        assert!(unlowerable(&reach));
+        // An input key may equal the constant row as well.
+        let mut input = c.clone();
+        input[1].cell.as_mut().unwrap().key = CellKey::Input("to".into());
+        assert!(unlowerable(&input));
+        // A label that can never be the row may carry any weight.
+        let mut apart = c;
+        apart[1].cell.as_mut().unwrap().key = CellKey::Fixed("bank".into());
+        apart[1].weight = q(5);
+        assert_eq!(check(&apart, &[raise(&apart)], &[q(0), q(5)]), Ok(()));
+        // With equal weights the write is counted once and must balance:
+        // raising one row is a refusal, a move between rows is admitted
+        // even beside an unassigned label that may name either.
+        let even = one_row();
+        assert!(matches!(
+            check(&even, &[raise(&even)], &[q(1); 2]),
+            Err(Failure::Unbalanced { .. })
+        ));
+        let mut moved = one_row();
+        moved[1].cell.as_mut().unwrap().key = CellKey::Fixed("bank".into());
+        moved.push(stored(
+            "routed",
+            "Wallet",
+            "Account",
+            CellKey::Computed("route(input.to)".into()),
+        ));
+        let shift = Writer {
+            id: "shift".into(),
+            delta: Delta::Affine(vec![vec![q(1)], vec![q(-1)], vec![q(0)]]),
+            assigns: vec!["cash".into(), "wallet_cash".into()],
+            source: WriterSource::Unbound,
+        };
+        assert_eq!(check(&moved, std::slice::from_ref(&shift), &[q(1); 3]), Ok(()));
+        // ... but not when the label that may name a written row is weighted
+        // differently.
+        moved[2].weight = q(2);
+        assert!(matches!(
+            check(&moved, &[shift], &[q(1), q(1), q(2)]),
+            Err(Failure::Unknown(why)) if why.starts_with(ALIAS_UNLOWERABLE_CODE)
         ));
     }
 

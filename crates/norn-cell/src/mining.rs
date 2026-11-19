@@ -1,7 +1,7 @@
 //! MINE-CONS-1: bounded runtime questions over source-pinned observed flows.
 //! Exact certificates describe only this supplied window, never business truth.
 use norn_checker::obligations::conservation::{
-    Coordinate, Delta, Failure, Rational, Writer, check, discovery::discover,
+    Coordinate, Delta, Failure, Rational, Writer, WriterSource, check, discovery::discover,
 };
 use std::collections::BTreeSet;
 
@@ -104,15 +104,16 @@ pub fn suggest_conservation(
         .map(|o| Writer {
             id: o.record.clone(),
             delta: Delta::Affine(o.delta.iter().map(|v| vec![*v]).collect()),
-            // An observation assigns what it changed; with no preconditions
-            // every stored key pair stays possibly equal.
+            // An observation assigns what it changed. It is bound to no
+            // executable action, so every stored key pair stays possibly
+            // equal.
             assigns: coordinates
                 .iter()
                 .zip(&o.delta)
                 .filter(|(_, v)| **v != zero)
                 .map(|(c, _)| c.id.clone())
                 .collect(),
-            preconditions: Vec::new(),
+            source: WriterSource::Unbound,
         })
         .collect();
     let training = writers.get(..training_records).ok_or(Failure::Malformed)?;

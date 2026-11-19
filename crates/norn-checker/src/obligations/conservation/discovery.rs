@@ -198,7 +198,7 @@ mod tests {
                     vec![q(d, 1), ZERO],
                 ]),
                 assigns: vec!["0".into(), "1".into()],
-                preconditions: Vec::new(),
+                source: super::super::WriterSource::Unbound,
             }],
         )
     }

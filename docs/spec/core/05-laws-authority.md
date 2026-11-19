@@ -173,14 +173,19 @@ writer lists its write footprint, every coordinate it assigns, including
 zero-delta writes such as `Bal[k] := pre.Bal[k]`, and must also balance in every
 key-equality case of its footprint that its executable preconditions do not
 exclude, with the writes to one cell either accumulating or one pre-state write
-surviving. The checker lowers the preconditions itself; only a top-level
+surviving. Only the preconditions of the action definition a writer is bound to
+can exclude a case: the checker reads them from that `ActionRoot`, which the
+kernel evaluates over the effective input before any effect, and a writer bound
+to no action (a mined observation) keeps every case. Of those, only a top-level
 conjunct `input.a != input.b` excludes a case, and computed keys stay possibly
-equal. An unbalanced case refuses as `law.conservation.key_alias`, naming the
-merged coordinates. More than 6 assigned coordinates of one stored member or
-256 cases per writer is unknown (`law.conservation.alias_bound`). Cells that may
-be one row but carry different weights, scopes or units, or stored coordinates
-beside unstored ones, are unknown (`law.conservation.alias_unlowerable`). None
-is ever admitted.
+equal. A write changes every coordinate of the functional that may name its
+row, assigned or not, and the row counts once. An unbalanced case refuses as
+`law.conservation.key_alias`, naming the merged coordinates. More than 6
+assigned coordinates of one stored member or 256 cases per writer is unknown
+(`law.conservation.alias_bound`). A coordinate that may name an assigned row but
+carries a different weight, scope or unit, or stored coordinates beside unstored
+ones, are unknown (`law.conservation.alias_unlowerable`). None is ever
+admitted.
 
 This alias coverage is reviewed, not proved: the case enumeration, the footprint
 and storage lowering, the precondition lowering and the merged-row
