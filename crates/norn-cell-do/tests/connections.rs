@@ -1,6 +1,12 @@
 //! Connector credentials (D126): the vault, OAuth + PKCE, single-flight
 //! refresh, the egress client and the routes' authorization.
 #![cfg(not(target_arch = "wasm32"))]
+#![allow(
+    clippy::expect_used,
+    clippy::unwrap_in_result,
+    clippy::too_many_lines,
+    reason = "test harness: a failed setup step fails the test"
+)]
 
 use std::collections::BTreeMap;
 use std::io::{BufRead as _, BufReader, Read as _, Write as _};
@@ -118,10 +124,12 @@ impl Mock {
                         body.len()
                     );
                     for (name, value) in extra {
-                        head.push_str(&format!("{name}: {value}\r\n"));
+                        head = format!("{head}{name}: {value}\r\n");
                     }
-                    let _ = write!(out, "{head}\r\n{body}");
-                    let _ = out.flush();
+                    // A client that hung up is not this server's failure.
+                    if write!(out, "{head}\r\n{body}").is_ok() {
+                        out.flush().ok();
+                    }
                 });
             }
         });
@@ -270,7 +278,7 @@ fn vault_round_trips_and_binds_each_value_to_its_cell_slot_and_revision() {
         other_cell.open_sealed("connection:a", 3, &sealed),
         Err(VaultError::Integrity)
     );
-    let mut tampered = sealed.clone();
+    let mut tampered = sealed;
     tampered.ciphertext[0] ^= 1;
     assert_eq!(
         vault.open_sealed("connection:a", 3, &tampered),
@@ -452,11 +460,15 @@ impl Lookup for Rebinding {
     fn lookup(&self, _host: &str, _port: u16) -> std::io::Result<Vec<IpAddr>> {
         let call = self.0.fetch_add(1, Ordering::SeqCst);
         Ok(vec![if call == 0 {
-            "192.0.2.10".parse().expect("ip")
+            IpAddr::from([192, 0, 2, 10])
         } else {
-            "127.0.0.1".parse().expect("ip")
+            IpAddr::from([127, 0, 0, 1])
         }])
     }
+}
+
+fn lookup_of(lookup: &Arc<Rebinding>) -> Arc<dyn Lookup> {
+    Arc::clone(lookup)
 }
 
 fn post(url: &str) -> http::Request<Vec<u8>> {
@@ -474,7 +486,7 @@ fn dns_rebinding_is_refused_and_never_reaches_the_internal_address() {
     let egress = Egress::with_connect_timeout(
         Vec::new(),
         None,
-        Arc::clone(&lookup) as Arc<dyn Lookup>,
+        lookup_of(&lookup),
         Duration::from_millis(300),
     )
     .expect("egress")
@@ -500,8 +512,7 @@ fn dns_rebinding_is_refused_and_never_reaches_the_internal_address() {
 #[test]
 fn internal_and_plain_http_destinations_are_refused_before_any_lookup() {
     let lookup = Arc::new(Rebinding::default());
-    let egress =
-        Egress::new(Vec::new(), None, Arc::clone(&lookup) as Arc<dyn Lookup>).expect("egress");
+    let egress = Egress::new(Vec::new(), None, lookup_of(&lookup)).expect("egress");
     for url in [
         "https://169.254.169.254/latest/meta-data",
         "https://10.0.0.1/",
@@ -683,7 +694,7 @@ fn concurrent_refreshes_make_exactly_one_token_endpoint_call() {
         .seen()
         .into_iter()
         .filter(|s| s.line.starts_with("POST /token"))
-        .last()
+        .next_back()
         .expect("second");
     assert!(second.body.contains(NEW_REFRESH), "{}", second.body);
 }
@@ -727,8 +738,10 @@ fn query_param(url: &str, name: &str) -> String {
         .expect("url")
         .query_pairs()
         .find(|(key, _)| key == name)
-        .map(|(_, value)| value.into_owned())
-        .unwrap_or_else(|| panic!("{name} missing from {url}"))
+        .map_or_else(
+            || panic!("{name} missing from {url}"),
+            |(_, value)| value.into_owned(),
+        )
 }
 
 #[test]
