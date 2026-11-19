@@ -6,6 +6,7 @@ import { connectors } from "./connectors.ts"
 import { MCP_PATH, serveMcp } from "./mcp.ts"
 import { cellFor } from "./cell.ts"
 import { questions } from "./questions.ts"
+import { billingConfig, billingDocument, entitlementOf, recordWebhook, subscribed, webhookSeen, type BillingConfig, type BillingDb } from "./billing.ts"
 import { cellScope } from "./scope.ts"
 
 /** The Studio Worker: Better Auth under /api/auth, authenticated /api/*, static assets for everything else. */
@@ -46,6 +47,15 @@ export interface Env {
   readonly AGENT_FALLBACK_MODEL?: string
   /** What the assistant may spend in all, in dollars (default 20). */
   readonly AGENT_SPEND_CAP_USD?: string
+  /**
+   * Hosted billing through Polar (worker/billing.ts); all four or none. None: billing is off and
+   * every limit is unlimited (self-hosting). POLAR_SERVER is "sandbox" or "production"; POLAR_PLANS
+   * is the plan table as JSON (billing.ts PLACEHOLDER_PLANS shows its shape).
+   */
+  readonly POLAR_ACCESS_TOKEN?: string
+  readonly POLAR_WEBHOOK_SECRET?: string
+  readonly POLAR_SERVER?: string
+  readonly POLAR_PLANS?: string
 }
 
 export const refuse = (status: number, reason: string, headers: HeadersInit = {}) =>
@@ -80,7 +90,8 @@ function auth(env: Env): Auth {
   }
   const { TOOL_GATEWAY_URL: url, TOOL_GATEWAY_CLIENT_ID: clientId, TOOL_GATEWAY_CLIENT_SECRET: clientSecret } = env
   const gateway = url === undefined || clientId === undefined || clientSecret === undefined ? undefined : { url, clientId, clientSecret }
-  const instance = createAuth({ mcp: mcpOn(env), database: env.AUTH_DB, secret: env.BETTER_AUTH_SECRET, baseURL: env.BETTER_AUTH_URL, trustedOrigins: trustedOrigins(env), defaultEnvironmentId: env.STUDIO_DEFAULT_ENVIRONMENT_ID?.trim() || undefined, scrypt: passwordScrypt(env.AUTH_SCRYPT), clientIpHeader: clientIpHeader(env.STUDIO_CLIENT_IP_HEADER), ...signUpEmails(env) === undefined ? {} : { signUpEmails: signUpEmails(env) }, ...sendMagicLink === undefined ? {} : { sendMagicLink }, ...env.STUDIO_DEFAULT_ORG === undefined ? {} : { defaultOrganizationId: env.STUDIO_DEFAULT_ORG }, ...gateway === undefined ? {} : { gateway } })
+  const billing = billingConfig(env)
+  const instance = createAuth({ ...billing === undefined ? {} : { billing: { config: billing, db: env.AUTH_DB as unknown as BillingDb } }, mcp: mcpOn(env), database: env.AUTH_DB, secret: env.BETTER_AUTH_SECRET, baseURL: env.BETTER_AUTH_URL, trustedOrigins: trustedOrigins(env), defaultEnvironmentId: env.STUDIO_DEFAULT_ENVIRONMENT_ID?.trim() || undefined, scrypt: passwordScrypt(env.AUTH_SCRYPT), clientIpHeader: clientIpHeader(env.STUDIO_CLIENT_IP_HEADER), ...signUpEmails(env) === undefined ? {} : { signUpEmails: signUpEmails(env) }, ...sendMagicLink === undefined ? {} : { sendMagicLink }, ...env.STUDIO_DEFAULT_ORG === undefined ? {} : { defaultOrganizationId: env.STUDIO_DEFAULT_ORG }, ...gateway === undefined ? {} : { gateway } })
   instances.set(env.AUTH_DB, instance)
   return instance
 }
@@ -111,6 +122,53 @@ async function me(request: Request, env: Env): Promise<Response> {
 }
 
 const mcpOn = (env: Env) => env.STUDIO_MCP === "on"
+
+/** Polar's signed webhooks: a delivery id already applied is acknowledged without applying it again. */
+export const POLAR_WEBHOOK_PATH = "/api/auth/polar/webhooks"
+async function polarWebhook(request: Request, env: Env): Promise<Response> {
+  const db = env.AUTH_DB as unknown as BillingDb
+  const id = request.headers.get("webhook-id")
+  if (id !== null && await webhookSeen(db, id)) return Response.json({ received: true }, { headers: { "cache-control": "no-store" } })
+  // Better Auth's Polar plugin verifies the signature (and its 5-minute window) before anything is applied.
+  const response = await auth(env).handler(request)
+  if (response.ok && id !== null) await recordWebhook(db, id, Date.now())
+  return response
+}
+
+/** A Polar page (checkout, portal) the plugin minted for this person; refused unless it is https. */
+async function toPolar(response: Response): Promise<Response> {
+  if (!response.ok) return refuse(response.status === 401 ? 401 : 502, response.status === 401 ? "Sign in first." : "Billing is unavailable right now; try again shortly.")
+  const { url } = (await response.json()) as { url?: unknown }
+  if (typeof url !== "string" || !URL.canParse(url) || new URL(url).protocol !== "https:") return refuse(502, "Billing is unavailable right now; try again shortly.")
+  return new Response(null, { status: 303, headers: { location: url, "cache-control": "no-store" } })
+}
+
+/**
+ * The billing routes: the server's billing document for the shell, and links that send the signed-in
+ * person to Polar. Checkout and portal go through the plugin's own endpoints (session, origin and rate
+ * checks included); a person who already pays is sent to the portal, never a second checkout.
+ */
+async function billingRoute(request: Request, env: Env, billing: BillingConfig | undefined, pathname: string): Promise<Response> {
+  if (request.method !== "GET") return refuse(405, "GET only.", { allow: "GET" })
+  const session = await auth(env).api.getSession({ headers: request.headers })
+  if (session === null) return refuse(401, "Sign in first.")
+  const db = env.AUTH_DB as unknown as BillingDb
+  if (pathname === "/api/billing") return Response.json(await billingDocument(db, billing, env.BETTER_AUTH_URL, session.user.id), { headers: { "cache-control": "no-store" } })
+  if (billing === undefined) return refuse(404, "Billing is not enabled on this deployment.")
+  const internal = (path: string, body: unknown) => auth(env).handler(new Request(new URL(`/api/auth${path}`, env.BETTER_AUTH_URL), {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie: request.headers.get("cookie") ?? "", origin: new URL(env.BETTER_AUTH_URL).origin, [clientIpHeader(env.STUDIO_CLIENT_IP_HEADER)]: request.headers.get(clientIpHeader(env.STUDIO_CLIENT_IP_HEADER)) ?? "" },
+    body: JSON.stringify(body),
+  }))
+  if (pathname === "/api/billing/portal") return toPolar(await internal("/customer/portal", { redirect: false }))
+  if (pathname === "/api/billing/checkout") {
+    const plan = new URL(request.url).searchParams.get("plan")
+    if (plan === null || !billing.table.plans.some((candidate) => candidate.id === plan)) return refuse(404, "No such plan.")
+    if (subscribed(await entitlementOf(db, billing, session.user.id))) return toPolar(await internal("/customer/portal", { redirect: false }))
+    return toPolar(await internal("/checkout", { slug: plan, redirect: false }))
+  }
+  return refuse(404, "No such endpoint.")
+}
 /** The invited addresses, lower-case; undefined (open sign-up) when the setting is absent. */
 export const signUpEmails = (env: Pick<Env, "STUDIO_SIGNUP_EMAILS">): readonly string[] | undefined =>
   env.STUDIO_SIGNUP_EMAILS === undefined ? undefined : env.STUDIO_SIGNUP_EMAILS.split(",").map((email) => email.trim().toLowerCase()).filter(Boolean)
@@ -139,11 +197,13 @@ export default {
     }
     if (pathname === "/api/auth/magic-link/verify" && !(await verifyMagicLinkOrigin(request, env.BETTER_AUTH_SECRET, trustedOrigins(env)))) return refuse(403, "Magic link is not valid for this origin.")
     if (pathname === "/api/auth/sign-up/email") return publicSignUp(await auth(env).handler(request))
+    if (pathname === POLAR_WEBHOOK_PATH && billingConfig(env) !== undefined) return polarWebhook(request, env)
     // The gateway provider is link-only: refuse every sign-in that could start from it (social and
     // generic OAuth), so a linked gateway identity never yields a Studio session. Linking stays.
     if (SIGN_IN_ELSEWHERE.has(pathname)) return refuse(403, "Studio sign-in is by email and password or magic link.")
     if (pathname.startsWith("/api/auth/")) return auth(env).handler(request)
     if (pathname === "/api/me") return me(request, env)
+    if (pathname === "/api/billing" || pathname.startsWith("/api/billing/")) return billingRoute(request, env, billingConfig(env), pathname)
     // Every Norn call goes to the host as the resolved actor; the host and its PDP decide.
     if (pathname.startsWith("/api/host/")) {
       const actor = await resolveActor(request, auth(env))

@@ -11,6 +11,8 @@ import { organization } from "better-auth/plugins/organization"
 import { adminAc, defaultStatements, memberAc, ownerAc } from "better-auth/plugins/organization/access"
 import { hashPassword, verifyPassword, type PasswordScrypt } from "./password.ts"
 import type { ClientIpHeader } from "./client-ip.ts"
+import { admitCell, admitMember, refusalMessage, type Admission, type BillingDb } from "./billing.ts"
+import { polarPlugin, type PolarBilling } from "./polar.ts"
 
 /**
  * Better Auth for the hosted Studio: email + password, email magic link,
@@ -72,6 +74,14 @@ export interface AuthConfig {
   readonly mcp?: boolean
   /** The header the edge sets to the client's address (rate limits); never defaulted. */
   readonly clientIpHeader: ClientIpHeader
+  /** Hosted billing through Polar (polar.ts); absent, nothing is billed or limited. */
+  readonly billing?: PolarBilling
+}
+
+/** A plan limit refuses as a typed 403 the client renders as given: `code` PLAN_LIMIT and the `refusal`. */
+function enforce(admission: Admission): void {
+  if (admission.kind === "admitted") return
+  throw new APIError("FORBIDDEN", { code: "PLAN_LIMIT", message: refusalMessage(admission), refusal: admission })
 }
 
 /** Where assistants reach Norn, and the resource their access tokens are bound to (RFC 8707). */
@@ -360,6 +370,9 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
         "/api-key/verify": { window: MINUTE, max: 60 },
         "/oauth2/register": { window: 60 * MINUTE, max: 20 },
         "/oauth2/token": { window: MINUTE, max: 60 },
+        // Polar delivers from a few addresses; a burst of subscription events must not be throttled.
+        "/polar/webhooks": { window: MINUTE, max: 600 },
+        "/checkout": { window: MINUTE, max: 10 },
       },
     },
     advanced: {
@@ -377,7 +390,13 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
       // sender verifies addresses, nobody can join an organization by claiming an invited email.
       organization({ ac, roles: ORG_ROLES, creatorRole: "owner", allowUserToCreateOrganization: true, requireEmailVerificationOnInvitation: true,
         organizationHooks: {
-          beforeCreateOrganization: async ({ organization }) => ({ data: { ...organization, ...organization.metadata === undefined ? {} : { metadata: publicMetadata(organization.metadata) } } }),
+          // Each workspace a person owns is a hosted cell their plan pays for (billing.ts); unbilled, always admitted.
+          beforeCreateOrganization: async ({ organization, user }) => {
+            enforce(await admitCell(config.database as unknown as BillingDb, config.billing?.config, config.baseURL, user.id))
+            return { data: { ...organization, ...organization.metadata === undefined ? {} : { metadata: publicMetadata(organization.metadata) } } }
+          },
+          beforeCreateInvitation: async ({ organization }) => enforce(await admitMember(config.database as unknown as BillingDb, config.billing?.config, config.baseURL, organization.id)),
+          beforeAddMember: async ({ organization }) => enforce(await admitMember(config.database as unknown as BillingDb, config.billing?.config, config.baseURL, organization.id)),
           beforeUpdateOrganization: async ({ organization, member }) => {
             if (organization.metadata === undefined) return
             const adapter = await getCurrentAdapter((await self.auth?.$context)?.adapter as never)
@@ -414,6 +433,7 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
       jwt({ jwt: { issuer: config.baseURL, audience: "norn-host", expirationTime: "5m" } }),
       ...config.gateway === undefined ? [] : [gatewayLink(config.gateway)],
       ...config.mcp === true ? assistantAuthorization(config.baseURL) : [],
+      ...config.billing === undefined ? [] : [polarPlugin(config.billing, config.baseURL)],
     ],
     databaseHooks: {
       user: {
