@@ -50,7 +50,7 @@ const ADDED: [&str; 4] = [
     "application_count",
     "completion_rate",
 ];
-/// Core evidence types the trusted base may lack (as `hosted_load.rs`).
+/// Core evidence types the trusted base may lack (as a hosted load provisions them).
 const CELL_OWNED: [&str; 3] = [
     "norn.ObservedLinkClaim.entity.json",
     "norn.SourceDocument.interface.json",

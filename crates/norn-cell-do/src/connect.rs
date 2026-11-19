@@ -954,8 +954,8 @@ mod tests {
     #[test]
     fn only_the_declared_routes_are_this_modules() {
         assert!(matches!(
-            route_of("/v1/sources/erpnext.sandbox:sync"),
-            Some(Route::Sync("erpnext.sandbox"))
+            route_of("/v1/sources/erpnext.rest:sync"),
+            Some(Route::Sync("erpnext.rest"))
         ));
         assert!(matches!(route_of("/v1/uploads:begin"), Some(Route::Begin)));
         assert!(matches!(route_of("/v1/uploads:read"), Some(Route::Read)));

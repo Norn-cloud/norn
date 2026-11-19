@@ -6,7 +6,7 @@
  * checker's findings, and installs only for an owner or admin. `apply` plans
  * first and applies against the planned revision.
  *
- *   norn apply registry/packs/jewelry --url https://studio.example/api/host \
+ *   norn apply fixtures/packs/batches --url https://studio.example/api/host \
  *     --org ORG --env ENV --email you@example.com --password-env NORN_PASSWORD
  *
  * `--token-env VAR` sends a host bearer token instead (a host reached

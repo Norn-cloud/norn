@@ -465,7 +465,7 @@ mod tests {
     #[test]
     fn a_pack_directory_is_read_in_name_order_and_kept_exact() {
         let pack =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../registry/packs/jewelry/artifacts");
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/packs/batches/artifacts");
         let read = artifacts(&[pack]).unwrap();
         let ids: Vec<String> = read
             .iter()
@@ -474,10 +474,10 @@ mod tests {
         assert_eq!(
             ids,
             [
-                "jewelry.Melt.entity",
-                "jewelry.melt.access.policy",
-                "jewelry.melt.fine_mass_conserved.law",
-                "jewelry.melt.record.action"
+                "lab.Batch.entity",
+                "lab.batch.access.policy",
+                "lab.batch.mass_conserved.law",
+                "lab.batch.record.action"
             ]
         );
     }

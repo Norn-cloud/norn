@@ -3,10 +3,10 @@
 //! policy, never by an endpoint or a client claim.
 //!
 //! The documents pack is provisioned on a tenant cell and its scans are loaded
-//! through the cell's own mapping. Invoice INV-0041 prints lines 18.50 +
+//! through the cell's own mapping. Invoice INV-1041 prints lines 18.50 +
 //! 12.00 and a total of 30.50; a correction of its total to 30.00 breaks
 //! `canon.ItemizedDocument.total_matches_lines`, the canon concept's law the
-//! scanned document inherits (and, as its journal entry JE-0041 books 30.50,
+//! scanned document inherits (and, as its journal entry JE-1041 books 30.50,
 //! `docs.ScannedDocument.total_matches_ledger`). Every role the pack lets call
 //! the correction is refused the same way and nothing commits, but only an
 //! admin or owner reads which law refused, on which document, with which
@@ -98,11 +98,10 @@ fn documents() -> Vec<Value> {
     .iter()
     .map(|name| artifact(&core.join(name)))
     .collect();
-    let mut paths: Vec<PathBuf> =
-        std::fs::read_dir(root().join("registry/packs/documents/artifacts"))
-            .expect("pack artifacts")
-            .map(|entry| entry.expect("entry").path())
-            .collect();
+    let mut paths: Vec<PathBuf> = std::fs::read_dir(root().join("fixtures/packs/scans/artifacts"))
+        .expect("pack artifacts")
+        .map(|entry| entry.expect("entry").path())
+        .collect();
     paths.sort();
     paths.sort_by_key(|path| {
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
@@ -153,12 +152,12 @@ impl Cell {
         )
     }
 
-    /// A correction of INV-0041's total to `total` by `role`.
+    /// A correction of INV-1041's total to `total` by `role`.
     fn correct(&mut self, role: &str, total: &str) -> (u16, Value) {
         let body = json!({ "idempotencyKey": format!("inv-0041-{role}-{total}"),
-            "input": { "id": "SCAN-INV-0041", "currency": "USD", "total": total,
+            "input": { "id": "SCAN-INV-1041", "currency": "USD", "total": total,
                        "correction_reason": "typo",
-                       "correction_evidence": "SCAN-INV-0041~total" } });
+                       "correction_evidence": "SCAN-INV-1041~total" } });
         let response = self.call(
             &format!("/v1/actions/{CORRECT}"),
             &user(role),
@@ -245,7 +244,7 @@ fn only_admins_and_owners_read_a_law_refusal() {
             "{role}: {refusal}"
         );
         assert!(
-            reason["subject"].to_string().contains("SCAN-INV-0041"),
+            reason["subject"].to_string().contains("SCAN-INV-1041"),
             "{role}: {refusal}"
         );
         // The refused total and the values the document holds it against:

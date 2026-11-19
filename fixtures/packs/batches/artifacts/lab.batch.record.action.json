@@ -1,0 +1,158 @@
+{
+  "artifactId": "lab.batch.record.action",
+  "dependencies": [
+    {
+      "artifactId": "core.units",
+      "kind": "entity",
+      "required": true,
+      "version": "1.0.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Record a batch",
+  "namespace": "lab",
+  "payload": {
+    "access": {
+      "artifactId": "lab.batch.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "lab.batch.record",
+    "description": "Record how much mass a batch took in, gave out and lost.",
+    "effectProgram": {
+      "entityArtifactId": "lab.Batch.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "id",
+      "objectKind": "lab.Batch"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Batch number",
+          "type": "string"
+        },
+        "input_g": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 3,
+            "unit": {
+              "code": "g",
+              "system": "ucum"
+            }
+          },
+          "title": "Mass in (g)",
+          "type": "number"
+        },
+        "loss_g": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 3,
+            "unit": {
+              "code": "g",
+              "system": "ucum"
+            }
+          },
+          "title": "Recorded loss (g)",
+          "type": "number"
+        },
+        "loss_reason": {
+          "description": "Why mass was lost, when it was.",
+          "title": "Loss reason",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "material": {
+          "enum": [
+            "copper",
+            "tin"
+          ],
+          "title": "Material",
+          "type": "string"
+        },
+        "output_g": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 3,
+            "unit": {
+              "code": "g",
+              "system": "ucum"
+            }
+          },
+          "title": "Mass out (g)",
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "material",
+        "input_g",
+        "output_g",
+        "loss_g",
+        "loss_reason"
+      ],
+      "type": "object",
+      "x-norn": {
+        "groups": [
+          {
+            "fields": [
+              "/id",
+              "/material"
+            ],
+            "id": "batch",
+            "title": "Batch"
+          },
+          {
+            "fields": [
+              "/input_g",
+              "/output_g",
+              "/loss_g",
+              "/loss_reason"
+            ],
+            "id": "mass",
+            "title": "Mass"
+          }
+        ]
+      }
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Record a batch",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "lab.Batch"
+      },
+      {
+        "change": "modified",
+        "entityKind": "lab.Batch"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "fixtures/packs/batches/artifacts/lab.batch.record.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

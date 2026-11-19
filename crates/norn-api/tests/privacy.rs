@@ -378,7 +378,7 @@ fn every_mode_is_applied_on_the_server_and_an_unkeyed_pseudonym_redacts() {
     assert_eq!(document["masked"]["email"]["mode"], "redacted");
 }
 
-/// The documents Studio's privacy walk replays (`fixtures/demo/privacy`), as
+/// The documents Studio's privacy walk replays (`fixtures/privacy`), as
 /// this server writes them for a Party-shaped cell: a viewer's grid page, an
 /// auditor's, and an auditor's reveal with its receipt. `NORN_BLESS=1`
 /// rewrites them; review the diff.
@@ -462,8 +462,7 @@ fn party_cell() -> (DevHost<NativeEngine>, tempfile::TempDir) {
 }
 
 fn retained(name: &str, document: &dyn erased::Doc) {
-    let root =
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/demo/privacy");
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/privacy");
     let mut text = document.text();
     text.push('\n');
     let file = root.join(name);
@@ -676,7 +675,7 @@ fn the_guard_tokenizes_marked_fields_and_detected_identifiers_and_restores_throu
     assert!(viewer.reveals.is_empty() && !viewer.complete);
 }
 
-/// The `pitch` cell's set: the three-systems catalog with the privacy pack
+/// A privacy cell's set: the three-systems catalog with the privacy pack
 /// (its marking catalog and reveal policy) and its `canon.Party` overlay in
 /// place of the canon artifact. It admits as one set, and the canon pack
 /// alone stays unmarked.
@@ -947,7 +946,7 @@ fn a_question_cannot_group_or_filter_by_a_marked_party_name() {
 }
 
 /// HOST-INSTALL-1: a pack applied over a provisioned privacy set keeps its
-/// markings. The jewelry pack is applied through `apply_definitions` (the
+/// markings. The batches fixture pack is applied through `apply_definitions` (the
 /// hosted route's function); the read path takes the marking catalog from
 /// the retained canonical set of the new revision, so a member's read of
 /// `canon.Party.display_name` is still the pseudonym.
@@ -1034,15 +1033,15 @@ fn an_applied_pack_keeps_the_privacy_markings() {
         environment_id: Some("dev".into()),
     };
     let pack: Vec<Json> = [
-        "jewelry.Melt.entity",
-        "jewelry.melt.access.policy",
-        "jewelry.melt.fine_mass_conserved.law",
-        "jewelry.melt.record.action",
+        "lab.Batch.entity",
+        "lab.batch.access.policy",
+        "lab.batch.mass_conserved.law",
+        "lab.batch.record.action",
     ]
     .iter()
     .map(|id| {
         serde_json::from_str(&text(&format!(
-            "registry/packs/jewelry/artifacts/{id}.json"
+            "fixtures/packs/batches/artifacts/{id}.json"
         )))
         .unwrap()
     })

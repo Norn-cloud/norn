@@ -113,7 +113,7 @@ test("a concept's law governs every concept that implements it, and a sum over i
     read("canon/artifacts/canon.ItemizedDocument.interface.json"),
     read("canon/artifacts/canon.LineItem.interface.json"),
     read("canon/artifacts/canon.ItemizedDocument.total_matches_lines.law.json"),
-    read("documents/artifacts/docs.ScannedDocument.entity.json"),
+    read("../../fixtures/packs/scans/artifacts/docs.ScannedDocument.entity.json"),
   ]
   const catalog = catalogOf(document, "en")
   const law = catalog.byName.get("docs.ScannedDocument")?.laws.find(({ id }) => id === "canon.ItemizedDocument.total_matches_lines")

@@ -8,14 +8,14 @@ test("a step along the row goes straight across, its label mid-gap", () => {
 test("a step down to the next row runs in the lane between the rows, its label under its own source", () => {
   const routed = laneRoute({ x: 144, y: 29 }, { x: 240, y: 139 })
   expect(routed.straight).toBe(false)
-  expect(routed.label).toEqual({ x: 144 + LANE.stub + 10, y: 139 - LANE.pitch / 2, anchor: "start" })
+  expect(routed.label).toEqual({ x: 144 + LANE.stub + 10, y: 139 - LANE.spacing / 2, anchor: "start" })
   // Two sources dropping to the same target sit at different places along the lane.
   expect(laneRoute({ x: 384, y: 29 }, { x: 240, y: 139 }).label.x).not.toBe(routed.label.x)
 })
 
 test("a step back along the row loops above it and enters its target from the left", () => {
   const routed = laneRoute({ x: 384, y: 29 }, { x: 240, y: 29 })
-  expect(routed.label).toEqual({ x: 384 + LANE.stub - 10, y: 29 - LANE.pitch / 2, anchor: "end" })
+  expect(routed.label).toEqual({ x: 384 + LANE.stub - 10, y: 29 - LANE.spacing / 2, anchor: "end" })
   expect(routed.path.startsWith("M 384 29")).toBe(true)
   expect(routed.path.endsWith("L 240 29")).toBe(true)
 })
@@ -55,7 +55,7 @@ test("steps into one target land at distinct points on its left side, and leave 
 
 test("a rail moves the lane, the turns and the landing point", () => {
   const routed = laneRoute({ x: 144, y: 29 }, { x: 424, y: 139 }, LANE, { offset: 8, out: 8, into: 16, port: -8 })
-  expect(routed.label).toEqual({ x: 144 + LANE.stub + 8 + 10, y: 139 - LANE.pitch / 2 + 8, anchor: "start" })
+  expect(routed.label).toEqual({ x: 144 + LANE.stub + 8 + 10, y: 139 - LANE.spacing / 2 + 8, anchor: "start" })
   expect(routed.path.endsWith("L 424 131")).toBe(true)
 })
 

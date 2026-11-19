@@ -2,12 +2,12 @@
 //! `POST /v1/cell/definitions:plan` and `:apply`, on the same [`Tenant`] the
 //! Durable Object binding drives.
 //!
-//! The pitch's second moment, end to end on a provisioned cell: a broken
-//! jewelry pack is refused with the checker's diagnostic and changes nothing;
+//! End to end on a provisioned cell, with the batches fixture pack: a broken
+//! pack is refused with the checker's diagnostic and changes nothing;
 //! a member may not apply; the owner's plan names the new type; an admin's
-//! apply installs it as the next revision with a receipt; a melt that loses
-//! metal is refused and a correct one accepted; a restart reopens the cell at
-//! the applied revision; and a law change the stored melts break is held back
+//! apply installs it as the next revision with a receipt; a batch that loses
+//! mass is refused and a correct one accepted; a restart reopens the cell at
+//! the applied revision; and a law change the stored batches break is held back
 //! with findings naming them.
 //!
 //! These pin decisions of the server's permission and admission system that
@@ -41,17 +41,15 @@ const ISSUER: &str = "https://studio-preview.example";
 const NOW: u64 = 1_800_000_000;
 const HANDLE_KEY: [u8; 32] = [7; 32];
 const QUERY: &str = "orgId=org_a&environmentId=prod";
-const MELT: &str = "jewelry.Melt";
-const RECORD: &str = "jewelry.melt.record";
+const BATCH: &str = "lab.Batch";
+const RECORD: &str = "lab.batch.record";
 const RECORDED: &str =
     include_str!("../../../fixtures/demo/explorer/three-systems.definitions.json");
-const JEWELRY: [&str; 4] = [
-    include_str!("../../../registry/packs/jewelry/artifacts/jewelry.Melt.entity.json"),
-    include_str!("../../../registry/packs/jewelry/artifacts/jewelry.melt.access.policy.json"),
-    include_str!(
-        "../../../registry/packs/jewelry/artifacts/jewelry.melt.fine_mass_conserved.law.json"
-    ),
-    include_str!("../../../registry/packs/jewelry/artifacts/jewelry.melt.record.action.json"),
+const BATCHES: [&str; 4] = [
+    include_str!("../../../fixtures/packs/batches/artifacts/lab.Batch.entity.json"),
+    include_str!("../../../fixtures/packs/batches/artifacts/lab.batch.access.policy.json"),
+    include_str!("../../../fixtures/packs/batches/artifacts/lab.batch.mass_conserved.law.json"),
+    include_str!("../../../fixtures/packs/batches/artifacts/lab.batch.record.action.json"),
 ];
 
 fn key() -> SigningKey {
@@ -88,7 +86,7 @@ fn scope() -> CellScope {
     }
 }
 
-/// The three-systems tenant set: the canon the jewelry pack specializes.
+/// The three-systems tenant set: the canon the batches pack specializes.
 fn tenant_set() -> Vec<Value> {
     let artifacts: Vec<Value> = serde_json::from_str(RECORDED).unwrap();
     artifacts
@@ -99,10 +97,10 @@ fn tenant_set() -> Vec<Value> {
         .collect()
 }
 
-/// The jewelry pack as the registry carries it: its action callable on a
+/// The batches pack as the registry carries it: its action callable on a
 /// tenant cell through the pack's own access policy.
-fn jewelry() -> Vec<Value> {
-    JEWELRY
+fn batches_pack() -> Vec<Value> {
+    BATCHES
         .iter()
         .map(|text| serde_json::from_str(text).unwrap())
         .collect()
@@ -110,7 +108,7 @@ fn jewelry() -> Vec<Value> {
 
 /// The pack with its law's predicate replaced by `expression`.
 fn with_law(expression: &str) -> Vec<Value> {
-    let mut artifacts = jewelry();
+    let mut artifacts = batches_pack();
     artifacts[2]["payload"]["response"]["expression"] = json!(expression);
     artifacts
 }
@@ -172,9 +170,9 @@ impl Cell {
         json_of(&read)["version"].as_u64().unwrap()
     }
 
-    fn melt(&mut self, id: &str, input: &str, output: &str, loss: &str) -> Response {
-        let body = json!({ "input": { "id": id, "metal": "gold", "input_fine_g": input,
-            "output_fine_g": output, "loss_fine_g": loss, "loss_reason": null },
+    fn batch(&mut self, id: &str, input: &str, output: &str, loss: &str) -> Response {
+        let body = json!({ "input": { "id": id, "material": "copper", "input_g": input,
+            "output_g": output, "loss_g": loss, "loss_reason": null },
             "idempotencyKey": id });
         self.call(
             "POST",
@@ -184,10 +182,10 @@ impl Cell {
         )
     }
 
-    fn melts(&mut self) -> Response {
+    fn batches(&mut self) -> Response {
         self.call(
             "GET",
-            &format!("/v1/objects/{MELT}"),
+            &format!("/v1/objects/{BATCH}"),
             Some(&user("admin")),
             "",
         )
@@ -219,13 +217,13 @@ fn a_pack_is_planned_and_applied_on_a_running_cell() {
     let mut cell = provisioned(&path);
     // Provisioning installs the cell's own sources pack after its set (#1358).
     let base = cell.version();
-    // Before the pack, the cell serves no melts.
-    assert_ne!(cell.melts().status, 200);
+    // Before the pack, the cell serves no batches.
+    assert_ne!(cell.batches().status, 200);
 
-    // A broken pack: the law reads a property the Melt does not have. Plan
+    // A broken pack: the law reads a property the Batch does not have. Plan
     // and apply refuse it with the checker's diagnostic, placed in the
     // submission; nothing changes.
-    let broken = with_law("self.input_fine_g == self.output_fine_g + self.loss_g");
+    let broken = with_law("self.input_g == self.output_g + self.loss_kg");
     let planned = cell.change(PLAN_PATH, Some("owner"), &broken, None);
     assert_eq!(planned.status, 422, "{}", planned.body);
     let refusal = json_of(&planned);
@@ -245,11 +243,11 @@ fn a_pack_is_planned_and_applied_on_a_running_cell() {
 
     // Only a definition writer (owner, admin) plans or applies; anyone else
     // gets the one opaque denial, whatever the body.
-    let denied = cell.change(APPLY_PATH, None, &jewelry(), Some(base));
+    let denied = cell.change(APPLY_PATH, None, &batches_pack(), Some(base));
     assert_eq!(denied.status, 403);
     for role in ["member", "viewer"] {
         for route in [PLAN_PATH, APPLY_PATH] {
-            let response = cell.change(route, Some(role), &jewelry(), Some(base));
+            let response = cell.change(route, Some(role), &batches_pack(), Some(base));
             assert_eq!(response, denied, "{role} {route}");
         }
     }
@@ -257,28 +255,28 @@ fn a_pack_is_planned_and_applied_on_a_running_cell() {
         "POST",
         APPLY_PATH,
         Some(&token("org_b", "owner")),
-        &json!({ "artifacts": jewelry(), "expectedVersion": 1 }).to_string(),
+        &json!({ "artifacts": batches_pack(), "expectedVersion": 1 }).to_string(),
     );
     assert_eq!(other_org, denied);
     assert_eq!(cell.version(), base);
 
-    // The owner's plan: four artifacts added, the Melt a new type.
-    let planned = cell.change(PLAN_PATH, Some("owner"), &jewelry(), None);
+    // The owner's plan: four artifacts added, the Batch a new type.
+    let planned = cell.change(PLAN_PATH, Some("owner"), &batches_pack(), None);
     assert_eq!(planned.status, 200, "{}", planned.body);
     let plan = json_of(&planned);
     assert_eq!(plan["baseVersion"], base);
     assert_eq!(plan["nextVersion"], base + 1);
     assert_eq!(plan["unchanged"], false);
     assert_eq!(plan["added"].as_array().unwrap().len(), 4, "{plan}");
-    assert_eq!(plan["newObjectTypes"], json!([MELT]));
+    assert_eq!(plan["newObjectTypes"], json!([BATCH]));
     assert_eq!(cell.version(), base, "a plan writes nothing");
 
     // Apply needs the planned revision; an admin applies it.
-    let unplanned = cell.change(APPLY_PATH, Some("admin"), &jewelry(), None);
+    let unplanned = cell.change(APPLY_PATH, Some("admin"), &batches_pack(), None);
     assert_eq!(unplanned.status, 400);
-    let stale = cell.change(APPLY_PATH, Some("admin"), &jewelry(), Some(base - 1));
+    let stale = cell.change(APPLY_PATH, Some("admin"), &batches_pack(), Some(base - 1));
     assert_eq!(json_of(&stale)["code"], "defs.stale");
-    let applied = cell.change(APPLY_PATH, Some("admin"), &jewelry(), Some(base));
+    let applied = cell.change(APPLY_PATH, Some("admin"), &batches_pack(), Some(base));
     assert_eq!(applied.status, 200, "{}", applied.body);
     let receipt = json_of(&applied);
     assert_eq!(receipt["outcome"], "installed");
@@ -286,56 +284,56 @@ fn a_pack_is_planned_and_applied_on_a_running_cell() {
     assert_eq!(receipt["receiptSha256"], plan["receiptSha256"]);
     assert_eq!(cell.version(), base + 1);
     // The same apply again installs nothing.
-    let again = cell.change(APPLY_PATH, Some("admin"), &jewelry(), Some(base + 1));
+    let again = cell.change(APPLY_PATH, Some("admin"), &batches_pack(), Some(base + 1));
     assert_eq!(json_of(&again)["outcome"], "unchanged", "{}", again.body);
     assert_eq!(cell.version(), base + 1);
 
-    // The new type is served at once, and its action is callable: a melt
-    // that loses metal is refused by the law, a correct one is accepted.
-    assert_eq!(cell.melts().status, 200);
-    let lossy = cell.melt("m1", "100.000", "98.000", "0.000");
+    // The new type is served at once, and its action is callable: a batch
+    // that loses mass is refused by the law, a correct one is accepted.
+    assert_eq!(cell.batches().status, 200);
+    let lossy = cell.batch("m1", "100.000", "98.000", "0.000");
     assert!(lossy.status >= 400, "{}", lossy.body);
     assert_eq!(
-        json_of(&cell.melts())["records"].as_array().map(Vec::len),
+        json_of(&cell.batches())["records"].as_array().map(Vec::len),
         Some(0)
     );
-    let correct = cell.melt("m2", "100.000", "98.000", "2.000");
+    let correct = cell.batch("m2", "100.000", "98.000", "2.000");
     assert_eq!(correct.status, 200, "{}", correct.body);
     assert_eq!(json_of(&correct)["outcome"], "committed");
     assert_eq!(
-        json_of(&cell.melts())["records"].as_array().map(Vec::len),
+        json_of(&cell.batches())["records"].as_array().map(Vec::len),
         Some(1)
     );
 
     // HOST-REOPEN-1: a restarted host reopens the cell at the applied
-    // revision, with the melt and its law.
+    // revision, with the batch and its law.
     drop(cell);
     let mut cell = Cell::opened(&path);
     assert_eq!(cell.version(), base + 1);
     assert_eq!(
-        json_of(&cell.melts())["records"].as_array().map(Vec::len),
+        json_of(&cell.batches())["records"].as_array().map(Vec::len),
         Some(1)
     );
-    let lossy = cell.melt("m3", "50.000", "49.000", "0.000");
+    let lossy = cell.batch("m3", "50.000", "49.000", "0.000");
     assert!(lossy.status >= 400, "{}", lossy.body);
 
-    // HOST-INSTALL-LIVE-1: a law the stored melt breaks is held back, with a
-    // finding naming the melt; nothing changes.
-    let stricter = with_law("self.input_fine_g == self.output_fine_g");
+    // HOST-INSTALL-LIVE-1: a law the stored batch breaks is held back, with a
+    // finding naming the batch; nothing changes.
+    let stricter = with_law("self.input_g == self.output_g");
     let held = cell.change(PLAN_PATH, Some("owner"), &stricter, None);
     assert_eq!(held.status, 409, "{}", held.body);
     let held = json_of(&held);
     assert_eq!(held["code"], "defs.live_data_refused");
     assert_eq!(
         held["diagnostics"][0]["span"]["pointer"],
-        format!("/objects/{MELT}/m2"),
+        format!("/objects/{BATCH}/m2"),
         "{held}"
     );
     let applied = cell.change(APPLY_PATH, Some("owner"), &stricter, Some(base + 1));
     assert_eq!(json_of(&applied)["code"], "defs.live_data_refused");
     assert_eq!(cell.version(), base + 1);
-    // A law the stored melt keeps installs, with the stored melt checked.
-    let looser = with_law("self.input_fine_g >= self.output_fine_g + self.loss_fine_g");
+    // A law the stored batch keeps installs, with the stored batch checked.
+    let looser = with_law("self.input_g >= self.output_g + self.loss_g");
     let applied = cell.change(APPLY_PATH, Some("owner"), &looser, Some(base + 1));
     assert_eq!(applied.status, 200, "{}", applied.body);
     assert_eq!(json_of(&applied)["plan"]["checkedObjects"], 1);
@@ -355,14 +353,14 @@ fn a_reserved_or_empty_change_is_refused() {
     let directory = tempfile::tempdir().unwrap();
     let mut cell = provisioned(&directory.path().join("cell.sqlite"));
     let base = cell.version();
-    let mut forged = jewelry();
+    let mut forged = batches_pack();
     forged[0]["artifactId"] = json!("core.forged");
     let refused = cell.change(PLAN_PATH, Some("owner"), &forged, None);
     assert_eq!(refused.status, 400);
     assert_eq!(json_of(&refused)["code"], "cell.reserved_artifact");
     let empty = cell.change(PLAN_PATH, Some("owner"), &[], None);
     assert_eq!(empty.status, 400);
-    let mut twice = jewelry();
+    let mut twice = batches_pack();
     twice.push(twice[0].clone());
     assert_eq!(
         cell.change(PLAN_PATH, Some("owner"), &twice, None).status,
@@ -385,7 +383,7 @@ impl Cell {
     }
 }
 
-/// "Add gold trading" from an agent (#520): the pack planned and applied
+/// "Add batch tracking" from an agent (#520): the pack planned and applied
 /// through MCP answers exactly what the routes answer, only a definition
 /// writer is offered the tools, and the pack's action is a tool afterwards.
 #[test]
@@ -402,10 +400,10 @@ fn an_agent_plans_and_applies_a_pack_through_mcp() {
     let planned = cell.mcp(
         "owner",
         "norn_plan_definitions",
-        &json!({"artifacts": jewelry()}),
+        &json!({"artifacts": batches_pack()}),
     );
     assert_eq!(planned["isError"], false, "{planned}");
-    let route = json_of(&cell.change(PLAN_PATH, Some("owner"), &jewelry(), None));
+    let route = json_of(&cell.change(PLAN_PATH, Some("owner"), &batches_pack(), None));
     assert_eq!(planned["structuredContent"], route);
     assert_eq!(planned["structuredContent"]["baseVersion"], json!(base));
 
@@ -414,13 +412,13 @@ fn an_agent_plans_and_applies_a_pack_through_mcp() {
     let denied = cell.mcp(
         "member",
         "norn_apply_definitions",
-        &json!({"artifacts": jewelry(), "expectedVersion": base}),
+        &json!({"artifacts": batches_pack(), "expectedVersion": base}),
     );
     assert!(denied.is_null(), "{denied}");
     let broken = cell.mcp(
         "owner",
         "norn_plan_definitions",
-        &json!({"artifacts": with_law("self.input_fine_g == self.output_fine_g + self.loss_g")}),
+        &json!({"artifacts": with_law("self.input_g == self.output_g + self.loss_kg")}),
     );
     assert_eq!(
         broken["structuredContent"]["code"], "defs.refused",
@@ -429,7 +427,7 @@ fn an_agent_plans_and_applies_a_pack_through_mcp() {
     let stale = cell.mcp(
         "owner",
         "norn_apply_definitions",
-        &json!({"artifacts": jewelry()}),
+        &json!({"artifacts": batches_pack()}),
     );
     assert_eq!(
         stale["isError"], true,
@@ -439,7 +437,7 @@ fn an_agent_plans_and_applies_a_pack_through_mcp() {
     let applied = cell.mcp(
         "owner",
         "norn_apply_definitions",
-        &json!({"artifacts": jewelry(), "expectedVersion": base}),
+        &json!({"artifacts": batches_pack(), "expectedVersion": base}),
     );
     assert_eq!(applied["isError"], false, "{applied}");
     assert_eq!(
@@ -458,16 +456,16 @@ fn an_agent_plans_and_applies_a_pack_through_mcp() {
     );
     // An agent whose tool list predates the install calls the new action by id,
     // through the same route and policy: the law refuses, then commits.
-    let melt = |id: &str, loss: &str| {
-        json!({"action": RECORD, "input": {"id": id, "metal": "gold",
-            "input_fine_g": "100.000", "output_fine_g": "99.000", "loss_fine_g": loss, "loss_reason": "crucible"}})
+    let batch = |id: &str, loss: &str| {
+        json!({"action": RECORD, "input": {"id": id, "material": "copper",
+            "input_g": "100.000", "output_g": "99.000", "loss_g": loss, "loss_reason": "spill"}})
     };
-    let refused = cell.mcp("member", "norn_call_action", &melt("melt-mcp-1", "0.000"));
+    let refused = cell.mcp("member", "norn_call_action", &batch("batch-mcp-1", "0.000"));
     assert_eq!(
         refused["structuredContent"]["code"], "core.laws.violated",
         "{refused}"
     );
-    let committed = cell.mcp("member", "norn_call_action", &melt("melt-mcp-2", "1.000"));
+    let committed = cell.mcp("member", "norn_call_action", &batch("batch-mcp-2", "1.000"));
     assert_eq!(
         committed["structuredContent"]["outcome"], "committed",
         "{committed}"
@@ -475,7 +473,7 @@ fn an_agent_plans_and_applies_a_pack_through_mcp() {
     let unknown = cell.mcp(
         "member",
         "norn_call_action",
-        &json!({"action": "jewelry.melt.erase", "input": {}}),
+        &json!({"action": "lab.batch.erase", "input": {}}),
     );
     assert_eq!(unknown["isError"], true, "{unknown}");
 }

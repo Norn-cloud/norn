@@ -52,12 +52,12 @@ fn host() -> (DevHost<NativeEngine>, FixturePrincipals) {
         .expect("retained catalog"),
     )
     .expect("artifacts");
-    // The admitted set the sync tests install: the sandbox packs' sources,
+    // The admitted set the sync tests install: the REST fixture packs' sources,
     // mappings and connectors, then the sources pack.
     for system in ["erpnext", "odoo"] {
         for kind in ["source", "mapping", "connector"] {
             artifacts.push(artifact(&format!(
-                "registry/packs/{system}-sandbox/artifacts/{system}.sandbox.{kind}.json"
+                "fixtures/packs/{system}-rest/artifacts/{system}.rest.{kind}.json"
             )));
         }
     }

@@ -55,7 +55,7 @@ export function NodeCard({ kind, kindLabel, title, subtitle, problems = 0, selec
   readonly problems?: number
   readonly selected?: boolean
   readonly className?: string
-  /** Taller than its content when its exits need the room (they sit a fixed pitch apart). */
+  /** Taller than its content when its exits need the room (they sit a fixed spacing apart). */
   readonly minHeight?: number
   readonly children?: ReactNode
   readonly testId?: string

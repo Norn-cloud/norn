@@ -648,8 +648,8 @@ fn every_currency_enum_and_code_set_is_the_one_iso_4217_list() {
         "erpnext/artifacts/erpnext.three",
         "odoo/artifacts/odoo.three",
         "shopify/artifacts/shopify.three",
-        "erpnext-sandbox/artifacts/erpnext.sandbox",
-        "odoo-sandbox/artifacts/odoo.sandbox",
+        "erpnext-rest/artifacts/erpnext.rest",
+        "odoo-rest/artifacts/odoo.rest",
     ] {
         let document = read(&format!("registry/packs/{source}.source.json"));
         for set in document["payload"]["codeSets"]

@@ -1,19 +1,19 @@
 //! #588 / #343 (L-provenance): scanned documents through the real mapping path.
 //!
-//! The admitted `registry/packs/documents` pack (with the core
+//! The admitted `fixtures/packs/scans` pack (with the core
 //! `norn.SourceEvidence` interface) is installed in a cell; the extracted rows
 //! of `fixtures/documents/scans.snapshot.json` are captured as raw observations
 //! (`inject_mapping_bundle`) and mapped (`process_mapping_bundle`), exactly as a
 //! connector delivers them. Then:
 //!
-//! - CAUGHT AT THE SOURCE: invoice INV-0042 prints lines 30.00 + 40.00 + 2.00,
+//! - CAUGHT AT THE SOURCE: invoice INV-1042 prints lines 30.00 + 40.00 + 2.00,
 //!   but the seeded legacy-OCR import reads its total as 720. LAW A
 //!   (`canon.ItemizedDocument.total_matches_lines`, the canon concept's law
 //!   the scanned document inherits) sums the line objects that link to the
 //!   document, records a finding pinned to the law and to each line it read,
 //!   and quarantines the document; the raw read keeps the source truth, and
 //!   the evidence of where the total was read survives.
-//! - SLIPPED THROUGH: expense report RPT-0117 prints no lines, so no law
+//! - SLIPPED THROUGH: expense report RPT-1117 prints no lines, so no law
 //!   applies, and its 72.0 read as 720 is admitted with field lineage.
 //! - CORRECTED: the governed correction patches the total, records the reason,
 //!   the evidence object and the verified actor (never caller input), and runs
@@ -84,7 +84,7 @@ fn documents() -> Vec<Value> {
         artifact("registry/packs/canon/artifacts/canon.ItemizedDocument.interface.json"),
         artifact("registry/packs/canon/artifacts/canon.LineItem.interface.json"),
     ];
-    let directory = root().join("registry/packs/documents/artifacts");
+    let directory = root().join("fixtures/packs/scans/artifacts");
     let mut paths: Vec<_> = std::fs::read_dir(&directory)
         .expect("pack artifacts")
         .map(|entry| entry.expect("entry").path())
@@ -504,7 +504,7 @@ fn text(record: &ObjectRecord, property: &str) -> String {
     }
 }
 
-/// LAW-LINK-MANY-1: INV-0042's finding under the concept's law read the three
+/// LAW-LINK-MANY-1: INV-1042's finding under the concept's law read the three
 /// line objects that link to the document, each pinned at the exact version it
 /// read, and records the values it compared.
 fn sums_the_linked_lines(findings: &[norn_ir::DataQualityFinding]) {
@@ -518,7 +518,7 @@ fn sums_the_linked_lines(findings: &[norn_ir::DataQualityFinding]) {
         lines_law.links,
         (1..=3)
             .map(|n| {
-                let key = format!("SCAN-INV-0042~line-{n}");
+                let key = format!("SCAN-INV-1042~line-{n}");
                 (format!("lines/{key}"), FactRef::new(LINE, key, 1))
             })
             .collect::<BTreeMap<_, _>>(),
@@ -545,13 +545,13 @@ fn a_dropped_decimal_is_caught_at_the_source_with_its_evidence() {
     let reader = store.read();
 
     let clean = reader
-        .authoritative_object(MAIN_WORLD, DOCUMENT, "SCAN-INV-0041")
+        .authoritative_object(MAIN_WORLD, DOCUMENT, "SCAN-INV-1041")
         .expect("read")
         .expect("a consistent invoice is admitted");
     assert_eq!(text(&clean, "total"), "30.5");
 
     let caught = reader
-        .object(MAIN_WORLD, DOCUMENT, "SCAN-INV-0042")
+        .object(MAIN_WORLD, DOCUMENT, "SCAN-INV-1042")
         .expect("read")
         .expect("raw reads keep the source truth");
     assert_eq!(text(&caught, "total"), "720");
@@ -566,13 +566,13 @@ fn a_dropped_decimal_is_caught_at_the_source_with_its_evidence() {
     );
     assert!(
         reader
-            .authoritative_object(MAIN_WORLD, DOCUMENT, "SCAN-INV-0042")
+            .authoritative_object(MAIN_WORLD, DOCUMENT, "SCAN-INV-1042")
             .expect("read")
             .is_none(),
         "a quarantined document stays out of authoritative reads"
     );
     let findings = reader
-        .observation_findings(MAIN_WORLD, DOCUMENT, "SCAN-INV-0042")
+        .observation_findings(MAIN_WORLD, DOCUMENT, "SCAN-INV-1042")
         .expect("findings");
     // 720 breaks both laws: its lines sum to 72 and its booked entry is 72.00.
     assert_eq!(law_pins(&findings), [LAW, LAW_B], "{findings:#?}");
@@ -583,10 +583,10 @@ fn a_dropped_decimal_is_caught_at_the_source_with_its_evidence() {
             .all(|finding| finding.status == DataQualityFindingStatus::Open)
     );
 
-    // LAW B alone: INV-0043's one line and its total were both read as 720, so
+    // LAW B alone: INV-1043's one line and its total were both read as 720, so
     // its lines agree with its total; only its booked entry (72.00) does not.
     let both_misread = reader
-        .object(MAIN_WORLD, DOCUMENT, "SCAN-INV-0043")
+        .object(MAIN_WORLD, DOCUMENT, "SCAN-INV-1043")
         .expect("read")
         .expect("raw read");
     assert!(
@@ -595,12 +595,12 @@ fn a_dropped_decimal_is_caught_at_the_source_with_its_evidence() {
             .expect("quality")
     );
     let findings = reader
-        .observation_findings(MAIN_WORLD, DOCUMENT, "SCAN-INV-0043")
+        .observation_findings(MAIN_WORLD, DOCUMENT, "SCAN-INV-1043")
         .expect("findings");
     assert_eq!(law_pins(&findings), [LAW_B], "{findings:#?}");
     assert_eq!(
         findings[0].links.get("ledger_entry"),
-        Some(&FactRef::new("docs.LedgerEntry", "demo/ledger/JE-0043", 1)),
+        Some(&FactRef::new("docs.LedgerEntry", "demo/ledger/JE-1043", 1)),
         "the finding pins the exact entry version it read"
     );
     assert_eq!(
@@ -610,7 +610,7 @@ fn a_dropped_decimal_is_caught_at_the_source_with_its_evidence() {
 
     // Where the total was read survives the quarantine of the document.
     let evidence = reader
-        .object(MAIN_WORLD, EVIDENCE, "SCAN-INV-0042~total")
+        .object(MAIN_WORLD, EVIDENCE, "SCAN-INV-1042~total")
         .expect("read")
         .expect("total evidence");
     assert_eq!(text(&evidence, "subject_property"), "total");
@@ -621,11 +621,11 @@ fn a_dropped_decimal_is_caught_at_the_source_with_its_evidence() {
     );
     // A printed line's value is evidence for that line's amount.
     let line_evidence = reader
-        .object(MAIN_WORLD, EVIDENCE, "SCAN-INV-0042~lines.1.amount")
+        .object(MAIN_WORLD, EVIDENCE, "SCAN-INV-1042~lines.1.amount")
         .expect("read")
         .expect("line evidence");
     assert_eq!(text(&line_evidence, "subject_type"), LINE);
-    assert_eq!(text(&line_evidence, "subject_key"), "SCAN-INV-0042~line-1");
+    assert_eq!(text(&line_evidence, "subject_key"), "SCAN-INV-1042~line-1");
     assert_eq!(text(&line_evidence, "subject_property"), "amount");
     assert_eq!(text(&evidence, "extractor"), "legacy-ocr");
     assert!(text(&evidence, "document_uri").starts_with("s3://"));
@@ -636,7 +636,7 @@ fn a_dropped_decimal_is_caught_at_the_source_with_its_evidence() {
             .object(
                 MAIN_WORLD,
                 "docs.DocumentLine",
-                &format!("SCAN-INV-0042~line-{line}"),
+                &format!("SCAN-INV-1042~line-{line}"),
             )
             .expect("read")
             .expect("line");
@@ -651,7 +651,7 @@ fn a_slipped_value_is_admitted_with_field_lineage_and_corrected_by_a_governed_ac
         let cell = host.cell().expect("cell");
         let reader = cell.store().read();
         let record = reader
-            .authoritative_object(MAIN_WORLD, DOCUMENT, "SCAN-RPT-0117")
+            .authoritative_object(MAIN_WORLD, DOCUMENT, "SCAN-RPT-1117")
             .expect("read")
             .expect("no law applies to a document without lines");
         assert_eq!(text(&record, "total"), "720");
@@ -661,7 +661,7 @@ fn a_slipped_value_is_admitted_with_field_lineage_and_corrected_by_a_governed_ac
         let lineage = reader
             .instance_source_provenance(
                 MAIN_WORLD,
-                &FactRef::new(DOCUMENT, "SCAN-RPT-0117", record.version),
+                &FactRef::new(DOCUMENT, "SCAN-RPT-1117", record.version),
                 &mut budget,
                 |_| Ok(true),
             )
@@ -682,14 +682,14 @@ fn a_slipped_value_is_admitted_with_field_lineage_and_corrected_by_a_governed_ac
     let forged = correct(
         &host,
         STEWARD,
-        r#"{"idempotencyKey":"forged","input":{"id":"SCAN-RPT-0117","currency":"USD","total":"72.00","correction_reason":"r","correction_evidence":"SCAN-RPT-0117~total","actor":"user:someone-else"}}"#,
+        r#"{"idempotencyKey":"forged","input":{"id":"SCAN-RPT-1117","currency":"USD","total":"72.00","correction_reason":"r","correction_evidence":"SCAN-RPT-1117~total","actor":"user:someone-else"}}"#,
     );
     assert!(forged.is_err(), "a caller-supplied actor is refused");
     // Nor can it offer the actor-derived field itself (ACTION-ACTOR-1)...
     let offered = correct(
         &host,
         STEWARD,
-        r#"{"idempotencyKey":"offered","input":{"id":"SCAN-RPT-0117","currency":"USD","total":"72.00","correction_reason":"r","correction_evidence":"SCAN-RPT-0117~total","corrected_by":"user:someone-else"}}"#,
+        r#"{"idempotencyKey":"offered","input":{"id":"SCAN-RPT-1117","currency":"USD","total":"72.00","correction_reason":"r","correction_evidence":"SCAN-RPT-1117~total","corrected_by":"user:someone-else"}}"#,
     )
     .expect_err("a caller-supplied corrected_by is refused");
     assert!((400..500).contains(&offered.status), "{offered:?}");
@@ -718,7 +718,7 @@ fn a_slipped_value_is_admitted_with_field_lineage_and_corrected_by_a_governed_ac
     let uncited = correct(
         &host,
         STEWARD,
-        r#"{"idempotencyKey":"uncited","input":{"id":"SCAN-RPT-0117","currency":"USD","total":"72.00","correction_reason":"r","correction_evidence":"SCAN-RPT-0117~nowhere"}}"#,
+        r#"{"idempotencyKey":"uncited","input":{"id":"SCAN-RPT-1117","currency":"USD","total":"72.00","correction_reason":"r","correction_evidence":"SCAN-RPT-1117~nowhere"}}"#,
     );
     assert!(
         uncited.is_err(),
@@ -729,7 +729,7 @@ fn a_slipped_value_is_admitted_with_field_lineage_and_corrected_by_a_governed_ac
     let unexplained = correct(
         &host,
         STEWARD,
-        r#"{"idempotencyKey":"no-reason","input":{"id":"SCAN-RPT-0117","currency":"USD","total":"72.00","correction_reason":"","correction_evidence":"SCAN-RPT-0117~total"}}"#,
+        r#"{"idempotencyKey":"no-reason","input":{"id":"SCAN-RPT-1117","currency":"USD","total":"72.00","correction_reason":"","correction_evidence":"SCAN-RPT-1117~total"}}"#,
     );
     assert!(
         unexplained.is_err(),
@@ -739,14 +739,14 @@ fn a_slipped_value_is_admitted_with_field_lineage_and_corrected_by_a_governed_ac
     correct(
         &host,
         STEWARD,
-        r#"{"idempotencyKey":"rpt-0117","input":{"id":"SCAN-RPT-0117","currency":"USD","total":"72.00","correction_reason":"The scan reads 72.0; the import dropped the decimal point.","correction_evidence":"SCAN-RPT-0117~total"}}"#,
+        r#"{"idempotencyKey":"rpt-0117","input":{"id":"SCAN-RPT-1117","currency":"USD","total":"72.00","correction_reason":"The scan reads 72.0; the import dropped the decimal point.","correction_evidence":"SCAN-RPT-1117~total"}}"#,
     )
     .expect("a consistent, explained correction commits");
 
     corrected_with_history(&host, slipped);
 }
 
-/// After the RPT-0117 correction: the corrected values, the original version
+/// After the RPT-1117 correction: the corrected values, the original version
 /// kept as history, and the history read naming what wrote each version.
 fn corrected_with_history(host: &DevHost<NativeEngine>, slipped: u64) {
     use crate::object_review::NornVersionWriter::{Action, Mapping, Other};
@@ -754,14 +754,14 @@ fn corrected_with_history(host: &DevHost<NativeEngine>, slipped: u64) {
         let cell = host.cell().expect("cell");
         let reader = cell.store().read();
         let corrected = reader
-            .authoritative_object(MAIN_WORLD, DOCUMENT, "SCAN-RPT-0117")
+            .authoritative_object(MAIN_WORLD, DOCUMENT, "SCAN-RPT-1117")
             .expect("read")
             .expect("corrected");
         assert_eq!(text(&corrected, "total"), "72");
         assert_eq!(text(&corrected, "corrected_by"), STEWARD);
         assert_eq!(
             text(&corrected, "correction_evidence"),
-            "SCAN-RPT-0117~total"
+            "SCAN-RPT-1117~total"
         );
         assert_eq!(
             text(&corrected, "extractor"),
@@ -771,7 +771,7 @@ fn corrected_with_history(host: &DevHost<NativeEngine>, slipped: u64) {
         assert!(corrected.version > slipped);
         // The original version is history, not overwritten.
         let original = reader
-            .object_at_version(MAIN_WORLD, DOCUMENT, "SCAN-RPT-0117", slipped)
+            .object_at_version(MAIN_WORLD, DOCUMENT, "SCAN-RPT-1117", slipped)
             .expect("read")
             .expect("original version");
         assert_eq!(text(&original, "total"), "720");
@@ -781,7 +781,7 @@ fn corrected_with_history(host: &DevHost<NativeEngine>, slipped: u64) {
         &scope_query(),
         Some(STEWARD),
         DOCUMENT,
-        "SCAN-RPT-0117",
+        "SCAN-RPT-1117",
         &Access,
     )
     .expect("history");
@@ -824,7 +824,7 @@ fn corrected_with_history(host: &DevHost<NativeEngine>, slipped: u64) {
         host,
         &scope_query(),
         Some(STEWARD),
-        (DOCUMENT, "SCAN-RPT-0117", slipped),
+        (DOCUMENT, "SCAN-RPT-1117", slipped),
         &Access,
     )
     .expect("the imported version keeps its lineage");
@@ -838,7 +838,7 @@ fn a_correction_must_satisfy_the_law_and_then_releases_the_quarantine() {
         &scope_query(),
         Some(STEWARD),
         DOCUMENT,
-        "SCAN-INV-0042",
+        "SCAN-INV-1042",
         &Access,
     )
     .expect("a reviewer reads the findings of a quarantined document");
@@ -846,7 +846,7 @@ fn a_correction_must_satisfy_the_law_and_then_releases_the_quarantine() {
     assert_eq!(findings.findings.len(), 2);
     assert!(
         findings.evidence.iter().any(
-            |evidence| evidence.object_type == EVIDENCE && evidence.id == "SCAN-INV-0042~total"
+            |evidence| evidence.object_type == EVIDENCE && evidence.id == "SCAN-INV-1042~total"
         ),
         "the evidence of the quarantined total is listed: {:?}",
         findings.evidence
@@ -857,7 +857,7 @@ fn a_correction_must_satisfy_the_law_and_then_releases_the_quarantine() {
             &scope_query(),
             Some("user:stranger"),
             DOCUMENT,
-            "SCAN-INV-0042",
+            "SCAN-INV-1042",
             &Access,
         )
         .is_err(),
@@ -877,7 +877,7 @@ fn a_correction_must_satisfy_the_law_and_then_releases_the_quarantine() {
             .iter()
             .map(|item| (item.id.as_str(), item.open_findings))
             .collect::<Vec<_>>(),
-        [("SCAN-INV-0042", 2), ("SCAN-INV-0043", 1)]
+        [("SCAN-INV-1042", 2), ("SCAN-INV-1043", 1)]
     );
     let before = host
         .cell()
@@ -889,7 +889,7 @@ fn a_correction_must_satisfy_the_law_and_then_releases_the_quarantine() {
     let wrong = correct(
         &host,
         STEWARD,
-        r#"{"idempotencyKey":"inv-0042-wrong","input":{"id":"SCAN-INV-0042","currency":"USD","total":"70.00","correction_reason":"typo","correction_evidence":"SCAN-INV-0042~total"}}"#,
+        r#"{"idempotencyKey":"inv-0042-wrong","input":{"id":"SCAN-INV-1042","currency":"USD","total":"70.00","correction_reason":"typo","correction_evidence":"SCAN-INV-1042~total"}}"#,
     );
     let refusal = wrong.expect_err("70.00 is not 30.00 + 40.00 + 2.00");
     assert_eq!(refusal.status, 422, "{refusal:?}");
@@ -907,18 +907,18 @@ fn a_correction_must_satisfy_the_law_and_then_releases_the_quarantine() {
     correct(
         &host,
         STEWARD,
-        r#"{"idempotencyKey":"inv-0042","input":{"id":"SCAN-INV-0042","currency":"USD","total":"72.00","correction_reason":"The scan reads 72.00; the legacy import dropped the decimal point.","correction_evidence":"SCAN-INV-0042~total"}}"#,
+        r#"{"idempotencyKey":"inv-0042","input":{"id":"SCAN-INV-1042","currency":"USD","total":"72.00","correction_reason":"The scan reads 72.00; the legacy import dropped the decimal point.","correction_evidence":"SCAN-INV-1042~total"}}"#,
     )
     .expect("the consistent correction commits");
     let cell = host.cell().expect("cell");
     let reader = cell.store().read();
     let released = reader
-        .authoritative_object(MAIN_WORLD, DOCUMENT, "SCAN-INV-0042")
+        .authoritative_object(MAIN_WORLD, DOCUMENT, "SCAN-INV-1042")
         .expect("read")
         .expect("released from quarantine");
     assert_eq!(text(&released, "total"), "72");
     let findings = reader
-        .observation_findings(MAIN_WORLD, DOCUMENT, "SCAN-INV-0042")
+        .observation_findings(MAIN_WORLD, DOCUMENT, "SCAN-INV-1042")
         .expect("findings");
     assert_eq!(findings.len(), 2, "the original findings are retained");
     assert!(
@@ -931,8 +931,8 @@ fn a_correction_must_satisfy_the_law_and_then_releases_the_quarantine() {
     corrections_under_the_ledger_law(&host);
 }
 
-/// LAW-LINK-1 on a native write: INV-0043 printed one line of 72.00 and a
-/// total of 72.00, booked as JE-0043 (72.00); the import read 720 for both.
+/// LAW-LINK-1 on a native write: INV-1043 printed one line of 72.00 and a
+/// total of 72.00, booked as JE-1043 (72.00); the import read 720 for both.
 /// The misread line is corrected on the line itself (and the total in the
 /// same commit); the concept's law sums the lines as the commit leaves them.
 #[allow(
@@ -945,14 +945,14 @@ fn corrections_under_the_ledger_law(host: &DevHost<NativeEngine>) {
             format!(r#","document_total":"{total}""#)
         });
         format!(
-            r#"{{"idempotencyKey":"{key}","input":{{"id":"SCAN-INV-0043~line-1","currency":"USD","amount":"{amount}"{total},"correction_reason":"Line and total both read 720; the scan and journal entry JE-0043 say 72.00.","correction_evidence":"{evidence}"}}}}"#
+            r#"{{"idempotencyKey":"{key}","input":{{"id":"SCAN-INV-1043~line-1","currency":"USD","amount":"{amount}"{total},"correction_reason":"Line and total both read 720; the scan and journal entry JE-1043 say 72.00.","correction_evidence":"{evidence}"}}}}"#
         )
     };
     // Fixing the total alone breaks LAW A: the line still reads 720.
     let only_total = correct(
         host,
         STEWARD,
-        r#"{"idempotencyKey":"only-total","input":{"id":"SCAN-INV-0043","currency":"USD","total":"72.00","correction_reason":"r","correction_evidence":"SCAN-INV-0043~total"}}"#,
+        r#"{"idempotencyKey":"only-total","input":{"id":"SCAN-INV-1043","currency":"USD","total":"72.00","correction_reason":"r","correction_evidence":"SCAN-INV-1043~total"}}"#,
     )
     .expect_err("refused");
     assert_eq!(only_total.status, 422, "{only_total:?}");
@@ -977,7 +977,7 @@ fn corrections_under_the_ledger_law(host: &DevHost<NativeEngine>) {
         host,
         STEWARD,
         CORRECT_LINE,
-        &line("only-line", "72.00", None, "SCAN-INV-0043~lines.1.amount"),
+        &line("only-line", "72.00", None, "SCAN-INV-1043~lines.1.amount"),
     )
     .expect_err("refused");
     assert_eq!(only_line.status, 422, "{only_line:?}");
@@ -991,7 +991,7 @@ fn corrections_under_the_ledger_law(host: &DevHost<NativeEngine>) {
                 "other-evidence",
                 "72.00",
                 Some("72.00"),
-                "SCAN-INV-0043~total"
+                "SCAN-INV-1043~total"
             )
         )
         .is_err(),
@@ -1006,7 +1006,7 @@ fn corrections_under_the_ledger_law(host: &DevHost<NativeEngine>) {
             "off-ledger",
             "70.00",
             Some("70.00"),
-            "SCAN-INV-0043~lines.1.amount",
+            "SCAN-INV-1043~lines.1.amount",
         ),
     )
     .expect_err("refused");
@@ -1028,25 +1028,25 @@ fn corrections_under_the_ledger_law(host: &DevHost<NativeEngine>) {
             "inv-0043",
             "72.00",
             Some("72.00"),
-            "SCAN-INV-0043~lines.1.amount",
+            "SCAN-INV-1043~lines.1.amount",
         ),
     )
     .expect("a line and total that agree with each other and the booked entry commit");
     let cell = host.cell().expect("cell");
     let reader = cell.store().read();
     let findings = reader
-        .observation_findings(MAIN_WORLD, DOCUMENT, "SCAN-INV-0043")
+        .observation_findings(MAIN_WORLD, DOCUMENT, "SCAN-INV-1043")
         .expect("findings");
     assert_eq!(law_pins(&findings), [LAW_B]);
     assert_eq!(findings[0].status, DataQualityFindingStatus::Resolved);
 
     let document = reader
-        .authoritative_object(MAIN_WORLD, DOCUMENT, "SCAN-INV-0043")
+        .authoritative_object(MAIN_WORLD, DOCUMENT, "SCAN-INV-1043")
         .expect("read")
         .expect("released from quarantine");
     assert_eq!(text(&document, "total"), "72");
     let corrected = reader
-        .object(MAIN_WORLD, LINE, "SCAN-INV-0043~line-1")
+        .object(MAIN_WORLD, LINE, "SCAN-INV-1043~line-1")
         .expect("read")
         .expect("line");
     assert_eq!(text(&corrected, "amount"), "72");
@@ -1054,7 +1054,7 @@ fn corrections_under_the_ledger_law(host: &DevHost<NativeEngine>) {
     assert_eq!(text(&corrected, "corrected_by"), STEWARD);
     assert_eq!(
         text(&corrected, "correction_evidence"),
-        "SCAN-INV-0043~lines.1.amount"
+        "SCAN-INV-1043~lines.1.amount"
     );
 }
 
@@ -1069,11 +1069,11 @@ fn a_native_ledger_change_that_contradicts_a_booked_document_refuses() {
     let (entry, values, version) = {
         let reader = cell.store().read();
         let edge = reader
-            .links_touching(MAIN_WORLD, DOCUMENT, "SCAN-INV-0041")
+            .links_touching(MAIN_WORLD, DOCUMENT, "SCAN-INV-1041")
             .expect("links")
             .into_iter()
             .find(|edge| edge.link == "ledger_entry")
-            .expect("SCAN-INV-0041 is booked");
+            .expect("SCAN-INV-1041 is booked");
         let record = reader
             .object(MAIN_WORLD, &edge.target_type, &edge.target)
             .expect("read")
@@ -1115,16 +1115,16 @@ fn a_native_ledger_change_that_contradicts_a_booked_document_refuses() {
     cell.commit(change("account_code", "\"6100\""))
         .expect("a change that keeps the amount commits");
 
-    // A document already in violation (SCAN-INV-0043, quarantined) does not
+    // A document already in violation (SCAN-INV-1043, quarantined) does not
     // freeze its entry: the write breaks nothing that held.
     let (entry, values, version) = {
         let reader = cell.store().read();
         let edge = reader
-            .links_touching(MAIN_WORLD, DOCUMENT, "SCAN-INV-0043")
+            .links_touching(MAIN_WORLD, DOCUMENT, "SCAN-INV-1043")
             .expect("links")
             .into_iter()
             .find(|edge| edge.link == "ledger_entry")
-            .expect("SCAN-INV-0043 is booked");
+            .expect("SCAN-INV-1043 is booked");
         let record = reader
             .object(MAIN_WORLD, &edge.target_type, &edge.target)
             .expect("read")
@@ -1194,13 +1194,13 @@ fn a_line_change_rechecks_its_document() {
     use norn_kernel::{CellCommit, CellHost, FactKey, FactMutation, FactVersion, FactWrite};
     let mut cell: SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, NativeEngine> =
         SqliteCell::new(loaded(), "org_demo/dev", |_| BTreeMap::new()).expect("cell");
-    let key = FactKey::new(LINE, "SCAN-INV-0041~line-1");
+    let key = FactKey::new(LINE, "SCAN-INV-1041~line-1");
     let (values, version) = {
         let reader = cell.store().read();
         let record = reader
             .object(MAIN_WORLD, LINE, &key.key)
             .expect("read")
-            .expect("SCAN-INV-0041's first line");
+            .expect("SCAN-INV-1041's first line");
         (record.values, record.version)
     };
     let change = |property: &str, value: &str| {
@@ -1219,7 +1219,7 @@ fn a_line_change_rechecks_its_document() {
     };
     let refusal = cell
         .commit(change("amount", "99.00"))
-        .expect_err("SCAN-INV-0041's total is 30.50");
+        .expect_err("SCAN-INV-1041's total is 30.50");
     assert_eq!(refusal.code(), "core.laws.violated", "{refusal:?}");
     assert!(format!("{refusal:?}").contains(LAW_ID), "{refusal:?}");
     assert_eq!(
@@ -1294,9 +1294,9 @@ fn a_changed_ledger_entry_rechecks_the_document_booked_to_it() {
             .into_iter()
             .find(|(dataset, record)| {
                 dataset == "Journal Entry"
-                    && record.get("entry_number").and_then(RuntimeValue::as_str) == Some("JE-0041")
+                    && record.get("entry_number").and_then(RuntimeValue::as_str) == Some("JE-1041")
             })
-            .expect("JE-0041");
+            .expect("JE-1041");
         let RuntimeValue::Object(fields) = &mut record else {
             panic!("a record is an object");
         };
@@ -1310,7 +1310,7 @@ fn a_changed_ledger_entry_rechecks_the_document_booked_to_it() {
     {
         let reader = store.read();
         let document = reader
-            .object(MAIN_WORLD, DOCUMENT, "SCAN-INV-0041")
+            .object(MAIN_WORLD, DOCUMENT, "SCAN-INV-1041")
             .expect("read")
             .expect("raw read");
         assert!(
@@ -1320,7 +1320,7 @@ fn a_changed_ledger_entry_rechecks_the_document_booked_to_it() {
             "the booked document no longer matches its entry"
         );
         let findings = reader
-            .observation_findings(MAIN_WORLD, DOCUMENT, "SCAN-INV-0041")
+            .observation_findings(MAIN_WORLD, DOCUMENT, "SCAN-INV-1041")
             .expect("findings");
         assert_eq!(law_pins(&findings), [LAW_B], "{findings:#?}");
         assert_eq!(findings[0].status, DataQualityFindingStatus::Open);
@@ -1328,13 +1328,13 @@ fn a_changed_ledger_entry_rechecks_the_document_booked_to_it() {
     let store = observe(store, "Journal Entry", &entry("30.50"), 3);
     let reader = store.read();
     let findings = reader
-        .observation_findings(MAIN_WORLD, DOCUMENT, "SCAN-INV-0041")
+        .observation_findings(MAIN_WORLD, DOCUMENT, "SCAN-INV-1041")
         .expect("findings");
     assert_eq!(law_pins(&findings), [LAW_B], "the finding is retained");
     assert_eq!(findings[0].status, DataQualityFindingStatus::Resolved);
     assert!(
         reader
-            .authoritative_object(MAIN_WORLD, DOCUMENT, "SCAN-INV-0041")
+            .authoritative_object(MAIN_WORLD, DOCUMENT, "SCAN-INV-1041")
             .expect("read")
             .is_some(),
         "released once the entry agrees again"
@@ -1351,13 +1351,13 @@ fn a_page_load_catches_the_dropped_decimal_too() {
     let reader = store.read();
     assert!(
         reader
-            .authoritative_object(MAIN_WORLD, DOCUMENT, "SCAN-INV-0041")
+            .authoritative_object(MAIN_WORLD, DOCUMENT, "SCAN-INV-1041")
             .expect("read")
             .is_some(),
         "a consistent invoice is admitted"
     );
     let caught = reader
-        .object(MAIN_WORLD, DOCUMENT, "SCAN-INV-0042")
+        .object(MAIN_WORLD, DOCUMENT, "SCAN-INV-1042")
         .expect("read")
         .expect("raw reads keep the source truth");
     assert!(
@@ -1366,7 +1366,7 @@ fn a_page_load_catches_the_dropped_decimal_too() {
             .expect("quality")
     );
     let findings = reader
-        .observation_findings(MAIN_WORLD, DOCUMENT, "SCAN-INV-0042")
+        .observation_findings(MAIN_WORLD, DOCUMENT, "SCAN-INV-1042")
         .expect("findings");
     assert_eq!(law_pins(&findings), [LAW, LAW_B], "{findings:#?}");
 }

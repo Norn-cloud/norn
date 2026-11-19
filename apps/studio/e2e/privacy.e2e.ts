@@ -20,7 +20,7 @@ async function shoot(page: Page, name: string) {
 }
 
 const recorded = (name: string): string =>
-  readFileSync(new URL(`../../../fixtures/demo/privacy/${name}`, import.meta.url), "utf8")
+  readFileSync(new URL(`../../../fixtures/privacy/${name}`, import.meta.url), "utf8")
 
 /** Serve the server's Party page for `reader`, and its reveal reply; record what the browser asked. */
 async function partyCell(page: Page, reader: "viewer" | "auditor") {

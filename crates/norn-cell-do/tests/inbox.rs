@@ -2,11 +2,11 @@
 //! the canon law `canon.ItemizedDocument.total_matches_lines` and the pack's
 //! ledger law, as Studio's Home and the MCP surface read it.
 //!
-//! - An admin sees INV-0042 in its law's group, with the finding in words
+//! - An admin sees INV-1042 in its law's group, with the finding in words
 //!   ("total 720.00 ≠ lines 72.00") and the fix the server derived from the
 //!   law: `docs.scanned_document.correct` with the total 72.00, the record's
 //!   currency and the evidence the total was read from. The fix, called with
-//!   a reason, commits, and INV-0042 leaves the inbox.
+//!   a reason, commits, and INV-1042 leaves the inbox.
 //! - A member lists the held records by id only: no finding, no values, no
 //!   fix (the findings read needs Sources). A viewer, who reads no values,
 //!   sees no held-back group at all, and a role the cell grants nothing sees
@@ -100,11 +100,10 @@ fn documents(marked: bool) -> Vec<Value> {
     .iter()
     .map(|name| artifact(&core.join(name)))
     .collect();
-    let mut paths: Vec<PathBuf> =
-        std::fs::read_dir(root().join("registry/packs/documents/artifacts"))
-            .expect("pack artifacts")
-            .map(|entry| entry.expect("entry").path())
-            .collect();
+    let mut paths: Vec<PathBuf> = std::fs::read_dir(root().join("fixtures/packs/scans/artifacts"))
+        .expect("pack artifacts")
+        .map(|entry| entry.expect("entry").path())
+        .collect();
     paths.sort();
     paths.sort_by_key(|path| {
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
@@ -278,10 +277,10 @@ fn held_back_records_are_grouped_by_law_with_the_fix_only_for_who_may_make_it() 
         "{lines}"
     );
     assert!(lines["count"].as_u64().unwrap() >= 1, "{lines}");
-    let record = listed(lines, "SCAN-INV-0042").expect("INV-0042 is held by the lines law");
+    let record = listed(lines, "SCAN-INV-1042").expect("INV-1042 is held by the lines law");
     assert_eq!(
         record["target"],
-        "/sources/docs.ScannedDocument/SCAN-INV-0042"
+        "/sources/docs.ScannedDocument/SCAN-INV-1042"
     );
     assert_eq!(
         record["finding"]["words"], "total 720.00 ≠ lines 72.00",
@@ -294,13 +293,13 @@ fn held_back_records_are_grouped_by_law_with_the_fix_only_for_who_may_make_it() 
     assert_eq!(fix["property"], "total", "{record}");
     assert_eq!(
         fix["arguments"],
-        json!({ "id": "SCAN-INV-0042", "total": "72.00", "currency": "USD",
-                "correction_evidence": "SCAN-INV-0042~total" }),
+        json!({ "id": "SCAN-INV-1042", "total": "72.00", "currency": "USD",
+                "correction_evidence": "SCAN-INV-1042~total" }),
         "{record}"
     );
     assert_eq!(fix["needs"], json!(["correction_reason"]), "{record}");
     let ledger = group(&inbox, LEDGER_LAW).expect("the ledger law's group");
-    let disputed = listed(ledger, "SCAN-INV-0043").expect("INV-0043 is held by the ledger law");
+    let disputed = listed(ledger, "SCAN-INV-1043").expect("INV-1043 is held by the ledger law");
     // "Use 72.00" under the ledger law would break the lines law (its line still reads
     // 720): the server tries the fix against the record's other laws and offers none.
     assert!(disputed.get("suggestedFix").is_none(), "{disputed}");
@@ -308,7 +307,7 @@ fn held_back_records_are_grouped_by_law_with_the_fix_only_for_who_may_make_it() 
         .as_array()
         .expect("the laws that disagree");
     assert!(!others.is_empty(), "{disputed}");
-    // INV-0042's fix keeps every other law it takes, so it is still offered (above).
+    // INV-1042's fix keeps every other law it takes, so it is still offered (above).
     let held = section(&inbox, "held_back");
     assert!(held["count"].as_u64().unwrap() >= 2, "{held}");
     assert_eq!(held["approximate"], false, "{held}");
@@ -316,7 +315,7 @@ fn held_back_records_are_grouped_by_law_with_the_fix_only_for_who_may_make_it() 
     // A member lists the held records, and nothing value-derived.
     let (status, member, _) = cell.inbox("member");
     assert_eq!(status, 200, "{member}");
-    let record = listed(group(&member, LINES_LAW).unwrap(), "SCAN-INV-0042").unwrap();
+    let record = listed(group(&member, LINES_LAW).unwrap(), "SCAN-INV-1042").unwrap();
     assert_eq!(
         record
             .as_object()
@@ -358,11 +357,11 @@ fn held_back_records_are_grouped_by_law_with_the_fix_only_for_who_may_make_it() 
     assert_eq!(receipt.status, 200, "{}", receipt.body);
     let (_, inbox, _) = cell.inbox("admin");
     assert!(
-        group(&inbox, LINES_LAW).is_none_or(|lines| listed(lines, "SCAN-INV-0042").is_none()),
-        "INV-0042 is released: {inbox}"
+        group(&inbox, LINES_LAW).is_none_or(|lines| listed(lines, "SCAN-INV-1042").is_none()),
+        "INV-1042 is released: {inbox}"
     );
     assert!(
-        listed(group(&inbox, LEDGER_LAW).unwrap(), "SCAN-INV-0043").is_some(),
+        listed(group(&inbox, LEDGER_LAW).unwrap(), "SCAN-INV-1043").is_some(),
         "{inbox}"
     );
 }
@@ -380,7 +379,7 @@ fn a_marked_name_is_a_pseudonym_for_every_caller_and_the_fix_stays() {
         assert!(group(&inbox, LINES_LAW).is_some(), "{role}: {inbox}");
     }
     let (_, inbox, _) = cell.inbox("admin");
-    let record = listed(group(&inbox, LINES_LAW).unwrap(), "SCAN-INV-0042").unwrap();
+    let record = listed(group(&inbox, LINES_LAW).unwrap(), "SCAN-INV-1042").unwrap();
     assert!(
         record["values"]["vendor"]
             .as_str()
@@ -410,13 +409,13 @@ fn a_connection_whose_connector_is_not_installed_is_not_a_failed_source() {
         { "id": "docs.scans", "system": "extractor", "label": "Scanned documents",
           "connector": "docs.scans.connector", "mapping": "docs.scans.mapping",
           "instance": "demo", "baseUrl": "https://extractor.example.test" },
-        { "id": "erpnext.sandbox", "system": "erpnext", "label": "ERPNext sandbox",
-          "connector": "erpnext.sandbox.connector", "mapping": "erpnext.sandbox.mapping",
+        { "id": "erpnext.rest", "system": "erpnext", "label": "ERPNext REST",
+          "connector": "erpnext.rest.connector", "mapping": "erpnext.rest.mapping",
           "instance": "sandbox", "baseUrl": "https://erp.example.test" },
     ])
     .to_string();
     let connector =
-        artifact(&root().join("registry/packs/documents-pull/artifacts/docs.scans.connector.json"));
+        artifact(&root().join("fixtures/packs/scans-pull/artifacts/docs.scans.connector.json"));
     let (mut cell, mut connect) = loaded_with(
         &directory.path().join("a.sqlite"),
         false,
@@ -424,7 +423,7 @@ fn a_connection_whose_connector_is_not_installed_is_not_a_failed_source() {
         &[connector],
     );
     let admin = user("admin");
-    for id in ["docs.scans", "erpnext.sandbox"] {
+    for id in ["docs.scans", "erpnext.rest"] {
         let path = format!("/v1/sources/{id}:sync");
         let request = Request {
             method: "POST",

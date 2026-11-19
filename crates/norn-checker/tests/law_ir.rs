@@ -942,12 +942,12 @@ fn itemized() -> (Vec<Value>, Vec<ArtifactEnvelope>) {
     let set = [
         "registry/packs/canon/artifacts/canon.ItemizedDocument.interface.json",
         "registry/packs/canon/artifacts/canon.LineItem.interface.json",
-        "registry/packs/documents/artifacts/docs.SourceDocument.interface.json",
-        "registry/packs/documents/artifacts/docs.SourceDocumentLine.interface.json",
-        "registry/packs/documents/artifacts/docs.BookedEntry.interface.json",
-        "registry/packs/documents/artifacts/docs.LedgerEntry.entity.json",
-        "registry/packs/documents/artifacts/docs.ScannedDocument.entity.json",
-        "registry/packs/documents/artifacts/docs.DocumentLine.entity.json",
+        "fixtures/packs/scans/artifacts/docs.SourceDocument.interface.json",
+        "fixtures/packs/scans/artifacts/docs.SourceDocumentLine.interface.json",
+        "fixtures/packs/scans/artifacts/docs.BookedEntry.interface.json",
+        "fixtures/packs/scans/artifacts/docs.LedgerEntry.entity.json",
+        "fixtures/packs/scans/artifacts/docs.ScannedDocument.entity.json",
+        "fixtures/packs/scans/artifacts/docs.DocumentLine.entity.json",
         "registry/packs/canon/artifacts/canon.ItemizedDocument.total_matches_lines.law.json",
     ]
     .map(read)

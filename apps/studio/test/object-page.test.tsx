@@ -259,10 +259,10 @@ test("an English summary under an Arabic title is marked lang=en; an Arabic one 
 
 test("a refusal with no detail lists the record's open law finding with the facts it compared, as the finding read them, when the record is held in quarantine", async () => {
   const { RedactedLawRefusal } = await import("../src/actions/law-refusal.tsx")
-  const artifact = (file: string) => JSON.parse(readFileSync(join(import.meta.dir, "../../../registry/packs/documents/artifacts", file), "utf8")) as unknown
+  const artifact = (file: string) => JSON.parse(readFileSync(join(import.meta.dir, "../../../fixtures/packs/scans/artifacts", file), "utf8")) as unknown
   const client = new QueryClient()
   client.setQueryData(["catalog"], readDocument(JSON.stringify([artifact("docs.ScannedDocument.entity.json"), JSON.parse(readFileSync(join(import.meta.dir, "../../../registry/packs/canon/artifacts/canon.ItemizedDocument.total_matches_lines.law.json"), "utf8"))]), "live"))
-  const id = "SCAN-INV-0042"
+  const id = "SCAN-INV-1042"
   client.setQueryData(["findings", "docs.ScannedDocument", id], readDocument(JSON.stringify({ objectType: "docs.ScannedDocument", id, quarantined: true, evidence: [],
     findings: [{ id: "f-1", ruleRef: { kind: "law", artifactId: "canon.ItemizedDocument.total_matches_lines.law", lawId: "canon.ItemizedDocument.total_matches_lines", version: "0.1" }, severity: "error", message: "total 720 vs lines 72", status: "open", firstSeen: "", lastSeen: "", values: { total: 720, "lines.amount": [30, 40, 2] } }] }), "live"))
   // Quarantined: the object route serves nothing; the history still carries the stored values.
@@ -285,8 +285,8 @@ test("a held record's finding shows the values its law compared, a summed list a
   const { Findings } = await import("../src/evidence/findings.tsx")
   const read = (path: string) => JSON.parse(readFileSync(join(import.meta.dir, "../../../registry/packs", path), "utf8")) as unknown
   const client = new QueryClient()
-  client.setQueryData(["catalog"], readDocument(JSON.stringify([read("documents/artifacts/docs.ScannedDocument.entity.json"), read("canon/artifacts/canon.ItemizedDocument.total_matches_lines.law.json")]), "live"))
-  const id = "SCAN-INV-0042"
+  client.setQueryData(["catalog"], readDocument(JSON.stringify([read("../../fixtures/packs/scans/artifacts/docs.ScannedDocument.entity.json"), read("canon/artifacts/canon.ItemizedDocument.total_matches_lines.law.json")]), "live"))
+  const id = "SCAN-INV-1042"
   client.setQueryData(["findings", "docs.ScannedDocument", id], readDocument(JSON.stringify({ objectType: "docs.ScannedDocument", id, quarantined: true, evidence: [],
     findings: [{ id: "f-1", ruleRef: { kind: "law", artifactId: "canon.ItemizedDocument.total_matches_lines.law", lawId: "canon.ItemizedDocument.total_matches_lines", version: "0.1" }, severity: "error", message: "m", status: "open", firstSeen: "", lastSeen: "", values: { total: 720, "lines.amount": [30, 40, 2] } }] }), "live"))
   const html = renderToStaticMarkup(<QueryClientProvider client={client}><Findings objectType="docs.ScannedDocument" id={id} /></QueryClientProvider>)

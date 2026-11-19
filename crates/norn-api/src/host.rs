@@ -644,7 +644,7 @@ mod page_tests {
 
     fn input(dataset: &str) -> MappingInput {
         MappingInput {
-            mapping: "erpnext.sandbox.mapping".into(),
+            mapping: "erpnext.rest.mapping".into(),
             dataset: dataset.into(),
             connector_instance: "sandbox".into(),
             partition: dataset.into(),

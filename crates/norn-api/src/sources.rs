@@ -47,7 +47,7 @@ pub const DEFAULT_EVERY_MINUTES: u32 = 15;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ConnectionConfig {
-    /// The connection id, e.g. `erpnext.sandbox`.
+    /// The connection id, e.g. `erpnext.rest`.
     pub id: String,
     /// The source system (`erpnext`, `odoo`, `shopify`).
     pub system: String,
@@ -785,8 +785,8 @@ fn auth_headers(
     }
 }
 
-/// The environment name of a secret reference: `erpnext_sandbox_token` is
-/// `NORN_SECRET_ERPNEXT_SANDBOX_TOKEN`.
+/// The environment name of a secret reference: `erpnext_rest_token` is
+/// `NORN_SECRET_ERPNEXT_REST_TOKEN`.
 #[must_use]
 pub fn secret_env(reference: &str) -> String {
     let mut name = String::from("NORN_SECRET_");

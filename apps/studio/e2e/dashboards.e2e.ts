@@ -14,7 +14,7 @@ const objectType = fixture("scrap-yield.object-type.json")
 const metrics = fixture("scrap-yield.metrics.json")
 const SHOTS = process.env.SHOTS ?? "test-results/shots"
 /** The cell's own guard documents for one assistant prompt (crates/norn-api/tests/privacy.rs writes them). */
-const privacy = (name: string) => JSON.parse(readFileSync(new URL(`../../../fixtures/demo/privacy/${name}`, import.meta.url), "utf8"))
+const privacy = (name: string) => JSON.parse(readFileSync(new URL(`../../../fixtures/privacy/${name}`, import.meta.url), "utf8"))
 
 const catalog = {
   objectSet: "demo.Conversion",

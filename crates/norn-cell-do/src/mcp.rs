@@ -683,7 +683,7 @@ fn generic_tools(
                 "title": "Call an action by id",
                 "description": "Call any governed action you may call, by its action id (norn_catalog lists them; an action installed during this conversation is callable here before its own tool appears). The input is the action's input object; fields the server fills (the actor, the clock) are not yours to send. The workspace's laws and policy decide it: the answer is a receipt or a refusal with its reason.",
                 "inputSchema": {"type": "object", "additionalProperties": false, "required": ["action", "input"], "properties": {
-                    "action": {"type": "string", "description": "An action id, for example jewelry.melt.record."},
+                    "action": {"type": "string", "description": "An action id, for example lab.batch.record."},
                     "input": {"type": "object", "description": "The action's input; decimals as exact strings."}
                 }},
                 "annotations": {"readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false},

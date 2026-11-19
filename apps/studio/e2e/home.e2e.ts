@@ -23,8 +23,8 @@ const sections = [{ kind: "held_back", count: 1, shown: 1, approximate: false },
 
 test("home: the inbox groups held-back records by law, each with its finding in words and the fix the server offers", async ({ page }) => {
   await cell(page, { scanLimit: 10000, sections, items: [group([{
-    objectType: "docs.ScannedDocument", id: "SCAN-INV-0042", target: "/sources/docs.ScannedDocument/SCAN-INV-0042",
-    finding: { id: "f1", words: "total 720.00 ≠ lines 72.00", message: "m", compared: {} }, values: { doc_number: "INV-0042" },
+    objectType: "docs.ScannedDocument", id: "SCAN-INV-1042", target: "/sources/docs.ScannedDocument/SCAN-INV-1042",
+    finding: { id: "f1", words: "total 720.00 ≠ lines 72.00", message: "m", compared: {} }, values: { doc_number: "INV-1042" },
     suggestedFix: { actionId: "docs.scanned_document.correct", title: "Correct an extracted total", label: "Use 72.00", property: "total", value: "72.00", arguments: {}, needs: ["correction_reason"] },
   }])] })
   await page.goto("/")
@@ -33,20 +33,20 @@ test("home: the inbox groups held-back records by law, each with its finding in 
   await expect(page.getByText("total 720.00 ≠ lines 72.00")).toBeVisible()
   await expect(page.getByRole("link", { name: "Review" })).toHaveAttribute("href", "/objects/docs.ScannedDocument?population=held_back")
   await page.getByRole("link", { name: "Use 72.00" }).click()
-  await expect(page).toHaveURL(/\/sources\/docs\.ScannedDocument\/SCAN-INV-0042$/)
+  await expect(page).toHaveURL(/\/sources\/docs\.ScannedDocument\/SCAN-INV-1042$/)
 })
 
 test("home: a member's inbox names the held record with no finding words and no fix (the server sends none)", async ({ page }) => {
-  await cell(page, { scanLimit: 10000, sections, items: [group([{ objectType: "docs.ScannedDocument", id: "SCAN-INV-0042", target: "/sources/docs.ScannedDocument/SCAN-INV-0042" }])] })
+  await cell(page, { scanLimit: 10000, sections, items: [group([{ objectType: "docs.ScannedDocument", id: "SCAN-INV-1042", target: "/sources/docs.ScannedDocument/SCAN-INV-1042" }])] })
   await page.goto("/")
-  await expect(page.getByRole("link", { name: "SCAN-INV-0042" })).toBeVisible()
+  await expect(page.getByRole("link", { name: "SCAN-INV-1042" })).toBeVisible()
   await expect(page.getByText("total 720.00")).toHaveCount(0)
   await expect(page.getByRole("link", { name: /Use / })).toHaveCount(0)
 })
 
 test("home: a record two laws disagree on offers no fix and names both laws", async ({ page }) => {
   await cell(page, { scanLimit: 10000, sections, items: [group([{
-    objectType: "docs.ScannedDocument", id: "SCAN-INV-0043", target: "/sources/docs.ScannedDocument/SCAN-INV-0043", values: { doc_number: "INV-0043" },
+    objectType: "docs.ScannedDocument", id: "SCAN-INV-1043", target: "/sources/docs.ScannedDocument/SCAN-INV-1043", values: { doc_number: "INV-1043" },
     finding: { id: "f2", words: "total 720.00 ≠ ledger entry 72.00", message: "m", compared: {} },
     otherFindings: [{ id: "lines", words: "total 72.00 ≠ lines 720.00", message: "m", compared: {} }],
   }])] })
