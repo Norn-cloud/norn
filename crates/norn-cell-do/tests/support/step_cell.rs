@@ -337,7 +337,7 @@ fn serve<E: SqlEngine>(store: CellStore<E>) -> Cell<E> {
     let host = DevHost::from_store(store, scope, |command| command.payload.clone())
         .unwrap()
         .with_authorizer(policy);
-    let cell = Cell {
+    Cell {
         host,
         principals: FixturePrincipals::new(NAMES, Arc::clone(&caller)),
         caller,
