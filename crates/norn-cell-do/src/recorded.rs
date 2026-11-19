@@ -3,7 +3,8 @@
 //! path by `norn dev --load` and by `POST /v1/observations:load` (#921).
 //!
 //! `{ "profile": "...", "snapshot": [{ "dataset", "record", "sourceVersion"? }] }`,
-//! plus optional `"source"`, `"mapping"` and `"connectorInstance"` (default
+//! plus optional `"incremental"` changes, `"source"`, `"mapping"` and
+//! `"connectorInstance"` (default
 //! `demo`, the instance the three-systems source schemas pin). Without the
 //! first two, a `synthetic-<system>-three/1` profile names source
 //! `synthetic-<system>` and mapping `<system>.three.mapping`. Each record's
@@ -11,6 +12,16 @@
 //! lexicographically: a later row with the same identity and a higher version
 //! is that record's next change. Without one, a row is the snapshot event at
 //! version `1`.
+//!
+//! RECORDED-INCREMENTAL-1: an `"incremental"` row is
+//! `{ "sequence", "operation": "upsert", "dataset", "record", "sourceVersion"? }`
+//! and loads after every snapshot row, in file order. Without a
+//! `sourceVersion` its version is `1+<sequence, 20 digits>`, which orders
+//! after the snapshot's `1` and by sequence; when any other row (snapshot or
+//! incremental) carries a `sourceVersion`, a version-less change would not
+//! order against it, so the whole export is refused. A row this loader cannot read (another
+//! operation, no sequence) refuses the whole export: no row of a recorded
+//! export is ever skipped.
 
 use norn_cell::mapping_bundle::MappingInput;
 use norn_ir::RuntimeValue;
@@ -42,7 +53,7 @@ pub struct Recorded {
     pub mapping: String,
     /// The connector instance the mapping's source schema pins.
     pub instance: String,
-    /// Its rows, in export order.
+    /// Its rows: the snapshot in export order, then the incremental changes.
     pub rows: Vec<RecordedRow>,
 }
 
@@ -70,27 +81,69 @@ impl Recorded {
             })
             .ok_or("name its \"mapping\" (or use a synthetic-<system>-three profile)")?;
         let instance = named("connectorInstance").unwrap_or_else(|| "demo".to_owned());
-        let rows = document
+        let row = |row: &Value, version: Option<String>| match (
+            row.get("dataset").and_then(Value::as_str),
+            row.get("record"),
+        ) {
+            (Some(dataset), Some(record)) => Ok(RecordedRow {
+                dataset: dataset.to_owned(),
+                record: record.clone(),
+                version,
+            }),
+            _ => Err("every row has a dataset and a record".to_owned()),
+        };
+        let source_version = |value: &Value| {
+            value
+                .get("sourceVersion")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        };
+        let mut rows = document
             .get("snapshot")
             .and_then(Value::as_array)
             .ok_or("no \"snapshot\" rows")?
             .iter()
-            .map(|row| {
-                let dataset = row.get("dataset").and_then(Value::as_str);
-                let version = row
-                    .get("sourceVersion")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned);
-                match (dataset, row.get("record")) {
-                    (Some(dataset), Some(record)) => Ok(RecordedRow {
-                        dataset: dataset.to_owned(),
-                        record: record.clone(),
-                        version,
-                    }),
-                    _ => Err("every snapshot row has a dataset and a record".to_owned()),
-                }
-            })
+            .map(|value| row(value, source_version(value)))
             .collect::<Result<Vec<_>, String>>()?;
+        if let Some(changes) = document.get("incremental") {
+            let changes = changes
+                .as_array()
+                .ok_or("\"incremental\" is a list of changes")?;
+            // Any recorded version, on a snapshot row or on any change in
+            // the file, wherever it stands relative to a version-less one.
+            let versioned = rows.iter().any(|row| row.version.is_some())
+                || changes
+                    .iter()
+                    .any(|change| source_version(change).is_some());
+            for (index, change) in changes.iter().enumerate() {
+                let operation = change.get("operation").and_then(Value::as_str);
+                if operation != Some("upsert") {
+                    return Err(format!(
+                        "incremental row {index}: operation {} does not load; a recorded export carries upserts only",
+                        operation.unwrap_or("(none)")
+                    ));
+                }
+                let sequence = change
+                    .get("sequence")
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| format!("incremental row {index} has no \"sequence\""))?;
+                // A synthesised version orders only against other synthesised
+                // versions, so it is refused beside a recorded one.
+                let version = match source_version(change) {
+                    Some(version) => version,
+                    None if versioned => {
+                        return Err(format!(
+                            "incremental row {index} has no \"sourceVersion\" while other rows carry one; a recorded export versions every change or none"
+                        ));
+                    }
+                    None => format!("1+{sequence:020}"),
+                };
+                rows.push(
+                    row(change, Some(version))
+                        .map_err(|error| format!("incremental row {index}: {error}"))?,
+                );
+            }
+        }
         Ok(Self {
             source,
             mapping,
@@ -175,4 +228,58 @@ fn raw(
             "payload_digest" => digest,
         },
     })
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, reason = "parse scenarios")]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn export(snapshot_version: Option<&str>, change_version: Option<&str>) -> Value {
+        let mut row = json!({ "dataset": "Item", "record": { "id": "i-1" } });
+        if let Some(version) = snapshot_version {
+            row["sourceVersion"] = json!(version);
+        }
+        let mut change = json!({ "sequence": 1, "operation": "upsert",
+            "dataset": "Item", "record": { "id": "i-1" } });
+        if let Some(version) = change_version {
+            change["sourceVersion"] = json!(version);
+        }
+        json!({ "profile": "synthetic-erpnext-three/1", "snapshot": [row], "incremental": [change] })
+    }
+
+    #[test]
+    fn a_version_less_change_beside_a_versioned_snapshot_refuses_the_export() {
+        let refused = Recorded::parse(&export(Some("2026-01-01"), None)).unwrap_err();
+        assert!(
+            refused.contains("incremental row 0") && refused.contains("sourceVersion"),
+            "{refused}"
+        );
+    }
+
+    #[test]
+    fn a_version_less_change_before_a_versioned_change_refuses_the_export() {
+        let mut document = export(None, None);
+        document["incremental"].as_array_mut().unwrap().push(
+            json!({ "sequence": 2, "operation": "upsert", "dataset": "Item",
+                "record": { "id": "i-1" }, "sourceVersion": "2026-01-01" }),
+        );
+        let refused = Recorded::parse(&document).unwrap_err();
+        assert!(
+            refused.contains("incremental row 0") && refused.contains("sourceVersion"),
+            "{refused}"
+        );
+    }
+
+    #[test]
+    fn a_change_versions_by_its_sequence_only_beside_a_version_less_snapshot() {
+        let recorded = Recorded::parse(&export(None, None)).unwrap();
+        assert_eq!(
+            recorded.rows[1].version.as_deref(),
+            Some("1+00000000000000000001")
+        );
+        let recorded = Recorded::parse(&export(Some("2026-01-01"), Some("2026-01-02"))).unwrap();
+        assert_eq!(recorded.rows[1].version.as_deref(), Some("2026-01-02"));
+    }
 }

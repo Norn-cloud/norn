@@ -119,7 +119,9 @@ fn a_recorded_page_lands_once_through_the_admitted_mapping() {
         refused.to_string().contains("observations.too_large"),
         "{refused}"
     );
-    let mut history = export.clone();
+    // One record's nine versions; a versioned export carries no version-less
+    // incremental rows (RECORDED-INCREMENTAL-1).
+    let mut history = json!({ "profile": export["profile"] });
     history["snapshot"] = Value::Array(
         (0..9)
             .map(|n| {
