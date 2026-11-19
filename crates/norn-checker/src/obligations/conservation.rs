@@ -1129,7 +1129,10 @@ mod tests {
             assigns: vec!["cash".into(), "wallet_cash".into()],
             source: WriterSource::Unbound,
         };
-        assert_eq!(check(&moved, std::slice::from_ref(&shift), &[q(1); 3]), Ok(()));
+        assert_eq!(
+            check(&moved, std::slice::from_ref(&shift), &[q(1); 3]),
+            Ok(())
+        );
         // ... but not when the label that may name a written row is weighted
         // differently.
         moved[2].weight = q(2);
