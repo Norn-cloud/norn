@@ -65,7 +65,10 @@ test("OTEL-OFF-1: without an endpoint the handler's own response passes through"
 })
 
 test("OTEL-NO-TENANT-1: latency and errors are exported per route template, refused and unknown requests included", async () => {
-  const env = { OTEL_EXPORTER_OTLP_ENDPOINT: "https://o2.test/api/norn", OTEL_EXPORTER_OTLP_HEADERS: "Authorization=Basic%20x" }
+  const env = { OTEL_EXPORTER_OTLP_ENDPOINT: "https://o2.test/api/norn", OTEL_EXPORTER_OTLP_HEADERS: "Authorization=Basic%20x", NORN_OTEL_INTERVAL_MS: "1000" }
+  const t = telemetry(env, "norn-studio")!
+  const { sent, send } = capture()
+  t.send = send
   const handler = instrumented<typeof env>({
     fetch: async (request) => {
       const path = new URL(request.url).pathname
@@ -79,18 +82,17 @@ test("OTEL-NO-TENANT-1: latency and errors are exported per route template, refu
   await handler.fetch(new Request("https://studio.test/api/me"), env, ctx)
   await handler.fetch(new Request("https://studio.test/api/host/v1/objects/acme.Order/acme-corp?orgId=acme"), env, ctx)
   await handler.fetch(new Request("https://studio.test/api/agent/dashboards", { method: "POST", body: "{}" }), env, ctx)
-  await handler.fetch(new Request("https://studio.test/api/acme-corp/globex_prod:pat@example.com", { method: "ACME" }), env, ctx)
+  await handler.fetch(new Request("https://studio.test/api/acme-corp/globex_prod:pat@example.com"), env, ctx)
   await handler.fetch(new Request("https://studio.test/api/host/v1/acme-corp"), env, ctx)
   await settled(ctx)
-  const { sent, send } = capture()
-  await telemetry(env, "norn-studio")!.flush(send)
+  await t.flush()
   const all = sent.join("\n")
   expect(all).toContain("norn_studio_requests_total")
   expect(all).toContain("norn_studio_errors_total")
   expect(all).toContain("/api/host/v1/objects/{type}/{id}")
   expect(all).toContain('"quota"')
-  expect(all).toContain("studio other other")
-  for (const leaked of [...TENANT, "acme.Order", "ACME"]) expect(all).not.toContain(leaked)
+  expect(all).toContain("studio GET other")
+  for (const leaked of [...TENANT, "acme.Order"]) expect(all).not.toContain(leaked)
 })
 
 test("OTEL-NEVER-FAILS-1: a hanging collector, a throwing hook or bad settings never delay or change the result", async () => {

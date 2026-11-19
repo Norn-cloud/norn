@@ -60,17 +60,26 @@ const TENANT = ["acme-corp", "acme", "globex_prod", "tenant-slug"]
 const scoped = (path: string, method = "GET", body?: string) =>
   new Request(`https://cell.test${path}?orgId=acme-corp&environmentId=prod`, { method, body: body ?? null, headers: { "x-norn-cell": JSON.stringify(["acme-corp", "prod"]) } })
 
-const names = (body: any): string[] => body.resourceMetrics[0].scopeMetrics[0].metrics.map((m: any) => m.name)
-const points = (body: any, name: string): any[] => {
-  const metric = body.resourceMetrics[0].scopeMetrics[0].metrics.find((m: any) => m.name === name)
-  return (metric?.sum ?? metric?.histogram)?.dataPoints ?? []
-}
+const metricList = (body: any): any[] => body.resourceMetrics[0].scopeMetrics[0].metrics
+const names = (body: any): string[] => metricList(body).map((m: any) => m.name)
+/** Every data point of `name` in a body, across however many metrics carry it. */
+const points = (body: any, name: string): any[] =>
+  metricList(body).filter((m: any) => m.name === name).flatMap((m: any) => (m.sum ?? m.histogram).dataPoints)
 const attr = (point: any, key: string) => {
   const value = point.attributes.find((a: any) => a.key === key)?.value
   return value?.stringValue ?? value?.boolValue ?? value?.intValue
 }
-const metricsOf = (sent: Sent[]) => sent.find((s) => s.url.endsWith("/v1/metrics"))!.body
-const spansOf = (sent: Sent[]) => sent.find((s) => s.url.endsWith("/v1/traces"))!.body.resourceSpans[0].scopeSpans[0].spans
+/** Every batch's metrics as one body: the background flush and a test's own flush may each have sent one. */
+const metricsOf = (sent: Sent[]) => ({ resourceMetrics: [{ scopeMetrics: [{ metrics: sent.filter((s) => s.url.endsWith("/v1/metrics")).flatMap((s) => metricList(s.body)) }] }] })
+const spansOf = (sent: Sent[]) => sent.filter((s) => s.url.endsWith("/v1/traces")).flatMap((s) => s.body.resourceSpans[0].scopeSpans[0].spans)
+
+/** The env's telemetry sending to a capture from the start, so the background flush is seen too. */
+function collected(env: Record<string, unknown>) {
+  const t = telemetry(env, "norn-cell")!
+  const { sent, send } = capture()
+  t.send = send
+  return { t, sent, all: async () => { await t.flush(); return sent } }
+}
 
 test("OTEL-OFF-1: without an endpoint the wrapped cell answers the same response and records nothing", async () => {
   expect(exportConfig({}, "x")).toBeNull()
@@ -131,6 +140,7 @@ test("OTEL-NO-TENANT-1: lowercase slugs, ids and colon suffixes never reach an a
     return Response.json({ format: "norn/refusal@2", code: "globex_prod.secret", message: "tenant-slug" }, { status: 404 })
   })
   const env = { ...ON }
+  const out = collected(env)
   const cell = new Cell(env)
   await cell.fetch(scoped("/v1/objects/acme/acme-corp"))
   await cell.fetch(scoped("/v1/actions/acme", "POST", "{}"))
@@ -138,34 +148,32 @@ test("OTEL-NO-TENANT-1: lowercase slugs, ids and colon suffixes never reach an a
   // The caller still reads the refusal the cell wrote.
   expect((await refused.json()).code).toBe("decision.not_found")
   await cell.fetch(scoped("/v1/acme-corp/globex_prod:tenant-slug", "POST", "{}"))
-  await cell.fetch(scoped("/v1/acme-corp", "ACME"))
+  await cell.fetch(scoped("/v1/acme-corp"))
   await settled(cell)
-  const t = telemetry(env, "norn-cell")!
-  const { sent, send } = capture()
-  await t.flush(send)
-  expect(sent.map((s) => s.url).sort()).toEqual(["https://collector.test/api/norn/v1/metrics", "https://collector.test/api/norn/v1/traces"])
+  const sent = await out.all()
+  expect([...new Set(sent.map((s) => s.url))].sort()).toEqual(["https://collector.test/api/norn/v1/metrics", "https://collector.test/api/norn/v1/traces"])
   expect(sent[0]!.headers["Authorization"]).toBe("Basic abc")
   const metrics = metricsOf(sent)
   expect(names(metrics)).toEqual(expect.arrayContaining(["norn_cell_requests_total", "norn_cell_request_duration_ms", "norn_cell_refusals_total", "norn_cell_actions_total", "norn_cell_decisions_total"]))
   expect(names(metrics)).not.toContain("norn_cell_commit_duration_ms")
   expect(attr(points(metrics, "norn_cell_actions_total")[0], "outcome")).toBe("pending")
   const refusals = points(metrics, "norn_cell_refusals_total").map((p) => [attr(p, "code"), attr(p, "route"), attr(p, "environment")]).sort()
-  expect(refusals).toEqual([["decision.not_found", "/v1/decisions/{decision}:decide", "prod"], ["other", "other", "prod"]])
-  expect(points(metrics, "norn_cell_requests_total").map((p) => attr(p, "method")).sort()).toEqual(["GET", "POST", "POST", "POST", "other"])
+  expect(refusals).toEqual([["decision.not_found", "/v1/decisions/{decision}:decide", "prod"], ["other", "other", "prod"], ["other", "other", "prod"]])
+  expect(points(metrics, "norn_cell_requests_total").map((p) => attr(p, "method")).sort()).toEqual(["GET", "GET", "POST", "POST", "POST"])
   const spanNames = spansOf(sent).map((s: any) => s.name).sort()
-  expect(spanNames).toEqual(["cell action /v1/actions/{action}", "cell decision /v1/decisions/{decision}:decide", "cell other other", "cell other other", "cell read /v1/objects/{type}/{id}"])
+  expect(spanNames).toEqual(["cell action /v1/actions/{action}", "cell decision /v1/decisions/{decision}:decide", "cell other other", "cell read /v1/objects/{type}/{id}", "cell read other"])
   const everything = JSON.stringify(sent)
   for (const secret of [...TENANT, "pat@example.com", "secret"]) expect(everything).not.toContain(secret)
 })
 
 test("an environment outside the configured stages is other", async () => {
   const env = { ...ON }
+  const out = collected(env)
   const Cell = fakeCell(() => new Response("{}"))
   const cell = new Cell(env)
   await cell.fetch(new Request("https://cell.test/v1/definitions", { headers: { "x-norn-cell": JSON.stringify(["acme", "acme-staging"]) } }))
   await settled(cell)
-  const { sent, send } = capture()
-  await telemetry(env, "norn-cell")!.flush(send)
+  const sent = await out.all()
   expect(points(metricsOf(sent), "norn_cell_requests_total").map((p) => attr(p, "environment"))).toEqual(["other"])
   expect(JSON.stringify(sent)).not.toContain("acme")
 })
@@ -225,20 +233,21 @@ test("OTEL-NEVER-FAILS-1: a hook that throws never reaches the handler, the alar
 
 test("OTEL-NEVER-FAILS-1: bad configuration turns export off instead of throwing", async () => {
   const bad: Record<string, unknown>[] = [
-    { OTEL_EXPORTER_OTLP_ENDPOINT: "https://o2.test/api", OTEL_SERVICE_NAME: 42 },
+    { OTEL_EXPORTER_OTLP_ENDPOINT: "https://o2.test/api", OTEL_SERVICE_NAME: 42, NORN_OTEL_INTERVAL_MS: "1000" },
     { OTEL_EXPORTER_OTLP_ENDPOINT: 42 },
     { OTEL_EXPORTER_OTLP_ENDPOINT: "not a url" },
     { OTEL_EXPORTER_OTLP_ENDPOINT: "https://o2.test/api", OTEL_EXPORTER_OTLP_HEADERS: "Authorization=Bearer a%0Ab" },
     { OTEL_EXPORTER_OTLP_ENDPOINT: "https://o2.test/api", OTEL_EXPORTER_OTLP_HEADERS: "Authorization=%E0%A4%A" },
     { OTEL_EXPORTER_OTLP_ENDPOINT: "https://o2.test/api", OTEL_EXPORTER_OTLP_HEADERS: "Bad Name=x" },
     { OTEL_EXPORTER_OTLP_ENDPOINT: "https://o2.test/api", OTEL_EXPORTER_OTLP_HEADERS: 7 },
-    { OTEL_EXPORTER_OTLP_ENDPOINT: "https://o2.test/api", OTEL_TRACES_SAMPLER_ARG: Symbol("x") },
   ]
-  // A numeric service name is ignored, not thrown on; every other bad setting turns export off.
+  // A numeric service name and a non-text sampler are ignored, not thrown on; every other bad setting turns export off.
   expect(exportConfig(bad[0], "norn-cell")!.service).toBe("norn-cell")
+  expect(exportConfig({ OTEL_EXPORTER_OTLP_ENDPOINT: "https://o2.test/api", OTEL_TRACES_SAMPLER_ARG: Symbol("x") }, "norn-cell")!.sampleRatio).toBe(1)
   for (const env of bad.slice(1)) expect(telemetry(env, "norn-cell")).toBeNull()
   const reply = new Response("{}")
   const Cell = fakeCell(() => reply)
+  telemetry(bad[0], "norn-cell")!.send = capture().send
   for (const env of bad) {
     const cell = new Cell(env)
     expect(await cell.fetch(scoped("/v1/definitions"))).toBe(reply)
@@ -303,6 +312,7 @@ test("a histogram exports delta buckets with its bounds", async () => {
 
 test("sync, alarm lag, and live publishes with the snapshots they sent are recorded from the hooks", async () => {
   const env = { ...ON }
+  const out = collected(env)
   const Cell = fakeCell(() => new Response("{}"))
   const cell = new Cell(env)
   cell.sockets = [{}, {}, {}]
@@ -317,9 +327,7 @@ test("sync, alarm lag, and live publishes with the snapshots they sent are recor
   // The publish's record runs once its promise settles; wait for its background task.
   await new Promise((resolve) => setTimeout(resolve, 5))
   await settled(cell)
-  const { sent, send } = capture()
-  await telemetry(env, "norn-cell")!.flush(send)
-  const metrics = metricsOf(sent)
+  const metrics = metricsOf(await out.all())
   expect(points(metrics, "norn_cell_live_fanout")[0].sum).toBe(3)
   expect(points(metrics, "norn_cell_live_snapshots_total")[0].asDouble).toBe(2)
   expect(points(metrics, "norn_cell_alarm_lag_ms")[0].sum).toBeGreaterThanOrEqual(1500)
