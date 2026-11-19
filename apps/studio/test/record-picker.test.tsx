@@ -1,10 +1,7 @@
-import { expect, mock, test } from "bun:test"
+import { expect, test } from "bun:test"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { renderToStaticMarkup } from "react-dom/server"
-import type { PickerRecords } from "../src/actions/action-form.tsx"
-
-mock.module("../src/lib/transport.ts", () => ({ transport: {}, recordedTransport: {} }))
-const { RecordPicker, pickerMode } = await import("../src/actions/action-form.tsx")
+import { RecordPicker, pickerMode, type PickerRecords } from "../src/actions/record-picker.tsx"
 
 const KIND = "purchasing.Supplier"
 const render = (client: QueryClient) =>
