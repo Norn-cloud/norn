@@ -37,6 +37,11 @@ enum Gate {
         #[arg(long)]
         maintainer_evidence: Option<PathBuf>,
     },
+    /// Every workflow-lint ignore still covers a finding in zizmor's `--no-ignores` report.
+    WorkflowLint {
+        #[arg(long)]
+        findings: PathBuf,
+    },
 }
 fn main() -> ExitCode {
     let Top::Ci(command) = Cli::parse().command;
@@ -68,6 +73,13 @@ fn main() -> ExitCode {
             maintainer_evidence,
         } => {
             let errors = ci::run_with_evidence(&root, &base_root, maintainer_evidence.as_deref());
+            (serde_json::to_string_pretty(&errors), errors.is_empty())
+        }
+        Gate::WorkflowLint { findings } => {
+            let errors = match std::fs::read_to_string(&findings) {
+                Ok(report) => ci::workflow_lint::check(&PathBuf::from("."), &report),
+                Err(error) => vec![format!("read {}: {error}", findings.display())],
+            };
             (serde_json::to_string_pretty(&errors), errors.is_empty())
         }
     };

@@ -1484,8 +1484,10 @@ def workflow_context_canaries(source: str) -> None:
                     ("verification evidence", ' && $name != verification-*', ''),
                     ("uncontained", 'if [[ $target != "$root/target" ]]; then', "if false; then"),
                     ("uncanonical", 'target=$(realpath -m -- "${CARGO_TARGET_DIR:-$PWD/target}")', 'target=${CARGO_TARGET_DIR:-$PWD/target}'),
-                    ("unconditional", "if [[ -n $pruned ]] && ((", "if true || [[ -n $pruned ]] && (("),
-                    ("first task", "      pruned=1\n", ""),
+                    ("unconditional", "if [[ -n $pruned ]] && ! {", "if true || [[ -n $pruned ]] && ! {"),
+                    ("first task", "      pruned=1 previous=$task\n", ""),
+                    ("every task shares a build", "shares_build() { [[ $1 == test/* ||", "shares_build() { [[ $1 == * ||"),
+                    ("shared build pruned", '! { shares_build "$previous" && shares_build "$task"; } && ', ""),
                     ("extra deletion", "        prune_target\n", '        prune_target; rm -rf -- "$HOME/.cargo"\n')):
                 if core.count(before) != 1:
                     raise AssertionError(f"bundle prune canary target drifted: {label}")

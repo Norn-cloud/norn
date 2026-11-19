@@ -1,0 +1,3 @@
+# actionlint for .github/workflows (core.sh `cheap`, #1348 CI-R2). Passed explicitly so a
+# `.github/actionlint.yaml` cannot loosen it; it lives in a gate directory.
+{}

@@ -2031,3 +2031,33 @@ fn val_rate_dynamic_currency_is_outside_the_bounded_exact_profile() {
     check_expression_with(&expression, &env, &Type::Bool, &roomy_limits())
         .expect("legacy profile remains available");
 }
+
+#[test]
+fn a_prepared_admission_runs_only_the_expression_that_prepared_it() {
+    let env = ZenTypeEnv::input_only(fields([("n", Type::Number)]), EnvOptions::default()).unwrap();
+    let context = Value::object([("input", Value::object([("n", Value::from(3_i64))]))]);
+    let positive = Expression::compile("input.n > 0").unwrap();
+    let prepared = positive.prepare_admitted(&env, &Type::Bool);
+    let attempt = positive.evaluate_prepared(
+        &prepared,
+        &context,
+        EvaluationBudget::default(),
+        &env,
+        &Type::Bool,
+    );
+    assert_eq!(attempt.result.unwrap().into_value(), Value::Bool(true));
+    let negative = Expression::compile("input.n < 0").unwrap();
+    let refused = negative.evaluate_prepared(
+        &prepared,
+        &context,
+        EvaluationBudget::default(),
+        &env,
+        &Type::Bool,
+    );
+    assert!(
+        matches!(&refused.result, Err(norn_expr::ExprError::Compile { message }) if message.contains("input.n > 0")),
+        "{:?}",
+        refused.result
+    );
+    assert_eq!(refused.units_used, 0);
+}
