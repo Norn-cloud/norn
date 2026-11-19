@@ -209,7 +209,13 @@ fn an_outsiders_question_is_answered_as_a_scope_with_no_cell_on_the_hosted_tenan
         ] {
             let at_seeded = ask(&mut seeded, &seeded_principals, &path, auth);
             let at_vacant = ask(&mut vacant, &vacant_principals, &path, auth);
-            assert_ne!(at_seeded.status, 200, "{path} as {auth:?}");
+            // D84: exactly the base's opaque 404 `question.not_found`.
+            assert_eq!(
+                (at_seeded.status, &json(&at_seeded)["code"]),
+                (404, &serde_json::json!("question.not_found")),
+                "{path} as {auth:?}: {}",
+                at_seeded.body
+            );
             assert_eq!(
                 (at_seeded.status, &at_seeded.body),
                 (at_vacant.status, &at_vacant.body),

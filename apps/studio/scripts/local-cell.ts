@@ -185,7 +185,9 @@ async function digest(text: string): Promise<string> {
 
 /** The live subscriptions of this server's sockets (`norn.live.v1`, as `apps/norn-cell-do/subscribe.mjs`). */
 export class LiveHub {
-  readonly #sockets = new Map<LiveSocket, Map<string, { path: string; digest: string }>>()
+  // `asked` numbers each read of a subscription; `answered` is the newest read
+  // whose answer was taken, so an older read finishing late never replaces it.
+  readonly #sockets = new Map<LiveSocket, Map<string, { path: string; digest: string; asked: number; answered: number }>>()
   constructor(private readonly ask: Ask) {}
 
   get size(): number { return this.#sockets.size }
@@ -207,7 +209,7 @@ export class LiveHub {
     const path = subscribable(msg.path)
     if (path === null) return refused("live.not_subscribable", "a subscription names one of this cell's GET routes")
     if (!subs.has(id) && subs.size >= MAX_SUBSCRIPTIONS) return refused("live.too_many_subscriptions", `at most ${MAX_SUBSCRIPTIONS} subscriptions per socket`)
-    subs.set(id, { path, digest: "" })
+    subs.set(id, { path, digest: "", asked: 0, answered: 0 })
     await this.#evaluate(ws, id)
   }
 
@@ -221,12 +223,17 @@ export class LiveHub {
     if (subs === undefined) return
     for (const [id, sub] of subs) {
       if (only !== undefined && id !== only) continue
+      const read = ++sub.asked
       let reply: { status: number; body: string }
       try { reply = await this.ask(sub.path) } catch { continue }
       if (reply.status === 401) { ws.close(4401, "token expired"); this.close(ws); return }
       const value = await digest(`${reply.status}\n${reply.body}`)
-      // A subscription removed while its answer was read sends nothing.
-      if (value === sub.digest || subs.get(id) !== sub) continue
+      // A subscription removed while its answer was read sends nothing, and
+      // an answer older than one already taken is superseded (a poll that
+      // read before a write but finished after the write's own read).
+      if (subs.get(id) !== sub || read < sub.answered) continue
+      sub.answered = read
+      if (value === sub.digest) continue
       sub.digest = value
       let body: unknown = null
       try { body = JSON.parse(reply.body) } catch { body = null }

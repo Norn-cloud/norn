@@ -187,10 +187,8 @@ pub(crate) fn answer(
     request: &Request<'_>,
 ) -> Response {
     // DEV-ONE-AUTHORITY-1: only this process installs definitions, from the
-    // project's sources; the hosted plan/apply routes are not served here.
-    if request.path == norn_api::cell_definitions::PLAN_PATH
-        || request.path == norn_api::cell_definitions::APPLY_PATH
-    {
+    // project's sources; no route that changes them is served here.
+    if changes_definitions(request.path) {
         return refusal(&Refusal::new(
             http::StatusCode::CONFLICT,
             "defs.dev_sources_only",
@@ -219,6 +217,18 @@ pub(crate) fn answer(
     }
     let on_engine = EngineQuestions::new(&questions, engine, host.scope());
     server::handle_all(host, principals, Some(&on_engine), &kinds, request)
+}
+
+/// The routes that change the installed definitions: the hosted plan/apply
+/// pair and the retained-definition install and retire. Admit only checks a
+/// definition and stays served.
+fn changes_definitions(path: &str) -> bool {
+    path == norn_api::cell_definitions::PLAN_PATH
+        || path == norn_api::cell_definitions::APPLY_PATH
+        || path == "/v1/definitions:install"
+        || path
+            .strip_prefix("/v1/definitions/")
+            .is_some_and(|rest| rest.ends_with(":retire"))
 }
 
 fn refusal(refused: &Refusal) -> Response {
@@ -321,6 +331,8 @@ mod tests {
             "question": "Convert this melt?", "risk": "high" } })
     }
 
+    /// Installs the approval in process, as norn dev installs from the
+    /// project's sources: no network route installs (DEV-ONE-AUTHORITY-1).
     fn gate(dev: &Dev) {
         let mut body = approval(&["admin"]);
         let (status, admitted) = call(
@@ -331,13 +343,62 @@ mod tests {
         );
         assert_eq!(status, 200, "{admitted}");
         body["signoff"] = json!({ "restatementSha256": admitted["restatementSha256"] });
-        let (status, installed) = call(
-            dev,
+        norn_api::definition_routes::install_definition(
+            &dev.host,
+            &norn_api::scope::ScopeQuery {
+                org_id: Some("org_demo".into()),
+                environment_id: Some("dev".into()),
+            },
+            Some(DEVELOPER),
+            &crate::dev::policy::dev_kinds(),
+            None,
+            &serde_json::from_str(&body.to_string()).unwrap(),
+            1_800_000_000_000,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn no_route_changes_the_definitions_on_the_dev_host() {
+        let dev = dev();
+        let mut body = approval(&["admin"]);
+        let (_, admitted) = call(
+            &dev,
             Some(DEVELOPER_TOKEN),
-            ("POST", "/v1/definitions:install", SCOPE),
+            ("POST", "/v1/definitions:admit", SCOPE),
             &body.to_string(),
         );
-        assert_eq!(status, 200, "{installed}");
+        body["signoff"] = json!({ "restatementSha256": admitted["restatementSha256"] });
+        for path in [
+            norn_api::cell_definitions::PLAN_PATH,
+            norn_api::cell_definitions::APPLY_PATH,
+            "/v1/definitions:install",
+            "/v1/definitions/ops.melt_approval:retire",
+        ] {
+            let (status, refused) = call(
+                &dev,
+                Some(DEVELOPER_TOKEN),
+                ("POST", path, SCOPE),
+                &body.to_string(),
+            );
+            assert_eq!(
+                (status, &refused["code"]),
+                (409, &json!("defs.dev_sources_only")),
+                "{path}: {refused}"
+            );
+        }
+        let query = format!("{SCOPE}&kind=approval");
+        let (status, listed) = call(
+            &dev,
+            Some(DEVELOPER_TOKEN),
+            ("GET", "/v1/definitions:list", &query),
+            "",
+        );
+        assert_eq!(status, 200, "{listed}");
+        assert!(
+            !listed.to_string().contains("ops.melt_approval"),
+            "nothing was installed: {listed}"
+        );
     }
 
     fn pending(dev: &Dev, token: &str) -> Value {

@@ -176,7 +176,7 @@ test("three_systems_dev_load: the packs' synthetic exports load whole, at startu
     const slices = [{ ...erpnext, incremental: [] }, { ...erpnext, snapshot: [] }]
     const rows = erpnext.snapshot.length + erpnext.incremental.length
     const load = async () => {
-      const total = { status: [] as number[], rows: 0, landed: 0, alreadyLanded: 0, quarantined: 0 }
+      const total = { status: [] as number[], rows: 0, landed: 0, alreadyLanded: 0, quarantined: 0, landedBySlice: [] as number[] }
       for (const slice of slices) {
         const response = await fetch(`${ready.url}/v1/observations:load?${scope}`, {
           method: "POST",
@@ -188,6 +188,7 @@ test("three_systems_dev_load: the packs' synthetic exports load whole, at startu
         total.status.push(response.status)
         total.rows += body.rows
         total.landed += body.landed
+        total.landedBySlice.push(body.landed)
         total.alreadyLanded += body.alreadyLanded
         total.quarantined += body.quarantined
       }
@@ -195,7 +196,10 @@ test("three_systems_dev_load: the packs' synthetic exports load whole, at startu
     }
     const first = await load()
     expect(first).toMatchObject({ status: [200, 200], rows, quarantined: 0 })
-    expect(first.landed).toBeGreaterThan(0)
+    // Each slice lands its own rows: the incremental changes are new versions,
+    // never reported as already landed behind the snapshot.
+    expect(first.landedBySlice[0]).toBeGreaterThan(0)
+    expect(first.landedBySlice[1]).toBeGreaterThan(0)
     expect(first.landed + first.alreadyLanded).toBe(rows)
     const again = await load()
     expect(again).toMatchObject({ status: [200, 200], rows, landed: 0, alreadyLanded: rows, quarantined: 0 })

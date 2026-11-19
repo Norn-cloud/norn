@@ -129,6 +129,30 @@ test("live reads: a subscription gets the dev host's GET answer, then only a cha
   expect(sent).toHaveLength(2)
 })
 
+test("live reads: an older read finishing after a newer one never replaces its answer", async () => {
+  const pending: ((reply: { status: number; body: string }) => void)[] = []
+  const hub = new LiveHub(() => new Promise((done) => { pending.push(done) }))
+  const { ws, sent } = socket()
+  hub.open(ws)
+  const subscribed = hub.message(ws, JSON.stringify({ type: "subscribe", id: "objects", path: "/v1/objects/canon.Delivery" }))
+  pending.shift()!({ status: 200, body: '{"total":1}' })
+  await subscribed
+  // A poll reads total=1, then a write's own read reads total=2 and finishes first.
+  const poll = hub.publish()
+  const afterWrite = hub.publish()
+  const [older, newer] = [pending.shift()!, pending.shift()!]
+  newer({ status: 200, body: '{"total":2}' })
+  await afterWrite
+  older({ status: 200, body: '{"total":1}' })
+  await poll
+  expect(sent.map((message) => message["body"])).toEqual([{ total: 1 }, { total: 2 }])
+  // The next read is still taken.
+  const later = hub.publish()
+  pending.shift()!({ status: 200, body: '{"total":4}' })
+  await later
+  expect(sent.at(-1)).toMatchObject({ body: { total: 4 } })
+})
+
 test("live reads refuse what the hosted cell refuses, and close on an expired token", async () => {
   expect(subscribable("/v1/subscribe?x=1")).toBeNull()
   expect(subscribable("/api/me")).toBeNull()
@@ -179,8 +203,9 @@ test("the local Studio's live socket: same-site only, answered as the session, a
     const ws = new WebSocket(`ws://127.0.0.1:${port}/api/host/v1/subscribe?orgId=local&environmentId=dev`, [LIVE_PROTOCOL])
     const messages: Record<string, unknown>[] = []
     const next = (count: number) => new Promise<void>((done, fail) => {
-      const deadline = setTimeout(() => fail(new Error(`waited for ${count} messages: ${JSON.stringify(messages)}`)), 5_000)
-      const check = () => { if (messages.length >= count) { clearTimeout(deadline); done() } else setTimeout(check, 10) }
+      let poll: ReturnType<typeof setTimeout> | undefined
+      const deadline = setTimeout(() => { clearTimeout(poll); fail(new Error(`waited for ${count} messages: ${JSON.stringify(messages)}`)) }, 5_000)
+      const check = () => { if (messages.length >= count) { clearTimeout(deadline); done() } else poll = setTimeout(check, 10) }
       check()
     })
     ws.addEventListener("message", (event) => messages.push(JSON.parse(String(event.data))))

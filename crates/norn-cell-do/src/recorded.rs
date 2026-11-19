@@ -17,9 +17,9 @@
 //! `{ "sequence", "operation": "upsert", "dataset", "record", "sourceVersion"? }`
 //! and loads after every snapshot row, in file order. Without a
 //! `sourceVersion` its version is `1+<sequence, 20 digits>`, which orders
-//! after the snapshot's `1` and by sequence; when any snapshot row carries a
-//! `sourceVersion`, a version-less change would not order against it, so the
-//! whole export is refused. A row this loader cannot read (another
+//! after the snapshot's `1` and by sequence; when any other row (snapshot or
+//! incremental) carries a `sourceVersion`, a version-less change would not
+//! order against it, so the whole export is refused. A row this loader cannot read (another
 //! operation, no sequence) refuses the whole export: no row of a recorded
 //! export is ever skipped.
 
@@ -105,11 +105,16 @@ impl Recorded {
             .iter()
             .map(|value| row(value, source_version(value)))
             .collect::<Result<Vec<_>, String>>()?;
-        let versioned = rows.iter().any(|row| row.version.is_some());
         if let Some(changes) = document.get("incremental") {
             let changes = changes
                 .as_array()
                 .ok_or("\"incremental\" is a list of changes")?;
+            // Any recorded version, on a snapshot row or on any change in
+            // the file, wherever it stands relative to a version-less one.
+            let versioned = rows.iter().any(|row| row.version.is_some())
+                || changes
+                    .iter()
+                    .any(|change| source_version(change).is_some());
             for (index, change) in changes.iter().enumerate() {
                 let operation = change.get("operation").and_then(Value::as_str);
                 if operation != Some("upsert") {
@@ -128,7 +133,7 @@ impl Recorded {
                     Some(version) => version,
                     None if versioned => {
                         return Err(format!(
-                            "incremental row {index} has no \"sourceVersion\" while snapshot rows carry one; a recorded export versions every change or none"
+                            "incremental row {index} has no \"sourceVersion\" while other rows carry one; a recorded export versions every change or none"
                         ));
                     }
                     None => format!("1+{sequence:020}"),
@@ -247,6 +252,20 @@ mod tests {
     #[test]
     fn a_version_less_change_beside_a_versioned_snapshot_refuses_the_export() {
         let refused = Recorded::parse(&export(Some("2026-01-01"), None)).unwrap_err();
+        assert!(
+            refused.contains("incremental row 0") && refused.contains("sourceVersion"),
+            "{refused}"
+        );
+    }
+
+    #[test]
+    fn a_version_less_change_before_a_versioned_change_refuses_the_export() {
+        let mut document = export(None, None);
+        document["incremental"].as_array_mut().unwrap().push(
+            json!({ "sequence": 2, "operation": "upsert", "dataset": "Item",
+                "record": { "id": "i-1" }, "sourceVersion": "2026-01-01" }),
+        );
+        let refused = Recorded::parse(&document).unwrap_err();
         assert!(
             refused.contains("incremental row 0") && refused.contains("sourceVersion"),
             "{refused}"
