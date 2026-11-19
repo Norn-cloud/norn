@@ -109,3 +109,24 @@ test("starter_is_formatted: a new project passes norn fmt --check", async () => 
     expect({ status, out: JSON.parse(out) }).toEqual({ status: 0, out: { changed: [], check: true } })
   } finally { rmSync(root, { recursive: true }) }
 }, 60000)
+
+test("init_three_systems_lays_out_the_hosted_packs_and_their_exports", async () => {
+  const root = scratch()
+  try {
+    const dir = join(root, "packs")
+    const result = await run([dir, "--template", "three-systems", "--no-install", "--json"])
+    expect(result.status).toBe(0)
+    const output = JSON.parse(result.out)
+    const profile = JSON.parse(readFileSync(join(TOOL_ROOT, "templates/three-systems/template.json"), "utf8"))
+    expect(output.manifest.sources).toEqual(["src", "definitions/core", ...profile.packs.map((pack: string) => `definitions/packs/${pack}`)])
+    expect(output.next).toBe(`cd ${dir} && bunx norn dev --load data/erpnext.json --load data/shopify.json --load data/odoo.json`)
+    expect(readdirSync(join(dir, "definitions/core")).sort()).toEqual(profile.core.map((id: string) => `${id}.json`).sort())
+    for (const pack of profile.packs) {
+      expect(readdirSync(join(dir, "definitions/packs", pack)).sort()).toEqual(readdirSync(join(TOOL_ROOT, "../../registry/packs", pack, "artifacts")).filter((name) => name.endsWith(".json")).sort())
+    }
+    for (const system of profile.data) {
+      expect(readFileSync(join(dir, "data", `${system}.json`), "utf8")).toBe(readFileSync(join(TOOL_ROOT, "../../registry/packs", system, "synthetic.json"), "utf8"))
+    }
+    expect(readdirSync(join(dir, "src"))).toEqual([])
+  } finally { rmSync(root, { recursive: true }) }
+})

@@ -689,6 +689,15 @@
     "labels.validation.unlabelled_locale": {
       "message": "a description or review state names a locale that has no label"
     },
+    "law.conservation.alias_bound": {
+      "message": "conservation writer has more key-aliasing cases than the checker enumerates: {$detail}"
+    },
+    "law.conservation.alias_unlowerable": {
+      "message": "conservation writer may write one row through coordinates the checker cannot reconcile: {$detail}"
+    },
+    "law.conservation.key_alias": {
+      "message": "conservation writer does not balance when its keys name one cell: {$detail}"
+    },
     "law.example.mismatch": {
       "message": "a law example's verdict differs from its expectation: {$detail}"
     },

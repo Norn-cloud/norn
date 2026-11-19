@@ -1,0 +1,7 @@
+{
+  "code": "law.conservation.key_alias",
+  "message": "conservation writer does not balance when its keys name one cell: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

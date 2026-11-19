@@ -111,7 +111,11 @@ try:
     answer = json.loads(body)
     assert answer["freshness"] == "exact" and answer["complete"], answer
     print(f"{RUNTIME} first answer (provisions analytics): {cold_answer:.1f} ms, body sha256 {hashlib.sha256(body).hexdigest()}")
-    assert request(f"{ANSWER}?{ANALYTICS}")[:2] == (403, denied), "anonymous answer"
+    # An outsider is answered exactly as a scope with no cell, before any
+    # question is looked up (D84: the base's 404 `question.not_found`), so
+    # the published question never shows; org_demo/prod is declared, vacant.
+    outsider = request(f"{ANSWER}?{ANALYTICS}")[:2]
+    assert outsider[0] != 200 and outsider == request(f"{ANSWER}?orgId=org_demo&environmentId=prod")[:2], outsider
     guest = json.loads(request(f"{ANSWER}?{ANALYTICS}", GUEST)[1])
     bucket = next(iter(guest["rows"]))
     trace_query = urllib.parse.urlencode({"lineageRef": guest["lineageRef"], "bucket": bucket})
