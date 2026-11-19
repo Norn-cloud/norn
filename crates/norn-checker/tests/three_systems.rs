@@ -134,6 +134,47 @@ fn all_rows(f: &Fixture) -> Vec<Row> {
         .collect()
 }
 
+/// Every registry pack's repo-local `rawMetadata` evidence must hash to its
+/// pin; a scheme URI (`evidence://…`) names evidence outside the repo.
+#[test]
+fn registry_pack_raw_metadata_pins_match_repo_files() {
+    let mut checked = 0;
+    for pack in fs::read_dir(root().join("registry/packs")).expect("packs") {
+        let dir = pack.expect("pack").path().join("artifacts");
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries {
+            let path = entry.expect("entry").path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            let artifact: Value =
+                serde_json::from_str(&fs::read_to_string(&path).expect("artifact")).expect("json");
+            let raw = &artifact["payload"]["rawMetadata"];
+            let Some(uri) = raw["uri"].as_str() else {
+                continue;
+            };
+            if uri.contains("://") {
+                continue;
+            }
+            let bytes = fs::read(root().join(uri))
+                .unwrap_or_else(|e| panic!("{}: rawMetadata {uri}: {e}", path.display()));
+            assert_eq!(
+                raw["sha256"].as_str(),
+                Some(format!("{:x}", Sha256::digest(bytes)).as_str()),
+                "{}: rawMetadata {uri} drifted from its pin",
+                path.display()
+            );
+            checked += 1;
+        }
+    }
+    assert!(
+        checked >= 5,
+        "only {checked} repo-local rawMetadata pins found"
+    );
+}
+
 #[test]
 fn mvp_map_three_artifact_set_is_admitted() {
     let set = artifacts();

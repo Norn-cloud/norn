@@ -180,7 +180,7 @@ export function sheetMarkup(document: SheetDocument, decision: SheetDecision, lo
     )
     .join("")
   return `
-    <section class="norn-sheet" dir="${locale === "ar" ? "rtl" : "ltr"}" lang="${locale}" aria-label="${escape(label(byId.get("decision-sheet"), locale))}">
+    <section class="norn-sheet" dir="${locale === "ar" ? "rtl" : "ltr"}" lang="${escape(locale)}" aria-label="${escape(label(byId.get("decision-sheet"), locale))}">
       <header class="norn-sheet-header">
         <h2 class="norn-title" data-region="question">${escape(decision.question)}</h2>
         <p class="norn-meta">${escape(flowName(decision.flow))} · ${escape(decision.step.label ?? decision.step.id)}</p>

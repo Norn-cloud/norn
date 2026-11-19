@@ -830,7 +830,8 @@ fn watermark_text(watermarks: &BTreeMap<String, Watermark>) -> String {
     serde_json::to_string(watermarks).unwrap_or_else(|_| "{}".to_owned())
 }
 
-/// RFC 3339 UTC with milliseconds.
+/// RFC 3339 UTC with milliseconds; millis outside jiff's range render as
+/// the epoch, `1970-01-01T00:00:00.000Z`.
 #[must_use]
 pub fn rfc3339(ms: u64) -> String {
     i64::try_from(ms)

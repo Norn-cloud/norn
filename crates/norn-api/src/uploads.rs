@@ -501,7 +501,9 @@ fn classify(value: &str) -> ColumnKind {
         }
     } else if value.eq_ignore_ascii_case("true") || value.eq_ignore_ascii_case("false") {
         ColumnKind::Boolean
-    } else if value.parse::<jiff::Timestamp>().is_ok() {
+    } else if norn_expr::temporal::canonical_timestamp(value).is_ok() {
+        // The engine's own grammar: a column is Datetime only when every
+        // value survives the mapping's `timestamp(...)`.
         ColumnKind::Datetime
     } else {
         ColumnKind::Text
@@ -995,6 +997,24 @@ fn typed(cell: Option<&str>, kind: ColumnKind) -> RuntimeValue {
 )]
 mod tests {
     use super::*;
+
+    /// Datetime means the engine's RFC 3339 subset, not any `jiff` spelling.
+    #[test]
+    fn datetime_detection_follows_the_engine_timestamp_grammar() {
+        assert_eq!(classify("2026-01-01T10:00:00Z"), ColumnKind::Datetime);
+        assert_eq!(
+            classify("2026-01-01T12:00:00.5+02:00"),
+            ColumnKind::Datetime
+        );
+        for loose in [
+            "2026-01-01T10:00Z",
+            "2026-01-01T10:00:00+0200",
+            "2026-01-01T10:00:00Z[UTC]",
+            "20260101T100000Z",
+        ] {
+            assert_eq!(classify(loose), ColumnKind::Text, "{loose}");
+        }
+    }
 
     /// The AWS `SigV4` query-auth example (`GET /test.txt`, 2013-05-24, us-east-1).
     #[test]
