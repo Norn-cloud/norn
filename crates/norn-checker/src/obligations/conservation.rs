@@ -160,14 +160,16 @@ impl BoundAction {
     }
 }
 
-/// The Norn1 content digest of an action definition: the digest of its typed
-/// root's canonical JSON ([`Digest::of_json_document`]). Two roots share it
-/// exactly when every field the kernel reads, preconditions included, is
-/// equal.
+/// The exact content digest of an action definition: the SHA-256 of its
+/// typed root's exact canonical JSON
+/// ([`norn_canonical::canonical_json_exact_of`]). It does not normalize
+/// Unicode: ZEN compares member names and string literals byte for byte, so
+/// two roots share it only when every field the kernel reads, preconditions
+/// included, has the same bytes.
 fn action_digest(action: &ActionRoot) -> Option<Digest> {
-    serde_json::to_vec(action)
-        .ok()
-        .and_then(|json| Digest::of_json_document(json).ok())
+    use sha2::{Digest as _, Sha256};
+    let bytes = norn_canonical::canonical_json_exact_of(action).ok()?;
+    Some(Digest::from_hex(&format!("{:x}", Sha256::digest(bytes))))
 }
 
 /// The installed action revisions, by id, pinned by content digest.
@@ -1231,6 +1233,61 @@ mod tests {
             InstalledActions::from_canonical_set("{}"),
             Err(Failure::Malformed)
         );
+    }
+
+    #[test]
+    fn cons_bound_action_digest_is_exact_not_nfc() {
+        // Sol round 4: ZEN compares member names and string literals byte for
+        // byte, so an NFC-equivalent edit is a different revision.
+        let (composed, decomposed) = ("\u{e9}", "e\u{301}");
+        // A member name: the checker keys the coordinate by the decomposed
+        // spelling, which only the edited guard names.
+        let c = keyed(&[decomposed, "to"]);
+        let original = action("transfer", &[&format!("input['{composed}'] != input.to")]);
+        let edited = action("transfer", &[&format!("input['{decomposed}'] != input.to")]);
+        let bind = |root: &ActionRoot| {
+            let mut writer = transfer(&c, &[]);
+            writer.source = WriterSource::Action(BoundAction::of(root));
+            writer
+        };
+        assert_ne!(
+            BoundAction::of(&original).digest,
+            BoundAction::of(&edited).digest
+        );
+        let installed = InstalledActions::pin(std::slice::from_ref(&original)).unwrap();
+        assert!(matches!(
+            super::check(&c, &[bind(&edited)], &[q(1); 2], &installed),
+            Err(Failure::Aliased { .. })
+        ));
+        // Control: installed as itself, the edited guard does exclude.
+        let installed = InstalledActions::pin(std::slice::from_ref(&edited)).unwrap();
+        assert_eq!(
+            super::check(&c, &[bind(&edited)], &[q(1); 2], &installed),
+            Ok(())
+        );
+        // A string literal: `'é' == 'é'` in its two encodings.
+        let c = keyed(&["from", "to"]);
+        let guard = |right: &str| {
+            action(
+                "transfer",
+                &[
+                    "input.from != input.to",
+                    &format!("'{composed}' == '{right}'"),
+                ],
+            )
+        };
+        let (original, edited) = (guard(composed), guard(decomposed));
+        assert_ne!(
+            BoundAction::of(&original).digest,
+            BoundAction::of(&edited).digest
+        );
+        let installed = InstalledActions::pin(std::slice::from_ref(&original)).unwrap();
+        let mut writer = transfer(&c, &[]);
+        writer.source = WriterSource::Action(BoundAction::of(&edited));
+        assert!(matches!(
+            super::check(&c, &[writer], &[q(1); 2], &installed),
+            Err(Failure::Aliased { .. })
+        ));
     }
 
     #[test]
