@@ -1,0 +1,26 @@
+providers.json in this directory holds OAuth provider metadata (endpoint URLs,
+scopes, scope separators, client authentication, PKCE and static authorization
+parameters) extracted by scripts/connections/extract_openconnector.py from
+
+  OOMOL Connect / OpenConnector v1.9.4
+  https://github.com/oomol-lab/open-connector
+  commit d89dc9f24f5a057bb500272d7dbf333837c77c68
+
+licensed under the Apache License, Version 2.0 (the same licence as this
+repository; see ../../LICENSE). Its NOTICE reads:
+
+  OOMOL Connect is licensed under the Apache License, Version 2.0, except where
+  otherwise noted.
+
+  Third-party provider and app names, trademarks, logos, icons, service marks,
+  trade names, APIs, documentation, and brand assets remain the property of
+  their respective owners.
+
+  References to third-party providers are included for identification and
+  interoperability only. Such references do not imply endorsement,
+  sponsorship, partnership, certification, or verification by the third-party
+  owner.
+
+The cross-origin redirect header list in
+crates/norn-cell-do/src/connections/egress.rs follows the same release's
+src/core/guarded-fetch.ts (crossOriginSafeHeaders).

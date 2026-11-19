@@ -872,14 +872,19 @@ impl Authorizer for ReadPolicy {
             Operation::ReadDefinitions => request
                 .actor
                 .is_some_and(|actor| self.pdp_for(actor).is_some()),
-            Operation::WriteDefinitions | Operation::SyncSource(_) => {
-                request.actor.is_some_and(|actor| {
-                    self.caller
-                        .current()
-                        .filter(|caller| caller.subject_id == actor)
-                        .is_some_and(|caller| self.table.writes_definitions(&caller.roles))
-                })
-            }
+            // CONN-AUTHZ-1: the roles that write definitions (admins and
+            // owners) manage connection credentials, every connection of the
+            // cell, so they also revoke a grant siblings share
+            // (GRANT-REVOKE-1).
+            Operation::WriteDefinitions
+            | Operation::SyncSource(_)
+            | Operation::ManageConnection(_)
+            | Operation::RevokeConnectionGrant(_) => request.actor.is_some_and(|actor| {
+                self.caller
+                    .current()
+                    .filter(|caller| caller.subject_id == actor)
+                    .is_some_and(|caller| self.table.writes_definitions(&caller.roles))
+            }),
             Operation::ProvisionCell => request
                 .actor
                 .is_some_and(|actor| provisioner(self.table, &self.caller, actor)),
