@@ -1176,6 +1176,117 @@
       "generatedArtifacts": []
     },
     {
+      "id": "hosted-timers-quint-typecheck",
+      "profile": "fast",
+      "command": "quint typecheck verification/hosted-timers-v1/models/hosted-timers.qnt",
+      "evidenceKind": "command",
+      "role": "typecheck",
+      "classifications": [
+        {
+          "subsystem": "transition-authority",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "hosted-timers-quint",
+      "profile": "fast",
+      "command": "quint verify verification/hosted-timers-v1/models/hosted-timers.qnt --backend apalache --invariants typeOk wakeCovers expiryAtomic timerRunsPinnedRule --max-steps 7",
+      "evidenceKind": "command",
+      "role": "supporting-check",
+      "classifications": [
+        {
+          "subsystem": "transition-authority",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [
+        "target/verification-results/hosted-timers-quint.json"
+      ],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "hosted-timers-progress-quint",
+      "profile": "full",
+      "command": "quint verify verification/hosted-timers-v1/models/hosted-timers.qnt --backend apalache --step stepProgress --invariants typeOk dueProgress healthyNotStarved --max-steps 4",
+      "evidenceKind": "command",
+      "role": "supporting-check",
+      "classifications": [
+        {
+          "subsystem": "transition-authority",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [
+        "target/verification-results/hosted-timers-progress-quint.json"
+      ],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "hosted-timers-progress-sim",
+      "profile": "fast",
+      "command": "quint run verification/hosted-timers-v1/models/hosted-timers.qnt --step stepProgress --invariant progress --max-steps 15 --max-samples 10000 --seed 1",
+      "evidenceKind": "command",
+      "role": "supporting-check",
+      "classifications": [
+        {
+          "subsystem": "transition-authority",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "approval-fencing-quint-typecheck",
+      "profile": "fast",
+      "command": "quint typecheck verification/hosted-timers-v1/models/approval-fencing.qnt",
+      "evidenceKind": "command",
+      "role": "typecheck",
+      "classifications": [
+        {
+          "subsystem": "transition-authority",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "approval-fencing-quint",
+      "profile": "fast",
+      "command": "quint verify verification/hosted-timers-v1/models/approval-fencing.qnt --backend apalache --invariants typeOk noStaleApprovedExecution --max-steps 10",
+      "evidenceKind": "command",
+      "role": "claim-evidence",
+      "classifications": [
+        {
+          "subsystem": "transition-authority",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [
+        "target/verification-results/approval-fencing-quint.json"
+      ],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "hosted-timers-variants",
+      "profile": "full",
+      "command": "python3 verification/hosted-timers-v1/check_variants.py",
+      "evidenceKind": "command",
+      "role": "supporting-check",
+      "classifications": [
+        {
+          "subsystem": "transition-authority",
+          "layer": "model"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
       "id": "kernel-l1-reference",
       "profile": "full",
       "command": "scripts/verify-kernel-l1-lean.sh",

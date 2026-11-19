@@ -1,0 +1,235 @@
+{
+  "schemaVersion": "norn.verification.hosted-timers-v1/1",
+  "issue": "#1464 (Sol round 1 on 0d0cbbdfaf56354472ef3e3f4a9ad638f74f87d0)",
+  "quint": "0.32.0",
+  "apalache": "0.56.1",
+  "models": [
+    {
+      "path": "models/hosted-timers.qnt",
+      "module": "hosted_timers",
+      "scope": "durable wake vs committed deadlines, alarm delivery/loss, restart and deploy bootstrap, per-item retry eligibility under a per-wake budget, decision expiry, flow timer rule pin (apps/norn-cell-do/worker.mjs rearm/alarm; crates/norn-api/src/timers.rs next_due/run_due; decisions::expire; flow_turn::timer)",
+      "invariants": [
+        "typeOk",
+        "wakeCovers",
+        "expiryAtomic",
+        "timerRunsPinnedRule",
+        "dueProgress",
+        "healthyNotStarved"
+      ],
+      "bounds": {
+        "itemSlots": 3,
+        "kinds": [
+          "reservation",
+          "timer",
+          "decision"
+        ],
+        "perWakeBudget": 2,
+        "time": [
+          0,
+          7
+        ],
+        "retryDelay": 2,
+        "recoveryWake": 1,
+        "alarmFairness": 1,
+        "handlerLosses": 1,
+        "rules": 2,
+        "legacyDeadlines": [
+          1,
+          2,
+          3
+        ],
+        "progressStep": "stepProgress: tick and whole passes (fire; oldest-first runItem up to the budget; finish, or a loss after any part of the batch), over the deploy-time cell's items only",
+        "progressDepth": "Apalache depth 4 (two alarm deliveries, with a loss at any point) for the intended progress check; seeded simulation of 10,000 traces to depth 15 beyond that; the starvation mutant is refuted at depth 5"
+      },
+      "assumptions": [
+        "A1 a cell commit and the durable alarm it registers are one storage transaction (DO storage + setAlarm in one output gate)",
+        "A2 alarm delivery is fair: the clock never passes a set alarm by more than FAIR without the alarm firing",
+        "A3 at most FAULTS handler losses (eviction, a throw the runtime stops retrying, a crash at any point of a pass) per trace",
+        "A4 no logical time passes while one alarm handler runs; writes may interleave with it",
+        "A5 an item's handling outcome (healthy or failing) is fixed per incarnation"
+      ],
+      "variants": [
+        {
+          "step": "stepRearmAfterCommit",
+          "invariant": "wakeCovers",
+          "maxSteps": 4,
+          "meaning": "Sol blocker 1: the wake is a best-effort rearm after the reply (status-gated, errors swallowed), so a committed deadline can have no wake"
+        },
+        {
+          "step": "stepNoRecoveryWake",
+          "invariant": "wakeCovers",
+          "maxSteps": 4,
+          "meaning": "Sol blocker 1: the handler re-arms only at its end (after source I/O), so a lost handler leaves due work with no wake"
+        },
+        {
+          "init": "initNoBootstrap",
+          "step": "step",
+          "invariant": "wakeCovers",
+          "maxSteps": 1,
+          "meaning": "Sol blocker 1: cells from before the deploy hold deadlines but no alarm"
+        },
+        {
+          "step": "stepSplitExpiry",
+          "invariant": "expiryAtomic",
+          "maxSteps": 4,
+          "meaning": "Sol blocker 3: expiry records in one transaction and resolves in another; the decision leaves the open set unresolved"
+        },
+        {
+          "step": "stepActiveRuleTimer",
+          "invariant": "timerRunsPinnedRule",
+          "maxSteps": 5,
+          "meaning": "Sol should: a flow timer runs the active rule instead of its run's pinned rule"
+        },
+        {
+          "step": "stepFailureStopsPass",
+          "invariant": "dueProgress",
+          "maxSteps": 6,
+          "meaning": "Sol blocker 2: a failed item stops the pass and has no persisted retry time, so the items behind it are never attempted"
+        },
+        {
+          "step": "stepAdvisoryRetry",
+          "invariant": "healthyNotStarved",
+          "maxSteps": 5,
+          "meaning": "Sol blocker 2: retry timing is advisory, so failing items refill every batch and a healthy item behind them starves"
+        }
+      ],
+      "witnesses": [
+        {
+          "invariant": "witnessDecisionResolved",
+          "maxSteps": 4
+        },
+        {
+          "invariant": "witnessPinnedAfterChange",
+          "maxSteps": 5
+        },
+        {
+          "invariant": "witnessRetried",
+          "maxSteps": 4
+        },
+        {
+          "invariant": "witnessLostWithDueWork",
+          "maxSteps": 4
+        },
+        {
+          "invariant": "witnessHealthyAfterFailures",
+          "maxSteps": 8
+        }
+      ],
+      "checks": [
+        {
+          "gate": "hosted-timers-quint",
+          "profile": "fast",
+          "invariants": [
+            "typeOk",
+            "wakeCovers",
+            "expiryAtomic",
+            "timerRunsPinnedRule"
+          ],
+          "maxSteps": 7
+        },
+        {
+          "gate": "hosted-timers-progress-quint",
+          "profile": "full",
+          "step": "stepProgress",
+          "invariants": [
+            "typeOk",
+            "dueProgress",
+            "healthyNotStarved"
+          ],
+          "maxSteps": 4
+        },
+        {
+          "gate": "hosted-timers-progress-sim",
+          "profile": "fast",
+          "mode": "simulate",
+          "step": "stepProgress",
+          "invariants": [
+            "progress"
+          ],
+          "maxSteps": 15,
+          "samples": 10000,
+          "seed": 1
+        }
+      ]
+    },
+    {
+      "path": "models/approval-fencing.qnt",
+      "module": "approval_fencing",
+      "scope": "approval digest checked inside the held definition epoch vs a concurrent definition change (crates/norn-api/src/approvals.rs, action_admission.rs, cell_definitions.rs)",
+      "invariants": [
+        "typeOk",
+        "noStaleApprovedExecution"
+      ],
+      "bounds": {
+        "calls": 2,
+        "definitionParts": [
+          "action",
+          "writer",
+          "defaults",
+          "laws",
+          "gate"
+        ],
+        "revisions": 2
+      },
+      "assumptions": [
+        "A1 a definition change takes the definition epoch exclusively; approvals take it for read",
+        "A2 the step a call licenses runs under the definition active at its dispatch"
+      ],
+      "variants": [
+        {
+          "step": "stepUnfencedCheck",
+          "invariant": "noStaleApprovedExecution",
+          "maxSteps": 5,
+          "meaning": "Sol blocker 5 (S6): the digest read releases its epoch before dispatch, so a definition change lands between check and step"
+        },
+        {
+          "step": "stepDriveAfterRefusal",
+          "invariant": "noStaleApprovedExecution",
+          "maxSteps": 6,
+          "meaning": "Sol blocker 5 (S6): the hosted path still drives the waiting step after answering approval.definition_changed"
+        },
+        {
+          "step": "stepNarrowDigest",
+          "invariant": "noStaleApprovedExecution",
+          "maxSteps": 5,
+          "meaning": "Sol should: the digest covers the action and writer only, so a change to defaults, law pins or decider roles keeps the approval"
+        }
+      ],
+      "witnesses": [
+        {
+          "invariant": "witnessExecuted",
+          "maxSteps": 3
+        },
+        {
+          "invariant": "witnessRefusedAfterChange",
+          "maxSteps": 4
+        },
+        {
+          "invariant": "witnessUnrelatedRevisionKeepsApproval",
+          "maxSteps": 4
+        },
+        {
+          "invariant": "witnessReparkedThenExecuted",
+          "maxSteps": 6
+        }
+      ],
+      "checks": [
+        {
+          "gate": "approval-fencing-quint",
+          "profile": "fast",
+          "invariants": [
+            "typeOk",
+            "noStaleApprovedExecution"
+          ],
+          "maxSteps": 10
+        }
+      ]
+    }
+  ],
+  "notProved": [
+    "No refinement to the Rust or JavaScript code: the models are the design spec, and no trace from them drives norn-api or the Worker yet (follow-up: a conformance test in the kernel_quint pattern once #1464's fix round lands).",
+    "Progress is bounded response under explicit fairness (A2) and a fault budget (A3), checked as invariants to the BMC depth; it is not unbounded LTL liveness with weak fairness.",
+    "Bounded: Apalache BMC to the stated depth over three item slots, budget two, logical time 0..7, two calls and two revisions; nothing beyond those bounds is claimed.",
+    "Live-law validation at the install boundary (Sol blocker 4), sync scheduling against the global sync lease and the published severity of defs.live_data_unchecked are not modelled."
+  ]
+}

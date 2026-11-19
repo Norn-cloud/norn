@@ -1,0 +1,4 @@
+{
+  "order": 10,
+  "value": "Hosted timers (#1464): verification/hosted-timers-v1 models the intended durable-wake, recovery-wake, bootstrap, per-item retry, atomic decision expiry and pinned-rule design to a bounded depth; progress is bounded response under explicit alarm-fairness and fault-budget assumptions (Apalache to two alarm deliveries, simulation beyond), not unbounded liveness, and no conformance test drives the Worker or norn-api from the model yet."
+}

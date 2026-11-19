@@ -1,0 +1,4 @@
+{
+  "order": 9,
+  "value": "quint run verification/hosted-timers-v1/models/hosted-timers.qnt --step stepProgress --invariant progress --max-steps 15 --max-samples 10000 --seed 1"
+}

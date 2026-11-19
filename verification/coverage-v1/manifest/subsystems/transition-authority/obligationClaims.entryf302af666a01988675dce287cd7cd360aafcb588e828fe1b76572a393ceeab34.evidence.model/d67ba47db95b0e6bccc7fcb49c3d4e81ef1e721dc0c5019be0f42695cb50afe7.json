@@ -1,0 +1,10 @@
+{
+  "order": 1,
+  "value": {
+    "artifact": "verification/hosted-timers-v1/models/approval-fencing.qnt",
+    "command": "quint verify verification/hosted-timers-v1/models/approval-fencing.qnt --backend apalache --invariants typeOk noStaleApprovedExecution --max-steps 10",
+    "selectors": {
+      "$entries": "obligationClaims.entryf302af666a01988675dce287cd7cd360aafcb588e828fe1b76572a393ceeab34.evidence.model.entryd67ba47db95b0e6bccc7fcb49c3d4e81ef1e721dc0c5019be0f42695cb50afe7.selectors"
+    }
+  }
+}
