@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process"
-import { existsSync, rmSync, writeFileSync } from "node:fs"
-import { join } from "node:path"
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { join, resolve } from "node:path"
+import { pathToFileURL } from "node:url"
 import { writeSecretConfig } from "../celld-config.ts"
 
 // Deploy the Norn cell Worker (a built norn-cell-do bundle) to one celld stage, and
@@ -36,6 +37,24 @@ export function cellStage(stage: string | undefined, bucket: string | undefined)
   // Each stage owns its bucket: a deploy with another stage's credentials refuses.
   if (bucket === undefined || !bucket.startsWith(`s3://norn-${stage}-celld`)) throw new Error(`CELLD_BUCKET must be stage ${stage}'s own bucket (s3://norn-${stage}-celld…)`)
   return { stage, origin: `https://${stage}.norn.cloud`, unit: `norn-${stage}-celld`, studio: `norn-studio-${stage}`, bucket }
+}
+
+/** A build that accepts fixture principals is never deployed: fixtures builds serve only the local smoke (apps/norn-cell-do/smoke.py), and no deployed stage is one. */
+export function assertDeployableBuild(stage: string, fixturesEnabled: boolean): void {
+  if (fixturesEnabled) {
+    throw new Error(`the bundle is a fixtures build (it accepts fixture principals); stage ${stage} takes only a build without the fixtures feature`)
+  }
+}
+
+/** Whether the bundle's Wasm was built with the `fixtures` feature, as the build itself reports it. */
+export async function bundleFixturesEnabled(bundle: string): Promise<boolean> {
+  const pkg = (await import(pathToFileURL(resolve(bundle, "pkg", "norn_cell_do.js")).href)) as {
+    initSync: (options: { module: Uint8Array }) => unknown
+    NornCell: { fixturesEnabled?: () => boolean }
+  }
+  if (typeof pkg.NornCell.fixturesEnabled !== "function") throw new Error("the bundle does not report whether it is a fixtures build (NornCell.fixturesEnabled); rebuild it")
+  pkg.initSync({ module: readFileSync(join(bundle, "pkg", "norn_cell_do_bg.wasm")) })
+  return pkg.NornCell.fixturesEnabled()
 }
 
 /** The Studio pointer to restore as the fleet application, checked to be the stage's own. */
@@ -121,6 +140,7 @@ async function main(argv: readonly string[]) {
   if (bundle === undefined || !existsSync(join(bundle, "worker.mjs")) || !existsSync(join(bundle, "subscribe.mjs")) || !existsSync(join(bundle, "pkg", "norn_cell_do_bg.wasm"))) {
     throw new Error("--bundle must hold worker.mjs, subscribe.mjs and pkg/norn_cell_do_bg.wasm (apps/norn-cell-do/README.md)")
   }
+  assertDeployableBuild(stage.stage, await bundleFixturesEnabled(bundle))
   const config = join(bundle, "wrangler.json")
   writeSecretConfig(config, {
     name: "norn-cell",

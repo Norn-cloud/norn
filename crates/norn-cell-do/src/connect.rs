@@ -268,7 +268,8 @@ struct Begin {
 
 impl Connect {
     /// The connections in `config` (`NORN_SOURCES`) and the server variables
-    /// `vars` (a JSON object of the `NORN_SECRET_*` and `NORN_S3_*` values).
+    /// `vars` (a JSON object of the `NORN_SECRET_*` and `NORN_S3_*` values,
+    /// and the operator's `NORN_SOURCE_ALLOWED_HOSTS`, SYNC-URL-1).
     ///
     /// # Errors
     /// Malformed configuration.
@@ -281,7 +282,12 @@ impl Connect {
             .map(|(name, value)| (name.clone(), value.clone()))
             .collect();
         Ok(Self {
-            sources: Sources::new(config, secrets)?,
+            sources: Sources::with_allowed_hosts(
+                config,
+                secrets,
+                vars.get(norn_api::sources::ALLOWED_HOSTS_VAR)
+                    .map_or("", String::as_str),
+            )?,
             uploads_store: S3Config::from_vars(&vars, Store::Uploads),
             documents_store: S3Config::from_vars(&vars, Store::Documents),
             uploads: BTreeMap::new(),
@@ -860,6 +866,35 @@ impl Connect {
             }),
         )
     }
+}
+
+/// `POST /v1/observations:load` on a host with no source connections (the
+/// dev host): decided by the cell's policy as `Operation::SyncSource` first,
+/// exactly as [`Connect::route`] decides it (CONNECT-AUTH-1), then loaded as
+/// on a hosted cell. `None` for any other path.
+pub fn observations<E: SqlEngine>(
+    host: &DevHost<E>,
+    principals: &dyn PrincipalResolver,
+    request: &Request<'_>,
+) -> Option<Response> {
+    if !matches!(route_of(request.path), Some(Route::Observations)) {
+        return None;
+    }
+    let _scope = RequestScope::new(principals);
+    let actor = principals.resolve(request.authorization, request.now);
+    let allowed = request.method == "POST"
+        && authorize(
+            host,
+            &scope_of(request.query),
+            actor.as_deref(),
+            Operation::SyncSource("observations".to_owned()),
+        )
+        .is_ok();
+    Some(if allowed {
+        load_observations(host, request.body)
+    } else {
+        server::outside::<E>(request)
+    })
 }
 
 /// The most rows one load carries, and the most page commits it may make (a
