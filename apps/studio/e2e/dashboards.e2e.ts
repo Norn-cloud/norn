@@ -206,6 +206,7 @@ test("a tile's details sheet: its menu and popover open above it, take the point
   await drill.click()
   const menu = sheet.getByRole("menu")
   await expect(menu).toBeVisible()
+  await menu.evaluate((el) => Promise.all(el.getAnimations().map((animation) => animation.finished)))
   await page.screenshot({ path: `${SHOTS}/tile-sheet-menu.png` })
   await page.keyboard.press("Escape")
   await expect(menu).toBeHidden()
