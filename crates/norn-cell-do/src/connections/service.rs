@@ -326,7 +326,7 @@ type Client = BasicClient<
     oauth2::EndpointSet,
 >;
 
-fn oauth_error<RE: std::error::Error + 'static>(
+fn oauth_error<RE: oauth2::ErrorResponse + 'static>(
     error: RequestTokenError<EgressError, RE>,
     code_of: impl Fn(&RE) -> String,
 ) -> ConnError {

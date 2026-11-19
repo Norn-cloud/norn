@@ -250,7 +250,7 @@ impl Resolver for PinnedResolver {
             .ok_or_else(|| refused(EgressError::Forbidden("a URL has no host".to_owned())))?;
         let addresses = self.checked(&host, port).map_err(refused)?;
         let mut out = self.empty();
-        for ip in addresses.into_iter().take(out.capacity()) {
+        for ip in addresses.into_iter().take(16) {
             out.push(SocketAddr::new(ip, port));
         }
         Ok(out)
