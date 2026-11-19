@@ -23,8 +23,8 @@ use norn_api::host::DevHost;
 use norn_api::refusal::Refusal;
 use norn_api::scope::{CellScope, ScopeQuery};
 use norn_cell::engine::SqlEngine;
-use serde_json::{Value, json};
 use serde_json::value::RawValue;
+use serde_json::{Value, json};
 
 /// The retained kinds a project's sources may declare.
 pub(crate) const SOURCE_KINDS: [&str; 1] = ["approval"];
@@ -121,9 +121,7 @@ pub(crate) fn sync<E: SqlEngine>(
         match install(host, &query, actor, kinds, &definition, now_ms) {
             Ok(Some(event)) => synced.changed.push(event),
             Ok(None) => {}
-            Err(refusal) => synced
-                .refused
-                .extend(from_refusal(definition.id, &refusal)),
+            Err(refusal) => synced.refused.extend(from_refusal(definition.id, &refusal)),
         }
     }
     for kind in SOURCE_KINDS {
@@ -171,10 +169,10 @@ fn install<E: SqlEngine>(
     now_ms: u64,
 ) -> Result<Option<Value>, Refusal> {
     let current = installed(host, query, actor, kinds, definition.id)?;
-    if let Some((_, true, payload)) = &current {
-        if payload == definition.payload {
-            return Ok(None);
-        }
+    if let Some((_, true, payload)) = &current
+        && payload == definition.payload
+    {
+        return Ok(None);
     }
     let raw = || RawValue::from_string(definition.payload.to_string()).map_err(Refusal::host);
     let admitted = definition_routes::admit_definition(
@@ -191,7 +189,7 @@ fn install<E: SqlEngine>(
     )?;
     if !admitted.admitted {
         let mut refusal = Refusal::invalid("the definition is not admissible");
-        refusal.code = "definition.refused".to_owned();
+        "definition.refused".clone_into(&mut refusal.code);
         refusal.diagnostics = admitted.diagnostics;
         return Err(refusal);
     }

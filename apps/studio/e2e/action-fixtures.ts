@@ -51,6 +51,8 @@ export const ADJUST_HOLDING = {
   objectKind: "canon.Holding",
   effect: "fire_transition",
   objectIdField: "id",
+  // The served catalog names a transition's target state (the receipt says it).
+  toState: "counted",
   uiEffects: NONE,
   inputSchema: {
     type: "object", additionalProperties: false, required: ["id", "quantity", "reason"],
@@ -68,6 +70,7 @@ export const RETIRE_HOLDING = {
   objectKind: "canon.Holding",
   effect: "fire_transition",
   objectIdField: "id",
+  toState: "retired",
   uiEffects: { irreversible: true, destructive: true, money: [] },
   inputSchema: { type: "object", additionalProperties: false, required: ["id"], properties: { id: { type: "string", title: "Holding id" } } },
 } as const

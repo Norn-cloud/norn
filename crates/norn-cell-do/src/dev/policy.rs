@@ -85,7 +85,8 @@ fn compile_actions<E: norn_cell::engine::SqlEngine>(
             action.access.is_none().then_some(action.action_id)
         })
         .collect();
-    let policy = ActionPolicy::compile(&model, &artifacts, host.scope()).map_err(|error| error.0)?;
+    let policy =
+        ActionPolicy::compile(&model, &artifacts, host.scope()).map_err(|error| error.0)?;
     Ok((policy, ungoverned))
 }
 

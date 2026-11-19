@@ -35,8 +35,8 @@ use norn_kernel::authz::{
     self, AccessRequest, ActorKind, AttrValue, AuthzSchema, CapabilityGrant, Delegation, Pdp,
     PdpActionAuthorizer, PrincipalInput, ResourceInput, ScopeKey,
 };
-use norn_projections::{CedarAttribute, CedarPrincipalAttribute};
 use norn_kernel::{ActionAuthorizer, ActionAuthzRequest, ActionDenial};
+use norn_projections::{CedarAttribute, CedarPrincipalAttribute};
 
 use crate::policy::{Caller, scope_key};
 use crate::seed::SeedError;
@@ -112,6 +112,72 @@ fn narrowed(
         }
     }
     Ok(rules)
+}
+
+/// The tenant's rules compiled against the projected schema
+/// (ACTION-RESOURCE-1).
+struct Compiled {
+    base: Pdp,
+    resource_attributes: BTreeMap<String, BTreeMap<String, CedarAttribute>>,
+    principal_id: bool,
+}
+
+fn compiled(
+    types: &[norn_ir::ObjectTypeDef],
+    interfaces: &[norn_ir::InterfaceDef],
+    roots: &[ActionRoot],
+    rules: Vec<AccessRule>,
+) -> Result<Compiled, SeedError> {
+    let policy = AccessIr {
+        access_version: IrVersion01::V0_1,
+        policy_id: ACTION_POLICY_ID.into(),
+        rules,
+        generic_rules: vec![],
+        extensions: None,
+    };
+    // ACTION-RESOURCE-1: the projection types each resource condition;
+    // the principal attributes the rules read are inferred from it.
+    let plain = norn_projections::project_cedar_schema(types, interfaces, roots);
+    let principal = authz::infer_principal_attributes(std::slice::from_ref(&policy), &plain)
+        .map_err(|error| SeedError(format!("action policy: {error}")))?;
+    if let Some((name, _)) = principal.iter().find(|(name, kind)| {
+        name.as_str() != PRINCIPAL_ID_ATTRIBUTE || !matches!(kind, CedarPrincipalAttribute::String)
+    }) {
+        return Err(SeedError(format!(
+            "action policy: principal attribute {name:?} is not one this host verifies; only `{PRINCIPAL_ID_ATTRIBUTE}` (the caller's subject id, a string) is"
+        )));
+    }
+    let projection = norn_projections::project_cedar_schema_with_principal_attributes(
+        types, interfaces, roots, &principal,
+    );
+    let host = norn_projections::project_host_access_schema(types);
+    let schema = AuthzSchema::from_projected_cedarschema_fragments(&[&projection.schema, &host])
+        .map_err(|error| SeedError(format!("action schema: {error}")))?;
+    let compiled = authz::compile_all_projected(&schema, &[policy], &projection)
+        .map_err(|error| SeedError(format!("action policy: {error}")))?;
+    let base =
+        Pdp::new(compiled, &[]).map_err(|error| SeedError(format!("action policy: {error}")))?;
+    let resource_attributes = projection
+        .attributes
+        .into_iter()
+        .map(|(object_type, attributes)| {
+            let scalar = attributes
+                .into_iter()
+                .filter(|(_, kind)| {
+                    matches!(
+                        kind,
+                        CedarAttribute::Bool | CedarAttribute::Long | CedarAttribute::String
+                    )
+                })
+                .collect();
+            (object_type, scalar)
+        })
+        .collect();
+    Ok(Compiled {
+        base,
+        resource_attributes,
+        principal_id: principal.contains_key(PRINCIPAL_ID_ATTRIBUTE),
+    })
 }
 
 impl ActionPolicy {
@@ -196,62 +262,17 @@ impl ActionPolicy {
         let types: Vec<_> = model.object_types().cloned().collect();
         let interfaces: Vec<_> = model.interfaces().cloned().collect();
         let roots: Vec<ActionRoot> = actions.into_iter().map(|(_, action)| action).collect();
-        let policy = AccessIr {
-            access_version: IrVersion01::V0_1,
-            policy_id: ACTION_POLICY_ID.into(),
-            rules,
-            generic_rules: vec![],
-            extensions: None,
-        };
-        // ACTION-RESOURCE-1: the projection types each resource condition;
-        // the principal attributes the rules read are inferred from it.
-        let plain = norn_projections::project_cedar_schema(&types, &interfaces, &roots);
-        let principal = authz::infer_principal_attributes(std::slice::from_ref(&policy), &plain)
-            .map_err(|error| SeedError(format!("action policy: {error}")))?;
-        if let Some((name, _)) = principal.iter().find(|(name, kind)| {
-            name.as_str() != PRINCIPAL_ID_ATTRIBUTE
-                || !matches!(kind, CedarPrincipalAttribute::String)
-        }) {
-            return Err(SeedError(format!(
-                "action policy: principal attribute {name:?} is not one this host verifies; only `{PRINCIPAL_ID_ATTRIBUTE}` (the caller's subject id, a string) is"
-            )));
-        }
-        let projection = norn_projections::project_cedar_schema_with_principal_attributes(
-            &types,
-            &interfaces,
-            &roots,
-            &principal,
-        );
-        let host = norn_projections::project_host_access_schema(&types);
-        let schema =
-            AuthzSchema::from_projected_cedarschema_fragments(&[&projection.schema, &host])
-                .map_err(|error| SeedError(format!("action schema: {error}")))?;
-        let compiled = authz::compile_all_projected(&schema, &[policy], &projection)
-            .map_err(|error| SeedError(format!("action policy: {error}")))?;
-        let base = Pdp::new(compiled, &[])
-            .map_err(|error| SeedError(format!("action policy: {error}")))?;
-        let resource_attributes = projection
-            .attributes
-            .into_iter()
-            .map(|(object_type, attributes)| {
-                let scalar = attributes
-                    .into_iter()
-                    .filter(|(_, kind)| {
-                        matches!(
-                            kind,
-                            CedarAttribute::Bool | CedarAttribute::Long | CedarAttribute::String
-                        )
-                    })
-                    .collect();
-                (object_type, scalar)
-            })
-            .collect();
+        let Compiled {
+            base,
+            resource_attributes,
+            principal_id,
+        } = compiled(&types, &interfaces, &roots, rules)?;
         Ok(Some(Self {
             base,
             callable,
             key: scope_key(scope),
             resource_attributes,
-            principal_id: principal.contains_key(PRINCIPAL_ID_ATTRIBUTE),
+            principal_id,
         }))
     }
 
@@ -264,8 +285,7 @@ impl ActionPolicy {
         object_type: &str,
         values: Option<&norn_kernel::cell_host::JsonObject>,
     ) -> BTreeMap<String, AttrValue> {
-        let (Some(projected), Some(values)) =
-            (self.resource_attributes.get(object_type), values)
+        let (Some(projected), Some(values)) = (self.resource_attributes.get(object_type), values)
         else {
             return BTreeMap::new();
         };
@@ -352,10 +372,8 @@ impl ActionPolicy {
                     object_type: call.target.object_type.as_str().to_owned(),
                     id: call.target.key.clone(),
                     scope: key.clone(),
-                    attributes: self.resource_values(
-                        call.target.object_type.as_str(),
-                        call.target_values,
-                    ),
+                    attributes: self
+                        .resource_values(call.target.object_type.as_str(), call.target_values),
                 },
                 context: BTreeMap::new(),
                 binding: None,

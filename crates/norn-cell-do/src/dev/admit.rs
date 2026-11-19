@@ -65,7 +65,9 @@ pub(crate) fn bind_source_schemas(artifacts: &[Value]) -> Vec<Value> {
         .map(|artifact| {
             let mut artifact = artifact.clone();
             let pending = artifact.get("kind").and_then(Value::as_str) == Some("mapping")
-                && artifact.pointer("/payload/source/sha256").and_then(Value::as_str)
+                && artifact
+                    .pointer("/payload/source/sha256")
+                    .and_then(Value::as_str)
                     == Some(PENDING_SOURCE_SHA256);
             if pending {
                 let text = |pointer: &str| {
@@ -75,7 +77,10 @@ pub(crate) fn bind_source_schemas(artifacts: &[Value]) -> Vec<Value> {
                         .unwrap_or_default()
                         .to_owned()
                 };
-                let found = hash_of(&text("/payload/source/schemaId"), &text("/payload/source/version"));
+                let found = hash_of(
+                    &text("/payload/source/schemaId"),
+                    &text("/payload/source/version"),
+                );
                 if let (Some(sha256), Some(slot)) =
                     (found, artifact.pointer_mut("/payload/source/sha256"))
                 {

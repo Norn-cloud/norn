@@ -210,10 +210,10 @@ fn when_words(when: &Value) -> Option<String> {
         "ge" => "≥",
         _ => return None,
     };
-    let value = match when.get("value")? {
-        Value::String(text) => text.clone(),
-        other => other.to_string(),
-    };
+    let value = when.get("value")?;
+    let value = value
+        .as_str()
+        .map_or_else(|| value.to_string(), str::to_owned);
     Some(format!("{property} {op} {value}"))
 }
 
@@ -262,7 +262,7 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn approval(when: Value) -> Value {
+    fn approval(when: &Value) -> Value {
         json!({ "action": "purchasing.request.submit", "decider": { "roles": ["admin"] },
                 "question": "Approve this purchase request?", "risk": "medium", "when": when })
     }
@@ -278,7 +278,7 @@ mod tests {
 
     #[test]
     fn a_threshold_admits_and_is_restated_in_words() {
-        let payload = approval(json!({ "property": "amount", "op": "gt", "value": "1000" }));
+        let payload = approval(&json!({ "property": "amount", "op": "gt", "value": "1000" }));
         assert!(findings(&payload).is_empty());
         let words = restate(&payload.to_string()).unwrap_or_default();
         assert!(
@@ -298,7 +298,7 @@ mod tests {
             json!({ "property": "amount", "op": "gt", "value": "1", "unit": "EGP" }),
             json!("amount > 1000"),
         ] {
-            let found = findings(&approval(when.clone()));
+            let found = findings(&approval(&when));
             assert_eq!(found.len(), 1, "{when}");
             assert_eq!(found[0].code, codes::INVALID, "{when}");
         }

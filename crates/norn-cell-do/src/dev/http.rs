@@ -289,7 +289,10 @@ mod tests {
         let actions = dev_actions();
         let host = DevHost::from_store(store, scope.clone(), |command| command.payload.clone())
             .unwrap()
-            .with_authorizer(LocalDeveloper::for_actor(DEVELOPER, actions.clone()));
+            .with_authorizer(LocalDeveloper::for_actor(
+                DEVELOPER,
+                std::sync::Arc::clone(&actions),
+            ));
         refresh_actions(&actions, &host).unwrap();
         Dev {
             host,

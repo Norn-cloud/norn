@@ -431,10 +431,7 @@ fn current_states<E: SqlEngine>(
 /// `fire_transition` can; a transition can when the object's state is one it
 /// fires from. A lifecycle this host does not find leaves the action listed,
 /// and the call decides.
-fn fires_from(
-    action: &ActionRoot,
-    states: &[LifecycleState],
-) -> bool {
+fn fires_from(action: &ActionRoot, states: &[LifecycleState]) -> bool {
     let Some(ActionEffectProgram::FireTransition {
         lifecycle,
         transition,

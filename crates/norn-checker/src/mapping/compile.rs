@@ -3067,11 +3067,7 @@ fn conform(raw: Option<&norn_canonical::JsonValue>, ty: &Type) -> Result<Value, 
         (Some(value), Type::Json) | (Some(value @ Json::Array(_)), Type::List(_)) => {
             any_value(value)
         }
-        (Some(value), ty) => Err(format!(
-            "value {} is not {}",
-            shown(value),
-            expected(ty)
-        )),
+        (Some(value), ty) => Err(format!("value {} is not {}", shown(value), expected(ty))),
     }
 }
 
@@ -3115,9 +3111,7 @@ fn expected(ty: &Type) -> String {
         Type::Decimal { scale, .. } => format!(
             "a decimal with up to {scale} fraction digits (a JSON number, or exact decimal text such as \"12.50\")"
         ),
-        Type::DecimalBinding { .. } | Type::Number => {
-            "a number (a JSON number)".to_owned()
-        }
+        Type::DecimalBinding { .. } | Type::Number => "a number (a JSON number)".to_owned(),
         Type::Timestamp { .. } => {
             "a timestamp (RFC 3339 text with an offset, such as \"2026-11-19T10:00:00Z\")"
                 .to_owned()
@@ -3359,7 +3353,9 @@ mod conform_tests {
                 "{text}"
             );
         }
-        for text in ["", "1e3", "+5", " 5", "05", "1.", ".5", "1,000.00", "12.5.1"] {
+        for text in [
+            "", "1e3", "+5", " 5", "05", "1.", ".5", "1,000.00", "12.5.1",
+        ] {
             assert!(
                 conform(Some(&Json::String(text.to_owned())), &decimal()).is_err(),
                 "{text:?}"

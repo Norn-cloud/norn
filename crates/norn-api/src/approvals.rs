@@ -27,8 +27,8 @@ use norn_cell::{CellError, MAIN_WORLD};
 use norn_ir::{RuntimeObject, RuntimeValue};
 use norn_kernel::cell_host::{
     BoundedFact, CellCommit, CellHost, CommitError, CommitReceipt, DueTimer, FactMutation,
-    FactState, FactWrite,
-    LinkReadTarget, LinkState, Observed, Performed, PredicateObject, PredicateQuery,
+    FactState, FactWrite, LinkReadTarget, LinkState, Observed, Performed, PredicateObject,
+    PredicateQuery,
 };
 use norn_kernel::{
     Command, CommandId, Effect, FactEvent, FactKey, FreshnessPolicy, Generation, IdempotencyKey,
@@ -431,14 +431,13 @@ pub(crate) fn applies(gate: &Gate, writes: &[FactWrite]) -> bool {
     ) else {
         return true;
     };
-    let record = writes.iter().find_map(|write| match &write.mutation {
-        FactMutation::Put { values }
-            if !write.key.object_type.as_str().starts_with("norn.") =>
-        {
-            Some(values)
-        }
-        _ => None,
-    });
+    let record = writes
+        .iter()
+        .filter(|write| !write.key.object_type.as_str().starts_with("norn."))
+        .find_map(|write| match &write.mutation {
+            FactMutation::Put { values } => Some(values),
+            FactMutation::Delete => None,
+        });
     let Some(actual) = record.and_then(|values| values.get(property)) else {
         return true;
     };
@@ -451,12 +450,15 @@ fn compare(actual: &RuntimeValue, op: &str, expected: &Value) -> Option<bool> {
     let decimal = |value: &RuntimeValue| match value {
         RuntimeValue::Number(number) => Some(*number),
         RuntimeValue::String(text) => norn_ir::Decimal::parse(text).ok(),
-        _ => None,
+        RuntimeValue::Null
+        | RuntimeValue::Bool(_)
+        | RuntimeValue::Array(_)
+        | RuntimeValue::Object(_) => None,
     };
     let expected_decimal = match expected {
         Value::Number(number) => norn_ir::Decimal::parse(&number.to_string()).ok(),
         Value::String(text) => norn_ir::Decimal::parse(text).ok(),
-        _ => None,
+        Value::Null | Value::Bool(_) | Value::Array(_) | Value::Object(_) => None,
     };
     let ordering: Option<Ordering> = match (decimal(actual), expected_decimal) {
         (Some(left), Some(right)) => left.partial_cmp(&right),
@@ -609,9 +611,11 @@ mod tests {
     }
 
     fn put(object_type: &str, values: Value) -> FactWrite {
-        let values = match RuntimeValue::from_json(values).unwrap() {
-            RuntimeValue::Object(values) => values,
-            _ => RuntimeObject::new(),
+        let values = if let RuntimeValue::Object(values) = RuntimeValue::from_json(values).unwrap()
+        {
+            values
+        } else {
+            RuntimeObject::new()
         };
         FactWrite {
             key: FactKey::new(object_type, "PR-1"),
@@ -620,12 +624,12 @@ mod tests {
         }
     }
 
-    fn request(amount: Value) -> Vec<FactWrite> {
+    fn request(amount: &Value) -> Vec<FactWrite> {
         vec![
             put("norn.ActionCall", json!({ "amount": "1" })),
             put(
                 "purchasing.PurchaseRequest",
-                json!({ "amount": amount, "status": "submitted" }),
+                json!({ "amount": amount.clone(), "status": "submitted" }),
             ),
         ]
     }
@@ -635,12 +639,12 @@ mod tests {
         let large = gate(Some(
             json!({ "property": "amount", "op": "gt", "value": "1000" }),
         ));
-        assert!(applies(&large, &request(json!("2500.00"))));
-        assert!(applies(&large, &request(json!(1000.01))));
-        assert!(!applies(&large, &request(json!("1000.00"))));
-        assert!(!applies(&large, &request(json!("990"))));
+        assert!(applies(&large, &request(&json!("2500.00"))));
+        assert!(applies(&large, &request(&json!(1000.01))));
+        assert!(!applies(&large, &request(&json!("1000.00"))));
+        assert!(!applies(&large, &request(&json!("990"))));
         // The kernel's own records never stand in for the call's record.
-        assert!(!applies(&large, &request(json!("12"))));
+        assert!(!applies(&large, &request(&json!("12"))));
     }
 
     #[test]
@@ -648,21 +652,21 @@ mod tests {
         let status = gate(Some(
             json!({ "property": "status", "op": "eq", "value": "submitted" }),
         ));
-        assert!(applies(&status, &request(json!("5"))));
+        assert!(applies(&status, &request(&json!("5"))));
         let other = gate(Some(
             json!({ "property": "status", "op": "ne", "value": "submitted" }),
         ));
-        assert!(!applies(&other, &request(json!("5"))));
+        assert!(!applies(&other, &request(&json!("5"))));
         // Fail closed: an unordered comparison, a missing property, no record.
         let ordered = gate(Some(
             json!({ "property": "status", "op": "lt", "value": "z" }),
         ));
-        assert!(applies(&ordered, &request(json!("5"))));
+        assert!(applies(&ordered, &request(&json!("5"))));
         let missing = gate(Some(
             json!({ "property": "priority", "op": "eq", "value": "high" }),
         ));
-        assert!(applies(&missing, &request(json!("5"))));
+        assert!(applies(&missing, &request(&json!("5"))));
         assert!(applies(&missing, &[]));
-        assert!(applies(&gate(None), &request(json!("5"))));
+        assert!(applies(&gate(None), &request(&json!("5"))));
     }
 }

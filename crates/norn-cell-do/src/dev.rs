@@ -265,13 +265,7 @@ fn run(args: &DevArgs, out: &mut Events) -> Result<(), Failure> {
         })
         .collect::<Result<Vec<_>, _>>()?;
     let actions = policy::dev_actions();
-    let (reopened, loaded) = reopen(
-        &cell_path,
-        &scope,
-        &manifest.dev.actor,
-        &loads,
-        &actions,
-    )?;
+    let (reopened, loaded) = reopen(&cell_path, &scope, &manifest.dev.actor, &loads, &actions)?;
     if let Some(loaded) = loaded {
         out.emit(
             &json!({ "event": "loaded", "files": loaded.files }),
