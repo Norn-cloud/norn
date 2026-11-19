@@ -137,6 +137,37 @@ flip after an answer's frontier does not change that answer) and
 **SOURCE-AGREE-ACCEPT** (an accepted disagreement is acknowledged and not
 counted; reopened, it is open again).
 
+**SOURCE-RESOLVE-1** (#1402; explicit over defeasible, #1445 addendum 2):
+when several mappings write one canonical property, its value is decided by an
+authority each mapping declares on the map or the property rule
+(`authority`): `system_of_record` (that source decides; every other writer is a
+`check`), `precedence` with a rank (the best-ranked writer that has reported
+decides), `check` (never decides) or `conflict` (peers: an agreed report is the
+value, a disagreement is an explicit conflict stored as null). A rule whose
+value is the map's subject writes the key itself and needs no authority.
+Admission refuses a property two mappings write when a writer declares nothing
+(`mapping.resolution.undeclared`), when the declarations do not single out who
+decides (`mapping.resolution.ambiguous`: two systems of record, a system of
+record beside a precedence, a repeated rank, two authorities in one mapping),
+when every writer is a check (`mapping.resolution.no_authority`), when conflict
+peers are mixed with other authorities (`mapping.resolution.mixed`) or when a
+conflict property is not nullable (`mapping.resolution.conflict_not_nullable`).
+At runtime every consumed report stays retained evidence, indexed by subject;
+a mapped record of a resolved type writes, for each property, the value its
+authorities decide over the latest report of every source, so the canonical
+value does not depend on arrival order. A report that does not decide is kept
+and not written; a subject whose property has no deciding report yet is not
+created (no guess). `source_resolution` reads each property's decision with
+every source's report and field lineage, and a **SOURCE-AGREE-2** finding for
+each report that differs from the canonical value (or every peer report of a
+conflict). Like SOURCE-AGREE-1 it is recomputed, never stored, and never
+excludes the subject. The three-system packs rank every shared type `ERPNext`,
+Odoo, Shopify (precedence, so each pack still installs on its own); a set may
+instead name a system of record with the others as checks. Follow-ups: source-side total mappings, locale-aware
+names as distinct facts, reconciliation lists on answers, an API/Studio surface
+for the resolution read, and field-level trace for a version whose fields were
+decided by several sources.
+
 **OBS-PAGE-1** (coordinator ruling 2026-11-12, pending maintainer review; an
 addition beside OBS-EVIDENCE-1, T4-CELL-1 unchanged): a raw observation may carry
 a page of 1..K source records. A page is only a unit of delivery. Each record

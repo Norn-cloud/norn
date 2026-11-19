@@ -15,6 +15,7 @@
 use norn_cell::compute::QueryContext;
 use norn_cell::mapping_bundle::MappingInput;
 use norn_cell::source_agreement::{SourceDisagreementCount, SourceDisagreementCounts};
+use norn_cell::source_resolution::{PropertyDecision, SOURCE_AGREE_2};
 use norn_cell::{CellStore, InstalledDefinitionInput, MAIN_WORLD, Model, SqliteCell, StoreOptions};
 use norn_checker::metric::compute::QuestionPlan;
 use norn_ir::{
@@ -68,10 +69,6 @@ fn fixture_artifacts() -> Vec<ArtifactEnvelope> {
         }
     }
     artifacts
-}
-
-fn setup(path: &Path) -> Cell {
-    setup_with(path, |_| {})
 }
 
 fn setup_with(path: &Path, edit: impl FnOnce(&mut Vec<ArtifactEnvelope>)) -> Cell {
@@ -149,6 +146,27 @@ fn setup_with(path: &Path, edit: impl FnOnce(&mut Vec<ArtifactEnvelope>)) -> Cel
         .expect("install");
     SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("cell")
 }
+/// SOURCE-AGREE-1 reads disagreement in a holding's version history, so these
+/// tests rank the holding's writers by precedence (Odoo, then Shopify, then
+/// `ERPNext`): each better-ranked report then replaces the canonical value,
+/// where the registry's system of record (`ERPNext`) would keep it.
+#[allow(clippy::ptr_arg, reason = "the shape setup_with edits")]
+fn holding_precedence(artifacts: &mut Vec<ArtifactEnvelope>) {
+    for (system, rank) in [("erpnext", 2), ("shopify", 1), ("odoo", 0)] {
+        let artifact = artifacts
+            .iter_mut()
+            .find(|a| a.artifact_id == format!("{system}.three.mapping"))
+            .expect("mapping");
+        let mut wire = serde_json::to_value(&*artifact).expect("wire");
+        for map in wire["payload"]["maps"].as_array_mut().expect("maps") {
+            if map["id"] == "holding" {
+                map["authority"] = json!({"kind": "precedence", "rank": rank});
+            }
+        }
+        *artifact = serde_json::from_value(wire).expect("edited mapping");
+    }
+}
+
 fn fixture(system: &str) -> Value {
     serde_json::from_str(
         &fs::read_to_string(root().join(format!("registry/packs/{system}/synthetic.json")))
@@ -249,6 +267,21 @@ fn load(cell: &mut Cell, system: &str) {
     }
 }
 
+/// [`load`], with the north gold holding reporting `grams` on hand.
+fn load_north(cell: &mut Cell, system: &str, grams: u64) {
+    for row in fixture(system)["snapshot"].as_array().expect("rows") {
+        let mut row = row.clone();
+        let record = row["record"].as_object_mut().expect("record");
+        let north = ["custom_norn_ref", "x_norn_ref", "metafield_norn_ref"]
+            .iter()
+            .any(|field| record.get(*field).and_then(Value::as_str) == Some(NORTH));
+        if north && record.contains_key("resource_code") {
+            record.insert("quantity".into(), json!(grams));
+        }
+        capture(cell, system, &row, "snapshot");
+    }
+}
+
 /// The derived "stock on hand as of each week" question over holdings.
 fn stock_plan() -> QuestionPlan {
     let space = norn_checker::metric::derive::derive_metric_space(
@@ -312,7 +345,7 @@ fn counts(subjects: u64) -> SourceDisagreementCounts {
 #[test]
 fn another_sources_basis_is_a_finding_that_resolves_when_the_holding_returns() {
     let directory = tempfile::tempdir().expect("directory");
-    let mut cell = setup(&directory.path().join("flip.sqlite"));
+    let mut cell = setup_with(&directory.path().join("flip.sqlite"), holding_precedence);
     load(&mut cell, "erpnext");
     let reader = cell.store().read();
     assert!(
@@ -389,7 +422,7 @@ fn another_sources_basis_is_a_finding_that_resolves_when_the_holding_returns() {
 #[test]
 fn an_answer_counts_disputed_members_at_its_frontier_as_its_reader_may_see_them() {
     let directory = tempfile::tempdir().expect("directory");
-    let mut cell = setup(&directory.path().join("answer.sqlite"));
+    let mut cell = setup_with(&directory.path().join("answer.sqlite"), holding_precedence);
     let plan = stock_plan();
     load(&mut cell, "erpnext");
     let before = cell
@@ -498,7 +531,7 @@ fn the_analytics_engine_answers_and_counts_disagreements_as_the_exact_engine_doe
     use norn_cell::analytics::TenantId;
     use norn_cell::analytics::engine::{Engine, Settings};
     let directory = tempfile::tempdir().expect("directory");
-    let mut cell = setup(&directory.path().join("engine.sqlite"));
+    let mut cell = setup_with(&directory.path().join("engine.sqlite"), holding_precedence);
     load(&mut cell, "erpnext");
     load(&mut cell, "shopify");
     let plan = stock_plan();
@@ -552,4 +585,213 @@ fn the_analytics_engine_answers_and_counts_disagreements_as_the_exact_engine_doe
     assert_eq!(answered.engine, norn_cell::compute::Engine::Duckdb);
     answered.engine = norn_cell::compute::Engine::Cell;
     assert_eq!(answered, exact);
+}
+
+/// The canonical values and resolution of the north gold holding, without
+/// the commit each report landed in (which differs by order by construction).
+/// Each property's decision with every (mapping, value) report.
+type Decisions = Vec<(String, PropertyDecision, Vec<(String, RuntimeValue)>)>;
+/// Each finding's (property, mapping, value).
+type Findings = Vec<(String, String, RuntimeValue)>;
+
+fn north_state(cell: &Cell) -> (Option<norn_ir::RuntimeObject>, Decisions, Findings) {
+    let reader = cell.store().read();
+    let values = reader
+        .object(MAIN_WORLD, "canon.Holding", NORTH)
+        .expect("read")
+        .map(|record| record.values);
+    let resolution = reader
+        .source_resolution("canon.Holding", NORTH, None)
+        .expect("resolution")
+        .expect("the holding is resolved across sources");
+    let properties = resolution
+        .properties
+        .iter()
+        .map(|p| {
+            (
+                p.property.clone(),
+                p.decision.clone(),
+                p.reports
+                    .iter()
+                    .map(|r| (r.mapping.clone(), r.value.clone()))
+                    .collect(),
+            )
+        })
+        .collect();
+    let findings = resolution
+        .findings
+        .iter()
+        .map(|f| {
+            (
+                f.property.clone(),
+                f.report.mapping.clone(),
+                f.report.value.clone(),
+            )
+        })
+        .collect();
+    (values, properties, findings)
+}
+
+/// `ERPNext` the holding's system of record, Odoo and Shopify checks.
+#[allow(clippy::ptr_arg, reason = "the shape setup_with edits")]
+fn holding_system_of_record(artifacts: &mut Vec<ArtifactEnvelope>) {
+    for (system, authority) in [
+        ("erpnext", json!({"kind": "system_of_record"})),
+        ("shopify", json!({"kind": "check"})),
+        ("odoo", json!({"kind": "check"})),
+    ] {
+        let artifact = artifacts
+            .iter_mut()
+            .find(|a| a.artifact_id == format!("{system}.three.mapping"))
+            .expect("mapping");
+        let mut wire = serde_json::to_value(&*artifact).expect("wire");
+        for map in wire["payload"]["maps"].as_array_mut().expect("maps") {
+            if map["id"] == "holding" {
+                map["authority"] = authority.clone();
+            }
+        }
+        *artifact = serde_json::from_value(wire).expect("edited mapping");
+    }
+}
+
+/// North gold synced `ERPNext` (2765 g), Odoo (2458 g), Shopify, and in the
+/// reverse order; the reverse cell is also returned after its first two
+/// sources, before `ERPNext` reports.
+fn both_orders(
+    directory: &Path,
+    edit: fn(&mut Vec<ArtifactEnvelope>),
+) -> (
+    Cell,
+    Cell,
+    (Option<norn_ir::RuntimeObject>, Decisions, Findings),
+) {
+    let mut forward = setup_with(&directory.join("forward.sqlite"), edit);
+    load_north(&mut forward, "erpnext", 2765);
+    load_north(&mut forward, "odoo", 2458);
+    load(&mut forward, "shopify");
+    let mut backward = setup_with(&directory.join("backward.sqlite"), edit);
+    load(&mut backward, "shopify");
+    load_north(&mut backward, "odoo", 2458);
+    let before = north_state(&backward);
+    load_north(&mut backward, "erpnext", 2765);
+    (forward, backward, before)
+}
+
+/// The decision of `property` in a [`north_state`].
+fn decision_of<'a>(decisions: &'a Decisions, property: &str) -> &'a PropertyDecision {
+    &decisions
+        .iter()
+        .find(|(p, ..)| p == property)
+        .expect("reported property")
+        .1
+}
+
+fn grams(value: u64) -> RuntimeValue {
+    RuntimeValue::from_json(json!(value)).expect("decimal")
+}
+
+/// SOURCE-RESOLVE-1 (#1402): the registry ranks the holding's writers
+/// `ERPNext` (2765 g), Odoo (2458 g), Shopify. Syncing in either order yields
+/// `ERPNext`'s value and the same SOURCE-AGREE-2 findings, never an overwrite
+/// by whichever source synced last.
+#[test]
+fn source_resolve_1_precedence_decides_the_same_value_in_either_sync_order() {
+    let directory = tempfile::tempdir().expect("directory");
+    let (forward, backward, before) = both_orders(directory.path(), |_| {});
+    // Before ERPNext reports, the best-ranked report that exists decides.
+    assert_eq!(
+        before.0.as_ref().and_then(|v| v.get("quantity")),
+        Some(&grams(2458))
+    );
+    assert_eq!(
+        decision_of(&before.1, "quantity"),
+        &PropertyDecision::Decided {
+            mapping: "odoo.three.mapping".into(),
+            value: grams(2458),
+        }
+    );
+    let (values, properties, findings) = north_state(&forward);
+    assert_eq!(
+        north_state(&backward),
+        (values.clone(), properties.clone(), findings.clone())
+    );
+    let values = values.expect("the holding exists");
+    assert_eq!(values.get("quantity"), Some(&grams(2765)));
+    assert_eq!(
+        values.get("quantity_basis"),
+        Some(&RuntimeValue::from("on_hand"))
+    );
+    assert_eq!(
+        decision_of(&properties, "quantity"),
+        &PropertyDecision::Decided {
+            mapping: "erpnext.three.mapping".into(),
+            value: grams(2765),
+        }
+    );
+    let quantity = properties
+        .iter()
+        .find(|(p, ..)| p == "quantity")
+        .expect("quantity");
+    assert_eq!(quantity.2.len(), 3, "every source's report is kept");
+    // Each report that differs is a SOURCE-AGREE-2 finding.
+    assert!(findings.contains(&("quantity".into(), "odoo.three.mapping".into(), grams(2458),)));
+    assert!(findings.contains(&(
+        "quantity_basis".into(),
+        "shopify.three.mapping".into(),
+        RuntimeValue::from("available"),
+    )));
+    assert!(
+        findings
+            .iter()
+            .all(|(_, mapping, _)| mapping != "erpnext.three.mapping")
+    );
+    // Every report carries its lineage: the source record that said it.
+    let resolution = forward
+        .store()
+        .read()
+        .source_resolution("canon.Holding", NORTH, None)
+        .expect("resolution")
+        .expect("resolved");
+    let odoo = resolution
+        .findings
+        .iter()
+        .find(|f| f.property == "quantity")
+        .expect("odoo finding");
+    assert_eq!(odoo.rule, SOURCE_AGREE_2);
+    assert_eq!(odoo.report.system, "synthetic-odoo");
+    assert!(
+        odoo.report
+            .lineage
+            .as_ref()
+            .is_some_and(|l| l.source.record.contains("SYN-ODOO-holding-north")),
+        "{odoo:#?}"
+    );
+}
+
+/// SOURCE-RESOLVE-1 with `ERPNext` the system of record and Odoo and Shopify
+/// checks: a holding only checks have reported is not created from a guess,
+/// its reports are kept, and the final value is the same in either order.
+#[test]
+fn source_resolve_1_checks_never_decide_and_the_system_of_record_does_in_either_order() {
+    let directory = tempfile::tempdir().expect("directory");
+    let (forward, backward, before) = both_orders(directory.path(), holding_system_of_record);
+    assert_eq!(
+        before.0, None,
+        "withheld until the system of record reports"
+    );
+    assert_eq!(
+        decision_of(&before.1, "quantity"),
+        &PropertyDecision::Undecided
+    );
+    let state = north_state(&forward);
+    assert_eq!(north_state(&backward), state);
+    assert_eq!(
+        state.0.as_ref().and_then(|v| v.get("quantity")),
+        Some(&grams(2765))
+    );
+    assert!(
+        state
+            .2
+            .contains(&("quantity".into(), "odoo.three.mapping".into(), grams(2458),))
+    );
 }

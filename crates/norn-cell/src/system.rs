@@ -72,6 +72,22 @@ pub(crate) fn claim_endpoints_of(selection: &str) -> String {
          UNION ALL SELECT 'target', json_extract(link.value, '$.targetKey'), i.\"consumed_commit_seq\", i.\"observation_id\", octet_length(i.\"observed\") FROM \"{INBOX}\" i, json_each(i.\"observed\", '$.input.records') AS record, json_each(record.value, '$.links') AS link WHERE i.\"observation_id\" LIKE 'mapping-bundle:%' AND i.\"consumed_commit_seq\" IS NOT NULL AND ({selection}) AND json_type(link.value, '$.targetKey') = 'text'"
     )
 }
+/// SOURCE-RESOLVE-1: the canonical subjects each consumed mapping bundle
+/// reports, one row per (type, key, bundle), with the bundle's mapping, so
+/// the latest report of every source for one subject is found by lookup.
+pub(crate) const SOURCE_SUBJECT: &str = "_norn_source_subject";
+
+/// The [`SOURCE_SUBJECT`] rows of the consumed mapping bundles that `?1`
+/// selects (a SQL condition on `i`).
+pub(crate) fn source_subjects_of(selection: &str) -> String {
+    format!(
+        "INSERT OR IGNORE INTO \"{SOURCE_SUBJECT}\" (\"object_type\", \"key\", \"mapping\", \"commit_seq\", \"position\", \"observation_id\") \
+         SELECT json_extract(record.value, '$.objectType'), json_extract(record.value, '$.key'), json_extract(i.\"observed\", '$.input.input.mapping'), i.\"consumed_commit_seq\", i.\"position\", i.\"observation_id\" \
+         FROM \"{INBOX}\" i, json_each(i.\"observed\", '$.input.records') AS record WHERE i.\"observation_id\" LIKE 'mapping-bundle:%' AND i.\"consumed_commit_seq\" IS NOT NULL AND ({selection}) \
+         AND json_type(record.value, '$.objectType') = 'text' AND json_type(record.value, '$.key') = 'text' AND json_type(i.\"observed\", '$.input.input.mapping') = 'text'"
+    )
+}
+
 /// Version high-water table.
 pub(crate) const VERSIONS: &str = "_norn_version";
 /// Link version table (#3013).
@@ -526,6 +542,16 @@ pub const SYSTEM_DDL: &[&str] = &[
   "observation_id" TEXT NOT NULL,
   "bytes" INTEGER NOT NULL,
   PRIMARY KEY ("side", "key", "observation_id")
+)"#,
+    // SOURCE-RESOLVE-1: subjects of consumed mapping bundles (`source_subjects_of`).
+    r#"CREATE TABLE IF NOT EXISTS "_norn_source_subject" (
+  "object_type" TEXT NOT NULL,
+  "key" TEXT NOT NULL,
+  "mapping" TEXT NOT NULL,
+  "commit_seq" INTEGER NOT NULL,
+  "position" INTEGER NOT NULL,
+  "observation_id" TEXT NOT NULL,
+  PRIMARY KEY ("object_type", "key", "observation_id")
 )"#,
     // The source event a mapping bundle captures (`source_event_mapping_bundles`):
     // looked up on every mapping, so an index, not a scan of every bundle.

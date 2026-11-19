@@ -78,6 +78,9 @@ pub(crate) struct MappingPlan {
     /// Journal model snapshot the full retained proof ran on; a hit requires
     /// the journal to still hold exactly this snapshot.
     model_snapshot: crate::ModelDefinitionSnapshot,
+    /// SOURCE-RESOLVE-1: who decides each canonical property several
+    /// mappings of the retained set write.
+    pub(crate) resolution: Arc<norn_checker::mapping::resolution::ResolutionTable>,
 }
 
 /// MAPPING-PLAN-1: retained-definition work is memoized per store, keyed by the
@@ -192,7 +195,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     /// MAPPING-PLAN-1: the installed row, export-journal record and receipt are
     /// re-read and compared on every call; only the pure model projection,
     /// governing-law check and mapping compilation are reused.
-    fn mapping_plan(
+    pub(crate) fn mapping_plan(
         &self,
         input: &MappingInput,
         version: u64,
@@ -269,6 +272,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             artifact_pins,
             definitions_digest: semantic_definitions_digest(&artifacts)?,
             model_snapshot: installation.model,
+            resolution: Arc::new(
+                norn_checker::mapping::resolution::ResolutionTable::from_artifacts(&artifacts, &[]),
+            ),
         });
         if let Some(cache) = self.mapping_plans {
             let mut cache = cache.borrow_mut();

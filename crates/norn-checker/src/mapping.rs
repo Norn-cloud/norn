@@ -57,6 +57,7 @@
 mod compile;
 pub mod evidence;
 pub mod lens;
+pub mod resolution;
 mod set;
 mod snapshot_lint;
 pub mod vendor;
@@ -181,6 +182,21 @@ pub mod codes {
 
     /// A principal key is not backed by an explicit reviewed binding.
     pub const INVALID_IDENTITY_BINDING: &str = "mapping.validation.invalid_identity_binding";
+
+    /// SOURCE-RESOLVE-1: a canonical property is written by more than one
+    /// mapping and some writer declares no authority.
+    pub const RESOLUTION_UNDECLARED: &str = "mapping.resolution.undeclared";
+    /// SOURCE-RESOLVE-1: a canonical property's writers do not single out who
+    /// decides it (two systems of record, a system of record beside a
+    /// precedence, a repeated rank, or two authorities in one mapping).
+    pub const RESOLUTION_AMBIGUOUS: &str = "mapping.resolution.ambiguous";
+    /// SOURCE-RESOLVE-1: every writer of a canonical property is a check.
+    pub const RESOLUTION_NO_AUTHORITY: &str = "mapping.resolution.no_authority";
+    /// SOURCE-RESOLVE-1: conflict peers are mixed with other authorities.
+    pub const RESOLUTION_MIXED: &str = "mapping.resolution.mixed";
+    /// SOURCE-RESOLVE-1: a conflict property is not nullable, so a
+    /// disagreement could not store null.
+    pub const RESOLUTION_CONFLICT_NOT_NULLABLE: &str = "mapping.resolution.conflict_not_nullable";
 }
 
 /// Decode a `MappingIR` document from its wire JSON and run

@@ -758,6 +758,10 @@
       "description": "How one dataset's records become objects of one object type (an RML\ntriples map).",
       "type": "object",
       "properties": {
+        "authority": {
+          "description": "SOURCE-RESOLVE-1: how this map's writes decide the target's\nproperties when another mapping writes them too. A property rule's own\n`authority` overrides it. Omitted when this mapping is the only writer\nof every property it maps; admission refuses a property two mappings\nwrite with no declared authority.",
+          "$ref": "#/$defs/SourceAuthority"
+        },
         "gaps": {
           "description": "Target members deliberately left unmapped, with a reason. Omitted\nwhen empty.",
           "type": "array",
@@ -901,6 +905,10 @@
       "description": "One property rule.",
       "type": "object",
       "properties": {
+        "authority": {
+          "description": "SOURCE-RESOLVE-1: this property's authority, overriding the map's.\nOmitted: the map's `authority` applies.",
+          "$ref": "#/$defs/SourceAuthority"
+        },
         "nested": {
           "description": "The parent collection and child-row predicate for a nested pivot.\nExactly one matching row supplies `value`; more than one is refused.\nOmitted for a direct property expression.",
           "$ref": "#/$defs/NestedPropertySource"
@@ -918,6 +926,74 @@
       "required": [
         "property",
         "value"
+      ]
+    },
+    "SourceAuthority": {
+      "description": "SOURCE-RESOLVE-1: how one mapping's write decides a canonical property\nthat several mappings (several source systems) write. The canonical value\nis decided by these declarations, never by which source wrote last; every\nsource's own report is kept with its lineage either way.",
+      "oneOf": [
+        {
+          "description": "This source is the system of record: its report is the canonical\nvalue, and every other writer of the property is a check.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "system_of_record"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Ordered precedence: of the writers that have reported, the one with\nthe lowest rank decides. Ranks of one property's writers are distinct.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "precedence"
+            },
+            "rank": {
+              "description": "Lower ranks win.",
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "rank"
+          ]
+        },
+        {
+          "description": "Never decides: the report is kept and compared with the canonical\nvalue; a difference is a source-agreement finding.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "check"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Peers without precedence: when every peer's report agrees that is the\nvalue; when they disagree the property reads as an explicit conflict\nlisting each report, and its stored value is null.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "conflict"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        }
       ]
     },
     "SourceBinding": {

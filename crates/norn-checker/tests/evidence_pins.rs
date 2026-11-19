@@ -253,6 +253,7 @@ fn mapping_pool() -> Vec<Value> {
                     property: norn_ir::PropertyId("id".into()),
                     value: norn_ir::ZenExpression("input.id".into()),
                     nested: None,
+                    authority: None,
                 }])
                 .expect("Rust-authored property map");
         }

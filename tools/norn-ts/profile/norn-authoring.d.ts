@@ -941,6 +941,16 @@ declare module "@norn/authoring" {
       readonly _tag: "NornMapping"
     }
 
+    /**
+     * SOURCE-RESOLVE-1: how a map's writes decide a canonical property other mappings write too.
+     * The value is decided by these declarations, never by the last writer.
+     */
+    type SourceAuthority =
+      | { readonly kind: "system_of_record" }
+      | { readonly kind: "precedence"; readonly rank: number }
+      | { readonly kind: "check" }
+      | { readonly kind: "conflict" }
+
     /** One object map: a logical source dataset onto a target type through an interface. Transforms are ZEN Expression text over `input`. */
     interface ObjectMapSpec {
       readonly id: string
@@ -949,7 +959,9 @@ declare module "@norn/authoring" {
       readonly when?: Expression<boolean>
       readonly subject: string | Expression<string>
       readonly sourceRecord: string | Expression<string>
-      readonly properties?: ReadonlyArray<{ readonly property: string; readonly value: string | Expression<unknown> }>
+      readonly properties?: ReadonlyArray<{ readonly property: string; readonly value: string | Expression<unknown>; readonly authority?: SourceAuthority }>
+      /** The map's authority over the properties it writes when another mapping writes them too; a property's own overrides it. */
+      readonly authority?: SourceAuthority
       /** Link patches: the link, the map that produces its target, and the target key expression. */
       readonly links?: ReadonlyArray<{ readonly link: string; readonly targetMap: string; readonly key: string }>
       /** Lifecycle maps: a state or transition expression, and the state an observed delete lands in. */

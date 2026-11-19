@@ -1874,7 +1874,7 @@ class DefinitionCompiler {
       source: { schemaId: this.string(source.get("schemaId")!), version: this.string(source.get("version")!), sha256: this.string(source.get("sha256")!) },
       interfaces: this.list(need("interfaces")).map((x) => pin(x, INTERFACES, "interface")),
       maps: this.list(need("maps")).map((x) => {
-        const m = this.closedRecord(x, ["id", "source", "target", "subject", "sourceRecord", "properties", "links", "lifecycles", "gaps", "ignoredFields", "when"], ["id", "source", "target", "subject", "sourceRecord"])
+        const m = this.closedRecord(x, ["id", "source", "target", "subject", "sourceRecord", "properties", "links", "lifecycles", "gaps", "ignoredFields", "when", "authority"], ["id", "source", "target", "subject", "sourceRecord"])
         const src = this.closedRecord(m.get("source")!, ["dataset", "nestedIn"], ["dataset"])
         const nested = src.get("nestedIn")
         const nestedIn = nested ? this.closedRecord(nested, ["dataset", "field"], ["dataset", "field"]) : undefined
@@ -1904,7 +1904,17 @@ class DefinitionCompiler {
           ...(m.has("when") ? { when: this.zen(m.get("when")!) } : {}),
           subject: this.mappingExpression(m.get("subject")!),
           sourceRecord: this.mappingExpression(m.get("sourceRecord")!),
-          properties: records("properties", ["property", "value"], ["property", "value"]),
+          properties: m.has("properties")
+            ? this.list(m.get("properties")!).map((e) => {
+                const r = this.closedRecord(e, ["property", "value", "authority"], ["property", "value"])
+                return {
+                  property: this.string(r.get("property")!),
+                  value: this.mappingExpression(r.get("value")!),
+                  ...(r.has("authority") ? { authority: this.sourceAuthority(r.get("authority")!) } : {}),
+                }
+              })
+            : undefined,
+          ...(m.has("authority") ? { authority: this.sourceAuthority(m.get("authority")!) } : {}),
           links: records("links", ["link", "targetMap", "key"], ["link", "targetMap", "key"]),
           lifecycles: records("lifecycles", ["property", "state", "transition", "onDelete"], ["property"]),
           gaps,
@@ -2155,6 +2165,21 @@ class DefinitionCompiler {
       else throw new CompileError("NORN-FLOW-LITERAL", "expected plain name: value members", p)
     }
     return out
+  }
+
+  /** SOURCE-RESOLVE-1: `{kind: "system_of_record" | "check" | "conflict"}` or `{kind: "precedence", rank: <whole number>}`. */
+  private sourceAuthority(input: ts.Expression): M.SourceAuthority {
+    const r = this.record(input)
+    const kind = this.string(r.get("kind") ?? input)
+    if (kind === "precedence") {
+      this.closedRecord(input, ["kind", "rank"], ["kind", "rank"])
+      const value = this.deref(r.get("rank")!)
+      if (!ts.isNumericLiteral(value) || !/^[0-9]+$/.test(value.text)) throw new CompileError("NORN-FLOW-LITERAL", "a precedence rank is a whole number literal", value)
+      return { kind, rank: Number(value.text) }
+    }
+    if (kind !== "system_of_record" && kind !== "check" && kind !== "conflict") throw new CompileError("NORN-FLOW-LITERAL", "an authority kind is system_of_record, precedence, check, or conflict", input)
+    this.closedRecord(input, ["kind"], ["kind"])
+    return { kind }
   }
 
   private closedRecord(input: ts.Expression, allowed: ReadonlyArray<string>, required: ReadonlyArray<string>): Map<string, ts.Expression> {

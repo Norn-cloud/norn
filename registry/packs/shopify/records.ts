@@ -97,6 +97,7 @@ export const Mapping = Norn.mapping({
       target: {type: Item, interface: Catalog},
       subject: "input.metafield_norn_ref",
       sourceRecord: "'shopify/demo/ProductVariant/' + input.id",
+      authority: {kind: "precedence", rank: 2},
       properties: [{property: "id", value: "input.metafield_norn_ref"}, {property: "code", value: "input.code"}, {property: "label", value: "input.label"}],
       ignoredFields: [{field: "sku", reason: "Alias only; duplicate SKUs do not establish identity."}, {field: "price", reason: "Sales price is not stock cost, valuation or a ledger effect."}]
     },
@@ -106,6 +107,7 @@ export const Mapping = Norn.mapping({
       target: {type: Holding, interface: Resource},
       subject: "input.metafield_norn_ref",
       sourceRecord: "'shopify/demo/InventoryLevel/' + input.id",
+      authority: {kind: "precedence", rank: 2},
       properties: [
         {property: "resource_code", value: "input.resource_code"},
         {property: "quantity", value: "input.quantity"},
@@ -128,6 +130,7 @@ export const Mapping = Norn.mapping({
       target: {type: Party, interface: Agent},
       subject: "input.metafield_norn_ref",
       sourceRecord: "'shopify/demo/Customer/' + input.id",
+      authority: {kind: "precedence", rank: 2},
       properties: [{property: "display_name", value: "input.label"}, {property: "kind", value: "'organization'"}],
       ignoredFields: [{field: "role", reason: "Mapped separately as an AgentRole; a customer role is not an Agent subtype."}]
     },
@@ -137,6 +140,7 @@ export const Mapping = Norn.mapping({
       target: {type: PartyRole, interface: AgentRole},
       subject: "input.metafield_norn_ref + '/role/' + input.role",
       sourceRecord: "'shopify/demo/Customer/' + input.id",
+      authority: {kind: "precedence", rank: 2},
       properties: [{property: "role", value: "input.role"}, {property: "valid_from", value: "null"}, {property: "valid_to", value: "null"}],
       links: [{link: "agent", targetMap: "party", key: "input.metafield_norn_ref"}],
       gaps: [{member: "counterparty", reason: "not_in_source", note: "The fixture role is scoped to the demo organisation, not an inferred bilateral legal relationship."}],
@@ -148,6 +152,7 @@ export const Mapping = Norn.mapping({
       target: {type: OrderLine, interface: Commitment},
       subject: "input.metafield_norn_ref",
       sourceRecord: "'shopify/demo/OrderLine/' + input.id",
+      authority: {kind: "precedence", rank: 2},
       properties: [{property: "quantity", value: "input.quantity"}, {property: "unit", value: "input.unit"}, {property: "currency", value: "null"}, {property: "status", value: "'promised'"}, {property: "due_at", value: "timestamp(input.due_at)"}],
       links: [{link: "provider", targetMap: "party", key: "input.provider_ref"}, {link: "receiver", targetMap: "party", key: "input.receiver_ref"}, {link: "resource", targetMap: "holding", key: "input.holding_ref"}]
     },
@@ -157,6 +162,7 @@ export const Mapping = Norn.mapping({
       target: {type: Delivery, interface: EconomicEvent},
       subject: "input.metafield_norn_ref",
       sourceRecord: "'shopify/demo/FulfillmentLine/' + input.id",
+      authority: {kind: "precedence", rank: 2},
       properties: [
         {property: "quantity", value: "input.quantity"},
         {property: "unit", value: "input.unit"},
@@ -179,6 +185,7 @@ export const Mapping = Norn.mapping({
       target: {type: SettlementObservation, interface: Settlement},
       subject: "input.metafield_norn_ref",
       sourceRecord: "'shopify/demo/Transaction/' + input.id",
+      authority: {kind: "precedence", rank: 2},
       properties: [{property: "amount", value: "input.amount"}, {property: "currency", value: "input.currency"}, {property: "kind", value: "input.kind"}],
       links: [{link: "payer", targetMap: "party", key: "input.payer_ref"}, {link: "payee", targetMap: "party", key: "input.payee_ref"}],
       gaps: [{member: "event", reason: "not_in_source", note: "Payment/refund report alone does not prove cash resource movement, settlement finality or balanced GL posting."}]

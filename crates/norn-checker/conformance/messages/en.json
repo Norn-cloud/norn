@@ -1169,6 +1169,21 @@
     "mapping.model.unresolved_source": {
       "message": "source schema {$schemaId} version {$version} is not a source_schema artifact of the set or the base"
     },
+    "mapping.resolution.ambiguous": {
+      "message": "a canonical property's writers do not single out who decides it: {$detail}"
+    },
+    "mapping.resolution.conflict_not_nullable": {
+      "message": "a canonical property declared conflict is not nullable, so a disagreement cannot be stored as null: {$detail}"
+    },
+    "mapping.resolution.mixed": {
+      "message": "conflict peers are mixed with other authorities for one canonical property: {$detail}"
+    },
+    "mapping.resolution.no_authority": {
+      "message": "every writer of a canonical property is a check, so nobody decides it: {$detail}"
+    },
+    "mapping.resolution.undeclared": {
+      "message": "a canonical property is written by more than one mapping without a declared authority: {$detail}"
+    },
     "mapping.runtime.evaluation_failed": {
       "message": "map {$map}: {$detail}"
     },

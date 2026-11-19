@@ -130,6 +130,11 @@ pub fn check_mapping_artifacts(
                 .map(|finding| in_payload(finding, artifact)),
         );
     }
+    // SOURCE-RESOLVE-1: a property several mappings write is decided by a
+    // declared authority, never by the last writer.
+    if let Ok(model) = &model {
+        out.extend(super::resolution::admission_findings(&mappings, model));
+    }
     out
 }
 
@@ -786,7 +791,7 @@ fn source_payload(artifact: &ArtifactEnvelope) -> Option<SourceSchemaIr> {
 }
 
 /// The strict root of a `mapping` artifact's payload.
-fn mapping_payload(artifact: &ArtifactEnvelope) -> Option<MappingIr> {
+pub(super) fn mapping_payload(artifact: &ArtifactEnvelope) -> Option<MappingIr> {
     let ArtifactPayload::Mapping(payload) = &artifact.payload else {
         return None;
     };

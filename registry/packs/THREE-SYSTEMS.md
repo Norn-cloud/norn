@@ -60,6 +60,15 @@ explicit `stock_cost` and `cost_currency` gaps and a null valuation method;
 valuation coverage is incomplete. Neither the sales price nor a payment amount
 is substituted for stock cost. No Shopify GL entries are emitted.
 
+Each map declares who decides the canonical properties all three systems
+write (SOURCE-RESOLVE-1, #1402): precedence ranks `ERPNext`, Odoo, then
+Shopify, so once `ERPNext` reports a holding a different Odoo quantity (or
+Shopify's `available` basis) is a SOURCE-AGREE-2 finding, never an overwrite.
+Precedence keeps each pack installable alone; a set may instead declare
+`ERPNext` the system of record with the others as checks. The canonical value
+is the same whichever system syncs first
+(`crates/norn-cell/tests/source_agreement.rs`).
+
 Each `synthetic.json` declares `synthetic_snapshot_incremental`,
 `productionCdc: false`, snapshot watermark 10 and ordered upserts starting at 11.
 The first delivery is deliberately redelivered at sequence 11. Sequence 12

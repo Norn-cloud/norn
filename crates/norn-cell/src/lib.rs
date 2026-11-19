@@ -71,6 +71,7 @@ pub mod restore;
 pub mod retained;
 pub mod source_agreement;
 pub mod source_provenance;
+pub mod source_resolution;
 pub mod store;
 pub mod system;
 pub mod transparency;

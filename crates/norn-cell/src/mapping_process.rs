@@ -198,6 +198,20 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 .input
                 .clone();
             values.remove(norn_checker::mapping::OBJECT_ID_FIELD);
+            // SOURCE-RESOLVE-1: a property several sources write takes the
+            // value its declared authorities decide over every source's
+            // latest report, never this report's merely for arriving last.
+            let current = slice.get(&key).and_then(|state| state.values.as_ref());
+            match self.resolve_mapped_record(bundle, record, current)? {
+                crate::source_resolution::Applied::AsMapped => {}
+                crate::source_resolution::Applied::Withheld => continue,
+                crate::source_resolution::Applied::Values(resolved) => {
+                    if resolved.is_empty() && record.lifecycle_snapshots.is_empty() {
+                        continue;
+                    }
+                    values = resolved;
+                }
+            }
             let prepared = prepare_observed_snapshot(
                 catalog,
                 &slice,

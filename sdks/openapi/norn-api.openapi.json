@@ -21329,6 +21329,10 @@
           "sourceRecord"
         ],
         "properties": {
+          "authority": {
+            "$ref": "#/components/schemas/NornIrSourceAuthority",
+            "description": "SOURCE-RESOLVE-1: how this map's writes decide the target's\nproperties when another mapping writes them too. A property rule's own\n`authority` overrides it. Omitted when this mapping is the only writer\nof every property it maps; admission refuses a property two mappings\nwrite with no declared authority."
+          },
           "gaps": {
             "type": "array",
             "items": {
@@ -22769,6 +22773,10 @@
           "value"
         ],
         "properties": {
+          "authority": {
+            "$ref": "#/components/schemas/NornIrSourceAuthority",
+            "description": "SOURCE-RESOLVE-1: this property's authority, overriding the map's.\nOmitted: the map's `authority` applies."
+          },
           "nested": {
             "$ref": "#/components/schemas/NornIrNestedPropertySource",
             "description": "The parent collection and child-row predicate for a nested pivot.\nExactly one matching row supplies `value`; more than one is refused.\nOmitted for a direct property expression."
@@ -26804,6 +26812,94 @@
           "version": {
             "type": "string",
             "description": "Adapter version."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrSourceAuthority": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/NornIrSourceAuthorityOneOf0"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrSourceAuthorityOneOf1"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrSourceAuthorityOneOf2"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrSourceAuthorityOneOf3"
+          }
+        ],
+        "description": "SOURCE-RESOLVE-1: how one mapping's write decides a canonical property\nthat several mappings (several source systems) write. The canonical value\nis decided by these declarations, never by which source wrote last; every\nsource's own report is kept with its lineage either way."
+      },
+      "NornIrSourceAuthorityOneOf0": {
+        "type": "object",
+        "description": "This source is the system of record: its report is the canonical\nvalue, and every other writer of the property is a check.",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "system_of_record"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrSourceAuthorityOneOf1": {
+        "type": "object",
+        "description": "Ordered precedence: of the writers that have reported, the one with\nthe lowest rank decides. Ranks of one property's writers are distinct.",
+        "required": [
+          "kind",
+          "rank"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "precedence"
+            ]
+          },
+          "rank": {
+            "type": "integer",
+            "format": "uint32",
+            "description": "Lower ranks win.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrSourceAuthorityOneOf2": {
+        "type": "object",
+        "description": "Never decides: the report is kept and compared with the canonical\nvalue; a difference is a source-agreement finding.",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "check"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrSourceAuthorityOneOf3": {
+        "type": "object",
+        "description": "Peers without precedence: when every peer's report agrees that is the\nvalue; when they disagree the property reads as an explicit conflict\nlisting each report, and its stored value is null.",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "conflict"
+            ]
           }
         },
         "additionalProperties": false
