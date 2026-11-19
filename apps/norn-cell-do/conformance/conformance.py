@@ -1048,8 +1048,10 @@ class WebSocket:
         port = url.port or default
         sock = socket.create_connection((url.hostname, port), timeout=30)
         if secure:
-            # create_default_context verifies the certificate chain and the hostname.
-            sock = ssl.create_default_context().wrap_socket(sock, server_hostname=url.hostname)
+            # create_default_context verifies the certificate chain and the hostname; TLS 1.2 at least.
+            context = ssl.create_default_context()
+            context.minimum_version = ssl.TLSVersion.TLSv1_2
+            sock = context.wrap_socket(sock, server_hostname=url.hostname)
         self.sock = sock
         key = base64.b64encode(os.urandom(16)).decode()
         authority = url.hostname if port == default else f"{url.hostname}:{port}"
