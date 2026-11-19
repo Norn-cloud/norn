@@ -42,7 +42,7 @@
 //! [`code`]: DecisionRefusal::code
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use norn_checker::entity_instance::InstanceError;
 use norn_checker::entity_model::{EntityContext, EntityModel};
@@ -85,6 +85,27 @@ pub struct TypeCatalog<'a> {
     extensions: Vec<&'a ObjectTypeExtension>,
     property_types: Option<&'a [PropertyTypeDef]>,
     effective_model: OnceLock<Result<EffectiveModel, norn_checker::EffectiveViewRefused>>,
+    memo: DefinitionMemo,
+}
+
+/// Work that depends only on a catalog's definitions, done once per catalog
+/// instead of once per checked row (#1417 P5). Builder methods that change the
+/// definitions reset it; a clone starts empty.
+#[derive(Debug, Default)]
+struct DefinitionMemo {
+    expressions: Mutex<BTreeMap<String, Result<Arc<Expression>, String>>>,
+    base_environment: OnceLock<Result<Arc<norn_expr::ZenTypeEnv>, String>>,
+    environments: Mutex<BTreeMap<ObjectTypeName, Result<Arc<norn_expr::ZenTypeEnv>, String>>>,
+    admissions: Mutex<BTreeMap<(ObjectTypeName, String), Arc<norn_expr::PreparedAdmission>>>,
+    laws: OnceLock<
+        BTreeMap<usize, Result<norn_ir::LawIR, crate::governing_laws::LawEvaluationError>>,
+    >,
+}
+
+impl Clone for DefinitionMemo {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
 }
 
 /// The checker-derived effective object and link contracts for one catalog.
@@ -111,6 +132,7 @@ impl<'a> TypeCatalog<'a> {
     /// A catalog over `types` (an admitted artifact set's object types).
     #[must_use]
     pub fn new(types: impl IntoIterator<Item = &'a ObjectTypeDef>) -> Self {
+        norn_ir::counters::bump(norn_ir::counters::Counter::TypeCatalogBuilds);
         Self {
             action_rules: &[],
             types: types
@@ -122,6 +144,7 @@ impl<'a> TypeCatalog<'a> {
             extensions: Vec::new(),
             property_types: None,
             effective_model: OnceLock::new(),
+            memo: DefinitionMemo::default(),
         }
     }
 
@@ -136,6 +159,7 @@ impl<'a> TypeCatalog<'a> {
     #[must_use]
     pub fn with_governing_laws(mut self, artifacts: &'a [norn_ir::ArtifactEnvelope]) -> Self {
         self.law_artifacts = artifacts.iter().collect();
+        self.memo = DefinitionMemo::default();
         self
     }
 
@@ -153,6 +177,7 @@ impl<'a> TypeCatalog<'a> {
                 .map(|interface| (interface.name.as_str(), interface)),
         );
         self.effective_model.take();
+        self.memo = DefinitionMemo::default();
         self
     }
 
@@ -166,6 +191,7 @@ impl<'a> TypeCatalog<'a> {
     ) -> Self {
         self.extensions.extend(extensions);
         self.effective_model.take();
+        self.memo = DefinitionMemo::default();
         self
     }
 
@@ -175,6 +201,7 @@ impl<'a> TypeCatalog<'a> {
     pub fn with_property_types(mut self, property_types: &'a [PropertyTypeDef]) -> Self {
         self.property_types = Some(property_types);
         self.effective_model.take();
+        self.memo = DefinitionMemo::default();
         self
     }
 
@@ -234,12 +261,108 @@ impl<'a> TypeCatalog<'a> {
         &self,
         object_type: &ObjectTypeName,
     ) -> Result<norn_expr::ZenTypeEnv, String> {
-        self.base_expression_environment()?
-            .bind_self(object_type)
-            .map_err(|error| error.to_string())
+        self.shared_expression_environment(object_type)
+            .map(|environment| (*environment).clone())
+    }
+
+    /// [`Self::expression_environment`], derived once per catalog and type.
+    pub(crate) fn shared_expression_environment(
+        &self,
+        object_type: &ObjectTypeName,
+    ) -> Result<Arc<norn_expr::ZenTypeEnv>, String> {
+        let mut environments = self
+            .memo
+            .environments
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        environments
+            .entry(object_type.clone())
+            .or_insert_with(|| {
+                self.shared_base_expression_environment()
+                    .and_then(|base| {
+                        (*base)
+                            .clone()
+                            .bind_self(object_type)
+                            .map_err(|error| error.to_string())
+                    })
+                    .map(Arc::new)
+            })
+            .clone()
     }
 
     pub(crate) fn base_expression_environment(&self) -> Result<norn_expr::ZenTypeEnv, String> {
+        self.shared_base_expression_environment()
+            .map(|environment| (*environment).clone())
+    }
+
+    fn shared_base_expression_environment(&self) -> Result<Arc<norn_expr::ZenTypeEnv>, String> {
+        self.memo
+            .base_environment
+            .get_or_init(|| self.derive_base_expression_environment().map(Arc::new))
+            .clone()
+    }
+
+    /// The compiled form of `source`, compiled once per catalog. The error is
+    /// the compile error's display text.
+    pub(crate) fn compiled_expression(&self, source: &str) -> Result<Arc<Expression>, String> {
+        let mut expressions = self
+            .memo
+            .expressions
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if let Some(compiled) = expressions.get(source) {
+            return compiled.clone();
+        }
+        let compiled = Expression::compile(source)
+            .map(Arc::new)
+            .map_err(|error| error.to_string());
+        expressions.insert(source.to_owned(), compiled.clone());
+        compiled
+    }
+
+    /// How the invariant `expression` on `object_type` runs as a Boolean in
+    /// `env` (that type's [`Self::shared_expression_environment`]), decided
+    /// once per catalog.
+    pub(crate) fn prepared_invariant(
+        &self,
+        object_type: &ObjectTypeName,
+        expression: &Expression,
+        env: &norn_expr::ZenTypeEnv,
+    ) -> Arc<norn_expr::PreparedAdmission> {
+        let mut admissions = self
+            .memo
+            .admissions
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        Arc::clone(
+            admissions
+                .entry((object_type.clone(), expression.source().to_owned()))
+                .or_insert_with(|| {
+                    Arc::new(expression.prepare_admitted(env, &norn_expr::Type::Bool))
+                }),
+        )
+    }
+
+    /// Every retained law artifact's decoded declaration, decoded once per
+    /// catalog and keyed by the artifact's address in this catalog.
+    pub(crate) fn decoded_laws(
+        &self,
+    ) -> &BTreeMap<usize, Result<norn_ir::LawIR, crate::governing_laws::LawEvaluationError>> {
+        self.memo.laws.get_or_init(|| {
+            self.law_artifacts
+                .iter()
+                .map(|artifact| {
+                    (
+                        std::ptr::from_ref(*artifact).addr(),
+                        crate::governing_laws::decode_law(artifact),
+                    )
+                })
+                .collect()
+        })
+    }
+
+    fn derive_base_expression_environment(&self) -> Result<norn_expr::ZenTypeEnv, String> {
+        norn_ir::counters::bump(norn_ir::counters::Counter::ExpressionEnvironmentBuilds);
         let objects: Vec<_> = self.types.values().map(|d| (*d).clone()).collect();
         let interfaces: Vec<_> = self.interfaces.values().map(|d| (*d).clone()).collect();
         let extensions: Vec<_> = self.extensions.iter().map(|d| (*d).clone()).collect();
@@ -469,6 +592,7 @@ impl<'a> TypeCatalog<'a> {
     }
 
     fn derive_effective_model(&self) -> Result<EffectiveModel, norn_checker::EffectiveViewRefused> {
+        norn_ir::counters::bump(norn_ir::counters::Counter::EffectiveModelBuilds);
         let object_types: Vec<_> = self
             .types
             .values()

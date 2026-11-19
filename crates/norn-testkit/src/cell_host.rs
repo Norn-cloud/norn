@@ -89,9 +89,8 @@ use norn_kernel::{
     FactState, FactVersion, FactWrite, FreshnessPolicy, Generation, IdempotencyKey, LedgerSeq,
     LinkKey, LinkMutation, LinkReadTarget, LinkState, LinkWrite, LogicalTime,
     ObservationAuthorization, ObservationEvent, ObservationId, Observed, OwnedRowsCommitProof,
-    Performed, PredicateObject, PredicateQuery, PredicateReadMember, Provenance, Timer, TimerId,
-    TypeCatalog, WrittenLinkVersion, WrittenVersion, check_commit, check_commit_observed,
-    check_commit_owned_rows,
+    Performed, PredicateObject, PredicateQuery, PredicateReadMember, Proposed, Provenance, Timer,
+    TimerId, TypeCatalog, WrittenLinkVersion, WrittenVersion,
 };
 use proptest::prelude::*;
 use proptest::strategy::Union;
@@ -125,7 +124,7 @@ pub type Responder<C, I> = Box<dyn FnMut(&Command<C>) -> I>;
 /// The in-memory reference [`CellHost`].
 ///
 /// Every verb is a plain collection operation; [`CellHost::commit`] runs
-/// [`check_commit`] and then applies everything, so it is atomic by
+/// [`norn_kernel::check_commit`] and then applies everything, so it is atomic by
 /// construction. Time and external observations are injected by the test
 /// ([`MemoryCell::advance_to`], [`MemoryCell::inject`]).
 ///
@@ -385,7 +384,7 @@ impl<E, C, I> MemoryCell<E, C, I> {
     }
 }
 
-/// What a [`MemoryCell`] has committed, as [`check_commit`] reads it.
+/// What a [`MemoryCell`] has committed, as [`norn_kernel::check_commit`] reads it.
 struct MemoryView<'c, E, C, I>(&'c MemoryCell<E, C, I>);
 
 impl<E, C, I> CommitView for MemoryView<'_, E, C, I> {
@@ -537,16 +536,10 @@ impl<E, C, I: Clone + norn_kernel::serde::Serialize> MemoryCell<E, C, I> {
                     *stored = values;
                 }
             }
-            let versions = match (authorization, owned_rows) {
-                (Some(authorization), None) => {
-                    check_commit_observed(&commit, &model, &MemoryView(self), authorization)?
-                }
-                (None, Some(proof)) => {
-                    check_commit_owned_rows(&commit, &model, &MemoryView(self), proof)?
-                }
-                (None, None) => check_commit(&commit, &model, &MemoryView(self))?,
-                (Some(_), Some(_)) => return Err(CommitError::ObservationAuthorization),
-            };
+            let versions = Proposed::new(&commit)
+                .authorize(authorization, owned_rows)?
+                .check(&model, &MemoryView(self))?
+                .into_versions();
             let fact_keys: Vec<FactKey> = commit
                 .writes
                 .iter()
