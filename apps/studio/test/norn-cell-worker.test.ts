@@ -3,6 +3,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test"
 import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
+import { BUNDLE_FILES } from "../scripts/celld-deploy-cell.ts"
 
 // The cell Worker (apps/norn-cell-do/worker.mjs) refuses to open a cell when its Wasm is a
 // fixtures build and NORN_STAGE is not a smoke or test stage. The Worker is loaded as shipped,
@@ -18,8 +19,8 @@ let Cell: CellClass
 
 beforeAll(async () => {
   const source = resolve(import.meta.dir, "../../norn-cell-do")
-  copyFileSync(join(source, "worker.mjs"), join(dir, "worker.mjs"))
-  copyFileSync(join(source, "subscribe.mjs"), join(dir, "subscribe.mjs"))
+  // Every module the deployed bundle holds (BUNDLE_FILES), so the Worker loads as it ships.
+  for (const file of BUNDLE_FILES.filter((name) => name.endsWith(".mjs"))) copyFileSync(join(source, file), join(dir, file))
   mkdirSync(join(dir, "pkg"))
   writeFileSync(join(dir, "pkg", "norn_cell_do_bg.wasm"), "")
   writeFileSync(
