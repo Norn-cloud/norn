@@ -3,6 +3,7 @@ import { afterAll, beforeAll, expect, spyOn, test } from "bun:test"
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
+import { BUNDLE_FILES } from "../scripts/celld-deploy-cell.ts"
 
 // The host conformance entry (apps/norn-cell-do/conformance/worker.mjs) serves nothing unless it is
 // opted in: a fixtures build, NORN_STAGE=test and NORN_CONFORMANCE=synthetic. Opted in, it serves
@@ -22,8 +23,8 @@ let Probe: ObjectClass
 
 beforeAll(async () => {
   const source = resolve(import.meta.dir, "../../norn-cell-do")
-  copyFileSync(join(source, "worker.mjs"), join(dir, "worker.mjs"))
-  copyFileSync(join(source, "subscribe.mjs"), join(dir, "subscribe.mjs"))
+  // Every module the deployed bundle holds (BUNDLE_FILES), so the cell Worker loads as it ships.
+  for (const file of BUNDLE_FILES.filter((name) => name.endsWith(".mjs"))) copyFileSync(join(source, file), join(dir, file))
   copyFileSync(join(source, "conformance", "worker.mjs"), join(dir, "conformance.mjs"))
   mkdirSync(join(dir, "pkg"))
   mkdirSync(join(dir, "probe-pkg"))
