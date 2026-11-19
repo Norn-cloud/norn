@@ -14,7 +14,8 @@
  */
 import { statSync } from "node:fs"
 import { resolve } from "node:path"
-import { compilePack } from "./pack.ts"
+import { loadChecker } from "./checker-abi.ts"
+import { bindSourceSchemas, checkPack, compilePack, pendingSourceSchemas } from "./pack.ts"
 
 export const PLAN_PATH = "/v1/cell/definitions:plan"
 export const APPLY_PATH = "/v1/cell/definitions:apply"
@@ -121,6 +122,14 @@ export async function main(command: "plan" | "apply", args: ReadonlyArray<string
   if ((email || tokenEnv) && !credentialsAllowed(url)) { process.stderr.write("credentials are sent only over HTTPS (or HTTP to loopback)\n"); return 2 }
   const pack = compilePack(resolve(input), { scope: { orgId: org, environmentId: env }, root: process.cwd(), ...(statSync(input).isFile() ? { modules: [resolve(input)] } : {}) })
   if (!pack.ok) { process.stdout.write(`${JSON.stringify(pack)}\n`); return 1 }
+  // MAPPING-SOURCE-REF-1: a mapping bound to a source schema of the pack by
+  // reference is pinned with the checker's hash before the pack is sent.
+  let artifacts = pack.artifacts
+  if (pendingSourceSchemas(artifacts)) {
+    const checker = await loadChecker().catch(() => undefined)
+    if (!checker) { process.stderr.write("a mapping binds a source schema by reference; set NORN_CHECKER_WASM_PKG so the checker can pin its hash\n"); return 2 }
+    artifacts = bindSourceSchemas(artifacts, checkPack(checker, artifacts, pack.baseArtifacts).receipt)
+  }
   const headers: Record<string, string> = {}
   if (tokenEnv) {
     const token = process.env[tokenEnv]
@@ -135,7 +144,7 @@ export async function main(command: "plan" | "apply", args: ReadonlyArray<string
     headers.origin = origin
   }
   const expected = option(args, "--expected-version")
-  const { out, ok } = await change({ url, org, env, headers }, command, pack.artifacts, args.includes("--json"), expected === undefined ? undefined : Number(expected))
+  const { out, ok } = await change({ url, org, env, headers }, command, artifacts, args.includes("--json"), expected === undefined ? undefined : Number(expected))
   process.stdout.write(`${out.join("\n")}\n`)
   return ok ? 0 : 1
 }

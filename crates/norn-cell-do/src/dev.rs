@@ -28,6 +28,12 @@
 //!   or a row of it the mapping quarantines, ends the session with exit 3
 //!   and the refusal; the session never serves after a refused load, and a
 //!   restart loads the same snapshot again (rows already landed stay landed).
+//! - DEV-DEFINITIONS-1: the sources' retained definitions (approvals) are
+//!   installed after each admitted set through the hosted admit, sign-off and
+//!   install path, in process, as the manifest's actor (`dev/definitions.rs`).
+//! - DEV-ACCESS-1: an action whose `access` names a policy is decided by that
+//!   policy for every local principal, as on a hosted cell
+//!   (`dev/policy.rs`).
 //! - DEV-CONFINED-1: the cell and the session files stay inside the project:
 //!   the manifest's cell is a relative path under the project root, and the
 //!   token and descriptor are owner-only files never written through a symlink.
@@ -55,6 +61,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 mod admit;
+mod definitions;
 mod http;
 mod load;
 mod policy;
@@ -257,7 +264,14 @@ fn run(args: &DevArgs, out: &mut Events) -> Result<(), Failure> {
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let (reopened, loaded) = reopen(&cell_path, &scope, &manifest.dev.actor, &loads)?;
+    let actions = policy::dev_actions();
+    let (reopened, loaded) = reopen(
+        &cell_path,
+        &scope,
+        &manifest.dev.actor,
+        &loads,
+        &actions,
+    )?;
     if let Some(loaded) = loaded {
         out.emit(
             &json!({ "event": "loaded", "files": loaded.files }),
@@ -325,11 +339,14 @@ fn run(args: &DevArgs, out: &mut Events) -> Result<(), Failure> {
         scope: &scope,
         url: &url,
         started_at: now_ms(),
+        actions,
+        ungoverned: std::cell::RefCell::new(None),
     };
     let active =
         active(&serving).map_err(|message| Failure::setup("norn.cell.unreadable", message))?;
     session.header(out, active.as_ref());
     if let Some(active) = &active {
+        session.access(out, &serving);
         session.ready(out, active)?;
     }
     let lines = spawn_worker(&args.worker, &root)?;
@@ -450,6 +467,10 @@ struct Session<'a> {
     scope: &'a CellScope,
     url: &'a str,
     started_at: u64,
+    /// The active revision's action policy (DEV-ACCESS-1).
+    actions: policy::DevActions,
+    /// The ungoverned actions last reported, so a change is reported once.
+    ungoverned: std::cell::RefCell<Option<Result<Vec<String>, String>>>,
 }
 
 impl Session<'_> {
@@ -620,6 +641,7 @@ impl Session<'_> {
                 &json!({ "event": "unchanged", "gen": event.get("gen"), "sourceDigest": event.get("sourceDigest") }),
                 "· unchanged (same definitions)",
             );
+            self.settle(out, serving, event);
             return Ok(None);
         }
         let result = match current {
@@ -647,6 +669,7 @@ impl Session<'_> {
                         &format!("· loaded {} recorded snapshot(s)", loaded.files.len()),
                     );
                 }
+                self.settle(out, serving, event);
                 Ok(Some(installed))
             }
             Err(refusal) => {
@@ -671,6 +694,82 @@ impl Session<'_> {
                 Ok(None)
             }
         }
+    }
+
+    /// After an admitted set is serving: install the sources' retained
+    /// definitions (DEV-DEFINITIONS-1) and recompile the action policy
+    /// (DEV-ACCESS-1). A refused definition is reported and changes nothing.
+    fn settle(&self, out: &mut Events, serving: &http::Serving, compiled: &Value) {
+        let definitions = compiled
+            .get("definitions")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let synced = {
+            let Ok(guard) = serving.read() else {
+                return;
+            };
+            let Some(host) = guard.as_ref() else {
+                return;
+            };
+            definitions::sync(
+                host,
+                self.scope,
+                &self.manifest.dev.actor,
+                &policy::dev_kinds(),
+                &definitions,
+                now_ms(),
+            )
+        };
+        for event in &synced.changed {
+            let text = |key: &str| event.get(key).and_then(Value::as_str).unwrap_or_default();
+            out.emit(
+                event,
+                &format!(
+                    "✓ {} {} v{} {}",
+                    text("kind"),
+                    text("id"),
+                    event.get("version").and_then(Value::as_u64).unwrap_or(0),
+                    text("lifecycle"),
+                ),
+            );
+        }
+        if !synced.refused.is_empty() {
+            Self::rejected(out, serving, compiled, "definitions", &synced.refused);
+        }
+        self.access(out, serving);
+    }
+
+    /// Recompile the active revision's action policy and report what it
+    /// governs when that changed.
+    fn access(&self, out: &mut Events, serving: &http::Serving) {
+        let refreshed = {
+            let Ok(guard) = serving.read() else {
+                return;
+            };
+            let Some(host) = guard.as_ref() else {
+                return;
+            };
+            policy::refresh_actions(&self.actions, host)
+        };
+        if self.ungoverned.borrow().as_ref() == Some(&refreshed) {
+            return;
+        }
+        match &refreshed {
+            Ok(ungoverned) if ungoverned.is_empty() => {}
+            Ok(ungoverned) => out.emit(
+                &json!({ "event": "access", "ungoverned": ungoverned }),
+                &format!(
+                    "· no access policy governs {}: only the local principals may call them, and a hosted cell would serve none of them",
+                    ungoverned.join(", ")
+                ),
+            ),
+            Err(reason) => out.emit(
+                &json!({ "event": "access", "error": reason }),
+                &format!("✗ the access policies do not compile, so no governed action is served: {reason}"),
+            ),
+        }
+        self.ungoverned.replace(Some(refreshed));
     }
 
     /// The first revision of a new cell.
@@ -702,7 +801,10 @@ impl Session<'_> {
         let host =
             DevHost::from_store(store, self.scope.clone(), |command| command.payload.clone())
                 .map_err(|refusal| serde_json::to_value(&refusal).unwrap_or(Value::Null))?
-                .with_authorizer(LocalDeveloper::for_actor(&self.manifest.dev.actor));
+                .with_authorizer(LocalDeveloper::for_actor(
+                    &self.manifest.dev.actor,
+                    std::sync::Arc::clone(&self.actions),
+                ));
         let installed = host
             .active_definitions()
             .map_err(|refusal| serde_json::to_value(&refusal).unwrap_or(Value::Null))?
@@ -735,6 +837,7 @@ fn reopen(
     scope: &CellScope,
     actor: &str,
     loads: &[PathBuf],
+    actions: &policy::DevActions,
 ) -> Result<(Option<DevHost<NativeEngine>>, Option<load::Loaded>), Failure> {
     let unreadable = |error: String| {
         Failure::setup(
@@ -766,7 +869,7 @@ fn reopen(
     };
     let host = DevHost::from_store(store, scope.clone(), |command| command.payload.clone())
         .map_err(|refusal| Failure::setup("norn.cell.scope_mismatch", refusal.message))?
-        .with_authorizer(LocalDeveloper::for_actor(actor));
+        .with_authorizer(LocalDeveloper::for_actor(actor, Arc::clone(actions)));
     Ok((Some(host), loaded))
 }
 

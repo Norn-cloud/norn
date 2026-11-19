@@ -26,7 +26,8 @@ use norn_cell::flow_run::RunStarter;
 use norn_cell::{CellError, MAIN_WORLD};
 use norn_ir::{RuntimeObject, RuntimeValue};
 use norn_kernel::cell_host::{
-    BoundedFact, CellCommit, CellHost, CommitError, CommitReceipt, DueTimer, FactState,
+    BoundedFact, CellCommit, CellHost, CommitError, CommitReceipt, DueTimer, FactMutation,
+    FactState, FactWrite,
     LinkReadTarget, LinkState, Observed, Performed, PredicateObject, PredicateQuery,
 };
 use norn_kernel::{
@@ -384,11 +385,104 @@ fn park<E: SqlEngine>(
 
 /// A host for one dry run of the kernel's action pipeline over `cell`: every
 /// read is the cell's, and every commit stops with [`WOULD_COMMIT`], so
-/// nothing is written.
-pub(crate) struct WouldCommit<'a, E: SqlEngine>(pub(crate) &'a ActionCell<E>);
+/// nothing is written. It keeps the object writes the commit carried, so a
+/// gate's `when` reads the record the call would write (APPROVAL-WHEN-1).
+pub(crate) struct WouldCommit<'a, E: SqlEngine> {
+    cell: &'a ActionCell<E>,
+    writes: Vec<FactWrite>,
+}
 
-fn stop<T>() -> Result<T, CommitError<CellError>> {
-    Err(CommitError::Host(CellError::DecisionRefused(WOULD_COMMIT)))
+impl<'a, E: SqlEngine> WouldCommit<'a, E> {
+    /// A dry run over `cell`.
+    pub(crate) const fn new(cell: &'a ActionCell<E>) -> Self {
+        Self {
+            cell,
+            writes: Vec::new(),
+        }
+    }
+
+    /// The object writes of the commit the dry run reached, if any.
+    pub(crate) fn into_writes(self) -> Vec<FactWrite> {
+        self.writes
+    }
+
+    fn stop<T>(
+        &mut self,
+        commit: CellCommit<FactEvent, RuntimeObject, RuntimeObject>,
+    ) -> Result<T, CommitError<CellError>> {
+        self.writes = commit.writes;
+        Err(CommitError::Host(CellError::DecisionRefused(WOULD_COMMIT)))
+    }
+}
+
+/// APPROVAL-WHEN-1: whether `gate` holds a call whose commit carries
+/// `writes`. Without `when`, every call. Otherwise the call's record (its
+/// first object write that is not a kernel record) is compared; a record
+/// without the property, or values the comparison cannot order, hold the
+/// call (fail closed).
+pub(crate) fn applies(gate: &Gate, writes: &[FactWrite]) -> bool {
+    let Some(when) = gate.payload.get("when") else {
+        return true;
+    };
+    let (Some(property), Some(op), Some(expected)) = (
+        when.get("property").and_then(Value::as_str),
+        when.get("op").and_then(Value::as_str),
+        when.get("value"),
+    ) else {
+        return true;
+    };
+    let record = writes.iter().find_map(|write| match &write.mutation {
+        FactMutation::Put { values }
+            if !write.key.object_type.as_str().starts_with("norn.") =>
+        {
+            Some(values)
+        }
+        _ => None,
+    });
+    let Some(actual) = record.and_then(|values| values.get(property)) else {
+        return true;
+    };
+    compare(actual, op, expected).unwrap_or(true)
+}
+
+/// `actual op expected`, or `None` when the values do not support `op`.
+fn compare(actual: &RuntimeValue, op: &str, expected: &Value) -> Option<bool> {
+    use std::cmp::Ordering;
+    let decimal = |value: &RuntimeValue| match value {
+        RuntimeValue::Number(number) => Some(*number),
+        RuntimeValue::String(text) => norn_ir::Decimal::parse(text).ok(),
+        _ => None,
+    };
+    let expected_decimal = match expected {
+        Value::Number(number) => norn_ir::Decimal::parse(&number.to_string()).ok(),
+        Value::String(text) => norn_ir::Decimal::parse(text).ok(),
+        _ => None,
+    };
+    let ordering: Option<Ordering> = match (decimal(actual), expected_decimal) {
+        (Some(left), Some(right)) => left.partial_cmp(&right),
+        _ => None,
+    };
+    if let Some(ordering) = ordering {
+        return Some(match op {
+            "eq" => ordering == Ordering::Equal,
+            "ne" => ordering != Ordering::Equal,
+            "lt" => ordering == Ordering::Less,
+            "le" => ordering != Ordering::Greater,
+            "gt" => ordering == Ordering::Greater,
+            "ge" => ordering != Ordering::Less,
+            _ => return None,
+        });
+    }
+    let equal = match (actual, expected) {
+        (RuntimeValue::String(left), Value::String(right)) => left == right,
+        (RuntimeValue::Bool(left), Value::Bool(right)) => left == right,
+        _ => return None,
+    };
+    match op {
+        "eq" => Some(equal),
+        "ne" => Some(!equal),
+        _ => None,
+    }
 }
 
 impl<E: SqlEngine> CellHost for WouldCommit<'_, E> {
@@ -398,24 +492,24 @@ impl<E: SqlEngine> CellHost for WouldCommit<'_, E> {
     type Error = CellError;
 
     fn load(&self, key: &FactKey) -> Result<FactState, CellError> {
-        self.0.load(key)
+        self.cell.load(key)
     }
     fn supports_reference_reads(&self) -> bool {
-        self.0.supports_reference_reads()
+        self.cell.supports_reference_reads()
     }
     fn load_reference(
         &self,
         key: &FactKey,
         max_bytes: u64,
     ) -> Result<Option<BoundedFact>, CellError> {
-        self.0.load_reference(key, max_bytes)
+        self.cell.load_reference(key, max_bytes)
     }
     fn load_bounded(
         &self,
         key: &FactKey,
         max_bytes: u64,
     ) -> Result<Option<BoundedFact>, CellError> {
-        self.0.load_bounded(key, max_bytes)
+        self.cell.load_bounded(key, max_bytes)
     }
     fn resolve_accepted_receipt(
         &self,
@@ -425,10 +519,10 @@ impl<E: SqlEngine> CellHost for WouldCommit<'_, E> {
         Option<norn_kernel::receipt_binding::ReceiptBinding<norn_kernel::cell_host::JsonObject>>,
         norn_kernel::receipt_binding::ReceiptBindingError<CellError>,
     > {
-        self.0.resolve_accepted_receipt(reference, manifest)
+        self.cell.resolve_accepted_receipt(reference, manifest)
     }
     fn load_link(&self, key: &LinkKey) -> Result<LinkState, CellError> {
-        self.0.load_link(key)
+        self.cell.load_link(key)
     }
     fn read_link_targets(
         &self,
@@ -446,36 +540,36 @@ impl<E: SqlEngine> CellHost for WouldCommit<'_, E> {
         max_members: usize,
         max_bytes: u64,
     ) -> Result<Option<Vec<PredicateObject>>, CellError> {
-        self.0.read_predicate(predicate, max_members, max_bytes)
+        self.cell.read_predicate(predicate, max_members, max_bytes)
     }
     fn commit(
         &mut self,
-        _commit: CellCommit<FactEvent, RuntimeObject, RuntimeObject>,
+        commit: CellCommit<FactEvent, RuntimeObject, RuntimeObject>,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        stop()
+        self.stop(commit)
     }
     fn commit_action_quantity(
         &mut self,
-        _commit: CellCommit<FactEvent, RuntimeObject, RuntimeObject>,
+        commit: CellCommit<FactEvent, RuntimeObject, RuntimeObject>,
         _requests: &[norn_ir::quantity_ledger::QuantityRequest],
         _idempotency_key: &str,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        stop()
+        self.stop(commit)
     }
     fn commit_action_references(
         &mut self,
-        _commit: CellCommit<FactEvent, RuntimeObject, RuntimeObject>,
+        commit: CellCommit<FactEvent, RuntimeObject, RuntimeObject>,
         _proof: norn_kernel::action_commit::ActionReferenceReads,
         _quantity: Option<(&norn_ir::quantity_ledger::QuantityRequest, &str)>,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        stop()
+        self.stop(commit)
     }
     fn commit_owned_rows(
         &mut self,
-        _commit: CellCommit<FactEvent, RuntimeObject, RuntimeObject>,
+        commit: CellCommit<FactEvent, RuntimeObject, RuntimeObject>,
         _proof: norn_kernel::cell_host::OwnedRowsCommitProof,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        stop()
+        self.stop(commit)
     }
     fn perform(&mut self) -> Result<Option<Performed<RuntimeObject>>, CellError> {
         Ok(None)
@@ -487,9 +581,88 @@ impl<E: SqlEngine> CellHost for WouldCommit<'_, E> {
         Ok(None)
     }
     fn serialize_by(&self, key: &FactKey) -> norn_kernel::cell_host::SerializationLane {
-        self.0.serialize_by(key)
+        self.cell.serialize_by(key)
     }
     fn publish(&mut self, _receipt: &CommitReceipt) -> Result<(), CellError> {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, reason = "fixture values")]
+mod tests {
+    //! APPROVAL-WHEN-1: which calls a narrowed approval holds.
+    use super::*;
+    use norn_kernel::cell_host::FactVersion;
+    use serde_json::json;
+
+    fn gate(when: Option<Value>) -> Gate {
+        let mut payload = json!({ "action": "purchasing.request.submit" });
+        if let (Some(when), Some(object)) = (when, payload.as_object_mut()) {
+            object.insert("when".to_owned(), when);
+        }
+        Gate {
+            definition: "purchasing.large_requests".to_owned(),
+            revision: 1,
+            payload,
+        }
+    }
+
+    fn put(object_type: &str, values: Value) -> FactWrite {
+        let values = match RuntimeValue::from_json(values).unwrap() {
+            RuntimeValue::Object(values) => values,
+            _ => RuntimeObject::new(),
+        };
+        FactWrite {
+            key: FactKey::new(object_type, "PR-1"),
+            expected: FactVersion(1),
+            mutation: FactMutation::Put { values },
+        }
+    }
+
+    fn request(amount: Value) -> Vec<FactWrite> {
+        vec![
+            put("norn.ActionCall", json!({ "amount": "1" })),
+            put(
+                "purchasing.PurchaseRequest",
+                json!({ "amount": amount, "status": "submitted" }),
+            ),
+        ]
+    }
+
+    #[test]
+    fn an_amount_threshold_holds_only_the_larger_requests() {
+        let large = gate(Some(
+            json!({ "property": "amount", "op": "gt", "value": "1000" }),
+        ));
+        assert!(applies(&large, &request(json!("2500.00"))));
+        assert!(applies(&large, &request(json!(1000.01))));
+        assert!(!applies(&large, &request(json!("1000.00"))));
+        assert!(!applies(&large, &request(json!("990"))));
+        // The kernel's own records never stand in for the call's record.
+        assert!(!applies(&large, &request(json!("12"))));
+    }
+
+    #[test]
+    fn text_compares_by_equality_and_anything_else_holds_the_call() {
+        let status = gate(Some(
+            json!({ "property": "status", "op": "eq", "value": "submitted" }),
+        ));
+        assert!(applies(&status, &request(json!("5"))));
+        let other = gate(Some(
+            json!({ "property": "status", "op": "ne", "value": "submitted" }),
+        ));
+        assert!(!applies(&other, &request(json!("5"))));
+        // Fail closed: an unordered comparison, a missing property, no record.
+        let ordered = gate(Some(
+            json!({ "property": "status", "op": "lt", "value": "z" }),
+        ));
+        assert!(applies(&ordered, &request(json!("5"))));
+        let missing = gate(Some(
+            json!({ "property": "priority", "op": "eq", "value": "high" }),
+        ));
+        assert!(applies(&missing, &request(json!("5"))));
+        assert!(applies(&missing, &[]));
+        assert!(applies(&gate(None), &request(json!("5"))));
     }
 }

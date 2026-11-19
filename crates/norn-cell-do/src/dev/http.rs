@@ -260,7 +260,7 @@ mod tests {
     //! waits as one open decision, its requester never decides it, and the
     //! local reviewer's approval commits it as the requester.
     use super::*;
-    use crate::dev::policy::{LocalDeveloper, reviewer};
+    use crate::dev::policy::{LocalDeveloper, dev_actions, refresh_actions, reviewer};
     use norn_api::scope::CellScope;
     use serde_json::{Value, json};
 
@@ -286,10 +286,13 @@ mod tests {
             DERIVES_LOSS,
             norn_api::action_admission::prepare_action_model,
         );
+        let actions = dev_actions();
+        let host = DevHost::from_store(store, scope.clone(), |command| command.payload.clone())
+            .unwrap()
+            .with_authorizer(LocalDeveloper::for_actor(DEVELOPER, actions.clone()));
+        refresh_actions(&actions, &host).unwrap();
         Dev {
-            host: DevHost::from_store(store, scope.clone(), |command| command.payload.clone())
-                .unwrap()
-                .with_authorizer(LocalDeveloper::for_actor(DEVELOPER)),
+            host,
             principals: DevPrincipals::new(vec![
                 (DEVELOPER_TOKEN.into(), DEVELOPER.into()),
                 (REVIEWER_TOKEN.into(), reviewer(DEVELOPER)),

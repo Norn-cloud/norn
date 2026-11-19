@@ -9,7 +9,9 @@
  *   bun src/worker.ts --project <dir> [--once]
  *
  * Each event is `{ event: "compiled", gen, sourceDigest, ok, ... }`:
- * `ok: true` carries `artifacts`, `sourceMap` and `warnings`; `ok: false`
+ * `ok: true` carries `artifacts`, `definitions` (retained definitions such as
+ * approvals, `{ kind, id, payload }`, which the host installs through the
+ * cell's own admit and sign-off path), `sourceMap` and `warnings`; `ok: false`
  * carries `diagnostics`, each with a project-relative `source`. `gen` grows
  * with every file-system batch; `sourceDigest` is the SHA-256 of the sorted
  * (project-relative path, bytes) pairs under `sources`, so a caller can tell
@@ -22,7 +24,10 @@
 import { createHash } from "node:crypto"
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync, watch } from "node:fs"
 import { join, relative, resolve, sep } from "node:path"
-import { compilePack, packModules, readArtifacts, type PackResult } from "./pack.ts"
+import type { Json } from "./canonical.ts"
+import type { RetainedDefinitionDoc } from "./compiler/definitions.ts"
+import { artifactId, compilePack, packModules, readArtifacts, type PackResult } from "./pack.ts"
+import { TOOL_ROOT } from "./profile.ts"
 import { ProjectError, readProject, type Project } from "./project.ts"
 
 export interface CompiledEvent {
@@ -31,6 +36,7 @@ export interface CompiledEvent {
   readonly sourceDigest: string
   readonly ok: boolean
   readonly artifacts?: ReadonlyArray<unknown>
+  readonly definitions?: ReadonlyArray<unknown>
   readonly sourceMap?: ReadonlyArray<unknown>
   readonly warnings?: ReadonlyArray<unknown>
   readonly diagnostics?: ReadonlyArray<unknown>
@@ -121,9 +127,67 @@ export function projectArtifacts(root: string, manifest: Project): unknown[] {
   })
 }
 
-/** The project compiled as one pack: `norn dev` and `norn explain` both compile through here. */
+/** The retained kinds a project's JSON sources may declare. */
+const RETAINED_KINDS: ReadonlySet<string> = new Set(["approval"])
+
+/**
+ * Retained definitions (`{ kind, id, payload }`, kind `approval`) carried as
+ * JSON files at the top level of each source directory, read exactly as
+ * `projectArtifacts` reads artifact envelopes.
+ */
+export function projectDefinitions(root: string, manifest: Project): RetainedDefinitionDoc[] {
+  const realRoot = realpathSync(root)
+  return sourceDirs(root, manifest).flatMap((dir) => readdirSync(dir).filter((f) => f.endsWith(".json")).sort().map((f) => join(dir, f))).flatMap((file) => {
+    if (!insideProject(realRoot, file)) throw outside(`definition ${posix(relative(root, file))}`)
+    const value = JSON.parse(readFileSync(file, "utf8")) as { readonly kind?: unknown; readonly id?: unknown; readonly payload?: unknown }
+    const retained = typeof value === "object" && value !== null && !Array.isArray(value) && typeof value.kind === "string" && RETAINED_KINDS.has(value.kind)
+      && typeof value.id === "string" && typeof value.payload === "object" && value.payload !== null && !Array.isArray(value.payload)
+    return retained ? [{ kind: "approval" as const, id: value.id as string, payload: value.payload as Json }] : []
+  })
+}
+
+/**
+ * The cell-owned `norn.` types a mapping needs (the link claims and source
+ * evidence the cell writes for every mapped row). A hosted tenant's base
+ * provides them; a project that declares a mapping and none of them gets the
+ * registry's copies, as `norn init --template three-systems` copies them.
+ */
+const CELL_OWNED = ["norn.ObservedLinkClaim.entity", "norn.SourceDocument.interface", "norn.SourceEvidence.interface"] as const
+const CELL_OWNED_DIR = resolve(TOOL_ROOT, "..", "..", "registry", "core", "artifacts")
+
+function cellOwned(artifacts: ReadonlyArray<Json>): Json[] {
+  const kinds = artifacts.map((artifact) => (artifact as { readonly kind?: unknown }).kind)
+  if (!kinds.includes("mapping")) return []
+  const declared = new Set(artifacts.map(artifactId))
+  if (CELL_OWNED.some((id) => declared.has(id))) return []
+  return CELL_OWNED.flatMap((id) => readArtifacts(join(CELL_OWNED_DIR, `${id}.json`)).map(({ artifact }) => artifact))
+}
+
+/**
+ * The project compiled as one pack: `norn dev`, `norn check <project>` and
+ * `norn explain` all compile through here, so each reads the same sources:
+ * the top-level modules, the top-level JSON artifacts and retained
+ * definitions, and the cell-owned types a mapping needs.
+ */
 export function compileProjectPack(root: string, manifest: Project): PackResult {
-  return compilePack(root, { modules: projectModules(root, manifest), scope: { orgId: manifest.scope.orgId, environmentId: manifest.scope.environmentId }, root })
+  const pack = compilePack(root, { modules: projectModules(root, manifest), scope: { orgId: manifest.scope.orgId, environmentId: manifest.scope.environmentId }, root })
+  if (!pack.ok) return pack
+  const files = projectArtifacts(root, manifest) as Json[]
+  const owned = cellOwned([...files, ...pack.artifacts])
+  const sources = new Map(pack.sources)
+  const refused = (construct: string, message: string): PackResult =>
+    ({ ok: false, profile: pack.profile, failures: [{ file: ".", diagnostics: [{ code: "NORN-FLOW-LITERAL", start: { line: 1, column: 1 }, end: { line: 1, column: 1 }, construct, message }] }] })
+  for (const artifact of files) {
+    const id = artifactId(artifact)
+    if (sources.has(id)) return refused(id, `artifact ${id} is declared by a JSON source and by ${sources.get(id)}`)
+    sources.set(id, "json")
+  }
+  for (const artifact of owned) sources.set(artifactId(artifact), "registry/core")
+  const definitions = projectDefinitions(root, manifest)
+  const ids = new Set(pack.retained.map((definition) => definition.id))
+  const duplicate = definitions.find((definition) => ids.has(definition.id))
+  if (duplicate) return refused(duplicate.id, `definition ${duplicate.id} is declared by a JSON source and by a module`)
+  return { ...pack, artifacts: [...owned, ...files, ...pack.artifacts], sources, retained: [...pack.retained, ...definitions] }
 }
 
 /** Compile every top-level module of every source directory as one set. */
@@ -139,7 +203,7 @@ export function compileProject(root: string, manifest: Project, gen: number): Co
   }
   return {
     event: "compiled", gen, sourceDigest: digest, ok: true,
-    artifacts: [...pack.baseArtifacts, ...projectArtifacts(root, manifest), ...pack.artifacts], sourceMap: pack.sourceMap, warnings: pack.warnings,
+    artifacts: [...pack.baseArtifacts, ...pack.artifacts], definitions: pack.retained, sourceMap: pack.sourceMap, warnings: pack.warnings,
   }
 }
 

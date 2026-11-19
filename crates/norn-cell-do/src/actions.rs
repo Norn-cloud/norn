@@ -18,21 +18,31 @@
 //!   capability for exactly the callable actions, in this cell's scope; the
 //!   tenant's policy (its role, scope and other conditions) is the deciding
 //!   conjunct. The caller's Norn roles are the principal's roles there.
+//! - ACTION-RESOURCE-1: the rules compile against the projected schema, so a
+//!   `resource` condition decides. The resource's attributes are the values
+//!   the kernel supplies for the check (the committed target, or the proposed
+//!   one for a create), each projected scalar property only; the principal's
+//!   one trusted attribute is `id`, the verified caller's subject id. A
+//!   `principalAttribute` any other name never holds (default deny).
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use norn_api::scope::CellScope;
 use norn_cell::Model;
 use norn_ir::access::{AccessIr, AccessRule, PolicyRoot};
-use norn_ir::{ActionRoot, ArtifactEnvelope, ArtifactKind, IrVersion01};
+use norn_ir::{ActionRoot, ArtifactEnvelope, ArtifactKind, IrVersion01, RuntimeValue};
 use norn_kernel::authz::{
-    self, AccessRequest, ActorKind, AuthzSchema, CapabilityGrant, Delegation, Pdp,
+    self, AccessRequest, ActorKind, AttrValue, AuthzSchema, CapabilityGrant, Delegation, Pdp,
     PdpActionAuthorizer, PrincipalInput, ResourceInput, ScopeKey,
 };
+use norn_projections::{CedarAttribute, CedarPrincipalAttribute};
 use norn_kernel::{ActionAuthorizer, ActionAuthzRequest, ActionDenial};
 
 use crate::policy::{Caller, scope_key};
 use crate::seed::SeedError;
+
+/// The one trusted principal attribute: the verified caller's subject id.
+pub const PRINCIPAL_ID_ATTRIBUTE: &str = "id";
 
 /// The id of the compiled action policy: every tenant rule is prefixed with
 /// the id of the policy artifact it came from.
@@ -45,6 +55,11 @@ pub struct ActionPolicy {
     /// The actions whose `access` ref names a compiled policy.
     callable: BTreeSet<String>,
     key: ScopeKey,
+    /// The projected scalar attributes of each resource type
+    /// (ACTION-RESOURCE-1): the target values the PDP sees.
+    resource_attributes: BTreeMap<String, BTreeMap<String, CedarAttribute>>,
+    /// Whether the rules read the principal's `id`.
+    principal_id: bool,
 }
 
 impl std::fmt::Debug for ActionPolicy {
@@ -181,11 +196,6 @@ impl ActionPolicy {
         let types: Vec<_> = model.object_types().cloned().collect();
         let interfaces: Vec<_> = model.interfaces().cloned().collect();
         let roots: Vec<ActionRoot> = actions.into_iter().map(|(_, action)| action).collect();
-        let projection = norn_projections::project_cedar_schema(&types, &interfaces, &roots);
-        let host = norn_projections::project_host_access_schema(&types);
-        let schema =
-            AuthzSchema::from_projected_cedarschema_fragments(&[&projection.schema, &host])
-                .map_err(|error| SeedError(format!("action schema: {error}")))?;
         let policy = AccessIr {
             access_version: IrVersion01::V0_1,
             policy_id: ACTION_POLICY_ID.into(),
@@ -193,15 +203,89 @@ impl ActionPolicy {
             generic_rules: vec![],
             extensions: None,
         };
-        let compiled = authz::compile(&schema, &policy)
+        // ACTION-RESOURCE-1: the projection types each resource condition;
+        // the principal attributes the rules read are inferred from it.
+        let plain = norn_projections::project_cedar_schema(&types, &interfaces, &roots);
+        let principal = authz::infer_principal_attributes(std::slice::from_ref(&policy), &plain)
+            .map_err(|error| SeedError(format!("action policy: {error}")))?;
+        if let Some((name, _)) = principal.iter().find(|(name, kind)| {
+            name.as_str() != PRINCIPAL_ID_ATTRIBUTE
+                || !matches!(kind, CedarPrincipalAttribute::String)
+        }) {
+            return Err(SeedError(format!(
+                "action policy: principal attribute {name:?} is not one this host verifies; only `{PRINCIPAL_ID_ATTRIBUTE}` (the caller's subject id, a string) is"
+            )));
+        }
+        let projection = norn_projections::project_cedar_schema_with_principal_attributes(
+            &types,
+            &interfaces,
+            &roots,
+            &principal,
+        );
+        let host = norn_projections::project_host_access_schema(&types);
+        let schema =
+            AuthzSchema::from_projected_cedarschema_fragments(&[&projection.schema, &host])
+                .map_err(|error| SeedError(format!("action schema: {error}")))?;
+        let compiled = authz::compile_all_projected(&schema, &[policy], &projection)
             .map_err(|error| SeedError(format!("action policy: {error}")))?;
         let base = Pdp::new(compiled, &[])
             .map_err(|error| SeedError(format!("action policy: {error}")))?;
+        let resource_attributes = projection
+            .attributes
+            .into_iter()
+            .map(|(object_type, attributes)| {
+                let scalar = attributes
+                    .into_iter()
+                    .filter(|(_, kind)| {
+                        matches!(
+                            kind,
+                            CedarAttribute::Bool | CedarAttribute::Long | CedarAttribute::String
+                        )
+                    })
+                    .collect();
+                (object_type, scalar)
+            })
+            .collect();
         Ok(Some(Self {
             base,
             callable,
             key: scope_key(scope),
+            resource_attributes,
+            principal_id: principal.contains_key(PRINCIPAL_ID_ATTRIBUTE),
         }))
+    }
+
+    /// ACTION-RESOURCE-1: the target's projected scalar values as the PDP's
+    /// resource attributes. A value of another shape (a decimal, a link, an
+    /// integer outside `i64`, null) is left out, so a condition on it never
+    /// holds.
+    fn resource_values(
+        &self,
+        object_type: &str,
+        values: Option<&norn_kernel::cell_host::JsonObject>,
+    ) -> BTreeMap<String, AttrValue> {
+        let (Some(projected), Some(values)) =
+            (self.resource_attributes.get(object_type), values)
+        else {
+            return BTreeMap::new();
+        };
+        projected
+            .iter()
+            .filter_map(|(name, kind)| {
+                let value = values.get(name)?;
+                let attribute = match (kind, value) {
+                    (CedarAttribute::String, RuntimeValue::String(text)) => {
+                        AttrValue::String(text.clone())
+                    }
+                    (CedarAttribute::Bool, RuntimeValue::Bool(flag)) => AttrValue::Bool(*flag),
+                    (CedarAttribute::Long, RuntimeValue::Number(number)) => {
+                        AttrValue::Long(number.to_string().parse().ok()?)
+                    }
+                    _ => return None,
+                };
+                Some((name.clone(), attribute))
+            })
+            .collect()
     }
 
     /// Whether `action_id` names a callable action.
@@ -244,6 +328,14 @@ impl ActionPolicy {
             Pdp::new(self.base.policy_set().clone(), &[grant]).map_err(|_unbuildable| denied())?;
         let key = self.key.clone();
         let roles = caller.roles.clone();
+        let principal_attributes = if self.principal_id {
+            BTreeMap::from([(
+                PRINCIPAL_ID_ATTRIBUTE.to_owned(),
+                AttrValue::String(caller.subject_id.clone()),
+            )])
+        } else {
+            BTreeMap::new()
+        };
         PdpActionAuthorizer::new(pdp, move |call: &ActionAuthzRequest<'_>| {
             Ok(AccessRequest {
                 principal: PrincipalInput {
@@ -251,7 +343,7 @@ impl ActionPolicy {
                     actor_kind,
                     agent_session_id: None,
                     roles: roles.clone(),
-                    attributes: BTreeMap::new(),
+                    attributes: principal_attributes.clone(),
                 },
                 scope: Some(key.clone()),
                 capability: call.action.action_id.clone(),
@@ -260,7 +352,10 @@ impl ActionPolicy {
                     object_type: call.target.object_type.as_str().to_owned(),
                     id: call.target.key.clone(),
                     scope: key.clone(),
-                    attributes: BTreeMap::new(),
+                    attributes: self.resource_values(
+                        call.target.object_type.as_str(),
+                        call.target_values,
+                    ),
                 },
                 context: BTreeMap::new(),
                 binding: None,

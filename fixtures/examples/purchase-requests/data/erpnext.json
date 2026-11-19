@@ -1,0 +1,67 @@
+{
+  "source": "erpnext",
+  "mapping": "purchasing.erpnext.mapping",
+  "connectorInstance": "demo",
+  "snapshot": [
+    {
+      "dataset": "Supplier",
+      "record": {
+        "name": "SUP-0001",
+        "supplier_name": "Cairo Office Supply",
+        "default_currency": "USD"
+      }
+    },
+    {
+      "dataset": "Supplier",
+      "record": {
+        "name": "SUP-0002",
+        "supplier_name": "Nile Paper Co.",
+        "default_currency": "EGP"
+      }
+    },
+    {
+      "dataset": "Material Request",
+      "record": {
+        "name": "MAT-MR-2026-00001",
+        "owner": "amira@example.test",
+        "supplier": "SUP-0001",
+        "currency": "USD",
+        "grand_total": "420.00",
+        "workflow_state": "Approved"
+      }
+    },
+    {
+      "dataset": "Material Request",
+      "record": {
+        "name": "MAT-MR-2026-00002",
+        "owner": "amira@example.test",
+        "supplier": "SUP-0001",
+        "currency": "USD",
+        "grand_total": "7800.00",
+        "workflow_state": "Pending"
+      }
+    },
+    {
+      "dataset": "Material Request",
+      "record": {
+        "name": "MAT-MR-2026-00003",
+        "owner": "omar@example.test",
+        "supplier": "SUP-0002",
+        "currency": "EGP",
+        "grand_total": "3500.00",
+        "workflow_state": "Draft"
+      }
+    },
+    {
+      "dataset": "Material Request",
+      "record": {
+        "name": "MAT-MR-2026-00004",
+        "owner": "omar@example.test",
+        "supplier": "SUP-0002",
+        "currency": "EGP",
+        "grand_total": "990.00",
+        "workflow_state": "Approved"
+      }
+    }
+  ]
+}

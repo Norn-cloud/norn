@@ -10,6 +10,20 @@
 //! (DEV-REVIEWER-1). Both hold every role of the hosted grant table, so an
 //! approval's declared decider roles are the hosted ones. This is server
 //! policy, stated on every `ready` event, never client logic.
+//!
+//! DEV-ACCESS-1: holding every role is not holding every action. An action
+//! whose `access` names a policy is decided by that policy for each local
+//! principal, by the hosted cell's own [`ActionPolicy`] compiled from the
+//! active revision (its roles, scope and resource conditions, the caller's
+//! verified `id` included), so a rule such as "the requester never approves
+//! their own request" refuses on `norn dev` exactly as it does hosted. A
+//! governed action whose policy does not compile is refused, never allowed.
+//! An action that names no policy stays callable by the local principals
+//! only (a hosted cell would not serve it at all); the `ready` event lists
+//! them.
+use std::sync::{Arc, RwLock};
+
+use crate::actions::ActionPolicy;
 use crate::policy::{Caller, CallerSlot, DEMO_GRANTS};
 use crate::principal::PrincipalResolver;
 use norn_api::authz::{AccessRequest, Authorizer, DenyAll, ReadRequest, RefusalDetailRequest};
@@ -35,21 +49,98 @@ pub(crate) fn dev_kinds() -> DefinitionKinds {
     crate::tenant::host_kinds(&DEMO_GRANTS)
 }
 
+/// The action policy of the active revision (DEV-ACCESS-1): the compiled
+/// policy, or why the revision's policies did not compile.
+pub(crate) type DevActions = Arc<RwLock<Result<Option<Arc<ActionPolicy>>, String>>>;
+
+/// A new, empty action slot: no governed action is callable until the first
+/// revision's policy is compiled into it.
+pub(crate) fn dev_actions() -> DevActions {
+    Arc::new(RwLock::new(Ok(None)))
+}
+
+/// The active revision's action policy and the actions no policy governs.
+type Compiled = (Option<ActionPolicy>, Vec<String>);
+
+fn compile_actions<E: norn_cell::engine::SqlEngine>(
+    host: &norn_api::host::DevHost<E>,
+) -> Result<Compiled, String> {
+    let Some(active) = host
+        .active_definitions()
+        .map_err(|refusal| refusal.explanation)?
+    else {
+        return Ok((None, Vec::new()));
+    };
+    let artifacts = norn_api::kernel_set::retained_artifacts(&active.canonical_set)?;
+    let model =
+        norn_api::kernel_set::kernel_model(&artifacts).map_err(|error| format!("{error:?}"))?;
+    let ungoverned = artifacts
+        .iter()
+        .filter(|artifact| artifact.kind() == norn_ir::ArtifactKind::Action)
+        .filter_map(|artifact| {
+            let action: norn_ir::ActionRoot =
+                serde_json::to_value(artifact.payload.to_json_value())
+                    .and_then(serde_json::from_value)
+                    .ok()?;
+            action.access.is_none().then_some(action.action_id)
+        })
+        .collect();
+    let policy = ActionPolicy::compile(&model, &artifacts, host.scope()).map_err(|error| error.0)?;
+    Ok((policy, ungoverned))
+}
+
+/// Compile the action policy of `host`'s active revision into `slot`, as a
+/// hosted cell does after each install. Returns the actions no policy
+/// governs (which the local principals alone may call), or why the
+/// revision's policies did not compile (then no governed action is served).
+pub(crate) fn refresh_actions<E: norn_cell::engine::SqlEngine>(
+    slot: &DevActions,
+    host: &norn_api::host::DevHost<E>,
+) -> Result<Vec<String>, String> {
+    let (stored, answer) = match compile_actions(host) {
+        Ok((policy, ungoverned)) => (Ok(policy.map(Arc::new)), Ok(ungoverned)),
+        Err(reason) => (Err(reason.clone()), Err(reason)),
+    };
+    if let Ok(mut guard) = slot.write() {
+        *guard = stored;
+    }
+    answer
+}
+
 /// Every grant to exactly the local actors; default deny for everyone else.
+/// Governed actions are decided by the active revision's policy
+/// (DEV-ACCESS-1).
 pub(crate) struct LocalDeveloper {
     pub(crate) actors: Vec<String>,
+    actions: DevActions,
 }
 
 impl LocalDeveloper {
-    /// The manifest's `actor` and its reviewer.
-    pub(crate) fn for_actor(actor: &str) -> Self {
+    /// The manifest's `actor` and its reviewer, deciding governed actions by
+    /// the policy in `actions`.
+    pub(crate) fn for_actor(actor: &str, actions: DevActions) -> Self {
         Self {
             actors: vec![actor.to_owned(), reviewer(actor)],
+            actions,
         }
     }
 
     fn is(&self, actor: &str) -> bool {
         self.actors.iter().any(|local| local == actor)
+    }
+}
+
+/// A local principal as the PDP sees it: every role of the hosted table.
+fn local_caller(actor: &str) -> Caller {
+    Caller {
+        subject_id: actor.to_owned(),
+        roles: DEMO_GRANTS
+            .entries
+            .iter()
+            .map(|(role, _)| (*role).to_owned())
+            .collect(),
+        actor_kind: "user",
+        role_table: DEMO_GRANTS.version,
     }
 }
 
@@ -62,13 +153,23 @@ impl Authorizer for LocalDeveloper {
         }
     }
     fn action(&self, request: &ActionAuthzRequest<'_>) -> Result<(), ActionDenial> {
-        if self.is(request.actor) {
-            Ok(())
-        } else {
-            Err(ActionDenial::Forbidden {
-                reason: norn_api::refusal::codes::AUTHZ_DENIED.into(),
-            })
+        let denied = || ActionDenial::Forbidden {
+            reason: norn_api::refusal::codes::AUTHZ_DENIED.into(),
+        };
+        if !self.is(request.actor) {
+            return Err(denied());
         }
+        if request.action.access.is_none() {
+            return Ok(());
+        }
+        // DEV-ACCESS-1: a governed action is the policy's to decide.
+        let policy = self
+            .actions
+            .read()
+            .ok()
+            .and_then(|slot| slot.as_ref().ok().cloned().flatten())
+            .ok_or_else(denied)?;
+        policy.decide(&local_caller(request.actor), request)
     }
     fn action_read(&self, request: &ActionReadAuthzRequest<'_>) -> Result<(), ActionDenial> {
         if self.is(request.actor) {
@@ -153,18 +254,7 @@ impl PrincipalResolver for DevPrincipals {
             }
         }
         // Every request records first, possibly nobody.
-        self.slot.record(found.as_ref().map(|actor| {
-            Caller {
-                subject_id: actor.clone(),
-                roles: DEMO_GRANTS
-                    .entries
-                    .iter()
-                    .map(|(role, _)| (*role).to_owned())
-                    .collect(),
-                actor_kind: "user",
-                role_table: DEMO_GRANTS.version,
-            }
-        }));
+        self.slot.record(found.as_deref().map(local_caller));
         found
     }
     fn end_request(&self) {
@@ -309,7 +399,7 @@ mod tests {
         }
         DevHost::from_store(store, scope(), |command| command.payload.clone())
             .expect("host")
-            .with_authorizer(LocalDeveloper::for_actor(ACTOR))
+            .with_authorizer(LocalDeveloper::for_actor(ACTOR, dev_actions()))
     }
 
     fn call(
