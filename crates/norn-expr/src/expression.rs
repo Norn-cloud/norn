@@ -104,8 +104,8 @@ impl Expression {
         env: &crate::ZenTypeEnv,
         expected: &crate::Type,
     ) -> EvaluationAttempt {
-        self.evaluate_prepared(
-            &self.prepare_admitted(env, expected),
+        self.run_prepared(
+            &self.admission_kind(env, expected),
             context,
             budget,
             env,
@@ -122,14 +122,17 @@ impl Expression {
         env: &crate::ZenTypeEnv,
         expected: &crate::Type,
     ) -> PreparedAdmission {
-        let kind = if crate::check::requires_exact_profile(self, env, expected) {
+        PreparedAdmission {
+            source: self.source.clone(),
+            kind: self.admission_kind(env, expected),
+        }
+    }
+
+    fn admission_kind(&self, env: &crate::ZenTypeEnv, expected: &crate::Type) -> Prepared {
+        if crate::check::requires_exact_profile(self, env, expected) {
             self.prepare_typed(env, expected)
         } else {
             Prepared::Plain
-        };
-        PreparedAdmission {
-            source: self.source.clone(),
-            kind,
         }
     }
 
@@ -156,7 +159,18 @@ impl Expression {
                 units_used: 0,
             };
         }
-        match &prepared.kind {
+        self.run_prepared(&prepared.kind, context, budget, env, expected)
+    }
+
+    fn run_prepared(
+        &self,
+        kind: &Prepared,
+        context: &Value,
+        budget: EvaluationBudget,
+        env: &crate::ZenTypeEnv,
+        expected: &crate::Type,
+    ) -> EvaluationAttempt {
+        match kind {
             Prepared::Plain => self.evaluate_metered(context, budget),
             Prepared::Refused(error) => EvaluationAttempt {
                 result: Err(error.clone()),
@@ -207,7 +221,7 @@ impl Expression {
         env: &crate::ZenTypeEnv,
         expected: &crate::Type,
     ) -> EvaluationAttempt {
-        self.evaluate_prepared(
+        self.run_prepared(
             &self.prepare_typed(env, expected),
             context,
             budget,
