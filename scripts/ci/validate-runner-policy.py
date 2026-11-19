@@ -50,7 +50,7 @@ def main() -> int:
     if args.root is None:
         command = ["cargo", "xtask", "ci", "policy"]
     else:
-        # The guard is its own workspace (D95): its manifest and lockfile sit in the gated
+        # The guard is its own workspace (#1270): its manifest and lockfile sit in the gated
         # crate directory, so the root manifest and lockfile never reach this binary.
         command = ["cargo", "run", "--locked", "--quiet",
                    "--manifest-path", str(REPO / "crates/norn-skeleton-guard/Cargo.toml"),

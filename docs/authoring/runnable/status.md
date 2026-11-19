@@ -1,7 +1,7 @@
 # Core release status
 
-Source baseline: public main `2859d63d435a89ce82dc3902d24924c0882e95a8`
-(2026-11-02). This supersedes the inspection baseline in the older core-spec
+Source baseline: public main `b532b4f4da` (2026-11-19); each row's release
+test was re-checked to exist, unignored, at this commit. This supersedes the inspection baseline in the older core-spec
 matrix for this runnable path. Open PRs do not count as released behavior.
 
 Every primitive remains **partial** across IR, admission, evaluator, commit,
