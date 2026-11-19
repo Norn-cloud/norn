@@ -95,7 +95,7 @@ export function parsePlans(text: string): PlanTable {
  * not all of them, or a malformed one, refuses: a half-configured deployment must not run unbilled
  * or bill without limits.
  */
-export function billingConfig(env: BillingEnv): BillingConfig | undefined {
+export function billingConfig(env: BillingEnv | Readonly<Record<string, string | undefined>>): BillingConfig | undefined {
   const present = BILLING_ENV.filter((name) => env[name] !== undefined && env[name] !== "")
   if (present.length === 0) return undefined
   if (present.length !== BILLING_ENV.length) throw new Error(`${BILLING_ENV.join(", ")} go together; missing: ${BILLING_ENV.filter((name) => !present.includes(name)).join(", ")}`)
