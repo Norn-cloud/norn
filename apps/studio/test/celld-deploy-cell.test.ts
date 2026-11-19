@@ -39,11 +39,9 @@ test("the probe passes on any answer from the new build's route, and fails on th
   expect(probeServesNewBuild(302, "")).toBe(false)
 })
 
-test("a fixtures build deploys only to a smoke or test stage", () => {
-  expect(() => assertDeployableBuild("next", true)).toThrow("fixtures build")
-  expect(() => assertDeployableBuild("demo", true)).toThrow("fixtures build")
-  expect(() => assertDeployableBuild("alpha", true)).toThrow("fixtures build")
-  expect(() => assertDeployableBuild("smoke", true)).not.toThrow()
-  expect(() => assertDeployableBuild("test", true)).not.toThrow()
-  expect(() => assertDeployableBuild("next", false)).not.toThrow()
+test("a fixtures build is never deployed, whatever the stage", () => {
+  for (const stage of ["next", "demo", "alpha", "smoke", "test"]) {
+    expect(() => assertDeployableBuild(stage, true)).toThrow("fixtures build")
+    expect(() => assertDeployableBuild(stage, false)).not.toThrow()
+  }
 })

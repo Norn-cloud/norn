@@ -365,23 +365,33 @@ fn real_world_sql_outside_the_dialect_refuses_cleanly() {
     }
 }
 
-/// Runs `sql` through the dialect on a thread with a bounded stack (4 MiB, or
-/// `SQL_STACK_KIB`): the bounds must refuse deep input before the parser or the
-/// lowering recurse far. A debug build needs about 2 MiB for the deepest
-/// nesting the dialect admits; without the bounds, these inputs overflow it.
-fn refused_on_a_small_stack(sql: String) -> Vec<norn_checker::Diagnostic> {
+/// The stack the bound tests run the dialect on, in KiB: 1024, or
+/// `SQL_STACK_KIB`, the same 1 MiB a Worker's Wasm stack has. CI runs these
+/// tests in the dev profile, whose frames are about five times the release
+/// and wasm32 builds': the deepest input the bounds admit needs about
+/// 850 KiB here, 175 KiB in a native release build and under 100 KiB in the
+/// wasm32 release build, so passing here covers those builds with margin.
+fn stack_bytes() -> usize {
+    std::env::var("SQL_STACK_KIB")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(1024)
+        .saturating_mul(1024)
+}
+
+/// Runs `sql` through the dialect (parse, lower, admit) on a thread with the
+/// bounded stack of [`stack_bytes`]; a stack overflow aborts the test binary.
+fn on_a_small_stack(sql: String) -> Result<(), Vec<norn_checker::Diagnostic>> {
     std::thread::Builder::new()
-        .stack_size(
-            std::env::var("SQL_STACK_KIB")
-                .ok()
-                .and_then(|v| v.parse::<usize>().ok())
-                .unwrap_or(4096)
-                .saturating_mul(1024),
-        )
-        .spawn(move || compile(&sql).expect_err("refused"))
+        .stack_size(stack_bytes())
+        .spawn(move || compile(&sql).map(|_| ()))
         .expect("spawn")
         .join()
-        .expect("no stack overflow")
+        .expect("no panic")
+}
+
+fn refused_on_a_small_stack(sql: String) -> Vec<norn_checker::Diagnostic> {
+    on_a_small_stack(sql).expect_err("refused")
 }
 
 #[track_caller]
@@ -456,29 +466,144 @@ fn nesting_within_the_bounds_still_compiles() {
     compile(&filtered(&vec!["o.amount > 0"; 60].join(" AND "))).expect("admitted");
 }
 
-#[test]
-fn the_depth_bound_admits_its_limit_and_refuses_one_past_it() {
-    let nested = |levels: usize| {
-        // Inside WHERE the condition is already one nested level.
-        let condition = format!(
-            "{}o.amount > 0{}",
-            "(".repeat(levels.saturating_sub(1)),
-            ")".repeat(levels.saturating_sub(1))
-        );
-        std::thread::Builder::new()
-            .stack_size(4096 * 1024)
-            .spawn(move || compile(&filtered(&condition)).map(|_| ()))
-            .expect("spawn")
-            .join()
-            .expect("no stack overflow")
-    };
-    // The parse admits 64 nested levels; whatever refuses it after that is
-    // not the dialect's depth bound.
-    if let Err(found) = nested(64) {
+/// The nested levels the dialect admits: an expression in a select item or
+/// `WHERE` is the first, and each parenthesis, call argument, `CASE` branch,
+/// window key, `NOT` or unary minus inside it is one more.
+const NESTED_LEVELS: usize = 24;
+
+/// `shape(levels)` is SQL whose deepest expression sits `levels` nested levels
+/// down. At the bound it runs through the dialect on the bounded stack without
+/// the depth refusal (whatever else refuses it is not the depth bound, and
+/// the run must not overflow); one level past it, the depth bound refuses it.
+#[track_caller]
+fn holds_at_the_depth_bound(shape: impl Fn(usize) -> String) {
+    if let Err(found) = on_a_small_stack(shape(NESTED_LEVELS)) {
         assert!(
             found.iter().all(|d| !d.message.contains("too deeply")),
             "{found:#?}"
         );
     }
-    refused_saying(&nested(65).expect_err("refused"), "too deeply");
+    refused_saying(
+        &refused_on_a_small_stack(shape(NESTED_LEVELS + 1)),
+        "too deeply",
+    );
+}
+
+/// `inner` wrapped `levels - 1` times by `wrap`, as the condition of a `WHERE`.
+fn wrapped(levels: usize, wrap: impl Fn(String) -> String) -> String {
+    let inner = (1..levels).fold("o.amount".to_owned(), |inner, _| wrap(inner));
+    filtered(&format!("{inner} > 0"))
+}
+
+#[test]
+fn nested_parentheses_hold_at_the_depth_bound() {
+    holds_at_the_depth_bound(|levels| wrapped(levels, |inner| format!("({inner})")));
+}
+
+#[test]
+fn nested_coalesce_calls_hold_at_the_depth_bound() {
+    holds_at_the_depth_bound(|levels| wrapped(levels, |inner| format!("coalesce({inner}, 0)")));
+}
+
+#[test]
+fn nested_case_branches_hold_at_the_depth_bound() {
+    holds_at_the_depth_bound(|levels| {
+        wrapped(levels, |inner| {
+            format!("CASE WHEN o.amount > 0 THEN o.amount ELSE {inner} END")
+        })
+    });
+    // A parenthesised ELSE spends two levels per CASE; an odd remainder is a
+    // parenthesis.
+    holds_at_the_depth_bound(|levels| {
+        let cases = (levels - 1) / 2;
+        let inner = (0..cases).fold(
+            if (levels - 1) % 2 == 1 {
+                "(o.amount)".to_owned()
+            } else {
+                "o.amount".to_owned()
+            },
+            |inner, _| format!("CASE WHEN o.amount > 0 THEN o.amount ELSE ({inner}) END"),
+        );
+        filtered(&format!("{inner} > 0"))
+    });
+}
+
+#[test]
+fn nested_window_keys_hold_at_the_depth_bound() {
+    holds_at_the_depth_bound(|levels| {
+        let key = (1..levels).fold("o.note".to_owned(), |inner, _| {
+            format!("sum(o.amount) OVER (PARTITION BY {inner})")
+        });
+        format!("SELECT {key} AS w FROM \"shop.Order\" o")
+    });
+}
+
+/// The tallest tree the dialect builds: each operator, comparison, call or
+/// `CASE` is one taller than its tallest operand, and a parenthesis adds
+/// nothing.
+const MAX_HEIGHT: usize = 64;
+
+/// `SELECT <e> AS x`, its expression built by `iterations` rounds of `round`.
+fn selected(seed: &str, iterations: usize, round: impl Fn(String) -> String) -> String {
+    let e = (0..iterations).fold(seed.to_owned(), |e, _| round(e));
+    format!("SELECT {e} AS x FROM \"shop.Order\" o")
+}
+
+#[test]
+fn a_flat_chain_holds_at_the_height_bound() {
+    // `o.amount` and n chained additions are n + 1 tall; the comparison is one more.
+    let chain = |n: usize| filtered(&format!("o.amount{} > 0", " + o.amount".repeat(n)));
+    on_a_small_stack(chain(MAX_HEIGHT - 2)).expect("admitted at the bound");
+    refused_saying(
+        &refused_on_a_small_stack(chain(MAX_HEIGHT - 1)),
+        "too deeply",
+    );
+}
+
+#[test]
+fn chains_under_parentheses_are_bounded_by_their_height() {
+    // Each round parenthesises the expression so far and chains onto it: the
+    // nesting stays shallow while the tree grows 60 taller per round.
+    let sql = selected("1", 30, |e| format!("({e}){}", "+1".repeat(60)));
+    assert!(sql.len() < 16_384, "{}", sql.len());
+    refused_saying(&refused_on_a_small_stack(sql), "too deeply");
+    // Within the nesting bound, it is the height that refuses it.
+    refused_saying(
+        &refused_on_a_small_stack(selected("1", 20, |e| format!("({e}){}", "+1".repeat(60)))),
+        "built too deeply",
+    );
+    // Just under the bound the same shape is admitted: 9 rounds of 7 are 64 tall.
+    let rounds = |n: usize| {
+        selected("o.amount", n, |e| {
+            format!("({e}){}", " + o.amount".repeat(7))
+        })
+    };
+    on_a_small_stack(rounds(9)).expect("admitted at the bound");
+    refused_saying(&refused_on_a_small_stack(rounds(10)), "built too deeply");
+}
+
+#[test]
+fn wide_shallow_expressions_are_admitted() {
+    // 64 leaves in a balanced tree is 7 tall, however many nodes it has.
+    on_a_small_stack(selected("o.amount", 6, |e| format!("({e}) + ({e})")))
+        .expect("a balanced tree is admitted");
+    // Siblings each just under the bound are as tall as the tallest of them.
+    let tall = format!("o.amount{}", " + o.amount".repeat(MAX_HEIGHT - 3));
+    on_a_small_stack(format!(
+        "SELECT ({tall}) * ({tall}) AS x, ({tall}) AS y FROM \"shop.Order\" o"
+    ))
+    .expect("tall siblings are admitted");
+}
+
+#[test]
+fn the_tallest_tree_under_the_deepest_nesting_holds_on_the_bounded_stack() {
+    // Every level parenthesises and chains once, and the innermost level is a
+    // chain as long as the height bound leaves: the parse recurses its
+    // deepest and the walks after it descend the tallest tree at once.
+    // `o.amount` and k additions are k + 1 tall, each of the other levels
+    // adds one, and the comparison one more.
+    let chain = MAX_HEIGHT - NESTED_LEVELS - 1;
+    let innermost = format!("o.amount{}", " + o.amount".repeat(chain));
+    let condition = (1..NESTED_LEVELS).fold(innermost, |inner, _| format!("({inner}) + o.amount"));
+    on_a_small_stack(filtered(&format!("{condition} > 0"))).expect("admitted at both bounds");
 }

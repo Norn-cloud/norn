@@ -262,13 +262,14 @@ impl Sources {
     /// value) naming the internal or plain-http hosts a base URL may use.
     ///
     /// # Errors
-    /// Malformed configuration, a duplicate id, or a base URL SYNC-URL-1 refuses.
+    /// Malformed configuration, a duplicate id, a base URL SYNC-URL-1
+    /// refuses, or an `allowed_hosts` entry that is not a bare host.
     pub fn with_allowed_hosts(
         config: &str,
         secrets: BTreeMap<String, String>,
         allowed_hosts: &str,
     ) -> Result<Self, String> {
-        let allowed_hosts = allowed_host_list(allowed_hosts);
+        let allowed_hosts = allowed_host_list(allowed_hosts)?;
         let connections: Vec<ConnectionConfig> =
             serde_json::from_str(config).map_err(|e| format!("source configuration: {e}"))?;
         let mut ids = std::collections::BTreeSet::new();
@@ -840,18 +841,31 @@ fn http(config: &ConnectionConfig, auth: &[(String, String)], request: Request) 
 }
 
 /// The hosts of an [`ALLOWED_HOSTS_VAR`] value, normalized as a URL's host
-/// is (lowercase, IP literals canonical); entries that are not hosts are
-/// dropped.
-fn allowed_host_list(value: &str) -> Vec<String> {
+/// is (lowercase, IP literals canonical). An entry that is not a bare host
+/// (a port, a scheme, a path) refuses the configuration, naming the entry,
+/// rather than leaving the operator's host silently unlisted.
+fn allowed_host_list(value: &str) -> Result<Vec<String>, String> {
     value
         .split(',')
         .map(str::trim)
         .filter(|entry| !entry.is_empty())
-        .filter_map(|entry| {
-            let parsed = url::Url::parse(&format!("https://{entry}/")).ok()?;
-            (parsed.port().is_none() && parsed.path() == "/")
-                .then(|| parsed.host_str().map(str::to_owned))
-                .flatten()
+        .map(|entry| {
+            url::Url::parse(&format!("https://{entry}/"))
+                .ok()
+                .filter(|parsed| {
+                    parsed.port().is_none()
+                        && parsed.path() == "/"
+                        && parsed.username().is_empty()
+                        && parsed.password().is_none()
+                        && parsed.query().is_none()
+                        && parsed.fragment().is_none()
+                })
+                .and_then(|parsed| parsed.host_str().map(str::to_owned))
+                .ok_or_else(|| {
+                    format!(
+                        "source configuration: {ALLOWED_HOSTS_VAR} entry {entry:?} is not a host; list host names or IP literals (IPv6 in brackets), without a scheme, port or path"
+                    )
+                })
         })
         .collect()
 }
@@ -891,7 +905,7 @@ fn internal_host(host: &url::Host<&str>) -> bool {
 }
 
 fn internal_ipv4(ip: std::net::Ipv4Addr) -> bool {
-    let [a, b, ..] = ip.octets();
+    let [a, b, c, _] = ip.octets();
     ip.is_unspecified()
         || ip.is_loopback()
         || ip.is_private()
@@ -901,21 +915,33 @@ fn internal_ipv4(ip: std::net::Ipv4Addr) -> bool {
         // 0.0.0.0/8 ("this network") and 100.64.0.0/10 (shared address space).
         || a == 0
         || (a == 100 && (b & 0xc0) == 64)
+        // 192.0.0.0/24 (protocol assignments), 198.18.0.0/15 (benchmarking)
+        // and 240.0.0.0/4 (reserved).
+        || (a == 192 && b == 0 && c == 0)
+        || (a == 198 && (b & 0xfe) == 18)
+        || a >= 240
 }
 
 fn internal_ipv6(ip: std::net::Ipv6Addr) -> bool {
     let segments = ip.segments();
-    let [first, ..] = segments;
-    // IPv4-mapped (::ffff:0:0/96) and IPv4-compatible (::/96) addresses carry
-    // an IPv4 destination; refuse them whatever the IPv4 part.
-    let mapped_or_compatible = matches!(segments, [0, 0, 0, 0, 0, 0xffff | 0, _, _]);
+    let [first, second, third, ..] = segments;
+    // Addresses that carry or reach an IPv4 destination are refused whatever
+    // the IPv4 part: IPv4-mapped (::ffff:0:0/96), IPv4-compatible (::/96),
+    // NAT64 (64:ff9b::/96 and the local-use 64:ff9b:1::/48), 6to4
+    // (2002::/16) and Teredo (2001::/32).
+    let carries_ipv4 = matches!(segments, [0, 0, 0, 0, 0, 0xffff | 0, _, _])
+        || matches!(segments, [0x64, 0xff9b, 0, 0, 0, 0, _, _])
+        || (first == 0x64 && second == 0xff9b && third == 1)
+        || first == 0x2002
+        || (first == 0x2001 && second == 0);
     ip.is_unspecified()
         || ip.is_loopback()
         || ip.is_multicast()
-        || mapped_or_compatible
-        // fc00::/7 unique-local, fe80::/10 link-local.
+        || carries_ipv4
+        // fc00::/7 unique-local, fe80::/10 link-local, fec0::/10 site-local.
         || (first & 0xfe00) == 0xfc00
         || (first & 0xffc0) == 0xfe80
+        || (first & 0xffc0) == 0xfec0
 }
 
 fn watermark_text(watermarks: &BTreeMap<String, Watermark>) -> String {
@@ -1418,6 +1444,13 @@ mod tests {
             "https://0",
             "https://255.255.255.255",
             "https://224.0.0.1",
+            // Protocol-assignment, benchmarking and reserved IPv4.
+            "https://192.0.0.1",
+            "https://192.0.0.255",
+            "https://198.18.0.1",
+            "https://198.19.255.255",
+            "https://240.0.0.1",
+            "https://254.1.2.3",
             // Unspecified, link-local, unique-local and multicast IPv6.
             "https://[::]",
             "https://[fe80::1]",
@@ -1430,6 +1463,17 @@ mod tests {
             "https://[::ffff:a9fe:a9fe]",
             "https://[::ffff:8.8.8.8]",
             "https://[::127.0.0.1]",
+            // NAT64, local-use NAT64, 6to4 and Teredo carry an IPv4 destination.
+            "https://[64:ff9b::7f00:1]",
+            "https://[64:ff9b::8.8.8.8]",
+            "https://[64:ff9b:1::a00:1]",
+            "https://[64:ff9b:1:ffff::1]",
+            "https://[2002:7f00:1::1]",
+            "https://[2002:808:808::1]",
+            "https://[2001:0:4136:e378::1]",
+            // Site-local IPv6.
+            "https://[fec0::1]",
+            "https://[feff::1]",
             // Single-label (private network) names.
             "https://erp-sandbox:8000",
             "http://erp-sandbox:8000",
@@ -1442,7 +1486,7 @@ mod tests {
     #[test]
     fn the_operator_allowlist_admits_named_internal_hosts_only() {
         let allowed =
-            allowed_host_list(" erp-sandbox , 127.0.0.1,[::1], ,not a host,10.0.0.5:80, LocalHost");
+            allowed_host_list(" erp-sandbox , 127.0.0.1,[::1], , LocalHost").expect("hosts");
         assert_eq!(
             allowed,
             ["erp-sandbox", "127.0.0.1", "[::1]", "localhost"].map(String::from)
@@ -1465,5 +1509,45 @@ mod tests {
         ] {
             assert!(!allowed_base(base, &allowed), "{base}");
         }
+    }
+
+    #[test]
+    fn neighbouring_public_addresses_stay_admitted() {
+        for base in [
+            "https://192.0.1.1",
+            "https://198.17.255.255",
+            "https://198.20.0.1",
+            "https://[64:ff9b:2::1]",
+            "https://[2001:db9::1]",
+            "https://[2001:4860::8888]",
+            "https://[2003::1]",
+            "https://[2606:4700::1111]",
+        ] {
+            assert!(allowed_base(base, &[]), "{base}");
+        }
+    }
+
+    #[test]
+    fn a_malformed_allowlist_entry_refuses_the_configuration_naming_it() {
+        for entry in [
+            "10.0.0.5:80",
+            "https://erp-sandbox",
+            "erp-sandbox/api",
+            "not a host",
+            "user@erp-sandbox",
+        ] {
+            let found = allowed_host_list(&format!("erp-sandbox,{entry}")).expect_err("refused");
+            assert!(
+                found.contains(ALLOWED_HOSTS_VAR) && found.contains(&format!("{entry:?}")),
+                "{entry}: {found}"
+            );
+            let refused = Sources::with_allowed_hosts("[]", BTreeMap::new(), entry)
+                .expect_err("configuration refused");
+            assert!(
+                refused.contains(&format!("{entry:?}")),
+                "{entry}: {refused}"
+            );
+        }
+        assert_eq!(allowed_host_list(" , ,"), Ok(Vec::new()));
     }
 }

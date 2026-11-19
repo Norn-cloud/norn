@@ -39,12 +39,9 @@ export function cellStage(stage: string | undefined, bucket: string | undefined)
   return { stage, origin: `https://${stage}.norn.cloud`, unit: `norn-${stage}-celld`, studio: `norn-studio-${stage}`, bucket }
 }
 
-/** The stages a build with the `fixtures` feature may serve; the Worker refuses the same set (apps/norn-cell-do/worker.mjs). */
-export const FIXTURE_STAGES: ReadonlySet<string> = new Set(["smoke", "test"])
-
-/** A build that accepts fixture principals is never deployed to a stage that is not a smoke or test stage. */
+/** A build that accepts fixture principals is never deployed: fixtures builds serve only the local smoke (apps/norn-cell-do/smoke.py), and no deployed stage is one. */
 export function assertDeployableBuild(stage: string, fixturesEnabled: boolean): void {
-  if (fixturesEnabled && !FIXTURE_STAGES.has(stage)) {
+  if (fixturesEnabled) {
     throw new Error(`the bundle is a fixtures build (it accepts fixture principals); stage ${stage} takes only a build without the fixtures feature`)
   }
 }
