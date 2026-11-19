@@ -4,9 +4,27 @@
   "compatibility_date": "2026-11-01",
   "durable_objects": {
     "bindings": [
-      { "name": "CELLS", "class_name": "Cell" },
-      { "name": "PROBES", "class_name": "Probe" }
+      {
+        "name": "CELLS",
+        "class_name": "Cell"
+      },
+      {
+        "name": "PROBES",
+        "class_name": "Probe"
+      }
     ]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Cell", "Probe"] }]
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "Cell",
+        "Probe"
+      ]
+    }
+  ],
+  "vars": {
+    "NORN_STAGE": "test",
+    "NORN_CONFORMANCE": "synthetic"
+  }
 }

@@ -4,10 +4,15 @@
 Runs the same request script on a Workers host and compares it with the
 native reference (crates/norn-cell-do/tests/conformance_reference.rs), then
 checks the Durable Object properties the cell relies on: transaction
-rollback, kills at every storage boundary of a commit, replies only after
-durability, no interleaving inside a synchronous turn, one live instance per
-id, alarms, SQLite behaviour and limits, the clock inside a synchronous call,
-waitUntil, live WebSockets across hibernation, and backup and restore.
+rollback, kills at sampled SQL boundaries of a commit (each boundary proven
+reached out of band before the kill), acknowledged commits surviving a kill,
+no interleaving inside a synchronous turn, one live instance per id, platform
+alarm probes, SQLite behaviour and limits, the clock inside a synchronous
+call, waitUntil, live WebSockets (and whether the object hibernated), and
+backup and restore.
+
+Every row is pass, fail, not tested (the run could not show it) or measured
+(an observation, not a claim). A row passes only when what it names was shown.
 
     conformance.py --reference REF --host celld  --project DIR [--out OUT]
     conformance.py --reference REF --host rivet  --project DIR [--out OUT]
@@ -16,8 +21,9 @@ waitUntil, live WebSockets across hibernation, and backup and restore.
 `celld` and `rivet` start and stop the host themselves (state under
 --state); `url` runs only the tests that need no host control. DIR is a
 built conformance project (see apps/norn-cell-do/README.md); it lives outside
-the checkout. Pins: celld 0.6.3, open-orange 1.0.3 with Rivet Engine
-3.1.2-rc.1 (`rivetdev/engine` by digest).
+the checkout. Pins: celld 0.6.3, open-orange 1.0.3 (installed from
+conformance/package.json + bun.lock) with Rivet Engine 3.1.2-rc.1
+(`rivetdev/engine` by digest).
 """
 import argparse
 import base64
@@ -26,10 +32,12 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import shutil
 import signal
 import socket
+import ssl
 import statistics
 import subprocess
 import sys
@@ -39,8 +47,15 @@ import urllib.parse
 import urllib.request
 
 ENGINE_IMAGE = "rivetdev/engine@sha256:6e585002b700dd4d3630808eb67884aa15d1a602d83781984edac47023b6d40f"
+ORANGE_VERSION = "1.0.3"
+# The locked, test-only OpenOrange install (bun install --frozen-lockfile in this directory).
+LOCKED_ORANGE = Path(__file__).resolve().parent / "node_modules" / ".bin" / "orange"
 NOW_HEADER = "x-norn-conformance-now"
 HOLD_HEADER = "x-norn-conformance-hold"
+MARKER_HEADER = "x-norn-conformance-marker"
+MARKER_LINE = "norn-conformance-hold-reached"
+REFERENCE_FORMAT = "norn/host-conformance-reference@2"
+SCRIPT_STEPS = 12
 ADMIN = "Bearer fixture:admin@demo"
 ANALYTICS = "orgId=org_demo&environmentId=analytics"
 
@@ -62,7 +77,7 @@ def request(base, method, path, query="", body=None, headers=None, timeout=60):
             status, payload, got = response.status, response.read(), dict(response.headers)
     except urllib.error.HTTPError as error:
         status, payload, got = error.code, error.read(), dict(error.headers)
-    return status, payload.decode(errors="replace"), (time.perf_counter() - started) * 1000, got
+    return status, payload, (time.perf_counter() - started) * 1000, got
 
 
 def probe(base, route, object_name="probe", timeout=60, **params):
@@ -76,9 +91,19 @@ def probe(base, route, object_name="probe", timeout=60, **params):
             break
         time.sleep(1)
     try:
-        return status, json.loads(body)
+        document = json.loads(body)
     except ValueError:
-        return status, {"raw": body[:300]}
+        return status, {"raw": body[:300].decode(errors="replace")}
+    return status, document if isinstance(document, dict) else {"raw": document}
+
+
+def probed(base, route, *keys, **kwargs):
+    """A probe that must answer 200 with a JSON object carrying `keys` and no error, or raise."""
+    status, body = probe(base, route, **kwargs)
+    missing = [key for key in keys if key not in body]
+    if status != 200 or "error" in body or missing:
+        raise RuntimeError(f"probe {route} answered {status} (missing {missing}): {str(body.get('error') or body)[:200]}")
+    return body
 
 
 def at(query, obj):
@@ -86,12 +111,15 @@ def at(query, obj):
 
 
 def head(base, query=ANALYTICS, timeout=120, obj=None):
+    """The cell's verified head as the exact string the Rust cell serialized, its document, and the time taken."""
     query = at(query, obj)
     status, body, ms, _ = request(base, "GET", "/__conformance/head", query, timeout=timeout)
     if status != 200:
-        raise RuntimeError(f"head: {status} {body[:300]}")
+        raise RuntimeError(f"head: {status} {body[:300]!r}")
     document = json.loads(body)
-    return document["head"], document, ms
+    if not isinstance(document.get("headJson"), str):
+        raise RuntimeError(f"head: no headJson string in {body[:300]!r}")
+    return document["headJson"], document, ms
 
 
 def recovered_head(base, obj=None, deadline_s=300):
@@ -112,10 +140,12 @@ def recovered_head(base, obj=None, deadline_s=300):
             time.sleep(1)
 
 
-def scripted(base, step, now_ms, hold=None, timeout=120, obj=None):
+def scripted(base, step, now_ms, hold=None, timeout=120, obj=None, marker=None):
     headers = {"authorization": step["authorization"], NOW_HEADER: str(now_ms)}
     if hold:
         headers[HOLD_HEADER] = hold
+    if marker:
+        headers[MARKER_HEADER] = marker
     return request(base, step["method"], step["path"], at(step["query"], obj), step["body"] or None, headers, timeout)
 
 
@@ -208,6 +238,9 @@ class UrlHost:
     def urls(self):
         return [self.url]
 
+    def logs(self):
+        return []
+
     def start(self):
         wait_ready(self.url, 180)
 
@@ -234,10 +267,15 @@ class CelldHost:
     def urls(self):
         return [self.url]
 
+    def logs(self):
+        return [self.state / "celld.log"]
+
     def start(self):
         started = time.perf_counter()
         log = open(self.state / "celld.log", "ab")
-        self.child = subprocess.Popen(["celld", "dev", "--port", str(self.port)], cwd=self.project, stdout=log, stderr=log, start_new_session=True)
+        # --no-watch: a file written under the project must not rebuild and restart the host mid-test;
+        # --logs: the Worker's console (the hold markers) reaches the log the runner reads.
+        self.child = subprocess.Popen(["celld", "dev", "--port", str(self.port), "--no-watch", "--logs"], cwd=self.project, stdout=log, stderr=log, start_new_session=True)
         wait_ready(self.url, 120, self.child)
         return (time.perf_counter() - started) * 1000
 
@@ -253,6 +291,24 @@ class CelldHost:
         return [self.project / ".celld"]
 
 
+def orange_version(binary):
+    """`binary`'s version, refused unless it is exactly the pinned open-orange release.
+
+    The binary must report exactly one version, ORANGE_VERSION; when it is the locked install's
+    shim, the installed package's own manifest must say the same.
+    """
+    out = subprocess.check_output([binary, "--version"], text=True, stderr=subprocess.STDOUT).strip()
+    versions = re.findall(r"\b\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?\b", out)
+    if versions != [ORANGE_VERSION]:
+        raise SystemExit(f"{binary} reports {out!r}; the suite runs only open-orange {ORANGE_VERSION} (bun install --frozen-lockfile in {LOCKED_ORANGE.parents[2]})")
+    manifest = Path(binary).resolve().parent.parent / "package.json"
+    if manifest.is_file():
+        package = json.loads(manifest.read_text())
+        if package.get("name") != "open-orange" or package.get("version") != ORANGE_VERSION:
+            raise SystemExit(f"{binary} belongs to {package.get('name')} {package.get('version')}, not open-orange {ORANGE_VERSION}")
+    return f"open-orange {ORANGE_VERSION}"
+
+
 class RivetHost:
     """A self-hosted Rivet Engine (Docker, pinned digest) with `orange serve` runners connecting out to it."""
 
@@ -266,8 +322,8 @@ class RivetHost:
         self.ports = [free_port() for _ in range(runners)]
         self.children = [None] * runners
         self.container = f"norn-conformance-engine-{os.getpid()}"
-        self.orange = os.environ.get("ORANGE", "orange")
-        self.version = subprocess.check_output([self.orange, "--version"], text=True).strip()
+        self.orange = os.environ.get("ORANGE", str(LOCKED_ORANGE))
+        self.version = orange_version(self.orange)
         config = {
             "storage": {"log_directory": "/var/lib/rivet/log", "auto_provision_partitions": 1, "balancing": {"enabled": False}},
             "object_storage": {"primary": {"file_system": {"path": "/var/lib/rivet/objects"}}},
@@ -277,6 +333,9 @@ class RivetHost:
 
     def urls(self):
         return [f"http://127.0.0.1:{port}" for port in self.ports]
+
+    def logs(self):
+        return [self.state / f"runner-{index}.log" for index in range(self.runners)]
 
     def start_engine(self):
         subprocess.run(["docker", "rm", "-f", self.container], capture_output=True)
@@ -306,7 +365,7 @@ class RivetHost:
             status, body, _, _ = request("http://127.0.0.1:6420", "PUT", "/pools/default", "namespace=default", "{}", {"authorization": f"Bearer {self.token}"})
             if status < 300:
                 break
-            if time.time() > stop_at or "retry" not in body:
+            if time.time() > stop_at or b"retry" not in body:
                 raise RuntimeError(f"pool: {status} {body[:200]}")
             time.sleep(0.5)
 
@@ -366,11 +425,17 @@ class Suite:
 
     def run(self, name, fn, needs_control=False):
         if needs_control and not self.host.controls:
-            return self.record(name, "skip", "needs host lifecycle control")
+            return self.record(name, "not tested", "needs host lifecycle control")
         try:
             status, detail = fn()
         except Exception as error:  # noqa: BLE001 - every failure is a row in the table
             status, detail = "fail", f"{type(error).__name__}: {error}"[:600]
+            if self.host.controls:
+                # A test that failed between a kill and a restart must not fail every row after it.
+                try:
+                    self.restart()
+                except Exception as restart_error:  # noqa: BLE001
+                    detail += f"; the host did not restart: {restart_error}"[:300]
         self.record(name, status, detail)
 
     def restart(self):
@@ -381,112 +446,153 @@ class Suite:
 
     def differential(self):
         native = self.ref["native"]
+        script = self.ref["script"]
+        if len(script) != SCRIPT_STEPS or len(native["steps"]) != SCRIPT_STEPS:
+            return "fail", f"the reference must hold exactly {SCRIPT_STEPS} steps per side: script {len(script)}, native {len(native['steps'])}"
         opened, _, _ = head(self.base)
         diffs = []
-        if opened != native["opened"]:
-            diffs.append(f"opened {opened} != {native['opened']}")
-        statements = []
-        for index, (step, want) in enumerate(zip(self.ref["script"], native["steps"])):
+        if opened.encode() != native["openedJson"].encode():
+            diffs.append(f"opened {opened} != {native['openedJson']}")
+        statements, ran = [], 0
+        for index, (step, want) in enumerate(zip(script, native["steps"], strict=True)):
             status, body, _, got = scripted(self.base, step, self.now)
             statements.append(int(header(got, "x-norn-conformance-statements") or 0))
             now_head, _, _ = head(self.base)
+            ran += 1
             if status != want["status"]:
-                diffs.append(f"step {index} status {status} != {want['status']}: {body[:200]}")
-            elif body != want["body"]:
-                diffs.append(f"step {index} body differs (sha256 {sha(body)} != {sha(want['body'])})")
-            if now_head != want["head"]:
-                diffs.append(f"step {index} head {now_head} != {want['head']}")
+                diffs.append(f"step {index} status {status} != {want['status']}: {body[:200]!r}")
+            elif body != want["body"].encode():
+                diffs.append(f"step {index} body differs (sha256 {sha(body)} != {sha(want['body'].encode())})")
+            if now_head.encode() != want["headJson"].encode():
+                diffs.append(f"step {index} head {now_head} != {want['headJson']}")
+        if ran != SCRIPT_STEPS:
+            diffs.append(f"ran {ran} of {SCRIPT_STEPS} steps")
         self.statements = max(statements) if statements else 0
         final = native["steps"][-1]["head"]
         if diffs:
             return "fail", "; ".join(diffs[:6])
-        return "pass", f"{len(native['steps'])} steps byte-identical (status, body, verified head); final head seq={final['seq']} commits={final['commits']} hash={final['hash'][:16]}…; ≤{self.statements} SQL statements per commit"
+        return "pass", f"{ran}/{SCRIPT_STEPS} steps byte-identical (status, raw body bytes, Rust-serialized verified head); final head seq={final['seq']} commits={final['commits']} hash={final['hash'][:16]}…; ≤{self.statements} SQL statements per commit"
 
     # -- transactions
 
     def tx_rollback(self):
-        status, adapter = probe(self.base, "adapter")
-        _, thrown = probe(self.base, "tx-throw")
-        ok = status == 200 and adapter.get("result", "").endswith(":pass") and thrown.get("rolledBack") and thrown.get("rethrown")
-        return ("pass" if ok else "fail"), f"adapter={adapter.get('result') or adapter.get('error')}; thrown string rolled back={thrown.get('rolledBack')} rethrown unchanged={thrown.get('rethrown')}"
+        adapter = probed(self.base, "adapter", "result")
+        thrown = probed(self.base, "tx-throw", "rolledBack", "rethrown")
+        ok = str(adapter["result"]).endswith(":pass") and thrown["rolledBack"] is True and thrown["rethrown"] is True
+        return ("pass" if ok else "fail"), f"adapter={adapter['result']}; thrown string rolled back={thrown['rolledBack']} rethrown unchanged={thrown['rethrown']}"
 
     def tx_nested(self):
-        _, adapter = probe(self.base, "adapter")
-        _, nested = probe(self.base, "tx-nested")
-        ok = "nested" in adapter.get("result", "")
-        return ("pass" if ok else "fail"), f"Norn refuses nesting before the platform (adapter={adapter.get('result') or adapter.get('error')}); platform nesting: inner error {nested.get('inner')!r}, outer kept={nested.get('outerKept')}"
+        adapter = probed(self.base, "adapter", "result")
+        nested = probed(self.base, "tx-nested", "inner", "outerKept")
+        ok = str(adapter["result"]).endswith(":pass") and "nested" in str(adapter["result"])
+        return ("pass" if ok else "fail"), f"Norn refuses nesting before the platform (adapter={adapter['result']}); platform nesting (measured): inner error {nested['inner']!r}, outer kept={nested['outerKept']}"
 
     # -- kills
 
+    def wait_marker(self, token, replied, seconds=60):
+        """Whether the host printed `token`'s hold marker (read from its own log) before any reply left."""
+        line = f"{MARKER_LINE} {token}".encode()
+        stop_at = time.time() + seconds
+        while time.time() < stop_at and not replied:
+            for path in self.host.logs():
+                try:
+                    if line in path.read_bytes():
+                        return True
+                except OSError:
+                    pass
+            time.sleep(0.2)
+        return False
+
     def kill_points(self):
+        """Kills at sampled SQL boundaries inside a commit: each boundary is proven reached (the host
+        printed the request's marker while the object spins there) before the host is killed. The
+        commit must then be either wholly absent or wholly present, never partial, and a retry must
+        match native. A boundary never shown reached is not tested."""
         steps = self.ref["kill"]["script"]
         native = self.ref["kill"]["native"]
         obj = f"kill-{secrets.token_hex(4)}"
         opened, _, _ = head(self.base, obj=obj, timeout=300)
-        if opened != native["opened"]:
-            return "fail", f"a fresh cell opened at {opened}, native {native['opened']}"
+        if opened != native["openedJson"]:
+            return "fail", f"a fresh cell opened at {opened}, native {native['openedJson']}"
         # Size the sweep by the kill request itself: a dry run on its own fresh cell.
         dry = f"kill-dry-{secrets.token_hex(4)}"
         head(self.base, obj=dry, timeout=300)  # provisioning is not part of the count
-        _, _, _, got = scripted(self.base, steps[0], self.now, obj=dry, timeout=300)
-        n = max(int(header(got, "x-norn-conformance-statements") or 1), 1)
+        status, _, _, got = scripted(self.base, steps[0], self.now, obj=dry, timeout=300)
+        counted = header(got, "x-norn-conformance-statements")
+        if status != 200 or not (counted or "").isdigit() or int(counted) < 1:
+            return "fail", f"the dry run answered {status} with statement count {counted!r}"
+        n = int(counted)
         spread = sorted({1, 2, 3, max(1, n // 4), max(1, n // 2), max(1, (3 * n) // 4), max(1, n - 1), n})
         if self.quick:
             spread = [1, n]
         points = [f"stmt:{k}" for k in spread] + ["turn-end", "post-turn"]
-        rows, failures, reopen_ms = [], [], []
-        before = native["opened"]
+        if len(points) > len(steps):
+            return "fail", f"{len(points)} kill points but only {len(steps)} kill steps in the reference"
+        rows, failures, untested, reopen_ms = [], [], [], []
+        before = native["openedJson"]
         for index, point in enumerate(points):
             step, want = steps[index], native["steps"][index]
-            # The request spins at the point; the reply must not arrive before the kill.
+            token = secrets.token_hex(16)
             replied = []
 
             def send():
                 try:
-                    status, _, _, got = scripted(self.base, step, self.now, hold=point, timeout=600, obj=obj)
+                    status, _, _, got = scripted(self.base, step, self.now, hold=point, timeout=600, obj=obj, marker=token)
                     replied.append((status, header(got, "x-norn-conformance-hold-reached")))
                 except OSError as error:
                     replied.append((f"error: {type(error).__name__}", None))
 
             with concurrent.futures.ThreadPoolExecutor(1) as pool:
                 future = pool.submit(send)
-                time.sleep(2.0)
+                reached = self.wait_marker(token, replied)
                 early = list(replied)
                 self.host.kill()
                 future.result(timeout=120)
             self.host.start()
             after_kill, waited = recovered_head(self.base, obj=obj)
             reopen_ms.append(waited)
-            landed = after_kill == want["head"]
+            landed = after_kill == want["headJson"]
             if not landed and after_kill != before:
-                failures.append(f"{point}: head after kill {after_kill} is neither {before} nor {want['head']}")
-            if early and early[0][1] == "false":
-                failures.append(f"{point}: harness error, the request never reached the hold")
-                before = want["head"] if landed else before
-                continue
+                failures.append(f"{point}: head after kill {after_kill} is neither {before} nor {want['headJson']} (partial)")
             if early:
-                failures.append(f"{point}: a reply ({early[0][0]}) left before the kill")
-            if point.startswith("stmt") and landed:
+                failures.append(f"{point}: a reply ({early[0][0]}, hold reached={early[0][1]}) left while the object was held")
+            if not reached:
+                untested.append(point)
+            elif point.startswith("stmt") and landed:
                 failures.append(f"{point}: a write inside an open transaction survived the kill")
             if not landed:
                 status, body, _, _ = scripted(self.base, step, self.now, obj=obj)
                 retried, _, _ = head(self.base, obj=obj)
-                if (status, body) != (want["status"], want["body"]) or retried != want["head"]:
+                if (status, body) != (want["status"], want["body"].encode()) or retried != want["headJson"]:
                     failures.append(f"{point}: retry differs from native ({status})")
-            rows.append(f"{point}={'landed' if landed else 'rolled back'}")
-            before = want["head"]
-        # Acknowledged then killed: an acknowledged commit must survive.
-        ack_step, ack_want = steps[len(points)], native["steps"][len(points)]
-        status, _, _, _ = scripted(self.base, ack_step, self.now, obj=obj)
+            rows.append(f"{point}={'not reached' if not reached else 'landed' if landed else 'rolled back'}")
+            before = want["headJson"]
+        self.measurements["cell_recovery_after_kill_ms"] = summary(reopen_ms)
+        detail = f"{len(points)} sampled boundaries of ≤{n} SQL statements, each killed after its out-of-band marker: " + ", ".join(rows) + f"; the cell answered again p50 {statistics.median(reopen_ms):.0f} ms after the host restarted"
+        if failures:
+            return "fail", "; ".join(failures)[:900]
+        if untested:
+            return "not tested", f"the host never showed reaching {', '.join(untested)} (no marker in its log), so those kills prove nothing; " + detail
+        return "pass", detail
+
+    def ack_kill(self):
+        """An acknowledged commit survives a kill of the host right after its reply."""
+        steps = self.ref["kill"]["script"]
+        native = self.ref["kill"]["native"]
+        obj = f"ack-{secrets.token_hex(4)}"
+        opened, _, _ = head(self.base, obj=obj, timeout=300)
+        if opened != native["openedJson"]:
+            return "fail", f"a fresh cell opened at {opened}, native {native['openedJson']}"
+        want = native["steps"][0]
+        status, body, _, _ = scripted(self.base, steps[0], self.now, obj=obj)
+        if (status, body) != (want["status"], want["body"].encode()):
+            return "fail", f"the commit answered {status}, not native's {want['status']}"
         self.host.kill()
         self.host.start()
         survived, waited = recovered_head(self.base, obj=obj)
-        reopen_ms.append(waited)
-        if status != 200 or survived != ack_want["head"]:
-            failures.append(f"ack-then-kill: status {status}, head {survived} != {ack_want['head']}")
-        self.measurements["cell_recovery_after_kill_ms"] = summary(reopen_ms)
-        detail = f"{len(points)} kill points over ≤{n} statements + ack-then-kill: " + ", ".join(rows) + f"; the cell answered again p50 {statistics.median(reopen_ms):.0f} ms after the host restarted"
-        return ("fail", "; ".join(failures)[:900]) if failures else ("pass", detail)
+        if survived != want["headJson"]:
+            return "fail", f"acknowledged commit lost: head {survived} != {want['headJson']}"
+        return "pass", f"acknowledged install (200) then the host was killed: the head after restart is the acknowledged one (answered again after {waited:.0f} ms)"
 
     # -- interleaving
 
@@ -518,12 +624,13 @@ class Suite:
 
     def concurrent_commits(self):
         steps = self.ref["concurrent"]
-        before, _, _ = head(self.base)
+        _, before, _ = head(self.base)
         with concurrent.futures.ThreadPoolExecutor(len(steps)) as pool:
             statuses = list(pool.map(lambda step: scripted(self.base, step, self.now)[0], steps))
-        after, _, _ = head(self.base)
-        ok = all(status == 200 for status in statuses) and after["commits"] - before["commits"] == len(steps)
-        return ("pass" if ok else "fail"), f"{len(steps)} concurrent installs: statuses {sorted(statuses)}; commits +{after['commits'] - before['commits']}; ledger verifies"
+        _, after, _ = head(self.base)
+        added = after["head"]["commits"] - before["head"]["commits"]
+        ok = all(status == 200 for status in statuses) and added == len(steps)
+        return ("pass" if ok else "fail"), f"{len(steps)} concurrent installs: statuses {sorted(statuses)}; commits +{added}; ledger verifies"
 
     # -- one live instance
 
@@ -531,15 +638,15 @@ class Suite:
         urls = self.host.urls()
         name = f"single-{secrets.token_hex(4)}"
         with concurrent.futures.ThreadPoolExecutor(16) as pool:
-            replies = list(pool.map(lambda i: probe(urls[i % len(urls)], "identity", object_name=name)[1], range(64)))
-        instances = {reply.get("instance") for reply in replies}
-        writes = max(reply.get("writes", 0) for reply in replies)
+            replies = list(pool.map(lambda i: probed(urls[i % len(urls)], "identity", "instance", "writes", object_name=name), range(64)))
+        instances = {reply["instance"] for reply in replies}
+        writes = max(reply["writes"] for reply in replies)
         ok = len(instances) == 1 and writes == 64
         detail = f"64 concurrent requests through {len(urls)} runner(s): {len(instances)} instance(s), {writes} serialized writes"
         if self.host.controls:
             self.restart()
             wait_for(lambda: probe(urls[0], "identity", object_name=name)[0] == 200, 300)
-            after = {probe(url, "identity", object_name=name)[1].get("instance") for url in urls for _ in range(4)}
+            after = {probed(url, "identity", "instance", object_name=name)["instance"] for url in urls for _ in range(4)}
             ok = ok and len(after) == 1
             detail += f"; after restart {len(after)} instance(s)"
         return ("pass" if ok else "fail"), detail
@@ -549,23 +656,27 @@ class Suite:
         and serves the cell elsewhere; a write lands there; then the frozen runner thaws and finishes
         its commit. That commit must not land (the outcome must be `y` alone) and must not be acknowledged."""
         if self.host.runners < 2:
-            return "skip", "needs two runners"
+            return "not tested", "needs two runners"
         urls = self.host.urls()
         z = self.ref["zombie"]
         obj = f"frozen-{secrets.token_hex(4)}"
         before, ident, _ = head(urls[0], obj=obj, timeout=300)
         held = []
+        token = secrets.token_hex(16)
 
         def send():
             try:
-                held.append(scripted(urls[0], z["x"], self.now, hold="stmt:3:5000", timeout=900, obj=obj)[:2])
+                held.append(scripted(urls[0], z["x"], self.now, hold="stmt:3:5000", timeout=900, obj=obj, marker=token)[:2])
             except OSError as error:
                 held.append((f"error {type(error).__name__}", ""))
 
         notes = []
         with concurrent.futures.ThreadPoolExecutor(1) as pool:
             future = pool.submit(send)
-            time.sleep(2)
+            if not self.wait_marker(token, held):
+                future.result(timeout=900)
+                return "not tested", f"the held write never showed reaching its hold (no marker; reply {held[:1]}), so no runner was frozen mid-commit"
+            time.sleep(1)
             first = [cpu_ticks(tree(child.pid)) for child in self.host.children]
             time.sleep(1)
             spent = [cpu_ticks(tree(child.pid)) - was for child, was in zip(self.host.children, first)]
@@ -579,7 +690,7 @@ class Suite:
                 moved = None
                 while time.time() - frozen_at < 180:
                     status, body, _, _ = request(urls[other], "GET", "/__conformance/head", at(ANALYTICS, obj), timeout=60)
-                    if status == 200 and json.loads(body).get("instance") != ident.get("instance"):
+                    if status == 200 and json.loads(body).get("instance") != ident.get("instance") and isinstance(json.loads(body).get("headJson"), str):
                         moved = json.loads(body)
                         break
                     notes.append(status)
@@ -595,30 +706,34 @@ class Suite:
         final, _ = recovered_head(urls[other], obj=obj)
         held_status = held[0][0] if held else None
         heads = z["heads"]
-        outcome = {json.dumps(heads["y"], sort_keys=True): "fenced (y only)", json.dumps(heads["xy"], sort_keys=True): "x then y", json.dumps(heads["yx"], sort_keys=True): "SPLIT BRAIN (y then x)"}.get(json.dumps(final, sort_keys=True), f"unknown head {final}")
-        detail = f"runner {owner} frozen mid-commit; cell served by a new instance on runner {other} after {moved_s:.0f} s (head {'unchanged' if moved['head'] == before else moved['head']}; earlier answers {sorted(set(notes))}); y → {y_status}; thawed x → {held_status}; outcome: {outcome}"
-        ok = moved["head"] == before and y_status == 200 and outcome.startswith("fenced") and held_status != 200
+        outcome = {heads["y"]: "fenced (y only)", heads["xy"]: "x then y", heads["yx"]: "SPLIT BRAIN (y then x)"}.get(final, f"unknown head {final}")
+        detail = f"runner {owner} frozen mid-commit; cell served by a new instance on runner {other} after {moved_s:.0f} s (head {'unchanged' if moved['headJson'] == before else moved['headJson']}; earlier answers {sorted(set(notes))}); y → {y_status}; thawed x → {held_status}; outcome: {outcome}"
+        ok = moved["headJson"] == before and y_status == 200 and outcome.startswith("fenced") and held_status != 200
         return ("pass" if ok else "fail"), detail
 
     def zombie(self):
         """Rivet only: the runner holding a cell stalls mid-commit; the cell moves; the stalled instance must not commit."""
         if self.host.runners < 2:
-            return "skip", "needs two runners"
+            return "not tested", "needs two runners"
         urls = self.host.urls()
         z = self.ref["zombie"]
         obj = f"zombie-{secrets.token_hex(4)}"
         before, ident, _ = head(urls[0], obj=obj, timeout=300)
         held = []
+        token = secrets.token_hex(16)
 
         def send():
             try:
-                held.append(scripted(urls[0], z["x"], self.now, hold="stmt:3:40000", timeout=600, obj=obj)[:2])
+                held.append(scripted(urls[0], z["x"], self.now, hold="stmt:3:40000", timeout=600, obj=obj, marker=token)[:2])
             except OSError as error:
                 held.append((f"error {type(error).__name__}", ""))
 
         with concurrent.futures.ThreadPoolExecutor(1) as pool:
             future = pool.submit(send)
-            time.sleep(2)
+            if not self.wait_marker(token, held):
+                future.result(timeout=600)
+                return "not tested", f"the held write never showed reaching its hold (no marker; reply {held[:1]}), so no runner stalled mid-commit"
+            time.sleep(1)
             # The runner hosting the cell is the one whose thread spins at the hold.
             first = [cpu_ticks(tree(child.pid)) for child in self.host.children]
             time.sleep(1.5)
@@ -633,90 +748,153 @@ class Suite:
         final, final_doc, _ = head(urls[other], obj=obj, timeout=300)
         held_status = held[0][0] if held else None
         heads = z["heads"]
-        outcome = {json.dumps(heads["xy"], sort_keys=True): "serialized (x then y)", json.dumps(heads["y"], sort_keys=True): "fenced (y only)", json.dumps(heads["yx"], sort_keys=True): "SPLIT BRAIN (y then x)"}.get(json.dumps(final, sort_keys=True), f"unknown head {final}")
+        outcome = {heads["xy"]: "serialized (x then y)", heads["y"]: "fenced (y only)", heads["yx"]: "SPLIT BRAIN (y then x)"}.get(final, f"unknown head {final}")
         detail = f"owner runner {owner} (CPU ticks {spent}) spun 40 s inside the transaction; write via runner {other} → {status} after {moved_ms:.0f} ms (instance {'moved' if got.get('x-norn-conformance-instance') != ident.get('instance') else 'same'}); held request → {held_status}; outcome: {outcome}"
         if status != 200:
-            return "fail", detail + f"; {body[:200]}"
+            return "fail", detail + f"; {body[:200]!r}"
         if outcome.startswith("fenced") and held_status == 200:
             return "fail", detail + "; the held request was acknowledged but its write is not in the ledger"
         return ("pass" if outcome.startswith(("serialized", "fenced")) else "fail"), detail
 
-    # -- alarms
+    # -- alarms (platform probes; the cell's own timers are not in this suite yet)
+
+    def fired(self, name, seconds):
+        """The alarm-state probe once it records a successful firing (or the last state after `seconds`)."""
+        last = {}
+
+        def check():
+            nonlocal last
+            last = probed(self.base, "alarm-state", "fired", "failed", object_name=name)
+            return last if last["fired"] else None
+
+        return wait_for(check, seconds) or last
 
     def alarms(self):
         notes, ok = [], True
         name = f"alarm-{secrets.token_hex(4)}"
-        probe(self.base, "alarm-set", object_name=name, **{"in": 1500})
-        fired = wait_for(lambda: probe(self.base, "alarm-state", object_name=name)[1].get("fired"), 30)
-        ok &= bool(fired)
-        notes.append(f"fires: {len(fired or [])}")
+        set_at = probed(self.base, "alarm-set", "at", object_name=name, **{"in": 1500})["at"]
+        self.fired(name, 30)
+        time.sleep(3)  # a duplicate delivery would land by now
+        state = probed(self.base, "alarm-state", "fired", "failed", object_name=name)
+        fires = len(state["fired"]) >= 1 and not state["failed"] and state["fired"][0][0] >= set_at
+        ok &= fires
+        notes.append(f"fires at or after its time: {len(state['fired'])} firing(s) (at-least-once), {len(state['failed'])} failure(s)")
+
+        # Retry: the handler fails its first delivery. Passing needs a successful re-delivery AND evidence
+        # that a failed delivery preceded it (a failure row that survived, or the runtime's own retry count).
         name = f"alarm-retry-{secrets.token_hex(4)}"
-        probe(self.base, "alarm-set", object_name=name, fail=1, **{"in": 1000})
-        fired = wait_for(lambda: probe(self.base, "alarm-state", object_name=name)[1].get("fired"), 90)
-        ok &= bool(fired)
-        notes.append(f"retried after a failing handler: {fired[0][1] if fired else 'never'}")
-        _, rolled = probe(self.base, "alarm-rollback", object_name=f"alarm-rb-{secrets.token_hex(4)}")
-        ok &= rolled.get("alarm") is None and rolled.get("logged") == 0
-        notes.append(f"rolled back with its transaction: alarm={rolled.get('alarm')} rows={rolled.get('logged')}")
+        probed(self.base, "alarm-set", "at", object_name=name, fail=1, **{"in": 1000})
+        state = self.fired(name, 90)
+        success = json.loads(state["fired"][0][1]) if state.get("fired") else None
+        evidence = []
+        if state.get("failed"):
+            evidence.append(f"{len(state['failed'])} failed delivery row(s)")
+        if success is not None and isinstance(success.get("retryCount"), int) and success["retryCount"] >= 1:
+            evidence.append(f"retryCount={success['retryCount']}")
+        if success is not None and success.get("isRetry") is True:
+            evidence.append("isRetry=true")
+        retried = success is not None and bool(evidence)
+        ok &= retried
+        notes.append(f"failing handler re-fired: {'yes (' + ', '.join(evidence) + ')' if retried else 'no' if success is None else 'fired, but nothing shows a failed delivery preceded it'}")
+
+        rolled = probed(self.base, "alarm-rollback", "alarm", "logged", object_name=f"alarm-rb-{secrets.token_hex(4)}")
+        ok &= rolled["alarm"] is None and rolled["logged"] == 0
+        notes.append(f"rolled back with its transaction: alarm={rolled['alarm']} rows={rolled['logged']}")
         if self.host.controls:
             name = f"alarm-restart-{secrets.token_hex(4)}"
-            probe(self.base, "alarm-set", object_name=name, **{"in": 6000})
+            probed(self.base, "alarm-set", "at", object_name=name, **{"in": 6000})
             self.host.kill()
             killed_at = time.time()
             self.host.start()
-            fired = wait_for(lambda: probe(self.base, "alarm-state", object_name=name)[1].get("fired"), 120)
-            ok &= bool(fired)
-            notes.append(f"survives a kill: {'fired' if fired else 'lost'} ({time.time() - killed_at:.0f} s after the kill)")
+            state = self.fired(name, 120)
+            ok &= bool(state.get("fired"))
+            notes.append(f"survives a kill: {'fired' if state.get('fired') else 'lost'} ({time.time() - killed_at:.0f} s after the kill)")
+        else:
+            notes.append("survives a kill: not tested (no host control)")
         return ("pass" if ok else "fail"), "; ".join(notes)
 
     # -- sqlite
 
     def sqlite(self):
-        status, info = probe(self.base, "sqlite")
-        if status != 200:
-            return "fail", f"probe failed: {info.get('error') or info}"
+        info = probed(self.base, "sqlite", "affinity", "variables100", "variables1000", "statement100k")
         expected = ["integer", "text", "real", "integer", "blob", "text"]
-        types = info.get("affinity", {}).get("types")
-        sizes = {}
+        types = info["affinity"].get("types")
+        # One value per commit. The Workers platform guarantees values up to 2 MB, and the cell's
+        # provisioning bound is 1 MiB, so 1 MiB must be stored exactly; larger sizes are measured.
+        # Every reply must be well formed: accepted with the exact length stored, or a refusal.
+        sizes, malformed = {}, []
         for size in (1 << 20, 16 << 20, 130 << 20):
-            _, result = probe(self.base, "size", object_name="sqlite-size", bytes=size, timeout=300)
-            sizes[f"{size >> 20}MiB"] = "ok" if result.get("accepted") else result.get("error", "?")[:80]
-        self.measurements["sqlite"] = {**info, "sizes": sizes}
-        ok = types == expected and info.get("affinity", {}).get("maxInt") == "9223372036854775807" and info.get("variables100") is True
-        return ("pass" if ok else "fail"), f"SQLite {info.get('version')}; affinity {types}; 1000 bindings={info.get('variables1000')}; 100 kB statement={info.get('statement100k')}; json={info.get('json')}; STRICT={info.get('strict')}; one value per commit: {sizes}"
+            result = probed(self.base, "size", "bytes", "accepted", object_name="sqlite-size", bytes=size, timeout=300)
+            if result["accepted"] is True and result.get("stored") == size:
+                sizes[size] = "stored"
+            elif result["accepted"] is False and isinstance(result.get("error"), str):
+                sizes[size] = f"refused ({result['error'][:60]})"
+            else:
+                malformed.append(f"{size >> 20} MiB: {result}")
+        self.measurements["sqlite"] = {**info, "sizes": {f"{size >> 20}MiB": v for size, v in sizes.items()}}
+        checks = {
+            "affinity": types == expected,
+            "64-bit integers": info["affinity"].get("maxInt") == "9223372036854775807",
+            "100 bindings": info["variables100"] is True,
+            "1 MiB value stored exactly": sizes.get(1 << 20) == "stored",
+            "well-formed size replies": not malformed,
+        }
+        failed = [name for name, passed in checks.items() if not passed]
+        measured = {f"{size >> 20} MiB": v for size, v in sizes.items() if size != 1 << 20}
+        detail = f"asserted: {', '.join(checks)}{' — failed: ' + ', '.join(failed) if failed else ''}{'; ' + '; '.join(malformed) if malformed else ''}; measured: SQLite {info.get('version')}, 1000 bindings={info['variables1000']}, 100 kB statement={info['statement100k']}, json={info.get('json')}, STRICT={info.get('strict')}, larger values {measured}"
+        return ("fail" if failed else "pass"), detail
 
     def clock(self):
-        _, info = probe(self.base, "clock", ms=50)
-        frozen = info.get("frozen")
-        return "pass", ("frozen inside a synchronous call" if frozen else f"advances inside a synchronous call (+{info.get('dateAdvancedMs')} ms over a 50 ms spin): a workerd deviation; safe for Norn, which reads the clock once per call and passes it into the cell")
+        info = probed(self.base, "clock", "frozen", "dateAdvancedMs", "perfAdvancedMs", ms=50)
+        if not isinstance(info["frozen"], bool) or not isinstance(info["dateAdvancedMs"], (int, float)):
+            return "fail", f"malformed clock probe: {info}"
+        self.measurements["clock_in_sync_call"] = {"frozen": info["frozen"], "dateAdvancedMs": info["dateAdvancedMs"], "perfAdvancedMs": info["perfAdvancedMs"]}
+        observed = "frozen inside a synchronous call (workerd behaviour)" if info["frozen"] else f"advances inside a synchronous call (+{info['dateAdvancedMs']} ms over a 50 ms spin; a workerd deviation)"
+        return "measured", observed + "; Norn reads the clock once per call and passes it into the cell, so either is safe"
 
     def wait_until(self):
         name = f"bg-{secrets.token_hex(4)}"
-        probe(self.base, "wait-until", object_name=name, n=15, every=1000)
+        probed(self.base, "wait-until", "started", object_name=name, n=15, every=1000)
         time.sleep(22)
-        _, counts = probe(self.base, "pairs", object_name=name)
-        ok = counts.get("count") == 15 and counts.get("pairs") == 15
-        return ("pass" if ok else "fail"), f"15 background turns over 15 s with no traffic (idle eviction after 10 s on OpenOrange): {counts.get('count')} ran, each atomic ({counts.get('pairs')} pairs)"
+        counts = probed(self.base, "pairs", "count", "pairs", object_name=name)
+        ok = counts["count"] == 15 and counts["pairs"] == 15
+        return ("pass" if ok else "fail"), f"15 background turns over 15 s with no traffic (idle eviction after 10 s on OpenOrange): {counts['count']} ran, each atomic ({counts['pairs']} pairs)"
 
     # -- websockets
 
     def websocket(self):
-        url = urllib.parse.urlparse(self.base)
-        ws = WebSocket(url.hostname, url.port, f"/v1/subscribe?{ANALYTICS}", {"authorization": ADMIN, "sec-websocket-protocol": "norn.live.v1"})
-        ws.send(json.dumps({"type": "subscribe", "id": "list", "path": f"/v1/definitions:list?kind=dashboard&{ANALYTICS}"}))
-        first = ws.receive(30)
-        idle = 15
-        time.sleep(idle)
-        step = self.ref["live"]
-        started = time.perf_counter()
-        status, _, _, _ = scripted(self.base, step, self.now)
-        second = ws.receive(30)
-        latency = (time.perf_counter() - started) * 1000
-        ws.close()
+        """A live subscription keeps answering after 15 s idle. Whether the object hibernated meanwhile
+        is its own row: shown only when a new instance answered the commit that the socket saw."""
+        ws = WebSocket(self.base, f"/v1/subscribe?{ANALYTICS}", {"authorization": ADMIN, "sec-websocket-protocol": "norn.live.v1"})
+        hibernation = ("not tested", "the live subscription did not complete")
+        try:
+            ws.send(json.dumps({"type": "subscribe", "id": "list", "path": f"/v1/definitions:list?kind=dashboard&{ANALYTICS}"}))
+            first = ws.receive(30)
+            _, subscribed, _ = head(self.base)
+            idle = 15
+            time.sleep(idle)
+            step = self.ref["live"]
+            started = time.perf_counter()
+            status, _, _, got = scripted(self.base, step, self.now)
+            second = ws.receive(30)
+            latency = (time.perf_counter() - started) * 1000
+        finally:
+            ws.close()
         anonymous = request(self.base, "GET", "/v1/subscribe", ANALYTICS, headers={"upgrade": "websocket", "connection": "upgrade", "sec-websocket-key": base64.b64encode(os.urandom(16)).decode(), "sec-websocket-version": "13"})[0]
         ok = first.get("type") == "snapshot" and status == 200 and second.get("type") == "snapshot" and second.get("digest") != first.get("digest") and anonymous == 401
         self.measurements["live_commit_to_snapshot_ms"] = round(latency, 1)
-        return ("pass" if ok else "fail"), f"snapshot, {idle} s idle (past OpenOrange's 10 s instance drop), commit → new snapshot in {latency:.0f} ms; anonymous upgrade → {anonymous}"
+        before, after = subscribed.get("instance"), header(got, "x-norn-conformance-instance")
+        if ok and before and after and before != after:
+            hibernation = ("pass", f"the object was rebuilt while idle (instance {before[:8]}… → {after[:8]}…) and the same socket received the new snapshot")
+        elif ok and before and after:
+            hibernation = ("not tested", f"the socket survived {idle} s idle, but the same instance ({before[:8]}…) answered the commit: the object never hibernated, so hibernation is not shown")
+        elif ok:
+            hibernation = ("not tested", "the instance was not reported")
+        self.hibernation = hibernation
+        return ("pass" if ok else "fail"), f"snapshot, {idle} s idle, commit → new snapshot on the same socket in {latency:.0f} ms; anonymous upgrade → {anonymous}"
+
+    def websocket_hibernation(self):
+        return getattr(self, "hibernation", ("not tested", "the live subscription row did not run"))
 
     # -- backup and restore
 
@@ -757,7 +935,7 @@ class Suite:
         _, _, cold = head(self.base, timeout=300)
         self.measurements["first_request_after_15s_idle_ms"] = round(cold, 1)
         if not self.host.controls:
-            return "pass", f"commit p50 {self.measurements['commit_ms']['p50']} ms"
+            return "measured", f"commit p50 {self.measurements['commit_ms']['p50']} ms"
         baseline = pss_kib(self.host.pids())
         opened = []
         for count in (1, 20, 50, cells):
@@ -780,7 +958,7 @@ class Suite:
         self.measurements[f"errors_{cells}_cells"] = errors
         self.measurements["host_start_ms"] = summary([self.restart() for _ in range(3)])
         self.measurements["cell_recovery_after_restart_ms"] = recovered_head(self.base)[1]
-        return ("pass" if errors == 0 else "fail"), f"{cells} cells opened and committed, {errors} errors"
+        return ("measured" if errors == 0 else "fail"), f"{cells} cells opened and committed, {errors} errors"
 
 
 def bench_head(base, index):
@@ -800,7 +978,10 @@ def summary(values):
     ordered = sorted(values)
     if not ordered:
         return {}
-    pick = lambda q: ordered[min(len(ordered) - 1, int(round(q * (len(ordered) - 1))))]
+
+    def pick(q):
+        return ordered[min(len(ordered) - 1, int(round(q * (len(ordered) - 1))))]
+
     return {"n": len(ordered), "p50": round(pick(0.5), 1), "p99": round(pick(0.99), 1), "max": round(ordered[-1], 1)}
 
 
@@ -826,12 +1007,29 @@ def wait_for(check, seconds):
 
 
 class WebSocket:
-    """A minimal RFC 6455 client: handshake, masked text frames out, text frames in."""
+    """A minimal RFC 6455 client: handshake, masked text frames out, text frames in.
 
-    def __init__(self, host, port, path, headers):
-        self.sock = socket.create_connection((host, port), timeout=30)
+    `base` is the host's http(s) URL: http opens plain TCP (ws), https opens TLS with certificate
+    and hostname verification (wss); the port defaults by scheme.
+    """
+
+    def __init__(self, base, path, headers):
+        url = urllib.parse.urlsplit(base)
+        if url.scheme not in ("http", "https"):
+            raise ValueError(f"unsupported scheme {url.scheme!r}")
+        secure = url.scheme == "https"
+        default = 443 if secure else 80
+        port = url.port or default
+        sock = socket.create_connection((url.hostname, port), timeout=30)
+        if secure:
+            # create_default_context verifies the certificate chain and the hostname.
+            sock = ssl.create_default_context().wrap_socket(sock, server_hostname=url.hostname)
+        self.sock = sock
         key = base64.b64encode(os.urandom(16)).decode()
-        lines = [f"GET {path} HTTP/1.1", f"Host: {host}:{port}", "Upgrade: websocket", "Connection: Upgrade", f"Sec-WebSocket-Key: {key}", "Sec-WebSocket-Version: 13"]
+        authority = url.hostname if port == default else f"{url.hostname}:{port}"
+        if ":" in url.hostname:
+            authority = f"[{url.hostname}]" + ("" if port == default else f":{port}")
+        lines = [f"GET {path} HTTP/1.1", f"Host: {authority}", "Upgrade: websocket", "Connection: Upgrade", f"Sec-WebSocket-Key: {key}", "Sec-WebSocket-Version: 13"]
         lines += [f"{name}: {value}" for name, value in headers.items()]
         self.sock.sendall(("\r\n".join(lines) + "\r\n\r\n").encode())
         response = b""
@@ -897,15 +1095,18 @@ def main():
     parser.add_argument("--only", help="comma-separated test names")
     args = parser.parse_args()
     reference = json.loads(args.reference.read_text())
-    assert reference["format"] == "norn/host-conformance-reference@1", reference["format"]
+    if reference.get("format") != REFERENCE_FORMAT:
+        raise SystemExit(f"reference format {reference.get('format')!r}, expected {REFERENCE_FORMAT} (rerun conformance_reference)")
     if args.host == "url":
         host = UrlHost(args.url)
     else:
         project = args.project.resolve()
         config = json.loads((project / "wrangler.json").read_text())
-        config.setdefault("vars", {})["NORN_LINEAGE_KEY"] = reference["lineageKey"]
+        # The local test host opts the conformance entry in explicitly (see conformance/worker.mjs).
+        config.setdefault("vars", {}).update({"NORN_LINEAGE_KEY": reference["lineageKey"], "NORN_STAGE": "test", "NORN_CONFORMANCE": "synthetic"})
         (project / "wrangler.json").write_text(json.dumps(config))
-        state = (args.state or project / ".conformance").resolve()
+        # State and logs live beside the project, never inside it (a host may watch the project).
+        state = (args.state or project.parent / f"{project.name}-conformance-state").resolve()
         state.mkdir(parents=True, exist_ok=True)
         host = CelldHost(project, state) if args.host == "celld" else RivetHost(project, state)
     suite = Suite(host, reference, quick=args.quick)
@@ -915,17 +1116,19 @@ def main():
         ("differential ledger heads", suite.differential, False),
         ("transactionSync rollback on throw", suite.tx_rollback, False),
         ("nested transaction refused", suite.tx_nested, False),
-        ("kill at every commit boundary", suite.kill_points, True),
+        ("kills at sampled SQL boundaries inside a commit leave no partial write", suite.kill_points, True),
+        ("acknowledged commit survives a kill", suite.ack_kill, True),
         ("no interleaving inside a synchronous turn", suite.interleaving, False),
         ("concurrent commits serialize", suite.concurrent_commits, False),
         ("one live instance per id", suite.single_instance, False),
         ("no split brain when a runner stalls mid-commit", suite.zombie, True),
         ("no split brain when a frozen runner thaws after its cell moved", suite.zombie_frozen, True),
-        ("alarms: at-least-once, restart, rollback", suite.alarms, False),
+        ("alarms (platform probes): fire, re-fire after a failing handler, rollback, kill", suite.alarms, False),
         ("SQLite version, affinity, limits", suite.sqlite, False),
-        ("clock inside a synchronous call", suite.clock, False),
+        ("clock inside a synchronous call (measurement)", suite.clock, False),
         ("waitUntil across idle eviction", suite.wait_until, False),
-        ("WebSocket subscribe across hibernation", suite.websocket, False),
+        ("WebSocket live subscription across 15 s idle", suite.websocket, False),
+        ("WebSocket survives the object hibernating", suite.websocket_hibernation, False),
         ("backup and restore in place", suite.backup_restore, True),
     ]
     only = set(args.only.split(",")) if args.only else None

@@ -7,7 +7,8 @@
 //! serves the script through the same tenant dispatch the Durable Object
 //! binding (`src/wasm.rs`) runs, over `NativeEngine`, and records each
 //! response's status and body and the verified ledger head after each
-//! step. A hosted run passes only when every one of those is byte-identical.
+//! step, the head as the exact JSON the cell serializes. A hosted run passes
+//! only when every one of those is byte-identical.
 //!
 //! The reference itself must be reproducible: two fresh runs, and a run whose
 //! cell is reopened from its file between every step, give the same record.
@@ -205,6 +206,12 @@ impl<E: SqlEngine> Cell<E> {
     }
 }
 
+/// A head as the exact bytes the cell serializes (what `ledgerHead()`
+/// returns in a `fixtures` Wasm build): the hosted runner compares strings.
+fn head_json(head: &LedgerHead) -> String {
+    serde_json::to_string(head).unwrap()
+}
+
 /// The record of one run of `steps` from a freshly provisioned cell: the
 /// head after provisioning, then per step the status, body and head.
 fn record(
@@ -216,10 +223,10 @@ fn record(
         .iter()
         .map(|step| {
             let ((status, body), head) = serve(step);
-            json!({ "status": status, "body": body, "head": head })
+            json!({ "status": status, "body": body, "head": head, "headJson": head_json(&head) })
         })
         .collect();
-    json!({ "opened": opened, "steps": steps })
+    json!({ "opened": opened, "openedJson": head_json(opened), "steps": steps })
 }
 
 fn in_memory_run(steps: &[Step]) -> Value {
@@ -275,7 +282,7 @@ fn zombie_steps() -> (Step, Step) {
 }
 
 fn final_head(run: &Value) -> Value {
-    run["steps"].as_array().unwrap().last().unwrap()["head"].clone()
+    run["steps"].as_array().unwrap().last().unwrap()["headJson"].clone()
 }
 
 fn wire(steps: &[Step]) -> Vec<Value> {
@@ -309,6 +316,15 @@ fn the_reference_record_is_reproducible_and_survives_restarts() {
     // The script exercises what it claims: commits, refusals that commit
     // nothing, and reads.
     let steps = first["steps"].as_array().unwrap();
+    assert_eq!(
+        steps.len(),
+        12,
+        "the hosted runner expects exactly 12 steps"
+    );
+    // The stale expected version is a conflict and the empty title a checker
+    // refusal: exactly these statuses, neither of which commits.
+    assert_eq!(steps[4]["status"], 409, "{:#}", steps[4]);
+    assert_eq!(steps[5]["status"], 422, "{:#}", steps[5]);
     let commits = |index: usize| {
         let before = if index == 0 {
             &first["opened"]
@@ -324,6 +340,7 @@ fn the_reference_record_is_reproducible_and_survives_restarts() {
             "step {index} was refused ({status}) but committed"
         );
     }
+    assert!(!commits(4) && !commits(5), "the 409 and 422 committed");
     assert!(
         (0..steps.len()).filter(|&index| commits(index)).count() >= 4,
         "the script commits too little: {first:#}"
@@ -367,7 +384,7 @@ fn the_reference_record_is_reproducible_and_survives_restarts() {
             })
             .collect();
         let document = json!({
-            "format": "norn/host-conformance-reference@1",
+            "format": "norn/host-conformance-reference@2",
             "nowMs": NOW_MS,
             "lineageKey": LINEAGE_KEY,
             "script": wire(&main),

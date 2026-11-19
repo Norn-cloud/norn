@@ -153,19 +153,50 @@ a Rivet Engine); celld and Wrangler are the other hosts.
 - `conformance/worker.mjs` is a test entry around the unchanged `worker.mjs`:
   a fixed request clock, a hold at a storage boundary (the n-th SQL statement
   of a commit, the end of its synchronous transaction, or the next timer turn)
-  where the runner kills the host, the verified ledger head, and `Probe`
-  objects for the Durable Object API the cell relies on. It needs a
-  `fixtures` build.
-- `conformance/conformance.py` runs the suite: the script compared
-  byte-for-byte with native; transactionSync rollback and nesting; a kill at
-  every boundary of a commit with no reply before durability and an
-  acknowledged commit surviving; no interleaving inside a synchronous turn;
-  one live instance per object (two runners on Rivet, and a runner stalled
-  mid-commit while its cell moves); alarms (at-least-once, across a kill,
-  rolled back with their transaction); SQLite version, affinity and size
-  limits; the clock inside a synchronous call; waitUntil past idle eviction;
-  live WebSockets across hibernation; backup and restore in place; then cold
-  start, commit latency, memory per cell and 100 cells on one host.
+  where the runner kills the host, the verified ledger head (the exact string
+  the Rust cell serializes), and `Probe` objects for the Durable Object API the
+  cell relies on. It serves nothing unless it is opted in: a `fixtures` build
+  AND `NORN_STAGE=test` AND `NORN_CONFORMANCE=synthetic` (its
+  `wrangler.json` sets both). Opted in, it serves only the synthetic scope
+  `org_demo/analytics` and its probe objects, and refuses everything else.
+  The production deploy (`apps/studio/scripts/celld-deploy-cell.ts`) writes its
+  own configuration with neither variable, so this entry refuses every request
+  there (`apps/studio/test/norn-cell-conformance-entry.test.ts`).
+- `conformance/conformance.py` runs the suite. Every row is **pass**,
+  **fail**, **not tested** (the run could not show it) or **measured** (an
+  observation, not a claim):
+  - the 12-step script compared with native: statuses, raw body bytes and the
+    Rust-serialized ledger head after each step, byte for byte;
+  - transactionSync rollback and nesting;
+  - kills at **sampled** SQL boundaries of a commit (statements 1, 2, 3, n/4,
+    n/2, 3n/4, n−1 and n, the end of the transaction and the next turn), not
+    every statement. Each boundary is proven reached before the kill: the
+    entry prints the request's random marker to the host's log while it spins
+    there, and the runner kills only once it reads it; a boundary never shown
+    reached makes the row **not tested**. A kill must leave the commit wholly
+    absent or wholly present, and a retry must match native;
+  - an acknowledged commit surviving a kill. The suite does **not** show that
+    the platform withholds replies until a write is durable: the post-turn
+    hold delays the reply in the entry itself;
+  - no interleaving inside a synchronous turn; one live instance per object
+    (two runners on Rivet, and a runner stalled or frozen mid-commit while its
+    cell moves, each proven held by the same marker);
+  - alarms as **platform probes only** (fire, re-fire after a failing handler
+    with evidence that a failed delivery preceded it, rolled back with their
+    transaction, across a kill). The cell's own timers are not in the suite
+    yet;
+  - SQLite affinity, bindings, and a 1 MiB value stored exactly (larger values
+    are measured); the clock inside a synchronous call (measured);
+  - waitUntil past idle eviction;
+  - a live WebSocket across 15 s idle, and, as its own row, whether the object
+    hibernated meanwhile (a new instance answered the commit the socket saw);
+    when the same instance answered, hibernation is **not tested**;
+  - backup and restore in place; then cold start, commit latency, memory per
+    cell and 100 cells on one host (measured).
+
+  Durability evidence is process kills (SIGKILL) against **one** Rivet Engine
+  with its log and objects on local disk, or one `celld dev` process: no
+  power loss, torn writes, multi-engine clusters or S3 object storage.
 
 Build the project outside the checkout, then run it on a host:
 
@@ -179,12 +210,30 @@ cp apps/norn-cell-do/{worker.mjs,subscribe.mjs} "$P/"
 cp apps/norn-cell-do/conformance/worker.mjs "$P/conformance.mjs"
 cp apps/norn-cell-do/conformance/wrangler.json "$P/"
 NORN_CELL_DO_CONFORMANCE_OUT="$P/reference.json" cargo test --locked -p norn-cell-do --test conformance_reference
+(cd apps/norn-cell-do/conformance && bun install --frozen-lockfile)   # open-orange 1.0.3, test-only; runs on Node 22+
 python3 apps/norn-cell-do/conformance/conformance.py --reference "$P/reference.json" --host rivet --project "$P"
 ```
 
-`--host celld` runs `celld dev` (0.6.3). `--host rivet` runs the Rivet Engine
+`--host celld` runs `celld dev --no-watch --logs` (0.6.3). Host state and logs go beside the project (`--state`), never inside it. `--host rivet` runs the Rivet Engine
 (`rivetdev/engine` 3.1.2-rc.1, pinned by digest, in Docker) with two
-`orange serve` runners (open-orange 1.0.3, `ORANGE` names the binary).
-`--host url --url <base>` runs the tests that need no host control against
-any deployment of a `fixtures` build. Run it on a Boat VM, never a shared
-host.
+`orange serve` runners from the locked install (`conformance/package.json`
+and `bun.lock`, with integrity hashes); `ORANGE` may name another binary, and
+the runner refuses any that is not open-orange 1.0.3. Run it on a Boat VM,
+never a shared host.
+
+`--host url --url <base>` runs the tests that need no host control (kills,
+restarts and backups report **not tested**). Point it only at a fresh,
+isolated deployment made for the run, never at a stage that serves anyone:
+
+1. Build the project as above (a `fixtures` build; the production deploy
+   script refuses one).
+2. Deploy `$P` with its own `wrangler.json` (main `conformance.mjs`, the
+   `CELLS` and `PROBES` bindings, `NORN_STAGE=test`,
+   `NORN_CONFORMANCE=synthetic`) under a new, throwaway name, and set
+   `NORN_LINEAGE_KEY` to the reference's public lineage key
+   (`jq -r .lineageKey "$P/reference.json"`); the ledger heads only match
+   native with that key.
+3. Run `conformance.py --reference "$P/reference.json" --host url --url
+   https://<that deployment>` (`https` uses TLS with hostname verification,
+   port 443 unless the URL names one).
+4. Delete the deployment afterwards.

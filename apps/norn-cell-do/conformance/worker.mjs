@@ -11,15 +11,50 @@
 // - `Probe` objects for the Durable Object API properties the cell relies on.
 //
 // Nothing here changes what the cell decides: requests reach the same Rust dispatch.
+//
+// The entry serves nothing unless it is opted in: a `fixtures` build (the Wasm has the
+// ledger-head accessor) AND `NORN_STAGE=test` AND `NORN_CONFORMANCE=synthetic`. Opted in, it
+// serves only the synthetic fixture scope (org_demo/analytics) and its probe objects; anything
+// else is refused. The production deploy (apps/studio/scripts/celld-deploy-cell.ts) writes its
+// own config with neither variable and refuses a fixtures build, so this entry never serves there.
 import router, { Cell as ProductionCell } from "./worker.mjs";
+import { NornCell } from "./pkg/norn_cell_do.js";
 import { initSync as initProbe, exercise } from "./probe-pkg/workers_sql.js";
 import probeModule from "./probe-pkg/workers_sql_bg.wasm";
 initProbe({ module: probeModule });
 
 const NOW_HEADER = "x-norn-conformance-now";
 const HOLD_HEADER = "x-norn-conformance-hold";
+const MARKER_HEADER = "x-norn-conformance-marker";
 const OBJECT_PARAM = "conformanceObject";
 const INSTANCE = crypto.randomUUID();
+// The only scope this entry serves: the reference's fixture scope.
+const SYNTHETIC = ["org_demo", "analytics"];
+// A runner's out-of-band marker: printed when a hold is reached, before the object spins there.
+const MARKER = /^[0-9a-f]{16,64}$/;
+
+/** Whether this Wasm is a `fixtures` build: the head accessor exists only there (and the build says so, where it can). */
+export function fixturesBuild(cell = NornCell) {
+  if (typeof cell?.prototype?.ledgerHead !== "function") return false;
+  return typeof cell.fixturesEnabled === "function" ? cell.fixturesEnabled() === true : true;
+}
+
+/** The explicit opt-in: a fixtures build on the test stage, with the conformance switch set. */
+export function conformanceEnabled(env, cell = NornCell) {
+  return env?.NORN_STAGE === "test" && env?.NORN_CONFORMANCE === "synthetic" && fixturesBuild(cell);
+}
+
+const isSynthetic = (scope) => Array.isArray(scope) && scope.length === 2 && scope[0] === SYNTHETIC[0] && scope[1] === SYNTHETIC[1];
+
+function refuse(code, message) {
+  return Response.json({ format: "norn/refusal@2", retryable: false, reason: null, code, category: "permission", message, explanation: "a conformance build serves only an opted-in test stage and its synthetic scope" }, { status: 403 });
+}
+
+/** Print the runner's marker for a reached hold (stderr, written before the spin starts). */
+function mark(state) {
+  state.reached = true;
+  if (state.marker !== null) console.error(`norn-conformance-hold-reached ${state.marker}`);
+}
 
 /** Spin the runtime thread: forever, or for `ms` of wall time where the clock moves. */
 function spin(ms) {
@@ -50,7 +85,7 @@ function instrument(ctx, state) {
           if (state.depth > 0) state.inTransaction += 1;
           const hold = state.hold;
           if (hold?.at === "stmt" && state.depth > 0 && state.inTransaction === hold.n) {
-            state.reached = true;
+            mark(state);
             spin(hold.ms);
           }
           return target.exec(...args);
@@ -71,7 +106,7 @@ function instrument(ctx, state) {
           } finally {
             state.depth -= 1;
             if (state.depth === 0 && state.hold?.at === "turn-end") {
-              state.reached = true;
+              mark(state);
               spin(state.hold.ms);
             }
           }
@@ -90,7 +125,7 @@ function instrument(ctx, state) {
 
 export class Cell extends ProductionCell {
   constructor(ctx, env) {
-    const state = { statements: 0, inTransaction: 0, transactions: 0, depth: 0, hold: null, reached: false };
+    const state = { statements: 0, inTransaction: 0, transactions: 0, depth: 0, hold: null, marker: null, reached: false };
     super(instrument(ctx, state), env);
     this.counts = state;
     this.instance = crypto.randomUUID();
@@ -106,22 +141,34 @@ export class Cell extends ProductionCell {
     return { instance: this.instance, isolate: INSTANCE, pid: globalThis.process?.pid ?? null, constructedAt: this.constructedAt };
   }
   async fetch(request) {
+    // Refused before anything opens: not opted in, or not the synthetic scope.
+    if (!conformanceEnabled(this.env)) return refuse("conformance.disabled", "this conformance entry is not enabled");
+    let scope;
+    try {
+      scope = ProductionCell.scopeOf(request);
+    } catch {
+      scope = null;
+    }
+    if (!isSynthetic(scope)) return refuse("conformance.scope", "this conformance entry serves only its synthetic scope");
     const url = new URL(request.url);
     if (url.pathname === "/__conformance/head") {
-      await this.open(ProductionCell.scopeOf(request));
-      return Response.json({ head: JSON.parse(this.cell.ledgerHead()), ...this.identity() });
+      await this.open(scope);
+      // The Rust-serialized head, carried as the exact string the cell produced.
+      const headJson = this.cell.ledgerHead();
+      return Response.json({ headJson, head: JSON.parse(headJson), ...this.identity() });
     }
     if (url.pathname === "/__conformance/stats") {
       const { statements, inTransaction, transactions } = this.last ?? {};
       return Response.json({ statements, inTransaction, transactions, ...this.identity() });
     }
-    Object.assign(this.counts, { statements: 0, inTransaction: 0, transactions: 0, reached: false, hold: parseHold(request.headers.get(HOLD_HEADER)) });
+    const marker = request.headers.get(MARKER_HEADER);
+    Object.assign(this.counts, { statements: 0, inTransaction: 0, transactions: 0, reached: false, hold: parseHold(request.headers.get(HOLD_HEADER)), marker: marker !== null && MARKER.test(marker) ? marker : null });
     try {
       const response = await super.fetch(request);
       if (this.counts.hold?.at === "post-turn") {
         // The request's write turn has ended (and begun committing); the reply has not left.
         await new Promise((resolve) => setTimeout(resolve, 0));
-        this.counts.reached = true;
+        mark(this.counts);
         spin(this.counts.hold.ms);
       }
       const headers = new Headers(response.headers);
@@ -134,6 +181,7 @@ export class Cell extends ProductionCell {
     } finally {
       this.last = { ...this.counts };
       this.counts.hold = null;
+      this.counts.marker = null;
     }
   }
 }
@@ -155,6 +203,7 @@ export class Probe {
     return Array.from(this.sql.exec(sql, ...params).raw(), (row) => row.map((v) => (v instanceof ArrayBuffer ? `blob:${v.byteLength}` : v)));
   }
   async fetch(request) {
+    if (!conformanceEnabled(this.env)) return refuse("conformance.disabled", "this conformance entry is not enabled");
     const url = new URL(request.url);
     const route = url.pathname.slice("/__probe/".length);
     const param = (name, fallback) => url.searchParams.get(name) ?? fallback;
@@ -260,7 +309,7 @@ export class Probe {
           return reply({ alarm: await this.ctx.storage.getAlarm(), logged: this.rows("SELECT count(*) FROM log WHERE kind = 'alarm-rolled-back'")[0][0] });
         }
         case "alarm-state":
-          return reply({ alarm: await this.ctx.storage.getAlarm(), fired: this.rows("SELECT at, detail FROM log WHERE kind = 'alarm' ORDER BY seq") });
+          return reply({ alarm: await this.ctx.storage.getAlarm(), fired: this.rows("SELECT at, detail FROM log WHERE kind = 'alarm' ORDER BY seq"), failed: this.rows("SELECT at, detail FROM log WHERE kind = 'alarm-failed' ORDER BY seq") });
         case "wait-until": {
           // Background work past the reply: `n` writes, one per `every` ms, each its own turn.
           const n = Number(param("n", "15"));
@@ -357,6 +406,7 @@ export class Probe {
 
 export default {
   async fetch(request, env) {
+    if (!conformanceEnabled(env)) return refuse("conformance.disabled", "this conformance entry is not enabled");
     const url = new URL(request.url);
     if (url.pathname.startsWith("/__probe/")) {
       return env.PROBES.get(env.PROBES.idFromName(url.searchParams.get("object") ?? "probe")).fetch(request);
@@ -370,6 +420,10 @@ export default {
       forwarded.headers.set("x-norn-cell", JSON.stringify(["org_demo", "analytics"]));
       return env.CELLS.get(env.CELLS.idFromName(`conformance/${object}`)).fetch(forwarded);
     }
+    // Everything else goes through the production router, for the synthetic scope only.
+    const orgs = url.searchParams.getAll("orgId");
+    const environments = url.searchParams.getAll("environmentId");
+    if (!isSynthetic([...orgs, ...environments]) || orgs.length !== 1) return refuse("conformance.scope", "this conformance entry serves only its synthetic scope");
     return router.fetch(request, env);
   },
 };
