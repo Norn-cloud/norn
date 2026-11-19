@@ -259,15 +259,32 @@ impl Drop for LocalKeyring {
     }
 }
 
+/// Decoded straight into a wiped buffer, so no key byte is ever held in an
+/// unprotected allocation, whether decoding succeeds or fails. The buffer
+/// holds a little more than a key, so a longer value is refused as one.
 fn decode_key(variable: &str, value: &str) -> Result<Zeroizing<[u8; KEY_BYTES]>, VaultError> {
-    let bytes = Zeroizing::new(
-        base64::engine::general_purpose::STANDARD
-            .decode(value.trim())
-            .map_err(|_error| VaultError::Config(format!("{variable} is not standard base64")))?,
-    );
-    <[u8; KEY_BYTES]>::try_from(bytes.as_slice())
-        .map(Zeroizing::new)
-        .map_err(|_error| VaultError::Config(format!("{variable} is not {KEY_BYTES} bytes")))
+    let mut buffer = Zeroizing::new([0_u8; KEY_BYTES * 2]);
+    let written = match base64::engine::general_purpose::STANDARD
+        .decode_slice(value.trim(), buffer.as_mut_slice())
+    {
+        Ok(written) => written,
+        Err(base64::DecodeSliceError::OutputSliceTooSmall) => usize::MAX,
+        Err(base64::DecodeSliceError::DecodeError(_)) => {
+            return Err(VaultError::Config(format!(
+                "{variable} is not standard base64"
+            )));
+        }
+    };
+    let mut key = Zeroizing::new([0_u8; KEY_BYTES]);
+    match buffer.get(..written) {
+        Some(decoded) if decoded.len() == KEY_BYTES => {
+            key.copy_from_slice(decoded);
+            Ok(key)
+        }
+        _ => Err(VaultError::Config(format!(
+            "{variable} is not {KEY_BYTES} bytes"
+        ))),
+    }
 }
 
 impl LocalKeyring {

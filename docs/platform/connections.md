@@ -104,6 +104,12 @@ request: `DELETE …?revokeGrant=true` disconnects, then asks the provider's RFC
 7009 revocation endpoint, when the provider has one, to end the grant. Every
 other connection on that grant then fails its next refresh and is marked
 `reconnect_needed`. The outcome is audited as `credential.provider_revoke`.
+Because the grant can back connections the caller doesn't manage,
+`revokeGrant=true` is also decided as `Operation::RevokeConnectionGrant(id)`
+before anything is deleted: authority over every connection of the cell,
+which the cell's policy gives its owners and admins. A caller who manages
+only this connection gets `403 connection.grant_forbidden` and nothing is
+deleted; a plain `DELETE` still works for them.
 
 The vault is opened only after a request is authorized; a denied caller never
 causes a vault read.
@@ -119,7 +125,10 @@ completion:
    start reserves its state in the host's memory, bound to the user, the
    connection and the key's digest, for ten minutes. At most 256
    authorizations are reserved at once, and at most 8 per user (a user's
-   oldest is dropped when they start a ninth).
+   oldest is dropped when they start a ninth). A start is admitted against
+   those bounds before it stores its pending row and sealed PKCE verifier, so
+   a start refused with `503 connection.unavailable` stores nothing. A
+   dropped or expired reservation's row and verifier are deleted with it.
 2. The provider redirects the browser to `oauth:callback?state=…&code=…`. The
    callback parks the code only for a reserved, unexpired state (the first
    code wins), and answers `connection.oauth_received`. An unknown or expired

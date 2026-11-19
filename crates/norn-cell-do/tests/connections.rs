@@ -901,7 +901,12 @@ struct OwnerOnly;
 impl Authorizer for OwnerOnly {
     fn authorize(&self, request: &AccessRequest<'_>) -> Result<(), Refusal> {
         match (&request.operation, request.actor) {
-            (Operation::ManageConnection(_), Some("owner")) => Ok(()),
+            (
+                Operation::ManageConnection(_) | Operation::RevokeConnectionGrant(_),
+                Some("owner"),
+            ) => Ok(()),
+            // Manages one connection, without authority over its grant.
+            (Operation::ManageConnection(id), Some("manager")) if id == "acme.main" => Ok(()),
             _ => Err(norn_api::authz::read_denied()),
         }
     }
@@ -914,6 +919,7 @@ impl PrincipalResolver for Bearers {
         match authorization? {
             "Bearer owner-token" | "Bearer owner-token-2" => Some("owner".to_owned()),
             "Bearer viewer-token" => Some("viewer".to_owned()),
+            "Bearer manager-token" => Some("manager".to_owned()),
             _ => None,
         }
     }
@@ -1979,6 +1985,9 @@ impl Lookup for HangingLookup {
     }
 }
 
+/// Backoff sleeps taken by [`timed_out_lookups_never_accumulate_beyond_the_bound`].
+static BUSY_SLEEPS: AtomicUsize = AtomicUsize::new(0);
+
 /// S2, EGRESS-DNS-BOUND-1: lookups that time out leave at most
 /// `MAX_LOOKUPS` threads behind; further lookups are refused at once, and
 /// the bound frees as the hung lookups end.
@@ -1996,7 +2005,9 @@ fn timed_out_lookups_never_accumulate_beyond_the_bound() {
         Arc::new(HangingLookup(Arc::clone(&hanging))),
         quick,
     )
-    .with_sleep(|_| {});
+    .with_sleep(|_| {
+        BUSY_SLEEPS.fetch_add(1, Ordering::SeqCst);
+    });
     let get = || {
         egress.send(
             http::Request::get("https://hangs.example.com/")
@@ -2015,6 +2026,13 @@ fn timed_out_lookups_never_accumulate_beyond_the_bound() {
     assert_eq!(hanging.calls.load(Ordering::SeqCst), MAX_LOOKUPS);
     assert_eq!(egress.outstanding_lookups(), MAX_LOOKUPS);
     assert_eq!(busy, 8);
+    // S2 (round 3): a busy resolver answers at once; it is never retried
+    // through the backoff.
+    assert_eq!(
+        BUSY_SLEEPS.load(Ordering::SeqCst),
+        0,
+        "resolver_busy was retried"
+    );
 
     *hanging.open.lock().expect("gate") = true;
     hanging.opened.notify_all();
@@ -2103,6 +2121,29 @@ fn debug_output_carries_no_secret() {
     ] {
         assert!(!printed.contains(secret), "the {label} is printed");
     }
+    // RESPONSE-DEBUG-1: `oauth:start`'s answer carries the completion key
+    // for its one caller; its `Debug` shows the status and length only.
+    let (_dir, path) = temp_db();
+    let server = token_server(Arc::new(AtomicUsize::new(0)), Duration::ZERO);
+    let driver = Driver::new(&path, server.port);
+    let started = driver.call(
+        "POST",
+        "/v1/connections/acme.main/oauth:start",
+        SCOPE_QUERY,
+        Some("owner-token"),
+        r#"{"provider":"acme"}"#,
+        1_000,
+    );
+    assert_eq!(started.status, 200, "{}", started.body);
+    let key = json_of(&started)["completionKey"]
+        .as_str()
+        .expect("key")
+        .to_owned();
+    let printed = format!("{started:?}");
+    assert!(
+        printed.contains("200") && !printed.contains(&key) && !printed.contains("completionKey"),
+        "the start answer's body is printed"
+    );
     let vars = norn_cell_do::connections::SecretVars(BTreeMap::from([(
         "NORN_OAUTH_ACME_CLIENT_SECRET".to_owned(),
         "VAR-SECRET".to_owned(),
@@ -2112,4 +2153,249 @@ fn debug_output_carries_no_secret() {
         printed.contains("NORN_OAUTH_ACME_CLIENT_SECRET") && !printed.contains("VAR-SECRET"),
         "a variable value is printed"
     );
+}
+
+/// S4 (round 3), GRANT-REVOKE-1: `revokeGrant=true` is decided at grant
+/// scope before anything is deleted. A manager of one connection without
+/// that authority is refused, and the credential, its row and the provider
+/// grant all stay; a plain disconnect still works for them.
+#[test]
+fn revoking_the_grant_needs_grant_scope_before_anything_is_deleted() {
+    let (_dir, path) = temp_db();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let server = token_server(Arc::clone(&calls), Duration::ZERO);
+    let driver = Driver::new(&path, server.port);
+    let path_of = "/v1/connections/acme.main/credentials";
+    let credentials =
+        format!(r#"{{"provider":"acme","accessToken":"{ACCESS}","refreshToken":"{REFRESH}"}}"#);
+    let set = driver.call(
+        "PUT",
+        path_of,
+        SCOPE_QUERY,
+        Some("owner-token"),
+        &credentials,
+        1_000,
+    );
+    assert_eq!(set.status, 200, "{}", set.body);
+
+    let refused = driver.call(
+        "DELETE",
+        path_of,
+        &format!("{SCOPE_QUERY}&revokeGrant=true"),
+        Some("manager-token"),
+        "",
+        1_100,
+    );
+    assert_eq!(
+        (refused.status, &json_of(&refused)["code"]),
+        (403, &serde_json::json!("connection.grant_forbidden")),
+        "{}",
+        refused.body
+    );
+    let status = driver.call(
+        "GET",
+        path_of,
+        SCOPE_QUERY,
+        Some("manager-token"),
+        "",
+        1_200,
+    );
+    assert_eq!(status.status, 200, "{}", status.body);
+    assert_eq!(
+        json_of(&status)["state"],
+        "connected",
+        "a refused revoke deleted"
+    );
+    assert!(
+        server
+            .seen()
+            .iter()
+            .all(|s| !s.line.starts_with("POST /revoke")),
+        "a refused revoke reached the provider"
+    );
+    let conns = driver.routes.connections().expect("opened");
+    assert!(
+        conns
+            .audit_trail("acme.main")
+            .expect("audit")
+            .iter()
+            .all(|(_, event, ..)| event.as_str() != "credential.revoke"),
+        "a refused revoke was recorded as one"
+    );
+
+    // A plain disconnect is theirs to make.
+    let gone = driver.call(
+        "DELETE",
+        path_of,
+        SCOPE_QUERY,
+        Some("manager-token"),
+        "",
+        1_300,
+    );
+    assert_eq!(gone.status, 200, "{}", gone.body);
+    assert_eq!(json_of(&gone)["state"], "not_connected");
+}
+
+/// Pending authorizations in the store: `(rows, sealed verifiers)`.
+fn pending_records(path: &std::path::Path) -> (i64, i64) {
+    let engine = engine(path);
+    let count = |sql: &str| match engine
+        .query(sql, &[])
+        .expect("count")
+        .first()
+        .and_then(|row| row.first())
+    {
+        Some(SqlValue::Integer(count)) => *count,
+        other => panic!("{other:?}"),
+    };
+    (
+        count(r#"SELECT COUNT(*) FROM "_norn_oauth_state""#),
+        count(r#"SELECT COUNT(*) FROM "_norn_vault_sealed" WHERE "slot" LIKE 'oauth-state:%'"#),
+    )
+}
+
+/// Lets every principal manage every connection (and nothing else).
+struct AnyManager;
+
+impl Authorizer for AnyManager {
+    fn authorize(&self, request: &AccessRequest<'_>) -> Result<(), Refusal> {
+        match (&request.operation, request.actor) {
+            (Operation::ManageConnection(_), Some(_)) => Ok(()),
+            _ => Err(norn_api::authz::read_denied()),
+        }
+    }
+}
+
+/// `Bearer actor-N` is principal `actor-N`.
+struct Numbered;
+
+impl PrincipalResolver for Numbered {
+    fn resolve(&self, authorization: Option<&str>, _now: u64) -> Option<String> {
+        authorization?
+            .strip_prefix("Bearer ")
+            .filter(|token| token.starts_with("actor-"))
+            .map(str::to_owned)
+    }
+    fn end_request(&self) {}
+}
+
+/// S5a (round 3), OAUTH-HANDOFF-1: a start is admitted before it stores
+/// anything, so a start refused at capacity leaves no row; a reservation
+/// evicted for a principal's newer one, or expired, takes its row and
+/// sealed verifier with it.
+#[test]
+fn refused_evicted_and_expired_starts_leave_no_pending_records() {
+    use norn_cell_do::connections::service::STATE_TTL_MS;
+    use norn_cell_do::connections::{MAX_PARKED, MAX_PER_PRINCIPAL};
+    let (_dir, path) = temp_db();
+    let server = token_server(Arc::new(AtomicUsize::new(0)), Duration::ZERO);
+    let store = CellStore::from_engine(
+        engine(&path),
+        Model::from_definitions(&[], &[]).expect("model"),
+    )
+    .expect("store");
+    let host = DevHost::from_store(
+        store,
+        CellScope {
+            org_id: "org_demo".into(),
+            environment_id: "dev".into(),
+        },
+        |_| BTreeMap::new(),
+    )
+    .expect("host")
+    .with_authorizer(AnyManager);
+    let routes = routes(&path, server.port, &Arc::new(AtomicUsize::new(0)));
+    let start = |actor: usize, now_ms: u64| {
+        let auth = format!("Bearer actor-{actor}");
+        routes
+            .route(
+                &host,
+                &Numbered,
+                &request(
+                    "POST",
+                    "/v1/connections/acme.main/oauth:start",
+                    SCOPE_QUERY,
+                    Some(&auth),
+                    r#"{"provider":"acme"}"#,
+                ),
+                now_ms,
+            )
+            .expect("routed")
+    };
+    let full = MAX_PARKED / MAX_PER_PRINCIPAL;
+    let live = i64::try_from(MAX_PARKED).expect("small");
+    for actor in 0..full {
+        for _ in 0..MAX_PER_PRINCIPAL {
+            let started = start(actor, 1_000);
+            assert_eq!(started.status, 200, "{}", started.body);
+        }
+    }
+    assert_eq!(routes.handoffs().len(1_000), MAX_PARKED);
+    assert_eq!(pending_records(&path), (live, live));
+
+    // At capacity: a new principal's start is refused and stores nothing.
+    let refused = start(full, 1_000);
+    assert_eq!(
+        (refused.status, &json_of(&refused)["code"]),
+        (503, &serde_json::json!("connection.unavailable")),
+        "{}",
+        refused.body
+    );
+    assert_eq!(
+        pending_records(&path),
+        (live, live),
+        "a refused start stored"
+    );
+
+    // A principal at its own cap replaces its oldest: row and verifier go.
+    let replaced = start(0, 1_500);
+    assert_eq!(replaced.status, 200, "{}", replaced.body);
+    assert_eq!(routes.handoffs().len(1_500), MAX_PARKED);
+    assert_eq!(
+        pending_records(&path),
+        (live, live),
+        "an evicted flow kept its rows"
+    );
+
+    // Expired: the next request drops the reservations and their records.
+    let expired = 1_000 + STATE_TTL_MS;
+    let callback = routes
+        .route(
+            &host,
+            &Numbered,
+            &request(
+                "GET",
+                "/v1/connections/oauth:callback",
+                "state=unknown&code=a-code",
+                None,
+                "",
+            ),
+            expired,
+        )
+        .expect("routed");
+    assert_eq!(callback.status, 400, "{}", callback.body);
+    assert_eq!(routes.handoffs().len(expired), 1, "the later start is live");
+    assert_eq!(
+        pending_records(&path),
+        (1, 1),
+        "expired flows kept their rows"
+    );
+    let after = 1_500 + STATE_TTL_MS;
+    let late = routes
+        .route(
+            &host,
+            &Numbered,
+            &request(
+                "GET",
+                "/v1/connections/oauth:callback",
+                "state=unknown&code=a-code",
+                None,
+                "",
+            ),
+            after,
+        )
+        .expect("routed");
+    assert_eq!(late.status, 400, "{}", late.body);
+    assert!(routes.handoffs().is_empty(after));
+    assert_eq!(pending_records(&path), (0, 0));
 }

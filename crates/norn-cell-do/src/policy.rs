@@ -873,10 +873,13 @@ impl Authorizer for ReadPolicy {
                 .actor
                 .is_some_and(|actor| self.pdp_for(actor).is_some()),
             // CONN-AUTHZ-1: the roles that write definitions (admins and
-            // owners) manage connection credentials.
+            // owners) manage connection credentials, every connection of the
+            // cell, so they also revoke a grant siblings share
+            // (GRANT-REVOKE-1).
             Operation::WriteDefinitions
             | Operation::SyncSource(_)
-            | Operation::ManageConnection(_) => request.actor.is_some_and(|actor| {
+            | Operation::ManageConnection(_)
+            | Operation::RevokeConnectionGrant(_) => request.actor.is_some_and(|actor| {
                 self.caller
                     .current()
                     .filter(|caller| caller.subject_id == actor)

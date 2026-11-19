@@ -28,12 +28,13 @@
 //! costs a call only [`Timeouts::resolve`]; at most [`MAX_LOOKUPS`] such
 //! threads are outstanding per client, and a lookup that would start
 //! another is refused at once (`Transport("resolver_busy")`), so timed-out
-//! lookups can't pile up threads.
+//! lookups can't pile up threads. That refusal is not retried
+//! (EGRESS-RETRY-1): a busy resolver answers the call at once.
 //! EGRESS-PROXY-1: no proxy. `NORN_EGRESS_PROXY` is refused at startup
 //! ([`refuse_proxy`]) until a CONNECT to the checked address, keeping the TLS
 //! name and `Host`, exists; ambient `HTTP(S)_PROXY` variables are ignored.
-//! EGRESS-RETRY-1: idempotent methods are retried on a transport failure or a
-//! 429/502/503/504 answer, at most [`MAX_ATTEMPTS`] times with exponential
+//! EGRESS-RETRY-1: idempotent methods are retried on a transport failure
+//! (but a busy resolver) or a 429/502/503/504 answer, at most [`MAX_ATTEMPTS`] times with exponential
 //! backoff (or `Retry-After`, capped); a POST is sent once.
 //! EGRESS-DEADLINE-1: one call, with every redirect, retry, backoff and
 //! lookup, ends within [`Timeouts::total`].
@@ -121,6 +122,10 @@ pub fn refuse_proxy(value: Option<&str>) -> Result<(), EgressError> {
     }
     Ok(())
 }
+
+/// The transport kind of a lookup refused because [`MAX_LOOKUPS`] are
+/// outstanding (EGRESS-DNS-BOUND-1); never retried.
+const RESOLVER_BUSY: &str = "resolver_busy";
 
 /// Why an outbound call did not complete. Never carries a header value, a
 /// body or a peer's error text.
@@ -306,7 +311,7 @@ impl PinnedResolver {
     ) -> Result<Vec<IpAddr>, EgressError> {
         let unresolved = || EgressError::Unresolved(host.to_owned());
         let slot =
-            LookupSlot::take(&self.outstanding).ok_or(EgressError::Transport("resolver_busy"))?;
+            LookupSlot::take(&self.outstanding).ok_or(EgressError::Transport(RESOLVER_BUSY))?;
         let (send, receive) = std::sync::mpsc::sync_channel(1);
         let lookup = Arc::clone(&self.lookup);
         let name = host.to_owned();
@@ -317,7 +322,7 @@ impl PinnedResolver {
                 // The receiver may have given up; nothing to tell it then.
                 let _late = send.send(lookup.lookup(&name, port));
             })
-            .map_err(|_spawn| EgressError::Transport("resolver_busy"))?;
+            .map_err(|_spawn| EgressError::Transport(RESOLVER_BUSY))?;
         receive
             .recv_timeout(bound)
             .ok()
@@ -623,7 +628,8 @@ impl Egress {
                 && matches!(response.status().as_u16(), 429 | 502 | 503 | 504)
             {
                 backoff(attempt, response.headers())
-            } else if matches!(outcome, Err(EgressError::Transport(_))) {
+            } else if matches!(outcome, Err(EgressError::Transport(kind)) if kind != RESOLVER_BUSY)
+            {
                 backoff(attempt, &HeaderMap::new())
             } else {
                 return outcome;

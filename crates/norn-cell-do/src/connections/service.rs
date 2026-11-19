@@ -967,6 +967,31 @@ impl<E: SqlEngine> Connections<E> {
         Ok(vault.delete(&state_slot(hash))?)
     }
 
+    /// OAUTH-HANDOFF-1: delete the pending authorizations whose host
+    /// reservation went (`hashes`, the state digests evicted for a newer
+    /// one) and every one expired at `now_ms`, row and sealed verifier.
+    ///
+    /// # Errors
+    /// Storage failures.
+    pub fn forget_pending(&self, hashes: &[String], now_ms: u64) -> Result<(), ConnError> {
+        self.transaction(|vault| {
+            let expired: Vec<String> = vault
+                .engine()
+                .query(
+                    r#"SELECT "state_hash" FROM "_norn_oauth_state" WHERE "expires_ms" <= ?1"#,
+                    &[ms(now_ms)],
+                )
+                .map_err(storage)?
+                .iter()
+                .filter_map(|row| get_text(row, 0))
+                .collect();
+            for hash in hashes.iter().chain(&expired) {
+                Self::forget_state(vault, hash)?;
+            }
+            Ok(())
+        })
+    }
+
     /// OAUTH-STATE-1: consume `state` once and return its sealed pending
     /// authorization if it is `actor`'s, for `id`, under `key`, unexpired
     /// and of the connection's current generation; refused (and audited)

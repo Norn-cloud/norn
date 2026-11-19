@@ -52,13 +52,24 @@ use norn_api::authz::{ReadCapability, ReadRequest};
 use crate::policy::{CallerSlot, CellObjectAccess, DEMO_GRANTS, READ_POLICY_ID, collection_access};
 use crate::principal::{PrincipalResolver, RequestScope};
 
-/// One finite HTTP response: a status and a JSON body.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// One finite HTTP response: a status and a JSON body. Its `Debug` shows
+/// the status and the body's length only (RESPONSE-DEBUG-1): a body can
+/// carry a secret meant for its one caller (`oauth:start`'s completion key).
+#[derive(Clone, PartialEq, Eq)]
 pub struct Response {
     /// HTTP status.
     pub status: u16,
     /// UTF-8 JSON body: the route's document or a shared [`Refusal`].
     pub body: String,
+}
+
+impl std::fmt::Debug for Response {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Response")
+            .field("status", &self.status)
+            .field("body_bytes", &self.body.len())
+            .finish()
+    }
 }
 
 /// Longest accepted query string, in bytes.

@@ -17,7 +17,9 @@
 //! - `PUT /v1/connections/{id}/credentials`: [`service::SetCredentials`].
 //! - `DELETE /v1/connections/{id}/credentials`: disconnect, locally only;
 //!   `?revokeGrant=true` also revokes the grant at the provider, which can
-//!   end sibling connections on that grant (GRANT-REVOKE-1).
+//!   end sibling connections on that grant (GRANT-REVOKE-1), so it is also
+//!   decided as `Operation::RevokeConnectionGrant(id)`, authority over every
+//!   connection of the cell, before anything is deleted.
 //! - `POST /v1/connections/{id}/oauth:start`: `{provider, scopes?, params?}`
 //!   → `{authorizeUrl, expiresAtMs, completionKey}`.
 //! - `GET /v1/connections/oauth:callback?state=…&code=…`: the provider's
@@ -39,7 +41,10 @@
 //! nothing is stored, so callbacks can't fill the store. At most
 //! [`MAX_PARKED`] reservations live, at most [`MAX_PER_PRINCIPAL`] per
 //! principal (a principal's oldest is dropped for its next), and expired
-//! ones are dropped on every connection request. The first code for a state
+//! ones are dropped on every connection request. A start is admitted
+//! against those bounds before it writes its pending row and sealed
+//! verifier, so a refused start stores nothing; an evicted or expired
+//! reservation's row and sealed verifier are deleted with it. The first code for a state
 //! wins. Nothing is exchanged or stored until the principal who started
 //! calls `oauth:complete` with its own credential and the completion key
 //! (OAUTH-SESSION-1); a caller whose binding doesn't match spends nothing.
@@ -385,48 +390,46 @@ pub enum Claim {
 /// vault.
 #[derive(Default)]
 pub struct Handoffs {
-    reserved: Mutex<BTreeMap<String, Reservation>>,
+    parked: Mutex<Parked>,
 }
 
-impl Handoffs {
-    fn lock(&self) -> std::sync::MutexGuard<'_, BTreeMap<String, Reservation>> {
-        self.reserved.lock().unwrap_or_else(PoisonError::into_inner)
-    }
+#[derive(Default)]
+struct Parked {
+    reserved: BTreeMap<String, Reservation>,
+    /// Starts admitted and not yet reserved or abandoned.
+    admitted: usize,
+}
 
-    fn purge(reserved: &mut BTreeMap<String, Reservation>, now_ms: u64) {
-        reserved.retain(|_, reservation| now_ms < reservation.expires_ms);
-    }
+/// One start admitted by [`Handoffs::admit`] before anything is persisted
+/// (OAUTH-HANDOFF-1): it holds a slot until [`Admission::reserve`] fills it
+/// or it is dropped.
+pub struct Admission<'a> {
+    handoffs: &'a Handoffs,
+}
 
-    /// Drop every expired reservation and its code.
-    pub fn sweep(&self, now_ms: u64) {
-        Self::purge(&mut self.lock(), now_ms);
+impl Drop for Admission<'_> {
+    fn drop(&mut self) {
+        let mut parked = self.handoffs.lock();
+        parked.admitted = parked.admitted.saturating_sub(1);
     }
+}
 
-    /// How many reservations live.
-    pub fn len(&self, now_ms: u64) -> usize {
-        let mut reserved = self.lock();
-        Self::purge(&mut reserved, now_ms);
-        reserved.len()
-    }
-
-    /// Whether none lives.
-    pub fn is_empty(&self, now_ms: u64) -> bool {
-        self.len(now_ms) == 0
-    }
-
-    /// Reserve `state` for `binding` until `expires_ms`. A principal holding
-    /// [`MAX_PER_PRINCIPAL`] loses its oldest; `false` when [`MAX_PARKED`]
-    /// live anyway.
+impl Admission<'_> {
+    /// Reserve `state` for `binding` until `expires_ms`. The principal's
+    /// oldest reservations beyond [`MAX_PER_PRINCIPAL`] go; their state
+    /// digests are returned so their stored records are deleted too.
+    #[must_use]
     pub fn reserve(
-        &self,
+        self,
         state: &str,
         binding: &Binding<'_>,
         expires_ms: u64,
         now_ms: u64,
-    ) -> bool {
-        let mut reserved = self.lock();
-        Self::purge(&mut reserved, now_ms);
-        let mut own: Vec<(u64, String)> = reserved
+    ) -> Vec<String> {
+        let mut parked = self.handoffs.lock();
+        Handoffs::purge(&mut parked.reserved, now_ms);
+        let mut own: Vec<(u64, String)> = parked
+            .reserved
             .iter()
             .filter(|(_, reservation)| reservation.actor == binding.actor)
             .map(|(hash, reservation)| (reservation.expires_ms, hash.clone()))
@@ -436,13 +439,11 @@ impl Handoffs {
             .len()
             .saturating_add(1)
             .saturating_sub(MAX_PER_PRINCIPAL);
-        for (_, hash) in own.into_iter().take(excess) {
-            reserved.remove(&hash);
+        let evicted: Vec<String> = own.into_iter().take(excess).map(|(_, hash)| hash).collect();
+        for hash in &evicted {
+            parked.reserved.remove(hash);
         }
-        if reserved.len() >= MAX_PARKED {
-            return false;
-        }
-        reserved.insert(
+        parked.reserved.insert(
             service::state_hash(state),
             Reservation {
                 actor: binding.actor.to_owned(),
@@ -452,15 +453,70 @@ impl Handoffs {
                 code: None,
             },
         );
-        true
+        evicted
+    }
+}
+
+impl Handoffs {
+    fn lock(&self) -> std::sync::MutexGuard<'_, Parked> {
+        self.parked.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Drop expired reservations; how many went.
+    fn purge(reserved: &mut BTreeMap<String, Reservation>, now_ms: u64) -> usize {
+        let before = reserved.len();
+        reserved.retain(|_, reservation| now_ms < reservation.expires_ms);
+        before.saturating_sub(reserved.len())
+    }
+
+    /// Drop every expired reservation and its code; how many went.
+    pub fn sweep(&self, now_ms: u64) -> usize {
+        Self::purge(&mut self.lock().reserved, now_ms)
+    }
+
+    /// How many reservations live.
+    pub fn len(&self, now_ms: u64) -> usize {
+        let mut parked = self.lock();
+        Self::purge(&mut parked.reserved, now_ms);
+        parked.reserved.len()
+    }
+
+    /// Whether none lives.
+    pub fn is_empty(&self, now_ms: u64) -> bool {
+        self.len(now_ms) == 0
+    }
+
+    /// Admit one more start by `actor` before it persists anything: `None`
+    /// when [`MAX_PARKED`] reservations and admitted starts live, counting
+    /// the one of `actor`'s that its reservation would replace
+    /// ([`MAX_PER_PRINCIPAL`]). A refused start changes nothing.
+    pub fn admit(&self, actor: &str, now_ms: u64) -> Option<Admission<'_>> {
+        let mut parked = self.lock();
+        Self::purge(&mut parked.reserved, now_ms);
+        let own = parked
+            .reserved
+            .values()
+            .filter(|reservation| reservation.actor == actor)
+            .count();
+        let replaced = own.saturating_add(1).saturating_sub(MAX_PER_PRINCIPAL);
+        let live = parked
+            .reserved
+            .len()
+            .saturating_sub(replaced)
+            .saturating_add(parked.admitted);
+        if live >= MAX_PARKED {
+            return None;
+        }
+        parked.admitted = parked.admitted.saturating_add(1);
+        Some(Admission { handoffs: self })
     }
 
     /// Park `code` for `state`: `true` only for a live reservation (the
     /// first code wins); an unknown or expired state stores nothing.
     pub fn park(&self, state: &str, code: &str, now_ms: u64) -> bool {
-        let mut reserved = self.lock();
-        Self::purge(&mut reserved, now_ms);
-        let Some(reservation) = reserved.get_mut(&service::state_hash(state)) else {
+        let mut parked = self.lock();
+        Self::purge(&mut parked.reserved, now_ms);
+        let Some(reservation) = parked.reserved.get_mut(&service::state_hash(state)) else {
             return false;
         };
         if reservation.code.is_none() {
@@ -473,8 +529,9 @@ impl Handoffs {
     /// the reservation is checked first and removed only when its code is
     /// handed out.
     pub fn claim(&self, state: &str, binding: &Binding<'_>, now_ms: u64) -> Claim {
-        let mut reserved = self.lock();
-        Self::purge(&mut reserved, now_ms);
+        let mut parked = self.lock();
+        let reserved = &mut parked.reserved;
+        Self::purge(reserved, now_ms);
         let hash = service::state_hash(state);
         let Some(reservation) = reserved.get(&hash) else {
             return Claim::Unknown;
@@ -577,7 +634,12 @@ impl<E: SqlEngine> Routes<E> {
             return None;
         }
         let _request = RequestScope::new(principals);
-        self.handoffs.sweep(now_ms);
+        // OAUTH-HANDOFF-1: an expired reservation's stored records go with it.
+        if self.handoffs.sweep(now_ms) > 0
+            && let Some(connections) = self.connections()
+        {
+            let _ignored = connections.forget_pending(&[], now_ms);
+        }
         let (scope, params) = query(request.query);
         if let Route::Callback = route {
             return Some(self.callback(request, &params, now_ms));
@@ -605,6 +667,35 @@ impl<E: SqlEngine> Routes<E> {
         let (true, Some(actor)) = (allowed, actor) else {
             return Some(server::outside::<H>(request));
         };
+        let disconnect = matches!(route, Route::Credentials(_)) && request.method == "DELETE";
+        let revoke_grant = match params.get("revokeGrant").map(String::as_str) {
+            Some("true") => disconnect,
+            None | Some("false") => false,
+            Some(_) if disconnect => {
+                return Some(refused(&ConnError::Invalid(
+                    "revokeGrant is true or false".to_owned(),
+                )));
+            }
+            Some(_) => false,
+        };
+        // GRANT-REVOKE-1: revoking the grant can end sibling connections,
+        // so it is decided at grant scope, before anything is deleted or the
+        // vault opens.
+        if revoke_grant
+            && authorize(
+                host,
+                &scope,
+                Some(&actor),
+                Operation::RevokeConnectionGrant(id.to_owned()),
+            )
+            .is_err()
+        {
+            return Some(coded(
+                403,
+                "connection.grant_forbidden",
+                "revoking the grant at the provider needs authority over every connection of the cell; disconnect without revokeGrant",
+            ));
+        }
         if let Err(error) = &self.serving {
             return Some(coded(
                 503,
@@ -631,15 +722,9 @@ impl<E: SqlEngine> Routes<E> {
                 })
                 .and_then(|body| connections.set(&actor, id, body, now_ms))
                 .map(|status| json!(status)),
-            (Route::Credentials(_), _) => match params.get("revokeGrant").map(String::as_str) {
-                None | Some("false") => Ok(false),
-                Some("true") => Ok(true),
-                Some(_) => Err(ConnError::Invalid(
-                    "revokeGrant is true or false".to_owned(),
-                )),
-            }
-            .and_then(|grant| connections.revoke(&actor, id, grant, now_ms))
-            .map(|status| json!(status)),
+            (Route::Credentials(_), _) => connections
+                .revoke(&actor, id, revoke_grant, now_ms)
+                .map(|status| json!(status)),
             (Route::Start(_), _) => self.start(connections, &actor, id, request.body, now_ms),
             (Route::Complete(_) | Route::Callback, _) => {
                 return Some(self.complete(connections, &actor, id, request.body, now_ms));
@@ -664,6 +749,13 @@ impl<E: SqlEngine> Routes<E> {
         let body = serde_json::from_str::<StartBody>(body).map_err(|_parse| {
             ConnError::Invalid("the body is not {provider, scopes?, params?}".to_owned())
         })?;
+        // OAUTH-HANDOFF-1: admitted before the pending row and the sealed
+        // verifier are written, so a refused start stores nothing.
+        let Some(admission) = self.handoffs.admit(actor, now_ms) else {
+            return Err(ConnError::Unavailable(
+                "too many authorizations are waiting; retry shortly".to_owned(),
+            ));
+        };
         let started =
             connections.start(actor, id, &body.provider, body.scopes, &body.params, now_ms)?;
         let (Some(state), Some(key)) = (
@@ -677,14 +769,10 @@ impl<E: SqlEngine> Routes<E> {
             connection: id,
             key,
         };
-        if !self
-            .handoffs
-            .reserve(state, &binding, started.expires_at_ms, now_ms)
-        {
-            return Err(ConnError::Unavailable(
-                "too many authorizations are waiting; retry shortly".to_owned(),
-            ));
-        }
+        let evicted = admission.reserve(state, &binding, started.expires_at_ms, now_ms);
+        // The evicted and the expired go from the store too; what this
+        // misses expires and goes on a later request.
+        let _ignored = connections.forget_pending(&evicted, now_ms);
         Ok(json!({
             "authorizeUrl": started.authorize_url,
             "expiresAtMs": started.expires_at_ms,
