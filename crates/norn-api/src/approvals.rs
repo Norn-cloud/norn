@@ -16,6 +16,13 @@
 //! authority, with everything decided again at that commit, including the
 //! laws the cell checks only when it commits. Nothing bypasses the dispatch:
 //! the approver's decision executes the call by calling it as the requester.
+//!
+//! APPROVAL-PIN-1: a call pinned to a definitions version (`?version=`)
+//! parks with that pin, and its approval commits it pinned the same way: a
+//! catalog that changed between parking and approval refuses the commit
+//! (`defs.stale`) and commits nothing. The pin is part of the call's
+//! identity: the requester's retry under another catalog parks anew and
+//! waits for a fresh decision.
 
 use std::collections::BTreeMap;
 
@@ -75,6 +82,10 @@ pub(crate) struct ParkedCall {
     pub(crate) input: RuntimeObject,
     pub(crate) idempotency_key: String,
     pub(crate) requester: RunStarter,
+    /// APPROVAL-PIN-1: the definitions version the requester pinned the call
+    /// to (`?version=`), if any. Its approval commits it only while that
+    /// version is still active (`defs.stale` otherwise).
+    pub(crate) definitions_version: Option<u64>,
 }
 
 /// A parked call as its decision carries it: the approval that held it and
@@ -109,6 +120,10 @@ pub(crate) fn held_call(approval: &RuntimeValue) -> Option<HeldCall> {
             input: input.clone(),
             idempotency_key: text("idempotencyKey")?,
             requester: norn_ir::runtime::decode(approval.get("requester")?).ok()?,
+            definitions_version: match approval.get("definitionsVersion") {
+                None => None,
+                Some(pin) => Some(norn_ir::runtime::decode(pin).ok()?),
+            },
         },
     })
 }
@@ -206,19 +221,27 @@ fn request(gate: &Gate) -> Value {
     request
 }
 
-/// The command id of a parked call: one per action, input, idempotency key
-/// and requester, so the same call parks once, and an approval approves
-/// exactly the call it was asked about.
+/// The command id of a parked call: one per action, input, idempotency key,
+/// requester and definitions pin, so the same call parks once, and an
+/// approval approves exactly the call it was asked about.
+///
+/// APPROVAL-PIN-1: a pinned call's id also hashes its pin, under its own
+/// domain tag, so the requester's retry under another catalog (unpinned, or
+/// pinned to another version) is another call that parks for a fresh
+/// decision, never the earlier approval. An unpinned call's id is unchanged.
 fn command_id(parked_call: &ParkedCall) -> Result<String, Refusal> {
-    let digest = norn_ir::canonical::domain_hash_hex(
-        b"norn.approval.call/1\0",
-        &(
-            &parked_call.action,
-            &parked_call.idempotency_key,
-            &parked_call.requester.subject,
-            &parked_call.input,
-        ),
-    )
+    let call = (
+        &parked_call.action,
+        &parked_call.idempotency_key,
+        &parked_call.requester.subject,
+        &parked_call.input,
+    );
+    let digest = match parked_call.definitions_version {
+        None => norn_ir::canonical::domain_hash_hex(b"norn.approval.call/1\0", &call),
+        Some(pin) => {
+            norn_ir::canonical::domain_hash_hex(b"norn.approval.pinned-call/1\0", &(call, pin))
+        }
+    }
     .map_err(Refusal::host)?;
     Ok(format!(
         "norn.approval/{}",
@@ -328,7 +351,7 @@ fn park<E: SqlEngine>(
 ) -> Result<(), Refusal> {
     let starter = norn_ir::runtime::encode(&parked_call.requester).map_err(Refusal::host)?;
     let text = |value: &str| RuntimeValue::String(value.to_owned());
-    let approval: RuntimeObject = BTreeMap::from([
+    let mut approval: RuntimeObject = BTreeMap::from([
         ("definition".to_owned(), text(&gate.definition)),
         (
             "revision".to_owned(),
@@ -345,6 +368,12 @@ fn park<E: SqlEngine>(
         ),
         ("requester".to_owned(), starter),
     ]);
+    if let Some(pin) = parked_call.definitions_version {
+        approval.insert(
+            "definitionsVersion".to_owned(),
+            norn_ir::runtime::encode(&pin).map_err(Refusal::host)?,
+        );
+    }
     let payload: RuntimeObject = BTreeMap::from([
         ("kind".to_owned(), text("perform")),
         (

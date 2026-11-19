@@ -59,12 +59,13 @@ test("a subscriber who loses access gets the cell's refusal on the next commit, 
 
   // Access is revoked; the next commit re-asks, and the cell refuses.
   host.set({ status: 403, body: DENIED })
-  await live.publish({ getWebSockets: () => [ws] }, host.ask)
+  // publish resolves to the changed snapshots it sent (counted as norn_cell_live_snapshots_total).
+  expect(await live.publish({ getWebSockets: () => [ws] }, host.ask)).toBe(1)
   expect(ws.sent.at(-1)).toEqual({ type: "snapshot", id: "inbox", status: 403, digest: expect.any(String), body: JSON.parse(DENIED) })
 
   // Data changes behind the refusal: nothing is sent while the cell keeps refusing.
   const before = ws.sent.length
-  await live.publish({ getWebSockets: () => [ws] }, host.ask)
+  expect(await live.publish({ getWebSockets: () => [ws] }, host.ask)).toBe(0)
   expect(ws.sent).toHaveLength(before)
   expect(ws.sent.filter((m) => m.status === 200)).toHaveLength(1)
 })
