@@ -1,0 +1,4 @@
+{
+  "order": 80,
+  "value": "apps/studio/worker/migrations/0010_billing_payer.sql"
+}
