@@ -940,7 +940,8 @@ fn commit_approved<E: SqlEngine>(
     let query = crate::actions::ActionQuery {
         org_id: Some(host.scope().org_id.clone()),
         environment_id: Some(host.scope().environment_id.clone()),
-        version: None,
+        // APPROVAL-PIN-1: the requester's pin holds at approval too.
+        version: call.call.definitions_version,
     };
     let request = crate::actions::ActionRequest {
         input: RuntimeValue::Object(call.call.input.clone()),

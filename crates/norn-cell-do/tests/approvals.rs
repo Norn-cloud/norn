@@ -24,10 +24,16 @@ const APPROVAL_ID: &str = "ops.melt_approval";
 /// Install the approval gating the melt action, deciders `admin`, signed by
 /// the operator.
 fn gate(cell: &Cell, expires_in_ms: Option<u64>) {
+    gate_asking(cell, expires_in_ms, "Convert this melt?");
+}
+
+/// [`gate`], asking `question`: installing it again with another question is
+/// a new definitions version.
+fn gate_asking(cell: &Cell, expires_in_ms: Option<u64>, question: &str) {
     let mut payload = json!({
         "action": MELT_ACTION,
         "decider": { "roles": ["admin"] },
-        "question": "Convert this melt?",
+        "question": question,
         "risk": "high",
     });
     if let Some(ms) = expires_in_ms {
@@ -159,6 +165,55 @@ fn an_approved_call_commits_for_its_requester() {
     assert_eq!(replayed["outcome"], json!("replayed"));
     // Every request ends with no caller recorded.
     assert_eq!(cell.caller.current(), None);
+}
+
+/// The active definitions version.
+fn definitions_version(cell: &Cell) -> u64 {
+    let (status, catalog) = call_with(cell, "GET", "/v1/definitions", SCOPE, OPERATOR, "");
+    assert_eq!(status, 200, "{catalog}");
+    catalog["version"].as_u64().unwrap()
+}
+
+/// Park the melt call pinned to `version` (`?version=`).
+fn convert_pinned(cell: &Cell, version: u64, body: &str) -> (u16, Value) {
+    let query = format!("{SCOPE}&version={version}");
+    let path = format!("/v1/actions/{MELT_ACTION}");
+    call_with(cell, "POST", &path, &query, OPERATOR, body)
+}
+
+/// APPROVAL-PIN-1: a call pinned to a definitions version commits on approval
+/// only while that version is active: a catalog that changed between parking
+/// and approval refuses the commit (`defs.stale`) and commits nothing.
+#[test]
+fn an_approval_keeps_the_callers_definitions_pin() {
+    let cell = cell();
+    gate(&cell, None);
+    let pinned = definitions_version(&cell);
+    let (status, parked) = convert_pinned(&cell, pinned, &melt7("operator-pin"));
+    assert_eq!(status, 202, "{parked}");
+    let id = parked["decision"]["id"].as_str().unwrap().to_owned();
+    gate_asking(&cell, None, "Convert this melt now?");
+    assert_ne!(definitions_version(&cell), pinned, "the catalog changed");
+    let (status, decided) = decide(&cell, APPROVER, &id, "approve");
+    assert_eq!(status, 200, "{decided}");
+    assert_eq!(
+        decided["call"],
+        json!({ "committed": false, "code": "defs.stale" }),
+        "{decided}"
+    );
+    assert_eq!(melt_status(&cell), 404, "nothing committed");
+
+    // Unchanged between parking and approval, the pinned call commits.
+    let cell = step_cell::cell();
+    gate(&cell, None);
+    let pinned = definitions_version(&cell);
+    let (status, parked) = convert_pinned(&cell, pinned, &melt7("operator-pin"));
+    assert_eq!(status, 202, "{parked}");
+    let id = parked["decision"]["id"].as_str().unwrap().to_owned();
+    let (status, decided) = decide(&cell, APPROVER, &id, "approve");
+    assert_eq!(status, 200, "{decided}");
+    assert_eq!(decided["call"], json!({ "committed": true }), "{decided}");
+    assert_eq!(melt_status(&cell), 200);
 }
 
 /// APPROVAL-BINDS-INPUT: an approval approves exactly the call it was asked about: the same key
