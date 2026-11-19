@@ -1,0 +1,7 @@
+{
+  "code": "widget.lifecycle.assumption_violated",
+  "message": "a page state is shown while the object is in a lifecycle state it does not assume: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

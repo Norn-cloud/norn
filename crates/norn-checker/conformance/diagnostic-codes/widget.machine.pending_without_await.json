@@ -1,0 +1,7 @@
+{
+  "code": "widget.machine.pending_without_await",
+  "message": "a pending page machine state does not name the call or read it awaits: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

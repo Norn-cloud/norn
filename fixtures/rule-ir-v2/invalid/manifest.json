@@ -20,10 +20,22 @@
       "code": "rule.validation.jdm_unknown_node_type"
     },
     {
-      "file": "hit-policy-unique.rule.json",
-      "reason": "the DMN unique hit policy has no JDM form; only first and collect are admitted",
+      "file": "hit-policy-priority.rule.json",
+      "reason": "the DMN priority hit policy has no JDM form; tables admit first, collect and unique",
       "error_at": "/payload/graph/nodes/4/content/hitPolicy",
       "code": "rule.validation.jdm_hit_policy_rejected"
+    },
+    {
+      "file": "unique-overlap.rule.json",
+      "reason": "two rows of a unique table match {tier: a, vip: true} (TABLE-UNIQUE-1)",
+      "error_at": "/payload/graph/nodes/1/content/hitPolicy",
+      "code": "rule.validation.jdm_unique_overlap"
+    },
+    {
+      "file": "hit-policy-unique.rule.json",
+      "reason": "a unique table behind a switch does not read the rule's closed input, so its rows cannot be proved disjoint (TABLE-UNIQUE-1): Unknown, refused",
+      "error_at": "/payload/graph/nodes/4/content/hitPolicy",
+      "code": "rule.validation.jdm_unique_unproved"
     },
     {
       "file": "duplicate-node-id.rule.json",

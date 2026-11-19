@@ -1,0 +1,7 @@
+{
+  "code": "widget.machine.initial_not_idle",
+  "message": "a page machine's initial state is not an idle state: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

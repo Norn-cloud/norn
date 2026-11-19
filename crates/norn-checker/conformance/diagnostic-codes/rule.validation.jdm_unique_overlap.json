@@ -1,0 +1,7 @@
+{
+  "code": "rule.validation.jdm_unique_overlap",
+  "message": "two rows of a unique decision table match the same input: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

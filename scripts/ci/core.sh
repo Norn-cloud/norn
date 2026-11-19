@@ -31,6 +31,33 @@ nextest=(cargo nextest --profile ci)
 # tool installs (`cargo install`) build in their own directory under $upstream instead.
 guard=(--manifest-path crates/norn-skeleton-guard/Cargo.toml)
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/target}"
+# Fresh builds on reused targets: sources extracted with their commit times
+# (git archive) can be older than artifacts built from another tree, and cargo
+# decides by mtime, so a reused target could keep stale binaries. When the
+# tree differs from the one this target last built, touch every file changed
+# between the two (every tracked file when the old tree is unknown) and every
+# uncommitted change, then stamp the tree. Regeneration refuses a binary older
+# than the stamp (require_fresh).
+tree_stamp="$CARGO_TARGET_DIR/.norn-built-tree"
+refresh_sources() {
+  mkdir -p "$CARGO_TARGET_DIR"
+  local current previous
+  current=$(git rev-parse 'HEAD^{tree}')
+  previous=$(cat "$tree_stamp" 2> /dev/null || true)
+  if [[ -n $previous ]] && git cat-file -e "$previous^{tree}" 2> /dev/null; then
+    [[ $previous == "$current" ]] || git diff --name-only -z "$previous" "$current" | xargs -0 -r touch -c --
+  else
+    git ls-files -z | xargs -0 -r touch -c --
+  fi
+  { git diff --name-only -z HEAD; git ls-files -z --others --exclude-standard; } | xargs -0 -r touch -c --
+  # The stamp changes only with the tree, so an up-to-date binary stays newer.
+  [[ $previous == "$current" ]] || printf '%s\n' "$current" > "$tree_stamp"
+}
+refresh_sources
+# Fails unless binary $1 was built after this tree was stamped.
+require_fresh() {
+  [[ -x $1 && $1 -nt $tree_stamp ]] || { echo "core.sh: $1 is older than this tree; rebuild it" >&2; exit 1; }
+}
 # Pinned cargo tools: a binary that already reports the exact pinned version (CI preinstalls
 # checksummed release binaries) is used as is; otherwise the same version is built from source.
 ensure_tool() {
@@ -283,9 +310,11 @@ PY
       ;;
     duckdb)
       # The workspace never enables the optional DuckDB backend, so a change that breaks it
-      # compiles everywhere else (#513, #1152). Build it and run its integration test; full
-      # plans run this phase, and affected plans run it whenever norn-cell is reached.
-      cargo test --locked -p norn-cell --features duckdb --test duckdb_question
+      # compiles everywhere else (#513, #1152). Build it and run its integration tests (the
+      # tenant engine's correspondence suite and the transform backend); full plans run this
+      # phase, and affected plans run it whenever norn-cell is reached. The in-process
+      # `duckdb_question` target was retired with the SQL question path (#1395).
+      cargo test --locked -p norn-cell --features duckdb --test analytics_engine --test duckdb_transform
       ;;
     wasm)
       cargo check --locked --target wasm32-unknown-unknown -p norn-canonical -p norn-ir -p norn-expr -p norn-checker -p norn-graph -p norn-datalog -p norn-authz -p norn-kernel -p norn-builtins -p norn-projections -p norn-decisions -p norn-api
@@ -333,11 +362,21 @@ PY
       "$NORN_BIN" check --artifacts "$upstream/task.json" --context "$upstream/context.json" > "$upstream/check.json"
       cargo test --locked -p norn-checker-wasm --test parity -- --test-threads=1
       node crates/norn-checker-wasm/tests/parity/parity.mjs "$NORN_CHECKER_WASM_PKG" "$NORN_CHECKER_WASM_PARITY_OUT"
+      # runnable-docs runs each release test the status matrix names; build
+      # them first so its bounded runs only execute (#1171 integrated gate).
+      grep -oE 'cargo test --locked -p [a-z-]+ --test [a-z_]+' docs/authoring/runnable/status.md | sort -u |
+        while read -r build; do $build --no-run; done
+      # The ZEN-only engine package pages load (D105): one evaluator, so it answers every
+      # evaluation of the shared corpus exactly as the checker package does.
+      NORN_WASM_ENGINE=1 crates/norn-checker-wasm/scripts/build-pkg.sh
+      node crates/norn-checker-wasm/tests/parity/engine-parity.mjs "$NORN_CHECKER_WASM_PKG" "${CARGO_TARGET_DIR:-$PWD/target}/norn-checker-wasm/engine"
       (cd tools/norn-ts && bun install --frozen-lockfile --backend copyfile && bun run typecheck && bun test --timeout 60000)
       # The SDK and demo UI typecheck and tests run in `cheap`; the diff below proves
       # the regenerated SDK is the committed one those runs checked.
       (cd packages/norn-sdk && bun install --frozen-lockfile --backend copyfile)
-      cargo run --locked -p norn-cli -- openapi > sdks/openapi/norn-api.openapi.json
+      cargo build --locked -p norn-cli
+      require_fresh "$CARGO_TARGET_DIR/debug/norn"
+      "$CARGO_TARGET_DIR/debug/norn" openapi > sdks/openapi/norn-api.openapi.json
       (cd packages/norn-sdk && bun run generate)
       python3 -m venv "$upstream/openapi-venv"
       "$upstream/openapi-venv/bin/python" -m pip install --disable-pip-version-check --no-input openapi-spec-validator==0.9.0
@@ -369,6 +408,7 @@ PY
       fi
       ensure_tool wasm-bindgen-cli 0.2.129 wasm-bindgen
       crates/norn-checker-wasm/scripts/build-pkg.sh "$PWD/apps/studio/src/checker"
+      NORN_WASM_ENGINE=1 crates/norn-checker-wasm/scripts/build-pkg.sh "$PWD/apps/studio/src/engine"
       (
         cd apps/studio
         bun install --frozen-lockfile --ignore-scripts --backend copyfile

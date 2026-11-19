@@ -3,6 +3,7 @@
 // every read. Nothing here inspects data or grants access.
 import { initSync, NornCell } from "./pkg/norn_cell_do.js";
 import module from "./pkg/norn_cell_do_bg.wasm";
+import * as live from "./subscribe.mjs";
 initSync({ module });
 
 // The demo cell, as [orgId, environmentId]: where a request that names no well-formed scope lands.
@@ -24,6 +25,8 @@ const MAX_BODY = 65536;
 const PROVISION_PATH = "/v1/cell:provision";
 /** The largest provisioning submission (a tenant's artifact set), in bytes; the cell checks the same bound. This is read before the cell authorizes the caller. */
 const MAX_PROVISION_BODY = 1048576;
+/** HOST-INSTALL-1: a definitions change carries a pack, bounded like a provisioning set. */
+const DEFINITIONS_PATHS = new Set(["/v1/cell/definitions:plan", "/v1/cell/definitions:apply"]);
 // The environments a tenant cell may exist in: pinned configuration (NORN_TENANT_ENVIRONMENTS,
 // comma-separated), never taken from a request. An organization has at most one cell per
 // declared environment; a scope naming any other environment never reaches a cell of its own.
@@ -35,6 +38,10 @@ const isDemo = ([org, e]) => org === DEMO[0] && (e === "dev" || e === "analytics
 // minute, not one per cell. The cell is told the document's real fetch time, so its age and stale
 // bounds count from the fetch, and every refresh fetches anew.
 let lastJwks = null;
+// D102: engine steps one request may take (frontier, sync batches, the question).
+const ENGINE_STEPS = 64;
+// A hung engine call must not hold the object.
+const ENGINE_TIMEOUT_MS = 120_000;
 
 export class Cell {
   constructor(ctx, env) {
@@ -58,7 +65,11 @@ export class Cell {
     lastJwks = { url: this.env.NORN_HOST_JWKS_URL, text: await response.text(), at: Date.now() };
     return lastJwks;
   }
-  open(request) {
+  /** The cell's scope as the router names it, [orgId, environmentId]. */
+  static scopeOf(request) {
+    return JSON.parse(request.headers.get(CELL_HEADER));
+  }
+  open(scope) {
     // A failed open is cached for OPEN_RETRY_MS and refused at once with the same
     // error: no JWKS fetch, no provisioning reads and no 5 s hold on the object per
     // request while the issuer is unreachable or the stage is misconfigured.
@@ -71,12 +82,20 @@ export class Cell {
     // One opening per object; seeding, provisioning and dispatch are synchronous Wasm. A scope
     // nobody provisioned opens vacant: the cell reads its storage and writes nothing.
     this.opening ??= (async () => {
-      const [org, env] = JSON.parse(request.headers.get(CELL_HEADER));
+      const [org, env] = scope;
       const issuer = this.env.NORN_HOST_ISSUER;
       const jwks = issuer === undefined ? undefined : await this.jwks(true);
       // NORN_LINEAGE_KEY is the stage secret for keyed lineage handles (D53); the
       // analytics cell refuses to open without one of at least 32 bytes.
       this.cell = new NornCell(this.ctx.storage, org, env, issuer, jwks?.text, this.env.NORN_LINEAGE_KEY, jwks?.at ?? Date.now());
+      // #921: the connections (NORN_SOURCES) and the secrets and storage settings they name stay in the cell.
+      try {
+        this.cell.configureConnect(this.env.NORN_SOURCES ?? "[]", connectVars(this.env));
+      } catch (error) {
+        console.error(`source connections not configured: ${error}`);
+      }
+      // D102: questions are answered on the tenant analytics engine when the Worker has one.
+      if (this.env.NORN_OLAP_URL !== undefined) this.cell.enableAnalytics();
     })().catch((error) => {
       this.opening = null;
       this.openFailure = { error, at: Date.now() };
@@ -89,6 +108,69 @@ export class Cell {
     const url = new URL(request.url);
     return this.cell.fetch(request.method, url.pathname, url.search.slice(1), request.headers.get("authorization") ?? undefined, Date.now(), body);
   }
+  /**
+   * D102: perform one engine call the cell asked for. The engine trusts only
+   * this Worker's token; the cell decided the call and checks the answer.
+   */
+  async engine(call) {
+    try {
+      const response = await fetch(`${this.env.NORN_OLAP_URL}/v1/${call.op}`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${this.env.NORN_SECRET_DUCKDB_TOKEN}`, "content-type": "application/json" },
+        body: call.body,
+        redirect: "manual",
+        signal: AbortSignal.timeout(ENGINE_TIMEOUT_MS),
+      });
+      const text = await response.text();
+      // The cell may answer its caller opaquely; the operator sees why.
+      if (response.status !== 200) console.error(`analytics engine ${call.op} answered ${response.status}: ${text.slice(0, 500)}`);
+      return { status: response.status, body: text };
+    } catch (error) {
+      console.error(`analytics engine call failed: ${error}`);
+      return { status: 503, body: JSON.stringify({ code: "analytics.unavailable", detail: "the analytics engine is unreachable" }) };
+    }
+  }
+  /** The engine's file for a streamed call, or its refusal for the cell to map. */
+  async stream(call) {
+    try {
+      const response = await fetch(`${this.env.NORN_OLAP_URL}/v1/${call.op}`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${this.env.NORN_SECRET_DUCKDB_TOKEN}`, "content-type": "application/json" },
+        body: call.body,
+        redirect: "manual",
+        signal: AbortSignal.timeout(ENGINE_TIMEOUT_MS),
+      });
+      if (response.status !== 200) return { status: response.status, body: await response.text() };
+      const headers = { "content-type": response.headers.get("content-type") ?? "application/octet-stream", "cache-control": "no-store", ...call.stream };
+      return new Response(response.body, { status: 200, headers });
+    } catch (error) {
+      console.error(`analytics engine stream failed: ${error}`);
+      return { status: 503, body: JSON.stringify({ code: "analytics.unavailable", detail: "the analytics engine is unreachable" }) };
+    }
+  }
+  /**
+   * Run the cell's engine calls until it answers; each re-entry is decided afresh.
+   * A call marked `stream` (an export the cell authorized) is answered by
+   * streaming the engine's file to the caller with the cell's headers.
+   */
+  async settle(request, body, reply) {
+    const url = new URL(request.url);
+    for (let step = 0; reply.engine !== undefined && step < ENGINE_STEPS; step++) {
+      const call = JSON.parse(reply.engine);
+      if (call.stream !== undefined) {
+        const streamed = await this.stream(call);
+        if (streamed instanceof Response) return streamed;
+        reply = this.cell.resumeEngine(request.method, url.pathname, url.search.slice(1), request.headers.get("authorization") ?? undefined, Date.now(), body, reply.engine, streamed.status, streamed.body);
+        continue;
+      }
+      const answer = await this.engine(call);
+      reply = this.cell.resumeEngine(request.method, url.pathname, url.search.slice(1), request.headers.get("authorization") ?? undefined, Date.now(), body, reply.engine, answer.status, answer.body);
+    }
+    if (reply.engine !== undefined) {
+      return { status: 503, body: JSON.stringify({ format: "norn/refusal@2", retryable: true, reason: null, code: "analytics.unsettled", category: "host", message: "the analytics engine did not settle", explanation: "retry the request" }) };
+    }
+    return reply;
+  }
   /** Refetch the pinned JWKS and install it. On failure the cached keys keep aging; the cell refuses them past its stale bound. */
   async refreshJwks() {
     try {
@@ -100,28 +182,192 @@ export class Cell {
       return false;
     }
   }
+  /** The cell's own GET, as `principal` asks it now: what a live subscription forwards. */
+  ask(pathname, query, authorization) {
+    return this.cell.fetch("GET", pathname, query, authorization ?? undefined, Date.now(), undefined);
+  }
+  /** Open the cell for a live socket woken from hibernation, refreshing aged keys first. */
+  async ready(scope) {
+    await this.open(scope);
+    if (this.cell.jwksDue(Date.now())) await this.refreshJwks();
+  }
+  async webSocketMessage(ws, message) {
+    const attachment = ws.deserializeAttachment();
+    if (!attachment) return ws.close(1011, "no live state");
+    await this.ready(attachment.scope);
+    await live.message(ws, message, (path, query, authorization) => this.ask(path, query, authorization));
+  }
+  async webSocketClose(ws, code) {
+    try {
+      ws.close(code === 1005 ? 1000 : code, "closed");
+    } catch {
+      // Already closed.
+    }
+  }
+  /** After a commit, every live subscription on this object is answered again. */
+  publish() {
+    if (this.ctx.getWebSockets().length === 0) return;
+    live.publish(this.ctx, (path, query, authorization) => this.ask(path, query, authorization)).catch((error) => console.error(`live publish failed: ${error}`));
+  }
   async fetch(request) {
+    const url = new URL(request.url);
+    if (url.pathname === "/v1/subscribe") {
+      if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
+        return Response.json({ format: "norn/refusal@2", retryable: false, reason: null, code: "live.upgrade_required", category: "invalid", message: "live reads are a WebSocket", explanation: `open a WebSocket with the ${live.PROTOCOL} protocol` }, { status: 426 });
+      }
+      const authorization = request.headers.get("authorization");
+      if (authorization === null) {
+        return Response.json({ format: "norn/refusal@2", retryable: false, reason: null, code: "authn.required", category: "permission", message: "sign in first", explanation: "a live socket carries the caller's token" }, { status: 401 });
+      }
+      const scope = Cell.scopeOf(request);
+      await this.ready(scope);
+      return live.accept(this.ctx, scope, authorization, request.headers.get("sec-websocket-protocol") ?? "");
+    }
     // A submission (an ad-hoc question, a definition, a provisioning set) is read once, bounded, before the cell sees it.
-    const limit = new URL(request.url).pathname === PROVISION_PATH ? MAX_PROVISION_BODY : MAX_BODY;
+    const limit = url.pathname === PROVISION_PATH || DEFINITIONS_PATHS.has(url.pathname) ? MAX_PROVISION_BODY : MAX_BODY;
     const body = request.method === "POST" ? await readBounded(request, limit) : undefined;
     if (body === null) {
       return Response.json({ format: "norn/refusal@2", retryable: false, reason: null, code: "request.too_large", category: "limit", message: "the request body is too large", explanation: `submissions are at most ${limit} bytes` }, { status: 413 });
     }
-    await this.open(request);
+    await this.open(Cell.scopeOf(request));
     // Keys at their maximum age are refetched before serving, whether or not any
     // token names an unknown key id, so a removed key stops verifying.
     if (this.cell.jwksDue(Date.now())) await this.refreshJwks();
     let reply = this.serve(request, body);
     // An unknown key id, at most once per retry interval: refetch the pinned JWKS and retry once.
     if (reply.refreshJwks && (await this.refreshJwks())) reply = this.serve(request, body);
-    // The operator sees why a cell serves no action; a caller only ever sees the opaque denial.
+    // A continuation (an upload's object read): fetch exactly what the cell planned, hand it back.
+    while (reply.thenToken) {
+      const { status, bytes } = await perform(JSON.parse(reply.thenRequest));
+      reply = this.cell.resume(reply.thenToken, status, bytes, Date.now());
+    }
+    if (reply.startSync) this.keep(this.runSync(reply.startSync));
+    // SYNC-ONE-1: the due-check and its claim are one synchronous cell call, so two requests never start one connection twice.
+    const due = this.cell.syncDue(Date.now());
+    if (due) this.keep(this.runSync(due));
+    // The operator sees why a cell does not open or serves no action; a caller only ever sees a refusal.
     const policyError = reply.policyError ?? null;
     if (policyError !== this.policyError) {
-      if (policyError !== null) console.error(`action policy not installed: ${policyError}`);
+      if (policyError !== null) console.error(`cell needs an operator: ${policyError}`);
       this.policyError = policyError;
     }
+    reply = await this.settle(request, body, reply);
+    if (reply instanceof Response) return reply;
+    // After a commit, every live subscription on this object is answered again.
+    if (request.method !== "GET" && reply.status < 400) this.publish();
     return new Response(reply.body, { status: reply.status, headers: { "content-type": "application/json" } });
   }
+  /** Run one claimed sync to its end: every step is the cell's, every fetch its plan. */
+  async runSync(id) {
+    // The runtime's clock stands still inside a synchronous call, so each step
+    // is timed across a timer turn: cellMs is the cell's own work (mapping and
+    // the commit's statements); fetchMs is each request, including any wait for
+    // the previous step's writes to become durable before the request may leave.
+    const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+    const started = Date.now();
+    let cellMs = 0;
+    let fetchMs = 0;
+    let maxCellMs = 0;
+    let maxFetchMs = 0;
+    let fetches = 0;
+    let steps = 0;
+    // SYNC-YIELD-2: keep each step near the step budget by pacing its rows from the last step's time per row.
+    const budgetMs = stepBudgetMs(this.env);
+    let rows = FIRST_STEP_ROWS;
+    // The slowest steps, by kind: begin (the first), page (it mapped rows), fetch (it took a response, mapped none), end (it finished).
+    const slow = [];
+    const timed = async (response) => {
+      const before = Date.now();
+      const next = JSON.parse(this.cell.syncStep(id, response?.status, response?.bytes, before, rows));
+      // SYNC-YIELD-1: the timer turn also lets requests waiting on this cell run between pages.
+      await tick();
+      const spent = Date.now() - before;
+      cellMs += spent;
+      maxCellMs = Math.max(maxCellMs, spent);
+      steps += 1;
+      const kind = steps === 1 ? "begin" : next.done ? "end" : next.mapped > 0 ? "page" : "fetch";
+      slow.push({ kind, ms: spent, mapped: next.mapped ?? 0 });
+      slow.sort((a, b) => b.ms - a.ms);
+      slow.length = Math.min(slow.length, 3);
+      if (next.mapped > 0) rows = Math.max(1, Math.min(MAX_STEP_ROWS, Math.floor((budgetMs * next.mapped) / Math.max(1, spent))));
+      return next;
+    };
+    let step = await timed(undefined);
+    while (step.request || step.continue) {
+      if (step.continue) {
+        step = await timed(undefined);
+        continue;
+      }
+      const sent = Date.now();
+      const response = await perform(step.request);
+      const spent = Date.now() - sent;
+      fetchMs += spent;
+      maxFetchMs = Math.max(maxFetchMs, spent);
+      fetches += 1;
+      step = await timed(response);
+    }
+    // Counts and times only: what a run cost, never what it read or carried.
+    const done = step.done ?? {};
+    const wallMs = Date.now() - started;
+    console.log(JSON.stringify({ sync: id, outcome: done.outcome, rowsRead: done.rowsRead, rowsLanded: done.rowsLanded, rowsQuarantined: done.rowsQuarantined, steps, fetches, wallMs, cellMs, fetchMs, maxCellMs, maxFetchMs, slow }));
+    // A sync commits as it goes; live subscriptions are answered again once it ends.
+    if ((done.rowsLanded ?? 0) > 0) this.publish();
+  }
+  /** Keep background work alive past the reply where the runtime offers it. */
+  keep(promise) {
+    const guarded = promise.catch((error) => console.error(`source sync failed: ${error}`));
+    if (typeof this.ctx.waitUntil === "function") this.ctx.waitUntil(guarded);
+  }
+}
+
+// SYNC-YIELD-2: a sync step aims to hold the cell about this long (NORN_SYNC_STEP_MS, 250 ms to 30 s); rows per step follow from the last step's time per row.
+const STEP_BUDGET_MS = 1500;
+/** The server's step budget: a longer step pays a page commit's fixed cost over more rows, a shorter one keeps the cell responsive. */
+function stepBudgetMs(env) {
+  const configured = Number(env.NORN_SYNC_STEP_MS);
+  return Number.isFinite(configured) && configured > 0 ? Math.min(30_000, Math.max(250, configured)) : STEP_BUDGET_MS;
+}
+const FIRST_STEP_ROWS = 8;
+const MAX_STEP_ROWS = 500;
+// A source page or an uploaded object, read once and bounded (bytes).
+const MAX_SOURCE_BODY = 20 * 1024 * 1024;
+// One outbound source or storage request may take this long.
+const SOURCE_FETCH_TIMEOUT_MS = 30_000;
+
+/** The server variables the cell's connections and uploads read, by name: secrets and storage settings only. Never logged. */
+function connectVars(env) {
+  return JSON.stringify(Object.fromEntries(Object.entries(env).filter(([name, value]) => typeof value === "string" && (name.startsWith("NORN_SECRET_") || name.startsWith("NORN_S3_")))));
+}
+
+/** Perform exactly the request the cell planned; the status and bytes go back to the cell, unread here. */
+async function perform(request) {
+  try {
+    const response = await fetch(request.url, { method: request.method, headers: request.headers, body: request.body ?? undefined, redirect: "manual", signal: AbortSignal.timeout(SOURCE_FETCH_TIMEOUT_MS) });
+    const bytes = await readBoundedBytes(response, MAX_SOURCE_BODY);
+    return bytes === null ? { status: 413, bytes: new Uint8Array() } : { status: response.status, bytes };
+  } catch {
+    // A network failure is a refused read: status 0, no body.
+    return { status: 0, bytes: new Uint8Array() };
+  }
+}
+
+/** A response body as bytes, counted as they arrive; null once it passes `limit` (the stream is cancelled). */
+async function readBoundedBytes(response, limit) {
+  const reader = response.body?.getReader();
+  if (reader === undefined) return new Uint8Array();
+  const chunks = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > limit) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  return new Uint8Array(await new Blob(chunks).arrayBuffer());
 }
 
 /** Read a request body as text, counting bytes as they arrive; null once it passes `limit` (the stream is cancelled, never buffered whole). */
@@ -168,6 +414,8 @@ export default {
     const forwarded = new Request(request);
     forwarded.headers.set(CELL_HEADER, JSON.stringify(cell));
     const response = await env.CELLS.get(env.CELLS.idFromName(key(cell))).fetch(forwarded);
+    // A live socket passes through untouched.
+    if (response.status === 101) return response;
     const out = new Response(response.body, response);
     for (const [name, value] of Object.entries(headers)) out.headers.set(name, value);
     return out;

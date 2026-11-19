@@ -1,0 +1,51 @@
+{
+  "artifactId": "lab.batch.mass_conserved.law",
+  "dependencies": [
+    {
+      "artifactId": "lab.Batch.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "A batch loses no mass: input equals output plus recorded loss.",
+  "namespace": "lab",
+  "payload": {
+    "condition": "true",
+    "id": "lab.batch.mass_conserved",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "lab",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "fixtures/packs/batches/batches.ts"
+    },
+    "rationale": "Mass is neither created nor destroyed by a batch; any difference is recorded as loss.",
+    "response": {
+      "expression": "self.input_g == self.output_g + self.loss_g",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "lab.Batch"
+      ],
+      "root": {
+        "id": "lab.Batch",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "lab.Batch"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "fixtures/packs/batches/artifacts/lab.batch.mass_conserved.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

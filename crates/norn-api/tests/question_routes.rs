@@ -328,6 +328,7 @@ fn trace_query(lineage: &str) -> TraceQuery {
         environment_id: Some("dev".into()),
         lineage_ref: Some(lineage.into()),
         bucket: Some(WEEK.into()),
+        ..TraceQuery::default()
     }
 }
 
@@ -518,6 +519,18 @@ fn asof_uses_authenticated_cutoff_and_preserves_the_old_answer_after_correction(
             .expect_err("cutoff must match");
         assert_eq!((denied.status, denied.code.as_str()), (422, code));
     }
+}
+
+#[test]
+fn a_moved_answer_is_a_retryable_conflict_saying_so() {
+    let refusal = Refusal::from_compute(norn_cell::CellError::ComputeRefused(
+        "core.projection.answer_moved",
+    ));
+    assert_eq!(
+        (refusal.status, refusal.code.as_str(), refusal.retryable),
+        (409, "core.projection.answer_moved", true)
+    );
+    assert_eq!(refusal.message, "the data changed since this answer");
 }
 
 #[test]
@@ -1630,5 +1643,224 @@ fn a_historical_answer_withholds_its_quarantine_finding_ids_from_a_reader_withou
     assert_eq!(
         historical("auditor").result.exclusions,
         BTreeMap::from([("SYN-MELT-15-1".to_owned(), finding)])
+    );
+}
+
+/// Every registry pack, derived as a cell would: no listed metric names an
+/// internal encoding (a semantic model's `norn_path_…` field or an encoded
+/// object name). A linked time is its definition's path: the property and the
+/// links to it (METRIC-GRAIN-LINK-1).
+#[test]
+fn no_listed_metric_names_an_internal_encoding_in_any_pack() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let read = |dir: &str| -> Vec<norn_ir::ArtifactEnvelope> {
+        let mut paths: Vec<_> = std::fs::read_dir(root.join(dir))
+            .expect("artifacts")
+            .map(|entry| entry.expect("entry").path())
+            .collect();
+        paths.sort();
+        paths
+            .iter()
+            .map(|path| {
+                serde_json::from_str(&std::fs::read_to_string(path).expect("artifact"))
+                    .expect("envelope")
+            })
+            .collect()
+    };
+    // Every pack at once over the core base packs implement, as the registry's
+    // admission test checks them (registry standards such as iso4217 are not installed).
+    let mut set: Vec<norn_ir::ArtifactEnvelope> = [
+        "core.Agent.interface",
+        "core.AgentRole.interface",
+        "core.Resource.interface",
+        "core.Commitment.interface",
+        "core.Hold.interface",
+        "core.EconomicEvent.interface",
+        "core.LedgerEffect.interface",
+        "core.Claim.interface",
+        "norn.SourceEvidence.interface",
+        "norn.SourceDocument.interface",
+        "core.value_types.entity",
+        "std.value_types.entity",
+        "core.units",
+    ]
+    .iter()
+    .map(|name| {
+        let path = root.join(format!("registry/core/artifacts/{name}.json"));
+        serde_json::from_str(&std::fs::read_to_string(path).expect("core artifact"))
+            .expect("envelope")
+    })
+    .collect();
+    let mut packs: Vec<_> = std::fs::read_dir(root.join("registry/packs"))
+        .expect("packs")
+        .map(|entry| entry.expect("entry").path())
+        .filter(|path| path.join("artifacts").is_dir())
+        .collect();
+    packs.sort();
+    for pack in &packs {
+        let name = pack
+            .file_name()
+            .expect("name")
+            .to_string_lossy()
+            .into_owned();
+        set.extend(read(&format!("registry/packs/{name}/artifacts")));
+    }
+    let space = norn_checker::metric::derive::derive_metric_space(
+        &set,
+        &std::collections::BTreeSet::new(),
+        &norn_ir::LawRoot::Entity("canon.Holding".to_owned()),
+    )
+    .unwrap_or_else(|findings| panic!("the registry packs derive: {findings:#?}"));
+    let mut linked = 0;
+    for candidate in space.candidates() {
+        let summary = norn_api::question_routes::metric_summary(&candidate.definition, Vec::new());
+        let mut shown = summary.unit_partition.clone();
+        shown.extend(summary.time_links.iter().cloned());
+        shown.extend(
+            [
+                &summary.time_property,
+                &summary.expression,
+                &summary.object_type,
+            ]
+            .into_iter()
+            .flatten()
+            .cloned(),
+        );
+        shown.push(summary.label.clone());
+        for text in &shown {
+            assert!(
+                !text.contains("norn_path_") && !text.contains("analysis.object_"),
+                "{} shows {text}",
+                candidate.definition.name
+            );
+        }
+        if !summary.time_links.is_empty() {
+            linked += 1;
+            assert_eq!(summary.time_property.as_deref(), Some("occurred_at"));
+        }
+    }
+    // The posting and settlement sums of the three systems take their event's time.
+    assert!(linked > 0);
+}
+
+/// PRIVACY-4 at answer time. `metal` declares no marking, so admission admits
+/// the question that filters by it; but a source classified the conversions'
+/// `metal` at runtime (`pii.contact`), so its values carry that label. The
+/// answer and its trace refuse with `question.validation.marked_field` before
+/// any value is read; the same question on a cell whose values carry no label
+/// is answered.
+#[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one labeled and one unlabeled cell, each built in full"
+)]
+fn a_question_on_a_field_whose_values_carry_a_runtime_label_is_refused_at_answer_time() {
+    let labeled = |labels: bool| {
+        let (mut store, plan, mut context) = fixture();
+        context.scope = physical().key();
+        let model = store.model().clone();
+        let artifacts = serde_json::json!([
+            {"irVersion":"0.1","artifactId":"demo.Conversion.entity","kind":"entity","namespace":"demo","name":"Conversion","version":"0.1.0","lifecycle":"draft","scope":{"orgId":"org_demo","environmentId":"dev"},"dependencies":[],"provenance":{"source":"authoring_sdk"},"payload":{"entityVersion":"2.0","objectType":object_type()}},
+            {"irVersion":"0.1","artifactId":"demo.markings.entity","kind":"entity","namespace":"demo","name":"Markings","version":"0.1.0","lifecycle":"draft","scope":{"orgId":"org_demo","environmentId":"dev"},"dependencies":[],"provenance":{"source":"authoring_sdk"},"payload":{"entityVersion":"2.0","markings":[{"id":"pii.contact","label":"Contact","severity":"high","category":"pii.contact","mask":{"kind":"pseudonym","subject":"Conversion"}}]}}
+        ]);
+        store
+            .install_definitions(
+                model,
+                norn_cell::InstalledDefinitionInput {
+                    canonical_set: serde_json::to_string(&artifacts).expect("set"),
+                    registry: vec![],
+                    receipt_sha256: "runtime-labels".into(),
+                    admission_receipt: None,
+                    readmission: None,
+                    diff: serde_json::json!({}),
+                    installed_at: 1,
+                    layout: None,
+                },
+                Some(0),
+                &context.scope,
+            )
+            .expect("definitions with a marking catalog");
+        let writes = fixture_writes();
+        let keys: Vec<String> = writes
+            .iter()
+            .filter_map(|write| {
+                if let FactWriteRow::Put { key, .. } = write {
+                    Some(key.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let events = if labels {
+            vec![
+                norn_ir::RuntimeValue::from_json(serde_json::json!({
+                    "type": "observation.recorded",
+                    "mapped": keys.iter().map(|key| serde_json::json!({
+                        "objectType": TYPE,
+                        "key": key,
+                        "propertyProvenance": {"metal": {"markings": ["pii.contact"]}}
+                    })).collect::<Vec<_>>()
+                }))
+                .expect("event"),
+            ]
+        } else {
+            vec![]
+        };
+        store
+            .commit(&CommitBatch {
+                world: WORLD.into(),
+                scope: context.scope.clone(),
+                logical_time: CLOCK,
+                writes,
+                events,
+                ..CommitBatch::default()
+            })
+            .expect("K1");
+        let host = DevHost::from_store(store, physical(), |_| BTreeMap::new())
+            .expect("host")
+            .with_authorizer(Policy);
+        let runtime = Runtime {
+            bad_row: false,
+            plan,
+            context,
+            cutoff: None,
+            cutoff_receipt: None,
+            resolved: Arc::new(AtomicUsize::new(0)),
+            min_disclosed: norn_api::question_routes::DEFAULT_MIN_DISCLOSED_BUCKET,
+        };
+        (host, runtime)
+    };
+
+    let (host, runtime) = labeled(true);
+    let refused = get_answer(&host, &scope(), Some("reader"), QUESTION, &runtime)
+        .expect_err("a labeled filter field is refused");
+    assert_eq!(refused.status, 422, "{refused:?}");
+    assert!(
+        refused
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "question.validation.marked_field"),
+        "{refused:?}"
+    );
+    let traced = get_numeric_trace(
+        &host,
+        &trace_query("any"),
+        Some("reader"),
+        QUESTION,
+        &runtime,
+    )
+    .expect_err("its trace is refused too");
+    assert!(
+        traced
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "question.validation.marked_field"),
+        "{traced:?}"
+    );
+
+    let (host, runtime) = labeled(false);
+    assert!(
+        get_answer(&host, &scope(), Some("reader"), QUESTION, &runtime).is_ok(),
+        "an unlabeled field answers"
     );
 }

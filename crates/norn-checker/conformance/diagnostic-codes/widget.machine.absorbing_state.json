@@ -1,0 +1,7 @@
+{
+  "code": "widget.machine.absorbing_state",
+  "message": "a non-terminal page machine state has no exit: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

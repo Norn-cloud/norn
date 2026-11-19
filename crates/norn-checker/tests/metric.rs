@@ -252,18 +252,42 @@ fn fan_out_is_checked_at_every_hop_in_both_directions() {
     );
 }
 
+/// METRIC-UNIT-PARTITION-1: without a conversion, an amount aggregates per
+/// currency, so a question groups by its currency source or fixes it.
 #[test]
-fn sums_reject_mixed_currencies_without_conversion_and_infer_singletons() {
+fn sums_without_conversion_aggregate_per_currency() {
     let (mut metric, question) = sales();
     metric["x-norn"]["currency"]
         .as_object_mut()
         .expect("currency")
         .remove("conversion");
     assert_code(&check(&metric, &question), codes::MIXED_CURRENCY);
-    metric["x-norn"]["currency"]["property"]["property"] = json!("fx_currency");
-    assert_code(&check(&metric, &question), codes::MIXED_CURRENCY);
-    metric["x-norn"]["currency"]["property"]["property"] = json!("base_currency");
-    assert_code(&check(&metric, &question), codes::CURRENCY_SOURCE_MISMATCH);
+    let currency = json!({"links": ["parent_sales_invoice"], "property": "currency"});
+    let mut grouped = question.clone();
+    grouped["groupBy"]
+        .as_array_mut()
+        .expect("groupBy")
+        .push(json!({"path": currency}));
+    let findings = check(&metric, &grouped);
+    assert!(findings.is_empty(), "{findings:?}");
+    let mut fixed = question.clone();
+    fixed["filter"] = json!([{"path": currency, "operator": "eq", "value": "SAR"}]);
+    let findings = check(&metric, &fixed);
+    assert!(findings.is_empty(), "{findings:?}");
+    fixed["filter"][0]["operator"] = json!("ne");
+    assert_code(&check(&metric, &fixed), codes::MIXED_CURRENCY);
+    // An ISO 4217 code is upper case.
+    fixed["filter"][0] = json!({"path": currency, "operator": "eq", "value": "sar"});
+    assert_code(&check(&metric, &fixed), codes::INVALID_FILTER);
+    // A reaggregation never rolls up across the currency.
+    let mut rolled = grouped.clone();
+    rolled["aggregate"][0]["reaggregate"] =
+        json!({"aggregate": "sum", "across": [currency], "overTime": false});
+    assert_code(&check(&metric, &rolled), codes::MIXED_CURRENCY);
+    for other in ["fx_currency", "base_currency"] {
+        metric["x-norn"]["currency"]["property"]["property"] = json!(other);
+        assert_code(&check(&metric, &question), codes::CURRENCY_SOURCE_MISMATCH);
+    }
 }
 
 #[test]
@@ -683,13 +707,11 @@ fn mandatory_paths_reject_optional_forward_and_unproven_inverse_existence() {
             &catalog(&ontology.to_string()),
         );
         assert_code(&findings, codes::PARTIAL_PATH);
-        for pointer in [
-            "/metrics/0/x-norn/timeDimension",
-            "/metrics/0/x-norn/currency/property",
-        ] {
-            assert!(findings.iter().any(|d| d.code == codes::PARTIAL_PATH
-                && d.span.as_ref().expect("span").pointer == pointer));
-        }
+        assert!(findings.iter().any(|d| d.code == codes::PARTIAL_PATH
+            && d.span.as_ref().expect("span").pointer == "/metrics/0/x-norn/currency/property"));
+        // METRIC-GRAIN-LINK-1: a partial time path is admitted; rows it misses are skipped and counted.
+        assert!(!findings.iter().any(|d| d.code == codes::PARTIAL_PATH
+            && d.span.as_ref().expect("span").pointer == "/metrics/0/x-norn/timeDimension"));
         // A non-null terminal rate cannot repair a missing FX link.
         ontology[1]["payload"]["objectType"]["properties"]
             .as_array_mut()
@@ -716,12 +738,13 @@ fn mandatory_paths_reject_optional_forward_and_unproven_inverse_existence() {
 }
 
 #[test]
-fn monetary_type_derives_currency_and_rejects_omission_and_rebinding() {
+fn monetary_type_infers_its_currency_and_rejects_rebinding() {
     let (mut metric, question) = sales();
     metric["x-norn"]
         .as_object_mut()
         .expect("extension")
         .remove("currency");
+    // Omitted, the binding is the type's own source, summed per currency.
     assert_code(&check(&metric, &question), codes::MIXED_CURRENCY);
     let (mut metric, _) = sales();
     metric["x-norn"]["currency"] =
@@ -866,7 +889,11 @@ fn shared_and_inherited_monetary_types_keep_the_authoritative_currency_source() 
         .expect("extension")
         .remove("currency");
     assert_code(
-        &check_metrics_and_questions(&[decode::<MetricDefinition>(&metric)], &[], &cat),
+        &check_metrics_and_questions(
+            &[decode::<MetricDefinition>(&metric)],
+            &[decode::<QuestionIR>(&question)],
+            &cat,
+        ),
         codes::MIXED_CURRENCY,
     );
 }
@@ -940,9 +967,10 @@ fn query_grain_refuses_expansion_implicit_keys_and_unsupported_semantics() {
     );
     let mut symmetric = definitions.clone();
     symmetric[0].norn.safe_aggregation = Some(norn_ir::metric::SafeAggregation::Symmetric);
+    // A traversal grouping is refused by name, at its path.
     assert_code(
         &admit(&symmetric, &expanded, &catalog, 100).expect_err("unqualified traversal"),
-        UNSUPPORTED_ENGINE,
+        codes::LINKED_PATH,
     );
     let mut duplicate = question.clone();
     duplicate.metrics.push(duplicate.metrics[0].clone());
@@ -1128,7 +1156,7 @@ fn query_ordered_predicates_refuse_before_reading_any_population() {
 
 /// METRIC-ADDITIVITY-1: declaration, rather than unit or metric metadata, authorizes aggregation.
 #[test]
-fn invoice_totals_require_their_authoritative_currency() {
+fn invoice_totals_aggregate_per_their_authoritative_currency() {
     let (mut metric, _) = sales();
     metric["type_params"]["expr"] = json!("grand_total");
     metric["type_params"]["metric_aggregation_params"]["semantic_model"] =
@@ -1140,10 +1168,23 @@ fn invoice_totals_require_their_authoritative_currency() {
         .expect("policy")
         .remove("currency");
     let metric: MetricDefinition = decode(&metric);
-    assert_code(
-        &check_metrics_and_questions(&[metric], &[], &catalog(ONTOLOGY)),
-        codes::MIXED_CURRENCY,
-    );
+    let (_, mut question) = sales();
+    question["objectSet"] = json!("erpnext.SalesInvoice");
+    question["groupBy"] = json!([{"path": {"property": "posting_date"}, "grain": "day"}]);
+    let run = |question: &Value| {
+        check_metrics_and_questions(
+            std::slice::from_ref(&metric),
+            &[decode::<QuestionIR>(question)],
+            &catalog(ONTOLOGY),
+        )
+    };
+    assert_code(&run(&question), codes::MIXED_CURRENCY);
+    question["groupBy"]
+        .as_array_mut()
+        .expect("groupBy")
+        .push(json!({"path": {"property": "currency"}}));
+    let findings = run(&question);
+    assert!(findings.is_empty(), "{findings:?}");
 }
 
 #[test]
@@ -1330,5 +1371,156 @@ fn question_locale_identity_refuses_unknown_or_incomplete_wording_and_retains_de
     assert_eq!(
         render_question(&plan, &wording, "en").expect_err("all translations complete"),
         "law.wording.incomplete_locale"
+    );
+}
+
+/// The metric ontology with `erpnext.Customer.customer_name` marked
+/// `pii.contact` and its catalog declared, as a privacy overlay declares it.
+fn marked_catalog() -> EffectiveCatalog {
+    let mut artifacts: Vec<Value> = serde_json::from_str(ONTOLOGY).expect("ontology");
+    let mut catalog = None;
+    for artifact in &mut artifacts {
+        if artifact["payload"]["objectType"]["name"] == "erpnext.Customer" {
+            let properties = artifact["payload"]["objectType"]["properties"]
+                .as_array_mut()
+                .expect("properties");
+            for property in properties {
+                if property["id"] == "customer_name" {
+                    property["markings"] = json!(["pii.contact"]);
+                }
+            }
+            let mut markings = artifact.clone();
+            markings["artifactId"] = json!("erpnext.markings.entity");
+            markings["name"] = json!("Markings");
+            markings["payload"] = json!({
+                "entityVersion": "2.0",
+                "markings": [{
+                    "id": "pii.contact", "label": "Contact", "severity": "high",
+                    "category": "pii.contact",
+                    "mask": { "kind": "pseudonym", "subject": "Customer" }
+                }]
+            });
+            catalog = Some(markings);
+        }
+    }
+    artifacts.push(catalog.expect("the Customer artifact"));
+    catalog_of(&artifacts)
+}
+
+fn catalog_of(artifacts: &[Value]) -> EffectiveCatalog {
+    let artifacts: Vec<ArtifactEnvelope> =
+        serde_json::from_value(Value::Array(artifacts.to_vec())).expect("ontology decodes");
+    let registry = BTreeSet::from([PropertyTypeName("iso4217.currency_code".into())]);
+    EffectiveCatalog::from_artifacts_with_registry(&artifacts, &registry)
+}
+
+/// PRIVACY-4: a question cannot group or filter by a property that carries a
+/// declared marking (its buckets or counts would show the value unmasked); an
+/// unmarked property on the same path still admits.
+#[test]
+fn a_question_cannot_group_or_filter_by_a_marked_field() {
+    let metric: MetricDefinition = decode(&serde_json::from_str::<Value>(SALES).expect("metric"));
+    let base: Value = serde_json::from_str(SALES_QUESTION).expect("question");
+    let catalog = marked_catalog();
+    let admit = |question: &Value| {
+        check_metrics_and_questions(
+            std::slice::from_ref(&metric),
+            &[decode::<QuestionIR>(question)],
+            &catalog,
+        )
+    };
+    assert!(admit(&base).is_empty(), "{:?}", admit(&base));
+
+    let mut grouped = base.clone();
+    grouped["groupBy"][0] = json!({
+        "path": { "links": ["parent_sales_invoice", "customer"], "property": "customer_name" }
+    });
+    let findings = admit(&grouped);
+    assert_code(&findings, codes::MARKED_FIELD);
+    assert!(
+        findings.iter().any(|d| d.code == codes::MARKED_FIELD
+            && d.span
+                .as_ref()
+                .is_some_and(|s| s.pointer == "/questions/0/groupBy/0")),
+        "{findings:?}"
+    );
+
+    let mut filtered = base.clone();
+    filtered["filter"] = json!([{
+        "path": { "links": ["parent_sales_invoice", "customer"], "property": "customer_name" },
+        "operator": "eq",
+        "value": "Ada"
+    }]);
+    let findings = admit(&filtered);
+    assert_code(&findings, codes::MARKED_FIELD);
+    assert_eq!(
+        findings
+            .iter()
+            .filter(|d| d.code == codes::MARKED_FIELD)
+            .count(),
+        1,
+        "one finding, and no repeated path error: {findings:?}"
+    );
+
+    let mut unmarked = base;
+    unmarked["groupBy"][0] = json!({
+        "path": { "links": ["parent_sales_invoice", "customer"], "property": "name" }
+    });
+    assert!(
+        admit(&unmarked)
+            .iter()
+            .all(|d| d.code != codes::MARKED_FIELD),
+        "an unmarked field on the same path is not refused for its marking"
+    );
+}
+
+/// A path across a link is evaluated only as a linked time grouping. Grouping
+/// by a linked type's field (a sales item's customer name) or filtering across
+/// a link is refused by name, at the path, before any evaluation, so no answer
+/// can read another type's values through a question.
+#[test]
+fn a_question_cannot_group_or_filter_across_a_link_except_by_its_linked_time() {
+    use norn_checker::metric::compute::admit;
+    let metric: MetricDefinition = decode(&serde_json::from_str::<Value>(SALES).expect("metric"));
+    let mut base: Value = serde_json::from_str(SALES_QUESTION).expect("question");
+    // The fixture groups by the store across a link; the baseline groups by nothing.
+    base["groupBy"] = json!([]);
+    let catalog = catalog_of(&serde_json::from_str::<Vec<Value>>(ONTOLOGY).expect("ontology"));
+    let findings = |question: &Value| {
+        admit(
+            std::slice::from_ref(&metric),
+            &decode::<QuestionIR>(question),
+            &catalog,
+            10_000,
+        )
+        .err()
+        .unwrap_or_default()
+    };
+    let at = |findings: &[norn_checker::Diagnostic], pointer: &str| {
+        findings.iter().any(|d| {
+            d.code == codes::LINKED_PATH && d.span.as_ref().is_some_and(|s| s.pointer == pointer)
+        })
+    };
+    assert!(
+        findings(&base).iter().all(|d| d.code != codes::LINKED_PATH),
+        "an own-field question is not refused for a link: {:?}",
+        findings(&base)
+    );
+
+    let customer = json!({ "links": ["parent_sales_invoice", "customer"], "property": "name" });
+    let mut grouped = base.clone();
+    grouped["groupBy"] = json!([{ "path": customer }]);
+    assert!(
+        at(&findings(&grouped), "/questions/0/groupBy/0"),
+        "{:?}",
+        findings(&grouped)
+    );
+
+    let mut filtered = base;
+    filtered["filter"] = json!([{ "path": customer, "operator": "eq", "value": "CUST-1" }]);
+    assert!(
+        at(&findings(&filtered), "/questions/0/filter/0"),
+        "{:?}",
+        findings(&filtered)
     );
 }

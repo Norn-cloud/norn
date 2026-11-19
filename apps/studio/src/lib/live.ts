@@ -28,7 +28,8 @@ export interface Contribution {
   /** `null` when the bucket has a restricted record: the receipt hash commits to the values (DATA-VALUES-1, #1175). */
   readonly receiptHash: string | null
   readonly factDigest: string | null
-  readonly source: { readonly status: "resolved" | "restricted" | "unavailable" }
+  /** Where the record came from: its source record when the reader holds Sources, else why not. */
+  readonly source: { readonly status: "resolved"; readonly provenance?: Schemas["NornInstanceSourceProvenance"] } | { readonly status: "restricted" | "unavailable" }
   readonly commitSeq: number
   readonly recordedAtMs: number
   /** The server withheld this record's values from the reader's role. */

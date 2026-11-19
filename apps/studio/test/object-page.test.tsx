@@ -41,7 +41,7 @@ test("a record page names its type and copyable id, and offers every tab", async
   const html = await page("canon.Item", "demo/item/gold")
   expect(html).toContain("Gold scrap")
   expect(html).toContain("Copy demo/item/gold")
-  for (const tab of ["Overview", "Relations", "Lineage", "Guarantees", "Ledger", "Access"]) expect(html).toContain(`>${tab}</button>`)
+  for (const tab of ["Overview", "Lineage", "Guarantees", "Access"]) expect(html).toContain(`>${tab}</button>`)
   expect(html).toContain("No personal data marked")
 })
 
@@ -54,7 +54,9 @@ test("the technical view shows only Norn artefacts: the definition, the mapping 
   const html = await page("canon.Item", "demo/item/gold", "technical")
   expect(html).toContain("Record document")
   expect(html).toContain("Copy erpnext.three.mapping@0.1.0")
-  expect(html).toContain("Copy c57613e24612d622549f16d9707d77be8bc2273d76a1aace235c428290bc4459")
+  // The pin as the recorded source document carries it, so a regenerated fixture moves the test with it (#1347).
+  const pin = (JSON.parse(readFileSync(join(import.meta.dir, "../../../fixtures/demo/explorer/objects/canon.Item/demo~item~gold.source.json"), "utf8")) as { mappingPin: { sha256: string } }).mappingPin.sha256
+  expect(html).toContain(`Copy ${pin}`)
   expect(html).toContain("This page shows a recorded snapshot. Once live reads are available, they will return the access decision and receipt for your account.")
   expect(html).toContain("Viewing as")
   expect(html).not.toContain("no signed-in principal")
@@ -85,8 +87,9 @@ test("the object type's own URL still opens the type, not an empty record", asyn
   expect(html).toContain("Facts recorded")
 })
 
-test("the overview says in one sentence what the record is and what its stored links show, and lists who points at it", async () => {
-  const html = await page("canon.Item", "demo/item/gold")
+test("the overview lists who points at the record; the one-sentence summary of what it is shows in the technical view only", async () => {
+  expect(await page("canon.Item", "demo/item/gold")).not.toContain("Gold scrap is an item record")
+  const html = await page("canon.Item", "demo/item/gold", "technical")
   // main's recorded snapshot stores two holdings of the gold item; the empty case is summaryOf's test below.
   expect(html).toContain("Gold scrap is an item record, read from ERPNext by mapping erpnext.three.mapping. 2 stored links connect it to other records.")
   expect(html).toContain("Holding records (item)")
@@ -112,7 +115,7 @@ test("stored links show on the overview in both directions; a link that is not s
   expect(html).toContain('href="/sources/canon.Holding/demo/holding/vault-2"')
   expect(html).not.toContain("demo/holding/other")
   expect(html).not.toContain("demo/holding/elsewhere")
-  expect(html).toContain("2 stored links connect it to other records.")
+  expect(await page("canon.Item", "demo/item/gold", "technical", links)).toContain("2 stored links connect it to other records.")
 })
 
 test("when the server returned only the first page of links, the summary does not claim the snapshot has none", () => {
@@ -228,7 +231,7 @@ test("LABEL-LOCALE-1: a partially labelled enum shows every declared value, labe
   ] as unknown as Parameters<typeof catalogOf>[0]
   const concept = catalogOf(artifacts, "ar").byName.get("sales.Invoice")!
   for (const technical of [false, true]) {
-    const html = renderToStaticMarkup(<LocaleProvider initial="ar"><FactsTable concept={concept} technical={technical} /></LocaleProvider>)
+    const html = renderToStaticMarkup(<QueryClientProvider client={new QueryClient()}><LocaleProvider initial="ar"><FactsTable concept={concept} technical={technical} /></LocaleProvider></QueryClientProvider>)
     // Every declared value is on the page, in declaration order: nothing is hidden for lack of a label.
     const shown = ["draft", "مُرحّلة", technical ? "on_hold" : "on hold", "ملغاة"]
     const at = shown.map((text) => html.indexOf(text))
@@ -240,7 +243,7 @@ test("LABEL-LOCALE-1: a partially labelled enum shows every declared value, labe
     expect(html).not.toMatch(/lang="en"[^>]*>مُرحّلة/)
   }
   // With no label at all in the reader's language, the type's own description lists every value.
-  const english = renderToStaticMarkup(<FactsTable concept={catalogOf(artifacts, "en").byName.get("sales.Invoice")!} technical={false} />)
+  const english = renderToStaticMarkup(<QueryClientProvider client={new QueryClient()}><FactsTable concept={catalogOf(artifacts, "en").byName.get("sales.Invoice")!} technical={false} /></QueryClientProvider>)
   expect(english).toContain("One of: draft, posted, on hold, void")
 })
 
@@ -252,4 +255,44 @@ test("an English summary under an Arabic title is marked lang=en; an Arabic one 
   expect(arabic.byName.get("canon.Holding")).toMatchObject({ titleLang: "ar", summary: "رصيد مقسَّم حسب المالك والموقع", summaryLang: "ar" })
   expect(arabic.byName.get("core.Agent")).toMatchObject({ titleLang: "ar", summaryLang: "en" })
   expect(catalogOf(document, "en").byName.get("canon.Holding")).toMatchObject({ titleLang: "en", summary: "Owner and location partitioned holding", summaryLang: "en" })
+})
+
+test("a refusal with no detail lists the record's open law finding with the facts it compared, as the finding read them, when the record is held in quarantine", async () => {
+  const { RedactedLawRefusal } = await import("../src/actions/law-refusal.tsx")
+  const artifact = (file: string) => JSON.parse(readFileSync(join(import.meta.dir, "../../../fixtures/packs/scans/artifacts", file), "utf8")) as unknown
+  const client = new QueryClient()
+  client.setQueryData(["catalog"], readDocument(JSON.stringify([artifact("docs.ScannedDocument.entity.json"), JSON.parse(readFileSync(join(import.meta.dir, "../../../registry/packs/canon/artifacts/canon.ItemizedDocument.total_matches_lines.law.json"), "utf8"))]), "live"))
+  const id = "SCAN-INV-1042"
+  client.setQueryData(["findings", "docs.ScannedDocument", id], readDocument(JSON.stringify({ objectType: "docs.ScannedDocument", id, quarantined: true, evidence: [],
+    findings: [{ id: "f-1", ruleRef: { kind: "law", artifactId: "canon.ItemizedDocument.total_matches_lines.law", lawId: "canon.ItemizedDocument.total_matches_lines", version: "0.1" }, severity: "error", message: "total 720 vs lines 72", status: "open", firstSeen: "", lastSeen: "", values: { total: 720, "lines.amount": [30, 40, 2] } }] }), "live"))
+  // Quarantined: the object route serves nothing; the history still carries the stored values.
+  client.setQueryData(["object", "docs.ScannedDocument", id], null)
+  client.setQueryData(["history", "docs.ScannedDocument", id], readDocument(JSON.stringify({ objectType: "docs.ScannedDocument", id, truncated: false,
+    versions: [{ version: 1, commit: 2975, logicalTime: 0, values: { total: 720 }, writer: { kind: "other" } }] }), "live"))
+  const html = renderToStaticMarkup(<QueryClientProvider client={client}><ViewProvider><RedactedLawRefusal objectType="docs.ScannedDocument" id={id} code="core.laws.violated" message="a declared precondition does not hold" technical={false} /></ViewProvider></QueryClientProvider>)
+  expect(html).toContain("Refused by a law. Nothing was written.")
+  expect(html).toContain("Open findings on this record")
+  // The law is the canon concept's, inherited by the scanned document (LAW-INTERFACE-1).
+  expect(html).toContain("total must equal the sum of its lines")
+  expect(html).toMatch(/720\.00/)
+  // The line objects the law summed, as the finding recorded them (LAW-LINK-MANY-1).
+  expect(html).toMatch(/sum of lines/)
+  expect(html).toContain("72.00 (30.00 + 40.00 + 2.00)")
+  expect(html).not.toContain(">—<")
+})
+
+test("a held record's finding shows the values its law compared, a summed list as its exact sum and parts", async () => {
+  const { Findings } = await import("../src/evidence/findings.tsx")
+  const read = (path: string) => JSON.parse(readFileSync(join(import.meta.dir, "../../../registry/packs", path), "utf8")) as unknown
+  const client = new QueryClient()
+  client.setQueryData(["catalog"], readDocument(JSON.stringify([read("../../fixtures/packs/scans/artifacts/docs.ScannedDocument.entity.json"), read("canon/artifacts/canon.ItemizedDocument.total_matches_lines.law.json")]), "live"))
+  const id = "SCAN-INV-1042"
+  client.setQueryData(["findings", "docs.ScannedDocument", id], readDocument(JSON.stringify({ objectType: "docs.ScannedDocument", id, quarantined: true, evidence: [],
+    findings: [{ id: "f-1", ruleRef: { kind: "law", artifactId: "canon.ItemizedDocument.total_matches_lines.law", lawId: "canon.ItemizedDocument.total_matches_lines", version: "0.1" }, severity: "error", message: "m", status: "open", firstSeen: "", lastSeen: "", values: { total: 720, "lines.amount": [30, 40, 2] } }] }), "live"))
+  const html = renderToStaticMarkup(<QueryClientProvider client={client}><Findings objectType="docs.ScannedDocument" id={id} /></QueryClientProvider>)
+  // The total the law read, then what it holds it against: the line objects it summed.
+  expect(html).toContain("720.00")
+  expect(html).toContain("72.00 = 30.00 + 40.00 + 2.00")
+  expect(html).toContain("sum of lines")
+  expect(html.indexOf("720.00")).toBeLessThan(html.indexOf("72.00 ="))
 })

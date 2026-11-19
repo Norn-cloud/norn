@@ -23,14 +23,93 @@ export const PartyRole = Norn.type({
     { id: "counterparty", target: Party, cardinality: { to: "one", from: "many" } },
   ],
 })
+/**
+ * The ISO 4217 codes a canon currency admits: SIX list one (the active codes, published 2026-09-17),
+ * less XTS (testing) and XXX (no currency). Every canon currency enum is this list, and every pack
+ * declares its source currency fields with {@link ISO_4217_CODE_SET}, so a real source's EGP or EUR
+ * maps like USD. The three-systems test holds the two lists and every use equal.
+ */
+export const ISO_4217 = [
+  "AED", "AFN", "ALL", "AMD", "AOA", "ARS", "AUD", "AWG", "AZN", "BAM", "BBD", "BDT", "BHD", "BIF",
+  "BMD", "BND", "BOB", "BOV", "BRL", "BSD", "BTN", "BWP", "BYN", "BZD", "CAD", "CDF", "CHE", "CHF",
+  "CHW", "CLF", "CLP", "CNY", "COP", "COU", "CRC", "CUP", "CVE", "CZK", "DJF", "DKK", "DOP", "DZD",
+  "EGP", "ERN", "ETB", "EUR", "FJD", "FKP", "GBP", "GEL", "GHS", "GIP", "GMD", "GNF", "GTQ", "GYD",
+  "HKD", "HNL", "HTG", "HUF", "IDR", "ILS", "INR", "IQD", "IRR", "ISK", "JMD", "JOD", "JPY", "KES",
+  "KGS", "KHR", "KMF", "KPW", "KRW", "KWD", "KYD", "KZT", "LAK", "LBP", "LKR", "LRD", "LSL", "LYD",
+  "MAD", "MDL", "MGA", "MKD", "MMK", "MNT", "MOP", "MRU", "MUR", "MVR", "MWK", "MXN", "MXV", "MYR",
+  "MZN", "NAD", "NGN", "NIO", "NOK", "NPR", "NZD", "OMR", "PAB", "PEN", "PGK", "PHP", "PKR", "PLN",
+  "PYG", "QAR", "RON", "RSD", "RUB", "RWF", "SAR", "SBD", "SCR", "SDG", "SEK", "SGD", "SHP", "SLE",
+  "SOS", "SRD", "SSP", "STN", "SVC", "SYP", "SZL", "THB", "TJS", "TMT", "TND", "TOP", "TRY", "TTD",
+  "TWD", "TZS", "UAH", "UGX", "USD", "USN", "UYI", "UYU", "UYW", "UZS", "VED", "VES", "VND", "VUV",
+  "WST", "XAD", "XAF", "XAG", "XAU", "XBA", "XBB", "XBC", "XBD", "XCD", "XCG", "XDR", "XOF", "XPD",
+  "XPF", "XPT", "XSU", "XUA", "YER", "ZAR", "ZMW", "ZWG",
+] as const
+/** {@link ISO_4217} as a source code set's values (`codeSets: [{ ..., values: ISO_4217_CODE_SET }]`). */
+export const ISO_4217_CODE_SET = [
+  { value: "AED" }, { value: "AFN" }, { value: "ALL" }, { value: "AMD" }, { value: "AOA" },
+  { value: "ARS" }, { value: "AUD" }, { value: "AWG" }, { value: "AZN" }, { value: "BAM" },
+  { value: "BBD" }, { value: "BDT" }, { value: "BHD" }, { value: "BIF" }, { value: "BMD" },
+  { value: "BND" }, { value: "BOB" }, { value: "BOV" }, { value: "BRL" }, { value: "BSD" },
+  { value: "BTN" }, { value: "BWP" }, { value: "BYN" }, { value: "BZD" }, { value: "CAD" },
+  { value: "CDF" }, { value: "CHE" }, { value: "CHF" }, { value: "CHW" }, { value: "CLF" },
+  { value: "CLP" }, { value: "CNY" }, { value: "COP" }, { value: "COU" }, { value: "CRC" },
+  { value: "CUP" }, { value: "CVE" }, { value: "CZK" }, { value: "DJF" }, { value: "DKK" },
+  { value: "DOP" }, { value: "DZD" }, { value: "EGP" }, { value: "ERN" }, { value: "ETB" },
+  { value: "EUR" }, { value: "FJD" }, { value: "FKP" }, { value: "GBP" }, { value: "GEL" },
+  { value: "GHS" }, { value: "GIP" }, { value: "GMD" }, { value: "GNF" }, { value: "GTQ" },
+  { value: "GYD" }, { value: "HKD" }, { value: "HNL" }, { value: "HTG" }, { value: "HUF" },
+  { value: "IDR" }, { value: "ILS" }, { value: "INR" }, { value: "IQD" }, { value: "IRR" },
+  { value: "ISK" }, { value: "JMD" }, { value: "JOD" }, { value: "JPY" }, { value: "KES" },
+  { value: "KGS" }, { value: "KHR" }, { value: "KMF" }, { value: "KPW" }, { value: "KRW" },
+  { value: "KWD" }, { value: "KYD" }, { value: "KZT" }, { value: "LAK" }, { value: "LBP" },
+  { value: "LKR" }, { value: "LRD" }, { value: "LSL" }, { value: "LYD" }, { value: "MAD" },
+  { value: "MDL" }, { value: "MGA" }, { value: "MKD" }, { value: "MMK" }, { value: "MNT" },
+  { value: "MOP" }, { value: "MRU" }, { value: "MUR" }, { value: "MVR" }, { value: "MWK" },
+  { value: "MXN" }, { value: "MXV" }, { value: "MYR" }, { value: "MZN" }, { value: "NAD" },
+  { value: "NGN" }, { value: "NIO" }, { value: "NOK" }, { value: "NPR" }, { value: "NZD" },
+  { value: "OMR" }, { value: "PAB" }, { value: "PEN" }, { value: "PGK" }, { value: "PHP" },
+  { value: "PKR" }, { value: "PLN" }, { value: "PYG" }, { value: "QAR" }, { value: "RON" },
+  { value: "RSD" }, { value: "RUB" }, { value: "RWF" }, { value: "SAR" }, { value: "SBD" },
+  { value: "SCR" }, { value: "SDG" }, { value: "SEK" }, { value: "SGD" }, { value: "SHP" },
+  { value: "SLE" }, { value: "SOS" }, { value: "SRD" }, { value: "SSP" }, { value: "STN" },
+  { value: "SVC" }, { value: "SYP" }, { value: "SZL" }, { value: "THB" }, { value: "TJS" },
+  { value: "TMT" }, { value: "TND" }, { value: "TOP" }, { value: "TRY" }, { value: "TTD" },
+  { value: "TWD" }, { value: "TZS" }, { value: "UAH" }, { value: "UGX" }, { value: "USD" },
+  { value: "USN" }, { value: "UYI" }, { value: "UYU" }, { value: "UYW" }, { value: "UZS" },
+  { value: "VED" }, { value: "VES" }, { value: "VND" }, { value: "VUV" }, { value: "WST" },
+  { value: "XAD" }, { value: "XAF" }, { value: "XAG" }, { value: "XAU" }, { value: "XBA" },
+  { value: "XBB" }, { value: "XBC" }, { value: "XBD" }, { value: "XCD" }, { value: "XCG" },
+  { value: "XDR" }, { value: "XOF" }, { value: "XPD" }, { value: "XPF" }, { value: "XPT" },
+  { value: "XSU" }, { value: "XUA" }, { value: "YER" }, { value: "ZAR" }, { value: "ZMW" },
+  { value: "ZWG" },
+] as const
+
+// A stock's cost is summed per its ISO 4217 currency (METRIC-UNIT-PARTITION-1); a cost without its
+// currency is refused at the write (the invariant), and a holding with no cost may have neither.
+const StockValuationProperties = Schema.Struct({
+  stock_cost: Schema.NullOr(Norn.decimal(6, { currency: "cost_currency", additivity: { kind: "semi_additive" } })),
+  cost_currency: Schema.NullOr(Schema.Literals(ISO_4217)),
+})
+export const StockValuation = Norn.interfaceType({
+  name: "canon.StockValuation", title: "Valued stock", version: "0.1.0",
+  properties: StockValuationProperties,
+  invariants: [{ id: "cost_has_currency", message: "A stock cost names its currency.",
+    expression: Norn.expression(StockValuationProperties, self => self.stock_cost === null || self.cost_currency !== null),
+  }],
+})
 export const Holding = Norn.type({
-  name: "canon.Holding", title: "Owner and location partitioned holding", version: "0.1.0", implements: [Resource],
+  name: "canon.Holding", title: "Owner and location partitioned holding", version: "0.1.0", implements: [Resource, StockValuation],
   properties: Schema.Struct({
-    resource_code: Norn.ref("core.code"), quantity: Norn.ref("core.quantity"),
+    // A holding is a stock: summable across holdings at one instant, never over time. Every canon
+    // quantity is held in `unit` or, for money, `currency` (METRIC-UNIT-PARTITION-1); a holding's is
+    // also on its `quantity_basis`, since on-hand and available quantities never add (THREE-SYSTEMS).
+    resource_code: Norn.ref("core.code"), quantity: Norn.ref("core.quantity", { additivity: { kind: "semi_additive" }, unitSource: ["unit", "currency", "quantity_basis"] }),
     unit: Schema.NullOr(Norn.ref("ucum.unit_code")), currency: Schema.NullOr(Norn.ref("core.code")),
     valuation_method: Schema.NullOr(Schema.Literals(["fifo", "moving_average"])),
-    location: Schema.String, quantity_basis: Schema.Literals(["on_hand", "available"]), stock_cost: Schema.NullOr(Norn.decimal(6, { currency: "cost_currency" })),
-    cost_currency: Schema.NullOr(Schema.String),
+    // When the source observed this balance (valid time; METRIC-SNAPSHOT-ASOF-1 orders a holding's versions by it).
+    observed_at: Norn.ref("iso8601.timestamp"),
+    location: Schema.String, quantity_basis: Schema.Literals(["on_hand", "available"]), stock_cost: Schema.NullOr(Norn.decimal(6, { currency: "cost_currency", additivity: { kind: "semi_additive" } })),
+    cost_currency: Schema.NullOr(Schema.Literals(ISO_4217)),
   }),
   links: [
     { id: "item", target: Item, cardinality: { to: "one", from: "many", required: true } },
@@ -42,7 +121,8 @@ export const OrderLine = Norn.type({
   name: "canon.OrderLine", title: "Order-line commitment", version: "0.1.0", implements: [Commitment],
   properties: Schema.Struct({
     status: Schema.Literals(["requested", "promised", "fulfilled", "cancelled", "breached"]),
-    due_at: Norn.ref("iso8601.timestamp"), quantity: Norn.ref("core.quantity"),
+    // An ordered quantity is a flow: additive across lines and over due_at.
+    due_at: Norn.ref("iso8601.timestamp"), quantity: Norn.ref("core.quantity", { additivity: { kind: "additive" }, unitSource: ["unit", "currency"] }),
     unit: Schema.NullOr(Norn.ref("ucum.unit_code")), currency: Schema.NullOr(Norn.ref("core.code")),
   }),
   links: [
@@ -55,7 +135,8 @@ export const Delivery = Norn.type({
   name: "canon.Delivery", title: "Delivery observation", version: "0.1.0", implements: [EconomicEvent],
   properties: Schema.Struct({
     action: Schema.Literals(["transfer_ownership", "transfer_custody", "consume", "produce"]),
-    occurred_at: Norn.ref("iso8601.timestamp"), quantity: Norn.ref("core.quantity"),
+    // A delivered quantity is a flow: additive across events and over occurred_at.
+    occurred_at: Norn.ref("iso8601.timestamp"), quantity: Norn.ref("core.quantity", { additivity: { kind: "additive" }, unitSource: ["unit", "currency"] }),
     unit: Schema.NullOr(Norn.ref("ucum.unit_code")), currency: Schema.NullOr(Norn.ref("core.code")),
   }),
   links: [
@@ -66,18 +147,22 @@ export const Delivery = Norn.type({
     { id: "reverses", target: "core.EconomicEvent", cardinality: { to: "one", from: "one" } },
   ],
 })
+// A posting's amount is a flow: additive, its time is its event's (METRIC-GRAIN-LINK-1), and its
+// sums split by `currency`, since core.money_amount binds none (METRIC-UNIT-PARTITION-1).
 export const Posting = Norn.type({
   name: "canon.Posting", title: "Signed ledger observation, not a posting command", version: "0.1.0", implements: [LedgerEffect],
-  properties: Schema.Struct({ account_code: Norn.ref("core.code"), amount: Norn.ref("core.money_amount"), currency: Norn.ref("core.code"), book: Schema.String, account_role: Schema.String }),
+  properties: Schema.Struct({ account_code: Norn.ref("core.code"), amount: Norn.ref("core.money_amount", { additivity: { kind: "additive" }, unitSource: ["currency"] }), currency: Norn.ref("core.code"), book: Schema.String, account_role: Schema.String }),
   links: [{ id: "event", target: Delivery, cardinality: { to: "one", from: "many", required: true } }],
 })
+// A settlement's amount is a flow summed per currency (METRIC-UNIT-PARTITION-1); its currency is
+// an ISO 4217 code, so "usd" is refused at the write instead of splitting a total from "USD".
 export const Settlement = Norn.interfaceType({
   name: "canon.Settlement", title: "Reported settlement evidence", version: "0.1.0",
-  properties: Schema.Struct({ amount: Norn.decimal(6, { currency: "currency" }), currency: Schema.String, kind: Schema.Literals(["payment", "refund"]) }),
+  properties: Schema.Struct({ amount: Norn.decimal(6, { currency: "currency", additivity: { kind: "additive" } }), currency: Schema.Literals(ISO_4217), kind: Schema.Literals(["payment", "refund"]) }),
 })
 export const SettlementObservation = Norn.type({
   name: "canon.SettlementObservation", title: "Settlement observation", version: "0.1.0", implements: [Settlement],
-  properties: Schema.Struct({ amount: Norn.decimal(6, { currency: "currency" }), currency: Schema.String, kind: Schema.Literals(["payment", "refund"]) }),
+  properties: Schema.Struct({ amount: Norn.decimal(6, { currency: "currency", additivity: { kind: "additive" } }), currency: Schema.Literals(ISO_4217), kind: Schema.Literals(["payment", "refund"]) }),
   links: [
     { id: "payer", target: Party, cardinality: { to: "one", from: "many", required: true } },
     { id: "payee", target: Party, cardinality: { to: "one", from: "many", required: true } },
@@ -112,4 +197,47 @@ export const SetValuationPolicy = Norn.action({
   ],
   writes: [{ type: ValuationPolicy, change: "created" }, { type: ValuationPolicy, change: "modified" }],
   effect: { kind: "upsert_input_object", type: ValuationPolicy, objectIdField: "id" },
+})
+
+/**
+ * LAW-LINK-MANY-1 (#611): an itemized document (an invoice, a receipt, an
+ * order) and its lines. The concept owns the relation and the law that ties
+ * them; every type that implements it is bound by that one law, with no copy
+ * per type. The document reaches its lines through `lines`, which each
+ * implementer meets with the inverse role of its line type's link to it, so
+ * the sum is over the line objects in the model, never a field an import
+ * computed.
+ */
+export const ItemizedDocument = Norn.interfaceType({
+  name: "canon.ItemizedDocument", title: "Itemized document", version: "0.1.0",
+  description: "A document that states a total and lists the lines it is the sum of: an invoice, a receipt, an expense report or an order.",
+  properties: Schema.Struct({ currency: Schema.Literals(ISO_4217), total: Norn.decimal(2, { currency: "currency", additivity: { kind: "additive" } }) }),
+  links: [{ id: "lines", target: "canon.LineItem", cardinality: { to: "many", from: "one" } }],
+})
+export const LineItem = Norn.interfaceType({
+  name: "canon.LineItem", title: "Line item", version: "0.1.0",
+  description: "One line of an itemized document: the amount it adds to the document's total.",
+  properties: Schema.Struct({ currency: Schema.Literals(ISO_4217), amount: Norn.decimal(2, { currency: "currency", additivity: { kind: "additive" } }) }),
+  links: [{ id: "document", target: ItemizedDocument, cardinality: { to: "one", from: "many", required: true } }],
+})
+
+/**
+ * The law of the concept: a document that lists lines states their sum as
+ * its total. It is declared once, on `canon.ItemizedDocument`, and governs
+ * every implementer (LAW-INTERFACE-1); a specialization cannot drop or
+ * narrow it, since it is not the specialization's to declare. A document with
+ * no lines is not bound by it. Correcting a line re-checks its document.
+ */
+export const TotalMatchesLines = Norn.law({
+  id: "canon.ItemizedDocument.total_matches_lines.law", title: "An itemized document's total equals the sum of its lines", version: "0.1.0",
+  dependencies: [{ artifactId: "canon.ItemizedDocument.interface", kind: "entity", version: "0.1.0", required: true }],
+  law: {
+    lawVersion: "0.1", id: "canon.ItemizedDocument.total_matches_lines", owner: "canon",
+    severity: "error", rationale: "A document's total must equal the sum of its lines; when they differ, a digit was usually misread or a decimal point dropped.",
+    provenance: { source: "authoring_sdk", sourcePath: "registry/packs/canon/records.ts" },
+    subject: "canon.ItemizedDocument",
+    scope: { root: { kind: "entity", id: "canon.ItemizedDocument" }, objectTypes: ["canon.ItemizedDocument"] },
+    condition: "len(self.lines) > 0",
+    modality: { kind: "always" }, response: { kind: "predicate", expression: "self.total == sum(map(self.lines, #.amount))" },
+  },
 })

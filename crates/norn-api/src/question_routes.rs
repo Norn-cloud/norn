@@ -41,6 +41,12 @@ pub trait QuestionRuntime<E: SqlEngine>: Send + Sync {
     /// # Errors
     /// Unknown or no-longer-admitted declarations refuse.
     fn plan(&self, question: &str) -> Result<QuestionPlan, Refusal>;
+    /// The names [`Self::plan`] resolves, for catalogs that list them (an
+    /// agent's tool schema). Naming a question grants nothing: every answer
+    /// and trace is still authorized. The default lists none.
+    fn question_names(&self) -> Vec<String> {
+        Vec::new()
+    }
     /// Resolve the current frontier under the held definition epoch and cell lock.
     /// # Errors
     /// Unavailable or unauthenticated dependencies refuse rather than being fabricated.
@@ -87,6 +93,37 @@ pub trait QuestionRuntime<E: SqlEngine>: Send + Sync {
     ) -> Result<norn_kernel::authz::AccessRequest, Refusal> {
         Err(read_denied())
     }
+    /// QUERY-ENGINE-1: evaluate an admitted plan's current answer. The default
+    /// is the native exact engine. A host may choose another engine that
+    /// returns the same rows; the result's `engine` names the one that
+    /// answered. Answers at a knowledge cutoff go through
+    /// [`Self::evaluate_known_at`].
+    /// # Errors
+    /// A typed compute refusal, or a host engine failure.
+    fn evaluate(
+        &self,
+        store: &CellStore<E>,
+        plan: &QuestionPlan,
+        context: QueryContext,
+        visible: &mut dyn FnMut(&ObjectRecord) -> Result<bool, CellError>,
+    ) -> Result<QueryResult, CellError> {
+        store.evaluate_question(plan, context, visible)
+    }
+    /// ASOF-KNOWLEDGE-1: evaluate an admitted plan as known at `cutoff`. The
+    /// default is the native exact engine; a host may choose another engine
+    /// that returns the same historical envelope.
+    /// # Errors
+    /// A typed compute refusal, or a host engine failure.
+    fn evaluate_known_at(
+        &self,
+        store: &CellStore<E>,
+        plan: &QuestionPlan,
+        context: QueryContext,
+        cutoff: norn_cell::KnowledgeCutoff,
+        visible: &mut dyn FnMut(&ObjectRecord) -> Result<bool, CellError>,
+    ) -> Result<norn_cell::compute::HistoricalQuestionResult, CellError> {
+        store.evaluate_question_known_at(plan, context, cutoff, visible)
+    }
 }
 
 /// The declared default minimum disclosed bucket size (D53).
@@ -129,6 +166,24 @@ pub struct TraceQuery {
     /// Canonical bucket key from that result.
     #[param(required = true, nullable = false)]
     pub bucket: Option<String>,
+    /// The answer's `knownAsOf`, with `nowMs`: trace the answer as it was
+    /// given, even after the cell has committed since. Without them the
+    /// trace is of the cell's current answer.
+    pub known_as_of: Option<u64>,
+    /// The answer's `nowMs`, with `knownAsOf`.
+    pub now_ms: Option<u64>,
+}
+
+/// The answer's coordinates a trace may name: both, or neither.
+fn answered_at(
+    known_as_of: Option<u64>,
+    now_ms: Option<u64>,
+) -> Result<Option<(u64, u64)>, Refusal> {
+    match (known_as_of, now_ms) {
+        (Some(frontier), Some(now)) => Ok(Some((frontier, now))),
+        (None, None) => Ok(None),
+        _ => Err(Refusal::invalid("knownAsOf and nowMs are given together")),
+    }
 }
 
 /// Evaluate using the native exact engine; analytical freshness labels are preserved.
@@ -174,17 +229,16 @@ fn answer_plan<E: SqlEngine>(
     if snapshot.context.scope != host.scope().key() {
         return Err(read_denied());
     }
+    refuse_labeled_paths(host, cell.store(), plan, &snapshot.context.world)?;
     let permits = |row: &ObjectRecord, grant| allowed(host, runtime, actor, question, row, grant);
     let mut withheld = BTreeSet::new();
-    let visible = |row: &ObjectRecord| visible_recording(row, &permits, &mut withheld);
+    let mut visible = |row: &ObjectRecord| visible_recording(row, &permits, &mut withheld);
     let mut answer = match snapshot.cutoff {
-        Some(cutoff) => cell
-            .store()
-            .evaluate_question_known_at(plan, snapshot.context, cutoff, visible)
+        Some(cutoff) => runtime
+            .evaluate_known_at(cell.store(), plan, snapshot.context, cutoff, &mut visible)
             .map(QuestionAnswer::Historical),
-        None => cell
-            .store()
-            .evaluate_question(plan, snapshot.context, visible)
+        None => runtime
+            .evaluate(cell.store(), plan, snapshot.context, &mut visible)
             .map(QuestionAnswer::Live),
     }
     .map_err(Refusal::from_compute)?;
@@ -365,7 +419,87 @@ pub fn get_numeric_trace<E: SqlEngine>(
         .bucket
         .as_deref()
         .ok_or_else(|| Refusal::invalid("bucket is required"))?;
-    trace_plan(host, runtime, actor, question, &plan, key, lineage, bucket)
+    let answered = answered_at(query.known_as_of, query.now_ms)?;
+    trace_plan(
+        host, runtime, actor, question, &plan, key, lineage, bucket, answered,
+    )
+}
+
+/// PRIVACY-4 at answer time. Admission refuses a group-by or filter on a
+/// property with a DECLARED marking; a value can also carry a label no
+/// declaration names (a runtime-classified source field, or a computed value
+/// that inherits one). So before any answer or trace, every grouped or
+/// filtered property must have no label on any live row of the answer's
+/// world. A summary the store
+/// cannot prove complete refuses too (fail closed). A cell that declares no
+/// marking has none to find.
+fn refuse_labeled_paths<E: SqlEngine>(
+    host: &DevHost<E>,
+    store: &CellStore<E>,
+    plan: &QuestionPlan,
+    world: &str,
+) -> Result<(), Refusal> {
+    let question = plan.question();
+    if question.dimensions.is_empty() && question.filters.is_empty() {
+        return Ok(());
+    }
+    let reader = store.read();
+    if host.marking_catalog(&reader)?.is_empty() {
+        return Ok(());
+    }
+    let paths = question
+        .dimensions
+        .iter()
+        .enumerate()
+        .map(|(index, dimension)| (format!("/groupBy/{index}"), &dimension.path))
+        .chain(
+            question
+                .filters
+                .iter()
+                .enumerate()
+                .map(|(index, filter)| (format!("/filter/{index}"), &filter.path)),
+        );
+    for (pointer, path) in paths {
+        let property = path.property.as_str();
+        // An own path is read on the grain; a linked one (admitted only for a
+        // linked time) on every type declaring the property: more to check,
+        // never less.
+        let types: Vec<String> = if path.links.is_empty() {
+            vec![plan.grain().as_str().to_owned()]
+        } else {
+            reader
+                .model()
+                .object_types()
+                .map(|definition| definition.name.as_str().to_owned())
+                .filter(|name| {
+                    reader
+                        .model()
+                        .effective_property_types(name)
+                        .is_ok_and(|properties| properties.iter().any(|(id, _)| id == property))
+                })
+                .collect()
+        };
+        for object_type in types {
+            let labels = reader
+                .property_marking_summary(world, &object_type, property)
+                .map_err(Refusal::host)?;
+            if !labels.is_some_and(|labels| labels.is_empty()) {
+                let mut refusal = Refusal::new(
+                    http::StatusCode::UNPROCESSABLE_ENTITY,
+                    "question.refused",
+                    "the question is not admissible",
+                    "each diagnostic names the rule and where in the question it applies",
+                );
+                refusal.diagnostics = vec![crate::refusal::RefusalDiagnostic::error(
+                    norn_checker::metric::codes::MARKED_FIELD,
+                    "this question groups or filters by a field whose values are marked",
+                    format!("/question{pointer}"),
+                )];
+                return Err(refusal);
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Trace one bucket of an admitted `plan`'s current exact result, named by
@@ -380,12 +514,14 @@ fn trace_plan<E: SqlEngine>(
     key: &[u8],
     lineage: &str,
     bucket: &str,
+    answered: Option<(u64, u64)>,
 ) -> Result<NumericTrace, Refusal> {
     let cell = host.cell()?;
-    let snapshot = runtime.snapshot(cell.store(), plan, actor)?;
+    let mut snapshot = runtime.snapshot(cell.store(), plan, actor)?;
     if snapshot.context.scope != host.scope().key() {
         return Err(read_denied());
     }
+    refuse_labeled_paths(host, cell.store(), plan, &snapshot.context.world)?;
     if snapshot.cutoff.is_some() {
         return Err(Refusal::from_compute(CellError::ComputeRefused(
             "core.compute.unsupported_engine",
@@ -393,20 +529,35 @@ fn trace_plan<E: SqlEngine>(
     }
     let permits = |row: &ObjectRecord, grant| allowed(host, runtime, actor, question, row, grant);
     let mut withheld = BTreeSet::new();
-    let mut trace = cell
-        .store()
-        .trace_question_matching(
+    let matches = |internal: &str| lineage_handle_matches(key, internal, lineage);
+    let disclosure = LineageDisclosure {
+        values: &mut |row| permits(row, Values),
+        source: &mut |row| permits(row, Sources),
+    };
+    let mut trace = match answered {
+        // The answer as it was given: recomputed from its commit, at its clock.
+        Some((frontier, now)) => {
+            snapshot.context.now_ms = now;
+            cell.store().trace_question_answered_matching(
+                plan,
+                snapshot.context,
+                frontier,
+                &matches,
+                bucket,
+                |row| visible_recording(row, &permits, &mut withheld),
+                disclosure,
+            )
+        }
+        None => cell.store().trace_question_matching(
             plan,
             snapshot.context,
-            &|internal| lineage_handle_matches(key, internal, lineage),
+            &matches,
             bucket,
             |row| visible_recording(row, &permits, &mut withheld),
-            LineageDisclosure {
-                values: &mut |row| permits(row, Values),
-                source: &mut |row| permits(row, Sources),
-            },
-        )
-        .map_err(Refusal::from_compute)?;
+            disclosure,
+        ),
+    }
+    .map_err(Refusal::from_compute)?;
     let world = withheld.is_empty() && world_values(host, runtime, cell.store(), actor);
     withhold_ledger_head(&mut trace.result, key, world);
     withhold_exclusions(&mut trace.result, key, world);
@@ -487,6 +638,35 @@ pub trait AdHocQuestions<E: SqlEngine>: QuestionRuntime<E> {
     /// Output buckets per answer. Above it the answer refuses
     /// `question.bucket_bound_exceeded` (413); never a truncated answer.
     fn max_buckets(&self) -> usize;
+    /// Admit `question`, already authorized, against this runtime's metrics
+    /// with at most `max_rows` rows read. A runtime whose metrics come from a
+    /// derived metric space admits through that space, so its rules (such as
+    /// grouping by a unit source the question leaves free) apply to every
+    /// question; one over declared metrics only uses [`admit_declared`]. It
+    /// has no default, so a wrapper (such as the engine's) forwards it.
+    /// # Errors
+    /// The checker's findings, with pointers into the question.
+    fn admit(
+        &self,
+        question: &QuestionIR,
+        max_rows: u32,
+    ) -> Result<QuestionPlan, Vec<norn_checker::Diagnostic>>;
+    /// The property paths a question over `metric` must group by or fix
+    /// with an `eq` filter (its unit sources, such as `unit` and `currency`),
+    /// dotted from the measured object. No default, for the same reason.
+    fn unit_partition(&self, metric: &str) -> Vec<String>;
+}
+
+/// The checker's [`admit`] over a runtime's declared metrics and catalog: the
+/// admission of a runtime with no derived metric space.
+/// # Errors
+/// The checker's findings, with pointers into the question.
+pub fn admit_declared<E: SqlEngine>(
+    runtime: &dyn AdHocQuestions<E>,
+    question: &QuestionIR,
+    max_rows: u32,
+) -> Result<QuestionPlan, Vec<norn_checker::Diagnostic>> {
+    admit(runtime.definitions(), question, runtime.catalog(), max_rows)
 }
 
 /// `POST /v1/questions:evaluate`: one ad-hoc question to admit and answer.
@@ -510,6 +690,13 @@ pub struct AdHocTraceRequest {
     pub lineage_ref: String,
     /// Canonical bucket key from that answer.
     pub bucket: String,
+    /// The answer's `knownAsOf`, with `nowMs`: trace the answer as it was
+    /// given, even after the cell has committed since.
+    #[serde(default)]
+    pub known_as_of: Option<u64>,
+    /// The answer's `nowMs`, with `knownAsOf`.
+    #[serde(default)]
+    pub now_ms: Option<u64>,
 }
 
 fn evaluate_question_schema() -> utoipa::openapi::schema::Object {
@@ -675,12 +862,7 @@ pub fn check_ad_hoc<E: SqlEngine>(
             },
         )?);
     }
-    let plan = match admit(
-        runtime.definitions(),
-        question,
-        runtime.catalog(),
-        runtime.max_rows(),
-    ) {
+    let plan = match runtime.admit(question, runtime.max_rows()) {
         Ok(plan) => plan,
         // D62: pointers into the one submitted question, each finding once.
         Err(findings) => return Ok(Err(rebased(findings))),
@@ -737,6 +919,7 @@ pub fn trace_ad_hoc<E: SqlEngine>(
     let actor = actor.ok_or_else(read_denied)?;
     let (plan, key) = admit_ad_hoc(host, scope, actor, &request.question, runtime)?;
     let _epoch = collection_epoch(host, scope, runtime, actor, &request.question)?;
+    let answered = answered_at(request.known_as_of, request.now_ms)?;
     trace_plan(
         host,
         runtime,
@@ -746,7 +929,352 @@ pub fn trace_ad_hoc<E: SqlEngine>(
         key,
         &request.lineage_ref,
         &request.bucket,
+        answered,
     )
+}
+
+/// One metric an ad-hoc question may name.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NornMetricSummary {
+    /// The metric's name, as a question's `aggregate` names it.
+    pub name: String,
+    /// Its label.
+    pub label: String,
+    /// `simple`, `ratio`, `cumulative`, `derived` or `conversion`.
+    pub kind: String,
+    /// The concept it aggregates, for a simple metric.
+    #[schema(required = true, nullable = true)]
+    pub object_type: Option<String>,
+    /// The aggregated expression (a property), for a simple metric.
+    #[schema(required = true, nullable = true)]
+    pub expression: Option<String>,
+    /// The time property its buckets use, for a simple metric: a property of
+    /// the measured object, or of the object [`Self::time_links`] reach.
+    #[schema(required = true, nullable = true)]
+    pub time_property: Option<String>,
+    /// The to-one links from the measured object to the object holding
+    /// [`Self::time_property`] (METRIC-GRAIN-LINK-1: a posting's time is its
+    /// event's); empty when the time is the object's own.
+    pub time_links: Vec<String>,
+    /// The numerator metric, for a ratio.
+    #[schema(required = true, nullable = true)]
+    pub numerator: Option<String>,
+    /// The denominator metric, for a ratio.
+    #[schema(required = true, nullable = true)]
+    pub denominator: Option<String>,
+    /// Properties a question over this metric must group by or fix with an
+    /// `eq` filter (`eq null` included): its unit sources, such as `unit` and
+    /// `currency`. Empty when its values share one unit.
+    pub unit_partition: Vec<String>,
+    /// How its values aggregate: `additive` sums over every axis, time
+    /// included; `semi_additive` sums across the others and takes its
+    /// `aggregate` (`first`, `last`, `min` or `max`) along `over` (`time`), as a
+    /// stock's end-of-period value does; `non_additive` is recomputed for each
+    /// bucket.
+    #[schema(schema_with = metric_additivity_schema)]
+    pub additivity: norn_ir::metric::MetricAdditivity,
+}
+
+/// One listed metric, named from its definition: the time is the definition's
+/// own path (a property and the links to it), never the semantic model's
+/// encoded field name.
+#[must_use]
+pub fn metric_summary(
+    definition: &MetricDefinition,
+    unit_partition: Vec<String>,
+) -> NornMetricSummary {
+    let aggregation = definition.type_params.metric_aggregation_params.as_ref();
+    let time = definition.norn.time_dimension.as_ref();
+    NornMetricSummary {
+        name: definition.name.clone(),
+        label: definition.label.clone(),
+        kind: serde_json::to_value(definition.metric_type)
+            .ok()
+            .and_then(|kind| kind.as_str().map(str::to_owned))
+            .unwrap_or_default(),
+        object_type: aggregation.map(|params| params.semantic_model.0.clone()),
+        expression: definition.type_params.expr.clone(),
+        time_property: aggregation.map(|params| {
+            time.map_or_else(
+                || params.agg_time_dimension.clone(),
+                |path| path.property.0.clone(),
+            )
+        }),
+        time_links: time
+            .map(|path| {
+                path.links
+                    .iter()
+                    .map(|link| link.as_str().to_owned())
+                    .collect()
+            })
+            .unwrap_or_default(),
+        numerator: definition.type_params.numerator.clone(),
+        denominator: definition.type_params.denominator.clone(),
+        unit_partition,
+        additivity: definition.norn.additivity.clone(),
+    }
+}
+
+fn metric_additivity_schema() -> utoipa::openapi::Ref {
+    utoipa::openapi::Ref::from_schema_name("NornIrMetricAdditivity")
+}
+
+/// The metrics ad-hoc questions may name, among those the caller may read.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NornMetricList {
+    /// In name order.
+    pub metrics: Vec<NornMetricSummary>,
+}
+
+/// F2b: list the metrics an ad-hoc question may name. A metric is listed
+/// only when the caller may read its concept's population (HOST-READ-1), so
+/// the list never names a concept the caller cannot read.
+/// # Errors
+/// No actor, or a host failure.
+#[utoipa::path(get, path = "/v1/questions:metrics", params(ScopeQuery), responses((status = 200, description = "The metrics ad-hoc questions may name.", body = NornMetricList), (status = 403, description = "The request was refused: scope or authority denied.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
+pub fn list_metrics<E: SqlEngine>(
+    host: &DevHost<E>,
+    scope: &ScopeQuery,
+    actor: Option<&str>,
+    runtime: &dyn AdHocQuestions<E>,
+) -> Result<NornMetricList, Refusal> {
+    let actor = actor.ok_or_else(read_denied)?;
+    let named: &dyn QuestionRuntime<E> = runtime;
+    let readable = |object_type: &str| {
+        mapped(host, named, actor, object_type, Population, None).is_ok_and(|access| {
+            host.read_access(
+                scope,
+                &ReadRequest {
+                    capability: Population,
+                    access: &access,
+                },
+            )
+            .is_ok()
+        })
+    };
+    let mut metrics: Vec<NornMetricSummary> = runtime
+        .definitions()
+        .iter()
+        .map(|definition| metric_summary(definition, runtime.unit_partition(&definition.name)))
+        .collect();
+    // A ratio is listed when both of its operands are.
+    let simple: BTreeSet<String> = metrics
+        .iter()
+        .filter(|metric| metric.object_type.as_deref().is_some_and(&readable))
+        .map(|metric| metric.name.clone())
+        .collect();
+    metrics.retain(|metric| {
+        simple.contains(&metric.name)
+            || (metric.object_type.is_none()
+                && metric
+                    .numerator
+                    .as_ref()
+                    .is_some_and(|name| simple.contains(name))
+                && metric
+                    .denominator
+                    .as_ref()
+                    .is_some_and(|name| simple.contains(name)))
+    });
+    metrics.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(NornMetricList { metrics })
+}
+
+/// One object type an ad-hoc question may range over, with every effective
+/// property and its resolved type (`null` for a registry or unresolved type).
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogObjectType {
+    /// The object type's name: a question's `objectSet`.
+    pub name: String,
+    /// Its effective properties, in declaration order.
+    pub properties: Vec<CatalogProperty>,
+    /// Its one-hop links to object types the caller may read, so a client can
+    /// say what a question cannot group by yet (a question groups across a link
+    /// only by the linked time). A link to a type the caller may not read is
+    /// left out.
+    pub links: Vec<CatalogLink>,
+}
+
+/// One link of a listed object type, to a readable target.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogLink {
+    /// The link role, as a path's `links` names it.
+    pub id: String,
+    /// The object type it reaches.
+    pub target: String,
+}
+
+/// One effective property: its id and its resolved type, as declared.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogProperty {
+    /// The property id: what a group-by or filter path names.
+    pub id: String,
+    /// The resolved type (kind, unit, scale, additivity), or `null`.
+    #[serde(rename = "type")]
+    #[schema(schema_with = property_type_schema)]
+    pub property_type: Option<norn_ir::PropertyType>,
+}
+
+/// `GET /v1/questions:catalog`: what this caller may build an ad-hoc question
+/// from, and what this cell's engine admits. Every metric and object type
+/// listed is one the caller may read the population of (D67): a ratio only
+/// when both its operands are, a type only when it is a readable metric's
+/// population. Nothing listed is a promise: `:evaluate` still admits.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct QuestionCatalog {
+    /// The object types the listed metrics range over.
+    pub object_types: Vec<CatalogObjectType>,
+    /// The listed metrics, as declared, in name order.
+    #[schema(schema_with = metrics_schema)]
+    pub metrics: Vec<MetricDefinition>,
+    /// Calendar grains a group-by may bucket a time property by; a group-by
+    /// without a grain groups by the property's values.
+    #[schema(value_type = Vec<String>)]
+    pub grains: Vec<norn_ir::metric::TimeGrain>,
+    /// Filter operators the engine admits.
+    #[schema(value_type = Vec<String>)]
+    pub operators: Vec<norn_ir::metric::FilterOperator>,
+    /// Most group-bys one question may have.
+    pub max_group_by: usize,
+    /// Most buckets one answer may have (above it, 413).
+    pub max_buckets: usize,
+}
+
+// `schema_with` replaces the field's schema, doc comment included, so each
+// helper restates its field's description.
+fn property_type_schema() -> utoipa::openapi::schema::Object {
+    crate::objects::free_form(
+        "The resolved type (kind, unit, scale, additivity), or null for a registry or unresolved type.",
+        true,
+    )
+}
+
+fn metrics_schema() -> utoipa::openapi::schema::Array {
+    let mut array = utoipa::openapi::schema::Array::new(crate::objects::free_form(
+        "A declared metric definition: MetricFlow fields with Norn policy under `x-norn`.",
+        false,
+    ));
+    array.description = Some("The listed metrics, as declared, in name order.".to_owned());
+    array
+}
+
+/// `GET /v1/questions:catalog`: the metrics, object types and engine bounds
+/// an ad-hoc question is built from, for this caller (D67: only what the
+/// caller may read the population of).
+/// # Errors
+/// No actor or a scope that is not this cell's (one opaque 403), or a host
+/// failure reading the model.
+#[utoipa::path(get, path = "/v1/questions:catalog", params(ScopeQuery), responses((status = 200, description = "The question catalog for this caller.", body = QuestionCatalog), (status = 400, description = "The request was refused as invalid.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
+pub fn question_catalog<E: SqlEngine>(
+    host: &DevHost<E>,
+    scope: &ScopeQuery,
+    actor: Option<&str>,
+    runtime: &dyn AdHocQuestions<E>,
+) -> Result<QuestionCatalog, Refusal> {
+    let actor = actor.ok_or_else(read_denied)?;
+    host.scope()
+        .admit(scope.org_id.as_deref(), scope.environment_id.as_deref())
+        .map_err(|_scope| read_denied())?;
+    let named: &dyn QuestionRuntime<E> = runtime;
+    // Whether `actor` may read `resource`'s population, governed by `over`.
+    let readable = |resource: &str, over: &dyn Fn(&str) -> bool| {
+        mapped(host, named, actor, resource, Population, None).is_ok_and(|access| {
+            over(access.resource.object_type.as_str())
+                && host.read_permitted(&ReadRequest {
+                    capability: Population,
+                    access: &access,
+                })
+        })
+    };
+    let population = |metric: &MetricDefinition| {
+        metric
+            .type_params
+            .metric_aggregation_params
+            .as_ref()
+            .map(|params| params.semantic_model.0.clone())
+    };
+    let definitions = runtime.definitions();
+    let mut simple: BTreeSet<&str> = BTreeSet::new();
+    let mut types: BTreeSet<String> = BTreeSet::new();
+    for metric in definitions {
+        if let Some(over) = population(metric)
+            && readable(&over, &|governed| governed == over)
+            && readable(&metric.name, &|governed| governed == over)
+        {
+            simple.insert(metric.name.as_str());
+            types.insert(over);
+        }
+    }
+    // A ratio is listed only when both its operands are.
+    let operands_listed = |metric: &MetricDefinition| {
+        [
+            &metric.type_params.numerator,
+            &metric.type_params.denominator,
+        ]
+        .into_iter()
+        .all(|operand| operand.as_deref().is_some_and(|name| simple.contains(name)))
+    };
+    let mut metrics: Vec<MetricDefinition> = definitions
+        .iter()
+        .filter(|metric| {
+            simple.contains(metric.name.as_str())
+                || (population(metric).is_none()
+                    && operands_listed(metric)
+                    && readable(&metric.name, &|governed| types.contains(governed)))
+        })
+        .cloned()
+        .collect();
+    metrics.sort_by(|a, b| a.name.cmp(&b.name));
+    let object_types = {
+        let cell = host.cell()?;
+        let reader = cell.store().read();
+        types
+            .into_iter()
+            .filter(|name| reader.model().has_type(name))
+            .map(|name| {
+                let properties = reader
+                    .model()
+                    .effective_property_types(&name)
+                    .map_err(Refusal::host)?
+                    .into_iter()
+                    .map(|(id, property_type)| CatalogProperty { id, property_type })
+                    .collect();
+                let catalog = runtime.catalog();
+                let links = catalog
+                    .links_for_object_type(&name)
+                    .into_iter()
+                    .flatten()
+                    .flat_map(|link| {
+                        catalog
+                            .target_types(link.target.as_str())
+                            .into_iter()
+                            .flatten()
+                            .map(move |target| (link.id.as_str().to_owned(), target))
+                    })
+                    .filter(|(_, target)| readable(target, &|governed| governed == target.as_str()))
+                    .map(|(id, target)| CatalogLink { id, target })
+                    .collect();
+                Ok(CatalogObjectType {
+                    name,
+                    properties,
+                    links,
+                })
+            })
+            .collect::<Result<Vec<_>, Refusal>>()?
+    };
+    Ok(QuestionCatalog {
+        object_types,
+        metrics,
+        grains: norn_checker::metric::compute::GRAINS.to_vec(),
+        operators: norn_checker::metric::compute::OPERATORS.to_vec(),
+        max_group_by: norn_checker::metric::compute::MAX_GROUP_BY,
+        max_buckets: runtime.max_buckets(),
+    })
 }
 
 /// Hold the definition epoch across evaluation, as a named question does.

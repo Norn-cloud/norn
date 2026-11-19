@@ -15,6 +15,7 @@ import type { Json } from "./canonical.ts"
 import type { CheckResult, CheckerAbi } from "./checker-abi.ts"
 import { FLOW_SOURCE_MAP_DRAFT_FORMAT, FLOW_SOURCE_MAP_FORMAT, type FlowSourceMap, type FlowSourceMapDraft, type FlowSourceMapFlow } from "./flow-source-map.ts"
 import { type DefinitionSource, compileDefinitionFiles } from "./compiler/definitions.ts"
+import type { CompiledExample } from "./examples.ts"
 import { compileFile } from "./compiler/index.ts"
 import type { FlowDef } from "./builder/flow.ts"
 import { TOOL_ROOT, loadProfile } from "./profile.ts"
@@ -62,6 +63,8 @@ export type PackResult =
       /** Registry package artifacts, excluding ids authored by this pack. */
       readonly baseArtifacts: ReadonlyArray<Json>
       readonly profile: string
+      /** LAW-EXAMPLE-1 cases of every module; `norn check` runs them. */
+      readonly examples: ReadonlyArray<CompiledExample>
     }
   | { readonly ok: false; readonly failures: ReadonlyArray<PackModuleFailure>; readonly profile: string }
 
@@ -152,6 +155,7 @@ export function compilePack(dir: string, options: PackOptions): PackResult {
   const sources = new Map<string, string>()
   const flows: PackFlow[] = []
   const sourceMap: DefinitionSource[] = []
+  const examples: CompiledExample[] = []
   const warnings: Array<Diagnostic & { readonly file: string }> = []
   const add = (artifact: Json, from: string): void => {
     const id = artifactId(artifact)
@@ -167,6 +171,7 @@ export function compilePack(dir: string, options: PackOptions): PackResult {
     if (!result.ok) { failures.push({ file, diagnostics: result.diagnostics }); return }
     sourceMap.push(...result.sourceMap.map((s) => ({ ...s, at: { ...s.at, file: posix(relative(root, resolve(TOOL_ROOT, s.at.file))) } })))
     warnings.push(...result.warnings.map((warning) => ({ ...warning, file })))
+    examples.push(...result.examples.map((e) => ({ ...e, at: { ...e.at, file: posix(relative(root, resolve(TOOL_ROOT, e.at.file))) } })))
     for (const artifact of result.artifacts) add(artifact, file)
     if (result.flows > 0) {
       // A flow lowers through the syntax compiler to its Run type and decide rule (T7-EFX-2).
@@ -197,7 +202,7 @@ export function compilePack(dir: string, options: PackOptions): PackResult {
   const flowSourceMap = flows.length > 0
     ? { format: FLOW_SOURCE_MAP_DRAFT_FORMAT, flows: flows.map((flow) => flow.flowSourceMap) }
     : undefined
-  return { ok: true, artifacts, sources, sourceMap, warnings, flows, baseArtifacts, profile, ...(flowSourceMap ? { flowSourceMap } : {}) }
+  return { ok: true, artifacts, sources, sourceMap, warnings, flows, baseArtifacts, profile, examples, ...(flowSourceMap ? { flowSourceMap } : {}) }
 }
 
 /** Check a compiled set with the Rust checker (the CheckReceipt hash comes from the checker). */

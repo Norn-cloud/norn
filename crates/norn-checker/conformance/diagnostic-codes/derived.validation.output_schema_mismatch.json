@@ -1,0 +1,7 @@
+{
+  "code": "derived.validation.output_schema_mismatch",
+  "message": "a relational view declares its own output schema; ViewIR v1 infers it",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

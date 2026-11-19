@@ -22,7 +22,7 @@
 import { createHash } from "node:crypto"
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync, watch } from "node:fs"
 import { join, relative, resolve, sep } from "node:path"
-import { compilePack, packModules, type PackResult } from "./pack.ts"
+import { compilePack, packModules, readArtifacts, type PackResult } from "./pack.ts"
 import { ProjectError, readProject, type Project } from "./project.ts"
 
 export interface CompiledEvent {
@@ -85,7 +85,7 @@ function sourceFiles(root: string, manifest: Project): string[] {
       const path = join(dir, entry)
       const kind = lstatSync(path)
       if (kind.isDirectory()) walk(path)
-      else if (kind.isFile() && entry.endsWith(".ts")) files.add(path)
+      else if (kind.isFile() && (entry.endsWith(".ts") || entry.endsWith(".json"))) files.add(path)
     }
   }
   for (const dir of sourceDirs(root, manifest)) walk(dir)
@@ -106,6 +106,21 @@ export function sourceDigest(root: string, manifest: Project): string {
   return hash.digest("hex")
 }
 
+/**
+ * Pre-compiled artifact envelopes (`*.json`) at the top level of each source
+ * directory: generated registry artifacts a project carries as files, for
+ * example the three-systems packs, whose TypeScript compiles only as the
+ * registry release. The same checker admits them with the compiled modules;
+ * nothing here trusts them.
+ */
+export function projectArtifacts(root: string, manifest: Project): unknown[] {
+  const realRoot = realpathSync(root)
+  return sourceDirs(root, manifest).flatMap((dir) => readArtifacts(dir)).map(({ file, artifact }) => {
+    if (!insideProject(realRoot, file)) throw outside(`artifact ${posix(relative(root, file))}`)
+    return artifact
+  })
+}
+
 /** The project compiled as one pack: `norn dev` and `norn explain` both compile through here. */
 export function compileProjectPack(root: string, manifest: Project): PackResult {
   return compilePack(root, { modules: projectModules(root, manifest), scope: { orgId: manifest.scope.orgId, environmentId: manifest.scope.environmentId }, root })
@@ -124,7 +139,7 @@ export function compileProject(root: string, manifest: Project, gen: number): Co
   }
   return {
     event: "compiled", gen, sourceDigest: digest, ok: true,
-    artifacts: [...pack.baseArtifacts, ...pack.artifacts], sourceMap: pack.sourceMap, warnings: pack.warnings,
+    artifacts: [...pack.baseArtifacts, ...projectArtifacts(root, manifest), ...pack.artifacts], sourceMap: pack.sourceMap, warnings: pack.warnings,
   }
 }
 

@@ -3,8 +3,35 @@ import type { ReactNode } from "react"
 import { cn } from "@/lib/utils"
 
 /**
- * A white card with a quiet header row (small muted icon, label, optional
- * action at the end) around an inset well that holds the figure, list or chart.
+ * A page's head: its title, one line on what the page is for, and the page's own actions. Every
+ * page uses it, so titles share one size, weight and rhythm.
+ */
+export function PageHeader({ title, description, actions, meta, lang }: {
+  title: ReactNode
+  description?: ReactNode
+  actions?: ReactNode
+  /** Small facts beside the title: a count, a status, an id. */
+  meta?: ReactNode
+  lang?: string
+}) {
+  return (
+    <header className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3 pb-1">
+      <div className="min-w-0 space-y-1.5">
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <h1 lang={lang} className="min-w-0 text-title font-semibold tracking-tight [overflow-wrap:anywhere]">{title}</h1>
+          {meta && <div className="flex flex-wrap items-center gap-2 text-meta text-muted-foreground">{meta}</div>}
+        </div>
+        {description && <p className="max-w-[68ch] text-pretty text-muted-foreground">{description}</p>}
+      </div>
+      {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
+    </header>
+  )
+}
+
+/**
+ * A flat card (design system v1): one hairline, a quiet header row (small muted icon, label,
+ * optional action at the end) over a hairline divider, then the figure, list or chart. No shadow
+ * and no card inside a card: the page reads as one surface with ruled sections, as in Linear.
  */
 export function Panel({ icon: Icon, label, action, children, className, id }: {
   icon?: LucideIcon
@@ -15,30 +42,38 @@ export function Panel({ icon: Icon, label, action, children, className, id }: {
   id?: string
 }) {
   return (
-    <section id={id} data-slot="panel" className={cn("min-w-0 rounded-lg border bg-card p-1.5", className)}>
-      <header className="flex h-9 items-center gap-2 px-2.5 text-sm">
+    <section id={id} data-slot="panel" className={cn("min-w-0 overflow-hidden rounded-2xl bg-card shadow-[var(--elevation-1)] ring-1 ring-foreground/5",
+      // A panel inside another panel is a section of it, not a card in a card: one hairline above, no frame.
+      "[[data-slot=well]_&]:rounded-none [[data-slot=well]_&]:shadow-none [[data-slot=well]_&]:ring-0 [[data-slot=well]_&]:border-t [[data-slot=well]_&]:border-border [[data-slot=well]_&]:bg-transparent [[data-slot=well]_&>header]:px-0",
+      className)}>
+      <header className="flex min-h-12 flex-wrap items-center gap-x-2 gap-y-0.5 px-5 pt-2 text-sm">
         {Icon && <Icon aria-hidden className="size-4 shrink-0 text-muted-foreground" />}
-        <h2 className="min-w-0 truncate font-medium">{label}</h2>
-        {action && <div className="ms-auto shrink-0 text-meta text-muted-foreground max-sm:hidden">{action}</div>}
+        {/* A title wraps (two lines at most) rather than losing its end; a hint goes to the next line when both don't fit. */}
+        <h2 className="line-clamp-2 min-w-0 flex-1 basis-40 text-panel font-medium tracking-tight [overflow-wrap:anywhere]" title={typeof label === "string" ? label : undefined}>{label}</h2>
+        {/* A hint (text) gives way on a phone; a control (an element) stays. */}
+        {action && <div className={cn("ms-auto shrink-0 text-meta text-muted-foreground", typeof action === "string" && "max-sm:hidden")}>{action}</div>}
       </header>
       {children}
     </section>
   )
 }
 
-/** The inset well inside a panel: a slightly grey fill with its own hairline and smaller radius. */
+/** The body of a panel: flush with the card, so a panel is one surface (no inner frame). */
 export function Well({ children, className }: { children: ReactNode; className?: string }) {
-  return <div data-slot="well" className={cn("rounded-md border bg-surface-subtle", className)}>{children}</div>
+  return <div data-slot="well" className={cn("bg-card px-1.5 pb-1.5", className)}>{children}</div>
 }
 
-/** What a well shows when the server has nothing for it: an icon, "No data yet" and one plain sentence. */
-/** An empty well: an icon, a short title ("No data yet" unless given) and a line saying why. */
-export function EmptyState({ icon: Icon, title = "No data yet", children }: { icon: LucideIcon; title?: ReactNode; children: ReactNode }) {
+/**
+ * An empty well: an icon, a short title ("No data yet" unless given), a line saying why, and the
+ * next step when there is one (load data, connect a source, add the first item).
+ */
+export function EmptyState({ icon: Icon, title = "No data yet", children, next }: { icon: LucideIcon; title?: ReactNode; children: ReactNode; next?: ReactNode }) {
   return (
     <div className="flex flex-col items-center gap-2 px-6 py-10 text-center">
-      <Icon aria-hidden className="size-5 text-muted-foreground" />
+      <span className="flex size-10 items-center justify-center rounded-xl border border-border bg-surface-subtle"><Icon aria-hidden className="size-[1.125rem] text-muted-foreground" /></span>
       <div className="text-sm font-medium">{title}</div>
       <p className="max-w-xs text-meta text-muted-foreground">{children}</p>
+      {next && <div className="flex flex-wrap justify-center gap-2 pt-1">{next}</div>}
     </div>
   )
 }

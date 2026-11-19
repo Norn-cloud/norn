@@ -339,7 +339,8 @@ fn validate_kind_payload(artifact: &ArtifactEnvelope, diagnostics: &mut Vec<Diag
         | ArtifactPayload::Mapping(_)
         | ArtifactPayload::Law(_)
         | ArtifactPayload::DefinedConcept(_)
-        | ArtifactPayload::Labels(_) => {}
+        | ArtifactPayload::Labels(_)
+        | ArtifactPayload::Model(_) => {}
     }
     if matches!(artifact.payload, ArtifactPayload::Law(_)) {
         diagnostics.extend(
@@ -419,6 +420,7 @@ const fn artifact_payload_validation_code(kind: &ArtifactKind) -> &'static str {
         ArtifactKind::Law => crate::verification::codes::INVALID_DOCUMENT,
         ArtifactKind::DefinedConcept => "defined_concept.validation.invalid_payload",
         ArtifactKind::Labels => "labels.validation.invalid_payload",
+        ArtifactKind::Model => "model.validation.invalid_payload",
     }
 }
 
@@ -815,8 +817,21 @@ fn validate_derived_payload(
         }
     }
 
-    // maintenance: required; only "recompute_on_read" is supported; "incremental" is rejected.
-    validate_view_maintenance(payload.get("maintenance"), diagnostics, artifact_id, CODE);
+    // maintenance: required; "recompute_on_read", or "materialized" for a
+    // relational calc (VIEW-MAT-1); "incremental" is rejected.
+    let relational = payload
+        .get("calc")
+        .and_then(|calc| calc.as_object())
+        .and_then(|calc| calc.get("kind"))
+        .and_then(|kind| kind.as_string())
+        .is_some_and(|kind| kind == "relational");
+    validate_view_maintenance(
+        payload.get("maintenance"),
+        relational,
+        diagnostics,
+        artifact_id,
+        CODE,
+    );
 
     // scopeRequired: optional; when present, the same fail-closed scope
     // dimensions as every other kind (T1-IR-2).
@@ -1039,9 +1054,14 @@ fn validate_view_calc(
                             ));
                     }
                 },
+                // ViewIR v1: the strict typed root reports a malformed plan
+                // (`derived.validation.invalid_payload`), and the plan's
+                // operators are typed against the whole artifact set
+                // (`transform::check_transform_set`).
+                Some(JsonValue::String(k)) if k == "relational" => {}
                 _ => {
                     diagnostics.push(kind_invalid(
-                        "payload.calc.kind must be \"field_projection\"",
+                        "payload.calc.kind must be \"field_projection\" or \"relational\"",
                         "payload.calc.kind",
                         artifact_id,
                         code,
@@ -1062,6 +1082,7 @@ fn validate_view_calc(
 
 fn validate_view_maintenance(
     value: Option<&JsonValue>,
+    relational: bool,
     diagnostics: &mut Vec<Diagnostic>,
     artifact_id: Option<&str>,
     code: &str,
@@ -1076,6 +1097,7 @@ fn validate_view_maintenance(
             ));
         }
         Some(JsonValue::String(m)) if m == "recompute_on_read" => {}
+        Some(JsonValue::String(m)) if m == "materialized" && relational => {}
         Some(JsonValue::String(m)) if m == "incremental" => {
             diagnostics.push(Diagnostic {
                 code: "derived.validation.incremental_not_supported".to_string(),
@@ -1090,7 +1112,7 @@ fn validate_view_maintenance(
         }
         _ => {
             diagnostics.push(kind_invalid(
-                "payload.maintenance must be \"recompute_on_read\"",
+                "payload.maintenance must be \"recompute_on_read\", or \"materialized\" for a relational calc",
                 "payload.maintenance",
                 artifact_id,
                 code,
@@ -1842,9 +1864,10 @@ pub(crate) fn validate_closed_schema(
                 type_members,
                 schema,
                 path,
+                depth,
                 diagnostics,
                 artifact_id,
-                code,
+                profile,
             ),
             ClosedSchemaUnions::Nullable => validate_nullable_schema(
                 type_members,
@@ -2071,19 +2094,21 @@ fn validate_nullable_schema(
     );
 }
 
-/// Admit only the two standard JSON Schema type arrays used by generated
-/// `MappingIR` action inputs: the full `RuntimeValue` JSON domain, or a nullable
-/// primitive scalar. A union is a leaf and accepts no sibling keywords.
+/// Admit only the two standard JSON Schema type arrays of ActionIR inputs: the
+/// full `RuntimeValue` JSON domain (generated `MappingIR` inputs), which accepts
+/// no sibling keyword, or a nullable primitive scalar, which is validated as its
+/// non-null scalar leaf and so may carry what that leaf may: a string `enum`, a
+/// decimal `nornType`, and display labels. Null is admitted besides the enum.
 fn validate_action_type_union(
     members: &[JsonValue],
     schema: &BTreeMap<String, JsonValue>,
     path: &str,
+    depth: usize,
     diagnostics: &mut Vec<Diagnostic>,
     artifact_id: Option<&str>,
-    code: &str,
+    profile: ClosedSchemaProfile,
 ) {
-    reject_unknown_object_fields(schema, &["type"], path, diagnostics, artifact_id, code);
-
+    let code = profile.code;
     let names: Option<Vec<&str>> = members.iter().map(JsonValue::as_string).collect();
     let Some(names) = names else {
         diagnostics.push(invalid_diagnostic(
@@ -2098,14 +2123,29 @@ fn validate_action_type_union(
     let json_domain: BTreeSet<&str> = ["null", "boolean", "number", "string", "array", "object"]
         .into_iter()
         .collect();
-    let nullable_scalar = names.len() == 2
-        && unique.len() == 2
-        && unique.contains("null")
-        && unique
-            .iter()
-            .any(|name| matches!(*name, "string" | "integer" | "number" | "boolean"));
-    let json_value = names.len() == json_domain.len() && unique == json_domain;
-    if !nullable_scalar && !json_value {
+    let scalar = (names.len() == 2 && unique.len() == 2 && unique.contains("null"))
+        .then(|| {
+            unique
+                .iter()
+                .copied()
+                .find(|name| matches!(*name, "string" | "integer" | "number" | "boolean"))
+        })
+        .flatten();
+    if let Some(scalar) = scalar {
+        let mut inner = schema.clone();
+        inner.insert("type".to_owned(), JsonValue::String(scalar.to_owned()));
+        validate_closed_schema(
+            Some(&JsonValue::Object(inner)),
+            path,
+            depth,
+            diagnostics,
+            artifact_id,
+            profile,
+        );
+        return;
+    }
+    reject_unknown_object_fields(schema, &["type"], path, diagnostics, artifact_id, code);
+    if !(names.len() == json_domain.len() && unique == json_domain) {
         diagnostics.push(invalid_diagnostic(
             code,
             "ActionIR type array must be a nullable scalar or the complete JSON value domain",
@@ -5699,6 +5739,7 @@ fn artifact_kind_key(kind: &ArtifactKind) -> &'static str {
         ArtifactKind::Law => "law",
         ArtifactKind::DefinedConcept => "defined_concept",
         ArtifactKind::Labels => "labels",
+        ArtifactKind::Model => "model",
     }
 }
 
@@ -6696,6 +6737,51 @@ pub(crate) fn invalid_diagnostic(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// An `ActionIR` input's nullable scalar leaf carries what its scalar leaf
+    /// carries (a string `enum`, a decimal `nornType`, display labels) beside
+    /// null; anything else beside a type array stays refused.
+    #[test]
+    fn nullable_action_input_leaves_carry_their_scalar_keywords() {
+        let check = |leaf: serde_json::Value| {
+            let input = json!({
+                "type": "object", "required": ["value"], "additionalProperties": false,
+                "properties": { "value": leaf },
+            });
+            let tree = norn_ir::json_tree_from_value(input).expect("schema tree");
+            let mut diagnostics = Vec::new();
+            validate_closed_action_schema(
+                Some(&tree),
+                "$.inputSchema",
+                0,
+                true,
+                &mut diagnostics,
+                Some("app.x.action"),
+            );
+            diagnostics
+                .into_iter()
+                .map(|d| d.message)
+                .collect::<Vec<_>>()
+        };
+        for admitted in [
+            json!({ "type": ["string", "null"], "enum": ["pass", "fail"], "title": "Status" }),
+            json!({ "type": ["number", "null"], "nornType": { "kind": "decimal", "scale": 18 } }),
+            json!({ "type": ["integer", "null"], "description": "count" }),
+            json!({ "type": ["string", "null"] }),
+            json!({ "type": ["null", "boolean", "number", "string", "array", "object"] }),
+        ] {
+            assert_eq!(check(admitted.clone()), Vec::<String>::new(), "{admitted}");
+        }
+        for refused in [
+            json!({ "type": ["string", "null"], "minimum": 0 }),
+            json!({ "type": ["number", "null"], "enum": ["a"] }),
+            json!({ "type": ["number", "null"], "nornType": { "kind": "decimal", "scale": 19 } }),
+            json!({ "type": ["null", "boolean", "number", "string", "array", "object"], "title": "x" }),
+            json!({ "type": ["string", "integer"] }),
+        ] {
+            assert!(!check(refused.clone()).is_empty(), "{refused}");
+        }
+    }
 
     fn provenance() -> ArtifactProvenance {
         ArtifactProvenance {

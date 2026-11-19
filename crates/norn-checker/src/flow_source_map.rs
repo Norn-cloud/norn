@@ -453,6 +453,7 @@ fn finding(
     artifact_id: Option<String>,
 ) -> Diagnostic {
     Diagnostic {
+        witness: None,
         code: DiagnosticCode::new(code),
         severity: DiagnosticSeverity::Error,
         message,

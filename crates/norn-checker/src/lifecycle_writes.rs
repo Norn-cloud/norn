@@ -685,6 +685,7 @@ pub(crate) fn finding(
     pointer: &str,
 ) -> Diagnostic {
     Diagnostic {
+        witness: None,
         code: DiagnosticCode::new(code),
         severity: DiagnosticSeverity::Error,
         message,

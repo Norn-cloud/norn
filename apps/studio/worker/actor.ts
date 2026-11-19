@@ -14,7 +14,8 @@ export interface NornActor {
   readonly orgId: string
   /** The membership role in that organization (owner/admin/member/viewer). */
   readonly role: string
-  readonly authMethod: "password" | "magic_link" | "api_key"
+  /** `oauth`: an assistant the person connected, acting on their grant (MCP). */
+  readonly authMethod: "password" | "magic_link" | "api_key" | "oauth"
 }
 
 /** Roles an organization API key may act with; approving roles stay with people. */
@@ -72,7 +73,10 @@ const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"])
  * credential and need no Origin.
  */
 export function originAllowed(request: Request, actor: NornActor, studioOrigins: readonly string[]): boolean {
-  if (actor.actorKind === "service" || SAFE_METHODS.has(request.method)) return true
+  // A WebSocket upgrade is a GET the browser makes cross-site with the cookie and lets the page
+  // read: a live socket (UI-LIVE-1) must come from the Studio origin like any state change.
+  const upgrade = request.headers.get("upgrade")?.toLowerCase() === "websocket"
+  if (actor.actorKind === "service" || (SAFE_METHODS.has(request.method) && !upgrade)) return true
   return studioOrigins.includes(request.headers.get("origin") ?? "")
 }
 
@@ -84,6 +88,14 @@ export function originAllowed(request: Request, actor: NornActor, studioOrigins:
 export async function forwardToHost(request: Request, host: Fetcher, auth: Auth, actor: NornActor, path: string): Promise<Response> {
   const url = new URL(request.url)
   const headers = new Headers({ authorization: `Bearer ${await hostToken(auth, actor)}` })
+  // A live socket (UI-LIVE-1) passes through with its handshake headers; the host answers it.
+  if (request.headers.get("upgrade")?.toLowerCase() === "websocket") {
+    for (const name of ["upgrade", "connection", "sec-websocket-key", "sec-websocket-version", "sec-websocket-protocol"]) {
+      const value = request.headers.get(name)
+      if (value !== null) headers.set(name, value)
+    }
+    return host.fetch(new Request(`https://norn-host${path}${url.search}`, { method: "GET", headers }))
+  }
   for (const name of ["content-type", "accept"]) {
     const value = request.headers.get(name)
     if (value !== null) headers.set(name, value)
@@ -94,10 +106,15 @@ export async function forwardToHost(request: Request, host: Fetcher, auth: Auth,
   // The cell has already authorized this definition read. Add a display-only name
   // without changing its recorded signer or exposing users from other organizations.
   if (request.method !== "GET" || !/^\/v1\/definitions\/[^/:]+$/.test(path) || !response.ok) return response
-  const value: unknown = await response.clone().json().catch(() => null)
-  if (typeof value !== "object" || value === null || Array.isArray(value) || !("signoff" in value)) return response
+  // Read once: a streamed host body cannot be cloned before it is consumed
+  // (the cell runtime refuses), so every outcome below re-serves these bytes.
+  const text = await response.text()
+  const unchanged = () => new Response(text, { status: response.status, statusText: response.statusText, headers: response.headers })
+  let value: unknown = null
+  try { value = JSON.parse(text) } catch { return unchanged() }
+  if (typeof value !== "object" || value === null || Array.isArray(value) || !("signoff" in value)) return unchanged()
   const signoff = value.signoff
-  if (typeof signoff !== "object" || signoff === null || Array.isArray(signoff) || !("signer" in signoff) || typeof signoff.signer !== "string") return response
+  if (typeof signoff !== "object" || signoff === null || Array.isArray(signoff) || !("signer" in signoff) || typeof signoff.signer !== "string") return unchanged()
   const userId = signoff.signer.startsWith("user:") ? signoff.signer.slice(5) : ""
   let displayName = "a removed user"
   if (userId && actor.actorKind === "user" && actor.subjectId === userId) displayName = "you"

@@ -1,0 +1,68 @@
+{
+  "artifactId": "ml.modelversion.retire.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Retire a model version",
+  "namespace": "ml",
+  "payload": {
+    "access": {
+      "artifactId": "ml.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "ml.modelversion.retire",
+    "effectProgram": {
+      "entityArtifactId": "ml.ModelVersion.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "version_id",
+      "objectKind": "ml.ModelVersion",
+      "transition": "retire"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "version_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "version_id"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "version_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "version_id"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Retire a model version",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "ml.ModelVersion"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/ml/artifacts/ml.modelversion.retire.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

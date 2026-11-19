@@ -59,7 +59,7 @@ export interface CheckOptions {
 /** Array methods that lower to norn-zen/6 closures; `.length` lowers to `len`. */
 const ARRAY_CLOSURES: ReadonlySet<string> = new Set(["some", "every", "filter", "map"])
 /** `Norn.law(name, spec)` members whose values are predicates over the subject. */
-const LAW_PREDICATES: ReadonlySet<string> = new Set(["when", "must", "never", "eventually"])
+const LAW_PREDICATES: ReadonlySet<string> = new Set(["when", "must", "never", "eventually", "may"])
 /** Element names that would shadow a Norn expression binding or a zen keyword. */
 export const RESERVED_CLOSURE_NAMES: ReadonlySet<string> = new Set(["self", "actor", "input", "slice", "event", "and", "or", "not", "in", "as"])
 
@@ -1295,7 +1295,18 @@ class FileWalk {
       }
       case "@norn/authoring#Norn.decision": {
         if (a[0]) this.expr(a[0], ctx)
-        if (a[1]) this.callback(a[1], call, ctx, true)
+        const rows = a[1] && this.unwrap(a[1])
+        // TABLE-UNIQUE-1: a table is a literal list of { when, then } rows of pure callbacks.
+        if (rows && ts.isArrayLiteralExpression(rows)) {
+          for (const row of rows.elements) {
+            const entry = this.unwrap(row as ts.Expression)
+            if (!ts.isObjectLiteralExpression(entry)) { this.report(row, "NORN-FLOW-LITERAL", "a table row is { when, then }"); continue }
+            for (const p of entry.properties) {
+              if (ts.isPropertyAssignment(p) && ts.isIdentifier(p.name) && (p.name.text === "when" || p.name.text === "then")) this.callback(p.initializer, call, ctx, true)
+              else this.report(p, "NORN-FLOW-LITERAL", "a table row takes when and then callbacks")
+            }
+          }
+        } else if (a[1]) this.callback(a[1], call, ctx, true)
         return
       }
       case "@norn/authoring#Norn.flow": {
@@ -1409,7 +1420,10 @@ class FileWalk {
       }
       case "effect/Function#pipe":
         return this.args(call, eff)
-      case "@norn/authoring#Norn.law": {
+      case "@norn/authoring#Norn.law":
+      case "@norn/authoring#Norn.obligation":
+      case "@norn/authoring#Norn.prohibition":
+      case "@norn/authoring#Norn.permission": {
         // `law(name, { on, when, must | never | eventually, within, ... })` (A3, #1176):
         // its predicates are pure expression callbacks over the subject.
         const spec = a[1] && this.unwrap(a[1])
@@ -1419,6 +1433,7 @@ class FileWalk {
           if (!ts.isPropertyAssignment(p) || !(ts.isIdentifier(p.name) || ts.isStringLiteral(p.name))) { this.report(p, "NORN-FLOW-LITERAL", "a law spec takes plain name: value members"); continue }
           const value = this.unwrap(p.initializer)
           if (LAW_PREDICATES.has(p.name.text)) this.callback(p.initializer, call, { ...ctx, lawSubject: true }, true)
+          else if (p.name.text === "unless") this.lawExceptions(p.initializer, call, ctx)
           else if (p.name.text === "within" && ts.isObjectLiteralExpression(value)) {
             for (const w of value.properties) {
               if (ts.isPropertyAssignment(w) && ts.isIdentifier(w.name) && w.name.text === "before") this.callback(w.initializer, call, ctx, true)
@@ -1431,6 +1446,22 @@ class FileWalk {
       }
       default:
         return this.args(call, ctx)
+    }
+  }
+
+  /** `unless: { label: { when, because, unless? } }`: each `when` is a predicate over the subject. */
+  private lawExceptions(node: ts.Expression, call: ts.CallExpression, ctx: Ctx): void {
+    const tree = this.unwrap(node)
+    if (!ts.isObjectLiteralExpression(tree)) return this.report(node, "NORN-FLOW-LITERAL", "unless is an object literal of labelled exceptions")
+    for (const entry of tree.properties) {
+      const body = ts.isPropertyAssignment(entry) ? this.unwrap(entry.initializer) : undefined
+      if (!ts.isPropertyAssignment(entry) || !body || !ts.isObjectLiteralExpression(body)) { this.report(entry, "NORN-FLOW-LITERAL", "an exception is label: { when, because, unless? }"); continue }
+      for (const p of body.properties) {
+        if (!ts.isPropertyAssignment(p) || !(ts.isIdentifier(p.name) || ts.isStringLiteral(p.name))) { this.report(p, "NORN-FLOW-LITERAL", "an exception takes plain name: value members"); continue }
+        if (p.name.text === "when") this.callback(p.initializer, call, { ...ctx, lawSubject: true }, true)
+        else if (p.name.text === "unless") this.lawExceptions(p.initializer, call, ctx)
+        else this.expr(p.initializer, ctx)
+      }
     }
   }
 

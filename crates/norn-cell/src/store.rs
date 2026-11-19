@@ -101,22 +101,69 @@ fn preflight_mask_policy_changes(previous: Option<&str>, candidate: &str) -> Res
     let old = catalog(previous)?;
     let new = catalog(candidate)?;
     for (id, marking) in old {
-        let weakens = match new.get(&id).map(|marking| &marking.mask) {
-            None => true,
-            Some(norn_ir::MaskPolicy::LastN { count }) => match marking.mask {
-                norn_ir::MaskPolicy::LastN { count: old_count } => *count > old_count,
-                norn_ir::MaskPolicy::Redacted {} | norn_ir::MaskPolicy::Null {} => true,
-            },
-            Some(norn_ir::MaskPolicy::Redacted {} | norn_ir::MaskPolicy::Null {}) => false,
-        };
+        let weakens = new
+            .get(&id)
+            .is_none_or(|candidate| marking.mask.weakened_by(&candidate.mask));
         if weakens {
             return Err(CellError::DefinitionMigrationRefused(format!(
                 "install removes or weakens mask policy for `{}`; declassify the exact fact versions instead",
                 id.as_str()
             )));
         }
+        // PRIVACY-2: no rule may newly allow revealing a declared marking.
+        let (before, after) = (
+            reveal_rules(previous, id.as_str())?,
+            reveal_rules(candidate, id.as_str())?,
+        );
+        if let Some(rule) = after.difference(&before).next() {
+            return Err(CellError::DefinitionMigrationRefused(format!(
+                "install widens who may reveal `{}` (rule {rule}); reveal grants on a declared marking are never widened in place",
+                id.as_str()
+            )));
+        }
     }
     Ok(())
+}
+
+/// The `norn.reveal` rules of every `AccessIR` policy in `encoded` that can
+/// apply to `marking`, without their ids (a renamed rule is the same rule).
+fn reveal_rules(encoded: &str, marking: &str) -> Result<BTreeSet<String>, CellError> {
+    let artifacts: Vec<norn_ir::ArtifactEnvelope> =
+        serde_json::from_str(encoded).map_err(CellError::Json)?;
+    let mut rules = BTreeSet::new();
+    for artifact in artifacts
+        .iter()
+        .filter(|artifact| artifact.kind() == norn_ir::ArtifactKind::Policy)
+    {
+        let Ok(norn_ir::access::PolicyRoot::Access(access)) =
+            serde_json::to_value(artifact.payload.to_json_value())
+                .and_then(serde_json::from_value::<norn_ir::access::PolicyRoot>)
+        else {
+            continue;
+        };
+        for rule in &access.rules {
+            let reveals = rule.resource_type.as_str() == "norn.Marking"
+                && rule.actions.iter().any(|action| action == "norn.reveal");
+            let names = rule.all_of.iter().all(|condition| match condition {
+                norn_ir::access::AccessCondition::Marking(marking_condition) => marking_condition
+                    .any_of
+                    .iter()
+                    .any(|id| id.as_str() == marking),
+                norn_ir::access::AccessCondition::Role(_)
+                | norn_ir::access::AccessCondition::Rel(_)
+                | norn_ir::access::AccessCondition::Context(_)
+                | norn_ir::access::AccessCondition::Resource(_)
+                | norn_ir::access::AccessCondition::Entitlement(_) => true,
+            });
+            if reveals && names {
+                let mut unnamed = rule.clone();
+                unnamed.rule_id.clear();
+                unnamed.actions = vec!["norn.reveal".to_owned()];
+                rules.insert(serde_json::to_string(&unnamed).map_err(CellError::Json)?);
+            }
+        }
+    }
+    Ok(rules)
 }
 
 fn preflight_source_marking_changes<E: SqlEngine>(
@@ -1509,6 +1556,51 @@ impl MarkingDeclassification {
     }
 }
 
+/// The receipt of one reveal: who saw which marked property of which exact
+/// fact version, when (the commit's logical time) and why. The API commits it
+/// only after the PDP allowed `norn.reveal` for every marking on the property,
+/// and before it returns the value; the receipt never carries the value.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MarkingReveal {
+    /// The concrete object type.
+    pub object_type: String,
+    /// The object's opaque store id.
+    pub key: String,
+    /// The property revealed.
+    pub property: String,
+    /// The exact fact version whose value was revealed.
+    pub version: u64,
+    /// The markings the reveal was decided for.
+    pub markings: Vec<String>,
+    /// The authenticated actor the value was revealed to.
+    pub actor: String,
+    /// The purpose the actor gave; empty when none.
+    pub purpose: String,
+}
+
+impl MarkingReveal {
+    /// The canonical `marking.revealed` ledger event.
+    ///
+    /// # Errors
+    /// Returns a cell encoding error if the event cannot be represented.
+    pub fn ledger_event(&self) -> Result<Value, CellError> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Event<'a> {
+            #[serde(rename = "type")]
+            kind: &'static str,
+            #[serde(flatten)]
+            reveal: &'a MarkingReveal,
+        }
+        norn_ir::runtime::encode(&Event {
+            kind: "marking.revealed",
+            reveal: self,
+        })
+        .map_err(CellError::Encoding)
+    }
+}
+
 /// An object's version after a commit wrote it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -1640,7 +1732,7 @@ impl ReceiptBody {
     clippy::trivially_copy_pass_by_ref,
     reason = "serde skip_serializing_if requires a reference predicate"
 )]
-const fn is_zero(value: &u64) -> bool {
+pub(crate) const fn is_zero(value: &u64) -> bool {
     *value == 0
 }
 
@@ -1746,6 +1838,7 @@ pub struct CellStore<E: SqlEngine = DefaultEngine> {
     verified: RefCell<LedgerHead>,
     source_disputes: RefCell<crate::mapping_conflict::SourceDisputeIndex>,
     mapping_plans: RefCell<crate::mapping_bundle::MappingPlanCache>,
+    verified_receipts: RefCell<crate::history::VerifiedReceipts>,
     /// Immutable quantity boundary found at open or established by a committed
     /// upgrade. Mutable metadata is checked against it, never used as authority.
     quantity_boundary: Cell<Option<crate::quantity::FormatBoundary>>,
@@ -2146,6 +2239,21 @@ impl<E: SqlEngine> CellStore<E> {
         Ok(store)
     }
 
+    /// The value a file is bound to under `key` ([`Self::bind`]), read
+    /// without opening the store under a model: a host checks which tenant a
+    /// file belongs to before trusting its layout. `None` when unbound.
+    ///
+    /// # Errors
+    /// Store-format or engine failures.
+    pub fn read_binding(engine: &E, key: &str) -> Result<Option<String>, CellError> {
+        validate_store_format(engine)?;
+        engine.query_optional(
+            &format!("SELECT \"value\" FROM \"{META}\" WHERE \"key\" = ?1"),
+            params![format!("binding:{key}")],
+            |row| row.get::<String>(0),
+        )
+    }
+
     /// Read the installed active set before constructing the model used to
     /// open this cell. A missing system table means this is a fresh or
     /// pre-install file and the host may use its seed.
@@ -2222,6 +2330,7 @@ impl<E: SqlEngine> CellStore<E> {
             verified: RefCell::new(LedgerHead::genesis()),
             source_disputes: RefCell::default(),
             mapping_plans: RefCell::default(),
+            verified_receipts: RefCell::default(),
             quantity_boundary: Cell::new(None),
             fork: None,
         }
@@ -2250,12 +2359,20 @@ impl<E: SqlEngine> CellStore<E> {
         source: &mut impl FnMut(&E) -> Result<norn_ir::cell_id::CellId, CellError>,
     ) -> Result<(), CellError> {
         validate_store_format(conn)?;
-        for statement in SYSTEM_DDL.iter().chain(&crate::flow_run::DDL) {
+        for statement in SYSTEM_DDL
+            .iter()
+            .chain(&crate::flow_run::DDL)
+            .chain(&crate::decision_ledger::DDL)
+        {
             conn.execute_batch(statement)?;
         }
+        // Claim endpoints of bundles consumed before the table existed; a
+        // no-op for every bundle already indexed.
+        conn.execute(&crate::system::claim_endpoints_of("1"), params![])?;
         crate::system::intern_marking_subjects(conn)?;
         export_journal::init(conn)?;
         crate::retained::init(conn)?;
+        crate::compute::materialize::init(conn)?;
         crate::payload_storage::init(conn)?;
         // Before the model's indexes name `p:` columns of an older file.
         crate::migration::upgrade_raw_property_columns(conn, model)?;
@@ -2329,10 +2446,14 @@ impl<E: SqlEngine> CellStore<E> {
         // Chain, receipts and all quantity caches share one open snapshot.
         // Successful verification is retained by this store's head/boundary
         // caches; ordinary admission does not repeat the startup fold.
+        // One proof cache for this read-only pass (#1423): receipts and the
+        // retained writer models are proven once per pass, not once per event.
+        let pass = RefCell::default();
         let (head, boundary) = store.conn.transaction(|| {
             crate::cell_identity::verify_history(&store.conn)?;
             let verified = store
                 .read()
+                .with_transaction_verified_receipts(&pass)
                 .verify_ledger_with_boundary(&LedgerHead::genesis())?;
             store.verify_definition_history()?;
             store.read().verify_value_history()?;
@@ -2567,6 +2688,7 @@ impl<E: SqlEngine> CellStore<E> {
         StoreReader::new(&self.conn, &self.model)
             .with_source_disputes(&self.source_disputes)
             .with_mapping_plans(&self.mapping_plans)
+            .with_verified_receipts(&self.verified_receipts)
             .with_quantity_boundary(self.quantity_boundary.get())
     }
 
@@ -2879,10 +3001,14 @@ impl<E: SqlEngine> CellStore<E> {
                 } else {
                     // A file provisioned before a system table existed gains it here,
                     // so the next run start or write finds it (idempotent DDL).
-                    for statement in SYSTEM_DDL.iter().chain(&crate::flow_run::DDL) {
+                    for statement in SYSTEM_DDL
+            .iter()
+            .chain(&crate::flow_run::DDL)
+            .chain(&crate::decision_ledger::DDL) {
                         self.conn.execute_batch(statement)?;
                     }
                     crate::retained::init(&self.conn)?;
+                    crate::compute::materialize::init(&self.conn)?;
                     let binding = |key: &str| self.conn.query_optional(
                         &format!("SELECT \"value\" FROM \"{META}\" WHERE \"key\" = ?1"),
                         params![key], |row| row.get::<String>(0),
@@ -2894,7 +3020,8 @@ impl<E: SqlEngine> CellStore<E> {
                         return Err(CellError::IdempotencyConflict("tenant provisioning".to_owned()).into());
                     }
                     crate::cell_identity::verify_history(&self.conn)?;
-                    let (head, boundary) = self.read().verify_ledger_with_boundary(&LedgerHead::genesis())?;
+                    let pass = RefCell::default();
+                    let (head, boundary) = self.read().with_transaction_verified_receipts(&pass).verify_ledger_with_boundary(&LedgerHead::genesis())?;
                     self.verify_definition_history()?;
                     self.read().verify_value_history()?;
                     crate::identity::validate(&self.read())?;
@@ -3109,8 +3236,10 @@ impl<E: SqlEngine> CellStore<E> {
                 writer.admit_created_identities()?;
             }
             crate::flow_run::check_starts(&writer.reader(), effective_batch)?;
+            crate::decision_ledger::check(&writer.reader(), effective_batch)?;
             let written = writer.apply_writes()?;
             crate::flow_run::apply(&writer.reader(), effective_batch, &written, commit_seq)?;
+            crate::decision_ledger::apply(&writer.reader(), effective_batch, commit_seq)?;
             let quantity_result = writer.apply_quantity()?;
             probe(CommitPoint::FactsApplied)?;
             let linked = writer.apply_links()?;

@@ -1,20 +1,55 @@
 import type { Field, Lifecycle } from "./catalog.ts"
 import { member } from "./exact.ts"
+import { groupDigits, readableTime } from "./format.ts"
 import type { LinkPage, ObjectRecord } from "./transport.ts"
 
-/** A fact's value as the server sent it: decimals keep their exact text, with their declared currency. */
+/**
+ * An exact decimal's text written to its declared scale, up to two places: the cell stores
+ * decimals canonically (72.00 is kept as 72), so the declared places are put back by padding.
+ * Digits are never rounded or dropped; text that is not a plain decimal is left as sent.
+ */
+export function atScale(text: string, scale: number | undefined): string {
+  // Two places (cents, grams to the hundredth) is how such a value is written; a larger declared
+  // scale is a precision bound (a p-value to 18 places), so it is not padded.
+  if (scale === undefined || scale <= 0 || scale > 2 || !/^-?\d+(\.\d+)?$/.test(text)) return text
+  const [whole, fraction = ""] = text.split(".")
+  return fraction.length >= scale ? text : `${whole}.${fraction.padEnd(scale, "0")}`
+}
+
+/** A fact's value as the server sent it: decimals keep their exact text at their declared scale, with their declared currency. */
 export function factText(field: Field, record: ObjectRecord, numbers: ReadonlyMap<string, string>, at: string): string {
   const value = record.values[field.id]
   if (value === null || value === undefined) return "—"
   if (field.decimal) {
-    const text = numbers.get(`${at}/values/${member(field.id)}`) ?? (typeof value === "string" ? value : "unavailable")
+    const text = atScale(numbers.get(`${at}/values/${member(field.id)}`) ?? (typeof value === "string" ? value : "unavailable"), field.decimal.scale)
     const currency = field.decimal.currencyFrom ? record.values[field.decimal.currencyFrom] : undefined
-    const unit = field.decimal.unit ?? (typeof currency === "string" ? currency : undefined)
+    const named = field.decimal.unitFrom?.map((property) => record.values[property]).find((value) => typeof value === "string" && value !== "")
+    const unit = field.decimal.unit ?? (typeof named === "string" ? named : typeof currency === "string" ? currency : undefined)
     const per = field.decimal.perUnit ? ` per ${field.decimal.perUnit}` : ""
     return unit ? `${text} ${unit}${per}` : `${text}${per}`
   }
   // Server values are shown as sent: codes and identifiers are never reworded, and nested numbers keep their exact text.
   return typeof value === "string" ? value : exactJson(value, numbers, `${at}/values/${member(field.id)}`)
+}
+
+/**
+ * A fact as a reader reads it in the Business view: numbers grouped in thousands with their unit,
+ * dates and times in words (UTC, said so), a choice by its declared label. The Technical view, and
+ * every value not of these kinds, is the exact text the server sent ({@link factText}).
+ */
+export function factDisplay(field: Field, record: ObjectRecord, numbers: ReadonlyMap<string, string>, at: string, view: "business" | "technical"): string {
+  const exact = factText(field, record, numbers, at)
+  const value = record.values[field.id]
+  if (view === "technical" || value === null || value === undefined) return exact
+  return displayOf(field, value, exact)
+}
+
+/** {@link factDisplay}'s rule for one value whose exact text is `exact`. */
+export function displayOf(field: Field, value: unknown, exact: string): string {
+  if (field.decimal || field.scalar.kind === "integer") return groupDigits(exact)
+  if (field.scalar.kind === "enum" && typeof value === "string") return field.valueLabels?.get(value) ?? value.replaceAll("_", " ")
+  if ((field.scalar.kind === "timestamp" || field.scalar.kind === "date") && typeof value === "string") return readableTime(value)
+  return exact
 }
 
 /** The record's own name when its concept declares one, else its identity. */

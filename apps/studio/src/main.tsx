@@ -1,31 +1,34 @@
-import { AgentButton } from "./agent/panel.tsx"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { RouterProvider, createRootRoute, createRouter } from "@tanstack/react-router"
-import { ChartLine, Database, Gauge, Inbox, LayoutDashboard, Network, Plug, ShieldCheck, Workflow } from "lucide-react"
+import { Blend, ChartLine, Database, Fingerprint, House, Inbox, LayoutDashboard, Network, Plug, ShieldCheck, Workflow } from "lucide-react"
 import { StrictMode } from "react"
 import { Button } from "@/components/ui/button"
 import { authApi, useAccount, useRefreshAccount } from "@/lib/session"
 import { LoginPage } from "./login.tsx"
+import { oauthPage } from "./oauth.tsx"
 import { createRoot } from "react-dom/client"
 import { useDecisionBadge } from "./decisions/inbox.tsx"
 import { useGuaranteesMenu } from "./guarantees.tsx"
 import { useQuestionsMenu } from "./questions.tsx"
 import { routeTree } from "./routes.tsx"
+import { Sidekick, useSidekickServed } from "./sidekick/panel.tsx"
 import { Shell, type Section } from "./shell.tsx"
 import { useSourcesMenu } from "./sources.tsx"
 import { useWorkflowsMenu } from "./workflows.tsx"
 import "./index.css"
 
 const SECTIONS: readonly Section[] = [
-  { path: "/decisions", label: "Decisions", icon: Inbox, summary: "Choices your flows wait on you to make, soonest deadline first.", useBadge: useDecisionBadge, group: "Work" },
-  { path: "/sources", label: "Sources", icon: Database, summary: "Records from every connected system, mapped into one business model, with the rows held back and why.", kind: "source", useMenu: useSourcesMenu, group: "Model" },
-  { path: "/questions", label: "Questions", icon: ChartLine, summary: "Business questions answered exactly, down to the records behind every number.", kind: "question", useMenu: useQuestionsMenu, group: "Model" },
-  { path: "/dashboards", label: "Dashboards", icon: LayoutDashboard, summary: "Saved sets of questions, each a definition the cell checks before it is kept.", group: "Model" },
-  { path: "/workflows", label: "Workflows", icon: Workflow, summary: "How each business process moves, and which rules allow or refuse every step.", kind: "workflow", useMenu: useWorkflowsMenu, group: "Rules" },
+  { path: "/", label: "Home", icon: House, summary: "What needs you, and the numbers that matter.", group: "Work" },
+  { path: "/decisions", label: "Decisions", icon: Inbox, summary: "Choices your flows wait on you to make, soonest deadline first.", useBadge: useDecisionBadge, group: "Work", paths: ["/episodes"] },
+  { path: "/sources", label: "Sources", icon: Database, summary: "Records from every connected system, mapped into one business model, with the rows held back and why.", kind: "source", useMenu: useSourcesMenu, group: "Model", paths: ["/objects"], action: { label: "Connect a source", to: "/connections" } },
+  { path: "/transforms", label: "Transforms", icon: Blend, summary: "Derived datasets the cell checks: typed columns, declared joins, every row traced to its records.", kind: "transform", group: "Model" },
+  { path: "/metrics", label: "Metrics", icon: ChartLine, summary: "The numbers your records add up to, answered exactly, down to the records behind every number.", kind: "question", useMenu: useQuestionsMenu, group: "Model", action: { label: "Explore a metric", to: "/metrics/new" } },
+  { path: "/dashboards", label: "Dashboards", icon: LayoutDashboard, summary: "Saved sets of questions, each a definition the cell checks before it is kept.", group: "Model", action: { label: "New dashboard", to: "/dashboards/new" } },
+  { path: "/workflows", label: "Workflows", icon: Workflow, summary: "How each business process moves, and which rules allow or refuse every step.", kind: "workflow", useMenu: useWorkflowsMenu, group: "Rules", paths: ["/runs"], action: { label: "Open the canvas", to: "/canvas" } },
   { path: "/canvas", label: "Canvas", icon: Network, summary: "Draw and change a process, with every edit checked as you make it.", group: "Rules" },
+  { path: "/markings", label: "Markings", icon: Fingerprint, summary: "Personal data: how each marking is shown, the facts that carry it, and who may reveal it.", group: "Rules" },
   { path: "/guarantees", label: "Guarantees", icon: ShieldCheck, summary: "The recorded law, and how strongly it is checked.", kind: "guarantee", useMenu: useGuaranteesMenu, group: "Rules" },
   { path: "/connections", label: "Connections", icon: Plug, summary: "Apps and tools from your tool gateway, run through Norn's policy.", group: "System" },
-  { path: "/status", label: "Status", icon: Gauge, summary: "Where the alpha stands, area by area.", foot: true },
 ]
 
 /**
@@ -35,7 +38,9 @@ const SECTIONS: readonly Section[] = [
 function Root() {
   const account = useAccount()
   const refresh = useRefreshAccount()
-  if (account.data != null) return <Shell sections={SECTIONS} tools={<AgentButton />} account={account.data} onSignOut={() => void signOut(refresh)} />
+  // Sidekick is offered only where a bridge serves it (a private deployment); elsewhere the rail shows no entry for it.
+  const sidekick = useSidekickServed()
+  if (account.data != null) return <Shell sections={SECTIONS} assistant={sidekick ? { title: "Sidekick", content: <Sidekick /> } : undefined} account={account.data} onSignOut={() => void signOut(refresh)} />
   if (account.isPending) return null
   if (account.isError) {
     return (
@@ -68,10 +73,15 @@ const applyScheme = () => document.documentElement.classList.toggle("dark", dark
 applyScheme()
 dark.addEventListener("change", applyScheme)
 
+// An assistant's OAuth flow (MCP) lands on its own pages, outside the Studio shell.
+const OAuthPage = oauthPage(window.location.pathname)
+
 createRoot(document.getElementById("root") as HTMLElement).render(
   <StrictMode>
-    <QueryClientProvider client={new QueryClient()}>
-      <RouterProvider router={router} />
-    </QueryClientProvider>
+    {OAuthPage === null ? (
+      <QueryClientProvider client={new QueryClient()}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>
+    ) : <OAuthPage />}
   </StrictMode>,
 )

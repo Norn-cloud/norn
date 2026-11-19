@@ -219,7 +219,10 @@ pub(crate) fn dedupe_findings(findings: impl IntoIterator<Item = Diagnostic>) ->
                 ((diagnostic.code.as_str() == "widget.validation.invalid_payload"
                     && diagnostic.message.starts_with("UI law:"))
                     || diagnostic.code.as_str() == "consistency.normative.conflict"
-                    || STATE_FINDINGS.contains(&diagnostic.code.as_str()))
+                    || STATE_FINDINGS.contains(&diagnostic.code.as_str())
+                    // A finding with its own run (one per stuck or violating pair) is distinct
+                    // from another at the same pointer.
+                    || diagnostic.witness.is_some())
                 .then(|| diagnostic.message.clone()),
             ))
         })
@@ -464,6 +467,7 @@ fn relocate(diagnostic: &mut Diagnostic, artifact: &ArtifactEnvelope, pointer: &
 
 fn finding(code: &str, message: String, artifact: &ArtifactEnvelope, pointer: &str) -> Diagnostic {
     Diagnostic {
+        witness: None,
         code: DiagnosticCode::new(code),
         severity: DiagnosticSeverity::Error,
         message,
@@ -480,6 +484,7 @@ mod tests {
 
     fn diagnostic(code: &str, message: &str) -> Diagnostic {
         Diagnostic {
+            witness: None,
             code: DiagnosticCode::new(code),
             severity: DiagnosticSeverity::Error,
             message: message.to_owned(),

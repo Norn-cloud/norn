@@ -3,8 +3,9 @@
 //! Reuses the admitted schema parser and ZEN evaluator. This is an analysis of
 //! an already validated table, not an alternative JDM validator or evaluator.
 //! Unbounded domains, unsupported execution modes and exhausted budgets return
-//! an explicit unknown result. Neither admitted hit policy forbids overlap:
-//! `first` prioritizes it; `collect` selects every matching row.
+//! an explicit unknown result. `first` prioritizes overlap and `collect`
+//! selects every matching row; `unique` forbids it, and its admission
+//! (TABLE-UNIQUE-1) is this analysis finding none.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -225,7 +226,8 @@ pub fn analyze_table(
         }
         let count = match table.hit_policy {
             JdmHitPolicy::First => usize::from(!matching.is_empty()),
-            JdmHitPolicy::Collect => matching.len(),
+            // Every match is reported: more than one is the overlap unique forbids.
+            JdmHitPolicy::Collect | JdmHitPolicy::Unique => matching.len(),
         };
         for (index, _) in matching.iter().take(count) {
             selected.insert(*index);

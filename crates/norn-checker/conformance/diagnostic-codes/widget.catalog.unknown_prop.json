@@ -1,0 +1,7 @@
+{
+  "code": "widget.catalog.unknown_prop",
+  "message": "a catalog component is given a prop its entry does not declare: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

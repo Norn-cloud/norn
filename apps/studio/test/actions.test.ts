@@ -146,6 +146,11 @@ test("a call sends the encoded input and its key; a refusal keeps every diagnost
   expect(result.kind === "refused" && result.diagnostics.map((d) => d.pointer)).toEqual(["/input/a", "/input/b"])
 })
 
+test("an approval-gated call answers 202 pending with the decision it opened, and commits nothing", async () => {
+  const gated = cell(() => Response.json({ outcome: "pending", decision: { id: "dec_1", expiresAtMs: 1800000000000 } }, { status: 202 }))
+  expect(await callAction("ops.refund", "{}", "k", gated.fetcher)).toEqual({ kind: "pending", decision: { id: "dec_1", expiresAtMs: 1800000000000 } })
+})
+
 // The documents the cell's route serves (crates/norn-cell-do/tests/actions.rs asserts it serves exactly these).
 const served = JSON.parse(readFileSync(join(import.meta.dir, "fixtures/action-call.json"), "utf8")) as Record<"committed" | "conflict" | "invalidKey", unknown>
 
@@ -153,7 +158,8 @@ test("the cell's own receipt and refusal documents read as Studio's receipt and 
   const ok = cell(() => Response.json(served.committed))
   expect(await callAction("constitution.melt.convert", '{"id":"melt-1","input_fine_g":12,"output_fine_g":10}', "k", ok.fetcher)).toEqual({ kind: "receipt", receipt: served.committed as never })
   const conflict = await callAction("constitution.melt.convert", "{}", "k", cell(() => Response.json(served.conflict, { status: 409 })).fetcher)
-  expect(conflict).toEqual({ kind: "refused", status: 409, code: "action.idempotency_conflict", message: "the request conflicts with current state", diagnostics: [] })
+  // The cell's explanation travels with the refusal, as it sent it.
+  expect(conflict).toEqual({ kind: "refused", status: 409, code: "action.idempotency_conflict", message: "the request conflicts with current state", diagnostics: [], explanation: (served.conflict as { explanation: string }).explanation })
   const invalid = await callAction("constitution.melt.convert", "{}", "", cell(() => Response.json(served.invalidKey, { status: 400 })).fetcher)
   expect(invalid.kind === "refused" && invalid.diagnostics).toEqual([{ code: "request.invalid", message: "idempotencyKey must be 1 to 128 printable characters and at most 256 bytes", pointer: "/idempotencyKey" }])
   // The key is not an input field: its finding reads at the top of the form.

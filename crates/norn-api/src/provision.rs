@@ -51,6 +51,10 @@ pub mod codes {
     /// The scope has no cell yet; told only to a verified member of its
     /// organization.
     pub const NOT_PROVISIONED: &str = "cell.not_provisioned";
+    /// The scope has a cell this host cannot open (its stored layout is not
+    /// the one its definitions rebuild); told only to a verified member of
+    /// its organization, with the reason only to a definition writer.
+    pub const UNOPENABLE: &str = "cell.unopenable";
     /// The cell was provisioned from a different submission.
     pub const PROVISION_CONFLICT: &str = "cell.provision_conflict";
     /// The submitted definitions are not admissible.
@@ -219,6 +223,19 @@ pub fn not_provisioned() -> Refusal {
     )
 }
 
+/// The refusal for a scope whose stored cell this host cannot open: an
+/// operator must restore or repair it. `reason` (the open failure, naming the
+/// layout found and the one expected) goes only to a definition writer.
+#[must_use]
+pub fn unopenable(reason: Option<&str>) -> Refusal {
+    Refusal::new(
+        StatusCode::SERVICE_UNAVAILABLE,
+        codes::UNOPENABLE,
+        "the cell cannot be opened; an operator must restore it (norn-cell-restore)",
+        reason.unwrap_or("the cell's stored layout is not the one its definitions rebuild"),
+    )
+}
+
 /// The refusal for provisioning on a host that serves an existing cell and
 /// provisions cells itself; the submission is not read.
 #[must_use]
@@ -265,9 +282,11 @@ pub fn unservable(detail: impl Into<String>) -> Refusal {
 
 /// The submission's own artifacts, decoded from their exact text: none in a
 /// reserved namespace, each an artifact envelope scoped inside `cell`.
-fn tenant_artifacts(
+/// `refused` makes the refusal of artifacts scoped outside the cell.
+pub(crate) fn tenant_artifacts(
     cell: &CellScope,
     sources: &[Box<RawValue>],
+    refused: fn(Vec<RefusalDiagnostic>) -> Refusal,
 ) -> Result<Vec<ArtifactEnvelope>, Refusal> {
     let mut reserved = Vec::new();
     let mut malformed = Vec::new();
@@ -393,43 +412,48 @@ pub fn admit_submission(
             ),
         ));
     }
-    let tenant = tenant_artifacts(cell, &request.artifacts)?;
+    let tenant = tenant_artifacts(cell, &request.artifacts, refused)?;
+    let mut artifacts = base.artifacts.clone();
+    artifacts.extend(tenant.iter().cloned());
+    kernel_set::admit_kernel_set_with_base(&artifacts, &base.ids).map_err(|refusal| match refusal {
+        KernelRefusal::Refused(findings) => refused(placed(&findings, &tenant)),
+        KernelRefusal::Invalid(detail) => unservable(detail),
+    })
+}
+
+/// The checker's `findings` as refusal diagnostics placed in a submission of
+/// `tenant`: a finding that names one of the submitted artifacts points at
+/// it (`/artifacts/{index}…`); a finding on the retained set has no place.
+pub(crate) fn placed(
+    findings: &[norn_checker::Diagnostic],
+    tenant: &[ArtifactEnvelope],
+) -> Vec<RefusalDiagnostic> {
     let position = |id: &str| {
         tenant
             .iter()
             .position(|artifact| artifact.artifact_id == id)
     };
-    let mut artifacts = base.artifacts.clone();
-    artifacts.extend(tenant.iter().cloned());
-    kernel_set::admit_kernel_set_with_base(&artifacts, &base.ids).map_err(|refusal| match refusal {
-        KernelRefusal::Refused(findings) => refused(
-            findings
-                .iter()
-                .filter_map(|finding| {
-                    let mut diagnostic =
-                        RefusalDiagnostic::from_checker(std::slice::from_ref(finding), "").pop()?;
-                    // A finding is placed in the submission when it names one
-                    // of the tenant's artifacts; a base finding has no place.
-                    diagnostic.span =
+    findings
+        .iter()
+        .filter_map(|finding| {
+            let mut diagnostic =
+                RefusalDiagnostic::from_checker(std::slice::from_ref(finding), "").pop()?;
+            diagnostic.span = finding
+                .artifact_id
+                .as_deref()
+                .and_then(position)
+                .map(|index| RefusalSpan {
+                    pointer: format!(
+                        "/artifacts/{index}{}",
                         finding
-                            .artifact_id
-                            .as_deref()
-                            .and_then(position)
-                            .map(|index| RefusalSpan {
-                                pointer: format!(
-                                    "/artifacts/{index}{}",
-                                    finding
-                                        .span
-                                        .as_ref()
-                                        .map_or("", |span| span.pointer.as_str())
-                                ),
-                            });
-                    Some(diagnostic)
-                })
-                .collect(),
-        ),
-        KernelRefusal::Invalid(detail) => unservable(detail),
-    })
+                            .span
+                            .as_ref()
+                            .map_or("", |span| span.pointer.as_str())
+                    ),
+                });
+            Some(diagnostic)
+        })
+        .collect()
 }
 
 /// The install input of `admitted` at the logical time `installed_at`.
@@ -481,7 +505,7 @@ fn receipt<E: SqlEngine>(
 /// `cell.provision_conflict` (409) when the engine already holds a cell
 /// provisioned from something else; `host.error` (500) for a storage failure,
 /// which leaves the engine as it was.
-#[utoipa::path(post, path = "/v1/cell:provision", params(ScopeQuery), request_body = ProvisionRequest, responses((status = 200, description = "The cell was provisioned, or already holds exactly this submission.", body = ProvisionReceipt), (status = 400, description = "The request was refused as invalid, or carries an artifact in a reserved namespace.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied.", body = Refusal), (status = 405, description = "The request was refused: the route takes POST.", body = Refusal), (status = 409, description = "The request was refused: the cell holds other definitions, or the submission names another trusted base.", body = Refusal), (status = 413, description = "The request was refused: the body exceeds the host bound.", body = Refusal), (status = 422, description = "The request was refused: the definitions are not admissible.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
+#[utoipa::path(post, path = "/v1/cell:provision", params(ScopeQuery), request_body = ProvisionRequest, responses((status = 200, description = "The cell was provisioned, or already holds exactly this submission.", body = ProvisionReceipt), (status = 400, description = "The request was refused as invalid, or carries an artifact in a reserved namespace.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied.", body = Refusal), (status = 405, description = "The request was refused: the route takes POST.", body = Refusal), (status = 409, description = "The request was refused: the cell holds other definitions, or the submission names another trusted base.", body = Refusal), (status = 413, description = "The request was refused: the body exceeds the host bound.", body = Refusal), (status = 422, description = "The request was refused: the definitions are not admissible.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal), (status = 503, description = "The request was refused: the scope's stored cell cannot be opened.", body = Refusal)))]
 pub fn provision_cell<E: SqlEngine>(
     engine: E,
     scope: &CellScope,
@@ -491,8 +515,10 @@ pub fn provision_cell<E: SqlEngine>(
 ) -> Result<(CellStore<E>, ProvisionReceipt), Refusal> {
     let input = install_input(admitted, now_ms);
     // Every provisioned cell can serve governed actions: the kernel's own
-    // receipt and owned-row types are part of its model from the start.
-    let model = crate::action_admission::prepare_action_model(&admitted.model)?;
+    // receipt and owned-row types are part of its model from the start. It
+    // is the model a reopen rebuilds from the installed set (DEFS-REOPEN-1).
+    let model = crate::host::reopen_model(&input.canonical_set, true)?;
+    crate::host::check_reopens(&model, &input.canonical_set, true)?;
     let store =
         CellStore::provision_definitions(engine, model, &input, &scope.key()).map_err(|error| {
             if matches!(error, CellError::IdempotencyConflict(_)) {

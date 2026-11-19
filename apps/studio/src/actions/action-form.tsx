@@ -1,4 +1,6 @@
-import { AlertTriangle, CheckCircle2, ChevronLeft, Lock, Pencil, Plus, Undo2, X } from "lucide-react"
+import { ShieldX } from "lucide-react"
+import { Chip } from "@/components/chip"
+import { AlertTriangle, CheckCircle2, ChevronLeft, Hourglass, Inbox, Lock, Pencil, Plus, Undo2, X } from "lucide-react"
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react"
 import { CopyId } from "@/components/copy-id"
 import { Button } from "@/components/ui/button"
@@ -12,6 +14,7 @@ import {
 } from "../lib/actions.ts"
 import type { Phase } from "../lib/screen/call.ts"
 import { useCall, type Call } from "../lib/screen/use-call.ts"
+import { LawRefusal, RedactedLawRefusal, type InputField } from "./law-refusal.tsx"
 
 const newKey = newIdempotencyKey
 
@@ -74,7 +77,10 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
   const dirty = JSON.stringify(draft) !== JSON.stringify(initial) && !committed
   const diagnostics = phase.kind === "refused" ? phase.diagnostics : []
   // A commit leaves nothing unsent; a refusal in a wizard opens the first step it names (one on no field stays on the review).
-  useEffect(() => { if (phase.kind === "done") { onDirty?.(false); onCommitted?.() } }, [phase.kind])
+  useEffect(() => {
+    if (phase.kind === "done") { onDirty?.(false); onCommitted?.() }
+    if (phase.kind === "pending") onDirty?.(false)
+  }, [phase.kind])
   useEffect(() => {
     if (phase.kind !== "refused" || !wizard) return
     const first = problemsBySection(sections, phase.diagnostics).findIndex((n) => n > 0)
@@ -90,6 +96,8 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
   }
 
   const submit = () => dispatch({ kind: "submit", input: encodeObject(fields, draft as { readonly [name: string]: Draft }) })
+
+  if (phase.kind === "pending") return <SentForApproval action={action} expiresAtMs={phase.decision.expiresAtMs} decisionId={phase.decision.id} technical={technical} onClose={onClose} />
 
   if (committed) {
     return <Receipt action={action} objectTitle={objectTitle} technical={technical} onView={onView} phase={phase}
@@ -111,10 +119,17 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
       }}>
       {action.description && <p className="text-sm text-muted-foreground">{action.description}</p>}
       {blocked !== null && <p role="alert" className="rounded-lg border border-node-border bg-muted/50 p-3 text-sm">Studio can't build a form for this action yet ({blocked}). It's listed so you know it exists.</p>}
-      {phase.kind === "refused" && (
-        <div role="alert" className="grid gap-1 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-          <span className="font-medium">{phase.message}</span>
-          {top.map((d) => <span key={`${d.pointer}:${d.code}:${d.message}`} className="text-meta">{d.message}</span>)}
+      {phase.kind === "refused" && phase.reason !== undefined && phase.code === "core.laws.violated" && <LawRefusal code={phase.code} reason={phase.reason} explanation={phase.explanation ?? phase.message} fields={(action.inputSchema as { properties?: Readonly<Record<string, InputField>> } | null)?.properties ?? {}} technical={technical} onUse={(path, text) => edit(`/${path}`, text)} />}
+      {phase.kind === "refused" && phase.reason === undefined && phase.code === "core.laws.violated" && (
+        <RedactedLawRefusal objectType={action.objectKind} id={(() => { const value = (draft as { readonly [name: string]: Draft })[action.objectIdField]; return typeof value === "string" && value !== "" ? value : undefined })()}
+          code={phase.code} message={phase.explanation ?? phase.message} technical={technical} />
+      )}
+      {phase.kind === "refused" && phase.code !== "core.laws.violated" && (
+        <div role="alert" className="grid gap-1.5 rounded-xl border border-border bg-card px-3 py-2.5 text-sm">
+          <span className="flex flex-wrap items-center gap-2"><Chip tone="red" icon={ShieldX}>Refused</Chip><span className="font-medium">{REFUSED[phase.code] ?? phase.message}</span></span>
+          {phase.explanation ? <span className="text-meta text-foreground">{phase.explanation}</span> : REFUSED[phase.code] !== undefined && <span className="text-meta text-foreground">{phase.message}</span>}
+          <span className="font-mono text-xs text-muted-foreground">{phase.code}</span>
+          {top.map((d) => <span key={`${d.pointer}:${d.code}:${d.message}`} className="text-meta text-destructive-text">{d.message}</span>)}
           {top.length === 0 && phase.diagnostics.length > 0 && <span className="text-meta">Each problem is shown at its field below.</span>}
         </div>
       )}
@@ -166,6 +181,21 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
   )
 }
 
+/**
+ * Headlines for the cell's refusal codes, in plain words; the cell's own message and explanation
+ * stay below. A code not listed here keeps the cell's message as its headline.
+ */
+const REFUSED: Readonly<Record<string, string>> = {
+  "core.laws.violated": "Breaks a rule",
+  "action.precondition_failed": "A condition for this action does not hold",
+  "action.target_not_found": "The record to change does not exist",
+  "action.slice_object_missing": "A record this action reads does not exist",
+  "action.invalid_input": "The input doesn't fit this action",
+  "action.idempotency_conflict": "This request was already used for a different change",
+  "authz.denied": "Not allowed",
+  "defs.stale": "The definitions changed: open the action again",
+}
+
 function FieldRow({ field, label, draft, diagnostics, locked, onEdit }: {
   readonly field: FormField; readonly label: string; readonly draft: Draft; readonly diagnostics: readonly Diagnostic[]; readonly locked: boolean
   readonly onEdit: (pointer: string, value: Draft) => void
@@ -186,12 +216,18 @@ function FieldRow({ field, label, draft, diagnostics, locked, onEdit }: {
         {field.spec.kind === "decimal" && field.spec.unit && <span className="text-meta font-normal text-muted-foreground">({field.spec.unit})</span>}
         {field.required && <span aria-hidden className="text-destructive">*</span>}
       </label>
-      {field.description && <p id={`${id}-help`} className="text-meta text-muted-foreground">{field.description}</p>}
+      {/* A field filled from where the action was opened says so; the definition's own help (written for typing it in) stays behind a disclosure. */}
+      {locked
+        ? <div id={`${id}-help`} className="text-meta text-muted-foreground">
+          Filled in from where you opened this action.
+          {field.description && <details className="mt-0.5"><summary className="cursor-pointer select-none underline-offset-4 hover:underline">About this field</summary><p className="pt-1">{field.description}</p></details>}
+        </div>
+        : field.description && <p id={`${id}-help`} className="text-meta text-muted-foreground">{field.description}</p>}
       {locked
         ? (
           <div className="relative">
             <Lock className="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden />
-            <Input id={id} readOnly aria-readonly value={String(value)} title="This record: set by where you opened the action"
+            <Input id={id} readOnly aria-readonly value={String(value)} title="Set by where you opened the action"
               className="h-9 cursor-default bg-muted/70 pl-8 font-mono text-xs text-muted-foreground focus-visible:ring-0" />
           </div>
         )
@@ -381,6 +417,29 @@ function when(ms: number, now = Date.now()): string {
   if (seconds >= 0 && seconds < 60) return "just now"
   if (seconds >= 0 && seconds < 3600) return `${Math.round(seconds / 60)} min ago`
   return new Date(ms).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
+}
+
+/** An approval-gated call: the cell committed nothing and put a decision in the inbox. */
+function SentForApproval({ action, expiresAtMs, decisionId, technical, onClose }: {
+  readonly action: ActionSummary; readonly expiresAtMs: number; readonly decisionId: string; readonly technical: boolean; readonly onClose: (() => void) | undefined
+}) {
+  const expires = new Date(expiresAtMs)
+  return (
+    <section aria-label="Sent for approval" className="grid gap-4">
+      <div className="grid gap-3 rounded-node border border-node-border bg-card p-4 shadow-[var(--node-highlight),var(--elevation-node)]">
+        <p role="status" className="flex items-start gap-2 text-sm font-medium">
+          <Hourglass className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
+          <span>{action.title} was sent for approval. Nothing changes until a decider approves it.</span>
+        </p>
+        <p className="text-meta text-muted-foreground">
+          It waits in Decisions until <time dateTime={expires.toISOString()} title={expires.toISOString()}>{expires.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</time>.
+        </p>
+        <Button asChild variant="outline" size="sm" className="justify-self-start border-node-border"><a href="/decisions"><Inbox /> Open Decisions</a></Button>
+        {technical && <div className="text-meta text-muted-foreground">Decision <CopyId value={decisionId} short={16} /></div>}
+      </div>
+      {onClose && <div className="flex justify-end"><Button type="button" variant="ghost" onClick={onClose}>Close</Button></div>}
+    </section>
+  )
 }
 
 type Committed = Extract<Phase, { kind: "done" | "undoing" | "undo-failed" | "undone" }>

@@ -24,6 +24,8 @@ import { CellUnavailable, readStudioScope, scopedHostFetch } from "./definitions
  *            action's schema refuses is one 400 `action.invalid_input` with no field pointers, so
  *            Studio shows it on the form, not on a field; a rule, law or precondition refusal
  *            carries none either.
+ *        202 { outcome: "pending", decision: { id, expiresAtMs } }: an approval-gated action
+ *            (APPROVAL-1); nothing is committed until a decider approves it in the inbox.
  *        409 `action.idempotency_conflict` when the key was used for a different call.
  *        Fixture: test/fixtures/action-call.json, produced by crates/norn-cell-do/tests/actions.rs.
  *
@@ -80,9 +82,13 @@ export type CatalogRead =
   | { readonly kind: "unavailable" }
   | { readonly kind: "refused"; readonly status: number; readonly code: string; readonly message: string }
 
+/** An approval-gated call (APPROVAL-1): 202, nothing committed yet; a decider settles it in the inbox. */
+export interface PendingDecision { readonly id: string; readonly expiresAtMs: number }
+
 export type CallResult =
   | { readonly kind: "receipt"; readonly receipt: ActionReceipt }
-  | { readonly kind: "refused"; readonly status: number; readonly code: string; readonly message: string; readonly diagnostics: readonly Diagnostic[] }
+  | { readonly kind: "pending"; readonly decision: PendingDecision }
+  | { readonly kind: "refused"; readonly status: number; readonly code: string; readonly message: string; readonly diagnostics: readonly Diagnostic[]; readonly explanation?: string; readonly reason?: RefusalReason }
   | { readonly kind: "no-cell" }
   | { readonly kind: "unavailable" }
 
@@ -91,19 +97,32 @@ export const ACTIONS_UNAVAILABLE = "This cell doesn't take actions from Studio y
 type Fetch = (input: string, init?: RequestInit) => Promise<Response>
 const defaultFetch: Fetch = (input, init) => fetch(input, init)
 
-interface Refusal { readonly code: string; readonly message: string; readonly diagnostics: readonly Diagnostic[] }
+/**
+ * DIAG-REASON-1: what refused a call, disclosed with the caller's authority: the law (its pinned
+ * declaration), the subject, and the stored values it checked, by path (`total`, `ledger_entry.amount`).
+ */
+export interface RefusalReason {
+  readonly law: string
+  readonly subject: string
+  readonly values: Readonly<Record<string, unknown>>
+  readonly pin?: { readonly kind?: string; readonly artifactId?: string; readonly lawId?: string; readonly version?: string }
+}
+
+interface Refusal { readonly code: string; readonly message: string; readonly diagnostics: readonly Diagnostic[]; readonly explanation?: string; readonly reason?: RefusalReason }
 
 function refusalOf(text: string): Refusal | null {
   let body: unknown
   try { body = JSON.parse(text) } catch { return null }
-  const { code, message, diagnostics } = (body ?? {}) as { code?: unknown; message?: unknown; diagnostics?: unknown }
+  const { code, message, diagnostics, explanation, reason } = (body ?? {}) as { code?: unknown; message?: unknown; diagnostics?: unknown; explanation?: unknown; reason?: unknown }
   if (typeof code !== "string") return null
   // The cell's refusal@2 places a finding at `span.pointer`; a bare `pointer` is read too.
   const list = Array.isArray(diagnostics) ? diagnostics.map((d: { code?: unknown; message?: unknown; pointer?: unknown; span?: { pointer?: unknown } | null }) => ({
     code: String(d.code ?? ""), message: String(d.message ?? ""),
     pointer: typeof d.span?.pointer === "string" ? d.span.pointer : typeof d.pointer === "string" ? d.pointer : null,
   })) : []
-  return { code, message: typeof message === "string" ? message : code, diagnostics: list }
+  // The cell's own explanation names what refused the call (a law and its statement, say); it is shown as sent.
+  const disclosed = reason !== null && typeof reason === "object" && typeof (reason as { law?: unknown }).law === "string" ? reason as RefusalReason : undefined
+  return { code, message: typeof message === "string" ? message : code, diagnostics: list, ...typeof explanation === "string" ? { explanation } : {}, ...disclosed ? { reason: disclosed } : {} }
 }
 
 async function scoped(fetcher: Fetch) {
@@ -140,6 +159,11 @@ export async function callAction(actionId: string, input: string, idempotencyKey
     body: `{"input":${input},"idempotencyKey":${JSON.stringify(idempotencyKey)}}`,
   })
   const text = await response.text()
+  if (response.status === 202) {
+    const pending = JSON.parse(text) as { readonly outcome?: unknown; readonly decision?: PendingDecision }
+    if (pending.outcome === "pending" && pending.decision !== undefined) return { kind: "pending", decision: pending.decision }
+    throw new CellUnavailable(response.status)
+  }
   if (response.ok) return { kind: "receipt", receipt: JSON.parse(text) as ActionReceipt }
   const refusal = refusalOf(text)
   if (response.status === 404 || response.status === 503) return { kind: "unavailable" }

@@ -8,11 +8,12 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use crate::server::{self, Request, Response};
+use norn_api::analytics_routes::{EngineQuestions, Transport};
 use norn_api::host::DevHost;
 use norn_api::refusal::Refusal;
 use norn_cell::engine::NativeEngine;
 
-use super::policy::{DevPrincipals, DevQuestions};
+use super::policy::{DevMetrics, DevPrincipals};
 
 /// Longest accepted request head (request line plus headers), in bytes.
 const MAX_HEAD_BYTES: usize = 16 * 1024;
@@ -28,11 +29,12 @@ pub(crate) fn serve(
     listener: &TcpListener,
     serving: &Serving,
     principals: &DevPrincipals,
-    questions: &DevQuestions,
+    questions: &DevMetrics,
+    engine: Option<&dyn Transport>,
 ) {
     for stream in listener.incoming().flatten() {
         // A broken connection affects only itself.
-        let _ignored = connection(stream, serving, principals, questions);
+        let _ignored = connection(stream, serving, principals, questions, engine);
     }
 }
 
@@ -40,11 +42,12 @@ fn connection(
     mut stream: TcpStream,
     serving: &Serving,
     principals: &DevPrincipals,
-    questions: &DevQuestions,
+    questions: &DevMetrics,
+    engine: Option<&dyn Transport>,
 ) -> std::io::Result<()> {
     stream.set_read_timeout(Some(Duration::from_secs(10)))?;
     let response = match read_request(&stream) {
-        Ok(parsed) => dispatch(&parsed, serving, principals, questions),
+        Ok(parsed) => dispatch(&parsed, serving, principals, questions, engine),
         Err(refused) => refusal(&refused),
     };
     let reason = match response.status {
@@ -148,7 +151,8 @@ fn dispatch(
     parsed: &Parsed,
     serving: &Serving,
     principals: &DevPrincipals,
-    questions: &DevQuestions,
+    questions: &DevMetrics,
+    engine: Option<&dyn Transport>,
 ) -> Response {
     let Ok(guard) = serving.read() else {
         return refusal(&Refusal::host("the serving state is poisoned"));
@@ -161,20 +165,41 @@ fn dispatch(
             "fix the refused change shown by norn dev; the first admitted revision is served",
         ));
     };
+    // DEV-ONE-AUTHORITY-1: only this process installs definitions, from the
+    // project's sources; the hosted plan/apply routes are not served here.
+    if parsed.path == norn_api::cell_definitions::PLAN_PATH
+        || parsed.path == norn_api::cell_definitions::APPLY_PATH
+    {
+        return refusal(&Refusal::new(
+            http::StatusCode::CONFLICT,
+            "defs.dev_sources_only",
+            "norn dev installs definitions from the project's sources",
+            "save the project's sources; norn dev admits and installs every change itself",
+        ));
+    }
     let now = super::now_ms().checked_div(1000).unwrap_or_default();
-    server::handle_with(
-        host,
-        principals,
-        Some(questions),
-        &Request {
-            method: &parsed.method,
-            path: &parsed.path,
-            query: &parsed.query,
-            authorization: parsed.authorization.as_deref(),
-            now,
-            body: &parsed.body,
-        },
-    )
+    // The active revision's metrics, derived before the request runs.
+    let questions = match questions.questions(host) {
+        Ok(questions) => questions,
+        Err(refused) => return refusal(&refused),
+    };
+    let request = Request {
+        method: &parsed.method,
+        path: &parsed.path,
+        query: &parsed.query,
+        authorization: parsed.authorization.as_deref(),
+        now,
+        body: &parsed.body,
+    };
+    // D102: with an engine linked in, questions and profiles run on it.
+    let Some(engine) = engine else {
+        return server::handle_with(host, principals, Some(&questions), &request);
+    };
+    if let Some(response) = server::analytics(host, principals, engine, None, &request) {
+        return response;
+    }
+    let on_engine = EngineQuestions::new(&questions, engine, host.scope());
+    server::handle_with(host, principals, Some(&on_engine), &request)
 }
 
 fn refusal(refused: &Refusal) -> Response {

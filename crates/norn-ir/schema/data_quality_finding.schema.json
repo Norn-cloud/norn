@@ -24,6 +24,13 @@
       "description": "When this finding was most recently observed.",
       "$ref": "#/$defs/UtcTimestamp"
     },
+    "links": {
+      "description": "LAW-LINK-1: for a law that reads its subject's to-one links, the exact\nversion of each target it read, by link id (a link with no target is\nabsent), so the evaluation replays exactly. Empty for every other\nfinding, and then omitted.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/FactRef"
+      }
+    },
     "message": {
       "description": "Human-readable summary of the finding.",
       "type": "string"
@@ -63,6 +70,13 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/DataQualitySubject"
+      }
+    },
+    "values": {
+      "description": "DIAG-REASON-1 / LAW-LINK-MANY-1: for a law finding, the stored values\nthe law compared, by path, as it read them: the subject's own\nproperties (`total`), a to-one target's (`ledger_entry.amount`), and\nan inverse role's sources' as a list (`lines.amount`). Not part of the\nidentity: the subject version and `links` fix them. Empty for every\nother finding, and then omitted.",
+      "type": "object",
+      "additionalProperties": {
+        "description": "Exact JSON value. Number tokens retain decimal precision and are not binary64 values. Preserve source text or use an exact-decimal JSON parser; JavaScript JSON.parse may lose precision."
       }
     }
   },
@@ -270,6 +284,35 @@
             "kind",
             "code",
             "detail"
+          ]
+        },
+        {
+          "description": "SOURCE-AGREE-1: two sources reported different values of a measure's\npartition source (its unit, currency or basis) for one subject, in\nconsecutive versions. Both reports are true facts about what each\nsource says; the subject is never excluded for it.",
+          "type": "object",
+          "properties": {
+            "earlier": {
+              "description": "The earlier version's source and value.",
+              "$ref": "#/$defs/SourceClaim"
+            },
+            "kind": {
+              "type": "string",
+              "const": "source_disagreement"
+            },
+            "later": {
+              "description": "The later version's source and value.",
+              "$ref": "#/$defs/SourceClaim"
+            },
+            "property": {
+              "description": "The partition-source property the sources disagree on.",
+              "$ref": "#/$defs/PropertyId"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "property",
+            "earlier",
+            "later"
           ]
         }
       ]
@@ -565,6 +608,29 @@
           "type": "string",
           "const": "ambiguous_shortest_path"
         }
+      ]
+    },
+    "SourceClaim": {
+      "description": "SOURCE-AGREE-1: what one source reported for a partition source, and the\nversion that recorded it.",
+      "type": "object",
+      "properties": {
+        "fact": {
+          "description": "The version that recorded it (its commit).",
+          "$ref": "#/$defs/FactRef"
+        },
+        "system": {
+          "description": "The reporting source system (`SourceRecordRef::system`).",
+          "type": "string"
+        },
+        "value": {
+          "description": "The reported code, or `None` for null.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "system",
+        "fact"
       ]
     },
     "SourceRecordRef": {

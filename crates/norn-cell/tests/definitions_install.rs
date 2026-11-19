@@ -7608,6 +7608,7 @@ fn additivity_migration_model(integer: bool, scale: u64, additive: bool) -> Mode
             unit: None,
             currency_source: None,
             per_unit: None,
+            unit_source: Vec::new(),
         }
     };
     snapshot.object_types[0].properties.push(norn_ir::Property {

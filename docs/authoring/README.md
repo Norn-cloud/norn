@@ -39,7 +39,7 @@ Route changes to the relevant core contract:
 | Functions, integrations, reconciliation | [07 World boundary](../spec/core/07-world-boundary.md) |
 | Forks, scenarios, metrics, reactive views | [08 Worlds/projections](../spec/core/08-worlds-projections.md) |
 
-**CURRENT** syntax is read, never executed as an application module. The compiler resolves supported symbols and lowers them to IR; the Rust checker is admission authority. Use Effect Schema and the ruled syntax subset, not arbitrary TypeScript execution. See the [profile declarations](../../tools/norn-ts/profile/norn-authoring.d.ts), [compiler fixtures](../../tools/norn-ts/fixtures), and [rejection corpus](../../tools/norn-ts/corpus/reject).
+**CURRENT** Norn definitions are written in Effect's vocabulary (Effect Schema for shapes, `Effect.gen` for flows) and type-checked against the pinned `effect` package, but Norn never runs them: the compiler reads the syntax and lowers it to Norn IR, and the Rust checker decides what is admitted. Use the ruled syntax subset, not arbitrary TypeScript. See the [profile declarations](../../tools/norn-ts/profile/norn-authoring.d.ts), [compiler fixtures](../../tools/norn-ts/fixtures), and [rejection corpus](../../tools/norn-ts/corpus/reject).
 
 ### A small CURRENT definition
 
@@ -63,7 +63,7 @@ export const Holding = Norn.type({
 })
 ```
 
-Use `Norn.decimal(scale, { unit })` for exact quantities and `{ currency: "currencyProperty" }` for money bound to a sibling currency property. Specify scale, rounding, overflow and zero-division behavior for computations. `Norn.ref` names a shared **value type**, not an object reference. Object references belong in `links`; do not store `Customer.ref` or `Scrap.many` as scalar props.
+Use `Norn.decimal(scale, { unit })` for exact quantities and `{ currency: "currencyProperty" }` for money bound to a sibling currency property. Specify scale, rounding, overflow and zero-division behavior for computations. `Norn.ref` names a shared **value type**, not an object reference. Object references belong in `links`; do not store `Customer.ref` or `Scrap.many` as scalar props. When a value type is shared by a flow and a stock, declare additivity where it is used: `Norn.ref("core.quantity", { additivity: { kind: "additive" } })` on an event's quantity and `{ kind: "semi_additive" }` on a holding's (METRIC-ADDITIVITY-REF-1). A use site may only add additivity to an integer or decimal type that declares none. When a quantity's unit is stored beside it rather than fixed, declare where: `{ unitSource: ["unit", "currency"] }` (METRIC-UNIT-PARTITION-1). Questions that aggregate it must then group by or `eq`-filter each of those properties.
 
 ### Labels in any language (CURRENT)
 

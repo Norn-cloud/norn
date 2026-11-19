@@ -1,0 +1,29 @@
+{
+  "artifactId": "source.Synced.interface",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "A record of the cell's own source sync",
+  "namespace": "source",
+  "payload": {
+    "entityVersion": "2.0",
+    "interface": {
+      "name": "source.Synced",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/sources/artifacts/source.Synced.interface.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

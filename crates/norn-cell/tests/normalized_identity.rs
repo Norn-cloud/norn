@@ -740,6 +740,7 @@ fn normalization_profile_refuses_unsupported_components_and_step_exhaustion() {
         unit: None,
         currency_source: None,
         per_unit: None,
+        unit_source: Vec::new(),
     };
     defs[0].properties.push(amount);
     defs[0].identity[0]

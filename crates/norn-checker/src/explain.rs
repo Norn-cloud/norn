@@ -25,6 +25,7 @@ pub mod wording_codes {
 
 fn refusal(code: &str, message: impl Into<String>) -> Vec<Diagnostic> {
     vec![Diagnostic {
+        witness: None,
         code: DiagnosticCode::new(code),
         severity: DiagnosticSeverity::Error,
         message: message.into(),

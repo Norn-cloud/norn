@@ -1,8 +1,7 @@
 # Typed authoring
 
-This frontend reads typed TypeScript syntax without executing authored modules.
-Its Effect profile and compiler lower definitions and bounded flows to Norn IR;
-the Rust checker remains the admission authority through the WASM ABI.
+Norn definitions are written in Effect's vocabulary (Effect Schema for shapes, `Effect.gen` for flows) and type-checked against the pinned `effect` package, but Norn never runs them: the compiler reads the syntax and lowers it to Norn IR, and the Rust checker decides what is admitted.
+This frontend is that compiler; the checker runs through its WASM ABI.
 
 Install the exact dependencies with `bun install --frozen-lockfile`.
 `bun src/cli.ts profile <file.ts>` recognizes the supported syntax.

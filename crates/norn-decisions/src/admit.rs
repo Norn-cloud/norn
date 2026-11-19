@@ -660,7 +660,8 @@ fn table_content(content: &JdmDecisionTableContent) -> DecisionTableContent {
                 .collect(),
         ),
         hit_policy: match content.hit_policy {
-            JdmHitPolicy::First => DecisionTableHitPolicy::First,
+            // TABLE-UNIQUE-1: admission proved at most one row matches, so first selects it.
+            JdmHitPolicy::First | JdmHitPolicy::Unique => DecisionTableHitPolicy::First,
             JdmHitPolicy::Collect => DecisionTableHitPolicy::Collect,
         },
         transform_attributes: transform_attributes(
@@ -676,7 +677,10 @@ fn switch_content(content: &JdmSwitchContent) -> SwitchNodeContent {
     SwitchNodeContent {
         hit_policy: match content.hit_policy {
             Some(JdmHitPolicy::Collect) => SwitchStatementHitPolicy::Collect,
-            Some(JdmHitPolicy::First) | None => SwitchStatementHitPolicy::First,
+            // A switch never admits unique; the screen refuses it before this point.
+            Some(JdmHitPolicy::First | JdmHitPolicy::Unique) | None => {
+                SwitchStatementHitPolicy::First
+            }
         },
         statements: Arc::new(
             content

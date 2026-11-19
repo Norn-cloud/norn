@@ -252,6 +252,11 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                                 &FactKey::new(object_type, key),
                                 &record.values,
                                 &finding,
+                                &mut crate::link_laws::CurrentLinks {
+                                    reader: self,
+                                    world,
+                                    subject: FactKey::new(record.object_type.as_str(), key),
+                                },
                             )
                             .map_err(|error| CellError::QualityEvaluation(Box::new(error)))?
                         {

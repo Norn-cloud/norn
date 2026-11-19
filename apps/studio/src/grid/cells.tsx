@@ -1,11 +1,16 @@
+import { Link } from "@tanstack/react-router"
 import { Lock } from "lucide-react"
 import type { CSSProperties } from "react"
+import { FactProvenance } from "@/components/provenance"
+import { MaskedValue } from "@/components/masked-value"
 import { cn } from "@/lib/utils"
 import type { Field } from "../lib/catalog.ts"
 import { member } from "../lib/exact.ts"
-import { factText } from "../lib/objects.ts"
+import { displayOf, factText } from "../lib/objects.ts"
+import { useView, type View } from "../lib/view.tsx"
 import { propertyWithheld, rowWithheld } from "../lib/records-query.ts"
-import type { ObjectRecord } from "../lib/transport.ts"
+import type { ObjectRecord, SourceLineage } from "../lib/transport.ts"
+import { maskedOf } from "../lib/privacy.ts"
 
 /** One record as a page sent it, with that page's exact number texts. */
 export interface GridRow {
@@ -23,16 +28,17 @@ export const WITHHELD_PROPERTY_HINT = "The server withheld this value from your 
 export const isWithheld = (row: GridRow): boolean => rowWithheld(row.record) || row.record.values === null
 export const fieldWithheld = (row: GridRow, field: Field): boolean => isWithheld(row) || propertyWithheld(row.record, field.id)
 
-/** The canvas tints (D65, `--tint-*`), one per declared enum value by its position, so a value keeps its colour everywhere. */
-const TINTS = ["--tint-state", "--tint-tool", "--tint-route", "--tint-outcome", "--tint-agent", "--tint-ask", "--tint-wait", "--tint-law"] as const
 
-export function EnumChip({ field, value }: { readonly field: Field; readonly value: string }) {
-  const index = field.scalar.kind === "enum" ? field.scalar.values.indexOf(value) : -1
-  const tint = TINTS[(index < 0 ? 0 : index) % TINTS.length] ?? TINTS[0]
+/**
+ * A choice as a neutral chip; `label` is what the reader reads (its declared label in Business, the stored value
+ * in Technical). A value's colour would have to say what it means, and a declaration says nothing of that yet, so
+ * no value is coloured: a colour picked by position once showed "failed" in green.
+ */
+export function EnumChip({ field: _field, value, label = value }: { readonly field: Field; readonly value: string; readonly label?: string }) {
   return (
-    <span title={value} style={{ "--tint": `var(${tint})` } as CSSProperties}
-      className="inline-block max-w-full truncate rounded-md bg-[color-mix(in_oklab,var(--tint)_14%,transparent)] px-1.5 py-0.5 text-xs leading-tight text-[color-mix(in_oklab,var(--tint)_80%,var(--foreground))] ring-1 ring-[color-mix(in_oklab,var(--tint)_22%,transparent)] ring-inset">
-      {value}
+    <span title={value}
+      className="inline-block max-w-full truncate rounded-md bg-muted px-1.5 py-0.5 text-xs leading-tight text-foreground ring-1 ring-border ring-inset">
+      {label}
     </span>
   )
 }
@@ -47,6 +53,12 @@ export const alignRight = right
 
 /** The value as plain text, for titles, copy and tests. Exact as the server sent it. */
 export function cellText(field: Field, row: GridRow): string {
+  if (isWithheld(row)) return WITHHELD
+  const masked = maskedOf(row.record, field.id)
+  if (masked !== null) {
+    const projected = row.record.values[field.id]
+    return masked.mode === "refuse" ? WITHHELD : typeof projected === "string" ? projected : projected === null || projected === undefined ? "—" : JSON.stringify(projected)
+  }
   if (fieldWithheld(row, field)) return WITHHELD
   const value = row.record.values[field.id]
   if (value === null || value === undefined) return "—"
@@ -60,22 +72,85 @@ export function cellText(field: Field, row: GridRow): string {
   }
 }
 
-/** A typed cell. Dates and timestamps are shown as sent, with their offset; amounts keep their exact digits and unit. */
+/** What a cell reads as in `view`: Business groups numbers and names dates and choices in words; Technical is {@link cellText}. */
+export function cellDisplay(field: Field, row: GridRow, view: View): string {
+  const exact = cellText(field, row)
+  const value = row.record.values[field.id]
+  return view === "technical" || fieldWithheld(row, field) || maskedOf(row.record, field.id) !== null || value === null || value === undefined ? exact : displayOf(field, value, exact)
+}
+
+/**
+ * A typed cell, one renderer per value kind. Amounts keep their exact digits and their unit; in the
+ * Business view digits are grouped, dates and times read in words (UTC, said so) and a choice by
+ * its label. The exact text is always the title.
+ */
 export function Cell({ field, row }: { readonly field: Field; readonly row: GridRow }) {
+  const { view } = useView()
+  const masked = isWithheld(row) ? null : maskedOf(row.record, field.id)
+  // A marked property is the server's projection, never the value: a chip, and "Reveal" when allowed.
+  if (masked !== null) return <MaskedValue objectType={row.record.objectType} id={row.record.id} property={field.id} masked={masked} projected={row.record.values[field.id]} />
   if (fieldWithheld(row, field)) return <WithheldMark />
   const value = row.record.values[field.id]
   if (value === null || value === undefined) return <span className="text-muted-foreground" aria-label="No value">—</span>
-  const text = cellText(field, row)
+  const exact = cellText(field, row)
+  const text = cellDisplay(field, row, view)
   switch (field.scalar.kind) {
-    case "enum": return <EnumChip field={field} value={text} />
+    case "enum": return <EnumChip field={field} value={exact} label={text} />
     case "boolean": return <span>{text}</span>
     case "date":
-    case "timestamp":
-    case "duration": return <time className="font-mono text-xs tabular-nums" dateTime={field.scalar.kind === "duration" ? undefined : text}>{text}</time>
+    case "timestamp": return <time className={cn("tabular-nums", view === "technical" && "font-mono text-xs")} dateTime={exact} title={exact}>{text}</time>
+    case "duration": return <time className="font-mono text-xs tabular-nums">{text}</time>
     case "record":
     case "json-ext": return <code className="block max-w-64 truncate text-xs" title={text}>{text}</code>
     case "decimal":
-    case "integer": return <span className="tabular-nums">{text}</span>
+    case "integer": return <span className="tabular-nums" title={exact}>{text}</span>
     default: return <span className="block max-w-80 truncate" title={text}>{text}</span>
   }
+}
+
+/** The properties a record is named by, in the order Studio reads them. */
+const NAME_PROPERTIES = ["label", "display_name"] as const
+
+/**
+ * The Record column's name. When the naming property is marked, it is the server's projection as a
+ * chip (with "Reveal" when allowed), never a name the server did not send.
+ */
+export function RecordName({ row, fallback }: { readonly row: GridRow; readonly fallback: string }) {
+  if (!isWithheld(row)) {
+    for (const property of NAME_PROPERTIES) {
+      const masked = maskedOf(row.record, property)
+      if (masked !== null) return <MaskedValue objectType={row.record.objectType} id={row.record.id} property={property} masked={masked} projected={row.record.values[property]} />
+    }
+  }
+  return <>{fallback}</>
+}
+
+/** The way from a fact's card to the record's full lineage. */
+export function LineageLink({ objectType, id }: { readonly objectType: string; readonly id: string }) {
+  return <Link to="/sources/$concept/$" params={{ concept: objectType, _splat: id }} hash="lineage" className="text-sm font-medium underline-offset-4 hover:underline">Open the record's lineage</Link>
+}
+
+/**
+ * A typed cell whose value opens its provenance card: the same renderer, with the card one click
+ * away. Withheld and empty values have no card; a recorded page has no history to read.
+ */
+export function TracedCell({ field, row, live, lineage = null, variant = "glyph" }: {
+  readonly field: Field
+  readonly row: GridRow
+  readonly live: boolean
+  /** The record's lineage, when the page read it: a recorded snapshot's card is drawn from it. */
+  readonly lineage?: SourceLineage | null
+  readonly variant?: "inline" | "glyph"
+}) {
+  const { view } = useView()
+  const value = row.record.values[field.id]
+  if (fieldWithheld(row, field) || maskedOf(row.record, field.id) !== null || value === null || value === undefined) return <Cell field={field} row={row} />
+  const { objectType, id, version } = row.record
+  const label = field.id.replaceAll("_", " ")
+  return (
+    <FactProvenance objectType={objectType} id={id} version={version} fact={field.id} label={label} value={cellDisplay(field, row, view)} lineage={lineage} live={live}
+      variant={variant} trace={<LineageLink objectType={objectType} id={id} />}>
+      <Cell field={field} row={row} />
+    </FactProvenance>
+  )
 }

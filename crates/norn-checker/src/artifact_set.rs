@@ -153,10 +153,11 @@ pub struct ResolvedArtifactSet<'a> {
 pub const fn may_reference(from: &ArtifactKind, to: &ArtifactKind) -> bool {
     use ArtifactKind::{
         Action, BusinessPack, Connector, Customization, DefinedConcept, Derived, Entity, Labels,
-        Law, Mapping, Policy, Relation, Rule, Setting, SourceSchema, Widget,
+        Law, Mapping, Model, Policy, Relation, Rule, Setting, SourceSchema, Widget,
     };
     match from {
-        Entity => matches!(to, Entity),
+        // A model reads object types; nothing references a model yet.
+        Entity | Model => matches!(to, Entity),
         DefinedConcept => matches!(to, Entity | DefinedConcept),
         // A catalog labels definitions; nothing references a catalog.
         Labels => matches!(to, Entity | Action | Rule | Law | Widget),
@@ -384,6 +385,15 @@ pub(crate) fn check_artifact_set_using(
                     &normalized_artifacts,
                     &normalized_base,
                 ))
+                .chain(crate::transform::check_transform_set(
+                    &normalized_artifacts,
+                    &normalized_base,
+                    normalized_context.registry,
+                ))
+                .chain(crate::model::check_model_set(
+                    &normalized_artifacts,
+                    &normalized_base,
+                ))
                 .collect::<Vec<_>>()
         }
         Err(resolution) => normalized_artifacts
@@ -468,6 +478,7 @@ pub(crate) fn scope_finding(
     let (dimension, required, actual) = scope_conflict(&owner.scope, &target.scope)?;
     let actual = actual.map_or_else(|| "unset".to_owned(), |value| format!("{value:?}"));
     Some(Diagnostic {
+        witness: None,
         code: DiagnosticCode::new(codes::INCOMPATIBLE_SCOPE),
         severity: DiagnosticSeverity::Error,
         message: format!(
@@ -682,6 +693,7 @@ pub(crate) const fn pack_kind(kind: PackArtifactKind) -> ArtifactKind {
         PackArtifactKind::Law => ArtifactKind::Law,
         PackArtifactKind::DefinedConcept => ArtifactKind::DefinedConcept,
         PackArtifactKind::Labels => ArtifactKind::Labels,
+        PackArtifactKind::Model => ArtifactKind::Model,
     }
 }
 
@@ -799,6 +811,7 @@ const fn kind_name(kind: &ArtifactKind) -> &'static str {
         ArtifactKind::Law => "law",
         ArtifactKind::DefinedConcept => "defined_concept",
         ArtifactKind::Labels => "labels",
+        ArtifactKind::Model => "model",
     }
 }
 
@@ -923,6 +936,7 @@ fn cycle_findings(
 
 fn finding(code: &str, message: String, artifact: &ArtifactEnvelope, pointer: &str) -> Diagnostic {
     Diagnostic {
+        witness: None,
         code: DiagnosticCode::new(code),
         severity: DiagnosticSeverity::Error,
         message,

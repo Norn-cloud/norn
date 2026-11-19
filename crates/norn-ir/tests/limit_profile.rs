@@ -2,7 +2,7 @@
 
 use norn_ir::{
     EnvelopeLimits, LimitProfileRef, NORN_LIMITS_PROFILE_ID, NORN_LIMITS_V1_SHA256,
-    NORN_LIMITS_V1_VERSION, ResourceLimitProfile,
+    NORN_LIMITS_V1_VERSION, QuestionLimits, ResourceLimitProfile,
 };
 
 #[test]
@@ -101,4 +101,39 @@ fn norn_limits_v1_canonical_bytes_match_golden_file() {
         .unwrap();
     assert_eq!(bytes.as_slice(), golden.as_slice());
     assert_eq!(norn_canonical::canonicalize_json(golden).unwrap(), bytes);
+}
+
+/// Question bounds (ruling 2026-11-12) are additive: `norn.limits/1` declares
+/// none, so its bytes are unchanged and it bounds questions by the default;
+/// a profile that declares them commits to them in its canonical bytes.
+#[test]
+fn question_limits_are_additive_and_hashed_when_declared() {
+    let v1 = ResourceLimitProfile::norn_limits_v1();
+    assert_eq!(v1.question, None);
+    assert!(serde_json::to_value(&v1).unwrap().get("question").is_none());
+    assert_eq!(v1.question_limits(), QuestionLimits::DEFAULT);
+    assert!(QuestionLimits::DEFAULT.max_scanned_records > v1.slice.max_records);
+    let golden = include_bytes!("golden/norn.limits.v1.canonical.json");
+    assert_eq!(
+        serde_json::from_slice::<ResourceLimitProfile>(golden).unwrap(),
+        v1
+    );
+    let mut declared = v1.clone();
+    declared.question = Some(QuestionLimits {
+        max_scanned_records: 5,
+        max_scanned_bytes: 4_096,
+    });
+    assert_eq!(declared.question_limits().max_scanned_records, 5);
+    let serde_bytes = serde_json::to_vec(&declared).unwrap();
+    assert_eq!(
+        declared.canonical_json().unwrap(),
+        norn_canonical::canonicalize_json(&serde_bytes).unwrap()
+    );
+    assert_ne!(
+        declared.content_sha256().unwrap(),
+        v1.content_sha256().unwrap()
+    );
+    let mut value = serde_json::to_value(&declared).unwrap();
+    value["question"]["max_rows"] = serde_json::json!(5);
+    assert!(serde_json::from_value::<ResourceLimitProfile>(value).is_err());
 }

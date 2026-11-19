@@ -116,6 +116,26 @@ test("a cookie-authenticated write from anywhere but the Studio origin never rea
   expect(seen).toHaveLength(2)
 })
 
+test("a live socket (UI-LIVE-1) opens only from the Studio origin and reaches the host with the host token and its handshake", async () => {
+  const { env, seen } = stage(() => new Response(null, { status: 204 }))
+  const cookie = await signUp(env, "live@example.com")
+  const handshake = { cookie, upgrade: "websocket", connection: "Upgrade", "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==", "sec-websocket-version": "13", "sec-websocket-protocol": "norn.live.v1" }
+  // Cross-site socket hijacking: the browser sends the cookie on an upgrade from any page.
+  for (const origin of ["https://evil.norn.cloud", "null", undefined]) {
+    const headers: Record<string, string> = { ...handshake }
+    if (origin !== undefined) headers.origin = origin
+    expect([origin, (await call(env, "/api/host/v1/subscribe", { headers })).status]).toEqual([origin, 403])
+  }
+  expect(seen).toHaveLength(0)
+  await call(env, "/api/host/v1/subscribe?orgId=o&environmentId=e", { headers: { ...handshake, origin: ORIGIN } })
+  expect(seen).toHaveLength(1)
+  const forwarded = seen[0]!
+  expect(new URL(forwarded.url).pathname).toBe("/v1/subscribe")
+  expect(forwarded.headers.get("cookie")).toBeNull()
+  expect(forwarded.headers.get("authorization")).toStartWith("Bearer ")
+  for (const name of ["upgrade", "sec-websocket-key", "sec-websocket-version", "sec-websocket-protocol"]) expect(forwarded.headers.get(name)).toBe(handshake[name as keyof typeof handshake])
+})
+
 test("an API-key write needs no Origin", async () => {
   const { env, seen, auth } = stage(() => new Response(null, { status: 202 }))
   const cookie = await signUp(env, "ha@example.com")
@@ -168,4 +188,28 @@ test("an authorized definition read resolves its signer inside the active organi
   const refused = await read()
   expect(refused.status).toBe(403)
   expect((await refused.json() as { signoff: { displayName?: string } }).signoff.displayName).toBeUndefined()
+})
+
+/** A host reply as the cell runtime streams it: its body cannot be cloned before it is read. */
+function streamed(document: unknown, status = 200): Response {
+  const response = new Response(new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode(JSON.stringify(document))); controller.close() } }), { status, headers: { "content-type": "application/json" } })
+  response.clone = () => { throw new TypeError("Cannot clone a streaming response before consumption") }
+  return response
+}
+
+test("a streamed definition read is served without cloning, signed or not", async () => {
+  let document: Record<string, unknown> = {}
+  const { env, auth } = stage(() => streamed(document))
+  const cookie = await signUp(env, "streamed@example.com")
+  const reader = await resolveActor(new Request(ORIGIN, { headers: { cookie } }), auth)
+  if (!reader) throw new Error("no reader")
+  const read = () => call(env, "/api/host/v1/definitions/ops.approve_refund?orgId=x&environmentId=y", { headers: { cookie } })
+  document = { id: "ops.approve_refund", kind: "flow", signoff: { signer: `user:${reader.subjectId}`, signedAtMs: 1, restatementSha256: "a".repeat(64) } }
+  const signed = await read()
+  expect(signed.status).toBe(200)
+  expect((await signed.json() as { signoff: { displayName: string } }).signoff.displayName).toBe("you")
+  document = { id: "ops.approve_refund", kind: "flow", signoff: null }
+  const unsigned = await read()
+  expect(unsigned.status).toBe(200)
+  expect(await unsigned.json() as Record<string, unknown>).toEqual(document)
 })

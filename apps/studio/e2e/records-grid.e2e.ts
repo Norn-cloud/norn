@@ -19,6 +19,14 @@ async function shoot(page: Page, name: string) {
 const grid = (page: Page) => page.getByRole("grid", { name: "Holding records" })
 const rows = (page: Page) => grid(page).locator('[role="row"][aria-rowindex]:not([aria-rowindex="1"])')
 const firstCell = (page: Page, column: number) => rows(page).first().locator('[role="gridcell"]').nth(column)
+/** A column's position by its header, so a type that gains a property moves no assertion. */
+async function columnIndex(page: Page, name: string): Promise<number> {
+  await expect(grid(page).getByRole("columnheader", { name, exact: true })).toBeVisible()
+  const headers = (await grid(page).getByRole("columnheader").allInnerTexts()).map((text) => text.trim())
+  const index = headers.indexOf(name)
+  if (index < 0) throw new Error(`No ${name} column among ${headers.join(", ")}`)
+  return index
+}
 
 test.beforeEach(({ }, info) => { test.skip(Boolean(process.env.E2E_BASE), `${info.title}: uses the object-route stand-in`) })
 
@@ -26,11 +34,12 @@ test("view: browse, typed cells, virtualized rows, columns, server sort, paging 
   await session(page)
   const cell = await objectCell(page, population(500))
   await page.goto("/objects/canon.Holding")
-  await expect(page.getByText("500 records")).toBeVisible()
+  await expect(page.getByText("500 records", { exact: true })).toBeVisible()
   await expect(firstCell(page, 0)).toHaveText("demo/holding/0001")
-  // Exact decimal text with its unit; enums as declared, never reworded.
+  // Exact decimal text with its unit.
   await expect(rows(page).first()).toContainText("37.007")
-  await expect(rows(page).first()).toContainText("moving_average")
+  // Business reads a choice in words; its stored value stays the chip's title.
+  await expect(rows(page).first()).toContainText("moving average")
   // Only the rows in view are in the DOM.
   expect(await rows(page).count()).toBeLessThan(50)
   await shoot(page, "live")
@@ -65,7 +74,7 @@ test("view: keyboard moves through rows and opens the record drawer", async ({ p
   await session(page)
   await objectCell(page, population(120))
   await page.goto("/objects/canon.Holding")
-  await expect(page.getByText("120 records")).toBeVisible()
+  await expect(page.getByText("120 records", { exact: true })).toBeVisible()
   await grid(page).focus()
   await page.keyboard.press("ArrowDown")
   await page.keyboard.press("ArrowDown")
@@ -86,7 +95,7 @@ test("view: the filter runs on the server; no match and clear", async ({ page })
   await session(page)
   const cell = await objectCell(page, population(300))
   await page.goto("/objects/canon.Holding")
-  await expect(page.getByText("300 records")).toBeVisible()
+  await expect(page.getByText("300 records", { exact: true })).toBeVisible()
   await page.getByRole("button", { name: "Filter" }).click()
   await page.getByLabel("Condition 1 property").selectOption("valuation_method")
   await page.getByLabel("Condition 1 value").selectOption("fifo")
@@ -105,7 +114,7 @@ test("view: the filter runs on the server; no match and clear", async ({ page })
   await expect(page.getByText("No records match this filter.")).toBeVisible()
   await shoot(page, "no-match")
   await page.getByRole("button", { name: "Clear filter" }).click()
-  await expect(page.getByText("300 records")).toBeVisible()
+  await expect(page.getByText("300 records", { exact: true })).toBeVisible()
   await expect.poll(() => cell.requests.at(-1)?.searchParams.get("filter") ?? null).toBeNull()
 })
 
@@ -153,8 +162,11 @@ test("withheld rows read Withheld everywhere, sort last, and never match a filte
   await expect(withheld.first().getByRole("gridcell")).toHaveCount(2)
   await expect(withheld.first().getByRole("gridcell").first()).toHaveText("demo/holding/0004")
   // A row whose stock cost alone is withheld reads Withheld in that cell only.
+  await page.getByRole("button", { name: "Columns" }).click()
+  await page.getByRole("menuitemcheckbox", { name: "stock cost" }).click()
+  await page.keyboard.press("Escape")
   const costHidden = rows(page).nth(2)
-  await expect(costHidden.getByRole("gridcell").nth(8)).toHaveText("Withheld")
+  await expect(costHidden.getByRole("gridcell").nth(await columnIndex(page, "stock cost"))).toHaveText("Withheld")
   await expect(costHidden).toContainText("111.021")
   await shoot(page, "withheld")
   await withheld.first().click()
@@ -166,7 +178,7 @@ test("withheld rows read Withheld everywhere, sort last, and never match a filte
   await page.getByLabel("Condition 1 property").selectOption("location")
   await page.getByLabel("Condition 1 test").selectOption("present")
   await page.getByRole("button", { name: "Apply" }).click()
-  await expect(page.getByText("30 records")).toBeVisible()
+  await expect(page.getByText("30 records", { exact: true })).toBeVisible()
   expect(cell.requests.length).toBeGreaterThan(1)
 })
 
@@ -227,4 +239,23 @@ test("loading shows placeholder rows, and an empty type says nothing is stored y
   release()
   await expect(page.getByText("No holding records are stored yet.")).toBeVisible()
   await shoot(page, "empty")
+})
+
+test("a cell that does not answer at first: Studio says it is reconnecting and retries; it never shows the recording meanwhile", async ({ page }) => {
+  await session(page)
+  await objectCell(page, population(40))
+  // The cell is busy for the first 2.5 s (the local host's own 503), then answers: no fallback to the recorded workspace.
+  let since: number | undefined
+  await page.route("**/api/host/v1/definitions?**", (route) => {
+    since ??= Date.now()
+    return Date.now() - since < 2500
+      ? route.fulfill({ status: 503, json: { error: "norn dev at http://127.0.0.1:4174 did not answer; is it still running?" } })
+      : route.fallback()
+  })
+  await page.goto("/objects/canon.Holding")
+  await expect(page.locator('[data-connection="retrying"]')).toContainText("Couldn't reach the cell.")
+  await expect(page.getByText("Recorded · synthetic gold-scrap data")).toHaveCount(0)
+  // Once it answers, Studio reads what the cell says (this stand-in serves no definitions, so the switcher then names the recording) and the banner goes.
+  await expect(page.getByText("40 records", { exact: true })).toBeVisible({ timeout: 20_000 })
+  await expect(page.locator('[data-connection="retrying"]')).toHaveCount(0)
 })

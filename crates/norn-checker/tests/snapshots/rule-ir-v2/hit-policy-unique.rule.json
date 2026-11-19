@@ -3,8 +3,8 @@
   "diagnostics": [
     {
       "artifactId": "retail.reorder_decision.rule",
-      "code": "rule.validation.jdm_hit_policy_rejected",
-      "message": "hit policy 'unique' is not admitted by the Norn profile: JDM admits first and collect; other DMN hit policies are translated or rejected at DMN ingress (T3-DEC-4)",
+      "code": "rule.validation.jdm_unique_unproved",
+      "message": "unique table 'approval' is Unknown, so it is refused: its input is not the rule's closed input record, so no finite proof covers it; use first for a classification table, or give the table a finite closed input it reads directly",
       "remediation": "fix_definition",
       "severity": "error",
       "span": {

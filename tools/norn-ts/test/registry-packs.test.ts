@@ -5,9 +5,12 @@ import { compileDefinitionFiles } from "../src/compiler/definitions.ts"
 import { TOOL_ROOT } from "../src/profile.ts"
 import { checker } from "./checker.ts"
 
-/** `registry/packs/<pack>/*.ts` compile to `registry/packs/<pack>/artifacts/<artifactId>.json`; NORN_PACKS_UPDATE=1 regenerates them. */
+/**
+ * `registry/packs/<pack>/*.ts` compile to `registry/packs/<pack>/artifacts/<artifactId>.json`, and the test fixture packs
+ * under `fixtures/packs/<pack>` the same way; NORN_PACKS_UPDATE=1 regenerates them.
+ */
 const REPO = join(TOOL_ROOT, "../..")
-const PACKS = join(REPO, "registry/packs")
+const PACK_ROOTS = [join(REPO, "registry/packs"), join(REPO, "fixtures/packs")]
 const update = process.env.NORN_PACKS_UPDATE === "1"
 
 function compiled(dir: string): any[] {
@@ -19,7 +22,7 @@ function compiled(dir: string): any[] {
   })
 }
 
-const packs = readdirSync(PACKS, { withFileTypes: true }).filter(d => d.isDirectory()).map(d => join(PACKS, d.name)).sort()
+const packs = PACK_ROOTS.flatMap(root => readdirSync(root, { withFileTypes: true }).filter(d => d.isDirectory()).map(d => join(root, d.name)).sort())
 
 test("registry packs are generated from their typed sources", () => {
   for (const dir of packs) {
@@ -40,8 +43,15 @@ test.skipIf(!checker)("the Rust checker admits every registry pack and link", ()
   const artifacts = packs.flatMap(compiled)
   const core = join(REPO, "registry/core/artifacts")
   const physics = ["Agent", "AgentRole", "Resource", "Commitment", "Hold", "EconomicEvent", "LedgerEffect", "Claim"]
-  const base = [...physics.map(name => `core.${name}.interface.json`), "core.value_types.entity.json", "std.value_types.entity.json", "core.units.json"]
+  // The core interfaces packs implement (physics, and the scanned-documents fixture pack's norn.SourceEvidence and norn.SourceDocument), the
+  // claim type every mapped link is recorded as (norn.ObservedLinkClaim, OBS-LINK-CONVERGE-1), plus the value types and units. Not every core interface: some (core.Order) name registry standard
+  // types (iso4217) this checker call does not install.
+  const base = [...physics.map(name => `core.${name}.interface.json`), "norn.SourceEvidence.interface.json", "norn.SourceDocument.interface.json", "norn.ObservedLinkClaim.entity.json", "core.value_types.entity.json", "std.value_types.entity.json", "core.units.json"]
     .map(name => JSON.parse(readFileSync(join(core, name), "utf8")))
   const checked = checker!.checkArtifactSet(artifacts, { base })
   if (!checked.admitted) throw new Error(JSON.stringify(checked.diagnostics))
+  // LAW-LINK-1 regression: every registered pack law stays admitted, with no finding against it.
+  const laws = new Set(artifacts.filter(a => a.kind === "law").map(a => a.artifactId as string))
+  expect(laws.size).toBeGreaterThan(0)
+  expect(checked.diagnostics.diagnostics.filter(d => laws.has(d.artifactId ?? ""))).toEqual([])
 }, 60_000)

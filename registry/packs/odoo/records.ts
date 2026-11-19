@@ -1,6 +1,6 @@
 import { Norn } from "@norn/authoring"
 import { Agent, AgentRole, Resource, Commitment, EconomicEvent, LedgerEffect } from "../../core/src/physics.ts"
-import { Catalog, Item, Party, PartyRole, Holding, OrderLine, Delivery, Posting, Settlement, SettlementObservation } from "../canon/records.ts"
+import { Catalog, Item, Party, PartyRole, Holding, OrderLine, Delivery, Posting, Settlement, SettlementObservation, ISO_4217_CODE_SET } from "../canon/records.ts"
 
 export const Source = Norn.sourceSchema({
   id: "odoo.three.source",
@@ -9,7 +9,7 @@ export const Source = Norn.sourceSchema({
   source: {system: "synthetic-odoo", instance: "demo", version: "odoo-three/1"},
   observedAt: "2026-11-02T00:00:00Z",
   adapter: {name: "synthetic-record-replay", version: "0.1.0"},
-  rawMetadata: {uri: "registry/packs/odoo/synthetic.json", sha256: "681adbdf0de776701a4390dd3f94a25cbdfd657501b0f2a2e14398ceb647fb8a"},
+  rawMetadata: {uri: "registry/packs/odoo/synthetic.json", sha256: "4b8f939a1266c787769606584c57fc3f06e6652e4ac0b7fa05f383a576043d46"},
   datasets: [
     {id: "product.product", nativeName: "Synthetic product.product", kind: "document"},
     {id: "stock.quant", nativeName: "Synthetic stock.quant", kind: "document"},
@@ -74,6 +74,7 @@ export const Source = Norn.sourceSchema({
     {dataset: "account.payment", name: "payer_ref", ordinal: 5, nativeType: "SyntheticText", typeCandidate: {type: "string", origin: "declared"}, required: true},
     {dataset: "account.payment", name: "payee_ref", ordinal: 6, nativeType: "SyntheticText", typeCandidate: {type: "string", origin: "declared"}, required: true},
     {dataset: "stock.quant", name: "valuation_method", ordinal: 11, nativeType: "SyntheticText", typeCandidate: {type: "string", origin: "declared"}, required: true},
+    {dataset: "stock.quant", name: "write_date", ordinal: 12, nativeType: "SyntheticText", typeCandidate: {type: "string", origin: "declared"}, required: true},
     {dataset: "stock.move", name: "posting_state", ordinal: 9, nativeType: "SyntheticText", typeCandidate: {type: "string", origin: "declared"}, required: true},
     {dataset: "account.move.line", name: "posting_state", ordinal: 8, nativeType: "SyntheticText", typeCandidate: {type: "string", origin: "declared"}, required: true}
   ],
@@ -83,12 +84,13 @@ export const Source = Norn.sourceSchema({
     {id: "delivery_unit", dataset: "stock.move", field: "unit", origin: "declared", values: [{value: "g"}]},
     {id: "settlement_kind", dataset: "account.payment", field: "kind", origin: "declared", values: [{value: "payment"}, {value: "refund"}]},
     {id: "holding_valuation_method", dataset: "stock.quant", field: "valuation_method", origin: "declared", values: [{value: "moving_average"}]},
+    {id: "holding_cost_currency", dataset: "stock.quant", field: "cost_currency", origin: "declared", values: ISO_4217_CODE_SET},
     {id: "delivery_posting_state", dataset: "stock.move", field: "posting_state", origin: "declared", values: [{value: "posted"}]},
     {id: "posting_posting_state", dataset: "account.move.line", field: "posting_state", origin: "declared", values: [{value: "posted"}]},
-    {id: "posting_currency", dataset: "account.move.line", field: "currency", origin: "declared", values: [{value: "USD"}]},
+    {id: "posting_currency", dataset: "account.move.line", field: "currency", origin: "declared", values: ISO_4217_CODE_SET},
     {id: "posting_account_role", dataset: "account.move.line", field: "account_role", origin: "declared", values: [{value: "cogs"}, {value: "inventory"}]},
     {id: "posting_book", dataset: "account.move.line", field: "book", origin: "declared", values: [{value: "demo/stock-usd"}]},
-    {id: "settlement_currency", dataset: "account.payment", field: "currency", origin: "declared", values: [{value: "USD"}]}
+    {id: "settlement_currency", dataset: "account.payment", field: "currency", origin: "declared", values: ISO_4217_CODE_SET}
   ],
   constraints: [
     {id: "source_id_0", kind: "primary_key", dataset: "product.product", fields: ["id"], origin: "declared"},
@@ -105,7 +107,7 @@ export const Mapping = Norn.mapping({
   id: "odoo.three.mapping",
   title: "odoo synthetic observations to the REA canon",
   version: "0.1.0",
-  source: {schemaId: "odoo.three.source", version: "0.1.0", sha256: "1e62871482bc326d6a16e2c19e532d396ee7ef529275f37402c02fcd345e7a54"},
+  source: {schemaId: "odoo.three.source", version: "0.1.0", sha256: "9a996b1b5b2827db69b781441373fedc1e2750f83ab40553fb535eb8ba804ec0"},
   sourceContract: {kind: "generic"},
   interfaces: [Catalog, Resource, Agent, AgentRole, Commitment, EconomicEvent, LedgerEffect, Settlement],
   maps: [
@@ -127,6 +129,7 @@ export const Mapping = Norn.mapping({
       properties: [
         {property: "resource_code", value: "input.resource_code"},
         {property: "quantity", value: "input.quantity"},
+        {property: "observed_at", value: "timestamp(input.write_date)"},
         {property: "unit", value: "input.unit"},
         {property: "currency", value: "null"},
         {property: "valuation_method", value: "input.valuation_method"},

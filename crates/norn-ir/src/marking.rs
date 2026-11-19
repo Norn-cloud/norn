@@ -56,6 +56,42 @@ pub enum MaskPolicy {
     },
     /// Replace the value with JSON null.
     Null {},
+    /// Replace the value with a stable pseudonym such as `Customer #K3V9MQ7T2A`.
+    /// It is a keyed hash of the cell's secret, `subject` and the value, so
+    /// equal values keep equal pseudonyms (joins and counts still hold) and
+    /// it cannot be reversed without the cell.
+    Pseudonym {
+        /// What the value identifies (for example `Customer`); fields that
+        /// share a subject share pseudonyms.
+        subject: String,
+    },
+    /// Leave the property out of the document altogether.
+    Refuse {},
+}
+
+impl MaskPolicy {
+    /// How much this projection hides: a projection may only be replaced by
+    /// one of at least the same strength (`last-n` also by no larger count).
+    /// `pseudonym` keeps equality only, `redacted` and `null` keep nothing,
+    /// `refuse` hides even that the property exists.
+    #[must_use]
+    pub const fn strength(&self) -> u8 {
+        match self {
+            Self::LastN { .. } => 1,
+            Self::Pseudonym { .. } => 2,
+            Self::Redacted {} | Self::Null {} => 3,
+            Self::Refuse {} => 4,
+        }
+    }
+
+    /// Whether replacing `self` with `candidate` would show more of a value.
+    #[must_use]
+    pub const fn weakened_by(&self, candidate: &Self) -> bool {
+        match (self, candidate) {
+            (Self::LastN { count: old }, Self::LastN { count: new }) => *new > *old,
+            _ => candidate.strength() < self.strength(),
+        }
+    }
 }
 
 /// A declared classification and its read projection policy.
@@ -84,6 +120,16 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<MaskPolicy>(r#"{"kind":"last-n","count":4.0}"#).ok(),
             Some(MaskPolicy::LastN { count: 4 })
+        );
+        assert_eq!(
+            serde_json::from_str::<MaskPolicy>(r#"{"kind":"pseudonym","subject":"Customer"}"#).ok(),
+            Some(MaskPolicy::Pseudonym {
+                subject: "Customer".to_owned()
+            })
+        );
+        assert_eq!(
+            serde_json::from_str::<MaskPolicy>(r#"{"kind":"refuse"}"#).ok(),
+            Some(MaskPolicy::Refuse {})
         );
         for count in ["-1", "0.5", "4294967296"] {
             let json = format!(r#"{{"kind":"last-n","count":{count}}}"#);

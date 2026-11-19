@@ -1,9 +1,10 @@
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query"
+import { MarkingChips, useMarkingCatalog } from "@/components/marking-chip"
 import { Link, useNavigate } from "@tanstack/react-router"
 import { useVirtualizer } from "@tanstack/react-virtual"
 import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, Columns3, ExternalLink, Filter, Play, Plus, RefreshCw, Rows3 } from "lucide-react"
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react"
-import { CopyId } from "@/components/copy-id"
+import { CopyId, PathText } from "@/components/copy-id"
 import { EmptyState } from "@/components/panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -21,10 +22,11 @@ import { transport } from "../lib/transport.ts"
 import { ACTIONS_UNAVAILABLE, writesWhole, type ActionSummary } from "../lib/actions.ts"
 import { ActionSheet, useActions, type OpenAction } from "../actions/action-sheet.tsx"
 import { offeredFor } from "../lib/screen/call.ts"
-import { alignRight, Cell, isWithheld, WITHHELD_HINT, WITHHELD_ROW, WithheldMark, type GridRow } from "./cells.tsx"
+import { alignRight, isWithheld, TracedCell, WITHHELD_HINT, WITHHELD_ROW, WithheldMark, type GridRow, RecordName } from "./cells.tsx"
 import { blankClause, FilterEditor, filterable, fromPredicate, toPredicate, type DraftClause } from "./filter-editor.tsx"
+import { FacetsRail, FilterChips } from "./facets-rail.tsx"
 
-const ROW = 36
+const ROW = 32
 const DEFAULT_COLUMNS = 8
 const PAGE_SIZES = [50, 100, LIMITS.maxPageSize] as const
 const HIDDEN_FIELDS = new Set(["id", "label", "display_name"])
@@ -59,16 +61,34 @@ const STICKY = "sticky left-0 z-10 shadow-[1px_0_0_var(--node-border)]"
  * doesn't serve the object route, the recorded documents are shown and the controls say why
  * they're off.
  */
-export function RecordsGrid({ concept, read = readRecords }: { readonly concept: Concept; readonly read?: Read }) {
+/** The query a grid shows, as a saved view keeps it. */
+export interface GridQuery { readonly filter: Predicate | null; readonly sort: readonly SortKey[]; readonly columns: readonly string[] }
+
+export function RecordsGrid({ concept, read = readRecords, initial, onQuery }: {
+  readonly concept: Concept
+  readonly read?: Read
+  /** The query to open with: a saved view's. */
+  readonly initial?: Partial<GridQuery>
+  /** Told the query the grid shows, whenever it changes. */
+  readonly onQuery?: (query: GridQuery) => void
+}) {
   const name = concept.name
   const fields = useMemo(() => concept.fields.filter(({ id }) => !HIDDEN_FIELDS.has(id)), [concept])
-  const [sort, setSort] = useState<readonly SortKey[]>([])
-  const [filter, setFilter] = useState<Predicate | null>(null)
-  const [draft, setDraft] = useState<readonly DraftClause[]>([])
+  const markings = useMarkingCatalog()
+  // The Record column shows the record's name: the markings of the name facts it is read from.
+  const nameMarkings = useMemo(() => [...new Set(concept.fields.filter(({ id }) => HIDDEN_FIELDS.has(id)).flatMap(({ markings: marked }) => marked ?? []))], [concept])
+  const [sort, setSort] = useState<readonly SortKey[]>(initial?.sort ?? [])
+  const [filter, setFilter] = useState<Predicate | null>(initial?.filter ?? null)
+  // An opened view's filter is the draft too, so the editor opens on it with nothing unapplied.
+  const [draft, setDraft] = useState<readonly DraftClause[]>(() => fromPredicate(initial?.filter ?? null))
   const [limit, setLimit] = useState<number>(LIMITS.pageSize)
   const [cursors, setCursors] = useState<readonly (string | undefined)[]>([undefined])
   const [pageIndex, setPageIndex] = useState(0)
-  const [shown, setShown] = useState<ReadonlySet<string>>(() => new Set(fields.slice(0, DEFAULT_COLUMNS).map(({ id }) => id)))
+  const [shown, setShown] = useState<ReadonlySet<string>>(() => new Set(initial?.columns?.filter((id) => fields.some((field) => field.id === id)) ?? fields.slice(0, DEFAULT_COLUMNS).map(({ id }) => id)))
+  // The columns in the definition's order, as a view keeps them.
+  const shownList = fields.filter(({ id }) => shown.has(id)).map(({ id }) => id)
+  const reported = JSON.stringify({ filter, sort, shownList })
+  useEffect(() => { onQuery?.({ filter, sort, columns: shownList }) }, [reported])
   const [active, setActive] = useState(0)
   const [opened, setOpened] = useState<GridRow | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -162,7 +182,7 @@ export function RecordsGrid({ concept, read = readRecords }: { readonly concept:
   }
 
   if (data?.kind === "no-cell") return <Shell><EmptyState icon={Rows3} title="No data cell">{NO_DATA_CELL}</EmptyState></Shell>
-  if (data?.kind === "none") return <Shell><EmptyState icon={Rows3}>Records for this object type are not available yet.</EmptyState></Shell>
+  if (data?.kind === "none") return <Shell><EmptyState icon={Rows3}>Records for this object type are not served by this cell.</EmptyState></Shell>
 
   const refused = data?.kind === "refused" ? data : undefined
   const sortProblems = refused ? diagnosticsAt(refused.diagnostics, "/sort") : []
@@ -171,9 +191,14 @@ export function RecordsGrid({ concept, read = readRecords }: { readonly concept:
   const off = canQuery ? undefined : SERVER_QUERY_UNAVAILABLE
   const pill = "h-8 rounded-lg px-2.5 text-sm"
 
+  const facets = page?.origin === "live" && <FacetsRail objectType={name} fields={fields} filter={filter} onFilter={(next) => { setDraft(fromPredicate(next)); changeQuery({ filter: next }) }} />
   return (
     <Shell>
-      <div className="grid gap-3">
+      <div className={cn("grid gap-4", facets && "xl:grid-cols-[15rem_minmax(0,1fr)]")}>
+      {facets && <aside className="hidden max-h-[70vh] overflow-y-auto pe-1 xl:block">{facets}</aside>}
+      {/* content-start: beside a taller facets rail, the rows keep their own height (no band between them). */}
+      <div className="grid min-w-0 content-start gap-3">
+        {facets && <details className="rounded-lg border border-node-border px-3 py-2 xl:hidden"><summary className="cursor-pointer text-sm font-medium">Narrow by</summary><div className="pt-3">{facets}</div></details>}
         {/* Problems sit above the toolbar, so the filter popover (which opens below it) never covers them. */}
         {refused && (
           <div role="alert" className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
@@ -235,9 +260,10 @@ export function RecordsGrid({ concept, read = readRecords }: { readonly concept:
           </span>
         </div>
         {off !== undefined && page !== undefined && <p className="text-meta text-muted-foreground">{off}</p>}
+        <FilterChips filter={filter} fields={fields} onFilter={(next) => { setDraft(fromPredicate(next)); changeQuery({ filter: next }) }} />
         {notice !== null && <p role="status" className="flex items-center gap-1 text-meta text-muted-foreground"><RefreshCw className="size-3" aria-hidden />{notice}</p>}
         {page !== undefined && page.read.document.quarantineCount > 0 && (
-          <p className="text-meta text-muted-foreground">{page.read.document.quarantineCount} held back on this page for review.</p>
+          <p className="text-meta text-muted-foreground">{page.read.document.quarantineCount} held back on this page for review{page.origin === "live" ? "; the Quarantine tab names them" : ""}.</p>
         )}
 
         <div className="relative overflow-hidden rounded-xl border border-node-border bg-card">
@@ -246,7 +272,7 @@ export function RecordsGrid({ concept, read = readRecords }: { readonly concept:
             className={cn("max-h-[60vh] overflow-auto text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset", result.isFetching && "opacity-70")}>
             <div style={{ minWidth: width }}>
               <div role="row" aria-rowindex={1} className="sticky top-0 z-20 grid border-b border-node-border bg-muted" style={{ gridTemplateColumns: template }}>
-                <div role="columnheader" className={cn(STICKY, "bg-muted px-3 py-2 font-medium")}>Record</div>
+                <div role="columnheader" className={cn(STICKY, "flex items-center gap-1.5 bg-muted px-3 py-2 font-medium")}>Record<MarkingChips markings={nameMarkings} catalog={markings} className="inline-flex items-center gap-1 font-normal" /></div>
                 {columns.map((field: Field) => {
                   const key = sort.find(({ property }) => property === field.id)
                   const can = canQuery && sortable(field)
@@ -259,6 +285,7 @@ export function RecordsGrid({ concept, read = readRecords }: { readonly concept:
                         <span className="truncate">{label}</span>{can && <SortMark direction={key?.direction} />}
                         {sort.length > 1 && key && <sup className="tabular-nums" aria-hidden>{sort.indexOf(key) + 1}</sup>}
                       </button>
+                      <MarkingChips markings={field.markings} catalog={markings} className="ms-1 inline-flex shrink-0 items-center gap-1 font-normal" />
                     </div>
                   )
                 })}
@@ -283,10 +310,10 @@ export function RecordsGrid({ concept, read = readRecords }: { readonly concept:
                       className={cn("group absolute inset-x-0 grid cursor-pointer items-center border-b border-node-border/70", current ? "bg-[color-mix(in_oklab,var(--accent)_75%,var(--card))]" : "bg-card hover:bg-[color-mix(in_oklab,var(--muted)_70%,var(--card))]")}
                       style={{ gridTemplateColumns: template, height: ROW, transform: `translateY(${item.start}px)` }}
                       onClick={() => { setActive(item.index); setOpened(row) }}>
-                      <div role="gridcell" className={cn(STICKY, "truncate bg-inherit px-3 font-medium")}>{nameOf(row)}</div>
+                      <div role="gridcell" className={cn(STICKY, "truncate bg-inherit px-3 font-medium")}><RecordName row={row} fallback={nameOf(row)} /></div>
                       {withheld
                         ? <div role="gridcell" aria-colspan={columns.length} className="min-w-0 px-3" style={{ gridColumn: "2 / -1" }}><WithheldMark title={WITHHELD_HINT}>{WITHHELD_ROW}</WithheldMark></div>
-                        : columns.map((field) => <div key={field.id} role="gridcell" className={cn("min-w-0 truncate px-3", alignRight(field) && "text-right")}><Cell field={field} row={row} /></div>)}
+                        : columns.map((field) => <div key={field.id} role="gridcell" className={cn("group/cell min-w-0 truncate px-3", alignRight(field) && "text-right")}><TracedCell field={field} row={row} live={page?.origin === "live"} /></div>)}
                     </div>
                   )
                 })}
@@ -302,6 +329,7 @@ export function RecordsGrid({ concept, read = readRecords }: { readonly concept:
           <Button variant="outline" size="sm" className={cn(pill, "border-node-border shadow-node")} disabled={page?.next === undefined || result.isFetching}
             onClick={() => { const next = page?.next; if (next === undefined) return; setCursors([...cursors.slice(0, pageIndex + 1), next]); setPageIndex(pageIndex + 1); setActive(0) }}>Next</Button>
         </nav>
+      </div>
       </div>
       <RecordDrawer concept={concept} fields={fields} row={opened} origin={page?.origin} actions={actions} actionsOff={actionsOff} onClose={() => setOpened(null)}
         onAction={(action, id) => { setOpened(null); setActing({ action, prefill: { [action.objectIdField]: id } }) }} />
@@ -335,6 +363,7 @@ function RecordDrawer({ concept, fields, row, origin, actions, actionsOff, onClo
   readonly actions: readonly ActionSummary[]; readonly actionsOff: string | undefined; readonly onAction: (action: ActionSummary, id: string) => void
 }) {
   const record = row?.record
+  const markings = useMarkingCatalog()
   const object = useQuery({
     queryKey: ["object", record?.objectType, record?.id],
     queryFn: () => record ? transport.object(record.objectType, record.id) : null,
@@ -346,14 +375,14 @@ function RecordDrawer({ concept, fields, row, origin, actions, actionsOff, onClo
       <SheetContent className="w-[min(32rem,100vw)] overflow-y-auto border-node-border shadow-float sm:max-w-lg">
         {row !== null && record !== undefined && <>
           <SheetHeader>
-            <SheetTitle>{nameOf(row)}</SheetTitle>
+            <SheetTitle className="[overflow-wrap:break-word]"><PathText value={nameOf(row)} /></SheetTitle>
             <SheetDescription className="flex items-center gap-2"><span>{concept.title}</span><CopyId value={record.id} /></SheetDescription>
           </SheetHeader>
           <div className="grid gap-4 px-4 pb-6">
             {isWithheld(row)
               ? <p className="rounded-lg border border-node-border bg-muted/50 p-3 text-sm"><WithheldMark title={WITHHELD_HINT}>{WITHHELD_ROW}</WithheldMark></p>
               : <dl className="grid grid-cols-[minmax(8rem,auto)_1fr] gap-x-4 gap-y-2 text-sm">
-                {fields.map((field) => <div key={field.id} className="contents"><dt className="text-muted-foreground">{field.id.replaceAll("_", " ")}</dt><dd className="min-w-0 break-words"><Cell field={field} row={row} /></dd></div>)}
+                {fields.map((field) => <div key={field.id} className="contents"><dt className="flex flex-wrap items-center gap-1 text-muted-foreground">{field.id.replaceAll("_", " ")}<MarkingChips markings={field.markings} catalog={markings} /></dt><dd className="min-w-0 break-words"><TracedCell field={field} row={row} live={origin === "live"} lineage={object.data?.source?.document ?? null} variant="inline" /></dd></div>)}
                 <dt className="text-muted-foreground">version</dt><dd className="tabular-nums">{record.version}</dd>
               </dl>}
             {!isWithheld(row) && <section className="grid gap-2">

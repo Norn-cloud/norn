@@ -32,6 +32,7 @@ function session(seed: number, length = 60): { readonly risky: boolean; readonly
       () => ({ kind: "refused", status: 422, code: "action.precondition_failed", message: "no", diagnostics: [] }) as const,
       () => ({ kind: "unavailable" }) as const,
       () => ({ kind: "no-cell" }) as const,
+      () => ({ kind: "pending", decision: { id: `d${seq}`, expiresAtMs: 9 } }) as const,
     ])()
     const msg: Msg = pick(r, [
       // The view holds the fields still while a call is out, so it sends no edit then.
@@ -78,7 +79,7 @@ test("keys: one key never carries two bodies, a retry re-sends exactly the last 
     const bodies = new Map<string, string>()
     let last: Extract<Cmd, { kind: "call" }> | null = null
     for (const { before, msg, after, cmds } of session(seed).steps) {
-      if (msg.kind === "edit" && !inFlight(before) && before.phase.kind !== "done" && before.phase.kind !== "undo-failed" && before.phase.kind !== "undone") expect(after.key).toBe(msg.key)
+      if (msg.kind === "edit" && !inFlight(before) && before.phase.kind !== "done" && before.phase.kind !== "pending" && before.phase.kind !== "undo-failed" && before.phase.kind !== "undone") expect(after.key).toBe(msg.key)
       if (msg.kind === "edit" && inFlight(before)) expect(after).toBe(before)
       for (const c of calls(cmds)) {
         if (c.actionId !== "learning.triage_episode") continue
@@ -137,4 +138,17 @@ test("per-record offers only ever narrow the served catalog, in its order; witho
   }
   expect(offeredFor(catalog, { id: "r" })).toBe(catalog)
   expect(offeredFor(catalog, { id: "r", offers: "a" })).toBe(catalog)
+})
+
+test("an approval-gated call commits nothing: it waits for a decider, reads nothing again, and a new draft may follow", () => {
+  const sending = update(init({ actionId: "ops.refund", risky: false }, "k0"), { kind: "submit", input: "{}" })[0]
+  expect(sending.phase.kind).toBe("sending")
+  const [pending, cmds] = update(sending, { kind: "answered", result: { kind: "pending", decision: { id: "d1", expiresAtMs: 5 } } })
+  expect(pending.phase).toEqual({ kind: "pending", decision: { id: "d1", expiresAtMs: 5 } })
+  expect(cmds).toEqual([])
+  // The sent call stays the only one under its key: nothing is sent again from here but a new draft.
+  expect(update(pending, { kind: "submit", input: '{"other":1}' })).toEqual([pending, []])
+  const [again] = update(pending, { kind: "again", key: "k1" })
+  expect(again.phase.kind).toBe("editing")
+  expect(again.key).toBe("k1")
 })

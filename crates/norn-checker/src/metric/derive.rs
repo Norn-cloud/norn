@@ -4,8 +4,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use norn_ir::metric::{
-    DimensionPath, MeasureAggregate, MetricAdditivity, MetricAggregationParams, MetricNorn,
-    MetricType, MetricTypeParams, TimeGrain,
+    AdditivityAxis, DimensionPath, FilterOperator, MeasureAggregate, MetricAdditivity,
+    MetricAggregationParams, MetricNorn, MetricType, MetricTypeParams, NonAdditiveDimension,
+    QuestionDimension, Reaggregate, TimeGrain, WindowChoice,
 };
 use norn_ir::{
     ArtifactEnvelope, ArtifactPayload, LawIR, LawModality, LawResponse, LawRoot, LawSeverity,
@@ -42,6 +43,12 @@ pub struct MetricCandidate {
     pub time_grains: [TimeGrain; 5],
     /// Conservation evidence, when the law supplies term additivity.
     pub conservation: Vec<ConservationSource>,
+    /// METRIC-UNIT-PARTITION-1: the properties holding the measure's unit or
+    /// currency. [`MetricSpace::admit`] groups by each one a question neither
+    /// groups by nor fixes with an `eq` filter (`eq null` included); a question
+    /// admitted any other way that leaves one free refuses `mixed_unit` or
+    /// `mixed_currency`.
+    pub unit_partition: Vec<DimensionPath>,
 }
 
 /// Generated candidates and checker-owned law admission evidence.
@@ -57,6 +64,13 @@ impl MetricSpace {
     #[must_use]
     pub fn candidates(&self) -> &[MetricCandidate] {
         &self.candidates
+    }
+
+    /// The catalog the candidates were derived from, with any conserved
+    /// terms recorded: what an ad-hoc question over them is admitted against.
+    #[must_use]
+    pub const fn catalog(&self) -> &EffectiveCatalog {
+        &self.catalog
     }
 
     /// Lower a selection through the existing checked compute seam.
@@ -88,12 +102,34 @@ impl MetricSpace {
                 pending.extend(definition.type_params.denominator.as_deref());
             }
         }
+        // METRIC-UNIT-PARTITION-1: group by each unit source the question leaves free.
+        let mut question = question.clone();
+        for path in self
+            .candidates
+            .iter()
+            .filter(|candidate| selected.contains(candidate.definition.name.as_str()))
+            .flat_map(|candidate| &candidate.unit_partition)
+        {
+            let fixed = question
+                .dimensions
+                .iter()
+                .any(|dimension| &dimension.path == path)
+                || question.filters.iter().any(|filter| {
+                    &filter.path == path && matches!(filter.operator, FilterOperator::Eq)
+                });
+            if !fixed && question.dimensions.len() < compute::MAX_GROUP_BY {
+                question.dimensions.push(QuestionDimension {
+                    path: path.clone(),
+                    grain: None,
+                });
+            }
+        }
         let definitions: Vec<_> = selected
             .into_iter()
             .filter_map(|name| by_name.get(name))
             .map(|definition| (**definition).clone())
             .collect();
-        compute::admit(&definitions, question, &self.catalog, max_items)
+        compute::admit(&definitions, &question, &self.catalog, max_items)
     }
 }
 
@@ -143,19 +179,20 @@ pub fn derive_metric_space(
             continue;
         };
         let dimensions = dimensions(object, &catalog);
-        for time in object
+        // METRIC-GRAIN-LINK-1: an object with no time of its own takes its
+        // to-one links' times.
+        let mut times: Vec<DimensionPath> = object
             .properties
             .iter()
             .filter(|property| super::is_time(property))
-        {
-            let time_path = direct(&time.id);
+            .map(|time| direct(&time.id))
+            .collect();
+        if times.is_empty() {
+            times = linked_times(object, &catalog);
+        }
+        for time_path in &times {
             let sources = evidence.get(name).cloned().unwrap_or_default();
-            candidates.extend(candidates_at_time(
-                object,
-                &dimensions,
-                &sources,
-                &time_path,
-            ));
+            candidates.extend(candidates_at_time(object, &dimensions, &sources, time_path));
             if candidates.len() > 16_384 {
                 return Err(vec![crate::property_types::error(
                     codes::COMPLEXITY_LIMIT,
@@ -254,12 +291,31 @@ fn candidates_at_time(
             | PropertyAdditivity::NonAdditive {}
             | PropertyAdditivity::Ratio { .. } => false,
         };
+        // A snapshot keeps its own valid time (METRIC-SNAPSHOT-ASOF-1).
+        if matches!(kind.additivity(), PropertyAdditivity::SemiAdditive {})
+            && time_path.links.is_empty()
+        {
+            let mut generated = candidate(
+                snapshot(object, &property.id, time_path),
+                dimensions,
+                Vec::new(),
+            );
+            generated.unit_partition = unit_partition(object, &[&property.id]);
+            candidates.push(generated);
+            continue;
+        }
         if !additive {
             continue;
         }
         let definition = sum(object, &property.id, time_path, &proof);
         sums.insert(property.id.clone(), definition.name.clone());
-        candidates.push(candidate(definition, dimensions, proof));
+        let mut generated = candidate(definition, dimensions, proof);
+        generated.unit_partition = unit_partition(object, &[&property.id]);
+        candidates.push(generated);
+    }
+    // METRIC-GRAIN-LINK-1: a linked time derives sums only.
+    if !time_path.links.is_empty() {
+        return candidates;
     }
     declared_ratios(
         object,
@@ -322,6 +378,7 @@ fn declared_ratios(
             denominator.as_str(),
             definition.label
         );
+        definition.display = Some(in_words(&property.id));
         definition.metric_type = MetricType::Ratio;
         definition.type_params = MetricTypeParams {
             numerator: Some(numerator_name.clone()),
@@ -330,7 +387,9 @@ fn declared_ratios(
         };
         definition.norn.additivity = MetricAdditivity::NonAdditive;
         definition.norn.currency = None;
-        candidates.push(candidate(definition, dimensions, proof));
+        let mut generated = candidate(definition, dimensions, proof);
+        generated.unit_partition = unit_partition(object, &[numerator, denominator]);
+        candidates.push(generated);
     }
 }
 
@@ -364,6 +423,11 @@ fn conserved_ratios(
                 source.law,
                 source.digest
             );
+            definition.display = Some(format!(
+                "{} per {}",
+                in_words(output),
+                in_words(&source.input)
+            ));
             definition.metric_type = MetricType::Ratio;
             definition.type_params = MetricTypeParams {
                 numerator: Some(numerator.clone()),
@@ -371,7 +435,9 @@ fn conserved_ratios(
                 ..MetricTypeParams::default()
             };
             definition.norn.additivity = MetricAdditivity::NonAdditive;
-            candidates.push(candidate(definition, dimensions, vec![source.clone()]));
+            let mut generated = candidate(definition, dimensions, vec![source.clone()]);
+            generated.unit_partition = unit_partition(object, &[output, &source.input]);
+            candidates.push(generated);
         }
     }
 }
@@ -505,9 +571,14 @@ fn sum(
             "analysis.object_{}.{}.by_{}",
             encoded_name(object.name.as_str()),
             property.as_str(),
-            time.property.as_str()
+            if time.links.is_empty() {
+                time.property.as_str().to_owned()
+            } else {
+                field_name(time)
+            }
         ),
         label: format!("sum({}); conservation [{proof}]", property.as_str()),
+        display: Some(format!("total {}", in_words(property))),
         metric_type: MetricType::Simple,
         type_params: MetricTypeParams {
             expr: Some(property.as_str().to_owned()),
@@ -536,12 +607,117 @@ fn sum(
     }
 }
 
+/// METRIC-SNAPSHOT-ASOF-1: a balance's value as of each period's end, summed
+/// across subjects and never over time.
+fn snapshot(
+    object: &EffectiveObjectType,
+    property: &PropertyId,
+    time: &DimensionPath,
+) -> MetricDefinition {
+    let mut definition = sum(object, property, time, &[]);
+    definition.name = format!(
+        "analysis.object_{}.{}.as_of_{}",
+        encoded_name(object.name.as_str()),
+        property.as_str(),
+        time.property.as_str()
+    );
+    definition.label = format!(
+        "{}, as of {}; last value per {} at each period's end",
+        property.as_str(),
+        time.property.as_str(),
+        object.name.as_str()
+    );
+    definition.display = Some(format!("{} on hand", in_words(property)));
+    if let Some(params) = definition.type_params.metric_aggregation_params.as_mut() {
+        params.non_additive_dimension = Some(NonAdditiveDimension {
+            name: params.agg_time_dimension.clone(),
+            window_choice: WindowChoice::Max,
+            window_groupings: Vec::new(),
+        });
+    }
+    definition.norn.additivity = MetricAdditivity::SemiAdditive {
+        over: AdditivityAxis::Time,
+        aggregate: Reaggregate::Last,
+    };
+    definition
+}
+
+/// A property as a person says it in a sentence: `stock_cost` reads "stock cost".
+fn in_words(property: &PropertyId) -> String {
+    property.as_str().replace('_', " ")
+}
+
 fn encoded_name(name: &str) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     name.bytes()
         .flat_map(|byte| [byte >> 4, byte & 15])
         .filter_map(|digit| HEX.get(usize::from(digit)).map(|byte| char::from(*byte)))
         .collect()
+}
+
+/// METRIC-GRAIN-LINK-1: the stored, non-null times one to-one hop away, on a
+/// link reaching exactly one concrete object type.
+fn linked_times(object: &EffectiveObjectType, catalog: &EffectiveCatalog) -> Vec<DimensionPath> {
+    let mut times = Vec::new();
+    for link in catalog
+        .links_for_object_type(object.name.as_str())
+        .into_iter()
+        .flatten()
+        .filter(|link| link.cardinality.to == norn_ir::Multiplicity::One)
+    {
+        let Some(targets) = catalog.target_types(link.target.as_str()) else {
+            continue;
+        };
+        let targets: Vec<_> = targets.into_iter().collect();
+        let [target] = targets.as_slice() else {
+            continue;
+        };
+        let Some(Ok(target)) = catalog.object_type_named(target) else {
+            continue;
+        };
+        for time in target
+            .properties
+            .iter()
+            .filter(|property| super::is_time(property) && !property.nullable && !property.computed)
+        {
+            times.push(DimensionPath {
+                links: vec![link.id.clone()],
+                property: time.id.clone(),
+            });
+        }
+    }
+    times
+}
+
+/// The unit-source paths of `measures`, then their currency sources, deduplicated
+/// in declaration order. A direct, non-null currency source with a single code
+/// needs no partition; a linked one is grouped by (one group), as the checker
+/// cannot prove it single here.
+fn unit_partition(object: &EffectiveObjectType, measures: &[&PropertyId]) -> Vec<DimensionPath> {
+    let mut paths: Vec<DimensionPath> = Vec::new();
+    for id in measures {
+        if let Some(EffectiveKind::Base(PropertyType::Decimal {
+            unit_source,
+            currency_source,
+            ..
+        })) = object.property(id.as_str()).map(|property| &property.kind)
+        {
+            let single = |path: &DimensionPath| {
+                path.links.is_empty()
+                    && object.property(path.property.as_str()).is_some_and(|code| {
+                        !code.nullable
+                            && matches!(&code.kind, EffectiveKind::Base(PropertyType::Enum { values }) if values.len() == 1)
+                    })
+            };
+            let currency = currency_source.iter().filter(|path| !single(path)).cloned();
+            for path in unit_source.iter().map(direct).chain(currency) {
+                if !paths.contains(&path) {
+                    paths.push(path);
+                }
+            }
+        }
+    }
+    paths
 }
 
 fn candidate(
@@ -553,6 +729,7 @@ fn candidate(
         definition,
         dimensions: dimensions.to_vec(),
         conservation,
+        unit_partition: Vec::new(),
         time_grains: [
             TimeGrain::Day,
             TimeGrain::Week,
@@ -715,6 +892,7 @@ mod ontology_derived_measures {
                         rounding: None,
                         per_unit: None,
                         additivity: PropertyAdditivity::Undeclared {},
+                        unit_source: Vec::new(),
                     },
                 )
             })
@@ -1036,6 +1214,7 @@ mod ontology_derived_measures {
                     numerator: PropertyId("recovered".to_owned()),
                     denominator: PropertyId("input".to_owned()),
                 },
+                unit_source: Vec::new(),
             },
         ));
         artifacts[0].payload = payload(&ArtifactKind::Entity, &root);
@@ -1079,9 +1258,18 @@ mod ontology_derived_measures {
             else {
                 panic!("input quantity")
             };
+            let balance = matches!(class, PropertyAdditivity::SemiAdditive {});
             *additivity = class;
             artifacts[0].payload = payload(&ArtifactKind::Entity, &root);
-            assert!(space(&artifacts).candidates().is_empty());
+            let space = space(&artifacts);
+            // A balance yields only its as-of snapshots (METRIC-SNAPSHOT-ASOF-1), never a sum or ratio.
+            assert_eq!(!space.candidates().is_empty(), balance);
+            assert!(space.candidates().iter().all(|candidate| {
+                matches!(
+                    candidate.definition.norn.additivity,
+                    MetricAdditivity::SemiAdditive { .. }
+                ) && candidate.definition.type_params.expr.as_deref() == Some("input")
+            }));
         }
     }
 

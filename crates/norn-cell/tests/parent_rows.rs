@@ -2950,6 +2950,7 @@ fn val_exact_row_derivation_refuses_another_derived_target_without_writes() {
                 currency_source: None,
                 per_unit: None,
                 rounding: None,
+                unit_source: Vec::new(),
             };
         }
     }

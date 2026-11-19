@@ -118,8 +118,8 @@ async function main(argv: readonly string[]) {
   }
   const stage = cellStage(value("--stage"), process.env.CELLD_BUCKET)
   const bundle = value("--bundle")
-  if (bundle === undefined || !existsSync(join(bundle, "worker.mjs")) || !existsSync(join(bundle, "pkg", "norn_cell_do_bg.wasm"))) {
-    throw new Error("--bundle must hold worker.mjs and pkg/norn_cell_do_bg.wasm (apps/norn-cell-do/README.md)")
+  if (bundle === undefined || !existsSync(join(bundle, "worker.mjs")) || !existsSync(join(bundle, "subscribe.mjs")) || !existsSync(join(bundle, "pkg", "norn_cell_do_bg.wasm"))) {
+    throw new Error("--bundle must hold worker.mjs, subscribe.mjs and pkg/norn_cell_do_bg.wasm (apps/norn-cell-do/README.md)")
   }
   const config = join(bundle, "wrangler.json")
   writeSecretConfig(config, {

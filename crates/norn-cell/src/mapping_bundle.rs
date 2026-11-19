@@ -92,7 +92,18 @@ pub(crate) struct MappingPlan {
 #[derive(Debug, Default)]
 pub(crate) struct MappingPlanCache {
     plans: BTreeMap<(u64, String, String), Arc<MappingPlan>>,
+    /// The last fully verified install: the raw bytes of every row the
+    /// verification read, with what it proved (the set's canonical digest and
+    /// the journal's install record).
+    verified: Option<(Vec<u8>, String, crate::store::DefinitionInstallRecord)>,
+    /// Consumed claim bundles that rechecked under that verified install, by
+    /// inbox id, with the exact row text they were decoded from: a row whose
+    /// text is unchanged needs no second decode and recomputation.
+    pub(crate) claims: BTreeMap<String, (String, MappingBundle)>,
 }
+
+/// Most claim bundles [`MappingPlanCache`] keeps.
+pub(crate) const MAX_CACHED_CLAIM_BUNDLES: usize = 8_192;
 
 const MAX_MAPPING_PLANS: usize = 16;
 
@@ -190,8 +201,36 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             self.retained_definition_model(version)?;
             return Err(mismatch());
         };
-        let key = (version, digest(&installed)?, input.mapping.clone());
-        let installation = self.retained_definition_install(&installed)?;
+        // MAPPING-PLAN-1 still re-reads the installed row, the journal record
+        // with its payload bodies and the receipt on every call. When their
+        // raw bytes equal those of the last copy that verified, verification
+        // is a function of those bytes and gives the same result, so only a
+        // change pays for re-canonicalizing the whole set.
+        let fingerprint = self.install_fingerprint(&installed)?;
+        let known = self.mapping_plans.and_then(|cache| {
+            cache
+                .borrow()
+                .verified
+                .as_ref()
+                .filter(|(seen, ..)| *seen == fingerprint)
+                .map(|(_, digest, installation)| (digest.clone(), installation.clone()))
+        });
+        let (set_digest, installation) = if let Some(known) = known {
+            known
+        } else {
+            let proved = (
+                digest(&installed)?,
+                self.retained_definition_install(&installed)?,
+            );
+            if let Some(cache) = self.mapping_plans {
+                let mut cache = cache.borrow_mut();
+                cache.verified = Some((fingerprint, proved.0.clone(), proved.1.clone()));
+                // Rechecks were made under the install verified before.
+                cache.claims.clear();
+            }
+            proved
+        };
+        let key = (version, set_digest, input.mapping.clone());
         let cached = self
             .mapping_plans
             .and_then(|cache| cache.borrow().plans.get(&key).cloned());
@@ -239,6 +278,61 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             cache.plans.insert(key, Arc::clone(&plan));
         }
         Ok(plan)
+    }
+
+    /// The raw bytes of every row the install verification reads, each
+    /// length-prefixed: the installed row, its journal record, the payload
+    /// bodies the record references and the receipt. No canonicalization, and
+    /// compared exactly, not by a digest.
+    fn install_fingerprint(
+        &self,
+        installed: &crate::InstalledDefinitionSet,
+    ) -> Result<Vec<u8>, CellError> {
+        let mut bytes = Vec::new();
+        let mut field = |part: &[u8]| {
+            bytes.extend_from_slice(&u64::try_from(part.len()).unwrap_or(u64::MAX).to_be_bytes());
+            bytes.extend_from_slice(part);
+        };
+        // The large canonical set as its bytes, unescaped; every other field
+        // through the struct's own serialization (a new field either joins
+        // through `..` or fails to compile here until it is listed).
+        field(installed.canonical_set.as_bytes());
+        let mut rest = serde_json::to_value(crate::InstalledDefinitionSet {
+            canonical_set: String::new(),
+            registry: installed.registry.clone(),
+            receipt_sha256: installed.receipt_sha256.clone(),
+            admission_receipt: installed.admission_receipt.clone(),
+            model_hash: installed.model_hash.clone(),
+            ddl_hash: installed.ddl_hash.clone(),
+            layout: installed.layout.clone(),
+            ..*installed
+        })?;
+        if let Some(object) = rest.as_object_mut() {
+            object.remove("canonicalSet");
+        }
+        field(serde_json::to_string(&rest)?.as_bytes());
+        let seq = crate::read::to_i64(installed.commit_seq, "commit_seq")?;
+        let journal: Option<(String, String)> = self.conn.query_optional(
+            r#"SELECT "hash", "record" FROM "_norn_export_journal" WHERE "commit_seq" = ?1"#,
+            crate::engine::params![seq],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        if let Some((stored, record)) = journal {
+            field(stored.as_bytes());
+            field(record.as_bytes());
+        }
+        let bodies = self.conn.query(
+            r#"SELECT p."scope", p."world", p."body" FROM "_norn_export_payload" e JOIN "_norn_payload" p ON p."hash" = e."hash" WHERE e."commit_seq" = ?1 ORDER BY e."ordinal""#,
+            crate::engine::params![seq],
+        )?;
+        for row in bodies {
+            let row = crate::engine::SqlRow(row);
+            for column in 0..3 {
+                field(row.get::<String>(column)?.as_bytes());
+            }
+        }
+        field(serde_json::to_string(&self.receipt_at(installed.commit_seq)?)?.as_bytes());
+        Ok(bytes)
     }
 
     pub(crate) fn mapping_bundle(
@@ -345,18 +439,26 @@ impl<E: SqlEngine> CellStore<E> {
         raw: &Observed<RuntimeValue>,
         input: &MappingInput,
     ) -> Result<(String, bool), CellError> {
-        self.conn.transaction(|| {
-            let version = self
-                .read()
-                .installed_definitions(None)?
-                .ok_or_else(mismatch)?
-                .version;
-            if let Some(captured) = crate::mapping_identity::capture(self, raw, input, version)? {
-                return Ok(captured);
-            }
-            let bundle = self.read().mapping_bundle(&raw.input, input, version)?;
-            crate::mapping_conflict::capture(self, raw, &bundle)
-        })
+        self.conn
+            .transaction(|| self.capture_mapping_bundle(raw, input))
+    }
+
+    /// [`Self::inject_mapping_bundle`] inside the caller's transaction.
+    pub(crate) fn capture_mapping_bundle(
+        &self,
+        raw: &Observed<RuntimeValue>,
+        input: &MappingInput,
+    ) -> Result<(String, bool), CellError> {
+        let version = self
+            .read()
+            .installed_definitions(None)?
+            .ok_or_else(mismatch)?
+            .version;
+        if let Some(captured) = crate::mapping_identity::capture(self, raw, input, version)? {
+            return Ok(captured);
+        }
+        let bundle = self.read().mapping_bundle(&raw.input, input, version)?;
+        crate::mapping_conflict::capture(self, raw, &bundle)
     }
 }
 

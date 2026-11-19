@@ -44,10 +44,11 @@ macro_rules! fixture {
     };
 }
 
-const CATALOG: [&str; 3] = [
+const CATALOG: [&str; 4] = [
     fixture!("property-types", "text.property-type.json"),
     fixture!("property-types", "boolean.property-type.json"),
     fixture!("property-types", "ref.property-type.json"),
+    fixture!("property-types", "decimal.property-type.json"),
 ];
 
 fn registry() -> BTreeSet<PropertyTypeName> {
@@ -377,6 +378,15 @@ fn every_code_has_a_negative_case() {
                     { "id": "display_name", "type": { "kind": "integer" } },
                     { "id": "email", "type": text }
                 ] }] }),
+        ),
+        (
+            codes::ADDITIVITY_NOT_REFINED,
+            "/objectTypes/0/implements/0",
+            serde_json::json!({
+                "interfaces": [{ "name": "test.Weighed", "properties": [{ "id": "weight",
+                    "type": { "kind": "ref", "name": "inventory.net_weight", "additivity": { "kind": "additive" } } }] }],
+                "objectTypes": [{ "name": "test.Thing", "implements": ["test.Weighed"], "properties": [{ "id": "weight",
+                    "type": { "kind": "ref", "name": "inventory.net_weight", "additivity": { "kind": "semi_additive" } } }] }] }),
         ),
         (
             codes::INTERFACE_PROPERTY_WIDENS_NULLABILITY,
@@ -1317,13 +1327,20 @@ fn interface_link_requirements_are_met_by_narrowing_links() {
             "extends": "commerce.SalesOrder", "implements": ["commerce.Order"] }] })),
         Vec::new()
     );
-    // An inverse role is not a link the type declares.
-    assert_eq!(
+    // An interface is a read contract (LAW-LINK-MANY-1): an inverse role
+    // meets a to-many requirement, a document's `lines` met by its lines'
+    // links to it. It never meets a to-one one, which a law reads as one
+    // target through a forward link.
+    let ordered = |to: &str| {
         findings(&serde_json::json!({
             "interfaces": [{ "name": "test.Ordered",
-                "links": [link("orders", "commerce.SalesOrder", &serde_json::json!({ "to": "many", "from": "many" }))] }],
+                "links": [link("orders", "commerce.SalesOrder", &serde_json::json!({ "to": to, "from": "many" }))] }],
             "objectTypes": [{ "name": "test.Sub", "extends": "crm.Customer", "implements": ["test.Ordered"] }]
-        })),
+        }))
+    };
+    assert_eq!(ordered("many"), Vec::new());
+    assert_eq!(
+        ordered("one"),
         one(codes::MISSING_INTERFACE_LINK, "/objectTypes/0/implements/0")
     );
     // A property and a link required under one id, and link targets no one

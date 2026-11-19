@@ -65,6 +65,39 @@ pub struct NornQueryResult {
     /// Quarantined identities excluded from the answer → their finding or evidence pin.
     /// For a reader without whole-world Values (D53) each pin is a keyed handle: compare it only for equality.
     pub exclusions: BTreeMap<String, String>,
+    /// METRIC-GRAIN-LINK-1: rows that would count but whose optional time link
+    /// is absent, so they have no time; skipped, never bucketed. Absent when zero.
+    #[schema(required = false, nullable = false)]
+    pub unlinked: Option<u64>,
+    /// SOURCE-AGREE-1: members two sources disagree on, by partition source,
+    /// at this answer's frontier and visible to its reader. They are never
+    /// excluded. Absent when no member is disputed.
+    #[schema(required = false, nullable = false)]
+    pub source_disagreements: Option<NornSourceDisagreements>,
+}
+
+/// SOURCE-AGREE-1: the members of an answer two sources disagree on, counted
+/// as HOST-READ-4b counts links.
+#[derive(Debug, Clone, ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NornSourceDisagreements {
+    /// One entry per partition source with at least one disputed member.
+    pub groups: Vec<NornSourceDisagreementGroup>,
+    /// True when every candidate was examined; false when the read stopped at
+    /// `bound` subjects, and each count is then a lower bound.
+    pub complete: bool,
+    /// The most subjects one read examines.
+    pub bound: u64,
+}
+
+/// The disputed members of one partition source.
+#[derive(Debug, Clone, ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NornSourceDisagreementGroup {
+    /// The partition-source property, such as `quantity_basis`.
+    pub property: String,
+    /// Members with an open disagreement on it.
+    pub subjects: u64,
 }
 
 /// The evaluator that produced an answer.
@@ -75,6 +108,8 @@ pub enum NornQueryEngine {
     Ivm,
     /// Exact cell snapshot.
     Cell,
+    /// Embedded SQL over the exact authorized contribution snapshot.
+    Duckdb,
 }
 
 /// Snapshot freshness, independent of source cursor ordering.
@@ -144,6 +179,18 @@ pub struct NornQueryRow {
     #[serde(default, rename = "nullCounts")]
     #[schema(required = false)]
     pub null_counts: Vec<u64>,
+    /// D102: contributing members, present when `members` is not listed
+    /// because the population exceeds the question's bound (the analytics
+    /// engine answered); the trace pages them.
+    #[serde(default, rename = "memberCount")]
+    #[schema(required = false)]
+    pub member_count: Option<u64>,
+    /// MEMBERSHIP-DIGEST-1: SHA-256 over the members in identity order, each
+    /// as `<identity bytes>:<identity>,<version>` then `,<coefficient>` per
+    /// operand (empty when absent) and `;`. Present with `memberCount`.
+    #[serde(default, rename = "membershipDigest")]
+    #[schema(required = false)]
+    pub membership_digest: Option<String>,
 }
 
 /// One object version's contribution to a bucket.
@@ -204,7 +251,11 @@ fn effective_as_of_schema() -> Ref {
 
 fn bucket_schema() -> Schema {
     let mut schema = Object::with_type(SchemaType::AnyValue);
-    schema.description = Some("Scalar grouping value.".to_owned());
+    schema.description = Some(
+        "Grouping value: null without a group-by, the value for one, and for several an array \
+         of their values in the question's order (a null member is its own group)."
+            .to_owned(),
+    );
     Schema::Object(schema)
 }
 

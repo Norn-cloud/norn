@@ -1,0 +1,2162 @@
+{
+  "catalog": {
+    "artifacts": [
+      {
+        "irVersion": "0.1",
+        "artifactId": "shop.Order.entity",
+        "kind": "entity",
+        "namespace": "shop",
+        "name": "Order",
+        "version": "0.1.0",
+        "lifecycle": "draft",
+        "scope": {
+          "orgId": "org_demo",
+          "environmentId": "dev"
+        },
+        "dependencies": [],
+        "provenance": {
+          "source": "authoring_sdk"
+        },
+        "payload": {
+          "entityVersion": "2.0",
+          "objectType": {
+            "name": "shop.Order",
+            "properties": [
+              {
+                "id": "amount",
+                "type": {
+                  "kind": "decimal",
+                  "scale": 2,
+                  "additivity": {
+                    "kind": "additive"
+                  },
+                  "currencySource": {
+                    "property": "currency"
+                  }
+                }
+              },
+              {
+                "id": "currency",
+                "type": {
+                  "kind": "enum",
+                  "values": [
+                    {
+                      "value": "USD"
+                    },
+                    {
+                      "value": "EUR"
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "status",
+                "type": {
+                  "kind": "enum",
+                  "values": [
+                    {
+                      "value": "paid"
+                    },
+                    {
+                      "value": "void"
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "placed_at",
+                "type": {
+                  "kind": "timestamp",
+                  "timezone": "utc"
+                }
+              },
+              {
+                "id": "channel",
+                "type": {
+                  "kind": "enum",
+                  "values": [
+                    {
+                      "value": "web"
+                    },
+                    {
+                      "value": "store"
+                    }
+                  ]
+                }
+              }
+            ],
+            "links": [
+              {
+                "id": "customer",
+                "target": "shop.Customer",
+                "cardinality": {
+                  "to": "one",
+                  "from": "many"
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "irVersion": "0.1",
+        "artifactId": "shop.Customer.entity",
+        "kind": "entity",
+        "namespace": "shop",
+        "name": "Customer",
+        "version": "0.1.0",
+        "lifecycle": "draft",
+        "scope": {
+          "orgId": "org_demo",
+          "environmentId": "dev"
+        },
+        "dependencies": [],
+        "provenance": {
+          "source": "authoring_sdk"
+        },
+        "payload": {
+          "entityVersion": "2.0",
+          "objectType": {
+            "name": "shop.Customer",
+            "properties": [
+              {
+                "id": "name",
+                "type": {
+                  "kind": "text"
+                }
+              },
+              {
+                "id": "region",
+                "type": {
+                  "kind": "text"
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "irVersion": "0.1",
+        "artifactId": "shop.revenue_by_region",
+        "kind": "derived",
+        "namespace": "shop",
+        "name": "Weekly revenue by region",
+        "version": "0.1.0",
+        "lifecycle": "draft",
+        "scope": {
+          "orgId": "org_demo",
+          "environmentId": "dev"
+        },
+        "dependencies": [
+          {
+            "artifactId": "shop.Order.entity",
+            "kind": "entity",
+            "version": "0.1.0",
+            "required": true
+          },
+          {
+            "artifactId": "shop.Customer.entity",
+            "kind": "entity",
+            "version": "0.1.0",
+            "required": true
+          }
+        ],
+        "provenance": {
+          "source": "authoring_sdk"
+        },
+        "payload": {
+          "viewVersion": "0.1",
+          "viewId": "shop.revenue_by_region",
+          "inputs": [
+            {
+              "artifactId": "shop.Order.entity",
+              "kind": "entity",
+              "version": "0.1.0",
+              "alias": "order"
+            },
+            {
+              "artifactId": "shop.Customer.entity",
+              "kind": "entity",
+              "version": "0.1.0",
+              "alias": "customer"
+            }
+          ],
+          "calc": {
+            "kind": "relational",
+            "output": "ranked",
+            "nodes": {
+              "order": {
+                "op": "scan",
+                "input": "order"
+              },
+              "customer": {
+                "op": "scan",
+                "input": "customer"
+              },
+              "paid": {
+                "op": "filter",
+                "input": "order",
+                "predicate": "input.status == \"paid\""
+              },
+              "joined": {
+                "op": "join",
+                "left": "paid",
+                "right": "customer",
+                "on": {
+                  "link": {
+                    "column": "id",
+                    "link": "customer"
+                  }
+                },
+                "kind": "left",
+                "prefix": "customer_"
+              },
+              "regional": {
+                "op": "project",
+                "input": "joined",
+                "columns": [
+                  {
+                    "name": "id",
+                    "expression": "input.id"
+                  },
+                  {
+                    "name": "region",
+                    "expression": "input.customer_region ?? \"unassigned\"",
+                    "label": "Region"
+                  },
+                  {
+                    "name": "amount",
+                    "expression": "input.amount"
+                  },
+                  {
+                    "name": "currency",
+                    "expression": "input.currency"
+                  },
+                  {
+                    "name": "placed_at",
+                    "expression": "input.placed_at"
+                  }
+                ]
+              },
+              "weekly": {
+                "op": "aggregate",
+                "input": "regional",
+                "groupBy": [
+                  {
+                    "column": "region"
+                  },
+                  {
+                    "column": "placed_at",
+                    "grain": "week",
+                    "label": "Week"
+                  },
+                  {
+                    "column": "currency",
+                    "label": "Currency"
+                  }
+                ],
+                "measures": [
+                  {
+                    "name": "revenue",
+                    "fn": "sum",
+                    "column": "amount",
+                    "label": "Revenue"
+                  },
+                  {
+                    "name": "orders",
+                    "fn": "count",
+                    "label": "Orders"
+                  },
+                  {
+                    "name": "largest",
+                    "fn": "max",
+                    "column": "amount",
+                    "label": "Largest order"
+                  }
+                ]
+              },
+              "ranked": {
+                "op": "window",
+                "input": "weekly",
+                "partitionBy": [
+                  "region",
+                  "currency"
+                ],
+                "orderBy": [
+                  {
+                    "column": "placed_at",
+                    "direction": "asc"
+                  }
+                ],
+                "columns": [
+                  {
+                    "name": "week_number",
+                    "fn": "row_number",
+                    "label": "Week no."
+                  },
+                  {
+                    "name": "to_date",
+                    "fn": "running_sum",
+                    "column": "revenue",
+                    "label": "Revenue to date"
+                  },
+                  {
+                    "name": "previous_week",
+                    "fn": "lag",
+                    "column": "revenue",
+                    "label": "Previous week"
+                  }
+                ]
+              }
+            }
+          },
+          "outputSchema": {},
+          "maintenance": "recompute_on_read"
+        }
+      }
+    ]
+  },
+  "rows": {
+    "transform": "shop.revenue_by_region",
+    "version": "0.1.0",
+    "engine": "cell",
+    "commits": 2,
+    "materialization": null,
+    "columns": [
+      {
+        "name": "region",
+        "type": "text",
+        "nullable": false,
+        "additivity": "undeclared",
+        "identity": null,
+        "origins": [
+          {
+            "input": "customer",
+            "property": "region"
+          }
+        ],
+        "markings": [],
+        "currencyFrom": null,
+        "unitFrom": [],
+        "label": "Region"
+      },
+      {
+        "name": "placed_at",
+        "type": "date",
+        "nullable": false,
+        "additivity": "undeclared",
+        "identity": null,
+        "origins": [
+          {
+            "input": "order",
+            "property": "placed_at"
+          }
+        ],
+        "markings": [],
+        "currencyFrom": null,
+        "unitFrom": [],
+        "label": "Week"
+      },
+      {
+        "name": "currency",
+        "type": "enum[\"EUR\", \"USD\"]",
+        "nullable": false,
+        "additivity": "undeclared",
+        "identity": null,
+        "origins": [
+          {
+            "input": "order",
+            "property": "currency"
+          }
+        ],
+        "markings": [],
+        "currencyFrom": null,
+        "unitFrom": [],
+        "label": "Currency"
+      },
+      {
+        "name": "revenue",
+        "type": "decimal<2>",
+        "nullable": false,
+        "additivity": "additive",
+        "identity": null,
+        "origins": [
+          {
+            "input": "order",
+            "property": "amount"
+          }
+        ],
+        "markings": [],
+        "currencyFrom": "currency",
+        "unitFrom": [],
+        "label": "Revenue"
+      },
+      {
+        "name": "orders",
+        "type": "integer",
+        "nullable": false,
+        "additivity": "additive",
+        "identity": null,
+        "origins": [],
+        "markings": [],
+        "currencyFrom": null,
+        "unitFrom": [],
+        "label": "Orders"
+      },
+      {
+        "name": "largest",
+        "type": "decimal<2>",
+        "nullable": false,
+        "additivity": "non_additive",
+        "identity": null,
+        "origins": [
+          {
+            "input": "order",
+            "property": "amount"
+          }
+        ],
+        "markings": [],
+        "currencyFrom": "currency",
+        "unitFrom": [],
+        "label": "Largest order"
+      },
+      {
+        "name": "week_number",
+        "type": "integer",
+        "nullable": false,
+        "additivity": "non_additive",
+        "identity": null,
+        "origins": [],
+        "markings": [],
+        "currencyFrom": null,
+        "unitFrom": [],
+        "label": "Week no."
+      },
+      {
+        "name": "to_date",
+        "type": "decimal<2>",
+        "nullable": false,
+        "additivity": "non_additive",
+        "identity": null,
+        "origins": [
+          {
+            "input": "order",
+            "property": "amount"
+          }
+        ],
+        "markings": [],
+        "currencyFrom": "currency",
+        "unitFrom": [],
+        "label": "Revenue to date"
+      },
+      {
+        "name": "previous_week",
+        "type": "decimal<2>",
+        "nullable": true,
+        "additivity": "non_additive",
+        "identity": null,
+        "origins": [
+          {
+            "input": "order",
+            "property": "amount"
+          }
+        ],
+        "markings": [],
+        "currencyFrom": "currency",
+        "unitFrom": [],
+        "label": "Previous week"
+      }
+    ],
+    "grain": [
+      "region",
+      "placed_at",
+      "currency"
+    ],
+    "rows": [
+      {
+        "rowId": "71695d23d0be28bcfe1a5abdcbe36d41ddaa01ece18962b1563a17ad5b618d57",
+        "values": {
+          "currency": "USD",
+          "largest": 18.25,
+          "orders": 1,
+          "placed_at": "2026-10-26",
+          "previous_week": null,
+          "region": "east",
+          "revenue": 18.25,
+          "to_date": 18.25,
+          "week_number": 1
+        },
+        "memberCount": 2
+      },
+      {
+        "rowId": "037063959ff999e78738716a988e9af7be46d18499a3f1744cac1d986f31bae4",
+        "values": {
+          "currency": "USD",
+          "largest": 66,
+          "orders": 1,
+          "placed_at": "2026-11-09",
+          "previous_week": 18.25,
+          "region": "east",
+          "revenue": 66,
+          "to_date": 84.25,
+          "week_number": 2
+        },
+        "memberCount": 2
+      },
+      {
+        "rowId": "c251a67b904933a44a1aa108d8517fe886f8a7b0fa50261fb7d87e39f86f5dd1",
+        "values": {
+          "currency": "USD",
+          "largest": 120,
+          "orders": 2,
+          "placed_at": "2026-10-26",
+          "previous_week": null,
+          "region": "north",
+          "revenue": 195.5,
+          "to_date": 195.5,
+          "week_number": 1
+        },
+        "memberCount": 4
+      },
+      {
+        "rowId": "20672f459a777a9d7a049c3c876bdaf8a0a48ac871bdfdb248cfbedb99402fa8",
+        "values": {
+          "currency": "USD",
+          "largest": 60,
+          "orders": 1,
+          "placed_at": "2026-11-02",
+          "previous_week": 195.5,
+          "region": "north",
+          "revenue": 60,
+          "to_date": 255.5,
+          "week_number": 2
+        },
+        "memberCount": 2
+      },
+      {
+        "rowId": "567f8f978658cdfa57d8ec49f0053428edd753e7ba694cd25a020b9a697ba7c9",
+        "values": {
+          "currency": "USD",
+          "largest": 205,
+          "orders": 2,
+          "placed_at": "2026-11-09",
+          "previous_week": 60,
+          "region": "north",
+          "revenue": 347.75,
+          "to_date": 603.25,
+          "week_number": 3
+        },
+        "memberCount": 4
+      },
+      {
+        "rowId": "3422aea105603152768c9334180d5fad3f1e0b76d708ec1e12a3156864f72f4c",
+        "values": {
+          "currency": "USD",
+          "largest": 240,
+          "orders": 1,
+          "placed_at": "2026-10-26",
+          "previous_week": null,
+          "region": "south",
+          "revenue": 240,
+          "to_date": 240,
+          "week_number": 1
+        },
+        "memberCount": 2
+      },
+      {
+        "rowId": "f99917db657b8f02d0f94673d0e6811d5c388733eb12ff8bd450511f072635fd",
+        "values": {
+          "currency": "EUR",
+          "largest": 95,
+          "orders": 1,
+          "placed_at": "2026-11-02",
+          "previous_week": null,
+          "region": "south",
+          "revenue": 95,
+          "to_date": 95,
+          "week_number": 1
+        },
+        "memberCount": 2
+      },
+      {
+        "rowId": "ef932125a30c0cfad1762bdebabb35bb3752650339f381c9a38800ca7efbd99a",
+        "values": {
+          "currency": "USD",
+          "largest": 310.4,
+          "orders": 1,
+          "placed_at": "2026-11-02",
+          "previous_week": 240,
+          "region": "south",
+          "revenue": 310.4,
+          "to_date": 550.4,
+          "week_number": 2
+        },
+        "memberCount": 2
+      },
+      {
+        "rowId": "03df3f133fe2aa2f1977b9ae5b5a06f0c1a31b135220a213891e6416e12ae302",
+        "values": {
+          "currency": "USD",
+          "largest": 40,
+          "orders": 1,
+          "placed_at": "2026-11-09",
+          "previous_week": null,
+          "region": "unassigned",
+          "revenue": 40,
+          "to_date": 40,
+          "week_number": 1
+        },
+        "memberCount": 1
+      }
+    ],
+    "totalRows": 9,
+    "withheld": {},
+    "excluded": 0,
+    "complete": true,
+    "nodeRows": {
+      "customer": 4,
+      "joined": 11,
+      "order": 12,
+      "paid": 11,
+      "ranked": 9,
+      "regional": 11,
+      "weekly": 9
+    },
+    "nextAfter": null
+  },
+  "lineage": {
+    "037063959ff999e78738716a988e9af7be46d18499a3f1744cac1d986f31bae4": {
+      "transform": "shop.revenue_by_region",
+      "rowId": "037063959ff999e78738716a988e9af7be46d18499a3f1744cac1d986f31bae4",
+      "commits": 2,
+      "materialization": null,
+      "values": {
+        "currency": "USD",
+        "largest": 66,
+        "orders": 1,
+        "placed_at": "2026-11-09",
+        "previous_week": 18.25,
+        "region": "east",
+        "revenue": 66,
+        "to_date": 84.25,
+        "week_number": 2
+      },
+      "members": [
+        {
+          "input": "customer",
+          "objectType": "shop.Customer",
+          "id": "c-delta",
+          "version": 1
+        },
+        {
+          "input": "order",
+          "objectType": "shop.Order",
+          "id": "o-1009",
+          "version": 1
+        }
+      ]
+    },
+    "03df3f133fe2aa2f1977b9ae5b5a06f0c1a31b135220a213891e6416e12ae302": {
+      "transform": "shop.revenue_by_region",
+      "rowId": "03df3f133fe2aa2f1977b9ae5b5a06f0c1a31b135220a213891e6416e12ae302",
+      "commits": 2,
+      "materialization": null,
+      "values": {
+        "currency": "USD",
+        "largest": 40,
+        "orders": 1,
+        "placed_at": "2026-11-09",
+        "previous_week": null,
+        "region": "unassigned",
+        "revenue": 40,
+        "to_date": 40,
+        "week_number": 1
+      },
+      "members": [
+        {
+          "input": "order",
+          "objectType": "shop.Order",
+          "id": "o-1011",
+          "version": 1
+        }
+      ]
+    },
+    "20672f459a777a9d7a049c3c876bdaf8a0a48ac871bdfdb248cfbedb99402fa8": {
+      "transform": "shop.revenue_by_region",
+      "rowId": "20672f459a777a9d7a049c3c876bdaf8a0a48ac871bdfdb248cfbedb99402fa8",
+      "commits": 2,
+      "materialization": null,
+      "values": {
+        "currency": "USD",
+        "largest": 60,
+        "orders": 1,
+        "placed_at": "2026-11-02",
+        "previous_week": 195.5,
+        "region": "north",
+        "revenue": 60,
+        "to_date": 255.5,
+        "week_number": 2
+      },
+      "members": [
+        {
+          "input": "customer",
+          "objectType": "shop.Customer",
+          "id": "c-amal",
+          "version": 1
+        },
+        {
+          "input": "order",
+          "objectType": "shop.Order",
+          "id": "o-1005",
+          "version": 1
+        }
+      ]
+    },
+    "3422aea105603152768c9334180d5fad3f1e0b76d708ec1e12a3156864f72f4c": {
+      "transform": "shop.revenue_by_region",
+      "rowId": "3422aea105603152768c9334180d5fad3f1e0b76d708ec1e12a3156864f72f4c",
+      "commits": 2,
+      "materialization": null,
+      "values": {
+        "currency": "USD",
+        "largest": 240,
+        "orders": 1,
+        "placed_at": "2026-10-26",
+        "previous_week": null,
+        "region": "south",
+        "revenue": 240,
+        "to_date": 240,
+        "week_number": 1
+      },
+      "members": [
+        {
+          "input": "customer",
+          "objectType": "shop.Customer",
+          "id": "c-cairo",
+          "version": 1
+        },
+        {
+          "input": "order",
+          "objectType": "shop.Order",
+          "id": "o-1003",
+          "version": 1
+        }
+      ]
+    },
+    "567f8f978658cdfa57d8ec49f0053428edd753e7ba694cd25a020b9a697ba7c9": {
+      "transform": "shop.revenue_by_region",
+      "rowId": "567f8f978658cdfa57d8ec49f0053428edd753e7ba694cd25a020b9a697ba7c9",
+      "commits": 2,
+      "materialization": null,
+      "values": {
+        "currency": "USD",
+        "largest": 205,
+        "orders": 2,
+        "placed_at": "2026-11-09",
+        "previous_week": 60,
+        "region": "north",
+        "revenue": 347.75,
+        "to_date": 603.25,
+        "week_number": 3
+      },
+      "members": [
+        {
+          "input": "customer",
+          "objectType": "shop.Customer",
+          "id": "c-amal",
+          "version": 1
+        },
+        {
+          "input": "customer",
+          "objectType": "shop.Customer",
+          "id": "c-badr",
+          "version": 1
+        },
+        {
+          "input": "order",
+          "objectType": "shop.Order",
+          "id": "o-1008",
+          "version": 1
+        },
+        {
+          "input": "order",
+          "objectType": "shop.Order",
+          "id": "o-1010",
+          "version": 1
+        }
+      ]
+    },
+    "71695d23d0be28bcfe1a5abdcbe36d41ddaa01ece18962b1563a17ad5b618d57": {
+      "transform": "shop.revenue_by_region",
+      "rowId": "71695d23d0be28bcfe1a5abdcbe36d41ddaa01ece18962b1563a17ad5b618d57",
+      "commits": 2,
+      "materialization": null,
+      "values": {
+        "currency": "USD",
+        "largest": 18.25,
+        "orders": 1,
+        "placed_at": "2026-10-26",
+        "previous_week": null,
+        "region": "east",
+        "revenue": 18.25,
+        "to_date": 18.25,
+        "week_number": 1
+      },
+      "members": [
+        {
+          "input": "customer",
+          "objectType": "shop.Customer",
+          "id": "c-delta",
+          "version": 1
+        },
+        {
+          "input": "order",
+          "objectType": "shop.Order",
+          "id": "o-1004",
+          "version": 1
+        }
+      ]
+    },
+    "c251a67b904933a44a1aa108d8517fe886f8a7b0fa50261fb7d87e39f86f5dd1": {
+      "transform": "shop.revenue_by_region",
+      "rowId": "c251a67b904933a44a1aa108d8517fe886f8a7b0fa50261fb7d87e39f86f5dd1",
+      "commits": 2,
+      "materialization": null,
+      "values": {
+        "currency": "USD",
+        "largest": 120,
+        "orders": 2,
+        "placed_at": "2026-10-26",
+        "previous_week": null,
+        "region": "north",
+        "revenue": 195.5,
+        "to_date": 195.5,
+        "week_number": 1
+      },
+      "members": [
+        {
+          "input": "customer",
+          "objectType": "shop.Customer",
+          "id": "c-amal",
+          "version": 1
+        },
+        {
+          "input": "customer",
+          "objectType": "shop.Customer",
+          "id": "c-badr",
+          "version": 1
+        },
+        {
+          "input": "order",
+          "objectType": "shop.Order",
+          "id": "o-1001",
+          "version": 1
+        },
+        {
+          "input": "order",
+          "objectType": "shop.Order",
+          "id": "o-1002",
+          "version": 1
+        }
+      ]
+    },
+    "ef932125a30c0cfad1762bdebabb35bb3752650339f381c9a38800ca7efbd99a": {
+      "transform": "shop.revenue_by_region",
+      "rowId": "ef932125a30c0cfad1762bdebabb35bb3752650339f381c9a38800ca7efbd99a",
+      "commits": 2,
+      "materialization": null,
+      "values": {
+        "currency": "USD",
+        "largest": 310.4,
+        "orders": 1,
+        "placed_at": "2026-11-02",
+        "previous_week": 240,
+        "region": "south",
+        "revenue": 310.4,
+        "to_date": 550.4,
+        "week_number": 2
+      },
+      "members": [
+        {
+          "input": "customer",
+          "objectType": "shop.Customer",
+          "id": "c-cairo",
+          "version": 1
+        },
+        {
+          "input": "order",
+          "objectType": "shop.Order",
+          "id": "o-1006",
+          "version": 1
+        }
+      ]
+    },
+    "f99917db657b8f02d0f94673d0e6811d5c388733eb12ff8bd450511f072635fd": {
+      "transform": "shop.revenue_by_region",
+      "rowId": "f99917db657b8f02d0f94673d0e6811d5c388733eb12ff8bd450511f072635fd",
+      "commits": 2,
+      "materialization": null,
+      "values": {
+        "currency": "EUR",
+        "largest": 95,
+        "orders": 1,
+        "placed_at": "2026-11-02",
+        "previous_week": null,
+        "region": "south",
+        "revenue": 95,
+        "to_date": 95,
+        "week_number": 1
+      },
+      "members": [
+        {
+          "input": "customer",
+          "objectType": "shop.Customer",
+          "id": "c-cairo",
+          "version": 1
+        },
+        {
+          "input": "order",
+          "objectType": "shop.Order",
+          "id": "o-1007",
+          "version": 1
+        }
+      ]
+    }
+  },
+  "plan": {
+    "transform": "shop.revenue_by_region",
+    "version": "0.1.0",
+    "viewId": "shop.revenue_by_region",
+    "inputs": [
+      {
+        "alias": "customer",
+        "objectType": "shop.Customer",
+        "artifactId": "shop.Customer.entity",
+        "version": "0.1.0"
+      },
+      {
+        "alias": "order",
+        "objectType": "shop.Order",
+        "artifactId": "shop.Order.entity",
+        "version": "0.1.0"
+      }
+    ],
+    "nodes": [
+      {
+        "id": "order",
+        "op": "scan",
+        "inputs": [
+          "order"
+        ],
+        "grain": [
+          "id"
+        ],
+        "columns": [
+          {
+            "name": "id",
+            "type": "text",
+            "nullable": false,
+            "additivity": "undeclared",
+            "identity": "shop.Order",
+            "origins": [
+              {
+                "input": "order",
+                "property": "id"
+              }
+            ],
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": [],
+            "label": null
+          },
+          {
+            "name": "amount",
+            "type": "decimal<2>",
+            "nullable": false,
+            "additivity": "additive",
+            "identity": null,
+            "origins": [
+              {
+                "input": "order",
+                "property": "amount"
+              }
+            ],
+            "markings": [],
+            "currencyFrom": "currency",
+            "unitFrom": [],
+            "label": null
+          },
+          {
+            "name": "channel",
+            "type": "enum[\"store\", \"web\"]",
+            "nullable": false,
+            "additivity": "undeclared",
+            "identity": null,
+            "origins": [
+              {
+                "input": "order",
+                "property": "channel"
+              }
+            ],
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": [],
+            "label": null
+          },
+          {
+            "name": "currency",
+            "type": "enum[\"EUR\", \"USD\"]",
+            "nullable": false,
+            "additivity": "undeclared",
+            "identity": null,
+            "origins": [
+              {
+                "input": "order",
+                "property": "currency"
+              }
+            ],
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": [],
+            "label": null
+          },
+          {
+            "name": "placed_at",
+            "type": "timestamp",
+            "nullable": false,
+            "additivity": "undeclared",
+            "identity": null,
+            "origins": [
+              {
+                "input": "order",
+                "property": "placed_at"
+              }
+            ],
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": [],
+            "label": null
+          },
+          {
+            "name": "status",
+            "type": "enum[\"paid\", \"void\"]",
+            "nullable": false,
+            "additivity": "undeclared",
+            "identity": null,
+            "origins": [
+              {
+                "input": "order",
+                "property": "status"
+              }
+            ],
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": [],
+            "label": null
+          }
+        ]
+      },
+      {
+        "id": "paid",
+        "op": "filter",
+        "inputs": [
+          "order"
+        ],
+        "grain": [
+          "id"
+        ],
+        "columns": [
+          {
+            "name": "id",
+            "type": "text",
+            "nullable": false,
+            "additivity": "undeclared",
+            "identity": "shop.Order",
+            "origins": [
+              {
+                "input": "order",
+                "property": "id"
+              }
+            ],
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": [],
+            "label": null
+          },
+          {
+            "name": "amount",
+            "type": "decimal<2>",
+            "nullable": false,
+            "additivity": "additive",
+            "identity": null,
+            "origins": [
+              {
+                "input": "order",
+                "property": "amount"
+              }
+            ],
+            "markings": [],
+            "currencyFrom": "currency",
+            "unitFrom": [],
+            "label": null
+          },
+          {
+            "name": "channel",
+            "type": "enum[\"store\", \"web\"]",
+            "nullable": false,
+            "additivity": "undeclared",
+            "identity": null,
+            "origins": [
+              {
+                "input": "order",
+                "property": "channel"
+              }
+            ],
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": [],
+            "label": null
+          },
+          {
+            "name": "currency",
+            "type": "enum[\"EUR\", \"USD\"]",
+            "nullable": false,
+            "additivity": "undeclared",
+            "identity": null,
+            "origins": [
+              {
+                "input": "order",
+                "property": "currency"
+              }
+            ],
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": [],
+            "label": null
+          },
+          {
+            "name": "placed_at",
+            "type": "timestamp",
+            "nullable": false,
+            "additivity": "undeclared",
+            "identity": null,
+            "origins": [
+              {
+                "input": "order",
+                "property": "placed_at"
+              }
+            ],
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": [],
+            "label": null
+          },
+          {
+            "name": "status",
+            "type": "enum[\"paid\", \"void\"]",
+            "nullable": false,
+            "additivity": "undeclared",
+            "identity": null,
+            "origins": [
+              {
+                "input": "order",
+                "property": "status"
+              }
+            ],
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": [],
+            "label": null
+          }
+        ]
+      },
+      {
+        "id": "customer",
+        "op": "scan",
+        "inputs": [
+          "customer"
+        ],
+        "grain": [
+          "id"
+        ],
+        "columns": [
+          {
+            "name": "id",
+            "type": "text",
+            "nullable": false,
+            "additivity": "undeclared",
+            "identity": "shop.Customer",
+            "origins": [
+              {
+                "input": "customer",
+                "property": "id"
+              }
+            ],
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": [],
+            "label": null
+          },
+          {
+            "name": "name",
+            "type": "text",
+            "nullable": false,
+            "additivity": "undeclared",
+            "identity": null,
+            "origins": [
+              {
+                "input": "customer",
+                "property": "name"
+              }
+            ],
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": [],
+            "label": null
+          },
+          {
+            "name": "region",
+            "type": "text",
+            "nullable": false,
+            "additivity": "undeclared",
+            "identity": null,
+            "origins": [
+              {
+                "input": "customer",
+                "property": "region"
+              }
+            ],
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": [],
+            "label": null
+          }
+        ]
+      },
+      {
+        "id": "joined",
+        "op": "join",
+        "inputs": [
+          "paid",
+          "customer"
+        ],
+        "grain": [
+          "id"
+        ],
+        "columns": [
+          {
+            "name": "id",
+            "type": "text",
+            "nullable": false,
+            "additivity": "undeclared",
+            "identity": "shop.Order",
+            "origins": [
+              {
+                "input": "order",
+                "property": "id"
+              }
+            ],
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": [],
+            "label": null
+          },
+          {
+            "name": "amount",
+            "type": "decimal<2>",
+            "nullable": false,
+            "additivity": "additive",
+            "identity": null,
+            "origins": [
+              {
+                "input": "order",
+                "property": "amount"
+              }
+            ],
+            "markings": [],
+            "currencyFrom": "currency",
+            "unitFrom": [],
+            "label": null
+          },
+          {
+            "name": "channel",
+            "type": "enum[\"store\", \"web\"]",
+            "nullable": false,
+            "additivity": "undeclared",
+            "identity": null,
+            "origins": [
+              {
+                "input": "order",
+                "property": "channel"
+              }
+            ],
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": [],
+            "label": null
+          },
+          {
+            "name": "currency",
+            "type": "enum[\"EUR\", \"USD\"]",
+            "nullable": false,
+            "additivity": "undeclared",
+            "identity": null,
+            "origins": [
+              {
+                "input": "order",
+                "property": "currency"
+              }
+            ],
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": [],
+            "label": null
+          },
+          {
+            "name": "placed_at",
+            "type": "timestamp",
+            "nullable": false,
+            "additivity": "undeclared",
+            "identity": null,
+            "origins": [
+              {
+                "input": "order",
+                "property": "placed_at"
+              }
+            ],
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": [],
+            "label": null
+          },
+          {
+            "name": "status",
+            "type": "enum[\"paid\", \"void\"]",
+            "nullable": false,
+            "additivity": "undeclared",
+            "identity": null,
+            "origins": [
+              {
+                "input": "order",
+                "property": "status"
+              }
+            ],
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": [],
+            "label": null
+          },
+          {
+            "name": "customer_id",
+            "type": "text",
+            "nullable": true,
+            "additivity": "undeclared",
+            "identity": "shop.Customer",
+            "origins": [
+              {
+                "input": "customer",
+                "property": "id"
+              }
+            ],
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": [],
+            "label": null
+          },
+          {
+            "name": "customer_name",
+            "type": "text",
+            "nullable": true,
+            "additivity": "undeclared",
+            "identity": null,
+            "origins": [
+              {
+                "input": "customer",
+                "property": "name"
+              }
+            ],
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": [],
+            "label": null
+          },
+          {
+            "name": "customer_region",
+            "type": "text",
+            "nullable": true,
+            "additivity": "undeclared",
+            "identity": null,
+            "origins": [
+              {
+                "input": "customer",
+                "property": "region"
+              }
+            ],
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": [],
+            "label": null
+          }
+        ]
+      },
+      {
+        "id": "regional",
+        "op": "project",
+        "inputs": [
+          "joined"
+        ],
+        "grain": [
+          "id"
+        ],
+        "columns": [
+          {
+            "name": "id",
+            "type": "text",
+            "nullable": false,
+            "additivity": "undeclared",
+            "identity": "shop.Order",
+            "origins": [
+              {
+                "input": "order",
+                "property": "id"
+              }
+            ],
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": [],
+            "label": null
+          },
+          {
+            "name": "region",
+            "type": "text",
+            "nullable": false,
+            "additivity": "undeclared",
+            "identity": null,
+            "origins": [
+              {
+                "input": "customer",
+                "property": "region"
+              }
+            ],
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": [],
+            "label": "Region"
+          },
+          {
+            "name": "amount",
+            "type": "decimal<2>",
+            "nullable": false,
+            "additivity": "additive",
+            "identity": null,
+            "origins": [
+              {
+                "input": "order",
+                "property": "amount"
+              }
+            ],
+            "markings": [],
+            "currencyFrom": "currency",
+            "unitFrom": [],
+            "label": null
+          },
+          {
+            "name": "currency",
+            "type": "enum[\"EUR\", \"USD\"]",
+            "nullable": false,
+            "additivity": "undeclared",
+            "identity": null,
+            "origins": [
+              {
+                "input": "order",
+                "property": "currency"
+              }
+            ],
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": [],
+            "label": null
+          },
+          {
+            "name": "placed_at",
+            "type": "timestamp",
+            "nullable": false,
+            "additivity": "undeclared",
+            "identity": null,
+            "origins": [
+              {
+                "input": "order",
+                "property": "placed_at"
+              }
+            ],
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": [],
+            "label": null
+          }
+        ]
+      },
+      {
+        "id": "weekly",
+        "op": "aggregate",
+        "inputs": [
+          "regional"
+        ],
+        "grain": [
+          "region",
+          "placed_at",
+          "currency"
+        ],
+        "columns": [
+          {
+            "name": "region",
+            "type": "text",
+            "nullable": false,
+            "additivity": "undeclared",
+            "identity": null,
+            "origins": [
+              {
+                "input": "customer",
+                "property": "region"
+              }
+            ],
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": [],
+            "label": "Region"
+          },
+          {
+            "name": "placed_at",
+            "type": "date",
+            "nullable": false,
+            "additivity": "undeclared",
+            "identity": null,
+            "origins": [
+              {
+                "input": "order",
+                "property": "placed_at"
+              }
+            ],
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": [],
+            "label": "Week"
+          },
+          {
+            "name": "currency",
+            "type": "enum[\"EUR\", \"USD\"]",
+            "nullable": false,
+            "additivity": "undeclared",
+            "identity": null,
+            "origins": [
+              {
+                "input": "order",
+                "property": "currency"
+              }
+            ],
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": [],
+            "label": "Currency"
+          },
+          {
+            "name": "revenue",
+            "type": "decimal<2>",
+            "nullable": false,
+            "additivity": "additive",
+            "identity": null,
+            "origins": [
+              {
+                "input": "order",
+                "property": "amount"
+              }
+            ],
+            "markings": [],
+            "currencyFrom": "currency",
+            "unitFrom": [],
+            "label": "Revenue"
+          },
+          {
+            "name": "orders",
+            "type": "integer",
+            "nullable": false,
+            "additivity": "additive",
+            "identity": null,
+            "origins": [],
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": [],
+            "label": "Orders"
+          },
+          {
+            "name": "largest",
+            "type": "decimal<2>",
+            "nullable": false,
+            "additivity": "non_additive",
+            "identity": null,
+            "origins": [
+              {
+                "input": "order",
+                "property": "amount"
+              }
+            ],
+            "markings": [],
+            "currencyFrom": "currency",
+            "unitFrom": [],
+            "label": "Largest order"
+          }
+        ]
+      },
+      {
+        "id": "ranked",
+        "op": "window",
+        "inputs": [
+          "weekly"
+        ],
+        "grain": [
+          "region",
+          "placed_at",
+          "currency"
+        ],
+        "columns": [
+          {
+            "name": "region",
+            "type": "text",
+            "nullable": false,
+            "additivity": "undeclared",
+            "identity": null,
+            "origins": [
+              {
+                "input": "customer",
+                "property": "region"
+              }
+            ],
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": [],
+            "label": "Region"
+          },
+          {
+            "name": "placed_at",
+            "type": "date",
+            "nullable": false,
+            "additivity": "undeclared",
+            "identity": null,
+            "origins": [
+              {
+                "input": "order",
+                "property": "placed_at"
+              }
+            ],
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": [],
+            "label": "Week"
+          },
+          {
+            "name": "currency",
+            "type": "enum[\"EUR\", \"USD\"]",
+            "nullable": false,
+            "additivity": "undeclared",
+            "identity": null,
+            "origins": [
+              {
+                "input": "order",
+                "property": "currency"
+              }
+            ],
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": [],
+            "label": "Currency"
+          },
+          {
+            "name": "revenue",
+            "type": "decimal<2>",
+            "nullable": false,
+            "additivity": "additive",
+            "identity": null,
+            "origins": [
+              {
+                "input": "order",
+                "property": "amount"
+              }
+            ],
+            "markings": [],
+            "currencyFrom": "currency",
+            "unitFrom": [],
+            "label": "Revenue"
+          },
+          {
+            "name": "orders",
+            "type": "integer",
+            "nullable": false,
+            "additivity": "additive",
+            "identity": null,
+            "origins": [],
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": [],
+            "label": "Orders"
+          },
+          {
+            "name": "largest",
+            "type": "decimal<2>",
+            "nullable": false,
+            "additivity": "non_additive",
+            "identity": null,
+            "origins": [
+              {
+                "input": "order",
+                "property": "amount"
+              }
+            ],
+            "markings": [],
+            "currencyFrom": "currency",
+            "unitFrom": [],
+            "label": "Largest order"
+          },
+          {
+            "name": "week_number",
+            "type": "integer",
+            "nullable": false,
+            "additivity": "non_additive",
+            "identity": null,
+            "origins": [],
+            "markings": [],
+            "currencyFrom": null,
+            "unitFrom": [],
+            "label": "Week no."
+          },
+          {
+            "name": "to_date",
+            "type": "decimal<2>",
+            "nullable": false,
+            "additivity": "non_additive",
+            "identity": null,
+            "origins": [
+              {
+                "input": "order",
+                "property": "amount"
+              }
+            ],
+            "markings": [],
+            "currencyFrom": "currency",
+            "unitFrom": [],
+            "label": "Revenue to date"
+          },
+          {
+            "name": "previous_week",
+            "type": "decimal<2>",
+            "nullable": true,
+            "additivity": "non_additive",
+            "identity": null,
+            "origins": [
+              {
+                "input": "order",
+                "property": "amount"
+              }
+            ],
+            "markings": [],
+            "currencyFrom": "currency",
+            "unitFrom": [],
+            "label": "Previous week"
+          }
+        ]
+      }
+    ],
+    "output": "ranked",
+    "refresh": null
+  },
+  "checks": [
+    {
+      "sql": "SELECT o.channel AS channel, SUM(o.amount) AS revenue FROM \"shop.Order\" o GROUP BY o.channel",
+      "result": {
+        "admitted": false,
+        "artifact": null,
+        "plan": null,
+        "diagnostics": [
+          {
+            "code": "metric.validation.mixed_currency",
+            "severity": "error",
+            "message": "sum of o.amount mixes currencies: group by its currency o.currency",
+            "span": {
+              "pointer": "/payload/calc/nodes/grouped_2/measures/0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "sql": "SELECT o.channel AS channel, o.currency AS currency, SUM(o.amount) AS revenue FROM \"shop.Order\" o GROUP BY o.channel, o.currency",
+      "result": {
+        "admitted": true,
+        "artifact": {
+          "irVersion": "0.1",
+          "artifactId": "studio.checked_query",
+          "kind": "derived",
+          "namespace": "studio",
+          "name": "Checked query",
+          "version": "0.1.0",
+          "lifecycle": "draft",
+          "scope": {
+            "orgId": "org_demo",
+            "environmentId": "dev"
+          },
+          "dependencies": [
+            {
+              "artifactId": "shop.Order.entity",
+              "kind": "entity",
+              "version": "0.1.0",
+              "required": true
+            }
+          ],
+          "provenance": {
+            "source": "authoring_sdk"
+          },
+          "payload": {
+            "viewVersion": "0.1",
+            "viewId": "studio.checked_query",
+            "inputs": [
+              {
+                "artifactId": "shop.Order.entity",
+                "kind": "entity",
+                "version": "0.1.0",
+                "alias": "o"
+              }
+            ],
+            "calc": {
+              "kind": "relational",
+              "nodes": {
+                "scan_o": {
+                  "op": "scan",
+                  "input": "o"
+                },
+                "prepared_1": {
+                  "op": "project",
+                  "input": "scan_o",
+                  "columns": [
+                    {
+                      "name": "id",
+                      "expression": "input.id"
+                    },
+                    {
+                      "name": "channel",
+                      "expression": "input.channel"
+                    },
+                    {
+                      "name": "currency",
+                      "expression": "input.currency"
+                    },
+                    {
+                      "name": "revenue_value",
+                      "expression": "input.amount"
+                    }
+                  ]
+                },
+                "grouped_2": {
+                  "op": "aggregate",
+                  "input": "prepared_1",
+                  "groupBy": [
+                    {
+                      "column": "channel"
+                    },
+                    {
+                      "column": "currency"
+                    }
+                  ],
+                  "measures": [
+                    {
+                      "name": "revenue",
+                      "fn": "sum",
+                      "column": "revenue_value"
+                    }
+                  ]
+                }
+              },
+              "output": "grouped_2"
+            },
+            "outputSchema": {},
+            "maintenance": "recompute_on_read"
+          }
+        },
+        "plan": {
+          "transform": "studio.checked_query",
+          "version": "0.1.0",
+          "viewId": "studio.checked_query",
+          "inputs": [
+            {
+              "alias": "o",
+              "objectType": "shop.Order",
+              "artifactId": "shop.Order.entity",
+              "version": "0.1.0"
+            }
+          ],
+          "nodes": [
+            {
+              "id": "scan_o",
+              "op": "scan",
+              "inputs": [
+                "o"
+              ],
+              "grain": [
+                "id"
+              ],
+              "columns": [
+                {
+                  "name": "id",
+                  "type": "text",
+                  "nullable": false,
+                  "additivity": "undeclared",
+                  "identity": "shop.Order",
+                  "origins": [
+                    {
+                      "input": "o",
+                      "property": "id"
+                    }
+                  ],
+                  "markings": [],
+                  "currencyFrom": null,
+                  "unitFrom": [],
+                  "label": null
+                },
+                {
+                  "name": "amount",
+                  "type": "decimal<2>",
+                  "nullable": false,
+                  "additivity": "additive",
+                  "identity": null,
+                  "origins": [
+                    {
+                      "input": "o",
+                      "property": "amount"
+                    }
+                  ],
+                  "markings": [],
+                  "currencyFrom": "currency",
+                  "unitFrom": [],
+                  "label": null
+                },
+                {
+                  "name": "channel",
+                  "type": "enum[\"store\", \"web\"]",
+                  "nullable": false,
+                  "additivity": "undeclared",
+                  "identity": null,
+                  "origins": [
+                    {
+                      "input": "o",
+                      "property": "channel"
+                    }
+                  ],
+                  "markings": [],
+                  "currencyFrom": null,
+                  "unitFrom": [],
+                  "label": null
+                },
+                {
+                  "name": "currency",
+                  "type": "enum[\"EUR\", \"USD\"]",
+                  "nullable": false,
+                  "additivity": "undeclared",
+                  "identity": null,
+                  "origins": [
+                    {
+                      "input": "o",
+                      "property": "currency"
+                    }
+                  ],
+                  "markings": [],
+                  "currencyFrom": null,
+                  "unitFrom": [],
+                  "label": null
+                },
+                {
+                  "name": "placed_at",
+                  "type": "timestamp",
+                  "nullable": false,
+                  "additivity": "undeclared",
+                  "identity": null,
+                  "origins": [
+                    {
+                      "input": "o",
+                      "property": "placed_at"
+                    }
+                  ],
+                  "markings": [],
+                  "currencyFrom": null,
+                  "unitFrom": [],
+                  "label": null
+                },
+                {
+                  "name": "status",
+                  "type": "enum[\"paid\", \"void\"]",
+                  "nullable": false,
+                  "additivity": "undeclared",
+                  "identity": null,
+                  "origins": [
+                    {
+                      "input": "o",
+                      "property": "status"
+                    }
+                  ],
+                  "markings": [],
+                  "currencyFrom": null,
+                  "unitFrom": [],
+                  "label": null
+                }
+              ]
+            },
+            {
+              "id": "prepared_1",
+              "op": "project",
+              "inputs": [
+                "scan_o"
+              ],
+              "grain": [
+                "id"
+              ],
+              "columns": [
+                {
+                  "name": "id",
+                  "type": "text",
+                  "nullable": false,
+                  "additivity": "undeclared",
+                  "identity": "shop.Order",
+                  "origins": [
+                    {
+                      "input": "o",
+                      "property": "id"
+                    }
+                  ],
+                  "markings": [],
+                  "currencyFrom": null,
+                  "unitFrom": [],
+                  "label": null
+                },
+                {
+                  "name": "channel",
+                  "type": "enum[\"store\", \"web\"]",
+                  "nullable": false,
+                  "additivity": "undeclared",
+                  "identity": null,
+                  "origins": [
+                    {
+                      "input": "o",
+                      "property": "channel"
+                    }
+                  ],
+                  "markings": [],
+                  "currencyFrom": null,
+                  "unitFrom": [],
+                  "label": null
+                },
+                {
+                  "name": "currency",
+                  "type": "enum[\"EUR\", \"USD\"]",
+                  "nullable": false,
+                  "additivity": "undeclared",
+                  "identity": null,
+                  "origins": [
+                    {
+                      "input": "o",
+                      "property": "currency"
+                    }
+                  ],
+                  "markings": [],
+                  "currencyFrom": null,
+                  "unitFrom": [],
+                  "label": null
+                },
+                {
+                  "name": "revenue_value",
+                  "type": "decimal<2>",
+                  "nullable": false,
+                  "additivity": "additive",
+                  "identity": null,
+                  "origins": [
+                    {
+                      "input": "o",
+                      "property": "amount"
+                    }
+                  ],
+                  "markings": [],
+                  "currencyFrom": "currency",
+                  "unitFrom": [],
+                  "label": null
+                }
+              ]
+            },
+            {
+              "id": "grouped_2",
+              "op": "aggregate",
+              "inputs": [
+                "prepared_1"
+              ],
+              "grain": [
+                "channel",
+                "currency"
+              ],
+              "columns": [
+                {
+                  "name": "channel",
+                  "type": "enum[\"store\", \"web\"]",
+                  "nullable": false,
+                  "additivity": "undeclared",
+                  "identity": null,
+                  "origins": [
+                    {
+                      "input": "o",
+                      "property": "channel"
+                    }
+                  ],
+                  "markings": [],
+                  "currencyFrom": null,
+                  "unitFrom": [],
+                  "label": null
+                },
+                {
+                  "name": "currency",
+                  "type": "enum[\"EUR\", \"USD\"]",
+                  "nullable": false,
+                  "additivity": "undeclared",
+                  "identity": null,
+                  "origins": [
+                    {
+                      "input": "o",
+                      "property": "currency"
+                    }
+                  ],
+                  "markings": [],
+                  "currencyFrom": null,
+                  "unitFrom": [],
+                  "label": null
+                },
+                {
+                  "name": "revenue",
+                  "type": "decimal<2>",
+                  "nullable": false,
+                  "additivity": "additive",
+                  "identity": null,
+                  "origins": [
+                    {
+                      "input": "o",
+                      "property": "amount"
+                    }
+                  ],
+                  "markings": [],
+                  "currencyFrom": "currency",
+                  "unitFrom": [],
+                  "label": null
+                }
+              ]
+            }
+          ],
+          "output": "grouped_2",
+          "refresh": null
+        },
+        "diagnostics": []
+      }
+    }
+  ]
+}

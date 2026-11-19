@@ -1,0 +1,7 @@
+{
+  "code": "widget.machine.input_free_cycle",
+  "message": "a page machine state is on a cycle that runs on timers alone: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

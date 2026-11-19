@@ -1,0 +1,7 @@
+{
+  "code": "widget.machine.unreachable_state",
+  "message": "a page machine state cannot be reached from the initial state: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { RouterProvider, createMemoryHistory, createRootRoute, createRouter } from "@tanstack/react-router"
 import { ChartLine, Database } from "lucide-react"
 import type { ReactNode } from "react"
@@ -20,14 +21,16 @@ const questions: Section = { path: "/questions", label: "Questions", icon: Chart
 async function at(pathname: string, node: () => ReactNode) {
   const router = createRouter({ routeTree: createRootRoute({ component: node }), history: createMemoryHistory({ initialEntries: [pathname] }) })
   await router.load()
-  return renderToStaticMarkup(<RouterProvider router={router} />)
+  // The shell reads the session and the cell's mode as queries, as the app's root provides them.
+  return renderToStaticMarkup(<QueryClientProvider client={new QueryClient()}><RouterProvider router={router} /></QueryClientProvider>)
 }
 
 test("the open section lists its entries under their heading, the open entry marked", async () => {
   const html = await at("/sources/canon.Holding", () => <Shell sections={[sources, questions]} account={account} onSignOut={() => {}} />)
   expect(html).toContain("Object types")
   expect(html).toContain('href="/sources/canon.Holding"')
-  expect(html).toMatch(/data-sidebar="menu-sub-button"[^>]*data-active="true"/)
+  // The current page's item carries aria-current, and its row links to the page.
+  expect(html).toMatch(/role="treeitem"[^>]*aria-current="page"[^>]*>\s*<a[^>]*href="\/sources\/canon.Holding"/)
   expect(html).toContain("[&amp;&gt;svg]:text-muted-foreground")
 })
 
@@ -35,6 +38,10 @@ test("a record page belongs to the section above it", () => {
   expect(sectionOf([sources, questions], "/sources")).toBe(sources)
   expect(sectionOf([sources, questions], "/sources/canon.Holding")).toBe(sources)
   expect(sectionOf([sources, questions], "/sourcesx")).toBeUndefined()
+  // A type's records live under its applet's other prefix.
+  const owning = { ...sources, paths: ["/objects"] }
+  expect(sectionOf([owning, questions], "/objects/canon.Holding")).toBe(owning)
+  expect(sectionOf([owning, questions], "/objectsx")).toBeUndefined()
 })
 
 test("an entry is a route, or an anchor on its section's page", () => {
@@ -50,14 +57,17 @@ test("the breadcrumbs name the section, the item and the record id", async () =>
   expect(crumbs).toContain("demo/item/gold")
 })
 
-test("the page bar holds search, the view toggle, shortcuts and notifications; the sidebar names the workspace and the viewer", async () => {
+test("the page bar holds search, shortcuts and notifications (the view and language live in the account menu); the sidebar names the workspace and the viewer", async () => {
   const html = await at("/sources", () => <Shell sections={[sources, questions]} account={account} onSignOut={() => {}} />)
   expect(html).toContain("Search…")
-  expect(html).toContain('aria-label="Business or technical view"')
-  expect(html).toMatch(/aria-checked="true"[^>]*>Business</)
+  expect(html).not.toContain('aria-label="Business or technical view"')
+  // The phone's view-and-language menu is not drawn on a desktop, so it never shadows the account menu's choices.
+  expect(html).not.toContain("Language and view")
   expect(html).toContain("Keyboard shortcuts")
   expect(html).toContain("Notifications")
-  expect(html).toContain("Jewelry")
+  // Before the mode is decided the switcher says it is connecting; it names the recording only once Studio knows there is no cell.
+  expect(html).toContain("Connecting…")
+  expect(html).not.toContain("Recorded · synthetic gold-scrap data")
   expect(html).toContain("Ada Lovelace")
 })
 
@@ -70,19 +80,26 @@ test("only the recorded jewelry world opens; the NC benchmark points to its offl
   expect(WORKSPACES.find(({ group }) => group === "Class demos")?.detail).toBe("Coming soon")
 })
 
-test("a long section shows six entries and offers the rest, keeping the open one in view", async () => {
-  const many: Section = { ...sources, useMenu: () => Array.from({ length: 9 }, (_, index) => ({ href: `/sources/t${index}`, label: `Type ${index}`, group: "Object types" })) }
-  const html = await at("/sources/t8", () => <Shell sections={[many]} account={account} onSignOut={() => {}} />)
-  expect(html).toContain("Type 5")
-  expect(html).not.toContain(">Type 6<")
+test("the applet sidebar names the applet, offers its action, and counts each group; the rail lists every applet", async () => {
+  const acting: Section = { ...sources, action: { label: "Connect a source", to: "/connections" } }
+  const many: Section = { ...acting, useMenu: () => Array.from({ length: 9 }, (_, index) => ({ href: `/sources/t${index}`, label: `Type ${index}`, group: "Object types" })) }
+  const html = await at("/sources/t8", () => <Shell sections={[many, questions]} account={account} onSignOut={() => {}} />)
+  expect(html).toMatch(/<h2[^>]*>Sources<\/h2>/)
+  expect(html).toMatch(/href="\/connections"[^>]*>[\s\S]*?Connect a source/)
+  expect(html).toMatch(/>Object types<\/span><span[^>]*>9<\/span>/)
   expect(html).toContain("Type 8")
-  expect(html).toContain("Show 2 more")
+  expect(html).toMatch(/role="toolbar"[^>]*aria-label="Applets"|aria-label="Applets"[^>]*role="toolbar"/)
+  expect(html).toContain('aria-label="Questions"')
+  // The Norn knot is the one coloured mark (Nov 8 design): the rail never desaturates it.
+  const logo = /<a[^>]*aria-label="Norn Studio home"[^>]*>\s*<img[^>]*class="([^"]*)"/.exec(html)?.[1]
+  expect(logo).toBeDefined()
+  expect(logo).not.toMatch(/grayscale|saturate|brightness|contrast/)
 })
 
 test("a section's count sits in the theme's destructive pair", async () => {
   const counted: Section = { ...questions, useBadge: () => 3 }
   const html = await at("/sources", () => <Shell sections={[sources, counted]} account={account} onSignOut={() => {}} />)
-  const badge = html.match(/<span class="[^"]*bg-destructive[^"]*"[^>]*>3<\/span>/)?.[0] ?? ""
+  const badge = html.match(/<span[^>]*class="[^"]*bg-destructive[^"]*"[^>]*>3<\/span>/)?.[0] ?? ""
   expect(badge).toContain("text-destructive-foreground")
   expect(badge).not.toContain("text-white")
 })
@@ -117,4 +134,14 @@ test("the rail shows the signed-in user's initials and never the recorded-demo p
   expect(html).not.toContain("Recorded demo")
   expect(initials("")).toBe("?")
   expect(initials("ada@example.com")).toBe("A")
+})
+
+test("an assistant mounts in the shell's panel, opened from the rail; a page can hand it a prompt", async () => {
+  const html = await at("/sources", () => <Shell sections={[sources]} assistant={{ title: "Assistant", content: <p>agent here</p> }} account={account} onSignOut={() => {}} />)
+  expect(html).toMatch(/<button[^>]*aria-label="Assistant"[^>]*aria-pressed="false"/)
+  expect(html).toMatch(/data-slot="assistant-panel"[^>]*hidden/)
+  expect(html).toContain("agent here")
+  const none = await at("/sources", () => <Shell sections={[sources]} account={account} onSignOut={() => {}} />)
+  expect(none).not.toContain('data-slot="assistant-panel"')
+  expect(none).not.toContain('aria-label="Assistant"')
 })

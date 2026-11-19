@@ -641,7 +641,7 @@ pub struct PendingCommand {
 /// so queue selection skips parked rows without loading them. A string
 /// comparison is false for a non-string or missing member, exactly as
 /// [`norn_builtins::parks`] reads it; [`is_parked`] still re-checks each row.
-const PARKED_SQL: &str = "(json_extract(\"command\", '$.payload.kind') IS 'perform' AND json_extract(\"command\", '$.payload.function') IS 'norn.decision' AND json_extract(\"command\", '$.payload.functionVersion') IS '1')";
+const PARKED_SQL: &str = "(json_extract(\"command\", '$.payload.kind') IS 'perform' AND json_extract(\"command\", '$.payload.function') IN ('norn.decision', 'norn.action') AND json_extract(\"command\", '$.payload.functionVersion') IS '1')";
 
 /// PARKED-1: whether `command` waits outside the FIFO perform queue.
 #[must_use]
@@ -1170,6 +1170,10 @@ pub struct StoreReader<'a, E: SqlEngine = DefaultEngine> {
         Option<&'a std::cell::RefCell<crate::mapping_conflict::SourceDisputeIndex>>,
     pub(crate) mapping_plans:
         Option<&'a std::cell::RefCell<crate::mapping_bundle::MappingPlanCache>>,
+    pub(crate) verified_receipts: Option<&'a std::cell::RefCell<crate::history::VerifiedReceipts>>,
+    /// The receipt cache belongs to one read-only pass inside a transaction:
+    /// nothing writes while it lives, so it holds without a read revision.
+    pub(crate) verified_receipts_transaction: bool,
 }
 
 impl<'a, E: SqlEngine> StoreReader<'a, E> {
@@ -1249,7 +1253,27 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             source_disputes: None,
             mapping_plans: None,
             source_disputes_transaction: false,
+            verified_receipts: None,
+            verified_receipts_transaction: false,
         }
+    }
+
+    /// A receipt cache for one read-only pass inside a transaction.
+    pub(crate) const fn with_transaction_verified_receipts(
+        mut self,
+        receipts: &'a std::cell::RefCell<crate::history::VerifiedReceipts>,
+    ) -> Self {
+        self.verified_receipts = Some(receipts);
+        self.verified_receipts_transaction = true;
+        self
+    }
+
+    pub(crate) const fn with_verified_receipts(
+        mut self,
+        receipts: &'a std::cell::RefCell<crate::history::VerifiedReceipts>,
+    ) -> Self {
+        self.verified_receipts = Some(receipts);
+        self
     }
 
     /// Writer-owned preimages support internal event validation, never evidence export.
@@ -3373,6 +3397,15 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
     }
 
     fn ledger_range(&self, from: u64, limit: Option<usize>) -> Result<Vec<LedgerEntry>, CellError> {
+        self.ledger_range_with(from, limit, true)
+    }
+
+    fn ledger_range_with(
+        &self,
+        from: u64,
+        limit: Option<usize>,
+        verify: bool,
+    ) -> Result<Vec<LedgerEntry>, CellError> {
         // SQLite: a negative LIMIT is no limit.
         let limit = match limit {
             Some(limit) => i64::try_from(limit)
@@ -3419,10 +3452,51 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
                     reason: "command result payload does not verify".to_owned(),
                 });
             }
-            self.verify_durable_event(&entry.world, entry.commit_seq, &entry.event)?;
+            if verify {
+                self.verify_durable_event(&entry.world, entry.commit_seq, &entry.event)
+                    .map_err(|error| unproven_at(&entry, error))?;
+            }
             out.push(entry);
         }
         Ok(out)
+    }
+
+    /// #1423: the first ledger entry, in sequence order, whose committed value
+    /// proof the store refuses ([`CellError::HistoricalValueUnproven`] or
+    /// [`CellError::LedgerCorrupt`]), with its refusal; `None` when every entry
+    /// is proven. Read-only: an operator's diagnosis of a cell its open refuses.
+    ///
+    /// # Errors
+    /// SQL engine or decode errors, which are never read as a refusal.
+    #[cfg(feature = "native")]
+    pub(crate) fn first_unproven_entry(
+        &self,
+    ) -> Result<Option<(LedgerEntry, CellError)>, CellError> {
+        const PAGE: usize = 512;
+        let mut from = 1_u64;
+        loop {
+            let page = self.ledger_range_with(from, Some(PAGE), false)?;
+            let Some(last) = page.last().map(|entry| entry.seq) else {
+                return Ok(None);
+            };
+            for entry in page {
+                if let Err(error) =
+                    self.verify_durable_event(&entry.world, entry.commit_seq, &entry.event)
+                {
+                    // Only a refused proof marks the entry; an engine or
+                    // decode failure is no verdict and propagates.
+                    return if matches!(
+                        error,
+                        CellError::HistoricalValueUnproven(_) | CellError::LedgerCorrupt { .. }
+                    ) {
+                        Ok(Some((entry, error)))
+                    } else {
+                        Err(error)
+                    };
+                }
+            }
+            from = last.saturating_add(1);
+        }
     }
 
     /// Every receipt, in commit order.
@@ -4248,6 +4322,34 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         Ok(out)
     }
 
+    /// One pending (unconsumed) observation by its id, through the inbox's
+    /// unique id index; `None` when it is absent or already consumed.
+    ///
+    /// # Errors
+    ///
+    /// SQL engine or decode errors.
+    pub fn pending_observation(
+        &self,
+        observation_id: &str,
+    ) -> Result<Option<PendingObservation>, CellError> {
+        let rows = self.conn.query(
+            &format!(
+                "SELECT \"position\", \"observation_id\", \"observed\" FROM \"{INBOX}\" WHERE \"observation_id\" = ?1 AND \"consumed_commit_seq\" IS NULL"
+            ),
+            params![observation_id],
+        )?;
+        let Some(values) = rows.into_iter().next() else {
+            return Ok(None);
+        };
+        let row = SqlRow(values);
+        let observed: String = row.get(2)?;
+        Ok(Some(PendingObservation {
+            position: to_u64(row.get(0)?, "position")?,
+            observation_id: row.get(1)?,
+            observed: serde_json::from_str(&observed)?,
+        }))
+    }
+
     /// The runs of `command_id`, in order.
     ///
     /// # Errors
@@ -4422,6 +4524,21 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         }
         Ok(out)
     }
+}
+
+/// A history refusal names the ledger entry it stopped at (#1423), so the
+/// operator the `cell.unopenable` reason reaches can find it. The fact key
+/// is not repeated: the sequence and commit locate it.
+fn unproven_at(entry: &LedgerEntry, error: CellError) -> CellError {
+    let CellError::HistoricalValueUnproven(reason) = error else {
+        return error;
+    };
+    CellError::HistoricalValueUnproven(format!(
+        "{reason} (ledger seq {}, commit {}, op {})",
+        entry.seq,
+        entry.commit_seq,
+        entry.event.get("op").and_then(Value::as_str).unwrap_or("-")
+    ))
 }
 
 #[cfg(all(test, feature = "native"))]

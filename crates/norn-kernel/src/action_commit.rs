@@ -5027,6 +5027,14 @@ fn normalize_action_input<X>(
             supplied.remove(&step.field);
         }
     }
+    // ACTION-ACTOR-1: identity is never caller-supplied, not even as a value
+    // the derivation would overwrite.
+    if let Some(field) = actor_derived_fields(action)
+        .into_iter()
+        .find(|field| supplied.contains_key(field))
+    {
+        return Err(ActionRefusal::InvalidInput { field });
+    }
     let normalized = schema
         .decode_action_input(RuntimeValue::Object(supplied), "$input")
         .map_err(|violation| ActionRefusal::InvalidInput {
@@ -6444,6 +6452,25 @@ fn action_link_endpoint<X>(
         .ok_or_else(|| ActionRefusal::InvalidInput {
             field: field.to_owned(),
         })
+}
+
+/// ACTION-ACTOR-1: the input fields an action derives from the verified actor
+/// without the caller: a derivation with `inputRequired: false` that reads
+/// `actor`. A caller never supplies them (a supplied value refuses with
+/// `action.invalid_input`), and a published caller input schema omits them.
+/// A derivation that does not parse counts as one (fail closed).
+#[must_use]
+pub fn actor_derived_fields(action: &ActionRoot) -> std::collections::BTreeSet<String> {
+    action
+        .derive
+        .iter()
+        .filter(|step| !step.input_required)
+        .filter(|step| {
+            norn_expr::expression_read_paths(step.expression.as_str(), norn_expr::ACTOR_VARIABLE)
+                .map_or(true, |paths| !paths.is_empty())
+        })
+        .map(|step| step.field.clone())
+        .collect()
 }
 
 #[cfg(test)]

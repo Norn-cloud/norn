@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { RouterProvider, createMemoryHistory, createRootRoute, createRoute, createRouter } from "@tanstack/react-router"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
+import type { ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { readDocument } from "../src/lib/exact.ts"
 import { amountTexts, hostRead, isTrace, liveAccess, liveAnswer, liveTrace, type Trace } from "../src/lib/live.ts"
@@ -56,7 +57,7 @@ async function page(live: unknown) {
   client.setQueryData(["question-board"], [{ question: recorded("scrap-yield.question.json"), answer: recorded("scrap-yield.k1.answer.json"), metrics: recorded("scrap-yield.metrics.json"), objectType: recorded("scrap-yield.object-type.json") }])
   client.setQueryData(["live-answer", "demo.yield_week"], live)
   const root = createRootRoute()
-  const router = createRouter({ routeTree: root.addChildren([createRoute({ getParentRoute: () => root, path: "/questions/$name", component: QuestionPage })]), history: createMemoryHistory({ initialEntries: ["/questions/demo.yield_week"] }) })
+  const router = createRouter({ routeTree: root.addChildren([createRoute({ getParentRoute: () => root, path: "/metrics/$name", component: QuestionPage })]), history: createMemoryHistory({ initialEntries: ["/metrics/demo.yield_week"] }) })
   await router.load()
   return renderToStaticMarkup(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>)
 }
@@ -71,7 +72,7 @@ test("the page says where its answer came from: live from the cell, or the recor
 test("a refused live read shows the server's reason over the recorded snapshot", async () => {
   const html = await page({ kind: "refused", refusal: { code: "authz.denied", message: "The policy does not permit Population for this principal." } })
   expect(html).toContain("The policy does not permit Population for this principal.")
-  expect(html).toContain(">Refused:<")
+  expect(html).toContain(">Can&#x27;t answer this: <")
   expect(html).toContain("authz.denied")
   expect(html).toContain(">Recorded snapshot<")
 })
@@ -89,6 +90,13 @@ test("a contribution the server withholds (amounts: null) has no amount; none is
   }
 })
 
+/** A node rendered inside a router: each traced record links to its own page. */
+async function routed(node: ReactNode) {
+  const router = createRouter({ routeTree: createRootRoute({ component: () => node }), history: createMemoryHistory({ initialEntries: ["/metrics"] }) })
+  await router.load()
+  return renderToStaticMarkup(<RouterProvider router={router} />)
+}
+
 test("a withheld receipt hash (null) is a trace; any other non-string is not", () => {
   const trace = JSON.parse(withheldText('"amounts":null,')) as { contributions: { receiptHash: unknown }[] }
   expect(isTrace(trace)).toBe(true)
@@ -96,11 +104,11 @@ test("a withheld receipt hash (null) is a trace; any other non-string is not", (
   expect(isTrace(trace)).toBe(false)
 })
 
-test("the drawer shows Withheld for that row, its receipt hash withheld, and keeps its record and commit", () => {
+test("the drawer shows Withheld for that row, its receipt hash withheld, and keeps its record and commit", async () => {
   const client = new QueryClient()
   const lineageRef = "lineage-1"
   client.setQueryData(["live-trace", "demo.yield_week", lineageRef, bucket], { kind: "read", read: readDocument<Trace>(withheldText('"amounts":null,'), "live") })
-  const html = renderToStaticMarkup(<QueryClientProvider client={client}><LiveRecords question="demo.yield_week" lineageRef={lineageRef} bucket={{ key: bucket, label: "Week", value: "0.98", totals: [], members: [] }} /></QueryClientProvider>)
+  const html = await routed(<QueryClientProvider client={client}><LiveRecords question="demo.yield_week" lineageRef={lineageRef} bucket={{ key: bucket, label: "Week", value: "0.98", totals: [], members: [] }} /></QueryClientProvider>)
   const rows = html.split("<tr").slice(2)
   expect(rows[0]).toContain("SYN-MELT-00-0")
   expect(rows[0]).toContain(">Withheld<")
@@ -114,14 +122,14 @@ test("the drawer shows Withheld for that row, its receipt hash withheld, and kee
   expect(rows[1]).not.toContain("Copy ")
 })
 
-test("a disclosed receipt hash can be copied", () => {
+test("a disclosed receipt hash can be copied", async () => {
   const client = new QueryClient()
   const lineageRef = "lineage-1"
   const trace = JSON.parse(withheldText('"amounts":null,')) as { contributions: { receiptHash: unknown }[] }
   trace.contributions = trace.contributions.slice(1)
   trace.contributions[0]!.receiptHash = "d5d7"
   client.setQueryData(["live-trace", "demo.yield_week", lineageRef, bucket], { kind: "read", read: readDocument<Trace>(JSON.stringify(trace), "live") })
-  const html = renderToStaticMarkup(<QueryClientProvider client={client}><LiveRecords question="demo.yield_week" lineageRef={lineageRef} bucket={{ key: bucket, label: "Week", value: "0.98", totals: [], members: [] }} /></QueryClientProvider>)
+  const html = await routed(<QueryClientProvider client={client}><LiveRecords question="demo.yield_week" lineageRef={lineageRef} bucket={{ key: bucket, label: "Week", value: "0.98", totals: [], members: [] }} /></QueryClientProvider>)
   const [row] = html.split("<tr").slice(2)
   expect(row).toContain("SYN-MELT-00-1")
   expect(row).toContain("Copy d5d7")
@@ -238,7 +246,11 @@ test("a bucket the server suppressed (D53) reads 'Suppressed: fewer than 3 recor
   expect(frame?.unit).toBe("%")
   expect(frame?.points[0] as unknown).toEqual({ label: rows[0]?.label, position: null, shown: SUPPRESSED, exact: SUPPRESSED })
   expect(frame?.points.slice(1).every(({ position }) => typeof position === "number")).toBe(true)
-  const html = await page({ kind: "read", read: readDocument(source, "live") })
+  // The table lists a long series' latest weeks, so the page is checked with its latest bucket suppressed.
+  const latest = JSON.parse(answerText) as typeof suppressed
+  const last = Object.keys(latest.rows).at(-1) ?? ""
+  Object.assign(latest.rows[last] ?? {}, { suppressed: true, value: null, totals: [] })
+  const html = await page({ kind: "read", read: readDocument(JSON.stringify(latest), "live") })
   expect(html).toContain(SUPPRESSED)
   expect(html).not.toContain(" = Suppressed")
 })

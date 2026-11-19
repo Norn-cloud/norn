@@ -1,0 +1,7 @@
+{
+  "code": "derived.validation.column_conflict",
+  "message": "a relational view's node outputs two columns with one name",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

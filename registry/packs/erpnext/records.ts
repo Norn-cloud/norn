@@ -1,6 +1,6 @@
 import { Norn } from "@norn/authoring"
 import { Agent, AgentRole, Resource, Commitment, EconomicEvent, LedgerEffect } from "../../core/src/physics.ts"
-import { Catalog, Item, Party, PartyRole, Holding, OrderLine, Delivery, Posting, Settlement, SettlementObservation } from "../canon/records.ts"
+import { Catalog, Item, Party, PartyRole, Holding, OrderLine, Delivery, Posting, Settlement, SettlementObservation, ISO_4217_CODE_SET } from "../canon/records.ts"
 
 export const Source = Norn.sourceSchema({
   id: "erpnext.three.source",
@@ -9,7 +9,7 @@ export const Source = Norn.sourceSchema({
   source: {system: "synthetic-erpnext", instance: "demo", version: "erpnext-three/1"},
   observedAt: "2026-11-02T00:00:00Z",
   adapter: {name: "synthetic-record-replay", version: "0.1.0"},
-  rawMetadata: {uri: "registry/packs/erpnext/synthetic.json", sha256: "9d0f46360cc6dbd7ef9ce07152b8163f2f35d3ae349ba6ecfdce381fb516a3f4"},
+  rawMetadata: {uri: "registry/packs/erpnext/synthetic.json", sha256: "c6be2331a6bfdb02e41db56d8da20433662b69c972f1e4ee49caecb0ccb29f6c"},
   datasets: [
     {id: "Item", nativeName: "Synthetic Item", kind: "document"},
     {id: "Warehouse Lot Balance", nativeName: "Synthetic Warehouse Lot Balance", kind: "document"},
@@ -74,6 +74,7 @@ export const Source = Norn.sourceSchema({
     {dataset: "Payment Entry", name: "payer_ref", ordinal: 5, nativeType: "SyntheticText", typeCandidate: {type: "string", origin: "declared"}, required: true},
     {dataset: "Payment Entry", name: "payee_ref", ordinal: 6, nativeType: "SyntheticText", typeCandidate: {type: "string", origin: "declared"}, required: true},
     {dataset: "Warehouse Lot Balance", name: "valuation_method", ordinal: 11, nativeType: "SyntheticText", typeCandidate: {type: "string", origin: "declared"}, required: true},
+    {dataset: "Warehouse Lot Balance", name: "modified", ordinal: 12, nativeType: "SyntheticText", typeCandidate: {type: "string", origin: "declared"}, required: true},
     {dataset: "Delivery Note Item", name: "posting_state", ordinal: 9, nativeType: "SyntheticText", typeCandidate: {type: "string", origin: "declared"}, required: true},
     {dataset: "GL Entry", name: "posting_state", ordinal: 8, nativeType: "SyntheticText", typeCandidate: {type: "string", origin: "declared"}, required: true}
   ],
@@ -83,12 +84,13 @@ export const Source = Norn.sourceSchema({
     {id: "delivery_unit", dataset: "Delivery Note Item", field: "unit", origin: "declared", values: [{value: "g"}]},
     {id: "settlement_kind", dataset: "Payment Entry", field: "kind", origin: "declared", values: [{value: "payment"}, {value: "refund"}]},
     {id: "holding_valuation_method", dataset: "Warehouse Lot Balance", field: "valuation_method", origin: "declared", values: [{value: "moving_average"}]},
+    {id: "holding_cost_currency", dataset: "Warehouse Lot Balance", field: "cost_currency", origin: "declared", values: ISO_4217_CODE_SET},
     {id: "delivery_posting_state", dataset: "Delivery Note Item", field: "posting_state", origin: "declared", values: [{value: "posted"}]},
     {id: "posting_posting_state", dataset: "GL Entry", field: "posting_state", origin: "declared", values: [{value: "posted"}]},
-    {id: "posting_currency", dataset: "GL Entry", field: "currency", origin: "declared", values: [{value: "USD"}]},
+    {id: "posting_currency", dataset: "GL Entry", field: "currency", origin: "declared", values: ISO_4217_CODE_SET},
     {id: "posting_account_role", dataset: "GL Entry", field: "account_role", origin: "declared", values: [{value: "cogs"}, {value: "inventory"}]},
     {id: "posting_book", dataset: "GL Entry", field: "book", origin: "declared", values: [{value: "demo/stock-usd"}]},
-    {id: "settlement_currency", dataset: "Payment Entry", field: "currency", origin: "declared", values: [{value: "USD"}]}
+    {id: "settlement_currency", dataset: "Payment Entry", field: "currency", origin: "declared", values: ISO_4217_CODE_SET}
   ],
   constraints: [
     {id: "source_id_0", kind: "primary_key", dataset: "Item", fields: ["name"], origin: "declared"},
@@ -105,7 +107,7 @@ export const Mapping = Norn.mapping({
   id: "erpnext.three.mapping",
   title: "erpnext synthetic observations to the REA canon",
   version: "0.1.0",
-  source: {schemaId: "erpnext.three.source", version: "0.1.0", sha256: "3297994eee3f6f10c0541dc8b25b0c0c92e91c718c52a681e7b97ba8d2539cdc"},
+  source: {schemaId: "erpnext.three.source", version: "0.1.0", sha256: "eb61ffb42f8a4d6b0ee9f3f153fa647e7a03779c96622ba1f6568e16bc234574"},
   sourceContract: {kind: "generic"},
   interfaces: [Catalog, Resource, Agent, AgentRole, Commitment, EconomicEvent, LedgerEffect, Settlement],
   maps: [
@@ -127,6 +129,7 @@ export const Mapping = Norn.mapping({
       properties: [
         {property: "resource_code", value: "input.resource_code"},
         {property: "quantity", value: "input.quantity"},
+        {property: "observed_at", value: "timestamp(input.modified)"},
         {property: "unit", value: "input.unit"},
         {property: "currency", value: "null"},
         {property: "valuation_method", value: "input.valuation_method"},

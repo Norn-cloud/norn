@@ -24,7 +24,7 @@ async function start(page: Page) {
   const objects = await objectCell(page, population(20))
   const actions = await actionCell(page, objects)
   await page.goto("/objects/canon.Holding")
-  await expect(page.getByText("20 records")).toBeVisible()
+  await expect(page.getByText("20 records", { exact: true })).toBeVisible()
   await page.getByRole("button", { name: "New holding" }).click()
   await page.getByRole("menuitem", { name: "Open a holding" }).click()
   return { objects, actions }
@@ -87,7 +87,7 @@ test("validate: the cell checks on submit; its input refusal names no field, so 
   const form = sheet(page)
   for (let i = 0; i < 3; i += 1) await form.locator('button[type="submit"]').click() // Next, Next, Review
   await form.getByRole("button", { name: "Open a holding" }).click()
-  await expect(form.getByRole("alert").first()).toContainText("the request is invalid")
+  await expect(form.getByRole("alert").first()).toContainText("The input doesn't fit this action")
   await expect(steps(page).nth(3)).toHaveAttribute("aria-current", "step")
   await expect(steps(page).nth(0)).not.toHaveAccessibleName(/problem/)
   await expect(form.locator('[aria-invalid="true"]')).toHaveCount(0)

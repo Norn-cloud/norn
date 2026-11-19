@@ -68,6 +68,7 @@ mod expression;
 pub mod graph;
 mod literals;
 mod reads;
+mod row_tree;
 /// Exact validation of the admitted closed JSON schema dialect.
 pub mod schema;
 mod structural_sum;
@@ -76,8 +77,9 @@ mod value;
 
 pub use check::{
     CheckedExpression, ConstructionSource, CostEstimate, Diagnostic, InferredType, RootCostBounds,
-    StructuralLimits, check_expression, check_expression_with, check_expression_with_root_bounds,
-    check_expression_with_sources, check_unary, check_unary_with, validate_evaluation_source,
+    StructuralLimits, check_expression, check_expression_under, check_expression_with,
+    check_expression_with_root_bounds, check_expression_with_sources, check_unary,
+    check_unary_with, condition_null_guards, validate_evaluation_source,
     validate_unary_evaluation_source,
 };
 pub use convert::rescale_decimal;
@@ -92,6 +94,9 @@ pub use expression::{
     check_unary_syntax,
 };
 pub use literals::{FieldValue, ObjectLiteral, command_records, object_literals};
-pub use reads::{ExpressionReads, expression_read_paths, expression_reads};
+pub use reads::{
+    ExpressionReads, expression_element_paths, expression_read_paths, expression_reads,
+};
+pub use row_tree::{RowArithmetic, RowComparison, RowExpr, row_expression};
 pub use structural_sum::{StructuralSumEquality, structural_sum_equality};
 pub use value::{Number, Value};

@@ -389,6 +389,9 @@
     "core.laws.unresolved_scope": {
       "message": "retained instance membership is missing, ambiguous, stale or exceeds its budget"
     },
+    "core.observation.source_disagreement": {
+      "message": "SOURCE-AGREE-1: two sources report different values of a measure's unit, currency or basis for one record; both reports are kept and the record is not excluded."
+    },
     "core.projection.publication_guard": {
       "message": "analytical publication refused by declared policy: {$detail}"
     },
@@ -416,14 +419,44 @@
     "defined_concept.validation.invalid_payload": {
       "message": "defined-concept payload does not match its strict root"
     },
+    "derived.validation.column_conflict": {
+      "message": "a relational view's node outputs two columns with one name"
+    },
+    "derived.validation.grain_dropped": {
+      "message": "a relational view's projection drops or changes a column that identifies its rows"
+    },
     "derived.validation.incremental_not_supported": {
       "message": "maintenance \"incremental\" is reserved for a future IVM phase and is not yet supported; use \"recompute_on_read\""
     },
     "derived.validation.invalid_payload": {
       "message": "DerivedIR payload is invalid at {$path}: {$detail}"
     },
+    "derived.validation.invalid_plan": {
+      "message": "a relational view's plan refers to an undeclared input, node or output, has a cycle or an unreachable node, or uses a form ViewIR v1 does not admit"
+    },
     "derived.validation.io_in_view": {
       "message": "calc kind \"effectful_ts\" is not allowed inside a Derived view (IO must be in an Effect artifact)"
+    },
+    "derived.validation.join_undeclared": {
+      "message": "a relational view joins on something that is neither a declared link nor a declared key of the right type"
+    },
+    "derived.validation.order_not_total": {
+      "message": "a relational view's window or dedupe orders rows by keys that do not cover the input's row identity"
+    },
+    "derived.validation.output_schema_mismatch": {
+      "message": "a relational view declares its own output schema; ViewIR v1 infers it"
+    },
+    "derived.validation.sql_unsupported": {
+      "message": "a SQL transform uses a construct with no typed transform operator; it is refused, never run as SQL"
+    },
+    "derived.validation.type_mismatch": {
+      "message": "a relational view's expression or column does not have the type its operator needs"
+    },
+    "derived.validation.union_shape": {
+      "message": "a relational view unions inputs whose columns, types, contracts or grain differ"
+    },
+    "derived.validation.unknown_column": {
+      "message": "a relational view names a column that its input row does not have"
     },
     "entity.deprecation.v1_payload": {
       "message": "entity {$artifactId} uses the deprecated EntityIR v1 payload form; it is accepted during the migration and lowered to EntityIR v2 on read; author new versions with entityVersion \"2.0\""
@@ -655,6 +688,12 @@
     },
     "labels.validation.unlabelled_locale": {
       "message": "a description or review state names a locale that has no label"
+    },
+    "law.example.mismatch": {
+      "message": "a law example's verdict differs from its expectation: {$detail}"
+    },
+    "law.example.unsupported": {
+      "message": "a law example cannot be evaluated on one value: {$detail}"
     },
     "law.exception.cycle": {
       "message": "law exception overrides chain never reaches its law"
@@ -947,6 +986,9 @@
     "lifecycle.soundness.invalid_event": {
       "message": "a lifecycle external event is malformed: {$detail}"
     },
+    "lifecycle.soundness.invalid_module_name": {
+      "message": "a generated Quint module name is not a plain identifier: {$detail}"
+    },
     "lifecycle.soundness.invalid_trigger": {
       "message": "a lifecycle transition trigger or compensation is invalid: {$detail}"
     },
@@ -955,6 +997,12 @@
     },
     "lifecycle.soundness.no_ending": {
       "message": "a lifecycle declares no terminal or resting state: {$detail}"
+    },
+    "lifecycle.soundness.product_limit": {
+      "message": "the composed UI and lifecycle machine exceeds its state bound: {$detail}"
+    },
+    "lifecycle.soundness.sync_conflict": {
+      "message": "a UI and lifecycle sync table names one UI edge twice: {$detail}"
     },
     "lifecycle.soundness.timer_cycle": {
       "message": "a lifecycle cycle fires on timers alone: {$detail}"
@@ -1072,6 +1120,9 @@
     },
     "mapping.model.lifecycle_member": {
       "message": "{$property} of {$objectType}: a lifecycle property changes only through a lifecycle rule"
+    },
+    "mapping.model.link_claim_type_missing": {
+      "message": "map {$map} declares links, but norn.ObservedLinkClaim is not an object type of the set or the base"
     },
     "mapping.model.link_target_mismatch": {
       "message": "link {$link} of {$objectType} targets {$target}, which does not admit {$produced}"
@@ -1218,13 +1269,16 @@
       "message": "The time axis must be a single-valued date or timestamp."
     },
     "metric.validation.mixed_currency": {
-      "message": "Summing multiple currencies requires an explicit conversion."
+      "message": "Amounts in several currencies aggregate only per currency: group by the currency property, fix it with an eq filter, or convert explicitly."
+    },
+    "metric.validation.mixed_unit": {
+      "message": "METRIC-UNIT-PARTITION-1: the measure's unit is stored in sibling properties; group by each of them or fix each with an eq filter, so no aggregate mixes units."
     },
     "metric.validation.ontology_projection": {
       "message": "Generated semantic datasets or relationships differ from the ontology."
     },
     "metric.validation.partial_path": {
-      "message": "Mandatory time, currency and rate inputs require total paths."
+      "message": "Currency and rate inputs require total paths."
     },
     "metric.validation.ratio_aggregation": {
       "message": "METRIC-ADDITIVITY-1: aggregate the declared numerator and denominator separately, then divide their sums; averaging stored ratios is refused."
@@ -1246,6 +1300,48 @@
     },
     "metric.validation.unsupported_semantics": {
       "message": "Calculation requires semantics outside the admitted checker profile."
+    },
+    "model.admission.feature_kind": {
+      "message": "a model's feature or target property has a kind a model cannot read"
+    },
+    "model.admission.prediction_type_mismatch": {
+      "message": "a model's predictions type does not hold its outputs, subject and model version"
+    },
+    "model.admission.unknown_feature": {
+      "message": "a model's feature or target is not a property of its input object type"
+    },
+    "model.admission.unknown_input": {
+      "message": "a model's input object type is not declared by the artifact set or the installed base"
+    },
+    "model.law.personal_data_never_trains": {
+      "message": "a model trains on a feature or target that carries personal data that is not pseudonymized"
+    },
+    "model.validation.duplicate_id": {
+      "message": "a model lists a feature, output or contract id twice"
+    },
+    "model.validation.invalid_contract": {
+      "message": "a model contract names no output or does not apply to its output's type"
+    },
+    "model.validation.invalid_id": {
+      "message": "a model, input, feature, target, output or contract id is malformed"
+    },
+    "model.validation.invalid_output": {
+      "message": "a model output is not an inline text, integer, decimal, boolean or enum column"
+    },
+    "model.validation.invalid_payload": {
+      "message": "model payload does not match its strict root"
+    },
+    "model.validation.target_in_features": {
+      "message": "a model's target is also one of its features"
+    },
+    "model.validation.trust_without_contract": {
+      "message": "a contract_checked model declares no contract"
+    },
+    "model.validation.unsupported_trust": {
+      "message": "a model's trust is not opaque or contract_checked"
+    },
+    "object_type.validation.additivity_not_refined": {
+      "message": "property {$property} declares an additivity other than the one {$owner} requires; a member may add additivity where the referenced type declares none, never change a declared one"
     },
     "object_type.validation.computed_key_component": {
       "message": "key component {$property} is computed; identity is stored, not derived"
@@ -1565,8 +1661,17 @@
     "property_type.validation.invalid_unit": {
       "message": "unit code {$unit} must be non-blank without whitespace"
     },
+    "property_type.validation.invalid_unit_source": {
+      "message": "unit source {$detail}"
+    },
     "property_type.validation.inverted_range": {
       "message": "{$lower} is greater than {$upper}"
+    },
+    "property_type.validation.ref_additivity_conflict": {
+      "message": "ref {$name} declares {$declared} additivity, but the type it references declares {$referenced}; a use site may only add additivity to a type that declares none"
+    },
+    "property_type.validation.ref_additivity_not_numeric": {
+      "message": "ref {$name} resolves to a {$kind} type; only an integer or decimal declares additivity"
     },
     "property_type.validation.ref_cycle": {
       "message": "ref chain from {$name} returns to itself"
@@ -1603,6 +1708,12 @@
     },
     "question.validation.invalid_window": {
       "message": "The time window must be an ordered half-open UTC interval."
+    },
+    "question.validation.linked_path": {
+      "message": "a question can group across a link only by its linked time, and cannot filter across a link; grouping by another type's field is not supported yet"
+    },
+    "question.validation.marked_field": {
+      "message": "a question cannot group or filter by a field that carries a declared marking (for example pii.contact)"
     },
     "question.validation.mixed_axis_rollup": {
       "message": "Simultaneous time and non-time reductions require an ordered reduction contract."
@@ -1678,6 +1789,12 @@
     },
     "rule.validation.jdm_switch_unconnected_branch": {
       "message": "branch {$statementId} of switch {$nodeId} has no outgoing edge, so an event that takes it reaches no node"
+    },
+    "rule.validation.jdm_unique_overlap": {
+      "message": "two rows of a unique decision table match the same input: {$detail}"
+    },
+    "rule.validation.jdm_unique_unproved": {
+      "message": "the checker cannot prove a unique decision table's rows disjoint, so it is refused: {$detail}"
     },
     "rule.validation.jdm_unknown_column": {
       "message": "row {$rowId} has a cell for {$columnId}, which is not a column of the table"
@@ -1784,6 +1901,33 @@
     "source_schema.validation.unknown_field": {
       "message": "dataset {$dataset} has no field {$field}"
     },
+    "widget.catalog.duplicate_entry": {
+      "message": "a widget's catalog declares one entry id twice: {$detail}"
+    },
+    "widget.catalog.duplicate_renderer": {
+      "message": "two catalog entries render the same field type: {$detail}"
+    },
+    "widget.catalog.event_payload_mismatch": {
+      "message": "a page event's payload differs from the catalog event it raises: {$detail}"
+    },
+    "widget.catalog.invalid_prop": {
+      "message": "a catalog component's prop does not compile or does not fit its declared type: {$detail}"
+    },
+    "widget.catalog.island_machine": {
+      "message": "an opaque island declares an interaction machine: {$detail}"
+    },
+    "widget.catalog.unbound_prop": {
+      "message": "a catalog component's required prop is not bound: {$detail}"
+    },
+    "widget.catalog.unknown_entry": {
+      "message": "a page places a catalog component that is not declared: {$detail}"
+    },
+    "widget.catalog.unknown_event": {
+      "message": "a page event from a catalog component does not name one of its declared events: {$detail}"
+    },
+    "widget.catalog.unknown_prop": {
+      "message": "a catalog component is given a prop its entry does not declare: {$detail}"
+    },
     "widget.interaction.control_missing_for_transition": {
       "message": "a declared navigation item or action binding has no control that offers it: {$detail}"
     },
@@ -1811,6 +1955,108 @@
     "widget.interaction.unreachable_page": {
       "message": "an app page has no control that reaches it from the entry page: {$detail}"
     },
+    "widget.lifecycle.assumption_violated": {
+      "message": "a page state is shown while the object is in a lifecycle state it does not assume: {$detail}"
+    },
+    "widget.lifecycle.completion_unknown": {
+      "message": "a page state and an object state reach an ending of both only through guarded transitions: {$detail}"
+    },
+    "widget.lifecycle.stuck": {
+      "message": "a page state and an object state together reach no ending of both: {$detail}"
+    },
+    "widget.lifecycle.sync_not_accepted": {
+      "message": "a page transition synced with a lifecycle transition is not the accepted outcome of an action call: {$detail}"
+    },
+    "widget.lifecycle.sync_unfired": {
+      "message": "the action behind a synced page transition cannot fire its lifecycle transition: {$detail}"
+    },
+    "widget.lifecycle.uncovered_transition": {
+      "message": "a lifecycle transition the page fires is taken by no run: {$detail}"
+    },
+    "widget.lifecycle.unknown_lifecycle": {
+      "message": "a page machine names a lifecycle the object type does not declare: {$detail}"
+    },
+    "widget.lifecycle.unknown_reference": {
+      "message": "a page machine's lifecycle sync or assumption names an undeclared state or transition: {$detail}"
+    },
+    "widget.machine.absorbing_state": {
+      "message": "a non-terminal page machine state has no exit: {$detail}"
+    },
+    "widget.machine.await_outside_pending": {
+      "message": "a page machine state that is not pending declares awaits or a deadline: {$detail}"
+    },
+    "widget.machine.cancel_outside_pending": {
+      "message": "a page machine cancel effect is not a self-transition of a pending state on an input event: {$detail}"
+    },
+    "widget.machine.completion_unknown": {
+      "message": "an idle or terminal state is reachable from a page machine state only through guarded transitions: {$detail}"
+    },
+    "widget.machine.component_guard_outside_catalog": {
+      "message": "a page machine transition leaves its guard to component code: {$detail}"
+    },
+    "widget.machine.control_without_event": {
+      "message": "a page control raises no event of the page machine: {$detail}"
+    },
+    "widget.machine.duplicate_id": {
+      "message": "a page machine declares one field, event, state or transition id twice: {$detail}"
+    },
+    "widget.machine.error_without_recovery": {
+      "message": "a page machine error state has no transition a person or a timer drives: {$detail}"
+    },
+    "widget.machine.initial_not_idle": {
+      "message": "a page machine's initial state is not an idle state: {$detail}"
+    },
+    "widget.machine.input_free_cycle": {
+      "message": "a page machine state is on a cycle that runs on timers alone: {$detail}"
+    },
+    "widget.machine.invalid_event": {
+      "message": "a page machine event is malformed: {$detail}"
+    },
+    "widget.machine.invalid_expression": {
+      "message": "a page machine guard or assignment does not compile or type-check: {$detail}"
+    },
+    "widget.machine.invalid_field": {
+      "message": "a page machine field or payload member has a missing or ill-typed initial value: {$detail}"
+    },
+    "widget.machine.nondeterministic": {
+      "message": "a page machine state has more than one unguarded transition on one event or outcome: {$detail}"
+    },
+    "widget.machine.outcome_impossible": {
+      "message": "a page machine handles an outcome the awaited call cannot have: {$detail}"
+    },
+    "widget.machine.outcome_outside_pending": {
+      "message": "a page machine outcome event fires from a state that is not pending: {$detail}"
+    },
+    "widget.machine.pending_abandoned": {
+      "message": "a page machine leaves a pending state on an event that is not the call's outcome: {$detail}"
+    },
+    "widget.machine.pending_entered_without_start": {
+      "message": "a transition enters a pending page machine state without starting exactly the call it awaits: {$detail}"
+    },
+    "widget.machine.pending_outcome_uncovered": {
+      "message": "a pending page machine state has no unguarded transition for an outcome its call can have: {$detail}"
+    },
+    "widget.machine.pending_without_await": {
+      "message": "a pending page machine state does not name the call or read it awaits: {$detail}"
+    },
+    "widget.machine.pending_without_deadline": {
+      "message": "a pending page machine state has no positive deadline: {$detail}"
+    },
+    "widget.machine.start_without_pending": {
+      "message": "a page machine starts a call that no pending state awaits, or one already in flight: {$detail}"
+    },
+    "widget.machine.terminal_has_transition": {
+      "message": "a terminal page machine state has an outgoing transition: {$detail}"
+    },
+    "widget.machine.trap_region": {
+      "message": "no idle or terminal state is reachable from a page machine state: {$detail}"
+    },
+    "widget.machine.unknown_reference": {
+      "message": "a page machine names a state, event, field, node, binding, operation or navigation item it does not declare: {$detail}"
+    },
+    "widget.machine.unreachable_state": {
+      "message": "a page machine state cannot be reached from the initial state: {$detail}"
+    },
     "widget.validation.invalid_payload": {
       "message": "WidgetIR payload is invalid at {$path}: {$detail}"
     },
@@ -1819,6 +2065,15 @@
     },
     "widget.validation.unsafe_action_binding": {
       "message": "action binding must target a Norn action or process command, not a raw mutation"
+    },
+    "widget.view.behavior_unfit": {
+      "message": "a node carries an accessibility behaviour its component cannot have, or lists one twice: {$detail}"
+    },
+    "widget.view.subject_mismatch": {
+      "message": "a page view's kind cannot present its subject: {$detail}"
+    },
+    "widget.view.subject_unbound": {
+      "message": "a page view's object type or action is neither read nor called by the contract: {$detail}"
     }
   }
 }

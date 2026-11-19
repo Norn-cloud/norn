@@ -1,0 +1,7 @@
+{
+  "code": "widget.lifecycle.stuck",
+  "message": "a page state and an object state together reach no ending of both: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

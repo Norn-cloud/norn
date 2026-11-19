@@ -1,6 +1,8 @@
 import type { Schemas } from "../../../../packages/norn-sdk/src/index.ts"
 import { readDocument, type Read } from "./exact.ts"
+import { currentMode, liveTransport, type ObjectCounts } from "./live-transport.ts"
 import { readsOf } from "./objects.ts"
+import type { CountedLinkPage } from "./record-page.ts"
 
 export type { Schemas }
 export type Envelope = Schemas["NornArtifactEnvelope"]
@@ -19,7 +21,8 @@ export type SourceLineage = Schemas["NornInstanceSourceProvenance"]
 /** The reads behind one object: itself, the links touching it and where it came from. */
 export interface ObjectReads {
   readonly object: Read<ObjectRecord>
-  readonly links: Read<LinkPage>
+  /** The first page of its links, with the server's counts by link type when the cell counts them. */
+  readonly links: Read<CountedLinkPage>
   /** `null` for an object no mapping produced. */
   readonly source: Read<SourceLineage> | null
 }
@@ -47,6 +50,8 @@ export interface Transport {
   readonly restatement: () => Promise<Restatement>
   /** The admitted definitions the cell serves: concepts, relationships, laws and source mappings. */
   readonly catalog: () => Promise<Read<readonly Artifact[]>>
+  /** Each object type's record count for this caller, as the cell counted it: none for a type it may not list, and none recorded. */
+  readonly objectCounts: () => Promise<ObjectCounts>
   /** The guarantees the model checker recorded for a law, one document per checked definition, keyed by recording name. */
   readonly guarantees: () => Promise<readonly { readonly name: string; readonly read: Read<Guarantees> }[]>
   /** One page of a concept's authoritative objects after `after`; `null` when the server has no such read yet. */
@@ -88,6 +93,7 @@ export const recordedTransport: Transport = {
     asOf: recorded<HistoricalAnswer>("answers/scrap-yield.k1-as-of.answer.json"),
   }),
   catalog: async () => recorded<readonly Artifact[]>("explorer/three-systems.definitions.json"),
+  objectCounts: async () => ({}),
   guarantees: async () => ["original", "mutant"].map((name) => ({ name, read: recorded<Guarantees>(`guarantees/constitution.${name}.guarantees.json`) })),
   objectPage: async (objectType, after) =>
     optional<ObjectPage>(`explorer/objects/${objectType}${after === undefined ? "" : `.after.${after.replaceAll("/", "~")}`}.page.json`),
@@ -100,8 +106,25 @@ export const recordedTransport: Transport = {
   },
 }
 
+const through = (pick: (transport: Transport) => (...args: never[]) => Promise<unknown>) =>
+  async (...args: never[]) => {
+    const active = await currentMode()
+    const chosen = active.kind === "live" ? liveTransport(active.catalog, (input, init) => fetch(input, init), active.counts) : recordedTransport
+    return pick(chosen)(...args)
+  }
+
 /**
- * The transport the pages read through. Recorded until the cell's live read
- * host lands; live reads replace it here, behind configuration.
+ * The transport the pages read through: the connected cell's documents, or the
+ * recording when no cell is connected, decided once per page load (live-transport.ts `readMode`).
  */
-export const transport: Transport = recordedTransport
+export const transport: Transport = {
+  questionBoard: through((t) => t.questionBoard) as Transport["questionBoard"],
+  definitions: through((t) => t.definitions) as Transport["definitions"],
+  restatement: through((t) => t.restatement) as Transport["restatement"],
+  catalog: through((t) => t.catalog) as Transport["catalog"],
+  objectCounts: through((t) => t.objectCounts) as Transport["objectCounts"],
+  guarantees: through((t) => t.guarantees) as Transport["guarantees"],
+  objectPage: through((t) => t.objectPage) as Transport["objectPage"],
+  object: through((t) => t.object) as Transport["object"],
+}
+

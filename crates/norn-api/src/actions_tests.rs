@@ -214,7 +214,10 @@ fn call_at(
     now: LogicalTime,
 ) -> Result<ActionReceipt, Refusal> {
     let request = decode_action_request(body)?;
-    call_action(host, query, actor, action, &request, &Disclosure, now)
+    match call_action(host, query, actor, action, &request, &Disclosure, now)? {
+        ActionAnswer::Receipt(receipt) => Ok(receipt),
+        ActionAnswer::Pending(_) => Err(Refusal::host("no approval gates these actions")),
+    }
 }
 
 fn dump(host: &DevHost<NativeEngine>) -> BTreeMap<String, Vec<String>> {

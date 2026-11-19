@@ -1,0 +1,7 @@
+{
+  "code": "property_type.validation.ref_additivity_not_numeric",
+  "message": "ref {name} resolves to a {kind} type; only an integer or decimal declares additivity",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

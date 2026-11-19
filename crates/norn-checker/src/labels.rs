@@ -275,7 +275,7 @@ fn entity_targets(entity_roots: &[EntityRoot]) -> BTreeSet<LabelTarget> {
         }
     };
     let values_of = |property_type: &PropertyType| -> Vec<String> {
-        let values = if let PropertyType::Ref { name } = property_type {
+        let values = if let PropertyType::Ref { name, .. } = property_type {
             shared_enums
                 .get(name.0.as_str())
                 .cloned()
@@ -388,7 +388,8 @@ fn definition_targets(artifact: &ArtifactEnvelope, targets: &mut BTreeSet<LabelT
         | ArtifactKind::SourceSchema
         | ArtifactKind::Mapping
         | ArtifactKind::DefinedConcept
-        | ArtifactKind::Labels => {}
+        | ArtifactKind::Labels
+        | ArtifactKind::Model => {}
     }
 }
 
@@ -513,6 +514,7 @@ fn missing_labels(
             }
             let owner = owner.or_else(|| candidates.first().map(|(artifact, _)| *artifact));
             Some(Diagnostic {
+                witness: None,
                 code: DiagnosticCode::new(MISSING_LABEL),
                 severity: DiagnosticSeverity::Warning,
                 message: format!(
@@ -539,6 +541,7 @@ fn finding(
     artifact: &ArtifactEnvelope,
 ) -> Diagnostic {
     Diagnostic {
+        witness: None,
         code: DiagnosticCode::new(code),
         severity: DiagnosticSeverity::Error,
         message,

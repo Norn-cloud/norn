@@ -26,9 +26,10 @@ test("a run with no answer says why: the route not there yet, signed out, the ce
 test("a run answer reads with the catalogue's declarations, like a published answer", () => {
   const read = answerRead({ ...cell, name: "studio.gold_yield" }, catalog, { kind: "answer", read: readDocument(answerText, "live") })
   expect(read.metrics.document as unknown).toEqual(catalog.declarations.metrics)
-  const html = renderToStaticMarkup(<AnswerView read={read} heading="h3" />)
+  const html = renderToStaticMarkup(<QueryClientProvider client={new QueryClient()}><AnswerView read={read} heading="h3" /></QueryClientProvider>)
   expect(html).toContain(">Live<")
-  expect(html).toContain("Every week")
+  // A long series lists its latest weeks, with Show all.
+  expect(html).toMatch(/Every week|The latest 8 weeks/)
 })
 
 test("the cell's refusal of a run lands on the builder's fields, whether its pointer starts at the question or the checked document", () => {

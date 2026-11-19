@@ -5,7 +5,7 @@ use crate::{
     engine::SqlEngine,
     reactive::{BudgetedRead, DecodeBudget, ReactiveLimits},
 };
-use norn_checker::metric::compute::{QuestionPlan, contribution::project};
+use norn_checker::metric::compute::{QuestionPlan, UNSUPPORTED_ENGINE, contribution::project};
 use norn_ir::ResourceLimitProfile;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -54,17 +54,28 @@ impl IncrementalQuestion {
         knowledge: Option<crate::KnowledgeCutoff>,
         visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
     ) -> Result<Self, CellError> {
-        let (snapshot, source_pins, receipt_pin) =
-            store.question_snapshot_at_with(plan, context, knowledge, visible, |snapshot, _| {
+        // METRIC-SNAPSHOT-ASOF-1 / METRIC-GRAIN-LINK-1: neither a snapshot nor a
+        // linked time is maintained incrementally.
+        if plan.as_of() || plan.time_link().is_some() {
+            return Err(refused(UNSUPPORTED_ENGINE));
+        }
+        let (snapshot, source_pins, receipt_pin) = store.question_snapshot_at_with(
+            plan,
+            context,
+            knowledge,
+            false,
+            visible,
+            |snapshot, _| {
                 let reader = store.read();
                 let pins = reader.question_source_pins(&snapshot.finding_members)?;
                 let receipt = reader
                     .receipt_at(snapshot.result.revision.commits)?
                     .map(|r| r.hash);
                 Ok((snapshot, pins, receipt))
-            })?;
+            },
+        )?;
         let mut totals = Totals::default();
-        for (_, value) in snapshot.contributions.values() {
+        for (_, value) in snapshot.contributions.values().flatten() {
             totals.adjust(value, false)?;
         }
         let mut result = snapshot.result;
@@ -284,7 +295,7 @@ impl IncrementalQuestion {
             for id in std::mem::take(&mut changed) {
                 self.finding_members.remove(&id);
                 exclusions.remove(&id);
-                if let Some((_, previous)) = self.contributions.remove(&id) {
+                for (_, previous) in self.contributions.remove(&id).unwrap_or_default() {
                     self.totals.adjust(&previous, true)?;
                 }
                 let selected = if let Some(cutoff) = self.knowledge {
@@ -321,7 +332,7 @@ impl IncrementalQuestion {
                                 project(&self.plan, &record.values).map_err(refused)?
                         {
                             self.totals.adjust(&value, false)?;
-                            self.contributions.insert(id, (record.version, value));
+                            self.contributions.insert(id, vec![(record.version, value)]);
                         }
                     }
                     BudgetedRead::Missing => {

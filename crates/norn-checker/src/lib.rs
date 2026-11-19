@@ -80,6 +80,8 @@ pub mod mapping;
 mod markings;
 pub mod metric;
 pub mod metric_interchange;
+mod model;
+mod model_privacy;
 #[allow(
     missing_docs,
     clippy::pedantic,
@@ -96,6 +98,7 @@ pub mod metric_interchange;
 )]
 pub mod posting;
 mod soundness;
+pub mod source_agreement;
 pub mod table_analysis;
 pub mod tool_effect;
 mod unit_admission;
@@ -103,6 +106,7 @@ mod unit_codes;
 pub use metric::check_metrics_and_questions;
 pub mod explain;
 pub mod law_enrollment;
+pub mod law_examples;
 pub mod law_exceptions;
 pub mod naming_series;
 pub mod norm_precedence;
@@ -163,8 +167,13 @@ pub mod sealing;
 mod source_commands;
 pub mod source_schema;
 pub mod tool_ports;
+pub mod transform;
 pub mod typed_roots;
+pub mod ui_catalog;
 pub mod ui_interaction;
+pub mod ui_lifecycle;
+pub mod ui_machine;
+pub mod ui_view;
 pub mod verification;
 pub mod widget_ux;
 
@@ -179,7 +188,8 @@ pub use definitions_diff::{
 };
 pub use diagnostic::{
     DIAGNOSTICS_FORMAT, Diagnostic, DiagnosticCode, DiagnosticRemediation, DiagnosticSeverity,
-    SourceSpan, Span, StructuralEvidence, diagnostics_to_json,
+    DiagnosticWitness, SourceSpan, Span, StructuralEvidence, WitnessMove, WitnessSide, WitnessStep,
+    diagnostics_to_json,
 };
 pub use entity_artifacts::{
     EntityArtifactSetContext, TenantLayer, check_artifact_set_entity_model, check_entity_artifacts,
@@ -294,3 +304,12 @@ pub fn check_artifact_json(value: &serde_json::Value) -> Vec<Diagnostic> {
 
 /// Single-cell execution diagnostic shared with runtime admission.
 pub mod execution_profile;
+
+/// Whether `text` is a timestamp the engine admits: the RFC 3339 subset that
+/// the mapping's `timestamp(...)` coercion and stored timestamps accept.
+/// Callers outside the admission path (upload column typing) classify with
+/// this instead of a looser parser of their own.
+#[must_use]
+pub fn is_canonical_timestamp(text: &str) -> bool {
+    norn_expr::temporal::canonical_timestamp(text).is_ok()
+}

@@ -38,6 +38,8 @@ fn property(name: &str) -> EffectiveProperty {
             description: None,
             property_type: PropertyType::Ref {
                 name: PropertyTypeName(format!("core.units.{name}")),
+                additivity: norn_ir::PropertyAdditivity::Undeclared {},
+                unit_source: Vec::new(),
             },
             constraints: PropertyConstraints::default(),
             default: None,
@@ -164,6 +166,7 @@ fn unit_type(code: &str, system: norn_ir::UnitSystem) -> PropertyType {
         currency_source: None,
         per_unit: None,
         rounding: None,
+        unit_source: Vec::new(),
     }
 }
 

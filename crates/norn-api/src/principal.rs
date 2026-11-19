@@ -58,7 +58,7 @@ pub struct Principal {
     pub org_id: String,
     /// Norn roles from the declared table.
     pub roles: Vec<String>,
-    /// `password`, `magic_link` or `api_key`.
+    /// `password`, `magic_link`, `oauth` or `api_key`.
     pub auth_method: String,
     /// The table version the roles came from.
     pub role_table: &'static str,
@@ -203,10 +203,12 @@ impl TokenVerifier {
             "service" => (ActorKind::Service, "service"),
             _ => return None,
         };
+        // `oauth`: a person's own grant to an assistant they connected (MCP
+        // authorization); the token still names that person and their role.
         let methods: &[&str] = if actor_kind == ActorKind::Service {
             &["api_key"]
         } else {
-            &["password", "magic_link"]
+            &["password", "magic_link", "oauth"]
         };
         if !methods.contains(&norn.amr.as_str()) {
             return None;

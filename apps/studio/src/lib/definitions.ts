@@ -14,12 +14,21 @@ export interface Tile {
   /** The reader's title for the question; the QuestionIR's name is derived from it. */
   readonly title: string
   readonly question: Record<string, unknown> & { readonly name: string }
-  readonly view: { readonly kind: "chart" | "table"; readonly chart?: "line" | "bar" | "area" }
+  /** How the tile draws its answer; the cell admits a number only for one value, a pie only for the parts of one whole. */
+  readonly view: { readonly kind: "chart" | "table" | "number"; readonly chart?: "line" | "bar" | "area" | "pie" }
   readonly layout: { readonly x: number; readonly y: number; readonly w: number; readonly h: number }
+}
+/** Who authored a dashboard version; an assistant's proposal names itself, its model and the request it answered. */
+export interface Origin {
+  readonly by: "studio" | "code" | "assistant"
+  readonly proposal?: string
+  readonly model?: string
+  readonly request?: string
 }
 export interface Dashboard {
   readonly title: string
   readonly tiles: readonly Tile[]
+  readonly origin?: Origin
 }
 export interface StoredDashboard {
   readonly id: string
@@ -73,7 +82,7 @@ const isObject = (value: unknown): value is Record<string, unknown> => value !==
 const isTile = (value: unknown): value is Tile =>
   isObject(value) && typeof value.id === "string" && typeof value.title === "string"
   && isObject(value.question) && typeof value.question.name === "string"
-  && isObject(value.view) && (value.view.kind === "chart" || value.view.kind === "table")
+  && isObject(value.view) && (value.view.kind === "chart" || value.view.kind === "table" || value.view.kind === "number")
   && isObject(value.layout) && typeof value.layout.w === "number"
 const isDashboard = (value: unknown): value is Dashboard =>
   isObject(value) && typeof value.title === "string" && Array.isArray(value.tiles) && value.tiles.every(isTile)

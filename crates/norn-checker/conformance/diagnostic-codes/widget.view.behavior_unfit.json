@@ -1,0 +1,7 @@
+{
+  "code": "widget.view.behavior_unfit",
+  "message": "a node carries an accessibility behaviour its component cannot have, or lists one twice: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

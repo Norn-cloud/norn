@@ -4,7 +4,7 @@
 /// tenants (T1-ONT-1c); links and invariants (T1-ONT-1d). Their negative
 /// cases are in `tests/entity_model.rs`, which asserts it covers exactly this
 /// list.
-pub(crate) const MODEL_CODES: [&str; 45] = [
+pub(crate) const MODEL_CODES: [&str; 46] = [
     norn_checker::object_types::codes::SHADOWS_BASE,
     norn_checker::object_types::codes::INVALID_STATUS_DATE,
     norn_checker::object_types::codes::UNKNOWN_REPLACEMENT,
@@ -19,6 +19,7 @@ pub(crate) const MODEL_CODES: [&str; 45] = [
     norn_checker::object_types::codes::INTERFACE_PROPERTY_TYPE_MISMATCH,
     norn_checker::object_types::codes::INTERFACE_PROPERTY_WIDENS_NULLABILITY,
     norn_checker::object_types::codes::INTERFACE_REQUIREMENT_CONFLICT,
+    norn_checker::object_types::codes::ADDITIVITY_NOT_REFINED,
     norn_checker::object_types::codes::RESERVED_MEMBER_SEPARATOR,
     norn_checker::object_types::codes::UNNAMESPACED_MEMBER,
     norn_checker::object_types::codes::TENANT_TYPE_OUTSIDE_NAMESPACE,

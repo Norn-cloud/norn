@@ -521,7 +521,7 @@ fn check_artifact_set_with_profile(
         for artifact in artifacts {
             if matches!(&artifact.payload, norn_ir::ArtifactPayload::Setting(s) if s.setting_version.as_value() != Some(&norn_ir::JsonValue::String(CURRENT_SETTING_VERSION.into())))
             {
-                diagnostics.push(Diagnostic { code: DiagnosticCode::new("setting.validation.invalid_payload"), severity: DiagnosticSeverity::Error,
+                diagnostics.push(Diagnostic { witness: None, code: DiagnosticCode::new("setting.validation.invalid_payload"), severity: DiagnosticSeverity::Error,
                     message: format!("new setting admissions require settingVersion {CURRENT_SETTING_VERSION}; retained value profiles require their verified receipt"),
                     span: None, artifact_id: Some(artifact.artifact_id.clone()), remediation: Some(DiagnosticRemediation::FixDefinition) });
             }
@@ -545,7 +545,7 @@ fn check_artifact_set_with_profile(
     if !has_errors(&diagnostics) {
         match derive_type_env(artifacts, context.base, limits) {
             Ok(env) => type_env = Some(env.reference()?),
-            Err(errors) => diagnostics.extend(errors.iter().map(|error| Diagnostic {
+            Err(errors) => diagnostics.extend(errors.iter().map(|error| Diagnostic { witness: None,
                 code: DiagnosticCode::new(codes::ENVIRONMENT_UNDERIVABLE),
                 severity: DiagnosticSeverity::Error,
                 message: format!(

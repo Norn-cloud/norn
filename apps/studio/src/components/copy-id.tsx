@@ -8,6 +8,12 @@ export function DigestId({ value, short, className }: { readonly value: string |
   return <CopyId value={value} short={short} className={className} />
 }
 
+/** A path-like key (`demo/holding/owner/north/gold`) that wraps only after a `/`, never inside a word. */
+export function PathText({ value }: { readonly value: string }) {
+  const parts = value.split("/")
+  return <>{parts.map((part, index) => <span key={index}>{part}{index < parts.length - 1 && <>/<wbr /></>}</span>)}</>
+}
+
 /** An identifier in mono, with a button that copies it exactly. `short` shows its first characters only. */
 export function CopyId({ value, short, className }: { readonly value: string; readonly short?: number; readonly className?: string }) {
   const [state, setState] = useState<"idle" | "copied" | "failed">("idle")

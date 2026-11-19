@@ -139,9 +139,12 @@ pub(crate) fn model_of(artifacts: &[ArtifactEnvelope]) -> Result<Model, String> 
             EntityRoot::V2(root) => objects.push(root.object_type),
             EntityRoot::V2Interface(root) => interfaces.push(root.interface),
             EntityRoot::V2PropertyTypes(root) => properties.extend(root.property_types),
-            EntityRoot::V2Markings(_) | EntityRoot::V2Extension(_) | EntityRoot::V1(_) => {
+            // A markings catalog declares no object type; reads take it from
+            // the retained set, as the hosted path does.
+            EntityRoot::V2Markings(_) => {}
+            EntityRoot::V2Extension(_) | EntityRoot::V1(_) => {
                 return Err(format!(
-                    "{} uses an entity form the dev host does not serve yet (markings, extensions or EntityIR v1)",
+                    "{} uses an entity form the dev host does not serve yet (extensions or EntityIR v1)",
                     artifact.artifact_id
                 ));
             }

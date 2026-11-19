@@ -99,6 +99,19 @@ export class SchemaProjection {
     return e
   }
 
+  /** A literal array, or a const binding (local or imported) whose initializer is one, such as a shared code list. */
+  private constArray(input: ts.Expression): ts.Expression {
+    let e = this.unwrap(input)
+    for (let hops = 0; ts.isIdentifier(e); hops++) {
+      if (hops > 128) throw new CompileError("NORN-FLOW-UNBOUNDED", "constant references exceed the compiler bound", input)
+      const d = this.symbol(e)?.valueDeclaration
+      if (!d || !ts.isVariableDeclaration(d) || !d.initializer || (d.parent.flags & ts.NodeFlags.Const) === 0) return e
+      e = this.unwrap(d.initializer)
+    }
+    this.guard(e)
+    return e
+  }
+
   private readAt(input: ts.Expression, depth: number): SchemaNode {
     this.guard(input)
     if (depth > MAX_SCHEMA_DEPTH) throw new CompileError("NORN-FLOW-UNBOUNDED", "schema nesting exceeds the compiler bound", input)
@@ -187,7 +200,7 @@ export class SchemaProjection {
       case "effect/Schema#Literal":
         return { kind: "literals", values: [this.literal(arg(0))], node: call }
       case "effect/Schema#Literals": {
-        const list = this.unwrap(arg(0))
+        const list = this.constArray(arg(0))
         if (!ts.isArrayLiteralExpression(list) || list.elements.length === 0) throw projection("Schema.Literals takes a non-empty literal array", list)
         return { kind: "literals", values: list.elements.map((x) => this.literal(x)), node: call }
       }
@@ -242,34 +255,17 @@ export class SchemaProjection {
           throw new CompileError("NORN-FLOW-LITERAL", `Norn.decimal takes an integer literal scale between 0 and ${MAX_DECIMAL_SCALE}`, scale)
         }
         const options = a[1] ? this.objectLiteral(a[1]) : new Map<string, ts.Expression>()
-        for (const key of options.keys()) if (key !== "unit" && key !== "currency" && key !== "rounding" && key !== "additivity") throw new CompileError("NORN-FLOW-LITERAL", `unknown Norn.decimal option ${key}`, a[1]!)
+        for (const key of options.keys()) if (key !== "unit" && key !== "currency" && key !== "rounding" && key !== "additivity" && key !== "unitSource") throw new CompileError("NORN-FLOW-LITERAL", `unknown Norn.decimal option ${key}`, a[1]!)
         const unitNode = options.get("unit")
         const currencyNode = options.get("currency")
         const modeNode = options.get("rounding")
         const mode = modeNode === undefined ? undefined : this.stringLiteral(modeNode, call, "rounding")
         if (mode !== undefined && mode !== "refuse" && mode !== "toward_zero" && mode !== "half_even" && mode !== "half_away_from_zero") throw new CompileError("NORN-FLOW-LITERAL", "unsupported rounding mode", call)
-        const additivityNode = options.get("additivity")
-        let additivity: E.PropertyAdditivity | undefined
-        if (additivityNode !== undefined) {
-          const fields = this.objectLiteral(additivityNode)
-          const kind = this.stringLiteral(fields.get("kind"), additivityNode, "additivity.kind")
-          if (kind === "ratio" && fields.size === 3) {
-            const operand = (field: "numerator" | "denominator"): string => {
-              const node = fields.get(field)
-              const value = this.stringLiteral(node, additivityNode, `additivity.${field}`)
-              if (value.match(/^[a-z][a-z0-9_]*$/)?.[0] !== value) throw new CompileError("NORN-FLOW-LITERAL", `additivity.${field} must be a PropertyId matching [a-z][a-z0-9_]*`, node ?? additivityNode)
-              return value
-            }
-            additivity = { kind, numerator: operand("numerator"), denominator: operand("denominator") }
-          } else if (fields.size === 1 && (kind === "undeclared" || kind === "additive" || kind === "semi_additive" || kind === "non_additive")) {
-            additivity = kind === "undeclared" ? undefined : { kind }
-          } else {
-            throw new CompileError("NORN-FLOW-LITERAL", "additivity requires a closed class declaration; ratios require numerator and denominator", additivityNode)
-          }
-        }
+        const additivity = this.additivity(options.get("additivity"))
+        const unitSource = this.unitSource(options.get("unitSource"))
         const rounded = (type: E.PropertyType): E.PropertyType => {
           if (type.kind !== "decimal") throw new CompileError("NORN-FLOW-LITERAL", "rounding requires Decimal", call)
-          return { ...type, ...(mode === undefined ? {} : { rounding: mode }), ...(additivity === undefined ? {} : { additivity }) }
+          return { ...type, ...(mode === undefined ? {} : { rounding: mode }), ...(additivity === undefined ? {} : { additivity }), ...(unitSource.length === 0 ? {} : { unitSource }) }
         }
 
         if (currencyNode !== undefined) {
@@ -285,8 +281,12 @@ export class SchemaProjection {
       }
       case "@norn/authoring#Norn.boundDecimal":
         return { kind: "value-type", type: E.boundDecimal(this.stringLiteral(a[0], call, "the decimal binding group")), node: call }
-      case "@norn/authoring#Norn.ref":
-        return { kind: "value-type", type: E.ref(this.stringLiteral(a[0], call, "the property type name")), node: call }
+      case "@norn/authoring#Norn.ref": {
+        const name = this.stringLiteral(a[0], call, "the property type name")
+        const options = a[1] ? this.objectLiteral(a[1]) : new Map<string, ts.Expression>()
+        for (const key of options.keys()) if (key !== "additivity" && key !== "unitSource") throw new CompileError("NORN-FLOW-LITERAL", `unknown Norn.ref option ${key}`, a[1]!)
+        return { kind: "value-type", type: E.ref(name, this.additivity(options.get("additivity")), this.unitSource(options.get("unitSource"))), node: call }
+      }
       case "@norn/authoring#Norn.timestamp": {
         const timezone = this.stringLiteral(a[0], call, "the timezone policy")
         if (timezone !== "utc" && timezone !== "offset") throw new CompileError("NORN-FLOW-LITERAL", "the timezone policy is \"utc\" or \"offset\"", call)
@@ -297,6 +297,40 @@ export class SchemaProjection {
       default:
         throw projection(`${id ?? call.expression.getText()} is not a schema in the structural subset`, call)
     }
+  }
+
+  /** METRIC-UNIT-PARTITION-1: a literal array of distinct sibling property ids holding the unit. */
+  private unitSource(node: ts.Expression | undefined): string[] {
+    if (node === undefined) return []
+    const list = this.unwrap(node)
+    if (!ts.isArrayLiteralExpression(list) || list.elements.length === 0) throw new CompileError("NORN-FLOW-LITERAL", "unitSource is a non-empty literal array of property ids", node)
+    const ids = list.elements.map((element) => {
+      const id = this.stringLiteral(element, node, "a unitSource property id")
+      if (id.match(/^[a-z][a-z0-9_]*$/)?.[0] !== id) throw new CompileError("NORN-FLOW-LITERAL", "unitSource property ids match [a-z][a-z0-9_]*", element)
+      return id
+    })
+    if (new Set(ids).size !== ids.length) throw new CompileError("NORN-FLOW-LITERAL", "unitSource property ids are distinct", node)
+    return ids
+  }
+
+  /** METRIC-ADDITIVITY-1 / -REF-1: one closed additivity class; `undeclared` is omitted. */
+  private additivity(node: ts.Expression | undefined): E.PropertyAdditivity | undefined {
+    if (node === undefined) return undefined
+    const fields = this.objectLiteral(node)
+    const kind = this.stringLiteral(fields.get("kind"), node, "additivity.kind")
+    if (kind === "ratio" && fields.size === 3) {
+      const operand = (field: "numerator" | "denominator"): string => {
+        const member = fields.get(field)
+        const value = this.stringLiteral(member, node, `additivity.${field}`)
+        if (value.match(/^[a-z][a-z0-9_]*$/)?.[0] !== value) throw new CompileError("NORN-FLOW-LITERAL", `additivity.${field} must be a PropertyId matching [a-z][a-z0-9_]*`, member ?? node)
+        return value
+      }
+      return { kind, numerator: operand("numerator"), denominator: operand("denominator") }
+    }
+    if (fields.size === 1 && (kind === "undeclared" || kind === "additive" || kind === "semi_additive" || kind === "non_additive")) {
+      return kind === "undeclared" ? undefined : { kind }
+    }
+    throw new CompileError("NORN-FLOW-LITERAL", "additivity requires a closed class declaration; ratios require numerator and denominator", node)
   }
 
   private fields(input: ts.Expression, depth: number): StructField[] {
@@ -443,7 +477,14 @@ export class SchemaProjection {
   }
 
   /** The closed value schema (Function I/O, action input/output, RuleIR contracts). */
-  closed(schema: SchemaNode, nullable = false): S.ValueSchema {
+  /**
+   * A closed schema. `nullable`: `true` admits any `Schema.NullOr` (RuleIR);
+   * `"scalar"` admits `Schema.NullOr` of a scalar only, the nullable leaf ActionIR
+   * inputs and outputs admit (`["string" | "integer" | "number" | "boolean", "null"]`,
+   * with what the scalar leaf carries: a string `enum`, a decimal `nornType`, labels);
+   * `false` admits none.
+   */
+  closed(schema: SchemaNode, nullable: boolean | "scalar" = false): S.ValueSchema {
     this.bounded(schema)
     return this.closedAt(schema, nullable)
   }
@@ -454,7 +495,7 @@ export class SchemaProjection {
     return this.closedAt(schema, true, true)
   }
 
-  private closedAt(schema: SchemaNode, nullable: boolean, temporalWire = false): S.ValueSchema {
+  private closedAt(schema: SchemaNode, nullable: boolean | "scalar", temporalWire = false): S.ValueSchema {
     this.guard(schema.node)
     switch (schema.kind) {
       case "string":
@@ -485,6 +526,11 @@ export class SchemaProjection {
         const members = this.flatten(schema)
         if (nullable && members.length === 2 && members.some((m) => m.kind === "null")) {
           const nonNull = members.find((m) => m.kind !== "null")!
+          const scalar = ["string", "int", "finite", "boolean", "literals"].includes(nonNull.kind)
+            || (nonNull.kind === "value-type" && nonNull.type.kind === "decimal")
+          if (nullable === "scalar" && !scalar) {
+            throw projection("an action's absent value is a nullable scalar: Schema.NullOr of a string, literal set, integer, number, boolean or Norn.decimal (ActionIR admits no nullable struct or array)", schema.node)
+          }
           return S.nullable(this.closedAt(nonNull, nullable, temporalWire))
         }
         if (members.every((m) => m.kind === "literals")) return S.text([...new Set(members.flatMap((m) => (m.kind === "literals" ? m.values : [])))])

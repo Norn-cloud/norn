@@ -86,6 +86,9 @@ pub enum CellError {
     /// RUN-LEDGER-1: a run start or run write was refused (`run.*`).
     #[error("{0}")]
     RunRefused(&'static str),
+    /// DECISION-LEDGER-1: a decision resolution was refused (`decision.*`).
+    #[error("{0}")]
+    DecisionRefused(&'static str),
     /// A historical input was recorded after the requested knowledge cutoff.
     #[error("core.world.temporal_leakage")]
     TemporalLeakage,

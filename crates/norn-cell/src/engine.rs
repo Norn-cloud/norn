@@ -16,6 +16,61 @@
 
 use crate::CellError;
 
+/// The read revision of an engine whose connection is its database's only
+/// writer ([`ReadIsolation::ExclusiveSynchronous`]): a count of every
+/// statement that is not provably read-only, so equal counts outside a
+/// transaction mean unchanged contents. The engine's own `query`, `execute`
+/// and `execute_batch` note each statement; no caller bumps it.
+#[derive(Debug, Default)]
+pub struct WriteRevision(std::cell::Cell<u64>);
+
+impl WriteRevision {
+    /// A fresh connection's revision.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self(std::cell::Cell::new(0))
+    }
+
+    /// Note `sql` about to run: anything but one plain `SELECT` statement
+    /// counts as a write, including statements the platform would refuse.
+    pub fn note(&self, sql: &str) {
+        if !read_only(sql) {
+            self.bump();
+        }
+    }
+
+    /// Note a statement batch: always a write.
+    pub fn bump(&self) {
+        self.0.set(self.0.get().wrapping_add(1));
+    }
+
+    /// The revision outside a transaction; `None` inside one, whose writes
+    /// could still roll back.
+    #[must_use]
+    pub fn current(&self, in_transaction: bool) -> Option<(u64, u64)> {
+        (!in_transaction).then(|| (self.0.get(), 0))
+    }
+}
+
+/// One `SELECT` statement: no second statement after a `;`, and no keyword
+/// that writes. Conservative: anything unsure is not read-only.
+fn read_only(sql: &str) -> bool {
+    let text = sql.trim().trim_end_matches(';').trim_end();
+    let upper = text.to_ascii_uppercase();
+    upper.starts_with("SELECT")
+        && !text.contains(';')
+        && ![
+            "INSERT", "UPDATE", "DELETE", "REPLACE", "CREATE", "DROP", "ALTER", "PRAGMA", "ATTACH",
+            "VACUUM", "REINDEX",
+        ]
+        .iter()
+        .any(|keyword| {
+            upper
+                .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+                .any(|word| word == *keyword)
+        })
+}
+
 /// Largest SQLite integer carried exactly by a JavaScript number.
 pub const MAX_SAFE_INTEGER: i64 = 9_007_199_254_740_992;
 /// Maximum number of bindings in the admitted host subset.
@@ -476,6 +531,45 @@ impl NativeEngine {
         Self::configured(conn)
     }
 
+    /// Open an existing file read-only, for an operator's diagnosis (#1423):
+    /// the main file is never written and a missing one is not created, the
+    /// journal mode is left as stored, and a hot journal is refused rather
+    /// than rolled back. A WAL file may still get `-wal`/`-shm` sidecars.
+    ///
+    /// # Errors
+    /// SQLite open or configuration errors.
+    pub fn open_read_only(path: &std::path::Path) -> Result<Self, CellError> {
+        let conn = rusqlite::Connection::open_with_flags(
+            path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        Self::configured(conn)
+    }
+
+    /// Run `f` in one deferred read transaction, then end it without
+    /// committing anything: one snapshot for a read-only pass.
+    ///
+    /// # Errors
+    /// A nested call, SQLite errors, or `f`'s own.
+    pub(crate) fn read_transaction<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        if !self.conn.is_autocommit() {
+            return Err(CellError::Engine("nested transaction refused".to_owned()));
+        }
+        let tx = rusqlite::Transaction::new_unchecked(
+            &self.conn,
+            rusqlite::TransactionBehavior::Deferred,
+        )?;
+        let out = f();
+        let ended = tx.rollback();
+        // `f`'s own error wins over a failure to end the read.
+        let value = out?;
+        ended?;
+        Ok(value)
+    }
+
     /// Open an in-memory database with foreign keys enforced.
     ///
     /// # Errors
@@ -497,6 +591,8 @@ impl NativeEngine {
         // as its own text.
         conn.set_db_config(DbConfig::SQLITE_DBCONFIG_DQS_DML, false)?;
         conn.set_db_config(DbConfig::SQLITE_DBCONFIG_DQS_DDL, false)?;
+        // The cell runs a bounded set of statement shapes; keep them prepared.
+        conn.set_prepared_statement_cache_capacity(512);
         let user_sql = Arc::new(AtomicBool::new(false));
         let authorizer_flag = Arc::clone(&user_sql);
         // Let SQLite parse transaction controls, including quoted SQL and
@@ -683,7 +779,13 @@ impl SqlEngine for NativeEngine {
         let _counted = StatementCount::start(&self.conn, params);
         validate_bindings(sql, params)?;
         let _user_sql = UserSql::enter(&self.user_sql);
-        self.conn.execute(sql, rusqlite::params_from_iter(params))?;
+        // Every statement is prepared under the same authorizer state (the
+        // user-SQL flag is set for every call), so a cached statement was
+        // authorized exactly as a fresh one would be; a denied statement
+        // fails to prepare and is never cached.
+        self.conn
+            .prepare_cached(sql)?
+            .execute(rusqlite::params_from_iter(params))?;
         Ok(())
     }
 
@@ -691,7 +793,7 @@ impl SqlEngine for NativeEngine {
         let _counted = StatementCount::start(&self.conn, params);
         validate_bindings(sql, params)?;
         let _user_sql = UserSql::enter(&self.user_sql);
-        let mut statement = self.conn.prepare(sql)?;
+        let mut statement = self.conn.prepare_cached(sql)?;
         let width = statement.column_count();
         let mut rows = statement.query(rusqlite::params_from_iter(params))?;
         let mut result = Vec::new();

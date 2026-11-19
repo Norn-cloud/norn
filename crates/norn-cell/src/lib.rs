@@ -29,11 +29,13 @@
 //!   each result before delivering it, and `observe`/`clock` peek until a
 //!   commit consumes.
 
+pub mod analytics;
 pub mod catalog;
 pub mod cell_identity;
 pub mod classification;
 mod codec;
 pub mod compute;
+pub mod decision_ledger;
 pub mod engine;
 pub mod error;
 pub mod export;
@@ -43,10 +45,14 @@ pub mod fork;
 mod history;
 mod history_selection;
 pub mod host;
+mod link_laws;
 pub mod mapping_bundle;
 pub mod mapping_conflict;
 mod mapping_identity;
 mod mapping_links;
+#[doc(hidden)]
+pub use mapping_links::check_link_plans_against_wide_scope;
+pub mod mapping_page;
 mod mapping_process;
 mod migration;
 pub mod mining;
@@ -63,6 +69,7 @@ mod receipt_commitment;
 #[cfg(feature = "native")]
 pub mod restore;
 pub mod retained;
+pub mod source_agreement;
 pub mod source_provenance;
 pub mod store;
 pub mod system;
@@ -74,6 +81,7 @@ pub use error::CellError;
 pub use fork::{ForkEngine, ForkPin, StoreImage};
 pub use history::{FactSnapshot, FactVersionEvidence, HistoricalEvidence, KnowledgeCutoff};
 pub use host::{CommitRecord, PerformClaim, Responder, SqliteCell};
+pub use mapping_process::MappingOutcome;
 pub use model::{BindingIndexSpec, Model, ModelDefinitionSnapshot};
 pub use read::{
     BindingSortValue, BindingSortedCandidate, BindingSortedPosition, FindingLedgerPage,
@@ -81,12 +89,12 @@ pub use read::{
     PendingTimer, RunRecord, StoreReader,
 };
 #[cfg(feature = "native")]
-pub use restore::{RestoreError, RestoreReport};
+pub use restore::{HistoryDiagnosis, PrefixRestore, RestoreError, RestoreReport, UnprovenEntry};
 pub use store::{
     CellStore, CommitBatch, CommitOutcome, CommitPoint, Consumption, DefinitionInstallRecord,
     DefinitionReadmission, EffectRow, FactWriteRow, GuardedError, InstalledDefinitionInput,
     InstalledDefinitionSet, JournalMode, LinkChange, MAIN_WORLD, MarkingDeclassification,
-    OutboxCommand, Receipt, ReceiptBody, StoreOptions, TimerEntry, WrittenRow,
+    MarkingReveal, OutboxCommand, Receipt, ReceiptBody, StoreOptions, TimerEntry, WrittenRow,
 };
 
 /// Whether `function_id@version` is a compiled-in built-in

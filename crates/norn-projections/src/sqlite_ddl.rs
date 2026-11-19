@@ -511,7 +511,7 @@ fn resolve(
     let mut current: &PropertyType = &property.property_type;
     let mut depth = 0_usize;
     loop {
-        let PropertyType::Ref { name } = current else {
+        let PropertyType::Ref { name, .. } = current else {
             return Ok((current.kind(), nullable));
         };
         let def = lookup(owner, property, name, property_types)?;

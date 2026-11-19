@@ -70,7 +70,52 @@ pub struct ResourceLimitProfile {
     pub envelope: EnvelopeLimits,
     /// An inline custom helper, only if D33 ever admits one.
     pub helper: HelperLimits,
+    /// Bounds on an analytical question. Absent from `norn.limits/1`, whose
+    /// bytes and hash are unchanged; a profile without them bounds questions
+    /// by [`QuestionLimits::DEFAULT`] (see
+    /// [`ResourceLimitProfile::question_limits`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub question: Option<QuestionLimits>,
 }
+
+/// Bounds on an analytical question (ruling 2026-11-12). A question returns a
+/// handful of aggregate rows but scans many source records, so the records it
+/// scans are bounded apart from [`SliceLimits::max_records`], which bounds the
+/// records a read returns. Over the bound a question is refused
+/// (`core.compute.bound_exceeded`), never truncated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct QuestionLimits {
+    /// Maximum source records one evaluation of a question may scan.
+    pub max_scanned_records: u32,
+    /// Maximum stored bytes those records may decode to: the scan's memory
+    /// bound.
+    pub max_scanned_bytes: u64,
+}
+
+impl QuestionLimits {
+    /// The bound a profile without question limits applies. Measured on the
+    /// exact native engine (release build, one evaluation of a keyed sum, a
+    /// 4-vCPU sandbox): 10,000 rows in ~0.6 s and +6.5 MB, 100,000 in 6-8 s
+    /// and +170 MB, 1,000,000 in 55-82 s and +1.9 GB, linear at ~70 µs and
+    /// ~1.7 KB held per row (each row's contribution and member lineage are
+    /// kept until the answer is built). The bound is the ruling's floor,
+    /// 100,000 rows; past it an analytical engine answers or the question
+    /// narrows.
+    pub const DEFAULT: Self = Self {
+        max_scanned_records: QUESTION_MAX_SCANNED_RECORDS,
+        max_scanned_bytes: QUESTION_MAX_SCANNED_BYTES,
+    };
+}
+
+/// [`QuestionLimits::DEFAULT`]'s scan bound.
+const QUESTION_MAX_SCANNED_RECORDS: u32 = 100_000;
+
+/// [`QuestionLimits::DEFAULT`]'s decoded-bytes bound.
+const QUESTION_MAX_SCANNED_BYTES: u64 = 64 * MIB;
+
+// The ruling's floor: an analytical question scans at least 100,000 records.
+const _: () = assert!(QUESTION_MAX_SCANNED_RECORDS >= 100_000);
 
 /// Budget for one warm `decide` (§1 row 1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
@@ -212,7 +257,15 @@ impl ResourceLimitProfile {
                 aggregate_micros_per_decision: 500,
                 max_guest_memory_bytes: MIB,
             },
+            question: None,
         }
+    }
+
+    /// The question bounds this profile applies: its own, or
+    /// [`QuestionLimits::DEFAULT`] when it declares none.
+    #[must_use]
+    pub fn question_limits(&self) -> QuestionLimits {
+        self.question.unwrap_or(QuestionLimits::DEFAULT)
     }
 
     /// The profile as a Norn1 canonical JSON value. Field names equal the
@@ -229,8 +282,9 @@ impl ResourceLimitProfile {
             memory,
             envelope,
             helper,
+            question,
         } = self;
-        object([
+        let mut value = object([
             ("id", JsonValue::String(id.clone())),
             ("version", number(u64::from(*version))),
             (
@@ -299,7 +353,21 @@ impl ResourceLimitProfile {
                     ),
                 ]),
             ),
-        ])
+        ]);
+        // Absent question limits add no key, so `norn.limits/1` hashes as before.
+        if let (Some(question), JsonValue::Object(fields)) = (question, &mut value) {
+            fields.insert(
+                "question".to_owned(),
+                object([
+                    (
+                        "max_scanned_records",
+                        number(u64::from(question.max_scanned_records)),
+                    ),
+                    ("max_scanned_bytes", number(question.max_scanned_bytes)),
+                ]),
+            );
+        }
+        value
     }
 
     /// Norn1 canonical JSON bytes of the profile.

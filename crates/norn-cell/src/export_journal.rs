@@ -69,14 +69,22 @@ pub(crate) fn consumed_input<E: SqlEngine>(
     match consumed {
         Consumption::Observation { observation_id } => {
             let pending = reader
-                .pending_observations()?
-                .into_iter()
-                .find(|row| row.observation_id == *observation_id)
+                .pending_observation(observation_id)?
                 .ok_or_else(not_pending)?;
+            let members = if observation_id.starts_with(crate::mapping_page::PAGE_PREFIX) {
+                let mut members = Vec::new();
+                for id in crate::mapping_page::members(&pending.observed)? {
+                    members.extend(reader.pending_observation(&id)?);
+                }
+                members
+            } else {
+                Vec::new()
+            };
             preimage(&ConsumedInput::Observation {
                 position: pending.position,
                 observation_id: pending.observation_id,
                 observed: pending.observed,
+                members,
             })
         }
         Consumption::Result {
@@ -123,6 +131,10 @@ pub(crate) enum ConsumedInput {
         position: u64,
         observation_id: String,
         observed: Value,
+        /// OBS-PAGE-1: a page's members this commit consumes with it, in page
+        /// order; absent for every other delivery.
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        members: Vec<crate::PendingObservation>,
     },
     Result {
         position: u64,
@@ -179,7 +191,10 @@ pub(crate) fn record<E: SqlEngine>(
         None => String::new(),
     };
 
-    let reader = StoreReader::new(engine, model);
+    // Every event of this commit proves its facts against this commit's
+    // receipt: one read-only pass, so the receipt is verified once.
+    let receipts = std::cell::RefCell::default();
+    let reader = StoreReader::new(engine, model).with_transaction_verified_receipts(&receipts);
     let entries: Vec<_> = reader
         .ledger(receipt.body.first_event_seq)?
         .into_iter()
@@ -231,8 +246,11 @@ pub(crate) fn record<E: SqlEngine>(
     for entry in &export.entries {
         reader.verify_durable_event(&entry.world, entry.commit_seq, &entry.event)?;
     }
-    let hash = export.hash()?;
-    let serialized = crate::payload_storage::encode_export(engine, &export)?;
+    // The record's hash and its packed encoding both start from its canonical
+    // text; canonicalize it once.
+    let canonical = crate::codec::canonical_json(&export)?;
+    let hash = norn_ir::canonical::HashProfile::Norn1.hash_canonical_bytes(canonical.as_bytes());
+    let serialized = crate::payload_storage::encode_export(engine, &export, &canonical)?;
     engine.execute(
         r#"INSERT INTO "_norn_export_journal" ("commit_seq", "hash", "record") VALUES (?1, ?2, ?3)"#,
         params![to_i64(commit_seq, "commit_seq")?, hash, serialized],

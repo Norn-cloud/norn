@@ -481,8 +481,9 @@ pub fn restate_question(
     Ok(parts.join(", "))
 }
 
-/// A dashboard in plain words: its title, then `n. <tile title>: <the tile's
-/// question restated>` for each tile in order, one per line.
+/// A dashboard in plain words: its title, who authored it when its payload
+/// names an origin, then `n. <tile title>: <the tile's question restated>`
+/// for each tile in order, one per line.
 ///
 /// `payload` is the dashboard definition's payload, `{title, tiles: [{title,
 /// question, ...}]}`; members the restatement does not read are ignored.
@@ -503,6 +504,9 @@ pub fn restate_dashboard(
         .and_then(serde_json::Value::as_array)
         .ok_or_else(|| RestateError::Dashboard("no tiles array".to_owned()))?;
     let mut lines = vec![title.to_owned()];
+    if let Some(origin) = payload.get("origin") {
+        lines.push(origin_words(origin)?);
+    }
     for (number, tile) in (1_usize..).zip(tiles) {
         let tile_title = tile
             .get("title")
@@ -522,6 +526,29 @@ pub fn restate_dashboard(
         ));
     }
     Ok(lines.join("\n"))
+}
+
+/// Who authored a dashboard version, in words; an assistant's proposal quotes
+/// the person's request, so a sign-off covers what was asked as well as what
+/// was proposed.
+fn origin_words(origin: &serde_json::Value) -> Result<String, RestateError> {
+    let text = |key: &str| origin.get(key).and_then(serde_json::Value::as_str);
+    match text("by") {
+        Some("studio") => Ok("Built in Studio.".to_owned()),
+        Some("code") => Ok("Written as code.".to_owned()),
+        Some("assistant") => {
+            let model = text("model").map_or_else(String::new, |model| format!(" ({model})"));
+            Ok(match text("request") {
+                Some(request) => {
+                    format!("Proposed by the assistant{model} for the request: \"{request}\"")
+                }
+                None => format!("Proposed by the assistant{model}."),
+            })
+        }
+        _ => Err(RestateError::Dashboard(
+            "an origin's by is studio, code or assistant".to_owned(),
+        )),
+    }
 }
 
 /// The hash a sign-off records: lower-case hex SHA-256 of the restatement's

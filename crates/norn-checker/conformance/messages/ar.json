@@ -518,6 +518,10 @@
       "message": "عضوية النسخة المحفوظة مفقودة أو ملتبسة أو قديمة أو تتجاوز ميزانيتها",
       "review": "needs_review"
     },
+    "core.observation.source_disagreement": {
+      "message": "SOURCE-AGREE-1: مصدران يبلّغان عن قيمتين مختلفتين لسجل واحد في وحدة المقياس أو عملة المبلغ أو الأساس؛ يُحتفظ بالبلاغين ولا يُستبعد السجل.",
+      "review": "needs_review"
+    },
     "core.projection.publication_guard": {
       "message": "النشر التحليلي مرفوض بموجب سياسة معلَنة: {$detail}",
       "review": "needs_review"
@@ -554,6 +558,14 @@
       "message": "حمولة المفهوم المعرَّف لا تطابق جذرها الصارم",
       "review": "needs_review"
     },
+    "derived.validation.column_conflict": {
+      "message": "عقدة في العرض العلائقي تُخرج عمودين بالاسم نفسه",
+      "review": "needs_review"
+    },
+    "derived.validation.grain_dropped": {
+      "message": "إسقاط في العرض العلائقي يحذف أو يغيّر عمودًا يعرّف صفوفه",
+      "review": "needs_review"
+    },
     "derived.validation.incremental_not_supported": {
       "message": "الصيانة \"incremental\" محجوزة لمرحلة IVM مستقبلية وغير مدعومة بعد؛ استخدم \"recompute_on_read\"",
       "review": "needs_review"
@@ -562,8 +574,40 @@
       "message": "حمولة DerivedIR غير صالحة عند {$path}: {$detail}",
       "review": "needs_review"
     },
+    "derived.validation.invalid_plan": {
+      "message": "خطة العرض العلائقي تشير إلى مدخل أو عقدة أو مخرج غير معلن، أو فيها دورة أو عقدة غير موصولة، أو تستخدم شكلًا لا يقبله ViewIR v1",
+      "review": "needs_review"
+    },
     "derived.validation.io_in_view": {
       "message": "نوع الحساب \"effectful_ts\" غير مسموح داخل عرض مشتق (الإدخال والإخراج يكونان في أداة Effect)",
+      "review": "needs_review"
+    },
+    "derived.validation.join_undeclared": {
+      "message": "العرض العلائقي يربط على شيء ليس رابطًا معلنًا ولا مفتاحًا معلنًا للنوع الأيمن",
+      "review": "needs_review"
+    },
+    "derived.validation.order_not_total": {
+      "message": "نافذة أو إزالة تكرار في العرض العلائقي ترتب الصفوف بمفاتيح لا تغطي هوية صفوف المدخل",
+      "review": "needs_review"
+    },
+    "derived.validation.output_schema_mismatch": {
+      "message": "العرض العلائقي يعلن مخطط مخرجاته بنفسه، بينما يستنتجه ViewIR v1",
+      "review": "needs_review"
+    },
+    "derived.validation.sql_unsupported": {
+      "message": "تحويل SQL يستخدم بناءً لا يقابله معامل تحويل مُنمَّط؛ فيُرفض ولا يُنفَّذ أبدًا كـ SQL",
+      "review": "needs_review"
+    },
+    "derived.validation.type_mismatch": {
+      "message": "تعبير أو عمود في العرض العلائقي ليس من النوع الذي يحتاجه المعامل",
+      "review": "needs_review"
+    },
+    "derived.validation.union_shape": {
+      "message": "العرض العلائقي يوحّد مدخلات تختلف أعمدتها أو أنواعها أو عقودها أو حبيبتها",
+      "review": "needs_review"
+    },
+    "derived.validation.unknown_column": {
+      "message": "العرض العلائقي يسمي عمودًا غير موجود في صف مدخله",
       "review": "needs_review"
     },
     "entity.deprecation.v1_payload": {
@@ -872,6 +916,14 @@
     },
     "labels.validation.unlabelled_locale": {
       "message": "وصف أو حالة مراجعة تسمّي لغة ليس لها تسمية",
+      "review": "needs_review"
+    },
+    "law.example.mismatch": {
+      "message": "حكم مثال القانون يختلف عن المتوقع: {$detail}",
+      "review": "needs_review"
+    },
+    "law.example.unsupported": {
+      "message": "لا يمكن تقييم مثال القانون على قيمة واحدة: {$detail}",
       "review": "needs_review"
     },
     "law.exception.cycle": {
@@ -1262,6 +1314,10 @@
       "message": "حدث خارجي في دورة الحياة غير سليم البنية: {$detail}",
       "review": "needs_review"
     },
+    "lifecycle.soundness.invalid_module_name": {
+      "message": "اسم وحدة Quint المولّدة ليس معرّفًا بسيطًا: {$detail}",
+      "review": "needs_review"
+    },
     "lifecycle.soundness.invalid_trigger": {
       "message": "مُطلِق انتقال أو تعويضه في دورة الحياة غير صالح: {$detail}",
       "review": "needs_review"
@@ -1272,6 +1328,14 @@
     },
     "lifecycle.soundness.no_ending": {
       "message": "دورة الحياة لا تعلن أي حالة نهائية أو حالة سكون: {$detail}",
+      "review": "needs_review"
+    },
+    "lifecycle.soundness.product_limit": {
+      "message": "الآلة المركّبة من الواجهة ودورة الحياة تتجاوز حدّ عدد حالاتها: {$detail}",
+      "review": "needs_review"
+    },
+    "lifecycle.soundness.sync_conflict": {
+      "message": "جدول مزامنة الواجهة ودورة الحياة يذكر حافة الواجهة نفسها مرتين: {$detail}",
       "review": "needs_review"
     },
     "lifecycle.soundness.timer_cycle": {
@@ -1428,6 +1492,10 @@
     },
     "mapping.model.lifecycle_member": {
       "message": "{$property} من {$objectType}: خاصية دورة الحياة لا تتغير إلا بقاعدة دورة حياة",
+      "review": "needs_review"
+    },
+    "mapping.model.link_claim_type_missing": {
+      "message": "الخريطة {$map} تعلن روابط، لكن norn.ObservedLinkClaim ليس نوع كائن في المجموعة أو الأساس",
       "review": "needs_review"
     },
     "mapping.model.link_target_mismatch": {
@@ -1623,7 +1691,11 @@
       "review": "needs_review"
     },
     "metric.validation.mixed_currency": {
-      "message": "جمع عدة عملات يتطلب تحويلًا صريحًا.",
+      "message": "تُجمَّع المبالغ بعدة عملات لكل عملة فقط: جمّع حسب خاصية العملة، أو ثبّتها بمرشح eq، أو حوّلها صراحةً.",
+      "review": "needs_review"
+    },
+    "metric.validation.mixed_unit": {
+      "message": "METRIC-UNIT-PARTITION-1: وحدة المقياس مخزنة في خصائص مجاورة؛ جمّع حسب كل منها أو ثبّت كلًّا منها بمرشح eq، حتى لا يخلط أي تجميع بين الوحدات.",
       "review": "needs_review"
     },
     "metric.validation.ontology_projection": {
@@ -1631,7 +1703,7 @@
       "review": "needs_review"
     },
     "metric.validation.partial_path": {
-      "message": "مُدخلات الزمن والعملة والسعر الإلزامية تتطلب مسارات كاملة.",
+      "message": "مُدخلات العملة والسعر تتطلب مسارات كاملة.",
       "review": "needs_review"
     },
     "metric.validation.ratio_aggregation": {
@@ -1660,6 +1732,62 @@
     },
     "metric.validation.unsupported_semantics": {
       "message": "الحساب يتطلب دلالات خارج ملف المدقق المقبول.",
+      "review": "needs_review"
+    },
+    "model.admission.feature_kind": {
+      "message": "خاصية سمة النموذج أو هدفه من نوع لا يستطيع النموذج قراءته",
+      "review": "needs_review"
+    },
+    "model.admission.prediction_type_mismatch": {
+      "message": "نوع تنبؤات النموذج لا يحمل مُخرجاته ولا الموضوع ولا إصدار النموذج",
+      "review": "needs_review"
+    },
+    "model.admission.unknown_feature": {
+      "message": "سمة النموذج أو هدفه ليست خاصية لنوع الكائن المُدخل",
+      "review": "needs_review"
+    },
+    "model.admission.unknown_input": {
+      "message": "نوع الكائن المُدخل للنموذج لا تعلنه مجموعة الأدوات ولا القاعدة المثبَّتة",
+      "review": "needs_review"
+    },
+    "model.law.personal_data_never_trains": {
+      "message": "يتدرّب النموذج على سمة أو هدف يحمل بيانات شخصية غير مستعارة",
+      "review": "needs_review"
+    },
+    "model.validation.duplicate_id": {
+      "message": "النموذج يذكر معرّف سمة أو مُخرج أو عقد مرتين",
+      "review": "needs_review"
+    },
+    "model.validation.invalid_contract": {
+      "message": "عقد النموذج لا يسمّي مُخرجًا أو لا ينطبق على نوع مُخرجه",
+      "review": "needs_review"
+    },
+    "model.validation.invalid_id": {
+      "message": "معرّف النموذج أو المُدخل أو السمة أو الهدف أو المُخرج أو العقد غير صحيح الصيغة",
+      "review": "needs_review"
+    },
+    "model.validation.invalid_output": {
+      "message": "مُخرج النموذج ليس عمودًا مضمَّنًا من نوع نص أو عدد صحيح أو عشري أو منطقي أو تعداد",
+      "review": "needs_review"
+    },
+    "model.validation.invalid_payload": {
+      "message": "حمولة النموذج لا تطابق جذرها الصارم",
+      "review": "needs_review"
+    },
+    "model.validation.target_in_features": {
+      "message": "هدف النموذج هو أيضًا إحدى سماته",
+      "review": "needs_review"
+    },
+    "model.validation.trust_without_contract": {
+      "message": "نموذج contract_checked لا يعلن أي عقد",
+      "review": "needs_review"
+    },
+    "model.validation.unsupported_trust": {
+      "message": "ثقة النموذج ليست opaque ولا contract_checked",
+      "review": "needs_review"
+    },
+    "object_type.validation.additivity_not_refined": {
+      "message": "الخاصية {$property} تعلن جمعية غير التي يتطلبها {$owner}؛ يجوز للعضو أن يضيف الجمعية حيث لا يعلنها النوع المشار إليه، ولا يجوز أن يغيّر جمعية معلنة",
       "review": "needs_review"
     },
     "object_type.validation.computed_key_component": {
@@ -2086,8 +2214,20 @@
       "message": "رمز الوحدة {$unit} يجب ألا يكون فارغًا وألا يحتوي مسافات",
       "review": "needs_review"
     },
+    "property_type.validation.invalid_unit_source": {
+      "message": "مصدر الوحدة {$detail}",
+      "review": "needs_review"
+    },
     "property_type.validation.inverted_range": {
       "message": "{$lower} أكبر من {$upper}",
+      "review": "needs_review"
+    },
+    "property_type.validation.ref_additivity_conflict": {
+      "message": "ref {$name} يعلن الجمعية {$declared}، لكن النوع الذي يشير إليه يعلن {$referenced}؛ موضع الاستخدام يضيف الجمعية فقط إلى نوع لا يعلن أيًّا منها",
+      "review": "needs_review"
+    },
+    "property_type.validation.ref_additivity_not_numeric": {
+      "message": "ref {$name} يُحَل إلى نوع {$kind}؛ تُعلَن الجمعية على عدد صحيح أو عشري فقط",
       "review": "needs_review"
     },
     "property_type.validation.ref_cycle": {
@@ -2136,6 +2276,14 @@
     },
     "question.validation.invalid_window": {
       "message": "نافذة الزمن يجب أن تكون فترة UTC مرتبة نصف مفتوحة.",
+      "review": "needs_review"
+    },
+    "question.validation.linked_path": {
+      "message": "لا يمكن للسؤال أن يجمّع عبر رابط إلا حسب وقته المرتبط، ولا أن يرشّح عبر رابط؛ التجميع حسب حقل نوع آخر غير مدعوم بعد",
+      "review": "needs_review"
+    },
+    "question.validation.marked_field": {
+      "message": "لا يمكن للسؤال أن يجمّع أو يرشّح حسب حقل يحمل وسماً معلناً (مثل pii.contact)",
       "review": "needs_review"
     },
     "question.validation.mixed_axis_rollup": {
@@ -2236,6 +2384,14 @@
     },
     "rule.validation.jdm_switch_unconnected_branch": {
       "message": "الفرع {$statementId} من المحوّل {$nodeId} ليس له حافة خارجة، فالحدث الذي يسلكه لا يصل إلى أي عقدة",
+      "review": "needs_review"
+    },
+    "rule.validation.jdm_unique_overlap": {
+      "message": "صفّان في جدول قرار فريد يطابقان المدخل نفسه: {$detail}",
+      "review": "needs_review"
+    },
+    "rule.validation.jdm_unique_unproved": {
+      "message": "لا يستطيع المدقق إثبات أن صفوف جدول القرار الفريد منفصلة، لذا يُرفض: {$detail}",
       "review": "needs_review"
     },
     "rule.validation.jdm_unknown_column": {
@@ -2378,6 +2534,42 @@
       "message": "مجموعة البيانات {$dataset} ليس فيها الحقل {$field}",
       "review": "needs_review"
     },
+    "widget.catalog.duplicate_entry": {
+      "message": "كتالوج أداة رسومية يعلن معرّف المدخل نفسه مرتين: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.catalog.duplicate_renderer": {
+      "message": "مدخلا كتالوج يعرضان نوع الحقل نفسه: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.catalog.event_payload_mismatch": {
+      "message": "حمولة حدث صفحة تختلف عن حدث الكتالوج الذي يطلقه: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.catalog.invalid_prop": {
+      "message": "خاصية مكوّن كتالوج لا تُترجم أو لا تطابق نوعها المعلن: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.catalog.island_machine": {
+      "message": "جزيرة معتمة تعلن ترسيمة تفاعل: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.catalog.unbound_prop": {
+      "message": "خاصية مطلوبة لمكوّن كتالوج غير مربوطة: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.catalog.unknown_entry": {
+      "message": "صفحة تضع مكوّن كتالوج غير مُعلن: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.catalog.unknown_event": {
+      "message": "حدث صفحة من مكوّن كتالوج لا يسمّي أحد أحداثه المعلنة: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.catalog.unknown_prop": {
+      "message": "مكوّن كتالوج يُعطى خاصية لا يعلنها مدخله: {$detail}",
+      "review": "needs_review"
+    },
     "widget.interaction.control_missing_for_transition": {
       "message": "عنصر تنقل معلَن أو ربط إجراء ليس له عنصر تحكم يقدّمه: {$detail}",
       "review": "needs_review"
@@ -2414,6 +2606,142 @@
       "message": "صفحة في التطبيق ليس لها عنصر تحكم يصل إليها من صفحة الدخول: {$detail}",
       "review": "needs_review"
     },
+    "widget.lifecycle.assumption_violated": {
+      "message": "حالة في الصفحة تظهر بينما الكائن في حالة دورة حياة لا تفترضها: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.lifecycle.completion_unknown": {
+      "message": "حالة في الصفحة مع حالة الكائن لا تصلان إلى نهاية لكليهما إلا عبر انتقالات مشروطة: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.lifecycle.stuck": {
+      "message": "حالة في الصفحة مع حالة الكائن لا تصلان معًا إلى نهاية لكليهما: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.lifecycle.sync_not_accepted": {
+      "message": "انتقال في الصفحة مزامَن مع انتقال في دورة الحياة ليس النتيجة المقبولة لاستدعاء إجراء: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.lifecycle.sync_unfired": {
+      "message": "الإجراء وراء انتقال الصفحة المزامَن لا يستطيع إطلاق انتقال دورة الحياة: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.lifecycle.uncovered_transition": {
+      "message": "انتقال في دورة الحياة تطلقه الصفحة لا يأخذه أي تشغيل: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.lifecycle.unknown_lifecycle": {
+      "message": "ترسيمة الصفحة تسمّي دورة حياة لا يعلنها نوع الكائن: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.lifecycle.unknown_reference": {
+      "message": "مزامنة أو افتراض دورة الحياة في ترسيمة الصفحة يسمّي حالة أو انتقالًا غير مُعلن: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.absorbing_state": {
+      "message": "حالة غير نهائية في ترسيمة الصفحة ليس لها مخرج: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.await_outside_pending": {
+      "message": "حالة ليست حالة انتظار في ترسيمة الصفحة تعلن انتظارًا أو مهلة: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.cancel_outside_pending": {
+      "message": "تأثير الإلغاء في ترسيمة الصفحة ليس انتقالًا ذاتيًا لحالة انتظار بحدث إدخال: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.completion_unknown": {
+      "message": "لا يمكن الوصول إلى حالة خاملة أو نهائية من حالة في ترسيمة الصفحة إلا عبر انتقالات مشروطة: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.component_guard_outside_catalog": {
+      "message": "انتقال في ترسيمة صفحة يترك شرطه لشيفرة مكوّن: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.control_without_event": {
+      "message": "عنصر تحكم في الصفحة لا يطلق أي حدث من ترسيمة الصفحة: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.duplicate_id": {
+      "message": "ترسيمة الصفحة تعلن المعرّف نفسه لحقل أو حدث أو حالة أو انتقال مرتين: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.error_without_recovery": {
+      "message": "حالة خطأ في ترسيمة الصفحة ليس لها انتقال يقوده شخص أو مؤقّت: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.initial_not_idle": {
+      "message": "الحالة الابتدائية لترسيمة الصفحة ليست حالة خاملة: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.input_free_cycle": {
+      "message": "حالة في ترسيمة الصفحة تقع على دورة تعمل بالمؤقّتات وحدها: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.invalid_event": {
+      "message": "حدث في ترسيمة الصفحة غير سليم البنية: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.invalid_expression": {
+      "message": "شرط أو إسناد في ترسيمة الصفحة لا يُترجم أو لا يتوافق نوعه: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.invalid_field": {
+      "message": "حقل أو عضو حمولة في ترسيمة الصفحة قيمته الابتدائية مفقودة أو من نوع خاطئ: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.nondeterministic": {
+      "message": "حالة في ترسيمة الصفحة لها أكثر من انتقال غير مشروط على الحدث أو النتيجة نفسها: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.outcome_impossible": {
+      "message": "ترسيمة الصفحة تعالج نتيجة لا يمكن أن يصل إليها الاستدعاء المنتظر: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.outcome_outside_pending": {
+      "message": "حدث نتيجة في ترسيمة الصفحة ينطلق من حالة ليست حالة انتظار: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.pending_abandoned": {
+      "message": "ترسيمة الصفحة تغادر حالة انتظار بحدث ليس نتيجة الاستدعاء: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.pending_entered_without_start": {
+      "message": "انتقال يدخل حالة انتظار في ترسيمة الصفحة دون أن يبدأ الاستدعاء الذي تنتظره تحديدًا: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.pending_outcome_uncovered": {
+      "message": "حالة انتظار في ترسيمة الصفحة ليس لها انتقال غير مشروط لنتيجة ممكنة لاستدعائها: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.pending_without_await": {
+      "message": "حالة انتظار في ترسيمة الصفحة لا تسمّي الاستدعاء أو القراءة التي تنتظرها: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.pending_without_deadline": {
+      "message": "حالة انتظار في ترسيمة الصفحة ليس لها مهلة موجبة: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.start_without_pending": {
+      "message": "ترسيمة الصفحة تبدأ استدعاءً لا تنتظره أي حالة انتظار، أو استدعاءً جاريًا بالفعل: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.terminal_has_transition": {
+      "message": "حالة نهائية في ترسيمة الصفحة لها انتقال خارج منها: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.trap_region": {
+      "message": "لا يمكن الوصول إلى حالة خاملة أو نهائية من حالة في ترسيمة الصفحة: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.unknown_reference": {
+      "message": "ترسيمة الصفحة تشير إلى حالة أو حدث أو حقل أو عقدة أو ربط أو عملية أو عنصر تنقّل غير مُعلن: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.machine.unreachable_state": {
+      "message": "حالة في ترسيمة الصفحة لا يمكن الوصول إليها من الحالة الابتدائية: {$detail}",
+      "review": "needs_review"
+    },
     "widget.validation.invalid_payload": {
       "message": "حمولة WidgetIR غير صالحة عند {$path}: {$detail}",
       "review": "needs_review"
@@ -2424,6 +2752,18 @@
     },
     "widget.validation.unsafe_action_binding": {
       "message": "ربط الإجراء يجب أن يستهدف إجراء Norn أو أمر عملية، لا تعديلًا خامًا",
+      "review": "needs_review"
+    },
+    "widget.view.behavior_unfit": {
+      "message": "عقدة تحمل سلوك إتاحة لا يناسب مكوّنها، أو تذكره مرتين: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.view.subject_mismatch": {
+      "message": "نوع عرض الصفحة لا يمكنه تقديم موضوعه: {$detail}",
+      "review": "needs_review"
+    },
+    "widget.view.subject_unbound": {
+      "message": "نوع الكائن أو الإجراء في عرض الصفحة لا يقرؤه العقد ولا يستدعيه: {$detail}",
       "review": "needs_review"
     }
   }

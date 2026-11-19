@@ -63,6 +63,8 @@ fn setup(path: &Path) -> Cell {
 }
 
 fn setup_with(path: &Path, edit: impl FnOnce(&mut Vec<ArtifactEnvelope>)) -> Cell {
+    // Every plan in these tests is also checked against the wide journal scope.
+    norn_cell::check_link_plans_against_wide_scope(true);
     let mut artifacts = fixture_artifacts();
     edit(&mut artifacts);
     artifacts.sort_by(|a, b| a.artifact_id.cmp(&b.artifact_id));
@@ -106,6 +108,8 @@ fn setup_with(path: &Path, edit: impl FnOnce(&mut Vec<ArtifactEnvelope>)) -> Cel
         .with_governing_laws(&artifacts)
         .expect("laws");
     let mut store = CellStore::open(path, model.clone(), StoreOptions::default()).expect("store");
+    // Bound before the first commit, so every exported record carries it.
+    store.bind("scope", "org_demo/dev").expect("scope");
     store
         .install_definitions(
             model,
@@ -115,7 +119,12 @@ fn setup_with(path: &Path, edit: impl FnOnce(&mut Vec<ArtifactEnvelope>)) -> Cel
                 )
                 .expect("UTF8"),
                 registry: vec![],
-                receipt_sha256: "synthetic-mapped-links".into(),
+                // A well-formed digest, so the cell's history exports.
+                receipt_sha256: norn_ir::canonical::domain_hash_hex(
+                    b"norn.test.receipt\0",
+                    &"synthetic-mapped-links",
+                )
+                .expect("receipt digest"),
                 admission_receipt: None,
                 readmission: None,
                 diff: json!({}),
@@ -819,5 +828,507 @@ fn obs_link_target_arrival_resolves_only_the_current_pending_claim() {
     assert_eq!(
         provider(&cell),
         BTreeSet::from(["demo/party/custodian".into()])
+    );
+}
+
+/// Absence through the mapping path, for uploaded data. A nullable property
+/// mapped to no value (`canon.OrderLine.currency`, mapped from `null`) is
+/// stored as no value and reads back as null: not "", not 0. A null in a
+/// source field the source schema declares `required` (`Sales Order Item.unit`)
+/// is refused and nothing is written, so an uploader declares the columns that
+/// may be empty as `required: false` (the checker then types them nullable).
+#[test]
+fn absence_maps_to_null_and_a_required_source_field_refuses_it() {
+    let directory = tempfile::tempdir().expect("directory");
+    let mut cell = setup(&directory.path().join("nulls.sqlite"));
+    let source = fixture("erpnext");
+    for row in source["snapshot"].as_array().expect("rows") {
+        capture(&mut cell, "erpnext", row, "snapshot");
+    }
+    assert_eq!(count_snapshot(&cell), (10, 0));
+    let line = cell
+        .store()
+        .read()
+        .authoritative_object(MAIN_WORLD, "canon.OrderLine", "demo/order/1/line/1")
+        .expect("read")
+        .expect("order line");
+    let currency = line.values.get("currency");
+    assert!(
+        currency.is_none_or(|value| matches!(value, RuntimeValue::Null)),
+        "currency reads back as null, got {currency:?}"
+    );
+    assert!(
+        line.values
+            .get("unit")
+            .is_some_and(|value| !matches!(value, RuntimeValue::Null)),
+        "present values are untouched"
+    );
+
+    let mut row = source["snapshot"]
+        .as_array()
+        .expect("rows")
+        .iter()
+        .find(|row| row["dataset"] == "Sales Order Item")
+        .expect("order row")
+        .clone();
+    row["record"]["unit"] = Value::Null;
+    let id = retain_in(&mut cell, "erpnext", &row, "1", "snapshot");
+    assert!(
+        cell.process_mapping_bundle(&id).is_err(),
+        "a null in a required source field is refused"
+    );
+    let unchanged = cell
+        .store()
+        .read()
+        .authoritative_object(MAIN_WORLD, "canon.OrderLine", "demo/order/1/line/1")
+        .expect("read")
+        .expect("order line");
+    assert_eq!(unchanged.version, line.version, "nothing was written");
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(24))]
+    /// The narrowed link plan equals the wide one (checked inside every
+    /// mapping commit) over generated histories: deliveries in any order,
+    /// re-pointed claims, redeliveries of older versions and, on the to-many
+    /// `peers` link, cleared claims; for the production links (`from: one`
+    /// owner) and the added `from: many` relation.
+    #[test]
+    fn obs_link_narrowed_plans_equal_wide_plans(
+        many in proptest::bool::ANY,
+        steps in proptest::collection::vec((0u8..7, 0u8..4, 1u8..6), 1..18),
+    ) {
+        let directory = tempfile::tempdir().expect("directory");
+        let path = directory.path().join("shadow.sqlite");
+        let mut cell = if many { setup_with(&path, |artifacts| many_holding(artifacts)) } else { setup(&path) };
+        let source = fixture("erpnext");
+        let rows = source["snapshot"].as_array().expect("rows").clone();
+        let parties = ["demo/party/owner", "demo/party/custodian", "demo/party/customer", "clear"];
+        for (row, party, version) in steps {
+            // The erpnext snapshot has seven rows; `row` is drawn from 0..7.
+            let mut row = rows[usize::from(row)].clone();
+            let record = row["record"].as_object_mut().expect("record");
+            let party = parties[usize::from(party)];
+            if record.contains_key("provider_ref") && party != "clear" {
+                record.insert("provider_ref".into(), json!(party));
+            }
+            if many && record.contains_key("owner_ref") {
+                record.insert("owner_ref".into(), json!(party));
+            }
+            // A refusal of an unsupported profile is a valid outcome; a plan
+            // mismatch surfaces as an encoding error and fails here.
+            let event = version.to_string();
+            let captured = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                capture(&mut cell, "erpnext", &row, &event)
+            }));
+            if let Err(panic) = captured {
+                let message = panic
+                    .downcast_ref::<String>()
+                    .cloned()
+                    .or_else(|| panic.downcast_ref::<&str>().map(|s| (*s).to_owned()))
+                    .unwrap_or_default();
+                proptest::prop_assert!(
+                    !message.contains("narrowed link plan differs"),
+                    "{message}"
+                );
+                break;
+            }
+        }
+    }
+}
+
+/// A raw erpnext row at a fixed delivery clock, as a connector extract writes it.
+fn raw_of(row: &Value, event: &str) -> (Observed<RuntimeValue>, MappingInput) {
+    let record = &row["record"];
+    let alias = record["name"].as_str().expect("source alias").to_owned();
+    let payload = RuntimeValue::from_json(record.clone()).expect("payload");
+    let digest = norn_ir::canonical::HashProfile::Norn1
+        .hash_json(serde_json::to_string(&payload).expect("json"))
+        .expect("digest");
+    let source = "synthetic-erpnext".to_owned();
+    let raw = Observed {
+        id: ObservationId(format!("delivery-{event}-{alias}")),
+        provenance: norn_kernel::Provenance {
+            source: source.clone(),
+            source_id: alias.clone(),
+            mapping_version: "synthetic/1".into(),
+            observed_at: norn_kernel::LogicalTime::from_millis(1_793_702_400_000),
+        },
+        input: norn_ir::runtime_object! {
+            "contract"=>"norn.raw_observation/v1", "source"=>source, "source_id"=>alias,
+            "event_id"=>event, "source_version"=>event, "pipeline_version"=>"synthetic/1", "kind"=>"upsert", "extracted_at"=>1_793_702_400_000u64, "payload"=>payload, "payload_digest"=>digest,
+        },
+    };
+    let input = MappingInput {
+        mapping: "erpnext.three.mapping".into(),
+        dataset: row["dataset"].as_str().expect("dataset").into(),
+        connector_instance: "demo".into(),
+        partition: "snapshot".into(),
+        recorded_at: norn_ir::provenance::UtcTimestamp("2026-11-03T00:00:00Z".into()),
+    };
+    (raw, input)
+}
+
+/// The committed end state OBS-PAGE-EQUIV compares: every canonical object
+/// with its version, values and source lineage; links; link claims; the
+/// ledger's events; and the pending (quarantined) source rows.
+/// Page rows themselves are delivery framing and are left out.
+fn end_state(cell: &Cell) -> Vec<String> {
+    let reader = cell.store().read();
+    let mut state = Vec::new();
+    let budget = || {
+        norn_cell::reactive::DecodeBudget::new(&norn_cell::reactive::ReactiveLimits {
+            max_scan: 10_000,
+            max_candidate_bytes_per_commit: 100_000_000,
+            ..norn_cell::reactive::ReactiveLimits::from_profile(
+                &norn_ir::ResourceLimitProfile::norn_limits_v1(),
+            )
+        })
+    };
+    for ty in [
+        "canon.Item",
+        "canon.Party",
+        "canon.PartyRole",
+        "canon.Holding",
+        "canon.OrderLine",
+    ] {
+        let page = reader
+            .authoritative_page(MAIN_WORLD, ty, None, 1_000)
+            .expect("page");
+        state.push(format!("{ty} quarantine {}", page.quarantine_count));
+        for record in page.records {
+            let object = reader
+                .object(MAIN_WORLD, ty, &record.id)
+                .expect("object")
+                .expect("present");
+            let fact = norn_ir::FactRef::new(ty, &object.id, object.version);
+            let lineage = reader
+                .instance_source_provenance(MAIN_WORLD, &fact, &mut budget(), |_| Ok(true))
+                .expect("lineage");
+            state.push(format!(
+                "{ty} {} v{} {:?} {:?}",
+                object.id, object.version, object.values, lineage
+            ));
+        }
+    }
+    for link in graph(cell) {
+        state.push(format!("link {link:?}"));
+    }
+    for claim in reader.observed_link_claims().expect("claims") {
+        state.push(format!("claim {claim:?}"));
+    }
+    // Events as a multiset (OBS-PAGE-EQUIV): a page commit appends its
+    // records' object events in page order and then the page's link-claim
+    // events, where one by one interleaves them per record; the ordering
+    // that matters inside a commit is `claims_follow_their_referents`.
+    let mut events: Vec<String> = reader
+        .ledger(0)
+        .expect("ledger")
+        .into_iter()
+        .map(|entry| format!("event {:?}", entry.event))
+        .collect();
+    events.sort();
+    state.extend(events);
+    for pending in reader.pending_observations().expect("pending") {
+        if !pending.observation_id.starts_with("mapping-page:") {
+            state.push(format!("pending {}", pending.observation_id));
+        }
+    }
+    state
+}
+
+/// OBS-PAGE-1: within a commit no event precedes an event it depends on: a
+/// link-claim event comes after the object events of both its endpoints
+/// that the same commit creates or changes.
+fn claims_follow_their_referents(cell: &Cell) -> Result<(), String> {
+    let text = |value: &RuntimeValue, path: &[&str]| -> Option<String> {
+        let mut at = value;
+        for step in path {
+            at = at.get(step)?;
+        }
+        at.as_str().map(str::to_owned)
+    };
+    let ledger = cell
+        .store()
+        .read()
+        .ledger(0)
+        .map_err(|error| error.to_string())?;
+    for (index, entry) in ledger.iter().enumerate() {
+        if text(&entry.event, &["event", "key", "objectType"]).as_deref()
+            != Some(norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE)
+        {
+            continue;
+        }
+        for side in ["source_key", "target_key"] {
+            let Some(key) = text(&entry.event, &["event", "values", side]) else {
+                continue;
+            };
+            let later =
+                ledger
+                    .iter()
+                    .enumerate()
+                    .skip(index.saturating_add(1))
+                    .any(|(_, other)| {
+                        other.commit_seq == entry.commit_seq
+                            && text(&other.event, &["event", "key", "objectType"]).as_deref()
+                                != Some(norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE)
+                            && text(&other.event, &["event", "key", "key"]).as_deref()
+                                == Some(key.as_str())
+                    });
+            if later {
+                return Err(format!(
+                    "commit {}: claim at {index} precedes an event of {key}",
+                    entry.commit_seq
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn obs_page_a_repeated_identity_refuses_the_whole_page_before_capture() {
+    let directory = tempfile::tempdir().expect("directory");
+    let mut cell = setup(&directory.path().join("framing.sqlite"));
+    let rows = fixture("erpnext")["snapshot"]
+        .as_array()
+        .expect("rows")
+        .clone();
+    let (first, input) = raw_of(&rows[0], "1");
+    let (again, _) = raw_of(&rows[0], "2");
+    let (other, _) = raw_of(&rows[1], "1");
+    assert!(
+        cell.inject_mapping_page(&[first, other, again], &input)
+            .is_err()
+    );
+    assert!(
+        cell.store()
+            .read()
+            .pending_observations()
+            .expect("pending")
+            .is_empty(),
+        "a refused page captures nothing"
+    );
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(24))]
+    /// OBS-PAGE-EQUIV: consuming pages equals consuming their records one by
+    /// one in page order, over committed end state (objects with versions,
+    /// values and lineage; links; claims; events; quarantine), modulo commit
+    /// count. Batches are split before a repeated identity, as a host does,
+    /// so identities repeat across pages; generated rows mix intra-page links
+    /// in both orders (orders before or after their holdings and parties),
+    /// re-pointed claims, cleared parties and older redeliveries.
+    #[test]
+    fn obs_page_equiv_pages_equal_one_by_one(
+        many in proptest::bool::ANY,
+        batches in proptest::collection::vec(
+            proptest::collection::vec((0u8..7, 0u8..4, 1u8..6), 1..9),
+            1..4,
+        ),
+    ) {
+        let directory = tempfile::tempdir().expect("directory");
+        let open = |name: &str| {
+            let path = directory.path().join(name);
+            if many { setup_with(&path, |artifacts| many_holding(artifacts)) } else { setup(&path) }
+        };
+        let (mut single, mut paged) = (open("single.sqlite"), open("paged.sqlite"));
+        let rows = fixture("erpnext")["snapshot"].as_array().expect("rows").clone();
+        let parties = ["demo/party/owner", "demo/party/custodian", "demo/party/customer", "clear"];
+        for batch in batches {
+            // Split before a repeated row identity, and per dataset (a page
+            // reads one dataset).
+            let mut pages: Vec<Vec<(Observed<RuntimeValue>, MappingInput)>> = Vec::new();
+            let mut seen = BTreeSet::new();
+            for (row, party, version) in batch {
+                let mut row = rows[usize::from(row)].clone();
+                let record = row["record"].as_object_mut().expect("record");
+                let party = parties[usize::from(party)];
+                if record.contains_key("provider_ref") && party != "clear" {
+                    record.insert("provider_ref".into(), json!(party));
+                }
+                if many && record.contains_key("owner_ref") {
+                    record.insert("owner_ref".into(), json!(party));
+                }
+                let (raw, input) = raw_of(&row, &version.to_string());
+                let identity = raw.provenance.source_id.clone();
+                let split = pages.last().is_none_or(|page| {
+                    !seen.insert(identity.clone()) || page[0].1.dataset != input.dataset
+                });
+                if split {
+                    seen = BTreeSet::from([identity]);
+                    pages.push(Vec::new());
+                }
+                pages.last_mut().expect("page").push((raw, input));
+            }
+            for page in pages {
+                for (raw, input) in &page {
+                    let (id, _) = single.inject_mapping_bundle(raw, input).expect("capture");
+                    single.process_mapping_outcome(&id).expect("one by one");
+                }
+                let raws: Vec<_> = page.iter().map(|(raw, _)| raw.clone()).collect();
+                let ids = paged
+                    .inject_mapping_page(&raws, &page[0].1)
+                    .expect("page capture");
+                for (id, _) in ids.pages {
+                    paged.process_mapping_page(&id).expect("page");
+                }
+            }
+        }
+        let ordered = claims_follow_their_referents(&paged);
+        proptest::prop_assert!(ordered.is_ok(), "{ordered:?}");
+        let (single, paged) = (end_state(&single), end_state(&paged));
+        let only = |a: &[String], b: &[String]| -> Vec<String> {
+            a.iter().filter(|line| !b.contains(line)).cloned().collect()
+        };
+        proptest::prop_assert!(
+            single == paged,
+            "one by one only: {:#?}\npaged only: {:#?}\nfirst order difference: {:#?}",
+            only(&single, &paged),
+            only(&paged, &single),
+            single
+                .iter()
+                .zip(&paged)
+                .position(|(a, b)| a != b)
+                .map(|at| (&single[at..at.saturating_add(3).min(single.len())], &paged[at..at.saturating_add(3).min(paged.len())]))
+        );
+    }
+}
+
+/// OBS-PAGE-1 export/restore: a page commit's export carries the members it
+/// consumed, so a restored cell has the same state and the same per-record
+/// lineage as the original.
+#[tokio::test]
+async fn obs_page_commits_export_and_restore_with_their_members() {
+    let directory = tempfile::tempdir().expect("directory");
+    let mut cell = setup(&directory.path().join("paged.sqlite"));
+    let rows = fixture("erpnext")["snapshot"]
+        .as_array()
+        .expect("rows")
+        .clone();
+    // Rows of one dataset share a page; the orders link to holdings and
+    // parties captured in earlier pages or in their own.
+    let mut pages: Vec<(MappingInput, Vec<Observed<RuntimeValue>>)> = Vec::new();
+    for row in rows.iter().rev() {
+        let (raw, input) = raw_of(row, "1");
+        match pages.last_mut() {
+            Some((current, members)) if current.dataset == input.dataset => members.push(raw),
+            _ => pages.push((input, vec![raw])),
+        }
+    }
+    for (input, raws) in &pages {
+        for (id, _) in cell
+            .inject_mapping_page(raws, input)
+            .expect("capture")
+            .pages
+        {
+            cell.process_mapping_page(&id).expect("page");
+        }
+    }
+    let mut exporter =
+        norn_cell::export::Exporter::local(&directory.path().join("export")).expect("exporter");
+    for seq in 1..=cell.store().export_commit_count().expect("count") {
+        exporter
+            .append(
+                &cell
+                    .store()
+                    .export_record(seq)
+                    .expect("journal")
+                    .expect("record"),
+            )
+            .await
+            .expect("append");
+    }
+    let manifest = exporter.verify().await.expect("verified export");
+    let target = directory.path().join("restored.sqlite");
+    let model = cell.store().model().clone();
+    CellStore::restore_from(
+        &mut exporter,
+        &target,
+        model.clone(),
+        "org_demo/dev",
+        &manifest.bindings,
+        StoreOptions::default(),
+    )
+    .await
+    .expect("restore");
+    let restored = SqliteCell::new(
+        CellStore::open(&target, model, StoreOptions::default()).expect("reopen"),
+        "org_demo/dev",
+        |_| BTreeMap::new(),
+    )
+    .expect("cell");
+    assert_eq!(end_state(&restored), end_state(&cell));
+    assert_eq!(
+        restored.store().read().dump().expect("dump"),
+        cell.store().read().dump().expect("dump")
+    );
+}
+
+/// OBS-PAGE-1: an object of a page of 500 records traces to its own source
+/// row under the default decode budget of one trace: the page commit's receipt
+/// (about 1.3 KB per record) is read within the trace's receipt allowance.
+#[test]
+fn obs_page_members_trace_under_the_default_budget() {
+    let directory = tempfile::tempdir().expect("directory");
+    let mut cell = setup(&directory.path().join("traced.sqlite"));
+    let rows = fixture("erpnext")["snapshot"]
+        .as_array()
+        .expect("rows")
+        .clone();
+    let order = rows
+        .iter()
+        .find(|row| row["dataset"] == "Sales Order Item")
+        .expect("an order line")
+        .clone();
+    for row in rows
+        .iter()
+        .filter(|row| row["dataset"] != "Sales Order Item")
+    {
+        let (raw, input) = raw_of(row, "1");
+        for (id, _) in cell
+            .inject_mapping_page(&[raw], &input)
+            .expect("capture")
+            .pages
+        {
+            cell.process_mapping_page(&id).expect("page");
+        }
+    }
+    let mut lines = Vec::new();
+    let mut input = None;
+    for n in 1..=500 {
+        let mut line = order.clone();
+        line["record"]["name"] = json!(format!("SYN-ERPNEXT-order-{n:05}"));
+        line["record"]["custom_norn_ref"] = json!(format!("demo/order/{n:05}/line/1"));
+        let (raw, page_input) = raw_of(&line, "1");
+        lines.push(raw);
+        input = Some(page_input);
+    }
+    let input = input.expect("input");
+    for (id, _) in cell
+        .inject_mapping_page(&lines, &input)
+        .expect("capture")
+        .pages
+    {
+        cell.process_mapping_page(&id).expect("page");
+    }
+    let reader = cell.store().read();
+    let object = reader
+        .object(MAIN_WORLD, "canon.OrderLine", "demo/order/00042/line/1")
+        .expect("read")
+        .expect("landed");
+    let fact = norn_ir::FactRef::new("canon.OrderLine", &object.id, object.version);
+    let mut budget =
+        norn_cell::reactive::DecodeBudget::new(&norn_cell::reactive::ReactiveLimits::from_profile(
+            &norn_ir::ResourceLimitProfile::norn_limits_v1(),
+        ));
+    let traced = reader
+        .instance_source_provenance(MAIN_WORLD, &fact, &mut budget, |_| Ok(true))
+        .expect("traced")
+        .expect("source lineage");
+    assert!(
+        format!("{traced:?}").contains("SYN-ERPNEXT-order-00042"),
+        "{traced:?}"
     );
 }

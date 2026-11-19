@@ -1,0 +1,7 @@
+{
+  "code": "widget.lifecycle.unknown_reference",
+  "message": "a page machine's lifecycle sync or assumption names an undeclared state or transition: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

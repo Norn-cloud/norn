@@ -1,0 +1,7 @@
+{
+  "code": "widget.machine.component_guard_outside_catalog",
+  "message": "a page machine transition leaves its guard to component code: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

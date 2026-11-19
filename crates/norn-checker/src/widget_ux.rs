@@ -188,6 +188,9 @@ pub(crate) fn check_widget_ux_set(
     let combined: Vec<ArtifactEnvelope> = context.base.iter().chain(artifacts).cloned().collect();
     let catalog = EffectiveCatalog::from_artifacts_with_registry(&combined, context.registry);
     let mut diagnostics = Vec::new();
+    // The effective model of object types, built once and only for a set whose pages name a
+    // lifecycle to compose with (UI-LIFECYCLE-1).
+    let model = std::cell::OnceCell::new();
     for artifact in artifacts {
         let ArtifactPayload::Widget(payload) = &artifact.payload else {
             continue;
@@ -229,6 +232,20 @@ pub(crate) fn check_widget_ux_set(
             &nullable_inputs,
             &composed,
         ));
+        diagnostics.extend(crate::ui_machine::check(artifact, &ux));
+        diagnostics.extend(crate::ui_view::check(artifact, &ux));
+        diagnostics.extend(crate::ui_catalog::check(artifact, &ux, &composed));
+        let names_lifecycle = ux.pages.iter().any(|page| {
+            page.machine
+                .as_ref()
+                .is_some_and(|machine| machine.lifecycle.is_some())
+        });
+        if names_lifecycle {
+            let model = model.get_or_init(|| {
+                crate::action_set::Model::new(artifacts, context.base, context.registry, true)
+            });
+            diagnostics.extend(crate::ui_lifecycle::check(artifact, &ux, &combined, model));
+        }
     }
     diagnostics
 }
@@ -544,7 +561,10 @@ impl<'a, 'u, 'd> UxChecker<'a, 'u, 'd> {
                 }
                 ActionSurface::Form(form_id.clone())
             }
-            WidgetComponent::Dialog { .. } => surface.clone(),
+            // A control only raises page machine events; `ui_machine` checks its uses.
+            WidgetComponent::Dialog { .. }
+            | WidgetComponent::Control { .. }
+            | WidgetComponent::Catalog { .. } => surface.clone(),
             WidgetComponent::Form { form_id } => {
                 self.add_page_use(Usage::Form(form_id.clone()), page_id);
                 self.rendered_forms
@@ -633,6 +653,8 @@ impl<'a, 'u, 'd> UxChecker<'a, 'u, 'd> {
                 | WidgetComponent::ChildGrid { .. }
                 | WidgetComponent::Action { .. }
                 | WidgetComponent::Navigation { .. }
+                | WidgetComponent::Control { .. }
+                | WidgetComponent::Catalog { .. }
                 | WidgetComponent::Composition { .. } => false,
             }
     }
@@ -999,6 +1021,8 @@ impl<'a, 'u, 'd> UxChecker<'a, 'u, 'd> {
             | WidgetComponent::Field { .. }
             | WidgetComponent::Action { .. }
             | WidgetComponent::Navigation { .. }
+            | WidgetComponent::Control { .. }
+            | WidgetComponent::Catalog { .. }
             | WidgetComponent::Composition { .. } => record,
         };
         let mut invocations = Vec::new();
@@ -1166,7 +1190,9 @@ impl<'a, 'u, 'd> UxChecker<'a, 'u, 'd> {
             | WidgetComponent::Dialog { .. }
             | WidgetComponent::ChildGrid { .. }
             | WidgetComponent::Field { .. }
-            | WidgetComponent::Navigation { .. } => {}
+            | WidgetComponent::Navigation { .. }
+            | WidgetComponent::Control { .. }
+            | WidgetComponent::Catalog { .. } => {}
         }
         for (index, child) in node.children.iter().enumerate() {
             invocations.extend(self.effect_tree(
@@ -1712,6 +1738,8 @@ impl<'a, 'u, 'd> UxChecker<'a, 'u, 'd> {
             | WidgetComponent::Field { .. }
             | WidgetComponent::Action { .. }
             | WidgetComponent::Navigation { .. }
+            | WidgetComponent::Control { .. }
+            | WidgetComponent::Catalog { .. }
             | WidgetComponent::Composition { .. } => row_context,
         };
         if let WidgetComponent::Navigation { item_id } = &node.component {
@@ -3617,7 +3645,10 @@ impl<'a, 'u, 'd> UxChecker<'a, 'u, 'd> {
                     );
                 }
             }
-            WidgetComponent::Composition { .. } | WidgetComponent::Dialog { .. } => {}
+            WidgetComponent::Composition { .. }
+            | WidgetComponent::Dialog { .. }
+            | WidgetComponent::Control { .. }
+            | WidgetComponent::Catalog { .. } => {}
         }
         self.check_children(node, path);
         let child_surface = match &node.component {
@@ -3635,6 +3666,8 @@ impl<'a, 'u, 'd> UxChecker<'a, 'u, 'd> {
             | WidgetComponent::Field { .. }
             | WidgetComponent::Action { .. }
             | WidgetComponent::Navigation { .. }
+            | WidgetComponent::Control { .. }
+            | WidgetComponent::Catalog { .. }
             | WidgetComponent::Composition { .. } => surface,
         };
         for (index, child) in node.children.iter().enumerate() {
@@ -4118,6 +4151,8 @@ impl<'a, 'u, 'd> UxChecker<'a, 'u, 'd> {
             | WidgetComponent::ChildGrid { .. }
             | WidgetComponent::Action { .. }
             | WidgetComponent::Navigation { .. }
+            | WidgetComponent::Control { .. }
+            | WidgetComponent::Catalog { .. }
             | WidgetComponent::Composition { .. } => node.children.is_empty(),
         };
         if !valid {
@@ -6797,6 +6832,7 @@ fn binding_record_dependencies(binding: &WidgetDataBinding, index: usize) -> Vec
 
 fn finding(owner: &ArtifactEnvelope, path: &str, message: impl Into<String>) -> Diagnostic {
     Diagnostic {
+        witness: None,
         code: DiagnosticCode::new(CODE),
         severity: DiagnosticSeverity::Error,
         message: message.into(),
@@ -6864,7 +6900,7 @@ fn property_type(property: &EffectiveProperty) -> Option<Type> {
     Some(if property.nullable { ty.optional() } else { ty })
 }
 
-fn value_type(value_type: norn_ir::WidgetValueType, required: bool) -> Type {
+pub(crate) fn value_type(value_type: norn_ir::WidgetValueType, required: bool) -> Type {
     let ty = match value_type {
         norn_ir::WidgetValueType::Text => Type::text(),
         norn_ir::WidgetValueType::Integer => Type::Integer,
@@ -7288,6 +7324,8 @@ fn collect_tree_semantic_ids(
         WidgetComponent::Form { .. }
         | WidgetComponent::Action { .. }
         | WidgetComponent::Navigation { .. }
+        | WidgetComponent::Control { .. }
+        | WidgetComponent::Catalog { .. }
         | WidgetComponent::Detail { .. }
         | WidgetComponent::Dialog { .. } => {}
     }

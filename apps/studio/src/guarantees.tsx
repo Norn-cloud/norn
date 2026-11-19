@@ -1,15 +1,18 @@
 import { useQuery } from "@tanstack/react-query"
 import { useState } from "react"
-import { useRouterState } from "@tanstack/react-router"
-import { ArrowRight, ChevronRight, CircleCheck, CircleHelp, CircleX, ShieldCheck } from "lucide-react"
+import { Link, useRouterState } from "@tanstack/react-router"
+import { ArrowRight, ChevronRight, CircleCheck, CircleHelp, CircleX, Scale, ShieldCheck } from "lucide-react"
 import { KpiTile, StatStrip } from "@/components/kpi-tile"
-import { Panel, Well } from "@/components/panel"
+import { EmptyState, PageHeader, Panel, Well } from "@/components/panel"
+import { useMode } from "@/lib/live-transport"
 import { TableCard } from "@/components/table-card"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { cases, field, levelWords, openAfterHash, scalar, targetsGuarantee, verdictWords } from "./lib/guarantees.ts"
 import { transport, type Guarantees } from "./lib/transport.ts"
 import type { MenuEntry } from "./shell.tsx"
+import { ENFORCED, LawsPanel } from "./laws.tsx"
+import { useCatalog } from "./sources.tsx"
 
 const TITLE: Readonly<Record<string, string>> = {
   original: "As declared",
@@ -190,11 +193,45 @@ function Hero({ declared, broken }: { readonly declared: Guarantees; readonly br
 
 /** The recorded guarantee documents, for the submenu island. */
 export function useGuaranteesMenu(): readonly MenuEntry[] | undefined {
-  const read = useQuery({ queryKey: ["guarantees"], queryFn: transport.guarantees })
+  const recorded = useMode().data?.kind === "recorded"
+  const read = useQuery({ queryKey: ["guarantees"], queryFn: transport.guarantees, enabled: recorded })
   return read.data?.map(({ name }) => ({ href: `#guarantee-${name}`, label: TITLE[name] ?? name }))
 }
 
+/** A connected cell's laws, every type's together: what each must keep and how the cell holds it. */
+function LiveLaws() {
+  const { read, catalog } = useCatalog()
+  if (read.isPending) return <p className="text-muted-foreground">Reading definitions…</p>
+  if (read.isError) return <p className="text-destructive">{read.error.message}</p>
+  const governed = catalog?.concepts.filter(({ laws, rules, definition }) => (laws.length > 0 || rules.length > 0) && definition === "object type") ?? []
+  return (
+    <div className="space-y-5">
+      {governed.length === 0 && <EmptyState icon={Scale}>No admitted law governs a type in this cell.</EmptyState>}
+      {governed.length > 0 && <StatStrip>
+        <KpiTile icon={Scale} label="Laws in force" value={governed.reduce((sum, { laws, rules }) => sum + laws.length + rules.filter((rule) => !laws.some(({ rationale }) => rationale === rule)).length, 0)} sub={`over ${governed.length} ${governed.length === 1 ? "type" : "types"}`} />
+        <KpiTile icon={ShieldCheck} label="Refuse a breaking write" value={governed.reduce((sum, { laws }) => sum + laws.filter(({ severity }) => severity === "error").length, 0)} sub="checked on every write" />
+      </StatStrip>}
+      <p className="flex items-start gap-2 text-meta text-muted-foreground"><ShieldCheck aria-hidden className="mt-0.5 size-3.5 shrink-0" />{ENFORCED}</p>
+      {governed.map((concept) => <LawsPanel key={concept.name} concept={concept} enforced={false}
+        label={<Link to="/sources/$concept" params={{ concept: concept.name }} className="underline-offset-4 hover:underline">{concept.title}</Link>} />)}
+    </div>
+  )
+}
+
 export function GuaranteesPage() {
+  const mode = useMode()
+  if (mode.data?.kind === "live") return (
+    <section className="space-y-5">
+      <PageHeader title="Guarantees" description="The laws this cell admitted, type by type. Try to break one: the cell refuses the change and names the law." />
+      <LiveLaws />
+    </section>
+  )
+  // The recording shows only once Studio has decided there is no cell: never while it is still connecting.
+  if (mode.data?.kind !== "recorded") return mode.isError ? <p role="alert" className="text-destructive">{mode.error.message}</p> : <p className="text-muted-foreground">Connecting to the cell…</p>
+  return <RecordedGuarantees />
+}
+
+function RecordedGuarantees() {
   const read = useQuery({ queryKey: ["guarantees"], queryFn: transport.guarantees })
   const document = (name: string) => read.data?.find((entry) => entry.name === name)?.read.document
   const declared = document("original")
@@ -210,7 +247,7 @@ export function GuaranteesPage() {
   return (
     <section className="space-y-8">
       <div className="space-y-2">
-        <h1 className="text-title font-medium">Guarantees</h1>
+        <h1 className="text-title font-semibold tracking-tight">Guarantees</h1>
         <p className="max-w-2xl text-muted-foreground">The recorded law, and how strongly it is checked. The model checker explores every case within stated bounds; a broken copy of the definition shows it catches a real mistake.</p>
       </div>
       {read.isPending && <p className="text-muted-foreground">Reading guarantees…</p>}

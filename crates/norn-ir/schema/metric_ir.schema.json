@@ -612,7 +612,7 @@
       "type": "object",
       "properties": {
         "conversion": {
-          "description": "Required when summing a source whose currency is not a singleton enum.",
+          "description": "Converts the amounts to one target currency. Without it, amounts whose currency is not a single code aggregate per currency (METRIC-UNIT-PARTITION-1).",
           "$ref": "#/$defs/CurrencyConversion"
         },
         "property": {

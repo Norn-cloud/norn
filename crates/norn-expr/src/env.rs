@@ -1796,7 +1796,7 @@ impl<'d, 'e> Derivation<'d, 'e> {
                     Type::Record(name)
                 }
                 PropertyType::JsonExt { .. } => Type::Json,
-                PropertyType::Ref { name } => {
+                PropertyType::Ref { name, .. } => {
                     let name = name.as_str();
                     if !seen.insert(name) {
                         self.errors.push(EnvError::Cycle {

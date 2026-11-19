@@ -48,6 +48,12 @@ pub mod definition_catalog;
 pub use defined_concept::DefinedConceptRoot;
 pub mod labels;
 pub use labels::{LabelCatalogRoot, LabelEntry, LabelReview, LabelTarget};
+pub mod model;
+pub use model::{
+    ContractRule, ModelContract, ModelInput, ModelMethod, ModelOutput, ModelPredictions, ModelRoot,
+};
+pub mod trust;
+pub use trust::TrustLevel;
 pub mod decision_question;
 pub mod deontic;
 pub mod entitlement;
@@ -125,7 +131,7 @@ pub use customization::{
 pub use data_quality::{
     DATA_QUALITY_FINDING_VERSION, DataQualityFinding, DataQualityFindingStatus, DataQualityLineage,
     DataQualityOutcome, DataQualityRuleRef, DataQualitySeverity, DataQualitySubject,
-    InvariantOwner, data_quality_finding_schema, data_quality_lineage_schema,
+    InvariantOwner, SourceClaim, data_quality_finding_schema, data_quality_lineage_schema,
     data_quality_subject_schema,
 };
 pub use decision_output::{DecisionOutput, TIMER_AFTER_MILLIS_MEMBER, TIMER_ID_MEMBER};
@@ -186,7 +192,7 @@ pub use layout::{
 pub use limit_profile::{
     DecideBudget, EnvelopeLimits, HelperLimits, LIMIT_PROFILE_HASH_PROFILE, LimitProfileRef,
     MemoryLimits, NORN_LIMITS_PROFILE_ID, NORN_LIMITS_V1_SHA256, NORN_LIMITS_V1_VERSION,
-    ResourceLimitProfile, SliceLimits, TurnBudget,
+    QuestionLimits, ResourceLimitProfile, SliceLimits, TurnBudget,
 };
 pub use lineage::{
     DecisionRef, LineageCommit, LineageInput, LineageLink, LineageObject, LineageObservation,
@@ -225,8 +231,11 @@ pub use theorem_input::{
     TheoremStateModel, TheoremVariable, TheoremVariableDomain, TheoremVariableType,
 };
 pub use view::{
-    CalcExpr, PrimitiveBasisClass, TemporalScope, TemporalScopeMode, ViewInputKind, ViewInputRef,
-    ViewIrPayload, ViewMaintenance,
+    AggregateFn, AggregateNode, CalcExpr, DedupeKeep, DedupeNode, FilterNode, GroupKey, JoinKind,
+    JoinNode, JoinOn, KeyJoin, LinkJoin, Measure, OrderKey, PrimitiveBasisClass, ProjectColumn,
+    ProjectNode, RefreshPolicy, RelationalPlan, ScanNode, SortDirection, TemporalScope,
+    TemporalScopeMode, UnionNode, ViewInputKind, ViewInputRef, ViewIrPayload, ViewMaintenance,
+    ViewNode, ViewRefresh, WindowColumn, WindowFn, WindowNode,
 };
 pub use widget::{
     WidgetActionBinding, WidgetDataDependency, WidgetPermission, WidgetProjectionHints,
@@ -235,16 +244,21 @@ pub use widget::{
 pub use widget_ux::{
     ArtifactRef as WidgetArtifactRef, LocaleText, PropertyRef, WIDGET_UX_V1_VERSION,
     WidgetActionConfirmation, WidgetActionLocation, WidgetActionPlacement, WidgetActionSeverity,
-    WidgetApp, WidgetComponent, WidgetConfirmationStrength, WidgetConflictBehavior,
-    WidgetContextParam, WidgetDataBinding, WidgetDataQuery, WidgetDismissalMethod,
-    WidgetEffectHandler, WidgetExpressionInputs, WidgetFieldControl, WidgetFieldFormat,
-    WidgetFieldPresentation, WidgetFieldTarget, WidgetFilter, WidgetFilterOperator,
-    WidgetFilterValue, WidgetForm, WidgetFormMode, WidgetFormSubmit, WidgetKeyValue,
+    WidgetApp, WidgetBehavior, WidgetCallOutcome, WidgetCatalogEntry, WidgetCatalogEvent,
+    WidgetCatalogRef, WidgetComponent, WidgetConfirmationStrength, WidgetConflictBehavior,
+    WidgetContextParam, WidgetControlInput, WidgetDataBinding, WidgetDataQuery, WidgetDensity,
+    WidgetDismissalMethod, WidgetEffectHandler, WidgetExpressionInputs, WidgetFieldControl,
+    WidgetFieldFormat, WidgetFieldPresentation, WidgetFieldTarget, WidgetFilter,
+    WidgetFilterOperator, WidgetFilterValue, WidgetForm, WidgetFormMode, WidgetFormSubmit,
+    WidgetKeyValue, WidgetLifecycleAssumption, WidgetLifecycleSync, WidgetMachine,
+    WidgetMachineCall, WidgetMachineEffect, WidgetMachineEvent, WidgetMachineEventSource,
+    WidgetMachineField, WidgetMachineLifecycle, WidgetMachineState, WidgetMachineTransition,
     WidgetNativeProjection, WidgetNavigationDestination, WidgetNavigationItem, WidgetNode,
     WidgetOutcomeState, WidgetOverride, WidgetOverrideValue, WidgetPage, WidgetPageBounds,
-    WidgetPageRef, WidgetRoute, WidgetRouteParameter, WidgetSection, WidgetSectionKind,
-    WidgetSelectionMode, WidgetShellHandlers, WidgetSort, WidgetSortDirection, WidgetUx,
-    WidgetUxActionBinding, WidgetValueType, WidgetVersionConflictBinding, ZenCondition,
+    WidgetPageRef, WidgetRefusalCategory, WidgetRoute, WidgetRouteParameter, WidgetSection,
+    WidgetSectionKind, WidgetSelectionMode, WidgetShellHandlers, WidgetSort, WidgetSortDirection,
+    WidgetStateRole, WidgetTrust, WidgetUx, WidgetUxActionBinding, WidgetValueType,
+    WidgetVersionConflictBinding, WidgetView, WidgetViewKind, WidgetViewSubject, ZenCondition,
 };
 
 /// Representation-independent JSON number classification (issue #2440).
@@ -307,6 +321,9 @@ pub enum ArtifactKind {
     /// Localized labels for definitions; never part of a definition's
     /// identity ([`labels`]).
     Labels,
+    /// `ModelIR`: a typed predictive model with opaque internals
+    /// ([`model`]).
+    Model,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -349,6 +366,7 @@ pub const fn direct_artifact_write_allowed(
             | ArtifactKind::Law
             | ArtifactKind::DefinedConcept
             | ArtifactKind::Labels
+            | ArtifactKind::Model
     );
     let grants_runtime_authority = matches!(
         lifecycle,
@@ -1501,6 +1519,28 @@ define_payload_root!(
     }
 );
 
+define_payload_root!(
+    /// A typed predictive model with opaque internals ([`model`]).
+    #[schemars(with = "ModelRoot")]
+    ModelPayload {
+        required {
+            model_id => "modelId" as String,
+            title => "title" as String,
+            version => "version" as String,
+            input => "input" as ModelInput,
+            features => "features" as Vec<PropertyId>,
+            outputs => "outputs" as Vec<ModelOutput>,
+            trust => "trust" as TrustLevel,
+            method => "method" as ModelMethod
+        }
+        optional {
+            target => "target" as PropertyId,
+            contracts => "contracts" as Vec<ModelContract>,
+            predictions => "predictions" as ModelPredictions
+        }
+    }
+);
+
 define_payload_root!(DerivedPayload {
     required {
         view_version => "viewVersion" as IrVersion01,
@@ -1511,6 +1551,7 @@ define_payload_root!(DerivedPayload {
         maintenance => "maintenance" as ViewMaintenance
     }
     optional {
+        refresh => "refresh" as ViewRefresh,
         temporal_scope => "temporalScope" as TemporalScope,
         scope_required => "scopeRequired" as Vec<String>
     }
@@ -1542,6 +1583,7 @@ pub enum ArtifactPayload {
     Law(LawPayload),
     DefinedConcept(DefinedConceptPayload),
     Labels(LabelsPayload),
+    Model(ModelPayload),
 }
 
 /// The wire payload root must be a JSON object before it can select a closed kind root.
@@ -1596,6 +1638,7 @@ impl ArtifactPayload {
                 Self::DefinedConcept(DefinedConceptPayload::from_json_object(object))
             }
             ArtifactKind::Labels => Self::Labels(LabelsPayload::from_json_object(object)),
+            ArtifactKind::Model => Self::Model(ModelPayload::from_json_object(object)),
         }
     }
 
@@ -1619,6 +1662,7 @@ impl ArtifactPayload {
             Self::Law(_) => ArtifactKind::Law,
             Self::DefinedConcept(_) => ArtifactKind::DefinedConcept,
             Self::Labels(_) => ArtifactKind::Labels,
+            Self::Model(_) => ArtifactKind::Model,
         }
     }
 
@@ -1642,6 +1686,7 @@ impl ArtifactPayload {
             Self::Law(payload) => payload.to_json_value(),
             Self::DefinedConcept(payload) => payload.to_json_value(),
             Self::Labels(payload) => payload.to_json_value(),
+            Self::Model(payload) => payload.to_json_value(),
         }
     }
 
@@ -1665,6 +1710,7 @@ impl ArtifactPayload {
             Self::Law(payload) => payload.unknown_fields(),
             Self::DefinedConcept(payload) => payload.unknown_fields(),
             Self::Labels(payload) => payload.unknown_fields(),
+            Self::Model(payload) => payload.unknown_fields(),
         }
     }
 
@@ -1688,6 +1734,7 @@ impl ArtifactPayload {
             Self::Law(payload) => payload.has_invalid_extensions(),
             Self::DefinedConcept(payload) => payload.has_invalid_extensions(),
             Self::Labels(payload) => payload.has_invalid_extensions(),
+            Self::Model(payload) => payload.has_invalid_extensions(),
         }
     }
 
@@ -2193,6 +2240,7 @@ pub fn artifact_payload_schema(kind: &ArtifactKind) -> Schema {
         ArtifactKind::Law => schema_for!(LawPayload),
         ArtifactKind::DefinedConcept => schema_for!(DefinedConceptPayload),
         ArtifactKind::Labels => schema_for!(LabelsPayload),
+        ArtifactKind::Model => schema_for!(ModelPayload),
     }
 }
 

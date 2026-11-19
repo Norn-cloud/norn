@@ -14,6 +14,8 @@
     "27:15 effect/Schema#Struct",
     "28:17 effect/Schema#String",
     "29:12 effect/Schema#Int",
+    "29:29 effect/Schema#Int",
+    "29:46 effect/Schema#Int",
     "30:11 effect/Schema#Int",
     "31:13 effect/Schema#Literals",
     "32:17 @norn/authoring#Norn.date",

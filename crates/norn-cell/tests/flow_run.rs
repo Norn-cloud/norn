@@ -42,6 +42,7 @@ fn start(run_id: &str, flow: &str) -> RunStart {
         },
         object_type: RUN.to_owned(),
         state_property: "status".to_owned(),
+        started_by: None,
     }
 }
 

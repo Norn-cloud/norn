@@ -28,7 +28,7 @@ ANALYTICS = "orgId=org_demo&environmentId=analytics"
 ANSWER = "/v1/questions/demo.yield_week/answer"
 TRACE = "/v1/questions/demo.yield_week/trace"
 GUEST = "Bearer fixture:guest@demo"
-VIEWER = "Bearer fixture:viewer@demo"
+VIEWER = "Bearer fixture:admin@demo"
 
 
 # The analytics cell refuses to open without the stage's lineage key
@@ -126,5 +126,8 @@ try:
     status, body, _ = request(f"{ANSWER}?{ANALYTICS}", VIEWER)
     assert status == 200 and json.loads(body)["rows"] == answer["rows"], "answer changed across restart"
     print(f"{RUNTIME} first read after restart: {restart:.1f} ms; PASS")
+    # Live reads (UI-LIVE-1): the hibernating WebSocket on this runtime.
+    checkout = Path(__file__).resolve().parents[2]
+    subprocess.run(["bun", str(Path(__file__).with_name("live-check.mjs")), URL, str(checkout)], check=True)
 finally:
     stop(child)

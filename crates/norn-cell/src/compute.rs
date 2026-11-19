@@ -6,11 +6,16 @@ mod historical;
 pub mod ivm;
 /// Exact result membership and native fact evidence.
 pub mod lineage;
+/// VIEW-MAT-1: a materialized transform's stored result.
+pub mod materialize;
+/// VIEW-ENGINE-1: admitted transforms lowered to embedded `DuckDB`.
 #[cfg(feature = "duckdb")]
-mod olap;
+mod olap_transform;
 /// Governed native restatement generations.
 pub mod restatement;
 mod restatement_state;
+/// VIEW-ROWS-1 / VIEW-ENGINE-1: admitted transforms over one authorized snapshot.
+pub mod transform;
 pub use historical::HistoricalQuestionResult;
 
 use crate::{
@@ -20,7 +25,7 @@ use crate::{
 };
 use norn_checker::metric::compute::{
     QuestionPlan, UNSUPPORTED_ENGINE, arithmetic as math,
-    contribution::{Contribution, project},
+    contribution::{Contribution, Linked, as_of, project, project_linked},
 };
 use norn_ir::{Decimal, ObjectTypeName, RuntimeValue, UtcTimestamp};
 use norn_ir::{ResourceLimitProfile, metric::FreshnessPolicy};
@@ -130,7 +135,7 @@ pub struct Member {
 
 impl Member {
     /// A member whose amounts the evaluation discloses.
-    const fn visible(version: u64, amounts: Vec<Option<Decimal>>) -> Self {
+    pub(crate) const fn visible(version: u64, amounts: Vec<Option<Decimal>>) -> Self {
         Self {
             version,
             amounts: Some(amounts),
@@ -139,14 +144,20 @@ impl Member {
     }
 }
 
+/// D102: the identity a host's row gate is asked for when it decides every
+/// row of a type alike; a bucket whose members are not listed is gated by it.
+pub const ALL_MEMBERS: &str = ":all";
+
 impl QueryRow {
     /// DATA-VALUES-1 (D52/D53): mark `restricted` members and, if any, withhold
     /// every member's amounts in this bucket, so no hidden amount follows from
     /// the totals. For such a reader the bucket aggregate is disclosed only
     /// when the bucket has at least `min_disclosed` members; a smaller bucket
     /// keeps its membership but is `suppressed`: no totals and a null value.
+    /// A bucket whose members are not listed (D102) is restricted when
+    /// [`ALL_MEMBERS`] is, and counts its `member_count`.
     pub fn withhold(&mut self, restricted: impl Fn(&str) -> bool, min_disclosed: usize) {
-        let mut any = false;
+        let mut any = self.member_count.is_some() && restricted(ALL_MEMBERS);
         for (id, member) in &mut self.members {
             member.restricted = restricted(id);
             any |= member.restricted;
@@ -155,7 +166,10 @@ impl QueryRow {
             for member in self.members.values_mut() {
                 member.amounts = None;
             }
-            if self.members.len() < min_disclosed {
+            let members = self.member_count.map_or(self.members.len(), |n| {
+                usize::try_from(n).unwrap_or(usize::MAX)
+            });
+            if members < min_disclosed {
                 self.totals.clear();
                 self.null_counts.clear();
                 self.value = None;
@@ -186,6 +200,14 @@ pub struct QueryRow {
     /// and when the bucket is `suppressed`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub null_counts: Vec<u64>,
+    /// D102: contributing members, when `members` is not inlined because the
+    /// population exceeds the plan's bound (the analytics engine answered).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub member_count: Option<u64>,
+    /// MEMBERSHIP-DIGEST-1 over the members in identity order, present with
+    /// `member_count`; the trace pages the members it commits to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub membership_digest: Option<String>,
 }
 /// Result envelope for QUERY-ENGINE-1; construction alone grants no authority.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -218,27 +240,52 @@ pub struct QueryResult {
     pub context: QueryContext,
     /// DATA-QUARANTINE: engine-resolved identity → durable finding ID.
     pub exclusions: BTreeMap<String, String>,
+    /// METRIC-GRAIN-LINK-1: rows that would count but whose optional time
+    /// link is absent, so they have no time: skipped, never bucketed.
+    #[serde(default, skip_serializing_if = "crate::store::is_zero")]
+    pub unlinked: u64,
+    /// SOURCE-AGREE-1: members two sources disagree on, by partition source,
+    /// at this answer's frontier and visible to its reader; never excluded.
+    /// Absent when no member is disputed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_disagreements: Option<crate::source_agreement::SourceDisagreementCounts>,
 }
 
 #[derive(Serialize)]
-struct FindingEvidence<'a> {
+pub(crate) struct FindingEvidence<'a> {
     #[serde(flatten)]
-    context: &'a QueryContext,
-    exclusions: &'a BTreeMap<String, String>,
+    pub(crate) context: &'a QueryContext,
+    pub(crate) exclusions: &'a BTreeMap<String, String>,
 }
 
 pub(crate) type QuestionPopulation = (QueryContext, BTreeMap<String, String>);
 
 type Bucket = (RuntimeValue, Vec<i128>, BTreeMap<String, Member>);
 
-pub(crate) type Contributions = BTreeMap<String, (u64, Contribution)>;
+/// Each root identity's versioned contributions: one for an ordinary sum, one
+/// per bucket for a snapshot sum (METRIC-SNAPSHOT-ASOF-1).
+pub(crate) type Contributions = BTreeMap<String, Vec<(u64, Contribution)>>;
 /// ASOF-KNOWLEDGE-1: an `AsOf` plan admits only a cutoff recorded exactly at its declared
 /// instant; sub-millisecond declarations never match a millisecond clock.
 fn asof_matches(plan: &QuestionPlan, millis: u64) -> bool {
     plan.as_of_instant()
         .is_some_and(|instant| millis_coordinates(millis) == Some(instant))
 }
-fn check_question_cutoff(
+/// A question scans under its own bound (ruling 2026-11-12), not the bound
+/// on records a slice returns.
+pub(crate) fn question_budget() -> Result<DecodeBudget, CellError> {
+    let profile = ResourceLimitProfile::norn_limits_v1();
+    let question = profile.question_limits();
+    let limits = ReactiveLimits {
+        max_scan: usize::try_from(question.max_scanned_records)
+            .map_err(|_bound| refused("core.compute.bound_exceeded"))?,
+        max_candidate_bytes_per_commit: question.max_scanned_bytes,
+        ..ReactiveLimits::from_profile(&profile)
+    };
+    Ok(DecodeBudget::new(&limits))
+}
+
+pub(crate) fn check_question_cutoff(
     plan: &QuestionPlan,
     cutoff: Option<crate::KnowledgeCutoff>,
 ) -> Result<(), CellError> {
@@ -255,16 +302,16 @@ fn millis_coordinates(millis: u64) -> Option<(i64, u32)> {
     let nanos = millis.rem_euclid(1000).checked_mul(1_000_000)?;
     Some((seconds, u32::try_from(nanos).ok()?))
 }
-fn refused(code: &'static str) -> CellError {
+pub(crate) fn refused(code: &'static str) -> CellError {
     CellError::ComputeRefused(code)
 }
-fn decimal(n: i128) -> Result<Decimal, CellError> {
+pub(crate) fn decimal(n: i128) -> Result<Decimal, CellError> {
     Decimal::parse(&format!("{n}e-6")).map_err(CellError::Value)
 }
 
 impl<E: SqlEngine> CellStore<E> {
     /// QUERY-FRESH-1: the bound scope must agree even for an empty population.
-    fn check_question_scope(&self, scope: &str) -> Result<(), CellError> {
+    pub(crate) fn check_question_scope(&self, scope: &str) -> Result<(), CellError> {
         let bound = self.conn.query_optional(
             r#"SELECT "value" FROM "_norn_meta" WHERE "key"='binding:scope'"#,
             &[],
@@ -292,6 +339,134 @@ impl<E: SqlEngine> CellStore<E> {
             .map(|snapshot| snapshot.result)
     }
 
+    /// SOURCE-AGREE-1 on an answer another engine computed (D102): the same
+    /// counts [`Self::evaluate_question`] reports, read in one transaction at
+    /// `known_as_of`, with membership decided as the exact engine decides it
+    /// (as known at `cutoff`, when the answer is at one) and each
+    /// disagreement's two versions gated by `visible`.
+    ///
+    /// # Errors
+    /// Unproven history, an exhausted budget, or a gate's error.
+    pub fn answer_source_disagreements(
+        &self,
+        plan: &QuestionPlan,
+        context: &QueryContext,
+        (known_as_of, cutoff): (u64, Option<crate::KnowledgeCutoff>),
+        visible: &mut dyn FnMut(&ObjectRecord) -> Result<bool, CellError>,
+    ) -> Result<Option<crate::source_agreement::SourceDisagreementCounts>, CellError> {
+        self.conn.transaction(|| {
+            let reader = self.read();
+            let mut budget = question_budget()?;
+            let grain = plan.grain().as_str();
+            let frontier_receipt = match cutoff {
+                Some(cutoff) => historical::frame(&reader, cutoff, context.now_ms, &mut budget)?.1,
+                None => None,
+            };
+            let mut history = reader.history_read_seeded(frontier_receipt);
+            let model = self.model().model_hash().to_owned();
+            let mut member = |id: &str| -> Result<bool, CellError> {
+                let selected = match cutoff {
+                    Some(cutoff) => historical::historical_record(
+                        &mut history,
+                        &context.world,
+                        grain,
+                        id,
+                        cutoff,
+                        &model,
+                        &mut budget,
+                    )?,
+                    None => reader.object_with_budget(&context.world, grain, id, &mut budget)?,
+                };
+                let record = match selected {
+                    BudgetedRead::Found(record) => record,
+                    BudgetedRead::Missing => return Ok(false),
+                    BudgetedRead::Exhausted => return Err(refused("core.compute.bound_exceeded")),
+                };
+                let (entries, _) = subject_contributions(
+                    &reader,
+                    plan,
+                    context,
+                    (id, &record),
+                    cutoff,
+                    &mut budget,
+                )?;
+                Ok(!entries.is_empty())
+            };
+            reader.answer_disagreements(&context.world, grain, known_as_of, &mut member, visible)
+        })
+    }
+
+    /// ASOF-KNOWLEDGE-1 for another engine (D102): the head and receipt a
+    /// knowledge cutoff is pinned to, read at its own clock `now`.
+    ///
+    /// # Errors
+    /// A clock that is not the cutoff's, or an unproven frontier.
+    pub(crate) fn knowledge_frame(
+        &self,
+        cutoff: crate::KnowledgeCutoff,
+        now: u64,
+    ) -> Result<(LedgerHead, Option<String>), CellError> {
+        let reader = self.read();
+        let mut budget = question_budget()?;
+        let (head, receipt) = historical::frame(&reader, cutoff, now, &mut budget)?;
+        Ok((head, receipt.map(|receipt| receipt.hash)))
+    }
+
+    /// The exclusions of `candidates` as known at `cutoff`: each subject's
+    /// version then, and its findings committed by the frontier, exactly as
+    /// the exact engine reads them at a cutoff. Subjects deleted under
+    /// another model are read too: the mirror keeps no deletions, and the
+    /// exact engine refuses where such a deletion is the version known then.
+    ///
+    /// # Errors
+    /// A version (or deletion) committed under another model, an exhausted
+    /// budget, or a store error.
+    pub(crate) fn exclusions_known_at(
+        &self,
+        world: &str,
+        grain: &str,
+        candidates: BTreeSet<String>,
+        cutoff: crate::KnowledgeCutoff,
+    ) -> Result<BTreeMap<String, String>, CellError> {
+        let reader = self.read();
+        let mut budget = question_budget()?;
+        let (_, frontier_receipt) =
+            historical::frame(&reader, cutoff, cutoff.recorded_at.as_millis(), &mut budget)?;
+        let mut history = reader.history_read_seeded(frontier_receipt);
+        let mut candidates = candidates;
+        candidates.extend(historical::foreign_model_deletions(
+            &reader,
+            world,
+            grain,
+            cutoff.frontier,
+            self.model().model_hash(),
+            &budget,
+        )?);
+        let mut exclusions = BTreeMap::new();
+        for key in candidates {
+            let record = match historical::historical_record(
+                &mut history,
+                world,
+                grain,
+                &key,
+                cutoff,
+                self.model().model_hash(),
+                &mut budget,
+            )? {
+                BudgetedRead::Found(record) => record,
+                BudgetedRead::Missing => continue,
+                BudgetedRead::Exhausted => return Err(refused("core.compute.bound_exceeded")),
+            };
+            if let Some(finding) = reader
+                .question_findings(world, &record, Some(cutoff.frontier))?
+                .first()
+            {
+                exclusions.insert(key, finding.id.clone());
+            }
+        }
+        Ok(exclusions)
+    }
+
     fn question_snapshot(
         &self,
         plan: &QuestionPlan,
@@ -307,22 +482,25 @@ impl<E: SqlEngine> CellStore<E> {
         cutoff: Option<crate::KnowledgeCutoff>,
         visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
     ) -> Result<Snapshot, CellError> {
-        self.question_snapshot_at_with(plan, context, cutoff, visible, |snapshot, _| Ok(snapshot))
+        self.question_snapshot_at_with(plan, context, cutoff, false, visible, |snapshot, _| {
+            Ok(snapshot)
+        })
     }
-    fn question_snapshot_with<T>(
-        &self,
-        plan: &QuestionPlan,
-        context: QueryContext,
-        visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
-        consume: impl FnOnce(Snapshot, &mut DecodeBudget) -> Result<T, CellError>,
-    ) -> Result<T, CellError> {
-        self.question_snapshot_at_with(plan, context, None, visible, consume)
-    }
+    /// The question's snapshot, read live or as of `cutoff`. An `answered`
+    /// read is a live answer recomputed from the commit it was given at: its
+    /// rows are read as of `cutoff`, but it is pinned as the live answer was
+    /// (no slice pin, no historical receipt), so it reproduces that answer's
+    /// lineage pin exactly when nothing it read has changed since.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one snapshot: read, gate, project, pin, in order"
+    )]
     fn question_snapshot_at_with<T>(
         &self,
         plan: &QuestionPlan,
         context: QueryContext,
         cutoff: Option<crate::KnowledgeCutoff>,
+        answered: bool,
         visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
         consume: impl FnOnce(Snapshot, &mut DecodeBudget) -> Result<T, CellError>,
     ) -> Result<T, CellError> {
@@ -333,14 +511,15 @@ impl<E: SqlEngine> CellStore<E> {
             let max = self.check_question_plan(plan)?;
             let mut revision = self.verified_head()?;
             let reader = self.read();
-            let limits = ReactiveLimits::from_profile(&ResourceLimitProfile::norn_limits_v1());
-            let mut budget = DecodeBudget::new(&limits);
+            let mut budget = question_budget()?;
             let mut historical_receipt = None;
             let mut frontier_receipt = None;
             let (ids, complete) = if let Some(cutoff) = cutoff {
                 (revision, frontier_receipt) =
                     historical::frame(&reader, cutoff, context.now_ms, &mut budget)?;
-                historical_receipt = frontier_receipt.as_ref().map(|r| r.hash.clone());
+                if !answered {
+                    historical_receipt = frontier_receipt.as_ref().map(|r| r.hash.clone());
+                }
                 historical::history_ids(
                     &reader,
                     &context.world,
@@ -363,6 +542,7 @@ impl<E: SqlEngine> CellStore<E> {
             }
             let mut history = reader.history_read_seeded(frontier_receipt);
             let mut contributions = BTreeMap::new();
+            let mut unlinked = 0u64;
             let mut members = BTreeSet::new();
             let mut finding_members = BTreeSet::new();
             for id in ids {
@@ -402,18 +582,38 @@ impl<E: SqlEngine> CellStore<E> {
                 )? {
                     continue;
                 }
-                if let Some(value) = project(plan, &record.values).map_err(refused)? {
-                    contributions.insert(id, (record.version, value));
+                let (entries, timeless) = subject_contributions(
+                    &reader,
+                    plan,
+                    &context,
+                    (&id, &record),
+                    cutoff,
+                    &mut budget,
+                )?;
+                unlinked = unlinked.saturating_add(u64::from(timeless));
+                if !entries.is_empty() {
+                    contributions.insert(id, entries);
                 }
             }
-            let (query_pin, definition_pin) = self.question_pins(plan, cutoff)?;
-            let result = materialize(
+            let (query_pin, definition_pin) =
+                self.question_pins(plan, cutoff.filter(|_| !answered))?;
+            let mut result = materialize(
                 plan,
                 (context, exclusions),
                 revision,
                 query_pin,
                 definition_pin,
                 &contributions,
+            )?;
+            result.unlinked = unlinked;
+            // SOURCE-AGREE-1: the members two sources disagree on, at this
+            // answer's own frontier, as the reader may see them.
+            result.source_disagreements = reader.answer_disagreements(
+                &result.context.world,
+                plan.grain().as_str(),
+                result.known_as_of,
+                &mut |id| Ok(contributions.contains_key(id)),
+                visible,
             )?;
             consume(
                 Snapshot {
@@ -427,7 +627,7 @@ impl<E: SqlEngine> CellStore<E> {
             )
         })
     }
-    fn check_question_plan(&self, plan: &QuestionPlan) -> Result<usize, CellError> {
+    pub(crate) fn check_question_plan(&self, plan: &QuestionPlan) -> Result<usize, CellError> {
         let model = self.model().query_contract(plan.grain().as_str())?;
         if plan.properties().iter().any(|p| {
             model
@@ -438,7 +638,7 @@ impl<E: SqlEngine> CellStore<E> {
         }
         usize::try_from(plan.max_items()).map_err(|_bound| refused("core.compute.bound_exceeded"))
     }
-    fn question_pins(
+    pub(crate) fn question_pins(
         &self,
         plan: &QuestionPlan,
         cutoff: Option<crate::KnowledgeCutoff>,
@@ -515,7 +715,86 @@ fn null_counts(counts: Option<&Vec<u64>>) -> Vec<u64> {
         .unwrap_or_default()
 }
 
-fn bucket_key(value: &Contribution) -> Result<String, CellError> {
+/// One root identity's contributions: its current row's, one per bucket from
+/// every stored version for a snapshot sum (METRIC-SNAPSHOT-ASOF-1), or its
+/// row's at its linked object's time (METRIC-GRAIN-LINK-1); `true` when the
+/// row would count but its optional time link is absent.
+fn subject_contributions<E: SqlEngine>(
+    reader: &crate::read::StoreReader<'_, E>,
+    plan: &QuestionPlan,
+    context: &QueryContext,
+    (id, record): (&str, &ObjectRecord),
+    cutoff: Option<crate::KnowledgeCutoff>,
+    budget: &mut DecodeBudget,
+) -> Result<(Vec<(u64, Contribution)>, bool), CellError> {
+    if let Some(link) = plan.time_link() {
+        let targets = match reader.link_targets_with_budget(
+            &context.world,
+            plan.grain().as_str(),
+            link.link.as_str(),
+            id,
+            budget,
+        )? {
+            crate::reactive::BudgetedLinksRead::Complete(targets) => targets,
+            crate::reactive::BudgetedLinksRead::Exhausted => {
+                return Err(refused("core.compute.bound_exceeded"));
+            }
+        };
+        let linked = match targets.as_slice() {
+            [] => None,
+            [target] => match reader.object_with_budget(
+                &context.world,
+                link.target_type.as_str(),
+                target,
+                budget,
+            )? {
+                BudgetedRead::Found(linked) => Some(linked),
+                BudgetedRead::Missing => None,
+                BudgetedRead::Exhausted => return Err(refused("core.compute.bound_exceeded")),
+            },
+            _ => return Err(refused(UNSUPPORTED_ENGINE)),
+        };
+        let projected = project_linked(plan, &record.values, linked.as_ref().map(|l| &l.values))
+            .map_err(refused)?;
+        return Ok(match projected {
+            Linked::Contribution(value) => (vec![(record.version, value)], false),
+            Linked::Excluded => (Vec::new(), false),
+            Linked::Unlinked => (Vec::new(), true),
+        });
+    }
+    if !plan.as_of() {
+        return Ok((
+            project(plan, &record.values)
+                .map_err(refused)?
+                .map(|value| vec![(record.version, value)])
+                .unwrap_or_default(),
+            false,
+        ));
+    }
+    let versions = reader
+        // METRIC-SNAPSHOT-ASOF-1 at a knowledge cutoff: the versions known then.
+        .object_versions_with_budget(
+            &context.world,
+            plan.grain().as_str(),
+            id,
+            cutoff.map(|c| c.frontier),
+            budget,
+        )?
+        .ok_or_else(|| refused("core.compute.bound_exceeded"))?
+        .into_iter()
+        .map(|version| (version.version, version.values))
+        .collect::<Vec<_>>();
+    Ok((as_of(plan, &versions).map_err(refused)?, false))
+}
+
+/// Every `(root identity, versioned contribution)` pair.
+fn entries(contributions: &Contributions) -> impl Iterator<Item = (&String, &(u64, Contribution))> {
+    contributions
+        .iter()
+        .flat_map(|(id, entries)| entries.iter().map(move |entry| (id, entry)))
+}
+
+pub(crate) fn bucket_key(value: &Contribution) -> Result<String, CellError> {
     String::from_utf8(value.bucket.canonical_json()?)
         .map_err(|e| CellError::Encoding(e.to_string()))
 }
@@ -529,7 +808,7 @@ pub(crate) fn materialize(
     contributions: &Contributions,
 ) -> Result<QueryResult, CellError> {
     let mut totals = Totals::default();
-    for (_, value) in contributions.values() {
+    for (_, value) in contributions.values().flatten() {
         totals.adjust(value, false)?;
     }
     finish(
@@ -543,6 +822,10 @@ pub(crate) fn materialize(
     )
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "one envelope: buckets, ratios, null counts, coverage and lineage"
+)]
 pub(crate) fn finish(
     plan: &QuestionPlan,
     population: QuestionPopulation,
@@ -555,7 +838,7 @@ pub(crate) fn finish(
     let (context, exclusions) = population;
     let totals_in = totals;
     let mut grouped: BTreeMap<String, Bucket> = BTreeMap::new();
-    for (id, (version, contribution)) in contributions {
+    for (id, (version, contribution)) in entries(contributions) {
         let key = bucket_key(contribution)?;
         let bucket = grouped.entry(key.clone()).or_insert_with(|| {
             (
@@ -594,6 +877,8 @@ pub(crate) fn finish(
                     members,
                     suppressed: false,
                     null_counts,
+                    member_count: None,
+                    membership_digest: None,
                 },
             ))
         })
@@ -649,6 +934,8 @@ pub(crate) fn finish(
             Freshness::Exact
         },
         complete,
+        unlinked: 0,
+        source_disagreements: None,
         context,
         exclusions,
     })

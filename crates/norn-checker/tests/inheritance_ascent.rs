@@ -46,6 +46,7 @@ fn findings(local: &[ObjectTypeDef], base: &[ObjectTypeDef]) -> Vec<Diagnostic> 
 
 fn cycle(index: usize, name: &str) -> Diagnostic {
     Diagnostic {
+        witness: None,
         code: norn_checker::DiagnosticCode::new(codes::INHERITANCE_CYCLE),
         severity: DiagnosticSeverity::Error,
         message: format!("the extends chain of {name:?} returns to it"),

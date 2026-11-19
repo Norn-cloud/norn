@@ -1,0 +1,7 @@
+{
+  "code": "widget.machine.outcome_impossible",
+  "message": "a page machine handles an outcome the awaited call cannot have: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

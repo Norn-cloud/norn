@@ -423,6 +423,7 @@ impl DoStorage for DoStorageEmulator {
 pub struct DoEngine<S = DoStorageEmulator> {
     storage: S,
     active: std::cell::Cell<bool>,
+    revision: super::WriteRevision,
 }
 
 #[cfg(feature = "native")]
@@ -433,6 +434,7 @@ impl<S: DoStorage> DoEngine<S> {
         Self {
             storage,
             active: std::cell::Cell::new(false),
+            revision: super::WriteRevision::new(),
         }
     }
 
@@ -455,17 +457,24 @@ impl<S: DoStorage> SqlEngine for DoEngine<S> {
         ReadIsolation::ExclusiveSynchronous
     }
 
+    /// As on Workers: a count of this only writer's writes.
+    fn read_cache_revision(&self) -> Result<Option<(u64, u64)>, CellError> {
+        Ok(self.revision.current(self.active.get()))
+    }
+
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
         self.query(sql, params).map(|_| ())
     }
 
     fn query(&self, sql: &str, params: &[SqlValue]) -> Result<Vec<Vec<SqlValue>>, CellError> {
         super::validate_bindings(sql, params)?;
+        self.revision.note(sql);
         self.storage.exec(sql, params)
     }
 
     fn execute_batch(&self, sql: &str) -> Result<(), CellError> {
         super::validate_bindings(sql, &[])?;
+        self.revision.bump();
         self.storage.exec_batch(sql)
     }
 

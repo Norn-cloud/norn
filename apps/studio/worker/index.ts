@@ -3,6 +3,10 @@ import { activeMembership, createAuth, verifyMagicLinkOrigin, type Auth, type Ma
 import { passwordScrypt } from "./password.ts"
 import { clientIpHeader } from "./client-ip.ts"
 import { connectors } from "./connectors.ts"
+import { MCP_PATH, serveMcp } from "./mcp.ts"
+import { cellFor } from "./cell.ts"
+import { questions } from "./questions.ts"
+import { cellScope } from "./scope.ts"
 
 /** The Studio Worker: Better Auth under /api/auth, authenticated /api/*, static assets for everything else. */
 export interface Env {
@@ -30,6 +34,18 @@ export interface Env {
   readonly TOOL_GATEWAY_URL?: string
   readonly TOOL_GATEWAY_CLIENT_ID?: string
   readonly TOOL_GATEWAY_CLIENT_SECRET?: string
+  /** "on" serves /mcp to assistants people connect, with Studio as their OAuth server (migration 0007). */
+  readonly STUDIO_MCP?: string
+  /** Invite-only sign-up: the comma-separated addresses that may create an account. */
+  readonly STUDIO_SIGNUP_EMAILS?: string
+  /** The dashboard assistant's model (#923): the AI Gateway URL (it names the account) and its run-only token; both or neither. */
+  readonly AI_GATEWAY_URL?: string
+  readonly AI_GATEWAY_TOKEN?: string
+  /** Claude through the gateway (default claude-sonnet-5-5), and the Workers AI fallback. */
+  readonly AGENT_MODEL?: string
+  readonly AGENT_FALLBACK_MODEL?: string
+  /** What the assistant may spend in all, in dollars (default 20). */
+  readonly AGENT_SPEND_CAP_USD?: string
 }
 
 export const refuse = (status: number, reason: string, headers: HeadersInit = {}) =>
@@ -64,7 +80,7 @@ function auth(env: Env): Auth {
   }
   const { TOOL_GATEWAY_URL: url, TOOL_GATEWAY_CLIENT_ID: clientId, TOOL_GATEWAY_CLIENT_SECRET: clientSecret } = env
   const gateway = url === undefined || clientId === undefined || clientSecret === undefined ? undefined : { url, clientId, clientSecret }
-  const instance = createAuth({ database: env.AUTH_DB, secret: env.BETTER_AUTH_SECRET, baseURL: env.BETTER_AUTH_URL, trustedOrigins: trustedOrigins(env), defaultEnvironmentId: env.STUDIO_DEFAULT_ENVIRONMENT_ID?.trim() || undefined, scrypt: passwordScrypt(env.AUTH_SCRYPT), clientIpHeader: clientIpHeader(env.STUDIO_CLIENT_IP_HEADER), ...sendMagicLink === undefined ? {} : { sendMagicLink }, ...env.STUDIO_DEFAULT_ORG === undefined ? {} : { defaultOrganizationId: env.STUDIO_DEFAULT_ORG }, ...gateway === undefined ? {} : { gateway } })
+  const instance = createAuth({ mcp: mcpOn(env), database: env.AUTH_DB, secret: env.BETTER_AUTH_SECRET, baseURL: env.BETTER_AUTH_URL, trustedOrigins: trustedOrigins(env), defaultEnvironmentId: env.STUDIO_DEFAULT_ENVIRONMENT_ID?.trim() || undefined, scrypt: passwordScrypt(env.AUTH_SCRYPT), clientIpHeader: clientIpHeader(env.STUDIO_CLIENT_IP_HEADER), ...signUpEmails(env) === undefined ? {} : { signUpEmails: signUpEmails(env) }, ...sendMagicLink === undefined ? {} : { sendMagicLink }, ...env.STUDIO_DEFAULT_ORG === undefined ? {} : { defaultOrganizationId: env.STUDIO_DEFAULT_ORG }, ...gateway === undefined ? {} : { gateway } })
   instances.set(env.AUTH_DB, instance)
   return instance
 }
@@ -94,9 +110,27 @@ async function me(request: Request, env: Env): Promise<Response> {
   )
 }
 
+const mcpOn = (env: Env) => env.STUDIO_MCP === "on"
+/** The invited addresses, lower-case; undefined (open sign-up) when the setting is absent. */
+export const signUpEmails = (env: Pick<Env, "STUDIO_SIGNUP_EMAILS">): readonly string[] | undefined =>
+  env.STUDIO_SIGNUP_EMAILS === undefined ? undefined : env.STUDIO_SIGNUP_EMAILS.split(",").map((email) => email.trim().toLowerCase()).filter(Boolean)
+
+/** OAuth discovery for assistants: the authorization server's and the MCP resource's metadata (RFC 8414, RFC 9728). */
+const OAUTH_DISCOVERY = new Set([
+  "/.well-known/oauth-authorization-server",
+  "/.well-known/openid-configuration",
+  "/.well-known/oauth-protected-resource",
+  `/.well-known/oauth-protected-resource${MCP_PATH}`,
+])
+
 export default {
   async fetch(request, env) {
     const { pathname } = new URL(request.url)
+    if (mcpOn(env) && pathname === MCP_PATH) {
+      if (ACTOR_HEADERS.some((name) => request.headers.has(name))) return refuse(400, "Identity comes from the signed-in grant, not a request header.")
+      return serveMcp(request, { auth: auth(env), baseURL: env.BETTER_AUTH_URL, trustedOrigins: trustedOrigins(env), host: env.NORN_HOST, assets: env.ASSETS })
+    }
+    if (mcpOn(env) && OAUTH_DISCOVERY.has(pathname)) return auth(env).handler(request)
     if (!pathname.startsWith("/api/")) return env.ASSETS.fetch(request)
     if (ACTOR_HEADERS.some((name) => request.headers.has(name))) return refuse(400, "Identity comes from the signed-in session, not a request header.")
     if (pathname === "/api/auth/sign-in/magic-link" || pathname === "/api/auth/magic-link/verify") {
@@ -117,6 +151,45 @@ export default {
       if (!originAllowed(request, actor, trustedOrigins(env))) return refuse(403, "Cross-origin request refused.")
       if (env.NORN_HOST === undefined) return refuse(503, "No Norn host is connected to this deployment.")
       return forwardToHost(request, env.NORN_HOST, auth(env), actor, pathname.slice("/api/host".length))
+    }
+    // The question builders' catalog and checker: the cell's, read as the resolved actor.
+    if (pathname.startsWith("/api/questions/")) {
+      const actor = await resolveActor(request, auth(env))
+      if (actor === null) return refuse(401, "Sign in first.")
+      if (!originAllowed(request, actor, trustedOrigins(env))) return refuse(403, "Cross-origin request refused.")
+      if (env.NORN_HOST === undefined) return refuse(503, "No Norn host is connected to this deployment.")
+      return questions(request, cellFor(env.NORN_HOST, auth(env), actor), pathname.slice("/api/questions".length))
+    }
+    // Sidekick's grant: the signed-in person's own /mcp access for the in-app agent (sidekick.ts).
+    if (pathname === "/api/sidekick/grant") {
+      if (request.method !== "POST") return refuse(405, "POST only.", { allow: "POST" })
+      if (!mcpOn(env)) return refuse(404, "No such endpoint.")
+      const actor = await resolveActor(request, auth(env))
+      if (actor === null) return refuse(401, "Sign in first.")
+      if (actor.actorKind !== "user") return refuse(403, "Sidekick acts for a signed-in person only.")
+      if (!originAllowed(request, actor, trustedOrigins(env))) return refuse(403, "Cross-origin request refused.")
+      if ((await cellScope(auth(env), actor.orgId)).environmentId === null) return refuse(409, "This workspace has no data cell yet.")
+      const { grantAllowed, sidekickGrant } = await import("./sidekick.ts")
+      if (!grantAllowed(actor.subjectId)) return refuse(429, "Too many Sidekick grants; wait a few minutes.", { "retry-after": "60" })
+      return Response.json(await sidekickGrant(auth(env), env.BETTER_AUTH_URL, actor), { headers: { "cache-control": "no-store" } })
+    }
+    // The dashboard assistant: it acts only as the signed-in person, through the cell's own admission.
+    if (pathname === "/api/agent/dashboards" || pathname.startsWith("/api/agent/dashboards/")) {
+      const actor = await resolveActor(request, auth(env))
+      if (actor === null) return refuse(401, "Sign in first.")
+      if (actor.actorKind !== "user") return refuse(403, "The assistant acts for a signed-in person only.")
+      if (!originAllowed(request, actor, trustedOrigins(env))) return refuse(403, "Cross-origin request refused.")
+      if (env.NORN_HOST === undefined) return refuse(503, "No Norn host is connected to this deployment.")
+      const scope = await cellScope(auth(env), actor.orgId)
+      if (scope.environmentId === null) return refuse(409, "This workspace has no data cell yet.")
+      // Loaded on first use, never with the Worker: sign-in must not pay for the assistant.
+      const [{ assistant }, { configuredModel }] = await Promise.all([import("./assistant.ts"), import("./model.ts")])
+      const cap = Number(env.AGENT_SPEND_CAP_USD ?? "20")
+      return assistant(request, pathname.slice("/api/agent/dashboards".length), {
+        db: env.AUTH_DB, cell: cellFor(env.NORN_HOST, auth(env), actor),
+        scope: { orgId: actor.orgId, environmentId: scope.environmentId, userId: actor.subjectId },
+        model: configuredModel(env), capMicroUsd: Math.round((Number.isFinite(cap) && cap >= 0 ? cap : 20) * 1_000_000), now: Date.now(),
+      })
     }
     if (pathname.startsWith("/api/connectors/")) {
       // A gateway URL without its OAuth client is not a gateway this stage can use.

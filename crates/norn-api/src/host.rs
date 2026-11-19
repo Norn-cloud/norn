@@ -9,8 +9,9 @@ use norn_cell::{
     CellError, CellStore, InstalledDefinitionInput, InstalledDefinitionSet, Model,
     engine::SqlEngine,
 };
-use norn_ir::RuntimeObject;
-use norn_kernel::{Command, FactEvent};
+use norn_ir::{RuntimeObject, RuntimeValue};
+use norn_kernel::{Command, FactEvent, ObservationEvent, Observed};
+use std::ops::{Deref, DerefMut};
 use std::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard};
 
 pub(crate) type ActionCell<E> = norn_cell::SqliteCell<FactEvent, RuntimeObject, RuntimeObject, E>;
@@ -19,7 +20,97 @@ pub struct DevHost<E: SqlEngine> {
     scope: CellScope,
     pub(crate) authorizer: Box<dyn Authorizer>,
     definitions: RwLock<()>,
-    cell: Mutex<ActionCell<E>>,
+    /// Always `Some` outside [`DevHost::ingest`], which holds the lock while
+    /// it maps source rows under the observation profile.
+    cell: Mutex<Option<ActionCell<E>>>,
+    /// PRIVACY-1: the key this cell's pseudonyms are computed under; without
+    /// one a pseudonym projection redacts.
+    pseudonyms: Option<crate::privacy::PseudonymKey>,
+    /// The marking catalog of the active definitions, by definitions version.
+    markings: Mutex<Option<(Option<u64>, crate::privacy::MarkingCatalog)>>,
+}
+
+/// The locked cell, present whenever a guard exists.
+pub(crate) struct CellGuard<'a, E: SqlEngine>(MutexGuard<'a, Option<ActionCell<E>>>);
+
+impl<E: SqlEngine> Deref for CellGuard<'_, E> {
+    type Target = ActionCell<E>;
+    fn deref(&self) -> &ActionCell<E> {
+        // `cell()` admits only a present cell, and nothing takes it while the guard lives.
+        self.0
+            .as_ref()
+            .unwrap_or_else(|| unreachable!("a cell guard always holds the cell"))
+    }
+}
+
+impl<E: SqlEngine> DerefMut for CellGuard<'_, E> {
+    fn deref_mut(&mut self) -> &mut ActionCell<E> {
+        self.0
+            .as_mut()
+            .unwrap_or_else(|| unreachable!("a cell guard always holds the cell"))
+    }
+}
+
+/// Whether a cell's model declares the kernel's action types: a provisioned
+/// tenant cell (and `norn dev`) serves governed actions and reopens under
+/// [`crate::kernel_set::serving_model`]; a cell this build seeds itself
+/// reopens under the bare [`crate::kernel_set::kernel_model`].
+#[must_use]
+pub fn serves_actions(model: &Model) -> bool {
+    model
+        .object_types()
+        .any(|declared| declared.name.as_str() == norn_kernel::ACTION_CALL_TYPE)
+}
+
+/// The model a restarted host rebuilds for `canonical_set` (HOST-REOPEN-1):
+/// the serving model for a cell that serves actions, else the bare model.
+/// # Errors
+/// `host.error` when the set cannot be read or projected.
+pub fn reopen_model(canonical_set: &str, serving: bool) -> Result<Model, Refusal> {
+    let artifacts = crate::kernel_set::retained_artifacts(canonical_set).map_err(Refusal::host)?;
+    if serving {
+        crate::kernel_set::serving_model(&artifacts).map_err(Refusal::host)
+    } else {
+        crate::kernel_set::kernel_model(&artifacts)
+            .map_err(|refusal| Refusal::host(format!("{refusal:?}")))
+    }
+}
+
+/// DEFS-REOPEN-1: a revision installs only under the model a restarted host
+/// rebuilds from its retained set ([`reopen_model`]); anything else would
+/// commit a layout the next open refuses. Every path that installs a model
+/// (definitions, flows, uploads, provisioning) checks it here, before
+/// anything is written.
+/// # Errors
+/// `host.error` when the candidate's model or layout differs from the
+/// reopen model of `canonical_set`, or the set cannot be read.
+pub fn check_reopens(
+    candidate_model: &Model,
+    canonical_set: &str,
+    serving: bool,
+) -> Result<(), Refusal> {
+    let reopened = reopen_model(canonical_set, serving)?;
+    if reopened.model_hash() != candidate_model.model_hash()
+        || reopened.ddl_hash() != candidate_model.ddl_hash()
+    {
+        return Err(Refusal::host(format!(
+            "the candidate model is not the one the cell reopens under (model {} for {}, layout {} for {})",
+            candidate_model.model_hash(),
+            reopened.model_hash(),
+            candidate_model.ddl_hash(),
+            reopened.ddl_hash()
+        )));
+    }
+    Ok(())
+}
+
+/// What one captured source row came to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ingested {
+    /// The inbox id the cell captured the row under.
+    pub observation_id: String,
+    /// What processing did.
+    pub outcome: norn_cell::MappingOutcome,
 }
 impl<E: SqlEngine> DevHost<E> {
     /// Bind an opened store before publishing any read service.
@@ -37,7 +128,9 @@ impl<E: SqlEngine> DevHost<E> {
             scope,
             authorizer: Box::new(DenyAll),
             definitions: RwLock::new(()),
-            cell: Mutex::new(cell),
+            cell: Mutex::new(Some(cell)),
+            pseudonyms: None,
+            markings: Mutex::new(None),
         })
     }
     /// Supply the trusted server policy before sharing this host.
@@ -45,6 +138,48 @@ impl<E: SqlEngine> DevHost<E> {
     pub fn with_authorizer(mut self, authorizer: impl Authorizer + 'static) -> Self {
         self.authorizer = Box::new(authorizer);
         self
+    }
+    /// Key this cell's pseudonyms with `secret` (the host's lineage key);
+    /// a secret shorter than 32 bytes keys none, and pseudonyms redact.
+    #[must_use]
+    pub fn with_pseudonym_secret(mut self, secret: Option<&[u8]>) -> Self {
+        self.pseudonyms =
+            secret.and_then(|secret| crate::privacy::PseudonymKey::derive(secret, &self.scope));
+        self
+    }
+    /// Key this cell's pseudonyms with `secret` in place; see
+    /// [`Self::with_pseudonym_secret`].
+    pub fn set_pseudonym_secret(&mut self, secret: Option<&[u8]>) {
+        self.pseudonyms =
+            secret.and_then(|secret| crate::privacy::PseudonymKey::derive(secret, &self.scope));
+    }
+    /// Whether this cell's pseudonyms are keyed.
+    #[must_use]
+    pub const fn has_pseudonym_key(&self) -> bool {
+        self.pseudonyms.is_some()
+    }
+    pub(crate) const fn pseudonym_key(&self) -> Option<&crate::privacy::PseudonymKey> {
+        self.pseudonyms.as_ref()
+    }
+    /// PRIVACY-2: the trusted policy's `norn.reveal` decision.
+    pub(crate) fn reveals(&self, actor: &str, marking_id: &str) -> bool {
+        self.authorizer.reveal(actor, marking_id)
+    }
+    /// The marking catalog of the active definitions `reader` sees.
+    pub(crate) fn marking_catalog(
+        &self,
+        reader: &norn_cell::StoreReader<'_, E>,
+    ) -> Result<crate::privacy::MarkingCatalog, Refusal> {
+        let version = reader.active_definitions_version().map_err(Refusal::host)?;
+        let mut cached = self.markings.lock().map_err(Refusal::host)?;
+        if let Some((at, catalog)) = cached.as_ref()
+            && *at == version
+        {
+            return Ok(std::sync::Arc::clone(catalog));
+        }
+        let (at, catalog) = crate::privacy::catalog_of(reader)?;
+        *cached = Some((at, std::sync::Arc::clone(&catalog)));
+        Ok(catalog)
     }
     /// Physical scope, never taken from client claims.
     #[must_use]
@@ -104,8 +239,194 @@ impl<E: SqlEngine> DevHost<E> {
             .is_ok();
         matches && allowed
     }
-    pub(crate) fn cell(&self) -> Result<MutexGuard<'_, ActionCell<E>>, Refusal> {
-        self.cell.lock().map_err(Refusal::host)
+    pub(crate) fn cell(&self) -> Result<CellGuard<'_, E>, Refusal> {
+        let guard = self.cell.lock().map_err(Refusal::host)?;
+        if guard.is_none() {
+            return Err(Refusal::host("the cell is unavailable"));
+        }
+        Ok(CellGuard(guard))
+    }
+
+    /// Capture source rows and map them through the cell's own mapping path,
+    /// under the definition epoch, in OBS-PAGE-1 pages: consecutive rows with
+    /// the same [`MappingInput`](norn_cell::mapping_bundle::MappingInput),
+    /// split at [`PAGE_ROWS`] and before a repeated source record, are
+    /// captured by `inject_mapping_page` and committed by
+    /// `process_mapping_page`. The trusted host's sync calls this; no caller
+    /// supplies facts, and a refused row stays in the inbox as quarantined
+    /// evidence with its reasons. Rows already captured are captured once.
+    /// Returns one outcome per row.
+    /// # Errors
+    /// A page the cell cannot capture (framing or pins it refuses), or a
+    /// store failure; pages before it stay captured and processed.
+    pub fn ingest(
+        &self,
+        rows: &[(
+            Observed<RuntimeValue>,
+            norn_cell::mapping_bundle::MappingInput,
+        )],
+    ) -> Result<Vec<Ingested>, Refusal> {
+        let _epoch = self.definition_read()?;
+        let mut slot = self.cell.lock().map_err(Refusal::host)?;
+        let cell = slot
+            .take()
+            .ok_or_else(|| Refusal::host("the cell is unavailable"))?;
+        let mut observing: norn_cell::SqliteCell<
+            ObservationEvent,
+            RuntimeObject,
+            RuntimeObject,
+            E,
+        > = cell.into_profile();
+        let mut out = Vec::with_capacity(rows.len());
+        let mut result = Ok(());
+        for (input, page) in pages(rows) {
+            result = ingest_page(&mut observing, &page, input, &mut out);
+            if result.is_err() {
+                break;
+            }
+        }
+        *slot = Some(observing.into_profile());
+        result.map(|()| out).map_err(Refusal::host)
+    }
+
+    /// Install `added` over the active definitions as the next governed
+    /// version: an artifact of the same id is replaced, the whole set is
+    /// re-admitted on the cell's own base, and the model is the one the cell
+    /// reopens under (HOST-REOPEN-1, checked by [`Self::install_definitions`]).
+    /// The trusted host calls this (generated upload types, the cell's own
+    /// packs); no route supplies artifacts to it.
+    /// # Errors
+    /// No active definitions, the checker's refusal (its findings), or the
+    /// install's refusal.
+    pub fn install_artifacts(
+        &self,
+        added: &[norn_ir::ArtifactEnvelope],
+        installed_at: u64,
+    ) -> Result<u64, String> {
+        let active = self
+            .active_definitions()
+            .map_err(|r| r.message)?
+            .ok_or("the cell has no definitions to extend")?;
+        let admitted = crate::kernel_set::admit_over(
+            &active.canonical_set,
+            active.admission_receipt.as_deref(),
+            added,
+        )
+        .map_err(|refusal| match refusal {
+            crate::kernel_set::KernelRefusal::Refused(findings) => findings
+                .iter()
+                .map(|f| format!("{}: {}", f.code, f.message))
+                .collect::<Vec<_>>()
+                .join("; "),
+            crate::kernel_set::KernelRefusal::Invalid(detail) => detail,
+        })?;
+        // The model this cell reopens under (DEFS-REOPEN-1), by its kind.
+        let serving = serves_actions(self.cell().map_err(|r| r.explanation)?.store().model());
+        let model = reopen_model(&admitted.canonical_set, serving).map_err(|r| r.explanation)?;
+        let installed = self
+            .install_definitions(
+                model,
+                InstalledDefinitionInput {
+                    canonical_set: admitted.canonical_set,
+                    registry: vec![],
+                    receipt_sha256: admitted.receipt_sha256,
+                    admission_receipt: Some(admitted.receipt),
+                    readmission: None,
+                    diff: serde_json::json!({}),
+                    installed_at,
+                    layout: None,
+                },
+                Some(active.version),
+            )
+            .map_err(|r| format!("{}: {}", r.code, r.message))?;
+        Ok(installed.version)
+    }
+
+    /// Whether the cell's active model declares the object type `name`.
+    /// # Errors
+    /// Poisoned synchronization refuses closed.
+    pub fn serves_object_type(&self, name: &str) -> Result<bool, Refusal> {
+        let _epoch = self.definition_read()?;
+        let cell = self.cell()?;
+        Ok(cell
+            .store()
+            .model()
+            .object_types()
+            .any(|declared| declared.name.as_str() == name))
+    }
+
+    /// One artifact of the active definitions, as its JSON envelope. For the
+    /// trusted host process (a source sync reading its connector); no route
+    /// reaches it.
+    /// # Errors
+    /// Poisoned synchronization or a store failure refuses closed.
+    pub fn installed_artifact(
+        &self,
+        artifact_id: &str,
+    ) -> Result<Option<serde_json::Value>, Refusal> {
+        let Some(active) = self.active_definitions()? else {
+            return Ok(None);
+        };
+        let set: Vec<serde_json::Value> =
+            serde_json::from_str(&active.canonical_set).map_err(Refusal::host)?;
+        Ok(set.into_iter().find(|artifact| {
+            artifact
+                .get("artifactId")
+                .and_then(serde_json::Value::as_str)
+                == Some(artifact_id)
+        }))
+    }
+
+    /// One object's current values in the main world. For the trusted host
+    /// process (a source sync reading its own connection state); no route
+    /// reaches it, and it grants no read to anyone.
+    /// # Errors
+    /// Poisoned synchronization or a store failure refuses closed.
+    pub fn host_object(
+        &self,
+        object_type: &str,
+        key: &str,
+    ) -> Result<Option<RuntimeObject>, Refusal> {
+        let _epoch = self.definition_read()?;
+        let cell = self.cell()?;
+        cell.store()
+            .read()
+            .object(norn_cell::MAIN_WORLD, object_type, key)
+            .map(|row| row.map(|row| row.values))
+            .map_err(Refusal::host)
+    }
+
+    /// The cell model's object type names, in model order: the types a catalog
+    /// (an agent's tool schema) may offer. Naming a type grants nothing; every
+    /// read of it is still authorized.
+    /// # Errors
+    /// Poisoned synchronization refuses closed.
+    pub fn object_type_names(&self) -> Result<Vec<String>, Refusal> {
+        let cell = self.cell()?;
+        Ok(cell
+            .store()
+            .model()
+            .object_types()
+            .map(|object_type| object_type.name.as_str().to_owned())
+            .collect())
+    }
+
+    /// The current revision of the retained definition `id`, if any, read
+    /// under the definitions read epoch. The host's own authority checks
+    /// (`/v1/access:decide` reads a binding's `runRole`) read it here; no
+    /// network caller does.
+    /// # Errors
+    /// A store failure.
+    pub fn retained_definition(
+        &self,
+        id: &str,
+    ) -> Result<Option<norn_cell::retained::RetainedDefinitionRecord>, Refusal> {
+        let _epoch = self.definition_read()?;
+        let cell = self.cell()?;
+        cell.store()
+            .read()
+            .retained_definition(id, None)
+            .map_err(Refusal::host)
     }
 
     /// The active definitions version alone (no set is read), or `None` for
@@ -151,9 +472,32 @@ impl<E: SqlEngine> DevHost<E> {
         input: InstalledDefinitionInput,
         expected_version: Option<u64>,
     ) -> Result<InstalledDefinitionSet, Refusal> {
+        self.install_definitions_checked(candidate_model, input, expected_version, |_| Ok(()))
+    }
+
+    /// [`Self::install_definitions`], with `check` run on the cell's store
+    /// under the same exclusive epoch, before anything is written: what it
+    /// reads cannot change before the install commits, and its refusal
+    /// installs nothing.
+    /// # Errors
+    /// `check`'s refusal, or as [`Self::install_definitions`].
+    pub fn install_definitions_checked(
+        &self,
+        candidate_model: Model,
+        input: InstalledDefinitionInput,
+        expected_version: Option<u64>,
+        check: impl FnOnce(&CellStore<E>) -> Result<(), Refusal>,
+    ) -> Result<InstalledDefinitionSet, Refusal> {
         let _epoch = self.definition_write()?;
         let mut cell = self.cell()?;
-        cell.install_definitions(candidate_model, input, expected_version)
+        check(cell.store())?;
+        check_reopens(
+            &candidate_model,
+            &input.canonical_set,
+            serves_actions(cell.store().model()),
+        )?;
+        let installed = cell
+            .install_definitions(candidate_model, input, expected_version)
             .map_err(|error| {
                 if let CellError::DefinitionVersionConflict { expected, actual } = &error {
                     return Refusal::new(
@@ -172,6 +516,179 @@ impl<E: SqlEngine> DevHost<E> {
                     );
                 }
                 Refusal::host(error)
+            })?;
+        self.model_changed(&cell);
+        Ok(installed)
+    }
+
+    /// Tell the authorizer the model changed, under the write epoch the
+    /// caller holds, with the cell it just installed into.
+    pub(crate) fn model_changed(&self, cell: &ActionCell<E>) {
+        let types: Vec<norn_ir::ObjectTypeDef> =
+            cell.store().model().object_types().cloned().collect();
+        self.authorizer.model_changed(&types);
+    }
+}
+
+/// The most rows one OBS-PAGE-1 page carries; the cell's own bound is higher.
+pub const PAGE_ROWS: usize = 500;
+
+/// How many OBS-PAGE-1 pages (one commit each) [`DevHost::ingest`] makes of
+/// `rows`, before any canonical-object split inside a page.
+#[must_use]
+pub fn page_count(
+    rows: &[(
+        Observed<RuntimeValue>,
+        norn_cell::mapping_bundle::MappingInput,
+    )],
+) -> usize {
+    pages(rows).len()
+}
+
+/// OBS-PAGE-1 framing: consecutive rows with the same mapping input, split at
+/// [`PAGE_ROWS`] and before a source record the page already carries.
+fn pages(
+    rows: &[(
+        Observed<RuntimeValue>,
+        norn_cell::mapping_bundle::MappingInput,
+    )],
+) -> Vec<(
+    &norn_cell::mapping_bundle::MappingInput,
+    Vec<Observed<RuntimeValue>>,
+)> {
+    let mut pages: Vec<(
+        &norn_cell::mapping_bundle::MappingInput,
+        Vec<Observed<RuntimeValue>>,
+    )> = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for (raw, input) in rows {
+        let identity = raw.provenance.source_id.clone();
+        let split = pages.last().is_none_or(|(current, page)| {
+            *current != input || page.len() >= PAGE_ROWS || !seen.insert(identity.clone())
+        });
+        if split {
+            seen = std::collections::BTreeSet::from([identity]);
+            pages.push((input, Vec::new()));
+        }
+        if let Some((_, page)) = pages.last_mut() {
+            page.push(raw.clone());
+        }
+    }
+    pages
+}
+
+/// Capture and commit one page, one outcome per row into `out`. A page over
+/// the cell's byte bound is halved. A row the page did not report (captured
+/// as a finding, or a page an earlier sync consumed) is processed on its own,
+/// as one-by-one delivery would.
+fn ingest_page<E: SqlEngine>(
+    cell: &mut norn_cell::SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, E>,
+    page: &[Observed<RuntimeValue>],
+    input: &norn_cell::mapping_bundle::MappingInput,
+    out: &mut Vec<Ingested>,
+) -> Result<(), CellError> {
+    let captured = match cell.inject_mapping_page(page, input) {
+        Err(CellError::OutOfRange("mapping page bytes")) if page.len() > 1 => {
+            let (first, second) = page.split_at(page.len() / 2);
+            ingest_page(cell, first, input, out)?;
+            return ingest_page(cell, second, input, out);
+        }
+        other => other?,
+    };
+    // Each member this page consumed has its outcome; any other record (a
+    // conflict or identity finding, or a row consumed before) answers as it
+    // does one by one. One outcome per row, in row order.
+    let mut outcomes = std::collections::BTreeMap::new();
+    for (id, _new) in &captured.pages {
+        outcomes.extend(cell.process_mapping_page(id)?.unwrap_or_default());
+    }
+    for id in captured.records {
+        let outcome = match outcomes.remove(&id) {
+            Some(outcome) => outcome,
+            None => cell.process_mapping_outcome(&id)?,
+        };
+        out.push(Ingested {
+            observation_id: id,
+            outcome,
+        });
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    reason = "page framing scenarios"
+)]
+mod page_tests {
+    use super::*;
+    use crate::pull::{PullProfile, Row, observation};
+    use norn_cell::mapping_bundle::MappingInput;
+
+    fn row(id: &str) -> Observed<RuntimeValue> {
+        let profile = PullProfile {
+            source: "erpnext".into(),
+            pipeline: "norn-pull/1".into(),
+            feeds: Vec::new(),
+            token: None,
+        };
+        let row = Row {
+            dataset: "items".into(),
+            source_id: id.into(),
+            version: "1".into(),
+            payload: RuntimeValue::Object(std::collections::BTreeMap::new()),
+        };
+        observation(&profile, &row, 0).expect("sealed")
+    }
+
+    fn input(dataset: &str) -> MappingInput {
+        MappingInput {
+            mapping: "erpnext.rest.mapping".into(),
+            dataset: dataset.into(),
+            connector_instance: "sandbox".into(),
+            partition: dataset.into(),
+            recorded_at: norn_ir::provenance::UtcTimestamp("2026-11-12T00:00:00.000Z".into()),
+        }
+    }
+
+    /// OBS-PAGE-1 framing: a page is one mapping input, at most `PAGE_ROWS`
+    /// rows, and never carries one source record twice.
+    #[test]
+    fn pages_split_at_the_bound_a_new_input_and_a_repeated_record() {
+        let (items, bins) = (input("items"), input("bins"));
+        let many: Vec<_> = (0..1_200)
+            .map(|n| (row(&format!("r{n}")), items.clone()))
+            .collect();
+        let sizes: Vec<usize> = pages(&many).iter().map(|(_, page)| page.len()).collect();
+        assert_eq!(sizes, [500, 500, 200]);
+
+        let mixed = vec![
+            (row("x"), items.clone()),
+            (row("y"), items.clone()),
+            (row("x"), items.clone()),
+            (row("z"), bins),
+            (row("z"), items),
+        ];
+        let framed: Vec<(String, Vec<String>)> = pages(&mixed)
+            .into_iter()
+            .map(|(input, page)| {
+                (
+                    input.dataset.clone(),
+                    page.iter()
+                        .map(|raw| raw.provenance.source_id.clone())
+                        .collect(),
+                )
             })
+            .collect();
+        assert_eq!(
+            framed,
+            [
+                ("items".to_owned(), vec!["x".to_owned(), "y".to_owned()]),
+                ("items".to_owned(), vec!["x".to_owned()]),
+                ("bins".to_owned(), vec!["z".to_owned()]),
+                ("items".to_owned(), vec!["z".to_owned()]),
+            ]
+        );
     }
 }

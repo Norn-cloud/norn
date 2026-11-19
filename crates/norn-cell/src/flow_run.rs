@@ -21,12 +21,23 @@ use crate::error::CellError;
 use crate::read::{StoreReader, to_i64};
 use crate::store::{CommitBatch, WrittenRow};
 
+/// ACTION-STEP-1: a flow step that calls a governed action, executed by the
+/// cell under the run starter's authority. Hosts reach the built-in through
+/// the cell.
+pub use norn_builtins::action::{
+    ActionStep, FUNCTION_ID as ACTION_FUNCTION, StepRefusal as ActionStepRefusal,
+    parse_step as parse_action_step,
+};
+
 /// The `type` of the ledger event that starts a run.
 pub const RUN_STARTED: &str = "norn.run.started";
 /// The first generation of every run.
 pub const FIRST_GENERATION: u64 = 1;
 /// The most rows one [`StoreReader::flow_runs`] page returns.
 pub const MAX_RUN_PAGE: u32 = 200;
+/// The most ledger events [`StoreReader::run_start`] reads from a starting
+/// commit; a commit's events are bounded by the turn envelope.
+const MAX_START_EVENTS: usize = 4096;
 
 pub(crate) const FLOW_RUN: &str = "_norn_flow_run";
 
@@ -62,6 +73,25 @@ pub struct FlowRef {
     pub version: String,
 }
 
+/// The verified principal who started a run, as the host recorded it from
+/// the request that started it (ACTION-STEP-1). A run's action steps act
+/// under exactly this authority for the whole run: the roles are those the
+/// host verified at start, so a role revoked later still holds for this run
+/// until it ends (a waiting run is bounded by its decisions' seven-day
+/// expiry). Host bookkeeping, never a client claim.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RunStarter {
+    /// The verified subject id.
+    pub subject: String,
+    /// `user` or `service`.
+    pub actor_kind: String,
+    /// The roles the host verified, from `role_table`.
+    pub roles: Vec<String>,
+    /// The declared role table the roles came from.
+    pub role_table: String,
+}
+
 /// What a [`RUN_STARTED`] event records.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -74,6 +104,9 @@ pub struct RunStart {
     pub object_type: String,
     /// The Run type's lifecycle property (the flow's state machine).
     pub state_property: String,
+    /// Who started it, when the host recorded a verified principal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_by: Option<RunStarter>,
 }
 
 impl RunStart {
@@ -350,6 +383,46 @@ fn decode(row: &SqlRow) -> Result<RunRow, CellError> {
 }
 
 impl<E: SqlEngine> StoreReader<'_, E> {
+    /// The [`RunStart`] the commit that started `run_id` in `world` carried,
+    /// read from that commit's ledger events.
+    ///
+    /// # Errors
+    /// SQL engine or decode errors.
+    pub fn run_start(&self, world: &str, run_id: &str) -> Result<Option<RunStart>, CellError> {
+        let Some(row) = self.flow_run(world, run_id)? else {
+            return Ok(None);
+        };
+        let first = self.conn.query_optional(
+            &format!(
+                r#"SELECT MIN("seq") FROM "{LEDGER}" WHERE "commit_seq"=?1"#,
+                LEDGER = crate::system::LEDGER
+            ),
+            params![to_i64(row.created_commit_seq, "commit sequence")?],
+            |found| found.get::<Option<i64>>(0),
+        )?;
+        let Some(Some(first)) = first else {
+            return Ok(None);
+        };
+        let after = u64::try_from(first.saturating_sub(1))
+            .map_err(|_negative| CellError::OutOfRange("ledger sequence"))?;
+        for entry in self.ledger_page(after, MAX_START_EVENTS)? {
+            if entry.commit_seq != row.created_commit_seq {
+                break;
+            }
+            if entry.world != world || !is_run_start(&entry.event) {
+                continue;
+            }
+            let start: Option<RunStart> = entry
+                .event
+                .get("run")
+                .and_then(|run| norn_ir::runtime::decode(run).ok());
+            if let Some(start) = start.filter(|start| start.run_id == run_id) {
+                return Ok(Some(start));
+            }
+        }
+        Ok(None)
+    }
+
     /// The run `run_id` in `world`, if it was started.
     ///
     /// # Errors

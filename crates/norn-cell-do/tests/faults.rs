@@ -56,7 +56,7 @@ use serde_json::{Value, json};
 
 const SCOPE: &str = "orgId=org_demo&environmentId=analytics";
 /// The fixture principal holding `admin` on the analytics cell.
-const ADMIN: Option<&str> = Some("Bearer fixture:viewer@demo");
+const ADMIN: Option<&str> = Some("Bearer fixture:admin@demo");
 /// The host secret the cell's lineage handle key derives from.
 const HANDLE_KEY: [u8; 32] = [5; 32];
 /// The request clock: every receipt records the same time, so responses are
@@ -311,13 +311,26 @@ fn call<E: SqlEngine>(cell: &Cell<E>, req: Req) -> Response {
         now: NOW,
         body: &body,
     };
-    server::handle_all(
+    without_incident(server::handle_all(
         &cell.host,
         &cell.principals,
         Some(&cell.questions),
         &cell.kinds,
         &request,
-    )
+    ))
+}
+
+/// The response with its incident id removed (INCIDENT-1): the id is a
+/// per-occurrence correlation token, so two runs of the same case differ in
+/// it and in nothing else the laws compare.
+fn without_incident(mut response: Response) -> Response {
+    if let Ok(mut document) = serde_json::from_str::<serde_json::Value>(&response.body)
+        && let Some(fields) = document.as_object_mut()
+        && fields.remove("incidentId").is_some()
+    {
+        response.body = document.to_string();
+    }
+    response
 }
 
 /// The cell's observable definitions state: every version of every id, the

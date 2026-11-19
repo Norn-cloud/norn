@@ -1,0 +1,7 @@
+{
+  "code": "law.example.mismatch",
+  "message": "a law example's verdict differs from its expectation: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

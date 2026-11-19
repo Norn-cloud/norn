@@ -12,7 +12,7 @@ use norn_cell_do::principal::{DEMO_FIXTURES, FixturePrincipals};
 use norn_cell_do::{seed, server};
 use serde_json::Value;
 
-const VIEWER: Option<&str> = Some("Bearer fixture:viewer@demo");
+const VIEWER: Option<&str> = Some("Bearer fixture:admin@demo");
 const SCOPE: &str = "orgId=org_demo&environmentId=dev";
 
 /// The demo cell with its fixture principals recording into its policy.
@@ -91,8 +91,8 @@ fn anonymous_foreign_and_unknown_principals_get_one_denial() {
     let denied = call(&host, "GET", "/v1/definitions", SCOPE, None);
     assert_eq!(denied.status, 403);
     for (query, auth) in [
-        (SCOPE, Some("Bearer fixture:admin@demo")),
-        (SCOPE, Some("Bearer viewer@demo")),
+        (SCOPE, Some("Bearer fixture:nobody@demo")),
+        (SCOPE, Some("Bearer admin@demo")),
         ("orgId=foreign&environmentId=dev", VIEWER),
         ("orgId=org_demo", VIEWER),
     ] {
@@ -188,6 +188,16 @@ fn demo_rows_are_withheld_for_a_viewer_and_read_by_an_admin() {
     assert_eq!(ids(&viewer), expected);
     assert_eq!(ids(&admin), expected);
     assert_eq!(viewer["total"], admin["total"]);
+    // The catalog counts each type as its list does, for the same caller;
+    // an anonymous caller is refused the catalog, counts and all.
+    for (auth, page) in [(guest, &viewer), (VIEWER, &admin)] {
+        let (status, catalog) = get(&demo, "/v1/definitions", SCOPE, auth);
+        assert_eq!(status, 200, "{catalog}");
+        assert_eq!(catalog["objectCounts"]["canon.Party"], page["total"]);
+    }
+    let (status, refused) = get(&demo, "/v1/definitions", SCOPE, None);
+    assert_eq!(status, 403);
+    assert!(refused.get("objectCounts").is_none());
     for record in viewer["records"].as_array().unwrap() {
         assert_eq!(record["withheld"], Value::Bool(true));
         assert!(record["values"].is_null() && record["version"].is_null());
@@ -279,7 +289,7 @@ fn object_links_and_lineage_routes_dispatch() {
     );
     let (status, other) = get(
         &demo,
-        "/v1/objects/canon.Party/SYN-PARTY-01/history",
+        "/v1/objects/canon.Party/SYN-PARTY-01/audit",
         SCOPE,
         VIEWER,
     );
@@ -333,6 +343,17 @@ const UNDOCUMENTED: &[server::Route] = &[
     // the dev host and `server::handle` refuse it. Its document types live in
     // this crate, outside the generated contract.
     server::Route::Access,
+    // The cell's source, upload and recorded-load routes (#921): dispatched by the published
+    // host's entry point (`connect`), which owns the outbound fetch loop the
+    // sync and the object reads need; `server::handle` refuses them. They are
+    // write routes behind the cell's own policy, outside the read contract.
+    server::Route::SourceSync,
+    server::Route::UploadBegin,
+    server::Route::UploadRead,
+    server::Route::UploadComplete,
+    server::Route::UploadLoad,
+    server::Route::UploadDefine,
+    server::Route::ObservationsLoad,
 ];
 
 /// The route's path template with every `{parameter}` filled by `x`.
@@ -415,7 +436,7 @@ fn every_served_route_is_documented_or_named_as_undocumented() {
         "/v1/nothing",
         "/v1/access",
         "/v1/objects",
-        "/v1/objects/x/x/history",
+        "/v1/objects/x/x/audit",
     ] {
         let (status, body) = get(&demo, path, SCOPE, VIEWER);
         assert_eq!(

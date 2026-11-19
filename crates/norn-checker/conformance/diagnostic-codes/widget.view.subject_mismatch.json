@@ -1,0 +1,7 @@
+{
+  "code": "widget.view.subject_mismatch",
+  "message": "a page view's kind cannot present its subject: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

@@ -2522,6 +2522,7 @@ const fn change_name(change: WriteChange) -> &'static str {
 
 fn finding(code: &str, message: String, artifact: &ArtifactEnvelope, pointer: &str) -> Diagnostic {
     Diagnostic {
+        witness: None,
         code: DiagnosticCode::new(code),
         severity: DiagnosticSeverity::Error,
         message,

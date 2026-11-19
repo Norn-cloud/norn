@@ -1,0 +1,7 @@
+{
+  "code": "widget.machine.pending_abandoned",
+  "message": "a page machine leaves a pending state on an event that is not the call's outcome: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

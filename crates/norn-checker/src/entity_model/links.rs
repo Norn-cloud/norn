@@ -1003,6 +1003,50 @@ impl<'a> Checker<'a, '_> {
         let Some(position) = position else { return };
         let at = span_at(base, &["implements", position.to_string().as_str()]);
         let name = interface.name.as_str();
+        // LAW-LINK-MANY-1: an interface is a read contract, so an inverse role
+        // meets a link requirement: the role's sources must narrow the
+        // required target, and its view (`to` = the link's `from`, never
+        // required) the required cardinality.
+        if let Some(MemberKind::Inverse(decl)) = table.get(id).map(|member| member.kind) {
+            // A law reads a to-one requirement as one target, which an inverse
+            // role does not bind: only a to-many requirement takes one.
+            if requirement.cardinality.to != Multiplicity::Many {
+                self.out.push(error(
+                    codes::MISSING_INTERFACE_LINK,
+                    format!(
+                        "interface {name:?} requires link {id:?} to one target, but the type's member of that id is an inverse role; declare a forward link"
+                    ),
+                    at,
+                ));
+                return;
+            }
+            if self.target_narrows(decl.source, &requirement.target) == Some(false) {
+                self.out.push(error(
+                    codes::INTERFACE_LINK_TARGET_MISMATCH,
+                    format!(
+                        "inverse role {id:?} reads {:?}, which does not narrow {:?}, the target interface {name:?} requires",
+                        decl.source.as_str(),
+                        requirement.target.as_str()
+                    ),
+                    at.clone(),
+                ));
+            }
+            let view = LinkCardinality {
+                to: decl.link.cardinality.from,
+                from: decl.link.cardinality.to,
+                required: false,
+            };
+            if !cardinality_narrows(view, requirement.cardinality) {
+                self.out.push(error(
+                    codes::INTERFACE_LINK_WIDENS_CARDINALITY,
+                    format!(
+                        "inverse role {id:?} has a wider cardinality than interface {name:?} requires"
+                    ),
+                    at,
+                ));
+            }
+            return;
+        }
         let Some(MemberKind::Link(decl)) = table.get(id).map(|member| member.kind) else {
             let found = table.get(id).map_or_else(
                 || "the type neither declares nor inherits it".to_owned(),

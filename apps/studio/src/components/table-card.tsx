@@ -11,8 +11,10 @@ export function TableCard({ children, className }: { children: ReactNode; classN
     <div
       data-slot="table-card"
       className={cn(
-        "overflow-hidden rounded-sm border bg-card text-meta tabular-nums",
-        "[&_thead]:bg-surface-subtle [&_th]:h-10 [&_th]:text-meta [&_th]:font-medium [&_th]:text-muted-foreground [&_td]:h-11 [&_td]:py-2",
+        "overflow-hidden rounded-lg border bg-card text-meta tabular-nums",
+        // Directly in a panel the table is the panel's body: no second frame.
+        "[[data-slot=panel]>&]:mx-1.5 [[data-slot=panel]>&]:mb-1.5 [[data-slot=panel]>&]:rounded-lg [[data-slot=panel]>&]:border-0",
+        "[&_th]:h-8 [&_th]:border-b [&_th]:text-xs [&_th]:font-medium [&_th]:text-muted-foreground [&_td]:h-[2.375rem] [&_td]:py-1.5",
         className,
       )}
     >

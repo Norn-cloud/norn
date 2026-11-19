@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { useView } from "@/lib/view"
 import { cn } from "@/lib/utils"
 import { NO_DATA_CELL } from "../lib/definitions.ts"
+import { useLiveRefresh } from "../lib/live-reads.ts"
 import { getRun, newRunId, phaseOf, refreshEvery, runTitle, RUNS_UNAVAILABLE, startRun, stepTitle, type Phase, type Run, type RunStep, type StepStatus } from "../lib/runs.ts"
 
 const STATUS: Readonly<Record<StepStatus, { readonly icon: LucideIcon; readonly label: string; readonly tone: string }>> = {
@@ -64,19 +65,17 @@ export function RunPage() {
       if (result.kind === "ok") { etag.current = result.etag; last.current = result.value }
       return { result, at: Date.now() }
     },
-    refetchInterval: (query) => {
-      const run = query.state.data?.result.kind === "ok" ? query.state.data.result.value : last.current
-      return run === null ? false : refreshEvery(phaseOf(run))
-    },
     retry: false,
   })
   const result = read.data?.result
   // A 304 keeps the run already read.
   const run = result?.kind === "ok" ? result.value : result?.kind === "not-modified" ? last.current : null
+  // While the run works or waits, each commit that changes it is read once (UI-LIVE-1); an ended run is not watched.
+  useLiveRefresh(run !== null && refreshEvery(phaseOf(run)) !== false ? `/v1/runs/${encodeURIComponent(id)}` : null, ["run", id])
 
-  if (read.isPending) return <div className="mx-auto grid max-w-3xl gap-3" aria-label="Reading the run"><Skeleton className="h-8 w-64" />{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-14 rounded-node" />)}</div>
+  if (read.isPending) return <div className="grid max-w-4xl gap-3" aria-label="Reading the run"><Skeleton className="h-8 w-64" />{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-14 rounded-node" />)}</div>
   if (read.isError) return (
-    <div role="alert" className="mx-auto flex max-w-3xl flex-wrap items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+    <div role="alert" className="flex max-w-4xl flex-wrap items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
       <span>{read.error instanceof Error ? read.error.message : "The run could not be read."}</span><span className="flex-1" />
       <Button variant="outline" size="sm" onClick={() => void read.refetch()}>Retry</Button>
     </div>
@@ -90,10 +89,10 @@ export function RunPage() {
   const live = refreshEvery(phase) !== false
   const flowId = run.flow.ruleId.replace(/\.flow\.rule$/, "")
   return (
-    <div className="mx-auto grid max-w-3xl gap-4">
+    <div className="grid max-w-4xl gap-4">
       <header className="grid gap-2">
         <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-xl font-medium">{runTitle(run)}</h1>
+          <h1 className="text-title font-semibold tracking-tight">{runTitle(run)}</h1>
           <span className={cn("rounded-md px-2 py-0.5 text-xs", phase === "failed" ? "bg-destructive/10 text-destructive" : phase === "succeeded" ? "bg-[color-mix(in_oklab,var(--tint-outcome)_14%,transparent)] text-[color-mix(in_oklab,var(--tint-outcome)_80%,var(--foreground))]" : "bg-muted text-foreground")}>{PHASE[phase]}</span>
           {live && <span className="inline-flex items-center gap-1 text-meta text-muted-foreground" aria-live="polite"><Radio className="size-3 animate-pulse" aria-hidden />Live</span>}
           <span className="flex-1" />

@@ -1,3 +1,4 @@
 .alchemy/
 src/checker/
+src/engine/
 wrangler.json

@@ -222,7 +222,7 @@ impl EffectiveObjectType {
                 .properties
                 .iter()
                 .filter_map(|property| match &property.property_type {
-                    PropertyType::Ref { name } => Some(name.clone()),
+                    PropertyType::Ref { name, .. } => Some(name.clone()),
                     PropertyType::Text { .. }
                     | PropertyType::Integer { .. }
                     | PropertyType::Decimal { .. }
@@ -1239,9 +1239,18 @@ impl EffectiveProperty {
     }
 }
 
+/// METRIC-ADDITIVITY-REF-1: a `ref`'s use-site additivity is part of the
+/// effective kind, so every aggregation reader sees it as an inline one.
 fn resolved_kind(resolved: &crate::property_types::ResolvedType<'_>) -> EffectiveKind {
     match resolved.resolution {
-        TypeResolution::Base(base) => EffectiveKind::Base(base.clone()),
+        TypeResolution::Base(base) => EffectiveKind::Base(
+            crate::property_types::with_contract(
+                base,
+                resolved.additivity(),
+                resolved.unit_source(),
+            )
+            .into_owned(),
+        ),
         TypeResolution::Registry => resolved
             .names
             .last()
@@ -1958,6 +1967,12 @@ impl EffectiveCatalog {
             }
         }
         Some(target_types)
+    }
+
+    /// The artifact that declares the object type named `object_type`.
+    #[must_use]
+    pub fn artifact_of(&self, object_type: &str) -> Option<&str> {
+        self.by_name.get(object_type).map(String::as_str)
     }
 
     /// The effective forward links of an object type, including inherited
