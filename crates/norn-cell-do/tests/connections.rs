@@ -1810,17 +1810,20 @@ fn only_the_starting_session_completes_and_a_mismatch_spends_nothing() {
     let (state, key) = driver.start(1_000);
     assert_eq!(driver.callback(&state, "the-code", 1_100).status, 200);
 
-    for (connection, bearer, presented) in [
+    for (case, (connection, bearer, presented)) in [
         ("acme.main", "owner-token-2", "a-guessed-key"),
         ("acme.main", "owner-token", "a-guessed-key"),
         ("acme.other", "owner-token", key.as_str()),
         ("acme.other", "owner-token-2", key.as_str()),
-    ] {
+    ]
+    .into_iter()
+    .enumerate()
+    {
         let refused = driver.complete(connection, bearer, &state, presented, 1_200);
         assert_eq!(
             (refused.status, &json_of(&refused)["code"]),
             (400, &serde_json::json!("connection.oauth_state")),
-            "{connection} {bearer}"
+            "case {case}"
         );
     }
     let missing_key = driver.call(
@@ -1946,7 +1949,11 @@ fn oauth_calls_go_only_to_https_even_to_a_listed_host() {
         Some(("credential.provider_revoke", Some("egress_forbidden")))
     );
     let seen = server.seen();
-    assert_eq!(seen.len(), 1, "only the ping: {seen:?}");
+    assert_eq!(
+        seen.len(),
+        1,
+        "an OAuth call reached the plain-http endpoint"
+    );
     assert!(seen.iter().all(|s| !s.body.contains("token")));
 }
 
@@ -2086,15 +2093,23 @@ fn debug_output_carries_no_secret() {
     );
     assert!(
         printed.contains("/v1/connections/oauth:callback"),
-        "{printed}"
+        "the path is not printed"
     );
-    for secret in ["STATE-SECRET", "CODE-SECRET", "TOKEN-SECRET", "BODY-SECRET"] {
-        assert!(!printed.contains(secret), "{secret} printed: {printed}");
+    for (label, secret) in [
+        ("state", "STATE-SECRET"),
+        ("code", "CODE-SECRET"),
+        ("authorization", "TOKEN-SECRET"),
+        ("body", "BODY-SECRET"),
+    ] {
+        assert!(!printed.contains(secret), "the {label} is printed");
     }
     let vars = norn_cell_do::connections::SecretVars(BTreeMap::from([(
         "NORN_OAUTH_ACME_CLIENT_SECRET".to_owned(),
         "VAR-SECRET".to_owned(),
     )]));
     let printed = format!("{vars:?}");
-    assert!(printed.contains("NORN_OAUTH_ACME_CLIENT_SECRET") && !printed.contains("VAR-SECRET"));
+    assert!(
+        printed.contains("NORN_OAUTH_ACME_CLIENT_SECRET") && !printed.contains("VAR-SECRET"),
+        "a variable value is printed"
+    );
 }
