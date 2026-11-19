@@ -581,13 +581,19 @@ fn a_link_law_change_is_checked_against_the_stored_documents() {
         assert_eq!(diagnostic["code"], "defs.live_data_violation", "{held}");
         assert_eq!(diagnostic["severity"], "error", "{held}");
     }
-    // Every booked document breaks the stricter ledger law, read through
-    // its stored journal-entry link.
-    let ledger = diagnostics
+    // The booked document the cell admits (SCAN-INV-1041) breaks the
+    // stricter ledger law, read through its stored journal-entry link. The
+    // held-back invoices are not admitted data: their findings already
+    // refuse them, so they are not evaluated again.
+    let ledger: Vec<&Value> = diagnostics
         .iter()
         .filter(|diagnostic| diagnostic["law"] == LEDGER)
-        .count();
-    assert!(ledger >= 2, "{held}");
+        .collect();
+    assert_eq!(ledger.len(), 1, "{held}");
+    assert_eq!(
+        ledger[0]["span"]["pointer"], "/objects/docs.ScannedDocument/SCAN-INV-1041",
+        "{held}"
+    );
 
     // A ledger law every booked document keeps is evaluated on each of them
     // through the link: no finding names it, and none is left unchecked.
@@ -643,8 +649,8 @@ fn plan(cell: &mut Cell, artifacts: &[Value]) -> (u16, Value) {
 /// HOST-INSTALL-LIVE-1: a law is checked on the migration candidate's view.
 /// The candidate gives every ledger entry a `posted_state` of `draft` (a
 /// default the migration materializes) and a ledger law refusing drafts:
-/// every booked document breaks it through its link, though the stored
-/// entries hold no `posted_state` yet.
+/// the admitted booked document breaks it through its link, though the
+/// stored entries hold no `posted_state` yet.
 #[test]
 fn a_law_reads_the_default_the_migration_gives_a_linked_target() {
     let directory = tempfile::tempdir().unwrap();
@@ -658,15 +664,21 @@ fn a_law_reads_the_default_the_migration_gives_a_linked_target() {
     );
     assert_eq!(status, 409, "{held}");
     assert_eq!(held["code"], "defs.live_data_refused", "{held}");
-    let drafts = held["diagnostics"]
+    // The admitted booked document reads a draft through its link (the
+    // held-back invoices are not evaluated again).
+    let drafts: Vec<&Value> = held["diagnostics"]
         .as_array()
         .unwrap()
         .iter()
         .filter(|diagnostic| {
             diagnostic["law"] == LEDGER && diagnostic["code"] == "defs.live_data_violation"
         })
-        .count();
-    assert!(drafts >= 2, "every booked document reads a draft: {held}");
+        .collect();
+    assert_eq!(drafts.len(), 1, "{held}");
+    assert_eq!(
+        drafts[0]["span"]["pointer"], "/objects/docs.ScannedDocument/SCAN-INV-1041",
+        "{held}"
+    );
 }
 
 /// HOST-INSTALL-LIVE-1: subjects are selected by their effective law
@@ -682,7 +694,7 @@ fn a_change_confined_to_a_linked_type_rechecks_its_subjects() {
     assert_eq!(status, 200, "{planned}");
     // The ledger entries have no laws; only their linked subjects count.
     assert!(
-        planned["checkedObjects"].as_u64().unwrap() >= 2,
+        planned["checkedObjects"].as_u64().unwrap() >= 1,
         "the linked documents were evaluated: {planned}"
     );
 }
