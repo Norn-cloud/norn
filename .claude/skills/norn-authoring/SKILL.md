@@ -44,7 +44,7 @@ Hard rules in both syntaxes:
 
 ## Semantics to get right
 
-1. State the invariant, its subject type, units and atomic cell boundary before choosing syntax. Reuse `registry/core` interfaces (`core.Agent`, `core.Resource`, `core.EconomicEvent`, `core.LedgerEffect`, `core.Claim`, `core.Commitment`, `core.Hold`); `physics.ts` is renamed `rea.ts` in a separate unit.
+1. State the invariant, its subject type, units and atomic cell boundary before choosing syntax. Reuse `registry/core` interfaces (`core.Agent`, `core.Resource`, `core.EconomicEvent`, `core.LedgerEffect`, `core.Claim`, `core.Commitment`, `core.Hold`) (`registry/core/src/rea.ts`).
 2. Things vs happenings: catalog Item vs Holding/lot; a Claim is never a Commitment. Posted happenings are immutable; a correction is a new linked reversal.
 3. Every policy that needs approval or evidence needs an executable path (an event with `by`). Every machine needs terminal paths and named refusals.
 4. Enumerate all writers: actions, imports, timers, flow results, triggered rules. All synchronous balancing effects commit together; a later trigger never finishes today's balance.
@@ -60,7 +60,7 @@ From `tools/norn-ts` (heavy runs go to Boat, per repo rules):
 
 1. `bun src/cli.ts profile <file.ts>`: profile recognition (not admission).
 2. `bun src/cli.ts check <pack-dir|file.ts> --org ID --env ID` with `NORN_CHECKER_WASM_PKG` built as the SDK README says: the authoritative Rust checker.
-3. When you changed a registry source, regenerate through the registry path, not `compile`: `compile` emits one scoped draft array, while checked-in `registry/*/artifacts/*.json` are separate files with system envelopes, so a direct diff reports changes even when the definition is unchanged. `NORN_PACKS_UPDATE=1 bun test test/registry-packs.test.ts` regenerates packs; core artifacts are written per `test/core-physics.test.ts`. Generated artifacts change only when meaning changed.
+3. When you changed a registry source, regenerate through the registry path, not `compile`: `compile` emits one scoped draft array, while checked-in `registry/*/artifacts/*.json` are separate files with system envelopes, so a direct diff reports changes even when the definition is unchanged. `NORN_PACKS_UPDATE=1 bun test test/registry-packs.test.ts` regenerates packs; core artifacts are written per `test/core-rea.test.ts`. Generated artifacts change only when meaning changed.
 4. `bun run typecheck` and `bun test` for any SDK change; `bash scripts/ci/core.sh cheap` from the repo root.
 5. For changed semantics add named positive and refusal scenarios (no partial writes, replay/idempotency, the relevant races). For a new law on a type with live data, record what `norn plan` would report (spec §9); until `plan` evaluates laws, say so.
 

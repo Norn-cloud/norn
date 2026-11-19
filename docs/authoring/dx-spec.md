@@ -24,7 +24,7 @@ The same pattern runs through the registry:
 
 | Source | Plumbing written by hand |
 |---|---|
-| [`registry/core/src/physics.ts`](../../registry/core/src/physics.ts) | `cardinality: { to, from, required }` on every link; string targets (`"core.EconomicEvent"`) for self-references |
+| [`registry/core/src/rea.ts`](../../registry/core/src/rea.ts) | `cardinality: { to, from, required }` on every link; string targets (`"core.EconomicEvent"`) for self-references |
 | [`registry/core/src/commerce.ts`](../../registry/core/src/commerce.ts) | Lifecycle as `{ id, from: [...], to }` triples: states are strings, so a typo in `from` is a checker error, not an editor error |
 | [`registry/core/src/restatement.ts`](../../registry/core/src/restatement.ts) | Three artifacts to say "a reviewer may approve": `Norn.action` (`effect.kind: "fire_transition"`), `Norn.access` (role rule) and the lifecycle transition, cross-linked by id |
 | [`registry/packs/erpnext/records.ts`](../../registry/packs/erpnext/records.ts) | Mapping transforms as ZEN strings (`"'erpnext/demo/Item/' + input.name"`); a source schema `sha256` pinned by hand |
@@ -567,7 +567,7 @@ plan blocked: 1 new law violated by live data (cli.plan.law_violated_live)
 
 ## 7. Worked example: an accounting pack
 
-The code below is PROPOSED syntax. The table after it says which part of each check runs on `main` today. `@norn/core` is `registry/core/src/physics.ts` (renamed `rea.ts` in a separate unit; see §11).
+The code below is PROPOSED syntax. The table after it says which part of each check runs on `main` today. `@norn/core` is `registry/core/src/rea.ts`.
 
 ```mermaid
 classDiagram
@@ -622,7 +622,7 @@ classDiagram
 ```ts
 // registry/packs/accounting/accounting.ts
 import { pack, thing, happening, link, law, role, final, sum, id, text, oneOf, money, currency, date, timestamp, value } from "@norn/authoring/v2"
-import * as core from "@norn/core"   // registry/core/src (physics.ts today)
+import * as core from "@norn/core"   // registry/core/src/rea.ts
 
 export const Accountant = role("Accountant")
 export const Controller = role("Controller")
@@ -870,7 +870,7 @@ Inputs, in order (each is one PR, smallest blast radius first):
 |---|---|---|
 | 1 | `scripts/demo/constitution.source.ts`, `scripts/demo/jewelry.source.ts` | Smallest; the constitution law has the only generated model-checked result, so its profile must stay green |
 | 2 | `registry/core/src/observations.ts`, `restatement.ts`, `commerce.ts` | `restatement.ts` exercises machine + action + access folding into one `machine` |
-| 3 | `registry/core/src/physics.ts` | After the separate rename to `rea.ts` lands (do not combine the rename with the codemod) |
+| 3 | `registry/core/src/rea.ts` | The rename to `rea.ts` has landed; this step is the codemod only |
 | 4 | `registry/packs/canon/*.ts` | |
 | 5 | `registry/packs/{erpnext,odoo,shopify}/*.ts`, `registry/packs/live/records.ts` | `connector(...).map` + generated system-pack terms; hand-written correspondences kept |
 | 6 | `registry/packs/demo-commerce/*.ts`, `registry/packs/demo-erpnext/*.ts` | |

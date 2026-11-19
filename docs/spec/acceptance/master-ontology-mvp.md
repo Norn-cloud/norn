@@ -65,7 +65,7 @@ MVP-CONSTITUTION or thesis T4-C2.
 
 ## What exists and what done means
 
-At the [core baseline](../core/README.md), `registry/core/src/{physics,commerce}.ts` and generated interfaces/value types exist; `registry/packs/{canon,erpnext,shopify,odoo}/` contains declared pack/link artifacts. This does not prove retained law transport, live connectors, core-law runtime enforcement or application parity. #227 is open inventory alignment; #69/#71/#97/#103 are open analytical prerequisites.
+At the [core baseline](../core/README.md), `registry/core/src/{rea,commerce}.ts` and generated interfaces/value types exist; `registry/packs/{canon,erpnext,shopify,odoo}/` contains declared pack/link artifacts. This does not prove retained law transport, live connectors, core-law runtime enforcement or application parity. #227 is open inventory alignment; #69/#71/#97/#103 are open analytical prerequisites.
 
 Done requires every row above admitted with named laws and complete writer closure; every mapping required-member/unit/role case tested; all [core completeness](completeness-gate.md) and [six demo beats](jewelry-demo.md) passing without skips; explicit declared gaps; exact release/parameter/evidence pins; no new app opcode; and the repo's required CI/review gates on the accepted heads. Runtime/model/proof/parity statuses stay independent. Unknown unsupported safety, unresolved mandatory mappings or incomplete authoritative reads block the corresponding capability.
 
