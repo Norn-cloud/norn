@@ -52,13 +52,24 @@ use norn_api::authz::{ReadCapability, ReadRequest};
 use crate::policy::{CallerSlot, CellObjectAccess, DEMO_GRANTS, READ_POLICY_ID, collection_access};
 use crate::principal::{PrincipalResolver, RequestScope};
 
-/// One finite HTTP response: a status and a JSON body.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// One finite HTTP response: a status and a JSON body. Its `Debug` shows
+/// the status and the body's length only (RESPONSE-DEBUG-1): a body can
+/// carry a secret meant for its one caller (`oauth:start`'s completion key).
+#[derive(Clone, PartialEq, Eq)]
 pub struct Response {
     /// HTTP status.
     pub status: u16,
     /// UTF-8 JSON body: the route's document or a shared [`Refusal`].
     pub body: String,
+}
+
+impl std::fmt::Debug for Response {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Response")
+            .field("status", &self.status)
+            .field("body_bytes", &self.body.len())
+            .finish()
+    }
 }
 
 /// Longest accepted query string, in bytes.
@@ -68,8 +79,10 @@ pub const MAX_QUERY_BYTES: usize = 2048;
 /// each `in` up to fifty values, percent-encoded.
 pub const MAX_OBJECT_QUERY_BYTES: usize = 8192;
 
-/// One finite HTTP request as the transport delivers it.
-#[derive(Debug, Clone, Copy)]
+/// One finite HTTP request as the transport delivers it. Its `Debug` shows
+/// only the method and path (REQUEST-DEBUG-1): a query (an OAuth callback's
+/// code), the `Authorization` header and a body (credentials) never print.
+#[derive(Clone, Copy)]
 pub struct Request<'a> {
     /// HTTP method.
     pub method: &'a str,
@@ -83,6 +96,19 @@ pub struct Request<'a> {
     pub now: u64,
     /// The request body (`POST` routes), empty when there is none.
     pub body: &'a str,
+}
+
+impl std::fmt::Debug for Request<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Request")
+            .field("method", &self.method)
+            .field("path", &self.path)
+            .field("query", &"[redacted]")
+            .field("authorization", &self.authorization.map(|_| "[redacted]"))
+            .field("now", &self.now)
+            .field("body_bytes", &self.body.len())
+            .finish()
+    }
 }
 
 /// Declares [`Route`], [`Route::ALL`] and [`Route::signature`] from one list,

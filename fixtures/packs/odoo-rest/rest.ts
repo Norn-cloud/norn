@@ -1,5 +1,5 @@
 import { Norn } from "@norn/authoring"
-import { Agent, AgentRole, Resource, Commitment } from "../../../registry/core/src/physics.ts"
+import { Agent, AgentRole, Resource, Commitment } from "../../../registry/core/src/rea.ts"
 import { Catalog, Item, Party, PartyRole, Holding, OrderLine, ISO_4217_CODE_SET } from "../../../registry/packs/canon/records.ts"
 
 // Test fixture (#921): an Odoo database's rows, read

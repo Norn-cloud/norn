@@ -24,7 +24,7 @@ test("STRESS-PURCHASE compiles the complete workflow and immutable inspection", 
     const derive = '  derive: [{ field: "rejected", inputRequired: false,\n    expression: Norn.expression(LineInput, x => x.delivered - x.accepted) }],\n'
     expect(source.split(derive).length).toBe(2)
     const mutant = join(dir, "purchase.ts")
-    writeFileSync(mutant, source.replace(derive, "").replace('"../../registry/core/src/physics"', JSON.stringify(relative(dir, join(root, "registry/core/src/physics")).split(sep).join("/"))))
+    writeFileSync(mutant, source.replace(derive, "").replace('"../../registry/core/src/rea"', JSON.stringify(relative(dir, join(root, "registry/core/src/rea")).split(sep).join("/"))))
     const compiled = compileDefinitions(mutant, { scope: { orgId: "org_demo", environmentId: "dev" }, sourcePath })
     if (!compiled.ok) throw new Error(JSON.stringify(compiled.diagnostics))
     const mutantPath = join(root, "fixtures/stress/purchase-mutant.json")

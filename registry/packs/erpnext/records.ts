@@ -1,5 +1,5 @@
 import { Norn } from "@norn/authoring"
-import { Agent, AgentRole, Resource, Commitment, EconomicEvent, LedgerEffect } from "../../core/src/physics.ts"
+import { Agent, AgentRole, Resource, Commitment, EconomicEvent, LedgerEffect } from "../../core/src/rea.ts"
 import { Catalog, Item, Party, PartyRole, Holding, OrderLine, Delivery, Posting, Settlement, SettlementObservation, ISO_4217_CODE_SET } from "../canon/records.ts"
 
 export const Source = Norn.sourceSchema({

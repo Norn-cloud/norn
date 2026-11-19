@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import { cn } from "@/lib/utils"
+import { useLayer } from "@/components/ui/dialog"
 import { Tooltip as TooltipPrimitive } from "radix-ui"
 
 function TooltipProvider({
@@ -36,7 +37,7 @@ function TooltipContent({
   ...props
 }: React.ComponentProps<typeof TooltipPrimitive.Content>) {
   return (
-    <TooltipPrimitive.Portal>
+    <TooltipPrimitive.Portal container={useLayer()}>
       <TooltipPrimitive.Content
         data-slot="tooltip-content"
         sideOffset={sideOffset}
