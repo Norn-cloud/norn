@@ -259,13 +259,14 @@ impl Drop for LocalKeyring {
     }
 }
 
-fn decode_key(variable: &str, value: &str) -> Result<[u8; KEY_BYTES], VaultError> {
+fn decode_key(variable: &str, value: &str) -> Result<Zeroizing<[u8; KEY_BYTES]>, VaultError> {
     let bytes = Zeroizing::new(
         base64::engine::general_purpose::STANDARD
             .decode(value.trim())
             .map_err(|_error| VaultError::Config(format!("{variable} is not standard base64")))?,
     );
     <[u8; KEY_BYTES]>::try_from(bytes.as_slice())
+        .map(Zeroizing::new)
         .map_err(|_error| VaultError::Config(format!("{variable} is not {KEY_BYTES} bytes")))
 }
 
@@ -278,10 +279,18 @@ impl LocalKeyring {
     /// key's bytes under any id (VAULT-DEV-KEY-1).
     pub fn new(current: &str, keys: BTreeMap<String, [u8; KEY_BYTES]>) -> Result<Self, VaultError> {
         // Built first, so every key is wiped however this returns.
-        let ring = Self {
+        Self {
             current: current.to_owned(),
             keys,
-        };
+        }
+        .checked()
+    }
+
+    /// The checks of [`Self::new`]; the ring (and so every key) is dropped
+    /// and wiped when one fails.
+    fn checked(self) -> Result<Self, VaultError> {
+        let ring = self;
+        let current = ring.current.as_str();
         if let Some((id, _)) = ring.keys.iter().find(|(_, key)| *key == DEV_KEY) {
             return Err(VaultError::Config(format!(
                 "key id {id} holds the public development key"
@@ -341,7 +350,14 @@ impl LocalKeyring {
             .get(KEK_ID_VAR)
             .map(|id| id.trim().to_owned())
             .ok_or_else(|| VaultError::Config(format!("{KEK_VAR} is set without {KEK_ID_VAR}")))?;
-        let mut keys = BTreeMap::from([(current.clone(), decode_key(KEK_VAR, value)?)]);
+        // VAULT-WIPE-1: every decoded key lives in a ring from the moment it
+        // is decoded, so a malformed later entry still wipes them all.
+        let mut ring = Self {
+            current: current.clone(),
+            keys: BTreeMap::new(),
+        };
+        ring.keys
+            .insert(current.clone(), *decode_key(KEK_VAR, value)?);
         for entry in vars
             .get(KEKS_PREVIOUS_VAR)
             .map(String::as_str)
@@ -353,16 +369,17 @@ impl LocalKeyring {
             let (id, key) = entry.split_once('=').ok_or_else(|| {
                 VaultError::Config(format!("{KEKS_PREVIOUS_VAR} entries are id=base64"))
             })?;
-            if keys
-                .insert(id.trim().to_owned(), decode_key(KEKS_PREVIOUS_VAR, key)?)
-                .is_some()
+            if let Some(mut repeated) = ring
+                .keys
+                .insert(id.trim().to_owned(), *decode_key(KEKS_PREVIOUS_VAR, key)?)
             {
+                repeated.zeroize();
                 return Err(VaultError::Config(format!(
                     "{KEKS_PREVIOUS_VAR} repeats key id {id}"
                 )));
             }
         }
-        Self::new(&current, keys).map(Some)
+        ring.checked().map(Some)
     }
 
     /// The ids this keyring unwraps with.

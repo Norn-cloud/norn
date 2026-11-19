@@ -19,6 +19,16 @@
 //! http, whatever the allowlist says. [`Egress::send_direct`] follows none:
 //! OAuth token exchange, refresh and revocation carry client secrets, codes,
 //! verifiers and tokens in their bodies and use it.
+//! EGRESS-OAUTH-HTTPS-1: [`Egress::send_direct`] sends only to https,
+//! whatever the allowlist says, so a client secret, code, verifier or token
+//! never crosses a network in clear text; the one exception is a loopback
+//! address literal (`127.0.0.0/8`, `::1`) the operator lists, which never
+//! leaves the host.
+//! EGRESS-DNS-BOUND-1: a lookup runs on its own thread so a hung resolver
+//! costs a call only [`Timeouts::resolve`]; at most [`MAX_LOOKUPS`] such
+//! threads are outstanding per client, and a lookup that would start
+//! another is refused at once (`Transport("resolver_busy")`), so timed-out
+//! lookups can't pile up threads.
 //! EGRESS-PROXY-1: no proxy. `NORN_EGRESS_PROXY` is refused at startup
 //! ([`refuse_proxy`]) until a CONNECT to the checked address, keeping the TLS
 //! name and `Host`, exists; ambient `HTTP(S)_PROXY` variables are ignored.
@@ -36,6 +46,7 @@ use std::fmt;
 use std::io;
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs as _};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use http::header::{HeaderName, LOCATION, RETRY_AFTER};
@@ -53,6 +64,8 @@ pub const MAX_REDIRECTS: usize = 10;
 pub const MAX_ATTEMPTS: u32 = 3;
 /// Largest response body read, in bytes.
 pub const MAX_BODY_BYTES: u64 = 2 * 1024 * 1024;
+/// Most lookup threads outstanding per client (EGRESS-DNS-BOUND-1).
+pub const MAX_LOOKUPS: usize = 16;
 
 /// Headers a redirect that changes origin keeps; every other header (any
 /// credential, whatever its name) is dropped. From `OpenConnector` v1.9.4
@@ -243,6 +256,28 @@ struct PinnedResolver {
     lookup: Arc<dyn Lookup>,
     policy: Arc<Policy>,
     resolve: Duration,
+    /// Lookup threads still running (EGRESS-DNS-BOUND-1).
+    outstanding: Arc<AtomicUsize>,
+}
+
+/// One outstanding lookup thread, released when the thread ends.
+struct LookupSlot(Arc<AtomicUsize>);
+
+impl LookupSlot {
+    fn take(outstanding: &Arc<AtomicUsize>) -> Option<Self> {
+        outstanding
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |held| {
+                (held < MAX_LOOKUPS).then(|| held.saturating_add(1))
+            })
+            .ok()
+            .map(|_| Self(Arc::clone(outstanding)))
+    }
+}
+
+impl Drop for LookupSlot {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
 }
 
 fn host_port(uri: &http::Uri) -> Option<(String, u16)> {
@@ -261,27 +296,39 @@ fn refused(error: EgressError) -> ureq::Error {
 
 impl PinnedResolver {
     /// `lookup` on its own thread, waited for at most `bound`: a resolver
-    /// that hangs costs the caller `bound`, never more.
-    fn bounded_lookup(&self, host: &str, port: u16, bound: Duration) -> Option<Vec<IpAddr>> {
+    /// that hangs costs the caller `bound`, never more; at most
+    /// [`MAX_LOOKUPS`] threads are outstanding (EGRESS-DNS-BOUND-1).
+    fn bounded_lookup(
+        &self,
+        host: &str,
+        port: u16,
+        bound: Duration,
+    ) -> Result<Vec<IpAddr>, EgressError> {
+        let unresolved = || EgressError::Unresolved(host.to_owned());
+        let slot =
+            LookupSlot::take(&self.outstanding).ok_or(EgressError::Transport("resolver_busy"))?;
         let (send, receive) = std::sync::mpsc::sync_channel(1);
         let lookup = Arc::clone(&self.lookup);
         let name = host.to_owned();
         std::thread::Builder::new()
             .name("norn-egress-dns".to_owned())
             .spawn(move || {
+                let _slot = slot;
                 // The receiver may have given up; nothing to tell it then.
                 let _late = send.send(lookup.lookup(&name, port));
             })
-            .ok()?;
-        receive.recv_timeout(bound).ok()?.ok()
+            .map_err(|_spawn| EgressError::Transport("resolver_busy"))?;
+        receive
+            .recv_timeout(bound)
+            .ok()
+            .and_then(Result::ok)
+            .ok_or_else(unresolved)
     }
 
     fn checked(&self, host: &str, port: u16, bound: Duration) -> Result<Vec<IpAddr>, EgressError> {
         let addresses = match host.parse::<IpAddr>() {
             Ok(ip) => vec![ip],
-            Err(_) => self
-                .bounded_lookup(host, port, bound.min(self.resolve))
-                .ok_or_else(|| EgressError::Unresolved(host.to_owned()))?,
+            Err(_) => self.bounded_lookup(host, port, bound.min(self.resolve))?,
         };
         if addresses.is_empty() {
             return Err(EgressError::Unresolved(host.to_owned()));
@@ -434,6 +481,7 @@ impl Egress {
             lookup,
             policy,
             resolve: timeouts.resolve,
+            outstanding: Arc::new(AtomicUsize::new(0)),
         });
         let agent = ureq::Agent::with_parts(
             config,
@@ -465,13 +513,32 @@ impl Egress {
         self.run(request, Follow::Redirects)
     }
 
+    /// Lookup threads still running (EGRESS-DNS-BOUND-1).
+    #[must_use]
+    pub fn outstanding_lookups(&self) -> usize {
+        self.resolver.outstanding.load(Ordering::Acquire)
+    }
+
     /// Send `request` once per attempt and follow no redirect: a 3xx answer
     /// is refused, nothing is sent to its `Location` (EGRESS-REDIRECT-1).
+    /// Only to https, or a listed loopback literal (EGRESS-OAUTH-HTTPS-1).
     /// For OAuth token exchange, refresh and revocation.
     ///
     /// # Errors
-    /// [`EgressError`]; [`EgressError::Redirect`] for any 3xx.
+    /// [`EgressError`]; [`EgressError::Redirect`] for any 3xx;
+    /// [`EgressError::Forbidden`] for plain http to anything but loopback.
     pub fn send_direct(&self, request: Request<Vec<u8>>) -> Result<EgressResponse, EgressError> {
+        let uri = request.uri();
+        let loopback = uri
+            .host()
+            .map(|host| host.trim_start_matches('[').trim_end_matches(']'))
+            .and_then(|host| host.parse::<IpAddr>().ok())
+            .is_some_and(|ip| ip.is_loopback());
+        if uri.scheme_str() != Some("https") && !loopback {
+            return Err(EgressError::Forbidden(
+                "an OAuth call goes only to https".to_owned(),
+            ));
+        }
         self.run(request, Follow::None)
     }
 

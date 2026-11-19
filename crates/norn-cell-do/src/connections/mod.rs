@@ -15,29 +15,38 @@
 //! other):
 //! - `GET /v1/connections/{id}/credentials`: [`service::Status`] only.
 //! - `PUT /v1/connections/{id}/credentials`: [`service::SetCredentials`].
-//! - `DELETE /v1/connections/{id}/credentials`: disconnect and revoke.
+//! - `DELETE /v1/connections/{id}/credentials`: disconnect, locally only;
+//!   `?revokeGrant=true` also revokes the grant at the provider, which can
+//!   end sibling connections on that grant (GRANT-REVOKE-1).
 //! - `POST /v1/connections/{id}/oauth:start`: `{provider, scopes?, params?}`
-//!   → `{authorizeUrl, expiresAtMs}`.
+//!   → `{authorizeUrl, expiresAtMs, completionKey}`.
 //! - `GET /v1/connections/oauth:callback?state=…&code=…`: the provider's
 //!   browser redirect. It carries no credential, so it only parks the code
 //!   (OAUTH-HANDOFF-1).
-//! - `POST /v1/connections/{id}/oauth:complete`: `{state}`, by the principal
-//!   who started, with its own credential → status.
+//! - `POST /v1/connections/{id}/oauth:complete`: `{state, completionKey}`,
+//!   by the principal who started, with its own credential → status.
 //!
 //! CONN-AUTHZ-1: every route but the callback is decided as
 //! `Operation::ManageConnection(id)` by the cell's policy before the vault
 //! is opened or a body is read; a denied caller gets exactly what a scope
 //! with no cell answers. The callback opens no vault and reads no row.
 //! OAUTH-HANDOFF-1: a provider's redirect reaches the callback from the
-//! person's browser without the platform credential. The callback checks
-//! only the shape of `state` and `code` and parks the code in host memory,
-//! keyed by the state's digest, for at most [`service::STATE_TTL_MS`]; the
-//! first code for a state wins and at most [`MAX_PARKED`] wait. Nothing is
-//! exchanged or stored until the principal who started calls
-//! `oauth:complete` with its own credential; the state is then consumed in
-//! the transaction that checks that principal, the connection, the expiry
-//! and the generation (OAUTH-STATE-1). The client polls `oauth:complete`
-//! while it answers `connection.oauth_pending`.
+//! person's browser without the platform credential. An authorized
+//! `oauth:start` reserves its state in host memory (keyed by the state's
+//! digest, bound to the principal, the connection and the completion key's
+//! digest) until [`service::STATE_TTL_MS`] passes. The callback parks a code
+//! only for a live reservation: an unknown or expired state is refused and
+//! nothing is stored, so callbacks can't fill the store. At most
+//! [`MAX_PARKED`] reservations live, at most [`MAX_PER_PRINCIPAL`] per
+//! principal (a principal's oldest is dropped for its next), and expired
+//! ones are dropped on every connection request. The first code for a state
+//! wins. Nothing is exchanged or stored until the principal who started
+//! calls `oauth:complete` with its own credential and the completion key
+//! (OAUTH-SESSION-1); a caller whose binding doesn't match spends nothing.
+//! The state is then consumed in the transaction that checks that
+//! principal, the connection, the key, the expiry and the generation
+//! (OAUTH-STATE-1). The client polls `oauth:complete` while it answers
+//! `connection.oauth_pending`.
 //! CONN-CONFIG-1: provider OAuth clients are host configuration
 //! (`NORN_OAUTH_<PROVIDER>_CLIENT_ID` / `_CLIENT_SECRET`, the provider id
 //! upper-cased with `.` as `_`), and so is the callback URL
@@ -74,8 +83,12 @@ pub const REDIRECT_URL_VAR: &str = "NORN_OAUTH_REDIRECT_URL";
 pub const CALLBACK_PATH: &str = "/v1/connections/oauth:callback";
 /// Every OAuth client variable starts with this.
 pub const OAUTH_VAR_PREFIX: &str = "NORN_OAUTH_";
-/// Most provider codes parked at once (OAUTH-HANDOFF-1).
+/// Most authorizations reserved (and codes parked) at once
+/// (OAUTH-HANDOFF-1).
 pub const MAX_PARKED: usize = 256;
+/// Most authorizations one principal has reserved at once
+/// (OAUTH-HANDOFF-1).
+pub const MAX_PER_PRINCIPAL: usize = 8;
 
 /// The variable naming `provider`'s OAuth client id or secret (`suffix`).
 #[must_use]
@@ -91,6 +104,27 @@ pub fn client_var(provider: &str, suffix: &str) -> String {
 #[must_use]
 pub fn secret_var(name: &str) -> bool {
     name.starts_with(vault::VAR_PREFIX) || name.starts_with(OAUTH_VAR_PREFIX)
+}
+
+/// Host variables as read at startup, every value wiped when dropped
+/// (CONN-SECRET-ENV-1): the KEKs and client secrets among them never outlive
+/// [`Config::from_env`] in this copy.
+pub struct SecretVars(pub BTreeMap<String, String>);
+
+impl Drop for SecretVars {
+    fn drop(&mut self) {
+        for value in self.0.values_mut() {
+            zeroize::Zeroize::zeroize(value);
+        }
+    }
+}
+
+impl std::fmt::Debug for SecretVars {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SecretVars")
+            .field("names", &self.0.keys().collect::<Vec<_>>())
+            .finish_non_exhaustive()
+    }
 }
 
 /// Everything a host reads from its configuration to serve connections.
@@ -109,10 +143,12 @@ impl Config {
     /// # Errors
     /// As [`Self::from_vars`].
     pub fn from_env(allow_dev_key: bool) -> Result<Option<Self>, String> {
-        let vars: BTreeMap<String, String> = std::env::vars()
-            .filter(|(name, _)| name.starts_with("NORN_"))
-            .collect();
-        Self::from_vars(&vars, allow_dev_key)
+        let vars = SecretVars(
+            std::env::vars()
+                .filter(|(name, _)| name.starts_with("NORN_"))
+                .collect(),
+        );
+        Self::from_vars(&vars.0, allow_dev_key)
     }
 
     /// Read the host's variables; `None` when no vault KEK is configured
@@ -291,6 +327,13 @@ struct StartBody {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct CompleteBody {
     state: String,
+    completion_key: String,
+}
+
+impl Drop for CompleteBody {
+    fn drop(&mut self) {
+        zeroize::Zeroize::zeroize(&mut self.completion_key);
+    }
 }
 
 /// An OAuth `state` as `oauth2` mints it: 1-128 URL-safe characters.
@@ -306,41 +349,149 @@ fn code_shaped(code: &str) -> bool {
     (1..=2048).contains(&code.len()) && code.bytes().all(|b| b.is_ascii_graphic())
 }
 
-/// Provider codes parked by the callback until the starting principal
-/// completes (OAUTH-HANDOFF-1). Host memory only; never the vault.
+/// One authorization an authorized `oauth:start` reserved
+/// (OAUTH-HANDOFF-1).
+struct Reservation {
+    actor: String,
+    connection: String,
+    key_hash: String,
+    expires_ms: u64,
+    code: Option<Secret>,
+}
+
+/// Who may claim a reservation (OAUTH-SESSION-1).
+pub struct Binding<'a> {
+    /// The calling principal.
+    pub actor: &'a str,
+    /// The connection id of the route.
+    pub connection: &'a str,
+    /// The completion key the caller presents.
+    pub key: &'a str,
+}
+
+/// What [`Handoffs::claim`] found.
+pub enum Claim {
+    /// No live reservation for this binding: unknown, expired, spent or
+    /// another session's. Nothing was spent.
+    Unknown,
+    /// Reserved for this binding, but the provider hasn't redirected yet.
+    Waiting,
+    /// The parked code, now removed.
+    Ready(Secret),
+}
+
+/// Authorizations reserved by `oauth:start` and the provider codes parked
+/// for them by the callback (OAUTH-HANDOFF-1). Host memory only; never the
+/// vault.
 #[derive(Default)]
 pub struct Handoffs {
-    parked: Mutex<BTreeMap<String, (Secret, u64)>>,
+    reserved: Mutex<BTreeMap<String, Reservation>>,
 }
 
 impl Handoffs {
-    fn purge(parked: &mut BTreeMap<String, (Secret, u64)>, now_ms: u64) {
-        parked.retain(|_, (_, at)| now_ms < at.saturating_add(service::STATE_TTL_MS));
+    fn lock(&self) -> std::sync::MutexGuard<'_, BTreeMap<String, Reservation>> {
+        self.reserved.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Park `code` for `state`; the first code for a state wins. `false`
-    /// when [`MAX_PARKED`] codes already wait.
-    pub fn park(&self, state: &str, code: &str, now_ms: u64) -> bool {
-        let mut parked = self.parked.lock().unwrap_or_else(PoisonError::into_inner);
-        Self::purge(&mut parked, now_ms);
-        let hash = service::state_hash(state);
-        if parked.contains_key(&hash) {
-            return true;
+    fn purge(reserved: &mut BTreeMap<String, Reservation>, now_ms: u64) {
+        reserved.retain(|_, reservation| now_ms < reservation.expires_ms);
+    }
+
+    /// Drop every expired reservation and its code.
+    pub fn sweep(&self, now_ms: u64) {
+        Self::purge(&mut self.lock(), now_ms);
+    }
+
+    /// How many reservations live.
+    pub fn len(&self, now_ms: u64) -> usize {
+        let mut reserved = self.lock();
+        Self::purge(&mut reserved, now_ms);
+        reserved.len()
+    }
+
+    /// Whether none lives.
+    pub fn is_empty(&self, now_ms: u64) -> bool {
+        self.len(now_ms) == 0
+    }
+
+    /// Reserve `state` for `binding` until `expires_ms`. A principal holding
+    /// [`MAX_PER_PRINCIPAL`] loses its oldest; `false` when [`MAX_PARKED`]
+    /// live anyway.
+    pub fn reserve(
+        &self,
+        state: &str,
+        binding: &Binding<'_>,
+        expires_ms: u64,
+        now_ms: u64,
+    ) -> bool {
+        let mut reserved = self.lock();
+        Self::purge(&mut reserved, now_ms);
+        let mut own: Vec<(u64, String)> = reserved
+            .iter()
+            .filter(|(_, reservation)| reservation.actor == binding.actor)
+            .map(|(hash, reservation)| (reservation.expires_ms, hash.clone()))
+            .collect();
+        own.sort();
+        let excess = own
+            .len()
+            .saturating_add(1)
+            .saturating_sub(MAX_PER_PRINCIPAL);
+        for (_, hash) in own.into_iter().take(excess) {
+            reserved.remove(&hash);
         }
-        if parked.len() >= MAX_PARKED {
+        if reserved.len() >= MAX_PARKED {
             return false;
         }
-        parked.insert(hash, (Secret::from(code.to_owned()), now_ms));
+        reserved.insert(
+            service::state_hash(state),
+            Reservation {
+                actor: binding.actor.to_owned(),
+                connection: binding.connection.to_owned(),
+                key_hash: service::state_hash(binding.key),
+                expires_ms,
+                code: None,
+            },
+        );
         true
     }
 
-    /// Take the code parked for `state`, if one is and it is fresh.
-    pub fn take(&self, state: &str, now_ms: u64) -> Option<Secret> {
-        let mut parked = self.parked.lock().unwrap_or_else(PoisonError::into_inner);
-        Self::purge(&mut parked, now_ms);
-        parked
-            .remove(&service::state_hash(state))
-            .map(|(code, _)| code)
+    /// Park `code` for `state`: `true` only for a live reservation (the
+    /// first code wins); an unknown or expired state stores nothing.
+    pub fn park(&self, state: &str, code: &str, now_ms: u64) -> bool {
+        let mut reserved = self.lock();
+        Self::purge(&mut reserved, now_ms);
+        let Some(reservation) = reserved.get_mut(&service::state_hash(state)) else {
+            return false;
+        };
+        if reservation.code.is_none() {
+            reservation.code = Some(Secret::from(code.to_owned()));
+        }
+        true
+    }
+
+    /// Claim the code parked for `state` by `binding` (OAUTH-SESSION-1):
+    /// the reservation is checked first and removed only when its code is
+    /// handed out.
+    pub fn claim(&self, state: &str, binding: &Binding<'_>, now_ms: u64) -> Claim {
+        let mut reserved = self.lock();
+        Self::purge(&mut reserved, now_ms);
+        let hash = service::state_hash(state);
+        let Some(reservation) = reserved.get(&hash) else {
+            return Claim::Unknown;
+        };
+        if reservation.actor != binding.actor
+            || reservation.connection != binding.connection
+            || reservation.key_hash != service::state_hash(binding.key)
+        {
+            return Claim::Unknown;
+        }
+        if reservation.code.is_none() {
+            return Claim::Waiting;
+        }
+        reserved
+            .remove(&hash)
+            .and_then(|reservation| reservation.code)
+            .map_or(Claim::Unknown, Claim::Ready)
     }
 }
 
@@ -398,6 +549,11 @@ impl<E: SqlEngine> Routes<E> {
         }
     }
 
+    /// The reserved authorizations (OAUTH-HANDOFF-1).
+    pub const fn handoffs(&self) -> &Handoffs {
+        &self.handoffs
+    }
+
     /// Whether the vault has been opened (by an authorized request).
     pub fn vault_opened(&self) -> bool {
         self.opened.get().is_some()
@@ -421,6 +577,7 @@ impl<E: SqlEngine> Routes<E> {
             return None;
         }
         let _request = RequestScope::new(principals);
+        self.handoffs.sweep(now_ms);
         let (scope, params) = query(request.query);
         if let Route::Callback = route {
             return Some(self.callback(request, &params, now_ms));
@@ -474,9 +631,15 @@ impl<E: SqlEngine> Routes<E> {
                 })
                 .and_then(|body| connections.set(&actor, id, body, now_ms))
                 .map(|status| json!(status)),
-            (Route::Credentials(_), _) => connections
-                .revoke(&actor, id, now_ms)
-                .map(|status| json!(status)),
+            (Route::Credentials(_), _) => match params.get("revokeGrant").map(String::as_str) {
+                None | Some("false") => Ok(false),
+                Some("true") => Ok(true),
+                Some(_) => Err(ConnError::Invalid(
+                    "revokeGrant is true or false".to_owned(),
+                )),
+            }
+            .and_then(|grant| connections.revoke(&actor, id, grant, now_ms))
+            .map(|status| json!(status)),
             (Route::Start(_), _) => serde_json::from_str::<StartBody>(request.body)
                 .map_err(|_parse| {
                     ConnError::Invalid("the body is not {provider, scopes?, params?}".to_owned())
@@ -491,23 +654,56 @@ impl<E: SqlEngine> Routes<E> {
                         now_ms,
                     )
                 })
-                .map(|(url, expires)| json!({"authorizeUrl": url, "expiresAtMs": expires})),
+                .and_then(|started| {
+                    let (Some(state), Some(key)) = (
+                        started.state.expose_str(),
+                        started.completion_key.expose_str(),
+                    ) else {
+                        return Err(ConnError::BadState);
+                    };
+                    let binding = Binding {
+                        actor: &actor,
+                        connection: id,
+                        key,
+                    };
+                    if !self
+                        .handoffs
+                        .reserve(state, &binding, started.expires_at_ms, now_ms)
+                    {
+                        return Err(ConnError::Unavailable(
+                            "too many authorizations are waiting; retry shortly".to_owned(),
+                        ));
+                    }
+                    Ok(json!({
+                        "authorizeUrl": started.authorize_url,
+                        "expiresAtMs": started.expires_at_ms,
+                        "completionKey": key,
+                    }))
+                }),
             (Route::Complete(_) | Route::Callback, _) => {
                 let Ok(body) = serde_json::from_str::<CompleteBody>(request.body) else {
                     return Some(refused(&ConnError::Invalid(
-                        "the body is not {state}".to_owned(),
+                        "the body is not {state, completionKey}".to_owned(),
                     )));
                 };
-                let Some(code) = self.handoffs.take(&body.state, now_ms) else {
-                    return Some(coded(
-                        409,
-                        "connection.oauth_pending",
-                        "the provider has not redirected back yet; retry",
-                    ));
+                let binding = Binding {
+                    actor: &actor,
+                    connection: id,
+                    key: &body.completion_key,
                 };
-                connections
-                    .complete(&actor, id, &body.state, &code, now_ms)
-                    .map(|status| json!(status))
+                match self.handoffs.claim(&body.state, &binding, now_ms) {
+                    Claim::Unknown => Err(ConnError::BadState),
+                    Claim::Waiting => {
+                        return Some(coded(
+                            409,
+                            "connection.oauth_pending",
+                            "the provider has not redirected back yet; retry",
+                        ));
+                    }
+                    Claim::Ready(code) => connections
+                        .complete(&actor, id, &body.state, &body.completion_key, &code, now_ms)
+                        .map(|status| json!(status)),
+                }
             }
         };
         Some(match result {
@@ -549,9 +745,9 @@ impl<E: SqlEngine> Routes<E> {
             )
         } else {
             coded(
-                503,
-                "connection.unavailable",
-                "too many authorizations are waiting; retry shortly",
+                400,
+                "connection.oauth_state",
+                "this authorization is unknown or expired; start connecting again",
             )
         }
     }

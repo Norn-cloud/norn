@@ -25,7 +25,7 @@ use norn_cell::{CellStore, Model, StoreOptions};
 use norn_cell_do::connections::egress::{Egress, EgressError, Lookup, Timeouts};
 use norn_cell_do::connections::providers::{self, ClientAuth, Provider};
 use norn_cell_do::connections::service::{
-    ClientCredentials, ConnError, Connections, SetCredentials,
+    ClientCredentials, ConnError, Connections, SetCredentials, Started,
 };
 use norn_cell_do::connections::vault::{KeyId, KeyWrap, LocalKeyring, Secret, Vault, VaultError};
 use norn_cell_do::connections::{Config, Routes};
@@ -758,6 +758,19 @@ fn code(text: &str) -> Secret {
     Secret::from(text.to_owned())
 }
 
+/// A start's URL, expiry and completion key.
+fn parts(started: Started) -> (String, u64, String) {
+    (
+        started.authorize_url.clone(),
+        started.expires_at_ms,
+        started
+            .completion_key
+            .expose_str()
+            .expect("text")
+            .to_owned(),
+    )
+}
+
 #[test]
 fn oauth_state_is_single_use_bound_to_its_principal_and_expires() {
     let (_dir, path) = temp_db();
@@ -765,33 +778,50 @@ fn oauth_state_is_single_use_bound_to_its_principal_and_expires() {
     let server = token_server(Arc::clone(&calls), Duration::ZERO);
     let conns = connections(&path, server.port);
 
-    let (url, expires) = conns
-        .start("owner", "acme.main", "acme", None, &BTreeMap::new(), 1_000)
-        .expect("start");
+    let (url, expires, key) = parts(
+        conns
+            .start("owner", "acme.main", "acme", None, &BTreeMap::new(), 1_000)
+            .expect("start"),
+    );
     assert_eq!(expires, 1_000 + 600_000);
     assert_eq!(query_param(&url, "code_challenge_method"), "S256");
     let challenge = query_param(&url, "code_challenge");
     let state = query_param(&url, "state");
 
-    // Another principal cannot complete it; the state is then spent.
-    assert_eq!(
-        conns
-            .complete("intruder", "acme.main", &state, &code("code-1"), 2_000)
-            .err(),
-        Some(ConnError::BadState)
-    );
-    assert_eq!(
-        conns
-            .complete("owner", "acme.main", &state, &code("code-1"), 2_000)
-            .err(),
-        Some(ConnError::BadState)
-    );
+    // S5b, OAUTH-SESSION-1: another principal, another session (a wrong
+    // key) or another connection can't complete it, and spends nothing.
+    for (actor, connection, presented) in [
+        ("intruder", "acme.main", key.as_str()),
+        ("owner", "acme.main", "another-sessions-key"),
+        ("owner", "acme.other", key.as_str()),
+    ] {
+        assert_eq!(
+            conns
+                .complete(actor, connection, &state, presented, &code("code-1"), 2_000)
+                .err(),
+            Some(ConnError::BadState)
+        );
+    }
     assert_eq!(calls.load(Ordering::SeqCst), 0);
+    let first = conns
+        .complete("owner", "acme.main", &state, &key, &code("code-1"), 2_000)
+        .expect("the starting session still completes");
+    assert_eq!(first.state, "connected");
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    // Spent: a replay is refused.
+    assert_eq!(
+        conns
+            .complete("owner", "acme.main", &state, &key, &code("code-1"), 2_000)
+            .err(),
+        Some(ConnError::BadState)
+    );
 
     // Expired after ten minutes.
-    let (url, _) = conns
-        .start("owner", "acme.main", "acme", None, &BTreeMap::new(), 1_000)
-        .expect("start");
+    let (url, _, key) = parts(
+        conns
+            .start("owner", "acme.main", "acme", None, &BTreeMap::new(), 1_000)
+            .expect("start"),
+    );
     let late = query_param(&url, "state");
     assert_eq!(
         conns
@@ -799,6 +829,7 @@ fn oauth_state_is_single_use_bound_to_its_principal_and_expires() {
                 "owner",
                 "acme.main",
                 &late,
+                &key,
                 &code("code-2"),
                 1_000 + 600_000
             )
@@ -807,30 +838,33 @@ fn oauth_state_is_single_use_bound_to_its_principal_and_expires() {
     );
 
     // The right principal in time: exchanged once with the matching verifier.
-    let (url, _) = conns
-        .start(
-            "owner",
-            "acme.main",
-            "acme",
-            Some(vec!["read".to_owned(), "write".to_owned()]),
-            &BTreeMap::new(),
-            5_000,
-        )
-        .expect("start");
+    let (url, _, key) = parts(
+        conns
+            .start(
+                "owner",
+                "acme.main",
+                "acme",
+                Some(vec!["read".to_owned(), "write".to_owned()]),
+                &BTreeMap::new(),
+                5_000,
+            )
+            .expect("start"),
+    );
     let (good, challenge2) = (
         query_param(&url, "state"),
         query_param(&url, "code_challenge"),
     );
     assert_ne!(challenge, challenge2);
     let status = conns
-        .complete("owner", "acme.main", &good, &code("code-3"), 6_000)
+        .complete("owner", "acme.main", &good, &key, &code("code-3"), 6_000)
         .expect("connected");
     assert_eq!(status.state, "connected");
-    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
     let exchange = server
         .seen()
         .into_iter()
-        .find(|s| s.line.starts_with("POST /token"))
+        .filter(|s| s.line.starts_with("POST /token"))
+        .last()
         .expect("exchange");
     let verifier = exchange
         .body
@@ -842,7 +876,7 @@ fn oauth_state_is_single_use_bound_to_its_principal_and_expires() {
     assert_eq!(derived, challenge2);
     assert_eq!(
         conns
-            .complete("owner", "acme.main", &good, &code("code-3"), 6_000)
+            .complete("owner", "acme.main", &good, &key, &code("code-3"), 6_000)
             .err(),
         Some(ConnError::BadState)
     );
@@ -879,7 +913,7 @@ struct Bearers;
 impl PrincipalResolver for Bearers {
     fn resolve(&self, authorization: Option<&str>, _now: u64) -> Option<String> {
         match authorization? {
-            "Bearer owner-token" => Some("owner".to_owned()),
+            "Bearer owner-token" | "Bearer owner-token-2" => Some("owner".to_owned()),
             "Bearer viewer-token" => Some("viewer".to_owned()),
             _ => None,
         }
@@ -1013,7 +1047,13 @@ fn the_write_only_api_is_owner_only_and_never_returns_or_stores_a_credential() {
             "the {label} is stored in clear"
         );
     }
-    let revoked = call("DELETE", path_of, scope, Some("owner-token"), "");
+    let revoked = call(
+        "DELETE",
+        path_of,
+        &format!("{scope}&revokeGrant=true"),
+        Some("owner-token"),
+        "",
+    );
     assert_eq!(revoked.status, 200);
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&revoked.body).expect("json")["state"],
@@ -1158,13 +1198,16 @@ fn oauth_calls_follow_no_redirect() {
     }));
     let conns = connections(&path, server.port);
     // Exchange.
-    let (url, _) = conns
-        .start("owner", "acme.main", "acme", None, &BTreeMap::new(), 1_000)
-        .expect("start");
+    let (url, _, key) = parts(
+        conns
+            .start("owner", "acme.main", "acme", None, &BTreeMap::new(), 1_000)
+            .expect("start"),
+    );
     let exchanged = conns.complete(
         "owner",
         "acme.main",
         &query_param(&url, "state"),
+        &key,
         &code("code-1"),
         2_000,
     );
@@ -1188,7 +1231,9 @@ fn oauth_calls_follow_no_redirect() {
         Some("egress_redirect")
     );
     // Revocation.
-    conns.revoke("owner", "acme.main", 20_000).expect("revoke");
+    conns
+        .revoke("owner", "acme.main", true, 20_000)
+        .expect("revoke");
     let trail = conns.audit_trail("acme.main").expect("audit");
     assert_eq!(
         trail
@@ -1325,14 +1370,17 @@ fn provider_text_never_reaches_answers_status_or_audit() {
     );
     let status = conns.status("acme.main").expect("status");
     assert_eq!(status.last_error.as_deref(), Some("provider_error"));
-    let (url, _) = conns
-        .start("owner", "acme.main", "acme", None, &BTreeMap::new(), 20_000)
-        .expect("start");
+    let (url, _, key) = parts(
+        conns
+            .start("owner", "acme.main", "acme", None, &BTreeMap::new(), 20_000)
+            .expect("start"),
+    );
     let refused = conns
         .complete(
             "owner",
             "acme.main",
             &query_param(&url, "state"),
+            &key,
             &code("c"),
             21_000,
         )
@@ -1362,7 +1410,9 @@ fn a_stale_refresh_never_overwrites_a_replacement() {
         let refreshing =
             scope.spawn(|| conns.access_token("connection:acme.main", "acme.main", 10_000));
         std::thread::sleep(Duration::from_millis(200));
-        conns.revoke("owner", "acme.main", 10_100).expect("revoke");
+        conns
+            .revoke("owner", "acme.main", false, 10_100)
+            .expect("revoke");
         conns
             .set(
                 "owner",
@@ -1397,37 +1447,43 @@ fn a_disconnect_or_replacement_spends_pending_authorizations() {
     let server = token_server(Arc::clone(&calls), Duration::from_millis(600));
     let conns = connections(&path, server.port);
     let start = |at: u64| {
-        let (url, _) = conns
-            .start("owner", "acme.main", "acme", None, &BTreeMap::new(), at)
-            .expect("start");
-        query_param(&url, "state")
+        let (url, _, key) = parts(
+            conns
+                .start("owner", "acme.main", "acme", None, &BTreeMap::new(), at)
+                .expect("start"),
+        );
+        (query_param(&url, "state"), key)
     };
     // Started, disconnected, then completed: refused, nothing exchanged.
-    let state = start(1_000);
-    conns.revoke("owner", "acme.main", 1_100).expect("revoke");
+    let (state, key) = start(1_000);
+    conns
+        .revoke("owner", "acme.main", false, 1_100)
+        .expect("revoke");
     assert_eq!(
         conns
-            .complete("owner", "acme.main", &state, &code("c1"), 1_200)
+            .complete("owner", "acme.main", &state, &key, &code("c1"), 1_200)
             .err(),
         Some(ConnError::BadState)
     );
     // Started, replaced by a PUT, then completed: refused too.
-    let state = start(2_000);
+    let (state, key) = start(2_000);
     set(&conns, None);
     assert_eq!(
         conns
-            .complete("owner", "acme.main", &state, &code("c2"), 2_200)
+            .complete("owner", "acme.main", &state, &key, &code("c2"), 2_200)
             .err(),
         Some(ConnError::BadState)
     );
     assert_eq!(calls.load(Ordering::SeqCst), 0);
     // Disconnected while the code is being exchanged: nothing is stored.
-    let state = start(3_000);
+    let (state, key) = start(3_000);
     let completed = std::thread::scope(|scope| {
         let completing =
-            scope.spawn(|| conns.complete("owner", "acme.main", &state, &code("c3"), 3_100));
+            scope.spawn(|| conns.complete("owner", "acme.main", &state, &key, &code("c3"), 3_100));
         std::thread::sleep(Duration::from_millis(200));
-        conns.revoke("owner", "acme.main", 3_200).expect("revoke");
+        conns
+            .revoke("owner", "acme.main", false, 3_200)
+            .expect("revoke");
         completing.join().expect("thread")
     });
     assert_eq!(calls.load(Ordering::SeqCst), 1);
@@ -1453,7 +1509,7 @@ fn a_slow_revoke_never_deletes_a_replacement() {
     set(&conns, None);
     let replacement = "access-token-REPLACED-0010-next";
     std::thread::scope(|scope| {
-        let revoking = scope.spawn(|| conns.revoke("owner", "acme.main", 5_000));
+        let revoking = scope.spawn(|| conns.revoke("owner", "acme.main", true, 5_000));
         std::thread::sleep(Duration::from_millis(200));
         conns
             .set(
@@ -1566,7 +1622,7 @@ fn read_policy_decides_before_the_vault_opens() {
             (
                 "POST",
                 "/v1/connections/acme.main/oauth:complete",
-                r#"{"state":"x"}"#,
+                r#"{"state":"x","completionKey":"y"}"#,
             ),
         ] {
             let refused = call(method, route, query, auth, body);
@@ -1587,7 +1643,8 @@ fn read_policy_decides_before_the_vault_opens() {
         None,
         "",
     );
-    assert_eq!(parked.status, 200, "{}", parked.body);
+    assert_eq!(parked.status, 400, "{}", parked.body);
+    assert!(routes.handoffs().is_empty(1_000));
     assert_eq!(
         opens.load(Ordering::SeqCst),
         0,
@@ -1598,4 +1655,439 @@ fn read_policy_decides_before_the_vault_opens() {
     let admin = call("GET", path_of, query, Some("Bearer fixture:admin@demo"), "");
     assert_eq!(admin.status, 200, "{}", admin.body);
     assert_eq!(opens.load(Ordering::SeqCst), 1);
+}
+
+// ------------------------------------------------------------ round 2
+
+fn json_of(response: &norn_cell_do::server::Response) -> serde_json::Value {
+    serde_json::from_str(&response.body).expect("json")
+}
+
+/// Drives [`routes`] over [`owner_host`] at a fixed clock.
+struct Driver {
+    host: DevHost<NativeEngine>,
+    routes: Routes<NativeEngine>,
+}
+
+const SCOPE_QUERY: &str = "orgId=org_demo&environmentId=dev";
+
+impl Driver {
+    fn new(path: &std::path::Path, port: u16) -> Self {
+        Self {
+            host: owner_host(path),
+            routes: routes(path, port, &Arc::new(AtomicUsize::new(0))),
+        }
+    }
+
+    fn call(
+        &self,
+        method: &str,
+        path: &str,
+        query: &str,
+        bearer: Option<&str>,
+        body: &str,
+        now_ms: u64,
+    ) -> norn_cell_do::server::Response {
+        let auth = bearer.map(|token| format!("Bearer {token}"));
+        self.routes
+            .route(
+                &self.host,
+                &Bearers,
+                &request(method, path, query, auth.as_deref(), body),
+                now_ms,
+            )
+            .expect("routed")
+    }
+
+    /// `oauth:start` as `owner`: `(state, completionKey)`.
+    fn start(&self, now_ms: u64) -> (String, String) {
+        let started = self.call(
+            "POST",
+            "/v1/connections/acme.main/oauth:start",
+            SCOPE_QUERY,
+            Some("owner-token"),
+            r#"{"provider":"acme"}"#,
+            now_ms,
+        );
+        assert_eq!(started.status, 200, "{}", started.body);
+        let body = json_of(&started);
+        (
+            query_param(body["authorizeUrl"].as_str().expect("url"), "state"),
+            body["completionKey"].as_str().expect("key").to_owned(),
+        )
+    }
+
+    fn callback(&self, state: &str, code: &str, now_ms: u64) -> norn_cell_do::server::Response {
+        self.call(
+            "GET",
+            "/v1/connections/oauth:callback",
+            &format!("state={state}&code={code}"),
+            None,
+            "",
+            now_ms,
+        )
+    }
+
+    fn complete(
+        &self,
+        connection: &str,
+        bearer: &str,
+        state: &str,
+        key: &str,
+        now_ms: u64,
+    ) -> norn_cell_do::server::Response {
+        self.call(
+            "POST",
+            &format!("/v1/connections/{connection}/oauth:complete"),
+            SCOPE_QUERY,
+            Some(bearer),
+            &serde_json::json!({"state": state, "completionKey": key}).to_string(),
+            now_ms,
+        )
+    }
+}
+
+/// S5a, OAUTH-HANDOFF-1: the unauthenticated callback parks a code only
+/// for a state an authorized start reserved; a flood of unknown states
+/// stores nothing and blocks no legitimate flow; one principal holds at
+/// most `MAX_PER_PRINCIPAL` reservations; expired ones are dropped.
+#[test]
+fn the_callback_parks_only_reserved_states_and_a_flood_blocks_nothing() {
+    use norn_cell_do::connections::{MAX_PARKED, MAX_PER_PRINCIPAL};
+    let (_dir, path) = temp_db();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let server = token_server(Arc::clone(&calls), Duration::ZERO);
+    let driver = Driver::new(&path, server.port);
+
+    for flood in 0..(MAX_PARKED * 4) {
+        let refused = driver.callback(&format!("unknown-state-{flood}"), "a-code", 1_000);
+        assert_eq!(
+            (refused.status, &json_of(&refused)["code"]),
+            (400, &serde_json::json!("connection.oauth_state"))
+        );
+    }
+    assert!(driver.routes.handoffs().is_empty(1_000));
+
+    // A legitimate flow after the flood: reserved, parked, completed.
+    let (state, key) = driver.start(1_000);
+    assert_eq!(driver.callback(&state, "the-code", 1_100).status, 200);
+    let connected = driver.complete("acme.main", "owner-token", &state, &key, 1_200);
+    assert_eq!(connected.status, 200, "{}", connected.body);
+    assert_eq!(json_of(&connected)["state"], "connected");
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+    // The per-principal cap: a principal's oldest reservation goes first.
+    let flows: Vec<(String, String)> = (0..MAX_PER_PRINCIPAL + 3)
+        .map(|at| driver.start(2_000 + u64::try_from(at).expect("small")))
+        .collect();
+    assert_eq!(driver.routes.handoffs().len(2_100), MAX_PER_PRINCIPAL);
+    assert_eq!(driver.callback(&flows[0].0, "late", 2_100).status, 400);
+    let newest = flows.last().expect("flows");
+    assert_eq!(driver.callback(&newest.0, "fresh", 2_100).status, 200);
+
+    // Expired reservations are dropped on the next request, code and all.
+    let expired = 2_000 + 600_000 + 50;
+    assert_eq!(driver.callback(&newest.0, "again", expired).status, 400);
+    assert!(driver.routes.handoffs().is_empty(expired));
+}
+
+/// S5b, OAUTH-SESSION-1: another session of the same principal (no
+/// completion key, or a wrong one) and a caller on another connection can't
+/// complete or cancel the flow; the starting session then completes.
+#[test]
+fn only_the_starting_session_completes_and_a_mismatch_spends_nothing() {
+    let (_dir, path) = temp_db();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let server = token_server(Arc::clone(&calls), Duration::ZERO);
+    let driver = Driver::new(&path, server.port);
+    let (state, key) = driver.start(1_000);
+    assert_eq!(driver.callback(&state, "the-code", 1_100).status, 200);
+
+    for (connection, bearer, presented) in [
+        ("acme.main", "owner-token-2", "a-guessed-key"),
+        ("acme.main", "owner-token", "a-guessed-key"),
+        ("acme.other", "owner-token", key.as_str()),
+        ("acme.other", "owner-token-2", key.as_str()),
+    ] {
+        let refused = driver.complete(connection, bearer, &state, presented, 1_200);
+        assert_eq!(
+            (refused.status, &json_of(&refused)["code"]),
+            (400, &serde_json::json!("connection.oauth_state")),
+            "{connection} {bearer}"
+        );
+    }
+    let missing_key = driver.call(
+        "POST",
+        "/v1/connections/acme.main/oauth:complete",
+        SCOPE_QUERY,
+        Some("owner-token-2"),
+        &serde_json::json!({ "state": state }).to_string(),
+        1_200,
+    );
+    assert_eq!(missing_key.status, 400);
+    assert_eq!(calls.load(Ordering::SeqCst), 0, "a mismatch exchanged");
+    assert_eq!(
+        driver.routes.handoffs().len(1_200),
+        1,
+        "a mismatch spent it"
+    );
+
+    let connected = driver.complete("acme.main", "owner-token", &state, &key, 1_300);
+    assert_eq!(connected.status, 200, "{}", connected.body);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    let trail = driver
+        .routes
+        .connections()
+        .expect("opened")
+        .audit_trail("acme.main")
+        .expect("audit");
+    assert!(
+        trail
+            .iter()
+            .any(|(_, event, ..)| event.as_str() == "oauth.connected")
+    );
+}
+
+fn connections_with(
+    path: &std::path::Path,
+    egress: Egress,
+    provider: Provider,
+) -> Connections<NativeEngine> {
+    let vault = Vault::open(
+        engine(path),
+        SCOPE,
+        Arc::new(keyring("test-local-v1", &[("test-local-v1", 7)])),
+    )
+    .expect("vault");
+    Connections::new(
+        vault,
+        egress,
+        BTreeMap::from([(provider.id.clone(), provider)]),
+        BTreeMap::from([(
+            "acme".to_owned(),
+            ClientCredentials {
+                client_id: "client-1".to_owned(),
+                client_secret: Some(Secret::from("client-secret-SECRET-0005".to_owned())),
+            },
+        )]),
+        Some("https://app.norn.example/v1/connections/oauth:callback".to_owned()),
+    )
+    .expect("connections")
+}
+
+/// Resolves every name to loopback.
+#[derive(Debug)]
+struct ToLoopback;
+
+impl Lookup for ToLoopback {
+    fn lookup(&self, _host: &str, _port: u16) -> std::io::Result<Vec<IpAddr>> {
+        Ok(vec![IpAddr::from([127, 0, 0, 1])])
+    }
+}
+
+/// S1, EGRESS-OAUTH-HTTPS-1: an allowlisted plain-http token or
+/// revocation endpoint never receives a code, a client secret or a token.
+#[test]
+fn oauth_calls_go_only_to_https_even_to_a_listed_host() {
+    let (_dir, path) = temp_db();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let server = token_server(Arc::clone(&calls), Duration::ZERO);
+    let host = "plain.acme.test";
+    let mut provider = test_provider(server.port);
+    provider.token_url = format!("http://{host}:{}/token", server.port);
+    provider.revocation_url = Some(format!("http://{host}:{}/revoke", server.port));
+    let egress = Egress::new(vec![host.to_owned()], Arc::new(ToLoopback)).with_sleep(|_| {});
+    // The listed host is reachable for ordinary calls ...
+    let reachable = egress.send(
+        http::Request::get(format!("http://{host}:{}/ping", server.port))
+            .body(Vec::new())
+            .expect("request"),
+    );
+    assert_eq!(reachable.expect("reached").status(), 200);
+    let conns = connections_with(&path, egress, provider);
+    // ... but no OAuth call goes there.
+    let (url, _, key) = parts(
+        conns
+            .start("owner", "acme.main", "acme", None, &BTreeMap::new(), 1_000)
+            .expect("start"),
+    );
+    let exchanged = conns.complete(
+        "owner",
+        "acme.main",
+        &query_param(&url, "state"),
+        &key,
+        &code("code-1"),
+        2_000,
+    );
+    assert!(
+        matches!(exchanged, Err(ConnError::Egress(EgressError::Forbidden(_)))),
+        "{exchanged:?}"
+    );
+    set(&conns, Some(2_000));
+    assert!(matches!(
+        conns.access_token("connection:acme.main", "acme.main", 10_000),
+        Err(ConnError::Egress(EgressError::Forbidden(_)))
+    ));
+    conns
+        .revoke("owner", "acme.main", true, 20_000)
+        .expect("revoke");
+    let trail = conns.audit_trail("acme.main").expect("audit");
+    assert_eq!(
+        trail
+            .last()
+            .map(|(_, event, _, detail)| (event.as_str(), detail.as_deref())),
+        Some(("credential.provider_revoke", Some("egress_forbidden")))
+    );
+    let seen = server.seen();
+    assert_eq!(seen.len(), 1, "only the ping: {seen:?}");
+    assert!(seen.iter().all(|s| !s.body.contains("token")));
+}
+
+/// A resolver that hangs until opened, counting calls.
+#[derive(Debug, Default)]
+struct Hanging {
+    open: Mutex<bool>,
+    opened: std::sync::Condvar,
+    calls: AtomicUsize,
+}
+
+#[derive(Debug)]
+struct HangingLookup(Arc<Hanging>);
+
+impl Lookup for HangingLookup {
+    fn lookup(&self, _host: &str, _port: u16) -> std::io::Result<Vec<IpAddr>> {
+        self.0.calls.fetch_add(1, Ordering::SeqCst);
+        let mut open = self.0.open.lock().expect("gate");
+        while !*open {
+            open = self.0.opened.wait(open).expect("gate");
+        }
+        Err(std::io::Error::other("closed"))
+    }
+}
+
+/// S2, EGRESS-DNS-BOUND-1: lookups that time out leave at most
+/// `MAX_LOOKUPS` threads behind; further lookups are refused at once, and
+/// the bound frees as the hung lookups end.
+#[test]
+fn timed_out_lookups_never_accumulate_beyond_the_bound() {
+    use norn_cell_do::connections::egress::MAX_LOOKUPS;
+    let hanging = Arc::new(Hanging::default());
+    let quick = Timeouts {
+        connect: Duration::from_millis(100),
+        resolve: Duration::from_millis(20),
+        total: Duration::from_millis(500),
+    };
+    let egress = Egress::with_timeouts(
+        Vec::new(),
+        Arc::new(HangingLookup(Arc::clone(&hanging))),
+        quick,
+    )
+    .with_sleep(|_| {});
+    let get = || {
+        egress.send(
+            http::Request::get("https://hangs.example.com/")
+                .body(Vec::new())
+                .expect("request"),
+        )
+    };
+    let mut busy = 0;
+    for _ in 0..(MAX_LOOKUPS + 8) {
+        match get() {
+            Err(EgressError::Unresolved(_)) => {}
+            Err(EgressError::Transport("resolver_busy")) => busy += 1,
+            other => panic!("{other:?}"),
+        }
+    }
+    assert_eq!(hanging.calls.load(Ordering::SeqCst), MAX_LOOKUPS);
+    assert_eq!(egress.outstanding_lookups(), MAX_LOOKUPS);
+    assert_eq!(busy, 8);
+
+    *hanging.open.lock().expect("gate") = true;
+    hanging.opened.notify_all();
+    let released = Instant::now();
+    while egress.outstanding_lookups() > 0 {
+        assert!(released.elapsed() < Duration::from_secs(5), "threads stuck");
+        std::thread::yield_now();
+    }
+    assert!(matches!(get(), Err(EgressError::Unresolved(_))));
+    assert_eq!(hanging.calls.load(Ordering::SeqCst), MAX_LOOKUPS + 1);
+}
+
+/// S4, GRANT-REVOKE-1: a routine disconnect calls no provider, so a grant
+/// shared with sibling connections survives it; revoking the grant is its
+/// own explicit request.
+#[test]
+fn a_routine_disconnect_never_revokes_the_shared_grant() {
+    let (_dir, path) = temp_db();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let server = token_server(Arc::clone(&calls), Duration::ZERO);
+    let driver = Driver::new(&path, server.port);
+    let credentials =
+        format!(r#"{{"provider":"acme","accessToken":"{ACCESS}","refreshToken":"{REFRESH}"}}"#);
+    let path_of = "/v1/connections/acme.main/credentials";
+    let revocations = || {
+        server
+            .seen()
+            .into_iter()
+            .filter(|s| s.line.starts_with("POST /revoke"))
+            .count()
+    };
+    for (query, revoked) in [
+        (SCOPE_QUERY.to_owned(), 0),
+        (format!("{SCOPE_QUERY}&revokeGrant=false"), 0),
+        (format!("{SCOPE_QUERY}&revokeGrant=true"), 1),
+    ] {
+        let set = driver.call(
+            "PUT",
+            path_of,
+            SCOPE_QUERY,
+            Some("owner-token"),
+            &credentials,
+            1_000,
+        );
+        assert_eq!(set.status, 200, "{}", set.body);
+        let gone = driver.call("DELETE", path_of, &query, Some("owner-token"), "", 1_000);
+        assert_eq!(gone.status, 200, "{}", gone.body);
+        assert_eq!(json_of(&gone)["state"], "not_connected");
+        assert_eq!(revocations(), revoked, "{query}");
+    }
+    let bad = driver.call(
+        "DELETE",
+        path_of,
+        &format!("{SCOPE_QUERY}&revokeGrant=yes"),
+        Some("owner-token"),
+        "",
+        1_000,
+    );
+    assert_eq!(bad.status, 400);
+}
+
+/// S8, REQUEST-DEBUG-1: a transport request's `Debug` shows no query (an
+/// OAuth callback's code), no `Authorization` and no body; the startup
+/// variables print their names only.
+#[test]
+fn debug_output_carries_no_secret() {
+    let printed = format!(
+        "{:?}",
+        request(
+            "GET",
+            "/v1/connections/oauth:callback",
+            "state=STATE-SECRET&code=CODE-SECRET",
+            Some("Bearer TOKEN-SECRET"),
+            r#"{"accessToken":"BODY-SECRET"}"#,
+        )
+    );
+    assert!(
+        printed.contains("/v1/connections/oauth:callback"),
+        "{printed}"
+    );
+    for secret in ["STATE-SECRET", "CODE-SECRET", "TOKEN-SECRET", "BODY-SECRET"] {
+        assert!(!printed.contains(secret), "{secret} printed: {printed}");
+    }
+    let vars = norn_cell_do::connections::SecretVars(BTreeMap::from([(
+        "NORN_OAUTH_ACME_CLIENT_SECRET".to_owned(),
+        "VAR-SECRET".to_owned(),
+    )]));
+    let printed = format!("{vars:?}");
+    assert!(printed.contains("NORN_OAUTH_ACME_CLIENT_SECRET") && !printed.contains("VAR-SECRET"));
 }

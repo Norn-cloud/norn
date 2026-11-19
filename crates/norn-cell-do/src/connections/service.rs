@@ -32,9 +32,15 @@
 //! starting principal, the connection and the cell, kept hashed for ten
 //! minutes with its PKCE (S256) verifier sealed in the vault. Completing
 //! consumes it once, in one transaction that checks the sealed actor,
-//! connection, expiry and generation: a second use, an expired state,
-//! another principal or a superseded connection is refused and nothing is
-//! exchanged.
+//! connection, completion key, expiry and generation: a second use, an
+//! expired state, another principal or a superseded connection is refused
+//! and nothing is exchanged.
+//! OAUTH-SESSION-1: the start also mints a random completion key, answered
+//! only to the starting caller and sealed as a digest with the verifier.
+//! Completing needs the key as well as the principal, so another session of
+//! the same principal can't complete the flow. The binding (principal,
+//! connection, key) is checked before anything is spent: a caller whose
+//! binding doesn't match deletes nothing and the flow stays completable.
 //! REFRESH-ONE-1: refreshes of one connection are single-flight in the
 //! owning cell (the cell's host is its single writer): concurrent callers
 //! wait for the one in flight and read its result, so one token-endpoint
@@ -42,7 +48,15 @@
 //! refused refresh (an OAuth error answer) marks the connection
 //! `reconnect_needed`.
 //! OAUTH-DIRECT-1: token exchange, refresh and revocation follow no redirect
-//! ([`Egress::send_direct`]).
+//! and go only to https ([`Egress::send_direct`]).
+//! GRANT-REVOKE-1: a disconnect deletes locally and calls no provider. A
+//! provider's RFC 7009 revocation can end the whole grant (Google revokes
+//! every token the person gave this client), which would break sibling
+//! connections and replacements while their rows still say `connected`. So
+//! revoking at the provider is its own explicit request
+//! ([`Connections::revoke`] with `revoke_grant`), documented as ending every
+//! connection on that grant; each such sibling is marked `reconnect_needed`
+//! by its next refresh.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -225,6 +239,26 @@ impl Drop for SetCredentials {
     }
 }
 
+/// What `oauth:start` answers (OAUTH-STATE-1, OAUTH-SESSION-1).
+pub struct Started {
+    /// The provider authorization URL the person opens.
+    pub authorize_url: String,
+    /// When the authorization expires (Unix ms).
+    pub expires_at_ms: u64,
+    /// The state the provider echoes to the callback (also in the URL).
+    pub state: Secret,
+    /// The completion key, answered only to the starting caller.
+    pub completion_key: Secret,
+}
+
+impl fmt::Debug for Started {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Started")
+            .field("expires_at_ms", &self.expires_at_ms)
+            .finish_non_exhaustive()
+    }
+}
+
 /// What the vault seals for a connection (CONN-SEALED-BINDING-1).
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -253,6 +287,7 @@ struct Pending {
     verifier: String,
     connection: String,
     actor: String,
+    key_hash: String,
     provider: String,
     params: BTreeMap<String, String>,
     scopes: Vec<String>,
@@ -847,7 +882,8 @@ impl<E: SqlEngine> Connections<E> {
 
     /// `POST …/oauth:start`: the provider authorization URL a person opens,
     /// with a state bound to `actor`, `id`, this cell and the connection's
-    /// current generation (OAUTH-STATE-1).
+    /// current generation (OAUTH-STATE-1), and the completion key only the
+    /// caller receives (OAUTH-SESSION-1).
     ///
     /// # Errors
     /// An unknown or withheld provider, an unoffered scope, no client or
@@ -860,7 +896,7 @@ impl<E: SqlEngine> Connections<E> {
         scopes: Option<Vec<String>>,
         params: &BTreeMap<String, String>,
         now_ms: u64,
-    ) -> Result<(String, u64), ConnError> {
+    ) -> Result<Started, ConnError> {
         let provider = self.provider(provider_id)?;
         if self.redirect_url.is_none() {
             return Err(ConnError::Unavailable(
@@ -886,12 +922,15 @@ impl<E: SqlEngine> Connections<E> {
         }
         let (url, state) = request.url();
         let hash = state_hash(state.secret());
+        let key = Secret::from(CsrfToken::new_random_len(32).secret().clone());
+        let key_hash = state_hash(key.expose_str().unwrap_or_default());
         let expires_ms = now_ms.saturating_add(STATE_TTL_MS);
         self.transaction(|vault| {
             let pending = Pending {
                 verifier: verifier.secret().clone(),
                 connection: id.to_owned(),
                 actor: actor.to_owned(),
+                key_hash: key_hash.clone(),
                 provider: provider.id.clone(),
                 params: params.clone(),
                 scopes: scopes.clone(),
@@ -908,7 +947,12 @@ impl<E: SqlEngine> Connections<E> {
                 .map_err(storage)?;
             Self::audit(vault, now_ms, id, "oauth.start", actor, Some(&provider.id))
         })?;
-        Ok((url.to_string(), expires_ms))
+        Ok(Started {
+            authorize_url: url.to_string(),
+            expires_at_ms: expires_ms,
+            state: Secret::from(state.secret().clone()),
+            completion_key: key,
+        })
     }
 
     /// Delete one pending authorization, row and sealed verifier.
@@ -924,15 +968,19 @@ impl<E: SqlEngine> Connections<E> {
     }
 
     /// OAUTH-STATE-1: consume `state` once and return its sealed pending
-    /// authorization if it is `actor`'s, for `id`, unexpired and of the
-    /// connection's current generation; refused (and audited) otherwise.
+    /// authorization if it is `actor`'s, for `id`, under `key`, unexpired
+    /// and of the connection's current generation; refused (and audited)
+    /// otherwise. OAUTH-SESSION-1: a binding that doesn't match (principal,
+    /// connection, key) refuses before the state is spent.
     fn consume_state(
         &self,
         actor: &str,
         id: &str,
         state: &str,
+        key: &str,
         now_ms: u64,
     ) -> Result<Pending, ConnError> {
+        let key_hash = state_hash(key);
         let hash = state_hash(state);
         self.transaction(|vault| {
             let rows = vault
@@ -952,16 +1000,30 @@ impl<E: SqlEngine> Connections<E> {
                 .ok()
                 .flatten()
                 .and_then(|(_, secret)| opened::<Pending>(&secret).ok());
-            // Consumed before anything else, whatever happens next.
-            Self::forget_state(vault, &hash)?;
-            let current = Self::epoch(vault, id)?.0;
-            let Some(pending) = pending.filter(|pending| {
+            // OAUTH-SESSION-1: only the starting session's binding spends it.
+            let bound = pending.as_ref().is_none_or(|pending| {
                 pending.connection == id
                     && indexed == id
                     && pending.actor == actor
-                    && pending.expires_ms > now_ms
-                    && pending.generation == current
-            }) else {
+                    && pending.key_hash == key_hash
+            });
+            if !bound {
+                Self::audit(
+                    vault,
+                    now_ms,
+                    &indexed,
+                    "oauth.refused",
+                    actor,
+                    Some("binding"),
+                )?;
+                return Ok(Decided::Refused(ConnError::BadState));
+            }
+            // Spent by its own session (or unreadable), whatever happens next.
+            Self::forget_state(vault, &hash)?;
+            let current = Self::epoch(vault, id)?.0;
+            let Some(pending) = pending
+                .filter(|pending| pending.expires_ms > now_ms && pending.generation == current)
+            else {
                 Self::audit(
                     vault,
                     now_ms,
@@ -979,7 +1041,8 @@ impl<E: SqlEngine> Connections<E> {
 
     /// Complete the authorization `state` for `id` with the provider's
     /// `code` (OAUTH-STATE-1): consumed once, in a transaction that checks
-    /// the sealed actor, connection, expiry and generation; then the code is
+    /// the sealed actor, connection, completion `key` (OAUTH-SESSION-1),
+    /// expiry and generation; then the code is
     /// exchanged with its PKCE verifier (OAUTH-DIRECT-1), and the tokens are
     /// stored only if the generation is still the one the start saw
     /// (CONN-GENERATION-1).
@@ -992,10 +1055,11 @@ impl<E: SqlEngine> Connections<E> {
         actor: &str,
         id: &str,
         state: &str,
+        key: &str,
         code: &Secret,
         now_ms: u64,
     ) -> Result<Status, ConnError> {
-        let pending = self.consume_state(actor, id, state, now_ms)?;
+        let pending = self.consume_state(actor, id, state, key, now_ms)?;
         let provider = self.provider(&pending.provider)?;
         let client = self.client(provider, &pending.params, false)?;
         let exchanged = code
@@ -1069,13 +1133,20 @@ impl<E: SqlEngine> Connections<E> {
 
     /// `DELETE`: disconnect (CONN-GENERATION-1). In one transaction: the next
     /// generation, the credential and every pending authorization of `id`
-    /// deleted, audited. Then, when the provider has an RFC 7009 endpoint,
-    /// the old grant is revoked there with the sealed tokens (best effort,
-    /// audited); nothing that call does touches a newer credential.
+    /// deleted, audited. Only when `revoke_grant` (GRANT-REVOKE-1) and the
+    /// provider has an RFC 7009 endpoint is the old grant then revoked there
+    /// with the sealed tokens (best effort, audited); nothing that call does
+    /// touches a newer credential.
     ///
     /// # Errors
     /// Storage failures.
-    pub fn revoke(&self, actor: &str, id: &str, now_ms: u64) -> Result<Status, ConnError> {
+    pub fn revoke(
+        &self,
+        actor: &str,
+        id: &str,
+        revoke_grant: bool,
+        now_ms: u64,
+    ) -> Result<Status, ConnError> {
         let held = self.transaction(|vault| {
             // A credential that doesn't open is still deleted.
             let tokens = vault
@@ -1108,7 +1179,8 @@ impl<E: SqlEngine> Connections<E> {
             Self::audit(vault, now_ms, id, "credential.revoke", actor, None)?;
             Ok(tokens)
         })?;
-        if let Some(tokens) = held
+        if revoke_grant
+            && let Some(tokens) = held
             && let Ok(provider) = self.provider(&tokens.provider)
             && provider.revocation_url.is_some()
         {

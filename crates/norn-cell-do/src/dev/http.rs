@@ -428,8 +428,9 @@ mod tests {
             .unwrap()
             .1
             .into_owned();
+        let key = started["completionKey"].as_str().unwrap().to_owned();
         let complete = format!("/v1/connections/acme.main/oauth:complete?{QUERY}");
-        let body = serde_json::json!({ "state": state }).to_string();
+        let body = serde_json::json!({ "state": state, "completionKey": key }).to_string();
 
         // Before the redirect: pending, and the state is not spent.
         let (status, pending) = send(port, "POST", &complete, Some(BEARER), &body);
@@ -455,11 +456,16 @@ mod tests {
             "the redirect alone exchanged the code"
         );
 
-        // Anyone else (no credential, a wrong one) gets the outside answer.
+        // Anyone else (no credential, a wrong one) gets the outside answer;
+        // the right credential without the completion key is refused
+        // (OAUTH-SESSION-1). None of them spends the code.
         for bearer in [None, Some("not-the-session")] {
             let (status, _) = send(port, "POST", &complete, bearer, &body);
             assert_ne!(status, 200);
         }
+        let guessed = serde_json::json!({ "state": state, "completionKey": "guess" }).to_string();
+        let (status, _) = send(port, "POST", &complete, Some(BEARER), &guessed);
+        assert_eq!(status, 400);
         assert!(bodies.lock().unwrap().is_empty());
 
         // The starting session completes: exchanged once, with the code.
@@ -472,9 +478,9 @@ mod tests {
         assert!(
             exchanged[0].contains("code=the-code-1") && exchanged[0].contains("code_verifier=")
         );
-        // Spent: a replay finds nothing parked.
+        // Spent: a replay finds nothing reserved.
         let (status, _) = send(port, "POST", &complete, Some(BEARER), &body);
-        assert_eq!(status, 409);
+        assert_eq!(status, 400);
         assert_eq!(opens.load(Ordering::SeqCst), 1);
     }
 }

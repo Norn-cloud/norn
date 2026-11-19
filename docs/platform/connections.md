@@ -34,8 +34,9 @@ client can't pin. The hosted wiring builds on the same types.
   - an OAuth completion stores tokens only if the generation is still the one
     its start saw;
   - a disconnect deletes the credential and every pending authorization of the
-    connection in one transaction, and only then asks the provider to revoke
-    the old grant, so a slow revocation can't touch a newer credential.
+    connection in one transaction; when it was asked to revoke the grant too,
+    it calls the provider only after that, so a slow revocation can't touch a
+    newer credential.
 - **Refresh.** Refreshes of one connection are single-flight: concurrent
   callers make one token-endpoint call. A rotated refresh token is saved in
   the same write. If the provider refuses the refresh (an OAuth error), the
@@ -54,7 +55,10 @@ client can't pin. The hosted wiring builds on the same types.
 - **Egress.** Every outbound connector call goes through one client
   (`connections::egress`, over the workspace's `ureq`). It does four things:
   1. It requires https to a public host. Plain http, or an internal host, is
-     allowed only when the operator lists the host (see below).
+     allowed only when the operator lists the host (see below). OAuth token
+     exchange, refresh and revocation go only to https, even to a listed
+     host; the one exception is a listed loopback address literal
+     (`127.0.0.1`, `::1`), which never leaves the host.
   2. It resolves each name once and checks every address against the shared
      rules in `norn_api::net`, *after* resolution: no loopback, private,
      link-local or metadata, CGNAT, ULA, IPv4-mapped or NAT64 addresses. It
@@ -70,6 +74,9 @@ client can't pin. The hosted wiring builds on the same types.
   Idempotent requests are retried up to 3 times with exponential backoff, or
   `Retry-After` (at most 30 s). A POST is sent once. A name resolves within
   5 s, and a whole call, with every redirect, retry and wait, ends within 60 s.
+  A lookup runs on its own thread so a hung resolver can't hold a call past
+  5 s; at most 16 lookups are outstanding per host, and one more is refused
+  at once (`egress_failed`) rather than leaving another thread behind.
 
 ## Routes
 
@@ -83,14 +90,20 @@ cell gives.
 |---|---|---|
 | `GET /v1/connections/{id}/credentials` | – | status |
 | `PUT /v1/connections/{id}/credentials` | `{provider, accessToken, refreshToken?, expiresAtMs?, scopes?, params?}` | status |
-| `DELETE /v1/connections/{id}/credentials` | – | status (`not_connected`) |
-| `POST /v1/connections/{id}/oauth:start` | `{provider, scopes?, params?}` | `{authorizeUrl, expiresAtMs}` |
+| `DELETE /v1/connections/{id}/credentials[?revokeGrant=true]` | – | status (`not_connected`) |
+| `POST /v1/connections/{id}/oauth:start` | `{provider, scopes?, params?}` | `{authorizeUrl, expiresAtMs, completionKey}` |
 | `GET /v1/connections/oauth:callback?state=…&code=…` | – | `connection.oauth_received` |
-| `POST /v1/connections/{id}/oauth:complete` | `{state}` | status |
+| `POST /v1/connections/{id}/oauth:complete` | `{state, completionKey}` | status |
 
-`DELETE` disconnects (see Generations), then asks the provider's RFC 7009
-revocation endpoint, when the provider has one, to end the old grant. The
-outcome is audited as `credential.provider_revoke`.
+`DELETE` disconnects (see Generations) and deletes locally only; it calls no
+provider. A provider's revocation can end the whole grant, not just one
+token: Google revokes every token the person gave Norn's client, which would
+break other connections on the same Google account, and a replacement, while
+their rows still say `connected`. So revoking at the provider is an explicit
+request: `DELETE …?revokeGrant=true` disconnects, then asks the provider's RFC
+7009 revocation endpoint, when the provider has one, to end the grant. Every
+other connection on that grant then fails its next refresh and is marked
+`reconnect_needed`. The outcome is audited as `credential.provider_revoke`.
 
 The vault is opened only after a request is authorized; a denied caller never
 causes a vault read.
@@ -101,22 +114,30 @@ The provider redirects the person's browser to the callback, and that
 redirect carries no Norn credential. So the callback is a handoff, not a
 completion:
 
-1. `oauth:start`, with the user's credential, returns the authorize URL; the
-   client opens it.
+1. `oauth:start`, with the user's credential, returns the authorize URL and a
+   random `completionKey`; the client keeps the key and opens the URL. The
+   start reserves its state in the host's memory, bound to the user, the
+   connection and the key's digest, for ten minutes. At most 256
+   authorizations are reserved at once, and at most 8 per user (a user's
+   oldest is dropped when they start a ninth).
 2. The provider redirects the browser to `oauth:callback?state=…&code=…`. The
-   callback checks only the shape of both values and parks the code in the
-   host's memory, keyed by the state's digest, for at most ten minutes (the
-   first code for a state wins; at most 256 wait). It opens no vault, reads no
-   row, and answers `connection.oauth_received`.
-3. The client that started calls `oauth:complete` with `{state}` and the same
-   user's credential. It answers `409 connection.oauth_pending` until the
-   redirect has arrived, so the client polls. Once the code is there, the state
-   is consumed in one transaction that checks the sealed actor, connection,
-   expiry and generation; only then is the code exchanged.
+   callback parks the code only for a reserved, unexpired state (the first
+   code wins), and answers `connection.oauth_received`. An unknown or expired
+   state is refused with `400 connection.oauth_state` and nothing is stored,
+   so callbacks can't fill the store. It opens no vault and reads no row.
+   Expired reservations are dropped on every connection request.
+3. The client that started calls `oauth:complete` with
+   `{state, completionKey}` and the same user's credential. It answers
+   `409 connection.oauth_pending` until the redirect has arrived, so the
+   client polls. Once the code is there, the state is consumed in one
+   transaction that checks the sealed actor, connection, key, expiry and
+   generation; only then is the code exchanged.
 
-A state started by someone else, or one whose connection was disconnected or
-replaced meanwhile, is refused and spent. The state is the only thing the
-browser carries, and only the session that started can use it.
+Another user, another session of the same user (one without the key), or a
+call for another connection is refused with `400 connection.oauth_state` and
+spends nothing: the flow stays completable by the session that started it.
+A state whose connection was disconnected or replaced meanwhile is refused
+and spent.
 
 ## Host configuration
 
