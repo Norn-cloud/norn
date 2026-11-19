@@ -6,13 +6,15 @@ import { Schema } from "effect"
 
 export const Reading = Norn.type({
   name: "probe.Reading", title: "Probe reading", version: "0.1.0",
-  properties: Schema.Struct({ id: Schema.String, region: Schema.String, amount: Norn.decimal(2), occurred_at: Norn.timestamp("utc") }),
+  // amount is additive, so the cell derives a sum metric the probe can ask about.
+  properties: Schema.Struct({ id: Schema.String, region: Schema.String, amount: Norn.decimal(2, { additivity: { kind: "additive" } }), occurred_at: Norn.timestamp("utc") }),
   identity: [{ name: "primary", properties: ["id"] }],
 })
 
 export const AddReading = Norn.action({
   id: "probe.reading.add", title: "Add probe reading", version: "0.1.0",
-  input: Schema.Struct({ id: Schema.String, region: Schema.String, amount: Norn.decimal(2), occurred_at: Norn.timestamp("utc") }),
+  // An action input has no timestamp type yet: the time arrives as RFC 3339 text.
+  input: Schema.Struct({ id: Schema.String, region: Schema.String, amount: Norn.decimal(2), occurred_at: Schema.String }),
   output: Schema.Struct({ id: Schema.String }),
   scopeRequired: ["orgId", "environmentId"], idempotent: true, ledgered: true,
   writes: [{ type: Reading, change: "created" }],
