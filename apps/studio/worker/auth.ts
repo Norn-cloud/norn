@@ -11,7 +11,7 @@ import { organization } from "better-auth/plugins/organization"
 import { adminAc, defaultStatements, memberAc, ownerAc } from "better-auth/plugins/organization/access"
 import { hashPassword, verifyPassword, type PasswordScrypt } from "./password.ts"
 import type { ClientIpHeader } from "./client-ip.ts"
-import { admitCell, admitCreatedCell, admitCreatedInvitation, admitMember, refusalMessage, removeInvitation, removeWorkspace, type Admission, type BillingDb } from "./billing.ts"
+import { admitMember, claimSeat, refusalMessage, reserveCell, reserveSeat, type Admission, type BillingDb } from "./billing.ts"
 import { forgetPolarCustomer, polarPlugin, type PolarBilling } from "./polar.ts"
 
 /**
@@ -79,6 +79,9 @@ export interface AuthConfig {
 }
 
 /** A plan limit refuses as a typed 403 the client renders as given: `code` PLAN_LIMIT and the `refusal`. */
+/** How long an invitation (and the seat it reserves) stays open: Better Auth's default, 48 hours. */
+const INVITATION_SECONDS = 48 * 60 * 60
+
 function enforce(admission: Admission): void {
   if (admission.kind === "admitted") return
   throw new APIError("FORBIDDEN", { code: "PLAN_LIMIT", message: refusalMessage(admission), refusal: admission })
@@ -389,27 +392,28 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
       // Only a verified address may accept an invitation (GHSA-fmh4-wcc4-5jm3): until a mail
       // sender verifies addresses, nobody can join an organization by claiming an invited email.
       organization({ ac, roles: ORG_ROLES, creatorRole: "owner", allowUserToCreateOrganization: true, requireEmailVerificationOnInvitation: true,
+        // Set here, not left to Better Auth's default: a seat reservation expires with its invitation.
+        invitationExpiresIn: INVITATION_SECONDS,
         organizationHooks: {
-          // Each workspace a person owns is a hosted cell their plan pays for (billing.ts); unbilled, always admitted.
+          // Each workspace a person pays for is a hosted cell (billing.ts). Its cell is reserved under the
+          // id the workspace is then created with, in one conditional write: over the limit nothing is
+          // written. Unbilled, always admitted.
           beforeCreateOrganization: async ({ organization, user }) => {
-            enforce(await admitCell(config.database as unknown as BillingDb, config.billing?.config, config.baseURL, user.id))
-            return { data: { ...organization, ...organization.metadata === undefined ? {} : { metadata: publicMetadata(organization.metadata) } } }
+            const id = crypto.randomUUID()
+            enforce(await reserveCell(config.database as unknown as BillingDb, config.billing?.config, config.baseURL, user.id, id))
+            return { data: { ...organization, id, ...organization.metadata === undefined ? {} : { metadata: publicMetadata(organization.metadata) } } }
           },
-          // Concurrent creations can all pass the check above before any is written: recount with the
-          // new workspace in place and undo it when it is past the limit.
-          afterCreateOrganization: async ({ organization }) => {
-            const db = config.database as unknown as BillingDb
-            const admission = await admitCreatedCell(db, config.billing?.config, config.baseURL, organization.id)
-            if (admission.kind !== "admitted") await removeWorkspace(db, organization.id)
-            enforce(admission)
+          // An invitation's seat is reserved before the invitation exists, so nobody can accept one
+          // that was not admitted; the invitation is created with that id and the reservation's expiry.
+          beforeCreateInvitation: async ({ invitation, organization, inviter }) => {
+            const id = crypto.randomUUID()
+            const expiresAt = Date.now() + INVITATION_SECONDS * 1000
+            enforce(await reserveSeat(config.database as unknown as BillingDb, config.billing?.config, config.baseURL, { id, organizationId: organization.id, email: invitation.email, expiresAt }, inviter.id))
+            return { data: { id, expiresAt: new Date(expiresAt) } }
           },
-          beforeCreateInvitation: async ({ organization, inviter }) => enforce(await admitMember(config.database as unknown as BillingDb, config.billing?.config, config.baseURL, organization.id, inviter.id)),
-          afterCreateInvitation: async ({ organization, invitation, inviter }) => {
-            const db = config.database as unknown as BillingDb
-            const admission = await admitCreatedInvitation(db, config.billing?.config, config.baseURL, organization.id, invitation.id, inviter.id)
-            if (admission.kind !== "admitted") await removeInvitation(db, invitation.id)
-            enforce(admission)
-          },
+          // Acceptance claims that seat before Better Auth marks the invitation accepted.
+          beforeAcceptInvitation: async ({ invitation, user }) => enforce(await claimSeat(config.database as unknown as BillingDb, config.billing?.config, config.baseURL,
+            { id: invitation.id, organizationId: invitation.organizationId, email: invitation.email, expiresAt: new Date(invitation.expiresAt).getTime() }, user.id)),
           beforeAddMember: async ({ organization, user }) => enforce(await admitMember(config.database as unknown as BillingDb, config.billing?.config, config.baseURL, organization.id, user.id)),
           beforeUpdateOrganization: async ({ organization, member }) => {
             if (organization.metadata === undefined) return

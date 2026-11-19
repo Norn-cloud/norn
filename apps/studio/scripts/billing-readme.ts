@@ -30,7 +30,7 @@ export function billingSection(): string {
     ...BILLING_ENV.map((name) => `| \`${name}\` | ${WHAT[name]} |`),
     "",
     "Webhook endpoint to register in Polar: `<studio origin>/api/auth/polar/webhooks` (subscription events).",
-    "`null` is unlimited; `cells` counts the workspaces a person pays for (the first owner, fixed at creation), `members` a workspace's members and unexpired invitations still pending (or accepted but not yet joined).",
+    "`null` is unlimited; `cells` counts the workspaces a person pays for (the first owner, fixed at creation), `members` a workspace's members and the seats its open invitations hold (reserved before an invitation is sent, kept through acceptance until the member joins, freed when it is canceled, rejected or expires); limits are taken in one conditional write, so concurrent requests cannot pass them together.",
     "A downgrade keeps existing workspaces and members over the new limit; it refuses new ones until usage is back under it.",
     "PLACEHOLDER plan table (not decided prices or limits; the product ids are not real):",
     "",

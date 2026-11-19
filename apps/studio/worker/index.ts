@@ -109,16 +109,16 @@ export async function publicSignUp(response: Response): Promise<Response> {
 }
 
 /**
- * Accepting an invitation that is no longer pending. The workspace may have undone it (a concurrent
- * invitation took the last seat, billing.ts admitCreatedInvitation) or an admin withdrew it; Better
- * Auth says only "Invitation not found", so say what the person can do about it.
+ * Accepting an invitation that is no longer pending: it expired or an admin withdrew it; Better Auth
+ * says only "Invitation not found", so say what the person can do about it. (One the member limit
+ * refuses at acceptance, billing.ts claimSeat, is refused as PLAN_LIMIT instead.)
  */
 export async function acceptInvitation(response: Response): Promise<Response> {
   if (response.status !== 400) return response
   const body = (await response.clone().json().catch(() => null)) as { code?: unknown } | null
   if (body?.code !== "INVITATION_NOT_FOUND") return response
   return Response.json(
-    { code: "INVITATION_NOT_FOUND", message: "This invitation is no longer open: it expired, was withdrawn, or the workspace is at its member limit. Ask the workspace's admins for a new one." },
+    { code: "INVITATION_NOT_FOUND", message: "This invitation is no longer open: it expired or was withdrawn. Ask the workspace's admins for a new one." },
     { status: 400, headers: { "cache-control": "no-store" } },
   )
 }
