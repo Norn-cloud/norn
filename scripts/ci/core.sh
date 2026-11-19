@@ -26,7 +26,7 @@ rest_shards=3
 # Selection comes only from here: every run ignores nextest's configurable
 # default filter and uses the pinned `ci` profile (no retries).
 nextest=(cargo nextest --profile ci)
-# The skeleton guard is its own Cargo workspace (D95): its manifest and lockfile are in the
+# The skeleton guard is its own Cargo workspace (#1270): its manifest and lockfile are in the
 # gated crate directory. Every guard command names it and shares the root target directory;
 # tool installs (`cargo install`) build in their own directory under $upstream instead.
 guard=(--manifest-path crates/norn-skeleton-guard/Cargo.toml)
@@ -239,7 +239,7 @@ run_phase() {
       # plan selects, and its two named tests must have run and passed.
       ensure_nextest
       # nextest keeps its reports under the workspace root's target/nextest, whatever
-      # CARGO_TARGET_DIR says, and the guard's workspace root is its own directory (D95).
+      # CARGO_TARGET_DIR says, and the guard's workspace root is its own directory (#1270).
       parity_report="$(cargo metadata --locked --format-version 1 --no-deps "${guard[@]}" | python3 -c 'import json, sys; print(json.load(sys.stdin)["workspace_root"])')/target/nextest/ci/junit.xml"
       rm -f "$parity_report"
       "${nextest[@]}" run --locked --ignore-default-filter "${guard[@]}" --lib -E 'test(=ci::tests::the_parity_fixture_keeps_every_gate_pinned_case) | test(=ci::tests::pull_request_concurrency_matches_the_shared_parity_fixture)'
@@ -344,7 +344,7 @@ PY
       cargo deny --locked check
       cargo deny --locked "${guard[@]}" check --config deny.toml
       cargo xtask ci policy
-      # The guard's own suite: it left the root workspace (D95), so no test shard selects it.
+      # The guard's own suite: it left the root workspace (#1270), so no test shard selects it.
       # The guards phase runs in every plan, full or affected.
       "${nextest[@]}" run --locked --ignore-default-filter --no-fail-fast "${guard[@]}"
       ;;
@@ -625,7 +625,7 @@ for path in changed:
     elif not path.startswith(".github/ci/provenance/") and not (
             path.endswith(".md") and (path.startswith("docs/") or "/" not in path)):
         outside.append(path)
-# The guard is its own workspace (D95); the guards phase, in every plan, runs its suite.
+# The guard is its own workspace (#1270); the guards phase, in every plan, runs its suite.
 reached, stack = set(touched), list(touched)
 while stack:
     for user in users[stack.pop()]:
@@ -644,7 +644,7 @@ browser = ["browser"] if "norn-checker-wasm" in reached else []
 # The DuckDB backend lives in norn-cell: a change that reaches it builds and tests it (#1206).
 duckdb = ["duckdb"] if "norn-cell" in reached else []
 # A plan that reaches no workspace package (Markdown only) runs no test shard: empty packages
-# would not narrow a shard, and the guard's own suite runs in the guards phase (D95).
+# would not narrow a shard, and the guard's own suite runs in the guards phase (#1270).
 rest_names = [f"rest-{i}" for i in range(1, parts + 1)] if reached else []
 done({"mode": "affected", "shard": selected_heavy + rest_names, "phase": ["guards", "provenance", "clippy"] + browser + duckdb,
       "packages": "" if reached >= known else " ".join(sorted(reached)), "rest_shards": parts, "reason": reason})

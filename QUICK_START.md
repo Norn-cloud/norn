@@ -35,12 +35,14 @@ cargo install --locked wasm-bindgen-cli --version 0.2.129
 
 # the checker as WASM, which the TypeScript tools load
 crates/norn-checker-wasm/scripts/build-pkg.sh
-export NORN_CHECKER_WASM_PKG="${CARGO_TARGET_DIR:-$PWD/target}/norn-checker-wasm/pkg"
+# an absolute path, even when CARGO_TARGET_DIR is relative
+TARGET="$(cd "${CARGO_TARGET_DIR:-target}" && pwd)"
+export NORN_CHECKER_WASM_PKG="$TARGET/norn-checker-wasm/pkg"
 
 # the Rust `norn` and the local dev host that the TypeScript `norn dev` runs
 cargo build --locked --release -p norn-cli
 cargo build --locked --release -p norn-cell-do --bin norn-dev-host
-export NORN_DEV_HOST_BIN="${CARGO_TARGET_DIR:-$PWD/target}/release/norn-dev-host"
+export NORN_DEV_HOST_BIN="$TARGET/release/norn-dev-host"
 
 # the TypeScript `norn`, and Studio if you want the web app
 (cd tools/norn-ts && bun install --frozen-lockfile)
@@ -48,7 +50,7 @@ export NORN_DEV_HOST_BIN="${CARGO_TARGET_DIR:-$PWD/target}/release/norn-dev-host
 ```
 
 The hosted-cell smoke in [`crates/norn-cell`](crates/norn-cell/README.md) also needs
-`esbuild` on `PATH`. To install only the Rust `norn` from a tag:
+`esbuild` on `PATH` and celld v0.6.3 (see that README for its pin and checksum). To install only the Rust `norn` from a tag:
 `cargo install --locked --git https://github.com/Norn-cloud/norn --tag TAG norn-cli`.
 
 A one-command `norn dev` setup for a project with packs is in progress; this page

@@ -9,7 +9,7 @@
     "sim.dst.serial_total_s": {
       "better": "lower",
       "noise_pct": 15,
-      "why": "The D79 simulator set (sim.dst.serial_total_s), run serially on a Boat default VM. #1223 saw 33.4 s and 34.7 s for the same set on two VMs (about 4%); 15% leaves room for VM-to-VM CPU variance on a single run."
+      "why": "The DST simulator set (#1248; sim.dst.serial_total_s), run serially on a Boat default VM. #1223 saw 33.4 s and 34.7 s for the same set on two VMs (about 4%); 15% leaves room for VM-to-VM CPU variance on a single run."
     }
   }
 }

@@ -173,7 +173,7 @@ the parked command's result and commits the run's result turn (FLOW-DRIVER-1) wi
 the decision's resolution in one commit (DECISION-LEDGER-1). The same key and body
 replays the original commit. A decider adds a condition and grants nothing: the
 result turn runs as the cell, and the run's later steps act under the run
-starter's authority, never the decider's. The receipt is disclosed under D53 by the
+starter's authority, never the decider's. The receipt is disclosed by the
 cell's question runtime; a cell without one decides nothing. A run document names
 the open decision it waits on (`decision: {id, expiresAtMs}`) when the caller may
 decide it. Named scenarios (`crates/norn-cell-do/tests/decisions.rs`):
@@ -207,7 +207,7 @@ An `approval` retained definition (`{action, decider: {roles, law?}, question,
 risk, expiresInMs?}`) makes every call of one admitted action wait for a person.
 At most one active approval gates an action; its decider roles are roles of the
 cell's declared role table; installing or revising one changes who may complete
-an action, so it is installed only by signing the server's restatement (D59), as
+an action, so it is installed only by signing the server's restatement (#1094), as
 a flow is. While it is active, the shared action dispatch (every surface: HTTP,
 MCP's loopback, a flow's action step) runs the kernel's action pipeline for the
 call against a host that serves every read and stops at the commit point. A call

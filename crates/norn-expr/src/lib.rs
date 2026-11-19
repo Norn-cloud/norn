@@ -2,7 +2,8 @@
 //!
 //! Ring 0 — pure, portable semantic core (see `AGENTS.md`). This crate is the
 //! only Norn crate that depends on `zen-expression`, pinned to the
-//! `Norn-cloud/zen` fork (D19, D32; `zen-fork-ledger.md`). Its public API is
+//! `Norn-cloud/zen` fork, which carries only engine-internal patches
+//! (`crates/norn-skeleton-guard/zen-pin.json`). Its public API is
 //! Norn-owned: [`Expression`], [`Value`], [`Number`], [`EvaluationBudget`],
 //! [`Evaluation`], [`EvaluationAttempt`], [`UnaryTest`], [`ExprError`], the type environment
 //! ([`ZenTypeEnv`], [`Type`], [`RecordType`]), and the checker

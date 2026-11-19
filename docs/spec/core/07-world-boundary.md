@@ -269,7 +269,7 @@ manifests keep refusing `function.manifest.authored_host`. The decision function
 accept only a manifest the registry handed out (`Registered`), and bind only a
 dispatch pinned to its exact digest.
 
-DECISION-1 (`norn.decision@1`, D58): a flow asks a person by `perform` of this
+DECISION-1 (`norn.decision@1`, #1163): a flow asks a person by `perform` of this
 built-in, then `route` on `choice` with `otherwise` failing; the run waits in
 `awaiting_perform_<step>`. The input is one canonical-JSON blob named `request`,
 a closed record `{question, risk: low|medium|high, options: [{id, label,

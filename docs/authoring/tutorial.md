@@ -32,11 +32,12 @@ cargo install --locked wasm-bindgen-cli --version 0.2.129
 crates/norn-checker-wasm/scripts/build-pkg.sh
 cargo build --locked --release -p norn-cell-do --bin norn-dev-host
 (cd tools/norn-ts && bun install --frozen-lockfile)
-export NORN_CHECKER_WASM_PKG="${CARGO_TARGET_DIR:-$NORN/target}/norn-checker-wasm/pkg"
-export NORN_DEV_HOST_BIN="${CARGO_TARGET_DIR:-$NORN/target}/release/norn-dev-host"
+TARGET="$(cd "${CARGO_TARGET_DIR:-$NORN/target}" && pwd)"
+export NORN_CHECKER_WASM_PKG="$TARGET/norn-checker-wasm/pkg"
+export NORN_DEV_HOST_BIN="$TARGET/release/norn-dev-host"
 ```
 
-Both builds write under `CARGO_TARGET_DIR` when it is set, so the two paths follow it.
+Both builds write under `CARGO_TARGET_DIR` when it is set, so the two paths follow it; `TARGET` is that directory as an absolute path, so the exports stay valid when `CARGO_TARGET_DIR` is relative and you later run from another directory.
 
 `NORN_CHECKER_WASM_PKG` is the checker that `norn check` and `norn dev` load; `NORN_DEV_HOST_BIN` is the native host that `norn dev` runs. Keep both set in every terminal you use below. The [quickstart](../../QUICK_START.md) has the same build and the release path.
 
