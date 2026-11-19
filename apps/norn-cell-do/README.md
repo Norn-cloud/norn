@@ -138,3 +138,40 @@ traces are never served unkeyed.
 | Atomic commit (TXN-ATOMIC-1) | `BEGIN IMMEDIATE` | `storage.transactionSync` |
 | Durability | `synchronous=FULL` fsync | DO storage; output gates hold replies until durable |
 | Ledger, receipts, transparency | shared `norn-cell` store | the same store over `WorkersEngine` |
+
+## Telemetry
+
+`telemetry.mjs` exports what the host does over OpenTelemetry (OTLP/HTTP, JSON
+encoding) through `otlp.mjs`, a dependency-free exporter Studio's Worker shares.
+It is off unless the Worker has `OTEL_EXPORTER_OTLP_ENDPOINT` (OTEL-OFF-1):
+without it every wrapped method calls straight through and nothing is sent. Set:
+
+| var | value |
+|---|---|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | the collector's base URL; OpenObserve: `https://<host>/api/<org>` |
+| `OTEL_EXPORTER_OTLP_HEADERS` | `Authorization=Basic%20<base64 user:password>` (a secret) |
+| `OTEL_RESOURCE_ATTRIBUTES` | `deployment.environment=<stage>` |
+| `OTEL_TRACES_SAMPLER_ARG` | fraction of spans kept (default 1) |
+| `NORN_OTEL_INTERVAL_MS` | export interval (default 10000) |
+
+Metrics are delta counters and histograms, exported from each isolate at most
+once per interval (on the next request, alarm or sync after it passes):
+
+| metric | attributes |
+|---|---|
+| `norn_cell_requests_total`, `norn_cell_request_duration_ms` | route template, method, kind, outcome, status class, environment |
+| `norn_cell_commit_duration_ms` | kind (action, decision, provision, apply, install, load, sync, write), outcome |
+| `norn_cell_definitions_stage_ms` | stage: provision, admission, plan, apply, install |
+| `norn_cell_refusals_total` | refusal code, route, kind |
+| `norn_cell_actions_total`, `norn_cell_decisions_total` | outcome: ok, pending (parked for approval), refused, error |
+| `norn_cell_sync_runs_total`, `norn_cell_sync_duration_ms` (the sync lag: start to rows committed), `norn_cell_sync_rows_{read,landed,quarantined}_total` | outcome (ok, partial, failed), failure code |
+| `norn_cell_alarm_lag_ms`, `norn_cell_alarms_total` | retry; lag is fired minus armed deadline (TIMER-ALARM-1, once `alarm()` exists) |
+| `norn_cell_live_publishes_total`, `norn_cell_live_messages_total`, `norn_cell_live_fanout` | none |
+
+Each request, sync and alarm is also a span (`cell <kind>`). No attribute names
+a tenant, principal, object or payload (OTEL-NO-TENANT-1): routes are templates
+(`/v1/objects/{}/{}/history`), and a refusal contributes only its code. The
+per-commit work counters (#1421, `counters` feature) stay test-only.
+
+`probe/golden-path.mjs` is the synthetic probe (`probe/dev.sh` runs it against a
+fresh `norn dev`). Dashboards and alerts live in Norn-cloud/norn-ops `observability/`.

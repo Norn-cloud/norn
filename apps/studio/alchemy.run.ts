@@ -1,7 +1,7 @@
 import alchemy from "alchemy"
 import { D1Database, EmailSender, Vite, WorkerRef } from "alchemy/cloudflare"
 import { FileSystemStateStore } from "alchemy/state"
-import { authDeploy, cellHost, deployTarget, requireWorkerScript, scanState } from "./deploy-target.ts"
+import { authDeploy, cellHost, deployTarget, otelSettings, requireWorkerScript, scanState } from "./deploy-target.ts"
 
 // The recorded Studio: `vite build` output (synthetic recorded engine documents
 // only) served as static assets on the custom domains in STUDIO_DOMAINS
@@ -28,6 +28,9 @@ if (host !== undefined) await requireWorkerScript(host, process.env)
 // The scan below must see the secret's value, so keep a copy before taking it out of the environment.
 const scanEnv = { ...process.env }
 delete process.env.BETTER_AUTH_SECRET
+// OpenTelemetry export (worker/telemetry.ts): off unless OTEL_EXPORTER_OTLP_ENDPOINT is set; its headers become a Worker secret.
+const otel = otelSettings(process.env)
+delete process.env.OTEL_EXPORTER_OTLP_HEADERS
 const stateDir = process.env.ALCHEMY_STATE_DIR ?? ".alchemy"
 // Alchemy keeps this app's state under <stateDir>/<APP>/; the post-deploy scan reads exactly that subtree.
 const APP = "norn-studio"
@@ -60,6 +63,11 @@ export const studio = await Vite("studio", {
     ...auth.defaultOrg === undefined ? {} : { STUDIO_DEFAULT_ORG: auth.defaultOrg },
     ...host === undefined ? {} : { NORN_HOST: WorkerRef({ service: host }) },
     BETTER_AUTH_TRUSTED_ORIGINS: JSON.stringify(auth.origins),
+    ...otel === undefined ? {} : {
+      OTEL_EXPORTER_OTLP_ENDPOINT: otel.endpoint,
+      ...otel.headers === undefined ? {} : { OTEL_EXPORTER_OTLP_HEADERS: alchemy.secret(otel.headers) },
+      ...otel.resourceAttributes === undefined ? {} : { OTEL_RESOURCE_ATTRIBUTES: otel.resourceAttributes },
+    },
     // Magic links need a Cloudflare Email Service sender on the domain; without one they refuse.
     ...auth.emailFrom === undefined ? {} : { EMAIL: EmailSender({ allowedSenderAddresses: [auth.emailFrom] }), EMAIL_FROM: auth.emailFrom },
   },

@@ -4,6 +4,7 @@
 import { initSync, NornCell } from "./pkg/norn_cell_do.js";
 import module from "./pkg/norn_cell_do_bg.wasm";
 import * as live from "./subscribe.mjs";
+import { instrument, syncFinished } from "./telemetry.mjs";
 initSync({ module });
 
 // The demo cell, as [orgId, environmentId]: where a request that names no well-formed scope lands.
@@ -310,6 +311,7 @@ export class Cell {
     const done = step.done ?? {};
     const wallMs = Date.now() - started;
     console.log(JSON.stringify({ sync: id, outcome: done.outcome, rowsRead: done.rowsRead, rowsLanded: done.rowsLanded, rowsQuarantined: done.rowsQuarantined, steps, fetches, wallMs, cellMs, fetchMs, maxCellMs, maxFetchMs, slow }));
+    syncFinished(this.env, { ...done, wallMs });
     // A sync commits as it goes; live subscriptions are answered again once it ends.
     if ((done.rowsLanded ?? 0) > 0) this.publish();
   }
@@ -319,6 +321,9 @@ export class Cell {
     if (typeof this.ctx.waitUntil === "function") this.ctx.waitUntil(guarded);
   }
 }
+
+// OTEL-OFF-1: request, commit, sync, alarm and live fan-out telemetry, exported only when configured (telemetry.mjs).
+instrument(Cell);
 
 // SYNC-YIELD-2: a sync step aims to hold the cell about this long (NORN_SYNC_STEP_MS, 250 ms to 30 s); rows per step follow from the last step's time per row.
 const STEP_BUDGET_MS = 1500;

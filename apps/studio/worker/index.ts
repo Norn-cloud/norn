@@ -7,6 +7,7 @@ import { MCP_PATH, serveMcp } from "./mcp.ts"
 import { cellFor } from "./cell.ts"
 import { questions } from "./questions.ts"
 import { cellScope } from "./scope.ts"
+import { instrumented } from "./telemetry.ts"
 
 /** The Studio Worker: Better Auth under /api/auth, authenticated /api/*, static assets for everything else. */
 export interface Env {
@@ -46,6 +47,11 @@ export interface Env {
   readonly AGENT_FALLBACK_MODEL?: string
   /** What the assistant may spend in all, in dollars (default 20). */
   readonly AGENT_SPEND_CAP_USD?: string
+  /** OpenTelemetry export (telemetry.ts); off unless the endpoint is set. Headers carry the collector's credentials. */
+  readonly OTEL_EXPORTER_OTLP_ENDPOINT?: string
+  readonly OTEL_EXPORTER_OTLP_HEADERS?: string
+  readonly OTEL_RESOURCE_ATTRIBUTES?: string
+  readonly OTEL_TRACES_SAMPLER_ARG?: string
 }
 
 export const refuse = (status: number, reason: string, headers: HeadersInit = {}) =>
@@ -123,7 +129,7 @@ const OAUTH_DISCOVERY = new Set([
   `/.well-known/oauth-protected-resource${MCP_PATH}`,
 ])
 
-export default {
+const handler = {
   async fetch(request, env) {
     const { pathname } = new URL(request.url)
     if (mcpOn(env) && pathname === MCP_PATH) {
@@ -201,3 +207,5 @@ export default {
     return refuse(404, "No such endpoint.")
   },
 } satisfies ExportedHandler<Env>
+
+export default instrumented(handler) satisfies ExportedHandler<Env>
