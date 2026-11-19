@@ -846,7 +846,10 @@ fn http(config: &ConnectionConfig, auth: &[(String, String)], request: Request) 
 /// entry, rather than leaving the operator's host silently unlisted. The raw
 /// entry is checked before URL parsing, because parsing drops a default port
 /// (`127.0.0.1:443`) and empty userinfo (`@127.0.0.1`) and would list the bare
-/// host on every port and scheme.
+/// host on every port and scheme. Connection egress reads the same list.
+///
+/// # Errors
+/// An entry that is not a bare host, named.
 pub fn allowed_host_list(value: &str) -> Result<Vec<String>, String> {
     value
         .split(',')
