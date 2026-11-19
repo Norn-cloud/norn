@@ -290,7 +290,7 @@ class AffectedPlanTests(unittest.TestCase):
     def test_markdown_only_keeps_policy_and_provenance(self):
         self.commit("docs/synthetic.md")
         plan = self.plan("--affected", self.base)
-        # The guard is its own workspace (D95): no package is reached, so no test shard runs;
+        # The guard is its own workspace (#1270): no package is reached, so no test shard runs;
         # the guards phase runs the guard's suite.
         self.assertEqual(plan["shard"], [])
         self.assertEqual(plan["phase"], ["guards", "provenance", "clippy"])

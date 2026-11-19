@@ -27,7 +27,7 @@ wasm-bindgen = "=0.2.129"
 
 [features]
 # The checker ABI proper. Without it the crate is the ZEN engine alone: only
-# `evaluate_expression_json` (`evaluateExpression`), the same function, over norn-expr (D105).
+# `evaluate_expression_json` (`evaluateExpression`), the same function, over norn-expr (one evaluator, #1325).
 default = ["checker"]
 checker = ["dep:norn-checker", "dep:norn-projections"]
 
