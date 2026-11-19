@@ -2,11 +2,13 @@
 // The golden-path synthetic probe: one pass through what a customer does, timed
 // step by step, reported as pass/fail over OTLP (otlp.mjs) and on stdout.
 //
-//   ready    the probe cell answers and holds the probe definitions as probe.ts
-//            declares them (each action's id, version, effect and write target),
-//            and nothing else beyond the catalog's trusted base, so the probe
-//            never writes into a customer cell. Every later action call pins
-//            the definitions version read here (`?version=`), so a catalog that
+//   ready    the probe cell answers and holds exactly the definitions `norn
+//            compile` makes of probe.ts (each artifact's digest, DEFINITIONS
+//            below), and nothing else beyond the catalog's trusted base, so the
+//            probe never writes into a customer cell nor runs an action that
+//            differs from probe.ts in any executable part. Every later action
+//            call pins the definitions version read here (`?version=`), and a
+//            parked call keeps that pin through its approval, so a catalog that
 //            changes after this check refuses the write (defs.stale).
 //   load     a tiny dataset (three readings) lands through the load action
 //   ask      an ad-hoc question grouped by run answers this run's group with
@@ -46,6 +48,7 @@
 // (hosted) one parked decision remain, as the cell's audit trail requires.
 //
 // The cell must hold the probe definitions (probe/probe.ts; probe/dev.sh installs them).
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { isLoopback, telemetry } from "../otlp.mjs";
@@ -68,6 +71,19 @@ const ACTIONS = {
   [SENTINEL]: { target: SENTINEL_TYPE, writeMode: "create_only" },
 };
 const ENTITIES = [READING, CONFIRMATION, SENTINEL_TYPE];
+/**
+ * PROBE-DEFINITIONS-1: the digest (definitionDigest) of every artifact `norn
+ * compile` makes of probe.ts, by artifact id. probe-golden-path.test.ts
+ * compiles probe.ts and fails when these drift from it.
+ */
+export const DEFINITIONS = {
+  "probe.Reading.entity": "669debedddfe576afe3273a32c4207b77146294f316b00af9f0c6c32c8df7b96",
+  "probe.reading.put.action": "7d2c9e5b39f76e6cbfd017c414c0aac5a933c74fc9b42ab01b58dfd675e32aa7",
+  "probe.Confirmation.entity": "120494da3ed72c6eba4d13fe2522a9eb1d2550a4e95c95d578a4d0124b7519e7",
+  "probe.confirmation.put.action": "182b069990d2a2bf702557991c66fd7732a1c93853d9f11ce32fbbe35fd35103",
+  "probe.Sentinel.entity": "0e2738e987eb534f97eb4aa1ef34b0de8ab3e19f6dac33f7eade20bd1d5a8513",
+  "probe.sentinel.add.action": "6e5696d43c85230d03f4903ed6cd399bad4df86e4a54e7d9f8eee146cddd89f1",
+};
 /** The three readings' amounts and their sum, as the ask step expects them back. */
 const ROWS = [["north", "10.50"], ["south", "4.25"], ["north", "1.00"]];
 const EXPECTED_SUM = 15.75;
@@ -194,6 +210,24 @@ const said = (reply) => String(Number.isInteger(reply.status) ? reply.status : 0
 const SKIP = "skip";
 const isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 
+/** Sorted-key JSON (tools/norn-ts/src/canonical.ts's rule): the same definition prints the same bytes. */
+const canonical = (value) =>
+  Array.isArray(value)
+    ? `[${value.map(canonical).join(",")}]`
+    : isObject(value)
+      ? `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`
+      : JSON.stringify(value);
+
+/**
+ * PROBE-DEFINITIONS-1: an artifact's digest: sha256 of its canonical JSON
+ * without `scope` and `provenance`, which the cell and the source path set.
+ * Everything executable (payload, kind, id, version, dependencies) is in it.
+ */
+export function definitionDigest(artifact) {
+  const { scope: _scope, provenance: _provenance, ...definition } = artifact;
+  return createHash("sha256").update(canonical(definition)).digest("hex");
+}
+
 /**
  * The catalog's version when it holds the probe definitions as probe.ts declares
  * them and, beyond its trusted base (`baseArtifactIds`), nothing else: a cell
@@ -221,6 +255,13 @@ export function dedicatedVersion(catalog) {
     expect(isObject(effect) && effect.kind === "upsert_input_object" && effect.objectKind === wanted.target && effect.objectIdField === "id" && writeMode === wanted.writeMode, "probe.definition_effect_mismatch");
     const writes = Array.isArray(action.payload.writes) ? action.payload.writes : [];
     expect(writes.length > 0 && writes.every((w) => w?.entityKind === wanted.target), "probe.definition_target_mismatch");
+  }
+  // PROBE-DEFINITIONS-1: and exactly what norn compile makes of probe.ts, byte for byte, so no
+  // derivation, precondition or command the checks above do not read can reach a write.
+  const ids = new Set(own.map((a) => a?.artifactId));
+  expect(ids.size === own.length && own.length === Object.keys(DEFINITIONS).length, "probe.definitions_not_compiled");
+  for (const artifact of own) {
+    expect(isObject(artifact) && Object.hasOwn(DEFINITIONS, artifact.artifactId) && definitionDigest(artifact) === DEFINITIONS[artifact.artifactId], "probe.definitions_not_compiled");
   }
   return catalog.version;
 }
@@ -329,6 +370,10 @@ export async function run(argv = process.argv.slice(2), env = process.env) {
       expect(t.approver !== undefined, "probe.approver_token_required");
       const reply = await call(t, "POST", `/v1/decisions/${encodeURIComponent(state.decision)}:decide`, t.approver, { choice: "approve", idempotencyKey: `approve-${run}` });
       expect(reply.status === 200, `probe.decide_refused ${said(reply)}`);
+      // The approval commits the call under the pin it parked with (APPROVAL-PIN-1); a catalog
+      // that changed since refuses it, and an approval that committed nothing is no pass.
+      expect(reply.json?.call?.code !== "defs.stale", "probe.definitions_changed");
+      expect(reply.json?.call?.committed === true, "probe.approval_not_committed");
       state.committed = true;
       return "approved";
     });

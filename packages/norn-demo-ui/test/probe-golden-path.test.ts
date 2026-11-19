@@ -14,7 +14,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 // @ts-expect-error: the probe is plain JavaScript without declarations.
-import { ProbeError, TARGETS, dedicatedVersion, run, target } from "../../../apps/norn-cell-do/probe/golden-path.mjs"
+import { DEFINITIONS, ProbeError, TARGETS, dedicatedVersion, definitionDigest, run, target } from "../../../apps/norn-cell-do/probe/golden-path.mjs"
 
 const ROOT = new URL("../../../", import.meta.url).pathname
 const TOKEN = "tok-secret-1234"
@@ -58,7 +58,7 @@ const catalog = (edit: (probe: Artifact[]) => Artifact[] = (p) => p, base: Artif
 const action = (probe: Artifact[], id: string) => probe.find((a) => a.kind === "action" && a.payload.actionId === id)!
 
 type Seen = { method: string; path: string; search: URLSearchParams; authorization: string | null; body: any }
-type Fault = Partial<{ catalog: Catalog; gated: boolean; staleAnswer: boolean; wrongSum: boolean; staleConfirmation: boolean; untypedConfirmation: boolean; duplicateCode: string; throwWith: string; refuseWith: { status: number; code: string } }>
+type Fault = Partial<{ catalog: Catalog; gated: boolean; catalogChangesWhileParked: boolean; staleAnswer: boolean; wrongSum: boolean; staleConfirmation: boolean; untypedConfirmation: boolean; duplicateCode: string; throwWith: string; refuseWith: { status: number; code: string } }>
 
 const realFetch = globalThis.fetch
 afterEach(() => {
@@ -92,8 +92,10 @@ function fakeCell(fault: Fault = {}) {
       return Response.json({ id: body.input.id })
     }
     if (path === "/v1/decisions/dec-1:decide") {
+      // APPROVAL-PIN-1: the approval commits under the pin the call parked with, as decisions.rs does.
+      if (fault.catalogChangesWhileParked) return Response.json({ outcome: "decided", call: { committed: false, code: "defs.stale" } })
       objects.set(`probe.Confirmation/${parked.id}`, parked)
-      return Response.json({ outcome: "committed" })
+      return Response.json({ outcome: "decided", call: { committed: true } })
     }
     if (path === "/v1/actions/probe.sentinel.add") {
       if (objects.has("probe.Sentinel/probe-sentinel")) return Response.json({ code: fault.duplicateCode ?? "action.write_mode_failed" }, { status: 409 })
@@ -260,6 +262,38 @@ test("PROBE-BOUNDED-1: a cell holding anything beyond its base and probe.ts's de
     expect([name, detail(summary, "ready")]).toEqual([name, expect.objectContaining({ outcome: "fail", detail: code })])
     expect([name, cell.seen.filter((s) => s.method === "POST")]).toEqual([name, []])
   }
+})
+
+test("PROBE-DEFINITIONS-1: the probe's digests are exactly norn compile's output for probe.ts", () => {
+  expect(Object.fromEntries(PROBE.map((a) => [a.artifactId, definitionDigest(a)]))).toEqual(DEFINITIONS)
+  // Scope and provenance are the cell's and the source path's, not the definition's.
+  const moved = structuredClone(PROBE[0]!) as any
+  moved.scope = { orgId: "other", environmentId: "other" }
+  moved.provenance = { source: "user", sourcePath: "src/probe.ts" }
+  expect(definitionDigest(moved)).toBe(definitionDigest(PROBE[0]!))
+})
+
+test("B4b: an action that matches id, version, effect and targets but differs anywhere else is never written", async () => {
+  const cases: [string, Catalog][] = [
+    // A derivation that rewrites the object key: the kernel writes under the derived id.
+    ["an id derivation", catalog((p) => { action(p, "probe.reading.put").payload.derive = [{ field: "id", expression: { source: "'customer-order-1'" } }]; return p })],
+    ["a changed precondition", catalog((p) => { action(p, "probe.confirmation.put").payload.preconditions = [{ source: "true" }]; return p })],
+    ["a duplicated artifact", catalog((p) => [...p, structuredClone(p.find((a) => a.kind === "entity")!)])],
+  ]
+  for (const [name, served] of cases) {
+    const cell = fakeCell({ catalog: served, gated: true })
+    const { summary } = await probe(HOSTED)
+    expect([name, detail(summary, "ready")]).toEqual([name, expect.objectContaining({ outcome: "fail", detail: "probe.definitions_not_compiled" })])
+    expect([name, cell.seen.filter((s) => s.method === "POST")]).toEqual([name, []])
+  }
+})
+
+test("B4a: a catalog that changes while the call is parked fails the run, and nothing is confirmed", async () => {
+  const cell = fakeCell({ gated: true, catalogChangesWhileParked: true })
+  const { summary } = await probe(HOSTED)
+  expect(summary.outcome).toBe("fail")
+  expect(detail(summary, "approve")).toMatchObject({ outcome: "fail", detail: "probe.definitions_changed" })
+  expect(cell.objects.has("probe.Confirmation/probe-confirmation")).toBe(false)
 })
 
 test("PROBE-BOUNDED-1: every credential, the hosted approver's included, is checked before the first request", () => {
