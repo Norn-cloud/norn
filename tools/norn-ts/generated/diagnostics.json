@@ -1833,6 +1833,30 @@
       "no_fix": null
     },
     {
+      "code": "law.conservation.alias_bound",
+      "tier": "T3",
+      "severity": "error",
+      "message": "conservation writer has more key-aliasing cases than the checker enumerates: {detail}",
+      "fix": "Split the writer so it assigns at most 6 coordinates of one stored member, or add preconditions such as input.from != input.to that keep its keys distinct, then check it again.",
+      "no_fix": null
+    },
+    {
+      "code": "law.conservation.alias_unlowerable",
+      "tier": "T3",
+      "severity": "error",
+      "message": "conservation writer may write one row through coordinates the checker cannot reconcile: {detail}",
+      "fix": "Give every coordinate its stored row (root type, member and key), and give coordinates that may name one row the same weight, scope and unit.",
+      "no_fix": null
+    },
+    {
+      "code": "law.conservation.key_alias",
+      "tier": "T3",
+      "severity": "error",
+      "message": "conservation writer does not balance when its keys name one cell: {detail}",
+      "fix": "Add a precondition that keeps the reported keys distinct (for example input.from != input.to), or make the aliased case balance on its own.",
+      "no_fix": null
+    },
+    {
       "code": "law.example.mismatch",
       "tier": "T2",
       "severity": "error",

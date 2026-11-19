@@ -1,7 +1,8 @@
 //! MINE-CONS-1: bounded runtime questions over source-pinned observed flows.
 //! Exact certificates describe only this supplied window, never business truth.
 use norn_checker::obligations::conservation::{
-    Coordinate, Delta, Failure, Rational, Writer, check, discovery::discover,
+    Coordinate, Delta, Failure, InstalledActions, Rational, Writer, WriterSource, check,
+    discovery::discover,
 };
 use std::collections::BTreeSet;
 
@@ -104,6 +105,16 @@ pub fn suggest_conservation(
         .map(|o| Writer {
             id: o.record.clone(),
             delta: Delta::Affine(o.delta.iter().map(|v| vec![*v]).collect()),
+            // An observation assigns what it changed. It is bound to no
+            // executable action, so every stored key pair stays possibly
+            // equal.
+            assigns: coordinates
+                .iter()
+                .zip(&o.delta)
+                .filter(|(_, v)| **v != zero)
+                .map(|(c, _)| c.id.clone())
+                .collect(),
+            source: WriterSource::Unbound,
         })
         .collect();
     let training = writers.get(..training_records).ok_or(Failure::Malformed)?;
@@ -131,7 +142,12 @@ pub fn suggest_conservation(
         counterexamples: Vec::new(),
     };
     for writer in &writers {
-        match check(&result.coordinates, std::slice::from_ref(writer), &weights) {
+        match check(
+            &result.coordinates,
+            std::slice::from_ref(writer),
+            &weights,
+            &InstalledActions::none(),
+        ) {
             Ok(()) => result.supporting_records.push(writer.id.clone()),
             Err(witness @ Failure::Unbalanced { .. }) => {
                 result.counterexamples.push((writer.id.clone(), witness));
@@ -166,6 +182,7 @@ mod tests {
                     code: "g".into(),
                 },
                 weight: q(1, 1),
+                cell: None,
             })
             .collect();
         let observations = (0..count)
