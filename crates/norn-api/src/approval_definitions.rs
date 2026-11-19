@@ -231,11 +231,13 @@ pub fn restate(canonical: &str) -> Result<String, String> {
         .and_then(Value::as_array)
         .map(|roles| roles.iter().filter_map(Value::as_str).collect())
         .unwrap_or_default();
-    let first = match value.get("when").and_then(when_words) {
-        Some(when) => format!(
-            "A call of {action} that writes a record with {when} waits for a person to approve it; any other call commits at once."
+    let property = text("/when/property");
+    let first = match (value.get("when").and_then(when_words), property) {
+        // APPROVAL-WHEN-1 fails closed: a condition it cannot evaluate parks.
+        (Some(when), Some(property)) => format!(
+            "A call of {action} that writes a record with {when} waits for a person to approve it, and so does one whose record's {property} is missing or cannot be compared; any other call commits at once."
         ),
-        None => format!("Every call of {action} waits for a person to approve it."),
+        _ => format!("Every call of {action} waits for a person to approve it."),
     };
     let mut lines = vec![
         first,
@@ -283,7 +285,7 @@ mod tests {
         let words = restate(&payload.to_string()).unwrap_or_default();
         assert!(
             words.starts_with(
-                "A call of purchasing.request.submit that writes a record with amount > 1000 waits for a person to approve it; any other call commits at once."
+                "A call of purchasing.request.submit that writes a record with amount > 1000 waits for a person to approve it, and so does one whose record's amount is missing or cannot be compared; any other call commits at once."
             ),
             "{words}"
         );

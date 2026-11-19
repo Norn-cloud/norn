@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { type QueryClient, useQuery, useQueryClient } from "@tanstack/react-query"
 
 /** Who is signed in, as the Worker reports it (/api/me). Display only: the server decides every permission. */
 export interface Account {
@@ -44,4 +44,15 @@ export const authApi = {
 export function useRefreshAccount() {
   const client = useQueryClient()
   return () => client.invalidateQueries({ queryKey: SESSION })
+}
+
+/**
+ * End the session, then forget everything read as that reader (records, picker choices, the
+ * inbox) so the next reader in this tab never sees it, and re-read the session. A sign-out the
+ * server did not complete forgets nothing and rethrows.
+ */
+export async function endSession(client: QueryClient, signOut: () => Promise<void> = authApi.signOut): Promise<void> {
+  await signOut()
+  client.removeQueries({ predicate: (query) => query.queryKey[0] !== SESSION[0] })
+  await client.invalidateQueries({ queryKey: SESSION })
 }

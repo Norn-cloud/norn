@@ -21,7 +21,7 @@ import { diagnosticsAt, readRecords, type RecordsRead } from "../lib/records-sou
 import { transport } from "../lib/transport.ts"
 import { ACTIONS_UNAVAILABLE, writesWhole, type ActionSummary } from "../lib/actions.ts"
 import { ActionSheet, useActions, type OpenAction } from "../actions/action-sheet.tsx"
-import { offeredFor } from "../lib/screen/call.ts"
+import { offeredFor, recordCatalog } from "../lib/screen/call.ts"
 import { alignRight, isWithheld, TracedCell, WITHHELD_HINT, WITHHELD_ROW, WithheldMark, type GridRow, RecordName } from "./cells.tsx"
 import { blankClause, FilterEditor, filterable, fromPredicate, toPredicate, type DraftClause } from "./filter-editor.tsx"
 import { FacetsRail, FilterChips } from "./facets-rail.tsx"
@@ -367,7 +367,7 @@ function RecordDrawer({ concept, fields, row, origin, actions, actionsOff, onClo
   const markings = useMarkingCatalog()
   // What can act on this record now: the cell narrows the type's catalog to the record's state.
   const narrowed = useActions(record?.objectType ?? "", record?.id, record !== undefined && origin === "live")
-  const offered = narrowed.data?.kind === "catalog" ? narrowed.data.items : actions
+  const offered = recordCatalog(origin === "live", narrowed.data, actions)
   const object = useQuery({
     queryKey: ["object", record?.objectType, record?.id],
     queryFn: () => record ? transport.object(record.objectType, record.id) : null,
@@ -406,6 +406,9 @@ function RecordDrawer({ concept, fields, row, origin, actions, actionsOff, onClo
               <h3 className="text-sm font-medium">Actions</h3>
               {actionsOff !== undefined
                 ? <p className="text-meta text-muted-foreground">{actionsOff}</p>
+                : offered === null
+                  ? narrowed.isPending ? <Skeleton className="h-8" aria-label="Reading the actions on this record" />
+                    : <p className="text-meta text-muted-foreground">The cell's actions on this record could not be read.</p>
                 : offeredFor(offered, record).length === 0
                   ? <p className="text-meta text-muted-foreground">The cell offers you no actions on {concept.title.toLowerCase()} records.</p>
                   : <div className="flex flex-wrap gap-2">{offeredFor(offered, record).map((action) => (

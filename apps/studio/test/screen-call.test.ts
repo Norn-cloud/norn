@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import type { ActionReceipt, ActionSummary, CallResult } from "../src/lib/actions.ts"
-import { inFlight, init, offeredFor, undoOf, update, type Cmd, type Msg, type State } from "../src/lib/screen/call.ts"
+import { inFlight, init, offeredFor, recordCatalog, undoOf, update, type Cmd, type Msg, type State } from "../src/lib/screen/call.ts"
 
 // Properties of the renderer core over seeded random message sequences (D79: properties, not cases).
 
@@ -151,4 +151,15 @@ test("an approval-gated call commits nothing: it waits for a decider, reads noth
   const [again] = update(pending, { kind: "again", key: "k1" })
   expect(again.phase.kind).toBe("editing")
   expect(again.key).toBe("k1")
+})
+
+// ACTION-CATALOG-STATE-1: a live record offers only what the cell narrowed to its state; until
+// that read succeeds it offers nothing (not the type's list, and not "no actions").
+test("a live record waits for its narrowed catalog; a recorded one keeps the type's", () => {
+  const typeLevel = [{ actionId: "submit" }, { actionId: "approve" }] as unknown as ActionSummary[]
+  const narrowed = [{ actionId: "approve" }] as unknown as ActionSummary[]
+  expect(recordCatalog(true, undefined, typeLevel)).toBeNull()
+  expect(recordCatalog(true, { kind: "unavailable" }, typeLevel)).toBeNull()
+  expect(recordCatalog(true, { kind: "catalog", items: narrowed }, typeLevel)).toBe(narrowed)
+  expect(recordCatalog(false, undefined, typeLevel)).toBe(typeLevel)
 })

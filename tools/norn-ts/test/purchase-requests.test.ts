@@ -33,6 +33,7 @@ class Dev {
   readonly events: Event[] = []
   private readonly waiters: Array<() => void> = []
   readonly child: ChildProcessWithoutNullStreams
+  private exited = false
   constructor(dir: string, extra: string[] = []) {
     this.child = spawn(process.execPath, [CLI, "dev", "--json", "--port", "0", ...extra], { cwd: dir, env })
     let buffer = ""
@@ -46,20 +47,20 @@ class Dev {
         this.waiters.splice(0).forEach((wake) => wake())
       }
     })
-    this.child.on("exit", () => this.waiters.splice(0).forEach((wake) => wake()))
+    this.child.on("exit", () => { this.exited = true; this.waiters.splice(0).forEach((wake) => wake()) })
   }
   async next(match: (event: Event) => boolean, from: number, timeoutMs = 60_000): Promise<Event> {
     const deadline = Date.now() + timeoutMs
     for (;;) {
       const found = this.events.slice(from).find(match)
       if (found) return found
-      if (this.child.exitCode !== null) throw new Error(`norn dev exited ${this.child.exitCode}: ${JSON.stringify(this.events)}`)
+      if (this.exited) throw new Error(`norn dev exited ${this.child.exitCode ?? this.child.signalCode}: ${JSON.stringify(this.events)}`)
       if (Date.now() > deadline) throw new Error(`timed out: ${JSON.stringify(this.events)}`)
       await new Promise<void>((wake) => { this.waiters.push(wake); setTimeout(wake, 250) })
     }
   }
   async stop(): Promise<void> {
-    if (this.child.exitCode !== null) return
+    if (this.exited) return
     const exited = new Promise((done) => this.child.on("exit", done))
     this.child.kill("SIGTERM")
     await exited
@@ -210,4 +211,39 @@ test("norn check, norn explain and norn dev read the project through one loader"
   expect(report.diagnostics.diagnostics.filter((finding) => finding.severity === "error")).toEqual([])
   expect(report.admitted).toBe(true)
   expect(pendingSourceSchemas(input.artifacts)).toBe(false)
+}, 120_000)
+
+// DEV-DEFINITIONS-1: a gate the author declared is never silently dropped. A
+// JSON source that names the approval kind but is malformed, an id two JSON
+// sources declare, and a default-exported approval each refuse the compile.
+test("a malformed, duplicated or default-exported approval refuses the compile", async () => {
+  const { readProject } = await import("../src/project.ts")
+  const { compileProjectPack } = await import("../src/worker.ts")
+  const root = mkdtempSync(join(tmpdir(), "norn-purchase-requests-defs-"))
+  const dir = join(root, "purchase-requests")
+  const failure = () => {
+    const { root: projectRoot, manifest } = readProject(dir)
+    const pack = compileProjectPack(projectRoot, manifest)
+    if (pack.ok) throw new Error("compiled")
+    return pack.failures.flatMap((f) => f.diagnostics).map((d) => d.message).join("\n")
+  }
+  const reset = () => { rmSync(dir, { recursive: true, force: true }); cpSync(FIXTURE, dir, { recursive: true, filter: (path) => !path.includes(".norn") }) }
+  const payload = { action: "purchasing.request.submit", decider: { roles: ["admin"] }, question: "Sign off?", risk: "low" }
+  try {
+    reset()
+    writeFileSync(join(dir, "src/large.json"), JSON.stringify({ kind: "approval", id: "purchasing.other", payload: [] }))
+    expect(failure()).toContain("src/large.json declares an approval that is not { kind, id, payload }")
+
+    reset()
+    writeFileSync(join(dir, "src/a.json"), JSON.stringify({ kind: "approval", id: "purchasing.other", payload }))
+    writeFileSync(join(dir, "src/b.json"), JSON.stringify({ kind: "approval", id: "purchasing.other", payload: { ...payload, risk: "high" } }))
+    expect(failure()).toContain("definition purchasing.other is declared by more than one JSON source")
+
+    reset()
+    const source = readFileSync(join(dir, "src/purchasing.ts"), "utf8")
+    writeFileSync(join(dir, "src/purchasing.ts"), source.replace("export const LargeRequests = Norn.approval(", "export default Norn.approval("))
+    expect(failure()).toContain("approvals require named const bindings")
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 }, 120_000)

@@ -130,19 +130,35 @@ export function projectArtifacts(root: string, manifest: Project): unknown[] {
 /** The retained kinds a project's JSON sources may declare. */
 const RETAINED_KINDS: ReadonlySet<string> = new Set(["approval"])
 
+/** A JSON source that names a retained kind but is not a definition of it. */
+export class DefinitionSourceError extends Error {
+  constructor(readonly construct: string, message: string) { super(message) }
+}
+
 /**
  * Retained definitions (`{ kind, id, payload }`, kind `approval`) carried as
  * JSON files at the top level of each source directory, read exactly as
- * `projectArtifacts` reads artifact envelopes.
+ * `projectArtifacts` reads artifact envelopes. A document whose `kind` is a
+ * retained kind but whose `id` or `payload` is malformed, or whose `id`
+ * another JSON source declares, throws `DefinitionSourceError`: a gate the
+ * author declared is never silently dropped. Other JSON documents are not
+ * definitions and are skipped.
  */
 export function projectDefinitions(root: string, manifest: Project): RetainedDefinitionDoc[] {
   const realRoot = realpathSync(root)
+  const seen = new Set<string>()
   return sourceDirs(root, manifest).flatMap((dir) => readdirSync(dir).filter((f) => f.endsWith(".json")).sort().map((f) => join(dir, f))).flatMap((file) => {
-    if (!insideProject(realRoot, file)) throw outside(`definition ${posix(relative(root, file))}`)
+    const path = posix(relative(root, file))
+    if (!insideProject(realRoot, file)) throw outside(`definition ${path}`)
     const value = JSON.parse(readFileSync(file, "utf8")) as { readonly kind?: unknown; readonly id?: unknown; readonly payload?: unknown }
-    const retained = typeof value === "object" && value !== null && !Array.isArray(value) && typeof value.kind === "string" && RETAINED_KINDS.has(value.kind)
-      && typeof value.id === "string" && typeof value.payload === "object" && value.payload !== null && !Array.isArray(value.payload)
-    return retained ? [{ kind: "approval" as const, id: value.id as string, payload: value.payload as Json }] : []
+    const named = typeof value === "object" && value !== null && !Array.isArray(value) && typeof value.kind === "string" && RETAINED_KINDS.has(value.kind)
+    if (!named) return []
+    if (typeof value.id !== "string" || value.id === "" || typeof value.payload !== "object" || value.payload === null || Array.isArray(value.payload)) {
+      throw new DefinitionSourceError(path, `${path} declares an ${String(value.kind)} that is not { kind, id, payload } with a non-empty id and an object payload`)
+    }
+    if (seen.has(value.id)) throw new DefinitionSourceError(value.id, `definition ${value.id} is declared by more than one JSON source`)
+    seen.add(value.id)
+    return [{ kind: "approval" as const, id: value.id, payload: value.payload as Json }]
   })
 }
 
@@ -183,7 +199,12 @@ export function compileProjectPack(root: string, manifest: Project): PackResult 
     sources.set(id, "json")
   }
   for (const artifact of owned) sources.set(artifactId(artifact), "registry/core")
-  const definitions = projectDefinitions(root, manifest)
+  let definitions: RetainedDefinitionDoc[]
+  try { definitions = projectDefinitions(root, manifest) }
+  catch (error) {
+    if (error instanceof DefinitionSourceError) return refused(error.construct, error.message)
+    throw error
+  }
   const ids = new Set(pack.retained.map((definition) => definition.id))
   const duplicate = definitions.find((definition) => ids.has(definition.id))
   if (duplicate) return refused(duplicate.id, `definition ${duplicate.id} is declared by a JSON source and by a module`)

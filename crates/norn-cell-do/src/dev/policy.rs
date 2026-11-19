@@ -275,7 +275,7 @@ pub(crate) use crate::questions::DerivedQuestions as DevMetrics;
     clippy::indexing_slicing,
     reason = "dev-host question fixtures"
 )]
-mod tests {
+pub(super) mod tests {
     //! The dev host answers ad-hoc questions over the metrics its active
     //! revision derives, through the same dispatch the HTTP transport uses,
     //! and re-derives them when a new revision is installed.
@@ -295,7 +295,7 @@ mod tests {
     const BEARER: &str = "test-bearer-0123456789";
     const TYPE: &str = "shop.Sale";
 
-    fn scope() -> CellScope {
+    pub(in crate::dev) fn scope() -> CellScope {
         CellScope {
             org_id: "org_dev".into(),
             environment_id: "local".into(),
@@ -341,7 +341,7 @@ mod tests {
         }
     }
 
-    fn host(dir: &std::path::Path) -> DevHost<NativeEngine> {
+    pub(in crate::dev) fn host(dir: &std::path::Path) -> DevHost<NativeEngine> {
         host_with(dir, 0)
     }
 

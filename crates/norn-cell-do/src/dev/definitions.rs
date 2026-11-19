@@ -15,6 +15,9 @@
 //! - An approval the sources no longer declare is retired.
 //! - A definition the cell refuses changes nothing; its findings are the
 //!   compile's diagnostics, and every other definition still syncs.
+//! - A declaration that is not `{ kind, id, payload }`, or an id declared
+//!   twice, refuses the whole sync: nothing installs and nothing retires, so
+//!   a malformed source never retires the approval it meant to declare.
 use norn_api::definition_routes::{
     self, AdmitDefinitionRequest, DefinitionKinds, GetDefinitionQuery, InstallDefinitionRequest,
     ListDefinitionsQuery, RetireDefinitionRequest, SignoffRequest,
@@ -108,16 +111,28 @@ pub(crate) fn sync<E: SqlEngine>(
         environment_id: Some(scope.environment_id.clone()),
     };
     let mut synced = Synced::default();
-    let mut declared_ids = Vec::new();
+    let mut declarations = Vec::new();
+    let mut declared_ids: Vec<String> = Vec::new();
     for value in definitions {
-        let definition = match declared(value) {
-            Ok(definition) => definition,
-            Err(refused) => {
-                synced.refused.push(refused);
-                continue;
+        match declared(value) {
+            Ok(definition) if declared_ids.iter().any(|id| id == definition.id) => {
+                synced.refused.push(finding(
+                    definition.id,
+                    "norn.dev.definition_duplicate",
+                    format!("{} is declared more than once", definition.id),
+                ));
             }
-        };
-        declared_ids.push(definition.id.to_owned());
+            Ok(definition) => {
+                declared_ids.push(definition.id.to_owned());
+                declarations.push(definition);
+            }
+            Err(refused) => synced.refused.push(refused),
+        }
+    }
+    if !synced.refused.is_empty() {
+        return synced;
+    }
+    for definition in declarations {
         match install(host, &query, actor, kinds, &definition, now_ms) {
             Ok(Some(event)) => synced.changed.push(event),
             Ok(None) => {}
@@ -265,5 +280,57 @@ fn retire_undeclared<E: SqlEngine>(
             Some(next) => cursor = Some(next),
             None => return Ok(events),
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::expect_used,
+    reason = "sync fixtures"
+)]
+mod tests {
+    //! DEV-DEFINITIONS-1: a malformed or duplicated declaration refuses the
+    //! whole sync before the cell is asked anything, so nothing installs and
+    //! no installed approval retires.
+    use super::*;
+    use crate::dev::policy::tests::{host, scope};
+
+    fn approval(id: &str) -> Value {
+        json!({ "kind": "approval", "id": id, "payload": {
+            "action": "shop.sale.record", "decider": { "roles": ["admin"] },
+            "question": "Record this sale?", "risk": "low" } })
+    }
+
+    fn sync_of(definitions: &[Value]) -> Synced {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let host = host(dir.path());
+        let kinds = crate::dev::policy::dev_kinds();
+        sync(&host, &scope(), "dev@example", &kinds, definitions, 1)
+    }
+
+    fn codes(synced: &Synced) -> Vec<&str> {
+        synced
+            .refused
+            .iter()
+            .filter_map(|finding| finding.get("code").and_then(Value::as_str))
+            .collect()
+    }
+
+    #[test]
+    fn a_malformed_declaration_refuses_the_sync() {
+        let mut malformed = approval("shop.b");
+        malformed["payload"] = json!([]);
+        let synced = sync_of(&[approval("shop.a"), malformed]);
+        assert!(synced.changed.is_empty());
+        assert_eq!(codes(&synced), ["norn.dev.definition_shape"]);
+    }
+
+    #[test]
+    fn a_duplicated_id_refuses_the_sync() {
+        let synced = sync_of(&[approval("shop.a"), approval("shop.a")]);
+        assert!(synced.changed.is_empty());
+        assert_eq!(codes(&synced), ["norn.dev.definition_duplicate"]);
+        assert_eq!(synced.refused[0]["definitionId"], json!("shop.a"));
     }
 }

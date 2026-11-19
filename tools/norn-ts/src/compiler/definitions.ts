@@ -379,6 +379,7 @@ class DefinitionCompiler {
         const e = this.unwrap(statement.expression)
         if (ts.isCallExpression(e) && this.id(e) === QUESTION) throw new CompileError("NORN-FLOW-RESULT", "questions require named const bindings and the question compiler", e)
         if (ts.isCallExpression(e) && this.id(e) === DASHBOARD) throw new CompileError("NORN-FLOW-RESULT", "dashboards require named const bindings and the dashboard compiler", e)
+        if (ts.isCallExpression(e) && this.id(e) === APPROVAL) throw new CompileError("NORN-FLOW-RESULT", "approvals require named const bindings", e)
         if (ts.isCallExpression(e) && this.id(e) === FLOW) flows++
         continue
       }

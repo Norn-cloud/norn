@@ -1,4 +1,4 @@
-import type { ActionReceipt, ActionSummary, CallResult, Diagnostic, PendingDecision, RefusalReason } from "../actions.ts"
+import type { ActionReceipt, ActionSummary, CallResult, CatalogRead, Diagnostic, PendingDecision, RefusalReason } from "../actions.ts"
 
 /**
  * The renderer core for one governed call, framework-neutral (#1220, L-0):
@@ -158,6 +158,17 @@ export function undoOf(receipt: ActionReceipt): UndoOffer | null {
   const undo = (receipt as unknown as { readonly undo?: unknown }).undo
   if (!isRecord(undo) || typeof undo.actionId !== "string" || undo.actionId === "" || !isRecord(undo.input) || !exact(undo.input)) return null
   return { actionId: undo.actionId, input: JSON.stringify(undo.input) }
+}
+
+/**
+ * The catalog to offer on one record: for a live record, only the cell's catalog narrowed to the
+ * record's state (ACTION-CATALOG-STATE-1), and `null` until that read succeeds, so a type-level
+ * action its state cannot take is never shown; a recorded record has no state to narrow by and
+ * keeps the type's catalog.
+ */
+export function recordCatalog(live: boolean, narrowed: CatalogRead | undefined, typeLevel: readonly ActionSummary[]): readonly ActionSummary[] | null {
+  if (!live) return typeLevel
+  return narrowed?.kind === "catalog" ? narrowed.items : null
 }
 
 /**

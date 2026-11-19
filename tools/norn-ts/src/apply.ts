@@ -11,14 +11,24 @@
  *
  * `--token-env VAR` sends a host bearer token instead (a host reached
  * directly). Credentials are read from the environment, never arguments.
+ *
+ * A pack's retained definitions (`Norn.approval`) are not artifacts of the
+ * set: `apply` installs each after the set, through `POST
+ * /v1/definitions:admit` and `:install` with the caller's sign-off of the
+ * server's restatement (DEV-DEFINITIONS-1's path), and prints the words it
+ * signed. `plan` names them. An approval the cell refuses fails the command.
  */
 import { statSync } from "node:fs"
 import { resolve } from "node:path"
+import { isDeepStrictEqual } from "node:util"
+import type { RetainedDefinitionDoc } from "./compiler/definitions.ts"
 import { loadChecker } from "./checker-abi.ts"
 import { bindSourceSchemas, checkPack, compilePack, pendingSourceSchemas } from "./pack.ts"
 
 export const PLAN_PATH = "/v1/cell/definitions:plan"
 export const APPLY_PATH = "/v1/cell/definitions:apply"
+export const ADMIT_PATH = "/v1/definitions:admit"
+export const INSTALL_PATH = "/v1/definitions:install"
 
 type Doc = Record<string, any>
 
@@ -48,12 +58,13 @@ async function signIn(origin: string, email: string, password: string): Promise<
   return cookies.join("; ")
 }
 
-export async function post(target: Target, path: string, body: unknown): Promise<{ status: number; document: Doc }> {
+export async function post(target: Target, path: string, body?: unknown): Promise<{ status: number; document: Doc }> {
   const query = new URLSearchParams({ orgId: target.org, environmentId: target.env })
   const response = await fetch(`${target.url}${path}?${query}`, {
-    method: "POST", redirect: "manual",
-    headers: { "content-type": "application/json", accept: "application/json", ...target.headers },
-    body: JSON.stringify(body),
+    redirect: "manual",
+    ...(body === undefined
+      ? { method: "GET", headers: { accept: "application/json", ...target.headers } }
+      : { method: "POST", headers: { "content-type": "application/json", accept: "application/json", ...target.headers }, body: JSON.stringify(body) }),
   })
   const text = await response.text()
   try { return { status: response.status, document: JSON.parse(text) } }
@@ -83,8 +94,34 @@ export function appliedSummary(applied: Doc): string {
   return `${verb} revision ${applied.definitionsVersion} over ${applied.previousVersion} (receipt sha256 ${applied.receiptSha256}, commit ${applied.commitSeq})`
 }
 
-/** Plan, or plan then apply, `artifacts` on `target`; the lines to print and whether the cell accepted. */
-export async function change(target: Target, command: "plan" | "apply", artifacts: ReadonlyArray<unknown>, json: boolean, expectedVersion?: number): Promise<{ out: string[]; ok: boolean }> {
+/**
+ * Install `definition` as the caller, signing the server's restatement: the
+ * same admit → install path the dev host takes. Unchanged when the active
+ * version's payload equals it.
+ */
+async function installDefinition(target: Target, definition: RetainedDefinitionDoc, show: (status: number, document: Doc, summary: (d: Doc) => string) => boolean): Promise<boolean> {
+  const current = await post(target, `/v1/definitions/${encodeURIComponent(definition.id)}`)
+  if (current.status !== 200 && current.document.code !== "definition.not_found") return show(current.status, current.document, () => "")
+  const installed = current.status === 200 ? current.document : undefined
+  if (installed?.lifecycle === "active" && isDeepStrictEqual(installed.payload, definition.payload)) {
+    return show(200, { kind: definition.kind, id: definition.id, version: installed.version, outcome: "unchanged" }, (d) => `= ${d.kind} ${d.id} v${d.version} (unchanged)`)
+  }
+  const doc = { kind: definition.kind, id: definition.id, payload: definition.payload }
+  const admitted = await post(target, ADMIT_PATH, doc)
+  if (admitted.status !== 200) return show(admitted.status, admitted.document, () => "")
+  if (!admitted.document.admitted) return show(422, { code: "definition.refused", message: `${definition.kind} ${definition.id} is not admissible`, diagnostics: admitted.document.diagnostics }, () => "")
+  const signoff = admitted.document.restatementSha256 ? { signoff: { restatementSha256: admitted.document.restatementSha256 } } : {}
+  const done = await post(target, INSTALL_PATH, { ...doc, expectedVersion: installed?.version ?? null, ...signoff })
+  return show(done.status, { ...done.document, restatement: admitted.document.restatement }, (d) =>
+    [`+ ${definition.kind} ${d.id} v${d.version}${d.restatement ? ", signing:" : ""}`, ...(d.restatement ? String(d.restatement).split("\n").map((line) => `    ${line}`) : [])].join("\n"))
+}
+
+/**
+ * Plan, or plan then apply, `artifacts` on `target`, then install the pack's
+ * retained `definitions` once the set is applied; the lines to print and
+ * whether the cell accepted all of it.
+ */
+export async function change(target: Target, command: "plan" | "apply", artifacts: ReadonlyArray<unknown>, json: boolean, expectedVersion?: number, definitions: ReadonlyArray<RetainedDefinitionDoc> = []): Promise<{ out: string[]; ok: boolean }> {
   const out: string[] = []
   const show = (status: number, document: Doc, summary: (d: Doc) => string) => {
     const ok = status >= 200 && status < 300
@@ -95,12 +132,19 @@ export async function change(target: Target, command: "plan" | "apply", artifact
   if (command === "plan" || expected === undefined) {
     const planned = await post(target, PLAN_PATH, { artifacts })
     if (!show(planned.status, planned.document, planSummary)) return { out, ok: false }
-    if (command === "plan") return { out, ok: true }
+    if (command === "plan") {
+      for (const definition of definitions) out.push(json ? JSON.stringify({ kind: definition.kind, id: definition.id, installs: "after apply" }) : `  then ${definition.kind} ${definition.id}, signed on apply`)
+      return { out, ok: true }
+    }
     expected = planned.document.baseVersion
     if (typeof expected !== "number") throw new Error("the plan names no base revision")
   }
   const applied = await post(target, APPLY_PATH, { artifacts, expectedVersion: expected })
-  return { out, ok: show(applied.status, applied.document, appliedSummary) }
+  if (!show(applied.status, applied.document, appliedSummary)) return { out, ok: false }
+  for (const definition of definitions) {
+    if (!await installDefinition(target, definition, show)) return { out, ok: false }
+  }
+  return { out, ok: true }
 }
 
 function option(args: ReadonlyArray<string>, name: string): string | undefined {
@@ -144,7 +188,7 @@ export async function main(command: "plan" | "apply", args: ReadonlyArray<string
     headers.origin = origin
   }
   const expected = option(args, "--expected-version")
-  const { out, ok } = await change({ url, org, env, headers }, command, artifacts, args.includes("--json"), expected === undefined ? undefined : Number(expected))
+  const { out, ok } = await change({ url, org, env, headers }, command, artifacts, args.includes("--json"), expected === undefined ? undefined : Number(expected), pack.retained)
   process.stdout.write(`${out.join("\n")}\n`)
   return ok ? 0 : 1
 }

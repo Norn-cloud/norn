@@ -31,3 +31,22 @@ test("after sign-up the page asks the user to sign in, never saying whether the 
   expect(SIGNED_UP).toBe("Account ready. Sign in with your email and password.")
   expect(SIGNED_UP).not.toMatch(/already|exists|registered|taken/i)
 })
+
+// A sign-out forgets every read made as that reader (the record picker's choices included), so the
+// next reader in this tab never sees them; one the server did not complete forgets nothing.
+test("signing out forgets the reader's reads", async () => {
+  const { endSession } = await import("../src/lib/session.ts")
+  const client = new QueryClient()
+  const seed = () => {
+    client.setQueryData(["session"], { user: { id: "u1" } })
+    client.setQueryData(["picker", "purchasing.Supplier"], [{ id: "SUP-0001" }])
+    client.setQueryData(["records", "purchasing.PurchaseRequest"], [])
+  }
+  seed()
+  await expect(endSession(client, () => Promise.reject(new Error("offline")))).rejects.toThrow("offline")
+  expect(client.getQueryData<unknown>(["picker", "purchasing.Supplier"])).toEqual([{ id: "SUP-0001" }])
+  await endSession(client, async () => {})
+  expect(client.getQueryData(["picker", "purchasing.Supplier"])).toBeUndefined()
+  expect(client.getQueryData(["records", "purchasing.PurchaseRequest"])).toBeUndefined()
+  expect(client.getQueryCache().find({ queryKey: ["session"] })).toBeDefined()
+})

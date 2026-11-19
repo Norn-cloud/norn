@@ -211,6 +211,30 @@ fn caller_input_schema(action: &ActionRoot) -> Result<serde_json::Value, Refusal
     Ok(schema)
 }
 
+/// The created links whose target is an existing record: a required slice
+/// read of the target type keyed by the link's input field, which the commit
+/// refuses when the record is absent. A target the same proposal creates
+/// (a composed transition's `created` write) is not one, so a form keeps its
+/// caller-supplied id rather than a picker of stored records.
+fn existing_targets(action: &ActionRoot) -> Vec<NornActionInputLink> {
+    action
+        .create_links
+        .iter()
+        .filter(|link| {
+            action.slice.iter().any(|entry| {
+                !entry.optional
+                    && entry.object_type.as_str() == link.target_type
+                    && matches!(&entry.key, norn_ir::SliceKey::Property { from, property }
+                        if from == "input" && property.as_str() == link.target_id_field)
+            })
+        })
+        .map(|link| NornActionInputLink {
+            field: link.target_id_field.clone(),
+            object_kind: link.target_type.clone(),
+        })
+        .collect()
+}
+
 fn summary(action: &ActionRoot) -> Result<Option<NornActionSummary>, Refusal> {
     let (effect, object_kind, object_id_field) = match &action.effect_program {
         Some(ActionEffectProgram::UpsertInputObject {
@@ -255,14 +279,7 @@ fn summary(action: &ActionRoot) -> Result<Option<NornActionSummary>, Refusal> {
         effect,
         object_id_field: object_id_field.clone(),
         input_schema: caller_input_schema(action)?,
-        input_links: action
-            .create_links
-            .iter()
-            .map(|link| NornActionInputLink {
-                field: link.target_id_field.clone(),
-                object_kind: link.target_type.clone(),
-            })
-            .collect(),
+        input_links: existing_targets(action),
         to_state: None,
         ui_effects: NornActionUiEffects {
             irreversible: effects.contains(&ActionUiEffect::Irreversible),
@@ -481,4 +498,41 @@ fn transition_targets<E: SqlEngine>(
             })
         })
         .collect())
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    reason = "registry fixture"
+)]
+mod tests {
+    use super::*;
+
+    fn run_create() -> ActionRoot {
+        let envelope: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../registry/packs/tracking/artifacts/tracking.run.create.action.json"
+        ))
+        .unwrap();
+        serde_json::from_value(envelope["payload"].clone()).unwrap()
+    }
+
+    /// ACTION-CATALOG-LINKS-1: only a target the commit reads as an existing
+    /// record is a picker; a proposed target keeps its caller-supplied id.
+    #[test]
+    fn only_an_existing_target_is_picked() {
+        let action = run_create();
+        let picked = existing_targets(&action);
+        assert_eq!(picked.len(), 1);
+        assert_eq!(
+            (picked[0].field.as_str(), picked[0].object_kind.as_str()),
+            ("experiment_id", "tracking.Experiment")
+        );
+        let mut optional = action.clone();
+        optional.slice[0].optional = true;
+        assert!(existing_targets(&optional).is_empty());
+        let mut proposed = action;
+        proposed.slice.clear();
+        assert!(existing_targets(&proposed).is_empty());
+    }
 }
