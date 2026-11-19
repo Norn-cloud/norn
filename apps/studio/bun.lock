@@ -19,9 +19,9 @@
         "@tanstack/react-router": "1.170.46",
         "@tanstack/react-table": "8.21.3",
         "@tanstack/react-virtual": "3.14.22",
-        "@ui-sdk/core": "0.1.0-beta.1",
-        "@ui-sdk/react": "0.1.0-beta.1",
-        "@ui-sdk/web": "0.1.0-beta.1",
+        "@ui-sdk/core": "0.1.0-beta.13",
+        "@ui-sdk/react": "0.1.0-beta.13",
+        "@ui-sdk/web": "0.1.0-beta.13",
         "@xyflow/react": "12.12.1",
         "better-auth": "1.7.12",
         "canonicalize": "5.1.0",
@@ -623,11 +623,11 @@
 
     "@types/use-sync-external-store": ["@types/use-sync-external-store@0.0.6", "", {}, "sha512-zFDAD+tlpf2r4asuHEj0XH6pY6i0g5NeAHPn+15wk3BV6JA69eERFXC1gyGThDkVa1zCyKr5jox1+2LbV/AMLg=="],
 
-    "@ui-sdk/core": ["@ui-sdk/core@0.1.0-beta.1", "", {}, "sha512-sWsZW8RN6Gviir7REQYuDIafm9hierHQE31OJ+2g+1Pp3lDVKp/dk0+0dxFvqOQRmBveRvlE9FiARgNlQ9dMFw=="],
+    "@ui-sdk/core": ["@ui-sdk/core@0.1.0-beta.13", "", {}, "sha512-URjk9hqdc/cZKDtw6Gb9NqjY48U8l0EgoP4d5ghlooa3av+GrR0iSmsav133UU4oelcuKIO1ZPJ4j7gIPMr1Vg=="],
 
-    "@ui-sdk/react": ["@ui-sdk/react@0.1.0-beta.1", "", { "peerDependencies": { "@types/react": ">=19.2.10", "@ui-sdk/core": "^0.1.0-beta.1", "react": ">=19", "react-dom": ">=19" }, "optionalPeers": ["@types/react"] }, "sha512-7wcUsZI+WoG2uo3N+PHrWntk97qI9ez2cUrHV9H507FiL118Pi4tuhWUCMDtWwEUCNQLybpBm1QRLkEXVOPAUg=="],
+    "@ui-sdk/react": ["@ui-sdk/react@0.1.0-beta.13", "", { "peerDependencies": { "@types/react": ">=19.2.10", "@ui-sdk/core": "^0.1.0-beta.13", "react": ">=19", "react-dom": ">=19" }, "optionalPeers": ["@types/react"] }, "sha512-Gz85tAcPJHwnv90WMIAtED3fDamqVD3F3FF3uKsA/TsL+KbaeHSgX1gGdIpNcnzkmDO8YZk9aZBKgCFgpaCcHA=="],
 
-    "@ui-sdk/web": ["@ui-sdk/web@0.1.0-beta.1", "", { "peerDependencies": { "@ui-sdk/core": "^0.1.0-beta.1" } }, "sha512-PnlZD27q90B+vNbGcOYhpFjdCaguYqZoYnslgDL+KLYNTqzKgE64eUKp9IfawMpcosKOnk8aGPiaw3uaOTHMpQ=="],
+    "@ui-sdk/web": ["@ui-sdk/web@0.1.0-beta.13", "", { "peerDependencies": { "@ui-sdk/core": "^0.1.0-beta.13" } }, "sha512-f3lnxrjlTCHagChy/6ZW+4Axv9XcDfPnawkxCL++mZ1NbLMf302WPvbwwP1w+/bxOgxucu4euLYOQ6aPoYzXZw=="],
 
     "@ungap/structured-clone": ["@ungap/structured-clone@1.4.0", "", {}, "sha512-1mEZtMKPM09vDmQt5y7YvmN2+DFTP7Tg0EWXdic8/C6VRnpb33e4ghisCIE3WZjsE2N8mf+QV1Zqh7ZFYLWInQ=="],
 

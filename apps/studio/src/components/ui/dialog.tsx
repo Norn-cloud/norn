@@ -1,50 +1,65 @@
-"use client"
-
 import * as React from "react"
 import { cn } from "@/lib/utils"
-import { Dialog as DialogPrimitive } from "radix-ui"
+import { Dialog as Root, DialogClose as Close, DialogContent as Content, DialogDescription as Description, DialogTitle as Title, DialogTrigger as Trigger } from "@ui-sdk/react/dialog"
 
 import { Button } from "@/components/ui/button"
 import { XIcon } from "lucide-react"
 
-function Dialog({
-  ...props
-}: React.ComponentProps<typeof DialogPrimitive.Root>) {
-  return <DialogPrimitive.Root data-slot="dialog" {...props} />
+// A centred dialog on the UI SDK's dialog behaviour: focus moves in and is trapped, Escape and an
+// outside press close it, focus returns to what opened it, and the page behind is inert. The look is ours.
+// It closes at once and dims the page with its own ::backdrop, not a Backdrop part: while a modal with a
+// Backdrop part animates out, the SDK swallows a press over it, so the next click on the page behind
+// would be lost (Radix let it through). The SDK also waits on transitions inside the content, so those
+// stop as it closes.
+
+/** The open state, as Radix's root took it, so callers are unchanged. */
+type OpenProps = {
+  open?: boolean
+  defaultOpen?: boolean
+  onOpenChange?: (open: boolean) => void
+  modal?: boolean
+  children?: React.ReactNode
 }
 
-function DialogTrigger({
-  ...props
-}: React.ComponentProps<typeof DialogPrimitive.Trigger>) {
-  return <DialogPrimitive.Trigger data-slot="dialog-trigger" {...props} />
+/** A part's props with a plain class name (the SDK also takes one per state). */
+type Styled<C extends React.ElementType> = Omit<React.ComponentProps<C>, "className"> & { className?: string }
+
+/** A part that can lend its behaviour to its one child, as Radix's `asChild` did (the SDK's `render`). */
+type SlotProps<C extends React.ElementType> = Omit<Styled<C>, "children" | "render"> & {
+  asChild?: boolean
+  children?: React.ReactNode
 }
 
-function DialogPortal({
-  ...props
-}: React.ComponentProps<typeof DialogPrimitive.Portal>) {
-  return <DialogPrimitive.Portal data-slot="dialog-portal" {...props} />
+function slot(asChild: boolean | undefined, children: React.ReactNode) {
+  return asChild && React.isValidElement(children) ? { render: children as React.ReactElement<Record<string, unknown>> } : { children }
 }
 
-function DialogClose({
-  ...props
-}: React.ComponentProps<typeof DialogPrimitive.Close>) {
-  return <DialogPrimitive.Close data-slot="dialog-close" {...props} />
+const TABBABLE = "button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])"
+
+/**
+ * Where focus goes as a dialog opens, for callers that pass Radix's `onOpenAutoFocus`: the handler
+ * runs first, and a `preventDefault()` keeps the focus it moved; otherwise the first control.
+ */
+function firstFocus(content: HTMLElement | null, handler: (event: Event) => void): HTMLElement | undefined {
+  if (content === null) return undefined
+  const event = new Event("openautofocus", { cancelable: true })
+  content.addEventListener("openautofocus", handler, { once: true })
+  content.dispatchEvent(event)
+  const active = document.activeElement
+  if (event.defaultPrevented && active instanceof HTMLElement && content.contains(active)) return active
+  return content.querySelector<HTMLElement>(TABBABLE) ?? content
 }
 
-function DialogOverlay({
-  className,
-  ...props
-}: React.ComponentProps<typeof DialogPrimitive.Overlay>) {
-  return (
-    <DialogPrimitive.Overlay
-      data-slot="dialog-overlay"
-      className={cn(
-        "fixed inset-0 isolate z-50 bg-black/30 duration-100 supports-backdrop-filter:backdrop-blur-sm data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
-        className
-      )}
-      {...props}
-    />
-  )
+function Dialog({ open, defaultOpen, onOpenChange, modal = true, children }: OpenProps) {
+  return <Root open={open} defaultOpen={defaultOpen} modal={modal} onOpenChange={onOpenChange && ((next) => onOpenChange(next))}>{children}</Root>
+}
+
+function DialogTrigger({ asChild, children, ...props }: SlotProps<typeof Trigger>) {
+  return <Trigger data-slot="dialog-trigger" {...props} {...slot(asChild, children)} />
+}
+
+function DialogClose({ asChild, children, ...props }: SlotProps<typeof Close>) {
+  return <Close data-slot="dialog-close" {...props} {...slot(asChild, children)} />
 }
 
 function DialogContent({
@@ -52,36 +67,26 @@ function DialogContent({
   children,
   showCloseButton = true,
   ...props
-}: React.ComponentProps<typeof DialogPrimitive.Content> & {
+}: Omit<Styled<typeof Content>, "children"> & {
+  children?: React.ReactNode
   showCloseButton?: boolean
 }) {
   return (
-    <DialogPortal>
-      <DialogOverlay />
-      <DialogPrimitive.Content
-        data-slot="dialog-content"
-        className={cn(
-          "fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-6 rounded-4xl bg-popover p-6 text-sm text-popover-foreground shadow-xl ring-1 ring-foreground/5 duration-100 outline-none sm:max-w-md dark:ring-foreground/10 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
-          className
-        )}
-        {...props}
-      >
-        {children}
-        {showCloseButton && (
-          <DialogPrimitive.Close data-slot="dialog-close" asChild>
-            <Button
-              variant="ghost"
-              className="absolute top-4 right-4 bg-secondary"
-              size="icon-sm"
-            >
-              <XIcon
-              />
-              <span className="sr-only">Close</span>
-            </Button>
-          </DialogPrimitive.Close>
-        )}
-      </DialogPrimitive.Content>
-    </DialogPortal>
+    <Content
+      data-slot="dialog-content"
+      className={cn(
+        "fixed top-1/2 left-1/2 z-50 m-0 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-6 rounded-4xl bg-popover p-6 text-sm text-popover-foreground shadow-xl ring-1 ring-foreground/5 outline-none transition-[opacity,scale] duration-100 sm:max-w-md dark:ring-foreground/10 data-starting-style:scale-95 data-starting-style:opacity-0 data-closed:**:transition-none backdrop:bg-black/30 supports-backdrop-filter:backdrop:backdrop-blur-sm",
+        className
+      )}
+      {...props}
+    >
+      {children}
+      {showCloseButton && (
+        <Close data-slot="dialog-close" aria-label="Close" render={<Button variant="ghost" className="absolute top-4 right-4 bg-secondary" size="icon-sm" />}>
+          <XIcon />
+        </Close>
+      )}
+    </Content>
   )
 }
 
@@ -113,43 +118,32 @@ function DialogFooter({
       {...props}
     >
       {children}
-      {showCloseButton && (
-        <DialogPrimitive.Close asChild>
-          <Button variant="outline">Close</Button>
-        </DialogPrimitive.Close>
-      )}
+      {showCloseButton && <Close render={<Button variant="outline" />}>Close</Close>}
     </div>
   )
 }
 
-function DialogTitle({
-  className,
-  ...props
-}: React.ComponentProps<typeof DialogPrimitive.Title>) {
+function DialogTitle({ className, asChild, children, ...props }: SlotProps<typeof Title>) {
   return (
-    <DialogPrimitive.Title
+    <Title
       data-slot="dialog-title"
-      className={cn(
-        "font-heading text-base leading-none font-medium",
-        className
-      )}
+      className={cn("font-heading text-base leading-none font-medium", className)}
       {...props}
+      {...slot(asChild, children)}
     />
   )
 }
 
-function DialogDescription({
-  className,
-  ...props
-}: React.ComponentProps<typeof DialogPrimitive.Description>) {
+function DialogDescription({ className, asChild, children, ...props }: SlotProps<typeof Description>) {
   return (
-    <DialogPrimitive.Description
+    <Description
       data-slot="dialog-description"
       className={cn(
         "text-sm text-muted-foreground *:[a]:underline *:[a]:underline-offset-3 *:[a]:hover:text-foreground",
         className
       )}
       {...props}
+      {...slot(asChild, children)}
     />
   )
 }
@@ -161,8 +155,11 @@ export {
   DialogDescription,
   DialogFooter,
   DialogHeader,
-  DialogOverlay,
-  DialogPortal,
   DialogTitle,
   DialogTrigger,
+  firstFocus,
+  slot,
+  type OpenProps,
+  type SlotProps,
+  type Styled,
 }
