@@ -1,24 +1,55 @@
-//! The dev host's server policy: one local developer, named by the project
-//! manifest, holding every grant on a loopback-only cell (DEV-LOOPBACK-1).
+//! The dev host's server policy: the local developer named by the project
+//! manifest, and a second local reviewer, each holding every grant on a
+//! loopback-only cell (DEV-LOOPBACK-1).
 //!
-//! The principal comes only from the session bearer token in
-//! `.norn/dev.token`; any other caller is denied by default. This is server
+//! A principal comes only from a session bearer token: `.norn/dev.token`
+//! names the manifest's actor, `.norn/dev.reviewer.token` the reviewer
+//! (`<actor>+reviewer`); any other caller is denied by default. The reviewer
+//! exists so an approval can be demonstrated locally: the requester of a
+//! parked call never decides it (#618), so a second local principal decides
+//! (DEV-REVIEWER-1). Both hold every role of the hosted grant table, so an
+//! approval's declared decider roles are the hosted ones. This is server
 //! policy, stated on every `ready` event, never client logic.
+use crate::policy::{Caller, CallerSlot, DEMO_GRANTS};
 use crate::principal::PrincipalResolver;
 use norn_api::authz::{AccessRequest, Authorizer, DenyAll, ReadRequest, RefusalDetailRequest};
+use norn_api::definition_routes::DefinitionKinds;
 use norn_api::refusal::Refusal;
+use norn_cell::flow_run::RunStarter;
 use norn_kernel::{
     ActionAuthzRequest, ActionDenial, ActionReadAuthzRequest, ActionReadTypeAuthzRequest,
 };
 
-/// Every grant to exactly one actor; default deny for everyone else.
+/// The reviewer's actor: the manifest's actor with this suffix.
+pub(crate) const REVIEWER_SUFFIX: &str = "+reviewer";
+
+/// The local reviewer of the manifest's `actor`.
+pub(crate) fn reviewer(actor: &str) -> String {
+    format!("{actor}{REVIEWER_SUFFIX}")
+}
+
+/// The retained-definition kinds the dev host admits: the hosted host's
+/// (`crate::tenant::host_kinds` over [`DEMO_GRANTS`]), so an approval,
+/// flow or binding that admits on a hosted cell admits here.
+pub(crate) fn dev_kinds() -> DefinitionKinds {
+    crate::tenant::host_kinds(&DEMO_GRANTS)
+}
+
+/// Every grant to exactly the local actors; default deny for everyone else.
 pub(crate) struct LocalDeveloper {
-    pub(crate) actor: String,
+    pub(crate) actors: Vec<String>,
 }
 
 impl LocalDeveloper {
+    /// The manifest's `actor` and its reviewer.
+    pub(crate) fn for_actor(actor: &str) -> Self {
+        Self {
+            actors: vec![actor.to_owned(), reviewer(actor)],
+        }
+    }
+
     fn is(&self, actor: &str) -> bool {
-        actor == self.actor
+        self.actors.iter().any(|local| local == actor)
     }
 }
 
@@ -56,6 +87,20 @@ impl Authorizer for LocalDeveloper {
             Err(ActionDenial::Invisible)
         }
     }
+    fn verified_principal(&self, actor: &str) -> Option<RunStarter> {
+        // A local actor holds every role of the hosted table (APPROVAL-1:
+        // the requester a gated call parks for and commits as).
+        self.is(actor).then(|| RunStarter {
+            subject: actor.to_owned(),
+            actor_kind: "user".to_owned(),
+            roles: DEMO_GRANTS
+                .entries
+                .iter()
+                .map(|(role, _)| (*role).to_owned())
+                .collect(),
+            role_table: DEMO_GRANTS.version.to_owned(),
+        })
+    }
     fn disclose_refusal_detail(&self, request: &RefusalDetailRequest<'_>) -> bool {
         self.is(request.actor)
     }
@@ -68,25 +113,66 @@ impl Authorizer for LocalDeveloper {
     }
 }
 
-/// The session token is the only credential; it names the manifest's actor.
+/// The session tokens are the only credentials; each names one local actor.
+/// The verified actor is recorded in the slot for the request, as a hosted
+/// resolver records its caller, so an approved call commits as its requester
+/// and a run's steps act as its starter (ACTION-STEP-1).
 pub(crate) struct DevPrincipals {
-    pub(crate) bearer: String,
-    pub(crate) actor: String,
+    /// `(bearer, actor)` pairs.
+    sessions: Vec<(String, String)>,
+    slot: CallerSlot,
+}
+
+impl DevPrincipals {
+    /// The resolver of these `(bearer, actor)` sessions.
+    pub(crate) fn new(sessions: Vec<(String, String)>) -> Self {
+        Self {
+            sessions,
+            slot: CallerSlot::default(),
+        }
+    }
 }
 
 impl PrincipalResolver for DevPrincipals {
     fn resolve(&self, authorization: Option<&str>, _now: u64) -> Option<String> {
-        let presented = authorization?.strip_prefix("Bearer ")?;
-        // Equal length first, then every byte: no early exit on a prefix.
-        (presented.len() == self.bearer.len()
-            && presented
-                .bytes()
-                .zip(self.bearer.bytes())
-                .fold(0_u8, |seen, (a, b)| seen | (a ^ b))
-                == 0)
-            .then(|| self.actor.clone())
+        let presented = authorization.and_then(|value| value.strip_prefix("Bearer "));
+        // Every token is compared in full: equal length first, then every
+        // byte, with no early exit on a prefix or on an earlier match.
+        let mut found = None;
+        for (bearer, actor) in &self.sessions {
+            let same = presented.is_some_and(|presented| {
+                presented.len() == bearer.len()
+                    && presented
+                        .bytes()
+                        .zip(bearer.bytes())
+                        .fold(0_u8, |seen, (a, b)| seen | (a ^ b))
+                        == 0
+            });
+            if same {
+                found = Some(actor.clone());
+            }
+        }
+        // Every request records first, possibly nobody.
+        self.slot.record(found.as_ref().map(|actor| {
+            Caller {
+                subject_id: actor.clone(),
+                roles: DEMO_GRANTS
+                    .entries
+                    .iter()
+                    .map(|(role, _)| (*role).to_owned())
+                    .collect(),
+                actor_kind: "user",
+                role_table: DEMO_GRANTS.version,
+            }
+        }));
+        found
     }
-    fn end_request(&self) {}
+    fn end_request(&self) {
+        self.slot.record(None);
+    }
+    fn caller(&self) -> Option<&CallerSlot> {
+        Some(&self.slot)
+    }
 }
 
 pub(crate) use crate::questions::DerivedQuestions as DevMetrics;
@@ -223,9 +309,7 @@ mod tests {
         }
         DevHost::from_store(store, scope(), |command| command.payload.clone())
             .expect("host")
-            .with_authorizer(LocalDeveloper {
-                actor: ACTOR.into(),
-            })
+            .with_authorizer(LocalDeveloper::for_actor(ACTOR))
     }
 
     fn call(
@@ -235,10 +319,7 @@ mod tests {
         body: &Value,
     ) -> (u16, Value) {
         let questions = metrics.questions(host).expect("runtime");
-        let principals = DevPrincipals {
-            bearer: BEARER.into(),
-            actor: ACTOR.into(),
-        };
+        let principals = DevPrincipals::new(vec![(BEARER.into(), ACTOR.into())]);
         let body = body.to_string();
         let authorization = format!("Bearer {BEARER}");
         let response = handle_with(
@@ -262,10 +343,7 @@ mod tests {
 
     fn get(host: &DevHost<NativeEngine>, metrics: &DevMetrics, path: &str) -> (u16, Value) {
         let questions = metrics.questions(host).expect("runtime");
-        let principals = DevPrincipals {
-            bearer: BEARER.into(),
-            actor: ACTOR.into(),
-        };
+        let principals = DevPrincipals::new(vec![(BEARER.into(), ACTOR.into())]);
         let authorization = format!("Bearer {BEARER}");
         let response = handle_with(
             host,

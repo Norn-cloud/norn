@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
-import { basename, join, resolve } from "node:path"
+import { basename, dirname, join, resolve } from "node:path"
 import { buildInfo, type BuildInfo } from "./build-info.ts"
 import { TOOL_ROOT } from "./profile.ts"
 import { ProjectError, parseProject, type Project } from "./project.ts"
@@ -31,15 +31,39 @@ export async function init(args: readonly string[]): Promise<void> {
   }
 }
 
+/**
+ * `--template three-systems`: the product packs as a hosted tenant provisions
+ * them, from this checkout's registry (`templates/three-systems/template.json`
+ * names the parts): the host's trusted base and the cell-owned evidence types
+ * from `registry/core`, each pack's generated artifacts, and the packs'
+ * committed synthetic exports for `norn dev --load`. `norn dev` admits artifact
+ * envelopes found in source directories, so the project compiles them with its
+ * own `src`.
+ */
+function threeSystems(): { sources: string[]; files: Record<string, string>; data: string[] } {
+  if (distribution() !== "repository") throw new ProjectError("cli.project.usage", "The three-systems template reads the packs from a Norn checkout; run norn init from the repository.", 2)
+  const registry = join(TOOL_ROOT, "../../registry")
+  const profile = JSON.parse(readFileSync(join(TOOL_ROOT, "templates/three-systems/template.json"), "utf8")) as { core: string[]; packs: string[]; data: string[] }
+  const files: Record<string, string> = {}
+  for (const id of profile.core) files[`definitions/core/${id}.json`] = readFileSync(join(registry, "core/artifacts", `${id}.json`), "utf8")
+  for (const pack of profile.packs) {
+    const dir = join(registry, "packs", pack, "artifacts")
+    for (const file of readdirSync(dir).filter((name) => name.endsWith(".json")).sort()) files[`definitions/packs/${pack}/${file}`] = readFileSync(join(dir, file), "utf8")
+  }
+  const data = profile.data.map((system) => `data/${system}.json`)
+  for (const system of profile.data) files[`data/${system}.json`] = readFileSync(join(registry, "packs", system, "synthetic.json"), "utf8")
+  return { sources: ["definitions/core", ...profile.packs.map((pack) => `definitions/packs/${pack}`)], files, data }
+}
+
 async function initProject(args: readonly string[]): Promise<void> {
   const [directory, ...flags] = args
-  if (!directory || directory.startsWith("-")) throw new ProjectError("cli.project.usage", "Usage: norn init <dir> [--namespace NS] [--org ID] [--env ID] [--template starter|empty] [--no-install] [--json]", 2)
+  if (!directory || directory.startsWith("-")) throw new ProjectError("cli.project.usage", "Usage: norn init <dir> [--namespace NS] [--org ID] [--env ID] [--template starter|empty|three-systems] [--no-install] [--json]", 2)
   const options = new Map<string, string>()
   for (let i = 0; i < flags.length; i++) {
     const flag = flags[i]
     if (flag === "--json" || flag === "--no-install") continue
     if (!flag || !["--namespace", "--org", "--env", "--template"].includes(flag) || !flags[i + 1] || flags[i + 1]?.startsWith("-")) {
-      throw new ProjectError("cli.project.usage", "Unknown option or missing value; use norn init <dir> --template starter|empty.", 2)
+      throw new ProjectError("cli.project.usage", "Unknown option or missing value; use norn init <dir> --template starter|empty|three-systems.", 2)
     }
     options.set(flag, flags[++i] ?? "")
   }
@@ -48,9 +72,10 @@ async function initProject(args: readonly string[]): Promise<void> {
   const namespace = options.get("--namespace") ?? name.toLowerCase().replace(/[^a-z0-9_]+/g, "_")
   if (!/^[a-z][a-z0-9_]*$/.test(namespace)) throw new ProjectError("cli.project.invalid_name", "Invalid namespace; use a lowercase letter followed by lowercase letters, digits or underscores.")
   const template = options.get("--template") ?? "starter"
-  if (template !== "starter" && template !== "empty") throw new ProjectError("cli.project.usage", "Use --template starter or --template empty.", 2)
+  if (template !== "starter" && template !== "empty" && template !== "three-systems") throw new ProjectError("cli.project.usage", "Use --template starter, empty or three-systems.", 2)
+  const packs = template === "three-systems" ? threeSystems() : undefined
   if (existsSync(target) && (!statSync(target).isDirectory() || readdirSync(target).length !== 0)) throw new ProjectError("cli.project.exists", "Target is not an empty directory; choose a new directory.")
-  const manifest: Project = { format: "norn-project/1", name, sources: ["src"], scope: { orgId: options.get("--org") ?? "local", environmentId: options.get("--env") ?? "dev" }, dev: { port: 4174, actor: "local:developer" }, cell: ".norn/cell.sqlite" }
+  const manifest: Project = { format: "norn-project/1", name, sources: ["src", ...(packs?.sources ?? [])], scope: { orgId: options.get("--org") ?? "local", environmentId: options.get("--env") ?? "dev" }, dev: { port: 4174, actor: "local:developer" }, cell: ".norn/cell.sqlite" }
   parseProject(manifest)
   const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`
   const files: Record<string, string> = {
@@ -60,11 +85,13 @@ async function initProject(args: readonly string[]): Promise<void> {
     "AGENTS.md": readFileSync(join(TOOL_ROOT, "templates/starter/AGENTS.md"), "utf8"),
     ".gitignore": ".norn/\nnode_modules/\n",
   }
+  Object.assign(files, packs?.files)
   if (template === "starter") files["src/product.ts"] = readFileSync(join(TOOL_ROOT, "templates/starter/src/product.ts"), "utf8").replaceAll("__NAMESPACE__", namespace)
   mkdirSync(join(target, "src"), { recursive: true })
   const written: string[] = []
   try {
     for (const [path, content] of Object.entries(files)) {
+      mkdirSync(dirname(join(target, path)), { recursive: true })
       writeFileSync(join(target, path), content, { flag: "wx" })
       written.push(path)
     }
@@ -76,6 +103,7 @@ async function initProject(args: readonly string[]): Promise<void> {
     const install = Bun.spawn([process.execPath, "install"], { cwd: target, stdout: flags.includes("--json") ? "ignore" : "inherit", stderr: "inherit" })
     if (await install.exited !== 0) throw new ProjectError("cli.project.install", "Dependency installation failed; retry bun install in the project directory.", 3)
   }
-  const result = { created: directory, manifest, files: Object.keys(files), next: `cd ${directory} && bunx norn dev` }
-  process.stdout.write(flags.includes("--json") ? json(result) : `created ${directory}/ (norn-project/1, scope org=${manifest.scope.orgId} env=${manifest.scope.environmentId})\n${template === "starter" ? `  src/product.ts   ${namespace}.Product, ${namespace}.product.add\n` : ""}next: ${result.next}\n`)
+  const load = packs ? ` ${packs.data.map((path) => `--load ${path}`).join(" ")}` : ""
+  const result = { created: directory, manifest, files: Object.keys(files), next: `cd ${directory} && bunx norn dev${load}` }
+  process.stdout.write(flags.includes("--json") ? json(result) : `created ${directory}/ (norn-project/1, scope org=${manifest.scope.orgId} env=${manifest.scope.environmentId})\n${template === "starter" ? `  src/product.ts   ${namespace}.Product, ${namespace}.product.add\n` : ""}${packs ? `  definitions/     the product packs (${packs.sources.length} sources)\n  data/            their synthetic exports, snapshot and incremental rows\n` : ""}next: ${result.next}\n`)
 }
