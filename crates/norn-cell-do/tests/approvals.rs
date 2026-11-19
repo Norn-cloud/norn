@@ -356,8 +356,9 @@ fn a_rejected_step_call_fails_the_run() {
 }
 
 /// APPROVAL-MCP-PARKS: a gated action's MCP tool parks exactly like the
-/// HTTP call. MCP's loopback goes through the same dispatch, so the tool
-/// answers the same pending decision, not an error, and commits nothing.
+/// HTTP call pinned to the catalog version the tool came from. MCP's loopback
+/// goes through the same dispatch, so the tool answers the same pending
+/// decision, not an error, and commits nothing.
 #[test]
 fn an_mcp_tool_call_parks_like_http() {
     let cell = cell();
@@ -388,8 +389,10 @@ fn an_mcp_tool_call_parks_like_http() {
     let parked = called["result"]["structuredContent"].clone();
     assert_eq!(parked["outcome"], json!("pending"), "{called}");
     assert_eq!(melt_status(&cell), 404);
-    // The same call over HTTP is the same parked call.
-    let (status, direct) = convert(&cell, OPERATOR, &melt7(key));
+    // MCP calls an action pinned to the catalog it listed (APPROVAL-PIN-1):
+    // the same call over HTTP pinned to that version is the same parked call.
+    let version = definitions_version(&cell);
+    let (status, direct) = convert_pinned(&cell, version, &melt7(key));
     assert_eq!((status, &direct), (202, &parked));
     assert_eq!(pending(&cell, APPROVER)["total"], json!(1));
 }
