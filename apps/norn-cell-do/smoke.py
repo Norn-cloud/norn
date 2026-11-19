@@ -37,6 +37,9 @@ VIEWER = "Bearer fixture:admin@demo"
 CONFIG = ROOT / "wrangler.json"
 config = json.loads(CONFIG.read_text())
 config.setdefault("vars", {})["NORN_LINEAGE_KEY"] = secrets.token_hex(32)
+# The smoke build has the `fixtures` feature, which the Worker serves only on
+# a smoke or test stage.
+config["vars"]["NORN_STAGE"] = "smoke"
 CONFIG.write_text(json.dumps(config))
 
 

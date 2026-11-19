@@ -268,7 +268,8 @@ struct Begin {
 
 impl Connect {
     /// The connections in `config` (`NORN_SOURCES`) and the server variables
-    /// `vars` (a JSON object of the `NORN_SECRET_*` and `NORN_S3_*` values).
+    /// `vars` (a JSON object of the `NORN_SECRET_*` and `NORN_S3_*` values,
+    /// and the operator's `NORN_SOURCE_ALLOWED_HOSTS`, SYNC-URL-1).
     ///
     /// # Errors
     /// Malformed configuration.
@@ -281,7 +282,12 @@ impl Connect {
             .map(|(name, value)| (name.clone(), value.clone()))
             .collect();
         Ok(Self {
-            sources: Sources::new(config, secrets)?,
+            sources: Sources::with_allowed_hosts(
+                config,
+                secrets,
+                vars.get(norn_api::sources::ALLOWED_HOSTS_VAR)
+                    .map_or("", String::as_str),
+            )?,
             uploads_store: S3Config::from_vars(&vars, Store::Uploads),
             documents_store: S3Config::from_vars(&vars, Store::Documents),
             uploads: BTreeMap::new(),
