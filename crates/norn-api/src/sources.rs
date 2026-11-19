@@ -842,16 +842,20 @@ fn http(config: &ConnectionConfig, auth: &[(String, String)], request: Request) 
 
 /// The hosts of an [`ALLOWED_HOSTS_VAR`] value, normalized as a URL's host
 /// is (lowercase, IP literals canonical). An entry that is not a bare host
-/// (a port, a scheme, a path) refuses the configuration, naming the entry,
-/// rather than leaving the operator's host silently unlisted.
+/// (a port, a scheme, a path, userinfo) refuses the configuration, naming the
+/// entry, rather than leaving the operator's host silently unlisted. The raw
+/// entry is checked before URL parsing, because parsing drops a default port
+/// (`127.0.0.1:443`) and empty userinfo (`@127.0.0.1`) and would list the bare
+/// host on every port and scheme.
 fn allowed_host_list(value: &str) -> Result<Vec<String>, String> {
     value
         .split(',')
         .map(str::trim)
         .filter(|entry| !entry.is_empty())
         .map(|entry| {
-            url::Url::parse(&format!("https://{entry}/"))
-                .ok()
+            Some(entry)
+                .filter(|entry| bare_host(entry))
+                .and_then(|entry| url::Url::parse(&format!("https://{entry}/")).ok())
                 .filter(|parsed| {
                     parsed.port().is_none()
                         && parsed.path() == "/"
@@ -868,6 +872,27 @@ fn allowed_host_list(value: &str) -> Result<Vec<String>, String> {
                 })
         })
         .collect()
+}
+
+/// Whether a raw allowlist entry is exactly a host: a DNS name or IPv4
+/// dotted quad (letters, digits, hyphens, non-empty dot-separated labels, an
+/// optional trailing dot), or a bracketed IPv6 literal. Anything else (`@`,
+/// `:` outside brackets, `/`, `?`, `#`, whitespace) is not.
+fn bare_host(entry: &str) -> bool {
+    if let Some(inner) = entry
+        .strip_prefix('[')
+        .and_then(|rest| rest.strip_suffix(']'))
+    {
+        return !inner.is_empty()
+            && inner
+                .chars()
+                .all(|c| c.is_ascii_hexdigit() || c == ':' || c == '.');
+    }
+    let name = entry.strip_suffix('.').unwrap_or(entry);
+    !name.is_empty()
+        && name.split('.').all(|label| {
+            !label.is_empty() && label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        })
 }
 
 /// SYNC-URL-1, on the URL as the host's `fetch` parses it.
@@ -1512,6 +1537,22 @@ mod tests {
     }
 
     #[test]
+    fn bare_hosts_are_admitted_normalized() {
+        assert_eq!(
+            allowed_host_list("erp-sandbox,10.0.0.5,[fd00::1],ERP-Sandbox,erp-sandbox.")
+                .expect("hosts"),
+            [
+                "erp-sandbox",
+                "10.0.0.5",
+                "[fd00::1]",
+                "erp-sandbox",
+                "erp-sandbox."
+            ]
+            .map(String::from)
+        );
+    }
+
+    #[test]
     fn neighbouring_public_addresses_stay_admitted() {
         for base in [
             "https://192.0.1.1",
@@ -1535,6 +1576,18 @@ mod tests {
             "erp-sandbox/api",
             "not a host",
             "user@erp-sandbox",
+            "127.0.0.1:443",
+            "@127.0.0.1",
+            "erp-sandbox?x",
+            "erp-sandbox#f",
+            "user:pw@host",
+            "[::1]:443",
+            "host/",
+            "[]",
+            "[::1",
+            ".",
+            "erp..sandbox",
+            ".erp-sandbox",
         ] {
             let found = allowed_host_list(&format!("erp-sandbox,{entry}")).expect_err("refused");
             assert!(
