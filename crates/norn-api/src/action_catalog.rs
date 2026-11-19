@@ -9,6 +9,14 @@
 //! the same gate and by the kernel's per-target authorization, laws and
 //! preconditions, so an action missing from the list is still refused when it
 //! is called directly, and one on the list may still be refused for its target.
+//!
+//! ACTION-CATALOG-STATE-1: with `objectId` (and `objectKind`), the list is the
+//! actions that can act on that object now: a `fire_transition` action is
+//! left out unless the object's current lifecycle state is one its
+//! transition fires from. The object is read with the reader's own authority
+//! (`GET /v1/objects/{type}/{id}`), so an object the reader cannot see is
+//! refused exactly as that read is, and its state is never disclosed. Guards
+//! are not evaluated here: the call decides them.
 use crate::{
     action_admission::RetainedActions,
     actions::{ActionQuery, action_denied},
@@ -85,6 +93,11 @@ pub struct ActionCatalogQuery {
     /// Only actions whose effect targets this object type.
     #[param(nullable = false)]
     pub object_kind: Option<String>,
+    /// With `objectKind`: only actions that can act on this object in its
+    /// current lifecycle state (ACTION-CATALOG-STATE-1).
+    #[param(nullable = false)]
+    #[serde(default)]
+    pub object_id: Option<String>,
 }
 
 /// How an action's admitted effect program changes its target.
@@ -250,6 +263,31 @@ pub fn list_actions<E: SqlEngine>(
     query: &ActionCatalogQuery,
     actor: Option<&str>,
 ) -> Result<NornActionCatalog, Refusal> {
+    list_actions_on(host, query, actor, None)
+}
+
+/// [`list_actions`], narrowed to one object's current state when the query
+/// names `objectId` (ACTION-CATALOG-STATE-1). The object is read through
+/// `access`, the reader's object gate; without one, `objectId` is refused.
+///
+/// # Errors
+/// As [`list_actions`]; the object read's own refusal (one opaque 403 or
+/// 404); `objectId` without `objectKind` or without an object gate (400).
+pub fn list_actions_on<E: SqlEngine>(
+    host: &DevHost<E>,
+    query: &ActionCatalogQuery,
+    actor: Option<&str>,
+    access: Option<&dyn crate::object_routes::ObjectAccess>,
+) -> Result<NornActionCatalog, Refusal> {
+    let states = match (&query.object_id, &query.object_kind, access) {
+        (None, _, _) => None,
+        (Some(id), Some(kind), Some(access)) => Some(current_states(host, query, actor, kind, id, access)?),
+        (Some(_), _, _) => {
+            return Err(Refusal::invalid(
+                "objectId narrows the catalog of one objectKind on a host that serves object reads",
+            ));
+        }
+    };
     let callable = callable_actions(
         host,
         &ActionQuery {
@@ -272,10 +310,91 @@ pub fn list_actions<E: SqlEngine>(
                 .as_deref()
                 .is_none_or(|kind| kind == item.object_kind)
         })
+        .filter(|item| {
+            states.as_ref().is_none_or(|states| {
+                callable
+                    .actions
+                    .iter()
+                    .find(|(_, action)| action.action_id == item.action_id)
+                    .is_none_or(|(_, action)| fires_from(action, states))
+            })
+        })
         .collect::<Vec<_>>();
     items.sort_by(|a, b| a.action_id.cmp(&b.action_id));
     Ok(NornActionCatalog {
         definitions_version: callable.version,
         items,
     })
+}
+
+/// The object's current value of each lifecycle property of its type, read
+/// with the reader's authority, by lifecycle property.
+fn current_states<E: SqlEngine>(
+    host: &DevHost<E>,
+    query: &ActionCatalogQuery,
+    actor: Option<&str>,
+    kind: &str,
+    id: &str,
+    access: &dyn crate::object_routes::ObjectAccess,
+) -> Result<Vec<(String, Vec<norn_ir::entity_v2::lifecycle::Transition>, Option<String>)>, Refusal> {
+    let record = crate::object_routes::get_object(
+        host,
+        &crate::scope::ScopeQuery {
+            org_id: query.org_id.clone(),
+            environment_id: query.environment_id.clone(),
+        },
+        actor,
+        kind,
+        id,
+        access,
+    )?;
+    let cell = host.cell()?;
+    let reader = cell.store().read();
+    Ok(reader
+        .model()
+        .object_types()
+        .filter(|object_type| object_type.name.as_str() == kind)
+        .flat_map(|object_type| object_type.lifecycles.iter())
+        .map(|lifecycle| {
+            let property = lifecycle.property.as_str().to_owned();
+            let state = record
+                .values
+                .get(&property)
+                .and_then(norn_ir::RuntimeValue::as_str)
+                .map(str::to_owned);
+            (property, lifecycle.transitions.clone(), state)
+        })
+        .collect())
+}
+
+/// Whether `action` can act on an object in `states`: anything but a
+/// `fire_transition` can; a transition can when the object's state is one it
+/// fires from. A lifecycle this host does not find leaves the action listed,
+/// and the call decides.
+fn fires_from(
+    action: &ActionRoot,
+    states: &[(String, Vec<norn_ir::entity_v2::lifecycle::Transition>, Option<String>)],
+) -> bool {
+    let Some(ActionEffectProgram::FireTransition {
+        lifecycle,
+        transition,
+        ..
+    }) = &action.effect_program
+    else {
+        return true;
+    };
+    let Some((_, transitions, state)) = states
+        .iter()
+        .find(|(property, _, _)| property.as_str() == lifecycle.as_str())
+    else {
+        return true;
+    };
+    transitions
+        .iter()
+        .find(|declared| declared.id.as_str() == transition.as_str())
+        .is_none_or(|declared| {
+            state
+                .as_ref()
+                .is_some_and(|state| declared.from.iter().any(|from| from == state))
+        })
 }

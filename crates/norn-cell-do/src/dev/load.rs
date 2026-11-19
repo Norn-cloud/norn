@@ -121,9 +121,16 @@ pub(crate) fn load(
                         MappingOutcome::Landed => entry.1 = entry.1.saturating_add(1),
                         MappingOutcome::AlreadyLanded => {}
                         MappingOutcome::Quarantined(reasons) => {
+                            // The mapping's own words (field, value, the type
+                            // expected), not only its code.
+                            let findings = cell
+                                .mapping_findings(&member)
+                                .ok()
+                                .filter(|findings| !findings.is_empty())
+                                .unwrap_or(reasons);
                             return Err(format!(
                                 "{file}: {dataset} {member} was refused by the mapping: {}",
-                                reasons.join(", ")
+                                findings.join("; ")
                             ));
                         }
                     }

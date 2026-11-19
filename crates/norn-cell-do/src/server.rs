@@ -16,7 +16,7 @@
 use std::collections::BTreeMap;
 
 use http::StatusCode;
-use norn_api::action_catalog::{ActionCatalogQuery, list_actions};
+use norn_api::action_catalog::{ActionCatalogQuery, list_actions_on};
 use norn_api::actions::{
     ActionAnswer, ActionQuery, action_denied, call_action, decode_action_request,
 };
@@ -1002,13 +1002,19 @@ fn action_catalog<E: SqlEngine>(
             "the action catalog is read with GET",
         ));
     }
-    let mut fields = parse(query, &["orgId", "environmentId", "objectKind"])?;
+    let mut fields = parse(query, &["orgId", "environmentId", "objectKind", "objectId"])?;
     let query = ActionCatalogQuery {
         org_id: fields.remove("orgId"),
         environment_id: fields.remove("environmentId"),
         object_kind: fields.remove("objectKind"),
+        object_id: fields.remove("objectId"),
     };
-    document_json(&list_actions(host, &query, actor)?)
+    document_json(&list_actions_on(
+        host,
+        &query,
+        actor,
+        Some(&CellObjectAccess),
+    )?)
 }
 
 fn governed_action<E: SqlEngine>(

@@ -3055,7 +3055,9 @@ fn conform(raw: Option<&norn_canonical::JsonValue>, ty: &Type) -> Result<Value, 
         // MAPPING-DECIMAL-TEXT-1: sources (Frappe among them) send decimals
         // as JSON strings to keep them exact. Only the exact text form
         // (`-12.50`: no exponent, sign, spaces or leading zeros) is a number.
-        (Some(Json::String(text)), Type::Decimal { .. }) if exact_decimal_text(text) => {
+        (Some(Json::String(text)), Type::Number | Type::Decimal { .. })
+            if exact_decimal_text(text) =>
+        {
             number_value(text)
         }
         (Some(Json::Bool(flag)), Type::Bool) => Ok(Value::Bool(*flag)),
@@ -3363,6 +3365,11 @@ mod conform_tests {
                 "{text:?}"
             );
         }
+        // A source field typed `decimal` reads as a number.
+        assert_eq!(
+            conform(Some(&Json::String("7800.00".to_owned())), &Type::Number).unwrap(),
+            number_value("7800.00").unwrap()
+        );
         // Text stays text for an integer.
         assert!(conform(Some(&Json::String("5".to_owned())), &Type::Integer).is_err());
     }

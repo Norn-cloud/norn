@@ -531,7 +531,7 @@ impl<E: SqlEngine> CellHost for WouldCommit<'_, E> {
         max_targets: usize,
         max_key_bytes: u64,
     ) -> Result<Option<Vec<LinkReadTarget>>, CellError> {
-        self.0
+        self.cell
             .read_link_targets(source, link, max_targets, max_key_bytes)
     }
     fn read_predicate(
