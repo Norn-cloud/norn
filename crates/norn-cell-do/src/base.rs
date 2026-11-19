@@ -45,6 +45,28 @@ pub const SOURCES: [&str; 20] = [
     include_str!("../../../registry/core/artifacts/std.value_types.entity.json"),
 ];
 
+/// The registry packs a hosted three-systems tenant submits over the base
+/// (`tests/hosted_load.rs`; `norn init --template three-systems` copies the
+/// same set).
+pub const TENANT_PACKS: [&str; 6] = [
+    "canon",
+    "erpnext",
+    "locale-ar",
+    "odoo",
+    "shopify",
+    "sources",
+];
+
+/// The cell-owned `norn.` core artifacts the base lacks, by registry file
+/// stem: the link claims and source evidence the cell writes for every mapped
+/// link and source row, and the source-document interface. A tenant submits
+/// them only while the base lacks them.
+pub const CELL_OWNED: [&str; 3] = [
+    "norn.ObservedLinkClaim.entity",
+    "norn.SourceDocument.interface",
+    "norn.SourceEvidence.interface",
+];
+
 /// The host's trusted base.
 ///
 /// # Errors

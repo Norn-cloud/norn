@@ -41,24 +41,6 @@ const LINEAGE_KEY: [u8; 32] = [7; 32];
 const NOW: u64 = 1_800_000_000;
 /// The per-load row bound `POST /v1/observations:load` enforces.
 const MAX_LOAD_ROWS: usize = 100;
-/// The packs the hosted tenant submits.
-const PACKS: [&str; 6] = [
-    "canon",
-    "erpnext",
-    "locale-ar",
-    "odoo",
-    "shopify",
-    "sources",
-];
-/// Core evidence types the base lacks: the link claims and source evidence the
-/// cell writes for every mapped link and source row, and the source-document
-/// interface. Submitted only while the base lacks them.
-const CELL_OWNED: [&str; 3] = [
-    "norn.ObservedLinkClaim.entity.json",
-    "norn.SourceDocument.interface.json",
-    "norn.SourceEvidence.interface.json",
-];
-
 fn repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
@@ -91,7 +73,7 @@ fn owner(org: &str) -> String {
 fn tenant_set() -> Vec<Value> {
     let base = base::trusted_base().unwrap();
     let mut files: Vec<PathBuf> = Vec::new();
-    for pack in PACKS {
+    for pack in base::TENANT_PACKS {
         let dir = repo().join("registry/packs").join(pack).join("artifacts");
         for entry in std::fs::read_dir(&dir).unwrap() {
             let path = entry.unwrap().path();
@@ -100,8 +82,8 @@ fn tenant_set() -> Vec<Value> {
             }
         }
     }
-    for name in CELL_OWNED {
-        files.push(repo().join("registry/core/artifacts").join(name));
+    for name in base::CELL_OWNED {
+        files.push(repo().join(format!("registry/core/artifacts/{name}.json")));
     }
     let mut set = BTreeMap::new();
     for path in files {
