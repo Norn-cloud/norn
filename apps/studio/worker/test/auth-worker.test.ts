@@ -317,7 +317,9 @@ test("client organization metadata cannot assign or replace reserved cell bindin
   const created = await post(env, "/api/auth/organization/create", { name: "Other", slug: "other-workspace", metadata: { environmentId: "analytics", "norn.test": "forged", label: "kept" } }, { cookie })
   expect(created.status).toBe(200)
   const row = db.query(`select "metadata" from "organization" where "slug" = 'other-workspace'`).get() as { metadata: string }
-  expect(JSON.parse(row.metadata)).toEqual({ label: "kept" })
+  // Only the client's own key survives; the one reserved key is the server's: the creator as the workspace's payer (billing.ts).
+  const { userId } = db.query(`select "userId" from "member" where "organizationId" = ?`).get(own.organizationId) as { userId: string }
+  expect(JSON.parse(row.metadata)).toEqual({ label: "kept", "norn.billingPayer": userId })
   const updated = await post(env, "/api/auth/organization/update", { organizationId: own.organizationId, data: { metadata: { environmentId: "analytics", "norn.provisioningProof": "forged", "norn.test": "forged", label: "changed" } } }, { cookie })
   expect(updated.status).toBe(200)
   expect(stored().environmentId).toBe("server-cell")
