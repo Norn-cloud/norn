@@ -645,13 +645,13 @@ fn every_currency_enum_and_code_set_is_the_one_iso_4217_list() {
         lists.push((artifact.to_owned(), codes(&found["type"]["values"])));
     }
     for source in [
-        "erpnext/artifacts/erpnext.three",
-        "odoo/artifacts/odoo.three",
-        "shopify/artifacts/shopify.three",
-        "erpnext-rest/artifacts/erpnext.rest",
-        "odoo-rest/artifacts/odoo.rest",
+        "registry/packs/erpnext/artifacts/erpnext.three",
+        "registry/packs/odoo/artifacts/odoo.three",
+        "registry/packs/shopify/artifacts/shopify.three",
+        "fixtures/packs/erpnext-rest/artifacts/erpnext.rest",
+        "fixtures/packs/odoo-rest/artifacts/odoo.rest",
     ] {
-        let document = read(&format!("registry/packs/{source}.source.json"));
+        let document = read(&format!("{source}.source.json"));
         for set in document["payload"]["codeSets"]
             .as_array()
             .expect("code sets")

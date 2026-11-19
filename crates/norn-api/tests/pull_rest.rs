@@ -317,25 +317,25 @@ fn a_row_without_a_canonical_reference_is_quarantined_with_its_reason() {
 fn rest_mappings_pin_their_source_schemas() {
     let pairs = [
         (
-            "erpnext-rest",
+            "fixtures/packs/erpnext-rest",
             "erpnext.rest",
             "fixtures/packs/erpnext-rest/rest.ts",
         ),
-        ("odoo-rest", "odoo.rest", "fixtures/packs/odoo-rest/rest.ts"),
         (
-            "sources",
+            "fixtures/packs/odoo-rest",
+            "odoo.rest",
+            "fixtures/packs/odoo-rest/rest.ts",
+        ),
+        (
+            "registry/packs/sources",
             "norn.connect",
             "registry/packs/sources/records.ts",
         ),
     ];
     let mut wrong = Vec::new();
     for (pack, stem, typed) in pairs {
-        let source = artifact(&format!(
-            "registry/packs/{pack}/artifacts/{stem}.source.json"
-        ));
-        let mapping = artifact(&format!(
-            "registry/packs/{pack}/artifacts/{stem}.mapping.json"
-        ));
+        let source = artifact(&format!("{pack}/artifacts/{stem}.source.json"));
+        let mapping = artifact(&format!("{pack}/artifacts/{stem}.mapping.json"));
         let pin = norn_checker::ArtifactRef::of(&source).expect("pin").sha256;
         let payload = serde_json::to_value(mapping.payload.to_json_value()).expect("payload");
         if payload["source"]["sha256"].as_str() != Some(pin.as_str()) {
