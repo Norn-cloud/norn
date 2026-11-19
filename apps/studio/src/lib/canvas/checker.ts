@@ -16,7 +16,7 @@ interface CheckerModule {
 const PACKAGE = () => import.meta.glob<CheckerModule>("../../checker/norn_checker_wasm.js")
 // src/engine/ holds the ZEN engine alone: crates/norn-checker-wasm without its `checker` feature
 // (NORN_WASM_ENGINE=1), so only the checker ABI's own `evaluateExpression`, the same function
-// (D105). Page machines load it; CI holds the two packages to identical answers (engine-parity.mjs).
+// (one evaluator, #1325). Page machines load it; CI holds the two packages to identical answers (engine-parity.mjs).
 const ENGINE = () => import.meta.glob<Pick<CheckerModule, "default" | "evaluateExpression">>("../../engine/norn_engine_wasm.js")
 
 /** Load the checker; rejects when the package is absent, so an edit is never shown as clean unchecked. */

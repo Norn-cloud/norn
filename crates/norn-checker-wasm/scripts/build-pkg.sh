@@ -6,7 +6,7 @@
 #   out-dir defaults to <target-dir>/norn-checker-wasm/pkg (<target-dir>/norn-checker-wasm/engine
 #   with NORN_WASM_ENGINE=1).
 #
-# NORN_WASM_ENGINE=1 builds the ZEN engine alone (D105): this crate without its default
+# NORN_WASM_ENGINE=1 builds the ZEN engine alone (one evaluator, #1325): this crate without its default
 # `checker` feature, so the package exports only `evaluateExpression`, the same function as the
 # full package (tests/parity/engine-parity.mjs holds the two to the same answers).
 #
