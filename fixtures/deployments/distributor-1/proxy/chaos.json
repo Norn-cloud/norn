@@ -1,0 +1,21 @@
+{
+  "routes": {
+    "erpnext": {"kind": "erpnext", "listen": 18000, "upstream": "http://127.0.0.1:18100", "seed": 1,
+                "page_skip": 0.05, "page_repeat": 0.05, "storm_every": 40, "storm_len": 6, "drop_field": 0.04,
+                "drift_after": 400, "drift": {"actual_qty": "actual_quantity"}},
+    "odoo": {"kind": "odoo", "listen": 18069, "upstream": "http://127.0.0.1:18169", "seed": 2,
+             "page_skip": 0.05, "page_repeat": 0.05, "storm_every": 35, "storm_len": 4, "drop_field": 0.04,
+             "drift_after": 120, "drift": {"amount_total": "amount_total_signed"}},
+    "saleor": {"kind": "saleor", "listen": 18001, "upstream": "http://127.0.0.1:18101", "seed": 3,
+               "storm_every": 30, "storm_len": 5, "drop_field": 0.05},
+    "saleor-webhooks": {"kind": "relay", "listen": 18900, "upstream": "http://127.0.0.1:18901/saleor", "seed": 4, "dup_p": 0.3, "hold_p": 0.2}
+  },
+  "toxics": [
+    {"proxy": "erpnext-tcp", "type": "latency", "attributes": {"latency": 80, "jitter": 120}},
+    {"proxy": "odoo-tcp", "type": "latency", "attributes": {"latency": 60, "jitter": 60}},
+    {"proxy": "saleor-tcp", "type": "latency", "attributes": {"latency": 50, "jitter": 50}},
+    {"proxy": "legacy-pg", "type": "latency", "attributes": {"latency": 30, "jitter": 30}},
+    {"proxy": "erpnext-tcp", "type": "reset_peer", "toxicity": 0.02, "attributes": {"timeout": 200}},
+    {"proxy": "odoo-tcp", "type": "timeout", "toxicity": 0.01, "attributes": {"timeout": 3000}}
+  ]
+}

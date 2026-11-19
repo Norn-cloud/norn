@@ -1,0 +1,105 @@
+# distributor-1: the systems a mid-size distributor runs, self-hosted, with a
+# hostile network in front of every API. Synthetic data only.
+#
+#   erpnext  books, Cairo/Alexandria stock       :8000 (via proxy :18000)
+#   odoo     Giza/Delta branch                   :8069 (via proxy :18069)
+#   saleor   B2B web shop (GraphQL + webhooks)   :8001 (via proxy :18001)
+#   legacy   old warehouse DB (Postgres)         :5433 (via toxiproxy :15433)
+#
+# Extractors only ever talk to the proxy ports. Memory limits keep the stack
+# inside an 8 GB VM next to a Norn build. Tags are resolved and recorded by run.sh.
+name: distributor-1
+
+x-limits: &small
+  deploy: { resources: { limits: { memory: 512m } } }
+
+services:
+  # ---------------------------------------------------------------- ERPNext
+  mariadb:
+    image: mariadb:10.6
+    command: [--character-set-server=utf8mb4, --collation-server=utf8mb4_unicode_ci, --skip-character-set-client-handshake, --innodb-buffer-pool-size=256M]
+    environment: { MYSQL_ROOT_PASSWORD: d1-root }
+    healthcheck: { test: ["CMD", "mysqladmin", "ping", "-pd1-root"], interval: 5s, retries: 60 }
+    <<: *small
+  erp-redis:
+    image: redis:7-alpine
+    deploy: { resources: { limits: { memory: 128m } } }
+  erpnext:
+    image: frappe/erpnext:${ERPNEXT_TAG:-v15.88.1}
+    command: >
+      bash -c "test -f sites/d1.localhost/site_config.json ||
+      (bench new-site d1.localhost --mariadb-user-host-login-scope='%' --db-root-password d1-root --admin-password d1-admin --install-app erpnext --set-default);
+      bench --site d1.localhost set-config host_name http://d1.localhost;
+      bench serve --port 8000 --noreload"
+    environment:
+      DB_HOST: mariadb
+      DB_PORT: "3306"
+    depends_on: { mariadb: { condition: service_healthy } }
+    entrypoint: ["bash", "-c", "printf '{\"db_host\":\"mariadb\",\"redis_cache\":\"redis://erp-redis:6379\",\"redis_queue\":\"redis://erp-redis:6379\",\"redis_socketio\":\"redis://erp-redis:6379\"}' > sites/common_site_config.json; ls -1 apps > sites/apps.txt; exec \"$@\"", "--"]
+    ports: ["127.0.0.1:8000:8000"]
+    deploy: { resources: { limits: { memory: 1536m } } }
+
+  # ------------------------------------------------------------------- Odoo
+  odoo-db:
+    image: postgres:16-alpine
+    environment: { POSTGRES_USER: odoo, POSTGRES_PASSWORD: odoo, POSTGRES_DB: postgres }
+    healthcheck: { test: ["CMD", "pg_isready", "-U", "odoo"], interval: 5s, retries: 60 }
+    <<: *small
+  odoo:
+    image: odoo:${ODOO_TAG:-17.0}
+    command: ["--db_host=odoo-db", "--db_user=odoo", "--db_password=odoo", "-d", "d1", "-i", "sale_management,stock,account", "--without-demo=all", "--load-language=ar_001"]
+    depends_on: { odoo-db: { condition: service_healthy } }
+    ports: ["127.0.0.1:8069:8069"]
+    deploy: { resources: { limits: { memory: 1024m } } }
+
+  # ----------------------------------------------------------------- Saleor
+  saleor-db:
+    image: postgres:16-alpine
+    environment: { POSTGRES_USER: saleor, POSTGRES_PASSWORD: saleor, POSTGRES_DB: saleor }
+    healthcheck: { test: ["CMD", "pg_isready", "-U", "saleor"], interval: 5s, retries: 60 }
+    <<: *small
+  saleor-redis:
+    image: redis:7-alpine
+    deploy: { resources: { limits: { memory: 128m } } }
+  saleor:
+    image: ghcr.io/saleor/saleor:${SALEOR_TAG:-3.20}
+    command: ["bash", "-c", "python manage.py migrate --no-input && uvicorn saleor.asgi:application --host 0.0.0.0 --port 8000 --workers 1"]
+    environment: &saleor_env
+      DATABASE_URL: postgres://saleor:saleor@saleor-db/saleor
+      CACHE_URL: redis://saleor-redis:6379/0
+      CELERY_BROKER_URL: redis://saleor-redis:6379/1
+      SECRET_KEY: d1-synthetic-not-a-secret
+      ALLOWED_HOSTS: "*"
+      ALLOWED_CLIENT_HOSTS: "*"
+      PUBLIC_URL: http://localhost:8001/
+      DEFAULT_CHANNEL_SLUG: d1-b2b
+      HTTP_IP_FILTER_ALLOW_LOOPBACK_IPS: "True"
+      HTTP_IP_FILTER_ALLOW_PRIVATE_IPS: "True"
+      HTTP_IP_FILTER_ENABLED: "False"
+    depends_on: { saleor-db: { condition: service_healthy } }
+    ports: ["127.0.0.1:8001:8000"]
+    deploy: { resources: { limits: { memory: 1024m } } }
+  saleor-worker:
+    image: ghcr.io/saleor/saleor:${SALEOR_TAG:-3.20}
+    command: ["celery", "-A", "saleor.celeryconf:app", "worker", "-E", "--loglevel=info", "-c", "1"]
+    environment: *saleor_env
+    depends_on: [saleor]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    <<: *small
+
+  # ------------------------------------------------------------- legacy WMS
+  legacy:
+    image: postgres:16-alpine
+    environment: { POSTGRES_USER: wms, POSTGRES_PASSWORD: wms, POSTGRES_DB: wms, TZ: Africa/Cairo, PGTZ: Africa/Cairo }
+    volumes: ["${D1_FILES:-./out/files}/legacy.sql:/docker-entrypoint-initdb.d/10-legacy.sql:ro"]
+    ports: ["127.0.0.1:5433:5432"]
+    healthcheck: { test: ["CMD", "pg_isready", "-U", "wms"], interval: 5s, retries: 60 }
+    <<: *small
+
+  # --------------------------------------------------------- hostile network
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:2.9.0
+    command: ["-host=0.0.0.0", "-config=/config/toxiproxy.json"]
+    volumes: ["./proxy/toxiproxy.json:/config/toxiproxy.json:ro"]
+    ports: ["127.0.0.1:8474:8474", "127.0.0.1:15433:15433", "127.0.0.1:18100:18100", "127.0.0.1:18169:18169", "127.0.0.1:18101:18101"]
+    deploy: { resources: { limits: { memory: 64m } } }
