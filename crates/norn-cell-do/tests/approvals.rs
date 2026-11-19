@@ -218,7 +218,11 @@ fn an_approval_keeps_the_callers_definitions_pin() {
     let (status, unpinned) = convert(&cell, OPERATOR, &melt7("operator-pin"));
     assert_eq!(status, 202, "{unpinned}");
     assert_ne!(unpinned["decision"]["id"], json!(id), "{unpinned}");
-    assert_eq!(melt_status(&cell), 404, "no commit without a fresh decision");
+    assert_eq!(
+        melt_status(&cell),
+        404,
+        "no commit without a fresh decision"
+    );
     // The original pin stays stale.
     let (status, stale) = convert_pinned(&cell, pinned, &melt7("operator-pin"));
     assert_ne!(status, 200, "{stale}");
