@@ -12,6 +12,13 @@ import { ProbeError, run, target } from "../../../apps/norn-cell-do/probe/golden
 const TOKEN = "tok-secret-1234"
 const APPROVER = "approver-secret-5678"
 const HOSTED = { NORN_PROBE_URL: "https://probe.cell.test", NORN_PROBE_ORG: "probe-org", NORN_PROBE_ENV: "probe", NORN_PROBE_TOKEN: TOKEN }
+/** The catalog's artifacts, shaped as norn dev answers them: an entity names its object type, an action its id. */
+const artifact = (name: string) => {
+  const namespace = name.split(".")[0]
+  return /^[a-z]+\.[A-Z]/.test(name)
+    ? { artifactId: `${name}.entity`, kind: "entity", namespace, payload: { objectType: { name } } }
+    : { artifactId: `${name}.action`, kind: "action", namespace, payload: { actionId: name } }
+}
 const DEFINITIONS = ["probe.Reading", "probe.reading.put", "probe.Confirmation", "probe.confirmation.put", "probe.Sentinel", "probe.sentinel.add"]
 
 type Seen = { method: string; path: string; authorization: string | null; body: any }
@@ -33,7 +40,7 @@ function fakeCell(fault: Fault = {}) {
     seen.push({ method: init.method ?? "GET", path: url.pathname, authorization: new Headers(init.headers).get("authorization"), body })
     if (fault.throwWith !== undefined) throw new TypeError(fault.throwWith)
     const path = url.pathname
-    if (path === "/v1/definitions") return Response.json({ artifacts: [...DEFINITIONS, ...(fault.extraArtifact ? [fault.extraArtifact] : [])].map((artifactId) => ({ artifactId })) })
+    if (path === "/v1/definitions") return Response.json({ artifacts: [...DEFINITIONS, ...(fault.extraArtifact ? [fault.extraArtifact] : [])].map(artifact) })
     if (path === "/v1/actions/probe.reading.put" || path === "/v1/actions/probe.confirmation.put") {
       const type = path.endsWith("reading.put") ? "probe.Reading" : "probe.Confirmation"
       if (type === "probe.Confirmation" && fault.gated) {

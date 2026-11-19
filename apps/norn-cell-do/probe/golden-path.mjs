@@ -206,11 +206,13 @@ export async function run(argv = process.argv.slice(2), env = process.env) {
   const ready = await step("ready", async () => {
     const reply = await call(t, "GET", "/v1/definitions", t.token);
     expect(reply.status === 200, `probe.definitions_unreadable ${said(reply)}`);
-    const artifacts = Array.isArray(reply.json?.artifacts) ? reply.json.artifacts.map((a) => a?.artifactId) : null;
+    const artifacts = Array.isArray(reply.json?.artifacts) ? reply.json.artifacts : null;
     expect(artifacts !== null, "probe.definitions_unreadable");
-    for (const needed of [READING, PUT, CONFIRMATION, CONFIRM, SENTINEL]) expect(artifacts.includes(needed), "probe.definitions_missing");
+    // An entity names its object type, an action its id.
+    const named = new Set(artifacts.flatMap((a) => [a?.payload?.objectType?.name, a?.payload?.actionId]).filter((name) => typeof name === "string"));
+    for (const needed of [READING, PUT, CONFIRMATION, CONFIRM, SENTINEL]) expect(named.has(needed), "probe.definitions_missing");
     // PROBE-BOUNDED-1: a hosted probe writes only into a cell dedicated to it.
-    if (t.hosted) expect(artifacts.every((id) => typeof id === "string" && (id.startsWith("probe.") || id.startsWith("norn."))), "probe.cell_not_dedicated");
+    if (t.hosted) expect(artifacts.every((a) => a?.namespace === "probe"), "probe.cell_not_dedicated");
   });
   if (ready) {
     await step("load", async () => {
