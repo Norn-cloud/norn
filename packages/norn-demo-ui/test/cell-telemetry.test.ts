@@ -36,14 +36,14 @@ function fakeCell(answer: (request: Request) => Response | Promise<Response>) {
     }
     async fetch(request: Request) { return answer(request) }
     publish() { this.published += 1 }
-    async alarm() {}
+    async alarm(_info?: unknown) {}
   }
   instrument(Cell)
   return Cell
 }
 
 const scoped = (path: string, method = "GET", body?: string) =>
-  new Request(`https://cell.test${path}?orgId=acme&environmentId=prod`, { method, body, headers: { "x-norn-cell": JSON.stringify(["acme", "prod"]) } })
+  new Request(`https://cell.test${path}?orgId=acme&environmentId=prod`, { method, body: body ?? null, headers: { "x-norn-cell": JSON.stringify(["acme", "prod"]) } })
 
 const names = (body: any): string[] => body.resourceMetrics[0].scopeMetrics[0].metrics.map((m: any) => m.name)
 const points = (body: any, name: string): any[] => {
@@ -113,7 +113,9 @@ test("a request, a refusal, a parked action and a commit are counted by route, o
 })
 
 test("OTEL-NEVER-FAILS-1: an export that throws or is refused never reaches the request", async () => {
-  const t = new Telemetry(exportConfig(ON, "norn-cell")!)
+  // A clock the test moves: the failure log is rate-limited to once a minute.
+  let clock = 1_000_000
+  const t = new Telemetry(exportConfig(ON, "norn-cell")!, () => clock)
   t.count("x_total", {})
   const errors: string[] = []
   const original = console.error
@@ -121,7 +123,7 @@ test("OTEL-NEVER-FAILS-1: an export that throws or is refused never reaches the 
   try {
     await t.flush((async () => { throw new TypeError("network down") }) as unknown as typeof fetch)
     t.count("x_total", {})
-    t.lastLog = 0
+    clock += 61_000
     await t.flush((async () => new Response("no", { status: 401 })) as unknown as typeof fetch)
   } finally {
     console.error = original

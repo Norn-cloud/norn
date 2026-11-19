@@ -42,10 +42,13 @@ export function record(t: Telemetry, request: Request, status: number, startedMs
   if (route !== "static") t.span(`studio ${request.method} ${route}`, { "http.route": route, "http.request.method": request.method, "http.response.status_code": status, "norn.error.class": error ?? "" }, startedMs, endedMs, status >= 500)
 }
 
-type Fetch<E> = (request: Request, env: E, ctx?: ExecutionContext) => Promise<Response>
+/** A Worker handler; method syntax so a handler typed for Cloudflare's narrower Request fits. */
+interface Handler<E> {
+  fetch(request: Request, env: E, ctx?: ExecutionContext): Promise<Response>
+}
 
 /** The handler, timed per request when export is configured. */
-export function instrumented<E>(handler: { fetch: Fetch<E> }): { fetch: Fetch<E> } {
+export function instrumented<E>(handler: Handler<E>): Handler<E> {
   return {
     async fetch(request, env, ctx) {
       const t = telemetry(env, SERVICE)
