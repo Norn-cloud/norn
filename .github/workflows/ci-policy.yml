@@ -115,7 +115,8 @@ jobs:
           NORN_SCCACHE_ENDPOINT: ${{ secrets.NORN_SCCACHE_ENDPOINT }}
           NORN_SCCACHE_KEY_ID: ${{ secrets.NORN_SCCACHE_KEY_ID }}
           NORN_SCCACHE_SECRET: ${{ secrets.NORN_SCCACHE_SECRET }}
-        run: |
+        # Writes only constants this step computes (true/false, a path under RUNNER_TEMP).
+        run: | # zizmor: ignore[github-env]
           set -uo pipefail
           # Hosted runners share the GitHub Actions cache. A disposable Boat VM never uses it (its
           # egress limit is account-wide): it keeps a local cache bounded by SCCACHE_CACHE_SIZE and,
@@ -295,7 +296,8 @@ jobs:
           NORN_SCCACHE_ENDPOINT: ${{ secrets.NORN_SCCACHE_ENDPOINT }}
           NORN_SCCACHE_KEY_ID: ${{ secrets.NORN_SCCACHE_KEY_ID }}
           NORN_SCCACHE_SECRET: ${{ secrets.NORN_SCCACHE_SECRET }}
-        run: |
+        # Writes only constants this step computes (true/false, a path under RUNNER_TEMP).
+        run: | # zizmor: ignore[github-env]
           set -uo pipefail
           # Hosted runners share the GitHub Actions cache. A disposable Boat VM never uses it (its
           # egress limit is account-wide): it keeps a local cache bounded by SCCACHE_CACHE_SIZE and,

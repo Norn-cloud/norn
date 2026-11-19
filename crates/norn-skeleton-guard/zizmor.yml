@@ -1,0 +1,35 @@
+# zizmor baseline for .github/workflows (core.sh `cheap`, #1348 CI-R2). It lives in a gate
+# directory, so it changes only with `/approve-gates`. Entries may only be removed.
+#
+# Every other ignore is a `# zizmor: ignore[..]` comment on the workflow line itself. These are
+# lines where no comment can go, because a gate pins their text byte for byte.
+#
+# dangerous-triggers, ci-policy.yml `pull_request_target` and `issue_comment`: the `on:` block
+# is pinned by verification/coverage-v1/fixtures/pull-request-concurrency.json. The
+# trusted-policy job checks out the candidate only as data and runs base-owned code on it.
+#
+# template-injection: expressions inside actions/github-script `script:` bodies that
+# verification/coverage-v1/validate.py and negative_canaries.py pin. None expands
+# attacker-controlled text:
+# - steps.pr.outputs.number / head_sha: set by the job's first step from the pulls API
+#   (an integer and a 40-hex commit id);
+# - steps.group.outputs.base_sha: `git merge-base` output (a 40-hex commit id);
+# - github.event.workflow_run.head_sha: the commit id GitHub assigns;
+# - job.status: GitHub's success/failure/cancelled enum.
+# Moving a pinned line means moving its entry here in the same gated PR.
+rules:
+  dangerous-triggers:
+    ignore:
+      - ci-policy.yml:6
+      - ci-policy.yml:8
+  template-injection:
+    ignore:
+      - ci-policy.yml:479
+      - ci-policy.yml:515
+      - ci-policy.yml:524
+      - ci-policy.yml:541
+      - ci-policy.yml:547
+      - trusted-merge-group.yml:56
+      - trusted-merge-group.yml:57
+      - trusted-merge-group.yml:105
+      - trusted-merge-group.yml:106
