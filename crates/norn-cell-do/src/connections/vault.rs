@@ -356,8 +356,7 @@ impl LocalKeyring {
             current: current.clone(),
             keys: BTreeMap::new(),
         };
-        ring.keys
-            .insert(current.clone(), *decode_key(KEK_VAR, value)?);
+        ring.keys.insert(current, *decode_key(KEK_VAR, value)?);
         for entry in vars
             .get(KEKS_PREVIOUS_VAR)
             .map(String::as_str)

@@ -640,76 +640,95 @@ impl<E: SqlEngine> Routes<E> {
             }
             .and_then(|grant| connections.revoke(&actor, id, grant, now_ms))
             .map(|status| json!(status)),
-            (Route::Start(_), _) => serde_json::from_str::<StartBody>(request.body)
-                .map_err(|_parse| {
-                    ConnError::Invalid("the body is not {provider, scopes?, params?}".to_owned())
-                })
-                .and_then(|body| {
-                    connections.start(
-                        &actor,
-                        id,
-                        &body.provider,
-                        body.scopes,
-                        &body.params,
-                        now_ms,
-                    )
-                })
-                .and_then(|started| {
-                    let (Some(state), Some(key)) = (
-                        started.state.expose_str(),
-                        started.completion_key.expose_str(),
-                    ) else {
-                        return Err(ConnError::BadState);
-                    };
-                    let binding = Binding {
-                        actor: &actor,
-                        connection: id,
-                        key,
-                    };
-                    if !self
-                        .handoffs
-                        .reserve(state, &binding, started.expires_at_ms, now_ms)
-                    {
-                        return Err(ConnError::Unavailable(
-                            "too many authorizations are waiting; retry shortly".to_owned(),
-                        ));
-                    }
-                    Ok(json!({
-                        "authorizeUrl": started.authorize_url,
-                        "expiresAtMs": started.expires_at_ms,
-                        "completionKey": key,
-                    }))
-                }),
+            (Route::Start(_), _) => self.start(connections, &actor, id, request.body, now_ms),
             (Route::Complete(_) | Route::Callback, _) => {
-                let Ok(body) = serde_json::from_str::<CompleteBody>(request.body) else {
-                    return Some(refused(&ConnError::Invalid(
-                        "the body is not {state, completionKey}".to_owned(),
-                    )));
-                };
-                let binding = Binding {
-                    actor: &actor,
-                    connection: id,
-                    key: &body.completion_key,
-                };
-                match self.handoffs.claim(&body.state, &binding, now_ms) {
-                    Claim::Unknown => Err(ConnError::BadState),
-                    Claim::Waiting => {
-                        return Some(coded(
-                            409,
-                            "connection.oauth_pending",
-                            "the provider has not redirected back yet; retry",
-                        ));
-                    }
-                    Claim::Ready(code) => connections
-                        .complete(&actor, id, &body.state, &body.completion_key, &code, now_ms)
-                        .map(|status| json!(status)),
-                }
+                return Some(self.complete(connections, &actor, id, request.body, now_ms));
             }
         };
         Some(match result {
             Ok(body) => reply(200, &body),
             Err(error) => refused(&error),
         })
+    }
+
+    /// `oauth:start`, its state reserved for the caller (OAUTH-HANDOFF-1)
+    /// with the completion key it answers (OAUTH-SESSION-1).
+    fn start(
+        &self,
+        connections: &Connections<E>,
+        actor: &str,
+        id: &str,
+        body: &str,
+        now_ms: u64,
+    ) -> Result<serde_json::Value, ConnError> {
+        let body = serde_json::from_str::<StartBody>(body).map_err(|_parse| {
+            ConnError::Invalid("the body is not {provider, scopes?, params?}".to_owned())
+        })?;
+        let started =
+            connections.start(actor, id, &body.provider, body.scopes, &body.params, now_ms)?;
+        let (Some(state), Some(key)) = (
+            started.state.expose_str(),
+            started.completion_key.expose_str(),
+        ) else {
+            return Err(ConnError::BadState);
+        };
+        let binding = Binding {
+            actor,
+            connection: id,
+            key,
+        };
+        if !self
+            .handoffs
+            .reserve(state, &binding, started.expires_at_ms, now_ms)
+        {
+            return Err(ConnError::Unavailable(
+                "too many authorizations are waiting; retry shortly".to_owned(),
+            ));
+        }
+        Ok(json!({
+            "authorizeUrl": started.authorize_url,
+            "expiresAtMs": started.expires_at_ms,
+            "completionKey": key,
+        }))
+    }
+
+    /// `oauth:complete`: the binding is checked before the parked code is
+    /// taken (OAUTH-SESSION-1); pending until the provider redirected.
+    fn complete(
+        &self,
+        connections: &Connections<E>,
+        actor: &str,
+        id: &str,
+        body: &str,
+        now_ms: u64,
+    ) -> Response {
+        let Ok(body) = serde_json::from_str::<CompleteBody>(body) else {
+            return refused(&ConnError::Invalid(
+                "the body is not {state, completionKey}".to_owned(),
+            ));
+        };
+        let binding = Binding {
+            actor,
+            connection: id,
+            key: &body.completion_key,
+        };
+        let result = match self.handoffs.claim(&body.state, &binding, now_ms) {
+            Claim::Unknown => Err(ConnError::BadState),
+            Claim::Waiting => {
+                return coded(
+                    409,
+                    "connection.oauth_pending",
+                    "the provider has not redirected back yet; retry",
+                );
+            }
+            Claim::Ready(code) => {
+                connections.complete(actor, id, &body.state, &body.completion_key, &code, now_ms)
+            }
+        };
+        match result {
+            Ok(status) => reply(200, &json!(status)),
+            Err(error) => refused(&error),
+        }
     }
 
     /// OAUTH-HANDOFF-1: park the provider's code; no vault, no row.

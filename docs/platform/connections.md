@@ -75,7 +75,7 @@ client can't pin. The hosted wiring builds on the same types.
   `Retry-After` (at most 30 s). A POST is sent once. A name resolves within
   5 s, and a whole call, with every redirect, retry and wait, ends within 60 s.
   A lookup runs on its own thread so a hung resolver can't hold a call past
-  5 s; at most 16 lookups are outstanding per host, and one more is refused
+  5 s; at most 16 lookups are outstanding per egress client (one per cell), and one more is refused
   at once (`egress_failed`) rather than leaving another thread behind.
 
 ## Routes

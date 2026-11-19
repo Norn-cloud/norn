@@ -759,7 +759,7 @@ fn code(text: &str) -> Secret {
 }
 
 /// A start's URL, expiry and completion key.
-fn parts(started: Started) -> (String, u64, String) {
+fn parts(started: &Started) -> (String, u64, String) {
     (
         started.authorize_url.clone(),
         started.expires_at_ms,
@@ -779,7 +779,7 @@ fn oauth_state_is_single_use_bound_to_its_principal_and_expires() {
     let conns = connections(&path, server.port);
 
     let (url, expires, key) = parts(
-        conns
+        &conns
             .start("owner", "acme.main", "acme", None, &BTreeMap::new(), 1_000)
             .expect("start"),
     );
@@ -818,7 +818,7 @@ fn oauth_state_is_single_use_bound_to_its_principal_and_expires() {
 
     // Expired after ten minutes.
     let (url, _, key) = parts(
-        conns
+        &conns
             .start("owner", "acme.main", "acme", None, &BTreeMap::new(), 1_000)
             .expect("start"),
     );
@@ -839,7 +839,7 @@ fn oauth_state_is_single_use_bound_to_its_principal_and_expires() {
 
     // The right principal in time: exchanged once with the matching verifier.
     let (url, _, key) = parts(
-        conns
+        &conns
             .start(
                 "owner",
                 "acme.main",
@@ -863,8 +863,7 @@ fn oauth_state_is_single_use_bound_to_its_principal_and_expires() {
     let exchange = server
         .seen()
         .into_iter()
-        .filter(|s| s.line.starts_with("POST /token"))
-        .last()
+        .rfind(|s| s.line.starts_with("POST /token"))
         .expect("exchange");
     let verifier = exchange
         .body
@@ -1199,7 +1198,7 @@ fn oauth_calls_follow_no_redirect() {
     let conns = connections(&path, server.port);
     // Exchange.
     let (url, _, key) = parts(
-        conns
+        &conns
             .start("owner", "acme.main", "acme", None, &BTreeMap::new(), 1_000)
             .expect("start"),
     );
@@ -1371,7 +1370,7 @@ fn provider_text_never_reaches_answers_status_or_audit() {
     let status = conns.status("acme.main").expect("status");
     assert_eq!(status.last_error.as_deref(), Some("provider_error"));
     let (url, _, key) = parts(
-        conns
+        &conns
             .start("owner", "acme.main", "acme", None, &BTreeMap::new(), 20_000)
             .expect("start"),
     );
@@ -1448,7 +1447,7 @@ fn a_disconnect_or_replacement_spends_pending_authorizations() {
     let conns = connections(&path, server.port);
     let start = |at: u64| {
         let (url, _, key) = parts(
-            conns
+            &conns
                 .start("owner", "acme.main", "acme", None, &BTreeMap::new(), at)
                 .expect("start"),
         );
@@ -1712,8 +1711,16 @@ impl Driver {
         assert_eq!(started.status, 200, "{}", started.body);
         let body = json_of(&started);
         (
-            query_param(body["authorizeUrl"].as_str().expect("url"), "state"),
-            body["completionKey"].as_str().expect("key").to_owned(),
+            query_param(
+                body.get("authorizeUrl")
+                    .and_then(serde_json::Value::as_str)
+                    .expect("url"),
+                "state",
+            ),
+            body.get("completionKey")
+                .and_then(serde_json::Value::as_str)
+                .expect("key")
+                .to_owned(),
         )
     }
 
@@ -1907,7 +1914,7 @@ fn oauth_calls_go_only_to_https_even_to_a_listed_host() {
     let conns = connections_with(&path, egress, provider);
     // ... but no OAuth call goes there.
     let (url, _, key) = parts(
-        conns
+        &conns
             .start("owner", "acme.main", "acme", None, &BTreeMap::new(), 1_000)
             .expect("start"),
     );
