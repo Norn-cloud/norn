@@ -949,8 +949,8 @@ mod tests {
         #[test]
         fn asof_millisecond_coordinates_are_exact(offset in 0u32..86_400_000) {
             let millis=1_792_972_800_000u64.checked_add(u64::from(offset)).expect("bounded timestamp");
-            let at=chrono::DateTime::from_timestamp_millis(i64::try_from(millis).expect("bounded")).expect("valid timestamp");
-            let expected=(at.timestamp(),at.timestamp_subsec_nanos());
+            let at=jiff::Timestamp::from_millisecond(i64::try_from(millis).expect("bounded")).expect("valid timestamp");
+            let expected=(at.as_second(),u32::try_from(at.subsec_nanosecond()).expect("post-epoch"));
             proptest::prop_assert_eq!(millis_coordinates(millis),Some(expected));
             proptest::prop_assert_ne!(millis_coordinates(millis.checked_add(1).expect("bounded successor")),Some(expected));
         }

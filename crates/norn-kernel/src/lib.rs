@@ -106,6 +106,7 @@ pub use action_commit::{
     commit_action_with_preparation, owned_rows_manifest_key, prepare_action_input,
     prepare_action_input_for_call,
 };
+pub use cell_host::{Authorized, Checked, Committed, Proposed};
 pub use cell_host::{
     BoundedFact, CellCommit, CellHost, CommitError, CommitModel, CommitReceipt, CommitVersions,
     CommitView, Consumed, DueTimer, FactExpectation, FactKey, FactMutation, FactState, FactVersion,

@@ -623,21 +623,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1aa79e62e7697b8e29b513a68abacf485adcd1fe8284a4316c5ae868e6633327"
 dependencies = [
  "iana-time-zone",
- "js-sys",
  "num-traits",
  "serde",
- "wasm-bindgen",
  "windows-link",
-]
-
-[[package]]
-name = "chrono-tz"
-version = "0.10.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6139a8597ed92cf816dfb33f5dd6cf0bb93a6adc938f11039f371bc5bcd26c3"
-dependencies = [
- "chrono",
- "phf",
 ]
 
 [[package]]
@@ -1714,9 +1702,9 @@ dependencies = [
 
 [[package]]
 name = "jiff-tzdb"
-version = "0.1.8"
+version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "142bd39932ad231f10513df9ab62661fead8719872150b7ad02a2df79f4e141e"
+checksum = "c1283705eb0a21404d2bfd6eef2a7593d240bc42a0bdb39db0ad6fa2ec026524"
 
 [[package]]
 name = "jiff-tzdb-platform"
@@ -2123,9 +2111,9 @@ name = "norn-api"
 version = "0.1.0"
 dependencies = [
  "base64",
- "chrono",
  "ed25519-dalek",
  "http",
+ "jiff",
  "jsonschema",
  "norn-cell",
  "norn-checker",
@@ -2177,9 +2165,9 @@ name = "norn-cell"
 version = "0.1.0"
 dependencies = [
  "base64",
- "chrono",
  "ct-merkle",
  "duckdb",
+ "jiff",
  "js-sys",
  "norn-builtins",
  "norn-cell",
@@ -2318,8 +2306,8 @@ dependencies = [
 name = "norn-expr"
 version = "0.1.0"
 dependencies = [
- "chrono",
- "chrono-tz",
+ "jiff",
+ "jiff-tzdb",
  "norn-ir",
  "proptest",
  "serde",
@@ -2669,28 +2657,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "phf"
-version = "0.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "913273894cec178f401a31ec4b656318d95473527be05c0752cc41cdc32be8b7"
-dependencies = [
- "phf_shared 0.12.1",
-]
-
-[[package]]
 name = "phf_shared"
 version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67eabc2ef2a60eb7faa00097bd1ffdb5bd28e62bf39990626a582201b7a754e5"
-dependencies = [
- "siphasher",
-]
-
-[[package]]
-name = "phf_shared"
-version = "0.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "06005508882fb681fd97892ecff4b7fd0fee13ef1aa569f8695dae7ab9099981"
 dependencies = [
  "siphasher",
 ]
@@ -3539,7 +3509,7 @@ checksum = "bf776ba3fa74f83bf4b63c3dcbbf82173db2632ed8452cb2d891d33f459de70f"
 dependencies = [
  "new_debug_unreachable",
  "parking_lot",
- "phf_shared 0.11.3",
+ "phf_shared",
  "precomputed-hash",
 ]
 
@@ -4514,12 +4484,9 @@ dependencies = [
  "ahash",
  "anyhow",
  "bumpalo",
- "chrono",
- "chrono-tz",
  "csv",
  "fastrand",
- "humantime",
- "iana-time-zone",
+ "jiff",
  "nohash-hasher",
  "once_cell",
  "recursive",

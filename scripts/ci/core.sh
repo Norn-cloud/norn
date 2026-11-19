@@ -173,6 +173,38 @@ use_jsonschema() {
   export PATH="$upstream/venv/bin:$PATH"
   python3 -m pip install --disable-pip-version-check --no-input jsonschema==4.25.1 PyYAML==6.0.3
 }
+# Workflow lint (#1348 CI-R2): pinned actionlint and zizmor release binaries, checked against
+# their sha256 (a matching binary already on PATH is used as is). Their configs live in the gated
+# guard directory and are passed explicitly, so no config elsewhere in the tree can loosen them.
+# actionlint's shellcheck/pyflakes hooks are off: they would depend on whatever the runner has.
+lint_workflows() {
+  local dir="$upstream/workflow-lint" actionlint=actionlint zizmor=zizmor
+  mkdir -p "$dir"
+  fetch() {
+    [[ $(uname -sm) == 'Linux x86_64' ]] || { printf 'workflow lint: no pinned %s for %s\n' "$1" "$(uname -sm)" >&2; exit 1; }
+    curl -fsSL --retry 3 -o "$dir/$1.tar.gz" "$2"
+    printf '%s  %s\n' "$3" "$dir/$1.tar.gz" | sha256sum -c --quiet -
+    tar -xzf "$dir/$1.tar.gz" -C "$dir" "$1"
+  }
+  [[ $(actionlint -version 2> /dev/null | head -n 1) == 1.7.12 ]] || {
+    fetch actionlint https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+      8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+    actionlint="$dir/actionlint"
+  }
+  [[ $(zizmor --version 2> /dev/null) == 'zizmor 1.32.0' ]] || {
+    fetch zizmor https://github.com/zizmorcore/zizmor/releases/download/v1.32.0/zizmor-x86_64-unknown-linux-gnu.tar.gz \
+      bb110cc765eca9cd7efb2e284a956be5974c60027b0970f16397d86208a9957b
+    zizmor="$dir/zizmor"
+  }
+  "$actionlint" -config-file crates/norn-skeleton-guard/actionlint.yaml -no-color -shellcheck= -pyflakes= .github/workflows/*.yml
+  "$zizmor" --quiet --quiet --offline --config crates/norn-skeleton-guard/zizmor.yml --no-progress --format plain .github/workflows
+  # The baseline only shrinks: every ignore must still cover a finding of the unfiltered report.
+  # zizmor exits 10 or more when it reports findings, and below 10 only on its own errors.
+  local status=0
+  "$zizmor" --quiet --quiet --offline --no-config --no-ignores --format json .github/workflows > "$dir/findings.json" || status=$?
+  ((status == 0 || status >= 10)) || { printf 'workflow lint: zizmor failed (%s)\n' "$status" >&2; exit 1; }
+  cargo xtask ci workflow-lint --findings "$dir/findings.json"
+}
 run_phase() {
   if [[ $1 != cheap && $1 != test-shards && $1 != browser && $1 != duckdb && " ${phases[*]} " == *" $1 "* ]]; then prepare_inputs; fi
   case "$1" in
@@ -200,6 +232,7 @@ run_phase() {
       python3 scripts/standards_atlas.py --check
       python3 scripts/test_standards_atlas.py
       python3 scripts/metrics/test_metrics.py
+      lint_workflows
       cargo xtask ci policy
       cargo xtask ci provenance
       # The Rust half of the concurrency parity check runs on every plan, whatever packages the
@@ -302,7 +335,7 @@ PY
       crates/norn-skeleton-guard/scripts/baseline-shrink-only.sh "${NORN_CI_BASE:-HEAD}"
       crates/norn-checker/scripts/non-code-literals-shrink-only.sh "${NORN_CI_BASE:-HEAD}"
       rustup toolchain install nightly-2026-08-18 --profile minimal --no-self-update
-      CARGO_TARGET_DIR="$upstream/cargo-install" cargo install --locked cargo-public-api --version 0.52.0
+      ensure_tool cargo-public-api 0.52.0 cargo-public-api
       crates/norn-skeleton-guard/scripts/public-api-boundary.sh nightly-2026-08-18
       # Proof enrollment and its tests run in `cheap`, which every CI run and `all` include.
       ensure_nextest
@@ -444,20 +477,23 @@ plan = json.loads(raw)
 known = {"test/" + shard for shard in shards.split()} | {
     "phase/" + phase for phase in phases.split() + ["test-shards"]
     if phase not in {"cheap", "test", "formal"}}
-# Task seconds: p50 of green hosted tasks over 78 recorded runs, 2026-11-11..13 (#1348;
-# refit with the recorded task spans). They include each task's compile through the shared
-# sccache, so a bundle's first test task is charged only the residual cold compile below.
+# Task seconds on Boat, where merge groups and allowlisted pull requests run (#1348): p50 of
+# green tasks over 24 recorded runs with all 20 tasks, 2026-11-14..18, net of the test build.
+# Each Boat VM starts with an empty compiler cache, so a test task that builds alone carries
+# that build: heavy-1 p50 230 s on its own build, 31 s on a build an earlier task made (n=4).
+# The hosted p50s these replace (warm shared cache) packed 2071 s of tasks into one bundle.
 weights = {
-    "test/heavy-1": 90, "test/heavy-2": 653, "test/heavy-3": 158,
-    "test/heavy-4": 99, "test/heavy-5": 66, "test/heavy-6": 85,
-    "test/rest-1": 1158, "test/rest-2": 513, "test/rest-3": 319,
-    "phase/doctest": 31, "phase/features": 788, "phase/duckdb": 565, "phase/wasm": 137,
-    "phase/clippy": 94, "phase/doc": 44, "phase/guards": 735,
-    "phase/integration": 924, "phase/provenance": 12, "phase/test-shards": 13,
-    "phase/browser": 403,
+    "test/heavy-1": 31, "test/heavy-2": 293, "test/heavy-3": 203,
+    "test/heavy-4": 142, "test/heavy-5": 32, "test/heavy-6": 47,
+    "test/rest-1": 656, "test/rest-2": 315, "test/rest-3": 165,
+    "phase/doctest": 26, "phase/features": 618, "phase/duckdb": 363, "phase/wasm": 139,
+    "phase/clippy": 81, "phase/doc": 56, "phase/guards": 434,
+    "phase/integration": 920, "phase/provenance": 10, "phase/test-shards": 10,
+    "phase/browser": 304,
 }
-# A bundle's first test task observed at 66 s (heavy-5, n=47): the residual cold compile.
-compile_seconds = 60
+# A bundle's test build on a cold Boat VM: p50 of a test task on its own build minus the
+# same task on a shared one (heavy-1 199 s, heavy-5 190 s, heavy-6 167 s, test-shards 184 s).
+compile_seconds = 190
 def compiles_tests(task):
     return task.startswith("test/") or task == "phase/test-shards"
 def cold_cost(task):
@@ -621,16 +657,23 @@ PY
     [[ $# -eq 3 ]] || run_phase usage
     task_lines=$(bundle_plan tasks "$2" "$3")
     [[ $task_lines == phase/test-shards ]] || prepare_inputs
-    pruned=''
+    # One test build per bundle (#1348 CI2): every test shard of a plan builds the same test
+    # binaries (same packages, same features), and so does `test-shards` in a plan that
+    # names no packages. Those tasks run first and back to back, and no prune separates
+    # them, so the first builds and the rest reuse it. Same tasks, only their order changes.
+    shares_build() { [[ $1 == test/* || ( $1 == phase/test-shards && -z ${NORN_CI_PACKAGES:-} ) ]]; }
+    task_lines=$(while read -r task; do if shares_build "$task"; then echo "$task"; fi; done <<<"$task_lines"
+                 while read -r task; do if ! shares_build "$task"; then echo "$task"; fi; done <<<"$task_lines")
+    pruned='' previous=''
     while IFS=/ read -r kind item; do
       task="$kind/$item"
-      # Bundle tasks never share build outputs (the planner packs them freely), so
-      # a task may drop the previous task's target dir when disk runs low (#1059).
-      if [[ -n $pruned ]] && (( $(df -Pk / | awk 'NR == 2 {print $4}') < 40 * 1024 * 1024 )); then
+      # Other bundle tasks never share build outputs (the planner packs them freely), so a
+      # task may drop the previous task's target dir when disk runs low (#1059).
+      if [[ -n $pruned ]] && ! { shares_build "$previous" && shares_build "$task"; } && (( $(df -Pk / | awk 'NR == 2 {print $4}') < 40 * 1024 * 1024 )); then
         prune_target
         printf '::notice::pruned target before %s; %s KiB free\n' "$task" "$(df -Pk / | awk 'NR == 2 {print $4}')"
       fi
-      pruned=1
+      pruned=1 previous=$task
       printf '::group::%s\n' "$task"
       (
         task_start=$SECONDS

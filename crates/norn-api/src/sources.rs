@@ -835,10 +835,10 @@ fn watermark_text(watermarks: &BTreeMap<String, Watermark>) -> String {
 pub fn rfc3339(ms: u64) -> String {
     i64::try_from(ms)
         .ok()
-        .and_then(chrono::DateTime::from_timestamp_millis)
+        .and_then(|ms| jiff::Timestamp::from_millisecond(ms).ok())
         .map_or_else(
             || "1970-01-01T00:00:00.000Z".to_owned(),
-            |t| t.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            |t| t.strftime("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
         )
 }
 
@@ -1218,6 +1218,14 @@ pub fn kept_upload<E: SqlEngine>(
 #[allow(clippy::expect_used, reason = "token request scenarios")]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rfc3339_is_utc_with_milliseconds_and_out_of_range_reads_as_the_epoch() {
+        assert_eq!(rfc3339(0), "1970-01-01T00:00:00.000Z");
+        assert_eq!(rfc3339(1_700_000_000_123), "2023-11-14T22:13:20.123Z");
+        assert_eq!(rfc3339(1_700_000_000_000), "2023-11-14T22:13:20.000Z");
+        assert_eq!(rfc3339(u64::MAX), "1970-01-01T00:00:00.000Z");
+    }
 
     fn config() -> ConnectionConfig {
         serde_json::from_value(serde_json::json!({

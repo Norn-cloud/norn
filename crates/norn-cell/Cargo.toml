@@ -38,6 +38,8 @@ duckdb = ["dep:duckdb"]
 # Test-only: `engine::FaultEngine` for deterministic fault injection. Enabled
 # only through dev-dependencies, never by a production build.
 fault-injection = []
+# Deterministic commit-path work counters (#1421): harnesses only.
+counters = ["norn-ir/counters"]
 
 [dependencies]
 ct-merkle = "=0.3.0"
@@ -72,11 +74,11 @@ crate-type = ["cdylib"]
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 proptest = "1.11.0"
 sha2 = "0.10.9"
-chrono = { version = "0.4.45", default-features = false, features = ["std"] }
+jiff = { version = "0.2.37", default-features = false, features = ["std"] }
 # Test support only (T6-PSM-1 / T4-CELL-1): the host-agnostic CellHost laws.
 norn-testkit = { path = "../norn-testkit" }
 # This crate's own tests use the fault-injecting engine.
-norn-cell = { path = ".", features = ["fault-injection"] }
+norn-cell = { path = ".", features = ["fault-injection", "counters"] }
 tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread"] }
 
 [lints]

@@ -15,7 +15,14 @@ targets = [
 [advisories]
 version = 2
 yanked = "deny"
-# RustSec vulnerabilities and unsound advisories are errors by default in v2.
+# RustSec vulnerabilities and unsound advisories are errors by default in v2,
+# for every crate in the graph.
+# Unmaintained advisories fail only for crates a workspace member depends on
+# directly: those are ours to replace (#1436 moved norn-expr, norn-cell and the
+# vendored zen crate off chrono, chrono-tz and humantime). The same advisory
+# reached only through a dependency (arrow via duckdb, cedar-policy-core,
+# object_store, serde_with) is upstream's to fix and is not reported.
+unmaintained = "workspace"
 
 [licenses]
 version = 2

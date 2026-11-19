@@ -1,5 +1,5 @@
 {
-  "sha256": "50407150d7927c0938a466047e1757add09e19957611e92e9bd76a2ba245e426",
+  "sha256": "21860f01dff3e22463986d6d654d4ea678c8ce583b1953f361625c5f1b52f4ae",
   "origin": "derived",
   "category": "generated",
   "license": "Apache-2.0",
@@ -28,8 +28,7 @@
     "vendor/zen/core/expression/Cargo.toml",
     "vendor/zen/core/macros/Cargo.toml",
     "vendor/zen/core/template/Cargo.toml",
-    "vendor/zen/core/types/Cargo.toml",
-    "crates/norn-skeleton-guard/Cargo.toml"
+    "vendor/zen/core/types/Cargo.toml"
   ],
   "rights_evidence": [
     {

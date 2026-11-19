@@ -188,9 +188,9 @@ struct Presign<'a> {
 
 /// The signed query string (`SigV4`, `UNSIGNED-PAYLOAD`, only `host` signed).
 fn presign(p: &Presign<'_>) -> Option<String> {
-    let at = chrono::DateTime::from_timestamp_millis(i64::try_from(p.now_ms).ok()?)?;
-    let stamp = at.format("%Y%m%dT%H%M%SZ").to_string();
-    let date = at.format("%Y%m%d").to_string();
+    let at = jiff::Timestamp::from_millisecond(i64::try_from(p.now_ms).ok()?).ok()?;
+    let stamp = at.strftime("%Y%m%dT%H%M%SZ").to_string();
+    let date = at.strftime("%Y%m%d").to_string();
     let scope = format!("{date}/{}/s3/aws4_request", p.region);
     let mut query = BTreeMap::from([
         ("X-Amz-Algorithm".to_owned(), "AWS4-HMAC-SHA256".to_owned()),
@@ -501,7 +501,7 @@ fn classify(value: &str) -> ColumnKind {
         }
     } else if value.eq_ignore_ascii_case("true") || value.eq_ignore_ascii_case("false") {
         ColumnKind::Boolean
-    } else if chrono::DateTime::parse_from_rfc3339(value).is_ok() {
+    } else if value.parse::<jiff::Timestamp>().is_ok() {
         ColumnKind::Datetime
     } else {
         ColumnKind::Text

@@ -4,8 +4,8 @@
 //! [`SqliteCell`] implements the kernel's four-verb trait over one
 //! [`CellStore`]:
 //!
-//! - **commit** runs the kernel's own admission check
-//!   ([`check_commit`]) *inside* the store's commit transaction
+//! - **commit** runs the kernel's own admission check ([`Proposed`] →
+//!   [`Checked`], [`norn_kernel::check_commit`]) *inside* the store's commit transaction
 //!   ([`CellStore::commit_guarded`]), then writes the consumed delivery, the
 //!   whole-object writes, the ledger events, and the command/timer enqueues
 //!   in that one SQLite transaction: commit and enqueue are atomic, and a
@@ -31,13 +31,12 @@ use std::path::Path;
 use norn_ir::RuntimeValue as Value;
 use norn_kernel::cell_host::{JsonObject, ObjectTypeName};
 use norn_kernel::{
-    BoundedFact, CellCommit, CellHost, Command, CommandId, CommitError, CommitModel, CommitReceipt,
-    CommitVersions, CommitView, Consumed, DueTimer, Effect, FactKey, FactMutation, FactState,
-    FactVersion, Generation, LedgerSeq, LinkKey, LinkMutation, LinkReadTarget, LinkState,
-    LogicalTime, ObservationAuthorization, ObservationEvent, ObservationId, Observed,
-    OwnedRowsCommitProof, Performed, PredicateObject, PredicateQuery, PredicateReadMember, TimerId,
-    TypeCatalog, WrittenLinkVersion, WrittenVersion, check_commit, check_commit_identifiers,
-    check_commit_observed, check_commit_owned_rows,
+    BoundedFact, CellCommit, CellHost, Checked, Command, CommandId, CommitError, CommitModel,
+    CommitReceipt, CommitVersions, CommitView, Consumed, DueTimer, Effect, FactKey, FactMutation,
+    FactState, FactVersion, Generation, LedgerSeq, LinkKey, LinkMutation, LinkReadTarget,
+    LinkState, LogicalTime, ObservationAuthorization, ObservationEvent, ObservationId, Observed,
+    OwnedRowsCommitProof, Performed, PredicateObject, PredicateQuery, PredicateReadMember,
+    Proposed, TimerId, TypeCatalog, WrittenLinkVersion, WrittenVersion, check_commit_identifiers,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -1896,16 +1895,10 @@ where
                 .with_governing_laws(model.law_artifacts())
                 .with_property_types(model.property_types());
             let model = CommitModel::new(&catalog);
-            match (authorization, owned_rows) {
-                (Some(authorization), None) => {
-                    check_commit_observed(&commit, &model, &GuardView(reader), authorization)
-                }
-                (None, Some(proof)) => {
-                    check_commit_owned_rows(&commit, &model, &GuardView(reader), proof)
-                }
-                (None, None) => check_commit(&commit, &model, &GuardView(reader)),
-                (Some(_), Some(_)) => Err(CommitError::ObservationAuthorization),
-            }
+            Proposed::new(&commit)
+                .authorize(authorization, owned_rows)?
+                .check(&model, &GuardView(reader))
+                .map(Checked::into_versions)
         };
         match self.store.commit_guarded_submitted(
             &batch,

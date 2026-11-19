@@ -18,6 +18,10 @@ serde = { version = "1.0.228", features = ["derive"] }
 rust_decimal = { version = "1.43.0", default-features = false }
 serde_json = { version = "1.0.150", features = ["raw_value"] }
 
+[features]
+# Turns on the re-exported `counters` (#1421); harnesses only.
+counters = ["norn-canonical/counters"]
+
 [lints]
 workspace = true
 

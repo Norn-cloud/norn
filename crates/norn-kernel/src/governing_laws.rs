@@ -1,7 +1,7 @@
 //! Governing-law resolution and evaluation on the shared metered expression engine.
 use crate::decision_commit::DataQualityRuleClassification;
 use crate::{FactKey, TypeCatalog, cell_host::JsonObject};
-use norn_expr::{EvaluationBudget, Expression, Value};
+use norn_expr::{EvaluationBudget, Value};
 use norn_ir::{
     ArtifactEnvelope, DataQualityOutcome, DataQualityRuleRef, DataQualitySeverity, LawIR,
     LawModality, LawResponse, LawRoot, LawSeverity, ObjectTypeName,
@@ -309,7 +309,7 @@ pub fn reads_links(
     object_type: &ObjectTypeName,
 ) -> Result<bool, LawEvaluationError> {
     for artifact in catalog.governing_laws(object_type)? {
-        if !law_link_reads(catalog, object_type, &decode(artifact)?)?.is_empty() {
+        if !law_link_reads(catalog, object_type, decode(catalog, artifact)?)?.is_empty() {
             return Ok(true);
         }
     }
@@ -349,8 +349,8 @@ pub fn link_law_index(catalog: &TypeCatalog<'_>) -> Result<LinkLawIndex, LawEval
     }
     for subject in &catalog.object_type_names() {
         for artifact in catalog.governing_laws(subject)? {
-            let law = decode(artifact)?;
-            for read in law_link_reads(catalog, subject, &law)? {
+            let law = decode(catalog, artifact)?;
+            for read in law_link_reads(catalog, subject, law)? {
                 match read {
                     LinkRead::Forward(link) => {
                         let declared =
@@ -486,10 +486,30 @@ pub struct BoundInvariantFailure {
     /// Canonical version of the declaration that owns the invariant.
     pub version: String,
 }
-fn decode(artifact: &ArtifactEnvelope) -> Result<LawIR, LawEvaluationError> {
+/// Decode one retained law artifact. Callers on the commit path go through
+/// [`decode`], which reuses the catalog's decoded laws.
+pub(crate) fn decode_law(artifact: &ArtifactEnvelope) -> Result<LawIR, LawEvaluationError> {
+    norn_ir::counters::bump(norn_ir::counters::Counter::LawDecodes);
     let decoded: Result<LawIR, serde::de::value::Error> =
         LawIR::deserialize(artifact.payload.to_json_value().into_deserializer());
     decoded.map_err(|error| LawEvaluationError::Invalid(error.to_string()))
+}
+/// The catalog's decoded declaration of one of its own law artifacts.
+fn decode<'c>(
+    catalog: &'c TypeCatalog<'_>,
+    artifact: &ArtifactEnvelope,
+) -> Result<&'c LawIR, LawEvaluationError> {
+    match catalog
+        .decoded_laws()
+        .get(&std::ptr::from_ref(artifact).addr())
+    {
+        Some(Ok(law)) => Ok(law),
+        Some(Err(error)) => Err(error.clone()),
+        None => Err(LawEvaluationError::Invalid(format!(
+            "{} is not a retained law of this definition snapshot",
+            artifact.artifact_id.as_str()
+        ))),
+    }
 }
 impl TypeCatalog<'_> {
     /// LAW-COMPLETE-1: never silently omit an applicable inherited/effective law.
@@ -530,7 +550,7 @@ impl TypeCatalog<'_> {
         };
         let mut laws = Vec::new();
         for artifact in &self.law_artifacts {
-            let law = decode(artifact)?;
+            let law = decode(self, artifact)?;
             if !is_a(&law.subject) && !law.scope.object_types.iter().any(|ty| is_a(ty)) {
                 continue;
             }
@@ -538,7 +558,7 @@ impl TypeCatalog<'_> {
                 || !matches!(&law.scope.root, LawRoot::Entity(name) if *name == law.subject)
                 || law.scope.object_types != [law.subject.as_str()]
             {
-                return Err(LawEvaluationError::UnsupportedUntilB2(law.id));
+                return Err(LawEvaluationError::UnsupportedUntilB2(law.id.clone()));
             }
             laws.push(*artifact);
         }
@@ -646,20 +666,20 @@ pub(crate) fn invariant_failure(
         return Ok(None);
     }
     for artifact in catalog.governing_laws(subject)? {
-        let law = decode(artifact)?;
+        let law = decode(catalog, artifact)?;
         if !matches!(&law.response, LawResponse::Invariant { invariant_id, .. }
             if invariant_id == failure.id.as_str())
             || law.severity != LawSeverity::Error
         {
             continue;
         }
-        if !supported(&law) {
-            return Err(LawEvaluationError::Unsupported(law.id));
+        if !supported(law) {
+            return Err(LawEvaluationError::Unsupported(law.id.clone()));
         }
-        invariant_binding(catalog, subject, &law)?;
+        invariant_binding(catalog, subject, law)?;
         return law_failure(
             artifact,
-            &law,
+            law,
             failure.outcome.clone(),
             Some(bind_invariant_failure(catalog, failure.clone())?),
         )
@@ -674,17 +694,17 @@ pub(crate) fn classify(
     rule_ref: &DataQualityRuleRef,
 ) -> DataQualityRuleClassification {
     for artifact in &catalog.law_artifacts {
-        let Ok(law) = decode(artifact) else {
+        let Ok(law) = decode(catalog, artifact) else {
             continue;
         };
-        if !supported(&law) || pin(artifact, &law).as_ref() != Ok(rule_ref) {
+        if !supported(law) || pin(artifact, law).as_ref() != Ok(rule_ref) {
             continue;
         }
         let governs = |subject: &ObjectTypeName| {
             catalog.governing_laws(subject).is_ok_and(|laws| {
                 laws.iter()
                     .any(|retained| std::ptr::eq(*retained, *artifact))
-            }) && invariant_binding(catalog, subject, &law).is_ok()
+            }) && invariant_binding(catalog, subject, law).is_ok()
         };
         if catalog.object_type_names().iter().any(governs) {
             return DataQualityRuleClassification::Integrity;
@@ -802,21 +822,21 @@ pub fn evaluate_linked(
     };
     let mut failures = Vec::new();
     for artifact in artifacts {
-        let law = decode(artifact)?;
-        if !supported(&law) {
-            return Err(LawEvaluationError::Unsupported(law.id));
+        let law = decode(catalog, artifact)?;
+        if !supported(law) {
+            return Err(LawEvaluationError::Unsupported(law.id.clone()));
         }
-        let reads = law_link_reads(catalog, &key.object_type, &law)?;
+        let reads = law_link_reads(catalog, &key.object_type, law)?;
         if !reads.is_empty() && links.defers() {
             continue;
         }
         let mut object = subject.clone();
         let bound = bind_links(key, reads, links, &mut object)?;
         let context = Value::object([("self", Value::Object(object))]);
-        let invariant_id = invariant_binding(catalog, &key.object_type, &law)?;
+        let invariant_id = invariant_binding(catalog, &key.object_type, law)?;
         let mut invariant_failure = None;
         let activation = match &law.condition {
-            Some(expr) => boolean(expr.as_str(), &context, remaining)?,
+            Some(expr) => boolean(catalog, expr.as_str(), &context, remaining)?,
             None => Ok(true),
         };
         let result = match activation {
@@ -824,7 +844,7 @@ pub fn evaluate_linked(
             Err(outcome) => Err(outcome),
             Ok(true) => match &law.response {
                 LawResponse::Predicate { expression } => {
-                    boolean(expression.as_str(), &context, remaining)?.and_then(|value| {
+                    boolean(catalog, expression.as_str(), &context, remaining)?.and_then(|value| {
                         if value == matches!(law.modality, LawModality::Always {}) {
                             Ok(())
                         } else {
@@ -856,13 +876,13 @@ pub fn evaluate_linked(
                 LawResponse::Action { .. }
                 | LawResponse::Transition { .. }
                 | LawResponse::TranslationPreserves { .. } => {
-                    return Err(LawEvaluationError::Unsupported(law.id));
+                    return Err(LawEvaluationError::Unsupported(law.id.clone()));
                 }
             },
         };
         if let Err(outcome) = result {
-            let mut failure = law_failure(artifact, &law, outcome, invariant_failure)?;
-            failure.values = law_operands(&law, values, &bound.targets, &bound.sources);
+            let mut failure = law_failure(artifact, law, outcome, invariant_failure)?;
+            failure.values = law_operands(law, values, &bound.targets, &bound.sources);
             failure.links = bound.pinned;
             failures.push(failure);
         }
@@ -870,6 +890,7 @@ pub fn evaluate_linked(
     Ok(failures)
 }
 fn boolean(
+    catalog: &TypeCatalog<'_>,
     text: &str,
     context: &Value,
     remaining: &mut u64,
@@ -878,12 +899,10 @@ fn boolean(
         return Err(LawEvaluationError::BudgetExceeded);
     }
     *remaining = remaining.saturating_sub(1);
-    let expression = match Expression::compile(text) {
+    let expression = match catalog.compiled_expression(text) {
         Ok(expr) => expr,
-        Err(e) => {
-            return Ok(Err(DataQualityOutcome::EvaluationFailed {
-                reason: e.to_string(),
-            }));
+        Err(reason) => {
+            return Ok(Err(DataQualityOutcome::EvaluationFailed { reason }));
         }
     };
     let attempt = expression.evaluate_metered(context, EvaluationBudget::new(*remaining));

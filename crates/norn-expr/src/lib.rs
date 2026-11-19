@@ -90,7 +90,8 @@ pub use env::{
 };
 pub use error::ExprError;
 pub use expression::{
-    Evaluation, EvaluationAttempt, EvaluationBudget, Expression, UnaryTest, check_unary_syntax,
+    Evaluation, EvaluationAttempt, EvaluationBudget, Expression, PreparedAdmission, UnaryTest,
+    check_unary_syntax,
 };
 pub use literals::{FieldValue, ObjectLiteral, command_records, object_literals};
 pub use reads::{
