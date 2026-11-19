@@ -1833,6 +1833,22 @@
       "no_fix": null
     },
     {
+      "code": "law.conservation.alias_bound",
+      "tier": "T3",
+      "severity": "error",
+      "message": "conservation writer has more key-aliasing cases than the checker enumerates: {detail}",
+      "fix": "Split the writer so each keyed family touches at most 6 keys, or declare guards that keep its keys distinct, then check it again.",
+      "no_fix": null
+    },
+    {
+      "code": "law.conservation.key_alias",
+      "tier": "T3",
+      "severity": "error",
+      "message": "conservation writer does not balance when its keys name one cell: {detail}",
+      "fix": "Guard the writer so the reported keys are distinct (for example from != to) and declare that guard, or make the aliased case balance on its own.",
+      "no_fix": null
+    },
+    {
       "code": "law.example.mismatch",
       "tier": "T2",
       "severity": "error",

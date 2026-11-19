@@ -916,6 +916,14 @@
     "fix": "Add a label for the locale the description or review state names, or remove that locale."
   },
   {
+    "code": "law.conservation.alias_bound",
+    "fix": "Split the writer so each keyed family touches at most 6 keys, or declare guards that keep its keys distinct, then check it again."
+  },
+  {
+    "code": "law.conservation.key_alias",
+    "fix": "Guard the writer so the reported keys are distinct (for example from != to) and declare that guard, or make the aliased case balance on its own."
+  },
+  {
     "code": "law.example.mismatch",
     "fix": "Fix the law, its exceptions or the example's expectation so they agree."
   },

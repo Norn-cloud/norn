@@ -164,6 +164,13 @@ scope and unit. Altered weights, malformed matrices and duplicate coordinates or
 writers refuse. Nonzero residuals identify writer, partition and symbolic column;
 unsupported writers and arithmetic/resource limits remain unknown. A residual is
 an algebraic witness, not a reachable runtime counterexample.
+Keyed coordinates (`Bal[from]`, `Bal[to]`) of one family, scope and unit may
+name one cell at run time. Each writer must also balance in every key-equality
+case its guard does not exclude (the adapter lists proved `from != to` pairs),
+with the aliased writes either accumulating or one pre-state write surviving.
+An unbalanced case refuses as `law.conservation.key_alias`, naming the merged
+coordinates; more than 6 aliasing keys per family or 256 cases per writer is
+unknown (`law.conservation.alias_bound`), never admitted.
 
 This kernel alone establishes no application evidence. Declaration lowering must
 bind the complete writer closure and functional to a generated Challenge before

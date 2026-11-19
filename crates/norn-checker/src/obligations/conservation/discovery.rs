@@ -186,6 +186,7 @@ mod tests {
                     code: "g".into(),
                 },
                 weight,
+                key: None,
             })
             .collect();
         (
@@ -196,6 +197,7 @@ mod tests {
                     vec![q(n.checked_neg().unwrap(), 1), ZERO],
                     vec![q(d, 1), ZERO],
                 ]),
+                distinct: Vec::new(),
             }],
         )
     }
