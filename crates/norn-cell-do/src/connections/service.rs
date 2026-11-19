@@ -881,7 +881,15 @@ impl<E: SqlEngine> Connections<E> {
             );
             let revoked = client
                 .revoke_token(token)
-                .map_err(|_| ConnError::Provider("no revocation endpoint".to_owned()))
+                .map_err(|error| {
+                    // oauth2 revokes only over https.
+                    ConnError::Provider(match error {
+                        oauth2::ConfigurationError::InsecureUrl(_) => {
+                            "revocation_url_not_https".to_owned()
+                        }
+                        _ => "no_revocation_endpoint".to_owned(),
+                    })
+                })
                 .and_then(|request| {
                     request
                         .request(&|request| self.egress.send(request))

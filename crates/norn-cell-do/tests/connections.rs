@@ -962,18 +962,14 @@ fn the_write_only_api_is_owner_only_and_never_returns_or_stores_a_credential() {
         serde_json::from_str::<serde_json::Value>(&revoked.body).expect("json")["state"],
         "not_connected"
     );
-    // The provider's revocation endpoint was asked to end the grant.
-    let revoke = server
-        .seen()
-        .into_iter()
-        .find(|s| s.line.starts_with("POST /revoke"))
-        .expect("revoked upstream");
+    // The provider's revocation endpoint is asked over https only; this
+    // mock is plain http, so the revoke is refused before any call, and audited.
     assert!(
-        revoke.body.contains("token_type_hint=refresh_token"),
-        "{}",
-        revoke.body
+        !server
+            .seen()
+            .iter()
+            .any(|s| s.line.starts_with("POST /revoke"))
     );
-
     // No answer, audit row or printed status carries a credential.
     let trail = conns.audit_trail("acme.main").expect("audit");
     let events: Vec<&str> = trail.iter().map(|(_, event, ..)| event.as_str()).collect();
