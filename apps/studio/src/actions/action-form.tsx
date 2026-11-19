@@ -24,11 +24,12 @@ const newKey = newIdempotencyKey
 /** The form's input fields that name a record, by pointer → object type (the cell's `inputLinks`). */
 const Links = createContext<ReadonlyMap<string, string>>(new Map())
 
-interface PickedPage { readonly items?: readonly { readonly id: string; readonly values?: Readonly<Record<string, unknown>> }[] }
+interface PickedPage { readonly records?: readonly { readonly id: string; readonly values?: Readonly<Record<string, unknown>> }[] }
 
-/** A record's words in the picker: its id, then its first text value that is not the id. */
+/** A record's words in the picker: its id, then its name (a `name`, `title` or `label` field), else its first other text. */
 const pickLabel = (record: { readonly id: string; readonly values?: Readonly<Record<string, unknown>> }) => {
-  const named = Object.entries(record.values ?? {}).find(([key, value]) => typeof value === "string" && value !== record.id && !key.endsWith("_id") && key !== "id")?.[1]
+  const texts = Object.entries(record.values ?? {}).filter(([key, value]) => typeof value === "string" && value !== record.id && !key.endsWith("_id") && key !== "id")
+  const named = (texts.find(([key]) => /name|title|label/.test(key)) ?? texts[0])?.[1]
   return typeof named === "string" ? `${record.id} · ${named}` : record.id
 }
 
@@ -41,7 +42,7 @@ function RecordPicker({ objectKind, value, onPick, aria }: { readonly objectKind
     queryKey: ["picker", objectKind],
     queryFn: async () => {
       const read = await cellCall<PickedPage>(`/v1/objects/${encodeURIComponent(objectKind)}?limit=100`)
-      return read.kind === "ok" ? read.value.items ?? [] : null
+      return read.kind === "ok" ? read.value.records ?? [] : null
     },
     retry: false, staleTime: 30_000,
   })

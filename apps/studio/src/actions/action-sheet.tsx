@@ -12,8 +12,8 @@ import { ActionForm } from "./action-form.tsx"
  * The actions the cell offers this reader for one object type, or for one record in its current
  * state (the server filters; Studio shows what it gets).
  */
-export function useActions(objectKind: string, objectId?: string) {
-  return useQuery<CatalogRead>({ queryKey: ["actions", objectKind, objectId ?? null], queryFn: () => listActions(objectKind, undefined, objectId), retry: false, staleTime: objectId === undefined ? 60_000 : 0 })
+export function useActions(objectKind: string, objectId?: string, enabled = true) {
+  return useQuery<CatalogRead>({ queryKey: ["actions", objectKind, objectId ?? null], queryFn: () => listActions(objectKind, undefined, objectId), retry: false, staleTime: objectId === undefined ? 60_000 : 0, enabled })
 }
 
 /**

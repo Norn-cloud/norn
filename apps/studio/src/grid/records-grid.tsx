@@ -365,6 +365,9 @@ function RecordDrawer({ concept, fields, row, origin, actions, actionsOff, onClo
 }) {
   const record = row?.record
   const markings = useMarkingCatalog()
+  // What can act on this record now: the cell narrows the type's catalog to the record's state.
+  const narrowed = useActions(record?.objectType ?? "", record?.id, record !== undefined && origin === "live")
+  const offered = narrowed.data?.kind === "catalog" ? narrowed.data.items : actions
   const object = useQuery({
     queryKey: ["object", record?.objectType, record?.id],
     queryFn: () => record ? transport.object(record.objectType, record.id) : null,
@@ -403,9 +406,9 @@ function RecordDrawer({ concept, fields, row, origin, actions, actionsOff, onClo
               <h3 className="text-sm font-medium">Actions</h3>
               {actionsOff !== undefined
                 ? <p className="text-meta text-muted-foreground">{actionsOff}</p>
-                : offeredFor(actions, record).length === 0
+                : offeredFor(offered, record).length === 0
                   ? <p className="text-meta text-muted-foreground">The cell offers you no actions on {concept.title.toLowerCase()} records.</p>
-                  : <div className="flex flex-wrap gap-2">{offeredFor(actions, record).map((action) => (
+                  : <div className="flex flex-wrap gap-2">{offeredFor(offered, record).map((action) => (
                     <Button key={action.actionId} variant="outline" size="sm" className="border-node-border shadow-node" onClick={() => onAction(action, record.id)}>
                       <Play /> {writesWhole(action) ? `${action.title} (edit)` : action.title}
                     </Button>
