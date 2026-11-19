@@ -59,8 +59,21 @@ norn-cell = { path = "../norn-cell", default-features = false, features = ["nati
 clap = { version = "4.6.7", features = ["derive"] }
 # The per-session dev token and lineage handle key.
 getrandom = "0.3.4"
-# `norn-olapd` reads a dataset from the presigned URL the cell minted.
-ureq = { version = "=3.5.2", default-features = false, features = ["rustls"], optional = true }
+# `norn-olapd` reads a dataset from the presigned URL the cell minted; the
+# connection egress client (`connections::egress`) sends every outbound
+# connector call through it, pinned to the address it resolved and checked.
+ureq = { version = "=3.5.2", default-features = false, features = ["rustls"] }
+# Connection vault (`connections::vault`): per-cell DEKs wrapped by the host
+# KEK, credentials sealed with AES-256-GCM. No `getrandom` feature: nonces
+# and keys come from the `getrandom` dependency above.
+aes-gcm = { version = "=0.10.3", default-features = false, features = ["aes", "alloc"] }
+# OAuth 2.0 authorization code + PKCE S256 (`connections::oauth`), sent
+# through the egress client; none of its bundled HTTP clients.
+oauth2 = { version = "=5.0.0", default-features = false }
+# OAuth state digests (`connections::service`).
+sha2 = "0.10.9"
+# Egress URL checks, parsed as the host `fetch` parses them.
+url = { version = "2.5.8", default-features = false, features = ["std"] }
 
 # O_NOFOLLOW for the owner-only session files.
 [target.'cfg(unix)'.dependencies]
@@ -79,7 +92,7 @@ ed25519-dalek = { version = "2.2.0", default-features = false, features = ["std"
 fixtures = []
 # `norn-dev-host` answers questions DuckDB can lower on DuckDB (QUERY-ENGINE-1)
 # and falls back to the native exact engine. Opt-in: it builds bundled DuckDB.
-duckdb = ["norn-cell/duckdb", "dep:ureq"]
+duckdb = ["norn-cell/duckdb"]
 
 [lints]
 workspace = true

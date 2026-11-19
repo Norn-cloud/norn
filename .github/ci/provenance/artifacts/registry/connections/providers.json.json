@@ -1,0 +1,24 @@
+{
+  "sha256": "d338ad45cbe48b60ef0b1e315ee74c88b745415919b267ee09452c424a1d6df0",
+  "origin": "derived",
+  "category": "generated",
+  "license": "Apache-2.0",
+  "sources": [],
+  "analyzed_sources": [],
+  "parents": [
+    "scripts/connections/extract_openconnector.py"
+  ],
+  "rights_evidence": [
+    {
+      "path": "registry/connections/NOTICE",
+      "sha256": "b2c7a6373b2c279312538cbf58f63f00a34ebaee15589a6cb7cfebf9a10ea50f"
+    }
+  ],
+  "notices": [
+    {
+      "path": "registry/connections/NOTICE",
+      "sha256": "b2c7a6373b2c279312538cbf58f63f00a34ebaee15589a6cb7cfebf9a10ea50f"
+    }
+  ],
+  "connector": null
+}

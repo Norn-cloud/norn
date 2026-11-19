@@ -24,6 +24,10 @@ pub enum Operation {
     /// or read an upload (`upload`): a write of the cell's sources, decided
     /// like a definitions write.
     SyncSource(String),
+    /// Set, read the status of, connect (OAuth) or revoke the named
+    /// connection's credentials (CONN-AUTHZ-1). Decided by the host's policy
+    /// before any body is read; credentials are never returned to anyone.
+    ManageConnection(String),
     /// Decide a decision a flow run waits on, whose request declares these
     /// decider roles and law (DECISIONS-1). Deciding adds a condition to the
     /// run; it grants the run nothing.

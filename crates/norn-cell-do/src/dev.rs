@@ -293,6 +293,7 @@ fn run(args: &DevArgs, out: &mut Events) -> Result<(), Failure> {
                 format!("cannot open the analytics engine: {error}"),
             )
         })?;
+    let connections = http::DevConnections::new(cell_path.clone());
     {
         let serving = Arc::clone(&serving);
         std::thread::spawn(move || {
@@ -300,7 +301,14 @@ fn run(args: &DevArgs, out: &mut Events) -> Result<(), Failure> {
             let engine: Option<&dyn norn_api::analytics_routes::Transport> = Some(&engine);
             #[cfg(not(feature = "duckdb"))]
             let engine: Option<&dyn norn_api::analytics_routes::Transport> = None;
-            http::serve(&listener, &serving, &principals, &questions, engine);
+            http::serve(
+                &listener,
+                &serving,
+                &principals,
+                &questions,
+                engine,
+                &connections,
+            );
         });
     }
     let session = Session {

@@ -24,6 +24,66 @@ const MAX_BODY_BYTES: usize = 512 * 1024;
 /// revision is installed.
 pub(crate) type Serving = Arc<RwLock<Option<DevHost<NativeEngine>>>>;
 
+/// The project's connections (D126): configured from the `NORN_*`
+/// environment of `norn dev` (the development KEK is admitted), opened over
+/// the project's cell file on the first connection request after the cell
+/// exists, so an unprovisioned cell file stays fresh.
+pub(crate) struct DevConnections {
+    config: Option<crate::connections::Config>,
+    cell_path: std::path::PathBuf,
+    opened:
+        std::sync::OnceLock<Result<crate::connections::service::Connections<NativeEngine>, String>>,
+}
+
+impl DevConnections {
+    /// Read the configuration; a malformed one is reported and leaves the
+    /// connection routes unserved.
+    pub(crate) fn new(cell_path: std::path::PathBuf) -> Self {
+        let vars: std::collections::BTreeMap<String, String> = std::env::vars()
+            .filter(|(name, _)| name.starts_with("NORN_"))
+            .collect();
+        let config = crate::connections::Config::from_vars(&vars, true).unwrap_or_else(|error| {
+            eprintln!("norn dev: connections are off: {error}");
+            None
+        });
+        Self {
+            config,
+            cell_path,
+            opened: std::sync::OnceLock::new(),
+        }
+    }
+
+    fn route(
+        &self,
+        host: &DevHost<NativeEngine>,
+        principals: &DevPrincipals,
+        request: &Request<'_>,
+    ) -> Option<Response> {
+        let config = self.config.as_ref()?;
+        if !request.path.starts_with("/v1/connections/") {
+            return None;
+        }
+        let opened = self.opened.get_or_init(|| {
+            let engine = NativeEngine::open(&self.cell_path, norn_cell::StoreOptions::default())
+                .map_err(|error| error.to_string())?;
+            config.open(
+                engine,
+                &host.scope().key(),
+                std::sync::Arc::new(crate::connections::egress::SystemLookup),
+            )
+        });
+        match opened {
+            Ok(connections) => connections.route(host, principals, request, super::now_ms()),
+            Err(error) => Some(refusal(&Refusal::new(
+                http::StatusCode::SERVICE_UNAVAILABLE,
+                "connection.unavailable",
+                "the connection vault did not open",
+                error,
+            ))),
+        }
+    }
+}
+
 /// Serve `listener` until the process exits.
 pub(crate) fn serve(
     listener: &TcpListener,
@@ -31,10 +91,11 @@ pub(crate) fn serve(
     principals: &DevPrincipals,
     questions: &DevMetrics,
     engine: Option<&dyn Transport>,
+    connections: &DevConnections,
 ) {
     for stream in listener.incoming().flatten() {
         // A broken connection affects only itself.
-        let _ignored = connection(stream, serving, principals, questions, engine);
+        let _ignored = connection(stream, serving, principals, questions, engine, connections);
     }
 }
 
@@ -44,10 +105,11 @@ fn connection(
     principals: &DevPrincipals,
     questions: &DevMetrics,
     engine: Option<&dyn Transport>,
+    connections: &DevConnections,
 ) -> std::io::Result<()> {
     stream.set_read_timeout(Some(Duration::from_secs(10)))?;
     let response = match read_request(&stream) {
-        Ok(parsed) => dispatch(&parsed, serving, principals, questions, engine),
+        Ok(parsed) => dispatch(&parsed, serving, principals, questions, engine, connections),
         Err(refused) => refusal(&refused),
     };
     let reason = match response.status {
@@ -56,6 +118,8 @@ fn connection(
         400 => "Bad Request",
         403 => "Forbidden",
         404 => "Not Found",
+        502 => "Bad Gateway",
+        503 => "Service Unavailable",
         409 => "Conflict",
         413 => "Payload Too Large",
         422 => "Unprocessable Content",
@@ -153,6 +217,7 @@ fn dispatch(
     principals: &DevPrincipals,
     questions: &DevMetrics,
     engine: Option<&dyn Transport>,
+    connections: &DevConnections,
 ) -> Response {
     let Ok(guard) = serving.read() else {
         return refusal(&Refusal::host("the serving state is poisoned"));
@@ -191,6 +256,10 @@ fn dispatch(
         now,
         body: &parsed.body,
     };
+    // D126: connection credentials, decided by the same policy.
+    if let Some(response) = connections.route(host, principals, &request) {
+        return response;
+    }
     // D102: with an engine linked in, questions and profiles run on it.
     let Some(engine) = engine else {
         return server::handle_with(host, principals, Some(&questions), &request);
