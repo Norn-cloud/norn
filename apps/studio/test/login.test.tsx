@@ -50,3 +50,20 @@ test("signing out forgets the reader's reads", async () => {
   expect(client.getQueryData(["records", "purchasing.PurchaseRequest"])).toBeUndefined()
   expect(client.getQueryCache().find({ queryKey: ["session"] })).toBeDefined()
 })
+
+// #1469 S6: a kept draft belongs to the session that wrote it: another reader in this tab never
+// sees it, and a completed sign-out forgets it.
+test("kept drafts are the session's and a sign-out forgets them", async () => {
+  const { endSession } = await import("../src/lib/session.ts")
+  const { keptDrafts, sessionKey } = await import("../src/actions/kept-drafts.ts")
+  const alice = sessionKey({ user: { id: "u1" }, organization: { id: "o1" } })
+  const bob = sessionKey({ user: { id: "u2" }, organization: { id: "o1" } })
+  const draft = { values: { amount: "12" } } as never
+  keptDrafts.set(alice, "purchasing.request.submit:{}", draft)
+  expect(keptDrafts.get(bob, "purchasing.request.submit:{}")).toBeUndefined()
+  const client = new QueryClient()
+  await expect(endSession(client, () => Promise.reject(new Error("offline")))).rejects.toThrow("offline")
+  expect(keptDrafts.get(alice, "purchasing.request.submit:{}")).toBe(draft)
+  await endSession(client, async () => {})
+  expect(keptDrafts.get(alice, "purchasing.request.submit:{}")).toBeUndefined()
+})

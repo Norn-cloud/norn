@@ -1,4 +1,5 @@
 import { type QueryClient, useQuery, useQueryClient } from "@tanstack/react-query"
+import { forgetDrafts } from "../actions/kept-drafts.ts"
 
 /** Who is signed in, as the Worker reports it (/api/me). Display only: the server decides every permission. */
 export interface Account {
@@ -47,12 +48,13 @@ export function useRefreshAccount() {
 }
 
 /**
- * End the session, then forget everything read as that reader (records, picker choices, the
- * inbox) so the next reader in this tab never sees it, and re-read the session. A sign-out the
+ * End the session, then forget everything read or kept as that reader (records, picker choices,
+ * the inbox, unsent drafts) so the next reader in this tab never sees it, and re-read the session. A sign-out the
  * server did not complete forgets nothing and rethrows.
  */
 export async function endSession(client: QueryClient, signOut: () => Promise<void> = authApi.signOut): Promise<void> {
   await signOut()
+  forgetDrafts()
   client.removeQueries({ predicate: (query) => query.queryKey[0] !== SESSION[0] })
   await client.invalidateQueries({ queryKey: SESSION })
 }

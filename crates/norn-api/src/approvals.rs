@@ -229,18 +229,24 @@ fn request(gate: &Gate) -> Value {
 /// APPROVAL-PIN-1: a pinned call's id also hashes its pin, under its own
 /// domain tag, so the requester's retry under another catalog (unpinned, or
 /// pinned to another version) is another call that parks for a fresh
-/// decision, never the earlier approval. An unpinned call's id is unchanged.
-fn command_id(parked_call: &ParkedCall) -> Result<String, Refusal> {
+/// decision, never the earlier approval.
+///
+/// #1469 S5: the id also hashes the gate (its definition and revision), so a
+/// call made again after its gate changed (another decider, a renamed
+/// approval) parks for a fresh decision under the gate now in force, never
+/// the decision the earlier gate's deciders made.
+fn command_id(gate: &Gate, parked_call: &ParkedCall) -> Result<String, Refusal> {
     let call = (
         &parked_call.action,
         &parked_call.idempotency_key,
         &parked_call.requester.subject,
         &parked_call.input,
+        (&gate.definition, gate.revision),
     );
     let digest = match parked_call.definitions_version {
-        None => norn_ir::canonical::domain_hash_hex(b"norn.approval.call/1\0", &call),
+        None => norn_ir::canonical::domain_hash_hex(b"norn.approval.call/2\0", &call),
         Some(pin) => {
-            norn_ir::canonical::domain_hash_hex(b"norn.approval.pinned-call/1\0", &(call, pin))
+            norn_ir::canonical::domain_hash_hex(b"norn.approval.pinned-call/2\0", &(call, pin))
         }
     }
     .map_err(Refusal::host)?;
@@ -296,7 +302,7 @@ pub(crate) fn hold<E: SqlEngine>(
     parked_call: &ParkedCall,
     now: LogicalTime,
 ) -> Result<Held, Refusal> {
-    let id = command_id(parked_call)?;
+    let id = command_id(gate, parked_call)?;
     let decision_id = crate::decisions::decision_id(&id, 1)?;
     if let Some(row) = cell
         .store()
@@ -637,6 +643,33 @@ mod tests {
             revision: 1,
             payload,
         }
+    }
+
+    /// #1469 S5: the same unpinned call behind a revised gate, or behind
+    /// another gate, is another parked call with its own decision.
+    #[test]
+    fn a_call_parks_anew_when_its_gate_changes() {
+        let call = ParkedCall {
+            action: "purchasing.request.submit".to_owned(),
+            input: RuntimeObject::new(),
+            idempotency_key: "k1".to_owned(),
+            requester: RunStarter {
+                subject: "local:developer".to_owned(),
+                actor_kind: "user".to_owned(),
+                roles: vec!["member".to_owned()],
+                role_table: "studio-roles/1".to_owned(),
+            },
+            definitions_version: None,
+        };
+        let first = gate(None);
+        let mut revised = first.clone();
+        revised.revision = 2;
+        let mut renamed = first.clone();
+        "purchasing.renamed".clone_into(&mut renamed.definition);
+        let id = |gate: &Gate| command_id(gate, &call).unwrap();
+        assert_eq!(id(&first), id(&first.clone()));
+        assert_ne!(id(&first), id(&revised));
+        assert_ne!(id(&first), id(&renamed));
     }
 
     fn put(object_type: &str, values: Value) -> FactWrite {

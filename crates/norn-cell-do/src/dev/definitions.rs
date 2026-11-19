@@ -13,8 +13,12 @@
 //! - A definition whose payload equals the installed one installs nothing.
 //! - A changed one installs as the next version of its id.
 //! - An approval the sources no longer declare is retired.
-//! - A definition the cell refuses changes nothing; its findings are the
-//!   compile's diagnostics, and every other definition still syncs.
+//! - Every changed definition is admitted before anything installs or
+//!   retires: one the cell refuses refuses the whole sync, so nothing
+//!   installs, nothing retires, and the active gates stay; its findings are
+//!   the compile's diagnostics.
+//! - An approval that takes over the action of one the sources no longer
+//!   declare (a renamed approval) installs right after that one retires.
 //! - A declaration that is not `{ kind, id, payload }`, or an id declared
 //!   twice, refuses the whole sync: nothing installs and nothing retires, so
 //!   a malformed source never retires the approval it meant to declare.
@@ -132,12 +136,28 @@ pub(crate) fn sync<E: SqlEngine>(
     if !synced.refused.is_empty() {
         return synced;
     }
-    for definition in declarations {
-        match install(host, &query, actor, kinds, &definition, now_ms) {
+    let (first, after_retire) = match plan(host, &query, actor, kinds, &declarations, &declared_ids)
+    {
+        Ok(Ok(order)) => order,
+        Ok(Err(refused)) => {
+            synced.refused = refused;
+            return synced;
+        }
+        Err(refusal) => {
+            synced.refused.extend(from_refusal("approval", &refusal));
+            return synced;
+        }
+    };
+    for definition in first {
+        match install(host, &query, actor, kinds, definition, now_ms) {
             Ok(Some(event)) => synced.changed.push(event),
             Ok(None) => {}
             Err(refusal) => synced.refused.extend(from_refusal(definition.id, &refusal)),
         }
+    }
+    if !synced.refused.is_empty() {
+        // Nothing retires while a declared gate failed to install.
+        return synced;
     }
     for kind in SOURCE_KINDS {
         match retire_undeclared(host, &query, actor, kind, &declared_ids, now_ms) {
@@ -145,7 +165,114 @@ pub(crate) fn sync<E: SqlEngine>(
             Err(refusal) => synced.refused.extend(from_refusal(kind, &refusal)),
         }
     }
+    for definition in after_retire {
+        match install(host, &query, actor, kinds, definition, now_ms) {
+            Ok(Some(event)) => synced.changed.push(event),
+            Ok(None) => {}
+            Err(refusal) => synced.refused.extend(from_refusal(definition.id, &refusal)),
+        }
+    }
     synced
+}
+
+/// Which declarations install before the undeclared approvals retire, and
+/// which only after (one that takes over an action from a retiring approval,
+/// as a rename does); or every finding when any declaration is refused, so a
+/// refused set installs nothing and retires nothing (#1469 S2).
+type Order<'d, 'a> = (Vec<&'d Declared<'a>>, Vec<&'d Declared<'a>>);
+
+fn plan<'d, 'a, E: SqlEngine>(
+    host: &DevHost<E>,
+    query: &ScopeQuery,
+    actor: &str,
+    kinds: &DefinitionKinds,
+    declarations: &'d [Declared<'a>],
+    declared_ids: &[String],
+) -> Result<Result<Order<'d, 'a>, Vec<Value>>, Refusal> {
+    // The active approvals, as (id, the action it gates): an approval's
+    // listed title is its action.
+    let mut active: Vec<(String, String)> = Vec::new();
+    let mut cursor = None;
+    loop {
+        let page = definition_routes::list_definitions(
+            host,
+            &ListDefinitionsQuery {
+                org_id: query.org_id.clone(),
+                environment_id: query.environment_id.clone(),
+                kind: Some("approval".to_owned()),
+                include: None,
+                limit: Some(100),
+                cursor: cursor.take(),
+                uses: None,
+            },
+            Some(actor),
+        )?;
+        active.extend(page.items.into_iter().map(|item| (item.id, item.title)));
+        match page.cursor {
+            Some(next) => cursor = Some(next),
+            None => break,
+        }
+    }
+    let mut refused = Vec::new();
+    let mut order: Order<'d, 'a> = (Vec::new(), Vec::new());
+    let mut actions: Vec<&str> = Vec::new();
+    for definition in declarations {
+        let action = definition.payload.get("action").and_then(Value::as_str);
+        if let Some(action) = action {
+            if actions.contains(&action) {
+                refused.push(finding(
+                    definition.id,
+                    norn_api::approval_definitions::codes::DUPLICATE,
+                    format!("another declared approval already gates {action}"),
+                ));
+                continue;
+            }
+            actions.push(action);
+        }
+        if let Some((_, true, payload)) = installed(host, query, actor, kinds, definition.id)?
+            && payload == *definition.payload
+        {
+            continue;
+        }
+        let admitted = definition_routes::admit_definition(
+            host,
+            query,
+            Some(actor),
+            kinds,
+            None,
+            &AdmitDefinitionRequest {
+                kind: definition.kind.to_owned(),
+                id: definition.id.to_owned(),
+                payload: RawValue::from_string(definition.payload.to_string())
+                    .map_err(Refusal::host)?,
+            },
+        )?;
+        if admitted.admitted {
+            order.0.push(definition);
+            continue;
+        }
+        // Its only error is that the action is gated, and every approval
+        // gating it retires in this sync: it installs once they have.
+        let only_duplicate = admitted
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.severity == "error")
+            .all(|diagnostic| diagnostic.code == norn_api::approval_definitions::codes::DUPLICATE);
+        let gaters_retire = active
+            .iter()
+            .filter(|(id, gated)| id != definition.id && Some(gated.as_str()) == action)
+            .all(|(id, _)| !declared_ids.contains(id));
+        if only_duplicate && gaters_retire {
+            order.1.push(definition);
+        } else {
+            refused.extend(tagged(definition.id, &admitted.diagnostics));
+        }
+    }
+    Ok(if refused.is_empty() {
+        Ok(order)
+    } else {
+        Err(refused)
+    })
 }
 
 /// The installed version and payload of `id`, if it is active.

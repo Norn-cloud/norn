@@ -16,14 +16,17 @@
  * set: `apply` installs each after the set, through `POST
  * /v1/definitions:admit` and `:install` with the caller's sign-off of the
  * server's restatement (DEV-DEFINITIONS-1's path), and prints the words it
- * signed. `plan` names them. An approval the cell refuses fails the command.
+ * signed. `plan` names them. `apply` admits every one before it applies the
+ * set: an approval the cell refuses fails the command and applies nothing.
  */
-import { statSync } from "node:fs"
-import { resolve } from "node:path"
+import { existsSync, statSync } from "node:fs"
+import { join, resolve } from "node:path"
 import { isDeepStrictEqual } from "node:util"
 import type { RetainedDefinitionDoc } from "./compiler/definitions.ts"
 import { loadChecker } from "./checker-abi.ts"
-import { bindSourceSchemas, checkPack, compilePack, pendingSourceSchemas } from "./pack.ts"
+import { bindSourceSchemas, checkPack, compilePack, pendingSourceSchemas, type PackResult } from "./pack.ts"
+import { readProject } from "./project.ts"
+import { compileProjectPack } from "./worker.ts"
 
 export const PLAN_PATH = "/v1/cell/definitions:plan"
 export const APPLY_PATH = "/v1/cell/definitions:apply"
@@ -116,6 +119,30 @@ async function installDefinition(target: Target, definition: RetainedDefinitionD
     [`+ ${definition.kind} ${d.id} v${d.version}${d.restatement ? ", signing:" : ""}`, ...(d.restatement ? String(d.restatement).split("\n").map((line) => `    ${line}`) : [])].join("\n"))
 }
 
+/** The action ids `artifacts` declare. */
+function declaredActions(artifacts: ReadonlyArray<unknown>): Set<string> {
+  return new Set(artifacts.flatMap((artifact) => {
+    const doc = artifact as Doc
+    return doc?.kind === "action" && typeof doc.payload?.actionId === "string" ? [doc.payload.actionId] : []
+  }))
+}
+
+/**
+ * Admit `definition` before anything is applied (#1469 S3): the refusal to
+ * show, or undefined when it is admissible. An approval of an action the set
+ * itself adds cannot name an active action yet, so that one finding alone is
+ * excused; every other finding refuses.
+ */
+async function preadmit(target: Target, definition: RetainedDefinitionDoc, actions: Set<string>): Promise<{ status: number; document: Doc } | undefined> {
+  const admitted = await post(target, ADMIT_PATH, { kind: definition.kind, id: definition.id, payload: definition.payload })
+  if (admitted.status !== 200) return admitted
+  if (admitted.document.admitted) return undefined
+  const errors = (admitted.document.diagnostics ?? []).filter((d: Doc) => d.severity === "error")
+  const pending = definition.kind === "approval" && actions.has((definition.payload as Doc)?.action)
+  if (pending && errors.every((d: Doc) => d.code === "definition.approval_action_unknown")) return undefined
+  return { status: 422, document: { code: "definition.refused", message: `${definition.kind} ${definition.id} is not admissible`, diagnostics: admitted.document.diagnostics } }
+}
+
 /**
  * Plan, or plan then apply, `artifacts` on `target`, then install the pack's
  * retained `definitions` once the set is applied; the lines to print and
@@ -139,12 +166,33 @@ export async function change(target: Target, command: "plan" | "apply", artifact
     expected = planned.document.baseVersion
     if (typeof expected !== "number") throw new Error("the plan names no base revision")
   }
+  // Every retained definition is admitted before the set is applied: one
+  // the cell refuses applies nothing, so no action goes live ungated.
+  const actions = declaredActions(artifacts)
+  for (const definition of definitions) {
+    const refused = await preadmit(target, definition, actions)
+    if (refused) { show(refused.status, refused.document, () => ""); return { out, ok: false } }
+  }
   const applied = await post(target, APPLY_PATH, { artifacts, expectedVersion: expected })
   if (!show(applied.status, applied.document, appliedSummary)) return { out, ok: false }
   for (const definition of definitions) {
     if (!await installDefinition(target, definition, show)) return { out, ok: false }
   }
   return { out, ok: true }
+}
+
+/**
+ * The pack `input` names, scoped to the target cell: a project directory (one
+ * holding norn.json) is read by the shared project loader, exactly as `norn
+ * dev` and `norn compile` read it (its manifest's sources, JSON artifacts and
+ * definitions); any other directory or module compiles as a pack.
+ */
+export function loadPack(input: string, scope: { readonly orgId: string; readonly environmentId: string }): PackResult {
+  if (statSync(input).isDirectory() && existsSync(join(input, "norn.json"))) {
+    const { root, manifest } = readProject(resolve(input))
+    return compileProjectPack(root, { ...manifest, scope })
+  }
+  return compilePack(resolve(input), { scope, root: process.cwd(), ...(statSync(input).isFile() ? { modules: [resolve(input)] } : {}) })
 }
 
 function option(args: ReadonlyArray<string>, name: string): string | undefined {
@@ -164,7 +212,7 @@ export async function main(command: "plan" | "apply", args: ReadonlyArray<string
   const passwordEnv = option(args, "--password-env")
   const tokenEnv = option(args, "--token-env")
   if ((email || tokenEnv) && !credentialsAllowed(url)) { process.stderr.write("credentials are sent only over HTTPS (or HTTP to loopback)\n"); return 2 }
-  const pack = compilePack(resolve(input), { scope: { orgId: org, environmentId: env }, root: process.cwd(), ...(statSync(input).isFile() ? { modules: [resolve(input)] } : {}) })
+  const pack = loadPack(input, { orgId: org, environmentId: env })
   if (!pack.ok) { process.stdout.write(`${JSON.stringify(pack)}\n`); return 1 }
   // MAPPING-SOURCE-REF-1: a mapping bound to a source schema of the pack by
   // reference is pinned with the checker's hash before the pack is sent.

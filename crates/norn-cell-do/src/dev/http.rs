@@ -503,6 +503,81 @@ mod tests {
         );
     }
 
+    /// The source sync of `approvals`, as norn dev runs it on a save.
+    fn sync(dev: &Dev, approvals: &[Value]) -> crate::dev::definitions::Synced {
+        crate::dev::definitions::sync(
+            &dev.host,
+            &CellScope {
+                org_id: "org_demo".into(),
+                environment_id: "dev".into(),
+            },
+            DEVELOPER,
+            &crate::dev::policy::dev_kinds(),
+            approvals,
+            1_800_000_000_000,
+        )
+    }
+
+    fn named(id: &str, roles: &[&str]) -> Value {
+        let mut approval = approval(roles);
+        approval["id"] = json!(id);
+        approval
+    }
+
+    /// The ids of the active approvals.
+    fn gates(dev: &Dev) -> Vec<String> {
+        let query = format!("{SCOPE}&kind=approval");
+        let (status, listed) = call(
+            dev,
+            Some(DEVELOPER_TOKEN),
+            ("GET", "/v1/definitions:list", &query),
+            "",
+        );
+        assert_eq!(status, 200, "{listed}");
+        listed["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["id"].as_str().unwrap().to_owned())
+            .collect()
+    }
+
+    #[test]
+    fn a_renamed_approval_keeps_its_action_gated() {
+        let dev = dev();
+        let synced = sync(&dev, &[named("ops.old_gate", &["admin"])]);
+        assert!(synced.refused.is_empty(), "{:?}", synced.refused);
+        let synced = sync(&dev, &[named("ops.new_gate", &["admin"])]);
+        assert!(synced.refused.is_empty(), "{:?}", synced.refused);
+        assert_eq!(gates(&dev), ["ops.new_gate"]);
+        let action = format!("/v1/actions/{MELT_ACTION}");
+        let body = melt_body("melt-7", "12", "10", "dev-1");
+        let (status, parked) = call(&dev, Some(DEVELOPER_TOKEN), ("POST", &action, SCOPE), &body);
+        assert_eq!(status, 202, "the action is still gated: {parked}");
+    }
+
+    #[test]
+    fn a_refused_approval_set_keeps_the_active_gates() {
+        let dev = dev();
+        assert!(
+            sync(&dev, &[named("ops.old_gate", &["admin"])])
+                .refused
+                .is_empty()
+        );
+        let synced = sync(&dev, &[named("ops.new_gate", &["auditor"])]);
+        assert!(synced.changed.is_empty(), "{:?}", synced.changed);
+        let codes: Vec<&Value> = synced
+            .refused
+            .iter()
+            .map(|finding| &finding["code"])
+            .collect();
+        assert!(
+            codes.contains(&&json!("definition.approval_role_unknown")),
+            "{codes:?}"
+        );
+        assert_eq!(gates(&dev), ["ops.old_gate"], "nothing retired");
+    }
+
     #[test]
     fn an_approval_admits_against_the_hosted_roles() {
         let dev = dev();

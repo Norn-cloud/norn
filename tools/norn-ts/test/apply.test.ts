@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test"
+import { resolve } from "node:path"
 import { ADMIT_PATH, APPLY_PATH, INSTALL_PATH, PLAN_PATH, change, credentialsAllowed } from "../src/apply.ts"
 
 // HOST-INSTALL-1 client: `norn apply` plans first, applies against the planned
@@ -40,11 +41,13 @@ test("apply plans first, applies against the planned revision, and stops at a re
   }
 })
 
-// A pack's approvals are installed after its set, by signing the cell's
-// restatement; one the cell refuses fails the apply.
-test("apply installs the pack's approvals after the set, signing their restatement", async () => {
+// A pack's approvals are admitted before its set is applied and installed
+// after it, by signing the cell's restatement; one the cell refuses fails the
+// apply and applies nothing (#1469 S3).
+test("apply admits the pack's approvals first and installs them after the set, signing their restatement", async () => {
   const seen: { method: string; path: string; body: any }[] = []
   let admissible = true
+  let actionUnknown = false
   const server = Bun.serve({
     port: 0,
     async fetch(request) {
@@ -53,6 +56,7 @@ test("apply installs the pack's approvals after the set, signing their restateme
       if (url.pathname.endsWith(PLAN_PATH)) return Response.json({ baseVersion: 2, nextVersion: 3, unchanged: false, added: [], changed: [], same: [], newObjectTypes: [], checkedObjects: 0, diagnostics: [] })
       if (url.pathname.endsWith(APPLY_PATH)) return Response.json({ outcome: "installed", definitionsVersion: 3, previousVersion: 2, receiptSha256: "ab", commitSeq: 9 })
       if (request.method === "GET") return Response.json({ code: "definition.not_found", message: "no such definition" }, { status: 404 })
+      if (url.pathname.endsWith(ADMIT_PATH) && actionUnknown) return Response.json({ admitted: false, diagnostics: [{ severity: "error", code: "definition.approval_action_unknown", message: "the action is not admitted in this cell", span: { pointer: "/action" } }], restatement: null, restatementSha256: null })
       if (url.pathname.endsWith(ADMIT_PATH)) return Response.json(admissible
         ? { admitted: true, diagnostics: [], restatement: "Every call of lab.batch.close waits for a person to approve it.", restatementSha256: "cd" }
         : { admitted: false, diagnostics: [{ severity: "error", code: "definition.approval_role_unknown", message: "no such role", span: { pointer: "/decider/roles/0" } }], restatement: null, restatementSha256: null })
@@ -64,8 +68,8 @@ test("apply installs the pack's approvals after the set, signing their restateme
     const approval = { kind: "approval" as const, id: "lab.close_approval", payload: { action: "lab.batch.close", decider: { roles: ["admin"] }, question: "Close?", risk: "low" } }
     const applied = await change(target, "apply", [{ artifactId: "lab.Batch.entity" }], false, undefined, [approval])
     expect(applied.ok).toBe(true)
-    expect(seen.map((s) => `${s.method} ${s.path}`)).toEqual([`POST ${PLAN_PATH}`, `POST ${APPLY_PATH}`, "GET /v1/definitions/lab.close_approval", `POST ${ADMIT_PATH}`, `POST ${INSTALL_PATH}`])
-    expect(seen[4]!.body).toEqual({ ...approval, expectedVersion: null, signoff: { restatementSha256: "cd" } })
+    expect(seen.map((s) => `${s.method} ${s.path}`)).toEqual([`POST ${PLAN_PATH}`, `POST ${ADMIT_PATH}`, `POST ${APPLY_PATH}`, "GET /v1/definitions/lab.close_approval", `POST ${ADMIT_PATH}`, `POST ${INSTALL_PATH}`])
+    expect(seen[5]!.body).toEqual({ ...approval, expectedVersion: null, signoff: { restatementSha256: "cd" } })
     expect(applied.out.join("\n")).toContain("+ approval lab.close_approval v1, signing:\n    Every call of lab.batch.close waits")
 
     const planned = await change(target, "plan", [], false, undefined, [approval])
@@ -75,8 +79,21 @@ test("apply installs the pack's approvals after the set, signing their restateme
     seen.length = 0
     const refused = await change(target, "apply", [], false, undefined, [approval])
     expect(refused.ok).toBe(false)
-    expect(seen.map((s) => s.path)).not.toContain(INSTALL_PATH)
+    expect(seen.map((s) => s.path)).toEqual([PLAN_PATH, ADMIT_PATH])
     expect(refused.out.join("\n")).toContain("error definition.approval_role_unknown at /decider/roles/0: no such role")
+
+    // An approval of an action the set itself adds is not refused for naming
+    // an action the cell has not applied yet; any other action is.
+    actionUnknown = true
+    seen.length = 0
+    const unknown = await change(target, "apply", [], false, undefined, [approval])
+    expect(unknown.ok).toBe(false)
+    expect(seen.map((s) => s.path)).toEqual([PLAN_PATH, ADMIT_PATH])
+    seen.length = 0
+    const action = { kind: "action", artifactId: "lab.batch.close.action", payload: { actionId: "lab.batch.close" } }
+    const added = await change(target, "apply", [action], false, undefined, [approval])
+    expect(seen.map((s) => s.path)).toContain(APPLY_PATH)
+    expect(added.ok).toBe(false)
   } finally {
     server.stop(true)
   }
@@ -87,4 +104,19 @@ test("credentials go only over HTTPS or to loopback", () => {
   expect(credentialsAllowed("http://127.0.0.1:8787")).toBe(true)
   expect(credentialsAllowed("http://studio.example/api/host")).toBe(false)
   expect(credentialsAllowed("http://localhost.example")).toBe(false)
+})
+
+// #1469 S8: `norn apply <project-root>` reads the project through the shared
+// loader `norn dev` uses (its manifest's `src` modules and JSON definitions),
+// scoped to the target cell rather than the manifest's dev scope.
+test("apply reads a project root through the shared project loader", async () => {
+  const { loadPack } = await import("../src/apply.ts")
+  const root = resolve(import.meta.dir, "../../../fixtures/examples/purchase-requests")
+  const pack = loadPack(root, { orgId: "org_hosted", environmentId: "prod" })
+  if (!pack.ok) throw new Error(JSON.stringify(pack.failures))
+  const ids = pack.artifacts.map((artifact) => (artifact as { artifactId: string }).artifactId)
+  expect(ids.some((id) => id.startsWith("purchasing."))).toBe(true)
+  expect(pack.retained.map((definition) => definition.id)).toEqual(["purchasing.large_requests"])
+  const scopes = new Set(pack.artifacts.map((artifact) => JSON.stringify((artifact as { scope?: unknown }).scope)))
+  expect(scopes.has(JSON.stringify({ orgId: "org_purchasing", environmentId: "dev" }))).toBe(false)
 })
