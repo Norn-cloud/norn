@@ -108,6 +108,21 @@ export async function publicSignUp(response: Response): Promise<Response> {
   return Response.json(body, { status: 200, headers: { "cache-control": "no-store" } })
 }
 
+/**
+ * Accepting an invitation that is no longer pending. The workspace may have undone it (a concurrent
+ * invitation took the last seat, billing.ts admitCreatedInvitation) or an admin withdrew it; Better
+ * Auth says only "Invitation not found", so say what the person can do about it.
+ */
+export async function acceptInvitation(response: Response): Promise<Response> {
+  if (response.status !== 400) return response
+  const body = (await response.clone().json().catch(() => null)) as { code?: unknown } | null
+  if (body?.code !== "INVITATION_NOT_FOUND") return response
+  return Response.json(
+    { code: "INVITATION_NOT_FOUND", message: "This invitation is no longer open: it expired, was withdrawn, or the workspace is at its member limit. Ask the workspace's admins for a new one." },
+    { status: 400, headers: { "cache-control": "no-store" } },
+  )
+}
+
 /** The signed-in user and active organization, for the shell. Display only; Norn decides permissions. */
 async function me(request: Request, env: Env): Promise<Response> {
   const session = await auth(env).api.getSession({ headers: request.headers })
@@ -141,7 +156,20 @@ async function polarWebhook(request: Request, env: Env): Promise<Response> {
  * shape their own checkout, e.g. a years-long free trial that reads as an active plan. They are refused
  * from outside; /api/billing/* is the only way in and calls them with a fixed body.
  */
-export const PLUGIN_BILLING_PATHS = new Set(["/api/auth/checkout", "/api/auth/customer/portal"])
+/**
+ * The plugin's endpoints refused from outside: checkout and portal (Studio calls them itself, from
+ * /api/billing, with a fixed body) and the customer reads, which Studio never calls. The reads go too:
+ * with a `reference_id`, `/customer/subscriptions/list` lists a whole workspace's subscriptions by
+ * metadata under the organization's token. Studio's billing document (/api/billing) is the only read.
+ */
+export const PLUGIN_BILLING_PATHS = new Set([
+  "/api/auth/checkout",
+  "/api/auth/customer/portal",
+  "/api/auth/customer/state",
+  "/api/auth/customer/orders/list",
+  "/api/auth/customer/benefits/list",
+  "/api/auth/customer/subscriptions/list",
+])
 /** Matched as Better Auth's router could: any case, with or without a trailing slash. */
 const pluginBillingPath = (pathname: string) => PLUGIN_BILLING_PATHS.has(pathname.toLowerCase().replace(/\/+$/, ""))
 
@@ -217,6 +245,7 @@ export default {
     // generic OAuth), so a linked gateway identity never yields a Studio session. Linking stays.
     if (SIGN_IN_ELSEWHERE.has(pathname)) return refuse(403, "Studio sign-in is by email and password or magic link.")
     if (pluginBillingPath(pathname)) return refuse(404, "No such endpoint; billing starts at /api/billing.")
+    if (pathname === "/api/auth/organization/accept-invitation") return acceptInvitation(await auth(env).handler(request))
     if (pathname.startsWith("/api/auth/")) return auth(env).handler(request)
     if (pathname === "/api/me") return me(request, env)
     if (pathname === "/api/billing" || pathname.startsWith("/api/billing/")) return billingRoute(request, env, billingConfig(env), pathname)

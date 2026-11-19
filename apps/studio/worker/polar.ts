@@ -8,7 +8,7 @@ import { applySubscription, type BillingConfig, type BillingDb, type PolarSubscr
  * under /api/auth: `POST /checkout` and `GET|POST /customer/portal`, which the Worker refuses from
  * outside (index.ts PLUGIN_BILLING_PATHS) and calls itself only from /api/billing with a fixed body
  * (the plugin would forward a caller's trial, discount, product and redirect fields to Polar);
- * `GET /customer/*` (the person's own Polar customer, read only); and `POST /polar/webhooks`
+ * `GET /customer/*` (customer reads, which Studio never calls and the Worker also refuses); and `POST /polar/webhooks`
  * (signature-verified with POLAR_WEBHOOK_SECRET, Standard Webhooks, 5-minute window).
  *
  * A person becomes a Polar customer at their first checkout, under their user id as external id. Never
@@ -56,11 +56,12 @@ export function polarPlugin(billing: PolarBilling, baseURL: string) {
 
 /**
  * After an account is deleted: delete its Polar customer (cancelling what it pays for), if it ever
- * checked out. Best effort: a failure is logged (no user data) and never blocks the deletion.
+ * checked out, and anonymize it so the person's email and name do not stay in Polar. Best effort: a
+ * failure is logged (no user data) and never blocks the deletion.
  */
 export const forgetPolarCustomer = (billing: PolarBilling) => async (user: { id: string }): Promise<void> => {
   try {
-    await deleteExternalCustomers(billing.client ?? polarClient(billing.config))(user.id)
+    await deleteExternalCustomers(billing.client ?? polarClient(billing.config))(user.id, { anonymize: true })
   } catch (error) {
     // A person who never checked out has no Polar customer: nothing to delete.
     if ((error as { statusCode?: number } | null)?.statusCode === 404) return

@@ -43,7 +43,7 @@ function stage(billing: boolean): Env {
 const sql = (env: Env) => env.AUTH_DB as unknown as Database
 
 // --- the Polar API mock --------------------------------------------------------------------------
-interface PolarCall { readonly method: string; readonly path: string; readonly body: unknown }
+interface PolarCall { readonly method: string; readonly path: string; readonly search: string; readonly body: unknown }
 let polarCalls: PolarCall[] = []
 const realFetch = globalThis.fetch
 beforeEach(() => {
@@ -54,7 +54,7 @@ beforeEach(() => {
     if (url.origin !== "https://sandbox-api.polar.sh") throw new Error(`unexpected fetch ${url.origin}`)
     const text = await request.text()
     const body = text === "" ? null : JSON.parse(text)
-    polarCalls.push({ method: request.method, path: url.pathname, body })
+    polarCalls.push({ method: request.method, path: url.pathname, search: url.search, body })
     if (request.method === "GET" && url.pathname === "/v1/customers/") return Response.json({ items: [], pagination: { total_count: 0, max_page: 1 } })
     if (request.method === "POST" && url.pathname === "/v1/customers/") return Response.json({ id: "cus_1", type: "individual", external_id: body.external_id }, { status: 201 })
     if (request.method === "PATCH" && url.pathname.startsWith("/v1/customers/external/")) return Response.json({ id: "cus_1" })
@@ -270,7 +270,7 @@ test("deleting an account deletes its Polar customer, best effort", async () => 
   const user = { id: "user_del" }
   db.run(`insert into user (id, name, email, emailVerified, createdAt, updatedAt) values ('user_del', 'del', 'del@example.com', 0, ?, ?)`, [new Date().toISOString(), new Date().toISOString()])
   await context.internalAdapter.deleteUser(user.id)
-  expect(polarCalls.map((entry) => `${entry.method} ${entry.path}`)).toEqual([`DELETE /v1/customers/external/${user.id}`])
+  expect(polarCalls.map((entry) => `${entry.method} ${entry.path}${entry.search}`)).toEqual([`DELETE /v1/customers/external/${user.id}?anonymize=true`])
   // Polar answering 404 (never checked out) or failing never blocks the deletion.
   await forgetPolarCustomer(billing)({ id: "user_without_customer" })
 })
@@ -362,6 +362,24 @@ test("the after-creation recount keeps exactly the earliest workspaces and invit
   expect(await admitCreatedInvitation(db, CONFIG, ORIGIN, workspace, "inv_2", userId)).toMatchObject({ kind: "plan-limit", limit: "members", allowed: 2, used: 2 })
 })
 
+test("accepting an invitation the workspace undid says why, not just that it is missing", async () => {
+  const env = stage(true)
+  const { cookie, userId } = await enroll(env, "host@example.com")
+  const organizationId = firstWorkspace(env, userId)
+  const invite = await post(env, "/api/auth/organization/invite-member", { email: "late@example.com", role: "member", organizationId }, { cookie })
+  expect(invite.status).toBe(200)
+  const { id } = (await invite.json()) as { id: string }
+  // What afterCreateInvitation does to the loser of a concurrent invitation.
+  sql(env).run("delete from invitation where id = ?", [id])
+  const late = await enroll(env, "late@example.com")
+  const accept = await post(env, "/api/auth/organization/accept-invitation", { invitationId: id }, { cookie: late.cookie })
+  expect(accept.status).toBe(400)
+  const body = (await accept.json()) as { code: string; message: string }
+  expect(body.code).toBe("INVITATION_NOT_FOUND")
+  expect(body.message).toContain("member limit")
+  expect(body.message).toContain("withdrawn")
+})
+
 test("concurrent invitations cannot pass the member limit together", async () => {
   const env = stage(true)
   const { cookie, userId } = await enroll(env, "many@example.com")
@@ -442,6 +460,11 @@ test("the plugin's own checkout and portal are refused from outside, whatever th
     expect({ path, status: response.status }).toEqual({ path, status: 404 })
   }
   expect((await call(env, "/api/auth/customer/portal", { headers: { cookie } })).status).toBe(404)
+  // The customer reads Studio never calls; with a reference_id the plugin would list a workspace's subscriptions.
+  for (const path of ["/api/auth/customer/subscriptions/list?reference_id=org_1", "/api/auth/customer/subscriptions/list/?referenceId=org_1", "/api/auth/customer/state", "/api/auth/customer/orders/list", "/api/auth/customer/benefits/list"]) {
+    const response = await call(env, path, { headers: { cookie } })
+    expect({ path, status: response.status }).toEqual({ path, status: 404 })
+  }
   expect(polarCalls).toEqual([])
   // /api/billing/checkout stays the way in, with the server's fixed body: the configured product, no trial or discount.
   expect((await call(env, "/api/billing/checkout?plan=pro", { headers: { cookie } })).status).toBe(303)
