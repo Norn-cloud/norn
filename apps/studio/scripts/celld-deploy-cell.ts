@@ -3,6 +3,7 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 import { writeSecretConfig } from "../celld-config.ts"
+import { otelSettings } from "../deploy-target.ts"
 
 // Deploy the Norn cell Worker (a built norn-cell-do bundle) to one celld stage, and
 // prove the stage serves it. A cell-only deploy has three traps, each handled here:
@@ -19,7 +20,9 @@ import { writeSecretConfig } from "../celld-config.ts"
 // Environment: CELLD_BUCKET, S3_ENDPOINT, AWS_REGION, AWS_ACCESS_KEY_ID,
 // AWS_SECRET_ACCESS_KEY (the stage's own bucket credentials), NORN_LINEAGE_KEY,
 // NORN_PROBE_EMAIL + NORN_PROBE_PASSWORD (a stage account), NORN_CELLD_SSH (the
-// ssh host of the stage node; required). Secrets travel in the 0600 config file, stdin or the
+// ssh host of the stage node; required). Optional: OTEL_EXPORTER_OTLP_ENDPOINT,
+// OTEL_EXPORTER_OTLP_HEADERS and OTEL_RESOURCE_ATTRIBUTES turn on the cell's
+// telemetry export (apps/norn-cell-do/telemetry.mjs). Secrets travel in the 0600 config file, stdin or the
 // environment, never argv or logs.
 
 /** What one stage's cell deploy touches, derived from its name alone. */
@@ -44,23 +47,6 @@ export function assertDeployableBuild(stage: string, fixturesEnabled: boolean): 
   if (fixturesEnabled) {
     throw new Error(`the bundle is a fixtures build (it accepts fixture principals); stage ${stage} takes only a build without the fixtures feature`)
   }
-}
-
-/**
- * The files a cell bundle must hold: worker.mjs, every module it imports by a relative path (read from
- * worker.mjs itself, so a new module can never be left out of a deploy), and the Wasm.
- */
-export function bundleFiles(worker: string): string[] {
-  const imported = [...worker.matchAll(/^import\b[^;]*?\bfrom\s+"\.\/([^"]+)"/gm)].map((match) => match[1] as string)
-  return [...new Set(["worker.mjs", ...imported, "pkg/norn_cell_do_bg.wasm"])]
-}
-
-/** Refuse a bundle missing any file the Worker needs to start. */
-export function assertBundleComplete(bundle: string): void {
-  const worker = join(bundle, "worker.mjs")
-  if (!existsSync(worker)) throw new Error("--bundle must hold worker.mjs (apps/norn-cell-do/README.md)")
-  const missing = bundleFiles(readFileSync(worker, "utf8")).filter((file) => !existsSync(join(bundle, file)))
-  if (missing.length > 0) throw new Error(`--bundle is missing ${missing.join(", ")} (apps/norn-cell-do/README.md)`)
 }
 
 /** Whether the bundle's Wasm was built with the `fixtures` feature, as the build itself reports it. */
@@ -95,6 +81,9 @@ export function probeServesNewBuild(status: number, body: string): boolean {
     return false
   }
 }
+
+/** What a cell bundle must hold: the host's modules and the built cell. */
+export const BUNDLE_FILES = ["worker.mjs", "subscribe.mjs", "wake.mjs", "telemetry.mjs", "otlp.mjs", join("pkg", "norn_cell_do_bg.wasm")]
 
 const env = (name: string): string => {
   const value = process.env[name]
@@ -154,9 +143,11 @@ async function main(argv: readonly string[]) {
   }
   const stage = cellStage(value("--stage"), process.env.CELLD_BUCKET)
   const bundle = value("--bundle")
-  if (bundle === undefined) throw new Error("--bundle is required (apps/norn-cell-do/README.md)")
-  assertBundleComplete(bundle)
+  if (bundle === undefined || !BUNDLE_FILES.every((file) => existsSync(join(bundle, file)))) {
+    throw new Error(`--bundle must hold ${BUNDLE_FILES.join(", ")} (apps/norn-cell-do/README.md)`)
+  }
   assertDeployableBuild(stage.stage, await bundleFixturesEnabled(bundle))
+  const otel = otelSettings(process.env)
   const config = join(bundle, "wrangler.json")
   writeSecretConfig(config, {
     name: "norn-cell",
@@ -164,7 +155,10 @@ async function main(argv: readonly string[]) {
     compatibility_date: "2026-11-01",
     durable_objects: { bindings: [{ name: "CELLS", class_name: "Cell" }] },
     migrations: [{ tag: "v1", new_sqlite_classes: ["Cell"] }],
-    vars: { NORN_HOST_ISSUER: stage.origin, NORN_HOST_JWKS_URL: `${stage.origin}/api/auth/jwks`, NORN_LINEAGE_KEY: env("NORN_LINEAGE_KEY") },
+    vars: {
+      NORN_HOST_ISSUER: stage.origin, NORN_HOST_JWKS_URL: `${stage.origin}/api/auth/jwks`, NORN_LINEAGE_KEY: env("NORN_LINEAGE_KEY"),
+      ...otel === undefined ? {} : { OTEL_EXPORTER_OTLP_ENDPOINT: otel.endpoint, OTEL_RESOURCE_ATTRIBUTES: otel.resourceAttributes ?? `deployment.environment=${stage.stage}`, ...otel.headers === undefined ? {} : { OTEL_EXPORTER_OTLP_HEADERS: otel.headers } },
+    },
   })
   try {
     execFileSync("celld", ["deploy", ".", "--json"], { cwd: bundle, stdio: ["ignore", "inherit", "inherit"] })

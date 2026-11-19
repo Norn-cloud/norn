@@ -339,6 +339,7 @@ pub(crate) fn call_action_bound<E: SqlEngine>(
         &kernel_call,
         action_digest,
         approved,
+        query.version,
     )? {
         Gated::Pending(pending) => return Ok(ActionAnswer::Pending(pending)),
         Gated::Replayed(outcome) => *outcome,
@@ -413,6 +414,7 @@ fn through_gate<E: SqlEngine>(
     kernel_call: &norn_kernel::ActionCall<'_>,
     action_digest: String,
     approved: Option<&Approved<'_>>,
+    definitions_version: Option<u64>,
 ) -> Result<Gated, Refusal> {
     let action_id = kernel_call.action.action_id.as_str();
     let gate = crate::approvals::gate(cell, action_id)?;
@@ -434,11 +436,14 @@ fn through_gate<E: SqlEngine>(
             Some(gate) => {
                 crate::approvals::call_command_id(
                     gate,
-                    action_id,
-                    &action_digest,
-                    &kernel_call.idempotency_key,
-                    &kernel_call.actor,
-                    &kernel_call.input,
+                    &crate::approvals::CallParts {
+                        action: action_id,
+                        action_digest: &action_digest,
+                        idempotency_key: &kernel_call.idempotency_key,
+                        requester: &kernel_call.actor,
+                        input: &kernel_call.input,
+                        definitions_version,
+                    },
                 )? == *command
             }
         },
@@ -468,6 +473,7 @@ fn through_gate<E: SqlEngine>(
                 idempotency_key: kernel_call.idempotency_key.clone(),
                 requester,
                 action_digest,
+                definitions_version,
             };
             Ok(
                 match crate::approvals::hold(cell, &gate, &parked, kernel_call.turn.now)? {

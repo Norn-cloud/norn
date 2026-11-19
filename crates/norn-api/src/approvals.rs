@@ -24,6 +24,13 @@
 //! changed since it parked refuses it (`approval.definition_changed`), and
 //! the requester's call under the new definition parks anew for a fresh
 //! approval.
+//!
+//! APPROVAL-PIN-1: a call pinned to a definitions version (`?version=`)
+//! parks with that pin, and its approval commits it pinned the same way: a
+//! catalog that changed between parking and approval refuses the commit
+//! (`defs.stale`) and commits nothing. The pin is part of the call's
+//! identity: the requester's retry under another catalog parks anew and
+//! waits for a fresh decision.
 
 use std::collections::BTreeMap;
 
@@ -93,6 +100,10 @@ pub(crate) struct ParkedCall {
     /// was admitted under; empty for a call parked before digests were bound,
     /// which matches no definition.
     pub(crate) action_digest: String,
+    /// APPROVAL-PIN-1: the definitions version the requester pinned the call
+    /// to (`?version=`), if any. Its approval commits it only while that
+    /// version is still active (`defs.stale` otherwise).
+    pub(crate) definitions_version: Option<u64>,
 }
 
 /// A parked call as its decision carries it: the approval that held it and
@@ -128,6 +139,10 @@ pub(crate) fn held_call(approval: &RuntimeValue) -> Option<HeldCall> {
             idempotency_key: text("idempotencyKey")?,
             requester: norn_ir::runtime::decode(approval.get("requester")?).ok()?,
             action_digest: text("actionDigest").unwrap_or_default(),
+            definitions_version: match approval.get("definitionsVersion") {
+                None => None,
+                Some(pin) => Some(norn_ir::runtime::decode(pin).ok()?),
+            },
         },
     })
 }
@@ -226,44 +241,58 @@ fn request(gate: &Gate) -> Value {
 }
 
 /// The command id of a parked call: one per action, its effective
-/// definition's digest, the gate revision holding it, input, idempotency key
-/// and requester, so the same call parks
-/// once, and an approval approves exactly the call it was asked about under
-/// the action it was asked about (APPROVAL-REVISION-1).
+/// definition's digest, the gate revision holding it, input, idempotency
+/// key, requester and definitions pin, so the same call parks once, and an
+/// approval approves exactly the call it was asked about under the action
+/// it was asked about (APPROVAL-REVISION-1).
+///
+/// APPROVAL-PIN-1: a pinned call's id also hashes its pin, under its own
+/// domain tag, so the requester's retry under another catalog (unpinned, or
+/// pinned to another version) is another call that parks for a fresh
+/// decision, never the earlier approval.
 fn command_id(gate: &Gate, parked_call: &ParkedCall) -> Result<String, Refusal> {
     call_command_id(
         gate,
-        &parked_call.action,
-        &parked_call.action_digest,
-        &parked_call.idempotency_key,
-        &parked_call.requester.subject,
-        &parked_call.input,
+        &CallParts {
+            action: &parked_call.action,
+            action_digest: &parked_call.action_digest,
+            idempotency_key: &parked_call.idempotency_key,
+            requester: &parked_call.requester.subject,
+            input: &parked_call.input,
+            definitions_version: parked_call.definitions_version,
+        },
     )
 }
 
+/// What identifies a parked call besides its gate ([`command_id`]).
+pub(crate) struct CallParts<'a> {
+    pub(crate) action: &'a str,
+    pub(crate) action_digest: &'a str,
+    pub(crate) idempotency_key: &'a str,
+    pub(crate) requester: &'a str,
+    pub(crate) input: &'a RuntimeObject,
+    pub(crate) definitions_version: Option<u64>,
+}
+
 /// [`command_id`] from the call's parts: what an approval replay compares.
-pub(crate) fn call_command_id(
-    gate: &Gate,
-    action: &str,
-    action_digest: &str,
-    idempotency_key: &str,
-    requester: &str,
-    input: &RuntimeObject,
-) -> Result<String, Refusal> {
-    let digest = norn_ir::canonical::domain_hash_hex(
-        b"norn.approval.call/2\0",
-        &(
-            action,
-            action_digest,
-            // The gate revision the decider roles come from: a changed gate
-            // asks anew.
-            &gate.definition,
-            gate.revision,
-            idempotency_key,
-            requester,
-            input,
-        ),
-    )
+pub(crate) fn call_command_id(gate: &Gate, parts: &CallParts<'_>) -> Result<String, Refusal> {
+    let call = (
+        parts.action,
+        parts.action_digest,
+        // The gate revision the decider roles come from: a changed gate
+        // asks anew.
+        &gate.definition,
+        gate.revision,
+        parts.idempotency_key,
+        parts.requester,
+        parts.input,
+    );
+    let digest = match parts.definitions_version {
+        None => norn_ir::canonical::domain_hash_hex(b"norn.approval.call/2\0", &call),
+        Some(pin) => {
+            norn_ir::canonical::domain_hash_hex(b"norn.approval.pinned-call/2\0", &(call, pin))
+        }
+    }
     .map_err(Refusal::host)?;
     Ok(format!(
         "{COMMAND_PREFIX}{}",
@@ -384,7 +413,7 @@ fn park<E: SqlEngine>(
 ) -> Result<(), Refusal> {
     let starter = norn_ir::runtime::encode(&parked_call.requester).map_err(Refusal::host)?;
     let text = |value: &str| RuntimeValue::String(value.to_owned());
-    let approval: RuntimeObject = BTreeMap::from([
+    let mut approval: RuntimeObject = BTreeMap::from([
         ("definition".to_owned(), text(&gate.definition)),
         (
             "revision".to_owned(),
@@ -402,6 +431,12 @@ fn park<E: SqlEngine>(
         ),
         ("requester".to_owned(), starter),
     ]);
+    if let Some(pin) = parked_call.definitions_version {
+        approval.insert(
+            "definitionsVersion".to_owned(),
+            norn_ir::runtime::encode(&pin).map_err(Refusal::host)?,
+        );
+    }
     let payload: RuntimeObject = BTreeMap::from([
         ("kind".to_owned(), text("perform")),
         (

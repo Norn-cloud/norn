@@ -1037,6 +1037,7 @@ fn commit_approved<E: SqlEngine>(
         &call.call.action,
         &request,
         &approved,
+        call.call.definitions_version,
         disclosure,
         now,
         as_requester,
@@ -1069,6 +1070,8 @@ fn commit_replayed<E: SqlEngine>(
         &waiting.action,
         &request,
         &crate::actions::Approved::Parked(command),
+        // A run's step calls unpinned.
+        None,
         disclosure,
         now,
         as_requester,
@@ -1084,6 +1087,8 @@ fn commit_as_requester<E: SqlEngine>(
     action_id: &str,
     request: &crate::actions::ActionRequest,
     approved: &crate::actions::Approved<'_>,
+    // APPROVAL-PIN-1: the requester's pin holds at approval too.
+    version: Option<u64>,
     disclosure: &dyn QuestionRuntime<E>,
     now: LogicalTime,
     as_requester: AsStarter<'_>,
@@ -1091,7 +1096,7 @@ fn commit_as_requester<E: SqlEngine>(
     let query = crate::actions::ActionQuery {
         org_id: Some(host.scope().org_id.clone()),
         environment_id: Some(host.scope().environment_id.clone()),
-        version: None,
+        version,
     };
     let mut commit = || {
         crate::actions::call_action_bound(

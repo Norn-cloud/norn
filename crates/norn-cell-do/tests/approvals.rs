@@ -24,10 +24,16 @@ const APPROVAL_ID: &str = "ops.melt_approval";
 /// Install the approval gating the melt action, deciders `admin`, signed by
 /// the operator.
 fn gate(cell: &Cell, expires_in_ms: Option<u64>) {
+    gate_asking(cell, expires_in_ms, "Convert this melt?", None);
+}
+
+/// [`gate`], asking `question`, replacing revision `replaces` when given:
+/// installing it again with another question is a new definitions version.
+fn gate_asking(cell: &Cell, expires_in_ms: Option<u64>, question: &str, replaces: Option<u64>) {
     let mut payload = json!({
         "action": MELT_ACTION,
         "decider": { "roles": ["admin"] },
-        "question": "Convert this melt?",
+        "question": question,
         "risk": "high",
     });
     if let Some(ms) = expires_in_ms {
@@ -43,6 +49,9 @@ fn gate(cell: &Cell, expires_in_ms: Option<u64>) {
     );
     assert_eq!(status, 200, "{admitted}");
     body["signoff"] = json!({ "restatementSha256": admitted["restatementSha256"] });
+    if let Some(revision) = replaces {
+        body["expectedVersion"] = json!(revision);
+    }
     let (status, installed) = call(
         cell,
         "POST",
@@ -161,6 +170,83 @@ fn an_approved_call_commits_for_its_requester() {
     assert_eq!(cell.caller.current(), None);
 }
 
+/// The active definitions version.
+fn definitions_version(cell: &Cell) -> u64 {
+    let (status, catalog) = call_with(cell, "GET", "/v1/definitions", SCOPE, OPERATOR, "");
+    assert_eq!(status, 200, "{catalog}");
+    catalog["version"].as_u64().unwrap()
+}
+
+/// Park the melt call pinned to `version` (`?version=`).
+fn convert_pinned(cell: &Cell, version: u64, body: &str) -> (u16, Value) {
+    let query = format!("{SCOPE}&version={version}");
+    let path = format!("/v1/actions/{MELT_ACTION}");
+    call_with(cell, "POST", &path, &query, OPERATOR, body)
+}
+
+/// APPROVAL-PIN-1: a call pinned to a definitions version commits on approval
+/// only while that version is active: a catalog that changed between parking
+/// and approval refuses the commit (`defs.stale`) and commits nothing, and
+/// the requester's retry under the current catalog parks for a fresh
+/// decision instead of reusing that approval.
+#[test]
+fn an_approval_keeps_the_callers_definitions_pin() {
+    let cell = cell();
+    gate(&cell, None);
+    let pinned = definitions_version(&cell);
+    let (status, parked) = convert_pinned(&cell, pinned, &melt7("operator-pin"));
+    assert_eq!(status, 202, "{parked}");
+    let id = parked["decision"]["id"].as_str().unwrap().to_owned();
+    gate_asking(&cell, None, "Convert this melt now?", Some(1));
+    assert_ne!(definitions_version(&cell), pinned, "the catalog changed");
+    let (status, decided) = decide(&cell, APPROVER, &id, "approve");
+    assert_eq!(status, 200, "{decided}");
+    assert_eq!(
+        decided["call"],
+        json!({ "committed": false, "code": "defs.stale" }),
+        "{decided}"
+    );
+    assert_eq!(melt_status(&cell), 404, "nothing committed");
+
+    // The requester's retry under the current catalog is another call: it
+    // never finds the earlier approval, and parks for a fresh decision.
+    let current = definitions_version(&cell);
+    let (status, retried) = convert_pinned(&cell, current, &melt7("operator-pin"));
+    assert_eq!(status, 202, "{retried}");
+    let fresh = retried["decision"]["id"].as_str().unwrap().to_owned();
+    assert_ne!(fresh, id, "a fresh decision");
+    let (status, unpinned) = convert(&cell, OPERATOR, &melt7("operator-pin"));
+    assert_eq!(status, 202, "{unpinned}");
+    assert_ne!(unpinned["decision"]["id"], json!(id), "{unpinned}");
+    assert_eq!(
+        melt_status(&cell),
+        404,
+        "no commit without a fresh decision"
+    );
+    // The original pin stays stale.
+    let (status, stale) = convert_pinned(&cell, pinned, &melt7("operator-pin"));
+    assert_ne!(status, 200, "{stale}");
+    assert_eq!(stale["code"], json!("defs.stale"), "{stale}");
+    assert_eq!(melt_status(&cell), 404);
+    // The fresh decision approved, the retry commits.
+    let (status, decided) = decide(&cell, APPROVER, &fresh, "approve");
+    assert_eq!(status, 200, "{decided}");
+    assert_eq!(decided["call"], json!({ "committed": true }), "{decided}");
+    assert_eq!(melt_status(&cell), 200);
+
+    // Unchanged between parking and approval, the pinned call commits.
+    let cell = step_cell::cell();
+    gate(&cell, None);
+    let pinned = definitions_version(&cell);
+    let (status, parked) = convert_pinned(&cell, pinned, &melt7("operator-pin"));
+    assert_eq!(status, 202, "{parked}");
+    let id = parked["decision"]["id"].as_str().unwrap().to_owned();
+    let (status, decided) = decide(&cell, APPROVER, &id, "approve");
+    assert_eq!(status, 200, "{decided}");
+    assert_eq!(decided["call"], json!({ "committed": true }), "{decided}");
+    assert_eq!(melt_status(&cell), 200);
+}
+
 /// APPROVAL-BINDS-INPUT: an approval approves exactly the call it was asked about: the same key
 /// with another input is another call, and parks on its own.
 #[test]
@@ -270,8 +356,9 @@ fn a_rejected_step_call_fails_the_run() {
 }
 
 /// APPROVAL-MCP-PARKS: a gated action's MCP tool parks exactly like the
-/// HTTP call. MCP's loopback goes through the same dispatch, so the tool
-/// answers the same pending decision, not an error, and commits nothing.
+/// HTTP call pinned to the catalog version the tool came from. MCP's loopback
+/// goes through the same dispatch, so the tool answers the same pending
+/// decision, not an error, and commits nothing.
 #[test]
 fn an_mcp_tool_call_parks_like_http() {
     let cell = cell();
@@ -302,8 +389,10 @@ fn an_mcp_tool_call_parks_like_http() {
     let parked = called["result"]["structuredContent"].clone();
     assert_eq!(parked["outcome"], json!("pending"), "{called}");
     assert_eq!(melt_status(&cell), 404);
-    // The same call over HTTP is the same parked call.
-    let (status, direct) = convert(&cell, OPERATOR, &melt7(key));
+    // MCP calls an action pinned to the catalog it listed (APPROVAL-PIN-1):
+    // the same call over HTTP pinned to that version is the same parked call.
+    let version = definitions_version(&cell);
+    let (status, direct) = convert_pinned(&cell, version, &melt7(key));
     assert_eq!((status, &direct), (202, &parked));
     assert_eq!(pending(&cell, APPROVER)["total"], json!(1));
 }

@@ -5,6 +5,7 @@ import { initSync, NornCell } from "./pkg/norn_cell_do.js";
 import module from "./pkg/norn_cell_do_bg.wasm";
 import * as live from "./subscribe.mjs";
 import { Wake } from "./wake.mjs";
+import { instrument, noteRefusal, syncFinished } from "./telemetry.mjs";
 initSync({ module });
 
 // The demo cell, as [orgId, environmentId]: where a request that names no well-formed scope lands.
@@ -227,10 +228,13 @@ export class Cell {
       // Already closed.
     }
   }
-  /** After a commit, every live subscription on this object is answered again. */
+  /** After a commit, every live subscription on this object is answered again; resolves to the changed snapshots sent. */
   publish() {
-    if (this.ctx.getWebSockets().length === 0) return;
-    live.publish(this.ctx, (path, query, authorization) => this.ask(path, query, authorization)).catch((error) => console.error(`live publish failed: ${error}`));
+    if (this.ctx.getWebSockets().length === 0) return Promise.resolve(0);
+    return live.publish(this.ctx, (path, query, authorization) => this.ask(path, query, authorization)).catch((error) => {
+      console.error(`live publish failed: ${error}`);
+      return 0;
+    });
   }
   async fetch(request) {
     const url = new URL(request.url);
@@ -293,7 +297,8 @@ export class Cell {
     if (reply instanceof Response) return reply;
     // After a commit, every live subscription on this object is answered again.
     if (request.method !== "GET" && reply.status < 400) this.publish();
-    return new Response(reply.body, { status: reply.status, headers: { "content-type": "application/json" } });
+    // A refusal's text is noted for its code's count (telemetry.mjs), so telemetry never reads the reply.
+    return noteRefusal(this.env, new Response(reply.body, { status: reply.status, headers: { "content-type": "application/json" } }), reply.body);
   }
   /** Run one claimed sync to its end: every step is the cell's, every fetch its plan. */
   async runSync(id) {
@@ -361,6 +366,7 @@ export class Cell {
     const done = step.done ?? {};
     const wallMs = Date.now() - started;
     console.log(JSON.stringify({ sync: id, outcome: done.outcome, rowsRead: done.rowsRead, rowsLanded: done.rowsLanded, rowsQuarantined: done.rowsQuarantined, steps, fetches, wallMs, cellMs, fetchMs, maxCellMs, maxFetchMs, slow }));
+    syncFinished(this.env, { ...done, wallMs }, this.ctx);
     // A sync commits as it goes; live subscriptions are answered again once it ends.
     if ((done.rowsLanded ?? 0) > 0) this.publish();
   }
@@ -394,6 +400,9 @@ export class Cell {
     if (typeof this.ctx.waitUntil === "function") this.ctx.waitUntil(guarded);
   }
 }
+
+// OTEL-OFF-1: request, sync, alarm and live publish telemetry, exported only when configured (telemetry.mjs).
+instrument(Cell);
 
 // SYNC-YIELD-2: a sync step aims to hold the cell about this long (NORN_SYNC_STEP_MS, 250 ms to 30 s); rows per step follow from the last step's time per row.
 const STEP_BUDGET_MS = 1500;
