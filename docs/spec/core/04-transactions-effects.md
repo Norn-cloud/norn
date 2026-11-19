@@ -30,10 +30,10 @@ Closed effect operations are the existing canonical fact mutations, link mutatio
 |---|---|
 | TXN-ATOMIC-1: all synchronous effects and outbox/timers commit together; commit | `core.txn.atomic_boundary` |
 | TXN-CLOSED-1: every writer admitted in full closure; admission/preparation | `core.txn.unchecked_writer` |
-| TXN-READSET-1: absence/membership/definition/settings/auth dependencies fenced; commit | `core.txn.contention` |
-| TXN-INTENT-1: user preconditions survive retries; preparation/commit | `core.txn.stale_intent` |
-| TXN-IDEMPOTENT-1: one accepted consequence per exact intent; commit | `core.txn.identity_mismatch` |
-| TXN-HISTORY-1: posted facts never overwritten/deleted; admission/commit | `core.txn.immutable_history` |
+| TXN-READSET-1: absence/membership/definition/settings/auth dependencies fenced; commit | `core.txn.contention` (reserved, unimplemented) |
+| TXN-INTENT-1: user preconditions survive retries; preparation/commit | `core.txn.stale_intent` (reserved, unimplemented) |
+| TXN-IDEMPOTENT-1: one accepted consequence per exact intent; commit | `core.txn.identity_mismatch` (reserved, unimplemented) |
+| TXN-HISTORY-1: posted facts never overwritten/deleted; admission/commit | `core.txn.immutable_history` (reserved, unimplemented) |
 
 Expected evidence: runtime atomicity/CAS enforcement, crash/reopen/race correspondence, generated per-writer preservation and explicit external-boundary goals. A safe constructor only certifies its own outputs; arbitrary account selection or imported data does not inherit that proof.
 
@@ -173,7 +173,7 @@ the parked command's result and commits the run's result turn (FLOW-DRIVER-1) wi
 the decision's resolution in one commit (DECISION-LEDGER-1). The same key and body
 replays the original commit. A decider adds a condition and grants nothing: the
 result turn runs as the cell, and the run's later steps act under the run
-starter's authority, never the decider's. The receipt is disclosed under D53 by the
+starter's authority, never the decider's. The receipt is disclosed by the
 cell's question runtime; a cell without one decides nothing. A run document names
 the open decision it waits on (`decision: {id, expiresAtMs}`) when the caller may
 decide it. Named scenarios (`crates/norn-cell-do/tests/decisions.rs`):
@@ -207,7 +207,7 @@ An `approval` retained definition (`{action, decider: {roles, law?}, question,
 risk, expiresInMs?}`) makes every call of one admitted action wait for a person.
 At most one active approval gates an action; its decider roles are roles of the
 cell's declared role table; installing or revising one changes who may complete
-an action, so it is installed only by signing the server's restatement (D59), as
+an action, so it is installed only by signing the server's restatement (#1094), as
 a flow is. While it is active, the shared action dispatch (every surface: HTTP,
 MCP's loopback, a flow's action step) runs the kernel's action pipeline for the
 call against a host that serves every read and stops at the commit point. A call

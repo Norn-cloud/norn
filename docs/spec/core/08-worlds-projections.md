@@ -34,12 +34,12 @@ Statistical analysis is a recorded Function result over point-in-time inputs. Pu
 | FORK-PIN-1: a fork is created only at its parent's verified head and keeps that pin and the cell identity; create/open | `core.world.fork_stale_base`, `core.world.fork_invalid_world` |
 | FORK-SIMULATE-1: only a fork records simulated results; main records performed results only; dispatch | `core.world.simulation_forbidden` |
 | FORK-EVIDENCE-1: what a fork minted is never presented as main evidence; export/evidence | `core.world.fork_evidence_forbidden` |
-| FORK-LIFE-1: a discarded, expired or promoted fork accepts no commit or open; host | `core.world.fork_closed` |
-| FORK-MERGE-1: promotion replays commands under main's current laws; commit | `core.world.merge_refused` |
+| FORK-LIFE-1: a discarded, expired or promoted fork accepts no commit or open; host | `core.world.fork_closed` (reserved, unimplemented) |
+| FORK-MERGE-1: promotion replays commands under main's current laws; commit | `core.world.merge_refused` (reserved, unimplemented) |
 | ASOF-KNOWLEDGE-1: no future knowledge leaks into old cutoff; evaluation | `core.world.temporal_leakage` |
 | RESTATE-HISTORY-1: append new interpretation, retain old answers; admission/publication | `core.world.invalid_restatement` |
 | LINEAGE-SUM-1: number equals exact declared contributions; publication | `core.projection.lineage_incomplete` |
-| SUB-REVISION-1: no silent gaps or revoked deliveries; host | `core.projection.reset_required` |
+| SUB-REVISION-1: no silent gaps or revoked deliveries; host | `core.projection.reset_required` (reserved, unimplemented) |
 | ANALYSIS-PUBLISH-1: temporal/quality/evidence guards precede publication; commit | `core.projection.publication_guard` |
 
 Evidence: runtime isolation/access enforcement; sampled replay/subscription/three-engine correspondence; bounded query tests; explicitly qualified statistical results. Locale renders labels/refusals/law slots without changing IDs, arithmetic, time or evidence. EN/AR use one semantic result and RTL metadata.
@@ -102,7 +102,7 @@ Inside a fork instance, inherited rows keep the `world` label they were committe
 - **Open** reopens an `open` fork under its pin and the inherited identity.
 - **Commit** runs the same evaluator, schemas, laws and authority as main, against the fork's own state. It never reads or writes the parent after creation.
 - **Discard** closes the fork. Its unique pages become unreachable and are reclaimed by garbage collection.
-- **TTL.** A fork with `expires_at` becomes `expired` when the lifecycle service observes the deadline; expiry is a discard. Open, read and commit on a closed fork refuse `core.world.fork_closed`.
+- **TTL.** A fork with `expires_at` becomes `expired` when the lifecycle service observes the deadline; expiry is a discard. Open, read and commit on a closed fork refuse `core.world.fork_closed` (reserved, unimplemented).
 - **Promote** is merge by replay (below), then the fork closes as `promoted`. Promotion never copies fork rows, pages or receipts into main.
 - **Known limit (flows):** a flow cannot be retired today: retirement is refused (`definition.flow_runs_live`) until the run ledger can rule out a live run, so a flow's artifacts stay in the kernel set.
 
@@ -116,7 +116,7 @@ Pages and blobs dedupe within one tenant only, across all of that tenant's cells
 
 ### Merge contract
 
-**FORK-MERGE-1.** Facts merge by replay, never by copying state. Each command the fork admitted after its base is replayed against main's current state under main's current authority, definition versions and laws. A command whose read versions are unchanged, or which re-evaluates to the same outcome, commits as an ordinary main action. Any other command refuses `core.world.merge_refused` with a typed reason or becomes a decision card; nothing is silently overwritten. Real performs happen only under main's bindings, after the replayed command is admitted. Definition namespaces merge three-way against the fork's base root: unchanged, one-sided or identical changes merge, divergent changes become conflicts, and the merged root passes admission again. This states the contract only; replay, recheck and decision cards are a later unit.
+**FORK-MERGE-1.** Facts merge by replay, never by copying state. Each command the fork admitted after its base is replayed against main's current state under main's current authority, definition versions and laws. A command whose read versions are unchanged, or which re-evaluates to the same outcome, commits as an ordinary main action. Any other command refuses `core.world.merge_refused` (reserved, unimplemented) with a typed reason or becomes a decision card; nothing is silently overwritten. Real performs happen only under main's bindings, after the replayed command is admitted. Definition namespaces merge three-way against the fork's base root: unchanged, one-sided or identical changes merge, divergent changes become conflicts, and the merged root passes admission again. This states the contract only; replay, recheck and decision cards are a later unit.
 
 ### FORK-ISOLATE
 
