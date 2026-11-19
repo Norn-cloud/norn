@@ -938,7 +938,7 @@ pub fn decide<E: SqlEngine>(
 /// An approval [`decide_held`] leaves to commit once the cell is released.
 enum Approval {
     /// Approved by this call.
-    Now(HeldCall),
+    Now(Box<HeldCall>),
     /// The caller's own earlier approval, replayed: the approved command.
     Replayed(String),
 }
@@ -1004,7 +1004,7 @@ fn decide_held<E: SqlEngine>(
     let approved = decision
         .call
         .filter(|_| body.choice == crate::approvals::APPROVE)
-        .map(Approval::Now);
+        .map(|call| Approval::Now(Box::new(call)));
     Ok((decided, approved))
 }
 
@@ -1080,7 +1080,10 @@ fn commit_replayed<E: SqlEngine>(
 
 /// One approved call through the shared dispatch as `requester`, fenced by
 /// `approved`.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one dispatch shared by a fresh approval and its replay"
+)]
 fn commit_as_requester<E: SqlEngine>(
     host: &DevHost<E>,
     requester: &RunStarter,
