@@ -91,6 +91,15 @@ pub struct Reply {
 
 #[wasm_bindgen]
 impl NornCell {
+    /// Whether this build accepts fixture principals ([`crate::fixtures_enabled`]):
+    /// the Worker refuses to open a cell of such a build outside a smoke or
+    /// test stage, and the deploy script refuses to deploy it.
+    #[must_use]
+    #[wasm_bindgen(js_name = fixturesEnabled)]
+    pub fn fixtures_enabled() -> bool {
+        crate::fixtures_enabled()
+    }
+
     /// Open the cell for the DO's own scope: a demo scope is seeded on first
     /// use; any other scope is served if it was provisioned, else vacant.
     /// `issuer` and `jwks` are the pinned token issuer and its key document
