@@ -164,13 +164,32 @@ scope and unit. Altered weights, malformed matrices and duplicate coordinates or
 writers refuse. Nonzero residuals identify writer, partition and symbolic column;
 unsupported writers and arithmetic/resource limits remain unknown. A residual is
 an algebraic witness, not a reachable runtime counterexample.
-Keyed coordinates (`Bal[from]`, `Bal[to]`) of one family, scope and unit may
-name one cell at run time. Each writer must also balance in every key-equality
-case its guard does not exclude (the adapter lists proved `from != to` pairs),
-with the aliased writes either accumulating or one pre-state write surviving.
-An unbalanced case refuses as `law.conservation.key_alias`, naming the merged
-coordinates; more than 6 aliasing keys per family or 256 cases per writer is
-unknown (`law.conservation.alias_bound`), never admitted.
+Stored coordinates name a row member by canonical storage identity: the root
+type of the object's hierarchy, the member and the key (`Fixed`, an input field
+used verbatim, or `Computed`), as the kernel identifies rows. Labels, scope and
+unit never separate storage, so a parent and a child type with one key are one
+row, and two coordinates may name one cell at run time (`from == to`). Each
+writer lists its write footprint, every coordinate it assigns, including
+zero-delta writes such as `Bal[k] := pre.Bal[k]`, and must also balance in every
+key-equality case of its footprint that its executable preconditions do not
+exclude, with the writes to one cell either accumulating or one pre-state write
+surviving. The checker lowers the preconditions itself; only a top-level
+conjunct `input.a != input.b` excludes a case, and computed keys stay possibly
+equal. An unbalanced case refuses as `law.conservation.key_alias`, naming the
+merged coordinates. More than 6 assigned coordinates of one stored member or
+256 cases per writer is unknown (`law.conservation.alias_bound`). Cells that may
+be one row but carry different weights, scopes or units, or stored coordinates
+beside unstored ones, are unknown (`law.conservation.alias_unlowerable`). None
+is ever admitted.
+
+This alias coverage is reviewed, not proved: the case enumeration, the footprint
+and storage lowering, the precondition lowering and the merged-row
+reconstruction feed the proved per-writer decision and are named in
+`TRUST-CHECKER-CERTIFICATE-GLUE`. The runtime does not close the gap. The kernel
+refuses duplicate canonical keys in a submitted `CellCommit`, but decision
+preparation folds a decision's ordered changes into one write per row, and the
+last `Set` wins, so two writes to one row through aliased keys reach the commit
+as one write and are never refused there.
 
 This kernel alone establishes no application evidence. Declaration lowering must
 bind the complete writer closure and functional to a generated Challenge before

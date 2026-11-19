@@ -922,6 +922,10 @@
       "message": "مُعدِّل حفظ الكمية له حالات تطابق مفاتيح أكثر مما يفحصه المدقق: {$detail}",
       "review": "needs_review"
     },
+    "law.conservation.alias_unlowerable": {
+      "message": "مُعدِّل حفظ الكمية قد يكتب صفاً واحداً عبر إحداثيات لا يستطيع المدقق التوفيق بينها: {$detail}",
+      "review": "needs_review"
+    },
     "law.conservation.key_alias": {
       "message": "مُعدِّل حفظ الكمية لا يتوازن عندما تشير مفاتيحه إلى الخلية نفسها: {$detail}",
       "review": "needs_review"

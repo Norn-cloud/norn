@@ -917,11 +917,15 @@
   },
   {
     "code": "law.conservation.alias_bound",
-    "fix": "Split the writer so each keyed family touches at most 6 keys, or declare guards that keep its keys distinct, then check it again."
+    "fix": "Split the writer so it assigns at most 6 coordinates of one stored member, or add preconditions such as input.from != input.to that keep its keys distinct, then check it again."
+  },
+  {
+    "code": "law.conservation.alias_unlowerable",
+    "fix": "Give every coordinate its stored row (root type, member and key), and give coordinates that may name one row the same weight, scope and unit."
   },
   {
     "code": "law.conservation.key_alias",
-    "fix": "Guard the writer so the reported keys are distinct (for example from != to) and declare that guard, or make the aliased case balance on its own."
+    "fix": "Add a precondition that keeps the reported keys distinct (for example input.from != input.to), or make the aliased case balance on its own."
   },
   {
     "code": "law.example.mismatch",

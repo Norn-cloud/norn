@@ -104,7 +104,15 @@ pub fn suggest_conservation(
         .map(|o| Writer {
             id: o.record.clone(),
             delta: Delta::Affine(o.delta.iter().map(|v| vec![*v]).collect()),
-            distinct: Vec::new(),
+            // An observation assigns what it changed; with no preconditions
+            // every stored key pair stays possibly equal.
+            assigns: coordinates
+                .iter()
+                .zip(&o.delta)
+                .filter(|(_, v)| **v != zero)
+                .map(|(c, _)| c.id.clone())
+                .collect(),
+            preconditions: Vec::new(),
         })
         .collect();
     let training = writers.get(..training_records).ok_or(Failure::Malformed)?;
@@ -167,7 +175,7 @@ mod tests {
                     code: "g".into(),
                 },
                 weight: q(1, 1),
-                key: None,
+                cell: None,
             })
             .collect();
         let observations = (0..count)

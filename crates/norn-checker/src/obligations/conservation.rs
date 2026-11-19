@@ -5,6 +5,7 @@
 //! complete writer coverage, the declared functional and faithful affine deltas.
 use std::collections::{BTreeMap, BTreeSet};
 
+use norn_expr::{RowComparison, RowExpr};
 use norn_ir::UnitRef;
 
 /// The extracted, proved acceptance decision for one writer (#718 U5).
@@ -25,35 +26,62 @@ pub struct Coordinate {
     pub unit: UnitRef,
     /// Weight required by the declared law, independently of discovery.
     pub weight: Rational,
-    /// The symbolic key when this coordinate is one row of a keyed family
-    /// (`Bal[from]`); `None` for a coordinate that is always its own cell.
-    pub key: Option<Key>,
+    /// The stored row member this coordinate reads and writes, or `None` for
+    /// a purely mathematical coordinate that is always its own cell. A system
+    /// mixing the two cannot be checked for aliasing and is unknown.
+    pub cell: Option<Cell>,
 }
 
-/// The symbolic key of a keyed coordinate such as `Bal[from]`.
+/// The storage identity of a coordinate such as `Account.balance[from]`.
 ///
-/// Keyed coordinates of one family, scope and unit with different bindings
-/// may still name one runtime cell (`from == to`), so CONS-LINEAR-1 checks
-/// every key-equality case a writer does not exclude.
+/// Rows are identified the way the kernel identifies them: the root type of
+/// the object's hierarchy plus the key (`CommitModel::canonical`). Labels,
+/// scope bindings (book, currency) and units never separate storage, so two
+/// coordinates of one root and member may name one cell at run time, and
+/// CONS-LINEAR-1 checks every case a writer's preconditions do not exclude.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Key {
-    /// The keyed state family (`Bal`).
-    pub family: String,
-    /// The writer's symbolic key (`from`). A binding names one key value
-    /// within a writer; different bindings may be equal at run time.
-    pub binding: String,
+pub struct Cell {
+    /// The object type the writer names (`Wallet`).
+    pub object_type: String,
+    /// The root of `object_type`'s hierarchy (`Account`); a parent and a
+    /// child type with one key are one row.
+    pub root: String,
+    /// The stored property (`balance`).
+    pub member: String,
+    /// The row key.
+    pub key: CellKey,
+}
+
+/// How a cell's row key is computed.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum CellKey {
+    /// A constant canonical key.
+    Fixed(String),
+    /// The action input field `input.<field>`, used verbatim as the
+    /// canonical key. A repeated field is one key. A key that normalizes,
+    /// converts or looks up its input is [`CellKey::Computed`].
+    Input(String),
+    /// Any other key expression, labelled for diagnostics. It may equal any
+    /// key, including another computed key with the same label.
+    Computed(String),
 }
 
 /// Diagnostic code of [`Failure::Aliased`]: a writer balances only while its
-/// keyed coordinates name distinct cells.
+/// coordinates name distinct cells.
 pub const KEY_ALIAS_CODE: &str = "law.conservation.key_alias";
 /// Diagnostic code prefixing the [`Failure::Unknown`] reason when a writer has
 /// more key-aliasing cases than the checker enumerates.
 pub const ALIAS_BOUND_CODE: &str = "law.conservation.alias_bound";
+/// Diagnostic code prefixing the [`Failure::Unknown`] reason when a possible
+/// collision cannot be checked faithfully: cells that may be one row carry
+/// different weights, scopes or units, or only some coordinates are stored.
+pub const ALIAS_UNLOWERABLE_CODE: &str = "law.conservation.alias_unlowerable";
 /// Most key-aliasing cases checked per writer, the all-distinct case included.
 pub const MAX_ALIAS_CASES: usize = 256;
-/// Most distinct bindings one family/scope/unit of a writer may touch.
+/// Most assigned coordinates one root and member of a writer may touch.
 pub const MAX_ALIASED_KEYS: usize = 6;
+/// The expression root of action input fields in preconditions.
+const INPUT_ROOT: &str = "input";
 
 /// Each row is one coordinate; columns are independent symbolic parameters,
 /// followed by a constant column. Every possible parameter value is checked.
@@ -72,10 +100,19 @@ pub struct Writer {
     pub id: String,
     /// Proposed delta before target-law filtering.
     pub delta: Delta,
-    /// Pairs of key bindings that this writer's guard proves unequal
-    /// (`from != to`). The adapter must establish each pair from the guard;
-    /// cases that would equate a listed pair are not checked.
-    pub distinct: Vec<(String, String)>,
+    /// The write footprint: ids of every coordinate this writer assigns,
+    /// including assignments that leave the value unchanged
+    /// (`Bal[k] := pre.Bal[k]`). Such a write can still overwrite another
+    /// write to the same cell. Every coordinate with a nonzero delta row must
+    /// be listed.
+    pub assigns: Vec<String>,
+    /// The writer's executable Boolean preconditions (ZEN source over
+    /// `input`), all of which hold whenever it writes. The checker lowers them
+    /// itself and only excludes a key-equality case when a top-level conjunct
+    /// `input.a != input.b` (or `not (input.a == input.b)`) separates the two
+    /// input keys. Anything else, including source it cannot lower, excludes
+    /// nothing.
+    pub preconditions: Vec<String>,
 }
 
 /// A refusal explains exactly which symbolic coefficient did not balance.
@@ -97,8 +134,8 @@ pub enum Failure {
         /// Exact nonzero weighted coefficient.
         residual: Rational,
     },
-    /// The writer balances while its keyed coordinates are distinct cells, but
-    /// not when some of their keys are equal and the writes hit one cell.
+    /// The writer balances while its coordinates are distinct cells, but not
+    /// when some of them name one cell and their writes combine.
     Aliased {
         /// Always [`KEY_ALIAS_CODE`].
         code: &'static str,
@@ -116,10 +153,10 @@ pub enum Failure {
     },
 }
 
-/// One runtime cell named by several keyed coordinates in an aliasing case.
+/// One runtime cell named by several coordinates in an aliasing case.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AliasedCell {
-    /// Coordinate ids whose keys are equal in this case.
+    /// Coordinate ids that name one cell in this case.
     pub coordinates: Vec<String>,
     /// The coordinate whose write survives (each write was computed from the
     /// pre-state), or `None` when the writes accumulate in sequence.
@@ -155,54 +192,74 @@ fn validate(
             return Err(malformed());
         }
     }
-    // One cell per (family, binding, scope, unit); one weight per family cell class.
-    let mut cells = BTreeSet::new();
-    let mut family_weights = BTreeMap::new();
-    for coordinate in coordinates {
-        let Some(key) = &coordinate.key else { continue };
-        if key.family.is_empty()
-            || key.binding.is_empty()
-            || !cells.insert((key, &coordinate.scope, &coordinate.unit))
-            || *family_weights
-                .entry((&key.family, &coordinate.scope, &coordinate.unit))
-                .or_insert(coordinate.weight)
-                != coordinate.weight
+    // Each named object type resolves to one root.
+    let mut roots = BTreeMap::new();
+    for cell in coordinates.iter().filter_map(|c| c.cell.as_ref()) {
+        let key = match &cell.key {
+            CellKey::Fixed(key) | CellKey::Input(key) | CellKey::Computed(key) => key,
+        };
+        if cell.object_type.is_empty()
+            || cell.root.is_empty()
+            || cell.member.is_empty()
+            || key.is_empty()
+            || *roots.entry(&cell.object_type).or_insert(&cell.root) != &cell.root
         {
             return Err(malformed());
         }
     }
     let mut writer_ids = BTreeSet::new();
-    if writers.iter().any(|w| {
-        w.id.is_empty()
-            || !writer_ids.insert(&w.id)
-            || w.distinct
+    for writer in writers {
+        let mut assigned = BTreeSet::new();
+        if writer.id.is_empty()
+            || !writer_ids.insert(&writer.id)
+            || writer
+                .assigns
                 .iter()
-                .any(|(a, b)| a.is_empty() || b.is_empty() || a == b)
-    }) {
-        return Err(malformed());
+                .any(|id| !ids.contains(id) || !assigned.insert(id))
+        {
+            return Err(malformed());
+        }
     }
     Ok(())
 }
 
-/// The keyed coordinates a writer touches (nonzero row), grouped by family,
-/// scope and unit in deterministic order; only groups that could alias.
-fn alias_groups(coordinates: &[Coordinate], rows: &[Vec<Rational>]) -> Vec<Vec<usize>> {
-    let mut groups: BTreeMap<_, Vec<usize>> = BTreeMap::new();
-    for (index, (coordinate, row)) in coordinates.iter().zip(rows).enumerate() {
-        if let Some(key) = &coordinate.key
-            && row.iter().any(|q| q.numerator != 0)
+/// Input-field pairs, ordered, that the preconditions prove unequal. Only
+/// top-level conjuncts `input.a != input.b` and `not (input.a == input.b)`
+/// count; source outside the lowerable subset proves nothing.
+fn proved_unequal(preconditions: &[String]) -> BTreeSet<(String, String)> {
+    fn pair(a: &RowExpr, b: &RowExpr, out: &mut BTreeSet<(String, String)>) {
+        if let (RowExpr::Column(a), RowExpr::Column(b)) = (a, b)
+            && a != b
         {
-            groups
-                .entry((&key.family, &coordinate.scope, &coordinate.unit))
-                .or_default()
-                .push(index);
+            out.insert((a.min(b).clone(), a.max(b).clone()));
         }
     }
-    groups.into_values().filter(|g| g.len() > 1).collect()
+    fn conjuncts(tree: &RowExpr, out: &mut BTreeSet<(String, String)>) {
+        match tree {
+            RowExpr::And(a, b) => {
+                conjuncts(a, out);
+                conjuncts(b, out);
+            }
+            RowExpr::Compare(RowComparison::NotEqual, a, b) => pair(a, b, out),
+            RowExpr::Not(inner) => {
+                if let RowExpr::Compare(RowComparison::Equal, a, b) = &**inner {
+                    pair(a, b, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = BTreeSet::new();
+    for source in preconditions {
+        if let Ok(Some(tree)) = norn_expr::row_expression(source, INPUT_ROOT) {
+            conjuncts(&tree, &mut out);
+        }
+    }
+    out
 }
 
 /// Every partition of `members` into equal-key blocks that keeps each
-/// guard-distinct pair apart, in a fixed order. `None` past `limit`.
+/// proved-unequal pair apart, in a fixed order. `None` past `limit`.
 fn key_partitions(
     members: &[usize],
     apart: &dyn Fn(usize, usize) -> bool,
@@ -248,47 +305,132 @@ fn key_partitions(
 /// One aliasing case: merged cells (coordinate indices) and how each combines.
 type AliasCase = Vec<(Vec<usize>, Option<usize>)>;
 
+/// Why no aliasing case set exists: the code and its detail.
+type AliasLimit = (&'static str, String);
+
+/// Whether two keys of one root and member are always one row.
+fn same_key(a: &CellKey, b: &CellKey) -> bool {
+    match (a, b) {
+        (CellKey::Fixed(a), CellKey::Fixed(b)) | (CellKey::Input(a), CellKey::Input(b)) => a == b,
+        _ => false,
+    }
+}
+
+/// Whether two keys of one root and member are never one row: different
+/// constants, or input fields the preconditions prove unequal. A computed
+/// key, or an input key beside a constant, may be equal.
+fn never_same_key(a: &CellKey, b: &CellKey, unequal: &BTreeSet<(String, String)>) -> bool {
+    match (a, b) {
+        (CellKey::Fixed(a), CellKey::Fixed(b)) => a != b,
+        (CellKey::Input(a), CellKey::Input(b)) => {
+            unequal.contains(&(a.min(b).clone(), a.max(b).clone()))
+        }
+        _ => false,
+    }
+}
+
 /// The aliasing cases of one writer beyond the all-distinct one: each case is
 /// a list of merged cells (coordinate indices, at least two) with the choice of
 /// how they combine (`Some(i)`: index `i` of the cell survives; `None`: the
-/// writes accumulate). `Err` names the bound that was exceeded.
+/// writes accumulate). Only assigned coordinates take part: a zero-delta
+/// assignment may still be the write that survives.
 fn alias_cases(
     coordinates: &[Coordinate],
-    writer: &Writer,
-    rows: &[Vec<Rational>],
-) -> Result<Vec<AliasCase>, String> {
-    let groups = alias_groups(coordinates, rows);
-    let binding = |i: usize| {
-        coordinates
-            .get(i)
-            .and_then(|c| c.key.as_ref())
-            .map(|k| k.binding.as_str())
-    };
-    let apart = |a: usize, b: usize| {
-        writer.distinct.iter().any(|(x, y)| {
-            (binding(a), binding(b)) == (Some(x), Some(y))
-                || (binding(a), binding(b)) == (Some(y), Some(x))
-        })
-    };
+    footprint: &BTreeSet<usize>,
+    unequal: &BTreeSet<(String, String)>,
+) -> Result<Vec<AliasCase>, AliasLimit> {
+    let bound = |why: String| (ALIAS_BOUND_CODE, why);
+    let cell = |i: usize| coordinates.get(i).and_then(|c| c.cell.as_ref());
+    // Assigned coordinates grouped by canonical storage: root and member.
+    let mut groups: BTreeMap<(&str, &str), Vec<usize>> = BTreeMap::new();
+    for &index in footprint {
+        if let Some(cell) = cell(index) {
+            groups
+                .entry((&cell.root, &cell.member))
+                .or_default()
+                .push(index);
+        }
+    }
     // Merged-cell sets per combination of group partitions.
     let mut merges: Vec<Vec<Vec<usize>>> = vec![Vec::new()];
-    for group in &groups {
+    for group in groups.into_values().filter(|g| g.len() > 1) {
         if group.len() > MAX_ALIASED_KEYS {
-            return Err(format!(
-                "{} keyed coordinates of one family alias (limit {MAX_ALIASED_KEYS})",
+            return Err(bound(format!(
+                "{} assigned coordinates of one stored member (limit {MAX_ALIASED_KEYS})",
                 group.len()
-            ));
+            )));
         }
-        let partitions = key_partitions(group, &apart, MAX_ALIAS_CASES)
-            .ok_or_else(|| format!("more than {MAX_ALIAS_CASES} key-equality cases"))?;
+        // Coordinates that are always one row form one atom.
+        let mut atoms: Vec<Vec<usize>> = Vec::new();
+        for &index in &group {
+            let key = cell(index).map(|c| &c.key);
+            let atom = atoms.iter_mut().find(|atom| {
+                let first = atom.first().and_then(|&i| cell(i)).map(|c| &c.key);
+                matches!((first, key), (Some(a), Some(b)) if same_key(a, b))
+            });
+            match atom {
+                Some(atom) => atom.push(index),
+                None => atoms.push(vec![index]),
+            }
+        }
+        let apart = |a: usize, b: usize| {
+            let key = |atom: usize| {
+                atoms
+                    .get(atom)
+                    .and_then(|members| members.first())
+                    .and_then(|&i| cell(i))
+                    .map(|c| &c.key)
+            };
+            matches!((key(a), key(b)), (Some(a), Some(b)) if never_same_key(a, b, unequal))
+        };
+        // Coordinates that may be one row must count that row the same way.
+        for (x, atom_x) in atoms.iter().enumerate() {
+            for (y, atom_y) in atoms.iter().enumerate().skip(x) {
+                if x != y && apart(x, y) {
+                    continue;
+                }
+                for &i in atom_x {
+                    for &j in atom_y {
+                        let (Some(a), Some(b)) = (coordinates.get(i), coordinates.get(j)) else {
+                            continue;
+                        };
+                        if (a.weight, &a.scope, &a.unit) != (b.weight, &b.scope, &b.unit) {
+                            return Err((
+                                ALIAS_UNLOWERABLE_CODE,
+                                format!(
+                                    "{} and {} may be one row but differ in weight, scope or unit",
+                                    a.id, b.id
+                                ),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        let indices: Vec<usize> = (0..atoms.len()).collect();
+        let partitions = key_partitions(&indices, &apart, MAX_ALIAS_CASES)
+            .ok_or_else(|| bound(format!("more than {MAX_ALIAS_CASES} key-equality cases")))?;
         let mut next = Vec::new();
         for merge in &merges {
             for partition in &partitions {
                 let mut combined = merge.clone();
-                combined.extend(partition.iter().filter(|b| b.len() > 1).cloned());
+                for block in partition {
+                    let mut members: Vec<usize> = block
+                        .iter()
+                        .filter_map(|&atom| atoms.get(atom))
+                        .flatten()
+                        .copied()
+                        .collect();
+                    members.sort_unstable();
+                    if members.len() > 1 {
+                        combined.push(members);
+                    }
+                }
                 next.push(combined);
                 if next.len() > MAX_ALIAS_CASES {
-                    return Err(format!("more than {MAX_ALIAS_CASES} key-equality cases"));
+                    return Err(bound(format!(
+                        "more than {MAX_ALIAS_CASES} key-equality cases"
+                    )));
                 }
             }
         }
@@ -307,7 +449,9 @@ fn alias_cases(
                     .collect(),
             );
             if cases.len() >= MAX_ALIAS_CASES {
-                return Err(format!("more than {MAX_ALIAS_CASES} key-aliasing cases"));
+                return Err(bound(format!(
+                    "more than {MAX_ALIAS_CASES} key-aliasing cases"
+                )));
             }
             // Odometer over choices 0 (accumulate) ..= cell.len() (survivor).
             let mut wrapped = true;
@@ -365,6 +509,16 @@ pub fn check(
     certificate: &[Rational],
 ) -> Result<(), Failure> {
     validate(coordinates, writers, certificate)?;
+    // A coordinate without storage beside stored ones may be any of their
+    // rows; that collision cannot be checked.
+    let stored = coordinates.iter().filter(|c| c.cell.is_some()).count();
+    if stored != 0 && stored != coordinates.len() {
+        return Err(Failure::Unknown(format!(
+            "{ALIAS_UNLOWERABLE_CODE}: {} of {} coordinates name no stored cell",
+            coordinates.len().saturating_sub(stored),
+            coordinates.len()
+        )));
+    }
     // Label each coordinate with the first coordinate of its scope/unit class.
     // The ordered map also fixes which unbalanced class is reported first.
     let mut classes = BTreeMap::new();
@@ -389,6 +543,20 @@ pub fn check(
         {
             return Err(Failure::Malformed);
         }
+        // The footprint must cover every changed coordinate.
+        let footprint: BTreeSet<usize> = coordinates
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| writer.assigns.contains(&c.id))
+            .map(|(index, _)| index)
+            .collect();
+        if rows
+            .iter()
+            .enumerate()
+            .any(|(index, row)| row.iter().any(|q| q.numerator != 0) && !footprint.contains(&index))
+        {
+            return Err(Failure::Malformed);
+        }
         work = work.saturating_add(rows.len().saturating_mul(columns));
         if work > 65_536 {
             return Err(Failure::Unknown("coefficient budget exceeded".into()));
@@ -406,11 +574,13 @@ pub fn check(
                 }
             }
         };
+        // Assigned cells the preconditions do not prove distinct may be one
+        // row at run time; the writer must balance in every such case too.
+        // A case set that cannot be built faithfully is unknown first.
+        let unequal = proved_unequal(&writer.preconditions);
+        let cases = alias_cases(coordinates, &footprint, &unequal)
+            .map_err(|(code, why)| Failure::Unknown(format!("{code}: {}: {why}", writer.id)))?;
         decide(rows)?;
-        // Keys the writer does not prove distinct may be equal at run time;
-        // the writer must balance in every such case as well.
-        let cases = alias_cases(coordinates, writer, rows)
-            .map_err(|why| Failure::Unknown(format!("{ALIAS_BOUND_CODE}: {}: {why}", writer.id)))?;
         for case in &cases {
             work = work.saturating_add(rows.len().saturating_mul(columns));
             if work > 65_536 {
@@ -525,7 +695,7 @@ mod tests {
                     code: "g".into(),
                 },
                 weight: q(1),
-                key: None,
+                cell: None,
             })
             .collect();
         let writer = Writer {
@@ -535,7 +705,8 @@ mod tests {
                 vec![q(0), q(1), q(0)],
                 vec![q(1), q(-1), q(0)],
             ]),
-            distinct: Vec::new(),
+            assigns: vec!["input".into(), "output".into(), "loss".into()],
+            preconditions: Vec::new(),
         };
         (coordinates, vec![writer])
     }
@@ -587,35 +758,54 @@ mod tests {
         assert_eq!(check(&c, &w, &[q(1); 3]), Err(Failure::Malformed));
     }
 
-    /// `Bal[k]` coordinates of one family; columns are `(amount, constant)`.
+    /// One stored member of `root`, written through `object_type`.
+    fn stored(id: &str, object_type: &str, root: &str, key: CellKey) -> Coordinate {
+        Coordinate {
+            id: id.into(),
+            scope: BTreeMap::from([("book".into(), "primary".into())]),
+            unit: UnitRef {
+                system: UnitSystem::Ucum,
+                code: "USD".into(),
+            },
+            weight: q(1),
+            cell: Some(Cell {
+                object_type: object_type.into(),
+                root: root.into(),
+                member: "balance".into(),
+                key,
+            }),
+        }
+    }
+    /// `Account.balance[input.k]` coordinates; columns are `(amount, constant)`.
     fn keyed(bindings: &[&str]) -> Vec<Coordinate> {
         bindings
             .iter()
-            .map(|binding| Coordinate {
-                id: format!("Bal[{binding}]"),
-                scope: BTreeMap::from([("book".into(), "primary".into())]),
-                unit: UnitRef {
-                    system: UnitSystem::Ucum,
-                    code: "USD".into(),
-                },
-                weight: q(1),
-                key: Some(Key {
-                    family: "Bal".into(),
-                    binding: (*binding).into(),
-                }),
+            .map(|binding| {
+                stored(
+                    &format!("Bal[{binding}]"),
+                    "Account",
+                    "Account",
+                    CellKey::Input((*binding).into()),
+                )
             })
             .collect()
     }
-    fn transfer(distinct: &[(&str, &str)]) -> Writer {
+    fn writer(id: &str, rows: Vec<Vec<Rational>>, c: &[Coordinate], guard: &[&str]) -> Writer {
         Writer {
-            id: "transfer".into(),
-            // Bal[from] := Bal[from] - amount; Bal[to] := Bal[to] + amount.
-            delta: Delta::Affine(vec![vec![q(-1), q(0)], vec![q(1), q(0)]]),
-            distinct: distinct
-                .iter()
-                .map(|(a, b)| ((*a).into(), (*b).into()))
-                .collect(),
+            id: id.into(),
+            delta: Delta::Affine(rows),
+            assigns: c.iter().map(|c| c.id.clone()).collect(),
+            preconditions: guard.iter().map(|g| (*g).into()).collect(),
         }
+    }
+    /// `Bal[from] := Bal[from] - amount; Bal[to] := Bal[to] + amount`.
+    fn transfer(c: &[Coordinate], guard: &[&str]) -> Writer {
+        writer(
+            "transfer",
+            vec![vec![q(-1), q(0)], vec![q(1), q(0)]],
+            c,
+            guard,
+        )
     }
 
     #[test]
@@ -623,7 +813,7 @@ mod tests {
         // #1457: with from == to both writes hit one row; the credit computed
         // from the pre-state overwrites the debit and mints `amount`.
         let c = keyed(&["from", "to"]);
-        let refusal = check(&c, &[transfer(&[])], &[q(1); 2]).unwrap_err();
+        let refusal = check(&c, &[transfer(&c, &[])], &[q(1); 2]).unwrap_err();
         let Failure::Aliased {
             code,
             writer,
@@ -644,38 +834,235 @@ mod tests {
     }
 
     #[test]
-    fn cons_distinct_account_transfer_is_admitted() {
-        // Distinct keys: Bal[from] and Bal[to] cannot alias, either because
-        // the guard proves it or because they are not keyed cells at all.
-        let mut c = keyed(&["from", "to"]);
+    fn cons_guarded_transfer_is_admitted() {
+        let c = keyed(&["from", "to"]);
+        for guard in [
+            "input.from != input.to",
+            "input.to != input.from",
+            "not (input.from == input.to)",
+            "input.amount > 0 and input.from != input.to",
+        ] {
+            assert_eq!(
+                check(&c, &[transfer(&c, &[guard])], &[q(1); 2]),
+                Ok(()),
+                "{guard}"
+            );
+        }
+        // The guard may be any one of the preconditions.
         assert_eq!(
-            check(&c, &[transfer(&[("from", "to")])], &[q(1); 2]),
+            check(
+                &c,
+                &[transfer(&c, &["input.amount > 0", "input.from != input.to"])],
+                &[q(1); 2]
+            ),
             Ok(())
         );
-        assert_eq!(
-            check(&c, &[transfer(&[("to", "from")])], &[q(1); 2]),
-            Ok(())
-        );
-        // Another family never aliases.
-        c[1].key = Some(Key {
-            family: "Escrow".into(),
-            binding: "to".into(),
-        });
-        assert_eq!(check(&c, &[transfer(&[])], &[q(1); 2]), Ok(()));
     }
 
     #[test]
-    fn cons_guard_must_name_the_aliased_pair() {
+    fn cons_inequality_comes_only_from_lowered_preconditions() {
+        // A caller cannot claim `from != to`: only a precondition the checker
+        // lowers to `input.from != input.to` excludes the case.
         let c = keyed(&["from", "to"]);
-        // A guard on unrelated bindings does not exclude from == to.
+        for guard in [
+            "input.amount > 0",
+            "input.from != input.fee",
+            "input.from != input.to or input.amount > 0",
+            "not (input.from != input.to)",
+            "self.from != self.to",
+            "input.from != input.to and len(input.memo) > 0",
+            "input.from !=",
+        ] {
+            assert!(
+                matches!(
+                    check(&c, &[transfer(&c, &[guard])], &[q(1); 2]),
+                    Err(Failure::Aliased { .. })
+                ),
+                "{guard}"
+            );
+        }
+        // Computed keys stay possibly equal whatever the guard says.
+        let computed: Vec<_> = ["from", "to"]
+            .iter()
+            .map(|k| {
+                stored(
+                    &format!("Bal[{k}]"),
+                    "Account",
+                    "Account",
+                    CellKey::Computed(format!("lower(input.{k})")),
+                )
+            })
+            .collect();
         assert!(matches!(
-            check(&c, &[transfer(&[("from", "fee")])], &[q(1); 2]),
+            check(
+                &computed,
+                &[transfer(&computed, &["input.from != input.to"])],
+                &[q(1); 2]
+            ),
             Err(Failure::Aliased { .. })
         ));
-        // A self-contradictory guard is malformed, not a proof.
+        // A repeated input field is one key: Bal[from] under two labels is
+        // one row, so the debit and credit of `from` collide.
+        let mut repeated = keyed(&["from", "to"]);
+        repeated[1].cell.as_mut().unwrap().key = CellKey::Input("from".into());
+        assert!(matches!(
+            check(
+                &repeated,
+                &[transfer(&repeated, &["input.from != input.to"])],
+                &[q(1); 2]
+            ),
+            Err(Failure::Aliased { .. })
+        ));
+    }
+
+    #[test]
+    fn cons_zero_delta_write_can_overwrite() {
+        // Bal[from] -= amount; Bal[to] += amount; Bal[k] := pre.Bal[k].
+        // The last write has zero delta, but with k == to it overwrites the
+        // credit computed from the same pre-state.
+        let c = keyed(&["from", "to", "k"]);
+        let rows = vec![vec![q(-1), q(0)], vec![q(1), q(0)], vec![q(0), q(0)]];
+        let refusal = check(
+            &c,
+            &[writer("touch", rows.clone(), &c, &["input.from != input.to"])],
+            &[q(1); 3],
+        )
+        .unwrap_err();
+        let Failure::Aliased { cells, .. } = refusal else {
+            panic!("expected an aliasing refusal, got {refusal:?}");
+        };
+        assert!(
+            cells
+                .iter()
+                .any(|cell| cell.survivor.as_deref() == Some("Bal[k]")),
+            "{cells:?}"
+        );
+        // Guarded distinct from both, k cannot alias.
+        let guard = "input.from != input.to and input.k != input.from and input.k != input.to";
         assert_eq!(
-            check(&c, &[transfer(&[("from", "from")])], &[q(1); 2]),
+            check(&c, &[writer("touch", rows.clone(), &c, &[guard])], &[q(1); 3]),
+            Ok(())
+        );
+        // Read but not assigned, Bal[k] cannot overwrite anything.
+        let mut read_only = writer("touch", rows.clone(), &c, &["input.from != input.to"]);
+        read_only.assigns.retain(|id| id != "Bal[k]");
+        assert_eq!(check(&c, &[read_only], &[q(1); 3]), Ok(()));
+        // A changed coordinate missing from the footprint is malformed.
+        let mut unlisted = writer("touch", rows, &c, &["input.from != input.to"]);
+        unlisted.assigns.retain(|id| id != "Bal[to]");
+        assert_eq!(check(&c, &[unlisted], &[q(1); 3]), Err(Failure::Malformed));
+    }
+
+    #[test]
+    fn cons_aliasing_follows_canonical_storage() {
+        // Wallet is a child of Account: Wallet.balance[to] and
+        // Account.balance[from] are one row when from == to.
+        let c = vec![
+            stored("Account[from]", "Account", "Account", CellKey::Input("from".into())),
+            stored("Wallet[to]", "Wallet", "Account", CellKey::Input("to".into())),
+        ];
+        assert!(matches!(
+            check(&c, &[transfer(&c, &[])], &[q(1); 2]),
+            Err(Failure::Aliased { .. })
+        ));
+        assert_eq!(
+            check(&c, &[transfer(&c, &["input.from != input.to"])], &[q(1); 2]),
+            Ok(())
+        );
+        // Another root, or another member, is another row.
+        let mut other = c.clone();
+        other[1].cell.as_mut().unwrap().object_type = "Escrow".into();
+        other[1].cell.as_mut().unwrap().root = "Escrow".into();
+        assert_eq!(check(&other, &[transfer(&other, &[])], &[q(1); 2]), Ok(()));
+        other[1].cell.as_mut().unwrap().root = "Account".into();
+        other[1].cell.as_mut().unwrap().member = "held".into();
+        assert_eq!(check(&other, &[transfer(&other, &[])], &[q(1); 2]), Ok(()));
+        // One object type cannot resolve to two roots.
+        let mut split = c.clone();
+        split[1].cell.as_mut().unwrap().object_type = "Account".into();
+        split[1].cell.as_mut().unwrap().root = "Party".into();
+        assert_eq!(
+            check(&split, &[transfer(&split, &[])], &[q(1); 2]),
             Err(Failure::Malformed)
+        );
+        // Book labels do not separate storage: a possible collision across
+        // books cannot be checked faithfully.
+        let mut books = c.clone();
+        books[1].scope.insert("book".into(), "other".into());
+        assert!(matches!(
+            check(&books, &[transfer(&books, &[])], &[q(1); 2]),
+            Err(Failure::Unknown(why)) if why.starts_with(ALIAS_UNLOWERABLE_CODE)
+        ));
+        // Proved distinct, the books are separate rows again.
+        assert!(matches!(
+            check(&books, &[transfer(&books, &["input.from != input.to"])], &[q(1); 2]),
+            Err(Failure::Unbalanced { .. })
+        ));
+        // Stored and unstored coordinates together are unknown.
+        let mut mixed = c;
+        mixed[1].cell = None;
+        assert!(matches!(
+            check(&mixed, &[transfer(&mixed, &[])], &[q(1); 2]),
+            Err(Failure::Unknown(why)) if why.starts_with(ALIAS_UNLOWERABLE_CODE)
+        ));
+    }
+
+    #[test]
+    fn cons_two_labels_on_one_cell_are_one_cell() {
+        // Account.balance["cash"] and Wallet.balance["cash"] are one row.
+        // Moving `amount` between the labels is no transfer at all: the
+        // writes collide and the surviving one changes the total.
+        let c = vec![
+            stored("cash", "Account", "Account", CellKey::Fixed("cash".into())),
+            stored("wallet_cash", "Wallet", "Account", CellKey::Fixed("cash".into())),
+        ];
+        let refusal = check(&c, &[transfer(&c, &[])], &[q(1); 2]).unwrap_err();
+        let Failure::Aliased { cells, .. } = refusal else {
+            panic!("expected an aliasing refusal, got {refusal:?}");
+        };
+        assert_eq!(cells[0].coordinates, ["cash", "wallet_cash"]);
+        // No guard separates them.
+        assert!(matches!(
+            check(&c, &[transfer(&c, &["input.from != input.to"])], &[q(1); 2]),
+            Err(Failure::Aliased { .. })
+        ));
+        // Different constants are different rows without any guard.
+        let mut apart = c.clone();
+        apart[1].cell.as_mut().unwrap().key = CellKey::Fixed("bank".into());
+        assert_eq!(check(&apart, &[transfer(&apart, &[])], &[q(1); 2]), Ok(()));
+        // A computed key may reach a fixed row.
+        let mut reach = c;
+        reach[1].cell.as_mut().unwrap().key = CellKey::Computed("route(input.to)".into());
+        assert!(matches!(
+            check(&reach, &[transfer(&reach, &[])], &[q(1); 2]),
+            Err(Failure::Aliased { .. })
+        ));
+        // An input key may equal a fixed row; inequality to a constant is
+        // not lowered, so it stays possible.
+        reach[1].cell.as_mut().unwrap().key = CellKey::Input("to".into());
+        assert!(matches!(
+            check(&reach, &[transfer(&reach, &["input.to != \"cash\""])], &[q(1); 2]),
+            Err(Failure::Aliased { .. })
+        ));
+    }
+
+    #[test]
+    fn cons_three_keys_have_exactly_five_partitions() {
+        let never = |_: usize, _: usize| false;
+        let all = key_partitions(&[0, 1, 2], &never, MAX_ALIAS_CASES).unwrap();
+        let expected: Vec<Vec<Vec<usize>>> = vec![
+            vec![vec![0, 1, 2]],
+            vec![vec![0, 1], vec![2]],
+            vec![vec![0, 2], vec![1]],
+            vec![vec![0], vec![1, 2]],
+            vec![vec![0], vec![1], vec![2]],
+        ];
+        assert_eq!(all, expected);
+        // a != b and b != c: only {a,c} can still merge.
+        let ab_bc = |x: usize, y: usize| matches!((x.min(y), x.max(y)), (0, 1) | (1, 2));
+        assert_eq!(
+            key_partitions(&[0, 1, 2], &ab_bc, MAX_ALIAS_CASES).unwrap(),
+            vec![vec![vec![0, 2], vec![1]], vec![vec![0], vec![1], vec![2]]]
         );
     }
 
@@ -683,80 +1070,84 @@ mod tests {
     fn cons_three_key_writer_checks_every_case() {
         // Bal[a] -= x; Bal[b] += y; Bal[c] += x - y: balanced when distinct.
         let c = keyed(&["a", "b", "c"]);
-        let writer = |distinct: &[(&str, &str)]| Writer {
-            id: "split".into(),
-            delta: Delta::Affine(vec![
-                vec![q(-1), q(0), q(0)],
-                vec![q(0), q(1), q(0)],
-                vec![q(1), q(-1), q(0)],
-            ]),
-            distinct: distinct
-                .iter()
-                .map(|(a, b)| ((*a).into(), (*b).into()))
-                .collect(),
+        let split = |guard: &[&str]| {
+            writer(
+                "split",
+                vec![
+                    vec![q(-1), q(0), q(0)],
+                    vec![q(0), q(1), q(0)],
+                    vec![q(1), q(-1), q(0)],
+                ],
+                &c,
+                guard,
+            )
         };
-        let all = [("a", "b"), ("b", "c"), ("a", "c")];
-        assert_eq!(check(&c, &[writer(&all)], &[q(1); 3]), Ok(()));
-        // Two guards leave a == c open.
-        let refusal = check(&c, &[writer(&all[..2])], &[q(1); 3]);
-        assert!(
-            matches!(&refusal, Err(Failure::Aliased { .. })),
-            "{refusal:?}"
-        );
-        let refusal = check(&c, &[writer(&[("a", "b"), ("a", "c")])], &[q(1); 3]).unwrap_err();
+        let all = "input.a != input.b and input.b != input.c and input.a != input.c";
+        assert_eq!(check(&c, &[split(&[all])], &[q(1); 3]), Ok(()));
+        // a != b and b != c leave a == c open, and only that case.
+        let refusal = check(
+            &c,
+            &[split(&["input.a != input.b and input.b != input.c"])],
+            &[q(1); 3],
+        )
+        .unwrap_err();
         let Failure::Aliased { cells, .. } = refusal else {
             panic!("expected an aliasing refusal, got {refusal:?}");
         };
         assert_eq!(cells.len(), 1);
+        assert_eq!(cells[0].coordinates, ["Bal[a]", "Bal[c]"]);
+        let refusal = check(
+            &c,
+            &[split(&["input.a != input.b", "input.a != input.c"])],
+            &[q(1); 3],
+        )
+        .unwrap_err();
+        let Failure::Aliased { cells, .. } = refusal else {
+            panic!("expected an aliasing refusal, got {refusal:?}");
+        };
         assert_eq!(cells[0].coordinates, ["Bal[b]", "Bal[c]"]);
-        // Unguarded: refused as well; all 13 aliasing cases are within bound.
-        assert!(matches!(
-            check(&c, &[writer(&[])], &[q(1); 3]),
-            Err(Failure::Aliased { .. })
-        ));
+        // Unguarded the first case checked is {a,b,c} as one cell.
+        let refusal = check(&c, &[split(&[])], &[q(1); 3]).unwrap_err();
+        let Failure::Aliased { cells, .. } = refusal else {
+            panic!("expected an aliasing refusal, got {refusal:?}");
+        };
+        assert_eq!(cells[0].coordinates, ["Bal[a]", "Bal[b]", "Bal[c]"]);
     }
 
     #[test]
-    fn cons_aliasing_past_the_bound_is_unknown_and_keys_are_validated() {
+    fn cons_aliasing_past_the_bound_is_unknown() {
         let bindings = ["k0", "k1", "k2", "k3", "k4", "k5", "k6"];
         let c = keyed(&bindings);
         let mut rows = vec![vec![q(1), q(0)]; bindings.len()];
         rows[0] = vec![q(-6), q(0)];
-        let writer = Writer {
-            id: "fan_out".into(),
-            delta: Delta::Affine(rows),
-            distinct: Vec::new(),
-        };
-        let refusal = check(&c, std::slice::from_ref(&writer), &[q(1); 7]);
+        let fan_out = writer("fan_out", rows, &c, &[]);
+        let refusal = check(&c, std::slice::from_ref(&fan_out), &[q(1); 7]);
         assert!(
             matches!(&refusal, Err(Failure::Unknown(why)) if why.starts_with(ALIAS_BOUND_CODE)),
             "{refusal:?}"
         );
-        // Six keys fit the per-family limit, but not the case bound.
+        // Six keys fit the per-member limit, but not the case bound.
         let c6 = keyed(&bindings[..6]);
         let mut rows = vec![vec![q(1), q(0)]; 6];
         rows[0] = vec![q(-5), q(0)];
-        let writer6 = Writer {
-            delta: Delta::Affine(rows),
-            ..writer
-        };
         assert!(matches!(
-            check(&c6, &[writer6], &[q(1); 6]),
+            check(&c6, &[writer("fan_out", rows, &c6, &[])], &[q(1); 6]),
             Err(Failure::Unknown(why)) if why.starts_with(ALIAS_BOUND_CODE)
         ));
-        // Duplicate cells and unequal weights within one family are malformed.
-        let mut dup = keyed(&["from", "to"]);
-        dup[1].key = dup[0].key.clone();
-        assert_eq!(
-            check(&dup, &[transfer(&[])], &[q(1); 2]),
-            Err(Failure::Malformed)
-        );
+        // Unequal weights on cells that may be one row cannot be checked.
         let mut uneven = keyed(&["from", "to"]);
         uneven[1].weight = q(2);
-        assert_eq!(
-            check(&uneven, &[transfer(&[])], &[q(1), q(2)]),
-            Err(Failure::Malformed)
-        );
+        assert!(matches!(
+            check(&uneven, &[transfer(&uneven, &[])], &[q(1), q(2)]),
+            Err(Failure::Unknown(why)) if why.starts_with(ALIAS_UNLOWERABLE_CODE)
+        ));
+        // Unknown or repeated footprint ids are malformed.
+        let mut ghost = transfer(&uneven, &[]);
+        ghost.assigns.push("Bal[nowhere]".into());
+        assert_eq!(check(&uneven, &[ghost], &[q(1), q(2)]), Err(Failure::Malformed));
+        let mut twice = transfer(&uneven, &[]);
+        twice.assigns.push("Bal[to]".into());
+        assert_eq!(check(&uneven, &[twice], &[q(1), q(2)]), Err(Failure::Malformed));
     }
 
     proptest! {
