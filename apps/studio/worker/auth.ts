@@ -13,6 +13,7 @@ import { hashPassword, verifyPassword, type PasswordScrypt } from "./password.ts
 import type { ClientIpHeader } from "./client-ip.ts"
 import { admitMember, refusalMessage, type Admission, type BillingDb } from "./billing.ts"
 import { forgetPolarCustomer, polarPlugin, type PolarBilling } from "./polar.ts"
+import { settingsOf } from "./polar-config.ts"
 
 /**
  * Better Auth for the hosted Studio: email + password, email magic link,
@@ -406,7 +407,7 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
             ({ data: { ...organization, metadata: { ...publicMetadata(organization.metadata), ...config.billing === undefined ? {} : { [BILLING_PAYER]: user.id, [BILLED]: true } } } }),
           // Advisory: an admin is told before inviting someone the workspace could not take (members and
           // pending invitations). Invitations hold nothing; the member limit is enforced when one joins.
-          beforeCreateInvitation: async ({ organization, inviter }) => enforce(await admitMember(config.database as unknown as BillingDb, config.billing?.config, config.baseURL, organization.id, inviter.id, true)),
+          beforeCreateInvitation: async ({ organization, inviter }) => enforce(await admitMember(config.database as unknown as BillingDb, settingsOf(config.billing?.config), config.baseURL, organization.id, inviter.id, true)),
           beforeUpdateOrganization: async ({ organization, member }) => {
             if (organization.metadata === undefined) return
             const adapter = await getCurrentAdapter((await self.auth?.$context)?.adapter as never)

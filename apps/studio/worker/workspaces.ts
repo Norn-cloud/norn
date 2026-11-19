@@ -1,5 +1,5 @@
 import { atomically, publicMetadata, BILLING_PAYER, BILLED, type Auth, type ProvisionDb } from "./auth.ts"
-import { admitCell, admitMember, limitRaised, refusalMessage, type Admission, type BillingConfig, type BillingDb } from "./billing.ts"
+import { admitCell, admitMember, limitRaised, refusalMessage, type Admission, type BillingDb, type BillingSettings } from "./billing.ts"
 
 /**
  * Creating a workspace and accepting an invitation, each as one database transaction. Better Auth's
@@ -10,14 +10,16 @@ import { admitCell, admitMember, limitRaised, refusalMessage, type Admission, ty
  *
  * Authorization is Better Auth's, unchanged: its session, and for an invitation the same checks its
  * accept route makes (pending and unexpired, addressed to the session's email, verified address,
- * membership limit). The database enforces the plan limits (migration 0011) inside the transaction, so
- * a refusal rolls the whole change back.
+ * membership limit). Each check is made again inside the write, against the rows and the database's
+ * clock at commit, so nothing that changes between the checks and the write (an expiry, a changed or
+ * unverified address, a concurrent acceptance) can pass. The database enforces the plan limits
+ * (migration 0011) inside the transaction, so a refusal rolls the whole change back.
  */
 
 export interface WorkspaceContext {
   readonly auth: Auth
   readonly db: D1Database
-  readonly billing: BillingConfig | undefined
+  readonly billing: BillingSettings | undefined
   readonly baseURL: string
 }
 
@@ -105,10 +107,16 @@ export async function acceptWorkspaceInvitation(request: Request, context: Works
   if ((count?.n ?? 0) >= MEMBERSHIP_LIMIT) return failure(403, "ORGANIZATION_MEMBERSHIP_LIMIT_REACHED", "Organization membership limit reached")
   const member = { id: crypto.randomUUID(), organizationId: invitation.organizationId, userId: session.user.id, role: invitation.role ?? "member", createdAt: new Date().toISOString() }
   try {
-    // The member is inserted only if this transaction's update accepted the invitation: one withdrawn,
-    // rejected or accepted meanwhile leaves nothing written.
+    // The invitation turns accepted only if, at the write, it is still pending and unexpired (the
+    // database's clock), the session's user still has a verified address it was sent to, its workspace
+    // exists and holds fewer than the membership limit; the member is inserted only if that update
+    // happened. A transaction is serialized, so two acceptances cannot both count 99 members.
     await atomically(context.db as unknown as ProvisionDb, [
-      { sql: `update "invitation" set "status" = 'accepted' where "id" = ? and "status" = 'pending'`, params: [invitationId] },
+      { sql: `update "invitation" set "status" = 'accepted' where "id" = ? and "status" = 'pending'
+        and (case when typeof("expiresAt") in ('integer', 'real') then "expiresAt" > (julianday('now') - 2440587.5) * 86400000.0 else julianday("expiresAt") > julianday('now') end)
+        and exists (select 1 from "user" u where u."id" = ? and u."emailVerified" = 1 and lower(u."email") = lower("invitation"."email"))
+        and exists (select 1 from "organization" o where o."id" = "invitation"."organizationId")
+        and (select count(*) from "member" m where m."organizationId" = "invitation"."organizationId") < ${MEMBERSHIP_LIMIT}`, params: [invitationId, session.user.id] },
       { sql: `insert into "member" ("id", "organizationId", "userId", "role", "createdAt") select ?, ?, ?, ?, ? where changes() = 1`, params: [member.id, member.organizationId, member.userId, member.role, member.createdAt] },
     ])
   } catch (error) {
@@ -117,7 +125,12 @@ export async function acceptWorkspaceInvitation(request: Request, context: Works
     if (/UNIQUE constraint failed: member\./.test(error instanceof Error ? error.message : "")) return failure(400, "INVITATION_NOT_FOUND", INVITATION_GONE)
     throw error
   }
-  if (await first(context.db, `select 1 as "joined" from "member" where "id" = ?`, member.id) === null) return failure(400, "INVITATION_NOT_FOUND", INVITATION_GONE)
+  if (await first(context.db, `select 1 as "joined" from "member" where "id" = ?`, member.id) === null) {
+    // Refused at the write: say which check failed, read again now.
+    const now = await first<{ n: number }>(context.db, `select count(*) as "n" from "member" where "organizationId" = ?`, invitation.organizationId)
+    if ((now?.n ?? 0) >= MEMBERSHIP_LIMIT) return failure(403, "ORGANIZATION_MEMBERSHIP_LIMIT_REACHED", "Organization membership limit reached")
+    return failure(400, "INVITATION_NOT_FOUND", INVITATION_GONE)
+  }
   await activate(context.auth, session.session.token, member.organizationId)
   return json({ invitation: { ...invitation, status: "accepted" }, member })
 }

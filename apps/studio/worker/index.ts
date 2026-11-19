@@ -6,7 +6,8 @@ import { connectors } from "./connectors.ts"
 import { MCP_PATH, serveMcp } from "./mcp.ts"
 import { cellFor } from "./cell.ts"
 import { questions } from "./questions.ts"
-import { billingConfig, billingDocument, entitlementOf, limitRaised, recordWebhook, subscribed, webhookSeen, type BillingConfig, type BillingDb } from "./billing.ts"
+import { billingDocument, entitlementOf, limitRaised, subscribed, syncBillingMode, type BillingDb, type BillingSettings } from "./billing.ts"
+import { polarConfig, settingsOf } from "./polar-config.ts"
 import { acceptWorkspaceInvitation, createWorkspace } from "./workspaces.ts"
 import { cellScope } from "./scope.ts"
 
@@ -49,9 +50,9 @@ export interface Env {
   /** What the assistant may spend in all, in dollars (default 20). */
   readonly AGENT_SPEND_CAP_USD?: string
   /**
-   * Hosted billing through Polar (worker/billing.ts); all four or none. None: billing is off and
+   * Hosted billing through Polar (worker/polar-config.ts); all four or none. None: billing is off and
    * every limit is unlimited (self-hosting). POLAR_SERVER is "sandbox" or "production"; POLAR_PLANS
-   * is the checkout plans as JSON (billing.ts PLACEHOLDER_PLANS shows its shape); limits come from Polar.
+   * is the checkout plans as JSON (polar-config.ts PLACEHOLDER_PLANS shows its shape); limits come from Polar.
    */
   readonly POLAR_ACCESS_TOKEN?: string
   readonly POLAR_WEBHOOK_SECRET?: string
@@ -91,7 +92,7 @@ function auth(env: Env): Auth {
   }
   const { TOOL_GATEWAY_URL: url, TOOL_GATEWAY_CLIENT_ID: clientId, TOOL_GATEWAY_CLIENT_SECRET: clientSecret } = env
   const gateway = url === undefined || clientId === undefined || clientSecret === undefined ? undefined : { url, clientId, clientSecret }
-  const billing = billingConfig(env)
+  const billing = polarConfig(env)
   const instance = createAuth({ ...billing === undefined ? {} : { billing: { config: billing, db: env.AUTH_DB as unknown as BillingDb } }, mcp: mcpOn(env), database: env.AUTH_DB, secret: env.BETTER_AUTH_SECRET, baseURL: env.BETTER_AUTH_URL, trustedOrigins: trustedOrigins(env), defaultEnvironmentId: env.STUDIO_DEFAULT_ENVIRONMENT_ID?.trim() || undefined, scrypt: passwordScrypt(env.AUTH_SCRYPT), clientIpHeader: clientIpHeader(env.STUDIO_CLIENT_IP_HEADER), ...signUpEmails(env) === undefined ? {} : { signUpEmails: signUpEmails(env) }, ...sendMagicLink === undefined ? {} : { sendMagicLink }, ...env.STUDIO_DEFAULT_ORG === undefined ? {} : { defaultOrganizationId: env.STUDIO_DEFAULT_ORG }, ...gateway === undefined ? {} : { gateway } })
   const handle = instance.handler
   instance.handler = (request: Request) => guarded(handle, request)
@@ -99,9 +100,14 @@ function auth(env: Env): Auth {
   return instance
 }
 
+const INVITATION_ANSWERED = "This invitation was already answered: accepted, rejected or withdrawn."
+/** Migration 0012's refusal to change an invitation that is no longer pending. */
+export const invitationAnswered = (error: unknown) => (error instanceof Error ? error.message : String(error)).includes("invitation.not_pending")
+
 /**
  * Better Auth's handler, with the errors it throws (auth.ts onAPIError) answered: a plan-limit
- * trigger's refusal (migration 0011) as PLAN_LIMIT, anything else as a bare 500. Nothing in the request
+ * trigger's refusal (migration 0011) as PLAN_LIMIT, a write to an invitation already answered
+ * (migration 0012) as INVITATION_NOT_FOUND, anything else as a bare 500. Nothing in the request
  * is read to explain it; the routes that can meet a limit with billing on are Studio's own
  * (workspaces.ts), which explain it from what the server authorized.
  */
@@ -109,6 +115,8 @@ async function guarded(handle: (request: Request) => Promise<Response>, request:
   try {
     return await handle(request)
   } catch (error) {
+    // Another answer to the invitation committed first (migration 0012): it stays as that answer.
+    if (invitationAnswered(error)) return Response.json({ code: "INVITATION_NOT_FOUND", message: INVITATION_ANSWERED }, { status: 400, headers: { "cache-control": "no-store" } })
     const limit = limitRaised(error)
     if (limit === null) {
       console.error(error)
@@ -136,7 +144,7 @@ async function workspaceRoute(request: Request, env: Env, pathname: string): Pro
   if (request.method !== "POST") return refuse(405, "POST only.", { allow: "POST" })
   const origin = request.headers.get("origin")
   if (origin === null || !trustedOrigins(env).includes(origin)) return refuse(403, "Cross-origin request refused.")
-  const context = { auth: auth(env), db: env.AUTH_DB, billing: billingConfig(env), baseURL: env.BETTER_AUTH_URL }
+  const context = { auth: auth(env), db: env.AUTH_DB, billing: billingSettings(env), baseURL: env.BETTER_AUTH_URL }
   const handle = pathname === "/api/workspaces" ? createWorkspace : pathname === "/api/workspaces/invitations/accept" ? acceptWorkspaceInvitation : undefined
   if (handle === undefined) return refuse(404, "No such endpoint.")
   try {
@@ -189,17 +197,11 @@ async function me(request: Request, env: Env): Promise<Response> {
 
 const mcpOn = (env: Env) => env.STUDIO_MCP === "on"
 
-/** Polar's signed webhooks: a delivery id already applied is acknowledged without applying it again. */
-export const POLAR_WEBHOOK_PATH = "/api/auth/polar/webhooks"
-async function polarWebhook(request: Request, env: Env): Promise<Response> {
-  const db = env.AUTH_DB as unknown as BillingDb
-  const id = request.headers.get("webhook-id")
-  if (id !== null && await webhookSeen(db, id)) return Response.json({ received: true }, { headers: { "cache-control": "no-store" } })
-  // Better Auth's Polar plugin verifies the signature (and its 5-minute window) before anything is applied.
-  const response = await auth(env).handler(request)
-  if (response.ok && id !== null) await recordWebhook(db, id, Date.now())
-  return response
-}
+/**
+ * Billing as entitlement and admission see it (provider-neutral), or undefined when off. The Polar
+ * settings themselves stay with the adapter (auth.ts, polar.ts).
+ */
+const billingSettings = (env: Env): BillingSettings | undefined => settingsOf(polarConfig(env))
 
 /**
  * The Polar plugin's checkout and portal endpoints. The plugin forwards whatever the caller sends
@@ -237,7 +239,7 @@ async function toPolar(response: Response): Promise<Response> {
  * person to Polar. Checkout and portal go through the plugin's own endpoints (session, origin and rate
  * checks included); a person who already pays is sent to the portal, never a second checkout.
  */
-async function billingRoute(request: Request, env: Env, billing: BillingConfig | undefined, pathname: string): Promise<Response> {
+async function billingRoute(request: Request, env: Env, billing: BillingSettings | undefined, pathname: string): Promise<Response> {
   if (request.method !== "GET") return refuse(405, "GET only.", { allow: "GET" })
   // Checkout and portal are plain links in Studio's own pages; another site must not start one with the person's cookie.
   const site = request.headers.get("sec-fetch-site")
@@ -257,7 +259,7 @@ async function billingRoute(request: Request, env: Env, billing: BillingConfig |
   if (pathname === "/api/billing/portal") return toPolar(await internal("/customer/portal", { redirect: false }))
   if (pathname === "/api/billing/checkout") {
     const plan = new URL(request.url).searchParams.get("plan")
-    if (plan === null || !billing.table.plans.some((candidate) => candidate.id === plan)) return refuse(404, "No such plan.")
+    if (plan === null || !billing.plans.some((candidate) => candidate.id === plan)) return refuse(404, "No such plan.")
     if (subscribed(await entitlementOf(db, billing, session.user.id))) return toPolar(await internal("/customer/portal", { redirect: false }))
     return toPolar(await internal("/checkout", { slug: plan, redirect: false }))
   }
@@ -284,6 +286,8 @@ export default {
     }
     if (mcpOn(env) && OAUTH_DISCOVERY.has(pathname)) return auth(env).handler(request)
     if (!pathname.startsWith("/api/")) return env.ASSETS.fetch(request)
+    // The database's limit triggers follow the same billing policy as the API (billing.ts syncBillingMode).
+    await syncBillingMode(env.AUTH_DB as unknown as BillingDb, billingSettings(env) !== undefined)
     if (ACTOR_HEADERS.some((name) => request.headers.has(name))) return refuse(400, "Identity comes from the signed-in session, not a request header.")
     if (pathname === "/api/auth/sign-in/magic-link" || pathname === "/api/auth/magic-link/verify") {
       const host = new URL(request.url).host
@@ -291,18 +295,17 @@ export default {
     }
     if (pathname === "/api/auth/magic-link/verify" && !(await verifyMagicLinkOrigin(request, env.BETTER_AUTH_SECRET, trustedOrigins(env)))) return refuse(403, "Magic link is not valid for this origin.")
     if (pathname === "/api/auth/sign-up/email") return publicSignUp(await auth(env).handler(request))
-    if (pathname === POLAR_WEBHOOK_PATH && billingConfig(env) !== undefined) return polarWebhook(request, env)
     // The gateway provider is link-only: refuse every sign-in that could start from it (social and
     // generic OAuth), so a linked gateway identity never yields a Studio session. Linking stays.
     if (SIGN_IN_ELSEWHERE.has(pathname)) return refuse(403, "Studio sign-in is by email and password or magic link.")
     if (pluginBillingPath(pathname)) return refuse(404, "No such endpoint; billing starts at /api/billing.")
     const moved = SPLIT_WRITE_PATHS.get(routePath(pathname))
-    if (moved !== undefined && billingConfig(env) !== undefined) return Response.json({ code: "USE_STUDIO_ROUTE", message: `With billing on, this goes through ${moved}.`, route: moved }, { status: 404, headers: { "cache-control": "no-store" } })
+    if (moved !== undefined && billingSettings(env) !== undefined) return Response.json({ code: "USE_STUDIO_ROUTE", message: `With billing on, this goes through ${moved}.`, route: moved }, { status: 404, headers: { "cache-control": "no-store" } })
     if (pathname === "/api/auth/organization/accept-invitation") return acceptInvitation(await auth(env).handler(request))
     if (pathname === "/api/workspaces" || pathname.startsWith("/api/workspaces/")) return workspaceRoute(request, env, pathname)
     if (pathname.startsWith("/api/auth/")) return auth(env).handler(request)
     if (pathname === "/api/me") return me(request, env)
-    if (pathname === "/api/billing" || pathname.startsWith("/api/billing/")) return billingRoute(request, env, billingConfig(env), pathname)
+    if (pathname === "/api/billing" || pathname.startsWith("/api/billing/")) return billingRoute(request, env, billingSettings(env), pathname)
     // Every Norn call goes to the host as the resolved actor; the host and its PDP decide.
     if (pathname.startsWith("/api/host/")) {
       const actor = await resolveActor(request, auth(env))

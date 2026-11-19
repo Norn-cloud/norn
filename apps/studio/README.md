@@ -38,15 +38,26 @@ Any of them set, even empty, needs all four with values, or Studio refuses to st
 
 | Setting | What |
 | --- | --- |
-| `POLAR_ACCESS_TOKEN` | Organization Access Token (Polar → Settings → Developers); a Worker secret |
+| `POLAR_ACCESS_TOKEN` | Organization Access Token (Polar → Settings → Developers) with the scopes below; a Worker secret |
 | `POLAR_WEBHOOK_SECRET` | the webhook endpoint's signing secret (Polar → Settings → Webhooks); a Worker secret |
 | `POLAR_SERVER` | `sandbox` or `production`; tokens and products are separate per server |
 | `POLAR_PLANS` | the plans offered at checkout as JSON: slug, name and Polar product id (below); no limits |
 
-Webhook endpoint to register in Polar: `<studio origin>/api/auth/polar/webhooks` (subscription events).
+Token scopes (`POLAR_ACCESS_TOKEN`):
+
+| Scope | Used to |
+| --- | --- |
+| `subscriptions:read` | reconcile a payer's limits from their current subscriptions (polar.ts reconcile) |
+| `checkouts:write` | start a checkout (/api/billing/checkout) |
+| `customer_sessions:write` | open the customer portal (/api/billing/portal) |
+| `customers:write` | delete and anonymize a deleted account's customer |
+
+Webhook endpoint to register in Polar: `<studio origin>/api/auth/polar/webhooks` (subscription and customer events).
+A webhook decides nothing by itself: once its signature and 5-minute window verify, it only names the payer (the customer's external id), and Studio reconciles that payer: it reads their live subscriptions from Polar and writes their whole state in one statement. Delivery order, duplicates and replays cannot change the outcome. Two reconciles of one payer that overlap both write Polar's state; the one that read Polar later wins. A failed read answers 5xx, so Polar delivers the event again.
 Limits come from Polar: each product's metadata sets `norn_cells` and `norn_members` (a non-negative integer, or `unlimited`), and a seat-based subscription's seats are its member limit.
-Each subscription event becomes its payer's limits in one write, never older than the one held; a product without valid limits, a canceled subscription and a person who never paid get the free limits: 1 workspace, 3 members.
+A payer with several live subscriptions gets the richest limit any of them grants, for each limit; a product without valid limits grants the free ones, and a person without a live subscription (canceled, or never paid) gets the free limits: 1 workspace, 3 members.
 `cells` counts the workspaces a person pays for (the creator, fixed at creation), `members` a workspace's members, its creator included and always admitted (so `0` means the creator alone).
+Turning billing off (removing the four settings) lifts every limit, in the API and in the database's triggers alike, including on workspaces billed while it was on.
 Only workspaces created while billing is on are billed. With billing on, workspaces are created at `POST /api/workspaces` and invitations accepted at `POST /api/workspaces/invitations/accept`, each in one transaction; Better Auth's own routes for both are refused.
 The database enforces both, in the statement that writes the workspace or the member (migration 0011's triggers), so concurrent requests cannot pass a limit together and nothing is reserved or undone.
 Invitations hold no seat: sending one is refused when members plus pending invitations reach the limit, but only joining is enforced. An acceptance past the limit is refused (`PLAN_LIMIT`) and the invitation stays pending, so it can be accepted once a seat frees.
