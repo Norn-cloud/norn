@@ -13,21 +13,22 @@ use std::io::{BufRead as _, BufReader, Read as _, Write as _};
 use std::net::{IpAddr, TcpListener};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use base64::Engine as _;
 use norn_api::authz::{AccessRequest, Authorizer, Operation};
 use norn_api::host::DevHost;
 use norn_api::refusal::Refusal;
 use norn_api::scope::CellScope;
-use norn_cell::engine::NativeEngine;
+use norn_cell::engine::{NativeEngine, SqlEngine as _, SqlValue};
 use norn_cell::{CellStore, Model, StoreOptions};
-use norn_cell_do::connections::egress::{Egress, EgressError, Lookup};
+use norn_cell_do::connections::egress::{Egress, EgressError, Lookup, Timeouts};
 use norn_cell_do::connections::providers::{self, ClientAuth, Provider};
 use norn_cell_do::connections::service::{
     ClientCredentials, ConnError, Connections, SetCredentials,
 };
 use norn_cell_do::connections::vault::{KeyId, KeyWrap, LocalKeyring, Secret, Vault, VaultError};
+use norn_cell_do::connections::{Config, Routes};
 use norn_cell_do::principal::PrincipalResolver;
 use norn_cell_do::server::Request;
 use sha2::Digest as _;
@@ -151,9 +152,7 @@ impl Lookup for NoLookup {
 }
 
 fn loopback_egress() -> Egress {
-    Egress::new(vec!["127.0.0.1".to_owned()], None, Arc::new(NoLookup))
-        .expect("egress")
-        .with_sleep(|_| {})
+    Egress::new(vec!["127.0.0.1".to_owned()], Arc::new(NoLookup)).with_sleep(|_| {})
 }
 
 fn test_provider(port: u16) -> Provider {
@@ -171,6 +170,7 @@ fn test_provider(port: u16) -> Provider {
         pkce_required: false,
         authorization_params: BTreeMap::new(),
         url_parameters: Vec::new(),
+        withheld: None,
     }
 }
 
@@ -198,8 +198,17 @@ fn connections(path: &std::path::Path, port: u16) -> Connections<NativeEngine> {
 }
 
 fn token_server(count: Arc<AtomicUsize>, delay: Duration) -> Mock {
+    token_server_with(count, delay, Duration::ZERO)
+}
+
+/// A token endpoint answering after `delay`, and a revocation endpoint
+/// answering after `revoke_delay`.
+fn token_server_with(count: Arc<AtomicUsize>, delay: Duration, revoke_delay: Duration) -> Mock {
     Mock::start(Arc::new(move |seen: &Seen| {
-        if seen.line.starts_with("POST /token") {
+        if seen.line.starts_with("POST /revoke") {
+            std::thread::sleep(revoke_delay);
+            (200, Vec::new(), String::new())
+        } else if seen.line.starts_with("POST /token") {
             count.fetch_add(1, Ordering::SeqCst);
             std::thread::sleep(delay);
             (
@@ -424,7 +433,7 @@ fn a_keyring_holds_one_environment_and_region_and_never_prints_a_key() {
     let printed = format!("{ring:?}");
     assert!(
         !printed.contains(&key) && !printed.contains("9, 9, 9"),
-        "{printed}"
+        "the keyring printed key bytes"
     );
     assert!(
         LocalKeyring::from_vars(&vars(&[]), false)
@@ -443,7 +452,10 @@ fn a_keyring_holds_one_environment_and_region_and_never_prints_a_key() {
         false,
     )
     .expect_err("short key");
-    assert!(!error.to_string().contains("bm90LWEta2V5"), "{error}");
+    assert!(
+        !error.to_string().contains("bm90LWEta2V5"),
+        "a configuration error carries the key value"
+    );
     assert_eq!(
         format!("{:?}", Secret::from(ACCESS.to_owned())),
         "[redacted]"
@@ -484,13 +496,14 @@ fn dns_rebinding_is_refused_and_never_reaches_the_internal_address() {
         (200, Vec::new(), "internal".to_owned())
     }));
     let lookup = Arc::new(Rebinding::default());
-    let egress = Egress::with_connect_timeout(
+    let egress = Egress::with_timeouts(
         Vec::new(),
-        None,
         lookup_of(&lookup),
-        Duration::from_millis(300),
+        Timeouts {
+            connect: Duration::from_millis(300),
+            ..Timeouts::default()
+        },
     )
-    .expect("egress")
     .with_sleep(|_| {});
     let url = format!("https://rebind.example.com:{}/x", internal.port);
     // First answer public: connected to that pinned address only (it does
@@ -513,7 +526,7 @@ fn dns_rebinding_is_refused_and_never_reaches_the_internal_address() {
 #[test]
 fn internal_and_plain_http_destinations_are_refused_before_any_lookup() {
     let lookup = Arc::new(Rebinding::default());
-    let egress = Egress::new(Vec::new(), None, lookup_of(&lookup)).expect("egress");
+    let egress = Egress::new(Vec::new(), lookup_of(&lookup));
     for url in [
         "https://169.254.169.254/latest/meta-data",
         "https://10.0.0.1/",
@@ -532,7 +545,6 @@ fn internal_and_plain_http_destinations_are_refused_before_any_lookup() {
         );
     }
     assert_eq!(lookup.0.load(Ordering::SeqCst), 0);
-    assert!(Egress::new(Vec::new(), Some("not a proxy"), Arc::new(NoLookup)).is_err());
 }
 
 #[test]
@@ -742,6 +754,10 @@ fn query_param(url: &str, name: &str) -> String {
         .expect("the parameter is in the URL")
 }
 
+fn code(text: &str) -> Secret {
+    Secret::from(text.to_owned())
+}
+
 #[test]
 fn oauth_state_is_single_use_bound_to_its_principal_and_expires() {
     let (_dir, path) = temp_db();
@@ -759,11 +775,15 @@ fn oauth_state_is_single_use_bound_to_its_principal_and_expires() {
 
     // Another principal cannot complete it; the state is then spent.
     assert_eq!(
-        conns.callback("intruder", &state, "code-1", 2_000).err(),
+        conns
+            .complete("intruder", "acme.main", &state, &code("code-1"), 2_000)
+            .err(),
         Some(ConnError::BadState)
     );
     assert_eq!(
-        conns.callback("owner", &state, "code-1", 2_000).err(),
+        conns
+            .complete("owner", "acme.main", &state, &code("code-1"), 2_000)
+            .err(),
         Some(ConnError::BadState)
     );
     assert_eq!(calls.load(Ordering::SeqCst), 0);
@@ -775,7 +795,13 @@ fn oauth_state_is_single_use_bound_to_its_principal_and_expires() {
     let late = query_param(&url, "state");
     assert_eq!(
         conns
-            .callback("owner", &late, "code-2", 1_000 + 600_000)
+            .complete(
+                "owner",
+                "acme.main",
+                &late,
+                &code("code-2"),
+                1_000 + 600_000
+            )
             .err(),
         Some(ConnError::BadState)
     );
@@ -797,7 +823,7 @@ fn oauth_state_is_single_use_bound_to_its_principal_and_expires() {
     );
     assert_ne!(challenge, challenge2);
     let status = conns
-        .callback("owner", &good, "code-3", 6_000)
+        .complete("owner", "acme.main", &good, &code("code-3"), 6_000)
         .expect("connected");
     assert_eq!(status.state, "connected");
     assert_eq!(calls.load(Ordering::SeqCst), 1);
@@ -815,7 +841,9 @@ fn oauth_state_is_single_use_bound_to_its_principal_and_expires() {
         .encode(sha2::Sha256::digest(verifier.as_bytes()));
     assert_eq!(derived, challenge2);
     assert_eq!(
-        conns.callback("owner", &good, "code-3", 6_000).err(),
+        conns
+            .complete("owner", "acme.main", &good, &code("code-3"), 6_000)
+            .err(),
         Some(ConnError::BadState)
     );
     // Unoffered scopes are refused before anything is stored.
@@ -859,17 +887,13 @@ impl PrincipalResolver for Bearers {
     fn end_request(&self) {}
 }
 
-#[test]
-fn the_write_only_api_is_owner_only_and_never_returns_or_stores_a_credential() {
-    let (_dir, path) = temp_db();
-    let calls = Arc::new(AtomicUsize::new(0));
-    let server = token_server(Arc::clone(&calls), Duration::ZERO);
+fn owner_host(path: &std::path::Path) -> DevHost<NativeEngine> {
     let store = CellStore::from_engine(
-        engine(&path),
+        engine(path),
         Model::from_definitions(&[], &[]).expect("model"),
     )
     .expect("store");
-    let host = DevHost::from_store(
+    DevHost::from_store(
         store,
         CellScope {
             org_id: "org_demo".into(),
@@ -878,26 +902,54 @@ fn the_write_only_api_is_owner_only_and_never_returns_or_stores_a_credential() {
         |_| BTreeMap::new(),
     )
     .expect("host")
-    .with_authorizer(OwnerOnly);
-    let conns = connections(&path, server.port);
+    .with_authorizer(OwnerOnly)
+}
+
+/// Routes over [`connections`], counting how often the vault is opened.
+fn routes(path: &std::path::Path, port: u16, opens: &Arc<AtomicUsize>) -> Routes<NativeEngine> {
+    let (path, opens) = (path.to_owned(), Arc::clone(opens));
+    Routes::with_opener(move |_scope| {
+        opens.fetch_add(1, Ordering::SeqCst);
+        Ok(connections(&path, port))
+    })
+}
+
+fn request<'a>(
+    method: &'a str,
+    path: &'a str,
+    query: &'a str,
+    authorization: Option<&'a str>,
+    body: &'a str,
+) -> Request<'a> {
+    Request {
+        method,
+        path,
+        query,
+        authorization,
+        now: 1,
+        body,
+    }
+}
+
+#[test]
+fn the_write_only_api_is_owner_only_and_never_returns_or_stores_a_credential() {
+    let (_dir, path) = temp_db();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let server = token_server(Arc::clone(&calls), Duration::ZERO);
+    let host = owner_host(&path);
+    let opens = Arc::new(AtomicUsize::new(0));
+    let routes = routes(&path, server.port, &opens);
     let body = format!(
         r#"{{"provider":"acme","accessToken":"{ACCESS}","refreshToken":"{REFRESH}","scopes":["read"]}}"#
     );
     let mut outputs = Vec::new();
     let mut call = |method: &str, path: &str, query: &str, who: Option<&str>, body: &str| {
         let auth = who.map(|token| format!("Bearer {token}"));
-        let response = conns
+        let response = routes
             .route(
                 &host,
                 &Bearers,
-                &Request {
-                    method,
-                    path,
-                    query,
-                    authorization: auth.as_deref(),
-                    now: 1,
-                    body,
-                },
+                &request(method, path, query, auth.as_deref(), body),
                 1_000,
             )
             .expect("routed");
@@ -906,15 +958,10 @@ fn the_write_only_api_is_owner_only_and_never_returns_or_stores_a_credential() {
     };
     let scope = "orgId=org_demo&environmentId=dev";
     let path_of = "/v1/connections/acme.main/credentials";
-    let outside = norn_cell_do::server::outside::<NativeEngine>(&Request {
-        method: "PUT",
-        path: path_of,
-        query: scope,
-        authorization: None,
-        now: 1,
-        body: "",
-    });
-    // CONN-AUTHZ-1: a viewer, an anonymous caller, another scope: the outside answer.
+    let outside =
+        norn_cell_do::server::outside::<NativeEngine>(&request("PUT", path_of, scope, None, ""));
+    // CONN-AUTHZ-1: a viewer, an anonymous caller, another scope: the
+    // outside answer, and the vault is never opened.
     for (who, query) in [
         (Some("viewer-token"), scope),
         (None, scope),
@@ -926,16 +973,15 @@ fn the_write_only_api_is_owner_only_and_never_returns_or_stores_a_credential() {
             (outside.status, &outside.body)
         );
     }
-    assert!(
-        conns
-            .status("acme.main")
-            .expect("status")
-            .provider
-            .is_none()
+    assert_eq!(
+        opens.load(Ordering::SeqCst),
+        0,
+        "the vault opened for a denied caller"
     );
 
     let set = call("PUT", path_of, scope, Some("owner-token"), &body);
     assert_eq!(set.status, 200, "{}", set.body);
+    assert_eq!(opens.load(Ordering::SeqCst), 1);
     let status: serde_json::Value = serde_json::from_str(&set.body).expect("json");
     assert_eq!(status["state"], "connected");
     assert_eq!(status["last4"], "wxyz");
@@ -961,10 +1007,10 @@ fn the_write_only_api_is_owner_only_and_never_returns_or_stores_a_credential() {
     assert_eq!(bad.status, 400);
     // The ciphertext is in the cell's storage; the plaintext is not.
     let bytes = std::fs::read(&path).expect("file");
-    for secret in [ACCESS, REFRESH] {
+    for (label, secret) in [("access token", ACCESS), ("refresh token", REFRESH)] {
         assert!(
             !bytes.windows(secret.len()).any(|w| w == secret.as_bytes()),
-            "{secret} stored in clear"
+            "the {label} is stored in clear"
         );
     }
     let revoked = call("DELETE", path_of, scope, Some("owner-token"), "");
@@ -973,43 +1019,53 @@ fn the_write_only_api_is_owner_only_and_never_returns_or_stores_a_credential() {
         serde_json::from_str::<serde_json::Value>(&revoked.body).expect("json")["state"],
         "not_connected"
     );
-    // The provider's revocation endpoint is asked over https only; this
-    // mock is plain http, so the revoke is refused before any call, and audited.
-    assert!(
-        !server
-            .seen()
-            .iter()
-            .any(|s| s.line.starts_with("POST /revoke"))
-    );
+    // The provider's revocation endpoint got the refresh token, once.
+    let revocation: Vec<Seen> = server
+        .seen()
+        .into_iter()
+        .filter(|s| s.line.starts_with("POST /revoke"))
+        .collect();
+    assert_eq!(revocation.len(), 1);
+    assert!(revocation[0].body.contains("token_type_hint=refresh_token"));
     // No answer, audit row or printed status carries a credential.
+    let conns = routes.connections().expect("opened");
     let trail = conns.audit_trail("acme.main").expect("audit");
     let events: Vec<&str> = trail.iter().map(|(_, event, ..)| event.as_str()).collect();
     assert_eq!(
         events,
-        ["credential.set", "oauth.start", "credential.revoke"]
+        [
+            "credential.set",
+            "oauth.start",
+            "credential.revoke",
+            "credential.provider_revoke"
+        ]
     );
+    assert_eq!(trail[3].3.as_deref(), Some("provider_revoked"));
     let printed = format!("{outputs:?}{trail:?}{:?}", conns.status("acme.main"));
-    for secret in [ACCESS, REFRESH, "client-secret-SECRET-0005", "SECRET"] {
-        assert!(!printed.contains(secret), "{secret} leaked: {printed}");
+    for (label, secret) in [ACCESS, REFRESH, "client-secret-SECRET-0005", "SECRET"]
+        .iter()
+        .enumerate()
+    {
+        assert!(!printed.contains(secret), "secret fixture {label} leaked");
     }
 }
 
 #[test]
-fn the_generated_providers_load_as_connector_auth() {
+fn the_generated_providers_load_as_connector_auth_and_shopify_is_withheld() {
     let providers = providers::load().expect("providers");
     assert_eq!(
         providers.keys().map(String::as_str).collect::<Vec<_>>(),
         ["github", "google.gmail", "shopify"]
     );
     let shopify = &providers["shopify"];
-    assert_eq!(shopify.scope_separator, ",");
-    assert_eq!(
-        shopify.fill(
-            &shopify.token_url,
-            &BTreeMap::from([("shopSubdomain".to_owned(), "acme".to_owned())])
-        ),
-        Ok("https://acme.myshopify.com/admin/oauth/access_token".to_owned())
+    assert!(
+        shopify
+            .withheld
+            .as_deref()
+            .is_some_and(|why| why.contains("not supported yet"))
     );
+    assert!(providers["github"].withheld.is_none() && providers["google.gmail"].withheld.is_none());
+    assert_eq!(shopify.scope_separator, ",");
     for evil in ["evil.com/x", "a@b", "", "UPPER", "-x"] {
         assert!(
             shopify
@@ -1034,4 +1090,512 @@ fn the_generated_providers_load_as_connector_auth() {
         Some("offline")
     );
     assert_eq!(providers["github"].scopes, ["read:user", "repo"]);
+}
+
+/// PROVIDER-WITHHELD-1: Shopify is refused before anything is stored or sent.
+#[test]
+fn a_withheld_provider_is_refused_everywhere() {
+    let (_dir, path) = temp_db();
+    let mut registry = providers::load().expect("providers");
+    let shopify = registry.remove("shopify").expect("shopify");
+    let vault = Vault::open(
+        engine(&path),
+        SCOPE,
+        Arc::new(keyring("test-local-v1", &[("test-local-v1", 7)])),
+    )
+    .expect("vault");
+    let conns = Connections::new(
+        vault,
+        loopback_egress(),
+        BTreeMap::from([("shopify".to_owned(), shopify)]),
+        BTreeMap::from([(
+            "shopify".to_owned(),
+            ClientCredentials {
+                client_id: "client-1".to_owned(),
+                client_secret: Some(Secret::from("s".to_owned())),
+            },
+        )]),
+        Some("https://app.norn.example/v1/connections/oauth:callback".to_owned()),
+    )
+    .expect("connections");
+    let params = BTreeMap::from([("shopSubdomain".to_owned(), "acme".to_owned())]);
+    let started = conns.start("owner", "shop", "shopify", None, &params, 1_000);
+    assert!(
+        matches!(&started, Err(ConnError::Unsupported(why)) if why.contains("not supported yet")),
+        "{started:?}"
+    );
+    let set = conns.set(
+        "owner",
+        "shop",
+        serde_json::from_value(serde_json::json!({
+            "provider": "shopify", "accessToken": ACCESS, "params": {"shopSubdomain": "acme"}
+        }))
+        .expect("body"),
+        1_000,
+    );
+    assert!(matches!(set, Err(ConnError::Unsupported(_))), "{set:?}");
+    assert_eq!(conns.status("shop").expect("status").state, "not_connected");
+}
+
+// ------------------------------------------------------ round-1 findings
+
+/// S1, OAUTH-DIRECT-1: token exchange, refresh and revocation follow no
+/// redirect; nothing reaches the redirect's target.
+#[test]
+fn oauth_calls_follow_no_redirect() {
+    let (_dir, path) = temp_db();
+    let thief = Mock::start(Arc::new(|_: &Seen| (200, Vec::new(), "{}".to_owned())));
+    let thief_port = thief.port;
+    let server = Mock::start(Arc::new(move |_: &Seen| {
+        (
+            307,
+            vec![(
+                "location".to_owned(),
+                format!("http://127.0.0.1:{thief_port}/steal"),
+            )],
+            String::new(),
+        )
+    }));
+    let conns = connections(&path, server.port);
+    // Exchange.
+    let (url, _) = conns
+        .start("owner", "acme.main", "acme", None, &BTreeMap::new(), 1_000)
+        .expect("start");
+    let exchanged = conns.complete(
+        "owner",
+        "acme.main",
+        &query_param(&url, "state"),
+        &code("code-1"),
+        2_000,
+    );
+    assert!(
+        matches!(exchanged, Err(ConnError::Egress(EgressError::Redirect(_)))),
+        "{exchanged:?}"
+    );
+    // Refresh.
+    set(&conns, Some(2_000));
+    let refreshed = conns.access_token("connection:acme.main", "acme.main", 10_000);
+    assert!(
+        matches!(refreshed, Err(ConnError::Egress(EgressError::Redirect(_)))),
+        "{refreshed:?}"
+    );
+    assert_eq!(
+        conns
+            .status("acme.main")
+            .expect("status")
+            .last_error
+            .as_deref(),
+        Some("egress_redirect")
+    );
+    // Revocation.
+    conns.revoke("owner", "acme.main", 20_000).expect("revoke");
+    let trail = conns.audit_trail("acme.main").expect("audit");
+    assert_eq!(
+        trail
+            .last()
+            .map(|(_, event, _, detail)| (event.as_str(), detail.as_deref())),
+        Some(("credential.provider_revoke", Some("egress_redirect")))
+    );
+    assert!(
+        thief.seen().is_empty(),
+        "a redirect target got an OAuth body"
+    );
+    assert_eq!(server.seen().len(), 3);
+}
+
+/// S1, EGRESS-REDIRECT-1: a 307 that would resend a body to another origin
+/// is refused before anything reaches it.
+#[test]
+fn a_body_is_never_resent_to_another_origin() {
+    let thief = Mock::start(Arc::new(|_: &Seen| (200, Vec::new(), String::new())));
+    let thief_port = thief.port;
+    let origin = Mock::start(Arc::new(move |_: &Seen| {
+        (
+            308,
+            vec![(
+                "location".to_owned(),
+                format!("http://127.0.0.1:{thief_port}/x"),
+            )],
+            String::new(),
+        )
+    }));
+    let refused = loopback_egress().send(post(&format!("http://127.0.0.1:{}/a", origin.port)));
+    assert!(
+        matches!(refused, Err(EgressError::Redirect(_))),
+        "{refused:?}"
+    );
+    assert!(thief.seen().is_empty());
+}
+
+/// Never answers in time.
+#[derive(Debug, Default)]
+struct SlowLookup;
+
+impl Lookup for SlowLookup {
+    fn lookup(&self, _host: &str, _port: u16) -> std::io::Result<Vec<IpAddr>> {
+        std::thread::sleep(Duration::from_secs(5));
+        Ok(vec![IpAddr::from([192, 0, 2, 10])])
+    }
+}
+
+/// S2: a proxy is refused at startup; a lookup and a whole call are bounded.
+#[test]
+fn proxies_are_refused_and_lookups_and_calls_are_bounded() {
+    let vars = BTreeMap::from([
+        (
+            concat!("NORN_", "VAULT_KEK").to_owned(),
+            "dev-insecure".to_owned(),
+        ),
+        (
+            "NORN_EGRESS_PROXY".to_owned(),
+            "http://proxy.example:3128".to_owned(),
+        ),
+    ]);
+    let refused = Config::from_vars(&vars, true).err().expect("refused");
+    assert!(
+        refused.contains("NORN_EGRESS_PROXY") && refused.contains("not supported"),
+        "{refused}"
+    );
+
+    let quick = Timeouts {
+        connect: Duration::from_millis(300),
+        resolve: Duration::from_millis(200),
+        total: Duration::from_millis(600),
+    };
+    let egress = Egress::with_timeouts(Vec::new(), Arc::new(SlowLookup), quick).with_sleep(|_| {});
+    let started = Instant::now();
+    let unresolved = egress.send(
+        http::Request::get("https://slow.example.com/")
+            .body(Vec::new())
+            .expect("request"),
+    );
+    assert!(
+        matches!(unresolved, Err(EgressError::Unresolved(_))),
+        "{unresolved:?}"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "{:?}",
+        started.elapsed()
+    );
+
+    // A peer that never answers: the whole call, retries included, ends at
+    // the deadline.
+    let hung = Mock::start(Arc::new(|_: &Seen| {
+        std::thread::sleep(Duration::from_secs(5));
+        (200, Vec::new(), String::new())
+    }));
+    let egress = Egress::with_timeouts(vec!["127.0.0.1".to_owned()], Arc::new(NoLookup), quick)
+        .with_sleep(|_| {});
+    let started = Instant::now();
+    let late = egress.send(
+        http::Request::get(format!("http://127.0.0.1:{}/", hung.port))
+            .body(Vec::new())
+            .expect("request"),
+    );
+    assert!(matches!(late, Err(EgressError::Deadline)), "{late:?}");
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "{:?}",
+        started.elapsed()
+    );
+}
+
+/// S3, CONN-ERROR-1: a provider's text never reaches an answer, the status
+/// or the audit; the log facade can't record wire rows.
+#[test]
+fn provider_text_never_reaches_answers_status_or_audit() {
+    assert!(log::STATIC_MAX_LEVEL <= log::LevelFilter::Info);
+    let (_dir, path) = temp_db();
+    let server = Mock::start(Arc::new(|_: &Seen| {
+        (
+            400,
+            vec![("content-type".to_owned(), "application/json".to_owned())],
+            r#"{"error":"<script>EVIL-CODE</script>","error_description":"PROVIDER-SECRET-TEXT"}"#
+                .to_owned(),
+        )
+    }));
+    let conns = connections(&path, server.port);
+    set(&conns, Some(2_000));
+    assert_eq!(
+        conns
+            .access_token("connection:acme.main", "acme.main", 10_000)
+            .err(),
+        Some(ConnError::ReconnectNeeded)
+    );
+    let status = conns.status("acme.main").expect("status");
+    assert_eq!(status.last_error.as_deref(), Some("provider_error"));
+    let (url, _) = conns
+        .start("owner", "acme.main", "acme", None, &BTreeMap::new(), 20_000)
+        .expect("start");
+    let refused = conns
+        .complete(
+            "owner",
+            "acme.main",
+            &query_param(&url, "state"),
+            &code("c"),
+            21_000,
+        )
+        .expect_err("refused");
+    assert_eq!(refused, ConnError::Provider("provider_error"));
+    let trail = conns.audit_trail("acme.main").expect("audit");
+    let printed = format!("{status:?}{trail:?}{refused}{refused:?}");
+    for (index, text) in ["EVIL", "script", "PROVIDER-SECRET-TEXT"]
+        .iter()
+        .enumerate()
+    {
+        assert!(!printed.contains(text), "provider text {index} leaked");
+    }
+}
+
+/// S4: a refresh in flight when the connection is disconnected and set
+/// again never overwrites the replacement.
+#[test]
+fn a_stale_refresh_never_overwrites_a_replacement() {
+    let (_dir, path) = temp_db();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let server = token_server(Arc::clone(&calls), Duration::from_millis(600));
+    let conns = connections(&path, server.port);
+    set(&conns, Some(2_000));
+    let replacement = "access-token-REPLACED-0009-rplc";
+    let stale = std::thread::scope(|scope| {
+        let refreshing =
+            scope.spawn(|| conns.access_token("connection:acme.main", "acme.main", 10_000));
+        std::thread::sleep(Duration::from_millis(200));
+        conns.revoke("owner", "acme.main", 10_100).expect("revoke");
+        conns
+            .set(
+                "owner",
+                "acme.main",
+                SetCredentials::from_parts("acme", replacement, None, None),
+                10_200,
+            )
+            .expect("replace");
+        refreshing.join().expect("thread")
+    });
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(stale.err(), Some(ConnError::Conflict));
+    assert_eq!(
+        conns.status("acme.main").expect("status").last4.as_deref(),
+        Some("rplc")
+    );
+    assert_eq!(
+        conns
+            .access_token("connection:acme.main", "acme.main", 20_000)
+            .expect("token")
+            .expose(),
+        replacement.as_bytes()
+    );
+}
+
+/// S4: a disconnect spends pending authorizations; one completing during a
+/// disconnect stores nothing; a replacement spends them too.
+#[test]
+fn a_disconnect_or_replacement_spends_pending_authorizations() {
+    let (_dir, path) = temp_db();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let server = token_server(Arc::clone(&calls), Duration::from_millis(600));
+    let conns = connections(&path, server.port);
+    let start = |at: u64| {
+        let (url, _) = conns
+            .start("owner", "acme.main", "acme", None, &BTreeMap::new(), at)
+            .expect("start");
+        query_param(&url, "state")
+    };
+    // Started, disconnected, then completed: refused, nothing exchanged.
+    let state = start(1_000);
+    conns.revoke("owner", "acme.main", 1_100).expect("revoke");
+    assert_eq!(
+        conns
+            .complete("owner", "acme.main", &state, &code("c1"), 1_200)
+            .err(),
+        Some(ConnError::BadState)
+    );
+    // Started, replaced by a PUT, then completed: refused too.
+    let state = start(2_000);
+    set(&conns, None);
+    assert_eq!(
+        conns
+            .complete("owner", "acme.main", &state, &code("c2"), 2_200)
+            .err(),
+        Some(ConnError::BadState)
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    // Disconnected while the code is being exchanged: nothing is stored.
+    let state = start(3_000);
+    let completed = std::thread::scope(|scope| {
+        let completing =
+            scope.spawn(|| conns.complete("owner", "acme.main", &state, &code("c3"), 3_100));
+        std::thread::sleep(Duration::from_millis(200));
+        conns.revoke("owner", "acme.main", 3_200).expect("revoke");
+        completing.join().expect("thread")
+    });
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(completed.err(), Some(ConnError::Conflict));
+    assert_eq!(
+        conns.status("acme.main").expect("status").state,
+        "not_connected"
+    );
+}
+
+/// S4: a slow provider revocation never deletes the credential set after
+/// the disconnect.
+#[test]
+fn a_slow_revoke_never_deletes_a_replacement() {
+    let (_dir, path) = temp_db();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let server = token_server_with(
+        Arc::clone(&calls),
+        Duration::ZERO,
+        Duration::from_millis(600),
+    );
+    let conns = connections(&path, server.port);
+    set(&conns, None);
+    let replacement = "access-token-REPLACED-0010-next";
+    std::thread::scope(|scope| {
+        let revoking = scope.spawn(|| conns.revoke("owner", "acme.main", 5_000));
+        std::thread::sleep(Duration::from_millis(200));
+        conns
+            .set(
+                "owner",
+                "acme.main",
+                SetCredentials::from_parts("acme", replacement, None, None),
+                5_100,
+            )
+            .expect("replace");
+        revoking.join().expect("thread").expect("revoked");
+    });
+    let status = conns.status("acme.main").expect("status");
+    assert_eq!(
+        (status.state.as_str(), status.last4.as_deref()),
+        ("connected", Some("next"))
+    );
+    // The provider was asked to revoke the old grant, not the new one.
+    let revoked = server
+        .seen()
+        .into_iter()
+        .find(|s| s.line.starts_with("POST /revoke"))
+        .expect("revoke call");
+    assert!(revoked.body.contains(REFRESH) && !revoked.body.contains("REPLACED"));
+}
+
+/// S8, CONN-SEALED-BINDING-1: editing the plaintext row's provider or
+/// parameters can't redirect a credential; the dev key is refused in a
+/// normal keyring.
+#[test]
+fn plaintext_metadata_edits_cannot_redirect_a_credential() {
+    let (_dir, path) = temp_db();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let server = token_server(Arc::clone(&calls), Duration::ZERO);
+    let conns = connections(&path, server.port);
+    set(&conns, Some(2_000));
+    let tamper = engine(&path);
+    tamper
+        .execute(
+            r#"UPDATE "_norn_connection" SET "params" = ?1 WHERE "id" = 'acme.main'"#,
+            &[SqlValue::Text(r#"{"shopSubdomain":"evil"}"#.to_owned())],
+        )
+        .expect("tamper");
+    assert_eq!(
+        conns
+            .access_token("connection:acme.main", "acme.main", 10_000)
+            .err(),
+        Some(ConnError::Vault(VaultError::Integrity))
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+
+    let dev = LocalKeyring::new(
+        "prod-eu-v1",
+        BTreeMap::from([(
+            "prod-eu-v1".to_owned(),
+            *b"norn-dev-insecure-vault-kek-v1!!",
+        )]),
+    );
+    assert!(matches!(dev, Err(VaultError::Config(why)) if why.contains("development key")));
+}
+
+// -------------------------------------------- authorization: ReadPolicy
+
+/// S7, CONN-AUTHZ-1: through the cell's own `ReadPolicy`, a viewer gets the
+/// empty-scope answer and the vault is never opened; an admin is served. The
+/// provider's browser redirect opens no vault either.
+#[test]
+fn read_policy_decides_before_the_vault_opens() {
+    use norn_cell_do::analytics;
+    use norn_cell_do::policy::{DEMO_GRANTS, ReadPolicy};
+    use norn_cell_do::principal::{DEMO_FIXTURES, FixturePrincipals};
+
+    let (_dir, path) = temp_db();
+    let scope = analytics::analytics_scope();
+    let opened = analytics::provision(engine(&path), &scope).expect("provision");
+    let policy = ReadPolicy::compile(opened.store.model().object_types(), &scope, &DEMO_GRANTS)
+        .expect("policy");
+    let principals = FixturePrincipals::new(DEMO_FIXTURES, policy.caller());
+    let host = DevHost::from_store(opened.store, scope, |command| command.payload.clone())
+        .expect("host")
+        .with_authorizer(policy);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let server = token_server(Arc::clone(&calls), Duration::ZERO);
+    let opens = Arc::new(AtomicUsize::new(0));
+    let routes = routes(&path, server.port, &opens);
+    let query = "orgId=org_demo&environmentId=analytics";
+    let path_of = "/v1/connections/acme.main/credentials";
+    let call = |method: &str, path: &str, query: &str, auth: Option<&str>, body: &str| {
+        routes
+            .route(
+                &host,
+                &principals,
+                &request(method, path, query, auth, body),
+                1_000,
+            )
+            .expect("routed")
+    };
+    for auth in [
+        Some("Bearer fixture:guest@demo"),
+        None,
+        Some("Bearer fixture:nobody@demo"),
+    ] {
+        for (method, route, body) in [
+            ("GET", path_of, ""),
+            ("DELETE", path_of, ""),
+            (
+                "POST",
+                "/v1/connections/acme.main/oauth:start",
+                r#"{"provider":"acme"}"#,
+            ),
+            (
+                "POST",
+                "/v1/connections/acme.main/oauth:complete",
+                r#"{"state":"x"}"#,
+            ),
+        ] {
+            let refused = call(method, route, query, auth, body);
+            let outside = norn_cell_do::server::outside::<NativeEngine>(&request(
+                method, route, query, auth, body,
+            ));
+            assert_eq!(
+                (refused.status, &refused.body),
+                (outside.status, &outside.body),
+                "{auth:?} {method} {route}"
+            );
+        }
+    }
+    let parked = call(
+        "GET",
+        "/v1/connections/oauth:callback",
+        "state=abc&code=def",
+        None,
+        "",
+    );
+    assert_eq!(parked.status, 200, "{}", parked.body);
+    assert_eq!(
+        opens.load(Ordering::SeqCst),
+        0,
+        "the vault opened before authorization"
+    );
+    assert!(!routes.vault_opened());
+
+    let admin = call("GET", path_of, query, Some("Bearer fixture:admin@demo"), "");
+    assert_eq!(admin.status, 200, "{}", admin.body);
+    assert_eq!(opens.load(Ordering::SeqCst), 1);
 }

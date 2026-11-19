@@ -72,6 +72,13 @@ aes-gcm = { version = "=0.10.3", default-features = false, features = ["aes", "a
 oauth2 = { version = "=5.0.0", default-features = false }
 # OAuth state digests (`connections::service`).
 sha2 = "0.10.9"
+# Wipes owned key and credential buffers in a way the optimizer keeps
+# (VAULT-WIPE-1).
+zeroize = { version = "1.9.1", default-features = false, features = ["alloc"] }
+# EGRESS-QUIET-1: caps the `log` facade at `info` in every build of this
+# crate, so ureq's debug and trace records (request lines, wire rows with
+# headers) are compiled out and no logger can turn them on.
+log = { version = "0.4.33", default-features = false, features = ["max_level_info", "release_max_level_info"] }
 # Egress URL checks, parsed as the host `fetch` parses them.
 url = { version = "2.5.8", default-features = false, features = ["std"] }
 

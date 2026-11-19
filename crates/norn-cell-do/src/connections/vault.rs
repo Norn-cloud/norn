@@ -21,6 +21,12 @@
 //! read routes and the rest of the cell never hold it.
 //! VAULT-NOLOG-1: [`Secret`] and the keyring print as `[redacted]`; nothing
 //! here logs, and no error carries a credential or key byte.
+//! VAULT-WIPE-1: every owned key and plaintext buffer ([`Secret`], the
+//! keyring's KEKs, decoded key bytes) is wiped with `zeroize` when dropped,
+//! which the optimizer may not remove.
+//! VAULT-DEV-KEY-1: the development key is public. Only
+//! [`LocalKeyring::from_vars`] with `allow_dev` (`norn dev`) builds a keyring
+//! holding it, and [`LocalKeyring::new`] refuses its bytes under any id.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -30,6 +36,7 @@ use aes_gcm::aead::{Aead, KeyInit, Payload};
 use aes_gcm::{Aes256Gcm, Nonce};
 use base64::Engine as _;
 use norn_cell::engine::{SqlEngine, SqlValue};
+use zeroize::{Zeroize as _, Zeroizing};
 
 /// The current KEK's id, `<env>-<region>-v<N>` (for example `prod-eu-v2`).
 pub const KEK_ID_VAR: &str = "NORN_VAULT_KEK_ID";
@@ -43,6 +50,12 @@ pub const KEKS_PREVIOUS_VAR: &str = "NORN_VAULT_KEKS_PREVIOUS";
 pub const DEV_KEK_VALUE: &str = "dev-insecure";
 /// The development key's id.
 pub const DEV_KEK_ID: &str = "dev-local-v1";
+/// Every vault variable starts with this (the connections module strips them
+/// from child process environments).
+pub const VAR_PREFIX: &str = "NORN_VAULT_";
+/// The development key's bytes: public, so refused in any normal keyring
+/// (VAULT-DEV-KEY-1).
+const DEV_KEY: &[u8; KEY_BYTES] = b"norn-dev-insecure-vault-kek-v1!!";
 
 const NONCE_BYTES: usize = 12;
 const KEY_BYTES: usize = 32;
@@ -119,13 +132,18 @@ impl fmt::Debug for Secret {
 
 impl Drop for Secret {
     fn drop(&mut self) {
-        self.0.fill(0);
+        self.0.zeroize();
     }
 }
 
-/// Fill `buf` with randomness from the host.
-fn random(buf: &mut [u8]) -> Result<(), VaultError> {
-    getrandom::fill(buf).map_err(|_error| VaultError::Entropy)
+/// `N` fresh random bytes from the host, written into uninitialised memory:
+/// a key or nonce never starts as a fixed value.
+fn random_bytes<const N: usize>() -> Result<Zeroizing<Vec<u8>>, VaultError> {
+    let mut buf = [std::mem::MaybeUninit::<u8>::uninit(); N];
+    let filled = getrandom::fill_uninit(&mut buf).map_err(|_error| VaultError::Entropy)?;
+    let bytes = Zeroizing::new(filled.to_vec());
+    filled.zeroize();
+    Ok(bytes)
 }
 
 /// A KEK id, `<env>-<region>-v<N>`: lowercase letters and digits in the
@@ -236,15 +254,17 @@ impl fmt::Debug for LocalKeyring {
 impl Drop for LocalKeyring {
     fn drop(&mut self) {
         for key in self.keys.values_mut() {
-            key.fill(0);
+            key.zeroize();
         }
     }
 }
 
 fn decode_key(variable: &str, value: &str) -> Result<[u8; KEY_BYTES], VaultError> {
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(value.trim())
-        .map_err(|_error| VaultError::Config(format!("{variable} is not standard base64")))?;
+    let bytes = Zeroizing::new(
+        base64::engine::general_purpose::STANDARD
+            .decode(value.trim())
+            .map_err(|_error| VaultError::Config(format!("{variable} is not standard base64")))?,
+    );
     <[u8; KEY_BYTES]>::try_from(bytes.as_slice())
         .map_err(|_error| VaultError::Config(format!("{variable} is not {KEY_BYTES} bytes")))
 }
@@ -253,16 +273,27 @@ impl LocalKeyring {
     /// A keyring wrapping under `current`, unwrapping with any of `keys`.
     ///
     /// # Errors
-    /// `current` not among `keys`, a malformed id, or ids of more than one
-    /// environment and region (VAULT-KEK-SCOPE-1).
+    /// `current` not among `keys`, a malformed id, ids of more than one
+    /// environment and region (VAULT-KEK-SCOPE-1), or the public development
+    /// key's bytes under any id (VAULT-DEV-KEY-1).
     pub fn new(current: &str, keys: BTreeMap<String, [u8; KEY_BYTES]>) -> Result<Self, VaultError> {
+        // Built first, so every key is wiped however this returns.
+        let ring = Self {
+            current: current.to_owned(),
+            keys,
+        };
+        if let Some((id, _)) = ring.keys.iter().find(|(_, key)| *key == DEV_KEY) {
+            return Err(VaultError::Config(format!(
+                "key id {id} holds the public development key"
+            )));
+        }
         let scope = KeyId::parse(current)?;
-        if !keys.contains_key(current) {
+        if !ring.keys.contains_key(current) {
             return Err(VaultError::Config(format!(
                 "the current key id {current} has no key"
             )));
         }
-        for id in keys.keys() {
+        for id in ring.keys.keys() {
             let other = KeyId::parse(id)?;
             if (&other.env, &other.region) != (&scope.env, &scope.region) {
                 return Err(VaultError::Config(format!(
@@ -271,23 +302,16 @@ impl LocalKeyring {
                 )));
             }
         }
-        Ok(Self {
-            current: current.to_owned(),
-            keys,
-        })
+        Ok(ring)
     }
 
-    /// The fixed development keyring ([`DEV_KEK_ID`]). Its key is public:
-    /// for `norn dev` and tests only.
-    #[must_use]
-    pub fn dev() -> Self {
-        let mut key = [0_u8; KEY_BYTES];
-        for (byte, value) in key.iter_mut().zip(b"norn-dev-insecure-vault-kek-v1!!") {
-            *byte = *value;
-        }
+    /// The fixed development keyring ([`DEV_KEK_ID`]). Its key is public;
+    /// private, reached only through [`Self::from_vars`] with `allow_dev`
+    /// (VAULT-DEV-KEY-1).
+    fn dev() -> Self {
         Self {
             current: DEV_KEK_ID.to_owned(),
-            keys: BTreeMap::from([(DEV_KEK_ID.to_owned(), key)]),
+            keys: BTreeMap::from([(DEV_KEK_ID.to_owned(), *DEV_KEY)]),
         }
     }
 
@@ -353,8 +377,7 @@ fn cipher(key: &[u8]) -> Result<Aes256Gcm, VaultError> {
 }
 
 fn seal_with(key: &[u8], aad: &[u8], plaintext: &[u8]) -> Result<(Vec<u8>, Vec<u8>), VaultError> {
-    let mut nonce = [0_u8; NONCE_BYTES];
-    random(&mut nonce)?;
+    let nonce = random_bytes::<NONCE_BYTES>()?;
     let ciphertext = cipher(key)?
         .encrypt(
             Nonce::from_slice(&nonce),
@@ -536,9 +559,7 @@ impl<E: SqlEngine> Vault<E> {
         if let Some((version, wrapped)) = self.wrapped_dek(None)? {
             return Ok((version, self.keys.unwrap(&wrapped, &self.dek_aad(version))?));
         }
-        let mut dek = vec![0_u8; KEY_BYTES];
-        random(&mut dek)?;
-        let dek = Secret::new(dek);
+        let dek = Secret::new(random_bytes::<KEY_BYTES>()?.to_vec());
         let version = 1;
         let wrapped = self.keys.wrap(&dek, &self.dek_aad(version))?;
         self.engine

@@ -67,6 +67,7 @@
       "id": "shopify",
       "system": "shopify",
       "upstream": "src/providers/shopify/definition.ts",
+      "withheld": "Shopify OAuth is not supported yet: it needs its own adapter (callback HMAC and shop checks, its token response and comma-separated scopes)",
       "auth": {
         "kind": "oauth2",
         "authId": "shopify.oauth2",

@@ -4,6 +4,9 @@
 //! `registry/connections/providers.json`. Each entry's `auth` is a
 //! `norn_ir::ConnectorAuth::Oauth2` value, checked as one when loaded.
 //!
+//! PROVIDER-WITHHELD-1: an entry the generator marks `withheld` (Shopify,
+//! until its adapter exists) keeps its metadata, and every connection call
+//! naming it is refused with that reason before anything is stored or sent.
 //! PROVIDER-URL-1: a provider URL template parameter (Shopify's
 //! `shopSubdomain`) is a lowercase DNS label; the filled URL is still checked
 //! by the egress client before any call.
@@ -55,6 +58,9 @@ pub struct Provider {
     pub authorization_params: BTreeMap<String, String>,
     /// URL template parameters a connection must supply.
     pub url_parameters: Vec<String>,
+    /// Why the host refuses to connect this provider yet
+    /// (PROVIDER-WITHHELD-1); `None` when it is enabled.
+    pub withheld: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -68,6 +74,8 @@ struct File {
 struct Entry {
     id: String,
     system: String,
+    #[serde(default)]
+    withheld: Option<String>,
     auth: ConnectorAuth,
 }
 
@@ -138,6 +146,7 @@ pub fn load() -> Result<BTreeMap<String, Provider>, String> {
                     .and_then(|v| serde_json::from_value(v.clone()).ok())
                     .unwrap_or_default(),
                 url_parameters: texts(&extra, "urlParameters"),
+                withheld: entry.withheld,
             };
             Ok((entry.id, provider))
         })

@@ -2286,6 +2286,7 @@ dependencies = [
  "getrandom 0.3.4",
  "http",
  "libc",
+ "log",
  "norn-api",
  "norn-cell",
  "norn-checker",
@@ -2301,6 +2302,7 @@ dependencies = [
  "ureq",
  "url",
  "wasm-bindgen",
+ "zeroize",
 ]
 
 [[package]]

@@ -293,7 +293,8 @@ fn run(args: &DevArgs, out: &mut Events) -> Result<(), Failure> {
                 format!("cannot open the analytics engine: {error}"),
             )
         })?;
-    let connections = http::DevConnections::new(cell_path.clone());
+    let connections = http::dev_connections(cell_path.clone())
+        .map_err(|message| Failure::setup("norn.dev.connections_config", message))?;
     {
         let serving = Arc::clone(&serving);
         std::thread::spawn(move || {
@@ -392,18 +393,8 @@ fn spawn_worker(command: &[String], root: &Path) -> Result<Receiver<Value>, Fail
         message: "the worker command is missing after --".to_owned(),
         exit: 2,
     })?;
-    #[allow(
-        clippy::disallowed_methods,
-        reason = "the dev host's one capability: running the project's compile worker"
-    )]
-    let mut child = Command::new(program)
-        .args(arguments)
-        .arg("--project")
-        .arg(root)
-        // The worker exits when this pipe closes, so it never outlives the host.
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
+    let names = std::env::vars_os().map(|(name, _)| name);
+    let mut child = worker_command(program, arguments, root, names)
         .spawn()
         .map_err(|error| {
             Failure::setup(
@@ -433,6 +424,37 @@ fn spawn_worker(command: &[String], root: &Path) -> Result<Receiver<Value>, Fail
         let _status = child.wait();
     });
     Ok(receive)
+}
+
+/// The compile worker's command. CONN-SECRET-ENV-1: the vault KEKs and the
+/// OAuth client secrets this host was given never reach the worker, which
+/// runs the project's own code.
+/// `inherited` names the variables the worker would inherit.
+fn worker_command(
+    program: &str,
+    arguments: &[String],
+    root: &Path,
+    inherited: impl Iterator<Item = std::ffi::OsString>,
+) -> Command {
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the dev host's one capability: running the project's compile worker"
+    )]
+    let mut command = Command::new(program);
+    command
+        .args(arguments)
+        .arg("--project")
+        .arg(root)
+        // The worker exits when this pipe closes, so it never outlives the host.
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit());
+    for name in inherited {
+        if name.to_str().is_some_and(crate::connections::secret_var) {
+            command.env_remove(name);
+        }
+    }
+    command
 }
 
 struct Session<'a> {
@@ -942,6 +964,40 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap();
         (dir, root)
+    }
+
+    /// CONN-SECRET-ENV-1: the compile worker never inherits a vault KEK or
+    /// an OAuth client variable; other variables pass through.
+    #[test]
+    fn the_worker_never_inherits_connection_secrets() {
+        let (_dir, root) = project();
+        let inherited = [
+            concat!("NORN_", "VAULT_KEK"),
+            concat!("NORN_", "VAULT_KEK_ID"),
+            concat!("NORN_", "VAULT_KEKS_PREVIOUS"),
+            "NORN_OAUTH_GITHUB_CLIENT_SECRET",
+            "NORN_OAUTH_REDIRECT_URL",
+            "NORN_SOURCE_ALLOWED_HOSTS",
+            "PATH",
+        ]
+        .map(std::ffi::OsString::from);
+        let command = worker_command("worker", &[], &root, inherited.into_iter());
+        let mut removed: Vec<_> = command
+            .get_envs()
+            .filter(|(_, value)| value.is_none())
+            .map(|(name, _)| name.to_string_lossy().into_owned())
+            .collect();
+        removed.sort();
+        assert_eq!(
+            removed,
+            [
+                "NORN_OAUTH_GITHUB_CLIENT_SECRET",
+                "NORN_OAUTH_REDIRECT_URL",
+                concat!("NORN_", "VAULT_KEK"),
+                concat!("NORN_", "VAULT_KEKS_PREVIOUS"),
+                concat!("NORN_", "VAULT_KEK_ID"),
+            ]
+        );
     }
 
     #[test]

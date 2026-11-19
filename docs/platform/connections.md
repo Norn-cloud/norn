@@ -17,19 +17,40 @@ client can't pin. The hosted wiring builds on the same types.
   bound to its cell, connection and revision, so a copied row doesn't open.
 - **Write-only API.** Credentials can be set and used, never read back. The
   status shows `last4`, scopes, expiry, last use and last error.
+- **Sealed bindings.** The provider and its URL parameters are sealed with the
+  tokens, and a pending authorization's verifier is sealed with its actor,
+  connection, generation and expiry. Calls use the sealed values. A plaintext
+  row that disagrees fails as a vault integrity error, so editing the status
+  row can't send a credential to another endpoint.
 - **OAuth 2.0 authorization code with PKCE (S256),** through the `oauth2`
   crate. The `state` is random and bound to the starting principal, the
   connection and the cell. It lives for ten minutes and is consumed once. The
   PKCE verifier is sealed in the vault.
+- **Generations.** Each connection id has a generation and a revision that
+  never reset, even after a disconnect. Setting, connecting and disconnecting
+  start a new generation; every credential write takes a new revision. Stale
+  work loses:
+  - a refresh writes only if both are still the ones it read;
+  - an OAuth completion stores tokens only if the generation is still the one
+    its start saw;
+  - a disconnect deletes the credential and every pending authorization of the
+    connection in one transaction, and only then asks the provider to revoke
+    the old grant, so a slow revocation can't touch a newer credential.
 - **Refresh.** Refreshes of one connection are single-flight: concurrent
-  callers make one token-endpoint call. The result is written only if the
-  connection's revision hasn't changed since the refresh read it. A rotated
-  refresh token is saved in that same write. If the provider refuses the
-  refresh (an OAuth error), the connection is marked `reconnect_needed`.
+  callers make one token-endpoint call. A rotated refresh token is saved in
+  the same write. If the provider refuses the refresh (an OAuth error), the
+  connection is marked `reconnect_needed`.
+- **Errors.** Answers, `last_error` and audit rows carry fixed codes only: an
+  RFC 6749 error code (`invalid_grant`, …) or `provider_error`, and the egress
+  kinds (`egress_redirect`, `egress_deadline`, …). No provider or peer text is
+  kept. The `log` facade is capped at `info` for this crate, so ureq's debug
+  and trace records, which include wire rows, are compiled out.
 - **Audit.** `_norn_connection_audit` gets one row per event: `credential.set`,
   `credential.use`, `credential.refresh`, `credential.revoke`,
-  `credential.failure`, `oauth.start`, `oauth.connected` and `oauth.refused`.
-  A row holds who, when and a short code, never a value.
+  `credential.provider_revoke`, `credential.failure`, `oauth.start`,
+  `oauth.connected` and `oauth.refused`. A row holds who, when and a short
+  code, never a value. A row recording a credential change commits in the
+  same transaction as the change.
 - **Egress.** Every outbound connector call goes through one client
   (`connections::egress`, over the workspace's `ureq`). It does four things:
   1. It requires https to a public host. Plain http, or an internal host, is
@@ -39,12 +60,16 @@ client can't pin. The hosted wiring builds on the same types.
      link-local or metadata, CGNAT, ULA, IPv4-mapped or NAT64 addresses. It
      then connects only to the addresses it checked, so DNS rebinding can't
      redirect the connection.
-  3. It follows redirects itself (at most 10) and checks every hop.
+  3. It follows redirects itself (at most 10) and checks every hop. It refuses
+     a hop from https to plain http, even to a listed host, and a 307/308 that
+     would resend a body to another origin. OAuth token exchange, refresh and
+     revocation follow no redirect at all.
   4. On a redirect that changes origin, it drops every header except a small
      safe list (deny by default).
 
   Idempotent requests are retried up to 3 times with exponential backoff, or
-  `Retry-After` (at most 30 s). A POST is sent once.
+  `Retry-After` (at most 30 s). A POST is sent once. A name resolves within
+  5 s, and a whole call, with every redirect, retry and wait, ends within 60 s.
 
 ## Routes
 
@@ -60,15 +85,38 @@ cell gives.
 | `PUT /v1/connections/{id}/credentials` | `{provider, accessToken, refreshToken?, expiresAtMs?, scopes?, params?}` | status |
 | `DELETE /v1/connections/{id}/credentials` | – | status (`not_connected`) |
 | `POST /v1/connections/{id}/oauth:start` | `{provider, scopes?, params?}` | `{authorizeUrl, expiresAtMs}` |
-| `GET /v1/connections/oauth:callback?state=…&code=…` | – | status |
+| `GET /v1/connections/oauth:callback?state=…&code=…` | – | `connection.oauth_received` |
+| `POST /v1/connections/{id}/oauth:complete` | `{state}` | status |
 
-`DELETE` first asks the provider's RFC 7009 revocation endpoint, when the
-provider has one, to end the grant. `oauth2` sends that request over https
-only. The outcome is audited, and the credential is deleted either way.
+`DELETE` disconnects (see Generations), then asks the provider's RFC 7009
+revocation endpoint, when the provider has one, to end the old grant. The
+outcome is audited as `credential.provider_revoke`.
 
-The callback must carry the same user's own credential (the platform domain's
-session, forwarded as the `Authorization` header). A state started by someone
-else is refused and spent.
+The vault is opened only after a request is authorized; a denied caller never
+causes a vault read.
+
+### The OAuth callback handoff
+
+The provider redirects the person's browser to the callback, and that
+redirect carries no Norn credential. So the callback is a handoff, not a
+completion:
+
+1. `oauth:start`, with the user's credential, returns the authorize URL; the
+   client opens it.
+2. The provider redirects the browser to `oauth:callback?state=…&code=…`. The
+   callback checks only the shape of both values and parks the code in the
+   host's memory, keyed by the state's digest, for at most ten minutes (the
+   first code for a state wins; at most 256 wait). It opens no vault, reads no
+   row, and answers `connection.oauth_received`.
+3. The client that started calls `oauth:complete` with `{state}` and the same
+   user's credential. It answers `409 connection.oauth_pending` until the
+   redirect has arrived, so the client polls. Once the code is there, the state
+   is consumed in one transaction that checks the sealed actor, connection,
+   expiry and generation; only then is the code exchanged.
+
+A state started by someone else, or one whose connection was disconnected or
+replaced meanwhile, is refused and spent. The state is the only thing the
+browser carries, and only the session that started can use it.
 
 ## Host configuration
 
@@ -78,14 +126,19 @@ else is refused and spent.
 | `NORN_VAULT_KEK_ID` | The current KEK's id: `<env>-<region>-v<N>`, for example `prod-eu-v2`. |
 | `NORN_VAULT_KEKS_PREVIOUS` | Other active KEKs, used to unwrap only: `prod-eu-v1=<base64>,…`. All must share the current id's environment and region. |
 | `NORN_OAUTH_REDIRECT_URL` | The callback URL registered with every provider, on the platform domain. |
-| `NORN_OAUTH_<PROVIDER>_CLIENT_ID` | The provider's OAuth client id. `<PROVIDER>` is the provider id in upper case, with `.` written as `_`: `GITHUB`, `GOOGLE_GMAIL`, `SHOPIFY`. |
+| `NORN_OAUTH_<PROVIDER>_CLIENT_ID` | The provider's OAuth client id. `<PROVIDER>` is the provider id in upper case, with `.` written as `_`: `GITHUB`, `GOOGLE_GMAIL`. |
 | `NORN_OAUTH_<PROVIDER>_CLIENT_SECRET` | Its client secret. |
 | `NORN_SOURCE_ALLOWED_HOSTS` | Hosts allowed although internal, or reached over plain http. This is the same list that source base URLs use (SYNC-URL-1). |
-| `NORN_EGRESS_PROXY` | Optional. `http://host:port`, an HTTP CONNECT proxy for every connector call. |
+| `NORN_EGRESS_PROXY` | Refused: the host doesn't start while it is set. See Egress addresses. |
 
 The secrets manager (Infisical) provides these to the host's environment.
-Only the connections module reads the KEK variables. A test fails if any
-other source file names them.
+Only the connections module reads them, and only the vault module names the
+KEK variables (a test fails if any other source file does). `norn dev`
+removes every `NORN_VAULT_*` and `NORN_OAUTH_*` variable from its compile
+worker's environment, since the worker runs the project's own code.
+
+The development key (`NORN_VAULT_KEK=dev-insecure`) is public. Only `norn dev`
+accepts it, and a normal keyring refuses its bytes under any key id.
 
 ### Rotating the KEK
 
@@ -102,13 +155,13 @@ other source file names them.
 
 ## Egress addresses
 
-Static egress is a deployment concern. Without a proxy, calls leave from the
-host's own address. To use fixed egress IPs, set `NORN_EGRESS_PROXY` to an HTTP
-CONNECT proxy that runs on those addresses.
+Calls leave from the host's own address. Fixed egress IPs are a deployment
+concern: run the host on those addresses.
 
-The client still checks the target URL, and every address the target resolves
-to, before it sends anything. The proxy then resolves the name again, so the
-proxy must enforce the same address policy. Ambient `HTTP_PROXY` and
+An egress proxy isn't supported yet. A CONNECT proxy would resolve the name
+again, outside the address checks above. Proxy support needs a CONNECT to the
+checked address that keeps the TLS name and `Host`. Until then the host
+refuses to start while `NORN_EGRESS_PROXY` is set. Ambient `HTTP_PROXY` and
 `HTTPS_PROXY` variables are ignored.
 
 ## Provider metadata
@@ -122,9 +175,15 @@ The script reads OpenConnector at tag v1.9.4 only (commit
 fetched by its commit-pinned URL and must match a pinned SHA-256. The licence
 is checked, and the upstream NOTICE is kept in `registry/connections/NOTICE`.
 
-The first providers are GitHub, Google (Gmail) and Shopify. Default scopes are
-the options OpenConnector selects by default (least privilege); the rest are
-optional scopes. To check that the file is current, run:
+The first providers are GitHub and Google (Gmail). Shopify's entry is
+generated but marked `withheld`: every call naming it is refused with
+`connection.provider_unsupported` until a Shopify adapter exists (callback
+HMAC and shop checks, its token response, comma-separated scopes). Default
+scopes are the options OpenConnector selects by default (least privilege);
+the rest are optional scopes.
+
+The egress client's cross-origin header list is copied from OpenConnector's
+`src/core/guarded-fetch.ts` at the same commit, under the same NOTICE. To check that the file is current, run:
 
 ```
 python3 scripts/connections/extract_openconnector.py --check

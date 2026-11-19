@@ -50,11 +50,18 @@ PINNED = {
     "src/providers/shopify/scopes.ts": "c4cb674b5c249367570dfb27b78741552d1a279e70243bef6d46fb30802b0ba4",
 }
 
-# (Norn provider id, system, OpenConnector service directory)
+# (Norn provider id, system, OpenConnector service directory, withheld reason)
+# A withheld provider keeps its generated entry; the host refuses to connect it.
 PROVIDERS = [
-    ("github", "github", "github"),
-    ("google.gmail", "google", "gmail"),
-    ("shopify", "shopify", "shopify"),
+    ("github", "github", "github", None),
+    ("google.gmail", "google", "gmail", None),
+    (
+        "shopify",
+        "shopify",
+        "shopify",
+        "Shopify OAuth is not supported yet: it needs its own adapter (callback HMAC and shop "
+        "checks, its token response and comma-separated scopes)",
+    ),
 ]
 
 OUTPUT = Path(__file__).resolve().parents[2] / "registry" / "connections" / "providers.json"
@@ -216,15 +223,16 @@ def build(source: Path | None) -> dict[str, object]:
     check_license(fetch("LICENSE.txt", source))
     notice = fetch("NOTICE.md", source)
     providers = []
-    for norn_id, system, service in PROVIDERS:
-        providers.append(
-            {
-                "id": norn_id,
-                "system": system,
-                "upstream": f"src/providers/{service}/definition.ts",
-                "auth": extract(service, source),
-            }
-        )
+    for norn_id, system, service, withheld in PROVIDERS:
+        entry: dict[str, object] = {
+            "id": norn_id,
+            "system": system,
+            "upstream": f"src/providers/{service}/definition.ts",
+        }
+        if withheld:
+            entry["withheld"] = withheld
+        entry["auth"] = extract(service, source)
+        providers.append(entry)
     return {
         "format": "norn.connection-providers/1",
         "generatedBy": "scripts/connections/extract_openconnector.py",

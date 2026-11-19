@@ -26,71 +26,25 @@ pub(crate) type Serving = Arc<RwLock<Option<DevHost<NativeEngine>>>>;
 
 /// The project's connections (D126): configured from the `NORN_*`
 /// environment of `norn dev` (the development KEK is admitted), opened over
-/// the project's cell file on the first connection request after the cell
-/// exists, so an unprovisioned cell file stays fresh.
-pub(crate) struct DevConnections {
-    /// The configuration, or why it is malformed (answered on every
-    /// connection route).
-    config: Result<Option<crate::connections::Config>, String>,
-    cell_path: std::path::PathBuf,
-    opened:
-        std::sync::OnceLock<Result<crate::connections::service::Connections<NativeEngine>, String>>,
-}
+/// the project's cell file on the first authorized connection request
+/// (CONN-AUTHZ-1), so an unprovisioned cell file stays fresh.
+pub(crate) type DevConnections = crate::connections::Routes<NativeEngine>;
 
-impl DevConnections {
-    /// Read the configuration; a malformed one is answered on every
-    /// connection route.
-    pub(crate) fn new(cell_path: std::path::PathBuf) -> Self {
-        let vars: std::collections::BTreeMap<String, String> = std::env::vars()
-            .filter(|(name, _)| name.starts_with("NORN_"))
-            .collect();
-        let config = crate::connections::Config::from_vars(&vars, true);
-        Self {
-            config,
-            cell_path,
-            opened: std::sync::OnceLock::new(),
-        }
-    }
-
-    fn route(
-        &self,
-        host: &DevHost<NativeEngine>,
-        principals: &DevPrincipals,
-        request: &Request<'_>,
-    ) -> Option<Response> {
-        if !request.path.starts_with("/v1/connections/") {
-            return None;
-        }
-        let config = match &self.config {
-            Ok(config) => config.as_ref()?,
-            Err(error) => {
-                return Some(refusal(&Refusal::new(
-                    http::StatusCode::SERVICE_UNAVAILABLE,
-                    "connection.unavailable",
-                    "the connection configuration is malformed",
-                    error.clone(),
-                )));
-            }
-        };
-        let opened = self.opened.get_or_init(|| {
-            let engine = NativeEngine::open(&self.cell_path, norn_cell::StoreOptions::default())
-                .map_err(|error| error.to_string())?;
-            config.open(
-                engine,
-                &host.scope().key(),
-                std::sync::Arc::new(crate::connections::egress::SystemLookup),
-            )
-        });
-        match opened {
-            Ok(connections) => connections.route(host, principals, request, super::now_ms()),
-            Err(error) => Some(refusal(&Refusal::new(
-                http::StatusCode::SERVICE_UNAVAILABLE,
-                "connection.unavailable",
-                "the connection vault did not open",
-                error,
-            ))),
-        }
-    }
+/// The dev host's connection routes over the cell file at `cell_path`.
+///
+/// # Errors
+/// A malformed or refused connection configuration (a set
+/// `NORN_EGRESS_PROXY`, EGRESS-PROXY-1): `norn dev` refuses to start.
+pub(crate) fn dev_connections(cell_path: std::path::PathBuf) -> Result<DevConnections, String> {
+    let config = crate::connections::Config::from_env(true)?;
+    Ok(crate::connections::Routes::new(
+        Ok(config),
+        move || {
+            NativeEngine::open(&cell_path, norn_cell::StoreOptions::default())
+                .map_err(|error| error.to_string())
+        },
+        std::sync::Arc::new(crate::connections::egress::SystemLookup),
+    ))
 }
 
 /// Serve `listener` until the process exits.
@@ -266,7 +220,7 @@ fn dispatch(
         body: &parsed.body,
     };
     // D126: connection credentials, decided by the same policy.
-    if let Some(response) = connections.route(host, principals, &request) {
+    if let Some(response) = connections.route(host, principals, &request, super::now_ms()) {
         return response;
     }
     // D102: with an engine linked in, questions and profiles run on it.
@@ -284,5 +238,243 @@ fn refusal(refused: &Refusal) -> Response {
     Response {
         status: refused.status,
         body: serde_json::to_string(refused).unwrap_or_else(|_error| String::from("{}")),
+    }
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::too_many_lines,
+    reason = "dev-host OAuth handoff end to end"
+)]
+mod tests {
+    //! OAUTH-HANDOFF-1 at the real entry point: requests over TCP to
+    //! [`serve`], the provider's redirect arriving as a browser sends it,
+    //! with no `Authorization` header.
+    use super::*;
+    use crate::connections::egress::{Egress, SystemLookup};
+    use crate::connections::providers::{ClientAuth, Provider};
+    use crate::connections::service::{ClientCredentials, Connections};
+    use crate::connections::vault::{LocalKeyring, Secret, Vault};
+    use crate::dev::policy::LocalDeveloper;
+    use norn_api::scope::CellScope;
+    use norn_cell::{CellStore, Model, StoreOptions};
+    use std::collections::BTreeMap;
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    const ACTOR: &str = "dev@example";
+    const BEARER: &str = "test-bearer-oauth-0123456789";
+    const QUERY: &str = "orgId=org_dev&environmentId=local";
+
+    /// A token endpoint recording each request body.
+    fn token_endpoint(bodies: Arc<Mutex<Vec<String>>>) -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut length = 0;
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                loop {
+                    line.clear();
+                    reader.read_line(&mut line).unwrap();
+                    if line.trim_end().is_empty() {
+                        break;
+                    }
+                    if let Some((name, value)) = line.split_once(':')
+                        && name.eq_ignore_ascii_case("content-length")
+                    {
+                        length = value.trim().parse().unwrap();
+                    }
+                }
+                let mut body = vec![0; length];
+                reader.read_exact(&mut body).unwrap();
+                bodies
+                    .lock()
+                    .unwrap()
+                    .push(String::from_utf8(body).unwrap());
+                let answer = r#"{"access_token":"access-token-DEV-0001-done","token_type":"bearer","expires_in":3600}"#;
+                let mut out = stream;
+                let _sent = write!(
+                    out,
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{answer}",
+                    answer.len()
+                );
+            }
+        });
+        port
+    }
+
+    fn send(
+        port: u16,
+        method: &str,
+        target: &str,
+        bearer: Option<&str>,
+        body: &str,
+    ) -> (u16, serde_json::Value) {
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        let auth = bearer.map_or_else(String::new, |token| {
+            format!("authorization: Bearer {token}\r\n")
+        });
+        write!(
+            stream,
+            "{method} {target} HTTP/1.1\r\nhost: 127.0.0.1\r\n{auth}content-length: {}\r\n\r\n{body}",
+            body.len()
+        )
+        .unwrap();
+        let mut answer = String::new();
+        stream.read_to_string(&mut answer).unwrap();
+        let (head, body) = answer.split_once("\r\n\r\n").unwrap();
+        let status = head.split_whitespace().nth(1).unwrap().parse().unwrap();
+        (status, serde_json::from_str(body).unwrap())
+    }
+
+    #[test]
+    fn a_browser_redirect_parks_the_code_and_only_the_starting_session_completes() {
+        let dir = tempfile::tempdir().unwrap();
+        let cell = dir.path().join("cell.sqlite");
+        let scope = CellScope {
+            org_id: "org_dev".into(),
+            environment_id: "local".into(),
+        };
+        let store = CellStore::from_engine(
+            NativeEngine::open(&cell, StoreOptions::default()).unwrap(),
+            Model::from_definitions(&[], &[]).unwrap(),
+        )
+        .unwrap();
+        let host = DevHost::from_store(store, scope.clone(), |_| BTreeMap::new())
+            .unwrap()
+            .with_authorizer(LocalDeveloper {
+                actor: ACTOR.into(),
+            });
+        let bodies = Arc::new(Mutex::new(Vec::new()));
+        let token_port = token_endpoint(Arc::clone(&bodies));
+        let opens = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&opens);
+        let vault_path = cell;
+        let routes = crate::connections::Routes::with_opener(move |scope_key| {
+            counted.fetch_add(1, Ordering::SeqCst);
+            let vault = Vault::open(
+                NativeEngine::open(&vault_path, StoreOptions::default()).unwrap(),
+                scope_key,
+                Arc::new(
+                    LocalKeyring::new(
+                        "test-local-v1",
+                        BTreeMap::from([("test-local-v1".to_owned(), [7; 32])]),
+                    )
+                    .unwrap(),
+                ),
+            )
+            .unwrap();
+            let provider = Provider {
+                id: "acme".to_owned(),
+                system: "acme".to_owned(),
+                authorization_url: "https://auth.acme.example/authorize".to_owned(),
+                token_url: format!("http://127.0.0.1:{token_port}/token"),
+                refresh_token_url: None,
+                revocation_url: None,
+                scopes: vec!["read".to_owned()],
+                optional_scopes: Vec::new(),
+                scope_separator: " ".to_owned(),
+                client_auth: ClientAuth::Post,
+                pkce_required: true,
+                authorization_params: BTreeMap::new(),
+                url_parameters: Vec::new(),
+                withheld: None,
+            };
+            Connections::new(
+                vault,
+                Egress::new(vec!["127.0.0.1".to_owned()], Arc::new(SystemLookup)),
+                BTreeMap::from([("acme".to_owned(), provider)]),
+                BTreeMap::from([(
+                    "acme".to_owned(),
+                    ClientCredentials {
+                        client_id: "client-1".to_owned(),
+                        client_secret: Some(Secret::from("client-secret-1".to_owned())),
+                    },
+                )]),
+                Some("http://127.0.0.1/v1/connections/oauth:callback".to_owned()),
+            )
+            .map_err(|error| error.to_string())
+        });
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let serving: Serving = Arc::new(RwLock::new(Some(host)));
+        std::thread::spawn(move || {
+            let principals = DevPrincipals {
+                bearer: BEARER.to_owned(),
+                actor: ACTOR.to_owned(),
+            };
+            let questions = DevMetrics::new([3; 32], scope);
+            serve(&listener, &serving, &principals, &questions, None, &routes);
+        });
+
+        let (status, started) = send(
+            port,
+            "POST",
+            &format!("/v1/connections/acme.main/oauth:start?{QUERY}"),
+            Some(BEARER),
+            r#"{"provider":"acme"}"#,
+        );
+        assert_eq!(status, 200, "{started}");
+        let authorize = url::Url::parse(started["authorizeUrl"].as_str().unwrap()).unwrap();
+        let state = authorize
+            .query_pairs()
+            .find(|(name, _)| name == "state")
+            .unwrap()
+            .1
+            .into_owned();
+        let complete = format!("/v1/connections/acme.main/oauth:complete?{QUERY}");
+        let body = serde_json::json!({ "state": state }).to_string();
+
+        // Before the redirect: pending, and the state is not spent.
+        let (status, pending) = send(port, "POST", &complete, Some(BEARER), &body);
+        assert_eq!(
+            (status, &pending["code"]),
+            (409, &serde_json::json!("connection.oauth_pending"))
+        );
+
+        // The provider's redirect, as a browser sends it: no credential.
+        let (status, parked) = send(
+            port,
+            "GET",
+            &format!("/v1/connections/oauth:callback?state={state}&code=the-code-1"),
+            None,
+            "",
+        );
+        assert_eq!(
+            (status, &parked["code"]),
+            (200, &serde_json::json!("connection.oauth_received"))
+        );
+        assert!(
+            bodies.lock().unwrap().is_empty(),
+            "the redirect alone exchanged the code"
+        );
+
+        // Anyone else (no credential, a wrong one) gets the outside answer.
+        for bearer in [None, Some("not-the-session")] {
+            let (status, _) = send(port, "POST", &complete, bearer, &body);
+            assert_ne!(status, 200);
+        }
+        assert!(bodies.lock().unwrap().is_empty());
+
+        // The starting session completes: exchanged once, with the code.
+        let (status, connected) = send(port, "POST", &complete, Some(BEARER), &body);
+        assert_eq!(status, 200, "{connected}");
+        assert_eq!(connected["state"], "connected");
+        assert_eq!(connected["last4"], "done");
+        let exchanged = bodies.lock().unwrap().clone();
+        assert_eq!(exchanged.len(), 1);
+        assert!(
+            exchanged[0].contains("code=the-code-1") && exchanged[0].contains("code_verifier=")
+        );
+        // Spent: a replay finds nothing parked.
+        let (status, _) = send(port, "POST", &complete, Some(BEARER), &body);
+        assert_eq!(status, 409);
+        assert_eq!(opens.load(Ordering::SeqCst), 1);
     }
 }

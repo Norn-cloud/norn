@@ -1,5 +1,5 @@
 {
-  "sha256": "86e2089e63abc9272898793bd1e9e8f64aab80e18fe8c768f2acf0df64fa244c",
+  "sha256": "75f3916ae8e369e1fd9771aa9d7baf9db216681a14beb45c968a1b95084a4ac5",
   "origin": "authored",
   "category": "code",
   "license": "Apache-2.0",
@@ -10,8 +10,17 @@
     {
       "path": "NOTICE",
       "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+    },
+    {
+      "path": "registry/connections/NOTICE",
+      "sha256": "b2c7a6373b2c279312538cbf58f63f00a34ebaee15589a6cb7cfebf9a10ea50f"
     }
   ],
-  "notices": [],
+  "notices": [
+    {
+      "path": "registry/connections/NOTICE",
+      "sha256": "b2c7a6373b2c279312538cbf58f63f00a34ebaee15589a6cb7cfebf9a10ea50f"
+    }
+  ],
   "connector": null
 }
