@@ -13,15 +13,12 @@
 // records nothing on the handler's path, and hands recording and export to a
 // background task the triggering event passes to waitUntil. Every hook is
 // guarded; a telemetry failure never changes a result or adds a retry.
-import { COUNT_BUCKETS, cellRoute, methodOf, statusClass, telemetry } from "./otlp.mjs";
+import { COUNT_BUCKETS, ENVIRONMENTS, cellRoute, methodOf, statusClass, telemetry } from "./otlp.mjs";
 
 export const SERVICE = "norn-cell";
 const CELL_HEADER = "x-norn-cell";
 /** A refusal body longer than this is not parsed for its code. */
 const MAX_REFUSAL_TEXT = 8192;
-
-/** The configured stage names an environment attribute may take; any other is "other". */
-const ENVIRONMENTS = new Set(["dev", "test", "preview", "next", "staging", "prod", "analytics"]);
 
 /** Every refusal code the host and kernel write (the norn-kernel, norn-cell-do, norn-cell, norn-api, norn-authz and norn-decisions crates, worker.mjs, subscribe.mjs), by family; any other is "other". */
 const REFUSAL_CODES = new Set(Object.entries({
@@ -235,28 +232,36 @@ export function recordRequest(t, seen, status, refusal, startedMs, endedMs) {
 
 const SYNC_OUTCOMES = new Set(["ok", "partial", "failed"]);
 
+/** Record one finished sync from its counts (runs in the background task). */
+export function recordSync(t, record, endedMs) {
+  const outcome = SYNC_OUTCOMES.has(record?.outcome) ? record.outcome : "other";
+  // ok, partial (some rows quarantined) or failed, with the failure's code.
+  const code = Array.isArray(record?.error) ? refusalCodeOf(record.error[0]) : "";
+  const count = (value) => (Number.isFinite(value) && value >= 0 ? value : 0);
+  const wallMs = count(record?.wallMs);
+  t.count("norn_cell_sync_runs_total", { outcome, code });
+  t.observe("norn_cell_sync_duration_ms", { outcome }, wallMs);
+  t.count("norn_cell_sync_rows_read_total", { outcome }, count(record?.rowsRead));
+  t.count("norn_cell_sync_rows_landed_total", { outcome }, count(record?.rowsLanded));
+  t.count("norn_cell_sync_rows_quarantined_total", { outcome }, count(record?.rowsQuarantined));
+  t.observe("norn_cell_sync_rows_landed", { outcome }, count(record?.rowsLanded), "1", COUNT_BUCKETS);
+  t.span("cell sync", { "norn.outcome": outcome, "norn.sync.rows_landed": count(record?.rowsLanded), "norn.sync.rows_quarantined": count(record?.rowsQuarantined), "norn.refusal.code": code }, endedMs - wallMs, endedMs, outcome === "failed");
+}
+
 /**
  * A finished source sync, from the counts runSync already logs (never what it
  * read). Its duration is the sync lag: from the sync starting to its rows
- * being committed and readable. Never throws.
+ * being committed and readable. Nothing is recorded on the caller's path: the
+ * counts are copied and recorded in the background task handed to
+ * `ctx.waitUntil`. Never throws.
  */
-export function syncFinished(env, record) {
+export function syncFinished(env, record, ctx) {
   try {
     const t = telemetry(env, SERVICE);
     if (t === null) return;
-    const outcome = SYNC_OUTCOMES.has(record?.outcome) ? record.outcome : "other";
-    // ok, partial (some rows quarantined) or failed, with the failure's code.
-    const code = Array.isArray(record?.error) ? refusalCodeOf(record.error[0]) : "";
-    const count = (value) => (Number.isFinite(value) && value >= 0 ? value : 0);
-    const wallMs = count(record?.wallMs);
-    t.count("norn_cell_sync_runs_total", { outcome, code });
-    t.observe("norn_cell_sync_duration_ms", { outcome }, wallMs);
-    t.count("norn_cell_sync_rows_read_total", { outcome }, count(record?.rowsRead));
-    t.count("norn_cell_sync_rows_landed_total", { outcome }, count(record?.rowsLanded));
-    t.count("norn_cell_sync_rows_quarantined_total", { outcome }, count(record?.rowsQuarantined));
-    t.observe("norn_cell_sync_rows_landed", { outcome }, count(record?.rowsLanded), "1", COUNT_BUCKETS);
     const ended = Date.now();
-    t.span("cell sync", { "norn.outcome": outcome, "norn.sync.rows_landed": count(record?.rowsLanded), "norn.sync.rows_quarantined": count(record?.rowsQuarantined), "norn.refusal.code": code }, ended - wallMs, ended, outcome === "failed");
+    const counts = { outcome: record?.outcome, error: Array.isArray(record?.error) ? [record.error[0]] : undefined, wallMs: record?.wallMs, rowsRead: record?.rowsRead, rowsLanded: record?.rowsLanded, rowsQuarantined: record?.rowsQuarantined };
+    background(t, ctx, () => recordSync(t, counts, ended));
   } catch {
     // OTEL-NEVER-FAILS-1.
   }
@@ -370,17 +375,6 @@ export function instrument(Cell) {
         } catch {
           // OTEL-NEVER-FAILS-1: the alarm's own result stands.
         }
-      }
-    };
-  }
-  const runSync = proto.runSync;
-  if (typeof runSync === "function") {
-    proto.runSync = async function instrumentedSync(...args) {
-      try {
-        return await runSync.apply(this, args);
-      } finally {
-        const t = of(this);
-        if (t !== null) background(t, this.ctx, () => {});
       }
     };
   }

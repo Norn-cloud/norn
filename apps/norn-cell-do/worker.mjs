@@ -321,7 +321,7 @@ export class Cell {
     const done = step.done ?? {};
     const wallMs = Date.now() - started;
     console.log(JSON.stringify({ sync: id, outcome: done.outcome, rowsRead: done.rowsRead, rowsLanded: done.rowsLanded, rowsQuarantined: done.rowsQuarantined, steps, fetches, wallMs, cellMs, fetchMs, maxCellMs, maxFetchMs, slow }));
-    syncFinished(this.env, { ...done, wallMs });
+    syncFinished(this.env, { ...done, wallMs }, this.ctx);
     // A sync commits as it goes; live subscriptions are answered again once it ends.
     if ((done.rowsLanded ?? 0) > 0) this.publish();
   }

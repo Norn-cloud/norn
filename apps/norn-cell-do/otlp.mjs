@@ -15,6 +15,10 @@
 // codes, outcomes). No tenant id, principal, object id, path segment or payload
 // is ever an attribute or a span name; `attrs` refuses values that are not
 // short strings, numbers or booleans.
+// OTEL-NO-TENANT-2: the resource names only fixed things. The service name is
+// one of SERVICES; OTEL_RESOURCE_ATTRIBUTES keeps only RESOURCE_KEYS whose value
+// is one of ENVIRONMENTS, and drops every other key and value, so no host,
+// tenant, slug or label configured at deploy reaches a collector.
 // OTEL-TLS-1: credentials (OTEL_EXPORTER_OTLP_HEADERS) travel only over HTTPS,
 // or to a loopback collector; a credentialed plain-HTTP remote endpoint, URL
 // userinfo or a header that is not a valid HTTP field turns export off.
@@ -24,9 +28,12 @@
 //                                (OpenObserve: https://<host>/api/<org>)
 //   OTEL_EXPORTER_OTLP_HEADERS   "name=value,name=value", values percent-decoded
 //                                (OpenObserve: "Authorization=Basic%20<b64>")
-//   OTEL_SERVICE_NAME            overrides the host's default service name
-//   OTEL_RESOURCE_ATTRIBUTES     "key=value,..." added to every export
-//                                (for example deployment.environment=next)
+//   OTEL_SERVICE_NAME            overrides the host's default service name, when
+//                                it is one of SERVICES
+//   OTEL_RESOURCE_ATTRIBUTES     "key=value,..."; only deployment.environment
+//                                (or deployment.environment.name) with a value
+//                                in ENVIRONMENTS is exported, for example
+//                                deployment.environment=next
 //   OTEL_TRACES_SAMPLER_ARG      fraction of spans kept, 0..1 (default 1)
 //   NORN_OTEL_INTERVAL_MS        export interval, 1 s to 5 min (default 10 s); a
 //                                batch waits at most MAX_WAIT_MS for its flush
@@ -45,6 +52,13 @@ const LOG_EVERY_MS = 60_000;
 const MAX_WAIT_MS = 20_000;
 
 const configs = new WeakMap();
+
+/** The service names a resource may carry (OTEL-NO-TENANT-2). */
+export const SERVICES = new Set(["norn-cell", "norn-studio", "norn-probe"]);
+/** The stage names an environment attribute or resource value may take (OTEL-NO-TENANT-2). */
+export const ENVIRONMENTS = new Set(["dev", "test", "preview", "next", "staging", "prod", "analytics"]);
+/** The resource attribute keys OTEL_RESOURCE_ATTRIBUTES may set; their values must be ENVIRONMENTS. */
+const RESOURCE_KEYS = new Set(["deployment.environment", "deployment.environment.name"]);
 
 /** "a=b,c=d" as pairs, percent-decoded; null when any entry is malformed. */
 function pairs(text) {
@@ -90,14 +104,15 @@ export function exportConfig(env, service) {
   const headerPairs = pairs(env.OTEL_EXPORTER_OTLP_HEADERS);
   if (headerPairs === null || headerPairs.some(([name, value]) => !FIELD_NAME.test(name) || !FIELD_VALUE.test(value))) return null;
   if (headerPairs.length > 0 && url.protocol === "http:" && !isLoopback(url.hostname)) return null;
-  const resource = pairs(env.OTEL_RESOURCE_ATTRIBUTES) ?? [];
+  // OTEL-NO-TENANT-2: allowlisted keys with allowlisted values; everything else is dropped.
+  const resource = (pairs(env.OTEL_RESOURCE_ATTRIBUTES) ?? []).filter(([key, value]) => RESOURCE_KEYS.has(key) && ENVIRONMENTS.has(value));
   const named = text(env.OTEL_SERVICE_NAME);
   const ratio = Number(text(env.OTEL_TRACES_SAMPLER_ARG) || "1");
   const interval = Number(text(env.NORN_OTEL_INTERVAL_MS) || "10000");
   return {
     endpoint,
     headers: Object.fromEntries(headerPairs),
-    service: /^[A-Za-z0-9_.-]{1,64}$/.test(named) ? named : service,
+    service: SERVICES.has(named) ? named : SERVICES.has(service) ? service : "norn",
     resource,
     sampleRatio: Number.isFinite(ratio) ? Math.min(1, Math.max(0, ratio)) : 1,
     intervalMs: Number.isFinite(interval) ? Math.min(300_000, Math.max(1000, interval)) : 10_000,
@@ -256,7 +271,7 @@ export class Telemetry {
 
   resource() {
     const resource = { "service.name": this.config.service, "service.instance.id": this.instance, "telemetry.sdk.name": "norn-otlp", "telemetry.sdk.language": "webjs" };
-    for (const [key, value] of this.config.resource) resource[key] = value.slice(0, MAX_ATTR_TEXT);
+    for (const [key, value] of this.config.resource) if (RESOURCE_KEYS.has(key) && ENVIRONMENTS.has(value)) resource[key] = value;
     return { attributes: keyValues(resource) };
   }
 

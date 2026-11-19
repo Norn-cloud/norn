@@ -9,6 +9,8 @@ import { readFileSync, readdirSync } from "node:fs"
 import { CELL_ROUTES, Telemetry, cellRoute, exportConfig, methodOf, telemetry } from "../../../apps/norn-cell-do/otlp.mjs"
 // @ts-expect-error: the host module is plain JavaScript without declarations.
 import { instrument, kindOf, noteRefusal, outcomeOf, refusalCode, refusalCodeOf, syncFinished } from "../../../apps/norn-cell-do/telemetry.mjs"
+// @ts-expect-error: the host module is plain JavaScript without declarations.
+import * as live from "../../../apps/norn-cell-do/subscribe.mjs"
 
 const ON = { OTEL_EXPORTER_OTLP_ENDPOINT: "https://collector.test/api/norn/", OTEL_EXPORTER_OTLP_HEADERS: "Authorization=Basic%20abc,stream-name=norn", NORN_OTEL_INTERVAL_MS: "1000" }
 
@@ -232,7 +234,7 @@ test("OTEL-NEVER-FAILS-1: a hook that throws never reaches the handler, the alar
   t.log = () => {}
   expect(await cell.fetch(scoped("/v1/definitions"))).toBe(reply)
   await expect(cell.alarm({ retryCount: 0 })).resolves.toBeUndefined()
-  expect(() => syncFinished(env, { outcome: "ok", wallMs: 3 })).not.toThrow()
+  expect(() => syncFinished(env, { outcome: "ok", wallMs: 3 }, cell.ctx)).not.toThrow()
   cell.sockets = [{}]
   cell.snapshots = 1
   await expect(cell.publish()).resolves.toBe(1)
@@ -332,9 +334,9 @@ test("sync, alarm lag, and live publishes with the snapshots they sent are recor
   expect(cell.published).toBe(1)
   cell.armed = Date.now() - 1500
   await cell.alarm({ retryCount: 0 })
-  syncFinished(env, { outcome: "partial", rowsRead: 10, rowsLanded: 8, rowsQuarantined: 2, wallMs: 1200 })
-  syncFinished(env, { outcome: "failed", error: ["source.unreachable", "the source did not answer"], wallMs: 5 })
-  syncFinished(env, { outcome: "failed", error: ["source.http_status", "acme said no"], wallMs: 5 })
+  syncFinished(env, { outcome: "partial", rowsRead: 10, rowsLanded: 8, rowsQuarantined: 2, wallMs: 1200 }, cell.ctx)
+  syncFinished(env, { outcome: "failed", error: ["source.unreachable", "the source did not answer"], wallMs: 5 }, cell.ctx)
+  syncFinished(env, { outcome: "failed", error: ["source.http_status", "acme said no"], wallMs: 5 }, cell.ctx)
   // The publish's record runs once its promise settles; wait for its background task.
   await new Promise((resolve) => setTimeout(resolve, 5))
   await settled(cell)
@@ -346,4 +348,58 @@ test("sync, alarm lag, and live publishes with the snapshots they sent are recor
   expect(points(metrics, "norn_cell_sync_runs_total").map((p: any) => attr(p, "code")).sort()).toEqual(["", "other", "source.http_status"])
   expect(JSON.stringify(metrics)).not.toContain("did not answer")
   expect(JSON.stringify(metrics)).not.toContain("acme")
+})
+
+test("B2: a finished sync records nothing on the caller's path, only in the background task it hands to waitUntil", async () => {
+  const env = { ...ON }
+  const out = collected(env)
+  const Cell = fakeCell(() => new Response("{}"))
+  const cell = new Cell(env)
+  const record = { outcome: "ok", rowsRead: 4, rowsLanded: 4, rowsQuarantined: 0, wallMs: 30 }
+  syncFinished(env, record, cell.ctx)
+  // Returned without recording: nothing is buffered yet, and one task waits on the event.
+  expect(out.t.buffered()).toBe(false)
+  expect(cell.waited.length).toBe(1)
+  // The caller's record changing afterwards does not change what is recorded.
+  record.rowsLanded = 999
+  await settled(cell)
+  const metrics = metricsOf(await out.all())
+  expect(points(metrics, "norn_cell_sync_rows_landed_total")[0].asDouble).toBe(4)
+})
+
+test("S2: the snapshot counter counts only the sends a socket took", async () => {
+  // Two subscribed sockets; one throws on send (closing under us).
+  const socket = (fails: boolean) => {
+    let attachment: any = { scope: ["o", "e"], authorization: "Bearer x", subs: { a: { pathname: "/v1/decisions", query: "", digest: "" } } }
+    return {
+      serializeAttachment: (v: unknown) => { attachment = structuredClone(v) },
+      deserializeAttachment: () => structuredClone(attachment),
+      send: () => { if (fails) throw new Error("closed") },
+      close() {},
+    }
+  }
+  const ask = () => ({ status: 200, body: "{}" })
+  expect(await live.publish({ getWebSockets: () => [socket(false), socket(true)] }, ask)).toBe(1)
+  expect(await live.publish({ getWebSockets: () => [socket(true)] }, ask)).toBe(0)
+})
+
+test("B1: the resource carries only allowlisted keys with allowlisted values, and a service name from the fixed set", async () => {
+  const env = { ...ON, OTEL_SERVICE_NAME: "acme-corp", OTEL_RESOURCE_ATTRIBUTES: "deployment.environment=prod,tenant=acme-corp,host.name=acme.cells.example,deployment.environment.name=acme-corp,service.namespace=globex" }
+  const config = exportConfig(env, "norn-cell")!
+  expect(config.service).toBe("norn-cell")
+  expect(config.resource).toEqual([["deployment.environment", "prod"]])
+  // A service name outside the set falls back to the host's; a listed one is kept.
+  expect(exportConfig({ ...ON, OTEL_SERVICE_NAME: "norn-studio" }, "norn-cell")!.service).toBe("norn-studio")
+  expect(exportConfig(ON, "acme-service")!.service).toBe("norn")
+  // An environment value outside the stages is dropped, not exported.
+  expect(exportConfig({ ...ON, OTEL_RESOURCE_ATTRIBUTES: "deployment.environment=acme-pilot" }, "norn-cell")!.resource).toEqual([])
+  const t = new Telemetry(config)
+  t.count("x_total", {})
+  t.span("s", {}, 0, 1)
+  const { sent, send } = capture()
+  await t.flush(send)
+  const text = JSON.stringify(sent.map((s) => s.body))
+  for (const leaked of ["acme", "globex", "cells.example", "tenant", "host.name"]) expect(text).not.toContain(leaked)
+  const keys = sent[0]!.body.resourceMetrics[0].resource.attributes.map((a: any) => a.key).sort()
+  expect(keys).toEqual(["deployment.environment", "service.instance.id", "service.name", "telemetry.sdk.language", "telemetry.sdk.name"])
 })

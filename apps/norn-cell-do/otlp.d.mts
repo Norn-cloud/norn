@@ -1,6 +1,8 @@
 // Types for otlp.mjs, for the TypeScript hosts that import it (Studio's Worker).
 export declare const MS_BUCKETS: readonly number[]
 export declare const COUNT_BUCKETS: readonly number[]
+export declare const SERVICES: ReadonlySet<string>
+export declare const ENVIRONMENTS: ReadonlySet<string>
 export type Attributes = Readonly<Record<string, string | number | boolean>>
 export interface ExportConfig {
   readonly endpoint: string

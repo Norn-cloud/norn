@@ -2,7 +2,7 @@ import { cellRoute, methodOf, routeTable, statusClass, telemetry, type Telemetry
 
 /**
  * Studio's request telemetry over OTLP (apps/norn-cell-do/otlp.mjs): latency and
- * status per route, and auth, billing, quota, rate-limit and server errors. Off
+ * status per route, and auth, billing, spend-cap, quota, rate-limit and server errors. Off
  * unless OTEL_EXPORTER_OTLP_ENDPOINT is set (OTEL-OFF-1); when off the handler
  * is called directly. Attributes and span names come from fixed tables only
  * (OTEL-NO-TENANT-1): a route template, an allowlisted method, a status class
@@ -71,9 +71,9 @@ export function studioRoute(pathname: string): string {
 }
 
 /** The fixed reasons a 429 names in `x-norn-limit` (assistant.ts). */
-const LIMITS: Readonly<Record<string, string>> = { spend_cap: "billing", proposals_hourly: "quota" }
+const LIMITS: Readonly<Record<string, string>> = { spend_cap: "spend_cap", proposals_hourly: "quota" }
 
-/** Which error class a response is: auth (401/403), billing (402, or the assistant's spend cap), quota (the assistant's hourly proposals), rate limit, server; null otherwise. */
+/** Which error class a response is: auth (401/403), billing (402), spend_cap (the assistant's spend cap), quota (the assistant's hourly proposals), rate limit, server; null otherwise. */
 export function errorClass(status: number, limit: string | null = null): string | null {
   if (status === 401 || status === 403) return "auth"
   if (status === 402) return "billing"

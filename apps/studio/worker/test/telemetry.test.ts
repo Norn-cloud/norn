@@ -43,11 +43,12 @@ test("routes come from the fixed table: every template, filled with tenant names
   for (const path of ["/api/acme-corp", "/api/connectors/acme/x/y/z", "/api/host/v1/acme-corp", "/api/host/acme", "/api/agent/acme", "/api/questions/acme"]) expect(studioRoute(path)).toBe("other")
 })
 
-test("auth, billing, quota, rate-limit and server errors are told apart", () => {
+test("auth, billing, spend-cap, quota, rate-limit and server errors are told apart", () => {
   expect(errorClass(401)).toBe("auth")
   expect(errorClass(403)).toBe("auth")
   expect(errorClass(402)).toBe("billing")
-  expect(errorClass(429, "spend_cap")).toBe("billing")
+  // The assistant's spend cap is its own class, never billing.
+  expect(errorClass(429, "spend_cap")).toBe("spend_cap")
   expect(errorClass(429, "proposals_hourly")).toBe("quota")
   expect(errorClass(429)).toBe("rate_limit")
   expect(errorClass(429, "acme-corp")).toBe("rate_limit")
