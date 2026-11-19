@@ -303,7 +303,7 @@ test("the billing document is the server's: entitlement, usage and the actions i
   const env = stage(true)
   const { cookie, userId } = await enroll(env, "ivy@example.com")
   expect((await call(env, "/api/billing")).status).toBe(401)
-  expect(await (await call(env, "/api/billing", { headers: { cookie } })).json()).toEqual({
+  expect(await (await call(env, "/api/billing", { headers: { cookie } })).json() as unknown).toEqual({
     entitlement: { billing: "enabled", plan: "free", status: "none", limits: PLANS.free },
     usage: { cells: 1 },
     actions: [

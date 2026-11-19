@@ -1,4 +1,5 @@
 import { readFileSync, writeFileSync } from "node:fs"
+import { fileURLToPath } from "node:url"
 import { BILLING_ENV, PLACEHOLDER_PLANS } from "../worker/billing.ts"
 
 /**
@@ -39,7 +40,7 @@ export function billingSection(): string {
   ].join("\n")
 }
 
-export const README = new URL("../README.md", import.meta.url)
+export const README = fileURLToPath(new URL("../README.md", import.meta.url))
 
 /** The README with its billing section regenerated (appended when it has none). */
 export function withBillingSection(text: string): string {
