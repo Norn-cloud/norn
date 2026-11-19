@@ -1,7 +1,7 @@
 import alchemy from "alchemy"
 import { D1Database, EmailSender, Vite, WorkerRef } from "alchemy/cloudflare"
 import { FileSystemStateStore } from "alchemy/state"
-import { authDeploy, cellHost, deployTarget, requireWorkerScript, scanState } from "./deploy-target.ts"
+import { authDeploy, cellHost, deployTarget, otelSettings, requireWorkerScript, scanState } from "./deploy-target.ts"
 import { polarConfig } from "./worker/polar-config.ts"
 
 // The recorded Studio: `vite build` output (synthetic recorded engine documents
@@ -29,6 +29,9 @@ if (host !== undefined) await requireWorkerScript(host, process.env)
 // The scan below must see the secret's value, so keep a copy before taking it out of the environment.
 const scanEnv = { ...process.env }
 delete process.env.BETTER_AUTH_SECRET
+// OpenTelemetry export (worker/telemetry.ts): off unless OTEL_EXPORTER_OTLP_ENDPOINT is set; its headers become a Worker secret.
+const otel = otelSettings(process.env)
+delete process.env.OTEL_EXPORTER_OTLP_HEADERS
 // Hosted billing (worker/polar-config.ts): POLAR_ACCESS_TOKEN, POLAR_WEBHOOK_SECRET, POLAR_SERVER and
 // POLAR_PLANS together, or none (billing off). The token and webhook secret become encrypted Worker secrets.
 const billing = polarConfig(process.env)
@@ -66,6 +69,11 @@ export const studio = await Vite("studio", {
     ...auth.defaultOrg === undefined ? {} : { STUDIO_DEFAULT_ORG: auth.defaultOrg },
     ...host === undefined ? {} : { NORN_HOST: WorkerRef({ service: host }) },
     BETTER_AUTH_TRUSTED_ORIGINS: JSON.stringify(auth.origins),
+    ...otel === undefined ? {} : {
+      OTEL_EXPORTER_OTLP_ENDPOINT: otel.endpoint,
+      ...otel.headers === undefined ? {} : { OTEL_EXPORTER_OTLP_HEADERS: alchemy.secret(otel.headers) },
+      ...otel.resourceAttributes === undefined ? {} : { OTEL_RESOURCE_ATTRIBUTES: otel.resourceAttributes },
+    },
     ...billing === undefined ? {} : {
       POLAR_ACCESS_TOKEN: alchemy.secret(billing.accessToken),
       POLAR_WEBHOOK_SECRET: alchemy.secret(billing.webhookSecret),
