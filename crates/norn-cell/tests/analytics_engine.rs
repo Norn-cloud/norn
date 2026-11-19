@@ -656,37 +656,91 @@ proptest::proptest! {
             fraction.map_or(String::new(), |f| format!(".{f}"))
         );
         let expected = norn_checker::metric::compute::contribution::instant_key(&text, false);
-        let (_dir, engine) = engine();
-        let (file, sha256) = csv(&engine, &["at", &text]);
-        let mut request = load_request(&by_metal(true, 100).1, "t", sha256);
-        request.table = norn_cell::analytics::TableSchema {
-            name: "probe.Times".into(),
-            columns: vec![norn_cell::analytics::Column {
-                id: "at".into(),
-                kind: norn_cell::analytics::ColumnKind::Timestamp,
-                nullable: true,
-                laws: Vec::new(),
-            }],
-            pin: "probe".into(),
-        };
-        let loaded = engine.load(&request, file.path()).expect("loaded");
-        match expected {
-            None => proptest::prop_assert_eq!(loaded.reasons, BTreeMap::from([("bulk.not_timestamp".to_owned(), 1)])),
-            Some((secs, nanos)) => {
-                proptest::prop_assert_eq!(loaded.rows, 1);
-                let profile = engine
-                    .profile(&norn_cell::analytics::ProfileRequest {
-                        tenant: tenant(),
-                        source: Source::Dataset { table: "probe.Times".into(), load: "t".into() },
-                        columns: vec!["at".into()],
-                    })
-                    .expect("profile");
-                proptest::prop_assert_eq!(
-                    profile.columns[0].ranks.get(&1).cloned(),
-                    Some(norn_cell::analytics::Value::Instant { text, secs, nanos })
-                );
-            }
+        proptest::prop_assert_eq!(load_timestamp(&text), expected);
+    }
+}
+
+/// The one timestamp `text` loads as: `Some` with the loaded UTC ordering key
+/// when the loader admits it (its profile reading the cell's own instant),
+/// `None` when it is quarantined as not a timestamp.
+fn load_timestamp(text: &str) -> Option<(i64, u32)> {
+    let (_dir, engine) = engine();
+    let (file, sha256) = csv(&engine, &["at", text]);
+    let mut request = load_request(&by_metal(true, 100).1, "t", sha256);
+    request.table = norn_cell::analytics::TableSchema {
+        name: "probe.Times".into(),
+        columns: vec![norn_cell::analytics::Column {
+            id: "at".into(),
+            kind: norn_cell::analytics::ColumnKind::Timestamp,
+            nullable: true,
+            laws: Vec::new(),
+        }],
+        pin: "probe".into(),
+    };
+    let loaded = engine.load(&request, file.path()).expect("loaded");
+    if loaded.rows == 0 {
+        assert_eq!(
+            loaded.reasons,
+            BTreeMap::from([("bulk.not_timestamp".to_owned(), 1)]),
+            "{text}"
+        );
+        return None;
+    }
+    assert_eq!(loaded.rows, 1, "{text}");
+    let profile = engine
+        .profile(&norn_cell::analytics::ProfileRequest {
+            tenant: tenant(),
+            source: Source::Dataset {
+                table: "probe.Times".into(),
+                load: "t".into(),
+            },
+            columns: vec!["at".into()],
+        })
+        .expect("profile");
+    match profile.columns[0].ranks.get(&1).cloned() {
+        Some(norn_cell::analytics::Value::Instant {
+            text: read,
+            secs,
+            nanos,
+        }) => {
+            assert_eq!(read, text);
+            Some((secs, nanos))
         }
+        other => panic!("{text} profiled as {other:?}"),
+    }
+}
+
+/// BULK-LOAD-1 (#1455): the loader's timestamp grammar is the cell's, at the
+/// edges the property test reaches only by chance. `-00:00` is RFC 3339's
+/// unknown local offset, which the cell refuses; `+00:00` and `Z` are UTC.
+#[test]
+fn loaded_timestamp_grammar_is_the_cells_at_its_edges() {
+    for (text, admitted) in [
+        ("1900-01-01T00:00:00-00:00", false),
+        ("2026-10-23T12:00:00-00:00", false),
+        ("2026-10-23T12:00:00.5-00:00", false),
+        ("1900-01-01T00:00:00+00:00", true),
+        ("1900-01-01T00:00:00Z", true),
+        ("2026-10-23T12:00:00.1Z", true),
+        ("2026-10-23T12:00:00.123456789+05:30", true),
+        ("2026-10-23T12:00:00.1234567890Z", false),
+        ("2026-10-23T12:00:00.Z", false),
+        ("2026-10-23T12:00:60Z", false),
+        ("2026-10-23T12:60:00Z", false),
+        ("2026-10-23T24:00:00Z", false),
+        ("2026-10-23T12:00:00+24:00", false),
+        ("2026-10-23t12:00:00z", false),
+        ("1969-12-31T23:59:59.999999999Z", true),
+        ("9999-12-31T23:59:59.999999999Z", true),
+        ("9999-12-31T23:59:59+00:00", true),
+        ("9999-12-31T23:59:59-00:01", false),
+        ("9999-12-31T23:30:00+01:00", true),
+        ("0000-01-01T00:00:00Z", true),
+        ("0000-01-01T00:59:59+01:00", false),
+    ] {
+        let expected = norn_checker::metric::compute::contribution::instant_key(text, false);
+        assert_eq!(expected.is_some(), admitted, "the cell reads {text}");
+        assert_eq!(load_timestamp(text), expected, "the loader reads {text}");
     }
 }
 

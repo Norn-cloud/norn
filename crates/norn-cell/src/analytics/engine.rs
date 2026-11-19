@@ -1888,28 +1888,36 @@ fn parse_sql(kind: ColumnKind, i: usize) -> Parsed {
             reason: format!("CASE WHEN t{i} IS NULL THEN 'bulk.not_date' END"),
         },
         ColumnKind::Timestamp => {
-            // RFC 3339 as the cell reads it: `YYYY-MM-DDTHH:MM:SS`, then an
-            // optional `.` and 1–9 digits, then `Z` or `±HH:MM`.
+            // RFC 3339 as the cell reads it (`norn_expr::temporal::
+            // canonical_timestamp`): `YYYY-MM-DDTHH:MM:SS`, then an optional
+            // `.` and 1–9 digits, then `Z` or `±HH:MM` other than `-00:00`
+            // (an unknown local offset), and a UTC instant whose year is
+            // 0000–9999.
             let zone = format!(
                 "CASE WHEN right({c}, 1) = 'Z' THEN 'Z' WHEN translate(right({c}, 6), '0123456789', '') IN ('+:', '-:') \
-                 AND substr(right({c}, 6), 4, 1) = ':' AND substr(right({c}, 6), 2, 2) <= '23' AND substr(right({c}, 6), 5, 2) <= '59' THEN right({c}, 6) END"
+                 AND substr(right({c}, 6), 4, 1) = ':' AND substr(right({c}, 6), 2, 2) <= '23' AND substr(right({c}, 6), 5, 2) <= '59' \
+                 AND right({c}, 6) <> '-00:00' THEN right({c}, 6) END"
             );
             let fraction = format!("substr({c}, 20, strlen({c}) - 19 - strlen({zone}))");
             let shape = format!(
                 "strlen({c}) BETWEEN 20 AND 35 AND translate(substr({c}, 1, 19), '0123456789', '') = '--T::' \
                  AND substr({c}, 5, 1) = '-' AND substr({c}, 8, 1) = '-' AND substr({c}, 11, 1) = 'T' AND substr({c}, 14, 1) = ':' \
-                 AND substr({c}, 17, 1) = ':' AND substr({c}, 12, 2) <= '23' AND substr({c}, 18, 2) <= '59' AND {zone} IS NOT NULL \
+                 AND substr({c}, 17, 1) = ':' AND substr({c}, 12, 2) <= '23' AND substr({c}, 15, 2) <= '59' AND substr({c}, 18, 2) <= '59' AND {zone} IS NOT NULL \
                  AND ({fraction} = '' OR (substr({fraction}, 1, 1) = '.' AND strlen({fraction}) BETWEEN 2 AND 10 AND translate(substr({fraction}, 2), '0123456789', '') = ''))"
             );
             let offset = format!(
                 "CASE WHEN {zone} = 'Z' THEN 0 ELSE (CASE WHEN substr({zone}, 1, 1) = '-' THEN -1 ELSE 1 END) * \
                  (CAST(substr({zone}, 2, 2) AS BIGINT) * 3600 + CAST(substr({zone}, 5, 2) AS BIGINT) * 60) END"
             );
+            let utc =
+                format!("(epoch_ms(TRY_CAST(substr({c}, 1, 19) AS TIMESTAMP)) // 1000 - {offset})");
             Parsed {
                 columns: vec![
                     format!("{c} AS {v}"),
+                    // The UTC second must lie between 0000-01-01T00:00:00Z
+                    // and 9999-12-31T23:59:59Z.
                     format!(
-                        "CASE WHEN {shape} THEN epoch_ms(TRY_CAST(substr({c}, 1, 19) AS TIMESTAMP)) // 1000 - {offset} END AS t{i}"
+                        "CASE WHEN {shape} THEN CASE WHEN {utc} BETWEEN -62167219200 AND 253402300799 THEN {utc} END END AS t{i}"
                     ),
                     format!(
                         "CASE WHEN {shape} THEN CAST(rpad(substr({fraction}, 2), 9, '0') AS INTEGER) END AS n{i}"
