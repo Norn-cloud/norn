@@ -686,7 +686,7 @@ impl<E: SqlEngine> Connections<E> {
                 "a scope is not one the provider offers".to_owned(),
             ));
         }
-        let client = self.client(provider, &params, false)?;
+        let client = self.client(provider, params, false)?;
         let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
         let mut request = client
             .authorize_url(CsrfToken::new_random)

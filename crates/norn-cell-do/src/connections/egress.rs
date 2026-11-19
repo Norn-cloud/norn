@@ -465,13 +465,13 @@ impl Egress {
         let request = request
             .body(body.map(<[u8]>::to_vec).unwrap_or_default())
             .map_err(|_error| EgressError::Transport("malformed request".to_owned()))?;
-        let response = self.agent.run(request).map_err(from_ureq)?;
+        let response = self.agent.run(request).map_err(|error| from_ureq(&error))?;
         let (parts, mut body) = response.into_parts();
         let bytes = body
             .with_config()
             .limit(MAX_BODY_BYTES)
             .read_to_vec()
-            .map_err(from_ureq)?;
+            .map_err(|error| from_ureq(&error))?;
         Ok(Response::from_parts(parts, bytes))
     }
 }
@@ -485,8 +485,8 @@ fn backoff(attempt: u32, headers: &HeaderMap) -> Duration {
         .map_or(base, |seconds| Duration::from_secs(seconds.min(30)))
 }
 
-fn from_ureq(error: ureq::Error) -> EgressError {
-    if let ureq::Error::Io(io) = &error
+fn from_ureq(error: &ureq::Error) -> EgressError {
+    if let ureq::Error::Io(io) = error
         && let Some(Refused(inner)) = io
             .get_ref()
             .and_then(|inner| inner.downcast_ref::<Refused>())
