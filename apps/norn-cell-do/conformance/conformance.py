@@ -824,10 +824,13 @@ class Suite:
         # Every reply must be well formed: accepted with the exact length stored, or a refusal.
         sizes, malformed = {}, []
         for size in (1 << 20, 16 << 20, 130 << 20):
-            result = probed(self.base, "size", "bytes", "accepted", object_name="sqlite-size", bytes=size, timeout=300)
-            if result["accepted"] is True and result.get("stored") == size:
+            # A refused value is a well-formed answer here (accepted=false with the platform's error).
+            status, result = probe(self.base, "size", object_name="sqlite-size", bytes=size, timeout=300)
+            if status != 200 or result.get("bytes") != size:
+                malformed.append(f"{size >> 20} MiB: {status} {str(result)[:120]}")
+            elif result.get("accepted") is True and result.get("stored") == size:
                 sizes[size] = "stored"
-            elif result["accepted"] is False and isinstance(result.get("error"), str):
+            elif result.get("accepted") is False and isinstance(result.get("error"), str):
                 sizes[size] = f"refused ({result['error'][:60]})"
             else:
                 malformed.append(f"{size >> 20} MiB: {result}")
