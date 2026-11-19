@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils"
 import { defineDecisionSheet, decideRequest, type NornDecisionSheet, type SheetDocument } from "../../../../packages/norn-demo-ui/src/elements/decision-sheet.ts"
 import { fetchTransport, wasmEvaluate } from "../../../../packages/norn-demo-ui/src/machine/index.ts"
 import { sharedEngine } from "../lib/canvas/checker.ts"
-import { defaultFetch, type Fetch } from "../lib/cell-read.ts"
+import { defaultFetch } from "../lib/cell-read.ts"
 import { scopedHostFetch } from "../lib/definitions.ts"
 import { flowTitle, remaining, stepTitle, urgent, type Decision, type Risk } from "../lib/decisions.ts"
 import sheetDocument from "./decision-sheet.widget.json"
@@ -51,13 +51,12 @@ const SETTLED = new Set(["decided", "resolved", "expired", "gone", "closed"])
  * Escape and the close button ask the machine, which decides whether to close or to ask first.
  * The cell decides who may decide, and when.
  */
-export function DecisionSheet({ decision, now, onClose, onSettled, fetcher = defaultFetch }: {
+export function DecisionSheet({ decision, now, onClose, onSettled }: {
   readonly decision: Decision | null
   readonly now: number | undefined
   readonly onClose: () => void
   /** The inbox should read again (decided, resolved elsewhere, expired or gone). */
   readonly onSettled: () => void
-  readonly fetcher?: Fetch
 }) {
   const { locale } = useLocale()
   const navigate = useNavigate()
@@ -75,7 +74,7 @@ export function DecisionSheet({ decision, now, onClose, onSettled, fetcher = def
     if (decision === null || target === null) return
     defineDecisionSheet()
     const sheet = document.createElement("norn-decision-sheet") as NornDecisionSheet
-    const call = scopedHostFetch(fetcher)
+    const call = scopedHostFetch(defaultFetch)
     sheet.options = {
       document: DOCUMENT,
       decision,
@@ -94,7 +93,7 @@ export function DecisionSheet({ decision, now, onClose, onSettled, fetcher = def
   }, [decision?.id, locale, host])
 
   useEffect(() => {
-    if (now !== undefined) (element.current as unknown as { setNow?: (ms: number) => void } | null)?.setNow?.(now)
+    if (now !== undefined) element.current?.setNow?.(now)
   }, [now])
 
   const request = () => {
