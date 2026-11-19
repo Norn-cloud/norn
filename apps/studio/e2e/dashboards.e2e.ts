@@ -56,6 +56,8 @@ const proposed = {
 const words = "Refinery overview\nProposed by the assistant (claude-sonnet-5-5) for the request: \"%\"\n1. Yield in total: Yield (recovered ÷ input) of demo Conversion records, in total, from 6 Jul to 26 Oct 2026 (26 Oct not included), live data at most 5 seconds old\n2. Recovered by metal: Recovered (sum of recovered) of demo Conversion records, by metal, ...\n3. Yield, weekly: Yield (recovered ÷ input) of demo Conversion records, by week of occurred at, ..."
 
 async function stage(page: Page) {
+  // The cell's question catalog, which a live answer's drill menu reads for what it can break a bucket out by.
+  await page.route("**/api/host/v1/questions:catalog**", (route) => route.fulfill({ json: { objectTypes: [{ name: "demo.Conversion", properties: objectType.properties }] } }))
   await page.route("**/api/me", (route) => route.fulfill({ json: { user: { id: "u_e2e", name: "Analyst", email: "analyst@example.com" }, organization: { id: "org_demo", name: "Demo", role: "member" }, environmentId: "analytics" } }))
   await page.route("**/api/questions/catalog", (route) => route.fulfill({ json: catalog }))
   await page.route("**/api/host/v1/questions:evaluate**", (route) => route.fulfill({ json: answerFor((route.request().postDataJSON() as { question: Parameters<typeof answerFor>[0] }).question) }))
@@ -224,7 +226,7 @@ test("a sheet closed by Escape while it is still opening lets the next click thr
   test.skip(Boolean(process.env.E2E_BASE), "this row uses deterministic stand-ins for the assistant and the cell")
   await board(page)
   // A slow entrance, so Escape lands mid-transition; the close must not wait for it.
-  await page.addStyleTag({ content: "[data-slot=sheet-content] { transition-duration: 10s !important }" })
+  await page.addStyleTag({ content: "[role=dialog][data-side] { transition-duration: 10s !important }" })
   const details = page.getByRole("button", { name: "Details" }).nth(2)
   const sheet = page.getByRole("dialog", { name: "Yield, weekly" })
   await details.click()
