@@ -162,8 +162,10 @@ a Rivet Engine); celld and Wrangler are the other hosts.
   `fixtures` build AND `NORN_STAGE=test` AND `NORN_CONFORMANCE=synthetic`.
   The checked-in `conformance/wrangler.json` sets neither and has no
   `workers.dev`, preview or route URL, so a plain `wrangler deploy` of it
-  serves nothing; the runner sets both values in its own copy for a local
-  host, and a hosted run supplies them in a separate, untracked config (see
+  serves nothing. For a local host the runner copies the project to a fresh
+  temporary directory, sets both values in that copy's `wrangler.json` only,
+  and deletes the copy afterwards: the supplied project is never written. A
+  hosted run supplies them in a separate, untracked config (see
   below). Opted in, it serves only the synthetic scope
   `org_demo/analytics` and its probe objects, and refuses everything else.
   The production deploy (`apps/studio/scripts/celld-deploy-cell.ts`) writes its
@@ -182,8 +184,10 @@ a Rivet Engine); celld and Wrangler are the other hosts.
     the host's log from inside the write transaction, after a statement ran,
     while it spins there (never for a refusal that wrote nothing or a callback
     that threw), and the runner kills only once it reads it. Without a marker
-    the runner does not kill: the boundary is **not tested**. A kill must leave
-    the commit wholly absent, and a retry must match native;
+    the runner neither kills nor restarts the host, even when the connection
+    was reset: the boundary is **not tested**, and if the cell then stops
+    answering the sweep ends there, every remaining boundary **not tested**.
+    A kill must leave the commit wholly absent, and a retry must match native;
   - an acknowledged commit surviving a kill. The suite does **not** show that
     the platform withholds replies until a write is durable: no boundary sits
     between a commit and its reply;
@@ -197,7 +201,10 @@ a Rivet Engine); celld and Wrangler are the other hosts.
   - SQLite affinity, bindings, and a 1 MiB value stored exactly (larger values
     are measured); the clock inside a synchronous call (measured);
   - waitUntil background work completing after the reply, with no traffic
-    meanwhile (idle eviction is not claimed; whether the object was replaced
+    meanwhile. It passes only with evidence that the work was still pending
+    when the reply arrived (the reply counts fewer writes than scheduled and
+    came back before the first was due) and that all of it ran afterwards;
+    otherwise it is **not tested** (idle eviction is not claimed; whether the object was replaced
     meanwhile is only reported);
   - a live WebSocket across 15 s idle, and, as its own row, whether the object
     hibernated meanwhile (a new instance answered the commit the socket saw);
@@ -224,6 +231,11 @@ NORN_CELL_DO_CONFORMANCE_OUT="$P/reference.json" cargo test --locked -p norn-cel
 (cd apps/norn-cell-do/conformance && bun install --frozen-lockfile)   # open-orange 1.0.3, test-only; runs on Node 22+
 python3 apps/norn-cell-do/conformance/conformance.py --reference "$P/reference.json" --host rivet --project "$P"
 ```
+
+`python3 -m unittest apps/norn-cell-do/conformance/test_conformance.py`
+checks the runner's own rules with a stub host: the supplied project stays
+byte-identical, a reset without a marker kills nothing, and waitUntil does not
+pass when the reply came after the work.
 
 `--host celld` runs `celld dev --no-watch --logs` (0.6.3). Host state and logs go beside the project (`--state`), never inside it. `--host rivet` runs the Rivet Engine
 (`rivetdev/engine` 3.1.2-rc.1, pinned by digest, in Docker) with two

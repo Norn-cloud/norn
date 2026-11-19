@@ -329,7 +329,8 @@ export class Probe {
             }
           })();
           this.ctx.waitUntil(work);
-          return reply({ started: n });
+          // Evidence the work is still pending when the reply leaves: the writes already made.
+          return reply({ started: n, written: this.rows("SELECT count(*) FROM log WHERE kind = ?", tag)[0][0] });
         }
         case "pairs":
           return reply({ count: this.rows("SELECT count(*) FROM log WHERE kind = ?", param("tag", "bg"))[0][0], pairs: this.rows("SELECT count(*) FROM log WHERE kind = ?", `${param("tag", "bg")}-pair`)[0][0] });

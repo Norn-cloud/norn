@@ -42,6 +42,7 @@ import ssl
 import statistics
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -535,7 +536,12 @@ class Suite:
             return "fail", f"{len(points)} kill points but only {len(steps)} kill steps in the reference"
         rows, failures, untested, reopen_ms = [], [], [], []
         before = native["openedJson"]
+        wedged = None
         for index, point in enumerate(points):
+            if wedged:
+                untested.append(point)
+                rows.append(f"{point}=not reached, not killed (the cell stopped answering after {wedged})")
+                continue
             step, want = steps[index], native["steps"][index]
             token = secrets.token_hex(16)
             replied = []
@@ -560,13 +566,15 @@ class Suite:
                 after_kill, waited = recovered_head(self.base, obj=obj)
                 reopen_ms.append(waited)
             else:
+                # No marker, no kill, and no restart either (a reset connection included): the
+                # boundary is not tested. A cell that no longer answers ends the sweep untested.
                 untested.append(point)
-                if replied and str(replied[0][0]).startswith("error"):
-                    # No answer and no marker: restart to free the object. A recovery, not a test.
-                    self.restart()
-                    after_kill, _ = recovered_head(self.base, obj=obj)
-                else:
+                try:
                     after_kill, _, _ = head(self.base, obj=obj)
+                except (RuntimeError, OSError, ValueError) as error:
+                    wedged = point
+                    rows.append(f"{point}=not reached, not killed (reply {replied[0][0] if replied else None}; then head: {type(error).__name__})")
+                    continue
             landed = after_kill == want["headJson"]
             if not landed and after_kill != before:
                 failures.append(f"{point}: head {after_kill} is neither {before} nor {want['headJson']} (partial)")
@@ -575,8 +583,15 @@ class Suite:
             if reached and landed:
                 failures.append(f"{point}: a write inside an open transaction survived the kill")
             if not landed:
-                status, body, _, _ = scripted(self.base, step, self.now, obj=obj)
-                retried, _, _ = head(self.base, obj=obj)
+                try:
+                    status, body, _, _ = scripted(self.base, step, self.now, obj=obj)
+                    retried, _, _ = head(self.base, obj=obj)
+                except (RuntimeError, OSError, ValueError) as error:
+                    if reached:
+                        raise
+                    wedged = point
+                    rows.append(f"{point}=not reached, not killed (then the retry: {type(error).__name__})")
+                    continue
                 if (status, body) != (want["status"], want["body"].encode()) or retried != want["headJson"]:
                     failures.append(f"{point}: retry differs from native ({status})")
             rows.append(f"{point}={'not reached, not killed (reply ' + str(replied[0][0] if replied else None) + ')' if not reached else 'landed' if landed else 'rolled back'}")
@@ -588,6 +603,8 @@ class Suite:
         if failures:
             return "fail", "; ".join(failures)[:900]
         if untested:
+            if wedged:
+                detail += f"; the cell stopped answering after {wedged}, so the sweep ended there without a kill"
             return "not tested", f"the host never showed reaching {', '.join(untested)} (no marker in its log), so those boundaries were not killed; " + detail
         return "pass", detail
 
@@ -876,14 +893,25 @@ class Suite:
 
     def wait_until(self):
         """Background work registered with waitUntil completes after the reply, with no traffic meanwhile.
+        It passes only with evidence that the work was still pending when the reply arrived (the reply
+        counts fewer writes than scheduled, and came back before the first was due) and finished after.
         Idle eviction is not claimed: whether the object was replaced meanwhile is only reported."""
         name = f"bg-{secrets.token_hex(4)}"
-        started = probed(self.base, "wait-until", "started", object_name=name, n=15, every=1000)
+        n, every = 15, 1000
+        probed(self.base, "pairs", "count", object_name=name)  # place the object first: its start is not the reply's time
+        sent = time.perf_counter()
+        started = probed(self.base, "wait-until", "started", "written", object_name=name, n=n, every=every)
+        reply_ms = (time.perf_counter() - sent) * 1000
         time.sleep(22)
         counts = probed(self.base, "pairs", "count", "pairs", object_name=name)
-        ok = counts["count"] == 15 and counts["pairs"] == 15
+        written = started["written"]
         same = started.get("instance") == counts.get("instance")
-        return ("pass" if ok else "fail"), f"15 background turns over 15 s after the reply, with no traffic: {counts['count']} ran, each atomic ({counts['pairs']} pairs); the {'same instance answered afterwards' if same else 'object was replaced afterwards (new instance)'} (measured, not a claim about eviction)"
+        detail = f"{n} background turns, one per {every} ms, scheduled before the reply; the reply came after {reply_ms:.0f} ms counting {written} written; after 22 s with no traffic {counts['count']} ran, each atomic ({counts['pairs']} pairs); the {'same instance answered afterwards' if same else 'object was replaced afterwards (new instance)'} (measured, not a claim about eviction)"
+        if not isinstance(written, int) or written >= n or reply_ms >= every:
+            return "not tested", "the reply did not show background work still pending when it arrived, so work after the reply was not shown; " + detail
+        if counts["count"] != n or counts["pairs"] != n:
+            return "fail", detail
+        return "pass", detail
 
     # -- websockets
 
@@ -1110,6 +1138,22 @@ class WebSocket:
             pass
 
 
+def local_copy(source, lineage_key):
+    """A fresh copy of the built project, opted in for a local host. Only the copy's wrangler.json is
+    written: the supplied project (which may be deployed as is) keeps its disabled config byte for byte.
+    The caller removes the copy's parent directory afterwards."""
+    project = Path(tempfile.mkdtemp(prefix="norn-conformance-")) / source.name
+    shutil.copytree(source, project, symlinks=True)
+    config = json.loads((project / "wrangler.json").read_text())
+    # The local test host opts the conformance entry in explicitly (see conformance/worker.mjs).
+    config.setdefault("vars", {}).update({"NORN_LINEAGE_KEY": lineage_key, "NORN_STAGE": "test", "NORN_CONFORMANCE": "synthetic"})
+    # The public-URL switches (off in the checked-in config) mean nothing on a local host, and celld refuses them.
+    for key in ("workers_dev", "preview_urls", "routes"):
+        config.pop(key, None)
+    (project / "wrangler.json").write_text(json.dumps(config))
+    return project
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--reference", required=True, type=Path)
@@ -1125,20 +1169,25 @@ def main():
     reference = json.loads(args.reference.read_text())
     if reference.get("format") != REFERENCE_FORMAT:
         raise SystemExit(f"reference format {reference.get('format')!r}, expected {REFERENCE_FORMAT} (rerun conformance_reference)")
+    cleanup = []
+    try:
+        run(args, reference, cleanup)
+    finally:
+        for step in cleanup:
+            step()
+
+
+def run(args, reference, cleanup):
     if args.host == "url":
         host = UrlHost(args.url)
     else:
-        project = args.project.resolve()
-        config = json.loads((project / "wrangler.json").read_text())
-        # The local test host opts the conformance entry in explicitly (see conformance/worker.mjs).
-        config.setdefault("vars", {}).update({"NORN_LINEAGE_KEY": reference["lineageKey"], "NORN_STAGE": "test", "NORN_CONFORMANCE": "synthetic"})
-        # The public-URL switches (off in the checked-in config) mean nothing on a local host, and celld refuses them.
-        for key in ("workers_dev", "preview_urls", "routes"):
-            config.pop(key, None)
-        (project / "wrangler.json").write_text(json.dumps(config))
+        source = args.project.resolve()
         # State and logs live beside the project, never inside it (a host may watch the project).
-        state = (args.state or project.parent / f"{project.name}-conformance-state").resolve()
+        state = (args.state or source.parent / f"{source.name}-conformance-state").resolve()
         state.mkdir(parents=True, exist_ok=True)
+        # The host runs a disposable copy: the supplied project's wrangler.json is never written.
+        project = local_copy(source, reference["lineageKey"])
+        cleanup.append(lambda: shutil.rmtree(project.parent, ignore_errors=True))
         host = CelldHost(project, state) if args.host == "celld" else RivetHost(project, state)
     suite = Suite(host, reference, quick=args.quick)
     started_ms = host.start()
