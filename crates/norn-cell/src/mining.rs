@@ -1,7 +1,8 @@
 //! MINE-CONS-1: bounded runtime questions over source-pinned observed flows.
 //! Exact certificates describe only this supplied window, never business truth.
 use norn_checker::obligations::conservation::{
-    Coordinate, Delta, Failure, Rational, Writer, WriterSource, check, discovery::discover,
+    Coordinate, Delta, Failure, InstalledActions, Rational, Writer, WriterSource, check,
+    discovery::discover,
 };
 use std::collections::BTreeSet;
 
@@ -141,7 +142,12 @@ pub fn suggest_conservation(
         counterexamples: Vec::new(),
     };
     for writer in &writers {
-        match check(&result.coordinates, std::slice::from_ref(writer), &weights) {
+        match check(
+            &result.coordinates,
+            std::slice::from_ref(writer),
+            &weights,
+            &InstalledActions::none(),
+        ) {
             Ok(()) => result.supporting_records.push(writer.id.clone()),
             Err(witness @ Failure::Unbalanced { .. }) => {
                 result.counterexamples.push((writer.id.clone(), witness));

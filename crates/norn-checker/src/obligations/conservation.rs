@@ -6,7 +6,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use norn_expr::{RowComparison, RowExpr};
-use norn_ir::{ActionRoot, UnitRef, ZenExpression};
+use norn_ir::function::Digest;
+use norn_ir::runtime::RuntimeValue;
+use norn_ir::{ActionRoot, ArtifactEnvelope, ArtifactKind, UnitRef, ZenExpression};
 
 /// The extracted, proved acceptance decision for one writer (#718 U5).
 pub mod decision;
@@ -118,28 +120,35 @@ pub enum WriterSource {
     /// No executable definition is bound (mined observations, discovery
     /// candidates): every key-equality case stays possible.
     Unbound,
-    /// The action definition the kernel runs. Its id must be the writer's.
+    /// The action definition the writer's delta was lowered from. Its id
+    /// must be the writer's. Its guards count only when it is the exact
+    /// revision [`InstalledActions`] pins for that id; otherwise the writer
+    /// is checked as [`WriterSource::Unbound`].
     Action(BoundAction),
 }
 
-/// The guards of one executable action, read from its definition.
+/// The guards of one action definition, with its content digest.
 ///
 /// It has no public constructor other than [`BoundAction::of`], so no caller
-/// can attach a precondition the kernel does not evaluate: whatever excludes
-/// a key-equality case is a precondition of the [`ActionRoot`] itself, which
-/// the kernel checks over the effective input before any effect.
+/// can attach a precondition outside an [`ActionRoot`]. That root is still
+/// the caller's: its guards exclude a key-equality case only when its digest
+/// equals the [`InstalledActions`] pin for its id, so the root is the exact
+/// revision the kernel checks over the effective input before any effect.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BoundAction {
     action_id: String,
+    /// `None` when the root does not canonicalize; it then matches no pin.
+    digest: Option<Digest>,
     preconditions: Vec<ZenExpression>,
 }
 
 impl BoundAction {
-    /// Binds the action definition the kernel executes.
+    /// Binds an action definition, pinned by its content digest.
     #[must_use]
     pub fn of(action: &ActionRoot) -> Self {
         Self {
             action_id: action.action_id.clone(),
+            digest: action_digest(action),
             preconditions: action.preconditions.clone(),
         }
     }
@@ -148,6 +157,82 @@ impl BoundAction {
     #[must_use]
     pub fn action_id(&self) -> &str {
         &self.action_id
+    }
+}
+
+/// The Norn1 content digest of an action definition: the digest of its typed
+/// root's canonical JSON ([`Digest::of_json_document`]). Two roots share it
+/// exactly when every field the kernel reads, preconditions included, is
+/// equal.
+fn action_digest(action: &ActionRoot) -> Option<Digest> {
+    serde_json::to_vec(action)
+        .ok()
+        .and_then(|json| Digest::of_json_document(json).ok())
+}
+
+/// The installed action revisions, by id, pinned by content digest.
+///
+/// The only source of trust for a [`BoundAction`]'s guards. It is read from
+/// an installed definition set's canonical artifact list
+/// (`InstalledDefinitionSet::canonical_set`), decoded the way the runtime
+/// loads the actions it executes, so a pin names the revision the kernel
+/// evaluates, never one a caller supplies beside it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct InstalledActions {
+    pins: BTreeMap<String, Digest>,
+}
+
+impl InstalledActions {
+    /// No installed action: every bound writer is checked as unbound.
+    #[must_use]
+    pub fn none() -> Self {
+        Self::default()
+    }
+
+    /// Pins the actions of an installed set's canonical artifact list.
+    ///
+    /// # Errors
+    ///
+    /// [`Failure::Malformed`] when the list or an action does not decode, or
+    /// two actions share an id.
+    pub fn from_canonical_set(canonical_set: &str) -> Result<Self, Failure> {
+        let Ok(RuntimeValue::Array(sources)) = RuntimeValue::from_json_text(canonical_set) else {
+            return Err(Failure::Malformed);
+        };
+        let mut actions = Vec::new();
+        for source in &sources {
+            let artifact: ArtifactEnvelope =
+                norn_ir::runtime::decode(source).map_err(|_| Failure::Malformed)?;
+            if artifact.kind() == ArtifactKind::Action {
+                let payload = source.get("payload").ok_or(Failure::Malformed)?;
+                actions.push(
+                    norn_ir::runtime::decode::<ActionRoot>(payload)
+                        .map_err(|_| Failure::Malformed)?,
+                );
+            }
+        }
+        Self::pin(&actions)
+    }
+
+    fn pin(actions: &[ActionRoot]) -> Result<Self, Failure> {
+        let mut pins = BTreeMap::new();
+        for action in actions {
+            let digest = action_digest(action).ok_or(Failure::Malformed)?;
+            if pins.insert(action.action_id.clone(), digest).is_some() {
+                return Err(Failure::Malformed);
+            }
+        }
+        Ok(Self { pins })
+    }
+
+    /// The preconditions of `source` when it is the installed revision of
+    /// its action; `None` keeps every key-equality case.
+    fn guards<'a>(&self, source: &'a WriterSource) -> Option<&'a [ZenExpression]> {
+        let WriterSource::Action(action) = source else {
+            return None;
+        };
+        let pinned = self.pins.get(&action.action_id)?;
+        (action.digest.as_ref() == Some(pinned)).then_some(action.preconditions.as_slice())
     }
 }
 
@@ -260,11 +345,12 @@ fn validate(
     Ok(())
 }
 
-/// Input-field pairs, ordered, that a bound action's preconditions prove
-/// unequal. Only top-level conjuncts `input.a != input.b` and
-/// `not (input.a == input.b)` count; source outside the lowerable subset, and
-/// any unbound writer, prove nothing.
-fn proved_unequal(source: &WriterSource) -> BTreeSet<(String, String)> {
+/// Input-field pairs, ordered, that an installed action's preconditions
+/// prove unequal. Only top-level conjuncts `input.a != input.b` and
+/// `not (input.a == input.b)` count; source outside the lowerable subset, an
+/// unbound writer and an action that is not the installed revision prove
+/// nothing.
+fn proved_unequal(guards: Option<&[ZenExpression]>) -> BTreeSet<(String, String)> {
     fn pair(a: &RowExpr, b: &RowExpr, out: &mut BTreeSet<(String, String)>) {
         if let (RowExpr::Column(a), RowExpr::Column(b)) = (a, b)
             && a != b
@@ -300,10 +386,7 @@ fn proved_unequal(source: &WriterSource) -> BTreeSet<(String, String)> {
         }
     }
     let mut out = BTreeSet::new();
-    let WriterSource::Action(action) = source else {
-        return out;
-    };
-    for precondition in &action.preconditions {
+    for precondition in guards.unwrap_or_default() {
         if let Ok(Some(tree)) = norn_expr::row_expression(precondition.as_str(), INPUT_ROOT) {
             conjuncts(&tree, &mut out);
         }
@@ -595,10 +678,15 @@ fn aliased_rows(
 /// # Errors
 /// Malformed certificate/system, unsupported writer, resource/number limit, or
 /// a nonzero symbolic coefficient. No failure grants application authority.
+///
+/// `installed` pins the action revisions the kernel executes; a bound
+/// writer's guards exclude key-equality cases only when its action is the
+/// pinned revision.
 pub fn check(
     coordinates: &[Coordinate],
     writers: &[Writer],
     certificate: &[Rational],
+    installed: &InstalledActions,
 ) -> Result<(), Failure> {
     validate(coordinates, writers, certificate)?;
     // A coordinate without storage beside stored ones may be any of their
@@ -669,7 +757,7 @@ pub fn check(
         // Assigned cells the preconditions do not prove distinct may be one
         // row at run time; the writer must balance in every such case too.
         // A case set that cannot be built faithfully is unknown first.
-        let unequal = proved_unequal(&writer.source);
+        let unequal = proved_unequal(installed.guards(&writer.source));
         let cases = alias_cases(coordinates, &footprint, &unequal)
             .map_err(|(code, why)| Failure::Unknown(format!("{code}: {}: {why}", writer.id)))?;
         decide(rows)?;
@@ -775,6 +863,21 @@ mod tests {
 
     fn q(n: i64) -> Rational {
         Rational::new(n, 1).unwrap()
+    }
+    /// [`super::check`] with the writers' own bound actions installed: the
+    /// fixtures model the installed revisions. The pin itself is tested in
+    /// `cons_bound_action_must_be_the_installed_revision`.
+    fn check(c: &[Coordinate], w: &[Writer], certificate: &[Rational]) -> Result<(), Failure> {
+        let pins = w
+            .iter()
+            .filter_map(|writer| match &writer.source {
+                WriterSource::Action(action) => {
+                    Some((action.action_id.clone(), action.digest.clone()?))
+                }
+                WriterSource::Unbound => None,
+            })
+            .collect();
+        super::check(c, w, certificate, &InstalledActions { pins })
     }
     fn system() -> (Vec<Coordinate>, Vec<Writer>) {
         let coordinates = ["input", "output", "loss"]
@@ -1057,6 +1160,77 @@ mod tests {
             "transfer"
         );
         assert_eq!(check(&c, &[guarded], &[q(1); 2]), Ok(()));
+    }
+
+    #[test]
+    fn cons_bound_action_must_be_the_installed_revision() {
+        // Sol round 3: the installed transfer has no guard. A clone of its
+        // root with `input.from != input.to` added, bound under the same id,
+        // is not the revision the kernel executes and excludes nothing.
+        let c = keyed(&["from", "to"]);
+        let unguarded = action("transfer", &[]);
+        let installed = InstalledActions::pin(std::slice::from_ref(&unguarded)).unwrap();
+        let mut forged = unguarded.clone();
+        forged
+            .preconditions
+            .push(ZenExpression("input.from != input.to".into()));
+        let mut probe = transfer(&c, &[]);
+        probe.source = WriterSource::Action(BoundAction::of(&forged));
+        assert!(matches!(
+            super::check(&c, std::slice::from_ref(&probe), &[q(1); 2], &installed),
+            Err(Failure::Aliased { .. })
+        ));
+        // Without any installed pin the guard counts no more.
+        assert!(matches!(
+            super::check(
+                &c,
+                std::slice::from_ref(&probe),
+                &[q(1); 2],
+                &InstalledActions::none()
+            ),
+            Err(Failure::Aliased { .. })
+        ));
+        // The genuinely installed guarded transfer is admitted.
+        let guarded = action("transfer", &["input.from != input.to"]);
+        let installed = InstalledActions::pin(std::slice::from_ref(&guarded)).unwrap();
+        assert_eq!(
+            super::check(
+                &c,
+                &[transfer(&c, &["input.from != input.to"])],
+                &[q(1); 2],
+                &installed
+            ),
+            Ok(())
+        );
+        // The pin is read from an installed canonical set, decoded the way
+        // the runtime loads the actions it executes.
+        let set = include_str!("../../../norn-kernel/tests/fixtures/action-writer.json");
+        let installed = InstalledActions::from_canonical_set(set).unwrap();
+        let sources: Vec<serde_json::Value> = serde_json::from_str(set).unwrap();
+        let root: ActionRoot = sources
+            .iter()
+            .find_map(|source| serde_json::from_value(source.get("payload")?.clone()).ok())
+            .unwrap();
+        let genuine = WriterSource::Action(BoundAction::of(&root));
+        assert!(installed.guards(&genuine).is_some());
+        let mut clone = root;
+        clone
+            .preconditions
+            .push(ZenExpression("input.from != input.to".into()));
+        assert_eq!(
+            installed.guards(&WriterSource::Action(BoundAction::of(&clone))),
+            None
+        );
+        assert_eq!(installed.guards(&WriterSource::Unbound), None);
+        // An ambiguous or undecodable installed set pins nothing.
+        assert_eq!(
+            InstalledActions::pin(&[action("t", &[]), action("t", &[])]),
+            Err(Failure::Malformed)
+        );
+        assert_eq!(
+            InstalledActions::from_canonical_set("{}"),
+            Err(Failure::Malformed)
+        );
     }
 
     #[test]

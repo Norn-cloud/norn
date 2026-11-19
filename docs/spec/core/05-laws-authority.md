@@ -174,9 +174,13 @@ zero-delta writes such as `Bal[k] := pre.Bal[k]`, and must also balance in every
 key-equality case of its footprint that its executable preconditions do not
 exclude, with the writes to one cell either accumulating or one pre-state write
 surviving. Only the preconditions of the action definition a writer is bound to
-can exclude a case: the checker reads them from that `ActionRoot`, which the
-kernel evaluates over the effective input before any effect, and a writer bound
-to no action (a mined observation) keeps every case. Of those, only a top-level
+can exclude a case, and only when that `ActionRoot` is the installed revision:
+its Norn1 content digest must equal the pin read from the installed definition
+set's canonical artifact list, decoded the way the runtime loads the actions the
+kernel evaluates over the effective input before any effect. A root that is not
+the installed revision (a clone with an added guard under the same id, say), and
+a writer bound to no action (a mined observation), keep every case. Of those,
+only a top-level
 conjunct `input.a != input.b` excludes a case, and computed keys stay possibly
 equal. A write changes every coordinate of the functional that may name its
 row, assigned or not, and the row counts once. An unbalanced case refuses as

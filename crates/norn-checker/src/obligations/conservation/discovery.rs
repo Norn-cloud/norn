@@ -166,7 +166,7 @@ fn eliminate(mut equations: Vec<Vec<Rational>>, n: usize) -> Result<Vec<Rational
     reason = "small exact discovery fixtures"
 )]
 mod tests {
-    use super::super::check;
+    use super::super::{InstalledActions, check};
     use super::*;
     use norn_ir::{UnitRef, UnitSystem};
     use proptest::prelude::*;
@@ -208,9 +208,12 @@ mod tests {
         let (mut c, w) = system(2, 1);
         let candidate = discover(&c, &w, &[None, Some(ONE)]).unwrap();
         assert_eq!(candidate, [q(1, 2), ONE]);
-        assert_eq!(check(&c, &w, &candidate), Ok(()));
+        assert_eq!(check(&c, &w, &candidate, &InstalledActions::none()), Ok(()));
         c[0].weight = ONE;
-        assert_eq!(check(&c, &w, &candidate), Err(Failure::Malformed));
+        assert_eq!(
+            check(&c, &w, &candidate, &InstalledActions::none()),
+            Err(Failure::Malformed)
+        );
     }
 
     #[test]
@@ -254,13 +257,16 @@ mod tests {
         rows.push(vec![ZERO; 2]);
         let candidate = discover(&c, &w, &[Some(ONE), None, None]).unwrap();
         assert_eq!(candidate, [ONE, ONE, ZERO]);
-        assert_eq!(check(&c, &w, &candidate), Ok(()));
+        assert_eq!(check(&c, &w, &candidate, &InstalledActions::none()), Ok(()));
         w.push(w[0].clone());
         assert_eq!(
             discover(&c, &w, &[Some(ONE), None, None]),
             Err(Failure::Malformed)
         );
-        assert_eq!(check(&c, &w, &candidate), Err(Failure::Malformed));
+        assert_eq!(
+            check(&c, &w, &candidate, &InstalledActions::none()),
+            Err(Failure::Malformed)
+        );
     }
 
     proptest! {
@@ -269,7 +275,7 @@ mod tests {
             let (c, w) = system(n, d);
             let candidate = discover(&c, &w, &[None, Some(ONE)]).unwrap();
             prop_assert_eq!(&candidate, &[q(d, n), ONE]);
-            prop_assert_eq!(check(&c, &w, &candidate), Ok(()));
+            prop_assert_eq!(check(&c, &w, &candidate, &InstalledActions::none()), Ok(()));
         }
     }
 }
