@@ -26,20 +26,6 @@
       "caveats": "The 11-test D79 simulator set (DST steps 1 and 1b), serial, nextest Summary wall time; one default Boat VM, single run. Simulator stores are unsynced on /dev/shm by design; before that change file-store reopen cost varied about 5x between VMs. Step 2 responder tests are excluded so this id stays comparable."
     },
     {
-      "name": "bench-forks",
-      "requires": [
-        "crates/norn-pages/tests/bench_forks.rs"
-      ],
-      "prepare": "cargo test --release --locked -p norn-pages --test bench_forks --no-run",
-      "run": "cargo test --release --locked -p norn-pages --test bench_forks -- --ignored --nocapture --test-threads 1",
-      "timeout_s": 1800,
-      "workload": {
-        "bench": "BENCH-FORK-1",
-        "profile": "release"
-      },
-      "caveats": "BENCH-FORK-1, one run per night. In-memory page tier only: no durability (U4), cold object-storage reads (U7), multi-node or contention. Fork p99 is a CPU tail on 4 vCPUs."
-    },
-    {
       "name": "promoted-proof-gates",
       "requires": [
         "scripts/verify-promoted-subsystems.sh"

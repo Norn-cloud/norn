@@ -1,40 +1,91 @@
 # Install
 
-Each `drop-*` release attaches prebuilt files; nothing is on npm, PyPI or crates.io yet.
-Replace `TAG` with a release tag such as `drop-29`.
+Nothing is on npm, PyPI or crates.io. Today you build Norn from a checkout of this
+repository. Prebuilt release files start with the next drop release.
+
+## Which `norn`?
+
+Two different programs are called `norn`:
+
+| | Rust `norn` | TypeScript `norn` |
+|---|---|---|
+| Source | `crates/norn-cli` | `tools/norn-ts` (`src/cli.ts`) |
+| Run it as | `target/release/norn`, or `cargo run -p norn-cli --` | `bun tools/norn-ts/src/cli.ts`, or `bunx norn` inside a project made by `norn init` |
+| Commands | `check`, `eval`, `explain`, `mcp`, `remote`, `cell`, `source`, `capabilities`, `openapi`, `source-digest` | `init`, `dev`, `fmt`, `check`, `compile`, `profile`, `question`, `dashboard`, `plan`, `apply`, `explain` |
+| Use it to | admit compiled IR, evaluate decisions, serve MCP, plan and apply on a hosted cell | write typed definitions, compile them to IR, run a local dev cell |
+
+Both have `check` and `explain`, and they take different inputs: the TypeScript
+`check` reads `.ts` sources, the Rust `check` reads the compiled JSON IR.
+The release files below carry only the Rust `norn`. Renaming one of them is tracked
+in [#1451](https://github.com/Norn-cloud/norn/issues/1451).
+
+## From source (works today)
+
+You need Rust 1.98.0 with the `wasm32-unknown-unknown` target, `wasm-bindgen-cli`
+0.2.129, Bun 1.3.14, and Node with `npx` (the checker build runs binaryen's
+`wasm-opt` through `npx`; set `NORN_WASM_OPT=0` to skip that step).
 
 ```sh
-# the `norn` command line (Linux or macOS, x64 or arm64) into ~/.local/bin
-curl -fsSL https://github.com/Norn-cloud/norn/releases/latest/download/install.sh | sh
-# or from source, pinned to a tag
-cargo install --locked --git https://github.com/Norn-cloud/norn --tag TAG norn-cli
-# the Python client (generated from the OpenAPI document, so it is a release file, not a git path)
-uv add https://github.com/Norn-cloud/norn/releases/download/TAG/norn_client-VERSION-py3-none-any.whl
-# the TypeScript SDK (types; TypeScript source)
-npm i https://github.com/Norn-cloud/norn/releases/download/TAG/norn-sdk-VERSION.tgz
+git clone https://github.com/Norn-cloud/norn && cd norn
+rustup target add wasm32-unknown-unknown
+cargo install --locked wasm-bindgen-cli --version 0.2.129
+
+# the checker as WASM, which the TypeScript tools load
+crates/norn-checker-wasm/scripts/build-pkg.sh
+export NORN_CHECKER_WASM_PKG="$PWD/target/norn-checker-wasm/pkg"
+
+# the Rust `norn` and the local dev host that the TypeScript `norn dev` runs
+cargo build --locked --release -p norn-cli
+cargo build --locked --release -p norn-cell-do --bin norn-dev-host
+export NORN_DEV_HOST_BIN="$PWD/target/release/norn-dev-host"
+
+# the TypeScript `norn`, and Studio if you want the web app
+(cd tools/norn-ts && bun install --frozen-lockfile)
+(cd apps/studio && bun install --frozen-lockfile)
 ```
 
-The macOS binaries are cross-built on Linux and have not been run natively yet; treat them as experimental.
-`VERSION` is `0.0.N` for `drop-N`. Every release lists its files and their SHA-256 sums in `SHA256SUMS`;
-`install.sh` checks the one it downloads. Set `NORN_VERSION=TAG` to install a specific release.
-`norn check` below also needs the TypeScript authoring tools, which still run from this checkout.
+The hosted-cell smoke in [`crates/norn-cell`](crates/norn-cell/README.md) also needs
+`esbuild` on `PATH`. To install only the Rust `norn` from a tag:
+`cargo install --locked --git https://github.com/Norn-cloud/norn --tag TAG norn-cli`.
+
+A one-command `norn dev` setup for a project with packs is in progress; this page
+will link its guide once it lands. Until then, follow
+[the authoring tutorial](docs/authoring/tutorial.md).
+
+## From a release (available from drop-29)
+
+`drop-28` and earlier releases have no files attached. From `drop-29` on, each
+`drop-*` release attaches what [`scripts/release/assets.sh`](scripts/release/assets.sh)
+builds: the Rust `norn` for Linux and macOS on x64 and arm64 (`norn-PLATFORM.tar.gz`),
+the TypeScript SDK (`norn-sdk-VERSION.tgz`), the Python client (wheel and sdist),
+`install.sh`, and `SHA256SUMS`. `VERSION` is `0.0.N` for `drop-N`.
+
+```sh
+TAG=drop-29
+# the Rust `norn` (Linux or macOS, x64 or arm64) into ~/.local/bin
+curl -fsSL https://github.com/Norn-cloud/norn/releases/download/$TAG/install.sh | NORN_VERSION=$TAG sh
+# the Python client (generated from the OpenAPI document)
+uv add https://github.com/Norn-cloud/norn/releases/download/$TAG/norn_client-0.0.29-py3-none-any.whl
+# the TypeScript SDK (types; TypeScript source)
+npm i https://github.com/Norn-cloud/norn/releases/download/$TAG/norn-sdk-0.0.29.tgz
+```
+
+`install.sh` checks the archive it downloads against `SHA256SUMS`; that catches a
+damaged download, it is not a signature. The macOS binaries are cross-built on Linux
+and have not been run natively yet; treat them as experimental. The TypeScript `norn`,
+the checker WASM and the dev host are not release files: build them from source as above.
 
 # Check a typed definition
 
-Install Rust 1.98.0 with the `wasm32-unknown-unknown` target, Bun 1.3.14 and
-`wasm-bindgen-cli` 0.2.129. From this checkout:
+After the source build above, from the repository root:
 
 ```sh
-cargo install --locked wasm-bindgen-cli --version 0.2.129
-crates/norn-checker-wasm/scripts/build-pkg.sh
-export NORN_CHECKER_WASM_PKG="$PWD/target/norn-checker-wasm/pkg"
 cd tools/norn-ts
-bun install --frozen-lockfile
 bun src/cli.ts check fixtures/quickstart --org example --env local
 bun src/cli.ts compile fixtures/quickstart --org example --env local --out /tmp/norn-task.json
 cd ../..
 printf '{}\n' > /tmp/norn-context.json
-cargo run --locked -p norn-cli -- check --artifacts /tmp/norn-task.json --context /tmp/norn-context.json
+target/release/norn check --artifacts /tmp/norn-task.json --context /tmp/norn-context.json
 ```
 
 The independently authored [Task](tools/norn-ts/fixtures/quickstart/task.ts) defines

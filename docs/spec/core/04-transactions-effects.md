@@ -30,10 +30,10 @@ Closed effect operations are the existing canonical fact mutations, link mutatio
 |---|---|
 | TXN-ATOMIC-1: all synchronous effects and outbox/timers commit together; commit | `core.txn.atomic_boundary` |
 | TXN-CLOSED-1: every writer admitted in full closure; admission/preparation | `core.txn.unchecked_writer` |
-| TXN-READSET-1: absence/membership/definition/settings/auth dependencies fenced; commit | `core.txn.contention` |
-| TXN-INTENT-1: user preconditions survive retries; preparation/commit | `core.txn.stale_intent` |
-| TXN-IDEMPOTENT-1: one accepted consequence per exact intent; commit | `core.txn.identity_mismatch` |
-| TXN-HISTORY-1: posted facts never overwritten/deleted; admission/commit | `core.txn.immutable_history` |
+| TXN-READSET-1: absence/membership/definition/settings/auth dependencies fenced; commit | `core.txn.contention` (reserved, unimplemented) |
+| TXN-INTENT-1: user preconditions survive retries; preparation/commit | `core.txn.stale_intent` (reserved, unimplemented) |
+| TXN-IDEMPOTENT-1: one accepted consequence per exact intent; commit | `core.txn.identity_mismatch` (reserved, unimplemented) |
+| TXN-HISTORY-1: posted facts never overwritten/deleted; admission/commit | `core.txn.immutable_history` (reserved, unimplemented) |
 
 Expected evidence: runtime atomicity/CAS enforcement, crash/reopen/race correspondence, generated per-writer preservation and explicit external-boundary goals. A safe constructor only certifies its own outputs; arbitrary account selection or imported data does not inherit that proof.
 

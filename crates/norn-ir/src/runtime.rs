@@ -10,7 +10,7 @@
 //!
 //! A [`Decimal`] is the expression engine's decimal (`rust_decimal`): a 96-bit
 //! integer mantissa with a scale of at most 28 fractional digits, the
-//! `norn-zen/6` profile's number (`crates/norn-expr/PROFILE.md`). A value
+//! `norn-zen/6` profile's number (`crates/norn-expr/README.md`). A value
 //! outside that range is refused, never rounded. There is one numeric kind:
 //! an integer is a decimal of scale 0.
 //!

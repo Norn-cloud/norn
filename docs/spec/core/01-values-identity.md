@@ -49,9 +49,9 @@ Unit-bearing entity declarations pin the vocabulary with one required exact-vers
 | VAL-UNIT-1 | Compatible dimension/unit before arithmetic; admission/evaluation | `core.values.unit_mismatch` |
 | ID-STABLE-1 | Label/key changes preserve object and definition identity; commit | `core.identity.reuse` |
 | ID-UNIQUE-1 | One canonical key binding across specialisations per scope/interval; commit | `core.identity.collision` |
-| ID-REF-1 | Required references resolve within authorized scope; admission/commit | `core.identity.unresolved_reference` |
-| TIME-PIN-1 | Explicit effective/recorded time and pinned calendar; admission/commit | `core.values.time_ambiguous` |
-| BLOB-INTEGRITY-1 | Exact retained content or explicit unavailable result; evaluation | `core.values.content_unavailable` |
+| ID-REF-1 | Required references resolve within authorized scope; admission/commit | `core.identity.unresolved_reference` (reserved, unimplemented) |
+| TIME-PIN-1 | Explicit effective/recorded time and pinned calendar; admission/commit | `core.values.time_ambiguous` (reserved, unimplemented) |
+| BLOB-INTEGRITY-1 | Exact retained content or explicit unavailable result; evaluation | `core.values.content_unavailable` (reserved, unimplemented) |
 
 ID-STABLE-1 distinguishes authored mutation from observation using the existing commit provenance. An authored Create of an identity with a committed deletion refuses `core.identity.reuse` atomically: "this identity was deleted; restore it explicitly or use a new identity". Observed CDC/source-bound reappearance preserves the same source-bound identity, lifts its tombstone and advances its version monotonically. Replay preserves both outcomes and their retained identity/version evidence. Explicit restoration requires a later governed action carrying retained identity evidence (#748); until that action exists, ordinary authoring cannot restore a deleted identity.
 

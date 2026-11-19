@@ -21,7 +21,7 @@ The type environment and checker (T1-EXPR-2):
 
 ## Profile `norn-zen/6` (structural grammar `norn-expr/4`)
 
-The published, versioned profile is [`PROFILE.md`](PROFILE.md) (`norn-zen/6`, bounded string normalization follow-up to #3116): the structural grammar, engine pin, and error, ordering, numeric, temporal, and string contracts. `CHECKER_PROFILE` is `norn-zen/6`; `tests/profile_conformance.rs` is its conformance suite. The fork enables `deterministic-temporal` and `bounded-strings` alongside the explicit no-default-features profile. The qualified source pin is `norn-v2.0.1-12`; its C12 zip 9 archive-loader update preserves the `norn-zen/6` semantics and explicit features.
+The published, versioned profile is the [profile section of this README](#norn-zen-expression--jdm-profile-norn-zen6), between the `profile:start` and `profile:end` markers (`norn-zen/6`, bounded string normalization follow-up to #3116): the structural grammar, engine pin, and error, ordering, numeric, temporal, and string contracts. `CHECKER_PROFILE` is `norn-zen/6`; `tests/profile_conformance.rs` is its conformance suite. The fork enables `deterministic-temporal` and `bounded-strings` alongside the explicit no-default-features profile. The qualified source pin is `norn-v2.0.1-12`; its C12 zip 9 archive-loader update preserves the `norn-zen/6` semantics and explicit features.
 
 Naming-series dates (`naming_series_date_at`) read only IANA tzdb 2025b from the exact-pinned `jiff-tzdb` 0.1.4 (the release `chrono-tz` 0.10.4 had; `NAMING_SERIES_TZDB_VERSION`) through jiff's TZif reader, and accept exactly `chrono-tz` 0.10.4's 597 zone names (`Factory` is refused). After 2099 the zones' DST rules keep applying, where chrono-tz stopped generating transitions.
 

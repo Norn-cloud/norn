@@ -32,7 +32,7 @@
 //!   [`CostEstimate`] within the limit profile's decide fuel budget, and
 //!   evaluation is always metered (T1-EXPR-4, #2522).
 //!
-//! The versioned Norn profile is published in `PROFILE.md` (T1-EXPR-6).
+//! The versioned Norn profile is published in this crate's `README.md` (T1-EXPR-6).
 //! Compilation alone does not imply admission: the checker proves the profile
 //! grammar, types, and static cost against the declared environment.
 //!

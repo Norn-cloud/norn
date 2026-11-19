@@ -366,8 +366,9 @@ PY
       # them first so its bounded runs only execute (#1171 integrated gate).
       grep -oE 'cargo test --locked -p [a-z-]+ --test [a-z_]+' docs/authoring/runnable/status.md | sort -u |
         while read -r build; do $build --no-run; done
-      # The ZEN-only engine package pages load (D105): one evaluator, so it answers every
-      # evaluation of the shared corpus exactly as the checker package does.
+      # The ZEN-only engine package pages load (#1325): pages and the checker share one
+      # evaluator so they cannot disagree, so it answers every evaluation of the shared
+      # corpus exactly as the checker package does.
       NORN_WASM_ENGINE=1 crates/norn-checker-wasm/scripts/build-pkg.sh
       node crates/norn-checker-wasm/tests/parity/engine-parity.mjs "$NORN_CHECKER_WASM_PKG" "${CARGO_TARGET_DIR:-$PWD/target}/norn-checker-wasm/engine"
       (cd tools/norn-ts && bun install --frozen-lockfile --backend copyfile && bun run typecheck && bun test --timeout 60000)
