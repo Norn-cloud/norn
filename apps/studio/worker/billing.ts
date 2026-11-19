@@ -332,9 +332,11 @@ export function limitRaised(error: unknown): LimitName | null {
  * Write the deployment's plan table where the limit triggers read it (migration 0011): each product's
  * limits, the free limits under product id '', nothing at all with billing off. Rows are upserted
  * before stale ones are removed, so the table is never empty while billing is on. Reads first and
- * writes only when it differs, so a starting Worker usually only reads.
+ * writes only when it differs, so a starting Worker usually only reads. With billing off, a database
+ * without the table (before migration 0011) has no limit triggers either, so there is nothing to clear.
  */
 export async function syncPlans(db: BillingDb, billing: BillingConfig | undefined): Promise<void> {
+  if (billing === undefined && (await rows(db, `select 1 from "sqlite_master" where "type" = 'table' and "name" = 'billing_plan'`)).length === 0) return
   const want = billing === undefined ? [] : [
     { product_id: "", cells: billing.table.free.cells, members: billing.table.free.members },
     ...billing.table.plans.map((plan) => ({ product_id: plan.productId, cells: plan.limits.cells, members: plan.limits.members })),

@@ -534,6 +534,10 @@ test("the database's limits are the entitlement's, and the plan table follows th
   ])
   await syncPlans(db, undefined)
   expect(sql(env).query("select count(*) as n from billing_plan").get()).toEqual({ n: 0 })
+  // Billing off on a database from before migration 0011: no plan table, no triggers, nothing to clear.
+  const before = new Database(":memory:")
+  before.exec(readFileSync(join(MIGRATIONS, "0001_better_auth.sql"), "utf8"))
+  await syncPlans(before as unknown as BillingDb, undefined)
   expect(limitsInDb()).toEqual({ cells: null, members: null })
   // A changed table replaces the old one's rows.
   await syncPlans(db, { ...CONFIG, table: { free: { cells: 2, members: 4 }, plans: [{ id: "pro", name: "Pro", productId: "prod_pro2", limits: { cells: 9, members: 9 } }] } })
