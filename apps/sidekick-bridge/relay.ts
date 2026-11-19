@@ -86,7 +86,8 @@ export function configFromEnv(env: Record<string, string | undefined>): Config {
   return {
     studioOrigin,
     allowedOrigins: list("SIDEKICK_ALLOWED_ORIGINS"),
-    // Fails closed: the relay does not start without the proxy's login header and at least one login.
+    // Fails closed: the relay does not start without the proxy's login header; with no allowed
+    // login it starts and refuses every request with 403.
     loginHeader: need("SIDEKICK_LOGIN_HEADER").toLowerCase(),
     allowedLogins: new Set([...list("SIDEKICK_ALLOWED_LOGINS")].map((login) => login.toLowerCase())),
     listenHost: env.SIDEKICK_LISTEN_HOST ?? "127.0.0.1",

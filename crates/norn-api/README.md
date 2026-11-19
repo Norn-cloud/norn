@@ -1,13 +1,41 @@
-# Core wire contracts
+# norn-api
 
-Projects the Rust IR and checker schemas into OpenAPI components for the TypeScript SDK.
-Run `norn openapi` to regenerate the contract. Cell execution uses `norn-cell` and
-`norn-kernel` directly; this crate supplies no server.
+Host-neutral services shared by every Norn transport, plus the wire contracts.
+It projects the Rust IR and checker schemas into OpenAPI components for the
+TypeScript SDK; run `norn openapi` to regenerate the contract. This crate
+supplies no HTTP server or listener: transports call its services. The Durable
+Object host and the native dev host (`norn-dev-host`) in `norn-cell-do`, and the
+`norn` CLI, are its transports.
+
+Services in `src/`, each named in `lib.rs`:
+
+- Reads: definitions (`routes`), typed objects, links, facets and reviews
+  (`object_*`), exact question answers and numeric traces (`question_routes`),
+  typed transform rows and lineage (`transform_routes`), and the work queue
+  (`inbox`).
+- Governed actions: `actions` (HOST-ACTION-1) is the one action service shared
+  by transports; it authorizes, admits scope and dispatches to the kernel's
+  `commit_action`. `action_catalog` lists what an actor may call; `approvals`
+  parks an approval-gated call as a decision (`decisions`).
+- Definitions: `cell_definitions` plans and applies a running cell's kernel
+  definitions (HOST-INSTALL-1, `POST /v1/cell/definitions:plan` and `:apply`);
+  `definition_routes` admits, installs and retires retained definitions;
+  `provision` is the tenant provisioning contract.
+- Runs: `run_routes` starts and reads runs of installed flows.
+- Analytics: `analytics_routes` answers questions, loads datasets and
+  exports rows on the tenant analytics engine. It takes typed operations only,
+  never SQL, and the cell verifies every engine answer.
+- Data in: `sources` and `pull` sync declared HTTP sources; `uploads` signs
+  storage URLs, profiles CSV and loads rows.
+- Privacy: `privacy` projects marked properties and governed reveals;
+  `privacy_guard` tokenizes model prompts.
+- Identity and refusals: `principal` (verified host tokens), `authz`
+  (default-deny server authorization), `scope`, `refusal` and
+  `refusal_disclosure`.
 
 The replay clock is a host prerequisite: the pure `Clock` interface supplies
 kernel logical time, and `ManualClock` supports deterministic replay through
-shared `Arc` handles. Wall-clock access, the native server, connector host and
-analytics executor remain deferred to subsequent ports.
+shared `Arc` handles. Wall-clock reads stay in the hosts.
 
 ## Host export contract (slice 1a)
 
@@ -57,9 +85,12 @@ Notifications never dispatch operations. Input messages are bounded at 1 MiB.
 
 The generic `Backend` boundary is for the same human service implementation,
 with generated `McpTool` IR supplied by its authorized catalog. It does not infer
-permissions from tool names, schemas or annotations. Explain awaits DIAG;
-plan/apply/dev await INIT; call awaits the governed action service in #500.
-Replay has no shared backend. These operations are absent, not stubbed.
+permissions from tool names, schemas or annotations. `norn mcp` advertises
+only `norn.capabilities` and `norn.check`; the CLI's other commands (`explain`,
+`cell plan`/`cell apply`, `eval`, `remote`) are not MCP tools there and refuse
+as `backend unavailable`, not stubbed. A hosted cell serves its own catalog,
+including one tool per action the caller may call, at `POST /v1/mcp` (see
+`norn-cell-do`).
 
 Scripted discovery/check/refusal/repair acceptance (not a live-LLM evaluation):
 `python3 scripts/demo/mcp-check-task.py <norn-binary> <compiled-quickstart.json>`.
