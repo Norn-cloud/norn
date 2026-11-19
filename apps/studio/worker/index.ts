@@ -6,7 +6,7 @@ import { connectors } from "./connectors.ts"
 import { MCP_PATH, serveMcp } from "./mcp.ts"
 import { cellFor } from "./cell.ts"
 import { questions } from "./questions.ts"
-import { billingConfig, billingDocument, entitlementOf, recordWebhook, subscribed, webhookSeen, type BillingConfig, type BillingDb } from "./billing.ts"
+import { admitCell, admitMember, billingConfig, billingDocument, entitlementOf, invitationWorkspace, limitRaised, recordWebhook, refusalMessage, subscribed, syncPlans, webhookSeen, type Admission, type BillingConfig, type BillingDb, type LimitName } from "./billing.ts"
 import { cellScope } from "./scope.ts"
 
 /** The Studio Worker: Better Auth under /api/auth, authenticated /api/*, static assets for everything else. */
@@ -92,8 +92,65 @@ function auth(env: Env): Auth {
   const gateway = url === undefined || clientId === undefined || clientSecret === undefined ? undefined : { url, clientId, clientSecret }
   const billing = billingConfig(env)
   const instance = createAuth({ ...billing === undefined ? {} : { billing: { config: billing, db: env.AUTH_DB as unknown as BillingDb } }, mcp: mcpOn(env), database: env.AUTH_DB, secret: env.BETTER_AUTH_SECRET, baseURL: env.BETTER_AUTH_URL, trustedOrigins: trustedOrigins(env), defaultEnvironmentId: env.STUDIO_DEFAULT_ENVIRONMENT_ID?.trim() || undefined, scrypt: passwordScrypt(env.AUTH_SCRYPT), clientIpHeader: clientIpHeader(env.STUDIO_CLIENT_IP_HEADER), ...signUpEmails(env) === undefined ? {} : { signUpEmails: signUpEmails(env) }, ...sendMagicLink === undefined ? {} : { sendMagicLink }, ...env.STUDIO_DEFAULT_ORG === undefined ? {} : { defaultOrganizationId: env.STUDIO_DEFAULT_ORG }, ...gateway === undefined ? {} : { gateway } })
+  const handle = instance.handler
+  instance.handler = (request: Request) => guarded(env, handle, request)
   instances.set(env.AUTH_DB, instance)
   return instance
+}
+
+/**
+ * Better Auth's handler, with the errors it throws (auth.ts onAPIError) answered: a plan-limit
+ * trigger's refusal (migration 0011) as the typed PLAN_LIMIT refusal, anything else as a bare 500.
+ */
+async function guarded(env: Env, handle: (request: Request) => Promise<Response>, request: Request): Promise<Response> {
+  const copy = request.method === "POST" ? request.clone() : request
+  try {
+    return await handle(request)
+  } catch (error) {
+    const limit = limitRaised(error)
+    if (limit === null) {
+      console.error(error)
+      return new Response(null, { status: 500, statusText: "Internal Server Error" })
+    }
+    return planLimit(env, copy, limit)
+  }
+}
+
+/**
+ * The database refused a workspace or member past its payer's limit. Explain it as the checks would:
+ * creating a workspace is the caller's own cell limit; joining (accepting an invitation) is the
+ * invitation's workspace's member limit. Counts are read again now; if the limit no longer refuses
+ * (someone left meanwhile) the answer is still PLAN_LIMIT, without details, and a retry may pass.
+ */
+async function planLimit(env: Env, request: Request, limit: LimitName): Promise<Response> {
+  const db = env.AUTH_DB as unknown as BillingDb
+  const billing = billingConfig(env)
+  const session = await auth(env).api.getSession({ headers: request.headers }).catch(() => null)
+  let admission: Admission | undefined
+  if (session !== null && billing !== undefined) {
+    if (limit === "cells") admission = await admitCell(db, billing, env.BETTER_AUTH_URL, session.user.id)
+    else {
+      const body = (await request.json().catch(() => null)) as { invitationId?: unknown; organizationId?: unknown } | null
+      const organizationId = typeof body?.organizationId === "string" ? body.organizationId
+        : typeof body?.invitationId === "string" ? await invitationWorkspace(db, body.invitationId) : null
+      if (organizationId !== null) admission = await admitMember(db, billing, env.BETTER_AUTH_URL, organizationId, session.user.id)
+    }
+  }
+  const refusal = admission?.kind === "plan-limit" ? admission : undefined
+  const message = refusal !== undefined ? refusalMessage(refusal) : limit === "cells" ? "Your plan's workspace limit is reached." : "This workspace's member limit is reached."
+  return Response.json({ code: "PLAN_LIMIT", message, ...refusal === undefined ? {} : { refusal } }, { status: 403, headers: { "cache-control": "no-store" } })
+}
+
+/** The plan table the limit triggers read (billing.ts syncPlans), written once per database binding per isolate. */
+const plans = new WeakMap<object, Promise<void>>()
+function plansSynced(env: Env): Promise<void> {
+  const known = plans.get(env.AUTH_DB)
+  if (known !== undefined) return known
+  const synced = syncPlans(env.AUTH_DB as unknown as BillingDb, billingConfig(env))
+  // A failed write is retried by the next request, never remembered as done.
+  synced.catch(() => plans.delete(env.AUTH_DB))
+  plans.set(env.AUTH_DB, synced)
+  return synced
 }
 
 /**
@@ -111,7 +168,7 @@ export async function publicSignUp(response: Response): Promise<Response> {
 /**
  * Accepting an invitation that is no longer pending: it expired or an admin withdrew it; Better Auth
  * says only "Invitation not found", so say what the person can do about it. (One the member limit
- * refuses at acceptance, billing.ts claimSeat, is refused as PLAN_LIMIT instead.)
+ * refuses at acceptance stays pending and is refused as PLAN_LIMIT instead: guarded.)
  */
 export async function acceptInvitation(response: Response): Promise<Response> {
   if (response.status !== 400) return response
@@ -233,6 +290,7 @@ export default {
     }
     if (mcpOn(env) && OAUTH_DISCOVERY.has(pathname)) return auth(env).handler(request)
     if (!pathname.startsWith("/api/")) return env.ASSETS.fetch(request)
+    await plansSynced(env)
     if (ACTOR_HEADERS.some((name) => request.headers.has(name))) return refuse(400, "Identity comes from the signed-in session, not a request header.")
     if (pathname === "/api/auth/sign-in/magic-link" || pathname === "/api/auth/magic-link/verify") {
       const host = new URL(request.url).host

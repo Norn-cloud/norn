@@ -8,15 +8,19 @@
  * it renders the document `/api/billing` returns and the refusals the server sends.
  *
  * The billed subject is a person (Better Auth user id = Polar customer `external_id`). Each workspace
- * a person pays for (its first owner, recorded at creation: migration 0010) is one hosted cell; a
+ * a person pays for (its creator, recorded at creation: migrations 0010, 0011) is one hosted cell; a
  * workspace's member limit comes from its payer's plan.
+ *
+ * The limits are enforced by the database, in the statement that writes the workspace or the member
+ * (migration 0011's triggers), so no request can pass one and nothing is reserved or undone. The checks
+ * here only explain a refusal or warn before an invitation is sent.
  */
 
 /** null = unlimited. */
 export interface Limits {
   /** Workspaces (each with its hosted cell) one person may pay for. */
   readonly cells: number | null
-  /** Members (plus pending invitations) one workspace may hold. */
+  /** Members one workspace may hold; its first member, the creator, is always admitted. */
   readonly members: number | null
 }
 export interface Plan {
@@ -224,55 +228,30 @@ export async function entitlementOf(db: BillingDb, billing: BillingConfig | unde
   return { billing: "enabled", plan: "free", status, limits: billing.table.free }
 }
 
-/**
- * Now, on the database's clock, in epoch milliseconds. Every reservation decision reads this one clock
- * inside the write that makes it, so a reservation expiring and being used are ordered by those writes
- * themselves, never by two machines' clocks.
- */
-const CLOCK = `cast((julianday('now') - 2440587.5) * 86400000 as integer)`
-/** How long a workspace's cell stays reserved for the creation request that took it. */
-export const CELL_RESERVATION_MS = 10 * 60 * 1000
-
-/** A cell reservation still counts: its workspace committed, or the creation that took it is still within its time. */
-const LIVE_CELL = `("reserved_until" is null or "reserved_until" > ${CLOCK})`
-/** Parameter: the payer. */
-const CELLS = `(select count(*) from "billing_workspace" where "payer_id" = ? and ${LIVE_CELL})`
-
-/**
- * The workspaces a person pays for: each is one hosted cell. Counted by the payer recorded at creation,
- * not by today's owner role, so handing the owner role around never frees a cell. A cell reserved for a
- * creation still in progress counts too.
- */
+/** The workspaces a person pays for: each is one hosted cell. Counted by the payer recorded at creation, not by today's owner role, so handing the owner role around never frees a cell. */
 export async function ownedWorkspaces(db: BillingDb, subjectId: string): Promise<number> {
-  const [row] = await rows<{ n: number }>(db, `select ${CELLS} as "n"`, subjectId)
+  const [row] = await rows<{ n: number }>(db, `select count(*) as "n" from "billing_workspace" where "payer_id" = ?`, subjectId)
   return row?.n ?? 0
 }
 
 /**
- * A seat reservation still counts: accepted (it stops expiring then, and the member insert consumes it,
- * migration 0011) or unexpired. Expiry and acceptance are decided by the same row's single writes.
+ * A workspace's members, and with `invitations` its pending unexpired invitations too, in one statement
+ * so both come from the same snapshot. Invitations are counted only to refuse sending one the workspace
+ * could not take; the member limit itself is enforced when a member joins (migration 0011).
  */
-const LIVE_SEAT = `("accepted_at" is not null or "expires_at" > ${CLOCK})`
-/**
- * The seats a workspace holds, in one expression so members and reservations come from the same
- * snapshot: its members plus its live seat reservations, leaving out one invitation's own reservation
- * (pass "" to leave out none). Parameters: organization id, organization id, the invitation id.
- */
-const SEATS = `((select count(*) from "member" where "organizationId" = ?) +
-  (select count(*) from "billing_seat" where "organization_id" = ? and "invitation_id" <> ? and ${LIVE_SEAT}))`
-
-/** Members and live seat reservations (pending or accepted invitations) of a workspace. */
-export async function workspaceSeats(db: BillingDb, organizationId: string): Promise<number> {
-  const [row] = await rows<{ n: number }>(db, `select ${SEATS} as "n"`, organizationId, organizationId, "")
+export async function workspaceMembers(db: BillingDb, organizationId: string, invitations = false, now = Date.now()): Promise<number> {
+  const invited = invitations
+    ? ` + (select count(*) from "invitation" where "organizationId" = ? and "status" = 'pending' and (case when typeof("expiresAt") in ('integer', 'real') then "expiresAt" > ? else "expiresAt" > ? end))`
+    : ""
+  const [row] = await rows<{ n: number }>(db, `select (select count(*) from "member" where "organizationId" = ?)${invited} as "n"`,
+    organizationId, ...invitations ? [organizationId, now, new Date(now).toISOString()] : [])
   return row?.n ?? 0
 }
 
-/** Who pays for a workspace: the payer recorded at its creation, else (a workspace from before that record) its earliest owner. */
+/** Who pays for a workspace: the payer recorded at its creation (migrations 0010, 0011), or null (not billed). */
 export async function workspaceOwner(db: BillingDb, organizationId: string): Promise<string | null> {
   const [payer] = await rows<{ payer_id: string }>(db, `select "payer_id" from "billing_workspace" where "organization_id" = ?`, organizationId)
-  if (payer !== undefined) return payer.payer_id
-  const [row] = await rows<{ userId: string }>(db, `select "userId" from "member" where "organizationId" = ? and (',' || replace("role", ' ', '') || ',') like '%,owner,%' order by "createdAt" asc limit 1`, organizationId)
-  return row?.userId ?? null
+  return payer?.payer_id ?? null
 }
 
 export type LimitName = keyof Limits
@@ -307,94 +286,74 @@ export function upgradeUrl(billing: BillingConfig, baseURL: string, entitlement:
   return plan === undefined ? null : new URL(`/api/billing/checkout?plan=${encodeURIComponent(plan.id)}`, baseURL).href
 }
 
-/**
- * `used` counts what the new workspace or seat comes after. With `take`, admission is that one
- * conditional write (it reserves only while under `allowed`, counted in the same statement); without,
- * it is a check against `used`.
- */
-async function admit(db: BillingDb, billing: BillingConfig | undefined, baseURL: string, payerId: string, callerId: string, name: LimitName, used: () => Promise<number>, take?: (allowed: number) => Promise<boolean>): Promise<Admission> {
-  if (billing === undefined) return { kind: "admitted" }
+/** Admitted while `used` is under the payer's limit, else the typed refusal. A check only: the database enforces (migration 0011). */
+async function admit(db: BillingDb, billing: BillingConfig, baseURL: string, payerId: string, callerId: string, name: LimitName, used: number): Promise<Admission> {
   const entitlement = await entitlementOf(db, billing, payerId)
   const allowed = entitlement.limits[name]
-  if (allowed === null) return { kind: "admitted" }
-  if (take !== undefined ? await take(allowed) : await used() < allowed) return { kind: "admitted" }
-  const count = await used()
+  if (allowed === null || used < allowed) return { kind: "admitted" }
   // Only the payer can raise their own plan; a link would otherwise bill the caller for someone else's workspace.
   const payer = payerId === callerId
-  return { kind: "plan-limit", limit: name, plan: entitlement.plan, allowed, used: count, upgradeUrl: payer ? upgradeUrl(billing, baseURL, entitlement, name, count) : null, upgradeBy: payer ? "you" : "workspace-owner" }
+  return { kind: "plan-limit", limit: name, plan: entitlement.plan, allowed, used, upgradeUrl: payer ? upgradeUrl(billing, baseURL, entitlement, name, used) : null, upgradeBy: payer ? "you" : "workspace-owner" }
+}
+
+/** May this person create another workspace? Unbilled, always. */
+export async function admitCell(db: BillingDb, billing: BillingConfig | undefined, baseURL: string, subjectId: string): Promise<Admission> {
+  if (billing === undefined) return { kind: "admitted" }
+  return admit(db, billing, baseURL, subjectId, subjectId, "cells", await ownedWorkspaces(db, subjectId))
 }
 
 /**
- * Reserve the cell for a workspace about to be created with `organizationId`, before it exists: one
- * conditional insert that counts the payer's live cells in the same statement, so concurrent creations
- * cannot pass the limit together and a refused one writes nothing. The workspace row then commits the
- * reservation (migration 0011); one that has expired by then can no longer commit. Unlimited or
- * unbilled, nothing is reserved and the owner's membership records the payer as before.
+ * May this workspace take another member? With `invitations`, its pending invitations count too: that
+ * is the check before sending one, so an admin is told before inviting someone who could not join. Its
+ * payer's plan decides; a workspace without one is not limited.
  */
-export const reserveCell = (db: BillingDb, billing: BillingConfig | undefined, baseURL: string, subjectId: string, organizationId: string) =>
-  admit(db, billing, baseURL, subjectId, subjectId, "cells", () => ownedWorkspaces(db, subjectId), async (allowed) =>
-    (await rows(db, `insert into "billing_workspace" ("organization_id", "payer_id", "reserved_until")
-      select ?, ?, ${CLOCK} + ? where ${CELLS} < ? returning "seq"`, organizationId, subjectId, CELL_RESERVATION_MS, subjectId, allowed)).length > 0)
-
-/**
- * May this workspace take one more member, added directly (not through an invitation)? Its payer's plan
- * decides; a workspace without one is not limited.
- */
-export async function admitMember(db: BillingDb, billing: BillingConfig | undefined, baseURL: string, organizationId: string, callerId: string): Promise<Admission> {
+export async function admitMember(db: BillingDb, billing: BillingConfig | undefined, baseURL: string, organizationId: string, callerId: string, invitations = false): Promise<Admission> {
   if (billing === undefined) return { kind: "admitted" }
   const payer = await workspaceOwner(db, organizationId)
   if (payer === null) return { kind: "admitted" }
-  return admit(db, billing, baseURL, payer, callerId, "members", () => workspaceSeats(db, organizationId))
+  return admit(db, billing, baseURL, payer, callerId, "members", await workspaceMembers(db, organizationId, invitations))
 }
 
-/** The invitation a seat is reserved or claimed for. `expiresAt` is epoch milliseconds. */
-export interface SeatInvitation {
-  readonly id: string
-  readonly organizationId: string
-  readonly email: string
-  readonly expiresAt: number
+/** The workspace an invitation is for, or null. */
+export async function invitationWorkspace(db: BillingDb, invitationId: string): Promise<string | null> {
+  const [row] = await rows<{ organizationId: string }>(db, `select "organizationId" from "invitation" where "id" = ?`, invitationId)
+  return row?.organizationId ?? null
 }
 
-/**
- * Reserve a seat for an invitation about to be created with `invitation.id`, before it exists and so
- * before anyone can accept it: one conditional insert that counts members and live reservations in
- * the same statement. Of concurrent invitations exactly those that fit get a seat; the rest are refused
- * and never written.
- */
-export async function reserveSeat(db: BillingDb, billing: BillingConfig | undefined, baseURL: string, invitation: SeatInvitation, callerId: string): Promise<Admission> {
-  if (billing === undefined) return { kind: "admitted" }
-  const payer = await workspaceOwner(db, invitation.organizationId)
-  if (payer === null) return { kind: "admitted" }
-  return admit(db, billing, baseURL, payer, callerId, "members", () => workspaceSeats(db, invitation.organizationId), async (allowed) =>
-    (await rows(db, `insert into "billing_seat" ("invitation_id", "organization_id", "email", "expires_at")
-      select ?, ?, lower(?), ? where ${SEATS} < ? returning "invitation_id"`,
-      invitation.id, invitation.organizationId, invitation.email, invitation.expiresAt, invitation.organizationId, invitation.organizationId, invitation.id, allowed)).length > 0)
+/** The limit a database refusal names (migration 0011's RAISE), or null for any other error. */
+export function limitRaised(error: unknown): LimitName | null {
+  const message = error instanceof Error ? error.message : typeof error === "string" ? error : ""
+  if (message.includes("billing.cells_limit")) return "cells"
+  if (message.includes("billing.members_limit")) return "members"
+  return null
 }
 
 /**
- * Accepting an invitation claims its seat, before the invitation is marked accepted. The claim is one
- * write on the reservation that converts it only while unexpired; once converted it no longer expires,
- * so an acceptance that crosses the expiry keeps its seat and an expired seat can never be both freed
- * and claimed. An invitation holding no live reservation (sent before billing was on, or resent past
- * its reservation) is admitted only if a seat is free now, again in one conditional write.
+ * Write the deployment's plan table where the limit triggers read it (migration 0011): each product's
+ * limits, the free limits under product id '', nothing at all with billing off. Rows are upserted
+ * before stale ones are removed, so the table is never empty while billing is on. Reads first and
+ * writes only when it differs, so a starting Worker usually only reads.
  */
-export async function claimSeat(db: BillingDb, billing: BillingConfig | undefined, baseURL: string, invitation: SeatInvitation, callerId: string): Promise<Admission> {
-  if (billing === undefined) return { kind: "admitted" }
-  const payer = await workspaceOwner(db, invitation.organizationId)
-  if (payer === null) return { kind: "admitted" }
-  return admit(db, billing, baseURL, payer, callerId, "members", () => workspaceSeats(db, invitation.organizationId), async (allowed) => {
-    const held = await rows(db, `update "billing_seat" set "accepted_at" = ${CLOCK} where "invitation_id" = ? and ${LIVE_SEAT} returning "invitation_id"`, invitation.id)
-    if (held.length > 0) return true
-    return (await rows(db, `insert into "billing_seat" ("invitation_id", "organization_id", "email", "expires_at", "accepted_at")
-      select ?, ?, lower(?), ?, ${CLOCK} where ${SEATS} < ?
-      on conflict ("invitation_id") do update set "accepted_at" = excluded."accepted_at", "expires_at" = excluded."expires_at" returning "invitation_id"`,
-      invitation.id, invitation.organizationId, invitation.email, invitation.expiresAt, invitation.organizationId, invitation.organizationId, invitation.id, allowed)).length > 0
-  })
+export async function syncPlans(db: BillingDb, billing: BillingConfig | undefined): Promise<void> {
+  const want = billing === undefined ? [] : [
+    { product_id: "", cells: billing.table.free.cells, members: billing.table.free.members },
+    ...billing.table.plans.map((plan) => ({ product_id: plan.productId, cells: plan.limits.cells, members: plan.limits.members })),
+  ]
+  const key = (row: { product_id: string; cells: number | null; members: number | null }) => JSON.stringify([row.product_id, row.cells, row.members])
+  const have = await rows<{ product_id: string; cells: number | null; members: number | null }>(db, `select "product_id", "cells", "members" from "billing_plan"`)
+  const wanted = new Set(want.map(key))
+  if (have.length === want.length && have.every((row) => wanted.has(key(row)))) return
+  for (const row of want) {
+    await run(db, `insert into "billing_plan" ("product_id", "cells", "members") values (?, ?, ?)
+      on conflict ("product_id") do update set "cells" = excluded."cells", "members" = excluded."members"`, row.product_id, row.cells, row.members)
+  }
+  if (want.length === 0) await run(db, `delete from "billing_plan"`)
+  else await run(db, `delete from "billing_plan" where "product_id" not in (${want.map(() => "?").join(", ")})`, ...want.map((row) => row.product_id))
 }
 
 export function refusalMessage(refusal: PlanLimitRefusal): string {
   if (refusal.limit === "cells") return `Your ${refusal.plan} plan allows ${refusal.allowed} workspace${refusal.allowed === 1 ? "" : "s"}; upgrade to create another.`
-  const allows = `This workspace's ${refusal.plan} plan allows ${refusal.allowed} member${refusal.allowed === 1 ? "" : "s"} (including pending invitations)`
+  const allows = `This workspace's ${refusal.plan} plan allows ${refusal.allowed} member${refusal.allowed === 1 ? "" : "s"}`
   return refusal.upgradeBy === "you" ? `${allows}; upgrade to add another.` : `${allows}; ask the workspace's owner to upgrade.`
 }
 

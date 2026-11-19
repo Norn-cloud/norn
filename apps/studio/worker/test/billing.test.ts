@@ -7,7 +7,7 @@ import worker, { type Env } from "../index.ts"
 import { authOptions, createAuth } from "../auth.ts"
 import { forgetPolarCustomer } from "../polar.ts"
 import {
-  applySubscription, billingConfig, BILLING_ENV, claimSeat, entitlementOf, ownedWorkspaces, parsePlans, PLACEHOLDER_PLANS, reserveCell, reserveSeat, statusOf, UNLIMITED, workspaceSeats,
+  applySubscription, billingConfig, BILLING_ENV, entitlementOf, limitRaised, ownedWorkspaces, parsePlans, PLACEHOLDER_PLANS, statusOf, syncPlans, UNLIMITED, workspaceMembers,
   type BillingConfig, type BillingDb, type PlanTable, type PolarSubscription,
 } from "../billing.ts"
 import { celldConfig, celldStudio } from "../../celld-config.ts"
@@ -36,9 +36,9 @@ function database(): Database {
   for (const file of readdirSync(MIGRATIONS).filter((name) => name.endsWith(".sql")).sort()) db.exec(readFileSync(join(MIGRATIONS, file), "utf8"))
   return db
 }
-function stage(billing: boolean): Env {
+function stage(billing: boolean, plans: PlanTable = PLANS): Env {
   const assets = { fetch: async () => new Response("<!doctype html>studio") } as unknown as Fetcher
-  return { ASSETS: assets, AUTH_DB: database() as unknown as D1Database, BETTER_AUTH_SECRET: "t".repeat(40), BETTER_AUTH_URL: ORIGIN, STUDIO_CLIENT_IP_HEADER: "cf-connecting-ip", ...billing ? POLAR_ENV : {} }
+  return { ASSETS: assets, AUTH_DB: database() as unknown as D1Database, BETTER_AUTH_SECRET: "t".repeat(40), BETTER_AUTH_URL: ORIGIN, STUDIO_CLIENT_IP_HEADER: "cf-connecting-ip", ...billing ? { ...POLAR_ENV, POLAR_PLANS: JSON.stringify(plans) } : {} }
 }
 const sql = (env: Env) => env.AUTH_DB as unknown as Database
 
@@ -347,9 +347,10 @@ test("concurrent workspace creations cannot pass the cell limit together: the on
   // Pro allows 3; one exists. Four at once: exactly two fit.
   const responses = await Promise.all(["a", "b", "c", "d"].map((name) => post(env, "/api/auth/organization/create", { name, slug: `rush-${name}` }, { cookie })))
   expect(responses.map((response) => response.status).sort()).toEqual([200, 200, 403, 403])
-  for (const response of responses.filter((one) => one.status === 403)) expect(((await response.json()) as { code: string }).code).toBe("PLAN_LIMIT")
+  for (const response of responses.filter((one) => one.status === 403)) {
+    expect(((await response.json()) as { code: string; refusal: unknown })).toMatchObject({ code: "PLAN_LIMIT", refusal: { limit: "cells", plan: "pro", allowed: 3, used: 3, upgradeBy: "you" } })
+  }
   expect(sql(env).query("select count(*) as n from billing_workspace where payer_id = ?").get(userId)).toEqual({ n: 3 })
-  expect(sql(env).query("select count(*) as n from billing_workspace where reserved_until is not null").get()).toEqual({ n: 0 })
   expect(sql(env).query("select count(*) as n from organization").get()).toEqual({ n: 3 })
   expect(sql(env).query("select count(*) as n from member where userId = ?").get(userId)).toEqual({ n: 3 })
 })
@@ -357,7 +358,7 @@ test("concurrent workspace creations cannot pass the cell limit together: the on
 test("a workspace over the cell limit is never written, so nothing has to be undone", async () => {
   const env = stage(true)
   const { cookie, userId } = await enroll(env, "nounder@example.com")
-  // The free cell is open (the provisioned workspace is gone), so every creation in the burst passes any pre-check.
+  // The free cell is open (the provisioned workspace is gone), so the whole burst races for it.
   const provisioned = firstWorkspace(env, userId)
   sql(env).run(`delete from member where organizationId = ?`, [provisioned])
   sql(env).run(`delete from organization where id = ?`, [provisioned])
@@ -370,23 +371,172 @@ test("a workspace over the cell limit is never written, so nothing has to be und
   expect(sql(env).query("select count(*) as n from billing_workspace").get()).toEqual({ n: 1 })
 })
 
-test("a cell reservation is one conditional write; one that expired before its workspace was written can no longer commit", async () => {
+/** A workspace row as the organization API writes it: its payer in server-only metadata. */
+const organizationRow = (env: Env, id: string, payer: string | null) =>
+  sql(env).run(`insert into organization (id, name, slug, metadata, createdAt) values (?, ?, ?, ?, ?)`, [id, id, id, JSON.stringify(payer === null ? {} : { "norn.billingPayer": payer }), new Date().toISOString()])
+
+test("the cell limit is the workspace row's own: at the limit the insert is refused and writes nothing; under it the payer is recorded in the same write", async () => {
+  const env = stage(true)
+  const { userId } = await enroll(env, "cells@example.com")
+  // Free: one cell, held by the provisioned workspace.
+  expect(() => organizationRow(env, "org_over", userId)).toThrow("billing.cells_limit")
+  expect(sql(env).query("select count(*) as n from organization where id = 'org_over'").get()).toEqual({ n: 0 })
+  expect(sql(env).query("select count(*) as n from billing_workspace where organization_id = 'org_over'").get()).toEqual({ n: 0 })
+  // Pro: room for two more, each billed from the row that creates it, before any member exists.
+  await webhook(env, "subscription.active", subscription({ external_id: userId }))
+  organizationRow(env, "org_two", userId)
+  expect(sql(env).query("select payer_id from billing_workspace where organization_id = 'org_two'").get()).toEqual({ payer_id: userId })
+  organizationRow(env, "org_three", userId)
+  expect(() => organizationRow(env, "org_four", userId)).toThrow("billing.cells_limit")
+  expect(await ownedWorkspaces(env.AUTH_DB as unknown as BillingDb, userId)).toBe(3)
+  // A workspace naming no payer (sign-up provisioning) is not refused; its owner's membership records the payer (0010).
+  organizationRow(env, "org_unnamed", null)
+  expect(sql(env).query("select count(*) as n from billing_workspace where organization_id = 'org_unnamed'").get()).toEqual({ n: 0 })
+  expect(limitRaised(new Error("D1_ERROR: billing.cells_limit: SQLITE_CONSTRAINT"))).toBe("cells")
+  expect(limitRaised(new Error("UNIQUE constraint failed"))).toBeNull()
+})
+
+test("a client cannot name another payer: the payer key is server-only and survives updates", async () => {
+  const env = stage(true)
+  const { cookie, userId } = await enroll(env, "named@example.com")
+  const victim = await enroll(env, "victim@example.com")
+  await webhook(env, "subscription.active", subscription({ external_id: userId }))
+  const created = await post(env, "/api/auth/organization/create", { name: "Mine", slug: "mine", metadata: { "norn.billingPayer": victim.userId, theme: "dark" } }, { cookie })
+  expect(created.status).toBe(200)
+  const { id } = (await created.json()) as { id: string }
+  expect(sql(env).query("select payer_id from billing_workspace where organization_id = ?").get(id)).toEqual({ payer_id: userId })
+  expect((await post(env, "/api/auth/organization/update", { organizationId: id, data: { metadata: { "norn.billingPayer": victim.userId } } }, { cookie })).status).toBe(200)
+  const { metadata } = sql(env).query("select metadata from organization where id = ?").get(id) as { metadata: string }
+  expect(JSON.parse(metadata)["norn.billingPayer"]).toBe(userId)
+})
+
+test("a plan with members: 0 still gives a new workspace its owner: no ownerless workspace is billed", async () => {
+  const env = stage(true, { free: { cells: 3, members: 0 }, plans: PLANS.plans })
+  const { cookie, userId } = await enroll(env, "solo@example.com")
+  const created = await post(env, "/api/auth/organization/create", { name: "Solo", slug: "solo" }, { cookie })
+  expect(created.status).toBe(200)
+  const { id } = (await created.json()) as { id: string }
+  expect(sql(env).query("select userId, role from member where organizationId = ?").all(id)).toEqual([{ userId, role: "owner" }])
+  const ownerless = `select count(*) as n from billing_workspace w where not exists (select 1 from member m where m.organizationId = w.organization_id and (',' || replace(m.role, ' ', '') || ',') like '%,owner,%')`
+  expect(sql(env).query(ownerless).get()).toEqual({ n: 0 })
+  // The creator alone: nobody else joins, and an invitation is refused before it is sent.
+  expect(() => join_(env, id, "user_other", "member")).toThrow("billing.members_limit")
+  const invite = await post(env, "/api/auth/organization/invite-member", { email: "nope@example.com", role: "member", organizationId: id }, { cookie })
+  expect(invite.status).toBe(403)
+  expect(((await invite.json()) as { refusal: unknown }).refusal).toMatchObject({ limit: "members", allowed: 0, used: 1 })
+})
+
+/** Mark an address verified: only a verified address may accept an invitation. */
+const verify = (env: Env, userId: string) => sql(env).run(`update user set emailVerified = 1 where id = ?`, [userId])
+/** An invitation written directly: invitations are advisory, so the API's pre-check is not what is under test. */
+const invitationRow = (env: Env, id: string, organizationId: string, email: string, inviterId: string, status = "pending") => {
+  const future = new Date(Date.now() + 86_400_000).toISOString()
+  sql(env).run(`insert into invitation (id, organizationId, email, role, status, expiresAt, createdAt, inviterId) values (?, ?, ?, 'member', ?, ?, ?, ?)`, [id, organizationId, email, status, future, future, inviterId])
+}
+const members = (env: Env, organizationId: string) => (sql(env).query("select count(*) as n from member where organizationId = ?").get(organizationId) as { n: number }).n
+/** Invitees with verified addresses, one invitation each, to a workspace. */
+async function invitees(env: Env, organizationId: string, inviterId: string, names: readonly string[]) {
+  return Promise.all(names.map(async (name) => {
+    const email = `${name}@example.com`
+    invitationRow(env, `inv_${name}`, organizationId, email, inviterId)
+    const person = await enroll(env, email)
+    verify(env, person.userId)
+    return { ...person, invitationId: `inv_${name}` }
+  }))
+}
+
+test("concurrent acceptances at the limit: exactly the limit joins, the rest are refused and their invitations stay open", async () => {
+  const env = stage(true)
+  const owner = await enroll(env, "busy@example.com")
+  const organizationId = firstWorkspace(env, owner.userId)
+  // Free: two members, the owner is one. Three accept at once.
+  const people = await invitees(env, organizationId, owner.userId, ["p", "q", "r"])
+  const responses = await Promise.all(people.map((person) => post(env, "/api/auth/organization/accept-invitation", { invitationId: person.invitationId }, { cookie: person.cookie })))
+  expect(responses.map((response) => response.status).sort()).toEqual([200, 403, 403])
+  expect(members(env, organizationId)).toBe(2)
+  for (const response of responses.filter((one) => one.status === 403)) {
+    const body = (await response.json()) as { code: string; message: string; refusal: unknown }
+    expect(body).toMatchObject({ code: "PLAN_LIMIT", refusal: { kind: "plan-limit", limit: "members", plan: "free", allowed: 2, used: 2, upgradeUrl: null, upgradeBy: "workspace-owner" } })
+    expect(body.message).toContain("ask the workspace's owner to upgrade")
+  }
+  // Better Auth reopened the refused invitations; nothing else was written. Once a member leaves, a retry joins.
+  const refused = people.filter((_, index) => responses[index]?.status === 403)
+  expect(refused.map((person) => (sql(env).query("select status from invitation where id = ?").get(person.invitationId) as { status: string }).status)).toEqual(["pending", "pending"])
+  const joined = people.find((_, index) => responses[index]?.status === 200)
+  sql(env).run("delete from member where organizationId = ? and userId = ?", [organizationId, joined?.userId ?? ""])
+  const retry = refused[0]
+  expect((await post(env, "/api/auth/organization/accept-invitation", { invitationId: retry?.invitationId }, { cookie: retry?.cookie })).status).toBe(200)
+  expect(members(env, organizationId)).toBe(2)
+})
+
+test("canceling or rejecting while others accept cannot put a workspace over its limit: invitations hold nothing", async () => {
+  const env = stage(true)
+  const owner = await enroll(env, "mixed@example.com")
+  const organizationId = firstWorkspace(env, owner.userId)
+  for (let round = 0; round < 3; round++) {
+    const [a, b, c] = await invitees(env, organizationId, owner.userId, [`a${round}`, `b${round}`, `c${round}`])
+    // A cancel of A, B's rejection and three acceptances race; whatever wins, only the free seat is filled.
+    await Promise.all([
+      post(env, "/api/auth/organization/accept-invitation", { invitationId: a?.invitationId }, { cookie: a?.cookie }),
+      post(env, "/api/auth/organization/cancel-invitation", { invitationId: a?.invitationId }, { cookie: owner.cookie }),
+      post(env, "/api/auth/organization/accept-invitation", { invitationId: b?.invitationId }, { cookie: b?.cookie }),
+      post(env, "/api/auth/organization/reject-invitation", { invitationId: b?.invitationId }, { cookie: b?.cookie }),
+      post(env, "/api/auth/organization/accept-invitation", { invitationId: c?.invitationId }, { cookie: c?.cookie }),
+    ])
+    expect(members(env, organizationId)).toBe(2)
+    sql(env).run(`delete from member where organizationId = ? and role <> 'owner'`, [organizationId])
+  }
+})
+
+test("a downgrade from an unlimited plan counts the members already there: they stay, nobody new joins", async () => {
+  const env = stage(true)
+  const owner = await enroll(env, "down@example.com")
+  const organizationId = firstWorkspace(env, owner.userId)
+  await webhook(env, "subscription.active", subscription({ external_id: owner.userId, product_id: "prod_team" }))
+  for (let n = 0; n < 4; n++) join_(env, organizationId, `user_team_${n}`, "member")
+  expect(members(env, organizationId)).toBe(5)
+  await webhook(env, "subscription.canceled", subscription({ external_id: owner.userId, product_id: "prod_team", status: "canceled", modified_at: "2026-11-19T11:00:00Z" }))
+  const [late] = await invitees(env, organizationId, owner.userId, ["late5"])
+  const accept = await post(env, "/api/auth/organization/accept-invitation", { invitationId: late?.invitationId }, { cookie: late?.cookie })
+  expect(accept.status).toBe(403)
+  expect(((await accept.json()) as { refusal: unknown }).refusal).toMatchObject({ limit: "members", plan: "free", allowed: 2, used: 5 })
+  expect(members(env, organizationId)).toBe(5)
+  expect(await workspaceMembers(env.AUTH_DB as unknown as BillingDb, organizationId, true)).toBe(6)
+  // Pro (ten) has room again.
+  await webhook(env, "subscription.active", subscription({ id: "sub_2", external_id: owner.userId, product_id: "prod_pro", modified_at: "2026-11-19T12:00:00Z" }))
+  expect((await post(env, "/api/auth/organization/accept-invitation", { invitationId: late?.invitationId }, { cookie: late?.cookie })).status).toBe(200)
+  expect(members(env, organizationId)).toBe(6)
+})
+
+test("the database's limits are the entitlement's, and the plan table follows the deployment", async () => {
   const env = stage(true)
   const db = env.AUTH_DB as unknown as BillingDb
-  // Free: one cell. The first reservation takes it, the second is refused and writes nothing.
-  expect(await reserveCell(db, CONFIG, ORIGIN, "user_x", "org_1")).toEqual({ kind: "admitted" })
-  expect(await reserveCell(db, CONFIG, ORIGIN, "user_x", "org_2")).toMatchObject({ kind: "plan-limit", limit: "cells", allowed: 1, used: 1, upgradeBy: "you" })
-  expect(sql(env).query("select organization_id from billing_workspace").all()).toEqual([{ organization_id: "org_1" }])
-  // A later step failed (the workspace row never landed) and the reservation ran out: it stops counting...
-  sql(env).run(`update billing_workspace set reserved_until = 0 where organization_id = 'org_1'`)
-  expect(await ownedWorkspaces(db, "user_x")).toBe(0)
-  expect(await reserveCell(db, CONFIG, ORIGIN, "user_x", "org_3")).toEqual({ kind: "admitted" })
-  // ...and can no longer become a workspace, so the cell it gave up is never held twice.
-  const insert = (id: string) => sql(env).run(`insert into organization (id, name, slug, createdAt) values (?, ?, ?, ?)`, [id, id, id, new Date().toISOString()])
-  expect(() => insert("org_1")).toThrow("workspace reservation expired")
-  insert("org_3")
-  expect(sql(env).query("select organization_id, reserved_until from billing_workspace where organization_id = 'org_3'").get()).toEqual({ organization_id: "org_3", reserved_until: null })
-  expect(await ownedWorkspaces(db, "user_x")).toBe(1)
+  const { userId } = await enroll(env, "agree@example.com")
+  const limitsInDb = () => sql(env).query("select cells, members from billing_limit where subject_id = ?").get(userId)
+  const cases: { id: string; product: string; status: string }[][] = [
+    [],
+    [{ id: "s1", product: "prod_pro", status: "active" }],
+    [{ id: "s1", product: "prod_pro", status: "past_due" }],
+    [{ id: "s1", product: "prod_pro", status: "canceled" }],
+    [{ id: "s1", product: "prod_retired", status: "active" }],
+    [{ id: "s1", product: "prod_pro", status: "active" }, { id: "s2", product: "prod_team", status: "active" }],
+    [{ id: "s1", product: "prod_team", status: "canceled" }, { id: "s2", product: "prod_pro", status: "past_due" }],
+  ]
+  for (const subscriptions of cases) {
+    sql(env).run("delete from billing_subscription")
+    for (const one of subscriptions) sql(env).run(`insert into billing_subscription (id, subject_id, product_id, status, polar_status, version, updated_at) values (?, ?, ?, ?, ?, 1, 1)`, [one.id, userId, one.product, one.status, one.status])
+    expect({ subscriptions, limits: limitsInDb() }).toEqual({ subscriptions, limits: (await entitlementOf(db, CONFIG, userId)).limits })
+  }
+  // The Worker wrote the table at its first request; turning billing off empties it, so nothing is limited.
+  expect(sql(env).query("select product_id, cells, members from billing_plan order by product_id").all()).toEqual([
+    { product_id: "", cells: 1, members: 2 }, { product_id: "prod_pro", cells: 3, members: 10 }, { product_id: "prod_team", cells: null, members: null },
+  ])
+  await syncPlans(db, undefined)
+  expect(sql(env).query("select count(*) as n from billing_plan").get()).toEqual({ n: 0 })
+  expect(limitsInDb()).toEqual({ cells: null, members: null })
+  // A changed table replaces the old one's rows.
+  await syncPlans(db, { ...CONFIG, table: { free: { cells: 2, members: 4 }, plans: [{ id: "pro", name: "Pro", productId: "prod_pro2", limits: { cells: 9, members: 9 } }] } })
+  expect(sql(env).query("select product_id, cells, members from billing_plan order by product_id").all()).toEqual([{ product_id: "", cells: 2, members: 4 }, { product_id: "prod_pro2", cells: 9, members: 9 }])
 })
 
 test("a live subscription to a product the plan table no longer names grants no limits, but goes to the portal, never a second checkout", async () => {
@@ -402,131 +552,18 @@ test("a live subscription to a product the plan table no longer names grants no 
   expect(((await (await call(env, "/api/billing", { headers: { cookie } })).json()) as { actions: unknown }).actions).toEqual([{ kind: "portal", label: "Manage billing", href: `${ORIGIN}/api/billing/portal` }])
 })
 
-/** Mark an address verified: only a verified address may accept an invitation. */
-const verify = (env: Env, userId: string) => sql(env).run(`update user set emailVerified = 1 where id = ?`, [userId])
-const invitationRow = (env: Env, id: string, organizationId: string, email: string, inviterId: string, status = "pending") => {
-  const future = new Date(Date.now() + 86_400_000).toISOString()
-  sql(env).run(`insert into invitation (id, organizationId, email, role, status, expiresAt, createdAt, inviterId) values (?, ?, ?, 'member', ?, ?, ?, ?)`, [id, organizationId, email, status, future, future, inviterId])
-}
-const seats = (env: Env, organizationId: string) => workspaceSeats(env.AUTH_DB as unknown as BillingDb, organizationId)
-
-test("an invitation holds its seat from before it exists; accepting it turns the seat into the member, canceling frees it", async () => {
-  const env = stage(true)
-  const { cookie, userId } = await enroll(env, "seat@example.com")
-  const organizationId = firstWorkspace(env, userId)
-  const invite = await post(env, "/api/auth/organization/invite-member", { email: "Taker@Example.com", role: "member", organizationId }, { cookie })
-  expect(invite.status).toBe(200)
-  const { id } = (await invite.json()) as { id: string }
-  expect(sql(env).query("select invitation_id, email, accepted_at from billing_seat").all()).toEqual([{ invitation_id: id, email: "taker@example.com", accepted_at: null }])
-  expect(await seats(env, organizationId)).toBe(2)
-  const taker = await enroll(env, "taker@example.com")
-  verify(env, taker.userId)
-  expect((await post(env, "/api/auth/organization/accept-invitation", { invitationId: id }, { cookie: taker.cookie })).status).toBe(200)
-  expect(sql(env).query("select count(*) as n from billing_seat").get()).toEqual({ n: 0 })
-  expect(await seats(env, organizationId)).toBe(2)
-  // A pro workspace: invite, then cancel; the seat comes back.
-  await webhook(env, "subscription.active", subscription({ external_id: userId }))
-  const second = (await (await post(env, "/api/auth/organization/invite-member", { email: "gone@example.com", role: "member", organizationId }, { cookie })).json()) as { id: string }
-  expect(await seats(env, organizationId)).toBe(3)
-  expect((await post(env, "/api/auth/organization/cancel-invitation", { invitationId: second.id }, { cookie })).status).toBe(200)
-  expect(await seats(env, organizationId)).toBe(2)
-})
-
-test("an invitation published without an admitted seat cannot be accepted past the member limit", async () => {
-  const env = stage(true)
-  const { cookie, userId } = await enroll(env, "gate@example.com")
-  const organizationId = firstWorkspace(env, userId)
-  // The admitted invitation fills the free plan's second seat.
-  expect((await post(env, "/api/auth/organization/invite-member", { email: "first@example.com", role: "member", organizationId }, { cookie })).status).toBe(200)
-  // Another invitation became acceptable without a seat (the old after-create recount had not run yet).
-  invitationRow(env, "inv_unadmitted", organizationId, "racer@example.com", userId)
-  const racer = await enroll(env, "racer@example.com")
-  verify(env, racer.userId)
-  const accept = await post(env, "/api/auth/organization/accept-invitation", { invitationId: "inv_unadmitted" }, { cookie: racer.cookie })
-  expect(accept.status).toBe(403)
-  expect(((await accept.json()) as { code: string; refusal: unknown }).refusal).toMatchObject({ kind: "plan-limit", limit: "members", allowed: 2, used: 2, upgradeUrl: null, upgradeBy: "workspace-owner" })
-  expect(sql(env).query("select count(*) as n from member where organizationId = ?").get(organizationId)).toEqual({ n: 1 })
-  expect(sql(env).query("select status from invitation where id = 'inv_unadmitted'").get()).toEqual({ status: "pending" })
-  // With a seat free (billing just turned on, say), the same kind of invitation is admitted at acceptance.
-  sql(env).run(`delete from invitation where email = 'first@example.com'`)
-  expect((await post(env, "/api/auth/organization/accept-invitation", { invitationId: "inv_unadmitted" }, { cookie: racer.cookie })).status).toBe(200)
-  expect(await seats(env, organizationId)).toBe(2)
-})
-
-test("concurrent invitations at the limit: one is written and holds the seat, the rest are never acceptable", async () => {
-  const env = stage(true)
-  const { cookie, userId } = await enroll(env, "many@example.com")
-  const organizationId = firstWorkspace(env, userId)
-  const responses = await Promise.all(["x", "y", "z"].map((name) => post(env, "/api/auth/organization/invite-member", { email: `${name}@example.com`, role: "member", organizationId }, { cookie })))
-  expect(responses.map((response) => response.status).sort()).toEqual([200, 403, 403])
-  expect(sql(env).query("select count(*) as n from invitation").get()).toEqual({ n: 1 })
-  const { id, email } = sql(env).query("select id, email from invitation").get() as { id: string; email: string }
-  expect(sql(env).query("select invitation_id from billing_seat").all()).toEqual([{ invitation_id: id }])
-  const invitee = await enroll(env, email)
-  verify(env, invitee.userId)
-  expect((await post(env, "/api/auth/organization/accept-invitation", { invitationId: id }, { cookie: invitee.cookie })).status).toBe(200)
-  expect(sql(env).query("select count(*) as n from member where organizationId = ?").get(organizationId)).toEqual({ n: 2 })
-})
-
 test("accepting a withdrawn invitation says what to do, not just that it is missing", async () => {
   const env = stage(true)
   const { cookie, userId } = await enroll(env, "host@example.com")
   const organizationId = firstWorkspace(env, userId)
   const { id } = (await (await post(env, "/api/auth/organization/invite-member", { email: "late@example.com", role: "member", organizationId }, { cookie })).json()) as { id: string }
   sql(env).run("delete from invitation where id = ?", [id])
-  expect(sql(env).query("select count(*) as n from billing_seat").get()).toEqual({ n: 0 })
   const late = await enroll(env, "late@example.com")
   const accept = await post(env, "/api/auth/organization/accept-invitation", { invitationId: id }, { cookie: late.cookie })
   expect(accept.status).toBe(400)
   const body = (await accept.json()) as { code: string; message: string }
   expect(body.code).toBe("INVITATION_NOT_FOUND")
   expect(body.message).toContain("withdrawn")
-})
-
-test("an acceptance that crosses its expiry keeps its seat; an expired seat given to another cannot be claimed", async () => {
-  const env = stage(true)
-  const db = env.AUTH_DB as unknown as BillingDb
-  const { userId } = await enroll(env, "cross@example.com")
-  const organizationId = firstWorkspace(env, userId)
-  const later = Date.now() + 86_400_000
-  const seat = (id: string, email: string) => ({ id, organizationId, email, expiresAt: later })
-  // A is claimed, then its expiry passes before the member is inserted: the seat is still A's.
-  expect(await reserveSeat(db, CONFIG, ORIGIN, seat("inv_a", "a@example.com"), userId)).toEqual({ kind: "admitted" })
-  expect(await claimSeat(db, CONFIG, ORIGIN, seat("inv_a", "a@example.com"), "user_a")).toEqual({ kind: "admitted" })
-  sql(env).run(`update billing_seat set expires_at = 0 where invitation_id = 'inv_a'`)
-  expect(await seats(env, organizationId)).toBe(2)
-  expect(await reserveSeat(db, CONFIG, ORIGIN, seat("inv_b", "b@example.com"), userId)).toMatchObject({ kind: "plan-limit", used: 2 })
-  // The member lands: the seat becomes it, not two.
-  const a = await enroll(env, "a@example.com")
-  join_(env, organizationId, a.userId, "member")
-  expect(sql(env).query("select count(*) as n from billing_seat").get()).toEqual({ n: 0 })
-  expect(await seats(env, organizationId)).toBe(2)
-  // Pro: C's seat expires before it is claimed and D takes the last one; C can no longer claim.
-  await webhook(env, "subscription.active", subscription({ external_id: userId }))
-  for (let n = 0; n < 7; n++) join_(env, organizationId, `user_fill_${n}`, "member")
-  expect(await reserveSeat(db, CONFIG, ORIGIN, seat("inv_c", "c@example.com"), userId)).toEqual({ kind: "admitted" })
-  sql(env).run(`update billing_seat set expires_at = 0 where invitation_id = 'inv_c'`)
-  expect(await reserveSeat(db, CONFIG, ORIGIN, seat("inv_d", "d@example.com"), userId)).toEqual({ kind: "admitted" })
-  expect(await claimSeat(db, CONFIG, ORIGIN, seat("inv_c", "c@example.com"), "user_c")).toMatchObject({ kind: "plan-limit", allowed: 10, used: 10 })
-  expect(await seats(env, organizationId)).toBe(10)
-})
-
-test("an acceptance that fails before its member exists gives the seat back to its invitation's expiry", async () => {
-  const env = stage(true)
-  const db = env.AUTH_DB as unknown as BillingDb
-  const { userId } = await enroll(env, "reopen@example.com")
-  const organizationId = firstWorkspace(env, userId)
-  invitationRow(env, "inv_r", organizationId, "r@example.com", userId)
-  const seat = { id: "inv_r", organizationId, email: "r@example.com", expiresAt: Date.now() + 86_400_000 }
-  expect(await claimSeat(db, CONFIG, ORIGIN, seat, "user_r")).toEqual({ kind: "admitted" })
-  // Better Auth marks it accepted, the member insert fails, and it reopens the invitation.
-  sql(env).run(`update invitation set status = 'accepted' where id = 'inv_r'`)
-  sql(env).run(`update invitation set status = 'pending' where id = 'inv_r'`)
-  expect(sql(env).query("select accepted_at from billing_seat where invitation_id = 'inv_r'").get()).toEqual({ accepted_at: null })
-  // Retrying claims it again; rejecting frees it.
-  expect(await claimSeat(db, CONFIG, ORIGIN, seat, "user_r")).toEqual({ kind: "admitted" })
-  sql(env).run(`update invitation set status = 'rejected' where id = 'inv_r'`)
-  expect(await seats(env, organizationId)).toBe(1)
 })
 
 test("a member-limit refusal sends someone who is not the payer to the workspace's owner, never to a checkout billed to them", async () => {
@@ -543,15 +580,6 @@ test("a member-limit refusal sends someone who is not the payer to the workspace
   expect(body.message).toContain("ask the workspace's owner to upgrade")
 })
 
-test("expired seat reservations hold no seat", async () => {
-  const env = stage(true)
-  const { cookie, userId } = await enroll(env, "exp@example.com")
-  const organizationId = firstWorkspace(env, userId)
-  sql(env).run(`insert into billing_seat (invitation_id, organization_id, email, expires_at) values ('inv_old', ?, 'old@example.com', ?)`, [organizationId, Date.now() - 60_000])
-  expect(await seats(env, organizationId)).toBe(1)
-  expect((await post(env, "/api/auth/organization/invite-member", { email: "fresh@example.com", role: "member", organizationId }, { cookie })).status).toBe(200)
-})
-
 // ===============================================================================================
 // Disabled mode (self-hosting) is unlimited and calls nothing
 
@@ -566,7 +594,10 @@ test("without Polar settings, nothing is billed, limited or called", async () =>
   expect((await call(env, "/api/billing/checkout?plan=pro", { headers: { cookie } })).status).toBe(404)
   expect((await webhook(env, "subscription.active", subscription({ external_id: userId }))).status).toBe(404)
   expect(sql(env).query("select count(*) as n from billing_subscription").get()).toEqual({ n: 0 })
-  expect(sql(env).query("select (select count(*) from billing_seat) + (select count(*) from billing_workspace where reserved_until is not null) as n").get()).toEqual({ n: 0 })
+  // The limit triggers refuse nothing: the plan table they read is empty.
+  expect(sql(env).query("select count(*) as n from billing_plan").get()).toEqual({ n: 0 })
+  for (let n = 0; n < 5; n++) join_(env, organizationId, `user_many_${n}`, "member")
+  expect(sql(env).query("select count(*) as n from member where organizationId = ?").get(organizationId)).toEqual({ n: 6 })
   expect(polarCalls).toEqual([])
 })
 
