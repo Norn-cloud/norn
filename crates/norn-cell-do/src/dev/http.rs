@@ -667,9 +667,7 @@ mod oauth_tests {
         .unwrap();
         let host = DevHost::from_store(store, scope.clone(), |_| BTreeMap::new())
             .unwrap()
-            .with_authorizer(LocalDeveloper {
-                actor: ACTOR.into(),
-            });
+            .with_authorizer(LocalDeveloper::for_actor(ACTOR));
         let bodies = Arc::new(Mutex::new(Vec::new()));
         let token_port = token_endpoint(Arc::clone(&bodies));
         let opens = Arc::new(AtomicUsize::new(0));

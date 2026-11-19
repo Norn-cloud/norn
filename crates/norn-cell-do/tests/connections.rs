@@ -2239,14 +2239,17 @@ fn revoking_the_grant_needs_grant_scope_before_anything_is_deleted() {
 /// Pending authorizations in the store: `(rows, sealed verifiers)`.
 fn pending_records(path: &std::path::Path) -> (i64, i64) {
     let engine = engine(path);
-    let count = |sql: &str| match engine
-        .query(sql, &[])
-        .expect("count")
-        .first()
-        .and_then(|row| row.first())
-    {
-        Some(SqlValue::Integer(count)) => *count,
-        other => panic!("{other:?}"),
+    let count = |sql: &str| {
+        engine
+            .query(sql, &[])
+            .expect("count")
+            .first()
+            .and_then(|row| row.first())
+            .and_then(|value| match value {
+                SqlValue::Integer(count) => Some(*count),
+                _ => None,
+            })
+            .expect("an integer count")
     };
     (
         count(r#"SELECT COUNT(*) FROM "_norn_oauth_state""#),
