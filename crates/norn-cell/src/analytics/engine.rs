@@ -1894,7 +1894,7 @@ fn parse_sql(kind: ColumnKind, i: usize) -> Parsed {
             // (an unknown local offset), and a UTC instant whose year is
             // 0000–9999.
             let zone = format!(
-                "CASE WHEN right({c}, 1) = 'Z' THEN 'Z' WHEN translate(right({c}, 6), '0123456789', '') IN ('+:', '-:') \
+                "CASE WHEN right({c}, 1) = 'Z' THEN 'Z' WHEN substr(right({c}, 6), 1, 1) IN ('+', '-') AND translate(right({c}, 6), '0123456789', '') IN ('+:', '-:') \
                  AND substr(right({c}, 6), 4, 1) = ':' AND substr(right({c}, 6), 2, 2) <= '23' AND substr(right({c}, 6), 5, 2) <= '59' \
                  AND right({c}, 6) <> '-00:00' THEN right({c}, 6) END"
             );
