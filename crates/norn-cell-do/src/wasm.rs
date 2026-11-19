@@ -176,6 +176,25 @@ impl NornCell {
         self.tenant.enable_analytics();
     }
 
+    /// The cell's verified ledger head as JSON (`{seq, hash, commits}`), for
+    /// the host conformance suite (`apps/norn-cell-do/conformance`). Smoke
+    /// builds only: a deployable cell answers nothing outside its routes.
+    ///
+    /// # Errors
+    /// The scope is vacant or the ledger does not verify.
+    #[cfg(feature = "fixtures")]
+    #[wasm_bindgen(js_name = ledgerHead)]
+    pub fn ledger_head(&self) -> Result<String, JsValue> {
+        let host = self
+            .tenant
+            .serving_host()
+            .ok_or_else(|| JsValue::from_str("the cell is vacant"))?;
+        let head = host
+            .verified_head()
+            .map_err(|refusal| JsValue::from_str(&refusal.code))?;
+        serde_json::to_string(&head).map_err(rejected)
+    }
+
     /// Re-enter a request with the engine's answer to the call it ended with.
     #[must_use]
     #[allow(

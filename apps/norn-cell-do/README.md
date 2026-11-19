@@ -138,3 +138,53 @@ traces are never served unkeyed.
 | Atomic commit (TXN-ATOMIC-1) | `BEGIN IMMEDIATE` | `storage.transactionSync` |
 | Durability | `synchronous=FULL` fsync | DO storage; output gates hold replies until durable |
 | Ledger, receipts, transparency | shared `norn-cell` store | the same store over `WorkersEngine` |
+
+## Host conformance (D122)
+
+`conformance/` checks that a Workers host runs this cell the way native Rust
+does. Customers' cells run on OpenOrange (each Durable Object a Rivet actor on
+a Rivet Engine); celld and Wrangler are the other hosts.
+
+- `crates/norn-cell-do/tests/conformance_reference.rs` owns the request
+  script and serves it natively through the same tenant dispatch as
+  `src/wasm.rs`, recording each status, body and verified ledger head. The
+  record must be reproducible, including with the cell reopened before every
+  step.
+- `conformance/worker.mjs` is a test entry around the unchanged `worker.mjs`:
+  a fixed request clock, a hold at a storage boundary (the n-th SQL statement
+  of a commit, the end of its synchronous transaction, or the next timer turn)
+  where the runner kills the host, the verified ledger head, and `Probe`
+  objects for the Durable Object API the cell relies on. It needs a
+  `fixtures` build.
+- `conformance/conformance.py` runs the suite: the script compared
+  byte-for-byte with native; transactionSync rollback and nesting; a kill at
+  every boundary of a commit with no reply before durability and an
+  acknowledged commit surviving; no interleaving inside a synchronous turn;
+  one live instance per object (two runners on Rivet, and a runner stalled
+  mid-commit while its cell moves); alarms (at-least-once, across a kill,
+  rolled back with their transaction); SQLite version, affinity and size
+  limits; the clock inside a synchronous call; waitUntil past idle eviction;
+  live WebSockets across hibernation; backup and restore in place; then cold
+  start, commit latency, memory per cell and 100 cells on one host.
+
+Build the project outside the checkout, then run it on a host:
+
+```sh
+P="${CARGO_TARGET_DIR:?}/norn-cell-conformance"; mkdir -p "$P"
+cargo build --locked -p norn-cell-do --features fixtures --target wasm32-unknown-unknown --profile wasm-release
+wasm-bindgen "$CARGO_TARGET_DIR/wasm32-unknown-unknown/wasm-release/norn_cell_do.wasm" --target web --out-name norn_cell_do --out-dir "$P/pkg"
+cargo rustc --locked -p norn-cell --no-default-features --example workers_sql --target wasm32-unknown-unknown --profile wasm-release
+wasm-bindgen "$CARGO_TARGET_DIR/wasm32-unknown-unknown/wasm-release/examples/workers_sql.wasm" --target web --out-name workers_sql --out-dir "$P/probe-pkg"
+cp apps/norn-cell-do/{worker.mjs,subscribe.mjs} "$P/"
+cp apps/norn-cell-do/conformance/worker.mjs "$P/conformance.mjs"
+cp apps/norn-cell-do/conformance/wrangler.json "$P/"
+NORN_CELL_DO_CONFORMANCE_OUT="$P/reference.json" cargo test --locked -p norn-cell-do --test conformance_reference
+python3 apps/norn-cell-do/conformance/conformance.py --reference "$P/reference.json" --host rivet --project "$P"
+```
+
+`--host celld` runs `celld dev` (0.6.3). `--host rivet` runs the Rivet Engine
+(`rivetdev/engine` 3.1.2-rc.1, pinned by digest, in Docker) with two
+`orange serve` runners (open-orange 1.0.3, `ORANGE` names the binary).
+`--host url --url <base>` runs the tests that need no host control against
+any deployment of a `fixtures` build. Run it on a Boat VM, never a shared
+host.
