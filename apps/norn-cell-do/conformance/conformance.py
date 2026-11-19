@@ -1150,7 +1150,11 @@ def local_copy(source, lineage_key):
     # The public-URL switches (off in the checked-in config) mean nothing on a local host, and celld refuses them.
     for key in ("workers_dev", "preview_urls", "routes"):
         config.pop(key, None)
-    (project / "wrangler.json").write_text(json.dumps(config))
+    # The copy keeps symlinks, so the copy's wrangler.json may point at the deployable original:
+    # replace the link (or file) with a regular file instead of writing through it.
+    target = project / "wrangler.json"
+    target.unlink()
+    target.write_text(json.dumps(config))
     return project
 
 

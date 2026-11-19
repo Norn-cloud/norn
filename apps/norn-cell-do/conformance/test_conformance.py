@@ -60,11 +60,22 @@ class LocalRunLeavesTheProjectAlone(unittest.TestCase):
     """S1: a local run writes the opt-in config only in a disposable copy."""
 
     def test_source_wrangler_json_is_byte_identical(self):
+        self.run_local(symlinked=False)
+
+    def test_a_symlinked_wrangler_json_is_never_written_through(self):
+        self.run_local(symlinked=True)
+
+    def run_local(self, symlinked):
         with tempfile.TemporaryDirectory() as root:
             project = Path(root) / "project"
             project.mkdir()
             original = (HERE / "wrangler.json").read_bytes()
-            (project / "wrangler.json").write_bytes(original)
+            deployable = Path(root) / "deployable.json"
+            deployable.write_bytes(original)
+            if symlinked:
+                (project / "wrangler.json").symlink_to(deployable)
+            else:
+                (project / "wrangler.json").write_bytes(original)
             ref = Path(root) / "reference.json"
             ref.write_text(json.dumps({**reference(), "format": conformance.REFERENCE_FORMAT}))
             argv = ["conformance.py", "--reference", str(ref), "--host", "celld", "--project", str(project), "--state", str(Path(root) / "state"), "--only", "none", "--quick"]
@@ -80,6 +91,7 @@ class LocalRunLeavesTheProjectAlone(unittest.TestCase):
                     conformance.main()
             self.assertEqual(exited.exception.code, 0)
             self.assertEqual((project / "wrangler.json").read_bytes(), original)
+            self.assertEqual(deployable.read_bytes(), original, "the file a symlink points at is untouched")
             self.assertNotEqual(seen["copy"].resolve(), project.resolve())
             self.assertEqual(seen["config"]["vars"]["NORN_CONFORMANCE"], "synthetic")
             self.assertNotIn("workers_dev", seen["config"])
