@@ -72,6 +72,9 @@ class LocalRunLeavesTheProjectAlone(unittest.TestCase):
             original = (HERE / "wrangler.json").read_bytes()
             deployable = Path(root) / "deployable.json"
             deployable.write_bytes(original)
+            state = Path(root) / "original-state"
+            state.mkdir()
+            (project / ".celld").symlink_to(state)
             if symlinked:
                 (project / "wrangler.json").symlink_to(deployable)
             else:
@@ -84,6 +87,7 @@ class LocalRunLeavesTheProjectAlone(unittest.TestCase):
             def host(path, state):
                 seen["config"] = json.loads((path / "wrangler.json").read_text())
                 seen["copy"] = path
+                seen["celld"] = (path / ".celld").exists() or (path / ".celld").is_symlink()
                 return StubHost(path, state)
 
             with mock.patch.object(conformance, "CelldHost", host), mock.patch.object(sys, "argv", argv):
@@ -92,6 +96,8 @@ class LocalRunLeavesTheProjectAlone(unittest.TestCase):
             self.assertEqual(exited.exception.code, 0)
             self.assertEqual((project / "wrangler.json").read_bytes(), original)
             self.assertEqual(deployable.read_bytes(), original, "the file a symlink points at is untouched")
+            self.assertFalse(seen["celld"], "the copy carries no .celld, so the host can't open the original state")
+            self.assertEqual(list(state.iterdir()), [], "the original state directory is untouched")
             self.assertNotEqual(seen["copy"].resolve(), project.resolve())
             self.assertEqual(seen["config"]["vars"]["NORN_CONFORMANCE"], "synthetic")
             self.assertNotIn("workers_dev", seen["config"])

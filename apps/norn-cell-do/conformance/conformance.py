@@ -1143,7 +1143,9 @@ def local_copy(source, lineage_key):
     written: the supplied project (which may be deployed as is) keeps its disabled config byte for byte.
     The caller removes the copy's parent directory afterwards."""
     project = Path(tempfile.mkdtemp(prefix="norn-conformance-")) / source.name
-    shutil.copytree(source, project, symlinks=True)
+    # A copied `.celld` (often a symlink to the project's own state) would make celld open the original
+    # project's objects and runtime: leave it out so the host starts from fresh state in the copy.
+    shutil.copytree(source, project, symlinks=True, ignore=lambda folder, names: [".celld"] if Path(folder) == Path(source) else [])
     config = json.loads((project / "wrangler.json").read_text())
     # The local test host opts the conformance entry in explicitly (see conformance/worker.mjs).
     config.setdefault("vars", {}).update({"NORN_LINEAGE_KEY": lineage_key, "NORN_STAGE": "test", "NORN_CONFORMANCE": "synthetic"})

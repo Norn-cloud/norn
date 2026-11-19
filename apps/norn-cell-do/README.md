@@ -205,9 +205,8 @@ a Rivet Engine); celld and Wrangler are the other hosts.
     when the reply arrived (the reply counts fewer writes than scheduled and
     came back before the first was due) and that all of it ran afterwards.
     Without that timing evidence the row is not tested; a qualifying reply
-    followed by missing writes is a fail;
-    otherwise it is **not tested** (idle eviction is not claimed; whether the object was replaced
-    meanwhile is only reported);
+    followed by missing writes is a fail (idle eviction is not claimed; whether
+    the object was replaced meanwhile is only reported);
   - a live WebSocket across 15 s idle, and, as its own row, whether the object
     hibernated meanwhile (a new instance answered the commit the socket saw);
     when the same instance answered, hibernation is **not tested**;
