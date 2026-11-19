@@ -39,6 +39,9 @@ const isDemo = ([org, e]) => org === DEMO[0] && (e === "dev" || e === "analytics
 // minute, not one per cell. The cell is told the document's real fetch time, so its age and stale
 // bounds count from the fetch, and every refresh fetches anew.
 let lastJwks = null;
+// A build with the `fixtures` feature accepts fixture bearer tokens; it serves only a stage named
+// here (NORN_STAGE, set by the local smoke), never a deployed one.
+const FIXTURE_STAGES = new Set(["smoke", "test"]);
 // D102: engine steps one request may take (frontier, sync batches, the question).
 const ENGINE_STEPS = 64;
 // A hung engine call must not hold the object.
@@ -89,6 +92,9 @@ export class Cell {
     // One opening per object; seeding, provisioning and dispatch are synchronous Wasm. A scope
     // nobody provisioned opens vacant: the cell reads its storage and writes nothing.
     this.opening ??= (async () => {
+      if (NornCell.fixturesEnabled() && !FIXTURE_STAGES.has(this.env.NORN_STAGE)) {
+        throw new Error("this cell build accepts fixture principals and serves only a smoke or test stage (NORN_STAGE)");
+      }
       const [org, env] = scope;
       const issuer = this.env.NORN_HOST_ISSUER;
       const jwks = issuer === undefined ? undefined : await this.jwks(true);
@@ -403,9 +409,9 @@ const MAX_SOURCE_BODY = 20 * 1024 * 1024;
 // One outbound source or storage request may take this long.
 const SOURCE_FETCH_TIMEOUT_MS = 30_000;
 
-/** The server variables the cell's connections and uploads read, by name: secrets and storage settings only. Never logged. */
+/** The server variables the cell's connections and uploads read, by name: secrets, storage settings and the operator's source host allowlist (SYNC-URL-1) only. Never logged. */
 function connectVars(env) {
-  return JSON.stringify(Object.fromEntries(Object.entries(env).filter(([name, value]) => typeof value === "string" && (name.startsWith("NORN_SECRET_") || name.startsWith("NORN_S3_")))));
+  return JSON.stringify(Object.fromEntries(Object.entries(env).filter(([name, value]) => typeof value === "string" && (name.startsWith("NORN_SECRET_") || name.startsWith("NORN_S3_") || name === "NORN_SOURCE_ALLOWED_HOSTS"))));
 }
 
 /** Perform exactly the request the cell planned; the status and bytes go back to the cell, unread here. */

@@ -353,8 +353,12 @@ const CONFIG: &str = r#"[
    "mapping": "odoo.rest.mapping", "instance": "sandbox", "baseUrl": "http://odoo-rest:8069"}
 ]"#;
 
+/// The sandbox's single-label hosts, which a deployment admits by listing
+/// them (SYNC-URL-1, `NORN_SOURCE_ALLOWED_HOSTS`).
+const SANDBOX_HOSTS: &str = "erpnext-rest,odoo-rest";
+
 fn sources() -> Sources {
-    Sources::new(
+    Sources::with_allowed_hosts(
         CONFIG,
         BTreeMap::from([
             (
@@ -366,6 +370,7 @@ fn sources() -> Sources {
                 "odoo-key".to_owned(),
             ),
         ]),
+        SANDBOX_HOSTS,
     )
     .expect("configuration")
 }
@@ -702,6 +707,17 @@ fn configuration_refuses_the_cells_own_instance_and_a_public_http_base() {
     assert!(refused(one("cell", "https://erp.example.test")).contains("the cell's own"));
     assert!(refused(one("sandbox", "http://erp.example.test")).contains("base URL"));
     assert!(Sources::new(&one("sandbox", "https://erp.example.test"), BTreeMap::new()).is_ok());
+    // An internal host is refused unless the operator lists it.
+    assert!(refused(one("sandbox", "http://erpnext-rest:8000")).contains("base URL"));
+    assert!(refused(one("sandbox", "https://169.254.169.254")).contains("base URL"));
+    assert!(
+        Sources::with_allowed_hosts(
+            &one("sandbox", "http://erpnext-rest:8000"),
+            BTreeMap::new(),
+            SANDBOX_HOSTS
+        )
+        .is_ok()
+    );
 }
 
 /// The scanned-document extractor as a pull source: its recorded page
@@ -1057,16 +1073,17 @@ fn a_host_page_size_sets_every_feeds_page() {
     };
     for refused in [0, 1001] {
         assert!(
-            Sources::new(&config(refused), BTreeMap::new()).is_err(),
+            Sources::with_allowed_hosts(&config(refused), BTreeMap::new(), SANDBOX_HOSTS).is_err(),
             "{refused}"
         );
     }
-    let mut sources = Sources::new(
+    let mut sources = Sources::with_allowed_hosts(
         &config(250),
         BTreeMap::from([(
             "NORN_SECRET_ERPNEXT_REST_TOKEN".to_owned(),
             "key:secret".to_owned(),
         )]),
+        SANDBOX_HOSTS,
     )
     .expect("configuration");
     let host = host();

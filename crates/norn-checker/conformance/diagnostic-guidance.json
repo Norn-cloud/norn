@@ -916,6 +916,18 @@
     "fix": "Add a label for the locale the description or review state names, or remove that locale."
   },
   {
+    "code": "law.conservation.alias_bound",
+    "fix": "Split the writer so it assigns at most 6 coordinates of one stored member, or add preconditions such as input.from != input.to that keep its keys distinct, then check it again."
+  },
+  {
+    "code": "law.conservation.alias_unlowerable",
+    "fix": "Give every coordinate its stored row (root type, member and key), and give coordinates that may name one row the same weight, scope and unit."
+  },
+  {
+    "code": "law.conservation.key_alias",
+    "fix": "Add a precondition that keeps the reported keys distinct (for example input.from != input.to), or make the aliased case balance on its own."
+  },
+  {
     "code": "law.example.mismatch",
     "fix": "Fix the law, its exceptions or the example's expectation so they agree."
   },

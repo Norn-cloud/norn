@@ -1,0 +1,7 @@
+{
+  "code": "law.conservation.alias_bound",
+  "message": "conservation writer has more key-aliasing cases than the checker enumerates: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}
