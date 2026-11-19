@@ -431,7 +431,7 @@ impl Egress {
             *method,
             Method::GET | Method::HEAD | Method::PUT | Method::DELETE | Method::OPTIONS
         );
-        let mut attempt = 0;
+        let mut attempt: u32 = 0;
         loop {
             attempt = attempt.saturating_add(1);
             let retry_left = idempotent && attempt < MAX_ATTEMPTS;

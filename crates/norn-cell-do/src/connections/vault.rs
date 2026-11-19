@@ -688,7 +688,7 @@ impl<E: SqlEngine> Vault<E> {
                 &[SqlValue::Text(self.keys.current().to_owned())],
             )
             .map_err(storage)?;
-        let mut rewrapped = 0;
+        let mut rewrapped: usize = 0;
         for row in rows {
             let version = int(row.first().ok_or_else(|| storage("dek row"))?)?;
             let (_, wrapped) = self
