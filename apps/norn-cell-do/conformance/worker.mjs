@@ -3,9 +3,11 @@
 //
 // - a fixed request clock (`x-norn-conformance-now`), so receipts and ledger heads are
 //   byte-comparable across runtimes;
-// - a hold at a storage boundary (`x-norn-conformance-hold`): the object spins at the
-//   n-th SQL statement, right after its synchronous transaction returns, or one timer
-//   turn later, and the conformance runner kills the host there;
+// - a hold inside the request's write transaction (`x-norn-conformance-hold`): the object
+//   spins right after the n-th SQL statement, or at the end of the transaction's callback
+//   before it commits, and the conformance runner kills the host there. The marker the
+//   runner waits for is printed only there: inside a transaction that has run at least one
+//   statement, never for a refusal that wrote nothing or a callback that threw;
 // - the cell's verified ledger head (`/__conformance/head`) and per-request storage
 //   counts (`/__conformance/stats`);
 // - `Probe` objects for the Durable Object API properties the cell relies on.
@@ -30,7 +32,7 @@ const OBJECT_PARAM = "conformanceObject";
 const INSTANCE = crypto.randomUUID();
 // The only scope this entry serves: the reference's fixture scope.
 const SYNTHETIC = ["org_demo", "analytics"];
-// A runner's out-of-band marker: printed when a hold is reached, before the object spins there.
+// A runner's out-of-band marker: printed when a hold inside the write transaction is reached, before the object spins there.
 const MARKER = /^[0-9a-f]{16,64}$/;
 
 /** Whether this Wasm is a `fixtures` build: the head accessor exists only there (and the build says so, where it can). */
@@ -65,12 +67,12 @@ function spin(ms) {
   for (let i = 0; i < bound && (ms === undefined || Date.now() - started < ms); i++);
 }
 
-/** The hold a request armed: {at: "stmt"|"turn-end"|"post-turn", n?, ms?}. */
+/** The hold a request armed: {at: "stmt"|"turn-end", n?, ms?}. */
 function parseHold(value) {
   if (value === null) return null;
   const [at, arg, ms] = value.split(":");
   if (at === "stmt") return { at, n: Number(arg), ms: ms === undefined ? undefined : Number(ms) };
-  if (at === "turn-end" || at === "post-turn") return { at, ms: arg === undefined ? undefined : Number(arg) };
+  if (at === "turn-end") return { at, ms: arg === undefined ? undefined : Number(arg) };
   throw new Error(`unknown hold ${value}`);
 }
 
@@ -83,12 +85,14 @@ function instrument(ctx, state) {
         return (...args) => {
           state.statements += 1;
           if (state.depth > 0) state.inTransaction += 1;
+          const cursor = target.exec(...args);
+          // Held right after the n-th statement ran inside the transaction (a statement that threw never holds).
           const hold = state.hold;
-          if (hold?.at === "stmt" && state.depth > 0 && state.inTransaction === hold.n) {
+          if (hold?.at === "stmt" && state.depth > 0 && state.inTransaction === hold.n && !state.reached) {
             mark(state);
             spin(hold.ms);
           }
-          return target.exec(...args);
+          return cursor;
         };
       }
       return bind(target)(Reflect.get(target, prop, target));
@@ -101,14 +105,20 @@ function instrument(ctx, state) {
         return (callback) => {
           state.depth += 1;
           state.transactions += 1;
+          const ran = state.inTransaction;
           try {
-            return target.transactionSync(callback);
+            return target.transactionSync(() => {
+              const result = callback();
+              // Held at the end of the outermost callback, before the transaction commits, only when it
+              // ran at least one statement and returned (a refusal throws and rolls back: no hold).
+              if (state.hold?.at === "turn-end" && state.depth === 1 && state.inTransaction > ran && !state.reached) {
+                mark(state);
+                spin(state.hold.ms);
+              }
+              return result;
+            });
           } finally {
             state.depth -= 1;
-            if (state.depth === 0 && state.hold?.at === "turn-end") {
-              mark(state);
-              spin(state.hold.ms);
-            }
           }
         };
       }
@@ -165,12 +175,6 @@ export class Cell extends ProductionCell {
     Object.assign(this.counts, { statements: 0, inTransaction: 0, transactions: 0, reached: false, hold: parseHold(request.headers.get(HOLD_HEADER)), marker: marker !== null && MARKER.test(marker) ? marker : null });
     try {
       const response = await super.fetch(request);
-      if (this.counts.hold?.at === "post-turn") {
-        // The request's write turn has ended (and begun committing); the reply has not left.
-        await new Promise((resolve) => setTimeout(resolve, 0));
-        mark(this.counts);
-        spin(this.counts.hold.ms);
-      }
       const headers = new Headers(response.headers);
       headers.set("x-norn-conformance-instance", this.instance);
       headers.set("x-norn-conformance-statements", String(this.counts.inTransaction));

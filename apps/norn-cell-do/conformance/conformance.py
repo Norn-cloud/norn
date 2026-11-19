@@ -4,12 +4,13 @@
 Runs the same request script on a Workers host and compares it with the
 native reference (crates/norn-cell-do/tests/conformance_reference.rs), then
 checks the Durable Object properties the cell relies on: transaction
-rollback, kills at sampled SQL boundaries of a commit (each boundary proven
-reached out of band before the kill), acknowledged commits surviving a kill,
-no interleaving inside a synchronous turn, one live instance per id, platform
-alarm probes, SQLite behaviour and limits, the clock inside a synchronous
-call, waitUntil, live WebSockets (and whether the object hibernated), and
-backup and restore.
+rollback, kills at sampled SQL boundaries inside a commit's transaction (each
+boundary proven reached out of band before the kill; no marker, no kill),
+acknowledged commits surviving a kill, no interleaving inside a synchronous
+turn, one live instance per id, platform alarm probes, SQLite behaviour and
+limits, the clock inside a synchronous call, waitUntil background work after
+the reply, live WebSockets (and whether the object hibernated), and backup and
+restore.
 
 Every row is pass, fail, not tested (the run could not show it) or measured
 (an observation, not a claim). A row passes only when what it names was shown.
@@ -58,6 +59,8 @@ REFERENCE_FORMAT = "norn/host-conformance-reference@2"
 SCRIPT_STEPS = 12
 ADMIN = "Bearer fixture:admin@demo"
 ANALYTICS = "orgId=org_demo&environmentId=analytics"
+# A descriptive client name: workers.dev refuses urllib's default User-Agent (error 1010).
+USER_AGENT = "norn-conformance/1"
 
 
 # ------------------------------------------------------------------ http
@@ -67,6 +70,7 @@ def request(base, method, path, query="", body=None, headers=None, timeout=60):
     url = f"{base}{path}" + (f"?{query}" if query else "")
     data = body.encode() if isinstance(body, str) and method != "GET" else None
     req = urllib.request.Request(url, data=data, method=method)
+    req.add_header("user-agent", USER_AGENT)
     for name, value in (headers or {}).items():
         req.add_header(name, value)
     if data is not None:
@@ -504,10 +508,11 @@ class Suite:
         return False
 
     def kill_points(self):
-        """Kills at sampled SQL boundaries inside a commit: each boundary is proven reached (the host
-        printed the request's marker while the object spins there) before the host is killed. The
-        commit must then be either wholly absent or wholly present, never partial, and a retry must
-        match native. A boundary never shown reached is not tested."""
+        """Kills at sampled SQL boundaries inside a commit's transaction: each boundary is proven
+        reached (the host printed the request's marker from inside the write transaction while the
+        object spins there) before the host is killed. The commit must then be either wholly absent
+        or wholly present, never partial, and a retry must match native. Without a marker there is
+        no kill: the boundary is not tested."""
         steps = self.ref["kill"]["script"]
         native = self.ref["kill"]["native"]
         obj = f"kill-{secrets.token_hex(4)}"
@@ -525,7 +530,7 @@ class Suite:
         spread = sorted({1, 2, 3, max(1, n // 4), max(1, n // 2), max(1, (3 * n) // 4), max(1, n - 1), n})
         if self.quick:
             spread = [1, n]
-        points = [f"stmt:{k}" for k in spread] + ["turn-end", "post-turn"]
+        points = [f"stmt:{k}" for k in spread] + ["turn-end"]
         if len(points) > len(steps):
             return "fail", f"{len(points)} kill points but only {len(steps)} kill steps in the reference"
         rows, failures, untested, reopen_ms = [], [], [], []
@@ -545,34 +550,45 @@ class Suite:
             with concurrent.futures.ThreadPoolExecutor(1) as pool:
                 future = pool.submit(send)
                 reached = self.wait_marker(token, replied)
-                early = list(replied)
-                self.host.kill()
-                future.result(timeout=120)
-            self.host.start()
-            after_kill, waited = recovered_head(self.base, obj=obj)
-            reopen_ms.append(waited)
+                if reached:
+                    early = list(replied)
+                    self.host.kill()
+                # Unreached, the request is never killed: it answers on its own (or times out).
+                future.result(timeout=120 if reached else 900)
+            if reached:
+                self.host.start()
+                after_kill, waited = recovered_head(self.base, obj=obj)
+                reopen_ms.append(waited)
+            else:
+                untested.append(point)
+                if replied and str(replied[0][0]).startswith("error"):
+                    # No answer and no marker: restart to free the object. A recovery, not a test.
+                    self.restart()
+                    after_kill, _ = recovered_head(self.base, obj=obj)
+                else:
+                    after_kill, _, _ = head(self.base, obj=obj)
             landed = after_kill == want["headJson"]
             if not landed and after_kill != before:
-                failures.append(f"{point}: head after kill {after_kill} is neither {before} nor {want['headJson']} (partial)")
-            if early:
+                failures.append(f"{point}: head {after_kill} is neither {before} nor {want['headJson']} (partial)")
+            if reached and early:
                 failures.append(f"{point}: a reply ({early[0][0]}, hold reached={early[0][1]}) left while the object was held")
-            if not reached:
-                untested.append(point)
-            elif point.startswith("stmt") and landed:
+            if reached and landed:
                 failures.append(f"{point}: a write inside an open transaction survived the kill")
             if not landed:
                 status, body, _, _ = scripted(self.base, step, self.now, obj=obj)
                 retried, _, _ = head(self.base, obj=obj)
                 if (status, body) != (want["status"], want["body"].encode()) or retried != want["headJson"]:
                     failures.append(f"{point}: retry differs from native ({status})")
-            rows.append(f"{point}={'not reached' if not reached else 'landed' if landed else 'rolled back'}")
+            rows.append(f"{point}={'not reached, not killed (reply ' + str(replied[0][0] if replied else None) + ')' if not reached else 'landed' if landed else 'rolled back'}")
             before = want["headJson"]
-        self.measurements["cell_recovery_after_kill_ms"] = summary(reopen_ms)
-        detail = f"{len(points)} sampled boundaries of ≤{n} SQL statements, each killed after its out-of-band marker: " + ", ".join(rows) + f"; the cell answered again p50 {statistics.median(reopen_ms):.0f} ms after the host restarted"
+        detail = f"{len(points)} sampled boundaries of ≤{n} SQL statements, each killed only after its out-of-band marker: " + ", ".join(rows)
+        if reopen_ms:
+            self.measurements["cell_recovery_after_kill_ms"] = summary(reopen_ms)
+            detail += f"; the cell answered again p50 {statistics.median(reopen_ms):.0f} ms after the host restarted"
         if failures:
             return "fail", "; ".join(failures)[:900]
         if untested:
-            return "not tested", f"the host never showed reaching {', '.join(untested)} (no marker in its log), so those kills prove nothing; " + detail
+            return "not tested", f"the host never showed reaching {', '.join(untested)} (no marker in its log), so those boundaries were not killed; " + detail
         return "pass", detail
 
     def ack_kill(self):
@@ -804,11 +820,14 @@ class Suite:
             name = f"alarm-restart-{secrets.token_hex(4)}"
             probed(self.base, "alarm-set", "at", object_name=name, **{"in": 6000})
             self.host.kill()
-            killed_at = time.time()
+            restarted_ms = time.time() * 1000
             self.host.start()
             state = self.fired(name, 120)
-            ok &= bool(state.get("fired"))
-            notes.append(f"survives a kill: {'fired' if state.get('fired') else 'lost'} ({time.time() - killed_at:.0f} s after the kill)")
+            # Only a firing recorded after the restart shows the alarm survived the kill.
+            fired = state.get("fired") or []
+            after = [row for row in fired if isinstance(row[0], (int, float)) and row[0] >= restarted_ms]
+            ok &= bool(after)
+            notes.append(f"survives a kill: {'fired after the restart' if after else 'no firing after the restart'} ({len(fired)} firing(s), {time.time() - restarted_ms / 1000:.0f} s after the restart)")
         else:
             notes.append("survives a kill: not tested (no host control)")
         return ("pass" if ok else "fail"), "; ".join(notes)
@@ -856,12 +875,15 @@ class Suite:
         return "measured", observed + "; Norn reads the clock once per call and passes it into the cell, so either is safe"
 
     def wait_until(self):
+        """Background work registered with waitUntil completes after the reply, with no traffic meanwhile.
+        Idle eviction is not claimed: whether the object was replaced meanwhile is only reported."""
         name = f"bg-{secrets.token_hex(4)}"
-        probed(self.base, "wait-until", "started", object_name=name, n=15, every=1000)
+        started = probed(self.base, "wait-until", "started", object_name=name, n=15, every=1000)
         time.sleep(22)
         counts = probed(self.base, "pairs", "count", "pairs", object_name=name)
         ok = counts["count"] == 15 and counts["pairs"] == 15
-        return ("pass" if ok else "fail"), f"15 background turns over 15 s with no traffic (idle eviction after 10 s on OpenOrange): {counts['count']} ran, each atomic ({counts['pairs']} pairs)"
+        same = started.get("instance") == counts.get("instance")
+        return ("pass" if ok else "fail"), f"15 background turns over 15 s after the reply, with no traffic: {counts['count']} ran, each atomic ({counts['pairs']} pairs); the {'same instance answered afterwards' if same else 'object was replaced afterwards (new instance)'} (measured, not a claim about eviction)"
 
     # -- websockets
 
@@ -988,8 +1010,9 @@ def summary(values):
     return {"n": len(ordered), "p50": round(pick(0.5), 1), "p99": round(pick(0.99), 1), "max": round(ordered[-1], 1)}
 
 
-def sha(text):
-    return hashlib.sha256(text.encode()).hexdigest()[:16]
+def sha(data):
+    """The first 16 hex digits of `data`'s sha256 (raw bytes, hashed as they are)."""
+    return hashlib.sha256(data).hexdigest()[:16]
 
 
 def sudo(argv, mkdir=None):
@@ -1032,7 +1055,7 @@ class WebSocket:
         authority = url.hostname if port == default else f"{url.hostname}:{port}"
         if ":" in url.hostname:
             authority = f"[{url.hostname}]" + ("" if port == default else f":{port}")
-        lines = [f"GET {path} HTTP/1.1", f"Host: {authority}", "Upgrade: websocket", "Connection: Upgrade", f"Sec-WebSocket-Key: {key}", "Sec-WebSocket-Version: 13"]
+        lines = [f"GET {path} HTTP/1.1", f"Host: {authority}", "Upgrade: websocket", "Connection: Upgrade", f"Sec-WebSocket-Key: {key}", "Sec-WebSocket-Version: 13", f"User-Agent: {USER_AGENT}"]
         lines += [f"{name}: {value}" for name, value in headers.items()]
         self.sock.sendall(("\r\n".join(lines) + "\r\n\r\n").encode())
         response = b""
@@ -1129,7 +1152,7 @@ def main():
         ("alarms (platform probes): fire, re-fire after a failing handler, rollback, kill", suite.alarms, False),
         ("SQLite version, affinity, limits", suite.sqlite, False),
         ("clock inside a synchronous call (measurement)", suite.clock, False),
-        ("waitUntil across idle eviction", suite.wait_until, False),
+        ("waitUntil background work completes after the reply", suite.wait_until, False),
         ("WebSocket live subscription across 15 s idle", suite.websocket, False),
         ("WebSocket survives the object hibernating", suite.websocket_hibernation, False),
         ("backup and restore in place", suite.backup_restore, True),

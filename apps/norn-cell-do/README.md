@@ -154,13 +154,17 @@ a Rivet Engine); celld and Wrangler are the other hosts.
   record must be reproducible, including with the cell reopened before every
   step.
 - `conformance/worker.mjs` is a test entry around the unchanged `worker.mjs`:
-  a fixed request clock, a hold at a storage boundary (the n-th SQL statement
-  of a commit, the end of its synchronous transaction, or the next timer turn)
-  where the runner kills the host, the verified ledger head (the exact string
-  the Rust cell serializes), and `Probe` objects for the Durable Object API the
-  cell relies on. It serves nothing unless it is opted in: a `fixtures` build
-  AND `NORN_STAGE=test` AND `NORN_CONFORMANCE=synthetic` (its
-  `wrangler.json` sets both). Opted in, it serves only the synthetic scope
+  a fixed request clock, a hold inside a commit's write transaction (right
+  after its n-th SQL statement, or at the end of its callback before it
+  commits) where the runner kills the host, the verified ledger head (the
+  exact string the Rust cell serializes), and `Probe` objects for the Durable
+  Object API the cell relies on. It serves nothing unless it is opted in: a
+  `fixtures` build AND `NORN_STAGE=test` AND `NORN_CONFORMANCE=synthetic`.
+  The checked-in `conformance/wrangler.json` sets neither and has no
+  `workers.dev`, preview or route URL, so a plain `wrangler deploy` of it
+  serves nothing; the runner sets both values in its own copy for a local
+  host, and a hosted run supplies them in a separate, untracked config (see
+  below). Opted in, it serves only the synthetic scope
   `org_demo/analytics` and its probe objects, and refuses everything else.
   The production deploy (`apps/studio/scripts/celld-deploy-cell.ts`) writes its
   own configuration with neither variable, so this entry refuses every request
@@ -171,26 +175,30 @@ a Rivet Engine); celld and Wrangler are the other hosts.
   - the 12-step script compared with native: statuses, raw body bytes and the
     Rust-serialized ledger head after each step, byte for byte;
   - transactionSync rollback and nesting;
-  - kills at **sampled** SQL boundaries of a commit (statements 1, 2, 3, n/4,
-    n/2, 3n/4, n−1 and n, the end of the transaction and the next turn), not
-    every statement. Each boundary is proven reached before the kill: the
-    entry prints the request's random marker to the host's log while it spins
-    there, and the runner kills only once it reads it; a boundary never shown
-    reached makes the row **not tested**. A kill must leave the commit wholly
-    absent or wholly present, and a retry must match native;
+  - kills at **sampled** SQL boundaries inside a commit's transaction (after
+    statements 1, 2, 3, n/4, n/2, 3n/4, n−1 and n, and at the end of the
+    callback before it commits), not every statement. Each boundary is proven
+    reached before the kill: the entry prints the request's random marker to
+    the host's log from inside the write transaction, after a statement ran,
+    while it spins there (never for a refusal that wrote nothing or a callback
+    that threw), and the runner kills only once it reads it. Without a marker
+    the runner does not kill: the boundary is **not tested**. A kill must leave
+    the commit wholly absent, and a retry must match native;
   - an acknowledged commit surviving a kill. The suite does **not** show that
-    the platform withholds replies until a write is durable: the post-turn
-    hold delays the reply in the entry itself;
+    the platform withholds replies until a write is durable: no boundary sits
+    between a commit and its reply;
   - no interleaving inside a synchronous turn; one live instance per object
     (two runners on Rivet, and a runner stalled or frozen mid-commit while its
     cell moves, each proven held by the same marker);
   - alarms as **platform probes only** (fire, re-fire after a failing handler
     with evidence that a failed delivery preceded it, rolled back with their
-    transaction, across a kill). The cell's own timers are not in the suite
-    yet;
+    transaction, and a firing recorded after the host restarted from a kill).
+    The cell's own timers are not in the suite yet;
   - SQLite affinity, bindings, and a 1 MiB value stored exactly (larger values
     are measured); the clock inside a synchronous call (measured);
-  - waitUntil past idle eviction;
+  - waitUntil background work completing after the reply, with no traffic
+    meanwhile (idle eviction is not claimed; whether the object was replaced
+    meanwhile is only reported);
   - a live WebSocket across 15 s idle, and, as its own row, whether the object
     hibernated meanwhile (a new instance answered the commit the socket saw);
     when the same instance answered, hibernation is **not tested**;
@@ -230,13 +238,20 @@ isolated deployment made for the run, never at a stage that serves anyone:
 
 1. Build the project as above (a `fixtures` build; the production deploy
    script refuses one).
-2. Deploy `$P` with its own `wrangler.json` (main `conformance.mjs`, the
-   `CELLS` and `PROBES` bindings, `NORN_STAGE=test`,
-   `NORN_CONFORMANCE=synthetic`) under a new, throwaway name, and set
-   `NORN_LINEAGE_KEY` to the reference's public lineage key
-   (`jq -r .lineageKey "$P/reference.json"`); the ledger heads only match
-   native with that key.
+2. Write a separate, untracked opt-in config for a new, throwaway name and
+   deploy it; the checked-in `wrangler.json` stays disabled. `NORN_LINEAGE_KEY`
+   is the reference's public lineage key (the ledger heads only match native
+   with it):
+
+   ```sh
+   jq --arg name "norn-conformance-$(openssl rand -hex 4)" --arg key "$(jq -r .lineageKey "$P/reference.json")" \
+     '.name = $name | .workers_dev = true | .vars = {NORN_STAGE: "test", NORN_CONFORMANCE: "synthetic", NORN_LINEAGE_KEY: $key}' \
+     "$P/wrangler.json" > "$P/wrangler.optin.json"
+   (cd "$P" && wrangler deploy --config wrangler.optin.json)
+   ```
 3. Run `conformance.py --reference "$P/reference.json" --host url --url
    https://<that deployment>` (`https` uses TLS with hostname verification,
-   port 443 unless the URL names one).
-4. Delete the deployment afterwards.
+   port 443 unless the URL names one). The runner identifies itself as
+   `User-Agent: norn-conformance/1` (`workers.dev` refuses urllib's default).
+4. Delete the deployment (`wrangler delete --name <that name>`) and
+   `$P/wrangler.optin.json` afterwards.
