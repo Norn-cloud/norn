@@ -504,7 +504,7 @@ impl<E: SqlEngine> Connections<E> {
         expected: Option<i64>,
         now_ms: u64,
     ) -> Result<Record, ConnError> {
-        let plaintext = Secret::new(serde_json::to_vec(tokens).map_err(storage)?);
+        let plaintext = Secret::from(serde_json::to_string(tokens).map_err(storage)?);
         vault.engine().transaction(|| {
             let current = Self::record(vault, id)?.map(|record| record.revision);
             if let Some(expected) = expected
