@@ -170,6 +170,72 @@ test("dashboard row: ask, read the checker's verdict, accept, open the board, ed
   await page.screenshot({ path: `${SHOTS}/3-refused.png`, fullPage: true })
 })
 
+/** Propose the weekly dashboard, accept it, and open the saved board. */
+async function board(page: Page) {
+  await stage(page)
+  await page.goto("/dashboards")
+  await page.getByRole("button", { name: /^Weekly / }).click()
+  await page.getByRole("button", { name: "Propose" }).click()
+  await page.locator("[data-proposal=prop_1]").getByRole("button", { name: "Accept and save" }).click()
+  await expect(page.getByRole("heading", { name: "Refinery overview" })).toBeVisible()
+  await expect(page.locator("[data-view=line]")).toBeVisible()
+}
+
+test("a tile's details sheet: its menu and popover open above it, take the pointer, and Escape closes them before the sheet", async ({ page }) => {
+  test.skip(Boolean(process.env.E2E_BASE), "this row uses deterministic stand-ins for the assistant and the cell")
+  await board(page)
+  const details = page.getByRole("button", { name: "Details" }).nth(2)
+  const sheet = page.getByRole("dialog", { name: "Yield, weekly" })
+  await details.click()
+  await expect(sheet).toBeVisible()
+
+  // The popover renders in the sheet's top layer: a click on it lands on it, not on the sheet's backdrop.
+  await sheet.getByRole("button", { name: "How this number was read" }).click()
+  const popover = sheet.locator("[data-slot=popover-content]")
+  await expect(popover).toBeVisible()
+  await popover.getByText("Known after").click()
+  await page.screenshot({ path: `${SHOTS}/tile-sheet-popover.png` })
+  await page.keyboard.press("Escape")
+  await expect(popover).toBeHidden()
+  await expect(sheet).toBeVisible()
+
+  // The drill menu too; Escape closes the menu first, then the sheet.
+  const drill = sheet.getByRole("button", { name: /^Drill into / }).first()
+  await drill.click()
+  const menu = sheet.getByRole("menu")
+  await expect(menu).toBeVisible()
+  await page.screenshot({ path: `${SHOTS}/tile-sheet-menu.png` })
+  await page.keyboard.press("Escape")
+  await expect(menu).toBeHidden()
+  await expect(sheet).toBeVisible()
+  await page.keyboard.press("Escape")
+  await expect(sheet).toBeHidden()
+
+  // A menu item takes the pointer: it opens the bucket's records over the sheet.
+  await details.click()
+  await expect(sheet).toBeVisible()
+  await drill.click()
+  await sheet.getByRole("menuitem", { name: /^See the \d+ records?$/ }).click()
+  await expect(menu).toBeHidden()
+  await expect(page.getByText(/records the server added up, exactly as it counted them/)).toBeVisible()
+})
+
+test("a sheet closed by Escape while it is still opening lets the next click through at once", async ({ page }) => {
+  test.skip(Boolean(process.env.E2E_BASE), "this row uses deterministic stand-ins for the assistant and the cell")
+  await board(page)
+  // A slow entrance, so Escape lands mid-transition; the close must not wait for it.
+  await page.addStyleTag({ content: "[data-slot=sheet-content] { transition-duration: 10s !important }" })
+  const details = page.getByRole("button", { name: "Details" }).nth(2)
+  const sheet = page.getByRole("dialog", { name: "Yield, weekly" })
+  await details.click()
+  await expect(sheet).toBeAttached()
+  await page.keyboard.press("Escape")
+  await expect(sheet).toBeHidden({ timeout: 2_000 })
+  // The page behind is live again: the same button opens the sheet once more.
+  await details.click({ timeout: 2_000 })
+  await expect(sheet).toBeAttached()
+})
+
 test("the assistant's model reads a safe prompt: typed placeholder chips, the guard's path, a restored reply, and Show original as a logged reveal", async ({ page }) => {
   test.skip(Boolean(process.env.E2E_BASE), "this row uses deterministic stand-ins for the assistant and the cell")
   await stage(page)

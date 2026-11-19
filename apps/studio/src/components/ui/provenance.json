@@ -39,9 +39,7 @@
     "changes": [
       "`cn` is imported from `@/lib/utils`",
       "shadcn.css is the keyframes, state variants and no-scrollbar part of shadcn@4.23.0's dist/tailwind.css, vendored instead of depending on the CLI package",
-      "index.css carries the Norn theme tokens plus the app's base layer",
-      "sheet.tsx and dialog.tsx keep shadcn's parts, props and classes but run on @ui-sdk/react/dialog (focus, dismissal, top layer) instead of Radix's Dialog; `asChild` maps to the SDK's `render`, and enter/exit transitions use the SDK's data-starting-style/data-ending-style",
-      "dropdown-menu.tsx drops its exit animation so a closing Radix menu never holds Escape from a UI SDK sheet it opened"
+      "index.css carries the Norn theme tokens plus the app's base layer"
     ]
   },
   "upstream": {
