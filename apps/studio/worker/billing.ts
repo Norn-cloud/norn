@@ -1,140 +1,56 @@
 /**
- * Hosted billing: what each person's plan allows, decided on the server. Polar (polar.ts) sells the
- * plans and reports subscriptions by signed webhook; this module keeps the entitlement record those
- * webhooks write and answers "may this person create another hosted cell / add another member".
+ * Hosted billing: what each person's plan allows, decided on the server. A payment provider sells the
+ * plans; its adapter (today Polar, polar.ts) reads a payer's current state from the provider whenever a
+ * signed webhook names them and writes it here whole (writeLimits). This module keeps that per-payer
+ * record and answers "may this person create another hosted cell / add another member". Nothing here
+ * or in the record is specific to a provider: it takes BillingSettings, never the provider's.
  *
- * Billing is off unless the deployment configures Polar. Off, every entitlement is unlimited and no
- * check refuses anything, so self-hosted Studio behaves exactly as before. The browser never decides:
- * it renders the document `/api/billing` returns and the refusals the server sends.
+ * Billing is off unless the deployment configures a provider. Off, every entitlement is unlimited, no
+ * check refuses anything, and the deploy writes the database's billing mode off (billingModeStatement),
+ * so its limit triggers refuse nothing either: self-hosted Studio behaves exactly as before. Requests
+ * follow that stored mode (billingOf), never their own settings, so the API and the triggers agree.
+ * The browser never decides: it renders the document `/api/billing` returns and the refusals the
+ * server sends.
  *
- * The billed subject is a person (Better Auth user id = Polar customer `external_id`). Each workspace
- * a person pays for (its first owner, recorded at creation: migration 0010) is one hosted cell; a
- * workspace's member limit comes from its payer's plan.
+ * The billed subject is a person (Better Auth user id; the provider customer's external id). Each
+ * workspace a person pays for (its creator, recorded at creation: migrations 0010, 0011) is one hosted
+ * cell; a billed workspace's member limit comes from its payer's plan.
+ *
+ * The limits are enforced by the database, in the statement that writes the workspace or the member
+ * (migration 0011's triggers), so no request can pass one and nothing is reserved or undone. The checks
+ * here only explain a refusal or warn before an invitation is sent.
  */
 
 /** null = unlimited. */
 export interface Limits {
   /** Workspaces (each with its hosted cell) one person may pay for. */
   readonly cells: number | null
-  /** Members (plus pending invitations) one workspace may hold. */
+  /** Members one workspace may hold; its first member, the creator, is always admitted. */
   readonly members: number | null
 }
-export interface Plan {
+/** A plan Studio offers at checkout, by slug and name. Its limits come from the provider (polar.ts). */
+export interface CheckoutPlan {
   /** The checkout slug, e.g. `pro`. */
   readonly id: string
   readonly name: string
-  /** The Polar product this plan is sold as. */
-  readonly productId: string
-  readonly limits: Limits
 }
-export interface PlanTable {
-  /** What a person without a paid plan gets. */
-  readonly free: Limits
-  readonly plans: readonly Plan[]
+/** Billing as entitlement and admission see it: on (these settings) or off (undefined). Provider-neutral. */
+export interface BillingSettings {
+  /** The plans offered at checkout, in order; the first is the upgrade a free person is offered. */
+  readonly plans: readonly CheckoutPlan[]
 }
-export type PolarServer = "sandbox" | "production"
-export interface BillingConfig {
-  readonly accessToken: string
-  readonly webhookSecret: string
-  readonly server: PolarServer
-  readonly table: PlanTable
-}
-
-/**
- * PLACEHOLDER plans: the shape POLAR_PLANS takes, not decided prices or limits. The product ids are
- * not real; an operator replaces them with the ids of products created in Polar.
- */
-export const PLACEHOLDER_PLANS: PlanTable = {
-  free: { cells: 1, members: 3 },
-  plans: [
-    { id: "pro", name: "Pro (placeholder)", productId: "00000000-0000-0000-0000-000000000001", limits: { cells: 5, members: 25 } },
-    { id: "team", name: "Team (placeholder)", productId: "00000000-0000-0000-0000-000000000002", limits: { cells: 20, members: null } },
-  ],
-}
-
-/** The settings that turn billing on; all or none. */
-export const BILLING_ENV = ["POLAR_ACCESS_TOKEN", "POLAR_WEBHOOK_SECRET", "POLAR_SERVER", "POLAR_PLANS"] as const
-export type BillingEnv = Partial<Record<(typeof BILLING_ENV)[number], string>>
-
-/** Plan ids the entitlement uses for "no paid plan" and "billing off". */
-const RESERVED_PLANS = new Set(["free", "unlimited"])
-const SLUG = /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/
-
-function limit(value: unknown, where: string): number | null {
-  if (value === null) return null
-  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) return value
-  throw new Error(`POLAR_PLANS: ${where} must be a non-negative integer or null (unlimited)`)
-}
-function limits(value: unknown, where: string): Limits {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error(`POLAR_PLANS: ${where} must be an object`)
-  const record = value as Record<string, unknown>
-  return { cells: limit(record.cells, `${where}.cells`), members: limit(record.members, `${where}.members`) }
-}
-
-/** Parse and check POLAR_PLANS; anything malformed refuses rather than guessing a limit. */
-export function parsePlans(text: string): PlanTable {
-  let raw: unknown
-  try { raw = JSON.parse(text) } catch { throw new Error("POLAR_PLANS must be JSON") }
-  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) throw new Error("POLAR_PLANS must be an object with free and plans")
-  const record = raw as Record<string, unknown>
-  if (!Array.isArray(record.plans)) throw new Error("POLAR_PLANS: plans must be an array")
-  const plans = record.plans.map((entry: unknown, index): Plan => {
-    const plan = (entry ?? {}) as Record<string, unknown>
-    if (typeof plan.id !== "string" || !SLUG.test(plan.id)) throw new Error(`POLAR_PLANS: plans[${index}].id must be a lowercase slug`)
-    if (RESERVED_PLANS.has(plan.id)) throw new Error(`POLAR_PLANS: plans[${index}].id "${plan.id}" is reserved`)
-    if (typeof plan.productId !== "string" || plan.productId.trim() === "") throw new Error(`POLAR_PLANS: plans[${index}].productId must be a Polar product id`)
-    const name = typeof plan.name === "string" && plan.name.trim() !== "" ? plan.name : plan.id
-    return { id: plan.id, name, productId: plan.productId, limits: limits(plan.limits, `plans[${index}].limits`) }
-  })
-  if (new Set(plans.map((plan) => plan.id)).size !== plans.length) throw new Error("POLAR_PLANS: plan ids must be unique")
-  if (new Set(plans.map((plan) => plan.productId)).size !== plans.length) throw new Error("POLAR_PLANS: product ids must be unique")
-  return { free: limits(record.free, "free"), plans }
-}
-
-/**
- * The deployment's billing, or undefined (billing off) when none of the settings is present. Some but
- * not all of them, or a malformed one, refuses: a half-configured deployment must not run unbilled
- * or bill without limits.
- */
-export function billingConfig(env: BillingEnv | Readonly<Record<string, string | undefined>>): BillingConfig | undefined {
-  const present = BILLING_ENV.filter((name) => env[name] !== undefined && env[name] !== "")
-  if (present.length === 0) return undefined
-  if (present.length !== BILLING_ENV.length) throw new Error(`${BILLING_ENV.join(", ")} go together; missing: ${BILLING_ENV.filter((name) => !present.includes(name)).join(", ")}`)
-  const server = env.POLAR_SERVER
-  if (server !== "sandbox" && server !== "production") throw new Error(`POLAR_SERVER is "sandbox" or "production", got ${JSON.stringify(server)}`)
-  return { accessToken: env.POLAR_ACCESS_TOKEN as string, webhookSecret: env.POLAR_WEBHOOK_SECRET as string, server, table: parsePlans(env.POLAR_PLANS as string) }
-}
+/** What a person without a paid plan (or whose plan was canceled) gets; migration 0011's billing_allowance holds the same constants. */
+export const FREE_LIMITS: Limits = { cells: 1, members: 3 }
 
 // ---------------------------------------------------------------------------------------------
-// The entitlement record (migration 0009_billing): one row per Polar subscription.
+// The per-payer limits record (migration 0011): written only by a provider adapter's reconcile.
 
 export type SubscriptionStatus = "active" | "past_due" | "canceled"
 
-/**
- * Polar's subscription status, as entitlement: trialing counts as active; past due keeps the plan
- * while Polar retries the payment (the only grace); unpaid (retries exhausted) and everything else not
- * being paid for (incomplete, expired, paused, canceled) is canceled. Unknown future statuses are
- * canceled, never granted.
- */
-export function statusOf(polarStatus: string): SubscriptionStatus {
-  if (polarStatus === "active" || polarStatus === "trialing") return "active"
-  if (polarStatus === "past_due") return "past_due"
-  return "canceled"
-}
-
-/** The fields of a Polar `subscription.*` webhook payload this module reads (SDK v1 snake_case). */
-export interface PolarSubscription {
-  readonly id: string
-  readonly status: string
-  readonly product_id: string
-  readonly created_at: string
-  readonly modified_at: string | null
-  readonly customer: { readonly external_id?: string | null }
-}
-
-/** bun:sqlite (tests, schema scripts) or D1: the same two calls. */
+/** bun:sqlite (tests, schema scripts) or D1: the same calls. */
+type Bound = { all<T>(): Promise<{ results: T[] }>; run(): Promise<unknown> }
 type Statement = {
-  bind?: (...params: unknown[]) => { all<T>(): Promise<{ results: T[] }>; run(): Promise<unknown> }
+  bind?: (...params: unknown[]) => Bound
   all?: (...params: unknown[]) => unknown[]
   run?: (...params: unknown[]) => unknown
 }
@@ -150,37 +66,71 @@ async function run(db: BillingDb, sql: string, ...params: unknown[]): Promise<vo
   if (statement.bind) await statement.bind(...params).run()
   else statement.run?.(...params)
 }
+export type WriteOutcome = "written" | "superseded" | "ignored"
 
-export type WebhookOutcome = "applied" | "stale" | "ignored"
+/** A payer's whole current state at the provider: their plan's label, its status, and its limits. */
+export interface Grant {
+  readonly plan: string
+  readonly status: SubscriptionStatus
+  readonly limits: Limits
+}
+/** Where a snapshot came from: the provider, the records it was computed from, and when it was read. */
+export interface SnapshotSource {
+  readonly provider: string
+  /** The provider records that decided it (e.g. subscription ids), for support; empty with none. */
+  readonly refs: readonly string[]
+  /** When the provider's state was read (epoch ms, taken before the read). */
+  readonly asOf: number
+}
 
 /**
- * Record one subscription event. Webhooks may arrive late, twice or out of order: a row only moves to
- * a version at least as new as the one it holds (Polar's `modified_at`), so a replayed or reordered
- * older event can never restore a canceled plan or cancel a renewed one.
+ * Record a payer's whole state, read from the provider, in one statement. Nothing is derived from a
+ * single event, so delivery order, duplicates and replays do not matter: every write is the provider's
+ * state as a whole. A snapshot only replaces one read no later than it (`as_of`), so a slow reconcile
+ * that read the provider earlier never overwrites a later one; an equal one rewrites the same state.
+ * Two reconciles that overlap both write authoritative snapshots, and the later read wins. Any change
+ * after a read is followed by its own webhook, whose reconcile reads again, so the row converges on the
+ * provider's state.
  */
-export async function applySubscription(db: BillingDb, subscription: PolarSubscription, now: number): Promise<WebhookOutcome> {
-  const subject = subscription.customer.external_id
-  // A customer with no external id was not created by this Studio; nothing here can be entitled.
-  if (typeof subject !== "string" || subject === "") return "ignored"
-  const version = Date.parse(subscription.modified_at ?? subscription.created_at)
-  if (!Number.isFinite(version)) return "ignored"
-  const before = await rows<{ version: number }>(db, `select "version" from "billing_subscription" where "id" = ?`, subscription.id)
-  await run(db,
-    `insert into "billing_subscription" ("id", "subject_id", "product_id", "status", "polar_status", "version", "updated_at") values (?, ?, ?, ?, ?, ?, ?)
-     on conflict ("id") do update set "subject_id" = excluded."subject_id", "product_id" = excluded."product_id", "status" = excluded."status",
-       "polar_status" = excluded."polar_status", "version" = excluded."version", "updated_at" = excluded."updated_at"
-     where excluded."version" >= "billing_subscription"."version"`,
-    subscription.id, subject, subscription.product_id, statusOf(subscription.status), subscription.status, version, now)
-  return before[0] !== undefined && before[0].version > version ? "stale" : "applied"
+export async function writeLimits(db: BillingDb, payerId: string, grant: Grant, source: SnapshotSource, now: number): Promise<WriteOutcome> {
+  if (payerId === "" || !Number.isSafeInteger(source.asOf)) return "ignored"
+  const written = await rows(db,
+    `insert into "billing_limit" ("payer_id", "plan", "status", "cells", "members", "provider", "provider_ref", "as_of", "updated_at") values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     on conflict ("payer_id") do update set "plan" = excluded."plan", "status" = excluded."status", "cells" = excluded."cells", "members" = excluded."members",
+       "provider" = excluded."provider", "provider_ref" = excluded."provider_ref", "as_of" = excluded."as_of", "updated_at" = excluded."updated_at"
+     where excluded."as_of" >= "billing_limit"."as_of"
+     returning 1 as "written"`,
+    payerId, grant.plan, grant.status, grant.limits.cells, grant.limits.members, source.provider, [...source.refs].sort().join(" "), source.asOf, now)
+  return written.length > 0 ? "written" : "superseded"
 }
 
-/** A webhook delivery id seen before (Polar retries and attackers replay); kept a day, past the signature's 5-minute window. */
-export async function webhookSeen(db: BillingDb, id: string): Promise<boolean> {
-  return (await rows(db, `select 1 from "billing_webhook" where "id" = ?`, id)).length > 0
+/**
+ * The database's billing mode (migration 0011's billing_mode) is the one switch: its limit triggers and
+ * every request read it, so the API and the database always apply the same policy. A deploy writes it
+ * once, from that deployment's billing settings (alchemy.run.ts, scripts/celld-migrate.ts), in this one
+ * statement; no request ever writes it, so isolates of two deployments serving at once cannot flip it.
+ */
+export const billingModeStatement = (on: boolean) =>
+  `INSERT INTO "billing_mode" ("id", "enabled") VALUES (1, ${on ? 1 : 0}) ON CONFLICT ("id") DO UPDATE SET "enabled" = excluded."enabled"`
+
+/** Whether the stored billing mode is on. A database without the row (or without migration 0011) is off, as its triggers are. */
+export async function billingModeOn(db: BillingDb): Promise<boolean> {
+  try {
+    const [mode] = await rows<{ enabled: number }>(db, `select "enabled" from "billing_mode" where "id" = 1`)
+    return mode?.enabled === 1
+  } catch (error) {
+    if (String(error instanceof Error ? error.message : error).includes("no such table: billing_mode")) return false
+    throw error
+  }
 }
-export async function recordWebhook(db: BillingDb, id: string, now: number): Promise<void> {
-  await run(db, `insert into "billing_webhook" ("id", "received_at") values (?, ?) on conflict ("id") do nothing`, id, now)
-  await run(db, `delete from "billing_webhook" where "received_at" < ?`, now - 24 * 60 * 60 * 1000)
+
+/**
+ * Billing as a request sees it: on or off as the stored mode says, never as this isolate's settings
+ * say. On, the deployment's checkout plans when this isolate has them, else none (limits still apply,
+ * nothing is offered at checkout).
+ */
+export async function billingOf(db: BillingDb, settings: BillingSettings | undefined): Promise<BillingSettings | undefined> {
+  return await billingModeOn(db) ? settings ?? { plans: [] } : undefined
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -197,55 +147,42 @@ export interface Entitlement {
 
 export const UNLIMITED: Entitlement = { billing: "disabled", plan: "unlimited", status: "active", limits: { cells: null, members: null } }
 
-const roomy = (value: number | null) => value ?? Number.POSITIVE_INFINITY
-const richer = (a: Limits, b: Limits) => roomy(a.cells) - roomy(b.cells) || roomy(a.members) - roomy(b.members)
-
 /**
- * A person's entitlement: the most generous plan among their active or past-due subscriptions (past
- * due keeps the plan while Polar retries the payment; Polar cancels it if that fails), else the free
- * limits. A subscription to a product the plan table does not name grants nothing.
+ * A person's entitlement, from their limits record: its plan and limits while active or past due (past
+ * due keeps the plan while the provider retries the payment), else the free limits.
  */
-export async function entitlementOf(db: BillingDb, billing: BillingConfig | undefined, subjectId: string): Promise<Entitlement> {
+export async function entitlementOf(db: BillingDb, billing: BillingSettings | undefined, subjectId: string): Promise<Entitlement> {
   if (billing === undefined) return UNLIMITED
-  const subscriptions = await rows<{ product_id: string; status: SubscriptionStatus }>(db, `select "product_id", "status" from "billing_subscription" where "subject_id" = ? order by "version" desc`, subjectId)
-  let best: Entitlement | undefined
-  for (const subscription of subscriptions) {
-    if (subscription.status === "canceled") continue
-    const plan = billing.table.plans.find((candidate) => candidate.productId === subscription.product_id)
-    if (plan === undefined) continue
-    if (best === undefined || richer(plan.limits, best.limits) > 0) best = { billing: "enabled", plan: plan.id, status: subscription.status, limits: plan.limits }
-  }
-  if (best !== undefined) return best
-  return { billing: "enabled", plan: "free", status: subscriptions.some((row) => row.status === "canceled") ? "canceled" : "none", limits: billing.table.free }
+  const [row] = await rows<{ plan: string; status: SubscriptionStatus; cells: number | null; members: number | null }>(db, `select "plan", "status", "cells", "members" from "billing_limit" where "payer_id" = ?`, subjectId)
+  if (row === undefined) return { billing: "enabled", plan: "free", status: "none", limits: FREE_LIMITS }
+  if (row.status === "canceled") return { billing: "enabled", plan: "free", status: "canceled", limits: FREE_LIMITS }
+  return { billing: "enabled", plan: row.plan, status: row.status, limits: { cells: row.cells, members: row.members } }
 }
 
-/**
- * The workspaces a person pays for: each is one hosted cell. Counted by the payer recorded at creation,
- * not by today's owner role, so handing the owner role around never frees a cell.
- */
+/** The workspaces a person pays for: each is one hosted cell. Counted by the payer recorded at creation, not by today's owner role, so handing the owner role around never frees a cell. */
 export async function ownedWorkspaces(db: BillingDb, subjectId: string): Promise<number> {
   const [row] = await rows<{ n: number }>(db, `select count(*) as "n" from "billing_workspace" where "payer_id" = ?`, subjectId)
   return row?.n ?? 0
 }
-/** Members and still-pending, unexpired invitations of a workspace. */
-export async function workspaceSeats(db: BillingDb, organizationId: string, now = Date.now()): Promise<number> {
-  const [members] = await rows<{ n: number }>(db, `select count(*) as "n" from "member" where "organizationId" = ?`, organizationId)
-  const [invited] = await rows<{ n: number }>(db, `select count(*) as "n" from "invitation" where "organizationId" = ? and "status" = 'pending' and ${UNEXPIRED}`, organizationId, ...unexpired(now))
-  return (members?.n ?? 0) + (invited?.n ?? 0)
-}
-/**
- * Better Auth writes dates to SQLite/D1 as ISO strings; a row written as epoch milliseconds compares
- * as a number. Either way an invitation whose expiry has passed holds no seat.
- */
-const UNEXPIRED = `(case when typeof("expiresAt") in ('integer', 'real') then "expiresAt" > ? else "expiresAt" > ? end)`
-const unexpired = (now: number) => [now, new Date(now).toISOString()]
 
-/** Who pays for a workspace: the payer recorded at its creation, else (a workspace from before that record) its earliest owner. */
+/**
+ * A workspace's members, and with `invitations` its pending unexpired invitations too, in one statement
+ * so both come from the same snapshot. Invitations are counted only to refuse sending one the workspace
+ * could not take; the member limit itself is enforced when a member joins (migration 0011).
+ */
+export async function workspaceMembers(db: BillingDb, organizationId: string, invitations = false, now = Date.now()): Promise<number> {
+  const invited = invitations
+    ? ` + (select count(*) from "invitation" where "organizationId" = ? and "status" = 'pending' and (case when typeof("expiresAt") in ('integer', 'real') then "expiresAt" > ? else "expiresAt" > ? end))`
+    : ""
+  const [row] = await rows<{ n: number }>(db, `select (select count(*) from "member" where "organizationId" = ?)${invited} as "n"`,
+    organizationId, ...invitations ? [organizationId, now, new Date(now).toISOString()] : [])
+  return row?.n ?? 0
+}
+
+/** Who pays for a billed workspace: the payer recorded at its creation (migrations 0010, 0011), or null (not billed, so not limited). */
 export async function workspaceOwner(db: BillingDb, organizationId: string): Promise<string | null> {
-  const [payer] = await rows<{ payer_id: string }>(db, `select "payer_id" from "billing_workspace" where "organization_id" = ?`, organizationId)
-  if (payer !== undefined) return payer.payer_id
-  const [row] = await rows<{ userId: string }>(db, `select "userId" from "member" where "organizationId" = ? and (',' || replace("role", ' ', '') || ',') like '%,owner,%' order by "createdAt" asc limit 1`, organizationId)
-  return row?.userId ?? null
+  const [payer] = await rows<{ payer_id: string }>(db, `select "payer_id" from "billing_workspace" where "organization_id" = ? and "billed" = 1`, organizationId)
+  return payer?.payer_id ?? null
 }
 
 export type LimitName = keyof Limits
@@ -264,89 +201,61 @@ export interface PlanLimitRefusal {
 }
 export type Admission = { readonly kind: "admitted" } | PlanLimitRefusal
 
-/** True when the person pays for a plan now: plan changes then go through Polar's portal, never a second checkout. */
-export const subscribed = (entitlement: Entitlement) => entitlement.billing === "enabled" && entitlement.plan !== "free"
+/**
+ * True when the person has a live (active or past-due) subscription, whatever its product: plan changes
+ * then go through the provider's portal, never a second checkout.
+ */
+export const subscribed = (entitlement: Entitlement) => entitlement.billing === "enabled" && (entitlement.status === "active" || entitlement.status === "past_due")
 
 /**
- * Where a person can raise a limit: their customer portal when they already pay (Polar changes the
- * plan there), else a checkout for the first plan (in POLAR_PLANS order) that admits one more, else null.
+ * Where a person can raise a limit: their customer portal when they already pay (the provider changes
+ * the plan there), else a checkout for the first plan offered, else null.
  */
-export function upgradeUrl(billing: BillingConfig, baseURL: string, entitlement: Entitlement, name: LimitName, used: number): string | null {
+export function upgradeUrl(billing: BillingSettings, baseURL: string, entitlement: Entitlement): string | null {
   if (subscribed(entitlement)) return new URL("/api/billing/portal", baseURL).href
-  const plan = billing.table.plans.find((candidate) => roomy(candidate.limits[name]) > used)
+  const plan = billing.plans[0]
   return plan === undefined ? null : new URL(`/api/billing/checkout?plan=${encodeURIComponent(plan.id)}`, baseURL).href
 }
 
-/** `used` counts what the new workspace or seat comes after; it is admitted while that is under the limit. */
-async function admit(db: BillingDb, billing: BillingConfig | undefined, baseURL: string, payerId: string, callerId: string, name: LimitName, used: () => Promise<number>): Promise<Admission> {
-  if (billing === undefined) return { kind: "admitted" }
+/** Admitted while `used` is under the payer's limit, else the typed refusal. A check only: the database enforces (migration 0011). */
+async function admit(db: BillingDb, billing: BillingSettings, baseURL: string, payerId: string, callerId: string, name: LimitName, used: number): Promise<Admission> {
   const entitlement = await entitlementOf(db, billing, payerId)
   const allowed = entitlement.limits[name]
-  if (allowed === null) return { kind: "admitted" }
-  const count = await used()
-  if (count < allowed) return { kind: "admitted" }
+  if (allowed === null || used < allowed) return { kind: "admitted" }
   // Only the payer can raise their own plan; a link would otherwise bill the caller for someone else's workspace.
   const payer = payerId === callerId
-  return { kind: "plan-limit", limit: name, plan: entitlement.plan, allowed, used: count, upgradeUrl: payer ? upgradeUrl(billing, baseURL, entitlement, name, count) : null, upgradeBy: payer ? "you" : "workspace-owner" }
+  return { kind: "plan-limit", limit: name, plan: entitlement.plan, allowed, used, upgradeUrl: payer ? upgradeUrl(billing, baseURL, entitlement) : null, upgradeBy: payer ? "you" : "workspace-owner" }
 }
 
-/** May this person create one more workspace (and its hosted cell)? Every creation path asks this first. */
-export const admitCell = (db: BillingDb, billing: BillingConfig | undefined, baseURL: string, subjectId: string) =>
-  admit(db, billing, baseURL, subjectId, subjectId, "cells", () => ownedWorkspaces(db, subjectId))
-
-/**
- * After a workspace is created: is it within its payer's limit? Concurrent creations can all pass
- * admitCell before any is written; this recounts with the new row in place. Workspaces are ranked by
- * creation order, so of a racing burst exactly the earliest ones that fit stay and the rest are undone.
- */
-export async function admitCreatedCell(db: BillingDb, billing: BillingConfig | undefined, baseURL: string, organizationId: string): Promise<Admission> {
+/** May this person create another workspace? Unbilled, always. */
+export async function admitCell(db: BillingDb, billing: BillingSettings | undefined, baseURL: string, subjectId: string): Promise<Admission> {
   if (billing === undefined) return { kind: "admitted" }
-  const [created] = await rows<{ payer_id: string; seq: number }>(db, `select "payer_id", "seq" from "billing_workspace" where "organization_id" = ?`, organizationId)
-  if (created === undefined) return { kind: "admitted" }
-  return admit(db, billing, baseURL, created.payer_id, created.payer_id, "cells", async () => {
-    const [earlier] = await rows<{ n: number }>(db, `select count(*) as "n" from "billing_workspace" where "payer_id" = ? and "seq" < ?`, created.payer_id, created.seq)
-    return earlier?.n ?? 0
-  })
-}
-
-/** May this workspace take one more member or invitation? Its payer's plan decides; a workspace without one is not limited. */
-export async function admitMember(db: BillingDb, billing: BillingConfig | undefined, baseURL: string, organizationId: string, callerId: string): Promise<Admission> {
-  if (billing === undefined) return { kind: "admitted" }
-  const payer = await workspaceOwner(db, organizationId)
-  if (payer === null) return { kind: "admitted" }
-  return admit(db, billing, baseURL, payer, callerId, "members", () => workspaceSeats(db, organizationId))
+  return admit(db, billing, baseURL, subjectId, subjectId, "cells", await ownedWorkspaces(db, subjectId))
 }
 
 /**
- * After an invitation is created: is it within the payer's member limit? Members hold their seats
- * first, then pending invitations in creation order, so of concurrent invitations exactly the earliest
- * ones that fit stay and the rest are undone.
+ * May this workspace take another member? With `invitations`, its pending invitations count too: that
+ * is the check before sending one, so an admin is told before inviting someone who could not join. Its
+ * payer's plan decides; a workspace without one is not limited.
  */
-export async function admitCreatedInvitation(db: BillingDb, billing: BillingConfig | undefined, baseURL: string, organizationId: string, invitationId: string, callerId: string, now = Date.now()): Promise<Admission> {
+export async function admitMember(db: BillingDb, billing: BillingSettings | undefined, baseURL: string, organizationId: string, callerId: string, invitations = false): Promise<Admission> {
   if (billing === undefined) return { kind: "admitted" }
   const payer = await workspaceOwner(db, organizationId)
   if (payer === null) return { kind: "admitted" }
-  return admit(db, billing, baseURL, payer, callerId, "members", async () => {
-    const [members] = await rows<{ n: number }>(db, `select count(*) as "n" from "member" where "organizationId" = ?`, organizationId)
-    const [earlier] = await rows<{ n: number }>(db,
-      `select count(*) as "n" from "invitation" where "organizationId" = ? and "status" = 'pending' and ${UNEXPIRED} and "rowid" < (select "rowid" from "invitation" where "id" = ?)`,
-      organizationId, ...unexpired(now), invitationId)
-    return (members?.n ?? 0) + (earlier?.n ?? 0)
-  })
+  return admit(db, billing, baseURL, payer, callerId, "members", await workspaceMembers(db, organizationId, invitations))
 }
 
-/** Undo a workspace created past its payer's limit (its members, invitations and payer record go with it). */
-export async function removeWorkspace(db: BillingDb, organizationId: string): Promise<void> {
-  for (const table of ["invitation", "member"]) await run(db, `delete from "${table}" where "organizationId" = ?`, organizationId)
-  await run(db, `delete from "organization" where "id" = ?`, organizationId)
-  await run(db, `delete from "billing_workspace" where "organization_id" = ?`, organizationId)
+/** The limit a database refusal names (migration 0011's RAISE), or null for any other error. */
+export function limitRaised(error: unknown): LimitName | null {
+  const message = error instanceof Error ? error.message : typeof error === "string" ? error : ""
+  if (message.includes("billing.cells_limit")) return "cells"
+  if (message.includes("billing.members_limit")) return "members"
+  return null
 }
-/** Undo an invitation created past the workspace's member limit. */
-export const removeInvitation = (db: BillingDb, invitationId: string) => run(db, `delete from "invitation" where "id" = ?`, invitationId)
 
 export function refusalMessage(refusal: PlanLimitRefusal): string {
   if (refusal.limit === "cells") return `Your ${refusal.plan} plan allows ${refusal.allowed} workspace${refusal.allowed === 1 ? "" : "s"}; upgrade to create another.`
-  const allows = `This workspace's ${refusal.plan} plan allows ${refusal.allowed} member${refusal.allowed === 1 ? "" : "s"} (including pending invitations)`
+  const allows = `This workspace's ${refusal.plan} plan allows ${refusal.allowed} member${refusal.allowed === 1 ? "" : "s"}`
   return refusal.upgradeBy === "you" ? `${allows}; upgrade to add another.` : `${allows}; ask the workspace's owner to upgrade.`
 }
 
@@ -365,15 +274,14 @@ export interface BillingDocument {
 }
 
 /** Everything the UI shows about billing, decided here; with billing off it has no actions at all. */
-export async function billingDocument(db: BillingDb, billing: BillingConfig | undefined, baseURL: string, subjectId: string): Promise<BillingDocument> {
+export async function billingDocument(db: BillingDb, billing: BillingSettings | undefined, baseURL: string, subjectId: string): Promise<BillingDocument> {
   const entitlement = await entitlementOf(db, billing, subjectId)
   const usage = { cells: await ownedWorkspaces(db, subjectId) }
   if (billing === undefined) return { entitlement, usage, actions: [] }
   // A paying person changes plan in the portal; a second checkout would bill them twice.
-  const actions: BillingAction[] = subscribed(entitlement) ? [] : billing.table.plans
-    .filter((plan) => richer(plan.limits, entitlement.limits) > 0)
+  const actions: BillingAction[] = subscribed(entitlement) ? [] : billing.plans
     .map((plan) => ({ kind: "checkout", label: `Upgrade to ${plan.name}`, href: new URL(`/api/billing/checkout?plan=${encodeURIComponent(plan.id)}`, baseURL).href }))
-  // Anyone billed once has a Polar customer and can manage it; a person never billed has nothing to manage.
+  // Anyone billed once is the provider's customer and can manage it; a person never billed has nothing to manage.
   if (entitlement.status !== "none") actions.push({ kind: "portal", label: "Manage billing", href: new URL("/api/billing/portal", baseURL).href })
   return { entitlement, usage, actions }
 }
