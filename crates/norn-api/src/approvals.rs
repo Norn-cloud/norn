@@ -62,10 +62,10 @@ pub(crate) const WOULD_COMMIT: &str = "approval.would_commit";
 pub const APPROVAL_STEP: &str = "approval";
 
 /// The command id prefix of every parked call ([`command_id`]).
-pub(crate) const COMMAND_PREFIX: &str = "norn.approval/";
+pub(crate) const COMMAND_PREFIX: &str = norn_cell::decision_ledger::APPROVAL_COMMAND_PREFIX;
 
 /// The option that approves a parked call.
-pub const APPROVE: &str = "approve";
+pub const APPROVE: &str = norn_cell::decision_ledger::APPROVE_CHOICE;
 
 /// The option that rejects a parked call.
 pub const REJECT: &str = "reject";

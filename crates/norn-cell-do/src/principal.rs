@@ -58,6 +58,14 @@ pub trait PrincipalResolver {
     fn caller(&self) -> Option<&CallerSlot> {
         None
     }
+
+    /// The declared role table this resolver's verified callers' roles come
+    /// from (APPROVAL-RECOVERY-1): a wake with no request in flight acts as
+    /// a recorded principal only under it. `None` for a resolver that
+    /// verifies no one, which acts as no one at a wake.
+    fn role_table(&self) -> Option<&'static str> {
+        None
+    }
 }
 
 /// The lifetime of one request's verified principal: it ends when this
@@ -293,6 +301,10 @@ impl PrincipalResolver for TokenPrincipals {
     fn caller(&self) -> Option<&CallerSlot> {
         Some(&self.slot)
     }
+
+    fn role_table(&self) -> Option<&'static str> {
+        self.keys.lock().ok().map(|keys| keys.verifier.role_table())
+    }
 }
 
 /// Synthetic principals for tests and local smoke builds, named as
@@ -359,5 +371,9 @@ impl PrincipalResolver for FixturePrincipals {
 
     fn caller(&self) -> Option<&CallerSlot> {
         Some(&self.slot)
+    }
+
+    fn role_table(&self) -> Option<&'static str> {
+        Some(FIXTURE_ROLES)
     }
 }

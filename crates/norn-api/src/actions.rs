@@ -617,6 +617,25 @@ fn caller_receipt<E: SqlEngine>(
     })
 }
 
+/// Whether the call keyed `idempotency_key` of `action_id` committed: its
+/// idempotency record exists (APPROVAL-RECOVERY-1 settles an approved call
+/// that committed before the host recorded so).
+///
+/// # Errors
+/// A host failure.
+pub(crate) fn call_recorded<E: SqlEngine>(
+    store: &norn_cell::CellStore<E>,
+    action_id: &str,
+    idempotency_key: &str,
+) -> Result<bool, Refusal> {
+    let record_key = format!("{action_id}/{idempotency_key}");
+    Ok(store
+        .read()
+        .version(MAIN_WORLD, ACTION_CALL_TYPE, &record_key)
+        .map_err(Refusal::host)?
+        > 0)
+}
+
 /// The authenticated receipt of the commit that wrote this call's
 /// idempotency record: a replay reports the original commit, never a new one.
 fn original_receipt<E: SqlEngine>(

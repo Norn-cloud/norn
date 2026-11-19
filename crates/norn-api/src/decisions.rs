@@ -24,8 +24,8 @@ use std::collections::BTreeMap;
 
 use http::StatusCode;
 use norn_cell::decision_ledger::{
-    DecisionRequest, DecisionResolved, DecisionRow, MAX_EXPIRES_IN_MS, MAX_TEXT_CHARS,
-    OptionEffect, Resolution,
+    ApprovedCallState, DecisionRequest, DecisionResolved, DecisionRow, MAX_EXPIRES_IN_MS,
+    MAX_TEXT_CHARS, OptionEffect, Resolution,
 };
 use norn_cell::engine::SqlEngine;
 use norn_cell::flow_run::RunStarter;
@@ -912,27 +912,159 @@ pub fn decide<E: SqlEngine>(
     match approved {
         None => {}
         Some(Approval::Now(call)) => {
-            decided.call = Some(commit_approved(
-                host,
-                &call,
-                disclosure,
-                request.now,
-                as_requester,
-            ));
+            let (call, settle) =
+                commit_approved(host, &call, disclosure, request.now, as_requester);
+            // APPROVAL-RECOVERY-1: a settlement that is not recorded leaves
+            // the call due, and the host's wake settles it again from the
+            // cell (a committed call by its idempotency record), so the
+            // answer stands either way.
+            let _recorded = record_settlement(host, &decided.decision.id, &call, settle);
+            decided.call = Some(call);
         }
         Some(Approval::Replayed(command)) => {
-            decided.call = commit_replayed(
+            // APPROVAL-RECOVERY-1: an approval whose call is still due (the
+            // host stopped before it committed) commits it now, once; one
+            // refused since answers its refusal.
+            decided.call = match resume_approved(
                 host,
-                &decided.run.id,
-                &command,
+                &decided.decision.id,
                 disclosure,
                 request.now,
                 as_requester,
             )
-            .map_err(Box::from)?;
+            .map_err(Box::from)?
+            {
+                Some(Resumed::Dispatched(call, _) | Resumed::Refused(call)) => Some(call),
+                None | Some(Resumed::Committed) => commit_replayed(
+                    host,
+                    &decided.run.id,
+                    &command,
+                    disclosure,
+                    request.now,
+                    as_requester,
+                )
+                .map_err(Box::from)?,
+            };
         }
     }
     Ok(decided)
+}
+
+/// APPROVAL-RECOVERY-1: what dispatching an approved call settles.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Settle {
+    /// It committed.
+    Committed,
+    /// It was refused for good: its approval never executes it.
+    Refused,
+    /// It could not be tried (a host failure, no principal to act as): it
+    /// stays due.
+    Retry,
+}
+
+/// What [`resume_approved`] found or did.
+#[derive(Debug)]
+pub(crate) enum Resumed {
+    /// The call had committed already; nothing was dispatched.
+    Committed,
+    /// The call was refused earlier; its refusal.
+    Refused(DecidedCall),
+    /// The call was dispatched now, and what that settled.
+    Dispatched(DecidedCall, Settle),
+}
+
+/// Record how an approved call settled; `false` when nothing was recorded
+/// (it stays due, or someone settled it first).
+fn record_settlement<E: SqlEngine>(
+    host: &DevHost<E>,
+    decision_id: &str,
+    call: &DecidedCall,
+    settle: Settle,
+) -> Result<bool, Refusal> {
+    let refused = match settle {
+        Settle::Retry => return Ok(false),
+        Settle::Committed => None,
+        Settle::Refused => Some(
+            call.code
+                .as_deref()
+                .unwrap_or(crate::approvals::approval_codes::DEFINITION_CHANGED),
+        ),
+    };
+    let _epoch = host.definition_read()?;
+    let cell = host.cell()?;
+    cell.store()
+        .settle_approved_call(MAIN_WORLD, decision_id, refused)
+        .map_err(Refusal::host)
+}
+
+/// APPROVAL-RECOVERY-1 (PARKED-CRASH for approvals): the approval of a
+/// parked action call is recorded with the call's due record in one
+/// transaction, and the call commits after it, as its requester. A host
+/// that stops in between leaves the call due: this commits it exactly once
+/// through the same dispatch and the same fence as the first try (the
+/// action's digest, the gate's definition and revision, the requester's
+/// definitions pin, all compared inside the dispatch's own epoch and cell
+/// hold), or settles its refusal, which stays visible on the decision
+/// (`approval.definition_changed` when the definitions changed meanwhile).
+/// A call that committed before its settlement was recorded is settled
+/// from its idempotency record and never dispatched again; a dispatch that
+/// replays changes nothing. `None` when the decision approved no call.
+///
+/// # Errors
+/// A host failure reading or settling the call; it stays due.
+pub(crate) fn resume_approved<E: SqlEngine>(
+    host: &DevHost<E>,
+    decision_id: &str,
+    disclosure: &dyn QuestionRuntime<E>,
+    now: LogicalTime,
+    as_requester: AsStarter<'_>,
+) -> Result<Option<Resumed>, Refusal> {
+    let held = {
+        let _epoch = host.definition_read()?;
+        let cell = host.cell()?;
+        let reader = cell.store().read();
+        let Some(row) = reader
+            .approved_call(MAIN_WORLD, decision_id)
+            .map_err(Refusal::host)?
+        else {
+            return Ok(None);
+        };
+        match row.state {
+            ApprovedCallState::Committed => return Ok(Some(Resumed::Committed)),
+            ApprovedCallState::Refused => {
+                return Ok(Some(Resumed::Refused(DecidedCall {
+                    committed: false,
+                    code: row.code,
+                })));
+            }
+            ApprovedCallState::Due => {}
+        }
+        let held = reader
+            .outbox_command(&row.command_id)
+            .map_err(Refusal::host)?
+            .and_then(|command| {
+                command
+                    .command
+                    .get("payload")
+                    .and_then(|payload| payload.get("approval"))
+                    .and_then(crate::approvals::held_call)
+            })
+            .ok_or_else(|| Refusal::host("an approved call's parked command is missing"))?;
+        if crate::actions::call_recorded(
+            cell.store(),
+            &held.call.action,
+            &held.call.idempotency_key,
+        )? {
+            cell.store()
+                .settle_approved_call(MAIN_WORLD, decision_id, None)
+                .map_err(Refusal::host)?;
+            return Ok(Some(Resumed::Committed));
+        }
+        held
+    };
+    let (call, settle) = commit_approved(host, &held, disclosure, now, as_requester);
+    record_settlement(host, decision_id, &call, settle)?;
+    Ok(Some(Resumed::Dispatched(call, settle)))
 }
 
 /// An approval [`decide_held`] leaves to commit once the cell is released.
@@ -1017,7 +1149,7 @@ fn commit_approved<E: SqlEngine>(
     disclosure: &dyn QuestionRuntime<E>,
     now: LogicalTime,
     as_requester: AsStarter<'_>,
-) -> DecidedCall {
+) -> (DecidedCall, Settle) {
     let request = crate::actions::ActionRequest {
         input: RuntimeValue::Object(call.call.input.clone()),
         idempotency_key: call.call.idempotency_key.clone(),
@@ -1064,18 +1196,21 @@ fn commit_replayed<E: SqlEngine>(
         input: RuntimeValue::Object(waiting.input),
         idempotency_key: waiting.idempotency_key,
     };
-    Ok(Some(commit_as_requester(
-        host,
-        &waiting.starter,
-        &waiting.action,
-        &request,
-        &crate::actions::Approved::Parked(command),
-        // A run's step calls unpinned.
-        None,
-        disclosure,
-        now,
-        as_requester,
-    )))
+    Ok(Some(
+        commit_as_requester(
+            host,
+            &waiting.starter,
+            &waiting.action,
+            &request,
+            &crate::actions::Approved::Parked(command),
+            // A run's step calls unpinned.
+            None,
+            disclosure,
+            now,
+            as_requester,
+        )
+        .0,
+    ))
 }
 
 /// One approved call through the shared dispatch as `requester`, fenced by
@@ -1095,7 +1230,7 @@ fn commit_as_requester<E: SqlEngine>(
     disclosure: &dyn QuestionRuntime<E>,
     now: LogicalTime,
     as_requester: AsStarter<'_>,
-) -> DecidedCall {
+) -> (DecidedCall, Settle) {
     let query = crate::actions::ActionQuery {
         org_id: Some(host.scope().org_id.clone()),
         environment_id: Some(host.scope().environment_id.clone()),
@@ -1115,22 +1250,36 @@ fn commit_as_requester<E: SqlEngine>(
             Some(approved),
         )
     };
-    let refused = |code: &str| DecidedCall {
-        committed: false,
-        code: Some(code.to_owned()),
+    let refused = |code: &str, settle: Settle| {
+        (
+            DecidedCall {
+                committed: false,
+                code: Some(code.to_owned()),
+            },
+            settle,
+        )
     };
     match as_requester(requester, &mut commit) {
-        Some(Ok(ActionAnswer::Receipt(_))) => DecidedCall {
-            committed: true,
-            code: None,
-        },
+        Some(Ok(ActionAnswer::Receipt(_))) => (
+            DecidedCall {
+                committed: true,
+                code: None,
+            },
+            Settle::Committed,
+        ),
         // Parking anew is impossible past the fence; never a commit.
-        Some(Ok(ActionAnswer::Pending(_))) => {
-            refused(crate::approvals::approval_codes::DEFINITION_CHANGED)
+        Some(Ok(ActionAnswer::Pending(_))) => refused(
+            crate::approvals::approval_codes::DEFINITION_CHANGED,
+            Settle::Refused,
+        ),
+        // A host failure decided nothing about the call: it stays due.
+        Some(Err(refusal)) if refusal.category == crate::refusal::RefusalCategory::Internal => {
+            refused(&refusal.code, Settle::Retry)
         }
-        Some(Err(refusal)) => refused(&refusal.code),
-        // The host cannot act as the requester: the call is denied.
-        None => refused(&crate::actions::action_denied().code),
+        Some(Err(refusal)) => refused(&refusal.code, Settle::Refused),
+        // The host cannot act as the requester now: the call is denied for
+        // this try and stays due.
+        None => refused(&crate::actions::action_denied().code, Settle::Retry),
     }
 }
 

@@ -578,6 +578,22 @@ pub fn handle_with<E: SqlEngine>(
     )
 }
 
+/// TIMER-ALARM-1: the cell's due work at `now`, as the alarm runs it, with
+/// the approved calls a stopped host left due committed first as their
+/// requesters under `principals` (APPROVAL-RECOVERY-1). `questions` is the
+/// cell's receipt-disclosure authority, as for [`handle_all`].
+///
+/// # Errors
+/// As [`norn_api::timers::run_due`].
+pub fn run_due<E: SqlEngine>(
+    host: &DevHost<E>,
+    principals: &dyn PrincipalResolver,
+    questions: Option<&dyn AdHocQuestions<E>>,
+    now: norn_kernel::LogicalTime,
+) -> Result<norn_api::timers::DueWork, Refusal> {
+    crate::runs::run_due(host, questions, principals, now)
+}
+
 /// Dispatch one request; `kinds` validates the retained definitions this
 /// cell admits (dashboards always; agents once a checker is registered).
 pub fn handle_all<E: SqlEngine>(

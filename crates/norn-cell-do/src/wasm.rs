@@ -409,7 +409,7 @@ impl NornCell {
     pub fn run_due(&mut self, now_ms: f64) -> Result<Due, JsValue> {
         let work = self
             .tenant
-            .run_due(millis(now_ms))
+            .run_due(self.principals.resolver(), millis(now_ms))
             .map_err(|refusal| rejected(refusal.code))?;
         Ok(Due {
             committed: work.committed(),

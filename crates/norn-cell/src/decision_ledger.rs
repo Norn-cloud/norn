@@ -35,8 +35,17 @@ pub const DECISION_RESOLVED: &str = "norn.decision.resolved";
 
 pub(crate) const DECISION: &str = "_norn_decision";
 
+/// APPROVAL-RECOVERY-1: the command id prefix of a parked action call
+/// (APPROVAL-1). Its approval makes the call due work.
+pub const APPROVAL_COMMAND_PREFIX: &str = "norn.approval/";
+
+/// The option that approves a parked action call.
+pub const APPROVE_CHOICE: &str = "approve";
+
+pub(crate) const APPROVED_CALL: &str = "_norn_approved_call";
+
 /// The decision ledger's DDL, applied with the other system tables.
-pub(crate) const DDL: [&str; 2] = [
+pub(crate) const DDL: [&str; 4] = [
     r#"CREATE TABLE IF NOT EXISTS "_norn_decision" (
   "world" TEXT NOT NULL,
   "decision_id" TEXT NOT NULL,
@@ -55,6 +64,18 @@ pub(crate) const DDL: [&str; 2] = [
   PRIMARY KEY ("world", "decision_id")
 )"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_decision/run" ON "_norn_decision" ("world", "run_id", "decision_id")"#,
+    // APPROVAL-RECOVERY-1: every approved action call, due until the host
+    // settles it (committed, or refused with its code).
+    r#"CREATE TABLE IF NOT EXISTS "_norn_approved_call" (
+  "world" TEXT NOT NULL,
+  "decision_id" TEXT NOT NULL,
+  "command_id" TEXT NOT NULL,
+  "resolved_at_ms" INTEGER NOT NULL,
+  "state" TEXT NOT NULL,
+  "code" TEXT,
+  PRIMARY KEY ("world", "decision_id")
+)"#,
+    r#"CREATE INDEX IF NOT EXISTS "_norn_approved_call/due" ON "_norn_approved_call" ("world", "state", "resolved_at_ms", "decision_id")"#,
 ];
 
 /// How a decision was resolved (DECISION-TERMINAL-1).
@@ -228,6 +249,61 @@ pub(crate) fn check<E: SqlEngine>(
     Ok(())
 }
 
+/// APPROVAL-RECOVERY-1: where an approved action call stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApprovedCallState {
+    /// Approved and not yet settled: the host commits it.
+    Due,
+    /// The call committed.
+    Committed,
+    /// The call was refused (its code is recorded); the approval never
+    /// executes it.
+    Refused,
+}
+
+impl ApprovedCallState {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Due => "due",
+            Self::Committed => "committed",
+            Self::Refused => "refused",
+        }
+    }
+
+    fn parse(text: &str) -> Result<Self, CellError> {
+        match text {
+            "due" => Ok(Self::Due),
+            "committed" => Ok(Self::Committed),
+            "refused" => Ok(Self::Refused),
+            _unknown => Err(CellError::Engine(format!(
+                "unknown approved call state {text}"
+            ))),
+        }
+    }
+}
+
+/// APPROVAL-RECOVERY-1: one approved action call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApprovedCall {
+    /// The approving decision.
+    pub decision_id: String,
+    /// The parked command that carries the call.
+    pub command_id: String,
+    /// When the approval committed (logical milliseconds).
+    pub resolved_at_ms: u64,
+    /// Where it stands.
+    pub state: ApprovedCallState,
+    /// The refusal code, when refused.
+    pub code: Option<String>,
+}
+
+/// Whether `resolved` approves a parked action call.
+fn approves_call(resolved: &DecisionResolved) -> bool {
+    resolved.resolution == Resolution::Decided
+        && resolved.choice.as_deref() == Some(APPROVE_CHOICE)
+        && resolved.command_id.starts_with(APPROVAL_COMMAND_PREFIX)
+}
+
 /// Record the decision `batch` resolves, inside the commit's transaction.
 ///
 /// # Errors
@@ -259,9 +335,40 @@ pub(crate) fn apply<E: SqlEngine>(
                 to_i64(commit_seq, "commit sequence")?
             ],
         )?;
+        // APPROVAL-RECOVERY-1: the approval and the call's due record are
+        // one transaction, so no crash leaves an approval without it.
+        if approves_call(&resolved) {
+            reader.conn.execute(
+                &format!(
+                    r#"INSERT INTO "{APPROVED_CALL}" ("world","decision_id","command_id","resolved_at_ms","state","code") VALUES (?1,?2,?3,?4,'due',NULL)"#
+                ),
+                params![
+                    batch.world,
+                    resolved.decision_id,
+                    resolved.command_id,
+                    to_i64(batch.logical_time, "logical time")?
+                ],
+            )?;
+        }
     }
     Ok(())
 }
+
+fn decode_approved(row: &SqlRow) -> Result<ApprovedCall, CellError> {
+    Ok(ApprovedCall {
+        decision_id: row.get(0)?,
+        command_id: row.get(1)?,
+        resolved_at_ms: u64::try_from(row.get::<i64>(2)?)
+            .map_err(|_negative| CellError::OutOfRange("approval time"))?,
+        state: ApprovedCallState::parse(&row.get::<String>(3)?)?,
+        code: row.get(4)?,
+    })
+}
+
+const APPROVED_COLUMNS: &str =
+    r#"a."decision_id",a."command_id",a."resolved_at_ms",a."state",a."code""#;
+const APPROVED_RETRY: &str =
+    r#"LEFT JOIN "_norn_due_retry" AS r ON r."item"=('approval/'||a."decision_id")"#;
 
 fn decode(row: &SqlRow) -> Result<DecisionRow, CellError> {
     let unsigned = |index: usize, what: &'static str| {
@@ -287,6 +394,71 @@ fn decode(row: &SqlRow) -> Result<DecisionRow, CellError> {
 }
 
 impl<E: SqlEngine> StoreReader<'_, E> {
+    /// APPROVAL-RECOVERY-1: the approved call of `decision_id`, if it
+    /// approved one.
+    ///
+    /// # Errors
+    /// SQL engine or decode errors.
+    pub fn approved_call(
+        &self,
+        world: &str,
+        decision_id: &str,
+    ) -> Result<Option<ApprovedCall>, CellError> {
+        self.conn.query_optional(
+            &format!(
+                r#"SELECT {APPROVED_COLUMNS} FROM "{APPROVED_CALL}" AS a WHERE a."world"=?1 AND a."decision_id"=?2"#
+            ),
+            params![world, decision_id],
+            decode_approved,
+        )
+    }
+
+    /// APPROVAL-RECOVERY-1 with TIMER-RETRY-1: up to `limit` approved calls
+    /// still due in `world` and eligible at `now` (no retry record, or one
+    /// whose backoff has passed), oldest approval first.
+    ///
+    /// # Errors
+    /// SQL engine or decode errors.
+    pub fn eligible_approved_calls(
+        &self,
+        world: &str,
+        now: u64,
+        limit: usize,
+    ) -> Result<Vec<ApprovedCall>, CellError> {
+        let rows = self.conn.query(
+            &format!(
+                r#"SELECT {APPROVED_COLUMNS} FROM "{APPROVED_CALL}" AS a {APPROVED_RETRY} WHERE a."world"=?1 AND a."state"='due' AND (r."item" IS NULL OR r."eligible_at"<=?2) ORDER BY a."resolved_at_ms",a."decision_id" LIMIT ?3"#
+            ),
+            params![
+                world,
+                to_i64(now, "approval time")?,
+                i64::try_from(limit).unwrap_or(i64::MAX)
+            ],
+        )?;
+        rows.into_iter()
+            .map(|values| decode_approved(&SqlRow(values)))
+            .collect()
+    }
+
+    /// APPROVAL-RECOVERY-1 with TIMER-RETRY-1: when the earliest approved
+    /// call still due in `world` may be tried (its approval time, or its
+    /// retry eligibility after a failure); `None` when none is due.
+    ///
+    /// # Errors
+    /// SQL engine or decode errors.
+    pub fn next_approved_call(&self, world: &str) -> Result<Option<u64>, CellError> {
+        let next = self.conn.query_optional(
+            &format!(
+                r#"SELECT MIN(MAX(a."resolved_at_ms",COALESCE(r."eligible_at",0))) FROM "{APPROVED_CALL}" AS a {APPROVED_RETRY} WHERE a."world"=?1 AND a."state"='due'"#
+            ),
+            params![world],
+            |row| row.get::<Option<i64>>(0),
+        )?;
+        next.flatten()
+            .map(|at| u64::try_from(at).map_err(|_negative| CellError::OutOfRange("approval time")))
+            .transpose()
+    }
+
     /// How `decision_id` was resolved in `world`, once it was.
     ///
     /// # Errors
@@ -303,5 +475,46 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             params![world, decision_id],
             decode,
         )
+    }
+}
+
+impl<E: SqlEngine> crate::store::CellStore<E> {
+    /// APPROVAL-RECOVERY-1: settle the approved call of `decision_id` as
+    /// committed, or as refused with `code`. Host bookkeeping outside the
+    /// ledger, in its own transaction; only a due call settles, so a
+    /// settlement is never overwritten. `true` when this call settled it.
+    ///
+    /// # Errors
+    /// SQL engine errors.
+    pub fn settle_approved_call(
+        &self,
+        world: &str,
+        decision_id: &str,
+        refused: Option<&str>,
+    ) -> Result<bool, CellError> {
+        let state = if refused.is_some() {
+            ApprovedCallState::Refused
+        } else {
+            ApprovedCallState::Committed
+        };
+        self.conn.transaction(|| -> Result<bool, CellError> {
+            let before = self.conn.query_optional(
+                &format!(
+                    r#"SELECT 1 FROM "{APPROVED_CALL}" WHERE "world"=?1 AND "decision_id"=?2 AND "state"='due'"#
+                ),
+                params![world, decision_id],
+                |_row| Ok(()),
+            )?;
+            if before.is_none() {
+                return Ok(false);
+            }
+            self.conn.execute(
+                &format!(
+                    r#"UPDATE "{APPROVED_CALL}" SET "state"=?3,"code"=?4 WHERE "world"=?1 AND "decision_id"=?2 AND "state"='due'"#
+                ),
+                params![world, decision_id, state.as_str(), refused.map(str::to_owned)],
+            )?;
+            Ok(true)
+        })
     }
 }

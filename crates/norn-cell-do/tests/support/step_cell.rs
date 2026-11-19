@@ -40,7 +40,9 @@ use serde_json::{Value, json};
     reason = "the shared fixture module serves the action tests too"
 )]
 pub(crate) mod action_cell;
-pub(crate) use action_cell::{DERIVES_LOSS, MELT, MELT_ACTION, melt_body, melt_store, melt_store_on};
+pub(crate) use action_cell::{
+    DERIVES_LOSS, MELT, MELT_ACTION, melt_body, melt_store, melt_store_on,
+};
 
 pub(crate) const SCOPE: &str = "orgId=org_demo&environmentId=dev";
 /// May convert melts; starts runs and installs flows.
