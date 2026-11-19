@@ -380,6 +380,12 @@ impl Connect {
         self.sources.due(now_ms)
     }
 
+    /// TIMER-ALARM-1: when the next scheduled sync falls due, at or after `now_ms`.
+    #[must_use]
+    pub fn next_sync_due(&self, now_ms: u64) -> Option<u64> {
+        self.sources.next_due(now_ms)
+    }
+
     /// Advance a running sync; the JSON the host reads: `{"request": …}` or `{"done": …}`.
     /// `rows`: the most rows this and later steps map (SYNC-YIELD-2); the
     /// answer says how many this step mapped (`mapped`), for the host's pacing.

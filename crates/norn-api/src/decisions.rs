@@ -511,7 +511,9 @@ pub(crate) fn open_decision<E: SqlEngine>(
 }
 
 /// Every open decision, oldest command first.
-fn open_decisions<E: SqlEngine>(store: &CellStore<E>) -> Result<Vec<OpenDecision>, Refusal> {
+pub(crate) fn open_decisions<E: SqlEngine>(
+    store: &CellStore<E>,
+) -> Result<Vec<OpenDecision>, Refusal> {
     let mut open = Vec::new();
     for pending in store.read().parked_commands().map_err(Refusal::host)? {
         if let Some(decision) = open_decision(store, &pending)? {
@@ -961,12 +963,22 @@ fn commit_approved<E: SqlEngine>(
         committed: false,
         code: Some(code.to_owned()),
     };
+    // APPROVAL-REVISION-1: the approval covers the action as it was defined
+    // when the call parked; a changed action is never executed under it.
+    match crate::actions::action_digest(host, &call.call.action) {
+        Ok(Some(digest)) if digest == call.call.action_digest => {}
+        Ok(_) => return refused(crate::approvals::approval_codes::DEFINITION_CHANGED),
+        Err(refusal) => return refused(&refusal.code),
+    }
     match as_requester(&call.call.requester, &mut commit) {
         Some(Ok(ActionAnswer::Receipt(_))) => DecidedCall {
             committed: true,
             code: None,
         },
-        Some(Ok(ActionAnswer::Pending(_))) => refused(codes::HOST_ERROR),
+        // The call parked again: its action changed after the check above.
+        Some(Ok(ActionAnswer::Pending(_))) => {
+            refused(crate::approvals::approval_codes::DEFINITION_CHANGED)
+        }
         Some(Err(refusal)) => refused(&refusal.code),
         // The host cannot act as the requester: the call is denied.
         None => refused(&crate::actions::action_denied().code),

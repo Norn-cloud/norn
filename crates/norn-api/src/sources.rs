@@ -387,6 +387,33 @@ impl Sources {
             .map(|_| id)
     }
 
+    /// TIMER-ALARM-1: when the next scheduled sync falls due, at or after
+    /// `now_ms` (the host wakes then and claims it with [`Self::due`]): a
+    /// connection never synced is due now, a running one when its lease
+    /// lapses (SYNC-LEASE-1), and any other one `every_minutes` after its
+    /// last run ended. `None` when no connection is scheduled.
+    #[must_use]
+    pub fn next_due(&self, now_ms: u64) -> Option<u64> {
+        self.connections
+            .iter()
+            .filter(|c| c.every_minutes > 0)
+            .map(|c| {
+                let state = self.state.get(&c.id);
+                if let Some(run) = state
+                    .and_then(|s| s.run.as_ref())
+                    .filter(|run| held(run, now_ms))
+                {
+                    return run.stepped_ms.saturating_add(RUN_LEASE_MS);
+                }
+                let every = u64::from(c.every_minutes).saturating_mul(60_000);
+                state
+                    .and_then(|s| s.last_end_ms)
+                    .map_or(now_ms, |last| last.saturating_add(every))
+                    .max(now_ms)
+            })
+            .min()
+    }
+
     /// Advance the claimed sync of `id`: `None` begins it; otherwise
     /// `response` is the status and body of the request last returned.
     pub fn step<E: SqlEngine>(

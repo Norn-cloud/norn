@@ -51,6 +51,7 @@ mod admit;
 mod http;
 mod load;
 mod policy;
+mod timers;
 
 use policy::{DevMetrics, DevPrincipals, LocalDeveloper};
 
@@ -302,6 +303,11 @@ fn run(args: &DevArgs, out: &mut Events) -> Result<(), Failure> {
             let engine: Option<&dyn norn_api::analytics_routes::Transport> = None;
             http::serve(&listener, &serving, &principals, &questions, engine);
         });
+    }
+    // TIMER-ALARM-1: the dev host's clock runs the cell's due work, as the hosted alarm does.
+    {
+        let serving = Arc::clone(&serving);
+        std::thread::spawn(move || timers::drive(&serving));
     }
     let session = Session {
         loads: &loads,

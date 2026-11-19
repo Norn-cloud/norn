@@ -57,6 +57,9 @@ const LAWS: [&str; 2] = [
     "docs.ScannedDocument.total_matches_ledger",
 ];
 const HANDLE_KEY: [u8; 32] = [7; 32];
+/// The scans pack's link-reading law: a booked document's total equals its
+/// journal entry's amount.
+const LEDGER: &str = "docs.ScannedDocument.total_matches_ledger";
 
 fn key() -> SigningKey {
     SigningKey::from_bytes(&[1; 32])
@@ -537,4 +540,66 @@ fn an_agent_reads_why_an_invoice_is_held_and_corrects_it_through_mcp() {
         "{accepted}"
     );
     cell.released(id, 72);
+}
+
+/// LIVE-FAIL-CLOSED-1 / LAW-LINK-1: a change to a law that reads a link is
+/// checked against the stored documents through their stored links. A
+/// stricter ledger law the booked documents break is held back with a
+/// violation naming each one; it is never installed over rows it could not
+/// read. A ledger law every booked document keeps is evaluated on them all,
+/// with nothing left unchecked.
+#[test]
+fn a_link_law_change_is_checked_against_the_stored_documents() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut cell = loaded(&directory.path().join("links.sqlite"));
+    let law = documents()
+        .into_iter()
+        .find(|artifact| artifact["artifactId"] == "docs.ScannedDocument.total_matches_ledger.law")
+        .expect("the ledger law");
+    let plan = |cell: &mut Cell, expression: &str| {
+        let mut changed = law.clone();
+        changed["payload"]["response"]["expression"] = json!(expression);
+        let response = cell.call(
+            norn_api::cell_definitions::PLAN_PATH,
+            &user("owner"),
+            &json!({ "artifacts": [changed] }).to_string(),
+        );
+        (
+            response.status,
+            serde_json::from_str::<Value>(&response.body).unwrap(),
+        )
+    };
+
+    let (status, held) = plan(
+        &mut cell,
+        "self.total == self.ledger_entry.amount and self.total < 0",
+    );
+    assert_eq!(status, 409, "{held}");
+    assert_eq!(held["code"], "defs.live_data_refused", "{held}");
+    let diagnostics = held["diagnostics"].as_array().unwrap();
+    for diagnostic in diagnostics {
+        assert_eq!(diagnostic["code"], "defs.live_data_violation", "{held}");
+        assert_eq!(diagnostic["severity"], "error", "{held}");
+    }
+    // Every booked document breaks the stricter ledger law, read through
+    // its stored journal-entry link.
+    let ledger = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic["law"] == LEDGER)
+        .count();
+    assert!(ledger >= 2, "{held}");
+
+    // A ledger law every booked document keeps is evaluated on each of them
+    // through the link: no finding names it, and none is left unchecked.
+    // (The held-back invoices still break the lines law.)
+    let (_, kept) = plan(
+        &mut cell,
+        "self.ledger_entry.amount == self.ledger_entry.amount",
+    );
+    let findings = kept["diagnostics"].as_array().cloned().unwrap_or_default();
+    assert!(
+        findings.iter().all(|diagnostic| diagnostic["law"] != LEDGER
+            && diagnostic["code"] != "defs.live_data_unchecked"),
+        "{kept}"
+    );
 }

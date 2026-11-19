@@ -16,6 +16,14 @@
 //! authority, with everything decided again at that commit, including the
 //! laws the cell checks only when it commits. Nothing bypasses the dispatch:
 //! the approver's decision executes the call by calling it as the requester.
+//!
+//! APPROVAL-REVISION-1: an approval is given for the action as it was
+//! defined when the call parked. The parked call carries the action
+//! definition's digest, and its command id hashes it, so an approval never
+//! lets the call commit under a changed action: approving a call whose action
+//! changed since it parked refuses it (`approval.definition_changed`), and
+//! the requester's call under the new definition parks anew for a fresh
+//! approval.
 
 use std::collections::BTreeMap;
 
@@ -58,6 +66,9 @@ pub mod approval_codes {
     pub const REJECTED: &str = "approval.rejected";
     /// The decision this call waited on expired.
     pub const EXPIRED: &str = "approval.expired";
+    /// APPROVAL-REVISION-1: the action changed after the call parked, so
+    /// its approval does not cover it; call again to request a new one.
+    pub const DEFINITION_CHANGED: &str = "approval.definition_changed";
 }
 
 /// The active approval gating one action.
@@ -75,6 +86,10 @@ pub(crate) struct ParkedCall {
     pub(crate) input: RuntimeObject,
     pub(crate) idempotency_key: String,
     pub(crate) requester: RunStarter,
+    /// APPROVAL-REVISION-1: the digest of the action's definition the call
+    /// was admitted under; empty for a call parked before digests were bound,
+    /// which matches no definition.
+    pub(crate) action_digest: String,
 }
 
 /// A parked call as its decision carries it: the approval that held it and
@@ -109,6 +124,7 @@ pub(crate) fn held_call(approval: &RuntimeValue) -> Option<HeldCall> {
             input: input.clone(),
             idempotency_key: text("idempotencyKey")?,
             requester: norn_ir::runtime::decode(approval.get("requester")?).ok()?,
+            action_digest: text("actionDigest").unwrap_or_default(),
         },
     })
 }
@@ -206,14 +222,16 @@ fn request(gate: &Gate) -> Value {
     request
 }
 
-/// The command id of a parked call: one per action, input, idempotency key
-/// and requester, so the same call parks once, and an approval approves
-/// exactly the call it was asked about.
+/// The command id of a parked call: one per action, its definition's
+/// digest, input, idempotency key and requester, so the same call parks
+/// once, and an approval approves exactly the call it was asked about under
+/// the action it was asked about (APPROVAL-REVISION-1).
 fn command_id(parked_call: &ParkedCall) -> Result<String, Refusal> {
     let digest = norn_ir::canonical::domain_hash_hex(
-        b"norn.approval.call/1\0",
+        b"norn.approval.call/2\0",
         &(
             &parked_call.action,
+            &parked_call.action_digest,
             &parked_call.idempotency_key,
             &parked_call.requester.subject,
             &parked_call.input,
@@ -335,6 +353,7 @@ fn park<E: SqlEngine>(
             norn_ir::runtime::encode(&gate.revision).map_err(Refusal::host)?,
         ),
         ("action".to_owned(), text(&parked_call.action)),
+        ("actionDigest".to_owned(), text(&parked_call.action_digest)),
         (
             "input".to_owned(),
             RuntimeValue::Object(parked_call.input.clone()),

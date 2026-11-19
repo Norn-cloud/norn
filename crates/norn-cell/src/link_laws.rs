@@ -168,3 +168,35 @@ impl<S: SqlEngine> LinkTargets for PinnedLinks<'_, '_, S> {
 pub(crate) fn pinned_links(finding: &norn_ir::DataQualityFinding) -> BTreeMap<String, FactRef> {
     finding.links.clone()
 }
+
+impl<S: SqlEngine> StoreReader<'_, S> {
+    /// LAW-LINK-1 / LAW-LINK-MANY-1 over stored rows: evaluate the governing
+    /// laws `catalog` retains for `subject` on `values`, reading each link a
+    /// law reads from the links stored in `world` now (a to-one target, or an
+    /// inverse role's sources). A host checking candidate laws against live
+    /// data uses this, so a law that reads a link is evaluated, never skipped.
+    ///
+    /// # Errors
+    /// As [`norn_kernel::governing_laws::evaluate_linked`]: an unreadable
+    /// link, unsupported semantics or exhausted fuel.
+    pub fn evaluate_laws_linked(
+        &self,
+        catalog: &norn_kernel::TypeCatalog<'_>,
+        world: &str,
+        subject: &FactKey,
+        values: &norn_kernel::cell_host::JsonObject,
+        remaining: &mut u64,
+    ) -> Result<Vec<norn_kernel::governing_laws::LawFailure>, LawEvaluationError> {
+        norn_kernel::governing_laws::evaluate_linked(
+            catalog,
+            subject,
+            values,
+            &mut CurrentLinks {
+                reader: self,
+                world,
+                subject: subject.clone(),
+            },
+            remaining,
+        )
+    }
+}

@@ -139,6 +139,34 @@ pub fn result(
     )
 }
 
+/// TIMER-ALARM-1: evaluate the timer turn of `rule` for a run whose sleep or
+/// retry timer fired. `record` is the timer record the run's own turn
+/// scheduled (`{kind: "timer", runId, step, attempt, timerId, afterMillis}`),
+/// delivered back unchanged; `run` is the run object's current values. A late
+/// timer the rule no longer waits on yields an empty output.
+///
+/// # Errors
+/// [`FlowTurnError`]; nothing is committed either way.
+pub fn timer(
+    rule: &RuleRoot,
+    environment_hash: &str,
+    run: RuntimeObject,
+    record: RuntimeObject,
+) -> Result<DecisionOutput, FlowTurnError> {
+    let run = run
+        .into_iter()
+        .filter(|(_, value)| !matches!(value, RuntimeValue::Null))
+        .collect();
+    let slice = BTreeMap::from([("run".to_owned(), RuntimeValue::Object(run))]);
+    turn(
+        rule,
+        environment_hash,
+        slice,
+        record,
+        FlowTurnError::TurnRefused,
+    )
+}
+
 fn turn(
     rule: &RuleRoot,
     environment_hash: &str,

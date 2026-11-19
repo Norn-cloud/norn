@@ -307,3 +307,65 @@ fn an_mcp_tool_call_parks_like_http() {
     assert_eq!((status, &direct), (202, &parked));
     assert_eq!(pending(&cell, APPROVER)["total"], json!(1));
 }
+
+/// Install the fixture's `set` as the cell's next definitions revision.
+fn revise(cell: &Cell, set: &str) {
+    let version = cell.host.active_definitions_version().unwrap();
+    let (model, input) = step_cell::action_cell::melt_install(
+        set,
+        norn_api::action_admission::prepare_action_model,
+        // After every commit so far: the cell's clock never runs backwards.
+        NOW * 1000 + 1,
+    );
+    cell.host
+        .install_definitions(model, input, version)
+        .expect("the next revision installs");
+    assert_ne!(cell.host.active_definitions_version().unwrap(), version);
+}
+
+/// APPROVAL-REVISION-1: an approval given for a call parked under revision N
+/// never executes it under N+1 when N+1 changed the action: approving it is
+/// refused `approval.definition_changed` and commits nothing, and the
+/// requester's call under the new action parks anew for a fresh approval.
+#[test]
+fn an_approval_never_executes_a_changed_action() {
+    let cell = cell();
+    gate(&cell, None);
+    let body = melt7("operator-rev");
+    let (status, parked) = convert(&cell, OPERATOR, &body);
+    assert_eq!(status, 202, "{parked}");
+    let id = parked["decision"]["id"].as_str().unwrap().to_owned();
+
+    // N+1: the action's writer no longer derives the loss.
+    revise(&cell, step_cell::action_cell::OMITS_LOSS);
+    let (status, decided) = decide(&cell, APPROVER, &id, "approve");
+    assert_eq!(status, 200, "{decided}");
+    assert_eq!(
+        decided["call"],
+        json!({ "committed": false, "code": "approval.definition_changed" }),
+        "{decided}"
+    );
+    assert_eq!(melt_status(&cell), 404, "nothing ran under the new action");
+
+    // The same call under the new action asks for a new approval.
+    let (status, again) = convert(&cell, OPERATOR, &body);
+    assert_eq!(status, 202, "{again}");
+    assert_ne!(again["decision"]["id"], json!(id), "{again}");
+    assert_eq!(melt_status(&cell), 404);
+}
+
+/// APPROVAL-REVISION-1: a later revision that leaves the action as it was
+/// keeps the approval: the approved call executes.
+#[test]
+fn an_approval_survives_a_revision_that_keeps_the_action() {
+    let cell = cell();
+    gate(&cell, None);
+    let (status, parked) = convert(&cell, OPERATOR, &melt7("operator-same"));
+    assert_eq!(status, 202, "{parked}");
+    let id = parked["decision"]["id"].as_str().unwrap().to_owned();
+    revise(&cell, step_cell::DERIVES_LOSS);
+    let (status, decided) = decide(&cell, APPROVER, &id, "approve");
+    assert_eq!(status, 200, "{decided}");
+    assert_eq!(decided["call"], json!({ "committed": true }), "{decided}");
+    assert_eq!(melt_status(&cell), 200);
+}

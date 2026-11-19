@@ -274,7 +274,12 @@ pub fn call_action<E: SqlEngine>(
             consumes: None,
         },
     };
-    let outcome = match through_gate(host, &mut cell, &catalog, &kernel_call)? {
+    // APPROVAL-REVISION-1: an approval binds to the action as defined now.
+    let action_digest = admitted
+        .digest(action_id)
+        .ok_or_else(|| Refusal::host("a retained action has no digest"))?
+        .to_owned();
+    let outcome = match through_gate(host, &mut cell, &catalog, &kernel_call, action_digest)? {
         Gated::Pending(pending) => return Ok(ActionAnswer::Pending(pending)),
         Gated::Replayed(outcome) => *outcome,
         Gated::Commit => norn_kernel::commit_action(
@@ -346,6 +351,7 @@ fn through_gate<E: SqlEngine>(
     cell: &mut crate::host::ActionCell<E>,
     catalog: &TypeCatalog<'_>,
     kernel_call: &norn_kernel::ActionCall<'_>,
+    action_digest: String,
 ) -> Result<Gated, Refusal> {
     let action_id = kernel_call.action.action_id.as_str();
     let Some(gate) = crate::approvals::gate(cell, action_id)? else {
@@ -369,6 +375,7 @@ fn through_gate<E: SqlEngine>(
                 input: kernel_call.input.clone(),
                 idempotency_key: kernel_call.idempotency_key.clone(),
                 requester,
+                action_digest,
             };
             Ok(
                 match crate::approvals::hold(cell, &gate, &parked, kernel_call.turn.now)? {
@@ -379,6 +386,29 @@ fn through_gate<E: SqlEngine>(
         }
         Err(error) => Err(kernel_refusal(host, &kernel_call.actor, action_id, &error)),
     }
+}
+
+/// APPROVAL-REVISION-1: the digest of `action_id`'s definition in the active
+/// revision, `None` when no active action has that id.
+///
+/// # Errors
+/// A host failure.
+pub(crate) fn action_digest<E: SqlEngine>(
+    host: &DevHost<E>,
+    action_id: &str,
+) -> Result<Option<String>, Refusal> {
+    let _epoch = host.definition_read()?;
+    let cell = host.cell()?;
+    let Some(installed) = cell
+        .store()
+        .read()
+        .installed_definitions(None)
+        .map_err(Refusal::host)?
+    else {
+        return Ok(None);
+    };
+    let admitted = crate::action_admission::RetainedActions::load(&installed, host.scope())?;
+    Ok(admitted.digest(action_id).map(str::to_owned))
 }
 
 /// The kernel turn's time: the cell clock after advancing it to `now` and the

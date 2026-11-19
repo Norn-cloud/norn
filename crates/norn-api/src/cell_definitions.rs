@@ -60,7 +60,8 @@ pub mod codes {
     pub const LIVE_DATA_VIOLATION: &str = "defs.live_data_violation";
     /// Stored objects the candidate laws refuse: the set is held back (409).
     pub const LIVE_DATA_REFUSED: &str = "defs.live_data_refused";
-    /// A stored object a candidate law could not be evaluated on (a finding).
+    /// A stored object a candidate law could not be evaluated on (a finding
+    /// of [`LIVE_DATA_REFUSED`]): unchecked is refused, never admitted.
     pub const LIVE_DATA_UNCHECKED: &str = "defs.live_data_unchecked";
     /// More stored objects than one plan evaluates (409).
     pub const LIVE_DATA_UNBOUNDED: &str = "defs.live_data_unbounded";
@@ -410,9 +411,12 @@ fn install_input(
 
 /// HOST-INSTALL-LIVE-1: evaluate every stored object of a type whose
 /// governing laws or declaration the candidate changes under the candidate's
-/// laws. Returns how many objects were evaluated and the findings: a
-/// violation is an error, a law that cannot be evaluated on stored values
-/// alone (one that reads a link) a warning.
+/// laws, reading each link a law reads from the cell's stored links
+/// (LAW-LINK-1). Returns how many objects were evaluated and the findings.
+/// Both kinds are errors (LIVE-FAIL-CLOSED-1): a violation, and an object a
+/// candidate law could not be evaluated on (exhausted fuel, an unreadable
+/// link), since a law nobody could check over a row is never admitted over
+/// it.
 fn live_findings<E: SqlEngine>(
     store: &CellStore<E>,
     candidate: &Model,
@@ -456,8 +460,9 @@ fn live_findings<E: SqlEngine>(
                 }
                 let key = norn_kernel::FactKey::new(name, record.id.clone());
                 let mut budget = LAW_FUEL;
-                match norn_kernel::governing_laws::evaluate(
+                match reader.evaluate_laws_linked(
                     &catalog,
+                    norn_cell::MAIN_WORLD,
                     &key,
                     &record.values,
                     &mut budget,
@@ -487,7 +492,7 @@ fn live_findings<E: SqlEngine>(
                     }
                     Err(reason) => findings.push(RefusalDiagnostic {
                         code: codes::LIVE_DATA_UNCHECKED.to_owned(),
-                        severity: "warning".to_owned(),
+                        severity: "error".to_owned(),
                         message: format!(
                             "{name} {} was not evaluated under the candidate laws: {reason}",
                             record.id
@@ -508,11 +513,13 @@ fn live_findings<E: SqlEngine>(
     Ok((checked, findings))
 }
 
-/// The live-data refusal of `findings`, if any is an error.
+/// The live-data refusal of `findings`, if any is an error: a violation or
+/// an object no candidate law could be evaluated on.
 fn held_back(findings: &[RefusalDiagnostic]) -> Option<Refusal> {
     let errors: Vec<RefusalDiagnostic> = findings
         .iter()
-        .filter(|finding| finding.severity == "error")
+        // LIVE-FAIL-CLOSED-1: unchecked is refused whatever its severity says.
+        .filter(|finding| finding.severity == "error" || finding.code == codes::LIVE_DATA_UNCHECKED)
         .cloned()
         .collect();
     if errors.is_empty() {
@@ -632,4 +639,40 @@ fn install_model<E: SqlEngine>(
 ) -> Result<Model, Refusal> {
     reopen_model(&admitted.canonical_set, serves_actions(store.model()))
         .map_err(|refusal| unservable(refusal.explanation))
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::expect_used,
+    reason = "test assertions"
+)]
+mod tests {
+    use super::{RefusalDiagnostic, RefusalSpan, codes, held_back};
+
+    fn finding(code: &str, severity: &str) -> RefusalDiagnostic {
+        RefusalDiagnostic {
+            code: code.to_owned(),
+            severity: severity.to_owned(),
+            message: "m".to_owned(),
+            law: None,
+            span: Some(RefusalSpan {
+                pointer: "/objects/t/1".to_owned(),
+            }),
+        }
+    }
+
+    /// LIVE-FAIL-CLOSED-1: an object no candidate law could be evaluated on
+    /// holds the definitions back, as a violation does; it is never admitted.
+    #[test]
+    fn an_unchecked_object_holds_the_definitions_back() {
+        for severity in ["error", "warning"] {
+            let refusal = held_back(&[finding(codes::LIVE_DATA_UNCHECKED, severity)])
+                .expect("unchecked is refused");
+            assert_eq!(refusal.code, codes::LIVE_DATA_REFUSED);
+            assert_eq!(refusal.diagnostics.len(), 1);
+            assert_eq!(refusal.diagnostics[0].code, codes::LIVE_DATA_UNCHECKED);
+        }
+        assert!(held_back(&[]).is_none());
+    }
 }
