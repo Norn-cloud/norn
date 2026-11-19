@@ -357,10 +357,14 @@ test("concurrent workspace creations cannot pass the cell limit together: the on
 test("a workspace over the cell limit is never written, so nothing has to be undone", async () => {
   const env = stage(true)
   const { cookie, userId } = await enroll(env, "nounder@example.com")
+  // The free cell is open (the provisioned workspace is gone), so every creation in the burst passes any pre-check.
+  const provisioned = firstWorkspace(env, userId)
+  sql(env).run(`delete from member where organizationId = ?`, [provisioned])
+  sql(env).run(`delete from organization where id = ?`, [provisioned])
   // Nothing can be deleted: a creation that wrote and then undid a workspace would leave it behind.
   for (const table of ["organization", "member", "billing_workspace", "invitation"]) sql(env).run(`create trigger no_delete_${table} before delete on "${table}" begin select raise(abort, 'no deletes'); end`)
   const responses = await Promise.all(["a", "b", "c"].map((name) => post(env, "/api/auth/organization/create", { name, slug: `nounder-${name}` }, { cookie })))
-  expect(responses.map((response) => response.status)).toEqual([403, 403, 403])
+  expect(responses.map((response) => response.status).sort()).toEqual([200, 403, 403])
   expect(sql(env).query("select count(*) as n from organization").get()).toEqual({ n: 1 })
   expect(sql(env).query("select count(*) as n from member where userId = ?").get(userId)).toEqual({ n: 1 })
   expect(sql(env).query("select count(*) as n from billing_workspace").get()).toEqual({ n: 1 })
