@@ -862,6 +862,35 @@ impl Connect {
     }
 }
 
+/// `POST /v1/observations:load` on a host with no source connections (the
+/// dev host): decided by the cell's policy as `Operation::SyncSource` first,
+/// exactly as [`Connect::route`] decides it (CONNECT-AUTH-1), then loaded as
+/// on a hosted cell. `None` for any other path.
+pub fn observations<E: SqlEngine>(
+    host: &DevHost<E>,
+    principals: &dyn PrincipalResolver,
+    request: &Request<'_>,
+) -> Option<Response> {
+    if !matches!(route_of(request.path), Some(Route::Observations)) {
+        return None;
+    }
+    let _scope = RequestScope::new(principals);
+    let actor = principals.resolve(request.authorization, request.now);
+    let allowed = request.method == "POST"
+        && authorize(
+            host,
+            &scope_of(request.query),
+            actor.as_deref(),
+            Operation::SyncSource("observations".to_owned()),
+        )
+        .is_ok();
+    Some(if allowed {
+        load_observations(host, request.body)
+    } else {
+        server::outside::<E>(request)
+    })
+}
+
 /// The most rows one load carries, and the most page commits it may make (a
 /// row repeating a record already in its page starts the next commit, as a
 /// record's history does). A load runs inside one cell call; on the hosted

@@ -21,6 +21,13 @@
 //!   so the manifest's all-grants developer never leaves the machine.
 //! - HOST-REOPEN-1: a restart reopens the cell at its active revision without
 //!   writing.
+//! - DEV-REVIEWER-1: a second local principal, the reviewer
+//!   (`.norn/dev.reviewer.token`), holds the same grants, so an approval the
+//!   developer's call waits on can be decided locally (`dev/policy.rs`).
+//! - DEV-LOAD-REFUSED-1: a recorded snapshot (`--load`) the cell refuses,
+//!   or a row of it the mapping quarantines, ends the session with exit 3
+//!   and the refusal; the session never serves after a refused load, and a
+//!   restart loads the same snapshot again (rows already landed stay landed).
 //! - DEV-CONFINED-1: the cell and the session files stay inside the project:
 //!   the manifest's cell is a relative path under the project root, and the
 //!   token and descriptor are owner-only files never written through a symlink.
@@ -111,6 +118,9 @@ struct ManifestDev {
     port: u16,
     actor: String,
 }
+
+/// A `--load` the cell refused: fatal, with exit 3 (DEV-LOAD-REFUSED-1).
+const LOAD_REFUSED: &str = "norn.dev.load_refused";
 
 /// A setup or usage failure: a stable code, an actionable message and the
 /// shared exit status (2 usage, 3 setup).
@@ -229,6 +239,10 @@ fn run(args: &DevArgs, out: &mut Events) -> Result<(), Failure> {
     let _lock = lock(&state)?;
     let token = token()?;
     write_private(&state.join("dev.token"), &format!("{}\n", token.bearer))?;
+    write_private(
+        &state.join("dev.reviewer.token"),
+        &format!("{}\n", token.reviewer),
+    )?;
     let scope = CellScope {
         org_id: manifest.scope.org_id.clone(),
         environment_id: manifest.scope.environment_id.clone(),
@@ -272,10 +286,13 @@ fn run(args: &DevArgs, out: &mut Events) -> Result<(), Failure> {
         .local_addr()
         .map_err(|error| Failure::setup("norn.dev.io", error.to_string()))?;
     let url = format!("http://{address}");
-    let principals = DevPrincipals {
-        bearer: token.bearer.clone(),
-        actor: manifest.dev.actor.clone(),
-    };
+    let principals = DevPrincipals::new(vec![
+        (token.bearer.clone(), manifest.dev.actor.clone()),
+        (
+            token.reviewer.clone(),
+            policy::reviewer(&manifest.dev.actor),
+        ),
+    ]);
     let questions = DevMetrics::new(token.handle_key, scope.clone());
     // D102: a build with `duckdb` answers questions and profiles on the
     // project's own analytics engine, under `.norn/analytics`.
@@ -465,6 +482,7 @@ impl Session<'_> {
             "tokenFile": ".norn/dev.token",
             "scope": { "orgId": self.scope.org_id, "environmentId": self.scope.environment_id },
             "actor": self.manifest.dev.actor,
+            "reviewer": { "actor": policy::reviewer(&self.manifest.dev.actor), "tokenFile": ".norn/dev.reviewer.token" },
             "active": { "version": active.version, "receiptSha256": active.receipt_sha256 },
             "startedAt": self.started_at,
         })
@@ -483,7 +501,7 @@ impl Session<'_> {
         out.emit(
             &event,
             &format!(
-                "✓ serving r{} · receipt {}…\n  API  {}/v1   token .norn/dev.token\nwatching sources",
+                "✓ serving r{} · receipt {}…\n  API  {}/v1   token .norn/dev.token (reviewer: .norn/dev.reviewer.token)\nwatching sources",
                 active.version,
                 short(&active.receipt_sha256),
                 self.url
@@ -642,6 +660,17 @@ impl Session<'_> {
                     "install",
                     std::slice::from_ref(&refusal),
                 );
+                // DEV-LOAD-REFUSED-1: a `--load` the cell refuses ends the
+                // session with that refusal; it never waits unserved for a
+                // source save that cannot change the snapshot.
+                if refusal.get("code").and_then(Value::as_str) == Some(LOAD_REFUSED) {
+                    let message = refusal
+                        .get("message")
+                        .and_then(Value::as_str)
+                        .unwrap_or("a recorded snapshot was refused")
+                        .to_owned();
+                    return Err(Failure::setup(LOAD_REFUSED, message));
+                }
                 Ok(None)
             }
         }
@@ -667,17 +696,16 @@ impl Session<'_> {
         let store = if self.loads.is_empty() {
             store
         } else {
-            let (store, loaded) = load::load(store, &self.scope.key(), self.loads)
-                .map_err(|message| json!({ "code": "norn.dev.load_refused", "severity": "error", "message": message }))?;
+            let (store, loaded) = load::load(store, &self.scope.key(), self.loads).map_err(
+                |message| json!({ "code": LOAD_REFUSED, "severity": "error", "message": message }),
+            )?;
             self.loaded.replace(Some(loaded));
             store
         };
         let host =
             DevHost::from_store(store, self.scope.clone(), |command| command.payload.clone())
                 .map_err(|refusal| serde_json::to_value(&refusal).unwrap_or(Value::Null))?
-                .with_authorizer(LocalDeveloper {
-                    actor: self.manifest.dev.actor.clone(),
-                });
+                .with_authorizer(LocalDeveloper::for_actor(&self.manifest.dev.actor));
         let installed = host
             .active_definitions()
             .map_err(|refusal| serde_json::to_value(&refusal).unwrap_or(Value::Null))?
@@ -736,14 +764,12 @@ fn reopen(
         (store, None)
     } else {
         let (store, loaded) = load::load(store, &scope.key(), loads)
-            .map_err(|message| Failure::setup("norn.dev.load_refused", message))?;
+            .map_err(|message| Failure::setup(LOAD_REFUSED, message))?;
         (store, Some(loaded))
     };
     let host = DevHost::from_store(store, scope.clone(), |command| command.payload.clone())
         .map_err(|refusal| Failure::setup("norn.cell.scope_mismatch", refusal.message))?
-        .with_authorizer(LocalDeveloper {
-            actor: actor.to_owned(),
-        });
+        .with_authorizer(LocalDeveloper::for_actor(actor));
     Ok((Some(host), loaded))
 }
 
@@ -786,24 +812,30 @@ fn lock(state: &Path) -> Result<File, Failure> {
 
 struct Token {
     bearer: String,
+    /// The local reviewer's session token (DEV-REVIEWER-1).
+    reviewer: String,
     handle_key: [u8; 32],
 }
 
 fn token() -> Result<Token, Failure> {
-    let mut bytes = [0_u8; 64];
+    let mut bytes = [0_u8; 96];
     getrandom::fill(&mut bytes)
         .map_err(|error| Failure::setup("norn.dev.io", format!("no randomness: {error}")))?;
-    let (bearer, key) = bytes.split_at(32);
+    let (bearers, key) = bytes.split_at(64);
+    let (bearer, reviewer) = bearers.split_at(32);
     let mut handle_key = [0_u8; 32];
     handle_key.copy_from_slice(key);
-    let hex = bearer
-        .iter()
-        .fold(String::with_capacity(64), |mut hex, byte| {
-            let _written = write!(hex, "{byte:02x}");
-            hex
-        });
+    let hex = |bytes: &[u8]| {
+        bytes
+            .iter()
+            .fold(String::with_capacity(64), |mut hex, byte| {
+                let _written = write!(hex, "{byte:02x}");
+                hex
+            })
+    };
     Ok(Token {
-        bearer: hex,
+        bearer: hex(bearer),
+        reviewer: hex(reviewer),
         handle_key,
     })
 }

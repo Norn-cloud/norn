@@ -165,24 +165,7 @@ fn dispatch(
             "fix the refused change shown by norn dev; the first admitted revision is served",
         ));
     };
-    // DEV-ONE-AUTHORITY-1: only this process installs definitions, from the
-    // project's sources; the hosted plan/apply routes are not served here.
-    if parsed.path == norn_api::cell_definitions::PLAN_PATH
-        || parsed.path == norn_api::cell_definitions::APPLY_PATH
-    {
-        return refusal(&Refusal::new(
-            http::StatusCode::CONFLICT,
-            "defs.dev_sources_only",
-            "norn dev installs definitions from the project's sources",
-            "save the project's sources; norn dev admits and installs every change itself",
-        ));
-    }
     let now = super::now_ms().checked_div(1000).unwrap_or_default();
-    // The active revision's metrics, derived before the request runs.
-    let questions = match questions.questions(host) {
-        Ok(questions) => questions,
-        Err(refused) => return refusal(&refused),
-    };
     let request = Request {
         method: &parsed.method,
         path: &parsed.path,
@@ -191,20 +174,275 @@ fn dispatch(
         now,
         body: &parsed.body,
     };
+    answer(host, principals, questions, engine, &request)
+}
+
+/// One request against the serving cell: what the transport answers once it
+/// has parsed the request. Tests drive the dev host through this.
+pub(crate) fn answer(
+    host: &DevHost<NativeEngine>,
+    principals: &DevPrincipals,
+    questions: &DevMetrics,
+    engine: Option<&dyn Transport>,
+    request: &Request<'_>,
+) -> Response {
+    // DEV-ONE-AUTHORITY-1: only this process installs definitions, from the
+    // project's sources; the hosted plan/apply routes are not served here.
+    if request.path == norn_api::cell_definitions::PLAN_PATH
+        || request.path == norn_api::cell_definitions::APPLY_PATH
+    {
+        return refusal(&Refusal::new(
+            http::StatusCode::CONFLICT,
+            "defs.dev_sources_only",
+            "norn dev installs definitions from the project's sources",
+            "save the project's sources; norn dev admits and installs every change itself",
+        ));
+    }
+    // A recorded export loads as on a hosted cell, decided by the same policy
+    // first (CONNECT-AUTH-1), so one loader serves both hosts.
+    if let Some(response) = crate::connect::observations(host, principals, request) {
+        return response;
+    }
+    // The hosted host's definition kinds: an approval names hosted roles.
+    let kinds = super::policy::dev_kinds();
+    // The active revision's metrics, derived before the request runs.
+    let questions = match questions.questions(host) {
+        Ok(questions) => questions,
+        Err(refused) => return refusal(&refused),
+    };
     // D102: with an engine linked in, questions and profiles run on it.
     let Some(engine) = engine else {
-        return server::handle_with(host, principals, Some(&questions), &request);
+        return server::handle_all(host, principals, Some(&questions), &kinds, request);
     };
-    if let Some(response) = server::analytics(host, principals, engine, None, &request) {
+    if let Some(response) = server::analytics(host, principals, engine, None, request) {
         return response;
     }
     let on_engine = EngineQuestions::new(&questions, engine, host.scope());
-    server::handle_with(host, principals, Some(&on_engine), &request)
+    server::handle_all(host, principals, Some(&on_engine), &kinds, request)
 }
 
 fn refusal(refused: &Refusal) -> Response {
     Response {
         status: refused.status,
         body: serde_json::to_string(refused).unwrap_or_else(|_error| String::from("{}")),
+    }
+}
+
+/// The admitted constitution melt cell the action tests share.
+#[cfg(test)]
+#[path = "../../../norn-api/tests/support/action_cell.rs"]
+#[allow(
+    dead_code,
+    reason = "the shared fixture module serves the action tests too"
+)]
+mod action_cell;
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    reason = "dev-host dispatch scenarios"
+)]
+mod tests {
+    //! DEV-REVIEWER-1 through the dev host's own dispatch: the hosted
+    //! definition kinds admit an approval over hosted roles, a gated call
+    //! waits as one open decision, its requester never decides it, and the
+    //! local reviewer's approval commits it as the requester.
+    use super::*;
+    use crate::dev::policy::{LocalDeveloper, reviewer};
+    use norn_api::scope::CellScope;
+    use serde_json::{Value, json};
+
+    use super::action_cell::{DERIVES_LOSS, MELT_ACTION, melt_body, melt_store};
+
+    const DEVELOPER: &str = "local:developer";
+    const DEVELOPER_TOKEN: &str = "developer-token-0123456789";
+    const REVIEWER_TOKEN: &str = "reviewer-token-01234567890";
+    const SCOPE: &str = "orgId=org_demo&environmentId=dev";
+
+    struct Dev {
+        host: DevHost<NativeEngine>,
+        principals: DevPrincipals,
+        metrics: DevMetrics,
+    }
+
+    fn dev() -> Dev {
+        let scope = CellScope {
+            org_id: "org_demo".into(),
+            environment_id: "dev".into(),
+        };
+        let store = melt_store(
+            DERIVES_LOSS,
+            norn_api::action_admission::prepare_action_model,
+        );
+        Dev {
+            host: DevHost::from_store(store, scope.clone(), |command| command.payload.clone())
+                .unwrap()
+                .with_authorizer(LocalDeveloper::for_actor(DEVELOPER)),
+            principals: DevPrincipals::new(vec![
+                (DEVELOPER_TOKEN.into(), DEVELOPER.into()),
+                (REVIEWER_TOKEN.into(), reviewer(DEVELOPER)),
+            ]),
+            metrics: DevMetrics::new([9; 32], scope),
+        }
+    }
+
+    fn call(
+        dev: &Dev,
+        token: Option<&str>,
+        (method, path, query): (&str, &str, &str),
+        body: &str,
+    ) -> (u16, Value) {
+        let authorization = token.map(|token| format!("Bearer {token}"));
+        let response = answer(
+            &dev.host,
+            &dev.principals,
+            &dev.metrics,
+            None,
+            &Request {
+                method,
+                path,
+                query,
+                authorization: authorization.as_deref(),
+                now: 1_800_000_000,
+                body,
+            },
+        );
+        (
+            response.status,
+            serde_json::from_str(&response.body).unwrap(),
+        )
+    }
+
+    fn approval(roles: &[&str]) -> Value {
+        json!({ "kind": "approval", "id": "ops.melt_approval", "payload": {
+            "action": MELT_ACTION, "decider": { "roles": roles },
+            "question": "Convert this melt?", "risk": "high" } })
+    }
+
+    fn gate(dev: &Dev) {
+        let mut body = approval(&["admin"]);
+        let (status, admitted) = call(
+            dev,
+            Some(DEVELOPER_TOKEN),
+            ("POST", "/v1/definitions:admit", SCOPE),
+            &body.to_string(),
+        );
+        assert_eq!(status, 200, "{admitted}");
+        body["signoff"] = json!({ "restatementSha256": admitted["restatementSha256"] });
+        let (status, installed) = call(
+            dev,
+            Some(DEVELOPER_TOKEN),
+            ("POST", "/v1/definitions:install", SCOPE),
+            &body.to_string(),
+        );
+        assert_eq!(status, 200, "{installed}");
+    }
+
+    fn pending(dev: &Dev, token: &str) -> Value {
+        let query = format!("{SCOPE}&state=pending");
+        let (status, page) = call(dev, Some(token), ("GET", "/v1/decisions", &query), "");
+        assert_eq!(status, 200, "{page}");
+        page
+    }
+
+    fn melt(dev: &Dev) -> u16 {
+        let path = "/v1/objects/constitution.Melt/melt-7";
+        call(dev, Some(DEVELOPER_TOKEN), ("GET", path, SCOPE), "").0
+    }
+
+    #[test]
+    fn an_approval_waits_on_the_dev_host_until_the_reviewer_decides() {
+        let dev = dev();
+        gate(&dev);
+        let body = melt_body("melt-7", "12", "10", "dev-1");
+        let action = format!("/v1/actions/{MELT_ACTION}");
+        let (status, parked) = call(&dev, Some(DEVELOPER_TOKEN), ("POST", &action, SCOPE), &body);
+        assert_eq!(status, 202, "{parked}");
+        assert_eq!(parked["outcome"], json!("pending"));
+        let id = parked["decision"]["id"].as_str().unwrap().to_owned();
+        assert_eq!(melt(&dev), 404, "a waiting call commits nothing");
+
+        // The requester never decides their own call (#618).
+        assert_eq!(pending(&dev, DEVELOPER_TOKEN)["total"], json!(0));
+        let decide = format!("/v1/decisions/{id}:decide");
+        let choice = json!({ "choice": "approve", "idempotencyKey": "approve-1" }).to_string();
+        let (status, own) = call(
+            &dev,
+            Some(DEVELOPER_TOKEN),
+            ("POST", &decide, SCOPE),
+            &choice,
+        );
+        assert_eq!(status, 404, "{own}");
+
+        // Without a session token nothing is listed or decided.
+        let (status, _) = call(&dev, None, ("POST", &decide, SCOPE), &choice);
+        assert_ne!(status, 200);
+
+        assert_eq!(pending(&dev, REVIEWER_TOKEN)["total"], json!(1));
+        let (status, decided) = call(
+            &dev,
+            Some(REVIEWER_TOKEN),
+            ("POST", &decide, SCOPE),
+            &choice,
+        );
+        assert_eq!(status, 200, "{decided}");
+        assert_eq!(decided["call"], json!({ "committed": true }), "{decided}");
+        assert_eq!(melt(&dev), 200);
+    }
+
+    #[test]
+    fn an_approval_admits_against_the_hosted_roles() {
+        let dev = dev();
+        let (status, refused) = call(
+            &dev,
+            Some(DEVELOPER_TOKEN),
+            ("POST", "/v1/definitions:admit", SCOPE),
+            &approval(&["auditor"]).to_string(),
+        );
+        assert_eq!(
+            (status, &refused["admitted"]),
+            (200, &json!(false)),
+            "{refused}"
+        );
+        assert_eq!(
+            refused["diagnostics"][0]["code"],
+            json!("definition.approval_role_unknown")
+        );
+        let (status, admitted) = call(
+            &dev,
+            Some(DEVELOPER_TOKEN),
+            ("POST", "/v1/definitions:admit", SCOPE),
+            &approval(&["admin"]).to_string(),
+        );
+        assert_eq!(
+            (status, &admitted["admitted"]),
+            (200, &json!(true)),
+            "{admitted}"
+        );
+    }
+
+    #[test]
+    fn a_load_without_a_session_token_is_answered_as_outside() {
+        let dev = dev();
+        let body = json!({ "profile": "synthetic-erpnext-three/1", "snapshot": [] }).to_string();
+        let path = "/v1/observations:load";
+        let anonymous = call(&dev, None, ("POST", path, SCOPE), &body);
+        let outside = crate::server::outside::<NativeEngine>(&Request {
+            method: "POST",
+            path,
+            query: SCOPE,
+            authorization: None,
+            now: 1_800_000_000,
+            body: &body,
+        });
+        assert_eq!(
+            anonymous,
+            (outside.status, serde_json::from_str(&outside.body).unwrap())
+        );
+        // The developer reaches the loader: this mapping is not admitted here.
+        let (status, refused) = call(&dev, Some(DEVELOPER_TOKEN), ("POST", path, SCOPE), &body);
+        assert_eq!(status, 400, "{refused}");
     }
 }

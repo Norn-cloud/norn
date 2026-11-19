@@ -152,6 +152,45 @@ test("developer_loop_roundtrip: author, observe, break, repair and restart throu
   }
 }, 240_000)
 
+test("three_systems_dev_load: the packs' synthetic exports load whole, and a refused load exits with its reason", async () => {
+  if (!native) return
+  const root = mkdtempSync(join(tmpdir(), "norn-dev-packs-"))
+  const dir = join(root, "packs")
+  let dev: Dev | undefined
+  try {
+    expect(spawnSync(process.execPath, [CLI, "init", dir, "--template", "three-systems", "--no-install"], { env }).status).toBe(0)
+    const data = ["erpnext", "shopify", "odoo"].flatMap((system) => ["--load", `data/${system}.json`])
+    dev = new Dev(dir, data)
+    const loaded = await dev.next("loaded", 0, 180_000)
+    expect(loaded.files.map((file: Event) => file.rows)).toEqual([13, 11, 13])
+    const ready = await dev.next("ready", 0, 180_000)
+    const token = readFileSync(join(dir, ".norn/dev.token"), "utf8").trim()
+    const scope = "orgId=local&environmentId=dev"
+    for (const type of ["canon.Holding", "canon.OrderLine", "canon.Delivery", "canon.Posting", "canon.SettlementObservation"]) {
+      const response = await fetch(`${ready.url}/v1/objects/${type}?${scope}`, { headers: { authorization: `Bearer ${token}` } })
+      const body = await response.json() as { records?: unknown[]; quarantineCount?: number }
+      expect({ type, status: response.status, some: (body.records?.length ?? 0) > 0, quarantined: body.quarantineCount }).toEqual({ type, status: 200, some: true, quarantined: 0 })
+    }
+    await dev.stop()
+    dev = undefined
+
+    // DEV-LOAD-REFUSED-1: an export the cell cannot read ends norn dev at once, with its reason.
+    writeFileSync(join(dir, "data/broken.json"), JSON.stringify({ rows: [] }))
+    const broken = spawnSync(process.execPath, [CLI, "dev", "--json", "--port", "0", "--load", "data/broken.json"], { cwd: dir, env, encoding: "utf8", timeout: 120_000 })
+    expect(broken.status).toBe(3)
+    expect(broken.stdout).toContain("norn.dev.load_refused")
+    const fresh = join(root, "fresh")
+    expect(spawnSync(process.execPath, [CLI, "init", fresh, "--template", "three-systems", "--no-install"], { env }).status).toBe(0)
+    writeFileSync(join(fresh, "data/broken.json"), JSON.stringify({ rows: [] }))
+    const first = spawnSync(process.execPath, [CLI, "dev", "--json", "--port", "0", "--load", "data/broken.json"], { cwd: fresh, env, encoding: "utf8", timeout: 180_000 })
+    expect(first.status).toBe(3)
+    expect(first.stdout).toContain("norn.dev.load_refused")
+  } finally {
+    await dev?.stop()
+    rmSync(root, { recursive: true, force: true })
+  }
+}, 600_000)
+
 test("norn dev outside a project or without a host refuses with an actionable code", () => {
   const root = mkdtempSync(join(tmpdir(), "norn-dev-setup-"))
   try {
