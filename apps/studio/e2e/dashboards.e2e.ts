@@ -236,6 +236,8 @@ test.describe("on a touch screen too", () => {
     const menu = sheet.getByRole("menu")
     await page.getByRole("button", { name: "Details" }).nth(2).click()
     await expect(sheet).toBeVisible()
+    // Measured once the sheet has slid into place: its entrance moves it up to 40px.
+    await expect.poll(() => sheet.evaluate((el) => el.getAnimations().filter((animation) => animation.playState === "running").length)).toBe(0)
     const box = await sheet.boundingBox()
     if (box === null) throw new Error("the sheet has no box")
     // Presses at coordinates, as a person makes them: the sheet's blank bottom-left corner.
@@ -255,8 +257,8 @@ test.describe("on a touch screen too", () => {
     await expect(menu).toBeHidden()
     await expect(sheet).toBeVisible()
 
-    // Left of the sheet is outside it.
-    await page.mouse.click(Math.max(4, box.x - 40), box.y + box.height / 2)
+    // The page's left edge is outside the sheet, which sits on the right.
+    await page.mouse.click(20, box.y + box.height / 2)
     await expect(sheet).toBeHidden()
   })
 })
