@@ -365,8 +365,67 @@ impl NornCell {
     /// (checked and marked in this one call), as its own principal.
     #[wasm_bindgen(js_name = syncDue)]
     pub fn sync_due(&mut self, now_ms: f64) -> Option<String> {
-        self.tenant.serving_host()?;
-        self.connect.as_mut()?.due(millis(now_ms))
+        let host = self.tenant.serving_host()?;
+        let connect = self.connect.as_mut()?;
+        // A schedule the cell's records cannot be read back for claims nothing.
+        connect.restore_schedule(host).ok()?;
+        connect.due(millis(now_ms))
+    }
+
+    /// TIMER-ALARM-1: whether this object serves a provisioned cell. Only
+    /// then does the host keep its scope for alarms; an open of a vacant
+    /// scope (anyone may name one) leaves no trace.
+    #[must_use]
+    pub fn serving(&self) -> bool {
+        self.tenant.serving_host().is_some()
+    }
+
+    /// TIMER-ALARM-1: when the Durable Object's alarm should next fire (Unix
+    /// milliseconds): the cell's earliest deadline or its next scheduled
+    /// sync, whichever is sooner, possibly already passed; `undefined` when
+    /// nothing is pending. The host arms it after every request, after a
+    /// sync ends and when the object opens.
+    ///
+    /// # Errors
+    /// A host failure reading the cell.
+    #[wasm_bindgen(js_name = nextDue)]
+    pub fn next_due(&mut self, now_ms: f64) -> Result<Option<f64>, JsValue> {
+        let cell = self
+            .tenant
+            .next_due()
+            .map_err(|refusal| rejected(refusal.code))?;
+        Ok(earliest(cell, self.sync_next(now_ms)?))
+    }
+
+    /// TIMER-ALARM-1: the alarm fired. Run the cell's work due at `now_ms`
+    /// (reservation expiries, flow timers, decision deadlines) through its
+    /// ordinary commit paths, and say when the alarm should fire next. A
+    /// re-delivered alarm finds nothing due and commits nothing. The host
+    /// then claims a due sync with `syncDue`.
+    ///
+    /// # Errors
+    /// A host failure reading the cell; the runtime retries the alarm.
+    #[wasm_bindgen(js_name = runDue)]
+    pub fn run_due(&mut self, now_ms: f64) -> Result<Due, JsValue> {
+        let work = self
+            .tenant
+            .run_due(millis(now_ms))
+            .map_err(|refusal| rejected(refusal.code))?;
+        Ok(Due {
+            committed: work.committed(),
+            next: earliest(work.next, self.sync_next(now_ms)?),
+            failed: (!work.failed.is_empty()).then(|| work.failed.join("; ")),
+        })
+    }
+
+    /// The next scheduled sync, with the schedule read back from the cell.
+    fn sync_next(&mut self, now_ms: f64) -> Result<Option<u64>, JsValue> {
+        let (Some(host), Some(connect)) = (self.tenant.serving_host(), self.connect.as_mut())
+        else {
+            return Ok(None);
+        };
+        connect.restore_schedule(host).map_err(rejected)?;
+        Ok(connect.next_sync_due(millis(now_ms)))
     }
 
     /// Advance the running sync of `id`; `status` and `body` answer the
@@ -430,6 +489,34 @@ impl NornCell {
             policy_error: None,
         }
     }
+}
+
+/// TIMER-ALARM-1: what an alarm did, and when the next one fires.
+#[wasm_bindgen(getter_with_clone)]
+#[derive(Debug, Clone)]
+pub struct Due {
+    /// The alarm committed something: live subscriptions are answered again.
+    pub committed: bool,
+    /// When the alarm should next fire (Unix milliseconds); `undefined`
+    /// when nothing is pending.
+    pub next: Option<f64>,
+    /// Why items that were due could not be handled (they stay due), for
+    /// the operator's log only.
+    pub failed: Option<String>,
+}
+
+#[allow(
+    clippy::as_conversions,
+    clippy::cast_precision_loss,
+    reason = "a Unix millisecond time is far below 2^53, exact as an f64"
+)]
+fn earliest(left: Option<u64>, right: Option<u64>) -> Option<f64> {
+    let both = match (left, right) {
+        (Some(left), Some(right)) => Some(left.min(right)),
+        (left, None) => left,
+        (None, right) => right,
+    };
+    both.map(|millis| millis as f64)
 }
 
 #[allow(

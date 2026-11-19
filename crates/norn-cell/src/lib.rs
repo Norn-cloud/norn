@@ -36,6 +36,7 @@ pub mod classification;
 mod codec;
 pub mod compute;
 pub mod decision_ledger;
+pub mod due_retry;
 pub mod engine;
 pub mod error;
 pub mod export;

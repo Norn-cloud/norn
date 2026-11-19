@@ -1170,3 +1170,82 @@ fn one_sync_runs_per_cell_at_a_time() {
         )
         .expect("the next one runs");
 }
+
+/// TIMER-ALARM-1: a host that was evicted keeps the schedule the cell
+/// recorded. A fresh `Sources` (the host's in-memory state is gone) reads
+/// each connection's last sync end back from its durable connection record,
+/// so the next sync falls due `everyMinutes` after it, not at once.
+#[test]
+fn an_evicted_host_keeps_the_recorded_sync_schedule() {
+    let host = host();
+    let started_ms = 1_794_484_800_000;
+    let ended_ms = started_ms + 5;
+    norn_api::sources::report_upload(
+        &host,
+        &norn_api::sources::UploadRun {
+            id: "upload.items",
+            label: "items.csv",
+            uri: "s3://uploads/demo/items.csv",
+            sha256: &"ab".repeat(32),
+            mapping: "",
+            actor: "viewer@demo",
+            started_ms,
+            ended_ms,
+            counts: (1, 1, 0),
+            reasons: BTreeMap::new(),
+        },
+    );
+    assert!(
+        host.host_object("source.Connection", "upload.items")
+            .expect("read")
+            .is_some(),
+        "the run is recorded"
+    );
+    let config = serde_json::json!([{ "id": "upload.items", "system": "erpnext", "label": "items",
+        "connector": "c", "mapping": "m", "instance": "i",
+        "baseUrl": "https://erp.example.test", "everyMinutes": 15 }])
+    .to_string();
+    let mut evicted = Sources::new(&config, BTreeMap::new()).expect("configured");
+    let now = started_ms + 60_000;
+    evicted.restore_schedule(&host).expect("restored");
+    assert_eq!(evicted.next_due(now), Some(ended_ms + 15 * 60_000));
+    assert_eq!(evicted.due(now), None, "not due before its schedule");
+    assert_eq!(
+        evicted.due(ended_ms + 15 * 60_000).as_deref(),
+        Some("upload.items")
+    );
+}
+
+/// TIMER-ALARM-1 (round 2 S8): a cell from before connection records were
+/// recorded has no `source.Connection` type. That is no recorded schedule,
+/// not a restore error: the host opens, and its scheduled connection is due
+/// as one never synced.
+#[test]
+fn a_cell_without_connection_records_restores_no_schedule() {
+    let catalog: Vec<ArtifactEnvelope> = serde_json::from_str(
+        &std::fs::read_to_string(
+            root().join("fixtures/demo/explorer/three-systems.definitions.json"),
+        )
+        .expect("retained catalog"),
+    )
+    .expect("artifacts");
+    let host = host_with(&catalog);
+    assert!(
+        !host
+            .object_type_names()
+            .expect("names")
+            .iter()
+            .any(|name| name == "source.Connection"),
+        "the older cell has no connection records"
+    );
+    let config = serde_json::json!([{ "id": "erpnext.rest", "system": "erpnext", "label": "items",
+        "connector": "c", "mapping": "m", "instance": "i",
+        "baseUrl": "https://erp.example.test", "everyMinutes": 15 }])
+    .to_string();
+    let mut sources = Sources::new(&config, BTreeMap::new()).expect("configured");
+    sources
+        .restore_schedule(&host)
+        .expect("no recorded schedule is not an error");
+    let now = 1_794_484_800_000;
+    assert_eq!(sources.next_due(now), Some(now));
+}

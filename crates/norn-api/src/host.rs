@@ -506,6 +506,11 @@ impl<E: SqlEngine> DevHost<E> {
         let installed = cell
             .install_definitions(candidate_model, input, expected_version)
             .map_err(|error| {
+                // HOST-INSTALL-LIVE-1: every install path refuses live data the
+                // candidate's laws break with the same typed 409.
+                if let Some(refusal) = crate::cell_definitions::live_law_refusal(&error) {
+                    return refusal;
+                }
                 if let CellError::DefinitionVersionConflict { expected, actual } = &error {
                     return Refusal::new(
                         StatusCode::CONFLICT,

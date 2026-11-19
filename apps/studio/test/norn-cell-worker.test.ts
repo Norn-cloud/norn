@@ -32,6 +32,8 @@ export class NornCell {
   constructor(_storage, org, env) { stub.opened.push({ org, env }); }
   configureConnect() {}
   enableAnalytics() {}
+  // A vacant scope: no alarms to arm, no scope to keep.
+  serving() { return false; }
 }
 `,
   )
