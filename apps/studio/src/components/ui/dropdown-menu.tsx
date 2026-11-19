@@ -6,11 +6,16 @@ import { CheckIcon, ChevronRightIcon } from "lucide-react"
 
 // Menus close at once. While a Radix menu animates out it is still the top Radix layer and takes
 // Escape, so an Escape pressed in a UI SDK sheet that its item just opened would be lost.
+// A menu inside a UI SDK panel is not modal: a modal Radix menu sets `pointer-events: none` on the
+// body, so a press on blank space in the panel lands on `<html>` and the SDK reads it as a press
+// outside the panel, closing both. The panel is already modal; the menu still closes on that press.
 
 function DropdownMenu({
+  modal,
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.Root>) {
-  return <DropdownMenuPrimitive.Root data-slot="dropdown-menu" {...props} />
+  const inPanel = useLayer() !== undefined
+  return <DropdownMenuPrimitive.Root data-slot="dropdown-menu" modal={modal ?? !inPanel} {...props} />
 }
 
 function DropdownMenuPortal({

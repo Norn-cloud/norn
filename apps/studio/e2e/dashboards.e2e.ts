@@ -223,6 +223,28 @@ test("a tile's details sheet: its menu and popover open above it, take the point
   await expect(page.getByText(/records the server added up, exactly as it counted them/)).toBeVisible()
 })
 
+test("a press on blank space in a tile's sheet closes only its open menu; a press outside then closes the sheet", async ({ page }) => {
+  test.skip(Boolean(process.env.E2E_BASE), "this row uses deterministic stand-ins for the assistant and the cell")
+  await board(page)
+  const sheet = page.getByRole("dialog", { name: "Yield, weekly" })
+  await page.getByRole("button", { name: "Details" }).nth(2).click()
+  await expect(sheet).toBeVisible()
+  await sheet.getByRole("button", { name: /^Drill into / }).first().click()
+  const menu = sheet.getByRole("menu")
+  await expect(menu).toBeVisible()
+
+  // Real pointer presses at coordinates, as a person clicks: the sheet's blank bottom-left corner.
+  const box = await sheet.boundingBox()
+  if (box === null) throw new Error("the sheet has no box")
+  await page.mouse.click(box.x + 12, box.y + box.height - 12)
+  await expect(menu).toBeHidden()
+  await expect(sheet).toBeVisible()
+
+  // Left of the sheet is outside it.
+  await page.mouse.click(Math.max(4, box.x - 40), box.y + box.height / 2)
+  await expect(sheet).toBeHidden()
+})
+
 test("a sheet closed by Escape while it is still opening lets the next click through at once", async ({ page }) => {
   test.skip(Boolean(process.env.E2E_BASE), "this row uses deterministic stand-ins for the assistant and the cell")
   await board(page)
