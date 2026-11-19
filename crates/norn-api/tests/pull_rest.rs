@@ -1153,3 +1153,48 @@ fn one_sync_runs_per_cell_at_a_time() {
         )
         .expect("the next one runs");
 }
+
+/// TIMER-ALARM-1: a host that was evicted keeps the schedule the cell
+/// recorded. A fresh `Sources` (the host's in-memory state is gone) reads
+/// each connection's last sync end back from its durable connection record,
+/// so the next sync falls due `everyMinutes` after it, not at once.
+#[test]
+fn an_evicted_host_keeps_the_recorded_sync_schedule() {
+    let host = host();
+    let started_ms = 1_794_484_800_000;
+    let ended_ms = started_ms + 5;
+    norn_api::sources::report_upload(
+        &host,
+        &norn_api::sources::UploadRun {
+            id: "upload.items",
+            label: "items.csv",
+            uri: "s3://uploads/demo/items.csv",
+            sha256: &"ab".repeat(32),
+            mapping: "",
+            actor: "viewer@demo",
+            started_ms,
+            ended_ms,
+            counts: (1, 1, 0),
+            reasons: BTreeMap::new(),
+        },
+    );
+    assert!(
+        host.host_object("source.Connection", "upload.items")
+            .expect("read")
+            .is_some(),
+        "the run is recorded"
+    );
+    let config = serde_json::json!([{ "id": "upload.items", "system": "erpnext", "label": "items",
+        "connector": "c", "mapping": "m", "instance": "i",
+        "baseUrl": "https://erp.example.test", "everyMinutes": 15 }])
+    .to_string();
+    let mut evicted = Sources::new(&config, BTreeMap::new()).expect("configured");
+    let now = started_ms + 60_000;
+    evicted.restore_schedule(&host).expect("restored");
+    assert_eq!(evicted.next_due(now), Some(ended_ms + 15 * 60_000));
+    assert_eq!(evicted.due(now), None, "not due before its schedule");
+    assert_eq!(
+        evicted.due(ended_ms + 15 * 60_000).as_deref(),
+        Some("upload.items")
+    );
+}

@@ -12,26 +12,45 @@
 //! records its resolution. A wake delivered twice (at-least-once alarms, a
 //! restart in between) finds nothing due the second time and commits
 //! nothing. Time comes only from the host's clock argument.
+//!
+//! An item that is due but cannot be handled stays due, with its retry
+//! eligibility kept in the cell per item and incarnation (TIMER-RETRY-1):
+//! every wake, re-arm and cold open respects its backoff, failed tries count
+//! toward a wake's budget, and items are tried earliest deadline first
+//! across all three kinds, so a stuck item never starves the rest. An
+//! expiry whose resolving commit failed is resumed from its recorded result.
+//! A flow timer runs under its run's pinned rule and environment
+//! (TIMER-PIN-1).
 
 use norn_cell::MAIN_WORLD;
+use norn_cell::due_retry::{decision_item, timer_item};
 use norn_cell::engine::SqlEngine;
+use norn_cell::read::PendingTimer;
 use norn_ir::RuntimeObject;
 use norn_kernel::{
     CellCommit, CellHost, DecisionTurn, DueTimer, EnvelopeLimits, FactEvent, FactKey, LogicalTime,
     TypeCatalog, World,
 };
 
+use crate::decisions::OpenDecision;
 use crate::host::{ActionCell, DevHost};
 use crate::refusal::Refusal;
 
-/// The most items one [`run_due`] call handles; the rest are left for the
-/// next wake, which [`DueWork::next`] then asks for at once.
+/// The most items one [`run_due`] call tries, handled or failed alike; the
+/// rest are left for the next wake, which [`DueWork::next`] then asks for at
+/// once.
 pub const MAX_DUE_STEPS: usize = 64;
 
-/// How long a host waits before it retries an item that was due but could
-/// not be handled (a run of a retired flow, a refused turn), so one stuck
-/// item never wakes the cell in a tight loop.
+/// The first backoff of an item that was due but could not be handled (a run
+/// of a retired flow, a refused turn); it doubles with each failure of the
+/// same incarnation, up to [`MAX_RETRY_MS`]. The retry eligibility is kept
+/// in the cell (TIMER-RETRY-1), so every wake, request, cold open and the
+/// dev host's loop respect it, and one stuck item never wakes the cell in a
+/// tight loop.
 pub const STUCK_RETRY_MS: u64 = 60_000;
+
+/// The longest backoff of an item that keeps failing.
+pub const MAX_RETRY_MS: u64 = 3_600_000;
 
 /// What one [`run_due`] call did, and when the host should wake next.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -44,12 +63,12 @@ pub struct DueWork {
     /// Decisions resolved as expired.
     pub decisions: u32,
     /// Why each item that was due could not be handled, for the operator's
-    /// log; such an item stays due and is retried.
+    /// log; such an item stays due and is retried after its backoff.
     pub failed: Vec<String>,
     /// When to wake next (logical milliseconds), or `None` when nothing is
-    /// pending. At most the wake time itself when work was left for the next
-    /// wake; never earlier than [`STUCK_RETRY_MS`] ahead for an item that was
-    /// due and could not be handled.
+    /// pending: the wake time itself when eligible work was left for the
+    /// next wake, else the earliest time any pending item may be tried (its
+    /// deadline, or its retry eligibility after a failure).
     pub next: Option<u64>,
 }
 
@@ -61,130 +80,199 @@ impl DueWork {
     }
 }
 
-/// The earliest deadline the cell holds (logical milliseconds): a timer
-/// (quantity or flow) or an open decision's expiry. It may already have
-/// passed: the host then wakes at once. `None` when nothing is pending.
+/// The earliest time the cell has work to try (logical milliseconds): a
+/// timer (quantity or flow), an open decision's expiry, or a recorded expiry
+/// still to resolve, each no earlier than its retry eligibility when it
+/// failed before (TIMER-RETRY-1). It may already have passed: the host then
+/// wakes at once. `None` when nothing is pending.
 ///
 /// # Errors
 /// A host failure.
 pub fn next_due<E: SqlEngine>(host: &DevHost<E>) -> Result<Option<u64>, Refusal> {
     let _epoch = host.definition_read()?;
     let cell = host.cell()?;
-    let timer = cell
-        .store()
-        .read()
-        .next_timer_due()
-        .map_err(Refusal::host)?;
-    let decision = earliest_decision(&cell, None)?;
-    Ok(min(timer, decision))
+    next_wake(&cell)
 }
 
-/// Run everything due at `now`, at most [`MAX_DUE_STEPS`] items: release
-/// expired quantity reservations, deliver flow timers to their runs, and
-/// resolve decisions past their deadline. Each item commits on its own
-/// through the cell's ordinary path; a failed item is left due and retried
-/// no sooner than [`STUCK_RETRY_MS`] later.
+/// One item due at a wake.
+enum Item {
+    Quantity(PendingTimer),
+    Timer(PendingTimer),
+    Decision(Box<OpenDecision>),
+}
+
+impl Item {
+    /// When it fell due, then its kind and id: the order items are tried in.
+    fn order(&self) -> (u64, u8, &str) {
+        match self {
+            Self::Quantity(pending) => (pending.timer.due, 0, &pending.timer.timer_id),
+            Self::Timer(pending) => (pending.timer.due, 1, &pending.timer.timer_id),
+            Self::Decision(decision) => (decision.expires_at_ms, 2, &decision.id),
+        }
+    }
+
+    /// Its retry key and incarnation (TIMER-RETRY-1).
+    fn retry_key(&self) -> (String, u64) {
+        match self {
+            Self::Quantity(pending) | Self::Timer(pending) => {
+                (timer_item(&pending.timer.timer_id), pending.commit_seq)
+            }
+            Self::Decision(decision) => (decision_item(&decision.id), decision.generation.0),
+        }
+    }
+}
+
+/// Run what is due at `now`, trying at most [`MAX_DUE_STEPS`] items:
+/// release expired quantity reservations, deliver flow timers to their runs,
+/// and resolve decisions past their deadline (resuming an expiry whose
+/// resolving commit never landed). Items are tried earliest deadline first
+/// across all three kinds, each committing on its own through the cell's
+/// ordinary path; one that cannot be handled is recorded with its retry
+/// eligibility (TIMER-RETRY-1), counts toward the budget, and never stops
+/// the items behind it. An item still within its backoff is not tried.
 ///
 /// # Errors
-/// A host failure reading the cell. An item that fails is not an error of
-/// the call: it stays due.
+/// A host failure reading the cell or recording a failure. An item that
+/// fails is not an error of the call: it stays due.
 pub fn run_due<E: SqlEngine>(host: &DevHost<E>, now: LogicalTime) -> Result<DueWork, Refusal> {
     let _epoch = host.definition_read()?;
     let mut cell = host.cell()?;
     let now = crate::actions::turn_clock(&mut cell, now)?;
+    let at = now.as_millis();
+    cell.store().prune_timer_retries().map_err(Refusal::host)?;
+    let mut items = eligible(&cell, at)?;
+    // One more than the budget tells whether work is left for the next wake.
+    let more = items.len() > MAX_DUE_STEPS;
+    items.truncate(MAX_DUE_STEPS);
     let mut work = DueWork::default();
-    let mut steps = 0;
-    // Quantity expiries first: each consumes its timer with the release.
-    // One that fails is corrupt state: the pass stops there, fail closed.
-    while steps < MAX_DUE_STEPS {
-        match cell.expire_quantity_due() {
-            Ok(true) => {
-                work.expired_reservations = work.expired_reservations.saturating_add(1);
-                steps = steps.saturating_add(1);
+    for item in items {
+        let (key, incarnation) = item.retry_key();
+        let handled = match &item {
+            Item::Quantity(pending) => {
+                cell.advance_to(now);
+                cell.expire_quantity(pending)
+                    .map(|()| &mut work.expired_reservations)
+                    .map_err(|error| format!("quantity expiry {}: {error}", pending.timer.timer_id))
             }
-            Ok(false) => break,
-            Err(error) => {
-                work.failed.push(format!("quantity expiry: {error}"));
-                break;
+            Item::Timer(pending) => norn_ir::runtime::decode(&pending.timer.timer)
+                .map_err(Refusal::host)
+                .and_then(|timer| {
+                    let due = DueTimer {
+                        timer,
+                        incarnation: norn_kernel::LedgerSeq(pending.commit_seq),
+                    };
+                    fire_timer(&mut cell, &due, now)
+                })
+                .map(|()| &mut work.timers)
+                .map_err(|refusal| format!("timer {}: {}", pending.timer.timer_id, why(&refusal))),
+            Item::Decision(decision) => expire_decision(&mut cell, decision, now)
+                .map(|()| &mut work.decisions)
+                .map_err(|why| format!("decision {}: {why}", decision.id)),
+        };
+        match handled {
+            Ok(count) => {
+                *count = count.saturating_add(1);
+                cell.store().clear_due_retry(&key).map_err(Refusal::host)?;
+            }
+            Err(why) => {
+                cell.store()
+                    .record_due_failure(&key, incarnation, at, (STUCK_RETRY_MS, MAX_RETRY_MS))
+                    .map_err(Refusal::host)?;
+                work.failed.push(why);
             }
         }
     }
-    // Flow timers, earliest first, each on its own: one that cannot be
-    // delivered stays due without hiding the ones behind it.
-    let due_timers = cell
+    work.next = if more { Some(at) } else { next_wake(&cell)? };
+    Ok(work)
+}
+
+/// Every item due at `at` and eligible to be tried, earliest deadline first
+/// across reservations, flow timers and decisions, at most one more than the
+/// budget.
+fn eligible<E: SqlEngine>(cell: &ActionCell<E>, at: u64) -> Result<Vec<Item>, Refusal> {
+    let bound = MAX_DUE_STEPS.saturating_add(1);
+    let reader = cell.store().read();
+    let mut items: Vec<Item> = reader
+        .eligible_due_timers(at, bound, true)
+        .map_err(Refusal::host)?
+        .into_iter()
+        .map(Item::Quantity)
+        .collect();
+    items.extend(
+        reader
+            .eligible_due_timers(at, bound, false)
+            .map_err(Refusal::host)?
+            .into_iter()
+            .map(Item::Timer),
+    );
+    let retries = reader
+        .due_retries(&decision_item(""))
+        .map_err(Refusal::host)?;
+    items.extend(
+        decisions(cell)?
+            .into_iter()
+            .filter(|decision| {
+                decision.expires_at_ms <= at
+                    && retries
+                        .get(&decision_item(&decision.id))
+                        .filter(|retry| retry.incarnation == decision.generation.0)
+                        .is_none_or(|retry| retry.eligible_at <= at)
+            })
+            .map(|decision| Item::Decision(Box::new(decision))),
+    );
+    items.sort_by(|left, right| left.order().cmp(&right.order()));
+    items.truncate(bound);
+    Ok(items)
+}
+
+/// Every decision a wake may resolve: the open ones, and the expiries
+/// recorded whose resolving commit never landed.
+fn decisions<E: SqlEngine>(cell: &ActionCell<E>) -> Result<Vec<OpenDecision>, Refusal> {
+    let mut all = crate::decisions::open_decisions(cell.store())?;
+    all.extend(crate::decisions::stalled_expiries(cell.store())?);
+    Ok(all)
+}
+
+/// Resolve one overdue decision as expired; why it could not be.
+fn expire_decision<E: SqlEngine>(
+    cell: &mut ActionCell<E>,
+    decision: &OpenDecision,
+    now: LogicalTime,
+) -> Result<(), String> {
+    crate::decisions::expire(cell, decision, now).map_err(|refusal| why(&refusal).to_owned())?;
+    let resolved = cell
         .store()
         .read()
-        .due_timers(now.as_millis(), MAX_DUE_STEPS.saturating_sub(steps))
-        .map_err(Refusal::host)?;
-    for pending in due_timers {
-        steps = steps.saturating_add(1);
-        let delivered = norn_ir::runtime::decode(&pending.timer.timer)
-            .map_err(Refusal::host)
-            .and_then(|timer| {
-                let due = DueTimer {
-                    timer,
-                    incarnation: norn_kernel::LedgerSeq(pending.commit_seq),
-                };
-                fire_timer(&mut cell, &due, now)
-            });
-        match delivered {
-            Ok(()) => work.timers = work.timers.saturating_add(1),
-            Err(refusal) => work.failed.push(format!(
-                "timer {}: {}",
-                pending.timer.timer_id,
-                why(&refusal)
-            )),
-        }
-    }
-    // Decisions past their deadline.
-    let overdue: Vec<_> = crate::decisions::open_decisions(cell.store())?
-        .into_iter()
-        .filter(|decision| decision.expires_at_ms <= now.as_millis())
-        .collect();
-    for decision in overdue {
-        if steps >= MAX_DUE_STEPS {
-            break;
-        }
-        steps = steps.saturating_add(1);
-        if let Err(refusal) = crate::decisions::expire(&mut cell, &decision, now) {
-            work.failed
-                .push(format!("decision {}: {}", decision.id, why(&refusal)));
-            continue;
-        }
-        let resolved = cell
-            .store()
-            .read()
-            .decision_resolution(MAIN_WORLD, &decision.id)
-            .map_err(Refusal::host)?
-            .is_some();
-        if resolved {
-            work.decisions = work.decisions.saturating_add(1);
-        } else {
-            // A retired flow's run keeps waiting on its decision.
-            work.failed.push(format!(
-                "decision {}: its run's flow is retired",
-                decision.id
-            ));
-        }
-    }
-    let at = now.as_millis();
-    work.next = if steps >= MAX_DUE_STEPS {
-        Some(at)
+        .decision_resolution(MAIN_WORLD, &decision.id)
+        .map_err(|error| error.to_string())?
+        .is_some();
+    if resolved {
+        Ok(())
     } else {
-        let reader = cell.store().read();
-        let future = min(
-            reader.next_timer_due_after(at).map_err(Refusal::host)?,
-            earliest_decision(&cell, Some(at))?,
-        );
-        let overdue = min(
-            reader.next_timer_due().map_err(Refusal::host)?,
-            earliest_decision(&cell, None)?,
-        )
-        .is_some_and(|due| due <= at);
-        let retry = (!work.failed.is_empty() || overdue).then(|| at.saturating_add(STUCK_RETRY_MS));
-        min(future, retry)
-    };
-    Ok(work)
+        // A retired flow's run keeps waiting on its decision.
+        Err("its run's flow is retired".to_owned())
+    }
+}
+
+/// When the cell next has work to try: the earliest timer or decision
+/// deadline, each no earlier than its retry eligibility (TIMER-RETRY-1).
+fn next_wake<E: SqlEngine>(cell: &ActionCell<E>) -> Result<Option<u64>, Refusal> {
+    let reader = cell.store().read();
+    let timer = reader.next_eligible_timer().map_err(Refusal::host)?;
+    let retries = reader
+        .due_retries(&decision_item(""))
+        .map_err(Refusal::host)?;
+    let decision = decisions(cell)?
+        .into_iter()
+        .map(|decision| {
+            let eligible = retries
+                .get(&decision_item(&decision.id))
+                .filter(|retry| retry.incarnation == decision.generation.0)
+                .map_or(0, |retry| retry.eligible_at);
+            decision.expires_at_ms.max(eligible)
+        })
+        .min();
+    Ok(min(timer, decision))
 }
 
 /// What an item's refusal says for the operator: its host cause, else its code.
@@ -204,23 +292,13 @@ fn min(left: Option<u64>, right: Option<u64>) -> Option<u64> {
     }
 }
 
-/// The earliest open decision deadline, strictly after `after` when given.
-fn earliest_decision<E: SqlEngine>(
-    cell: &ActionCell<E>,
-    after: Option<u64>,
-) -> Result<Option<u64>, Refusal> {
-    Ok(crate::decisions::open_decisions(cell.store())?
-        .into_iter()
-        .map(|decision| decision.expires_at_ms)
-        .filter(|due| after.is_none_or(|after| *due > after))
-        .min())
-}
-
-/// Deliver one due timer: a flow run's timer goes to its run's timer turn,
-/// committed consuming the timer; a timer that names no live run (the run
-/// ended, or nothing on this host scheduled it for a run) is consumed by an
-/// empty commit, so its firing is on the ledger and it never fires again.
-/// A run whose flow is retired keeps waiting, as on a decision.
+/// Deliver one due timer: a flow run's timer goes to its run's timer turn
+/// under the rule and environment the run was pinned to when it started
+/// (TIMER-PIN-1), committed consuming the timer; a timer that names no live
+/// run (the run ended, or nothing on this host scheduled it for a run) is
+/// consumed by an empty commit, so its firing is on the ledger and it never
+/// fires again. A run whose flow is retired, or whose pin is unavailable,
+/// keeps waiting.
 fn fire_timer<E: SqlEngine>(
     cell: &mut ActionCell<E>,
     due: &DueTimer<RuntimeObject>,
@@ -245,7 +323,9 @@ fn fire_timer<E: SqlEngine>(
     };
     let commit = match (run_id, row) {
         (Some(run_id), Some(row)) => {
-            let flow = crate::run_routes::installed_flow(cell.store(), &row.flow.id)?;
+            // TIMER-PIN-1: the run's own rule and environment, as pinned when it
+            // started; a pin the cell cannot produce keeps the timer due.
+            let flow = crate::run_routes::pinned_flow(cell.store(), &row)?;
             let key = FactKey::new(flow.object_type.clone(), run_id.clone());
             let slice = norn_kernel::load_slice(&*cell, [key.clone()]).map_err(Refusal::host)?;
             match slice.get(&key).and_then(|state| state.values.clone()) {

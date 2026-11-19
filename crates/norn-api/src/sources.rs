@@ -217,6 +217,9 @@ struct ConnectionState {
     mapped: usize,
     last_end_ms: Option<u64>,
     watermarks: Option<BTreeMap<String, Watermark>>,
+    /// The schedule was read back from the cell's durable sync record
+    /// (TIMER-ALARM-1), so an evicted host never resyncs early.
+    restored: bool,
 }
 
 /// Every configured connection of one cell and its running syncs.
@@ -387,13 +390,58 @@ impl Sources {
             .map(|_| id)
     }
 
+    /// TIMER-ALARM-1: read each scheduled connection's last sync end back
+    /// from the cell's durable connection record (SYNC-REPORT-1), once per
+    /// host instance, so a host that was evicted keeps the schedule the
+    /// cell recorded instead of syncing every connection at once. A
+    /// connection the cell holds no ended sync for stays never synced.
+    ///
+    /// # Errors
+    /// The cell could not be read: nothing is restored, and the host claims
+    /// nothing on the schedule until it can be.
+    pub fn restore_schedule<E: SqlEngine>(&mut self, host: &DevHost<E>) -> Result<(), String> {
+        for connection in &self.connections {
+            let state = self.state.entry(connection.id.clone()).or_default();
+            if state.restored {
+                continue;
+            }
+            let ended = host
+                .host_object(CONNECTION_TYPE, &connection.id)
+                .map_err(|refusal| format!("{}: {}", refusal.code, refusal.message))?
+                .and_then(|record| {
+                    record
+                        .get("last_sync_ended_at")
+                        .and_then(RuntimeValue::as_str)
+                        .and_then(|text| text.parse::<jiff::Timestamp>().ok())
+                        .and_then(|at| u64::try_from(at.as_millisecond()).ok())
+                });
+            if let Some(ended) = ended {
+                state.last_end_ms = Some(state.last_end_ms.map_or(ended, |known| known.max(ended)));
+            }
+            state.restored = true;
+        }
+        Ok(())
+    }
+
     /// TIMER-ALARM-1: when the next scheduled sync falls due, at or after
     /// `now_ms` (the host wakes then and claims it with [`Self::due`]): a
-    /// connection never synced is due now, a running one when its lease
-    /// lapses (SYNC-LEASE-1), and any other one `every_minutes` after its
-    /// last run ended. `None` when no connection is scheduled.
+    /// connection never synced is due now, and any other one `every_minutes`
+    /// after its last run ended. While any connection's sync holds the cell
+    /// (SYNC-SERIAL-1), no other can be claimed, so the next is when that
+    /// run's lease lapses (SYNC-LEASE-1); its end re-arms the host. `None`
+    /// when no connection is scheduled.
     #[must_use]
     pub fn next_due(&self, now_ms: u64) -> Option<u64> {
+        let lease = self
+            .state
+            .values()
+            .filter_map(|s| s.run.as_ref())
+            .filter(|run| held(run, now_ms))
+            .map(|run| run.stepped_ms.saturating_add(RUN_LEASE_MS))
+            .min();
+        if lease.is_some() && self.connections.iter().any(|c| c.every_minutes > 0) {
+            return lease;
+        }
         self.connections
             .iter()
             .filter(|c| c.every_minutes > 0)

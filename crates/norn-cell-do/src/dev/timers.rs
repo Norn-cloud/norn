@@ -53,3 +53,74 @@ pub(crate) fn tick(serving: &Serving, now_ms: u64) -> Duration {
         }
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, reason = "test fixtures")]
+mod tests {
+    use std::sync::{Arc, RwLock};
+
+    use norn_api::host::DevHost;
+    use norn_api::scope::CellScope;
+    use norn_cell::engine::{NativeEngine, SqlEngine};
+    use norn_cell::{CellStore, Model, StoreOptions};
+
+    use super::{POLL, tick};
+
+    fn model() -> Model {
+        let def = serde_json::from_value(serde_json::json!(
+            {"name":"fixture.Marker","properties":[{"id":"label","type":{"kind":"text"}}]}
+        ))
+        .unwrap();
+        Model::from_definitions(&[def], &[]).unwrap()
+    }
+
+    /// TIMER-RETRY-1: the dev host's loop wakes every second, yet a due item
+    /// that cannot be handled is tried once per backoff, as on the hosted
+    /// cell: the retry eligibility is the cell's, not the loop's.
+    #[test]
+    fn the_dev_loop_respects_a_failed_items_backoff() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("cell.sqlite");
+        let store = CellStore::open(&path, model(), StoreOptions::default()).unwrap();
+        // A timer no host can deliver (its record does not decode), added
+        // by another connection to the file.
+        NativeEngine::open(&path, StoreOptions::default())
+            .unwrap()
+            .execute(
+                r#"INSERT INTO "_norn_timer" ("timer_id","due","timer","commit_seq") VALUES ('stuck',1000,'{"bad":true}',1)"#,
+                &[],
+            )
+            .unwrap();
+        let scope = CellScope {
+            org_id: "org_demo".into(),
+            environment_id: "dev".into(),
+        };
+        let host =
+            DevHost::from_store(store, scope, |_| std::collections::BTreeMap::new()).unwrap();
+        let serving = Arc::new(RwLock::new(Some(host)));
+        let attempts = || {
+            let reader = NativeEngine::open(&path, StoreOptions::default()).unwrap();
+            reader
+                .query(
+                    r#"SELECT "attempts","eligible_at" FROM "_norn_due_retry" WHERE "item"='timer/stuck'"#,
+                    &[],
+                )
+                .unwrap()
+                .into_iter()
+                .next()
+                .map(|row| {
+                    let row = norn_cell::engine::SqlRow(row);
+                    (row.get::<i64>(0).unwrap(), row.get::<i64>(1).unwrap())
+                })
+        };
+        assert_eq!(tick(&serving, 2_000), POLL);
+        assert_eq!(attempts(), Some((1, 62_000)));
+        // The loop's next wakes, a second apart, try nothing until 62 s.
+        for now in [3_000, 4_000, 61_999] {
+            tick(&serving, now);
+            assert_eq!(attempts(), Some((1, 62_000)), "at {now}");
+        }
+        tick(&serving, 62_000);
+        assert_eq!(attempts(), Some((2, 182_000)));
+    }
+}

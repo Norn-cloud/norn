@@ -8,6 +8,10 @@ The Workers/Durable Objects host: one Norn tenant cell per Durable Object
   one again as its subscriber and sends only changed answers. The cell's own
   handler and authorization decide every answer; an expired token closes the
   socket (4401) and the client reconnects with a fresh one.
+- `wake.mjs`: the object's alarm (TIMER-ALARM-1). A request that may write
+  is guarded by a durable wake before it runs; afterwards, and after every
+  alarm run, the alarm follows the cell's next deadline; an alarm sets a
+  recovery wake first and re-arms before any fetch. `bun test ./wake.test.mjs`.
 - `worker.mjs`: the router picks the cell's object by its `CellScope` key
   (each scope in a declared environment, and each seeded demo scope, has its
   own object); the `Cell` object holds one
@@ -84,7 +88,7 @@ Build into a directory outside the checkout, then smoke it:
 ```sh
 export NORN_CELL_DO_PROJECT="${CARGO_TARGET_DIR:?}/norn-cell-do"
 mkdir -p "$NORN_CELL_DO_PROJECT"
-cp apps/norn-cell-do/{worker.mjs,subscribe.mjs,wrangler.json} "$NORN_CELL_DO_PROJECT/"
+cp apps/norn-cell-do/{worker.mjs,subscribe.mjs,wake.mjs,wrangler.json} "$NORN_CELL_DO_PROJECT/"
 cargo build --locked -p norn-cell-do --features fixtures --target wasm32-unknown-unknown --profile wasm-release
 wasm-bindgen "$CARGO_TARGET_DIR/wasm32-unknown-unknown/wasm-release/norn_cell_do.wasm" \
   --target web --out-name norn_cell_do --out-dir "$NORN_CELL_DO_PROJECT/pkg"

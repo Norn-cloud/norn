@@ -395,6 +395,69 @@ pub(crate) fn installed_flow<E: SqlEngine>(
     })
 }
 
+/// TIMER-PIN-1: the flow a started run executes as it was pinned when the
+/// run started: the rule at the run's pinned version, and the environment
+/// (the definitions receipt) the run started under, read from the
+/// definitions version its starting commit recorded. The flow must still be
+/// active (a retired flow's run keeps waiting, as on a decision). A pin this
+/// cell can no longer produce (the starting set holds no rule at the pinned
+/// version) is refused, so a timer of the run stays due rather than running
+/// under a rule the run never started with.
+///
+/// # Errors
+/// `run.flow_not_found` for a retired flow; a host failure when the pin is
+/// unavailable.
+pub(crate) fn pinned_flow<E: SqlEngine>(
+    store: &CellStore<E>,
+    row: &norn_cell::flow_run::RunRow,
+) -> Result<InstalledFlow, Refusal> {
+    let active = installed_flow(store, &row.flow.id)?;
+    let unavailable = |why: &str| {
+        Refusal::host(format!(
+            "the pinned flow {}@{} is unavailable: {why}",
+            row.flow.id, row.flow.version
+        ))
+    };
+    let reader = store.read();
+    let started = reader
+        .receipt_at(row.created_commit_seq)
+        .map_err(Refusal::host)?
+        .ok_or_else(|| unavailable("its starting commit has no receipt"))?
+        .body
+        .definitions_version;
+    let set = reader
+        .installed_definitions(Some(started))
+        .map_err(Refusal::host)?
+        .ok_or_else(|| unavailable("its starting definitions are not retained"))?;
+    let artifacts: Vec<Value> = serde_json::from_str(&set.canonical_set).map_err(Refusal::host)?;
+    let (entity_id, rule_id) = owned_ids(&row.flow.id);
+    let find = |id: &str, kind: &str| {
+        artifacts.iter().find(|artifact| {
+            text(artifact, "/artifactId") == Some(id) && text(artifact, "/kind") == Some(kind)
+        })
+    };
+    let rule = find(&rule_id, "rule")
+        .filter(|rule| text(rule, "/version") == Some(row.flow.version.as_str()))
+        .and_then(|rule| rule.pointer("/payload"))
+        .ok_or_else(|| unavailable("its starting definitions hold no rule at that version"))?;
+    let object_type = find(&entity_id, "entity")
+        .and_then(|entity| text(entity, "/payload/objectType/name"))
+        .ok_or_else(|| unavailable("its starting definitions hold no run type"))?;
+    if object_type != row.object_type {
+        return Err(unavailable(
+            "the run's type differs from its starting definitions",
+        ));
+    }
+    Ok(InstalledFlow {
+        rule: serde_json::from_value(rule.clone())
+            .map_err(|_not_a_rule| unavailable("its rule does not decode"))?,
+        version: row.flow.version.clone(),
+        object_type: object_type.to_owned(),
+        environment_hash: set.receipt_sha256,
+        view: active.view,
+    })
+}
+
 /// Whether the host lets `actor` start runs of `flow`: the one decision
 /// `POST /v1/runs` makes ([`Operation::StartRun`]), which a flow listing also
 /// reports as `canStart` so a client offers only the starts the cell allows.

@@ -4,6 +4,7 @@
 import { initSync, NornCell } from "./pkg/norn_cell_do.js";
 import module from "./pkg/norn_cell_do_bg.wasm";
 import * as live from "./subscribe.mjs";
+import { Wake } from "./wake.mjs";
 initSync({ module });
 
 // The demo cell, as [orgId, environmentId]: where a request that names no well-formed scope lands.
@@ -53,8 +54,10 @@ export class Cell {
     this.opening = null;
     // The last failed cold open and when it failed (see open()).
     this.openFailure = null;
-    // TIMER-ALARM-1: the alarm time this instance last set, so an unchanged deadline is not set again.
-    this.armed = null;
+    // TIMER-ALARM-1: the object's alarm follows the cell's deadlines (wake.mjs).
+    this.wake = new Wake(ctx.storage);
+    // Whether this instance has stored the scope it serves.
+    this.scopeKept = false;
   }
   /** The pinned JWKS document and when it was fetched. The URL is configuration, never taken from a token. `reuse` accepts this isolate's last document while it is younger than OPEN_RETRY_MS (cold opens only). */
   async jwks(reuse) {
@@ -100,9 +103,10 @@ export class Cell {
       }
       // D102: questions are answered on the tenant analytics engine when the Worker has one.
       if (this.env.NORN_OLAP_URL !== undefined) this.cell.enableAnalytics();
-      // TIMER-ALARM-1: keep the scope for alarms, and arm for whatever was already due when the object opened.
-      if (JSON.stringify(await this.ctx.storage.get(SCOPE_KEY)) !== JSON.stringify(scope)) await this.ctx.storage.put(SCOPE_KEY, scope);
-      await this.rearm();
+      // TIMER-ALARM-1: a serving cell keeps its scope for alarms, and arms for whatever was
+      // already due when it opened (a cell from before alarms, a lost alarm).
+      await this.keepScope(scope);
+      await this.wake.opened(this.cell, Date.now());
     })().catch((error) => {
       this.opening = null;
       this.openFailure = { error, at: Date.now() };
@@ -110,6 +114,12 @@ export class Cell {
       throw error;
     });
     return this.opening;
+  }
+  /** TIMER-ALARM-1: store the scope only for a serving cell, never for an open of a vacant scope. */
+  async keepScope(scope) {
+    if (this.scopeKept || !this.cell.serving()) return;
+    if (JSON.stringify(await this.ctx.storage.get(SCOPE_KEY)) !== JSON.stringify(scope)) await this.ctx.storage.put(SCOPE_KEY, scope);
+    this.scopeKept = true;
   }
   serve(request, body) {
     const url = new URL(request.url);
@@ -236,10 +246,25 @@ export class Cell {
     if (body === null) {
       return Response.json({ format: "norn/refusal@2", retryable: false, reason: null, code: "request.too_large", category: "limit", message: "the request body is too large", explanation: `submissions are at most ${limit} bytes` }, { status: 413 });
     }
-    await this.open(Cell.scopeOf(request));
+    const scope = Cell.scopeOf(request);
+    await this.open(scope);
     // Keys at their maximum age are refetched before serving, whether or not any
     // token names an unknown key id, so a removed key stops verifying.
     if (this.cell.jwksDue(Date.now())) await this.refreshJwks();
+    // TIMER-ALARM-1: a request that may write is guarded by a durable wake before it runs,
+    // and the alarm follows the cell's next deadline after it, whatever its reply.
+    if (request.method === "GET") return this.respond(request, body);
+    await this.wake.beforeWrite(this.cell, Date.now());
+    try {
+      return await this.respond(request, body);
+    } finally {
+      await this.wake.afterWrite(this.cell, Date.now());
+      // A provisioning request makes the cell serving: keep its scope from then on.
+      await this.keepScope(scope);
+    }
+  }
+  /** Serve one request on the opened cell. */
+  async respond(request, body) {
     let reply = this.serve(request, body);
     // An unknown key id, at most once per retry interval: refetch the pinned JWKS and retry once.
     if (reply.refreshJwks && (await this.refreshJwks())) reply = this.serve(request, body);
@@ -260,16 +285,25 @@ export class Cell {
     }
     reply = await this.settle(request, body, reply);
     if (reply instanceof Response) return reply;
-    // After a commit, every live subscription on this object is answered again,
-    // and the alarm follows the cell's next deadline (a new reservation, run or decision).
-    if (request.method !== "GET" && reply.status < 400) {
-      this.publish();
-      await this.rearm();
-    }
+    // After a commit, every live subscription on this object is answered again.
+    if (request.method !== "GET" && reply.status < 400) this.publish();
     return new Response(reply.body, { status: reply.status, headers: { "content-type": "application/json" } });
   }
   /** Run one claimed sync to its end: every step is the cell's, every fetch its plan. */
   async runSync(id) {
+    // TIMER-ALARM-1: a sync writes; it is guarded like a request, and re-arms at its end.
+    await this.wake.beforeWrite(this.cell, Date.now());
+    try {
+      await this.syncRun(id);
+    } catch (error) {
+      // A failed sync ends as a failed run; the schedule retries it.
+      console.error(`source sync failed: ${error}`);
+    } finally {
+      // A scheduling error propagates.
+      await this.wake.afterWrite(this.cell, Date.now());
+    }
+  }
+  async syncRun(id) {
     // The runtime's clock stands still inside a synchronous call, so each step
     // is timed across a timer turn: cellMs is the cell's own work (mapping and
     // the commit's statements); fetchMs is each request, including any wait for
@@ -323,53 +357,30 @@ export class Cell {
     console.log(JSON.stringify({ sync: id, outcome: done.outcome, rowsRead: done.rowsRead, rowsLanded: done.rowsLanded, rowsQuarantined: done.rowsQuarantined, steps, fetches, wallMs, cellMs, fetchMs, maxCellMs, maxFetchMs, slow }));
     // A sync commits as it goes; live subscriptions are answered again once it ends.
     if ((done.rowsLanded ?? 0) > 0) this.publish();
-    // The next scheduled sync counts from this one's end.
-    await this.rearm();
   }
   /**
-   * TIMER-ALARM-1: set the alarm to `next` (Unix ms), or to the cell's next
-   * deadline when not given. A deadline already passed fires at once. The
-   * runtime keeps one alarm per object; an extra firing finds nothing due.
-   */
-  async rearm(next) {
-    try {
-      const at = next === undefined ? this.cell.nextDue(Date.now()) : next;
-      if (at === undefined || at === null) return;
-      const when = Math.max(at, Date.now());
-      if (this.armed === when) return;
-      await this.ctx.storage.setAlarm(when);
-      this.armed = when;
-    } catch (error) {
-      console.error(`alarm not armed: ${error}`);
-    }
-  }
-  /**
-   * TIMER-ALARM-1: the cell's clock. Run everything due now through the
-   * cell (reservation expiries, flow timers, decision deadlines), start a
-   * sync that is due, and re-arm. Delivery is at least once: a repeated
-   * alarm finds nothing due. A failure throws, and the runtime retries.
+   * TIMER-ALARM-1: the cell's clock. The wake (wake.mjs) sets a recovery
+   * wake, runs everything due now through the cell (reservation expiries,
+   * flow timers, decision deadlines), claims a due sync, and sets the alarm
+   * to the next deadline, all before any external I/O; then the claimed sync
+   * runs. Delivery is at least once: a repeated alarm finds nothing due. A
+   * failure throws, so the runtime retries, and the recovery wake stays.
    */
   async alarm() {
-    this.armed = null;
     const scope = await this.ctx.storage.get(SCOPE_KEY);
-    // An object no request ever opened holds no cell.
+    // An object no serving cell ever opened holds nothing to wake.
     if (scope === undefined) return;
     await this.open(scope);
-    const due = this.cell.runDue(Date.now());
-    const { committed, next, failed } = due;
-    due.free();
-    // The operator sees what stayed due and why; it is retried.
-    if (failed !== undefined) console.error(`due work not handled: ${failed}`);
-    if (committed) this.publish();
-    // SYNC-ONE-1: an idle cell syncs on schedule too; the claim is the cell's.
-    const sync = this.cell.syncDue(Date.now());
-    if (sync) {
-      await this.runSync(sync).catch((error) => console.error(`source sync failed: ${error}`));
-      // The sync's end moves the next scheduled sync: read the cell afresh.
-      await this.rearm();
+    if (!this.cell.serving()) {
+      // A scope kept by an earlier build for a vacant cell: forget it.
+      await this.ctx.storage.delete(SCOPE_KEY);
       return;
     }
-    await this.rearm(next);
+    const { committed, failed, sync } = await this.wake.alarm(this.cell, Date.now());
+    // The operator sees what stayed due and why; it is retried after its backoff.
+    if (failed !== null) console.error(`due work not handled: ${failed}`);
+    if (committed) this.publish();
+    if (sync) await this.runSync(sync);
   }
   /** Keep background work alive past the reply where the runtime offers it. */
   keep(promise) {

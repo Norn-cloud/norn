@@ -310,12 +310,17 @@ fn an_mcp_tool_call_parks_like_http() {
 
 /// Install the fixture's `set` as the cell's next definitions revision.
 fn revise(cell: &Cell, set: &str) {
+    // After every commit so far: the cell's clock never runs backwards.
+    revise_at(cell, set, NOW * 1000 + 1);
+}
+
+/// [`revise`], installed at logical time `at`.
+fn revise_at(cell: &Cell, set: &str, at: u64) {
     let version = cell.host.active_definitions_version().unwrap();
     let (model, input) = step_cell::action_cell::melt_install(
         set,
         norn_api::action_admission::prepare_action_model,
-        // After every commit so far: the cell's clock never runs backwards.
-        NOW * 1000 + 1,
+        at,
     );
     cell.host
         .install_definitions(model, input, version)
@@ -368,4 +373,223 @@ fn an_approval_survives_a_revision_that_keeps_the_action() {
     assert_eq!(status, 200, "{decided}");
     assert_eq!(decided["call"], json!({ "committed": true }), "{decided}");
     assert_eq!(melt_status(&cell), 200);
+}
+
+/// APPROVAL-REVISION-1: the digest an approval binds covers what the action
+/// writes. A revision that changes only a default of the type the action
+/// writes (the facts a call commits change) makes the approval stale.
+#[test]
+fn an_approval_never_executes_under_a_changed_default() {
+    let cell = cell();
+    gate(&cell, None);
+    let (status, parked) = convert(&cell, OPERATOR, &melt7("operator-default"));
+    assert_eq!(status, 202, "{parked}");
+    let id = parked["decision"]["id"].as_str().unwrap().to_owned();
+
+    let version = cell.host.active_definitions_version().unwrap();
+    let (model, input) = step_cell::action_cell::melt_install_edited(
+        step_cell::DERIVES_LOSS,
+        |documents| {
+            let melt = documents
+                .iter_mut()
+                .find(|document| document["artifactId"] == "constitution.Melt.entity")
+                .unwrap();
+            let properties = melt["payload"]["objectType"]["properties"]
+                .as_array_mut()
+                .unwrap();
+            let loss = properties
+                .iter_mut()
+                .find(|property| property["id"] == "loss_fine_g")
+                .unwrap();
+            loss["default"] = json!("1");
+        },
+        norn_api::action_admission::prepare_action_model,
+        NOW * 1000 + 1,
+    );
+    cell.host
+        .install_definitions(model, input, version)
+        .expect("the default-only revision installs");
+
+    let (status, decided) = decide(&cell, APPROVER, &id, "approve");
+    assert_eq!(status, 200, "{decided}");
+    assert_eq!(
+        decided["call"],
+        json!({ "committed": false, "code": "approval.definition_changed" }),
+        "{decided}"
+    );
+    assert_eq!(melt_status(&cell), 404);
+}
+
+/// APPROVAL-REVISION-1: an approval is bound to the gate revision whose
+/// decider roles it was asked under: a new gate revision (here, more
+/// decider roles) makes the approval stale, and the call asks anew.
+#[test]
+fn an_approval_never_executes_under_a_changed_gate() {
+    let cell = cell();
+    gate(&cell, None);
+    let body = melt7("operator-gate");
+    let (status, parked) = convert(&cell, OPERATOR, &body);
+    assert_eq!(status, 202, "{parked}");
+    let id = parked["decision"]["id"].as_str().unwrap().to_owned();
+
+    let mut revised = json!({ "kind": "approval", "id": APPROVAL_ID,
+        "payload": { "action": MELT_ACTION, "decider": { "roles": ["admin", "member"] },
+                     "question": "Convert this melt?", "risk": "high" } });
+    let (status, admitted) = call(
+        &cell,
+        "POST",
+        "/v1/definitions:admit",
+        OPERATOR,
+        &revised.to_string(),
+    );
+    assert_eq!(status, 200, "{admitted}");
+    revised["signoff"] = json!({ "restatementSha256": admitted["restatementSha256"] });
+    revised["expectedVersion"] = json!(1);
+    let (status, installed) = call(
+        &cell,
+        "POST",
+        "/v1/definitions:install",
+        OPERATOR,
+        &revised.to_string(),
+    );
+    assert_eq!(status, 200, "{installed}");
+
+    let (status, decided) = decide(&cell, APPROVER, &id, "approve");
+    assert_eq!(status, 200, "{decided}");
+    assert_eq!(
+        decided["call"],
+        json!({ "committed": false, "code": "approval.definition_changed" }),
+        "{decided}"
+    );
+    assert_eq!(melt_status(&cell), 404);
+    let (status, again) = convert(&cell, OPERATOR, &body);
+    assert_eq!(status, 202, "{again}");
+    assert_ne!(again["decision"]["id"], json!(id), "{again}");
+}
+
+/// APPROVAL-REVISION-1 on the hosted path: an approved step call refused
+/// `approval.definition_changed` drives nothing. The run's waiting step is
+/// not called again under the changed action (no new approval parks), and
+/// the run stays where it was.
+#[test]
+fn a_stale_approval_never_drives_its_flow_step() {
+    let cell = cell();
+    gate(&cell, None);
+    let approval = start_gated_run(&cell, "melt-run-stale");
+    // The action's next revision, over the active set (the flow stays).
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../norn-cell/tests/fixtures/constitution.json"
+    ))
+    .unwrap();
+    let without: Vec<norn_ir::ArtifactEnvelope> =
+        serde_json::from_value(fixture[step_cell::action_cell::OMITS_LOSS].clone()).unwrap();
+    cell.host
+        .install_artifacts(&without, NOW * 1000 + 10)
+        .expect("the action's next revision installs");
+    let (status, decided) = decide(&cell, APPROVER, &approval, "approve");
+    assert_eq!(status, 200, "{decided}");
+    assert_eq!(
+        decided["call"]["code"],
+        json!("approval.definition_changed"),
+        "{decided}"
+    );
+    assert_eq!(
+        decided["run"]["state"],
+        json!("awaiting_perform_convert"),
+        "{decided}"
+    );
+    assert_eq!(
+        pending(&cell, APPROVER)["total"],
+        json!(0),
+        "nothing parked anew"
+    );
+    assert_eq!(melt_status(&cell), 404);
+}
+
+/// APPROVAL-REVISION-1, the race: a revision installed after the approval is
+/// recorded and before its call is dispatched (natively, between the two)
+/// is caught by the dispatch's own fence, inside its definitions epoch and
+/// before anything parks or writes: the call is refused, nothing commits,
+/// and no new approval parks.
+#[test]
+fn a_revision_racing_the_approved_dispatch_is_fenced() {
+    use norn_cell_do::policy::Caller;
+    let cell = cell();
+    gate(&cell, None);
+    let (status, parked) = convert(&cell, OPERATOR, &melt7("operator-race"));
+    assert_eq!(status, 202, "{parked}");
+    let id = parked["decision"]["id"].as_str().unwrap().to_owned();
+
+    let as_caller = |subject: &str, roles: &[String], table: &str| Caller {
+        subject_id: subject.to_owned(),
+        roles: roles.to_vec(),
+        actor_kind: "user",
+        role_table: Box::leak(table.to_owned().into_boxed_str()),
+    };
+    cell.caller.record(Some(as_caller(
+        "approver@steps",
+        &["admin".to_owned()],
+        norn_cell_do::principal::FIXTURE_ROLES,
+    )));
+    let scope = norn_api::scope::ScopeQuery {
+        org_id: Some("org_demo".into()),
+        environment_id: Some("dev".into()),
+    };
+    let body = norn_api::decisions::DecideRequest {
+        choice: "approve".into(),
+        note: None,
+        idempotency_key: "race-1".into(),
+    };
+    let reads = |capability: norn_api::authz::ReadCapability, object_type: &str| {
+        norn_cell_do::policy::collection_access(
+            cell.host.scope(),
+            "approver@steps",
+            capability,
+            object_type,
+        )
+    };
+    let raced = std::cell::Cell::new(false);
+    let as_requester = |requester: &norn_cell::flow_run::RunStarter,
+                        dispatch: &mut dyn FnMut() -> Result<
+        norn_api::actions::ActionAnswer,
+        norn_api::refusal::Refusal,
+    >| {
+        // The concurrent revision lands here: after the approval is
+        // recorded, before its call is dispatched.
+        revise_at(&cell, step_cell::action_cell::OMITS_LOSS, NOW * 1000 + 10);
+        raced.set(true);
+        cell.caller.record(Some(as_caller(
+            &requester.subject,
+            &requester.roles,
+            &requester.role_table,
+        )));
+        Some(dispatch())
+    };
+    let decided = norn_api::decisions::decide(
+        &cell.host,
+        &norn_api::decisions::DecideCall {
+            scope: &scope,
+            actor: Some("approver@steps"),
+            id: &id,
+            body: &body,
+            now: norn_kernel::LogicalTime::from_millis(NOW * 1000 + 2),
+        },
+        &reads,
+        &cell.handles,
+        &as_requester,
+    )
+    .unwrap();
+    cell.caller.record(None);
+    assert!(raced.get());
+    let dispatched = decided.call.expect("the approved call was dispatched");
+    assert_eq!(
+        (dispatched.committed, dispatched.code.as_deref()),
+        (false, Some("approval.definition_changed"))
+    );
+    assert_eq!(melt_status(&cell), 404, "nothing ran under the new action");
+    assert_eq!(
+        pending(&cell, APPROVER)["total"],
+        json!(0),
+        "nothing parked anew"
+    );
 }

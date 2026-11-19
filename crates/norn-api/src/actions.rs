@@ -204,6 +204,56 @@ pub fn call_action<E: SqlEngine>(
     disclosure: &dyn QuestionRuntime<E>,
     now: LogicalTime,
 ) -> Result<ActionAnswer, Refusal> {
+    call_action_bound(
+        host,
+        &ActionCall {
+            query,
+            actor,
+            action_id,
+            request,
+            now,
+        },
+        disclosure,
+        None,
+    )
+}
+
+/// One action call, as [`call_action`] takes it.
+pub(crate) struct ActionCall<'a> {
+    pub(crate) query: &'a ActionQuery,
+    pub(crate) actor: Option<&'a str>,
+    pub(crate) action_id: &'a str,
+    pub(crate) request: &'a ActionRequest,
+    pub(crate) now: LogicalTime,
+}
+
+/// APPROVAL-REVISION-1: what an approval was given for: the action's
+/// effective definition digest and the gate (its definition and revision)
+/// the call parked behind.
+pub(crate) struct Approved<'a> {
+    pub(crate) action_digest: &'a str,
+    pub(crate) gate_definition: &'a str,
+    pub(crate) gate_revision: u64,
+}
+
+/// [`call_action`], for an approved call when `approved` is given: inside
+/// the same definitions epoch and cell hold as the dispatch, before anything
+/// parks or writes, the action's current digest and the active gate must be
+/// exactly what was approved, else the call is refused
+/// `approval.definition_changed` and nothing is written.
+pub(crate) fn call_action_bound<E: SqlEngine>(
+    host: &DevHost<E>,
+    invocation: &ActionCall<'_>,
+    disclosure: &dyn QuestionRuntime<E>,
+    approved: Option<&Approved<'_>>,
+) -> Result<ActionAnswer, Refusal> {
+    let ActionCall {
+        query,
+        actor,
+        action_id,
+        request,
+        now,
+    } = *invocation;
     // `disclosure` is the cell's read runtime: its handle key and collection
     // grants decide which receipt coordinate the caller sees (D53).
     let actor = actor
@@ -274,12 +324,17 @@ pub fn call_action<E: SqlEngine>(
             consumes: None,
         },
     };
-    // APPROVAL-REVISION-1: an approval binds to the action as defined now.
-    let action_digest = admitted
-        .digest(action_id)
-        .ok_or_else(|| Refusal::host("a retained action has no digest"))?
-        .to_owned();
-    let outcome = match through_gate(host, &mut cell, &catalog, &kernel_call, action_digest)? {
+    // APPROVAL-REVISION-1: an approval binds to the action as defined now,
+    // with what it writes.
+    let action_digest = effective_digest(&admitted, action, &model, &catalog)?;
+    let outcome = match through_gate(
+        host,
+        &mut cell,
+        &catalog,
+        &kernel_call,
+        action_digest,
+        approved,
+    )? {
         Gated::Pending(pending) => return Ok(ActionAnswer::Pending(pending)),
         Gated::Replayed(outcome) => *outcome,
         Gated::Commit => norn_kernel::commit_action(
@@ -352,9 +407,21 @@ fn through_gate<E: SqlEngine>(
     catalog: &TypeCatalog<'_>,
     kernel_call: &norn_kernel::ActionCall<'_>,
     action_digest: String,
+    approved: Option<&Approved<'_>>,
 ) -> Result<Gated, Refusal> {
     let action_id = kernel_call.action.action_id.as_str();
-    let Some(gate) = crate::approvals::gate(cell, action_id)? else {
+    let gate = crate::approvals::gate(cell, action_id)?;
+    // APPROVAL-REVISION-1: an approved call is fenced here, under the epoch
+    // and the cell the dispatch holds, before anything parks or writes.
+    if let Some(approved) = approved {
+        let same_gate = gate.as_ref().is_some_and(|gate| {
+            gate.definition == approved.gate_definition && gate.revision == approved.gate_revision
+        });
+        if !same_gate || action_digest != approved.action_digest {
+            return Err(crate::approvals::definition_changed());
+        }
+    }
+    let Some(gate) = gate else {
         return Ok(Gated::Commit);
     };
     let dry = norn_kernel::commit_action(
@@ -388,27 +455,79 @@ fn through_gate<E: SqlEngine>(
     }
 }
 
-/// APPROVAL-REVISION-1: the digest of `action_id`'s definition in the active
-/// revision, `None` when no active action has that id.
+/// APPROVAL-REVISION-1: the digest an approval of `action` binds to: the
+/// action's retained definition (its payload, its pinned writer and the
+/// writer's helpers) and its effective write contract over `model`: the
+/// declaration of every object type it may write (with the types they
+/// extend, so a changed default that changes the written facts changes the
+/// digest), the interfaces and property types those declarations draw on,
+/// and the governing laws of each written type. An action whose writes are
+/// not statically known (a synchronous writer) binds every object type.
 ///
 /// # Errors
-/// A host failure.
-pub(crate) fn action_digest<E: SqlEngine>(
-    host: &DevHost<E>,
-    action_id: &str,
-) -> Result<Option<String>, Refusal> {
-    let _epoch = host.definition_read()?;
-    let cell = host.cell()?;
-    let Some(installed) = cell
-        .store()
-        .read()
-        .installed_definitions(None)
-        .map_err(Refusal::host)?
-    else {
-        return Ok(None);
-    };
-    let admitted = crate::action_admission::RetainedActions::load(&installed, host.scope())?;
-    Ok(admitted.digest(action_id).map(str::to_owned))
+/// A host failure: a retained action without a digest, an unreadable law.
+fn effective_digest(
+    admitted: &crate::action_admission::RetainedActions,
+    action: &norn_ir::ActionRoot,
+    model: &norn_cell::Model,
+    catalog: &TypeCatalog<'_>,
+) -> Result<String, Refusal> {
+    let definition = admitted
+        .digest(&action.action_id)
+        .ok_or_else(|| Refusal::host("a retained action has no digest"))?;
+    let every = action.synchronous_rule.is_some()
+        || (action.writes.is_empty() && action.effect_program.is_some());
+    let mut written: std::collections::BTreeSet<String> = action
+        .writes
+        .iter()
+        .map(|write| write.entity_kind.clone())
+        .chain(action.create_links.iter().flat_map(|link| {
+            std::iter::once(link.target_type.clone()).chain(
+                link.source
+                    .as_ref()
+                    .map(|source| source.object_type.clone()),
+            )
+        }))
+        .collect();
+    if every {
+        written.extend(model.object_types().map(|t| t.name.as_str().to_owned()));
+    }
+    // Each written type with every type it extends.
+    let mut pending: Vec<String> = written.iter().cloned().collect();
+    while let Some(name) = pending.pop() {
+        if let Some(parent) = model
+            .object_types()
+            .find(|t| t.name.as_str() == name)
+            .and_then(|t| t.extends.as_ref())
+            && written.insert(parent.as_str().to_owned())
+        {
+            pending.push(parent.as_str().to_owned());
+        }
+    }
+    let mut declarations = Vec::new();
+    let mut laws = Vec::new();
+    for name in &written {
+        let declaration = model.object_types().find(|t| t.name.as_str() == name);
+        declarations.push((name, declaration));
+        if declaration.is_some() {
+            let governing = catalog
+                .governing_laws(&norn_ir::ObjectTypeName(name.clone()))
+                .map_err(|error| Refusal::host(format!("{error:?}")))?;
+            laws.push((name, governing));
+        }
+    }
+    let interfaces: Vec<_> = model.interfaces().collect();
+    norn_ir::canonical::domain_hash_hex(
+        b"norn.approval.action/2\0",
+        &(
+            definition,
+            declarations,
+            interfaces,
+            model.property_types(),
+            laws,
+        ),
+    )
+    .map_err(Refusal::host)
 }
 
 /// The kernel turn's time: the cell clock after advancing it to `now` and the

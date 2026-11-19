@@ -222,16 +222,21 @@ fn request(gate: &Gate) -> Value {
     request
 }
 
-/// The command id of a parked call: one per action, its definition's
-/// digest, input, idempotency key and requester, so the same call parks
+/// The command id of a parked call: one per action, its effective
+/// definition's digest, the gate revision holding it, input, idempotency key
+/// and requester, so the same call parks
 /// once, and an approval approves exactly the call it was asked about under
 /// the action it was asked about (APPROVAL-REVISION-1).
-fn command_id(parked_call: &ParkedCall) -> Result<String, Refusal> {
+fn command_id(gate: &Gate, parked_call: &ParkedCall) -> Result<String, Refusal> {
     let digest = norn_ir::canonical::domain_hash_hex(
         b"norn.approval.call/2\0",
         &(
             &parked_call.action,
             &parked_call.action_digest,
+            // The gate revision the decider roles come from: a changed gate
+            // asks anew.
+            &gate.definition,
+            gate.revision,
             &parked_call.idempotency_key,
             &parked_call.requester.subject,
             &parked_call.input,
@@ -246,6 +251,17 @@ fn command_id(parked_call: &ParkedCall) -> Result<String, Refusal> {
 
 fn runtime(value: &Value) -> Result<RuntimeValue, Refusal> {
     RuntimeValue::from_json(value.clone()).map_err(Refusal::host)
+}
+
+/// APPROVAL-REVISION-1: the action or its gate changed after the call
+/// parked; its approval does not cover the call as it would run now.
+pub(crate) fn definition_changed() -> Refusal {
+    Refusal::new(
+        StatusCode::CONFLICT,
+        approval_codes::DEFINITION_CHANGED,
+        "the action changed since this call was approved",
+        "the approval covers the action and gate as they were when the call parked; call again to request a new approval",
+    )
 }
 
 fn rejected() -> Refusal {
@@ -290,7 +306,7 @@ pub(crate) fn hold<E: SqlEngine>(
     parked_call: &ParkedCall,
     now: LogicalTime,
 ) -> Result<Held, Refusal> {
-    let id = command_id(parked_call)?;
+    let id = command_id(gate, parked_call)?;
     let decision_id = crate::decisions::decision_id(&id, 1)?;
     if let Some(row) = cell
         .store()

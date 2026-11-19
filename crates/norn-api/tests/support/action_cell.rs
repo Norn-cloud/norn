@@ -84,6 +84,26 @@ where
     admitted_install(&documents(set), prepare, installed_at)
 }
 
+/// As [`melt_install`], with the fixture's `set` changed by `edit` first.
+#[allow(
+    dead_code,
+    reason = "only the approval tests install an edited revision"
+)]
+pub(crate) fn melt_install_edited<P, X>(
+    set: &str,
+    edit: impl FnOnce(&mut Vec<Value>),
+    prepare: P,
+    installed_at: u64,
+) -> (Model, InstalledDefinitionInput)
+where
+    P: FnOnce(&Model) -> Result<Model, X>,
+    X: std::fmt::Debug,
+{
+    let mut edited = documents(set);
+    edit(&mut edited);
+    admitted_install(&edited, prepare, installed_at)
+}
+
 /// The model and install input of `documents`, admitted by the checker.
 fn admitted_install<P, X>(
     documents: &[Value],

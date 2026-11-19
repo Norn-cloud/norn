@@ -455,6 +455,15 @@ pub(crate) fn open_decision<E: SqlEngine>(
         // Already answered; the consuming commit is pending.
         return Ok(None);
     }
+    parked_decision(store, pending)
+}
+
+/// The decision a parked command is, whether or not a result is recorded
+/// for it yet; `None` for a parked command that is not a decision.
+fn parked_decision<E: SqlEngine>(
+    store: &CellStore<E>,
+    pending: &PendingCommand,
+) -> Result<Option<OpenDecision>, Refusal> {
     let Some(payload) = pending
         .command
         .command
@@ -521,6 +530,50 @@ pub(crate) fn open_decisions<E: SqlEngine>(
         }
     }
     Ok(open)
+}
+
+/// The typed failure an expired decision delivers to its step
+/// (`norn.decision@1`'s declared `Expired` error).
+fn expired_failure() -> RuntimeObject {
+    BTreeMap::from([(
+        "_tag".to_owned(),
+        RuntimeValue::String("Expired".to_owned()),
+    )])
+}
+
+/// DECISION-TERMINAL-1: every decision whose expiry was recorded as its
+/// parked result but whose resolving commit never landed (it failed, or the
+/// host stopped in between). Such a decision is no longer open, so nothing
+/// lists or decides it; the host's wake resumes exactly the recorded result
+/// ([`expire`]) until the resolution commits.
+pub(crate) fn stalled_expiries<E: SqlEngine>(
+    store: &CellStore<E>,
+) -> Result<Vec<OpenDecision>, Refusal> {
+    let expired = RuntimeValue::Object(expired_failure());
+    let mut stalled = Vec::new();
+    for pending in store.read().parked_commands().map_err(Refusal::host)? {
+        if pending.result.as_ref() != Some(&expired) {
+            continue;
+        }
+        if let Some(decision) = parked_decision(store, &pending)? {
+            stalled.push(decision);
+        }
+    }
+    Ok(stalled)
+}
+
+/// Whether the parked command of `decision` holds exactly the expiry as its
+/// recorded result, awaiting the commit that consumes it.
+fn expiry_recorded<E: SqlEngine>(
+    store: &CellStore<E>,
+    decision: &OpenDecision,
+) -> Result<bool, Refusal> {
+    Ok(store
+        .read()
+        .pending_result(&decision.command.0, decision.generation.0)
+        .map_err(Refusal::host)?
+        .and_then(|pending| pending.result)
+        == Some(RuntimeValue::Object(expired_failure())))
 }
 
 /// Whether `actor` may decide: the host decides [`Operation::Decide`] over
@@ -948,34 +1001,39 @@ fn commit_approved<E: SqlEngine>(
         input: RuntimeValue::Object(call.call.input.clone()),
         idempotency_key: call.call.idempotency_key.clone(),
     };
+    // APPROVAL-REVISION-1: the approval covers the action and its gate as
+    // they were when the call parked. The dispatch compares both inside its
+    // own epoch and cell hold, before anything parks or writes, so a
+    // definition installed at any moment never runs under this approval.
+    let approved = crate::actions::Approved {
+        action_digest: &call.call.action_digest,
+        gate_definition: &call.definition,
+        gate_revision: call.revision,
+    };
     let mut commit = || {
-        crate::actions::call_action(
+        crate::actions::call_action_bound(
             host,
-            &query,
-            Some(&call.call.requester.subject),
-            &call.call.action,
-            &request,
+            &crate::actions::ActionCall {
+                query: &query,
+                actor: Some(&call.call.requester.subject),
+                action_id: &call.call.action,
+                request: &request,
+                now,
+            },
             disclosure,
-            now,
+            Some(&approved),
         )
     };
     let refused = |code: &str| DecidedCall {
         committed: false,
         code: Some(code.to_owned()),
     };
-    // APPROVAL-REVISION-1: the approval covers the action as it was defined
-    // when the call parked; a changed action is never executed under it.
-    match crate::actions::action_digest(host, &call.call.action) {
-        Ok(Some(digest)) if digest == call.call.action_digest => {}
-        Ok(_) => return refused(crate::approvals::approval_codes::DEFINITION_CHANGED),
-        Err(refusal) => return refused(&refusal.code),
-    }
     match as_requester(&call.call.requester, &mut commit) {
         Some(Ok(ActionAnswer::Receipt(_))) => DecidedCall {
             committed: true,
             code: None,
         },
-        // The call parked again: its action changed after the check above.
+        // Parking anew is impossible past the fence; never a commit.
         Some(Ok(ActionAnswer::Pending(_))) => {
             refused(crate::approvals::approval_codes::DEFINITION_CHANGED)
         }
@@ -1177,10 +1235,13 @@ fn resolve_call<E: SqlEngine>(
     output: RuntimeObject,
     resolved: &DecisionResolved,
 ) -> Result<bool, Refusal> {
-    if cell
-        .complete_parked(&decision.command, decision.generation, output)
-        .map_err(Refusal::host)?
-        .is_none()
+    let resumed =
+        resolved.resolution == Resolution::Expired && expiry_recorded(cell.store(), decision)?;
+    if !resumed
+        && cell
+            .complete_parked(&decision.command, decision.generation, output)
+            .map_err(Refusal::host)?
+            .is_none()
     {
         return Ok(false);
     }
@@ -1208,10 +1269,7 @@ pub(crate) fn expire<E: SqlEngine>(
     now: LogicalTime,
 ) -> Result<(), Refusal> {
     if let Some(held) = &decision.call {
-        let failure: RuntimeObject = BTreeMap::from([(
-            "_tag".to_owned(),
-            RuntimeValue::String("Expired".to_owned()),
-        )]);
+        let failure = expired_failure();
         let resolved = DecisionResolved {
             decision_id: decision.id.clone(),
             command_id: decision.command.0.clone(),
@@ -1239,10 +1297,7 @@ pub(crate) fn expire<E: SqlEngine>(
     let Ok(flow) = installed_flow(cell.store(), &row.flow.id) else {
         return Ok(());
     };
-    let failure: RuntimeObject = BTreeMap::from([(
-        "_tag".to_owned(),
-        RuntimeValue::String("Expired".to_owned()),
-    )]);
+    let failure = expired_failure();
     let delivery = |outcome| Delivery {
         command: &decision.command,
         generation: decision.generation,
@@ -1258,10 +1313,14 @@ pub(crate) fn expire<E: SqlEngine>(
         delivery(StepOutcome::Failure(failure.clone())),
         now,
     )?;
-    if cell
-        .complete_parked(&decision.command, decision.generation, failure.clone())
-        .map_err(Refusal::host)?
-        .is_none()
+    // An expiry recorded earlier whose resolving commit never landed is
+    // resumed with exactly that recorded result; anything else recorded
+    // meanwhile is left to the call that recorded it.
+    if !expiry_recorded(cell.store(), decision)?
+        && cell
+            .complete_parked(&decision.command, decision.generation, failure.clone())
+            .map_err(Refusal::host)?
+            .is_none()
     {
         return Ok(());
     }

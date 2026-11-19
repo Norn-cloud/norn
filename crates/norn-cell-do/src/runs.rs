@@ -237,8 +237,16 @@ fn decisions<E: SqlEngine>(
                 };
             match decide(host, &call, &reads, runtime, &as_requester) {
                 Ok(mut decided) => {
+                    // APPROVAL-REVISION-1: an approved call refused because its
+                    // action or gate changed drives nothing: the step waiting on
+                    // it never runs under the changed definition.
+                    let stale = decided.call.as_ref().is_some_and(|call| {
+                        call.code.as_deref()
+                            == Some(norn_api::approvals::approval_codes::DEFINITION_CHANGED)
+                    });
                     // The decision may have moved the run onto action steps.
-                    if steps.drive(&decided.run.id, now)
+                    if !stale
+                        && steps.drive(&decided.run.id, now)
                         && let Ok(run) = get_run(host, &scope, subject, &decided.run.id, &reads)
                     {
                         decided.run.state = run.state;

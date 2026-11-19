@@ -31,3 +31,17 @@ fn an_idle_cell_knows_when_its_next_sync_is_due() {
     let off = Sources::new(&off, BTreeMap::new()).expect("configured");
     assert_eq!(off.next_due(NOW), None);
 }
+
+/// TIMER-ALARM-1 / SYNC-SERIAL-1: while one connection's sync holds the
+/// cell, no other can be claimed, so the next scheduled sync is when that
+/// run's lease lapses, never "now" for a connection that is due but
+/// blocked (an alarm would otherwise fire in a tight loop).
+#[test]
+fn the_next_sync_waits_for_the_global_lease() {
+    let config = json!([connection("a.rest", 15), connection("b.rest", 15)]).to_string();
+    let mut sources = Sources::new(&config, BTreeMap::new()).expect("configured");
+    assert_eq!(sources.due(NOW).as_deref(), Some("a.rest"));
+    // b.rest was never synced, but a.rest holds the cell.
+    assert_eq!(sources.due(NOW + 1), None);
+    assert_eq!(sources.next_due(NOW + 1), Some(NOW + RUN_LEASE_MS));
+}

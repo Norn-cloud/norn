@@ -603,3 +603,125 @@ fn a_link_law_change_is_checked_against_the_stored_documents() {
         "{kept}"
     );
 }
+
+/// The pack's ledger-entry type with a new `posted_state` property that the
+/// migration materializes as `draft` on every stored entry.
+fn ledger_entry_with_default() -> Value {
+    let mut entry = documents()
+        .into_iter()
+        .find(|artifact| artifact["artifactId"] == "docs.LedgerEntry.entity")
+        .expect("the ledger entry type");
+    entry["payload"]["objectType"]["properties"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({ "id": "posted_state", "type": { "kind": "text" }, "default": "draft" }));
+    entry
+}
+
+/// The ledger law with `expression`.
+fn ledger_law(expression: &str) -> Value {
+    let mut law = documents()
+        .into_iter()
+        .find(|artifact| artifact["artifactId"] == "docs.ScannedDocument.total_matches_ledger.law")
+        .expect("the ledger law");
+    law["payload"]["response"]["expression"] = json!(expression);
+    law
+}
+
+fn plan(cell: &mut Cell, artifacts: &[Value]) -> (u16, Value) {
+    let response = cell.call(
+        norn_api::cell_definitions::PLAN_PATH,
+        &user("owner"),
+        &json!({ "artifacts": artifacts }).to_string(),
+    );
+    (
+        response.status,
+        serde_json::from_str::<Value>(&response.body).unwrap(),
+    )
+}
+
+/// HOST-INSTALL-LIVE-1: a law is checked on the migration candidate's view.
+/// The candidate gives every ledger entry a `posted_state` of `draft` (a
+/// default the migration materializes) and a ledger law refusing drafts:
+/// every booked document breaks it through its link, though the stored
+/// entries hold no `posted_state` yet.
+#[test]
+fn a_law_reads_the_default_the_migration_gives_a_linked_target() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut cell = loaded(&directory.path().join("default.sqlite"));
+    let (status, held) = plan(
+        &mut cell,
+        &[
+            ledger_entry_with_default(),
+            ledger_law("self.ledger_entry.posted_state != 'draft'"),
+        ],
+    );
+    assert_eq!(status, 409, "{held}");
+    assert_eq!(held["code"], "defs.live_data_refused", "{held}");
+    let drafts = held["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic["law"] == LEDGER && diagnostic["code"] == "defs.live_data_violation"
+        })
+        .count();
+    assert!(drafts >= 2, "every booked document reads a draft: {held}");
+}
+
+/// HOST-INSTALL-LIVE-1: subjects are selected by their effective law
+/// dependencies. A change confined to the ledger-entry type (the type the
+/// ledger law's link reaches) rechecks the scanned documents under their
+/// laws: the plan evaluates them (the held-back ones stay held back, never
+/// admitted, and are not evaluated), and every booked one keeps its laws.
+#[test]
+fn a_change_confined_to_a_linked_type_rechecks_its_subjects() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut cell = loaded(&directory.path().join("linked.sqlite"));
+    let (status, planned) = plan(&mut cell, &[ledger_entry_with_default()]);
+    assert_eq!(status, 200, "{planned}");
+    // The ledger entries have no laws; only their linked subjects count.
+    assert!(
+        planned["checkedObjects"].as_u64().unwrap() >= 2,
+        "the linked documents were evaluated: {planned}"
+    );
+}
+
+/// HOST-INSTALL-LIVE-1 / S9: an object no candidate law could be evaluated
+/// on keeps its published severity (a warning) and still holds the set back
+/// by its code.
+#[test]
+fn an_unchecked_object_is_a_warning_that_holds_the_set_back() {
+    let refusal =
+        norn_api::cell_definitions::live_law_refusal(&norn_cell::CellError::DefinitionLawRefused {
+            findings: vec![norn_cell::error::DefinitionLawFinding {
+                object_type: "docs.ScannedDocument".into(),
+                id: "SCAN-INV-1042".into(),
+                law: None,
+                message: "fuel".into(),
+                unchecked: true,
+            }],
+            checked: 1,
+        })
+        .expect("a live-law refusal");
+    assert_eq!(refusal.code, "defs.live_data_refused");
+    assert_eq!(refusal.diagnostics[0].code, "defs.live_data_unchecked");
+    assert_eq!(refusal.diagnostics[0].severity, "warning");
+}
+
+/// HOST-INSTALL-LIVE-1: the trusted host's own installs (a source or upload
+/// pack, the dev host's reload, both `DevHost::install_definitions`) run the
+/// same live check as the plan and apply routes: a law the stored documents
+/// break is never installed through them.
+#[test]
+fn a_host_install_is_checked_against_the_stored_documents() {
+    let directory = tempfile::tempdir().unwrap();
+    let cell = loaded(&directory.path().join("host.sqlite"));
+    let host = cell.tenant.serving_host().expect("a serving cell");
+    let before = host.active_definitions_version().unwrap();
+    let law: norn_ir::ArtifactEnvelope =
+        serde_json::from_value(ledger_law("self.total < 0")).unwrap();
+    let refused = host.install_artifacts(&[law], NOW * 1000).unwrap_err();
+    assert!(refused.contains("defs.live_data_refused"), "{refused}");
+    assert_eq!(host.active_definitions_version().unwrap(), before);
+}

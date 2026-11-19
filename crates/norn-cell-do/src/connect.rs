@@ -380,6 +380,15 @@ impl Connect {
         self.sources.due(now_ms)
     }
 
+    /// TIMER-ALARM-1: read the schedule back from the cell's durable sync
+    /// records once per host instance (see [`norn_api::sources::Sources::restore_schedule`]).
+    ///
+    /// # Errors
+    /// The cell could not be read.
+    pub fn restore_schedule<E: SqlEngine>(&mut self, host: &DevHost<E>) -> Result<(), String> {
+        self.sources.restore_schedule(host)
+    }
+
     /// TIMER-ALARM-1: when the next scheduled sync falls due, at or after `now_ms`.
     #[must_use]
     pub fn next_sync_due(&self, now_ms: u64) -> Option<u64> {

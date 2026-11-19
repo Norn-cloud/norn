@@ -337,8 +337,19 @@ impl NornCell {
     /// (checked and marked in this one call), as its own principal.
     #[wasm_bindgen(js_name = syncDue)]
     pub fn sync_due(&mut self, now_ms: f64) -> Option<String> {
-        self.tenant.serving_host()?;
-        self.connect.as_mut()?.due(millis(now_ms))
+        let host = self.tenant.serving_host()?;
+        let connect = self.connect.as_mut()?;
+        // A schedule the cell's records cannot be read back for claims nothing.
+        connect.restore_schedule(host).ok()?;
+        connect.due(millis(now_ms))
+    }
+
+    /// TIMER-ALARM-1: whether this object serves a provisioned cell. Only
+    /// then does the host keep its scope for alarms; an open of a vacant
+    /// scope (anyone may name one) leaves no trace.
+    #[must_use]
+    pub fn serving(&self) -> bool {
+        self.tenant.serving_host().is_some()
     }
 
     /// TIMER-ALARM-1: when the Durable Object's alarm should next fire (Unix
@@ -350,12 +361,12 @@ impl NornCell {
     /// # Errors
     /// A host failure reading the cell.
     #[wasm_bindgen(js_name = nextDue)]
-    pub fn next_due(&self, now_ms: f64) -> Result<Option<f64>, JsValue> {
+    pub fn next_due(&mut self, now_ms: f64) -> Result<Option<f64>, JsValue> {
         let cell = self
             .tenant
             .next_due()
             .map_err(|refusal| rejected(refusal.code))?;
-        Ok(earliest(cell, self.sync_next(now_ms)))
+        Ok(earliest(cell, self.sync_next(now_ms)?))
     }
 
     /// TIMER-ALARM-1: the alarm fired. Run the cell's work due at `now_ms`
@@ -374,14 +385,19 @@ impl NornCell {
             .map_err(|refusal| rejected(refusal.code))?;
         Ok(Due {
             committed: work.committed(),
-            next: earliest(work.next, self.sync_next(now_ms)),
+            next: earliest(work.next, self.sync_next(now_ms)?),
             failed: (!work.failed.is_empty()).then(|| work.failed.join("; ")),
         })
     }
 
-    fn sync_next(&self, now_ms: f64) -> Option<u64> {
-        self.tenant.serving_host()?;
-        self.connect.as_ref()?.next_sync_due(millis(now_ms))
+    /// The next scheduled sync, with the schedule read back from the cell.
+    fn sync_next(&mut self, now_ms: f64) -> Result<Option<u64>, JsValue> {
+        let (Some(host), Some(connect)) = (self.tenant.serving_host(), self.connect.as_mut())
+        else {
+            return Ok(None);
+        };
+        connect.restore_schedule(host).map_err(rejected)?;
+        Ok(connect.next_sync_due(millis(now_ms)))
     }
 
     /// Advance the running sync of `id`; `status` and `body` answer the
