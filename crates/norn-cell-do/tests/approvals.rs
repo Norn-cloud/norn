@@ -24,12 +24,12 @@ const APPROVAL_ID: &str = "ops.melt_approval";
 /// Install the approval gating the melt action, deciders `admin`, signed by
 /// the operator.
 fn gate(cell: &Cell, expires_in_ms: Option<u64>) {
-    gate_asking(cell, expires_in_ms, "Convert this melt?");
+    gate_asking(cell, expires_in_ms, "Convert this melt?", None);
 }
 
-/// [`gate`], asking `question`: installing it again with another question is
-/// a new definitions version.
-fn gate_asking(cell: &Cell, expires_in_ms: Option<u64>, question: &str) {
+/// [`gate`], asking `question`, replacing revision `replaces` when given:
+/// installing it again with another question is a new definitions version.
+fn gate_asking(cell: &Cell, expires_in_ms: Option<u64>, question: &str, replaces: Option<u64>) {
     let mut payload = json!({
         "action": MELT_ACTION,
         "decider": { "roles": ["admin"] },
@@ -49,6 +49,9 @@ fn gate_asking(cell: &Cell, expires_in_ms: Option<u64>, question: &str) {
     );
     assert_eq!(status, 200, "{admitted}");
     body["signoff"] = json!({ "restatementSha256": admitted["restatementSha256"] });
+    if let Some(revision) = replaces {
+        body["expectedVersion"] = json!(revision);
+    }
     let (status, installed) = call(
         cell,
         "POST",
@@ -192,7 +195,7 @@ fn an_approval_keeps_the_callers_definitions_pin() {
     let (status, parked) = convert_pinned(&cell, pinned, &melt7("operator-pin"));
     assert_eq!(status, 202, "{parked}");
     let id = parked["decision"]["id"].as_str().unwrap().to_owned();
-    gate_asking(&cell, None, "Convert this melt now?");
+    gate_asking(&cell, None, "Convert this melt now?", Some(1));
     assert_ne!(definitions_version(&cell), pinned, "the catalog changed");
     let (status, decided) = decide(&cell, APPROVER, &id, "approve");
     assert_eq!(status, 200, "{decided}");
