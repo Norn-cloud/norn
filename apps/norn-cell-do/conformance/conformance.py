@@ -1132,6 +1132,9 @@ def main():
         config = json.loads((project / "wrangler.json").read_text())
         # The local test host opts the conformance entry in explicitly (see conformance/worker.mjs).
         config.setdefault("vars", {}).update({"NORN_LINEAGE_KEY": reference["lineageKey"], "NORN_STAGE": "test", "NORN_CONFORMANCE": "synthetic"})
+        # The public-URL switches (off in the checked-in config) mean nothing on a local host, and celld refuses them.
+        for key in ("workers_dev", "preview_urls", "routes"):
+            config.pop(key, None)
         (project / "wrangler.json").write_text(json.dumps(config))
         # State and logs live beside the project, never inside it (a host may watch the project).
         state = (args.state or project.parent / f"{project.name}-conformance-state").resolve()
