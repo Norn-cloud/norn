@@ -468,7 +468,8 @@ impl Lookup for Rebinding {
 }
 
 fn lookup_of(lookup: &Arc<Rebinding>) -> Arc<dyn Lookup> {
-    Arc::clone(lookup)
+    let shared: Arc<Rebinding> = Arc::clone(lookup);
+    shared
 }
 
 fn post(url: &str) -> http::Request<Vec<u8>> {
