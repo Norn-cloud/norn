@@ -84,7 +84,7 @@ Build into a directory outside the checkout, then smoke it:
 ```sh
 export NORN_CELL_DO_PROJECT="${CARGO_TARGET_DIR:?}/norn-cell-do"
 mkdir -p "$NORN_CELL_DO_PROJECT"
-cp apps/norn-cell-do/{worker.mjs,subscribe.mjs,wrangler.json} "$NORN_CELL_DO_PROJECT/"
+cp apps/norn-cell-do/{worker.mjs,subscribe.mjs,telemetry.mjs,otlp.mjs,wrangler.json} "$NORN_CELL_DO_PROJECT/"
 cargo build --locked -p norn-cell-do --features fixtures --target wasm32-unknown-unknown --profile wasm-release
 wasm-bindgen "$CARGO_TARGET_DIR/wasm32-unknown-unknown/wasm-release/norn_cell_do.wasm" \
   --target web --out-name norn_cell_do --out-dir "$NORN_CELL_DO_PROJECT/pkg"
@@ -141,3 +141,183 @@ traces are never served unkeyed.
 | Atomic commit (TXN-ATOMIC-1) | `BEGIN IMMEDIATE` | `storage.transactionSync` |
 | Durability | `synchronous=FULL` fsync | DO storage; output gates hold replies until durable |
 | Ledger, receipts, transparency | shared `norn-cell` store | the same store over `WorkersEngine` |
+
+## Host conformance (D122)
+
+`conformance/` checks that a Workers host runs this cell the way native Rust
+does. Customers' cells run on OpenOrange (each Durable Object a Rivet actor on
+a Rivet Engine); celld and Wrangler are the other hosts.
+
+- `crates/norn-cell-do/tests/conformance_reference.rs` owns the request
+  script and serves it natively through the same tenant dispatch as
+  `src/wasm.rs`, recording each status, body and verified ledger head. The
+  record must be reproducible, including with the cell reopened before every
+  step.
+- `conformance/worker.mjs` is a test entry around the unchanged `worker.mjs`:
+  a fixed request clock, a hold inside a commit's write transaction (right
+  after its n-th SQL statement, or at the end of its callback before it
+  commits) where the runner kills the host, the verified ledger head (the
+  exact string the Rust cell serializes), and `Probe` objects for the Durable
+  Object API the cell relies on. It serves nothing unless it is opted in: a
+  `fixtures` build AND `NORN_STAGE=test` AND `NORN_CONFORMANCE=synthetic`.
+  The checked-in `conformance/wrangler.json` sets neither and has no
+  `workers.dev`, preview or route URL, so a plain `wrangler deploy` of it
+  serves nothing. For a local host the runner copies the project to a fresh
+  temporary directory, sets both values in that copy's `wrangler.json` only,
+  and deletes the copy afterwards: the supplied project is never written. A
+  hosted run supplies them in a separate, untracked config (see
+  below). Opted in, it serves only the synthetic scope
+  `org_demo/analytics` and its probe objects, and refuses everything else.
+  The production deploy (`apps/studio/scripts/celld-deploy-cell.ts`) writes its
+  own configuration with neither variable, so this entry refuses every request
+  there (`apps/studio/test/norn-cell-conformance-entry.test.ts`).
+- `conformance/conformance.py` runs the suite. Every row is **pass**,
+  **fail**, **not tested** (the run could not show it) or **measured** (an
+  observation, not a claim):
+  - the 12-step script compared with native: statuses, raw body bytes and the
+    Rust-serialized ledger head after each step, byte for byte;
+  - transactionSync rollback and nesting;
+  - kills at **sampled** SQL boundaries inside a commit's transaction (after
+    statements 1, 2, 3, n/4, n/2, 3n/4, n−1 and n, and at the end of the
+    callback before it commits), not every statement. Each boundary is proven
+    reached before the kill: the entry prints the request's random marker to
+    the host's log from inside the write transaction, after a statement ran,
+    while it spins there (never for a refusal that wrote nothing or a callback
+    that threw), and the runner kills only once it reads it. Without a marker
+    the runner neither kills nor restarts the host, even when the connection
+    was reset: the boundary is **not tested**, and if the cell then stops
+    answering the sweep ends there, every remaining boundary **not tested**.
+    A kill must leave the commit wholly absent, and a retry must match native;
+  - an acknowledged commit surviving a kill. The suite does **not** show that
+    the platform withholds replies until a write is durable: no boundary sits
+    between a commit and its reply;
+  - no interleaving inside a synchronous turn; one live instance per object
+    (two runners on Rivet, and a runner stalled or frozen mid-commit while its
+    cell moves, each proven held by the same marker);
+  - alarms as **platform probes only** (fire, re-fire after a failing handler
+    with evidence that a failed delivery preceded it, rolled back with their
+    transaction, and a firing recorded after the host restarted from a kill).
+    The cell's own timers are not in the suite yet;
+  - SQLite affinity, bindings, and a 1 MiB value stored exactly (larger values
+    are measured); the clock inside a synchronous call (measured);
+  - waitUntil background work completing after the reply, with no traffic
+    meanwhile. It passes only with evidence that the work was still pending
+    when the reply arrived (the reply counts fewer writes than scheduled and
+    came back before the first was due) and that all of it ran afterwards.
+    Without that timing evidence the row is not tested; a qualifying reply
+    followed by missing writes is a fail (idle eviction is not claimed; whether
+    the object was replaced meanwhile is only reported);
+  - a live WebSocket across 15 s idle, and, as its own row, whether the object
+    hibernated meanwhile (a new instance answered the commit the socket saw);
+    when the same instance answered, hibernation is **not tested**;
+  - backup and restore in place; then cold start, commit latency, memory per
+    cell and 100 cells on one host (measured).
+
+  Durability evidence is process kills (SIGKILL) against **one** Rivet Engine
+  with its log and objects on local disk, or one `celld dev` process: no
+  power loss, torn writes, multi-engine clusters or S3 object storage.
+
+Build the project outside the checkout, then run it on a host:
+
+```sh
+P="${CARGO_TARGET_DIR:?}/norn-cell-conformance"; mkdir -p "$P"
+cargo build --locked -p norn-cell-do --features fixtures --target wasm32-unknown-unknown --profile wasm-release
+wasm-bindgen "$CARGO_TARGET_DIR/wasm32-unknown-unknown/wasm-release/norn_cell_do.wasm" --target web --out-name norn_cell_do --out-dir "$P/pkg"
+cargo rustc --locked -p norn-cell --no-default-features --example workers_sql --target wasm32-unknown-unknown --profile wasm-release
+wasm-bindgen "$CARGO_TARGET_DIR/wasm32-unknown-unknown/wasm-release/examples/workers_sql.wasm" --target web --out-name workers_sql --out-dir "$P/probe-pkg"
+cp apps/norn-cell-do/{worker.mjs,subscribe.mjs} "$P/"
+cp apps/norn-cell-do/conformance/worker.mjs "$P/conformance.mjs"
+cp apps/norn-cell-do/conformance/wrangler.json "$P/"
+NORN_CELL_DO_CONFORMANCE_OUT="$P/reference.json" cargo test --locked -p norn-cell-do --test conformance_reference
+(cd apps/norn-cell-do/conformance && bun install --frozen-lockfile)   # open-orange 1.0.3, test-only; runs on Node 22+
+python3 apps/norn-cell-do/conformance/conformance.py --reference "$P/reference.json" --host rivet --project "$P"
+```
+
+`python3 -m unittest apps/norn-cell-do/conformance/test_conformance.py`
+checks the runner's own rules with a stub host: the supplied project stays
+byte-identical, a reset without a marker kills nothing, and waitUntil does not
+pass when the reply came after the work.
+
+`--host celld` runs `celld dev --no-watch --logs` (0.6.3). Host state and logs go to a fresh temporary directory (or an empty, real `--state` directory outside the project), never into the project. `--host rivet` runs the Rivet Engine
+(`rivetdev/engine` 3.1.2-rc.1, pinned by digest, in Docker) with two
+`orange serve` runners from the locked install (`conformance/package.json`
+and `bun.lock`, with integrity hashes); `ORANGE` may name another binary, and
+the runner refuses any that is not open-orange 1.0.3. Run it on a Boat VM,
+never a shared host.
+
+`--host url --url <base>` runs the tests that need no host control (kills,
+restarts and backups report **not tested**). Point it only at a fresh,
+isolated deployment made for the run, never at a stage that serves anyone:
+
+1. Build the project as above (a `fixtures` build; the production deploy
+   script refuses one).
+2. Write a separate, untracked opt-in config for a new, throwaway name and
+   deploy it; the checked-in `wrangler.json` stays disabled. `NORN_LINEAGE_KEY`
+   is the reference's public lineage key (the ledger heads only match native
+   with it):
+
+   ```sh
+   jq --arg name "norn-conformance-$(openssl rand -hex 4)" --arg key "$(jq -r .lineageKey "$P/reference.json")" \
+     '.name = $name | .workers_dev = true | .vars = {NORN_STAGE: "test", NORN_CONFORMANCE: "synthetic", NORN_LINEAGE_KEY: $key}' \
+     "$P/wrangler.json" > "$P/wrangler.optin.json"
+   (cd "$P" && wrangler deploy --config wrangler.optin.json)
+   ```
+3. Run `conformance.py --reference "$P/reference.json" --host url --url
+   https://<that deployment>` (`https` uses TLS with hostname verification,
+   port 443 unless the URL names one). The runner identifies itself as
+   `User-Agent: norn-conformance/1` (`workers.dev` refuses urllib's default).
+4. Delete the deployment (`wrangler delete --name <that name>`) and
+   `$P/wrangler.optin.json` afterwards.
+
+## Telemetry
+
+`telemetry.mjs` exports what the host does over OpenTelemetry (OTLP/HTTP, JSON
+encoding) through `otlp.mjs`, a dependency-free exporter Studio's Worker shares.
+It is off unless the Worker has `OTEL_EXPORTER_OTLP_ENDPOINT` (OTEL-OFF-1):
+without it every wrapped method calls straight through and nothing is sent. Set:
+
+| var | value |
+|---|---|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | the collector's base URL; OpenObserve: `https://<host>/api/<org>` |
+| `OTEL_EXPORTER_OTLP_HEADERS` | `Authorization=Basic%20<base64 user:password>` (a secret) |
+| `OTEL_RESOURCE_ATTRIBUTES` | `deployment.environment=<stage>` |
+| `OTEL_TRACES_SAMPLER_ARG` | fraction of spans kept (default 1) |
+| `NORN_OTEL_INTERVAL_MS` | export interval (default 10000) |
+
+Misconfiguration turns export off rather than failing a request: an endpoint
+that is not an http(s) URL or carries userinfo, a header that is not a valid
+HTTP field, or credentials sent over plain HTTP to anything but loopback
+(OTEL-TLS-1). Telemetry never delays or replaces a handler's result
+(OTEL-NEVER-FAILS-1): the wrappers read only the status and a refusal's body
+text the host already holds (`noteRefusal`), and recording and export run in a
+background task handed to `waitUntil`. The first observation in a quiet isolate
+schedules one flush within the interval (at most 20 s).
+
+Metrics are delta counters and histograms:
+
+| metric | attributes |
+|---|---|
+| `norn_cell_requests_total`, `norn_cell_request_duration_ms` | route template, method, kind (action, decision, provision, plan, apply, admission, install, sync, load, question, read, subscribe, write, other), outcome, status class, environment |
+| `norn_cell_definitions_stage_ms` | stage: provision, admission, plan, apply, install |
+| `norn_cell_refusals_total` | refusal code, route, kind |
+| `norn_cell_actions_total`, `norn_cell_decisions_total` | outcome: ok, pending (parked for approval), refused, error |
+| `norn_cell_sync_runs_total`, `norn_cell_sync_duration_ms` (the sync lag: start to rows committed), `norn_cell_sync_rows_{read,landed,quarantined}_total` | outcome (ok, partial, failed), failure code |
+| `norn_cell_alarm_lag_ms`, `norn_cell_alarms_total` | retry; lag is fired minus armed deadline (TIMER-ALARM-1, once `alarm()` exists) |
+| `norn_cell_live_publishes_total`, `norn_cell_live_fanout` (sockets per publish), `norn_cell_live_snapshots_total` (changed snapshots sent) | none |
+
+Each request, sync and alarm is also a span (`cell <kind> <route template>`).
+Every attribute comes from a fixed table (OTEL-NO-TENANT-1): routes are the
+templates in `otlp.mjs` `CELL_ROUTES` (`/v1/objects/{type}/{id}/history`; any
+other path is `other`), methods, environments and refusal codes are
+allowlisted (anything else is `other`), and nothing from a path segment, the
+scope, a principal or a body is kept. The per-commit work counters (#1421,
+`counters` feature) stay test-only.
+
+`probe/golden-path.mjs` is the synthetic probe (`probe/dev.sh` runs it against a
+fresh `norn dev`). It prints fixed diagnostic codes only, sends tokens only over
+HTTPS or to loopback, checks every credential before its first write, and
+writes into fixed slots (PROBE-BOUNDED-1). A hosted probe needs a cell dedicated
+to it: the probe refuses to write into a cell holding non-probe definitions.
+There is no cell deprovision or object delete API, so a hosted probe cell keeps
+each run's ledger entries, receipts and parked decision. Dashboards and alerts
+live in Norn-cloud/norn-ops `observability/`.

@@ -186,6 +186,13 @@ impl<E: SqlEngine> DevHost<E> {
     pub const fn scope(&self) -> &CellScope {
         &self.scope
     }
+    /// The cell's verified ledger head: what a host conformance run compares
+    /// across runtimes. Never a request route; the trusted host asks it.
+    /// # Errors
+    /// The cell is unavailable or its ledger does not verify.
+    pub fn verified_head(&self) -> Result<norn_cell::LedgerHead, Refusal> {
+        self.cell()?.store().verified_head().map_err(Refusal::host)
+    }
     /// Hold the epoch through authorization and projection.
     /// # Errors
     /// Poisoned synchronization refuses closed.

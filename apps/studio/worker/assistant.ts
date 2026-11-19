@@ -27,8 +27,8 @@ export const MAX_REQUEST_CHARS = 2000
 /** Proposals one person may ask for in an hour. */
 export const HOURLY_PROPOSALS = 20
 
-const json = (body: unknown, status = 200) => Response.json(body, { status, headers: { "cache-control": "no-store" } })
-const refused = (status: number, error: string) => json({ error }, status)
+const json = (body: unknown, status = 200, headers: Record<string, string> = {}) => Response.json(body, { status, headers: { "cache-control": "no-store", ...headers } })
+const refused = (status: number, error: string, headers: Record<string, string> = {}) => json({ error }, status, headers)
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value)
 
 /** A new dashboard's definition id, as Studio names one: its title and a random suffix. */
@@ -41,9 +41,9 @@ async function proposeRoute(request: Request, deps: AssistantDeps): Promise<Resp
   const body = await request.json().catch(() => null) as { request?: unknown; dashboardId?: unknown } | null
   const asked = typeof body?.request === "string" ? body.request.trim() : ""
   if (asked === "" || asked.length > MAX_REQUEST_CHARS) return refused(400, `Say what the dashboard should show, in at most ${MAX_REQUEST_CHARS} characters.`)
-  if (await spent(db) >= deps.capMicroUsd) return refused(429, "The assistant has reached its spending cap. Build the dashboard by hand, or ask an owner to raise the cap.")
+  if (await spent(db) >= deps.capMicroUsd) return refused(429, "The assistant has reached its spending cap. Build the dashboard by hand, or ask an owner to raise the cap.", { "x-norn-limit": "spend_cap" })
   const recent = await db.prepare("SELECT COUNT(*) AS n FROM dashboard_proposal WHERE user_id = ? AND created_at > ?").bind(scope.userId, now - 3_600_000).first<{ n: number }>()
-  if ((recent?.n ?? 0) >= HOURLY_PROPOSALS) return refused(429, `At most ${HOURLY_PROPOSALS} proposals an hour; try again later.`)
+  if ((recent?.n ?? 0) >= HOURLY_PROPOSALS) return refused(429, `At most ${HOURLY_PROPOSALS} proposals an hour; try again later.`, { "x-norn-limit": "proposals_hourly", "retry-after": "3600" })
   // Editing: the dashboard as it stands now, read as the person, is what the request changes.
   let target: { readonly id: string; readonly version: number; readonly payload: unknown } | undefined
   if (typeof body?.dashboardId === "string") {

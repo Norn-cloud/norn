@@ -45,6 +45,8 @@ pub mod jcs;
 pub mod kernel_set;
 /// Generic MCP catalog and dispatch boundary.
 pub mod mcp;
+/// NET-ADDR-1: the shared internal-address rules for every outbound call.
+pub mod net;
 /// HOST-READ-7: exact value counts of a concept's categorical properties.
 pub mod object_facets;
 /// HOST-READ-4: an object's link neighbourhood and its source lineage.
