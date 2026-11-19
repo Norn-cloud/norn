@@ -23,7 +23,7 @@
 //!
 //! Without its default `checker` feature the crate is the ZEN engine alone: only
 //! [`evaluate_expression_json`] (`evaluateExpression`), the same function the full package
-//! exports, over `norn-expr` (D105: one evaluator). Page machines load that build
+//! exports, over `norn-expr` (one evaluator, #1325). Page machines load that build
 //! (`scripts/build-pkg.sh` with `NORN_WASM_ENGINE=1`); `tests/parity/engine-parity.mjs` holds the
 //! two builds to the same answers.
 

@@ -77,7 +77,7 @@ pub const CHECKER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// The ZEN Expression checker profile a receipt records beside the type
 /// environment: `norn_expr::check::CHECKER_PROFILE`, the versioned Norn
-/// profile `norn-zen/6` published in `crates/norn-expr/PROFILE.md`
+/// profile `norn-zen/6` published in `crates/norn-expr/README.md`
 /// (T1-EXPR-6, #2766).
 pub const EXPR_PROFILE: &str = norn_expr::check::CHECKER_PROFILE;
 

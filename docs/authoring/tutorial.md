@@ -6,45 +6,47 @@ Norn is in alpha. Read "What works where" first.
 
 ## What works where
 
-- **Bun 1.3.x** is required (`bun --version`). The CLI runs on Bun; Node cannot run it yet.
-- **Linux x64:** fully supported. The release carries a prebuilt dev host.
-- **Linux arm64:** the release carries a prebuilt dev host that no one has run yet. Tell us if it works.
-- **macOS:** `norn check`, `norn explain` and `norn fmt` are expected to work, but nobody has run them on macOS yet. `norn dev` needs a dev host you build from source; the CLI prints the exact commands when it cannot find one.
+- **Bun 1.3.x** is required (`bun --version`). The TypeScript CLI runs on Bun; Node cannot run it yet.
+- **Linux x64:** the path below is the one that is exercised.
+- **Linux arm64 and macOS:** building from source is expected to work, but nobody has run this tutorial there yet. Tell us if it works.
 - **Windows:** use WSL (Linux x64) and follow the Linux path.
 
-## 1. Download and verify
+## Which `norn`
 
-Each alpha is a GitHub pre-release of `Norn-cloud/norn`, tagged `v0.1.0-alpha.N`. It carries:
-- the CLI tarball, `norn-cli-<version>.tgz`;
-- the authoring types, `norn-authoring-<version>.tgz`;
-- one prebuilt dev host per Linux platform;
-- `manifest.json` and `SHA256SUMS`.
+Two programs are called `norn` (renaming one is [#1451](https://github.com/Norn-cloud/norn/issues/1451)):
 
-Check what you downloaded before you install it:
+- the **TypeScript `norn`** in `tools/norn-ts`: `init`, `dev`, `fmt`, `check` and `compile` (typed sources), `profile`, `question`, `dashboard`, `plan`, `apply`, `explain`. Every `norn` command in this tutorial is this one. Inside a project made by `norn init` it runs as `bunx norn`.
+- the **Rust `norn`** in `crates/norn-cli`: `check` (compiled JSON IR), `eval`, `explain`, `mcp`, `remote`, `cell`, `source`, `capabilities`, `openapi`, `source-digest`. The drop releases attach this one.
+
+## 1. Build from source
+
+No release carries the TypeScript CLI, the checker WASM or the dev host yet. From `drop-29` on, a `drop-*` release attaches the Rust `norn` for Linux and macOS, the TypeScript SDK, the Python client, `install.sh` and `SHA256SUMS` (what [`scripts/release/assets.sh`](../../scripts/release/assets.sh) builds); none of these is needed for this tutorial.
+
+You need Rust 1.98.0 with the `wasm32-unknown-unknown` target, `wasm-bindgen-cli` 0.2.129, Bun 1.3.14, Node with `npx` (the checker build runs binaryen's `wasm-opt` through it), and `sha256sum` (the checker build prints checksums with it; on macOS it comes with GNU coreutils, `brew install coreutils`). Build in a checkout of the repository:
 
 ```sh
-VERSION=0.1.0-alpha.N
-BASE=https://github.com/Norn-cloud/norn/releases/download/v$VERSION
-curl -fsSLO "$BASE/SHA256SUMS"
-curl -fsSLO "$BASE/norn-cli-$VERSION.tgz"
-sha256sum --ignore-missing -c SHA256SUMS        # must print: norn-cli-<version>.tgz: OK
-gh attestation verify "norn-cli-$VERSION.tgz" --repo Norn-cloud/norn   # on releases that carry attestations
+git clone https://github.com/Norn-cloud/norn && cd norn
+NORN=$PWD
+rustup target add wasm32-unknown-unknown
+cargo install --locked wasm-bindgen-cli --version 0.2.129
+crates/norn-checker-wasm/scripts/build-pkg.sh
+cargo build --locked --release -p norn-cell-do --bin norn-dev-host
+(cd tools/norn-ts && bun install --frozen-lockfile)
+TARGET="$(cd "${CARGO_TARGET_DIR:-$NORN/target}" && pwd)"
+export NORN_CHECKER_WASM_PKG="$TARGET/norn-checker-wasm/pkg"
+export NORN_DEV_HOST_BIN="$TARGET/release/norn-dev-host"
 ```
 
-What these prove:
-- **`sha256sum`:** the file is the one the release lists.
-- **`gh attestation verify`:** the file was built by Norn's release workflow from the tagged commit. It needs the GitHub CLI, and only releases built by that workflow carry an attestation; a release without one says so in its notes.
-- **Where the trust comes from:** every source file in the packages is byte-identical to the repository at that commit. Once Norn's release workflow exists, the built files (checker WASM, dev hosts, licence texts, manifests) will come only from a run of it, and its attestation will say which run. Until then, a release's notes say how it was built.
-- **What it covers:** these checks cover the files you download yourself. When `norn dev` first runs, it fetches the dev host for your platform and runs it only if its sha256 is the one this release records.
+Both builds write under `CARGO_TARGET_DIR` when it is set, so the two paths follow it; `TARGET` is that directory as an absolute path, so the exports stay valid when `CARGO_TARGET_DIR` is relative and you later run from another directory.
 
-Your project's `bun.lock` pins the exact tarballs you installed. Commit it. Until it exists, nothing pins what `norn init` installed: the first install trusts the release URL, so run `norn init` only from a release you verified.
+`NORN_CHECKER_WASM_PKG` is the checker that `norn check` and `norn dev` load; `NORN_DEV_HOST_BIN` is the native host that `norn dev` runs. Keep both set in every terminal you use below. The [quickstart](../../QUICK_START.md) has the same build and the release path.
 
-## 2. Install the CLI and create a project
+## 2. Create a project
+
+Outside the checkout:
 
 ```sh
-bun add --global "./norn-cli-$VERSION.tgz"
-norn --version                  # norn 0.1.0-alpha.N (<commit>)
-norn init shop
+bun "$NORN/tools/norn-ts/src/cli.ts" init shop
 cd shop
 ```
 
@@ -53,7 +55,7 @@ cd shop
 - `src/product.ts`: a `shop.Product` type and a `shop.product.add` action;
 - `AGENTS.md`: the rules for a coding agent working in the project.
 
-It then installs the project's dependencies.
+It then runs `bun install`. Run from a checkout, the project depends on that checkout's `tools/norn-ts` (a `file:` dependency), so `bunx norn` in the project is the CLI you just built.
 
 ## 3. Check
 
@@ -103,22 +105,9 @@ Save. `norn dev` refuses the change and keeps serving the previous revision. `bu
 
 Put `"sku"` back and save; the next revision installs.
 
-## macOS: building the dev host
-
-`norn dev` prints the commit to build from. With Rust installed (the version it names):
-
-```sh
-git clone https://github.com/Norn-cloud/norn && cd norn
-git checkout <the commit norn dev printed>
-cargo build --release -p norn-cell-do --bin norn-dev-host
-export NORN_DEV_HOST_BIN="$PWD/target/release/norn-dev-host"
-```
-
-Build from that exact commit: a dev host from another commit may not match your CLI.
-
 ## Not in the alpha yet
 
-- Deploying a project anywhere but your own machine.
-- `norn plan` and `norn apply`.
-- An MCP endpoint for agents.
 - A `norn call` command (until then, use `curl` as above).
+- Prebuilt TypeScript CLI, checker or dev host files: build them from source as in step 1.
+
+`norn plan` and `norn apply` send a pack to a running hosted cell (`--url`), and the Rust `norn mcp` serves the available operations to an agent over MCP stdio.

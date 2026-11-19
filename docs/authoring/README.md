@@ -2,7 +2,7 @@
 
 Read the [thesis](../architecture/norn-thesis.md), [2026-11-01 decisions](../architecture/decisions/2026-11-01.md), and [core specification index](../spec/core/README.md) before designing definitions or engine features. The decision record governs conflicts with earlier designs. Acceptance contracts: [completeness](../spec/acceptance/completeness-gate.md), [jewelry](../spec/acceptance/jewelry-demo.md), [master ontology MVP](../spec/acceptance/master-ontology-mvp.md).
 
-**CURRENT** means supported authoring syntax in [`tools/norn-ts`](../../tools/norn-ts/README.md), inspected at `1227c72b2637a489ea2c51e51a62354376c0a322`. It does not imply every runtime or proof guarantee is qualified. **TARGET** means the intended authoring model; target examples below are illustrative contracts, not compilable SDK examples. `@norn/dsl` and its helpers are target notation, not today's package API. Never translate a missing construct into domain code in the kernel.
+**CURRENT** means supported authoring syntax in [`tools/norn-ts`](../../tools/norn-ts/README.md), inspected at `b532b4f4da` (2026-11-19). It does not imply every runtime or proof guarantee is qualified. **TARGET** means the intended authoring model; target examples below are illustrative contracts, not compilable SDK examples. `@norn/dsl` and its helpers are target notation, not today's package API. Never translate a missing construct into domain code in the kernel.
 
 ## The model (TARGET)
 
@@ -18,13 +18,13 @@ One concept bundles `is`, stored/derived properties, links, states, actions, law
 | Links | `Norn.type({ links: [...] })`; action `createLinks` | Named typed links and owned drafts with explicit identity/creation |
 | Actions and decisions | `Norn.action`, `Norn.decision`, `Norn.expression`; declared slices/writes | Composable actions with a complete checked synchronous effect closure |
 | Durable execution | `Norn.flow` + bounded Effect syntax lowers to lifecycle data | Happenings/commitments/receipts; no second runtime as business authority |
-| Laws and policies | `Norn.law` exposes LawIR; `Norn.access` declares access | Typed structured requirements and deontic policies; access remains separate |
+| Laws and policies | `Norn.law` exposes LawIR; `Norn.obligation`, `Norn.prohibition` and `Norn.permission` declare cited norms (a permission is a defeater and grants nothing); `Norn.example` declares a checked case of a law or norm; `Norn.access` declares access; `Norn.markings` declares a marking catalog | Typed structured requirements and deontic policies; access remains separate |
 | Packs/apps/overlays | File/pack-directory compilation; semantic-only `Norn.ontologyPack`/`Norn.packLink`; no app/overlay constructors | Pinned pack instances, explicit exports, app bindings, conjunctive overlays |
 | Parameters | No typed `param`/`settings` constructor in this profile | Typed, scoped, effective-dated governed values |
 | Defined concepts | No general `.where` classifier constructor | First-class pure classification over existing identities |
 | Integrations | `Norn.sourceSchema`, `Norn.mapping`, `Norn.connector`; action `commands` | Integration packs with external ontology, canonical links and governed write-back |
 | Functions | `Norn.fn`, `Norn.perform` inside `Norn.flow` | Canonical FunctionManifest; typed, capability-scoped performers and recorded receipts |
-| Metrics/views/explanations | No `metric`, `view`, `explain`, `expects` constructors in this profile | Reactive questions/views, typed measures, evidence and refusals |
+| Metrics/views/explanations | `Norn.question` (candidate QuestionIR over a measure, grouping and as-of basis), `Norn.dashboard` (tiles over questions declared in the same module), `Norn.transform` (a derived dataset plan), `Norn.model` (ModelIR: a typed predictive model's inputs, outputs and output contracts); `norn explain` is a CLI command. No `metric`, `view` or `expects` constructors in this profile | Reactive questions/views, typed measures, evidence and refusals |
 
 Route changes to the relevant core contract:
 
