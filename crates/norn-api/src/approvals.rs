@@ -20,7 +20,9 @@
 //! APPROVAL-PIN-1: a call pinned to a definitions version (`?version=`)
 //! parks with that pin, and its approval commits it pinned the same way: a
 //! catalog that changed between parking and approval refuses the commit
-//! (`defs.stale`) and commits nothing.
+//! (`defs.stale`) and commits nothing. The pin is part of the call's
+//! identity: the requester's retry under another catalog parks anew and
+//! waits for a fresh decision.
 
 use std::collections::BTreeMap;
 
@@ -219,19 +221,27 @@ fn request(gate: &Gate) -> Value {
     request
 }
 
-/// The command id of a parked call: one per action, input, idempotency key
-/// and requester, so the same call parks once, and an approval approves
-/// exactly the call it was asked about.
+/// The command id of a parked call: one per action, input, idempotency key,
+/// requester and definitions pin, so the same call parks once, and an
+/// approval approves exactly the call it was asked about.
+///
+/// APPROVAL-PIN-1: a pinned call's id also hashes its pin, under its own
+/// domain tag, so the requester's retry under another catalog (unpinned, or
+/// pinned to another version) is another call that parks for a fresh
+/// decision, never the earlier approval. An unpinned call's id is unchanged.
 fn command_id(parked_call: &ParkedCall) -> Result<String, Refusal> {
-    let digest = norn_ir::canonical::domain_hash_hex(
-        b"norn.approval.call/1\0",
-        &(
-            &parked_call.action,
-            &parked_call.idempotency_key,
-            &parked_call.requester.subject,
-            &parked_call.input,
-        ),
-    )
+    let call = (
+        &parked_call.action,
+        &parked_call.idempotency_key,
+        &parked_call.requester.subject,
+        &parked_call.input,
+    );
+    let digest = match parked_call.definitions_version {
+        None => norn_ir::canonical::domain_hash_hex(b"norn.approval.call/1\0", &call),
+        Some(pin) => {
+            norn_ir::canonical::domain_hash_hex(b"norn.approval.pinned-call/1\0", &(call, pin))
+        }
+    }
     .map_err(Refusal::host)?;
     Ok(format!(
         "norn.approval/{}",

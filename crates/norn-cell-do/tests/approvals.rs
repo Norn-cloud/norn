@@ -186,7 +186,9 @@ fn convert_pinned(cell: &Cell, version: u64, body: &str) -> (u16, Value) {
 
 /// APPROVAL-PIN-1: a call pinned to a definitions version commits on approval
 /// only while that version is active: a catalog that changed between parking
-/// and approval refuses the commit (`defs.stale`) and commits nothing.
+/// and approval refuses the commit (`defs.stale`) and commits nothing, and
+/// the requester's retry under the current catalog parks for a fresh
+/// decision instead of reusing that approval.
 #[test]
 fn an_approval_keeps_the_callers_definitions_pin() {
     let cell = cell();
@@ -205,6 +207,28 @@ fn an_approval_keeps_the_callers_definitions_pin() {
         "{decided}"
     );
     assert_eq!(melt_status(&cell), 404, "nothing committed");
+
+    // The requester's retry under the current catalog is another call: it
+    // never finds the earlier approval, and parks for a fresh decision.
+    let current = definitions_version(&cell);
+    let (status, retried) = convert_pinned(&cell, current, &melt7("operator-pin"));
+    assert_eq!(status, 202, "{retried}");
+    let fresh = retried["decision"]["id"].as_str().unwrap().to_owned();
+    assert_ne!(fresh, id, "a fresh decision");
+    let (status, unpinned) = convert(&cell, OPERATOR, &melt7("operator-pin"));
+    assert_eq!(status, 202, "{unpinned}");
+    assert_ne!(unpinned["decision"]["id"], json!(id), "{unpinned}");
+    assert_eq!(melt_status(&cell), 404, "no commit without a fresh decision");
+    // The original pin stays stale.
+    let (status, stale) = convert_pinned(&cell, pinned, &melt7("operator-pin"));
+    assert_ne!(status, 200, "{stale}");
+    assert_eq!(stale["code"], json!("defs.stale"), "{stale}");
+    assert_eq!(melt_status(&cell), 404);
+    // The fresh decision approved, the retry commits.
+    let (status, decided) = decide(&cell, APPROVER, &fresh, "approve");
+    assert_eq!(status, 200, "{decided}");
+    assert_eq!(decided["call"], json!({ "committed": true }), "{decided}");
+    assert_eq!(melt_status(&cell), 200);
 
     // Unchanged between parking and approval, the pinned call commits.
     let cell = step_cell::cell();
