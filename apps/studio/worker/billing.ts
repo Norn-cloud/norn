@@ -6,9 +6,11 @@
  * or in the record is specific to a provider: it takes BillingSettings, never the provider's.
  *
  * Billing is off unless the deployment configures a provider. Off, every entitlement is unlimited, no
- * check refuses anything, and the database's billing mode is off too (syncBillingMode), so its limit
- * triggers refuse nothing either: self-hosted Studio behaves exactly as before. The browser never
- * decides: it renders the document `/api/billing` returns and the refusals the server sends.
+ * check refuses anything, and the deploy writes the database's billing mode off (billingModeStatement),
+ * so its limit triggers refuse nothing either: self-hosted Studio behaves exactly as before. Requests
+ * follow that stored mode (billingOf), never their own settings, so the API and the triggers agree.
+ * The browser never decides: it renders the document `/api/billing` returns and the refusals the
+ * server sends.
  *
  * The billed subject is a person (Better Auth user id; the provider customer's external id). Each
  * workspace a person pays for (its creator, recorded at creation: migrations 0010, 0011) is one hosted
@@ -103,20 +105,32 @@ export async function writeLimits(db: BillingDb, payerId: string, grant: Grant, 
 }
 
 /**
- * Tell the database whether billing is on, so its limit triggers (migration 0011) follow the same
- * policy as entitlementOf: off, nothing is limited anywhere, including workspaces billed while it was
- * on. The Worker calls this before serving the API; a write happens only when the mode changes.
+ * The database's billing mode (migration 0011's billing_mode) is the one switch: its limit triggers and
+ * every request read it, so the API and the database always apply the same policy. A deploy writes it
+ * once, from that deployment's billing settings (alchemy.run.ts, scripts/celld-migrate.ts), in this one
+ * statement; no request ever writes it, so isolates of two deployments serving at once cannot flip it.
  */
-const syncedModes = new WeakMap<object, boolean>()
-export async function syncBillingMode(db: BillingDb, on: boolean): Promise<void> {
-  if (syncedModes.get(db) === on) return
+export const billingModeStatement = (on: boolean) =>
+  `INSERT INTO "billing_mode" ("id", "enabled") VALUES (1, ${on ? 1 : 0}) ON CONFLICT ("id") DO UPDATE SET "enabled" = excluded."enabled"`
+
+/** Whether the stored billing mode is on. A database without the row (or without migration 0011) is off, as its triggers are. */
+export async function billingModeOn(db: BillingDb): Promise<boolean> {
   try {
-    await run(db, `insert into "billing_mode" ("id", "enabled") values (1, ?) on conflict ("id") do update set "enabled" = excluded."enabled" where "enabled" <> excluded."enabled"`, on ? 1 : 0)
+    const [mode] = await rows<{ enabled: number }>(db, `select "enabled" from "billing_mode" where "id" = 1`)
+    return mode?.enabled === 1
   } catch (error) {
-    // A database without migration 0011 has no limit triggers either: nothing there to keep in step.
-    if (!String(error instanceof Error ? error.message : error).includes("no such table: billing_mode")) throw error
+    if (String(error instanceof Error ? error.message : error).includes("no such table: billing_mode")) return false
+    throw error
   }
-  syncedModes.set(db, on)
+}
+
+/**
+ * Billing as a request sees it: on or off as the stored mode says, never as this isolate's settings
+ * say. On, the deployment's checkout plans when this isolate has them, else none (limits still apply,
+ * nothing is offered at checkout).
+ */
+export async function billingOf(db: BillingDb, settings: BillingSettings | undefined): Promise<BillingSettings | undefined> {
+  return await billingModeOn(db) ? settings ?? { plans: [] } : undefined
 }
 
 // ---------------------------------------------------------------------------------------------

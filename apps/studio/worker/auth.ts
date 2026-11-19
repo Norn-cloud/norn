@@ -11,7 +11,7 @@ import { organization } from "better-auth/plugins/organization"
 import { adminAc, defaultStatements, memberAc, ownerAc } from "better-auth/plugins/organization/access"
 import { hashPassword, verifyPassword, type PasswordScrypt } from "./password.ts"
 import type { ClientIpHeader } from "./client-ip.ts"
-import { admitMember, refusalMessage, type Admission, type BillingDb } from "./billing.ts"
+import { admitMember, billingModeOn, billingOf, refusalMessage, type Admission, type BillingDb } from "./billing.ts"
 import { forgetPolarCustomer, polarPlugin, type PolarBilling } from "./polar.ts"
 import { settingsOf } from "./polar-config.ts"
 
@@ -404,10 +404,10 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
           // Clients cannot set "norn." keys. With billing on, the HTTP route is refused (index.ts) and
           // workspaces.ts creates workspaces; a server-side creation is billed to its creator the same way.
           beforeCreateOrganization: async ({ organization, user }) =>
-            ({ data: { ...organization, metadata: { ...publicMetadata(organization.metadata), ...config.billing === undefined ? {} : { [BILLING_PAYER]: user.id, [BILLED]: true } } } }),
+            ({ data: { ...organization, metadata: { ...publicMetadata(organization.metadata), ...await billingModeOn(config.database as unknown as BillingDb) ? { [BILLING_PAYER]: user.id, [BILLED]: true } : {} } } }),
           // Advisory: an admin is told before inviting someone the workspace could not take (members and
           // pending invitations). Invitations hold nothing; the member limit is enforced when one joins.
-          beforeCreateInvitation: async ({ organization, inviter }) => enforce(await admitMember(config.database as unknown as BillingDb, settingsOf(config.billing?.config), config.baseURL, organization.id, inviter.id, true)),
+          beforeCreateInvitation: async ({ organization, inviter }) => enforce(await admitMember(config.database as unknown as BillingDb, await billingOf(config.database as unknown as BillingDb, settingsOf(config.billing?.config)), config.baseURL, organization.id, inviter.id, true)),
           beforeUpdateOrganization: async ({ organization, member }) => {
             if (organization.metadata === undefined) return
             const adapter = await getCurrentAdapter((await self.auth?.$context)?.adapter as never)
@@ -457,7 +457,7 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
           },
           // The user-insert trigger commits the pending marker with the user; session creation retries incomplete provisioning.
           after: async (user, ctx) => {
-            if (ctx !== null) await provisionWorkspace(config.database as unknown as ProvisionDb, config.secret, user, config.defaultEnvironmentId, config.billing !== undefined)
+            if (ctx !== null) await provisionWorkspace(config.database as unknown as ProvisionDb, config.secret, user, config.defaultEnvironmentId, await billingModeOn(config.database as unknown as BillingDb))
           },
         },
         // A deleted account's Polar customer (if they ever checked out) goes too; best effort, never blocks the deletion.
@@ -471,7 +471,7 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
             if (adapter !== undefined && await stateOf(config.database as unknown as ProvisionDb, session.userId) === "pending") {
               const user = await adapter.findOne<{ id: string; name: string; email: string }>({ model: "user", where: [{ field: "id", value: session.userId }] })
               if (user === null) throw new Error("Cannot provision a workspace for a missing user")
-              await provisionWorkspace(config.database as unknown as ProvisionDb, config.secret, user, config.defaultEnvironmentId, config.billing !== undefined)
+              await provisionWorkspace(config.database as unknown as ProvisionDb, config.secret, user, config.defaultEnvironmentId, await billingModeOn(config.database as unknown as BillingDb))
             }
             const first = (where: { field: string; value: string }[]) => adapter === undefined ? Promise.resolve([]) : adapter.findMany<{ organizationId: string }>({
               model: "member",

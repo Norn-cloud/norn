@@ -1,7 +1,8 @@
 import alchemy from "alchemy"
-import { D1Database, EmailSender, Vite, WorkerRef } from "alchemy/cloudflare"
+import { createCloudflareApi, D1Database, EmailSender, Vite, WorkerRef } from "alchemy/cloudflare"
 import { FileSystemStateStore } from "alchemy/state"
 import { authDeploy, cellHost, deployTarget, otelSettings, requireWorkerScript, scanState } from "./deploy-target.ts"
+import { billingModeStatement } from "./worker/billing.ts"
 import { polarConfig } from "./worker/polar-config.ts"
 
 // The recorded Studio: `vite build` output (synthetic recorded engine documents
@@ -51,6 +52,13 @@ const authDb = await D1Database("auth-db", {
   migrationsDir: "./worker/migrations",
   adopt: true,
 })
+
+// The database's billing mode (worker/billing.ts billingModeStatement), written once here, after the
+// migrations, from this deployment's billing settings; no request writes it. Billing off writes off.
+const cloudflare = await createCloudflareApi()
+const mode = await cloudflare.post(`/accounts/${cloudflare.accountId}/d1/database/${authDb.id}/query`, { sql: billingModeStatement(billing !== undefined) })
+if (!mode.ok) throw new Error(`writing the billing mode failed: ${mode.status} ${await mode.text()}`)
+console.log(`Billing mode: ${billing === undefined ? "off" : "on"}`)
 
 export const studio = await Vite("studio", {
   name: target.worker,

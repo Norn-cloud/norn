@@ -6,7 +6,7 @@ import { connectors } from "./connectors.ts"
 import { MCP_PATH, serveMcp } from "./mcp.ts"
 import { cellFor } from "./cell.ts"
 import { questions } from "./questions.ts"
-import { billingDocument, entitlementOf, limitRaised, subscribed, syncBillingMode, type BillingDb, type BillingSettings } from "./billing.ts"
+import { billingDocument, entitlementOf, limitRaised, subscribed, billingOf, type BillingDb, type BillingSettings } from "./billing.ts"
 import { polarConfig, settingsOf } from "./polar-config.ts"
 import { acceptWorkspaceInvitation, createWorkspace } from "./workspaces.ts"
 import { cellScope } from "./scope.ts"
@@ -150,7 +150,7 @@ async function workspaceRoute(request: Request, env: Env, pathname: string): Pro
   if (request.method !== "POST") return refuse(405, "POST only.", { allow: "POST" })
   const origin = request.headers.get("origin")
   if (origin === null || !trustedOrigins(env).includes(origin)) return refuse(403, "Cross-origin request refused.")
-  const context = { auth: auth(env), db: env.AUTH_DB, billing: billingSettings(env), baseURL: env.BETTER_AUTH_URL }
+  const context = { auth: auth(env), db: env.AUTH_DB, billing: await billingSettings(env), baseURL: env.BETTER_AUTH_URL }
   const handle = pathname === "/api/workspaces" ? createWorkspace : pathname === "/api/workspaces/invitations/accept" ? acceptWorkspaceInvitation : undefined
   if (handle === undefined) return refuse(404, "No such endpoint.")
   try {
@@ -204,10 +204,11 @@ async function me(request: Request, env: Env): Promise<Response> {
 const mcpOn = (env: Env) => env.STUDIO_MCP === "on"
 
 /**
- * Billing as entitlement and admission see it (provider-neutral), or undefined when off. The Polar
- * settings themselves stay with the adapter (auth.ts, polar.ts).
+ * Billing as entitlement and admission see it (provider-neutral), or undefined when off: on or off as
+ * the database's stored mode says (billing.ts billingOf), the same mode its limit triggers read, never
+ * this isolate's own settings. The Polar settings themselves stay with the adapter (auth.ts, polar.ts).
  */
-const billingSettings = (env: Env): BillingSettings | undefined => settingsOf(polarConfig(env))
+const billingSettings = (env: Env): Promise<BillingSettings | undefined> => billingOf(env.AUTH_DB as unknown as BillingDb, settingsOf(polarConfig(env)))
 
 /**
  * The Polar plugin's checkout and portal endpoints. The plugin forwards whatever the caller sends
@@ -292,8 +293,6 @@ const handler = {
     }
     if (mcpOn(env) && OAUTH_DISCOVERY.has(pathname)) return auth(env).handler(request)
     if (!pathname.startsWith("/api/")) return env.ASSETS.fetch(request)
-    // The database's limit triggers follow the same billing policy as the API (billing.ts syncBillingMode).
-    await syncBillingMode(env.AUTH_DB as unknown as BillingDb, billingSettings(env) !== undefined)
     if (ACTOR_HEADERS.some((name) => request.headers.has(name))) return refuse(400, "Identity comes from the signed-in session, not a request header.")
     if (pathname === "/api/auth/sign-in/magic-link" || pathname === "/api/auth/magic-link/verify") {
       const host = new URL(request.url).host
@@ -306,12 +305,12 @@ const handler = {
     if (SIGN_IN_ELSEWHERE.has(pathname)) return refuse(403, "Studio sign-in is by email and password or magic link.")
     if (pluginBillingPath(pathname)) return refuse(404, "No such endpoint; billing starts at /api/billing.")
     const moved = SPLIT_WRITE_PATHS.get(routePath(pathname))
-    if (moved !== undefined && billingSettings(env) !== undefined) return Response.json({ code: "USE_STUDIO_ROUTE", message: `With billing on, this goes through ${moved}.`, route: moved }, { status: 404, headers: { "cache-control": "no-store" } })
+    if (moved !== undefined && await billingSettings(env) !== undefined) return Response.json({ code: "USE_STUDIO_ROUTE", message: `With billing on, this goes through ${moved}.`, route: moved }, { status: 404, headers: { "cache-control": "no-store" } })
     if (pathname === "/api/auth/organization/accept-invitation") return acceptInvitation(await auth(env).handler(request))
     if (pathname === "/api/workspaces" || pathname.startsWith("/api/workspaces/")) return workspaceRoute(request, env, pathname)
     if (pathname.startsWith("/api/auth/")) return auth(env).handler(request)
     if (pathname === "/api/me") return me(request, env)
-    if (pathname === "/api/billing" || pathname.startsWith("/api/billing/")) return billingRoute(request, env, billingSettings(env), pathname)
+    if (pathname === "/api/billing" || pathname.startsWith("/api/billing/")) return billingRoute(request, env, await billingSettings(env), pathname)
     // Every Norn call goes to the host as the resolved actor; the host and its PDP decide.
     if (pathname.startsWith("/api/host/")) {
       const actor = await resolveActor(request, auth(env))

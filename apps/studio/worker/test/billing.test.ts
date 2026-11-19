@@ -6,7 +6,7 @@ import { getMigrations } from "better-auth/db/migration"
 import worker, { type Env } from "../index.ts"
 import { authOptions, createAuth } from "../auth.ts"
 import { forgetPolarCustomer, grantOf, payerOf, reconcile, snapshotOf, statusOf, type PolarBilling, type PolarSubscription } from "../polar.ts"
-import { entitlementOf, FREE_LIMITS, limitRaised, ownedWorkspaces, UNLIMITED, workspaceMembers, writeLimits, type BillingDb } from "../billing.ts"
+import { billingModeOn, billingModeStatement, entitlementOf, FREE_LIMITS, limitRaised, ownedWorkspaces, UNLIMITED, workspaceMembers, writeLimits, type BillingDb } from "../billing.ts"
 import { BILLING_ENV, parsePlans, PLACEHOLDER_PLANS, polarConfig, POLAR_SCOPES, settingsOf, type PlanTable, type PolarConfig } from "../polar-config.ts"
 import { celldConfig, celldStudio } from "../../celld-config.ts"
 import { README, withBillingSection } from "../../scripts/billing-readme.ts"
@@ -43,9 +43,12 @@ function database(): Database {
   for (const file of readdirSync(MIGRATIONS).filter((name) => name.endsWith(".sql")).sort()) db.exec(readFileSync(join(MIGRATIONS, file), "utf8"))
   return db
 }
+/** A deployed stage: migrated, its billing mode written by the deploy step (alchemy.run.ts, celld-migrate.ts). */
 function stage(billing: boolean): Env {
   const assets = { fetch: async () => new Response("<!doctype html>studio") } as unknown as Fetcher
-  return { ASSETS: assets, AUTH_DB: database() as unknown as D1Database, BETTER_AUTH_SECRET: "t".repeat(40), BETTER_AUTH_URL: ORIGIN, STUDIO_CLIENT_IP_HEADER: "cf-connecting-ip", ...billing ? POLAR_ENV : {} }
+  const db = database()
+  db.run(billingModeStatement(billing))
+  return { ASSETS: assets, AUTH_DB: db as unknown as D1Database, BETTER_AUTH_SECRET: "t".repeat(40), BETTER_AUTH_URL: ORIGIN, STUDIO_CLIENT_IP_HEADER: "cf-connecting-ip", ...billing ? POLAR_ENV : {} }
 }
 const sql = (env: Env) => env.AUTH_DB as unknown as Database
 
@@ -946,6 +949,7 @@ class RacingDatabase extends Database {
 function racingStage(): Env & { AUTH_DB: D1Database } {
   const db = new RacingDatabase(":memory:")
   for (const file of readdirSync(MIGRATIONS).filter((name) => name.endsWith(".sql")).sort()) db.exec(readFileSync(join(MIGRATIONS, file), "utf8"))
+  db.run(billingModeStatement(true))
   return { ...stage(true), AUTH_DB: db as unknown as D1Database }
 }
 const racing = (env: Env) => env.AUTH_DB as unknown as RacingDatabase
@@ -1033,19 +1037,91 @@ test("turning billing off lifts every limit, in the API and in the database alik
   expect(() => join_(on, organizationId, "user_billed_over", "member")).toThrow("billing.members_limit")
   expect((await post(on, CREATE, { name: "Two", slug: "two" }, { cookie: owner.cookie })).status).toBe(403)
   expect(sql(on).query("select billed from billing_workspace where organization_id = ?").get(organizationId)).toEqual({ billed: 1 })
-  // The same database, the deployment's Polar settings removed.
+  // The same database, redeployed without the Polar settings: the deploy writes the mode off.
   const off = { ...on } as Env & Record<string, unknown>
   for (const name of BILLING_ENV) delete off[name]
+  sql(off).run(billingModeStatement(false))
   const document = await (await call(off, "/api/billing", { headers: { cookie: owner.cookie } })).json() as { entitlement: unknown }
   expect(document.entitlement).toEqual(UNLIMITED)
-  expect(sql(off).query("select enabled from billing_mode").get()).toEqual({ enabled: 0 })
   // The triggers agree: the billed workspace takes a fourth member, and its payer a second workspace.
   join_(off, organizationId, "user_billed_over", "member")
   expect(members(off, organizationId)).toBe(4)
   expect((await post(off, "/api/auth/organization/create", { name: "Two", slug: "two" }, { cookie: owner.cookie })).status).toBe(200)
-  // On again: the limits are back for anything new; what exists stays.
-  expect((await call(on, "/api/me", { headers: { cookie: owner.cookie } })).status).toBe(200)
-  expect(sql(on).query("select enabled from billing_mode").get()).toEqual({ enabled: 1 })
+  // Redeployed with billing on: the limits are back for anything new; what exists stays.
+  sql(on).run(billingModeStatement(true))
   expect(() => join_(on, organizationId, "user_billed_more", "member")).toThrow("billing.members_limit")
   expect(members(on, organizationId)).toBe(4)
+})
+
+/** Records every write to billing_mode from here on. */
+function watchMode(env: Env): () => unknown[] {
+  sql(env).exec(`create table mode_write (op text); create trigger mode_insert after insert on billing_mode begin insert into mode_write values ('insert'); end;
+    create trigger mode_update after update on billing_mode begin insert into mode_write values ('update'); end;
+    create trigger mode_delete after delete on billing_mode begin insert into mode_write values ('delete'); end;`)
+  return () => sql(env).query("select op from mode_write").all()
+}
+/** Another isolate on the same database whose deployment has no Polar settings (an old one still serving). */
+function withoutPolar(env: Env): Env {
+  const other = { ...env } as Env & Record<string, unknown>
+  for (const name of BILLING_ENV) delete other[name]
+  return other
+}
+
+test("no request writes the billing mode: only the deploy step does", async () => {
+  for (const billing of [true, false]) {
+    const on = stage(billing)
+    const writes = watchMode(on)
+    const off = withoutPolar(on)
+    for (const env of [on, off]) {
+      const { cookie } = await enroll(env, `mode-${billing}-${env === on ? "on" : "off"}@example.com`)
+      for (const path of ["/api/me", "/api/billing"]) expect((await call(env, path, { headers: { cookie } })).status).toBe(200)
+      await post(env, CREATE, { name: "Two", slug: `two-${billing}-${env === on ? "on" : "off"}` }, { cookie })
+    }
+    expect(writes()).toEqual([])
+    expect(sql(on).query("select enabled from billing_mode").get()).toEqual({ enabled: billing ? 1 : 0 })
+  }
+})
+
+test("an old billing-off isolate serving requests during a deploy cannot turn a billing-on deployment's limits off", async () => {
+  // The deploy wrote billing on; an isolate of the previous, billing-off deployment still serves.
+  const on = stage(true)
+  const old = withoutPolar(on)
+  const first = await enroll(on, "first-free@example.com")
+  expect((await post(on, CREATE, { name: "Second", slug: "first-second" }, { cookie: first.cookie })).status).toBe(403)
+  // The old isolate serves requests (the S15 probe: the mode went 1 → 0 here) ...
+  const second = await enroll(old, "second-free@example.com")
+  for (const path of ["/api/me", "/api/billing"]) expect((await call(old, path, { headers: { cookie: second.cookie } })).status).toBe(200)
+  expect(sql(on).query("select enabled from billing_mode").get()).toEqual({ enabled: 1 })
+  // ... and applies the stored mode itself: a second free workspace stays refused through either isolate and either route.
+  expect((await post(old, CREATE, { name: "Second", slug: "second-second" }, { cookie: second.cookie })).status).toBe(403)
+  expect((await post(on, CREATE, { name: "Second", slug: "second-second" }, { cookie: second.cookie })).status).toBe(403)
+  expect(await (await post(old, "/api/auth/organization/create", { name: "Second", slug: "second-second" }, { cookie: second.cookie })).json()).toMatchObject({ code: "USE_STUDIO_ROUTE" })
+  const document = await (await call(old, "/api/billing", { headers: { cookie: second.cookie } })).json() as { entitlement: { billing: string; plan: string } }
+  expect(document.entitlement).toMatchObject({ billing: "enabled", plan: "free" })
+  expect(sql(on).query("select count(*) as n from member where userId = ?").get(second.userId)).toEqual({ n: 1 })
+  // The reverse: a deployment that turned billing off is not limited by a billing-on isolate still serving.
+  sql(on).run(billingModeStatement(false))
+  expect((await post(on, CREATE, { name: "Second", slug: "second-second" }, { cookie: second.cookie })).status).toBe(200)
+  expect(await (await call(on, "/api/billing", { headers: { cookie: second.cookie } })).json()).toMatchObject({ entitlement: UNLIMITED })
+})
+
+test("a database without the billing mode row is billing off, in the API and the triggers", async () => {
+  const env = stage(true)
+  sql(env).run("delete from billing_mode")
+  expect(await billingModeOn(env.AUTH_DB as unknown as BillingDb)).toBe(false)
+  const { cookie } = await enroll(env, "no-row@example.com")
+  for (const slug of ["no-row-two", "no-row-three"]) expect((await post(env, CREATE, { name: slug, slug }, { cookie })).status).toBe(200)
+  expect(await (await call(env, "/api/billing", { headers: { cookie } })).json()).toMatchObject({ entitlement: UNLIMITED })
+  // Without the table (no migration 0011), too.
+  const bare = new Database(":memory:")
+  expect(await billingModeOn(bare as unknown as BillingDb)).toBe(false)
+})
+
+test("the Cloudflare deploy writes the billing mode once from its own settings, before the Worker", () => {
+  const source = readFileSync(join(import.meta.dir, "../../alchemy.run.ts"), "utf8")
+  const write = source.indexOf("billingModeStatement(billing !== undefined)")
+  expect(write).toBeGreaterThan(source.indexOf("D1Database(\"auth-db\""))
+  expect(write).toBeLessThan(source.indexOf("await Vite("))
+  expect(source.match(/billingModeStatement\(/g)).toHaveLength(1)
+  for (const file of ["index.ts", "auth.ts", "workspaces.ts", "polar.ts"]) expect(readFileSync(join(import.meta.dir, "..", file), "utf8")).not.toContain("billingModeStatement")
 })
