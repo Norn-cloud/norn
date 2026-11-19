@@ -202,12 +202,12 @@ impl InstalledActions {
         let mut actions = Vec::new();
         for source in &sources {
             let artifact: ArtifactEnvelope =
-                norn_ir::runtime::decode(source).map_err(|_| Failure::Malformed)?;
+                norn_ir::runtime::decode(source).map_err(|_undecodable| Failure::Malformed)?;
             if artifact.kind() == ArtifactKind::Action {
                 let payload = source.get("payload").ok_or(Failure::Malformed)?;
                 actions.push(
                     norn_ir::runtime::decode::<ActionRoot>(payload)
-                        .map_err(|_| Failure::Malformed)?,
+                        .map_err(|_undecodable| Failure::Malformed)?,
                 );
             }
         }
@@ -1170,7 +1170,7 @@ mod tests {
         let c = keyed(&["from", "to"]);
         let unguarded = action("transfer", &[]);
         let installed = InstalledActions::pin(std::slice::from_ref(&unguarded)).unwrap();
-        let mut forged = unguarded.clone();
+        let mut forged = unguarded;
         forged
             .preconditions
             .push(ZenExpression("input.from != input.to".into()));
