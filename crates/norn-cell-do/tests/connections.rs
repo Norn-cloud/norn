@@ -694,8 +694,7 @@ fn concurrent_refreshes_make_exactly_one_token_endpoint_call() {
     let second = server
         .seen()
         .into_iter()
-        .filter(|s| s.line.starts_with("POST /token"))
-        .next_back()
+        .rfind(|s| s.line.starts_with("POST /token"))
         .expect("second");
     assert!(second.body.contains(NEW_REFRESH), "{}", second.body);
 }
@@ -739,10 +738,8 @@ fn query_param(url: &str, name: &str) -> String {
         .expect("url")
         .query_pairs()
         .find(|(key, _)| key == name)
-        .map_or_else(
-            || panic!("{name} missing from {url}"),
-            |(_, value)| value.into_owned(),
-        )
+        .map(|(_, value)| value.into_owned())
+        .expect("the parameter is in the URL")
 }
 
 #[test]
