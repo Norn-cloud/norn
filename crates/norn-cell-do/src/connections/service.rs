@@ -23,6 +23,7 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::fmt::Write as _;
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 
 use norn_cell::engine::{SqlEngine, SqlValue};
@@ -38,6 +39,9 @@ use sha2::Digest as _;
 use super::egress::{Egress, EgressError};
 use super::providers::{ClientAuth, Provider};
 use super::vault::{Secret, Vault, VaultError};
+
+/// One audit row: when (Unix ms), event, actor, detail.
+pub type AuditRow = (u64, String, String, Option<String>);
 
 /// How long an OAuth state lives.
 pub const STATE_TTL_MS: u64 = 10 * 60 * 1000;
@@ -112,13 +116,12 @@ pub enum ConnError {
 impl fmt::Display for ConnError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Invalid(why) => write!(f, "{why}"),
+            Self::Invalid(why) | Self::Unavailable(why) => write!(f, "{why}"),
             Self::NotFound => f.write_str("no such connection"),
             Self::ReconnectNeeded => f.write_str("the connection must be connected again"),
             Self::Conflict => f.write_str("the connection changed; retry"),
             Self::BadState => f.write_str("the authorization is unknown, used or expired"),
             Self::Provider(why) => write!(f, "the provider refused: {why}"),
-            Self::Unavailable(why) => write!(f, "{why}"),
             Self::Vault(error) => error.fmt(f),
             Self::Egress(error) => error.fmt(f),
         }
@@ -281,7 +284,8 @@ fn get_ms(row: &[SqlValue], index: usize) -> Option<u64> {
 
 fn last4(token: &str) -> Option<String> {
     let chars: Vec<char> = token.chars().collect();
-    (chars.len() >= 12).then(|| chars[chars.len() - 4..].iter().collect())
+    let start = chars.len().checked_sub(4).filter(|_| chars.len() >= 12)?;
+    chars.get(start..).map(|tail| tail.iter().collect())
 }
 
 fn slot(id: &str) -> String {
@@ -290,7 +294,10 @@ fn slot(id: &str) -> String {
 
 fn state_hash(state: &str) -> String {
     let digest = sha2::Sha256::digest(state.as_bytes());
-    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+    digest.iter().fold(String::new(), |mut hex, byte| {
+        let _infallible = write!(hex, "{byte:02x}");
+        hex
+    })
 }
 
 /// A connection id: 1-64 of `[A-Za-z0-9._-]`.
@@ -371,7 +378,11 @@ impl<E: SqlEngine> Connections<E> {
         f(&vault)
     }
 
-    /// The cell's vault, for a key rotation pass.
+    /// Rewrap the cell's data keys under the current KEK id
+    /// (VAULT-ROTATE-1); the number rewrapped.
+    ///
+    /// # Errors
+    /// A data key under an id the keyring no longer lists, or storage.
     pub fn rewrap(&self) -> Result<usize, ConnError> {
         self.with_vault(|vault| Ok(vault.rewrap()?))
     }
@@ -403,10 +414,7 @@ impl<E: SqlEngine> Connections<E> {
     ///
     /// # Errors
     /// Storage failures.
-    pub fn audit_trail(
-        &self,
-        connection: &str,
-    ) -> Result<Vec<(u64, String, String, Option<String>)>, ConnError> {
+    pub fn audit_trail(&self, connection: &str) -> Result<Vec<AuditRow>, ConnError> {
         self.with_vault(|vault| {
             Ok(vault
                 .engine()
@@ -504,7 +512,7 @@ impl<E: SqlEngine> Connections<E> {
             {
                 return Err(ConnError::Conflict);
             }
-            record.revision = current.unwrap_or(0) + 1;
+            record.revision = current.unwrap_or(0).saturating_add(1);
             vault.put(&slot(id), record.revision, plaintext.expose(), now_ms)?;
             Self::write_record(vault, id, &record, now_ms)?;
             Ok(record)
@@ -620,15 +628,15 @@ impl<E: SqlEngine> Connections<E> {
             .map_err(ConnError::Invalid)?;
         let bad = |what: &str| ConnError::Invalid(format!("the provider's {what} is not a URL"));
         let mut client = BasicClient::new(ClientId::new(registered.client_id.clone()))
-            .set_auth_uri(AuthUrl::new(auth_url).map_err(|_| bad("authorization URL"))?)
-            .set_token_uri(TokenUrl::new(token_url).map_err(|_| bad("token URL"))?)
+            .set_auth_uri(AuthUrl::new(auth_url).map_err(|_parse| bad("authorization URL"))?)
+            .set_token_uri(TokenUrl::new(token_url).map_err(|_parse| bad("token URL"))?)
             .set_revocation_url_option(
                 provider
                     .revocation_url
                     .as_ref()
                     .map(|url| provider.fill(url, params).map_err(ConnError::Invalid))
                     .transpose()?
-                    .map(|url| RevocationUrl::new(url).map_err(|_| bad("revocation URL")))
+                    .map(|url| RevocationUrl::new(url).map_err(|_parse| bad("revocation URL")))
                     .transpose()?,
             )
             .set_auth_type(match provider.client_auth {
@@ -645,7 +653,7 @@ impl<E: SqlEngine> Connections<E> {
         }
         if let Some(redirect) = &self.redirect_url {
             client = client.set_redirect_uri(
-                RedirectUrl::new(redirect.clone()).map_err(|_| bad("redirect URL"))?,
+                RedirectUrl::new(redirect.clone()).map_err(|_parse| bad("redirect URL"))?,
             );
         }
         Ok(client)
@@ -663,7 +671,7 @@ impl<E: SqlEngine> Connections<E> {
         id: &str,
         provider_id: &str,
         scopes: Option<Vec<String>>,
-        params: BTreeMap<String, String>,
+        params: &BTreeMap<String, String>,
         now_ms: u64,
     ) -> Result<(String, u64), ConnError> {
         let provider = self.provider(provider_id)?;
@@ -818,10 +826,9 @@ impl<E: SqlEngine> Connections<E> {
             provider: provider.id.clone(),
             state: State::Connected,
             last4: last4(&access),
-            scopes: response
-                .scopes()
-                .map(|granted| granted.iter().map(|scope| scope.to_string()).collect())
-                .unwrap_or(scopes),
+            scopes: response.scopes().map_or(scopes, |granted| {
+                granted.iter().map(|scope| scope.to_string()).collect()
+            }),
             expires_at_ms: response.expires_in().map(|left| {
                 now_ms.saturating_add(u64::try_from(left.as_millis()).unwrap_or(u64::MAX))
             }),
@@ -887,7 +894,9 @@ impl<E: SqlEngine> Connections<E> {
                         oauth2::ConfigurationError::InsecureUrl(_) => {
                             "revocation_url_not_https".to_owned()
                         }
-                        _ => "no_revocation_endpoint".to_owned(),
+                        oauth2::ConfigurationError::MissingUrl(_) | _ => {
+                            "no_revocation_endpoint".to_owned()
+                        }
                     })
                 })
                 .and_then(|request| {
@@ -968,7 +977,7 @@ impl<E: SqlEngine> Connections<E> {
                 return Err(ConnError::Conflict);
             }
             let tokens = serde_json::from_slice(secret.expose())
-                .map_err(|_| ConnError::Vault(VaultError::Integrity))?;
+                .map_err(|_parse| ConnError::Vault(VaultError::Integrity))?;
             Ok((record, tokens))
         })
     }
@@ -978,13 +987,12 @@ impl<E: SqlEngine> Connections<E> {
     fn refresh(&self, actor: &str, id: &str, seen: i64, now_ms: u64) -> Result<(), ConnError> {
         let (flight, leader) = {
             let mut flights = self.flights.lock().unwrap_or_else(PoisonError::into_inner);
-            match flights.get(id) {
-                Some(flight) => (Arc::clone(flight), false),
-                None => {
-                    let flight = Arc::new(Flight::default());
-                    flights.insert(id.to_owned(), Arc::clone(&flight));
-                    (flight, true)
-                }
+            if let Some(flight) = flights.get(id) {
+                (Arc::clone(flight), false)
+            } else {
+                let flight = Arc::new(Flight::default());
+                flights.insert(id.to_owned(), Arc::clone(&flight));
+                (flight, true)
             }
         };
         if !leader {
@@ -1051,10 +1059,10 @@ impl<E: SqlEngine> Connections<E> {
                 now_ms.saturating_add(u64::try_from(left.as_millis()).unwrap_or(u64::MAX))
             }),
             last_error: None,
-            scopes: response
-                .scopes()
-                .map(|granted| granted.iter().map(|scope| scope.to_string()).collect())
-                .unwrap_or_else(|| record.scopes.clone()),
+            scopes: response.scopes().map_or_else(
+                || record.scopes.clone(),
+                |granted| granted.iter().map(|scope| scope.to_string()).collect(),
+            ),
             ..record
         };
         // A rotated refresh token replaces the old one in this same write.
@@ -1104,8 +1112,15 @@ fn failure_code(error: &ConnError) -> String {
         ConnError::Egress(EgressError::Forbidden(_)) => "egress_forbidden".to_owned(),
         ConnError::Egress(EgressError::Unresolved(_)) => "egress_unresolved".to_owned(),
         ConnError::Egress(EgressError::Redirect(_)) => "egress_redirect".to_owned(),
-        ConnError::Egress(_) => "egress_failed".to_owned(),
+        ConnError::Egress(EgressError::Transport(_) | EgressError::Config(_)) => {
+            "egress_failed".to_owned()
+        }
         ConnError::ReconnectNeeded => "reconnect_needed".to_owned(),
-        _ => "failed".to_owned(),
+        ConnError::Invalid(_)
+        | ConnError::NotFound
+        | ConnError::Conflict
+        | ConnError::BadState
+        | ConnError::Unavailable(_)
+        | ConnError::Vault(_) => "failed".to_owned(),
     }
 }

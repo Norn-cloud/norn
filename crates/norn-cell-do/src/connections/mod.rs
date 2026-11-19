@@ -8,7 +8,7 @@
 //!
 //! - [`vault`]: per-cell envelope encryption under a host KEK.
 //! - [`egress`]: pinned-address, redirect-safe outbound HTTP.
-//! - [`providers`]: OAuth metadata generated from OpenConnector v1.9.4.
+//! - [`providers`]: OAuth metadata generated from `OpenConnector` v1.9.4.
 //! - [`service`]: credentials, status, OAuth, refresh, audit.
 //!
 //! Routes (scoped by `orgId` and `environmentId` like every other):
@@ -279,14 +279,16 @@ impl<E: SqlEngine> Connections<E> {
         let result = match (route, request.method) {
             (Route::Credentials(_), "GET") => self.status(&id).map(|status| (200, json!(status))),
             (Route::Credentials(_), "PUT") => serde_json::from_str::<SetCredentials>(request.body)
-                .map_err(|_| ConnError::Invalid("the body is not a credentials object".to_owned()))
+                .map_err(|_parse| {
+                    ConnError::Invalid("the body is not a credentials object".to_owned())
+                })
                 .and_then(|body| self.set(&actor, &id, body, now_ms))
                 .map(|status| (200, json!(status))),
             (Route::Credentials(_), _) => self
                 .revoke(&actor, &id, now_ms)
                 .map(|status| (200, json!(status))),
             (Route::Start(_), _) => serde_json::from_str::<StartBody>(request.body)
-                .map_err(|_| {
+                .map_err(|_parse| {
                     ConnError::Invalid("the body is not {provider, scopes?, params?}".to_owned())
                 })
                 .and_then(|body| {
@@ -295,7 +297,7 @@ impl<E: SqlEngine> Connections<E> {
                         &id,
                         &body.provider,
                         body.scopes,
-                        body.params,
+                        &body.params,
                         now_ms,
                     )
                 })

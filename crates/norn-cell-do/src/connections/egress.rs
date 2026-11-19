@@ -12,7 +12,7 @@
 //! EGRESS-REDIRECT-1: redirects are followed here, at most
 //! [`MAX_REDIRECTS`], each hop's URL checked as the first. A hop that changes
 //! origin keeps only [`CROSS_ORIGIN_SAFE_HEADERS`] (deny by default, the list
-//! of OpenConnector v1.9.4 `src/core/guarded-fetch.ts`, Apache-2.0); 303, and
+//! of `OpenConnector` v1.9.4 `src/core/guarded-fetch.ts`, Apache-2.0); 303, and
 //! 301/302 after a POST, become a body-less GET.
 //! EGRESS-PROXY-1: with `NORN_EGRESS_PROXY` set, every call goes through that
 //! HTTP CONNECT proxy (for static egress addresses); the target URL and its
@@ -45,7 +45,7 @@ pub const MAX_ATTEMPTS: u32 = 3;
 pub const MAX_BODY_BYTES: u64 = 2 * 1024 * 1024;
 
 /// Headers a redirect that changes origin keeps; every other header (any
-/// credential, whatever its name) is dropped. From OpenConnector v1.9.4
+/// credential, whatever its name) is dropped. From `OpenConnector` v1.9.4
 /// (`crossOriginSafeHeaders`, sha d89dc9f2, Apache-2.0).
 pub const CROSS_ORIGIN_SAFE_HEADERS: [&str; 23] = [
     "accept",
@@ -74,7 +74,7 @@ pub const CROSS_ORIGIN_SAFE_HEADERS: [&str; 23] = [
 ];
 
 /// Body-describing headers dropped when a redirect turns a request into a
-/// GET (the fetch spec's list, as OpenConnector applies it).
+/// GET (the fetch spec's list, as `OpenConnector` applies it).
 const BODY_HEADERS: [&str; 5] = [
     "content-encoding",
     "content-language",
@@ -194,7 +194,7 @@ struct PinnedResolver {
 
 fn host_port(uri: &http::Uri) -> Option<(String, u16)> {
     let host = uri.host()?.trim_start_matches('[').trim_end_matches(']');
-    let port = uri.port_u16().or(match uri.scheme_str() {
+    let port = uri.port_u16().or_else(|| match uri.scheme_str() {
         Some("https") => Some(443),
         Some("http") => Some(80),
         _ => None,
@@ -433,7 +433,7 @@ impl Egress {
         );
         let mut attempt = 0;
         loop {
-            attempt += 1;
+            attempt = attempt.saturating_add(1);
             let retry_left = idempotent && attempt < MAX_ATTEMPTS;
             match self.once(method, url, headers, body) {
                 Ok(response)
@@ -493,9 +493,10 @@ fn from_ureq(error: ureq::Error) -> EgressError {
     {
         return inner.clone();
     }
-    match error {
-        ureq::Error::HostNotFound => EgressError::Unresolved("the host".to_owned()),
-        other => EgressError::Transport(other.to_string()),
+    if matches!(error, ureq::Error::HostNotFound) {
+        EgressError::Unresolved("the host".to_owned())
+    } else {
+        EgressError::Transport(error.to_string())
     }
 }
 

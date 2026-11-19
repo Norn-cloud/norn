@@ -739,7 +739,7 @@ fn oauth_state_is_single_use_bound_to_its_principal_and_expires() {
     let conns = connections(&path, server.port);
 
     let (url, expires) = conns
-        .start("owner", "acme.main", "acme", None, BTreeMap::new(), 1_000)
+        .start("owner", "acme.main", "acme", None, &BTreeMap::new(), 1_000)
         .expect("start");
     assert_eq!(expires, 1_000 + 600_000);
     assert_eq!(query_param(&url, "code_challenge_method"), "S256");
@@ -759,7 +759,7 @@ fn oauth_state_is_single_use_bound_to_its_principal_and_expires() {
 
     // Expired after ten minutes.
     let (url, _) = conns
-        .start("owner", "acme.main", "acme", None, BTreeMap::new(), 1_000)
+        .start("owner", "acme.main", "acme", None, &BTreeMap::new(), 1_000)
         .expect("start");
     let late = query_param(&url, "state");
     assert_eq!(
@@ -776,7 +776,7 @@ fn oauth_state_is_single_use_bound_to_its_principal_and_expires() {
             "acme.main",
             "acme",
             Some(vec!["read".to_owned(), "write".to_owned()]),
-            BTreeMap::new(),
+            &BTreeMap::new(),
             5_000,
         )
         .expect("start");
@@ -814,7 +814,7 @@ fn oauth_state_is_single_use_bound_to_its_principal_and_expires() {
             "acme.main",
             "acme",
             Some(vec!["admin".to_owned()]),
-            BTreeMap::new(),
+            &BTreeMap::new(),
             7_000
         ),
         Err(ConnError::Invalid(_))

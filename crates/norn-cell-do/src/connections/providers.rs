@@ -1,4 +1,4 @@
-//! OAuth provider metadata, generated from OpenConnector v1.9.4 (commit
+//! OAuth provider metadata, generated from `OpenConnector` v1.9.4 (commit
 //! d89dc9f2, Apache-2.0; NOTICE carried in the file) by
 //! `scripts/connections/extract_openconnector.py` into
 //! `registry/connections/providers.json`. Each entry's `auth` is a

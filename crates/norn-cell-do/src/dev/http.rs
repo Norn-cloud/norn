@@ -29,23 +29,22 @@ pub(crate) type Serving = Arc<RwLock<Option<DevHost<NativeEngine>>>>;
 /// the project's cell file on the first connection request after the cell
 /// exists, so an unprovisioned cell file stays fresh.
 pub(crate) struct DevConnections {
-    config: Option<crate::connections::Config>,
+    /// The configuration, or why it is malformed (answered on every
+    /// connection route).
+    config: Result<Option<crate::connections::Config>, String>,
     cell_path: std::path::PathBuf,
     opened:
         std::sync::OnceLock<Result<crate::connections::service::Connections<NativeEngine>, String>>,
 }
 
 impl DevConnections {
-    /// Read the configuration; a malformed one is reported and leaves the
-    /// connection routes unserved.
+    /// Read the configuration; a malformed one is answered on every
+    /// connection route.
     pub(crate) fn new(cell_path: std::path::PathBuf) -> Self {
         let vars: std::collections::BTreeMap<String, String> = std::env::vars()
             .filter(|(name, _)| name.starts_with("NORN_"))
             .collect();
-        let config = crate::connections::Config::from_vars(&vars, true).unwrap_or_else(|error| {
-            eprintln!("norn dev: connections are off: {error}");
-            None
-        });
+        let config = crate::connections::Config::from_vars(&vars, true);
         Self {
             config,
             cell_path,
@@ -59,10 +58,20 @@ impl DevConnections {
         principals: &DevPrincipals,
         request: &Request<'_>,
     ) -> Option<Response> {
-        let config = self.config.as_ref()?;
         if !request.path.starts_with("/v1/connections/") {
             return None;
         }
+        let config = match &self.config {
+            Ok(config) => config.as_ref()?,
+            Err(error) => {
+                return Some(refusal(&Refusal::new(
+                    http::StatusCode::SERVICE_UNAVAILABLE,
+                    "connection.unavailable",
+                    "the connection configuration is malformed",
+                    error.clone(),
+                )));
+            }
+        };
         let opened = self.opened.get_or_init(|| {
             let engine = NativeEngine::open(&self.cell_path, norn_cell::StoreOptions::default())
                 .map_err(|error| error.to_string())?;

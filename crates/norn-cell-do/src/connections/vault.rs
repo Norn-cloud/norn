@@ -454,23 +454,26 @@ pub struct Vault<E: SqlEngine> {
 }
 
 fn int(value: &SqlValue) -> Result<i64, VaultError> {
-    match value {
-        SqlValue::Integer(value) => Ok(*value),
-        _other => Err(storage("expected an integer")),
+    if let SqlValue::Integer(value) = value {
+        Ok(*value)
+    } else {
+        Err(storage("expected an integer"))
     }
 }
 
 fn blob(value: &SqlValue) -> Result<Vec<u8>, VaultError> {
-    match value {
-        SqlValue::Blob(value) => Ok(value.clone()),
-        _other => Err(storage("expected bytes")),
+    if let SqlValue::Blob(value) = value {
+        Ok(value.clone())
+    } else {
+        Err(storage("expected bytes"))
     }
 }
 
 fn text(value: &SqlValue) -> Result<String, VaultError> {
-    match value {
-        SqlValue::Text(value) => Ok(value.clone()),
-        _other => Err(storage("expected text")),
+    if let SqlValue::Text(value) = value {
+        Ok(value.clone())
+    } else {
+        Err(storage("expected text"))
     }
 }
 
@@ -705,7 +708,7 @@ impl<E: SqlEngine> Vault<E> {
                     ],
                 )
                 .map_err(storage)?;
-            rewrapped += 1;
+            rewrapped = rewrapped.saturating_add(1);
         }
         Ok(rewrapped)
     }
