@@ -19,8 +19,8 @@ Every row is pass, fail, not tested (the run could not show it) or measured
     conformance.py --reference REF --host rivet  --project DIR [--out OUT]
     conformance.py --reference REF --host url --url https://cell.example [--out OUT]
 
-`celld` and `rivet` start and stop the host themselves (state under
---state); `url` runs only the tests that need no host control. DIR is a
+`celld` and `rivet` start and stop the host themselves (state in a fresh temp directory, or
+an empty real --state outside the project); `url` runs only the tests that need no host control. DIR is a
 built conformance project (see apps/norn-cell-do/README.md); it lives outside
 the checkout. Pins: celld 0.6.3, open-orange 1.0.3 (installed from
 conformance/package.json + bun.lock) with Rivet Engine 3.1.2-rc.1
@@ -1144,6 +1144,20 @@ class WebSocket:
 LOCAL_ONLY = {".celld", ".open-orange", ".wrangler", "wrangler.jsonc", "wrangler.toml"}
 
 
+def fresh_state(requested, source):
+    if requested is None:
+        return Path(tempfile.mkdtemp(prefix="norn-conformance-state-"))
+    if requested.is_symlink():
+        sys.exit(f"--state {requested} is a symlink; give a real directory outside the project")
+    state = requested.resolve()
+    if state == source or source in state.parents:
+        sys.exit(f"--state {requested} is inside the project")
+    state.mkdir(parents=True, exist_ok=True)
+    if any(state.iterdir()):
+        sys.exit(f"--state {requested} is not empty; give a fresh directory")
+    return state
+
+
 def local_copy(source, lineage_key):
     """A fresh copy of the built project, opted in for a local host. Only the copy's wrangler.json is
     written: the supplied project (which may be deployed as is) keeps its disabled config byte for byte.
@@ -1204,9 +1218,11 @@ def run(args, reference, cleanup):
         host = UrlHost(args.url)
     else:
         source = args.project.resolve()
-        # State and logs live beside the project, never inside it (a host may watch the project).
-        state = (args.state or source.parent / f"{source.name}-conformance-state").resolve()
-        state.mkdir(parents=True, exist_ok=True)
+        # State and logs never reach the project: by default a fresh temp directory; a supplied --state
+        # must be an empty, real (not symlinked) directory outside the project.
+        state = fresh_state(args.state, source)
+        if args.state is None:
+            cleanup.append(lambda: shutil.rmtree(state, ignore_errors=True))
         # The host runs a disposable copy: the supplied project's wrangler.json is never written.
         project = local_copy(source, reference["lineageKey"])
         cleanup.append(lambda: shutil.rmtree(project.parent, ignore_errors=True))

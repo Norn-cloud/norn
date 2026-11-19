@@ -111,6 +111,36 @@ class LocalRunLeavesTheProjectAlone(unittest.TestCase):
             self.assertFalse(seen["copy"].exists(), "the disposable copy is removed afterwards")
 
 
+class StateNeverReachesTheProject(unittest.TestCase):
+    """Host state and logs go to a fresh directory, never through a link into the project."""
+
+    def test_default_state_is_a_fresh_temp_directory(self):
+        with tempfile.TemporaryDirectory() as root:
+            project = Path(root) / "project"
+            project.mkdir()
+            state = conformance.fresh_state(None, project.resolve())
+            try:
+                self.assertFalse(project.resolve() in state.resolve().parents)
+                self.assertEqual(list(state.iterdir()), [])
+            finally:
+                state.rmdir()
+
+    def test_unsafe_state_directories_are_refused(self):
+        with tempfile.TemporaryDirectory() as root:
+            project = Path(root) / "project"
+            project.mkdir()
+            inside = project / "state"
+            linked = Path(root) / "project-conformance-state"
+            linked.symlink_to(project)
+            busy = Path(root) / "busy"
+            busy.mkdir()
+            (busy / "celld.log").symlink_to(project / "log")
+            for bad in (inside, linked, busy):
+                with self.assertRaises(SystemExit, msg=str(bad)):
+                    conformance.fresh_state(bad, project.resolve())
+            self.assertEqual(sorted(p.name for p in project.iterdir()), [], "nothing was written into the project")
+
+
 class MarkerlessResetNeverKills(unittest.TestCase):
     """S2: a reset connection without a marker is not tested, never a kill or a restart."""
 
