@@ -1138,6 +1138,12 @@ class WebSocket:
             pass
 
 
+# Host state directories (celld, OpenOrange/Rivet, Wrangler) and the other config spellings celld would
+# prefer over wrangler.json: none of these is copied, so a host starts from fresh state and reads only the
+# copy's own wrangler.json.
+LOCAL_ONLY = {".celld", ".open-orange", ".wrangler", "wrangler.jsonc", "wrangler.toml"}
+
+
 def local_copy(source, lineage_key):
     """A fresh copy of the built project, opted in for a local host. Only the copy's wrangler.json is
     written: the supplied project (which may be deployed as is) keeps its disabled config byte for byte.
@@ -1145,7 +1151,17 @@ def local_copy(source, lineage_key):
     project = Path(tempfile.mkdtemp(prefix="norn-conformance-")) / source.name
     # A copied `.celld` (often a symlink to the project's own state) would make celld open the original
     # project's objects and runtime: leave it out so the host starts from fresh state in the copy.
-    shutil.copytree(source, project, symlinks=True, ignore=lambda folder, names: [".celld"] if Path(folder) == Path(source) else [])
+    shutil.copytree(source, project, symlinks=True, ignore=lambda folder, names: [n for n in names if n in LOCAL_ONLY] if Path(folder) == Path(source) else [])
+    # A top-level link back into the supplied project would let a host write through it: materialize it.
+    root = Path(source).resolve()
+    for entry in project.iterdir():
+        if entry.is_symlink() and (entry.resolve() == root or root in entry.resolve().parents):
+            target = entry.resolve()
+            entry.unlink()
+            if target.is_dir():
+                shutil.copytree(target, entry, symlinks=True)
+            elif target.exists():
+                shutil.copy2(target, entry)
     config = json.loads((project / "wrangler.json").read_text())
     # The local test host opts the conformance entry in explicitly (see conformance/worker.mjs).
     config.setdefault("vars", {}).update({"NORN_LINEAGE_KEY": lineage_key, "NORN_STAGE": "test", "NORN_CONFORMANCE": "synthetic"})
