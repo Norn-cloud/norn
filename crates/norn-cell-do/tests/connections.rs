@@ -2245,9 +2245,12 @@ fn pending_records(path: &std::path::Path) -> (i64, i64) {
             .expect("count")
             .first()
             .and_then(|row| row.first())
-            .and_then(|value| match value {
-                SqlValue::Integer(count) => Some(*count),
-                _ => None,
+            .and_then(|value| {
+                if let SqlValue::Integer(count) = value {
+                    Some(*count)
+                } else {
+                    None
+                }
             })
             .expect("an integer count")
     };
