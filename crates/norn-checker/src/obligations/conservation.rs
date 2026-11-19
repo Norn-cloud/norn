@@ -246,7 +246,19 @@ fn proved_unequal(preconditions: &[String]) -> BTreeSet<(String, String)> {
                     pair(a, b, out);
                 }
             }
-            _ => {}
+            // A disjunction, a negation of anything else, or any other
+            // conjunct proves no inequality.
+            RowExpr::Null
+            | RowExpr::Bool(_)
+            | RowExpr::Number(_)
+            | RowExpr::Text(_)
+            | RowExpr::Column(_)
+            | RowExpr::Negate(_)
+            | RowExpr::Arithmetic(..)
+            | RowExpr::Compare(..)
+            | RowExpr::Or(..)
+            | RowExpr::Coalesce(..)
+            | RowExpr::Conditional(..) => {}
         }
     }
     let mut out = BTreeSet::new();
@@ -329,6 +341,90 @@ fn never_same_key(a: &CellKey, b: &CellKey, unequal: &BTreeSet<(String, String)>
     }
 }
 
+/// The key-equality partitions of one storage group's assigned coordinates,
+/// each as its merged cells. Coordinates that are always one row stay
+/// together; proved-distinct keys stay apart.
+fn group_partitions(
+    coordinates: &[Coordinate],
+    group: &[usize],
+    unequal: &BTreeSet<(String, String)>,
+) -> Result<Vec<Vec<Vec<usize>>>, AliasLimit> {
+    let cell = |i: usize| coordinates.get(i).and_then(|c| c.cell.as_ref());
+    // Coordinates that are always one row form one atom.
+    let mut atoms: Vec<Vec<usize>> = Vec::new();
+    for &index in group {
+        let key = cell(index).map(|c| &c.key);
+        let atom = atoms.iter_mut().find(|atom| {
+            let first = atom.first().and_then(|&i| cell(i)).map(|c| &c.key);
+            matches!((first, key), (Some(a), Some(b)) if same_key(a, b))
+        });
+        match atom {
+            Some(atom) => atom.push(index),
+            None => atoms.push(vec![index]),
+        }
+    }
+    let apart = |a: usize, b: usize| {
+        let key = |atom: usize| {
+            atoms
+                .get(atom)
+                .and_then(|members| members.first())
+                .and_then(|&i| cell(i))
+                .map(|c| &c.key)
+        };
+        matches!((key(a), key(b)), (Some(a), Some(b)) if never_same_key(a, b, unequal))
+    };
+    // Coordinates that may be one row must count that row the same way.
+    for (x, left) in atoms.iter().enumerate() {
+        for (y, right) in atoms.iter().enumerate().skip(x) {
+            if x != y && apart(x, y) {
+                continue;
+            }
+            for &i in left {
+                for &j in right {
+                    let (Some(a), Some(b)) = (coordinates.get(i), coordinates.get(j)) else {
+                        continue;
+                    };
+                    if (a.weight, &a.scope, &a.unit) != (b.weight, &b.scope, &b.unit) {
+                        return Err((
+                            ALIAS_UNLOWERABLE_CODE,
+                            format!(
+                                "{} and {} may be one row but differ in weight, scope or unit",
+                                a.id, b.id
+                            ),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    let indices: Vec<usize> = (0..atoms.len()).collect();
+    let partitions = key_partitions(&indices, &apart, MAX_ALIAS_CASES).ok_or_else(|| {
+        (
+            ALIAS_BOUND_CODE,
+            format!("more than {MAX_ALIAS_CASES} key-equality cases"),
+        )
+    })?;
+    // Each partition as its merged cells: blocks naming two or more coordinates.
+    Ok(partitions
+        .iter()
+        .map(|partition| {
+            partition
+                .iter()
+                .filter_map(|block| {
+                    let mut members: Vec<usize> = block
+                        .iter()
+                        .filter_map(|&atom| atoms.get(atom))
+                        .flatten()
+                        .copied()
+                        .collect();
+                    members.sort_unstable();
+                    (members.len() > 1).then_some(members)
+                })
+                .collect()
+        })
+        .collect())
+}
+
 /// The aliasing cases of one writer beyond the all-distinct one: each case is
 /// a list of merged cells (coordinate indices, at least two) with the choice of
 /// how they combine (`Some(i)`: index `i` of the cell survives; `None`: the
@@ -360,72 +456,12 @@ fn alias_cases(
                 group.len()
             )));
         }
-        // Coordinates that are always one row form one atom.
-        let mut atoms: Vec<Vec<usize>> = Vec::new();
-        for &index in &group {
-            let key = cell(index).map(|c| &c.key);
-            let atom = atoms.iter_mut().find(|atom| {
-                let first = atom.first().and_then(|&i| cell(i)).map(|c| &c.key);
-                matches!((first, key), (Some(a), Some(b)) if same_key(a, b))
-            });
-            match atom {
-                Some(atom) => atom.push(index),
-                None => atoms.push(vec![index]),
-            }
-        }
-        let apart = |a: usize, b: usize| {
-            let key = |atom: usize| {
-                atoms
-                    .get(atom)
-                    .and_then(|members| members.first())
-                    .and_then(|&i| cell(i))
-                    .map(|c| &c.key)
-            };
-            matches!((key(a), key(b)), (Some(a), Some(b)) if never_same_key(a, b, unequal))
-        };
-        // Coordinates that may be one row must count that row the same way.
-        for (x, atom_x) in atoms.iter().enumerate() {
-            for (y, atom_y) in atoms.iter().enumerate().skip(x) {
-                if x != y && apart(x, y) {
-                    continue;
-                }
-                for &i in atom_x {
-                    for &j in atom_y {
-                        let (Some(a), Some(b)) = (coordinates.get(i), coordinates.get(j)) else {
-                            continue;
-                        };
-                        if (a.weight, &a.scope, &a.unit) != (b.weight, &b.scope, &b.unit) {
-                            return Err((
-                                ALIAS_UNLOWERABLE_CODE,
-                                format!(
-                                    "{} and {} may be one row but differ in weight, scope or unit",
-                                    a.id, b.id
-                                ),
-                            ));
-                        }
-                    }
-                }
-            }
-        }
-        let indices: Vec<usize> = (0..atoms.len()).collect();
-        let partitions = key_partitions(&indices, &apart, MAX_ALIAS_CASES)
-            .ok_or_else(|| bound(format!("more than {MAX_ALIAS_CASES} key-equality cases")))?;
+        let partitions = group_partitions(coordinates, &group, unequal)?;
         let mut next = Vec::new();
         for merge in &merges {
             for partition in &partitions {
                 let mut combined = merge.clone();
-                for block in partition {
-                    let mut members: Vec<usize> = block
-                        .iter()
-                        .filter_map(|&atom| atoms.get(atom))
-                        .flatten()
-                        .copied()
-                        .collect();
-                    members.sort_unstable();
-                    if members.len() > 1 {
-                        combined.push(members);
-                    }
-                }
+                combined.extend(partition.iter().cloned());
                 next.push(combined);
                 if next.len() > MAX_ALIAS_CASES {
                     return Err(bound(format!(
@@ -852,7 +888,10 @@ mod tests {
         assert_eq!(
             check(
                 &c,
-                &[transfer(&c, &["input.amount > 0", "input.from != input.to"])],
+                &[transfer(
+                    &c,
+                    &["input.amount > 0", "input.from != input.to"]
+                )],
                 &[q(1); 2]
             ),
             Ok(())
@@ -924,7 +963,12 @@ mod tests {
         let rows = vec![vec![q(-1), q(0)], vec![q(1), q(0)], vec![q(0), q(0)]];
         let refusal = check(
             &c,
-            &[writer("touch", rows.clone(), &c, &["input.from != input.to"])],
+            &[writer(
+                "touch",
+                rows.clone(),
+                &c,
+                &["input.from != input.to"],
+            )],
             &[q(1); 3],
         )
         .unwrap_err();
@@ -940,7 +984,11 @@ mod tests {
         // Guarded distinct from both, k cannot alias.
         let guard = "input.from != input.to and input.k != input.from and input.k != input.to";
         assert_eq!(
-            check(&c, &[writer("touch", rows.clone(), &c, &[guard])], &[q(1); 3]),
+            check(
+                &c,
+                &[writer("touch", rows.clone(), &c, &[guard])],
+                &[q(1); 3]
+            ),
             Ok(())
         );
         // Read but not assigned, Bal[k] cannot overwrite anything.
@@ -958,8 +1006,18 @@ mod tests {
         // Wallet is a child of Account: Wallet.balance[to] and
         // Account.balance[from] are one row when from == to.
         let c = vec![
-            stored("Account[from]", "Account", "Account", CellKey::Input("from".into())),
-            stored("Wallet[to]", "Wallet", "Account", CellKey::Input("to".into())),
+            stored(
+                "Account[from]",
+                "Account",
+                "Account",
+                CellKey::Input("from".into()),
+            ),
+            stored(
+                "Wallet[to]",
+                "Wallet",
+                "Account",
+                CellKey::Input("to".into()),
+            ),
         ];
         assert!(matches!(
             check(&c, &[transfer(&c, &[])], &[q(1); 2]),
@@ -995,7 +1053,11 @@ mod tests {
         ));
         // Proved distinct, the books are separate rows again.
         assert!(matches!(
-            check(&books, &[transfer(&books, &["input.from != input.to"])], &[q(1); 2]),
+            check(
+                &books,
+                &[transfer(&books, &["input.from != input.to"])],
+                &[q(1); 2]
+            ),
             Err(Failure::Unbalanced { .. })
         ));
         // Stored and unstored coordinates together are unknown.
@@ -1014,7 +1076,12 @@ mod tests {
         // writes collide and the surviving one changes the total.
         let c = vec![
             stored("cash", "Account", "Account", CellKey::Fixed("cash".into())),
-            stored("wallet_cash", "Wallet", "Account", CellKey::Fixed("cash".into())),
+            stored(
+                "wallet_cash",
+                "Wallet",
+                "Account",
+                CellKey::Fixed("cash".into()),
+            ),
         ];
         let refusal = check(&c, &[transfer(&c, &[])], &[q(1); 2]).unwrap_err();
         let Failure::Aliased { cells, .. } = refusal else {
@@ -1041,7 +1108,11 @@ mod tests {
         // not lowered, so it stays possible.
         reach[1].cell.as_mut().unwrap().key = CellKey::Input("to".into());
         assert!(matches!(
-            check(&reach, &[transfer(&reach, &["input.to != \"cash\""])], &[q(1); 2]),
+            check(
+                &reach,
+                &[transfer(&reach, &["input.to != \"cash\""])],
+                &[q(1); 2]
+            ),
             Err(Failure::Aliased { .. })
         ));
     }
@@ -1144,10 +1215,16 @@ mod tests {
         // Unknown or repeated footprint ids are malformed.
         let mut ghost = transfer(&uneven, &[]);
         ghost.assigns.push("Bal[nowhere]".into());
-        assert_eq!(check(&uneven, &[ghost], &[q(1), q(2)]), Err(Failure::Malformed));
+        assert_eq!(
+            check(&uneven, &[ghost], &[q(1), q(2)]),
+            Err(Failure::Malformed)
+        );
         let mut twice = transfer(&uneven, &[]);
         twice.assigns.push("Bal[to]".into());
-        assert_eq!(check(&uneven, &[twice], &[q(1), q(2)]), Err(Failure::Malformed));
+        assert_eq!(
+            check(&uneven, &[twice], &[q(1), q(2)]),
+            Err(Failure::Malformed)
+        );
     }
 
     proptest! {
