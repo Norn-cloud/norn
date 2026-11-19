@@ -180,12 +180,12 @@ At-least-once dispatch preserves operation ID across attempts. Retry ambiguous o
 
 | Invariant / layer | Stable target code (finding codes are not refusals) |
 |---|---|
-| FEED-CURSOR-1: capture/dedup/cursor atomic; ingestion commit | `core.boundary.cursor_gap` |
+| FEED-CURSOR-1: capture/dedup/cursor atomic; ingestion commit | `core.boundary.cursor_gap` (reserved, unimplemented) |
 | OBS-EVIDENCE-1: preserve imported truth/provenance, quarantine violations; capture/evaluation | `core.boundary.import_finding` |
-| EFFECT-IDENTITY-1: attempts retain exact operation identity; dispatch | `core.boundary.identity_mismatch` |
-| EFFECT-UNKNOWN-1: uncertainty never means failed/succeeded; reconciliation | `core.boundary.outcome_unknown` |
-| FUNCTION-CAP-1: pinned typed bounded capability boundary; admission/dispatch | `core.boundary.capability_denied` |
-| RESULT-FRESH-1: output receipt is not mutation authority; governed commit | `core.boundary.stale_result` |
+| EFFECT-IDENTITY-1: attempts retain exact operation identity; dispatch | `core.boundary.identity_mismatch` (reserved, unimplemented) |
+| EFFECT-UNKNOWN-1: uncertainty never means failed/succeeded; reconciliation | `core.boundary.outcome_unknown` (reserved, unimplemented) |
+| FUNCTION-CAP-1: pinned typed bounded capability boundary; admission/dispatch | `core.boundary.capability_denied` (reserved, unimplemented) |
+| RESULT-FRESH-1: output receipt is not mutation authority; governed commit | `core.boundary.stale_result` (reserved, unimplemented) |
 
 Evidence: structural mapping/manifest admission; runtime capability/freshness enforcement; sampled crash/retry/CDC correspondence; external assumptions remain explicit open proof goals. Quarantine is evidence-bearing handling, never a claim of correction.
 
@@ -269,7 +269,7 @@ manifests keep refusing `function.manifest.authored_host`. The decision function
 accept only a manifest the registry handed out (`Registered`), and bind only a
 dispatch pinned to its exact digest.
 
-DECISION-1 (`norn.decision@1`, D58): a flow asks a person by `perform` of this
+DECISION-1 (`norn.decision@1`, #1163): a flow asks a person by `perform` of this
 built-in, then `route` on `choice` with `otherwise` failing; the run waits in
 `awaiting_perform_<step>`. The input is one canonical-JSON blob named `request`,
 a closed record `{question, risk: low|medium|high, options: [{id, label,

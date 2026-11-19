@@ -1,5 +1,5 @@
 //! `evaluate_expression_json`: the ZEN evaluation of an admitted expression, the one evaluator
-//! every build of this crate exports (D105).
+//! every build of this crate exports (#1325).
 
 use norn_expr::{
     EvaluationBudget, ExprError, Expression, Value as ExprValue, validate_evaluation_source,
