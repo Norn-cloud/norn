@@ -87,8 +87,10 @@ jobs:
         run: |
           set -euo pipefail
           dir=$(mktemp -d)
-          (cd "$dir" && npm init -y > /dev/null && npm install --ignore-scripts "$GITHUB_WORKSPACE"/dist/norn-sdk-*.tgz > /dev/null)
-          test -f "$dir"/node_modules/@norn/sdk/src/index.ts
+          # The SDK has no dependencies: its packed tarball is the whole install.
+          tar -xzf "$GITHUB_WORKSPACE"/dist/norn-sdk-*.tgz -C "$dir"
+          test -f "$dir"/package/src/index.ts
+          test "$(jq -r .name "$dir"/package/package.json)" = @norn/sdk
           python3 -I -m venv "$dir/venv"
           "$dir/venv/bin/pip" install --disable-pip-version-check -q "$GITHUB_WORKSPACE"/dist/norn_client-*.whl
           "$dir/venv/bin/python" -I -c 'import norn_client; print("norn_client", norn_client.__file__)'
