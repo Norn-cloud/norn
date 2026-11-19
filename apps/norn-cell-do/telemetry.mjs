@@ -1,36 +1,156 @@
-// The cell host's telemetry: what a request, a commit, a sync, an alarm and a
-// live publish cost and how they ended, exported over OTLP (otlp.mjs). It wraps
-// the Durable Object's methods from outside, so the host's own code is
-// unchanged and nothing is recorded when export is off (OTEL-OFF-1).
+// The cell host's telemetry: what a request, a sync, an alarm and a live
+// publish cost and how they ended, exported over OTLP (otlp.mjs). It wraps the
+// Durable Object's methods from outside, so the host's own code is unchanged
+// and nothing is recorded when export is off (OTEL-OFF-1).
 //
-// Attributes are route templates, methods, status classes, outcomes and refusal
-// codes only (OTEL-NO-TENANT-1): never the scope, a principal, an object id or a
-// body. The environment id (`dev`, `prod`, `analytics`) is configuration, not
-// tenant data, and is kept so stages can be told apart.
-import { COUNT_BUCKETS, refusalCode, routeOf, statusClass, telemetry } from "./otlp.mjs";
+// Attributes come from fixed tables only (OTEL-NO-TENANT-1): route templates
+// (otlp.mjs CELL_ROUTES), allowlisted methods, environments and refusal codes,
+// status classes and outcomes. Never the scope, a principal, an object id, a
+// path segment or a body.
+//
+// OTEL-NEVER-FAILS-1: a wrapper reads only what the handler already produced
+// (its status, and a refusal's body text the host noted with `noteRefusal`),
+// records nothing on the handler's path, and hands recording and export to a
+// background task the triggering event passes to waitUntil. Every hook is
+// guarded; a telemetry failure never changes a result or adds a retry.
+import { COUNT_BUCKETS, cellRoute, methodOf, statusClass, telemetry } from "./otlp.mjs";
 
 export const SERVICE = "norn-cell";
 const CELL_HEADER = "x-norn-cell";
+/** A refusal body longer than this is not parsed for its code. */
+const MAX_REFUSAL_TEXT = 8192;
+
+/** The configured stage names an environment attribute may take; any other is "other". */
+const ENVIRONMENTS = new Set(["dev", "test", "preview", "next", "staging", "prod", "analytics"]);
+
+/** Every refusal code the host and kernel write (the norn-kernel, norn-cell-do, norn-cell, norn-api, norn-authz and norn-decisions crates, worker.mjs, subscribe.mjs), by family; any other is "other". */
+const REFUSAL_CODES = new Set(Object.entries({
+  action:
+    "aggregate_bound_exceeded aggregate_bytes_exceeded aggregate_stale_read aggregate_unavailable " +
+    "authorized_binding_mismatch blank_field derivation_failed duplicate_precondition " +
+    "expression_budget_exceeded id_too_long idempotency_conflict idempotency_key_too_long " +
+    "idempotency_without_receipt input_bound_exceeded invalid_input invalid_transition_identity " +
+    "legacy_receipt logical_time_rollback missing_precondition missing_scope owner_version_conflict " +
+    "owner_version_overflow permission_denied precondition_failed precondition_stale_read " +
+    "receipt_binding_mismatch receipt_body_forbidden receipt_effect_unsupported receipt_not_accepted " +
+    "receipt_not_pending receipt_reference_invalid receipt_replayed receipt_result_type " +
+    "receipt_run_mismatch receipt_unknown receipts_unconfigured slice_object_missing " +
+    "slice_unavailable target_not_found transition_binding_mismatch transition_protocol_conflict " +
+    "unsupported_effect write_mode_failed",
+  analytics:
+    "engine frontier_behind frontier_moved invalid too_large unauthorized unavailable unconfigured " +
+    "unknown unsettled",
+  approval: "expired rejected would_commit",
+  artifact_set: "action.effect_kind_mismatch",
+  authn: "required",
+  authz:
+    "access.actions_empty access.context_reserved access.decimal_comparison " +
+    "access.generic_rule_invalid access.id_empty access.marking_action_invalid " +
+    "access.marking_id_invalid access.marking_resource_invalid access.markings_empty " +
+    "access.name_invalid access.principal_attribute_conflict access.principal_operator_invalid " +
+    "access.principal_projection_required access.principal_reserved access.projection_required " +
+    "access.rel_unsupported access.resource_operator_invalid access.roles_empty access.rule_duplicate " +
+    "access.scope_org_required denied deny.absent_scope deny.access deny.access_error deny.capability " +
+    "deny.delegation deny.invalid_request entitlement.action_mismatch entitlement.actions_invalid " +
+    "entitlement.grantee_type_invalid entitlement.identifier_invalid entitlement.link_invalid " +
+    "entitlement.linked_record_mismatch entitlement.owner_mismatch " +
+    "entitlement.scope_attribute_invalid entitlement.scope_attribute_mismatch " +
+    "entitlement.scope_invalid entitlement.target_type_mismatch entitlement.value_invalid " +
+    "grant.invalid policy.invalid policy.lint policy.parse schema.invalid schema.parse " +
+    "schema.scope_type",
+  bulk: "above_max below_min digest_mismatch missing_column unreadable unsupported_law",
+  cell:
+    "base_mismatch not_provisioned provision_conflict provision_refused reserved_artifact " +
+    "scope_conflict sqlite unopenable",
+  commit:
+    "conflict dangling_link duplicate_key duplicate_link duplicate_link_read effective_values " +
+    "event_limit host identifier_too_long immutable_object invalid_link_read invalid_predicate_read " +
+    "invariant_budget_exceeded invariant_model invariant_violation link_cardinality link_conflict " +
+    "link_read_conflict link_read_too_large link_required link_target not_pending " +
+    "observation_authorization overflow owned_rows_protected predicate_read_conflict " +
+    "traversal_limit_exceeded type_mismatch unsupported_link_read unsupported_predicate_read",
+  connector: "bind read run",
+  dataset: "not_found uploads_unconfigured",
+  decision:
+    "envelope_exceeded expired guard_error guard_false host idempotency_conflict invalid_output " +
+    "invariant_budget_exceeded invariant_violation law_not_satisfied not_found not_in_slice " +
+    "not_pending note_too_long object_exists object_missing overflow perform_outside_main " +
+    "read_only_world resolution_invalid resolved source_owned_target stale_state " +
+    "turn_envelope_exceeded unknown_choice unknown_type unresolved_lifecycle",
+  definition:
+    "already_retired approval_action_unknown approval_duplicate approval_invalid " +
+    "approval_role_unknown binding_connector_invalid binding_digest_mismatch binding_invalid_payload " +
+    "binding_label_invalid binding_mapping_invalid binding_mapping_unknown_field binding_not_nfc " +
+    "binding_role_unknown binding_version_mismatch cursor_invalid flow_action_declared " +
+    "flow_artifact_conflict flow_artifact_foreign flow_command_unverifiable flow_function_unknown " +
+    "flow_id_mismatch flow_label_invalid flow_runs_live flow_scope_conflict flow_shape_invalid " +
+    "id_in_use id_invalid id_reserved invalid_payload kind_unknown layout_invalid not_found " +
+    "payload_too_large question_invalid question_unavailable refused signoff_mismatch " +
+    "signoff_required signoff_unavailable tile_id_invalid tile_title_invalid version_conflict " +
+    "view_invalid",
+  entitlement: "linked_record none owner_only",
+  guard: "idempotency_conflict not_found",
+  ingress: "limit_exceeded",
+  lifecycle: "declared_transition guard guard_evaluable immutable_state initial_state transition_source",
+  live:
+    "invalid_id not_subscribable too_many_sockets too_many_subscriptions unknown_message " +
+    "upgrade_required",
+  object: "not_found scan_bound_exceeded snapshot_moved snapshot_unavailable unknown_type",
+  observations: "too_large",
+  query:
+    "cursor_invalid invalid limit_invalid op_invalid property_unknown sort_invalid too_many " +
+    "value_invalid",
+  question: "bucket_bound_exceeded not_found refused",
+  request: "invalid too_large",
+  reveal: "idempotency_conflict",
+  route: "method_not_allowed not_found",
+  run:
+    "exists flow_inadmissible flow_not_found not_found result_not_pending start_conflict " +
+    "start_invalid start_refused state_invalid turn_refused",
+  scope: "denied missing",
+  source:
+    "auth_unsupported bound cell_busy connector_missing http_status ingest no_cell not_running " +
+    "profile_invalid profile_missing response_shape seal secret_missing sqlite sync_running " +
+    "token_refused unknown",
+  subscription: "empty_bound over_profile unknown_type",
+  transform: "not_found row_not_found snapshot_moved",
+  upload:
+    "changed invalid_prefix invalid_request not_completed not_csv not_found not_recorded read_failed " +
+    "refused storage_unconfigured too_large",
+}).flatMap(([family, codes]) => codes.split(" ").map((code) => `${family}.${code}`)));
+
+/** A refusal code when the host writes it, else "other". */
+export const refusalCodeOf = (code) => (typeof code === "string" && REFUSAL_CODES.has(code) ? code : "other");
+
+/** A refusal's code from a `norn/refusal@2` body the host already holds as text, bounded; "other" when it names none we know. */
+export function refusalCode(text) {
+  if (typeof text !== "string" || text.length > MAX_REFUSAL_TEXT) return "other";
+  try {
+    return refusalCodeOf(JSON.parse(text)?.code);
+  } catch {
+    return "other";
+  }
+}
 
 /** What a request does, from its method and route template. */
 export function kindOf(method, route) {
   if (route === "/v1/subscribe") return "subscribe";
-  if (method === "GET") return "read";
-  if (route === "/v1/actions/{}") return "action";
-  if (route === "/v1/decisions/{}:decide") return "decision";
-  if (route === "/v1/cell:provision") return "provision";
-  if (route === "/v1/cell/definitions:plan") return "plan";
-  if (route === "/v1/cell/definitions:apply") return "apply";
-  if (route === "/v1/definitions:admit") return "admission";
-  if (route === "/v1/definitions:install") return "install";
+  if (method === "GET" || method === "HEAD") return "read";
+  switch (route) {
+    case "/v1/actions/{action}": return "action";
+    case "/v1/decisions/{decision}:decide": return "decision";
+    case "/v1/cell:provision": return "provision";
+    case "/v1/cell/definitions:plan": return "plan";
+    case "/v1/cell/definitions:apply": return "apply";
+    case "/v1/definitions:admit": return "admission";
+    case "/v1/definitions:install": return "install";
+    case "/v1/sources/{source}:sync": return "sync";
+    case "other": return "other";
+  }
   if (route.startsWith("/v1/questions")) return "question";
-  if (route.endsWith(":sync")) return "sync";
   if (route.endsWith(":load") || route.startsWith("/v1/uploads")) return "load";
   return "write";
 }
-
-/** Kinds that read and decide nothing durable: their latency is not a commit's. */
-const NOT_COMMITS = new Set(["read", "subscribe", "question", "plan", "admission"]);
 
 /** How a request ended: committed, pending (parked for approval), refused or error. */
 export function outcomeOf(status) {
@@ -40,127 +160,216 @@ export function outcomeOf(status) {
   return "error";
 }
 
-/** The environment part of the router's cell header, if it is a plain configured name. */
-function environmentOf(request) {
+/** The environment part of the router's cell header, when it is a configured stage name. */
+function environmentOf(header) {
   try {
-    const environment = JSON.parse(request.headers.get(CELL_HEADER))?.[1];
-    return typeof environment === "string" && /^[a-z][a-z0-9_-]{0,31}$/.test(environment) ? environment : "other";
+    const environment = JSON.parse(header)?.[1];
+    return ENVIRONMENTS.has(environment) ? environment : "other";
   } catch {
     return "other";
   }
 }
 
-function keep(ctx, promise) {
-  if (typeof ctx?.waitUntil === "function") ctx.waitUntil(promise);
+/** Response -> refusal body text the host noted (never read from the stream). */
+const refusals = new WeakMap();
+
+/**
+ * The host notes a refusal's body, which it already holds as a string, so the
+ * refusal's code can be counted later without reading the response stream.
+ * Returns `response`; a no-op when export is off, never throws.
+ */
+export function noteRefusal(env, response, body) {
+  try {
+    if (response.status >= 400 && typeof body === "string" && body.length <= MAX_REFUSAL_TEXT && telemetry(env, SERVICE) !== null) refusals.set(response, body);
+  } catch {
+    // Best effort.
+  }
+  return response;
 }
 
-/** Record one finished request. `response` is null when the handler threw. */
-export async function recordRequest(t, request, response, startedMs, endedMs) {
-  const url = new URL(request.url);
-  const route = routeOf(url.pathname);
-  const method = request.method;
-  const kind = kindOf(method, route);
-  const status = response === null ? 500 : response.status;
-  const outcome = response === null ? "error" : outcomeOf(status);
-  const environment = environmentOf(request);
-  const ms = endedMs - startedMs;
-  // A refusal names its code; only a JSON body is read, and only on a 4xx/5xx.
-  let code = "";
-  if (response !== null && status >= 400 && (response.headers.get("content-type") ?? "").includes("application/json")) {
-    code = refusalCode(await response.clone().text());
+/** Wait one timer turn, so recording never runs on the handler's path. */
+const later = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+/** Hand `work` to the event's waitUntil: run after a timer turn, then export. Never throws. */
+function background(t, ctx, work) {
+  try {
+    const task = later().then(() => {
+      try {
+        work();
+      } catch {
+        t.log("telemetry record failed");
+      }
+      return t.pump();
+    }).catch(() => {});
+    if (typeof ctx?.waitUntil === "function") ctx.waitUntil(task);
+  } catch {
+    // Best effort.
   }
+}
+
+/**
+ * Record one finished request from bounded metadata: the method, the path's
+ * template, the router's environment header, the status, and a refusal's noted
+ * body. `seen` is that metadata, captured before the handler ran.
+ */
+export function recordRequest(t, seen, status, refusal, startedMs, endedMs) {
+  const route = cellRoute(seen.pathname);
+  const method = methodOf(seen.method);
+  const kind = kindOf(method, route);
+  const outcome = status === null ? "error" : outcomeOf(status);
+  const environment = environmentOf(seen.cell);
+  const ms = endedMs - startedMs;
+  const status_class = status === null ? "5xx" : statusClass(status);
+  const code = status !== null && status >= 400 ? refusalCode(refusal) : "";
   const base = { route, method, kind, environment };
-  t.count("norn_cell_requests_total", { ...base, status_class: response === null ? "5xx" : statusClass(status), outcome });
+  t.count("norn_cell_requests_total", { ...base, status_class, outcome });
   t.observe("norn_cell_request_duration_ms", { ...base, outcome }, ms);
-  if (code !== "") t.count("norn_cell_refusals_total", { route, kind, code, status_class: statusClass(status), environment });
-  if (!NOT_COMMITS.has(kind)) t.observe("norn_cell_commit_duration_ms", { kind, outcome, environment }, ms);
+  if (code !== "") t.count("norn_cell_refusals_total", { route, kind, code, status_class, environment });
   if (kind === "action") t.count("norn_cell_actions_total", { outcome, environment });
   if (kind === "decision") t.count("norn_cell_decisions_total", { outcome, environment });
   if (kind === "provision" || kind === "plan" || kind === "apply" || kind === "admission" || kind === "install") {
     t.observe("norn_cell_definitions_stage_ms", { stage: kind, outcome, environment }, ms);
   }
-  t.span(`cell ${kind}`, { "http.route": route, "http.request.method": method, "http.response.status_code": status, "norn.kind": kind, "norn.outcome": outcome, "norn.refusal.code": code, "norn.environment": environment }, startedMs, endedMs, outcome === "error");
+  t.span(`cell ${kind} ${route}`, { "http.route": route, "http.request.method": method, "http.response.status_code": status ?? 500, "norn.kind": kind, "norn.outcome": outcome, "norn.refusal.code": code, "norn.environment": environment }, startedMs, endedMs, outcome === "error");
 }
+
+const SYNC_OUTCOMES = new Set(["ok", "partial", "failed"]);
 
 /**
  * A finished source sync, from the counts runSync already logs (never what it
  * read). Its duration is the sync lag: from the sync starting to its rows
- * being committed and readable.
+ * being committed and readable. Never throws.
  */
 export function syncFinished(env, record) {
-  const t = telemetry(env, SERVICE);
-  if (t === null) return;
-  const outcome = typeof record?.outcome === "string" && /^[a-z_]{1,32}$/.test(record.outcome) ? record.outcome : "other";
-  // ok, partial (some rows quarantined) or failed, with the failure's code.
-  const code = Array.isArray(record?.error) && typeof record.error[0] === "string" && /^[a-z][a-z0-9_.]{0,63}$/.test(record.error[0]) ? record.error[0] : "";
-  t.count("norn_cell_sync_runs_total", { outcome, code });
-  t.observe("norn_cell_sync_duration_ms", { outcome }, record?.wallMs);
-  t.count("norn_cell_sync_rows_read_total", { outcome }, record?.rowsRead ?? 0);
-  t.count("norn_cell_sync_rows_landed_total", { outcome }, record?.rowsLanded ?? 0);
-  t.count("norn_cell_sync_rows_quarantined_total", { outcome }, record?.rowsQuarantined ?? 0);
-  t.observe("norn_cell_sync_rows_landed", { outcome }, record?.rowsLanded ?? 0, "1", COUNT_BUCKETS);
-  const ended = Date.now();
-  t.span("cell sync", { "norn.outcome": outcome, "norn.sync.rows_landed": record?.rowsLanded ?? 0, "norn.sync.rows_quarantined": record?.rowsQuarantined ?? 0, "norn.refusal.code": code }, ended - (record?.wallMs ?? 0), ended, outcome === "failed");
+  try {
+    const t = telemetry(env, SERVICE);
+    if (t === null) return;
+    const outcome = SYNC_OUTCOMES.has(record?.outcome) ? record.outcome : "other";
+    // ok, partial (some rows quarantined) or failed, with the failure's code.
+    const code = Array.isArray(record?.error) ? refusalCodeOf(record.error[0]) : "";
+    const count = (value) => (Number.isFinite(value) && value >= 0 ? value : 0);
+    const wallMs = count(record?.wallMs);
+    t.count("norn_cell_sync_runs_total", { outcome, code });
+    t.observe("norn_cell_sync_duration_ms", { outcome }, wallMs);
+    t.count("norn_cell_sync_rows_read_total", { outcome }, count(record?.rowsRead));
+    t.count("norn_cell_sync_rows_landed_total", { outcome }, count(record?.rowsLanded));
+    t.count("norn_cell_sync_rows_quarantined_total", { outcome }, count(record?.rowsQuarantined));
+    t.observe("norn_cell_sync_rows_landed", { outcome }, count(record?.rowsLanded), "1", COUNT_BUCKETS);
+    const ended = Date.now();
+    t.span("cell sync", { "norn.outcome": outcome, "norn.sync.rows_landed": count(record?.rowsLanded), "norn.sync.rows_quarantined": count(record?.rowsQuarantined), "norn.refusal.code": code }, ended - wallMs, ended, outcome === "failed");
+  } catch {
+    // OTEL-NEVER-FAILS-1.
+  }
 }
+
+/** Telemetry for `self`, or null; never throws. */
+const of = (self) => {
+  try {
+    return telemetry(self.env, SERVICE);
+  } catch {
+    return null;
+  }
+};
 
 /**
  * Wrap the cell object's handlers. `fetch` is timed and classified; `publish`
- * counts its fan-out; `alarm`, when the class has one (TIMER-ALARM-1), records
- * how late it fired against the deadline it was armed for (`this.armed`).
+ * counts its fan-out and the snapshots it sends; `alarm`, when the class has
+ * one (TIMER-ALARM-1), records how late it fired against the deadline it was
+ * armed for (`this.armed`).
  */
 export function instrument(Cell) {
   const proto = Cell.prototype;
   const fetch = proto.fetch;
   proto.fetch = async function instrumentedFetch(request) {
-    const t = telemetry(this.env, SERVICE);
+    const t = of(this);
     if (t === null) return fetch.call(this, request);
-    const started = Date.now();
-    let response = null;
+    let seen = null;
+    let started = 0;
     try {
-      response = await fetch.call(this, request);
+      seen = { method: request.method, pathname: new URL(request.url).pathname, cell: request.headers.get(CELL_HEADER) };
+      started = Date.now();
+    } catch {
+      // Unrecorded.
+    }
+    let status = null;
+    let refusal;
+    try {
+      const response = await fetch.call(this, request);
+      try {
+        status = response.status;
+        refusal = refusals.get(response);
+      } catch {
+        // Unrecorded.
+      }
       return response;
     } finally {
-      try {
-        await recordRequest(t, request, response, started, Date.now());
-      } catch (error) {
-        t.log(`telemetry record failed: ${error?.name ?? "error"}`);
+      if (seen !== null) {
+        let ended = started;
+        try {
+          ended = Date.now();
+        } catch {
+          // Unrecorded duration.
+        }
+        background(t, this.ctx, () => recordRequest(t, seen, status, refusal, started, ended));
       }
-      keep(this.ctx, t.flushIfDue());
     }
   };
   const publish = proto.publish;
   if (typeof publish === "function") {
     proto.publish = function instrumentedPublish(...args) {
-      const t = telemetry(this.env, SERVICE);
-      if (t !== null) {
-        const sockets = this.ctx.getWebSockets().length;
-        if (sockets > 0) {
-          t.count("norn_cell_live_publishes_total", {});
-          t.count("norn_cell_live_messages_total", {}, sockets);
-          t.observe("norn_cell_live_fanout", {}, sockets, "1", COUNT_BUCKETS);
-        }
+      const t = of(this);
+      let sockets = 0;
+      try {
+        if (t !== null) sockets = this.ctx.getWebSockets().length;
+      } catch {
+        // Unrecorded.
       }
-      return publish.apply(this, args);
+      const result = publish.apply(this, args);
+      if (t !== null && sockets > 0) {
+        // The host's publish resolves to the number of changed snapshots it sent.
+        Promise.resolve(result).then((sent) => {
+          background(t, this.ctx, () => {
+            t.count("norn_cell_live_publishes_total", {});
+            t.observe("norn_cell_live_fanout", {}, sockets, "1", COUNT_BUCKETS);
+            if (Number.isInteger(sent) && sent > 0) t.count("norn_cell_live_snapshots_total", {}, sent);
+          });
+        }, () => {});
+      }
+      return result;
     };
   }
   const alarm = proto.alarm;
   if (typeof alarm === "function") {
     proto.alarm = async function instrumentedAlarm(info) {
-      const t = telemetry(this.env, SERVICE);
+      const t = of(this);
       if (t === null) return alarm.call(this, info);
-      const armed = typeof this.armed === "number" ? this.armed : null;
-      const started = Date.now();
-      const retry = (info?.retryCount ?? 0) > 0;
+      let armed = null;
+      let started = 0;
+      let retry = false;
+      try {
+        armed = typeof this.armed === "number" ? this.armed : null;
+        started = Date.now();
+        retry = (info?.retryCount ?? 0) > 0;
+      } catch {
+        // Unrecorded.
+      }
       let failed = true;
       try {
         const result = await alarm.call(this, info);
         failed = false;
         return result;
       } finally {
-        if (armed !== null) t.observe("norn_cell_alarm_lag_ms", { retry }, Math.max(0, started - armed));
-        t.count("norn_cell_alarms_total", { outcome: failed ? "error" : "ok", retry });
-        t.span("cell alarm", { "norn.outcome": failed ? "error" : "ok", "norn.alarm.retry": retry, "norn.alarm.lag_ms": armed === null ? -1 : Math.max(0, started - armed) }, started, Date.now(), failed);
-        keep(this.ctx, t.flushIfDue());
+        try {
+          const ended = Date.now();
+          background(t, this.ctx, () => {
+            const lag = armed === null ? -1 : Math.max(0, started - armed);
+            if (armed !== null) t.observe("norn_cell_alarm_lag_ms", { retry }, lag);
+            t.count("norn_cell_alarms_total", { outcome: failed ? "error" : "ok", retry });
+            t.span("cell alarm", { "norn.outcome": failed ? "error" : "ok", "norn.alarm.retry": retry, "norn.alarm.lag_ms": lag }, started, ended, failed);
+          });
+        } catch {
+          // OTEL-NEVER-FAILS-1: the alarm's own result stands.
+        }
       }
     };
   }
@@ -170,8 +379,8 @@ export function instrument(Cell) {
       try {
         return await runSync.apply(this, args);
       } finally {
-        const t = telemetry(this.env, SERVICE);
-        if (t !== null) keep(this.ctx, t.flushIfDue());
+        const t = of(this);
+        if (t !== null) background(t, this.ctx, () => {});
       }
     };
   }

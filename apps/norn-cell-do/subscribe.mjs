@@ -58,11 +58,11 @@ export function accept(ctx, scope, authorization, requested = "") {
 }
 
 /**
- * Answer every subscription of `ws` again and send the ones that changed. `ask(path, query,
+ * Answer every subscription of `ws` again and send the ones that changed (counted in `tally.sent`). `ask(path, query,
  * authorization)` is the cell's own GET. Returns false when the socket was closed for an expired
  * or refused token.
  */
-export async function evaluate(ws, ask, only) {
+export async function evaluate(ws, ask, only, tally) {
   const attachment = ws.deserializeAttachment();
   if (!attachment) return false;
   let changed = false;
@@ -84,6 +84,7 @@ export async function evaluate(ws, ask, only) {
       body = null;
     }
     send(ws, { type: "snapshot", id, status: reply.status, digest: value, body });
+    if (tally !== undefined) tally.sent += 1;
   }
   if (changed) ws.serializeAttachment(attachment);
   return true;
@@ -121,7 +122,9 @@ export async function message(ws, raw, ask) {
   await evaluate(ws, ask, id);
 }
 
-/** After a commit: answer every live subscription on this object again. */
+/** After a commit: answer every live subscription on this object again. Resolves to the number of changed snapshots sent. */
 export async function publish(ctx, ask) {
-  for (const ws of ctx.getWebSockets()) await evaluate(ws, ask);
+  const tally = { sent: 0 };
+  for (const ws of ctx.getWebSockets()) await evaluate(ws, ask, undefined, tally);
+  return tally.sent;
 }

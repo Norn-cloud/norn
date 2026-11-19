@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, readdirSync, type Dirent } from "node:fs"
 import { join } from "node:path"
+import { exportConfig } from "../norn-cell-do/otlp.mjs"
 
 /** Where one deploy goes: production keeps the live Worker and domains; any other stage gets its own Worker and must name its domains. */
 export interface DeployTarget {
@@ -76,6 +77,8 @@ export function otelSettings(env: Readonly<Record<string, string | undefined>>):
   let url: URL
   try { url = new URL(endpoint) } catch { throw new Error("OTEL_EXPORTER_OTLP_ENDPOINT must be an http(s) URL") }
   if ((url.protocol !== "https:" && url.protocol !== "http:") || url.username !== "" || url.password !== "") throw new Error("OTEL_EXPORTER_OTLP_ENDPOINT must be an http(s) URL without credentials; put them in OTEL_EXPORTER_OTLP_HEADERS")
+  // OTEL-TLS-1: refuse at deploy what the Worker would silently turn off (malformed headers, credentials over plain HTTP to a remote host).
+  if (exportConfig(env, "norn-studio") === null) throw new Error("OTEL_EXPORTER_OTLP_HEADERS must be name=value pairs of valid HTTP fields, and credentials need an https endpoint (or a loopback one)")
   return {
     endpoint,
     ...env.OTEL_EXPORTER_OTLP_HEADERS === undefined ? {} : { headers: env.OTEL_EXPORTER_OTLP_HEADERS },

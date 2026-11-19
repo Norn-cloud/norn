@@ -4,7 +4,7 @@
 import { initSync, NornCell } from "./pkg/norn_cell_do.js";
 import module from "./pkg/norn_cell_do_bg.wasm";
 import * as live from "./subscribe.mjs";
-import { instrument, syncFinished } from "./telemetry.mjs";
+import { instrument, noteRefusal, syncFinished } from "./telemetry.mjs";
 initSync({ module });
 
 // The demo cell, as [orgId, environmentId]: where a request that names no well-formed scope lands.
@@ -205,10 +205,13 @@ export class Cell {
       // Already closed.
     }
   }
-  /** After a commit, every live subscription on this object is answered again. */
+  /** After a commit, every live subscription on this object is answered again; resolves to the changed snapshots sent. */
   publish() {
-    if (this.ctx.getWebSockets().length === 0) return;
-    live.publish(this.ctx, (path, query, authorization) => this.ask(path, query, authorization)).catch((error) => console.error(`live publish failed: ${error}`));
+    if (this.ctx.getWebSockets().length === 0) return Promise.resolve(0);
+    return live.publish(this.ctx, (path, query, authorization) => this.ask(path, query, authorization)).catch((error) => {
+      console.error(`live publish failed: ${error}`);
+      return 0;
+    });
   }
   async fetch(request) {
     const url = new URL(request.url);
@@ -256,7 +259,8 @@ export class Cell {
     if (reply instanceof Response) return reply;
     // After a commit, every live subscription on this object is answered again.
     if (request.method !== "GET" && reply.status < 400) this.publish();
-    return new Response(reply.body, { status: reply.status, headers: { "content-type": "application/json" } });
+    // A refusal's text is noted for its code's count (telemetry.mjs), so telemetry never reads the reply.
+    return noteRefusal(this.env, new Response(reply.body, { status: reply.status, headers: { "content-type": "application/json" } }), reply.body);
   }
   /** Run one claimed sync to its end: every step is the cell's, every fetch its plan. */
   async runSync(id) {

@@ -11,17 +11,22 @@ export interface ExportConfig {
   readonly intervalMs: number
 }
 export declare function exportConfig(env: unknown, service: string): ExportConfig | null
+export declare function isLoopback(hostname: string): boolean
 export declare class Telemetry {
-  constructor(config: ExportConfig, now?: () => number)
+  constructor(config: ExportConfig, now?: () => number, send?: typeof fetch)
+  send: typeof fetch
   count(name: string, attrs: Attributes, value?: number, unit?: string): void
   observe(name: string, attrs: Attributes, value: number, unit?: string, bounds?: readonly number[]): void
   span(name: string, attrs: Attributes, startMs: number, endMs: number, error?: boolean): void
   due(): boolean
-  flushIfDue(send?: typeof fetch): Promise<void>
+  buffered(): boolean
+  pump(): Promise<void>
   flush(send?: typeof fetch): Promise<void>
   log(message: string): void
 }
 export declare function telemetry(env: unknown, service: string): Telemetry | null
-export declare function routeOf(pathname: string): string
-export declare function refusalCode(text: string): string
+export declare function routeTable(templates: readonly string[]): (pathname: string) => string
+export declare const CELL_ROUTES: readonly string[]
+export declare function cellRoute(pathname: string): string
+export declare function methodOf(method: string): string
 export declare function statusClass(status: number): string

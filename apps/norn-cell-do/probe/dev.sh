@@ -12,7 +12,13 @@ set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../../.." && pwd)
 : "${NORN_DEV_HOST_BIN:?build it with cargo build --release -p norn-cell-do --bin norn-dev-host}"
+# Paths given relative to the caller's directory are resolved before norn dev runs from the project.
+[ -x "$NORN_DEV_HOST_BIN" ] || { echo "NORN_DEV_HOST_BIN is not an executable file" >&2; exit 2; }
+NORN_DEV_HOST_BIN=$(cd "$(dirname "$NORN_DEV_HOST_BIN")" && pwd)/$(basename "$NORN_DEV_HOST_BIN")
+export NORN_DEV_HOST_BIN
 project=${1:-$(mktemp -d)/probe}
+mkdir -p "$(dirname "$project")"
+project=$(cd "$(dirname "$project")" && pwd)/$(basename "$project")
 cli="$root/tools/norn-ts/src/cli.ts"
 if [ ! -f "$project/norn.json" ]; then
   bun "$cli" init "$project" --template empty --no-install --namespace probe >/dev/null

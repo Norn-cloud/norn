@@ -4,14 +4,20 @@
 //
 // OTEL-OFF-1: nothing is recorded or sent unless OTEL_EXPORTER_OTLP_ENDPOINT is
 // configured; `telemetry(env)` is then null and every call site is a no-op.
-// OTEL-NEVER-FAILS-1: an export never throws into a request and never delays
-// its reply; a failed send drops that batch and is logged at most once a minute.
+// OTEL-NEVER-FAILS-1: telemetry never throws into a handler and never delays or
+// replaces its result. Bad configuration turns export off; recording, draining
+// and sending run in a background task the triggering event hands to
+// waitUntil; a failed send drops that batch and is logged at most once a minute.
 // OTEL-BOUNDED-1: buffers are bounded (series and spans); past the bound new
 // data is dropped and counted, never grown.
-// OTEL-NO-TENANT-1: callers pass only low-cardinality attributes (route
-// templates, status, refusal codes, outcomes). No tenant id, principal, object
-// id or payload is ever an attribute; `attrs` refuses values that are not
+// OTEL-NO-TENANT-1: callers pass only low-cardinality attributes taken from
+// fixed tables (route templates, allowlisted methods, status classes, refusal
+// codes, outcomes). No tenant id, principal, object id, path segment or payload
+// is ever an attribute or a span name; `attrs` refuses values that are not
 // short strings, numbers or booleans.
+// OTEL-TLS-1: credentials (OTEL_EXPORTER_OTLP_HEADERS) travel only over HTTPS,
+// or to a loopback collector; a credentialed plain-HTTP remote endpoint, URL
+// userinfo or a header that is not a valid HTTP field turns export off.
 //
 // Configuration (standard OpenTelemetry names, read from the Worker's vars):
 //   OTEL_EXPORTER_OTLP_ENDPOINT  base URL; /v1/metrics and /v1/traces are appended
@@ -22,9 +28,10 @@
 //   OTEL_RESOURCE_ATTRIBUTES     "key=value,..." added to every export
 //                                (for example deployment.environment=next)
 //   OTEL_TRACES_SAMPLER_ARG      fraction of spans kept, 0..1 (default 1)
-//   NORN_OTEL_INTERVAL_MS        export interval, 1 s to 5 min (default 10 s)
+//   NORN_OTEL_INTERVAL_MS        export interval, 1 s to 5 min (default 10 s); a
+//                                batch waits at most MAX_WAIT_MS for its flush
 
-/** Milliseconds: request, commit and step latencies. */
+/** Milliseconds: request and step latencies. */
 export const MS_BUCKETS = [1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000, 120000];
 /** Counts: rows per sync, sockets per publish. */
 export const COUNT_BUCKETS = [0, 1, 5, 10, 50, 100, 500, 1000, 5000, 10000, 100000];
@@ -34,27 +41,43 @@ const MAX_SPANS = 1000;
 const MAX_ATTR_TEXT = 128;
 const SEND_TIMEOUT_MS = 5000;
 const LOG_EVERY_MS = 60_000;
+/** The longest a buffered observation waits for its flush: inside the time a Worker keeps a waitUntil task. */
+const MAX_WAIT_MS = 20_000;
 
 const configs = new WeakMap();
 
-/** "a=b,c=d" as pairs, percent-decoded; malformed entries are skipped. */
+/** "a=b,c=d" as pairs, percent-decoded; null when any entry is malformed. */
 function pairs(text) {
   const out = [];
-  for (const part of (text ?? "").split(",")) {
+  if (typeof text !== "string") return text === undefined ? out : null;
+  for (const part of text.split(",")) {
+    if (part.trim() === "") continue;
     const at = part.indexOf("=");
-    if (at <= 0) continue;
+    if (at <= 0) return null;
     try {
       out.push([decodeURIComponent(part.slice(0, at).trim()), decodeURIComponent(part.slice(at + 1).trim())]);
     } catch {
-      // A malformed escape: skip this entry, keep the rest.
+      return null;
     }
   }
   return out;
 }
 
-/** The export settings `env` names, or null when export is off (OTEL-OFF-1). */
+/** An HTTP field name (RFC 9110 token) and a value without control characters or non-Latin-1 text. */
+const FIELD_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,64}$/;
+const FIELD_VALUE = /^[\x20-\x7e\x80-\xff]{0,4096}$/;
+
+/** Whether `hostname` (as URL parses it) is this machine. */
+export function isLoopback(hostname) {
+  return hostname === "localhost" || hostname === "[::1]" || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname);
+}
+
+/** A string setting, trimmed; "" when unset or not a string. */
+const text = (value) => (typeof value === "string" ? value.trim() : "");
+
+/** The export settings `env` names, or null when export is off or misconfigured (OTEL-OFF-1, OTEL-TLS-1). */
 export function exportConfig(env, service) {
-  const endpoint = typeof env?.OTEL_EXPORTER_OTLP_ENDPOINT === "string" ? env.OTEL_EXPORTER_OTLP_ENDPOINT.trim().replace(/\/+$/, "") : "";
+  const endpoint = text(env?.OTEL_EXPORTER_OTLP_ENDPOINT).replace(/\/+$/, "");
   if (endpoint === "") return null;
   let url;
   try {
@@ -63,13 +86,19 @@ export function exportConfig(env, service) {
     return null;
   }
   if (url.protocol !== "https:" && url.protocol !== "http:") return null;
-  const ratio = Number(env.OTEL_TRACES_SAMPLER_ARG ?? "1");
-  const interval = Number(env.NORN_OTEL_INTERVAL_MS ?? "10000");
+  if (url.username !== "" || url.password !== "" || url.search !== "" || url.hash !== "") return null;
+  const headerPairs = pairs(env.OTEL_EXPORTER_OTLP_HEADERS);
+  if (headerPairs === null || headerPairs.some(([name, value]) => !FIELD_NAME.test(name) || !FIELD_VALUE.test(value))) return null;
+  if (headerPairs.length > 0 && url.protocol === "http:" && !isLoopback(url.hostname)) return null;
+  const resource = pairs(env.OTEL_RESOURCE_ATTRIBUTES) ?? [];
+  const named = text(env.OTEL_SERVICE_NAME);
+  const ratio = Number(text(env.OTEL_TRACES_SAMPLER_ARG) || "1");
+  const interval = Number(text(env.NORN_OTEL_INTERVAL_MS) || "10000");
   return {
     endpoint,
-    headers: Object.fromEntries(pairs(env.OTEL_EXPORTER_OTLP_HEADERS)),
-    service: (env.OTEL_SERVICE_NAME ?? "").trim() || service,
-    resource: pairs(env.OTEL_RESOURCE_ATTRIBUTES),
+    headers: Object.fromEntries(headerPairs),
+    service: /^[A-Za-z0-9_.-]{1,64}$/.test(named) ? named : service,
+    resource,
     sampleRatio: Number.isFinite(ratio) ? Math.min(1, Math.max(0, ratio)) : 1,
     intervalMs: Number.isFinite(interval) ? Math.min(300_000, Math.max(1000, interval)) : 10_000,
   };
@@ -78,15 +107,19 @@ export function exportConfig(env, service) {
 /**
  * The isolate's telemetry for this Worker `env`, or null when export is off.
  * One instance per env object (one per isolate in production), so every
- * Durable Object in the isolate shares one buffer and one timer.
+ * Durable Object in the isolate shares one buffer and one timer. Never throws.
  */
 export function telemetry(env, service) {
   if (env === null || typeof env !== "object") return null;
-  if (configs.has(env)) return configs.get(env);
-  const config = exportConfig(env, service);
-  const made = config === null ? null : new Telemetry(config);
-  configs.set(env, made);
-  return made;
+  try {
+    if (configs.has(env)) return configs.get(env);
+    const config = exportConfig(env, service);
+    const made = config === null ? null : new Telemetry(config);
+    configs.set(env, made);
+    return made;
+  } catch {
+    return null;
+  }
 }
 
 /** Only short strings, finite numbers and booleans survive (OTEL-NO-TENANT-1 is the caller's; this bounds the shape). */
@@ -110,9 +143,10 @@ const nanos = (ms) => `${BigInt(Math.round(ms)) * 1_000_000n}`;
 const hex = (bytes) => Array.from(crypto.getRandomValues(new Uint8Array(bytes)), (b) => b.toString(16).padStart(2, "0")).join("");
 
 export class Telemetry {
-  constructor(config, now = Date.now) {
+  constructor(config, now = Date.now, send = (url, init) => fetch(url, init)) {
     this.config = config;
     this.now = now;
+    this.send = send;
     this.instance = hex(8);
     this.started = now();
     this.windowStart = this.started;
@@ -124,6 +158,7 @@ export class Telemetry {
     this.spans = [];
     this.dropped = 0;
     this.sending = null;
+    this.waiting = null;
   }
 
   series(name, kind, unit, input, bounds) {
@@ -192,9 +227,31 @@ export class Telemetry {
     return this.now() - this.lastFlush >= this.config.intervalMs || this.spans.length >= MAX_SPANS / 2;
   }
 
-  /** Flush when due; the returned promise never rejects. Pass it to waitUntil. */
-  flushIfDue(send = fetch) {
-    return this.due() ? this.flush(send) : Promise.resolve();
+  /** Whether anything is buffered. */
+  buffered() {
+    return this.seriesCount > 0 || this.spans.length > 0 || this.dropped > 0;
+  }
+
+  /**
+   * The background work for whatever is buffered: a flush now when one is due,
+   * otherwise one bounded wait (at most MAX_WAIT_MS, never past the interval)
+   * and then a flush, so a quiet isolate still exports its first batch. The
+   * triggering event passes the promise to waitUntil; it never rejects.
+   */
+  pump() {
+    try {
+      if (this.sending !== null) return this.sending.then(() => this.pump());
+      if (this.waiting !== null || !this.buffered()) return this.waiting ?? Promise.resolve();
+      if (this.due()) return this.flush();
+      const wait = Math.max(0, Math.min(MAX_WAIT_MS, this.config.intervalMs - (this.now() - this.lastFlush)));
+      this.waiting = new Promise((resolve) => setTimeout(resolve, wait)).then(() => {
+        this.waiting = null;
+        return this.flush();
+      });
+      return this.waiting;
+    } catch {
+      return Promise.resolve();
+    }
   }
 
   resource() {
@@ -239,9 +296,14 @@ export class Telemetry {
   }
 
   /** Send everything buffered now. Never rejects (OTEL-NEVER-FAILS-1); one send at a time. */
-  flush(send = fetch) {
+  flush(send = this.send) {
     if (this.sending !== null) return this.sending;
-    const { metrics, traces } = this.drain();
+    let batch;
+    try {
+      batch = this.drain();
+    } catch {
+      return Promise.resolve();
+    }
     const post = async (path, body) => {
       if (body === null) return;
       try {
@@ -254,57 +316,128 @@ export class Telemetry {
         });
         // The body is never read beyond draining it; a refusal names only its status.
         await response.body?.cancel();
-        if (!response.ok) this.log(`OTLP export ${path} answered ${response.status}`);
+        if (!response.ok) this.log(`OTLP export ${path} answered ${Number(response.status) || 0}`);
       } catch (error) {
-        this.log(`OTLP export ${path} failed: ${error?.name ?? "error"}`);
+        this.log(`OTLP export ${path} failed: ${error?.name === "TimeoutError" ? "timeout" : "error"}`);
       }
     };
-    this.sending = Promise.all([post("/v1/metrics", metrics), post("/v1/traces", traces)]).then(() => {
+    this.sending = Promise.all([post("/v1/metrics", batch.metrics), post("/v1/traces", batch.traces)]).then(() => {
       this.sending = null;
     });
     return this.sending;
   }
 
   log(message) {
-    const now = this.now();
-    if (now - this.lastLog < LOG_EVERY_MS) return;
-    this.lastLog = now;
-    console.error(message);
+    try {
+      const now = this.now();
+      if (now - this.lastLog < LOG_EVERY_MS) return;
+      this.lastLog = now;
+      console.error(message);
+    } catch {
+      // Logging is best effort.
+    }
   }
 }
 
-// Route templates: the path a request named, with every identifier replaced by
-// `{}`, so a route is a bounded label (OTEL-NO-TENANT-1). The resource segment
-// after /v1/ and a trailing `:verb` are kept when they are plain lowercase
-// words; any other segment is an identifier.
-const WORD = /^[a-z][a-z_]{0,31}$/;
-const SUBRESOURCES = new Set(["history", "lineage", "links", "findings", "reveal", "rows", "plan", "trace", "answer", "definitions", "items"]);
+// Route templates (OTEL-NO-TENANT-1): a path is counted under the fixed
+// template it matches in an explicit table, or under `other`. Nothing from the
+// path itself is ever kept: `{type}` stands for any one non-empty segment and
+// `{id}:verb` for one ending in that verb; a final `*` for any further path.
 
-/** `/v1/objects/shop.Sale/42/history` -> `/v1/objects/{}/{}/history`; `/v1/sources/x:sync` -> `/v1/sources/{}:sync`. */
-export function routeOf(pathname) {
-  const parts = pathname.split("/").slice(1);
-  if (parts[0] !== "v1" || parts.length < 2) return "other";
-  const out = ["v1"];
-  for (let i = 1; i < parts.length && i < 6; i++) {
-    const part = parts[i];
-    const at = part.indexOf(":");
-    const name = at < 0 ? part : part.slice(0, at);
-    const verb = at < 0 ? "" : part.slice(at + 1);
-    const kept = i === 1 ? (WORD.test(name) ? name : "{}") : SUBRESOURCES.has(name) ? name : "{}";
-    out.push(verb === "" ? kept : `${kept}:${WORD.test(verb) ? verb : "{}"}`);
-  }
-  return `/${out.join("/")}`;
-}
-
-/** A refusal's code from a `norn/refusal@2` body, bounded; "other" when it has none. */
-export function refusalCode(text) {
-  try {
-    const code = JSON.parse(text)?.code;
-    return typeof code === "string" && /^[a-z][a-z0-9_.]{0,63}$/.test(code) ? code : "other";
-  } catch {
+/** A matcher over `templates`, tried in order: the first template a path matches, or "other". */
+export function routeTable(templates) {
+  const compiled = templates.map((template) => ({
+    template,
+    parts: template.split("/").slice(1).map((segment) => {
+      if (segment === "*") return { rest: true };
+      const placeholder = /^\{[a-z]+\}(?::([a-z_]+))?$/.exec(segment);
+      return placeholder === null ? { literal: segment } : { verb: placeholder[1] ?? null };
+    }),
+  }));
+  const fits = (parts, segments) => {
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i];
+      if (part.rest) return segments.length > i && segments[i] !== "";
+      const segment = segments[i];
+      if (segment === undefined) return false;
+      if (part.literal !== undefined) {
+        if (segment !== part.literal) return false;
+      } else if (part.verb === null ? segment === "" : !(segment.length > part.verb.length + 1 && segment.endsWith(`:${part.verb}`))) {
+        return false;
+      }
+    }
+    return segments.length === parts.length;
+  };
+  return (pathname) => {
+    if (typeof pathname !== "string" || !pathname.startsWith("/") || pathname.length > 2048) return "other";
+    const segments = pathname.split("/").slice(1);
+    for (const { template, parts } of compiled) if (fits(parts, segments)) return template;
     return "other";
-  }
+  };
 }
 
-/** "2xx" .. "5xx". */
-export const statusClass = (status) => `${Math.floor(status / 100)}xx`;
+/** Every route the cell host serves (crates/norn-cell-do/src/server.rs `Route::of`, and worker.mjs). Verb forms precede the plain placeholder they share a position with. */
+export const CELL_ROUTES = [
+  "/v1/access",
+  "/v1/actions",
+  "/v1/actions/{action}",
+  "/v1/cell:provision",
+  "/v1/cell/definitions:plan",
+  "/v1/cell/definitions:apply",
+  "/v1/definitions",
+  "/v1/definitions:admit",
+  "/v1/definitions:install",
+  "/v1/definitions:list",
+  "/v1/definitions/{id}:retire",
+  "/v1/definitions/{id}",
+  "/v1/objects/{type}:profile",
+  "/v1/objects/{type}:facets",
+  "/v1/objects/{type}:quarantined",
+  "/v1/objects/{type}:export",
+  "/v1/objects/{type}",
+  "/v1/objects/{type}/{id}",
+  "/v1/objects/{type}/{id}/links",
+  "/v1/objects/{type}/{id}/lineage",
+  "/v1/objects/{type}/{id}/findings",
+  "/v1/objects/{type}/{id}/history",
+  "/v1/objects/{type}/{id}/reveal",
+  "/v1/guard:prompt",
+  "/v1/guard/{id}:restore",
+  "/v1/questions:evaluate",
+  "/v1/questions:trace",
+  "/v1/questions:metrics",
+  "/v1/questions:catalog",
+  "/v1/questions/{question}/answer",
+  "/v1/questions/{question}/trace",
+  "/v1/sources/{source}:sync",
+  "/v1/uploads:begin",
+  "/v1/uploads:read",
+  "/v1/uploads/{upload}:complete",
+  "/v1/uploads/{upload}:load",
+  "/v1/uploads/{upload}:define",
+  "/v1/observations:load",
+  "/v1/datasets:load",
+  "/v1/mcp",
+  "/v1/runs",
+  "/v1/runs/{run}",
+  "/v1/decisions",
+  "/v1/decisions/{decision}:decide",
+  "/v1/transforms:compile",
+  "/v1/transforms/{transform}:refresh",
+  "/v1/transforms/{transform}/rows",
+  "/v1/transforms/{transform}/rows/{row}/lineage",
+  "/v1/transforms/{transform}/plan",
+  "/v1/inbox",
+  "/v1/subscribe",
+];
+
+/** `/v1/objects/shop.Sale/42/history` -> `/v1/objects/{type}/{id}/history`; an unknown path -> `other`. */
+export const cellRoute = routeTable(CELL_ROUTES);
+
+const METHODS = new Set(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]);
+
+/** The request method when it is a standard one, else "other". */
+export const methodOf = (method) => (METHODS.has(method) ? method : "other");
+
+/** "1xx" .. "5xx"; "other" for anything outside 100..599. */
+export const statusClass = (status) => (Number.isInteger(status) && status >= 100 && status <= 599 ? `${Math.floor(status / 100)}xx` : "other");
