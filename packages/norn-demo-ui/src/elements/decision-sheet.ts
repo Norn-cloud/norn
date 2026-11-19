@@ -537,6 +537,8 @@ export interface NornDecisionSheet extends HTMLElement {
    * with nothing changed, when the option is unknown, disabled, or the current state takes no choice.
    */
   choose(optionId: string): boolean
+  /** Repaint the countdown at the cell's clock `ms`; there once the sheet has mounted. */
+  readonly setNow?: (ms: number) => void
 }
 
 /**
