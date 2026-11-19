@@ -8,9 +8,12 @@ import { conceptTitle } from "../lib/catalog.ts"
 import { listActions, type ActionSummary, type CatalogRead, type Draft } from "../lib/actions.ts"
 import { ActionForm } from "./action-form.tsx"
 
-/** The actions the cell offers this reader for one object type (the server filters; Studio shows what it gets). */
-export function useActions(objectKind: string) {
-  return useQuery<CatalogRead>({ queryKey: ["actions", objectKind], queryFn: () => listActions(objectKind), retry: false, staleTime: 60_000 })
+/**
+ * The actions the cell offers this reader for one object type, or for one record in its current
+ * state (the server filters; Studio shows what it gets).
+ */
+export function useActions(objectKind: string, objectId?: string) {
+  return useQuery<CatalogRead>({ queryKey: ["actions", objectKind, objectId ?? null], queryFn: () => listActions(objectKind, undefined, objectId), retry: false, staleTime: objectId === undefined ? 60_000 : 0 })
 }
 
 /**
@@ -50,7 +53,11 @@ export function ActionSheet({ open, onClose, onView }: { readonly open: OpenActi
     return () => window.removeEventListener("beforeunload", warn)
   }, [dirty])
   const close = () => {
-    if (open !== null) void client.invalidateQueries({ queryKey: ["records", open.action.objectKind] })
+    if (open !== null) {
+      void client.invalidateQueries({ queryKey: ["records", open.action.objectKind] })
+      // A record's offered actions follow its state.
+      void client.invalidateQueries({ queryKey: ["actions", open.action.objectKind] })
+    }
     onClose()
   }
   const request = () => (dirty ? setAsking(true) : close())

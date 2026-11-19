@@ -1768,6 +1768,13 @@ export interface components {
         NornActionInput: {
             [key: string]: unknown;
         };
+        /** @description One input field that names a record of `objectKind`. */
+        NornActionInputLink: {
+            /** @description The top-level input field holding the record's id. */
+            field: string;
+            /** @description The object type it names. */
+            objectKind: string;
+        };
         /**
          * @description Qualified name of an object type: dotted lower-case namespace segments and
          *     a PascalCase type name (`retail.Sku`, `hr.Employee`), the form v1
@@ -1783,6 +1790,12 @@ export interface components {
             description?: string | null;
             /** @description How its effect changes that object. */
             effect: components["schemas"]["NornActionEffect"];
+            /**
+             * @description Input fields that name an existing record (a link the action creates
+             *     to it), so a form offers a picker of that type's records
+             *     (ACTION-CATALOG-LINKS-1). Omitted when none.
+             */
+            inputLinks?: components["schemas"]["NornActionInputLink"][];
             /** @description The input a caller supplies: the admitted input schema, in the action's closed input dialect, without the fields the server derives from the verified actor (ACTION-ACTOR-1), which a caller never supplies. */
             inputSchema: {
                 [key: string]: unknown;
@@ -1793,6 +1806,11 @@ export interface components {
             objectKind: string;
             /** @description Its title, or its identity when it declares none. */
             title: string;
+            /**
+             * @description For a `fire_transition` action: the lifecycle state its transition
+             *     leaves the object in, so a receipt can say what the record is now.
+             */
+            toState?: string | null;
             /** @description The effects a caller must handle. */
             uiEffects: components["schemas"]["NornActionUiEffects"];
         };
@@ -13052,6 +13070,11 @@ export interface operations {
                 environmentId: string;
                 /** @description Only actions whose effect targets this object type. */
                 objectKind?: string;
+                /**
+                 * @description With `objectKind`: only actions that can act on this object in its
+                 *     current lifecycle state (ACTION-CATALOG-STATE-1).
+                 */
+                objectId?: string;
             };
             header?: never;
             path?: never;

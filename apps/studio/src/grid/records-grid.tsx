@@ -136,8 +136,9 @@ export function RecordsGrid({ concept, read = readRecords, initial, onQuery }: {
   const rows = useMemo<readonly GridRow[]>(() => page === undefined ? [] : page.read.document.records.map((record, index) => ({ record, at: `/records/${index}`, numbers: page.read.numbers })), [page])
   const columns = fields.filter(({ id }) => shown.has(id))
   // Columns never squeeze below a readable width; past the card's width the grid scrolls sideways.
-  const template = `minmax(14rem,1.4fr) ${columns.map((field) => alignRight(field) ? "minmax(8rem,1fr)" : "minmax(9.5rem,1fr)").join(" ")}`
-  const width = `calc(14rem + ${columns.map((field) => alignRight(field) ? "8rem" : "9.5rem").join(" + ")})`
+  // Wide enough for a money amount with its currency ("7,800.00 USD") and a lifecycle state.
+  const template = `minmax(14rem,1.4fr) ${columns.map((field) => alignRight(field) ? "minmax(10.5rem,1fr)" : "minmax(11rem,1fr)").join(" ")}`
+  const width = `calc(14rem + ${columns.map((field) => alignRight(field) ? "10.5rem" : "11rem").join(" + ")})`
 
   const scroller = useRef<HTMLDivElement>(null)
   const [edges, setEdges] = useState({ right: false })

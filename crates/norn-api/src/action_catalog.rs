@@ -147,6 +147,25 @@ pub struct NornActionSummary {
     pub input_schema: serde_json::Value,
     /// The effects a caller must handle.
     pub ui_effects: NornActionUiEffects,
+    /// Input fields that name an existing record (a link the action creates
+    /// to it), so a form offers a picker of that type's records
+    /// (ACTION-CATALOG-LINKS-1). Omitted when none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub input_links: Vec<NornActionInputLink>,
+    /// For a `fire_transition` action: the lifecycle state its transition
+    /// leaves the object in, so a receipt can say what the record is now.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to_state: Option<String>,
+}
+
+/// One input field that names a record of `objectKind`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NornActionInputLink {
+    /// The top-level input field holding the record's id.
+    pub field: String,
+    /// The object type it names.
+    pub object_kind: String,
 }
 
 /// `GET /v1/actions`: the callable actions, by action identity.
@@ -236,6 +255,15 @@ fn summary(action: &ActionRoot) -> Result<Option<NornActionSummary>, Refusal> {
         effect,
         object_id_field: object_id_field.clone(),
         input_schema: caller_input_schema(action)?,
+        input_links: action
+            .create_links
+            .iter()
+            .map(|link| NornActionInputLink {
+                field: link.target_id_field.clone(),
+                object_kind: link.target_type.clone(),
+            })
+            .collect(),
+        to_state: None,
         ui_effects: NornActionUiEffects {
             irreversible: effects.contains(&ActionUiEffect::Irreversible),
             destructive: effects.contains(&ActionUiEffect::Destructive),
@@ -281,7 +309,9 @@ pub fn list_actions_on<E: SqlEngine>(
 ) -> Result<NornActionCatalog, Refusal> {
     let states = match (&query.object_id, &query.object_kind, access) {
         (None, _, _) => None,
-        (Some(id), Some(kind), Some(access)) => Some(current_states(host, query, actor, kind, id, access)?),
+        (Some(id), Some(kind), Some(access)) => {
+            Some(current_states(host, query, actor, kind, id, access)?)
+        }
         (Some(_), _, _) => {
             return Err(Refusal::invalid(
                 "objectId narrows the catalog of one objectKind on a host that serves object reads",
@@ -321,11 +351,41 @@ pub fn list_actions_on<E: SqlEngine>(
         })
         .collect::<Vec<_>>();
     items.sort_by(|a, b| a.action_id.cmp(&b.action_id));
+    let targets = transition_targets(host)?;
+    for item in &mut items {
+        item.to_state = callable
+            .actions
+            .iter()
+            .find(|(_, action)| action.action_id == item.action_id)
+            .and_then(|(_, action)| match &action.effect_program {
+                Some(ActionEffectProgram::FireTransition {
+                    object_kind,
+                    lifecycle,
+                    transition,
+                    ..
+                }) => targets
+                    .get(&(
+                        object_kind.clone(),
+                        lifecycle.as_str().to_owned(),
+                        transition.as_str().to_owned(),
+                    ))
+                    .cloned(),
+                _ => None,
+            });
+    }
     Ok(NornActionCatalog {
         definitions_version: callable.version,
         items,
     })
 }
+
+/// One lifecycle of an object: its property, its declared transitions and
+/// the object's current state, if it has one.
+type LifecycleState = (
+    String,
+    Vec<norn_ir::entity_v2::lifecycle::Transition>,
+    Option<String>,
+);
 
 /// The object's current value of each lifecycle property of its type, read
 /// with the reader's authority, by lifecycle property.
@@ -336,7 +396,7 @@ fn current_states<E: SqlEngine>(
     kind: &str,
     id: &str,
     access: &dyn crate::object_routes::ObjectAccess,
-) -> Result<Vec<(String, Vec<norn_ir::entity_v2::lifecycle::Transition>, Option<String>)>, Refusal> {
+) -> Result<Vec<LifecycleState>, Refusal> {
     let record = crate::object_routes::get_object(
         host,
         &crate::scope::ScopeQuery {
@@ -373,7 +433,7 @@ fn current_states<E: SqlEngine>(
 /// and the call decides.
 fn fires_from(
     action: &ActionRoot,
-    states: &[(String, Vec<norn_ir::entity_v2::lifecycle::Transition>, Option<String>)],
+    states: &[LifecycleState],
 ) -> bool {
     let Some(ActionEffectProgram::FireTransition {
         lifecycle,
@@ -397,4 +457,31 @@ fn fires_from(
                 .as_ref()
                 .is_some_and(|state| declared.from.iter().any(|from| from == state))
         })
+}
+
+/// Every declared transition's target state, by (object type, lifecycle
+/// property, transition id).
+fn transition_targets<E: SqlEngine>(
+    host: &DevHost<E>,
+) -> Result<std::collections::BTreeMap<(String, String, String), String>, Refusal> {
+    let cell = host.cell()?;
+    let reader = cell.store().read();
+    Ok(reader
+        .model()
+        .object_types()
+        .flat_map(|object_type| {
+            object_type.lifecycles.iter().flat_map(move |lifecycle| {
+                lifecycle.transitions.iter().map(move |transition| {
+                    (
+                        (
+                            object_type.name.as_str().to_owned(),
+                            lifecycle.property.as_str().to_owned(),
+                            transition.id.as_str().to_owned(),
+                        ),
+                        transition.to.clone(),
+                    )
+                })
+            })
+        })
+        .collect())
 }

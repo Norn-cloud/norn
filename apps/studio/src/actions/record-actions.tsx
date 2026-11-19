@@ -8,7 +8,8 @@ import { ActionSheet, useActions, type OpenAction } from "./action-sheet.tsx"
  * would break, a precondition) shows on the form with the cell's own words.
  */
 export function RecordActions({ objectType, id, onDone }: { readonly objectType: string; readonly id: string; readonly onDone: () => void }) {
-  const catalog = useActions(objectType)
+  // The cell lists what can act on this record now: a transition its state can't take is not offered.
+  const catalog = useActions(objectType, id)
   const [acting, setActing] = useState<OpenAction | null>(null)
   if (catalog.data?.kind !== "catalog" || catalog.data.items.length === 0) return null
   return (
