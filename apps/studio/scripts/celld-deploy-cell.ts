@@ -46,6 +46,23 @@ export function assertDeployableBuild(stage: string, fixturesEnabled: boolean): 
   }
 }
 
+/**
+ * The files a cell bundle must hold: worker.mjs, every module it imports by a relative path (read from
+ * worker.mjs itself, so a new module can never be left out of a deploy), and the Wasm.
+ */
+export function bundleFiles(worker: string): string[] {
+  const imported = [...worker.matchAll(/^import\b[^;]*?\bfrom\s+"\.\/([^"]+)"/gm)].map((match) => match[1] as string)
+  return [...new Set(["worker.mjs", ...imported, "pkg/norn_cell_do_bg.wasm"])]
+}
+
+/** Refuse a bundle missing any file the Worker needs to start. */
+export function assertBundleComplete(bundle: string): void {
+  const worker = join(bundle, "worker.mjs")
+  if (!existsSync(worker)) throw new Error("--bundle must hold worker.mjs (apps/norn-cell-do/README.md)")
+  const missing = bundleFiles(readFileSync(worker, "utf8")).filter((file) => !existsSync(join(bundle, file)))
+  if (missing.length > 0) throw new Error(`--bundle is missing ${missing.join(", ")} (apps/norn-cell-do/README.md)`)
+}
+
 /** Whether the bundle's Wasm was built with the `fixtures` feature, as the build itself reports it. */
 export async function bundleFixturesEnabled(bundle: string): Promise<boolean> {
   const pkg = (await import(pathToFileURL(resolve(bundle, "pkg", "norn_cell_do.js")).href)) as {
@@ -137,9 +154,8 @@ async function main(argv: readonly string[]) {
   }
   const stage = cellStage(value("--stage"), process.env.CELLD_BUCKET)
   const bundle = value("--bundle")
-  if (bundle === undefined || !existsSync(join(bundle, "worker.mjs")) || !existsSync(join(bundle, "subscribe.mjs")) || !existsSync(join(bundle, "pkg", "norn_cell_do_bg.wasm"))) {
-    throw new Error("--bundle must hold worker.mjs, subscribe.mjs and pkg/norn_cell_do_bg.wasm (apps/norn-cell-do/README.md)")
-  }
+  if (bundle === undefined) throw new Error("--bundle is required (apps/norn-cell-do/README.md)")
+  assertBundleComplete(bundle)
   assertDeployableBuild(stage.stage, await bundleFixturesEnabled(bundle))
   const config = join(bundle, "wrangler.json")
   writeSecretConfig(config, {

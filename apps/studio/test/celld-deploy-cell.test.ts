@@ -1,5 +1,8 @@
 import { expect, test } from "bun:test"
-import { assertDeployableBuild, cellStage, probeServesNewBuild, studioPointer } from "../scripts/celld-deploy-cell.ts"
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join, resolve } from "node:path"
+import { assertBundleComplete, assertDeployableBuild, bundleFiles, cellStage, probeServesNewBuild, studioPointer } from "../scripts/celld-deploy-cell.ts"
 
 test("a cell deploy targets one named stage with its own bucket", () => {
   expect(cellStage("next", "s3://norn-next-celld")).toEqual({
@@ -43,5 +46,24 @@ test("a fixtures build is never deployed, whatever the stage", () => {
   for (const stage of ["next", "demo", "alpha", "smoke", "test"]) {
     expect(() => assertDeployableBuild(stage, true)).toThrow("fixtures build")
     expect(() => assertDeployableBuild(stage, false)).not.toThrow()
+  }
+})
+
+// #1464 S10: the deploy ships every module the shipped Worker imports; a bundle without wake.mjs never starts.
+test("a cell bundle must hold every module the Worker imports", () => {
+  const worker = readFileSync(resolve(import.meta.dir, "../../norn-cell-do/worker.mjs"), "utf8")
+  expect(bundleFiles(worker)).toEqual(expect.arrayContaining(["worker.mjs", "subscribe.mjs", "wake.mjs", "pkg/norn_cell_do_bg.wasm"]))
+  const bundle = mkdtempSync(join(tmpdir(), "norn-cell-bundle-"))
+  try {
+    writeFileSync(join(bundle, "worker.mjs"), worker)
+    writeFileSync(join(bundle, "subscribe.mjs"), "")
+    mkdirSync(join(bundle, "pkg"))
+    writeFileSync(join(bundle, "pkg", "norn_cell_do_bg.wasm"), "")
+    writeFileSync(join(bundle, "pkg", "norn_cell_do.js"), "")
+    expect(() => assertBundleComplete(bundle)).toThrow("wake.mjs")
+    writeFileSync(join(bundle, "wake.mjs"), "")
+    expect(() => assertBundleComplete(bundle)).not.toThrow()
+  } finally {
+    rmSync(bundle, { recursive: true, force: true })
   }
 })

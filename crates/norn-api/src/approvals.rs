@@ -54,6 +54,9 @@ pub(crate) const WOULD_COMMIT: &str = "approval.would_commit";
 /// The step id a parked call's decision carries.
 pub const APPROVAL_STEP: &str = "approval";
 
+/// The command id prefix of every parked call ([`command_id`]).
+pub(crate) const COMMAND_PREFIX: &str = "norn.approval/";
+
 /// The option that approves a parked call.
 pub const APPROVE: &str = "approve";
 
@@ -228,23 +231,42 @@ fn request(gate: &Gate) -> Value {
 /// once, and an approval approves exactly the call it was asked about under
 /// the action it was asked about (APPROVAL-REVISION-1).
 fn command_id(gate: &Gate, parked_call: &ParkedCall) -> Result<String, Refusal> {
+    call_command_id(
+        gate,
+        &parked_call.action,
+        &parked_call.action_digest,
+        &parked_call.idempotency_key,
+        &parked_call.requester.subject,
+        &parked_call.input,
+    )
+}
+
+/// [`command_id`] from the call's parts: what an approval replay compares.
+pub(crate) fn call_command_id(
+    gate: &Gate,
+    action: &str,
+    action_digest: &str,
+    idempotency_key: &str,
+    requester: &str,
+    input: &RuntimeObject,
+) -> Result<String, Refusal> {
     let digest = norn_ir::canonical::domain_hash_hex(
         b"norn.approval.call/2\0",
         &(
-            &parked_call.action,
-            &parked_call.action_digest,
+            action,
+            action_digest,
             // The gate revision the decider roles come from: a changed gate
             // asks anew.
             &gate.definition,
             gate.revision,
-            &parked_call.idempotency_key,
-            &parked_call.requester.subject,
-            &parked_call.input,
+            idempotency_key,
+            requester,
+            input,
         ),
     )
     .map_err(Refusal::host)?;
     Ok(format!(
-        "norn.approval/{}",
+        "{COMMAND_PREFIX}{}",
         digest.get(..32).unwrap_or(&digest)
     ))
 }

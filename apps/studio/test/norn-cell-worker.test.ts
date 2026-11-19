@@ -20,6 +20,7 @@ beforeAll(async () => {
   const source = resolve(import.meta.dir, "../../norn-cell-do")
   copyFileSync(join(source, "worker.mjs"), join(dir, "worker.mjs"))
   copyFileSync(join(source, "subscribe.mjs"), join(dir, "subscribe.mjs"))
+  copyFileSync(join(source, "wake.mjs"), join(dir, "wake.mjs"))
   mkdirSync(join(dir, "pkg"))
   writeFileSync(join(dir, "pkg", "norn_cell_do_bg.wasm"), "")
   writeFileSync(
@@ -31,6 +32,8 @@ export class NornCell {
   constructor(_storage, org, env) { stub.opened.push({ org, env }); }
   configureConnect() {}
   enableAnalytics() {}
+  // A vacant scope: no alarms to arm, no scope to keep.
+  serving() { return false; }
 }
 `,
   )

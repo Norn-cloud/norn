@@ -227,13 +227,18 @@ pub(crate) struct ActionCall<'a> {
     pub(crate) now: LogicalTime,
 }
 
-/// APPROVAL-REVISION-1: what an approval was given for: the action's
-/// effective definition digest and the gate (its definition and revision)
-/// the call parked behind.
-pub(crate) struct Approved<'a> {
-    pub(crate) action_digest: &'a str,
-    pub(crate) gate_definition: &'a str,
-    pub(crate) gate_revision: u64,
+/// APPROVAL-REVISION-1: what an approval was given for.
+pub(crate) enum Approved<'a> {
+    /// A call approved now: the action's effective definition digest and the
+    /// gate (its definition and revision) the call parked behind.
+    Held {
+        action_digest: &'a str,
+        gate_definition: &'a str,
+        gate_revision: u64,
+    },
+    /// A replayed approval: the call must park, under the active gate and
+    /// the action as defined now, as exactly the approved command.
+    Parked(&'a str),
 }
 
 /// [`call_action`], for an approved call when `approved` is given: inside
@@ -413,13 +418,33 @@ fn through_gate<E: SqlEngine>(
     let gate = crate::approvals::gate(cell, action_id)?;
     // APPROVAL-REVISION-1: an approved call is fenced here, under the epoch
     // and the cell the dispatch holds, before anything parks or writes.
-    if let Some(approved) = approved {
-        let same_gate = gate.as_ref().is_some_and(|gate| {
-            gate.definition == approved.gate_definition && gate.revision == approved.gate_revision
-        });
-        if !same_gate || action_digest != approved.action_digest {
-            return Err(crate::approvals::definition_changed());
+    let covered = match approved {
+        None => true,
+        Some(Approved::Held {
+            action_digest: approved_digest,
+            gate_definition,
+            gate_revision,
+        }) => {
+            gate.as_ref().is_some_and(|gate| {
+                gate.definition == *gate_definition && gate.revision == *gate_revision
+            }) && action_digest == *approved_digest
         }
+        Some(Approved::Parked(command)) => match &gate {
+            None => false,
+            Some(gate) => {
+                crate::approvals::call_command_id(
+                    gate,
+                    action_id,
+                    &action_digest,
+                    &kernel_call.idempotency_key,
+                    &kernel_call.actor,
+                    &kernel_call.input,
+                )? == *command
+            }
+        },
+    };
+    if !covered {
+        return Err(crate::approvals::definition_changed());
     }
     let Some(gate) = gate else {
         return Ok(Gated::Commit);

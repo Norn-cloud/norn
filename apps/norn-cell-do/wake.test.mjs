@@ -147,6 +147,36 @@ describe("an alarm", () => {
     await wake.alarm(cell(), NOW);
     expect(store.alarm).toBe(NOW + RECOVERY_MS);
   });
+
+  // Round 2 S1: an alarm during an in-flight write must not trade the
+  // recovery wake for a later deadline. The write commits a sooner deadline,
+  // then the isolate dies before its rearm: only the recovery wake remains.
+  test("a later deadline never replaces the recovery wake while a request writes", async () => {
+    const store = storage();
+    const wake = new Wake(store);
+    const served = cell({ deadlines: [NOW + 3_600_000] });
+    await wake.beforeWrite(served, NOW);
+    await wake.alarm(served, NOW);
+    expect(store.alarm).toBe(NOW + RECOVERY_MS);
+    // The write commits a deadline 5 s out and crashes before afterWrite.
+    served.deadlines.push(NOW + 5_000);
+    // A fresh object (new isolate) sees only the stored alarm.
+    expect(store.alarm).toBeLessThanOrEqual(NOW + RECOVERY_MS);
+  });
+
+  test("a sooner deadline still wins while a request writes", async () => {
+    const store = storage();
+    const wake = new Wake(store);
+    const served = cell({ deadlines: [NOW + 5_000] });
+    await wake.beforeWrite(served, NOW);
+    await wake.alarm(served, NOW);
+    expect(store.alarm).toBe(NOW + 5_000);
+    // Once the write's rearm runs, the alarm follows the cell exactly again.
+    served.deadlines = [NOW + 3_600_000];
+    await wake.afterWrite(served, NOW);
+    await wake.alarm(served, NOW);
+    expect(store.alarm).toBe(NOW + 3_600_000);
+  });
 });
 
 describe("opening", () => {

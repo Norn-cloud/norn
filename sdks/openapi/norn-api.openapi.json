@@ -5309,7 +5309,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/DecidedCall",
-                "description": "For an approved action call (APPROVAL-1), what committing it as its\nrequester answered; absent otherwise and on a replay."
+                "description": "For an approved action call (APPROVAL-1), what committing it as its\nrequester answered; on a replay, present only while a run's step still\nwaits on the call, as what dispatching it again through the\napproval's fence answered."
               },
               {
                 "type": "null"

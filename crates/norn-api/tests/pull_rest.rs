@@ -1215,3 +1215,37 @@ fn an_evicted_host_keeps_the_recorded_sync_schedule() {
         Some("upload.items")
     );
 }
+
+/// TIMER-ALARM-1 (round 2 S8): a cell from before connection records were
+/// recorded has no `source.Connection` type. That is no recorded schedule,
+/// not a restore error: the host opens, and its scheduled connection is due
+/// as one never synced.
+#[test]
+fn a_cell_without_connection_records_restores_no_schedule() {
+    let catalog: Vec<ArtifactEnvelope> = serde_json::from_str(
+        &std::fs::read_to_string(
+            root().join("fixtures/demo/explorer/three-systems.definitions.json"),
+        )
+        .expect("retained catalog"),
+    )
+    .expect("artifacts");
+    let host = host_with(&catalog);
+    assert!(
+        !host
+            .object_type_names()
+            .expect("names")
+            .iter()
+            .any(|name| name == "source.Connection"),
+        "the older cell has no connection records"
+    );
+    let config = serde_json::json!([{ "id": "erpnext.rest", "system": "erpnext", "label": "items",
+        "connector": "c", "mapping": "m", "instance": "i",
+        "baseUrl": "https://erp.example.test", "everyMinutes": 15 }])
+    .to_string();
+    let mut sources = Sources::new(&config, BTreeMap::new()).expect("configured");
+    sources
+        .restore_schedule(&host)
+        .expect("no recorded schedule is not an error");
+    let now = 1_794_484_800_000;
+    assert_eq!(sources.next_due(now), Some(now));
+}

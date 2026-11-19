@@ -506,6 +506,58 @@ fn a_stale_approval_never_drives_its_flow_step() {
     assert_eq!(melt_status(&cell), 404);
 }
 
+/// APPROVAL-REVISION-1 (round 2 S6): a replayed approval is fenced like the
+/// first dispatch. The gate is retired after the step's call parked; the
+/// approval's first dispatch is refused stale, and its identical replay is
+/// refused the same way: the waiting step is never driven, so the action
+/// never executes ungated.
+#[test]
+fn a_replayed_approval_never_drives_a_step_past_a_retired_gate() {
+    let cell = cell();
+    gate(&cell, None);
+    let approval = start_gated_run(&cell, "melt-run-retired");
+    let (status, retired) = call(
+        &cell,
+        "POST",
+        &format!("/v1/definitions/{APPROVAL_ID}:retire"),
+        OPERATOR,
+        &json!({ "expectedVersion": 1 }).to_string(),
+    );
+    assert_eq!(status, 200, "{retired}");
+    let stale = json!({ "committed": false, "code": "approval.definition_changed" });
+    let (status, decided) = decide(&cell, APPROVER, &approval, "approve");
+    assert_eq!(status, 200, "{decided}");
+    assert_eq!(decided["call"], stale, "{decided}");
+    // The same key and body: a replay.
+    let (status, replayed) = decide(&cell, APPROVER, &approval, "approve");
+    assert_eq!(status, 200, "{replayed}");
+    assert_eq!(replayed["outcome"], json!("replayed"), "{replayed}");
+    assert_eq!(replayed["call"], stale, "{replayed}");
+    assert_eq!(
+        replayed["run"]["state"],
+        json!("awaiting_perform_convert"),
+        "{replayed}"
+    );
+    assert_eq!(melt_status(&cell), 404, "the action never ran ungated");
+}
+
+/// A replay of an approval whose call already committed drives nothing new
+/// and answers the committed call again.
+#[test]
+fn a_replayed_approval_of_a_committed_step_replays() {
+    let cell = cell();
+    gate(&cell, None);
+    let approval = start_gated_run(&cell, "melt-run-replay");
+    let (status, decided) = decide(&cell, APPROVER, &approval, "approve");
+    assert_eq!(status, 200, "{decided}");
+    assert_eq!(decided["run"]["state"], json!("completed"), "{decided}");
+    let (status, replayed) = decide(&cell, APPROVER, &approval, "approve");
+    assert_eq!(status, 200, "{replayed}");
+    assert_eq!(replayed["outcome"], json!("replayed"), "{replayed}");
+    assert_eq!(replayed["run"]["state"], json!("completed"), "{replayed}");
+    assert_eq!(melt_status(&cell), 200);
+}
+
 /// APPROVAL-REVISION-1, the race: a revision installed after the approval is
 /// recorded and before its call is dispatched (natively, between the two)
 /// is caught by the dispatch's own fence, inside its definitions epoch and

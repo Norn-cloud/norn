@@ -11,7 +11,8 @@
 //   deadline when that is sooner. A scheduling error propagates.
 // - An alarm first sets a recovery wake, then runs the due work, then sets
 //   the alarm exactly to the next deadline before any external I/O (a sync's
-//   fetches). A failure anywhere leaves the recovery wake, and the error
+//   fetches); while any request is still writing, to the earlier of that
+//   deadline and the recovery wake, until that request's own rearm runs. A failure anywhere leaves the recovery wake, and the error
 //   propagates so the runtime retries too.
 // - Opening a serving cell arms for whatever is already due (cells from
 //   before alarms existed, a lost alarm).
@@ -75,12 +76,19 @@ export class Wake {
     const sync = cell.syncDue(now) ?? null;
     // The next deadline, read after the claim (a claimed sync's lease counts).
     const next = cell.nextDue(now);
-    if (next !== undefined && next !== null) {
+    const recovery = now + RECOVERY_MS;
+    if (this.writing > 0) {
+      // A request still writing keeps the recovery wake until its own rearm
+      // runs: a deadline it commits may not be visible yet, and a crash after
+      // that commit leaves only this alarm. A sooner deadline still wins.
+      if (next !== undefined && next !== null && Math.max(next, now) < recovery) {
+        await this.storage.setAlarm(Math.max(next, now));
+      }
+    } else if (next !== undefined && next !== null) {
       await this.storage.setAlarm(Math.max(next, now));
-    } else if (this.writing === 0) {
+    } else {
       await this.storage.deleteAlarm();
     }
-    // A request still writing keeps the recovery wake: its deadline may not be visible yet.
     return { committed, failed: failed ?? null, sync };
   }
 }

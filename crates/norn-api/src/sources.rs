@@ -428,9 +428,26 @@ impl Sources {
     /// The cell could not be read: nothing is restored, and the host claims
     /// nothing on the schedule until it can be.
     pub fn restore_schedule<E: SqlEngine>(&mut self, host: &DevHost<E>) -> Result<(), String> {
+        let pending = |state: Option<&ConnectionState>| !state.is_some_and(|s| s.restored);
+        if !self
+            .connections
+            .iter()
+            .any(|c| c.every_minutes > 0 && pending(self.state.get(&c.id)))
+        {
+            return Ok(());
+        }
+        // A cell from before connection records has no such type: no
+        // recorded schedule, not a restore error.
+        let recorded = host
+            .object_type_names()
+            .map_err(|refusal| format!("{}: {}", refusal.code, refusal.message))?
+            .iter()
+            .any(|name| name == CONNECTION_TYPE);
         for connection in &self.connections {
             let state = self.state.entry(connection.id.clone()).or_default();
-            if state.restored {
+            // Only a scheduled connection has a schedule to restore.
+            if state.restored || connection.every_minutes == 0 || !recorded {
+                state.restored = true;
                 continue;
             }
             let ended = host
