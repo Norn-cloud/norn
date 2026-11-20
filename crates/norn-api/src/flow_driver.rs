@@ -11,7 +11,7 @@
 //!
 //! APPROVAL-RECOVERY-1: an action step whose approved call already has an
 //! outcome (it committed, or its refusal is recorded) takes that outcome
-//! without the action being called again ([`recorded_steps`]), and a result
+//! without the action being called again, and a result
 //! recorded but not yet consumed stays due until the run consumes it. The
 //! host's wake delivers both; it never calls an action.
 
@@ -279,8 +279,7 @@ pub(crate) fn recorded_steps<E: SqlEngine>(
             continue;
         };
         let key = step_call_key(text("idempotencyKey").unwrap_or(step), attempt)?;
-        let Some((decision_id, approved_at_ms, outcome)) =
-            approved_outcome(cell, run_id, &key)?
+        let Some((decision_id, approved_at_ms, outcome)) = approved_outcome(cell, run_id, &key)?
         else {
             continue;
         };
@@ -331,12 +330,12 @@ fn approved_outcome<E: SqlEngine>(
         }
         let outcome = match state {
             CallState::NotExecuted => None,
-            CallState::Refused(_, code)
+            CallState::Refused(code)
                 if code == crate::approvals::approval_codes::DEFINITION_CHANGED =>
             {
                 None
             }
-            CallState::Refused(_, code) => Some(failure("Refused", Some(&code))),
+            CallState::Refused(code) => Some(failure("Refused", Some(&code))),
             CallState::Committed(record) => {
                 let (object_type, object_id, version) =
                     crate::actions::recorded_target(cell.store(), &record, key)?;
@@ -433,8 +432,7 @@ pub fn drive_run<E: SqlEngine>(
             // APPROVAL-RECOVERY-1: an approved call with its outcome is never
             // called again; the step takes the outcome.
             let key = step_call_key(&step.idempotency_key, &step.attempt)?;
-            let recorded =
-                approved_outcome(&cell, run_id, &key)?.and_then(|(.., outcome)| outcome);
+            let recorded = approved_outcome(&cell, run_id, &key)?.and_then(|(.., outcome)| outcome);
             (step, starter, recorded)
         };
         let parsed = norn_cell::flow_run::parse_action_step(&step.input);

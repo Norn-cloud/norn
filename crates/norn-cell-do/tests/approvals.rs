@@ -159,7 +159,11 @@ fn an_approved_call_commits_for_its_requester() {
 
     let (status, decided) = decide(&cell, APPROVER, &id, "approve");
     assert_eq!(status, 200, "{decided}");
-    assert_eq!(decided["call"], json!({ "committed": true }), "{decided}");
+    assert_eq!(
+        decided["call"],
+        json!({ "committed": true, "state": "committed" }),
+        "{decided}"
+    );
     assert_eq!(melt_status(&cell), 200);
     assert_eq!(pending(&cell, APPROVER)["total"], json!(0));
 
@@ -203,7 +207,7 @@ fn an_approval_keeps_the_callers_definitions_pin() {
     assert_eq!(status, 200, "{decided}");
     assert_eq!(
         decided["call"],
-        json!({ "committed": false, "code": "defs.stale" }),
+        json!({ "committed": false, "code": "defs.stale", "state": "refused" }),
         "{decided}"
     );
     assert_eq!(melt_status(&cell), 404, "nothing committed");
@@ -231,7 +235,11 @@ fn an_approval_keeps_the_callers_definitions_pin() {
     // The fresh decision approved, the retry commits.
     let (status, decided) = decide(&cell, APPROVER, &fresh, "approve");
     assert_eq!(status, 200, "{decided}");
-    assert_eq!(decided["call"], json!({ "committed": true }), "{decided}");
+    assert_eq!(
+        decided["call"],
+        json!({ "committed": true, "state": "committed" }),
+        "{decided}"
+    );
     assert_eq!(melt_status(&cell), 200);
 
     // Unchanged between parking and approval, the pinned call commits.
@@ -243,7 +251,11 @@ fn an_approval_keeps_the_callers_definitions_pin() {
     let id = parked["decision"]["id"].as_str().unwrap().to_owned();
     let (status, decided) = decide(&cell, APPROVER, &id, "approve");
     assert_eq!(status, 200, "{decided}");
-    assert_eq!(decided["call"], json!({ "committed": true }), "{decided}");
+    assert_eq!(
+        decided["call"],
+        json!({ "committed": true, "state": "committed" }),
+        "{decided}"
+    );
     assert_eq!(melt_status(&cell), 200);
 }
 
@@ -436,7 +448,7 @@ fn an_approval_never_executes_a_changed_action() {
     assert_eq!(status, 200, "{decided}");
     assert_eq!(
         decided["call"],
-        json!({ "committed": false, "code": "approval.definition_changed" }),
+        json!({ "committed": false, "code": "approval.definition_changed", "state": "refused" }),
         "{decided}"
     );
     assert_eq!(melt_status(&cell), 404, "nothing ran under the new action");
@@ -460,7 +472,11 @@ fn an_approval_survives_a_revision_that_keeps_the_action() {
     revise(&cell, step_cell::DERIVES_LOSS);
     let (status, decided) = decide(&cell, APPROVER, &id, "approve");
     assert_eq!(status, 200, "{decided}");
-    assert_eq!(decided["call"], json!({ "committed": true }), "{decided}");
+    assert_eq!(
+        decided["call"],
+        json!({ "committed": true, "state": "committed" }),
+        "{decided}"
+    );
     assert_eq!(melt_status(&cell), 200);
 }
 
@@ -503,7 +519,7 @@ fn an_approval_never_executes_under_a_changed_default() {
     assert_eq!(status, 200, "{decided}");
     assert_eq!(
         decided["call"],
-        json!({ "committed": false, "code": "approval.definition_changed" }),
+        json!({ "committed": false, "code": "approval.definition_changed", "state": "refused" }),
         "{decided}"
     );
     assert_eq!(melt_status(&cell), 404);
@@ -547,7 +563,7 @@ fn an_approval_never_executes_under_a_changed_gate() {
     assert_eq!(status, 200, "{decided}");
     assert_eq!(
         decided["call"],
-        json!({ "committed": false, "code": "approval.definition_changed" }),
+        json!({ "committed": false, "code": "approval.definition_changed", "state": "refused" }),
         "{decided}"
     );
     assert_eq!(melt_status(&cell), 404);
@@ -613,7 +629,8 @@ fn a_replayed_approval_never_drives_a_step_past_a_retired_gate() {
         &json!({ "expectedVersion": 1 }).to_string(),
     );
     assert_eq!(status, 200, "{retired}");
-    let stale = json!({ "committed": false, "code": "approval.definition_changed" });
+    let stale =
+        json!({ "committed": false, "code": "approval.definition_changed", "state": "refused" });
     let (status, decided) = decide(&cell, APPROVER, &approval, "approve");
     assert_eq!(status, 200, "{decided}");
     assert_eq!(decided["call"], stale, "{decided}");

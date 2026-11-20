@@ -370,7 +370,7 @@ impl DecidedCall {
                 code: None,
                 state: DecidedCallState::Committed,
             },
-            CallState::Refused(_, code) => Self {
+            CallState::Refused(code) => Self {
                 committed: false,
                 code: Some(code.clone()),
                 state: DecidedCallState::Refused,
@@ -951,10 +951,8 @@ pub fn decide<E: SqlEngine>(
     // The cell and the definitions epoch are released: an approved call
     // still to run goes through the ordinary dispatch as its requester.
     if let Some(decision_id) = approved {
-        decided.call = Some(
-            run_approved(host, &decision_id, disclosure, request.now, as_requester)
-                .map_err(Box::from)?,
-        );
+        decided.call = run_approved(host, &decision_id, disclosure, request.now, as_requester)
+            .map_err(Box::from)?;
     }
     Ok(decided)
 }
@@ -1028,7 +1026,8 @@ fn decide_held<E: SqlEngine>(
 /// decided again, and the dispatch lets only exactly the approved call past
 /// its gate (APPROVAL-REVISION-1, APPROVAL-PIN-1), recording a refusal that
 /// decides it. A committed or refused call is answered as recorded and
-/// nothing runs.
+/// nothing runs. `None` for an approval recorded before approved calls were
+/// (it has no record to answer from).
 ///
 /// # Errors
 /// A host failure reading the call.
@@ -1038,15 +1037,16 @@ fn run_approved<E: SqlEngine>(
     disclosure: &dyn QuestionRuntime<E>,
     now: LogicalTime,
     as_requester: AsStarter<'_>,
-) -> Result<DecidedCall, Refusal> {
-    let missing = || Refusal::host("an approval has no approved call");
+) -> Result<Option<DecidedCall>, Refusal> {
+    let missing = || Refusal::host("an approved call lost its record");
     let (held, command) = {
         let _epoch = host.definition_read()?;
         let cell = host.cell()?;
-        let (held, state) =
-            crate::approvals::approved_call(&cell, decision_id)?.ok_or_else(missing)?;
-        if state != CallState::NotExecuted {
-            return Ok(DecidedCall::of(&state, None));
+        let Some((held, state)) = crate::approvals::approved_call(&cell, decision_id)? else {
+            return Ok(None);
+        };
+        if !matches!(state, CallState::NotExecuted) {
+            return Ok(Some(DecidedCall::of(&state, None)));
         }
         let command = cell
             .store()
@@ -1092,7 +1092,7 @@ fn run_approved<E: SqlEngine>(
     let cell = host.cell()?;
     let (_held, state) =
         crate::approvals::approved_call(&cell, decision_id)?.ok_or_else(missing)?;
-    Ok(DecidedCall::of(&state, tried))
+    Ok(Some(DecidedCall::of(&state, tried)))
 }
 
 /// One decide call: scope, the verified caller, the decision and the answer.

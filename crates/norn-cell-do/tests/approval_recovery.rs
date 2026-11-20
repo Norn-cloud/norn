@@ -190,7 +190,10 @@ fn crashes_leaving(
             None => break,
         }
     }
-    assert!(!found.is_empty(), "no crash point of the decide leaves {want:?}");
+    assert!(
+        !found.is_empty(),
+        "no crash point of the decide leaves {want:?}"
+    );
     found
 }
 
@@ -297,7 +300,7 @@ fn another_call_under_the_approved_key_is_a_conflict_never_a_commit() {
     assert_eq!(replayed["call"], conflict, "{replayed}");
     assert_eq!(commit_count_of(&reopened, &path), before, "nothing ran");
     let (_status, object) = melt(&reopened);
-    assert_eq!(object["values"]["input_fine_g"], json!("11"), "{object}");
+    assert_eq!(object["values"]["input_fine_g"], json!(11), "{object}");
 }
 
 /// Install the melt definitions `set` as the next version at `at`.
@@ -364,7 +367,11 @@ fn a_recorded_refusal_stays_final_after_the_cause_clears_and_after_a_restore() {
     install_set(&cell, DERIVES_LOSS, NOW * 1000 + 2);
     let (status, again) = retry(&cell);
     assert_eq!(status, 409, "{again}");
-    assert_eq!(again["code"], json!("approval.definition_changed"), "{again}");
+    assert_eq!(
+        again["code"],
+        json!("approval.definition_changed"),
+        "{again}"
+    );
     let (status, replayed) = approve(&cell, &id);
     assert_eq!(status, 200, "{replayed}");
     assert_eq!(replayed["call"], refused, "{replayed}");
@@ -380,7 +387,11 @@ fn a_recorded_refusal_stays_final_after_the_cause_clears_and_after_a_restore() {
     assert_eq!(replayed["call"], refused, "{replayed}");
     let (status, again) = retry(&restored);
     assert_eq!(status, 409, "{again}");
-    assert_eq!(again["code"], json!("approval.definition_changed"), "{again}");
+    assert_eq!(
+        again["code"],
+        json!("approval.definition_changed"),
+        "{again}"
+    );
     assert_eq!(melt(&restored).0, 404, "the restore never runs it");
     assert_eq!(next_due(&restored.host).unwrap(), None);
 }
@@ -480,5 +491,10 @@ fn a_committed_step_call_lost_before_its_delivery_moves_its_run_on_the_wake() {
         assert_eq!(next_due(&reopened.host).unwrap(), None);
         assert_eq!(wake(&reopened, due.max(NOW * 1000)), DueWork::default());
     }
-    assert!(delivered > 0, "no crash point leaves the outcome undelivered");
+    // Both boundaries: before the step's result is recorded, and after it
+    // is recorded but before the run consumed it.
+    assert!(
+        delivered >= 2,
+        "{delivered} crash points leave the outcome undelivered"
+    );
 }

@@ -174,7 +174,14 @@ where
     .unwrap();
     assert!(checked.receipt.admitted, "{:?}", checked.diagnostics);
     let input = InstalledDefinitionInput {
-        canonical_set: serde_json::to_string(documents).unwrap(),
+        // Canonical, as an export verifies it.
+        canonical_set: String::from_utf8(
+            RuntimeValue::from_json(Value::Array(documents.to_vec()))
+                .unwrap()
+                .canonical_json()
+                .unwrap(),
+        )
+        .unwrap(),
         registry: vec![],
         receipt_sha256: checked.receipt.content_sha256().unwrap(),
         admission_receipt: Some(

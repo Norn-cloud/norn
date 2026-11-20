@@ -283,22 +283,7 @@ pub(crate) fn call_action_bound<E: SqlEngine>(
         .find(|(_, action)| action.action_id == action_id)
         .ok_or_else(action_denied)?;
     if query.version.is_some_and(|pin| pin != installed.version) {
-        let stale = Refusal::new(
-            StatusCode::CONFLICT,
-            "defs.stale",
-            "the definitions changed; refresh the action catalog",
-            "the call pins a definitions version that is no longer active",
-        );
-        // APPROVAL-PIN-1: an approved call pinned to another catalog never
-        // runs under its approval.
-        return Err(match approved {
-            Some(command) => crate::approvals::refuse(
-                &mut cell,
-                &crate::decisions::decision_id(command, 1)?,
-                stale,
-            )?,
-            None => stale,
-        });
+        return Err(stale_pin(&mut cell, approved)?);
     }
     let model = cell.store().model().clone();
     let catalog = TypeCatalog::new(model.object_types())
@@ -341,25 +326,45 @@ pub(crate) fn call_action_bound<E: SqlEngine>(
     )? {
         Gated::Pending(pending) => return Ok(ActionAnswer::Pending(pending)),
         Gated::Replayed(outcome) => *outcome,
-        Gated::Commit(approval) => match norn_kernel::commit_action(
-            &mut *cell,
-            &catalog,
-            &kernel_call,
-            &KernelAuthorizer(host.authorizer.as_ref()),
-        ) {
-            Ok(outcome) => outcome,
-            Err(error) => {
+        Gated::Commit(approval) => {
+            let committed = norn_kernel::commit_action(
+                &mut *cell,
+                &catalog,
+                &kernel_call,
+                &KernelAuthorizer(host.authorizer.as_ref()),
+            );
+            committed.map_err(|error| {
                 let refusal = kernel_refusal(host, actor, action_id, &error);
-                return Err(match approval {
-                    Some(decision) => crate::approvals::refuse(&mut cell, &decision, refusal)?,
-                    None => refusal,
-                });
-            }
-        },
+                crate::approvals::refused_under(&mut cell, approval.as_deref(), refusal)
+            })?
+        }
     };
     let store = cell.store();
     let raw_hash = world_values(host, disclosure, store, actor);
     caller_receipt(store, action_id, request, outcome, raw_hash, key).map(ActionAnswer::Receipt)
+}
+
+/// `defs.stale`: the call pins a definitions version that is no longer
+/// active. APPROVAL-PIN-1: an approved call pinned to another catalog never
+/// runs under its approval, and that refusal is recorded for it.
+fn stale_pin<E: SqlEngine>(
+    cell: &mut crate::host::ActionCell<E>,
+    approved: Option<&str>,
+) -> Result<Refusal, Refusal> {
+    let stale = Refusal::new(
+        StatusCode::CONFLICT,
+        "defs.stale",
+        "the definitions changed; refresh the action catalog",
+        "the call pins a definitions version that is no longer active",
+    );
+    let approval = approved
+        .map(|command| crate::decisions::decision_id(command, 1))
+        .transpose()?;
+    Ok(crate::approvals::refused_under(
+        cell,
+        approval.as_deref(),
+        stale,
+    ))
 }
 
 /// The caller's view of a kernel refusal. Visibility and permission refusals
@@ -506,10 +511,11 @@ fn through_gate<E: SqlEngine>(
         }
         Err(error) => {
             let refusal = kernel_refusal(host, &kernel_call.actor, action_id, &error);
-            Err(match approval {
-                Some(decision) => crate::approvals::refuse(cell, &decision, refusal)?,
-                None => refusal,
-            })
+            Err(crate::approvals::refused_under(
+                cell,
+                approval.as_deref(),
+                refusal,
+            ))
         }
     }
 }

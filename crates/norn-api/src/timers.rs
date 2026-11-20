@@ -26,7 +26,7 @@
 //! approved call already has its outcome (it committed, or its refusal is
 //! recorded) while its run has not consumed it is due work: the wake
 //! delivers that outcome to the run, and it stays due until the run
-//! consumes it ([`crate::flow_driver::recorded_steps`]). An approved call
+//! consumes it. An approved call
 //! that did not commit is not due work: it stays visibly approved and not
 //! executed until the requester's retry or the approver's replay runs it.
 

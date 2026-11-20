@@ -240,7 +240,11 @@ fn resolutions(batch: &CommitBatch) -> Result<Vec<DecisionResolved>, CellError> 
 
 fn refusals(batch: &CommitBatch) -> Result<Vec<ApprovalRefused>, CellError> {
     let mut found = Vec::new();
-    for event in batch.events.iter().filter(|event| is_approval_refused(event)) {
+    for event in batch
+        .events
+        .iter()
+        .filter(|event| is_approval_refused(event))
+    {
         let object = event
             .as_object()
             .ok_or_else(|| refused("approval.refusal_invalid"))?;
@@ -443,7 +447,8 @@ fn decode_approved(row: &SqlRow) -> Result<ApprovedCall, CellError> {
     })
 }
 
-const APPROVED_COLUMNS: &str = r#""decision_id","command_id","run_id","resolved_at_ms","refused_status","refused_code""#;
+const APPROVED_COLUMNS: &str =
+    r#""decision_id","command_id","run_id","resolved_at_ms","refused_status","refused_code""#;
 
 fn decode(row: &SqlRow) -> Result<DecisionRow, CellError> {
     let unsigned = |index: usize, what: &'static str| {

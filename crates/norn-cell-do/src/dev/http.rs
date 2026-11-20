@@ -481,7 +481,11 @@ mod tests {
             &choice,
         );
         assert_eq!(status, 200, "{decided}");
-        assert_eq!(decided["call"], json!({ "committed": true }), "{decided}");
+        assert_eq!(
+            decided["call"],
+            json!({ "committed": true, "state": "committed" }),
+            "{decided}"
+        );
         assert_eq!(melt(&dev), 200);
 
         // The approved call committed as its requester, never as the
