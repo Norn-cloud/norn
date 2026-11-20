@@ -83,18 +83,21 @@ const fn is_legacy_derivation(derivation: &u32) -> bool {
     *derivation == 1
 }
 
-/// The checker derivation a retained bundle names.
-fn derivation_of(version: u32) -> Result<Derivation, CellError> {
+/// The checker derivations a retained bundle's number can name. An
+/// unversioned bundle (`1`) was captured either before decimal text
+/// conformed or under main's MAPPING-DECIMAL-TEXT-1, so it verifies under
+/// either (S1, #1488).
+fn derivations_of(version: u32) -> Result<&'static [Derivation], CellError> {
     match version {
-        1 => Ok(Derivation::V1),
-        2 => Ok(Derivation::V2),
+        1 => Ok(&[Derivation::V1DecimalText, Derivation::V1]),
+        2 => Ok(&[Derivation::V2]),
         _ => Err(mismatch()),
     }
 }
 
 const fn derivation_number(derivation: Derivation) -> u32 {
     match derivation {
-        Derivation::V1 => 1,
+        Derivation::V1 | Derivation::V1DecimalText => 1,
         Derivation::V2 => 2,
     }
 }
@@ -459,7 +462,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                     .apply_derived(&[source_document], &input.recorded_at, derivation)
                     .map_err(|refusals| match derivation {
                         // Exactly the diagnostics captured before MAP-EXPLAIN-1.
-                        Derivation::V1 => refusals
+                        Derivation::V1 | Derivation::V1DecimalText => refusals
                             .iter()
                             .map(|refusal| refusal.diagnostic().to_json())
                             .collect::<Vec<_>>(),
@@ -495,7 +498,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         if let Some(original) = &reprocesses {
             // MAP-REPROCESS-1: only the reprocessed row's own capture address,
             // re-derived under a newer derivation, ever has one.
-            if *original != format!("mapping-bundle:{address}") || derivation == Derivation::V1 {
+            if *original != format!("mapping-bundle:{address}")
+                || derivation_number(derivation) == 1
+            {
                 return Err(mismatch());
             }
             address = norn_ir::canonical::domain_hash_hex(
@@ -561,17 +566,19 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         }
         // MAP-DERIVATION-1: verified under the derivation it was captured
         // with, so a newer parser never changes what retained evidence proves.
-        if self.derived_mapping_bundle(
-            &bundle.raw,
-            &bundle.input,
-            bundle.definitions_version,
-            derivation_of(bundle.derivation)?,
-            bundle.reprocesses.clone(),
-        )? != *bundle
-        {
-            return Err(mismatch());
+        for derivation in derivations_of(bundle.derivation)? {
+            if self.derived_mapping_bundle(
+                &bundle.raw,
+                &bundle.input,
+                bundle.definitions_version,
+                *derivation,
+                bundle.reprocesses.clone(),
+            )? == *bundle
+            {
+                return Ok(());
+            }
         }
-        Ok(())
+        Err(mismatch())
     }
 }
 
