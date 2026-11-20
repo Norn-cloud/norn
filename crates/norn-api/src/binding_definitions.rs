@@ -158,7 +158,7 @@ fn text<'v>(object: &'v Map<String, Value>, key: &str) -> Option<&'v str> {
 #[must_use]
 pub fn check(raw: &str, roles: &[&str]) -> Vec<RefusalDiagnostic> {
     let mut findings = Vec::new();
-    let Ok(Value::Object(payload)) = serde_json::from_str::<Value>(raw) else {
+    let Ok(Value::Object(payload)) = jcs::read(raw) else {
         findings.push(error(codes::INVALID_PAYLOAD, "a binding is an object", ""));
         return findings;
     };

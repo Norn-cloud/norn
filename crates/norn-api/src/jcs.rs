@@ -22,14 +22,22 @@ pub fn canonicalize(value: &Value) -> Result<String, String> {
 }
 
 /// JCS text of the JSON document `text`, parsed with every number as the
-/// double nearest its decimal text.
+/// double nearest its decimal text ([`read`]).
+///
+/// # Errors
+/// As [`read`], or a number that is not finite as a double.
+pub fn canonicalize_text(text: &str) -> Result<String, String> {
+    canonicalize(&read(text)?)
+}
+
+/// The JSON document `text` as JCS reads it: every number the double
+/// nearest its decimal text, strings and member names verbatim.
 ///
 /// # Errors
 /// Malformed JSON (including duplicate member names, which I-JSON forbids),
 /// or a number that is not finite as a double.
-pub fn canonicalize_text(text: &str) -> Result<String, String> {
-    let value = parse_json_verbatim(text).map_err(|error| error.to_string())?;
-    canonicalize(&doubles(&value)?)
+pub fn read(text: &str) -> Result<Value, String> {
+    doubles(&parse_json_verbatim(text).map_err(|error| error.to_string())?)
 }
 
 /// `value` with every number the double nearest its exact decimal text, read
@@ -183,6 +191,25 @@ mod tests {
         ] {
             assert_eq!(number_text(double).unwrap(), text, "{double}");
         }
+    }
+
+    #[test]
+    fn numbers_read_as_the_nearest_double() {
+        // RFC 8785 `values.json` (#1429): serde_json's default parser lands
+        // one ULP below the nearest double here.
+        assert_eq!(
+            canonicalize_text("[333333333.33333329]").unwrap(),
+            "[333333333.3333333]"
+        );
+        let binding = read("{\"minimum\":333333333.33333329}").unwrap();
+        assert_eq!(
+            canonicalize(&binding).unwrap(),
+            "{\"minimum\":333333333.3333333}"
+        );
+        assert!(
+            read("{\"a\":1,\"a\":2}").is_err(),
+            "I-JSON forbids duplicate names"
+        );
     }
 
     #[test]
