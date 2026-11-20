@@ -448,6 +448,25 @@ impl crate::object_routes::ObjectAccess for NoCallRecords {
     }
 }
 
+/// [`Access`], except that Sources is never mapped: a member's grants
+/// (Population and Values).
+struct NoSources;
+impl crate::object_routes::ObjectAccess for NoSources {
+    fn access(
+        &self,
+        scope: &CellScope,
+        actor: &str,
+        capability: ReadCapability,
+        object_type: &str,
+        row: Option<&ObjectRecord>,
+    ) -> Result<norn_kernel::authz::AccessRequest, Refusal> {
+        if capability == ReadCapability::Sources {
+            return Err(read_denied());
+        }
+        Access.access(scope, actor, capability, object_type, row)
+    }
+}
+
 fn scope_query() -> crate::scope::ScopeQuery {
     crate::scope::ScopeQuery {
         org_id: Some("org_demo".into()),
@@ -807,23 +826,15 @@ fn corrected_with_history(host: &DevHost<NativeEngine>, slipped: u64) {
     .expect("history");
     assert_eq!(history.versions.len(), 2, "{history:#?}");
     let (newest, oldest) = (&history.versions[0], &history.versions[1]);
-    match &newest.writer {
-        Action {
-            action_id,
-            actor,
-            input,
-        } => {
-            assert_eq!(action_id, CORRECT);
-            assert_eq!(actor, STEWARD);
-            assert_eq!(
-                input
-                    .get("correction_reason")
-                    .and_then(RuntimeValue::as_str),
-                Some("The scan reads 72.0; the import dropped the decimal point.")
-            );
-        }
-        other @ (Mapping { .. } | Other) => panic!("the correction is the action's: {other:?}"),
-    }
+    // The writer is the action and its verified actor, and nothing of the
+    // call's effective input: the kernel stores that as one plain value even
+    // when preparation or a derivation put restricted values in it.
+    let named = serde_json::json!({ "kind": "action", "actionId": CORRECT, "actor": STEWARD });
+    assert_eq!(
+        serde_json::to_value(&newest.writer).expect("writer"),
+        named,
+        "{history:#?}"
+    );
     // The writer is the call record's to disclose: a caller who may read the
     // document but not its call records is told no writer: no actor, and none
     // of the call's input (its free-text reason among it). The row's own
@@ -846,6 +857,48 @@ fn corrected_with_history(host: &DevHost<NativeEngine>, slipped: u64) {
         Mapping { lineage } => assert_eq!(lineage.mapping_pin.artifact_id, "docs.scans.mapping"),
         other @ (Action { .. } | Other) => panic!("the import is the mapping's: {other:?}"),
     }
+    // A caller with Population and Values but no Sources (a member) reads
+    // the history: every version and its values, the action's writer, and no
+    // version's source lineage, which stays Sources' as `/lineage` keeps it.
+    let without_sources = crate::object_review::get_object_history(
+        host,
+        &scope_query(),
+        Some(STEWARD),
+        DOCUMENT,
+        "SCAN-RPT-1117",
+        &NoSources,
+    )
+    .expect("the history is served without Sources");
+    let writers: Vec<serde_json::Value> = without_sources
+        .versions
+        .iter()
+        .map(|version| serde_json::to_value(&version.writer).expect("writer"))
+        .collect();
+    assert_eq!(
+        writers,
+        [named, serde_json::json!({ "kind": "other" })],
+        "{without_sources:#?}"
+    );
+    assert_eq!(
+        without_sources
+            .versions
+            .iter()
+            .map(|version| version.values.clone())
+            .collect::<Vec<_>>(),
+        history
+            .versions
+            .iter()
+            .map(|version| version.values.clone())
+            .collect::<Vec<_>>()
+    );
+    crate::object_review::get_object_lineage_at(
+        host,
+        &scope_query(),
+        Some(STEWARD),
+        (DOCUMENT, "SCAN-RPT-1117", slipped),
+        &NoSources,
+    )
+    .expect_err("the lineage is not served without Sources");
     let value = |version: &crate::object_review::NornObjectVersion| match version
         .values
         .as_ref()
