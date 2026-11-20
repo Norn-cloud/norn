@@ -82,9 +82,14 @@ fn wal_path(path: &Path) -> PathBuf {
     PathBuf::from(name)
 }
 
-/// The WAL's bytes, or `None` when there is no WAL file.
+/// The WAL's bytes, or `None` when there is no WAL file. Any other read
+/// error fails the test instead of counting as absence.
 fn wal_bytes(path: &Path) -> Option<Vec<u8>> {
-    std::fs::read(wal_path(path)).ok()
+    match std::fs::read(wal_path(path)) {
+        Ok(wal) => Some(wal),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => panic!("reading the WAL: {error}"),
+    }
 }
 
 /// The frames a WAL holds: a 32-byte header, then frames of a 24-byte header
@@ -520,11 +525,14 @@ proptest! {
         let refusal = refusal.expect("refused");
         prop_assert!(stamp.matches(&refusal), "{:?}: unexpected refusal {}", how, refusal);
         prop_assert!(after == before, "{:?} changed the bytes of a refused cell", how);
-        // SQLite may create (or remove) an empty WAL for a reader; any frame
-        // after the open is one that was there before it.
+        // SQLite may create (or remove) an empty WAL for a reader. Once either
+        // read holds a frame, the WAL must be byte-identical across the open.
+        // Two reads see only the final state: a write the open undoes before
+        // it returns is outside what this property can observe.
+        let frames = |wal: &Option<Vec<u8>>| wal.as_deref().map_or(0, wal_frames);
         prop_assert!(
-            wal_after.as_deref().map_or(0, wal_frames) == 0 || wal_after == wal_before,
-            "{:?} wrote WAL frames", how
+            (frames(&wal_before) == 0 && frames(&wal_after) == 0) || wal_after == wal_before,
+            "{:?} changed the WAL's frames", how
         );
         prop_assert_eq!(journal_mode(&path), mode_before, "{:?} changed the journal mode", how);
     }
