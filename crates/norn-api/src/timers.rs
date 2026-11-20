@@ -27,7 +27,8 @@
 //! call committed leaves it due, and the next wake (or the cold open that
 //! arms one) commits it exactly once as its requester
 //! ([`crate::decisions`]), or settles its refusal. A host that cannot act as
-//! the requester at the wake ([`run_due`] has no [`Requester`]) keeps it due
+//! the requester at the wake ([`run_due`](crate::timers::run_due) has no
+//! [`Requester`](crate::timers::Requester)) keeps it due
 //! on its backoff.
 
 use norn_cell::MAIN_WORLD;
