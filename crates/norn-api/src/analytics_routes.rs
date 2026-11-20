@@ -638,7 +638,10 @@ impl From<&ManifestFile> for NornDatasetFile {
 /// ingest cannot enforce (422), stale pins or a reused request key (409), or
 /// an unreachable engine.
 #[utoipa::path(post, path = "/v1/datasets:load", params(ScopeQuery), request_body = DatasetLoadRequest, responses((status = 200, description = "The load.", body = NornDatasetLoad), (status = 400, description = "The request was refused as invalid.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied.", body = Refusal), (status = 404, description = "The request was refused: not found.", body = Refusal), (status = 409, description = "The definitions changed while the dataset landed, or the request key names another request.", body = Refusal), (status = 422, description = "The file was refused.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
-#[allow(clippy::too_many_lines, reason = "one load, in order: authorize, contract, land, commit, report")]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one load, in order: authorize, contract, land, commit, report"
+)]
 pub fn load_dataset<E: SqlEngine>(
     host: &DevHost<E>,
     scope: &ScopeQuery,
@@ -829,7 +832,10 @@ fn plain_read(value: &str) -> Option<&str> {
 /// write-side markings check: a load of a type whose rows a write would
 /// mark (a declared property marking, or a marked source field) is refused,
 /// as bulk ingest attaches no per-row markings.
-#[allow(clippy::too_many_lines, reason = "one contract, read top to bottom: the mapping, its reads, then the markings")]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one contract, read top to bottom: the mapping, its reads, then the markings"
+)]
 fn bulk_contract<E: SqlEngine>(
     host: &DevHost<E>,
     object_type: &str,
