@@ -264,7 +264,7 @@ impl<E: SqlEngine> DevHost<E> {
     }
 
     /// Capture source rows and map them through the cell's own mapping path,
-    /// under the definition epoch, in OBS-PAGE-1 pages ([`pages`]): rows with
+    /// under the definition epoch, in OBS-PAGE-1 pages ([`page_count`]): rows with
     /// the same [`MappingInput`](norn_cell::mapping_bundle::MappingInput),
     /// split at [`PAGE_ROWS`] and before a repeated source record, are
     /// captured by `inject_mapping_page` and committed by
