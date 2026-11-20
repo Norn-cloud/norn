@@ -177,7 +177,23 @@ subject exists: an explicit outcome naming the writers it awaits, counted by a
 sync as held back (`source.resolution.withheld`), never as landed. Sources that
 report an exclusive link with different targets are an explicit link conflict:
 the link changes no edge until they agree, while the bundle's property
-decisions still apply. `source_resolution` reads each property's decision with
+decisions still apply. A record's links follow the same withdrawal (claim
+journal v2, #1496): when a newer version of a source record no longer carries
+a link contribution of a resolved type that an earlier-consumed, lower version
+made (it moved to another key, stopped matching, or dropped the link), the
+newer version publishes a **withdrawal** claim for it: no target,
+`withdrawal: true`, and `supersedes` naming the contribution's earlier claims.
+The kernel's OBS-LINK-CONTRIBUTION-1 rule then sees the old claim superseded
+and authorizes removing its edge in the same commit, unless another standing
+claim holds that edge. A withdrawal is the contribution's own (capture scope,
+source, role, provenance), so it can never supersede another record's,
+source's or mapping's claim, and it asserts nothing about the link: it is never
+a conflict claim and never holds an edge. A late older version is stale on
+arrival and withdraws nothing; its own claims add no edge. The journal change is
+versioned by its evidence: a retained bundle publishes a withdrawal only when
+the commit that consumed it wrote that claim, so history consumed under journal
+v1 recomputes exactly (same claims, same identities, same `supersedes`), and
+such a record's stale edge is withdrawn by its next version. `source_resolution` reads each property's decision with
 every source's report and field lineage, the link conflicts, and a
 **SOURCE-AGREE-2** finding for each report that differs from the canonical
 value (or every peer report of a conflict). A read at a frontier decides under

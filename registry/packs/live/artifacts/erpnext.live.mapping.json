@@ -37,6 +37,10 @@
     ],
     "maps": [
       {
+        "authority": {
+          "kind": "precedence",
+          "rank": 5
+        },
         "id": "item",
         "ignoredFields": [
           {

@@ -1766,3 +1766,233 @@ fn source_resolve_1_a_system_of_record_that_moves_away_leaves_no_carried_value_i
     }
     assert_eq!(answers[0], answers[1]);
 }
+
+/// North gold's `owner` targets, and the owner conflicts its resolution lists.
+fn north_owner(cell: &Cell) -> (Option<Vec<String>>, usize) {
+    let reader = cell.store().read();
+    let targets = reader
+        .link_targets(MAIN_WORLD, "canon.Holding", "owner", NORTH, 16, 1 << 20)
+        .expect("links");
+    // No resolution when no source reports north any longer.
+    let conflicts = reader
+        .source_resolution("canon.Holding", NORTH, None)
+        .expect("read")
+        .map_or(0, |resolution| resolution.links.len());
+    (targets, conflicts)
+}
+
+/// `ERPNext` names `owner` as north gold's owner at source version `event`.
+fn erpnext_north_owner(cell: &mut Cell, event: &str, owner: &str) {
+    let owner = owner.to_owned();
+    let outcomes = sync_rows(cell, "erpnext", event, is_north, move |r| {
+        r.insert("owner_ref".into(), json!(owner.clone()));
+    });
+    assert_eq!(outcomes, [MappingOutcome::Landed], "{event}");
+}
+
+/// `ERPNext` moves its north gold record to another holding at `event`.
+fn erpnext_moves_north(cell: &mut Cell, event: &str) {
+    let moved = format!("{NORTH}/moved");
+    let outcomes = sync_rows(cell, "erpnext", event, is_north, move |r| {
+        r.insert("custom_norn_ref".into(), json!(moved.clone()));
+    });
+    assert_eq!(outcomes, [MappingOutcome::Landed], "{event}");
+}
+
+/// The cell's whole verifiable state: dump, receipts, export records and
+/// recomputed claims.
+type Replay = (
+    BTreeMap<String, Vec<String>>,
+    Vec<norn_cell::Receipt>,
+    Vec<norn_cell::export::ExportRecord>,
+    Vec<norn_ir::mapping::ObservedLinkClaim>,
+);
+
+fn replay_state(store: &CellStore) -> Replay {
+    let reader = store.read();
+    reader.verify_ledger().expect("ledger verifies");
+    let records = (1..=store.export_commit_count().expect("head"))
+        .map(|seq| store.export_record(seq).expect("record").expect("present"))
+        .collect();
+    (
+        reader.dump().expect("dump"),
+        reader.receipts().expect("receipts"),
+        records,
+        reader.observed_link_claims().expect("claims"),
+    )
+}
+
+/// Reopen `path` and rebuild it from its export records: both must read
+/// byte-identical to `before`, and the ledger verifies.
+fn assert_replays(path: &Path, before: &Replay) {
+    let (_, model) = edited_set(|_| {});
+    let reopened = CellStore::open(path, model, StoreOptions::default()).expect("reopen");
+    assert_eq!(&replay_state(&reopened), before, "reopened");
+    let records = &before.2;
+    let rebuilt = CellStore::rebuild_export_history(
+        norn_cell::engine::NativeEngine::open_in_memory().expect("engine"),
+        records,
+        &records.last().expect("last").hash().expect("hash"),
+    )
+    .expect("rebuild");
+    assert_eq!(rebuilt.read().dump().expect("dump"), before.0, "rebuilt");
+    assert_eq!(
+        rebuilt.read().observed_link_claims().expect("claims"),
+        before.3,
+        "rebuilt claims"
+    );
+}
+
+/// SOURCE-RESOLVE-1 (#1496): `ERPNext` v1 names the customer as north gold's
+/// owner, v2 moves that source record to another holding, and Odoo then
+/// names the owner. In either version order the move withdraws `ERPNext`'s
+/// edge: v2 publishes a withdrawal (no target, superseding v1's claim) when
+/// it follows v1, and a late v1 is stale on arrival. Odoo's edge is the only
+/// one, with no conflict, also when Odoo reports between the versions. The
+/// cell reopens and rebuilds byte-identical, with its withdrawal.
+#[test]
+fn source_resolve_1_a_moved_record_clears_its_old_edge_in_both_version_orders() {
+    let directory = tempfile::tempdir().expect("directory");
+    let owner = Some(vec!["demo/party/owner".to_owned()]);
+    for order in ["v1 v2 odoo", "v2 v1 odoo", "v1 odoo v2"] {
+        let path = directory
+            .path()
+            .join(format!("{}.sqlite", order.replace(' ', "-")));
+        let mut cell = setup_with(&path, |_| {});
+        erpnext_catalog_rows(&mut cell);
+        for step in order.split(' ') {
+            match step {
+                "v1" => erpnext_north_owner(&mut cell, "v1", "demo/party/customer"),
+                "v2" => erpnext_moves_north(&mut cell, "v2"),
+                _ => {
+                    sync_north(&mut cell, "odoo", "snapshot", |_| {});
+                }
+            }
+            if order == "v1 v2 odoo" && step == "v2" {
+                assert_eq!(
+                    north_owner(&cell),
+                    (Some(Vec::new()), 0),
+                    "{order}: the move withdraws the customer edge at once"
+                );
+            }
+        }
+        assert_eq!(north_owner(&cell), (owner.clone(), 0), "{order}");
+        let claims = cell.store().read().observed_link_claims().expect("claims");
+        let withdrawals: Vec<_> = claims.iter().filter(|c| c.withdrawal).collect();
+        if order == "v2 v1 odoo" {
+            assert!(
+                withdrawals.is_empty(),
+                "{order}: a late v1 withdraws nothing"
+            );
+        } else {
+            // v2 withdraws each link north's record carried (owner,
+            // custodian, item), and only north's.
+            assert!(
+                withdrawals
+                    .iter()
+                    .all(|w| w.source_key == NORTH && w.target.is_none()),
+                "{order}: {withdrawals:#?}"
+            );
+            let owners: Vec<_> = withdrawals
+                .iter()
+                .filter(|w| w.role.as_str() == "owner")
+                .collect();
+            let [withdrawal] = owners.as_slice() else {
+                panic!("{order}: one owner withdrawal: {withdrawals:#?}");
+            };
+            let withdrawn: Vec<_> = claims
+                .iter()
+                .filter(|c| withdrawal.supersedes.contains(&c.id().expect("id")))
+                .map(|c| c.target.as_ref().map(|t| t.key.as_str()))
+                .collect();
+            assert_eq!(withdrawn, [Some("demo/party/customer")], "{order}");
+        }
+        let before = replay_state(cell.store());
+        drop(cell);
+        assert_replays(&path, &before);
+    }
+}
+
+/// SOURCE-RESOLVE-1 (#1496): a withdrawal never removes an edge another
+/// source holds. `ERPNext` v1 and Odoo both name the owner; `ERPNext` v2 moves
+/// its record. The withdrawal supersedes only `ERPNext`'s own claim (its
+/// contribution), and Odoo's claim still holds the same edge, so it stays.
+#[test]
+fn source_resolve_1_a_withdrawal_never_removes_another_sources_edge() {
+    let directory = tempfile::tempdir().expect("directory");
+    let owner = Some(vec!["demo/party/owner".to_owned()]);
+    for odoo_first in [true, false] {
+        let mut cell = setup_with(
+            &directory.path().join(format!("shared-{odoo_first}.sqlite")),
+            |_| {},
+        );
+        erpnext_catalog_rows(&mut cell);
+        if odoo_first {
+            sync_north(&mut cell, "odoo", "snapshot", |_| {});
+        }
+        erpnext_north_owner(&mut cell, "v1", "demo/party/owner");
+        if !odoo_first {
+            sync_north(&mut cell, "odoo", "snapshot", |_| {});
+        }
+        assert_eq!(north_owner(&cell), (owner.clone(), 0));
+        erpnext_moves_north(&mut cell, "v2");
+        assert_eq!(
+            north_owner(&cell),
+            (owner.clone(), 0),
+            "odoo first {odoo_first}: Odoo's claim keeps the edge"
+        );
+        let claims = cell.store().read().observed_link_claims().expect("claims");
+        let withdrawal = claims
+            .iter()
+            .find(|c| c.withdrawal)
+            .expect("ERPNext withdraws its contribution");
+        let odoo = claims
+            .iter()
+            .find(|c| {
+                c.source_key == NORTH
+                    && c.role.as_str() == "owner"
+                    && c.provenance.mapping_version.as_str().starts_with("odoo.")
+            })
+            .expect("Odoo's claim");
+        assert!(!withdrawal.supersedes.contains(&odoo.id().expect("id")));
+        assert_ne!(
+            withdrawal.contribution_id().expect("contribution"),
+            odoo.contribution_id().expect("contribution")
+        );
+    }
+}
+
+/// SOURCE-RESOLVE-1 (#1496): claim journal v2 is versioned by its evidence.
+/// A cell whose v1 → v2 history was consumed under journal v1 (no withdrawal
+/// written) reopens and rebuilds byte-identical under v2, recomputing the same
+/// claims and verifying its ledger: v2 adds no withdrawal to old history. The
+/// record's next version then withdraws the old edge.
+#[test]
+fn source_resolve_1_claim_journal_v1_history_opens_verifies_and_heals_on_the_next_version() {
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("journal-v1.sqlite");
+    let mut cell = setup_with(&path, |_| {});
+    norn_cell::plan_as_claim_journal_v1(true);
+    erpnext_catalog_rows(&mut cell);
+    erpnext_north_owner(&mut cell, "v1", "demo/party/customer");
+    erpnext_moves_north(&mut cell, "v2");
+    norn_cell::plan_as_claim_journal_v1(false);
+    let customer = Some(vec!["demo/party/customer".to_owned()]);
+    assert_eq!(north_owner(&cell).0, customer, "v1 left the edge");
+    let before = replay_state(cell.store());
+    assert!(before.3.iter().all(|c| !c.withdrawal));
+    drop(cell);
+    assert_replays(&path, &before);
+    let (_, model) = edited_set(|_| {});
+    let store = CellStore::open(&path, model, StoreOptions::default()).expect("reopen");
+    let mut cell = SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("cell");
+    erpnext_moves_north(&mut cell, "v3");
+    sync_north(&mut cell, "odoo", "snapshot", |_| {});
+    assert_eq!(
+        north_owner(&cell),
+        (Some(vec!["demo/party/owner".to_owned()]), 0)
+    );
+    let before = replay_state(cell.store());
+    drop(cell);
+    assert_replays(&path, &before);
+}

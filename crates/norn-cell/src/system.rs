@@ -72,6 +72,32 @@ pub(crate) fn claim_endpoints_of(selection: &str) -> String {
          UNION ALL SELECT 'target', json_extract(link.value, '$.targetKey'), i.\"consumed_commit_seq\", i.\"observation_id\", octet_length(i.\"observed\") FROM \"{INBOX}\" i, json_each(i.\"observed\", '$.input.records') AS record, json_each(record.value, '$.links') AS link WHERE i.\"observation_id\" LIKE 'mapping-bundle:%' AND i.\"consumed_commit_seq\" IS NOT NULL AND ({selection}) AND json_type(link.value, '$.targetKey') = 'text'"
     )
 }
+/// SOURCE-RESOLVE-1 (claim journal v2): every source key that any consumed
+/// mapping bundle of a source record names as a claim source, by mapping and
+/// record (`claim_records_of`). A set, so the rows depend only on which
+/// bundles were consumed, never on their order. A newer version of the record
+/// withdraws a contribution it no longer carries, so a plan reads the record's
+/// other versions through these keys: the record's earlier keys when it plans
+/// a new version, and every version of each record that ever claimed a key it
+/// reads.
+pub(crate) const CLAIM_RECORD: &str = "_norn_claim_record";
+
+/// The [`CLAIM_RECORD`] rows of the consumed mapping bundles that `?1`
+/// selects (a SQL condition on `i`): the same claim sources
+/// [`claim_endpoints_of`] records, keyed by the bundle's source record.
+pub(crate) fn claim_records_of(selection: &str) -> String {
+    let bundles = format!("\"{INBOX}\" i, json_each(i.\"observed\", '$.input.records') AS record");
+    let selected = format!(
+        "i.\"observation_id\" LIKE 'mapping-bundle:%' AND i.\"consumed_commit_seq\" IS NOT NULL AND ({selection}) AND json_type(i.\"observed\", '$.input.input.mapping') = 'text'"
+    );
+    let columns = format!("json_extract(i.\"observed\", '$.input.input.mapping'), {RECORD_ID}");
+    format!(
+        "INSERT OR IGNORE INTO \"{CLAIM_RECORD}\" (\"mapping\", \"record_id\", \"key\") \
+         SELECT {columns}, json_extract(record.value, '$.key') FROM {bundles} WHERE {selected} AND json_array_length(json_extract(record.value, '$.clearedLinks')) > 0 AND json_type(record.value, '$.key') = 'text' \
+         UNION ALL SELECT {columns}, json_extract(link.value, '$.key') FROM {bundles}, json_each(record.value, '$.links') AS link WHERE {selected} AND json_type(link.value, '$.key') = 'text'"
+    )
+}
+
 /// SOURCE-RESOLVE-1: the canonical subjects each consumed mapping bundle
 /// reports, one row per (type, key, bundle), with the bundle's mapping,
 /// source record and source version, so the current report of every source
@@ -573,6 +599,15 @@ pub const SYSTEM_DDL: &[&str] = &[
   "bytes" INTEGER NOT NULL,
   PRIMARY KEY ("side", "key", "observation_id")
 )"#,
+    // SOURCE-RESOLVE-1 (claim journal v2): claim sources by source record
+    // (`claim_records_of`), looked up by record and by key.
+    r#"CREATE TABLE IF NOT EXISTS "_norn_claim_record" (
+  "mapping" TEXT NOT NULL,
+  "record_id" TEXT NOT NULL,
+  "key" TEXT NOT NULL,
+  PRIMARY KEY ("mapping", "record_id", "key")
+)"#,
+    r#"CREATE INDEX IF NOT EXISTS "_norn_claim_record_key" ON "_norn_claim_record" ("key")"#,
     // SOURCE-RESOLVE-1: subjects of consumed mapping bundles (`source_subjects_of`).
     r#"CREATE TABLE IF NOT EXISTS "_norn_source_subject" (
   "object_type" TEXT NOT NULL,

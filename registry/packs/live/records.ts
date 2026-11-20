@@ -24,6 +24,7 @@ export const ErpnextMapping = Norn.mapping({
   sourceContract: {kind: "generic"}, interfaces: [Catalog],
   maps: [{id: "item", source: {dataset: "Item"}, target: {type: Item, interface: Catalog},
     subject: "input.norn_ref", sourceRecord: "input.name",
+    authority: {kind: "precedence", rank: 5},
     properties: [{property: "id", value: "input.norn_ref"}, {property: "code", value: "input.code"}, {property: "label", value: "input.label"}],
     ignoredFields: [{field: "uom", reason: "Catalog identity has no stock quantity."}]
   }]

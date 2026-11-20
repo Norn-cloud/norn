@@ -744,6 +744,7 @@ fn claim_fixture() -> (
         }),
         provenance,
         supersedes: std::collections::BTreeSet::new(),
+        withdrawal: false,
     };
     (types, cell, claim)
 }
@@ -1750,4 +1751,77 @@ fn obs_link_retained_claim_cannot_supersede_a_fresh_claim() {
         Err(norn_kernel::CommitError::ObservationAuthorization)
     ));
     assert!(cell.load_link(&held).expect("kept").values.is_some());
+}
+
+/// SOURCE-RESOLVE-1 (#1496): a withdrawal (a clear claim superseding a
+/// stale claim) withdraws an edge only for its own contribution. A clear
+/// from another record or another source system that names the old claim in
+/// `supersedes` orders nothing, so the edge stays; the same contribution's
+/// withdrawal removes it.
+#[test]
+fn obs_link_a_withdrawal_of_another_contribution_never_removes_the_edge() {
+    let (types, cell, old) = claim_fixture();
+    let mut cell = cell.with_types(types.clone());
+    let catalog = norn_kernel::TypeCatalog::new(&types);
+    let (commit, authority) = claimed_commit(&catalog, &cell, &old);
+    cell.commit_observed(commit, authority)
+        .expect("original claim");
+    let source = FactKey::new(old.source_type.as_str(), &old.source_key);
+    let key = LinkKey::new(
+        source.clone(),
+        old.role.as_str(),
+        FactKey::new("test.Target", "two"),
+    );
+    let withdrawal = |edit: fn(&mut norn_ir::mapping::ObservedLinkClaim)| {
+        let mut clear = old.clone();
+        clear.observation_id = "bundle:withdrawal".into();
+        clear.target = None;
+        clear.withdrawal = true;
+        clear.supersedes = std::collections::BTreeSet::from([old.id().expect("id")]);
+        edit(&mut clear);
+        clear
+    };
+    let attempt = |cell: &mut ClaimCell, clear: &norn_ir::mapping::ObservedLinkClaim| {
+        let read = norn_kernel::FactExpectation {
+            key: source.clone(),
+            expected: cell.load(&source).expect("source").version,
+        };
+        let mut commit = CellCommit {
+            reads: vec![read.clone()],
+            links: vec![LinkWrite {
+                key: key.clone(),
+                expected: cell.load_link(&key).expect("link").version,
+                mutation: LinkMutation::Remove,
+            }],
+            ..CellCommit::empty()
+        };
+        let mut authority = norn_kernel::ObservationAuthorization::empty();
+        append_retained_claim(&catalog, cell, clear, &mut commit, &mut authority);
+        append_retained_claim(&catalog, cell, &old, &mut commit, &mut authority);
+        for claim in [clear, &old] {
+            authority
+                .seal_observed_link_claim(&catalog, claim, read.clone(), &commit)
+                .expect("sealed claim");
+        }
+        cell.commit_observed(commit, authority)
+    };
+    let foreign: [fn(&mut norn_ir::mapping::ObservedLinkClaim); 3] = [
+        |c| c.source_scope = "another-record".into(),
+        |c| c.provenance.source.system = "synthetic-b".into(),
+        |c| c.provenance.mapping_version = norn_ir::MappingVersion("another.mapping@1".into()),
+    ];
+    for edit in foreign {
+        let clear = withdrawal(edit);
+        assert_ne!(
+            clear.contribution_id().expect("contribution"),
+            old.contribution_id().expect("contribution")
+        );
+        assert!(matches!(
+            attempt(&mut cell, &clear),
+            Err(norn_kernel::CommitError::ObservationAuthorization)
+        ));
+        assert!(cell.load_link(&key).expect("edge").values.is_some());
+    }
+    attempt(&mut cell, &withdrawal(|_| {})).expect("own withdrawal");
+    assert!(cell.load_link(&key).expect("edge").values.is_none());
 }
