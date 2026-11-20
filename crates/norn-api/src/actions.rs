@@ -250,6 +250,61 @@ pub(crate) fn foreign_step_record() -> Refusal {
     )
 }
 
+/// S5a: a step attempt's call answers only with the record its own dispatch
+/// committed, now or on an earlier try, never another's under its key.
+fn require_owned<E: SqlEngine>(
+    store: &norn_cell::CellStore<E>,
+    action_id: &str,
+    idempotency_key: &str,
+    attempt: Option<&crate::approvals::StepAttempt>,
+) -> Result<(), Refusal> {
+    match attempt {
+        Some(attempt) if !crate::flow_driver::owns(store, action_id, idempotency_key, attempt)? => {
+            Err(foreign_step_record())
+        }
+        _owned_or_direct => Ok(()),
+    }
+}
+
+/// S5a: `attempt`, when the trusted invocation names one, still waits on
+/// exactly the call keyed `idempotency_key`.
+fn require_making<E: SqlEngine>(
+    store: &norn_cell::CellStore<E>,
+    attempt: Option<&crate::approvals::StepAttempt>,
+    idempotency_key: &str,
+) -> Result<(), Refusal> {
+    match attempt {
+        Some(attempt) if !crate::flow_driver::attempt_makes(store, attempt, idempotency_key)? => {
+            Err(crate::approvals::attempt_ended())
+        }
+        _making_or_direct => Ok(()),
+    }
+}
+
+/// S5a: the step-key namespace is fenced at bound dispatch, under the
+/// caller's hold: a call under a step's call key runs only for the trusted
+/// invocation of the step attempt that makes it now. A direct call held
+/// under such a key before the fence (its approval's dispatch) never runs,
+/// and that refusal is recorded for its approval.
+fn fence_step_key<E: SqlEngine>(
+    cell: &mut crate::host::ActionCell<E>,
+    idempotency_key: &str,
+    attempt: Option<&crate::approvals::StepAttempt>,
+    approval: Option<&str>,
+) -> Result<(), Refusal> {
+    if !crate::flow_driver::is_step_call_key(idempotency_key) {
+        return Ok(());
+    }
+    let refused = match attempt {
+        None => step_key_reserved(),
+        Some(_making) => match require_making(cell.store(), attempt, idempotency_key) {
+            Ok(()) => return Ok(()),
+            Err(refusal) => refusal,
+        },
+    };
+    Err(crate::approvals::refused_under(cell, approval, refused))
+}
+
 /// One action call, as [`call_action`] takes it.
 pub(crate) struct ActionCall<'a> {
     pub(crate) query: &'a ActionQuery,
@@ -378,23 +433,12 @@ pub(crate) fn call_action_bound<E: SqlEngine>(
     )? {
         Gated::Pending(pending) => return Ok(ActionAnswer::Pending(pending)),
         Gated::Replayed(outcome) => *outcome,
-        Gated::Commit(approval) => commit_call(
-            host,
-            &mut cell,
-            &catalog,
-            &kernel_call,
-            approval.as_deref(),
-            attempt,
-        )?,
+        Gated::Commit(approval) => {
+            let approval = approval.as_deref();
+            commit_call(host, &mut cell, &catalog, &kernel_call, approval, attempt)?
+        }
     };
-    // S5a: a step attempt's call answers only with the record its own
-    // dispatch committed, now or on an earlier try, never another's under
-    // its key.
-    if let Some(attempt) = attempt
-        && !crate::flow_driver::owns(cell.store(), action_id, &request.idempotency_key, attempt)?
-    {
-        return Err(foreign_step_record());
-    }
+    require_owned(cell.store(), action_id, &request.idempotency_key, attempt)?;
     let store = cell.store();
     let raw_hash = world_values(host, disclosure, store, actor);
     caller_receipt(store, action_id, request, outcome, raw_hash, key).map(ActionAnswer::Receipt)
@@ -600,33 +644,8 @@ fn through_gate<E: SqlEngine>(
             crate::approvals::attempt_ended(),
         )?);
     }
-    // S5a: the step-key namespace is fenced at bound dispatch, under this
-    // hold: a call under a step's call key runs only for the trusted
-    // invocation of the step attempt that makes it now. A direct call held
-    // under such a key before the fence (its approval's dispatch) never runs,
-    // and that refusal is recorded for its approval.
-    if crate::flow_driver::is_step_call_key(&kernel_call.idempotency_key) {
-        let fenced = match attempt {
-            None => Some(step_key_reserved()),
-            Some(attempt)
-                if !crate::flow_driver::attempt_makes(
-                    cell.store(),
-                    attempt,
-                    &kernel_call.idempotency_key,
-                )? =>
-            {
-                Some(crate::approvals::attempt_ended())
-            }
-            Some(_making) => None,
-        };
-        if let Some(refusal) = fenced {
-            return Err(crate::approvals::refused_under(
-                cell,
-                approval.as_deref(),
-                refusal,
-            ));
-        }
-    }
+    let key = &kernel_call.idempotency_key;
+    fence_step_key(cell, key, attempt, approval.as_deref())?;
     let Some(gate) = gate else {
         return Ok(Gated::Commit(None));
     };
@@ -659,18 +678,9 @@ fn through_gate<E: SqlEngine>(
                 .authorizer
                 .verified_principal(&kernel_call.actor)
                 .ok_or_else(action_denied)?;
-            // S5a: the step attempt the trusted invocation names must still
-            // wait on exactly this call, judged under this hold; a call
-            // parks for an attempt only then.
-            if let Some(attempt) = attempt
-                && !crate::flow_driver::attempt_makes(
-                    cell.store(),
-                    attempt,
-                    &kernel_call.idempotency_key,
-                )?
-            {
-                return Err(crate::approvals::attempt_ended());
-            }
+            // S5a: a call parks for a step attempt only while that attempt
+            // still waits on exactly this call, judged under this hold.
+            require_making(cell.store(), attempt, key)?;
             let parked = crate::approvals::ParkedCall {
                 action: action_id.to_owned(),
                 input: kernel_call.input.clone(),
