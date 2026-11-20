@@ -22,8 +22,7 @@ use norn_api::analytics_routes::{EngineAnswer, EngineCall, Transport, UploadReco
 use norn_api::host::DevHost;
 use norn_cell::analytics::engine::{Engine, Settings};
 use norn_cell::analytics::{
-    Column, ColumnKind, LandRequest, PointLaw, SettleRequest, StoreRequest, TableSchema,
-    hex_digest,
+    Column, ColumnKind, LandRequest, PointLaw, SettleRequest, StoreRequest, TableSchema, hex_digest,
 };
 use norn_cell::engine::NativeEngine;
 use norn_cell_do::olap::InProcess;
@@ -302,14 +301,9 @@ fn a_loaded_datasets_grid_equals_the_native_grid_of_the_same_rows() {
             serde_json::from_value(json!({"typeName": name})).unwrap();
         let uri = format!("s3://uploads/demo/{name}.csv");
         let sha256 = hex_digest(text.as_bytes());
-        let generated = norn_api::uploads::generate(
-            &table,
-            &request,
-            &uri,
-            &sha256,
-            "2026-11-12T12:00:00Z",
-        )
-        .unwrap();
+        let generated =
+            norn_api::uploads::generate(&table, &request, &uri, &sha256, "2026-11-12T12:00:00Z")
+                .unwrap();
         norn_api::uploads::install(&host, &generated, 1).unwrap();
         norn_api::uploads::load_rows(&host, &generated, &table, &uri, &sha256, 2).unwrap();
     }

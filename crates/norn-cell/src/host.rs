@@ -342,13 +342,8 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
         request: Option<&crate::dataset_manifest::DatasetRequest>,
     ) -> Result<(String, crate::Receipt), CellError> {
         let logical_time = self.now.as_millis();
-        self.store.commit_dataset_manifest(
-            MAIN_WORLD,
-            &self.scope,
-            logical_time,
-            manifest,
-            request,
-        )
+        self.store
+            .commit_dataset_manifest(MAIN_WORLD, &self.scope, logical_time, manifest, request)
     }
 
     /// Commit one complete quantity operation using this host's injected clock

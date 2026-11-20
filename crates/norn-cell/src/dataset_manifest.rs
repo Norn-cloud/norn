@@ -438,7 +438,10 @@ impl<E: SqlEngine> CellStore<E> {
 }
 
 /// A manifest event's manifest and identity, checked against the hash it records.
-fn decode_event(commit_seq: u64, text: &str) -> Result<(DatasetManifest, String, Value), CellError> {
+fn decode_event(
+    commit_seq: u64,
+    text: &str,
+) -> Result<(DatasetManifest, String, Value), CellError> {
     let event: Value = serde_json::from_str(text)?;
     let manifest: DatasetManifest =
         serde_json::from_value(event.get("manifest").cloned().unwrap_or(Value::Null))?;

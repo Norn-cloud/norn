@@ -116,7 +116,11 @@ const WIDENED: [(&str, &str, &str); 3] = [
         "warning",
         "self.customer == null or self.customer != 'void'",
     ),
-    ("customer_not_composed", "warning", "self.customer != '\u{e9}'"),
+    (
+        "customer_not_composed",
+        "warning",
+        "self.customer != '\u{e9}'",
+    ),
 ];
 
 #[derive(Debug, Clone)]
@@ -165,9 +169,7 @@ fn per_row(cell: &mut Cell, lines: &[Line]) -> (BTreeSet<Finding>, BTreeSet<u64>
             payload["customer"] = json!(customer);
         }
         // The price stays an exact number token, never a float.
-        let text = payload
-            .to_string()
-            .replace("\"__PRICE__\"", &line.price);
+        let text = payload.to_string().replace("\"__PRICE__\"", &line.price);
         let observed = Observed {
             id: ObservationId(format!("row-{row}")),
             provenance: Provenance {
@@ -310,7 +312,10 @@ fn settle_all(
             .expect("per-row residue");
         // LAW-04: the evaluator decides only the rules left to each row.
         for finding in &findings {
-            let row = page.iter().find(|r| r.row == finding.row).expect("a residue row");
+            let row = page
+                .iter()
+                .find(|r| r.row == finding.row)
+                .expect("a residue row");
             assert!(row.rules.contains(&finding.rule), "{finding:?}");
         }
         let through = page.last().expect("a residue page").row;
@@ -341,7 +346,9 @@ fn parquet_rows(path: &std::path::Path, column: &str) -> Vec<(u64, Option<String
             Ok((
                 row.get::<_, u64>(0)?,
                 row.get::<_, Option<String>>(1).unwrap_or(None),
-                row.get::<_, Option<bool>>(2).unwrap_or(None).unwrap_or(false),
+                row.get::<_, Option<bool>>(2)
+                    .unwrap_or(None)
+                    .unwrap_or(false),
             ))
         })
         .expect("rows");
@@ -387,7 +394,10 @@ fn set_based(cell: &Cell, lines: &[Line]) -> SetBased {
         .filter(|(_, _, holds)| *holds)
         .map(|(row, _, _)| *row)
         .collect::<BTreeSet<_>>();
-    assert_eq!(landed.held_by_rules, u64::try_from(held_by_rules.len()).expect("count"));
+    assert_eq!(
+        landed.held_by_rules,
+        u64::try_from(held_by_rules.len()).expect("count")
+    );
     assert_eq!(
         landed.data.as_ref().expect("data").rows,
         u64::try_from(data.len()).expect("count")
@@ -396,7 +406,10 @@ fn set_based(cell: &Cell, lines: &[Line]) -> SetBased {
         landed.load.rows,
         u64::try_from(data.len() + held_by_rules.len()).expect("count")
     );
-    assert!(data.is_disjoint(&held), "a held row is not in the data file");
+    assert!(
+        data.is_disjoint(&held),
+        "a held row is not in the data file"
+    );
     SetBased {
         findings,
         held,
@@ -461,8 +474,15 @@ fn lines() -> impl proptest::strategy::Strategy<Value = Vec<Line>> {
     proptest::collection::vec(proptest::prop_oneof![4 => ordinary, 1 => boundary], 1..24)
 }
 
-fn laws(extra: &[(&'static str, &'static str, &'static str)]) -> Vec<(&'static str, &'static str, &'static str)> {
-    LOWERED.iter().chain(&WIDENED).chain(extra).copied().collect()
+fn laws(
+    extra: &[(&'static str, &'static str, &'static str)],
+) -> Vec<(&'static str, &'static str, &'static str)> {
+    LOWERED
+        .iter()
+        .chain(&WIDENED)
+        .chain(extra)
+        .copied()
+        .collect()
 }
 
 proptest::proptest! {
@@ -532,7 +552,13 @@ fn a_reader_sees_no_row_of_a_landing_until_it_is_stored() {
             occurred_at: INSTANTS[0],
         })
         .collect();
-    let request = begin(&engine, &cell, csv(&first).as_bytes(), FileFormat::Csv, "a1");
+    let request = begin(
+        &engine,
+        &cell,
+        csv(&first).as_bytes(),
+        FileFormat::Csv,
+        "a1",
+    );
     let landed = engine.land(&request).expect("landed");
     let (landed, _, _) = settle_all(&engine, &cell, &request, landed);
     let (data, held) = (
@@ -575,12 +601,24 @@ fn a_reader_sees_no_row_of_a_landing_until_it_is_stored() {
             occurred_at: INSTANTS[2],
         })
         .collect();
-    let again = begin(&engine, &cell, csv(&second).as_bytes(), FileFormat::Csv, "a2");
+    let again = begin(
+        &engine,
+        &cell,
+        csv(&second).as_bytes(),
+        FileFormat::Csv,
+        "a2",
+    );
     let pending = engine.land(&again).expect("landed with residue");
     assert!(pending.residue_total > 0 && pending.data.is_none());
     assert_eq!(read(&stored).expect("unchanged"), current);
     // A retry is its own attempt; the first attempt's residue is untouched.
-    let retry = begin(&engine, &cell, csv(&second).as_bytes(), FileFormat::Csv, "a3");
+    let retry = begin(
+        &engine,
+        &cell,
+        csv(&second).as_bytes(),
+        FileFormat::Csv,
+        "a3",
+    );
     let retried = engine.land(&retry).expect("retried");
     assert_eq!(retried.residue_total, pending.residue_total);
     // A settle whose findings fail their check refuses and drops the attempt.
@@ -611,7 +649,13 @@ fn a_reader_sees_no_row_of_a_landing_until_it_is_stored() {
     assert_eq!(read(&stored).expect("unchanged"), current);
     // The retry settles on its own and lands what a clean run lands.
     let (retried, _, _) = settle_all(&engine, &cell, &retry, retried);
-    let clean = begin(&engine, &cell, csv(&second).as_bytes(), FileFormat::Csv, "a4");
+    let clean = begin(
+        &engine,
+        &cell,
+        csv(&second).as_bytes(),
+        FileFormat::Csv,
+        "a4",
+    );
     let clean_landed = engine.land(&clean).expect("landed");
     let (clean_landed, _, _) = settle_all(&engine, &cell, &clean, clean_landed);
     assert_eq!(
