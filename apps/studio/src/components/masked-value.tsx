@@ -1,5 +1,5 @@
 import { Eye, EyeOff, Fingerprint, Loader2, ShieldCheck } from "lucide-react"
-import { useEffect, useRef, useState } from "react"
+import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -22,11 +22,18 @@ const valueText = (value: unknown): string => (typeof value === "string" ? value
  * A marked property as the server projected it. A reader who may reveal sees the projection
  * blurred with "Reveal": the blur is presentation only, since the stored value is not in the page.
  * Revealing asks the cell, which records a receipt (who, what, when, why) and only then answers.
- * A revealed value is bound to the context the cell revealed it under (the version and this
- * projection): a newer projection that changes it, or no longer allows a reveal, drops the value,
- * and an answer that arrives after such a change is never shown.
+ * A revealed value is bound to the context the cell revealed it under: the record, the property, the
+ * version and this projection. Each context is its own instance (keyed by it), so any change of
+ * context (A → B, and back to A) discards the old instance with its revealed value and any reveal
+ * still in flight: an answer can only ever reach the instance that asked for it.
  */
-export function MaskedValue({ objectType, id, version, property, masked, projected, className }: {
+export function MaskedValue(props: MaskedValueProps) {
+  const { objectType, id, version, property, masked } = props
+  const context = revealContext(version, masked)
+  return <Reveal key={JSON.stringify([objectType, id, property, context])} {...props} context={context} />
+}
+
+interface MaskedValueProps {
   readonly objectType: string
   readonly id: string
   /** The record version the cell projected; a reveal belongs to it. */
@@ -35,21 +42,14 @@ export function MaskedValue({ objectType, id, version, property, masked, project
   readonly masked: Masked
   readonly projected: unknown
   readonly className?: string
-}) {
-  const context = revealContext(version, masked)
+}
+
+/** One reveal context's instance; it never outlives its context (see [`MaskedValue`]). */
+function Reveal({ objectType, id, property, masked, projected, className, context }: MaskedValueProps & { readonly context: string }) {
   const [revealed, setRevealed] = useState<Revealed | null>(null)
   const [open, setOpen] = useState(false)
   const [purpose, setPurpose] = useState("")
   const [state, setState] = useState<{ readonly kind: "idle" | "busy" } | { readonly kind: "error"; readonly message: string }>({ kind: "idle" })
-  // The context the latest projection carries, read when a reveal's answer arrives.
-  const current = useRef(context)
-  current.current = context
-  // A changed context forgets the old reveal and any reveal still in flight under it.
-  useEffect(() => {
-    setRevealed((kept) => kept !== null && kept.context !== context ? null : kept)
-    setState((kept) => kept.kind === "idle" ? kept : { kind: "idle" })
-    if (!masked.revealable) setOpen(false)
-  }, [context, masked.revealable])
 
   const shown = shownReveal(revealed, masked, context)
   if (shown !== null) {
@@ -76,12 +76,11 @@ export function MaskedValue({ objectType, id, version, property, masked, project
   if (!masked.revealable) return <span className={cn("inline-flex min-w-0", className)}>{chip}</span>
 
   const reveal = async () => {
-    const asked = context
     setState({ kind: "busy" })
     const result = await revealProperty(objectType, id, property, purpose)
-    // An answer to a context the cell has since replaced is dropped, whatever it says.
-    if (current.current !== asked) return
-    if (result.kind === "revealed") { setRevealed({ value: result.value, receipt: result.receipt, context: asked }); setOpen(false); setState({ kind: "idle" }); return }
+    // This instance is this context's alone: once the context changes it is unmounted, and its
+    // state (this answer included) is gone.
+    if (result.kind === "revealed") { setRevealed({ value: result.value, receipt: result.receipt, context }); setOpen(false); setState({ kind: "idle" }); return }
     setRevealed(null)
     setState({ kind: "error", message: result.kind === "refused" ? result.message : "The cell is not reachable." })
   }
