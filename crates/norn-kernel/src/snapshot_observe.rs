@@ -318,7 +318,8 @@ impl<'a> AuthorizedWrites<'a> {
             .find(|authorized| authorized.write == *write)
     }
 
-    /// [`ObservationAuthorization::authorizes_write`], from the index.
+    /// Whether this exact complete object write was prepared as an
+    /// observation, from the index.
     pub(crate) fn authorizes(&self, write: &FactWrite) -> bool {
         self.find(write).is_some()
     }
@@ -847,36 +848,7 @@ impl ObservationAuthorization {
     fn claim_standings(&self) -> BTreeMap<&FactKey, ClaimStanding> {
         // A fresh claim is one this turn's final authorized writes create.
         let fresh: BTreeSet<&FactKey> = self.writes.iter().map(|w| &w.write.key).collect();
-        let superseded: BTreeSet<&FactKey> = self
-            .claims
-            .iter()
-            .filter(|(key, claim)| {
-                self.claims.iter().any(|(other_key, other)| {
-                    other.contribution == claim.contribution
-                        && other.supersedes.contains(&key.key)
-                        && (fresh.contains(other_key) || !fresh.contains(key))
-                })
-            })
-            .map(|(key, _)| key)
-            .collect();
-        self.claims
-            .iter()
-            .map(|(key, claim)| {
-                let rival = self.claims.iter().any(|(other_key, other)| {
-                    other.contribution == claim.contribution
-                        && other.target != claim.target
-                        && !superseded.contains(other_key)
-                });
-                let standing = if superseded.contains(key) {
-                    ClaimStanding::Superseded
-                } else if rival {
-                    ClaimStanding::Contested
-                } else {
-                    ClaimStanding::Current
-                };
-                (key, standing)
-            })
-            .collect()
+        standings_of(&self.claims, &fresh)
     }
 
     /// The sealed edge changes the final claim set authorizes: a current claim
@@ -889,6 +861,17 @@ impl ObservationAuthorization {
         }
         let standings = self.claim_standings();
         let stands = |key: &FactKey| standings.get(key) != Some(&ClaimStanding::Superseded);
+        // Standing claims per edge, so a withdrawal asks its own edge only.
+        let mut standing_edges: BTreeMap<(&norn_ir::LinkId, &FactKey, Option<&FactKey>), usize> =
+            BTreeMap::new();
+        for (key, claim) in &self.claims {
+            if stands(key) {
+                let count = standing_edges
+                    .entry((&claim.role, &claim.source, claim.target.as_ref()))
+                    .or_default();
+                *count = count.saturating_add(1);
+            }
+        }
         self.claim_intents
             .iter()
             .filter(|(key, write)| {
@@ -897,15 +880,13 @@ impl ObservationAuthorization {
                 };
                 match write.mutation {
                     LinkMutation::Add { .. } => standings.get(key) == Some(&ClaimStanding::Current),
+                    // This claim does not stand, so every standing claim on
+                    // its edge is another one.
                     LinkMutation::Remove => {
                         !stands(key)
-                            && !self.claims.iter().any(|(other_key, other)| {
-                                other_key != key
-                                    && other.role == claim.role
-                                    && other.source == claim.source
-                                    && other.target == claim.target
-                                    && stands(other_key)
-                            })
+                            && standing_edges
+                                .get(&(&claim.role, &claim.source, claim.target.as_ref()))
+                                .is_none_or(|count| *count == 0)
                     }
                 }
             })
@@ -913,10 +894,16 @@ impl ObservationAuthorization {
             .collect()
     }
 
-    pub(crate) fn authorizes_claim_write(&self, write: &FactWrite) -> bool {
+    /// Whether `write` is a prepared claim's own creation, asked of the
+    /// commit's [`Self::indexed`] writes (no scan per claim).
+    pub(crate) fn authorizes_claim_write(
+        &self,
+        authorized: &AuthorizedWrites<'_>,
+        write: &FactWrite,
+    ) -> bool {
         write.expected == FactVersion(0)
             && matches!(&write.mutation, FactMutation::Put { values } if self.claims.get(&write.key).is_some_and(|claim| &claim.values == values))
-            && self.authorizes_write(write)
+            && authorized.authorizes(write)
     }
 
     /// Seal pending-record changes from trusted mapping preparation. Retained
@@ -1003,16 +990,9 @@ impl ObservationAuthorization {
         &self.source_scopes
     }
 
-    /// Whether this exact complete object write was prepared as an observation.
-    #[must_use]
-    pub(crate) fn authorizes_write(&self, write: &FactWrite) -> bool {
-        self.writes
-            .iter()
-            .any(|authorized| authorized.write == *write)
-    }
-
     /// The authorized writes indexed by key, for a check that asks about
-    /// every write of a commit (INGEST-BATCH-1: O(1) per write, not a scan).
+    /// every write of a commit (INGEST-BATCH-1: a keyed lookup per write,
+    /// O(log N), not a scan).
     pub(crate) fn indexed(&self) -> AuthorizedWrites<'_> {
         let mut by_key: BTreeMap<&FactKey, Vec<&AuthorizedObservedWrite>> = BTreeMap::new();
         for authorized in &self.writes {
@@ -2701,6 +2681,141 @@ where
         authorization,
     )
     .map_err(ObservationCommitRefusal::Commit)
+}
+
+/// OBS-LINK-CONTRIBUTION-1: each claim's standing, decided within its own
+/// contribution (claims indexed by it, no scan of every claim per claim).
+fn standings_of<'a>(
+    claims: &'a BTreeMap<FactKey, PreparedClaim>,
+    fresh: &BTreeSet<&FactKey>,
+) -> BTreeMap<&'a FactKey, ClaimStanding> {
+    let mut by_contribution: BTreeMap<&str, Vec<(&FactKey, &PreparedClaim)>> = BTreeMap::new();
+    for (key, claim) in claims {
+        by_contribution
+            .entry(claim.contribution.as_str())
+            .or_default()
+            .push((key, claim));
+    }
+    let mut standings = BTreeMap::new();
+    for group in by_contribution.values() {
+        let mut by_name: BTreeMap<&str, Vec<&FactKey>> = BTreeMap::new();
+        for (key, _) in group {
+            by_name.entry(key.key.as_str()).or_default().push(key);
+        }
+        let mut superseded: BTreeSet<&FactKey> = BTreeSet::new();
+        for (other_key, other) in group {
+            for named in &other.supersedes {
+                for key in by_name.get(named.as_str()).into_iter().flatten() {
+                    if fresh.contains(other_key) || !fresh.contains(key) {
+                        superseded.insert(key);
+                    }
+                }
+            }
+        }
+        // The targets the group's standing (not superseded) claims name.
+        let mut targets: BTreeSet<Option<&FactKey>> = BTreeSet::new();
+        for (key, claim) in group {
+            if !superseded.contains(key) {
+                targets.insert(claim.target.as_ref());
+            }
+        }
+        for (key, claim) in group {
+            let target = claim.target.as_ref();
+            let rival = targets.len() > 1 || !targets.contains(&target);
+            let standing = if superseded.contains(key) {
+                ClaimStanding::Superseded
+            } else if rival {
+                ClaimStanding::Contested
+            } else {
+                ClaimStanding::Current
+            };
+            standings.insert(*key, standing);
+        }
+    }
+    standings
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used, reason = "claim standing scenarios")]
+mod claim_standing_tests {
+    use super::{ClaimStanding, PreparedClaim, standings_of};
+    use crate::FactKey;
+    use std::collections::{BTreeMap, BTreeSet};
+
+    /// The all-pairs definition the index replaced.
+    fn reference<'a>(
+        claims: &'a BTreeMap<FactKey, PreparedClaim>,
+        fresh: &BTreeSet<&FactKey>,
+    ) -> BTreeMap<&'a FactKey, ClaimStanding> {
+        let superseded: BTreeSet<&FactKey> = claims
+            .iter()
+            .filter(|(key, claim)| {
+                claims.iter().any(|(other_key, other)| {
+                    other.contribution == claim.contribution
+                        && other.supersedes.contains(&key.key)
+                        && (fresh.contains(other_key) || !fresh.contains(key))
+                })
+            })
+            .map(|(key, _)| key)
+            .collect();
+        claims
+            .iter()
+            .map(|(key, claim)| {
+                let rival = claims.iter().any(|(other_key, other)| {
+                    other.contribution == claim.contribution
+                        && other.target != claim.target
+                        && !superseded.contains(other_key)
+                });
+                let standing = if superseded.contains(key) {
+                    ClaimStanding::Superseded
+                } else if rival {
+                    ClaimStanding::Contested
+                } else {
+                    ClaimStanding::Current
+                };
+                (key, standing)
+            })
+            .collect()
+    }
+
+    /// INGEST-BATCH-1 / S7: the contribution index decides every claim's
+    /// standing exactly as the all-pairs scan did, over contributions with
+    /// supersession chains, fresh and retained claims, rival and shared
+    /// targets, and absent targets.
+    #[test]
+    fn indexed_claim_standing_matches_the_all_pairs_definition() {
+        let mut seed = 0x9e37_79b9_u32;
+        let mut next = |bound: u32| {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed % bound
+        };
+        for _round in 0..200 {
+            let count = next(12) + 1;
+            let mut claims = BTreeMap::new();
+            for n in 0..count {
+                let supersedes = (0..next(3)).map(|_| format!("c{}", next(count))).collect();
+                let target = match next(3) {
+                    0 => None,
+                    t => Some(FactKey::new("test.Target", format!("t{t}"))),
+                };
+                claims.insert(
+                    FactKey::new("norn.ObservedLinkClaim", format!("c{n}")),
+                    PreparedClaim {
+                        supersedes,
+                        values: super::JsonObject::new(),
+                        contribution: format!("k{}", next(3)),
+                        role: norn_ir::LinkId("owner".to_owned()),
+                        source: FactKey::new("test.Source", "s"),
+                        target,
+                    },
+                );
+            }
+            let fresh: BTreeSet<&FactKey> = claims.keys().filter(|_| next(2) == 0).collect();
+            assert_eq!(standings_of(&claims, &fresh), reference(&claims, &fresh));
+        }
+    }
 }
 
 #[cfg(test)]

@@ -79,8 +79,8 @@ use norn_ir::{
 
 use compile::compile_mapping;
 pub use compile::{
-    CompiledMapping, EntitlementCoverageReport, FieldRefusal, MappedSnapshot, OBJECT_ID_FIELD,
-    RowRefusal, SourceDocument,
+    CompiledMapping, Derivation, EntitlementCoverageReport, FieldRefusal, MappedSnapshot,
+    OBJECT_ID_FIELD, RowRefusal, SourceDocument,
 };
 pub use set::{check_mapping_artifacts, compile_mapping_artifact, mapping_key};
 pub use snapshot_lint::lint_observed_deviations;

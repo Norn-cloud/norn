@@ -188,7 +188,12 @@ fn explain(reasons: &[norn_cell::QuarantineReason]) -> String {
                 .map
                 .as_ref()
                 .map_or_else(String::new, |map| format!(" (map {map}{field})"));
-            format!("{}{map}: {}", reason.code, reason.reason)
+            // A trusted operator's own report: the cell's refusal text too.
+            let detail = reason
+                .detail
+                .as_ref()
+                .map_or_else(String::new, |detail| format!(" ({detail})"));
+            format!("{}{map}: {}{detail}", reason.code, reason.reason)
         })
         .collect::<Vec<_>>()
         .join("; ")

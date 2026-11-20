@@ -1194,10 +1194,15 @@ fn check_link_authority<E, C, T, V: CommitView + ?Sized>(
     view: &V,
     authorization: Option<&ObservationAuthorization>,
 ) -> Result<(), CommitError<V::Error>> {
+    // One write index for every claim write (not a scan of the authorized
+    // writes per claim).
+    let indexed = authorization.map(ObservationAuthorization::indexed);
     if commit.writes.iter().any(|write| {
         model.canonical(&write.key).object_type.as_str()
             == norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE
-            && !authorization.is_some_and(|a| a.authorizes_claim_write(write))
+            && !authorization
+                .zip(indexed.as_ref())
+                .is_some_and(|(a, index)| a.authorizes_claim_write(index, write))
     }) {
         return Err(CommitError::ObservationAuthorization);
     }
@@ -1210,12 +1215,18 @@ fn check_link_authority<E, C, T, V: CommitView + ?Sized>(
         return Err(CommitError::ObservationAuthorization);
     }
     check_source_markers(commit, view, authorization)?;
-    let convergent =
-        authorization.map_or_else(Vec::new, ObservationAuthorization::convergent_links);
+    let mut convergent: BTreeMap<&crate::LinkKey, Vec<&crate::LinkWrite>> = BTreeMap::new();
+    for write in authorization.map_or_else(Vec::new, ObservationAuthorization::convergent_links) {
+        convergent.entry(&write.key).or_default().push(write);
+    }
     let sources: BTreeSet<_> = commit
         .links
         .iter()
-        .filter(|write| !convergent.contains(write))
+        .filter(|write| {
+            !convergent
+                .get(&write.key)
+                .is_some_and(|same| same.contains(write))
+        })
         .map(|write| model.canonical(&write.key.source))
         .chain(
             authorization

@@ -175,27 +175,55 @@ pending maintainer review; additions beside OBS-PAGE-1, which is unchanged):
 
 - **MAP-DECIMAL-TEXT-1:** a source field declared `decimal` conforms when it
   arrives as a JSON number or as exact decimal text (`"1234.50"`), read by the
-  same strict JSON-decimal grammar the action boundary uses (VAL-EXACT-1). Any
-  other text (`"1,234"`, `"1e3"`, `" 5"`) refuses `mapping.runtime.invalid_record`.
+  one strict wire decoder the action boundary also uses (VAL-EXACT-1,
+  `Decimal::parse_wire`): `-?(0|[1-9][0-9]*)(.[0-9]+)?` within the 96-bit
+  decimal range. Any other text (`"1,234"`, `"1e3"`, `"+5"`, `" 5"`) refuses
+  `mapping.runtime.invalid_record` at a mapping and `action.invalid_input` at
+  an action.
+- **MAP-DERIVATION-1:** a retained bundle records the runtime derivation it
+  was captured under (absent: derivation 1, before MAP-DECIMAL-TEXT-1) and is
+  always verified under that derivation, so a newer parser never changes what
+  retained evidence proves. Every derivation shares the capture address: a
+  replay of a captured event finds the row it already has, and a row an older
+  derivation quarantined stays quarantined on replay.
+- **MAP-REPROCESS-1:** a quarantined row that the current derivation accepts
+  lands only through the explicit reprocessing step a trusted host takes on an
+  operator's decision. The re-derived bundle has its own address, names the
+  row it reprocesses, and the commit that lands it consumes that row. Capture
+  and replay never reprocess.
 - **MAP-EXPLAIN-1:** every quarantined row is explained in structure, never by
   its code alone: the record, its dataset, the code, the mapping rule (map)
-  and, for a field that does not conform, the field, the value it held and the
-  declared type, plus the reason in words. The retained bundle diagnostic
-  carries the same fields.
-- **INGEST-GROUP-1:** a host frames a batch into pages by mapping input first,
-  each input's rows in batch order, unless a source identity appears under
-  two inputs of the batch (then it frames the batch in its own order). A
-  record's versions keep their order; links resolve in any order
-  (OBS-LINK-PENDING-ORDER).
+  and, for a field that does not conform, the field, a preview of the value it
+  held and the declared type, plus the reason in words. The retained
+  diagnostic keeps each text bounded (256 bytes): the value itself is the
+  retained raw evidence, so a malformed field never multiplies a row's size.
+- **SEC-QUARANTINE-1:** a row the cell refused at commit is answered with its
+  stable code and fixed, allowlisted words only. The refusal's own text can
+  name a stored subject's live type or values, which a caller allowed only to
+  sync sources may not read; the quarantined row keeps the evidence for an
+  operator who can.
+- **INGEST-GROUP-1:** a host frames a batch in its own order. It groups rows by
+  mapping input first only when the inputs are proven independent: no
+  identity root both write, no link from one into the other's writes, no link
+  target both name, and no source identity under two inputs. Overlapping
+  writes therefore apply in batch order and the last row wins, as one by one.
 - **INGEST-BATCH-1:** a record whose bundle the mapping refused joins no page
   row; it is quarantined before any commit, exactly as one by one, and it ends
   the run, so the records before it and after it each commit together
-  (OBS-PAGE-EQUIV holds: no two records share a commit across a refusal). A load is bounded by rows and by its
-  estimated work on the host, not by a bare commit count.
-- **INGEST-YIELD-1:** a host holds the cell one page at a time during a load
-  and serves requests already waiting for it between pages, so a read waits
-  for at most one page commit. The dev host serves several requests at once
-  (DEV-CONCURRENT-1); each request's verified caller stays its own.
+  (OBS-PAGE-EQUIV holds: no two records share a commit across a refusal). A
+  hosted load is bounded by rows and by a work budget charged for each row
+  captured and each commit the cell actually attempts (page runs, per-record
+  fallbacks, page consumptions). At the budget it stops at the start of the
+  page it is in, after at least one commit, and answers `next`; resuming from
+  `next` frames that page again, its committed runs commit nothing, and every
+  row is reported once.
+- **INGEST-YIELD-1:** a host holds the cell for one commit at a time during a
+  load (a page's capture, each run, each per-record fallback), never for a
+  page or a batch. A read holds a read pin for its whole request, and each
+  load commit waits for reads in flight, so a multi-step read sees one
+  snapshot and waits for at most one commit. The dev host serves several
+  requests at once (DEV-CONCURRENT-1); each request's verified caller stays
+  its own.
 
 ## Perform and recovery semantics
 

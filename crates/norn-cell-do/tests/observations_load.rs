@@ -3,6 +3,7 @@
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
+    clippy::indexing_slicing,
     reason = "route correspondence"
 )]
 use norn_api::host::DevHost;
@@ -119,13 +120,14 @@ fn a_recorded_page_lands_once_through_the_admitted_mapping() {
         refused.to_string().contains("observations.too_large"),
         "{refused}"
     );
-    // INGEST-BATCH-1: a load is a work budget, not a bare commit count. One
-    // record's nine versions are nine commits, within the budget (it was
-    // refused past 8 commits before); 21 versions are past it.
-    let history = |versions: usize| {
+    // INGEST-BATCH-1: a load is a work budget charged for the commits the
+    // cell makes. One record's nine versions are nine commits, within it; 21
+    // versions stop at the budget and answer where to resume, and resuming
+    // lands the rest, every row reported once.
+    let history = |versions: std::ops::Range<usize>| {
         let mut history = json!({ "profile": export["profile"] });
         history["snapshot"] = Value::Array(
-            (0..versions)
+            versions
                 .map(|n| {
                     let mut row = export["snapshot"][0].clone();
                     row["record"]["name"] = json!("SYN-ERPNEXT-history");
@@ -136,15 +138,202 @@ fn a_recorded_page_lands_once_through_the_admitted_mapping() {
         );
         history.to_string()
     };
-    let (status, loaded) = load(&mut connect, &host, &principals, ADMIN, &history(9));
+    let (status, loaded) = load(&mut connect, &host, &principals, ADMIN, &history(0..9));
     assert_eq!(status, 200, "{loaded}");
     assert_eq!(loaded["pages"], 9, "{loaded}");
-    let (status, refused) = load(&mut connect, &host, &principals, ADMIN, &history(21));
-    assert_eq!(status, 413, "{refused}");
-    assert!(
-        refused.to_string().contains("21 rows, 21 commits"),
-        "{refused}"
+    assert_eq!(loaded["next"], Value::Null, "{loaded}");
+    let (status, partial) = load(&mut connect, &host, &principals, ADMIN, &history(9..30));
+    assert_eq!(status, 200, "{partial}");
+    let next = usize::try_from(partial["next"].as_u64().expect("stopped at the budget")).unwrap();
+    assert!(next > 0 && next < 21, "{partial}");
+    assert_eq!(partial["rows"], next, "{partial}");
+    let (status, rest) = load(
+        &mut connect,
+        &host,
+        &principals,
+        ADMIN,
+        &history(9 + next..30),
     );
+    assert_eq!(status, 200, "{rest}");
+    assert_eq!(rest["next"], Value::Null, "{rest}");
+    assert_eq!(rest["rows"], 21 - next, "{rest}");
+    assert_eq!(rest["landed"], 21 - next, "{rest}");
+}
+
+/// The value of the first `key` anywhere in `value`.
+fn find<'v>(value: &'v Value, key: &str) -> Option<&'v Value> {
+    match value {
+        Value::Object(members) => members
+            .get(key)
+            .or_else(|| members.values().find_map(|member| find(member, key))),
+        Value::Array(items) => items.iter().find_map(|item| find(item, key)),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => None,
+    }
+}
+
+fn host() -> (DevHost<NativeEngine>, FixturePrincipals) {
+    let scope = seed::demo_scope();
+    let store = seed::provision(NativeEngine::open_in_memory().unwrap(), &scope).unwrap();
+    let policy = ReadPolicy::compile(store.model().object_types(), &scope, &DEMO_GRANTS).unwrap();
+    let principals = FixturePrincipals::new(DEMO_FIXTURES, policy.caller());
+    let host = DevHost::from_store(store, scope, |command| command.payload.clone())
+        .unwrap()
+        .with_authorizer(policy);
+    (host, principals)
+}
+
+fn export() -> Value {
+    serde_json::from_str(include_str!(
+        "../../../registry/packs/erpnext/synthetic.json"
+    ))
+    .unwrap()
+}
+
+/// `n` Item rows under distinct source ids that all key the same canonical
+/// item, labelled `L0`, `L1`, ...
+fn same_item(n: usize) -> Vec<Value> {
+    let export = export();
+    let item = export["snapshot"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["dataset"] == "Item")
+        .unwrap()
+        .clone();
+    (0..n)
+        .map(|k| {
+            let mut row = item.clone();
+            row["record"]["name"] = json!(format!("SYN-ERPNEXT-item-{k:03}"));
+            row["record"]["label"] = json!(format!("L{k}"));
+            row
+        })
+        .collect()
+}
+
+fn item_label(host: &DevHost<NativeEngine>, principals: &FixturePrincipals) -> Value {
+    let response = server::handle(
+        host,
+        principals,
+        &server::Request {
+            method: "GET",
+            path: "/v1/objects/canon.Item/demo%2Fitem%2Fgold",
+            query: SCOPE,
+            authorization: ADMIN,
+            now: 0,
+            body: "",
+        },
+    );
+    assert_eq!(response.status, 200, "{}", response.body);
+    let object: Value = serde_json::from_str(&response.body).unwrap();
+    find(&object, "label").cloned().unwrap_or(Value::Null)
+}
+
+/// S2 (INGEST-GROUP-1): rows A, B, A' of two inputs (two partitions of one
+/// dataset) with distinct source ids write the same canonical property. The
+/// load ends with A's second value, exactly as delivering them one by one
+/// does; grouping by input would have applied A, A', B and left B.
+#[test]
+fn overlapping_inputs_end_as_one_by_one_delivery() {
+    let mut snapshot = same_item(3);
+    snapshot[0]["record"]["label"] = json!("A1");
+    snapshot[1]["record"]["label"] = json!("B");
+    snapshot[2]["record"]["label"] = json!("A2");
+    let recorded = norn_cell_do::recorded::Recorded::parse(
+        &json!({ "profile": export()["profile"], "snapshot": snapshot }),
+    )
+    .unwrap();
+    let mut rows = recorded.observations().unwrap();
+    rows[0].1.partition = "first".into();
+    rows[1].1.partition = "second".into();
+    rows[2].1.partition = "first".into();
+
+    let (batched, principals) = host();
+    let outcomes = batched.ingest(&rows).unwrap();
+    assert!(
+        outcomes
+            .iter()
+            .all(|o| o.outcome == norn_cell::MappingOutcome::Landed),
+        "{outcomes:?}"
+    );
+    let (sequential, readers) = host();
+    for row in &rows {
+        sequential.ingest(std::slice::from_ref(row)).unwrap();
+    }
+    assert_eq!(item_label(&sequential, &readers), json!("A2"));
+    assert_eq!(item_label(&batched, &principals), json!("A2"));
+}
+
+/// S3 (INGEST-BATCH-1): a hosted load of 100 distinct source ids the cell
+/// splits into 100 commits (every row keys the same item) is charged for
+/// those commits: it stops within the budget and answers where to resume,
+/// and the resumed loads land the rest with no row lost or reported twice.
+#[test]
+fn a_load_the_cell_splits_is_charged_per_commit_and_resumes() {
+    let (host, principals) = host();
+    let mut connect = connect();
+    let snapshot = same_item(100);
+    let mut from = 0_usize;
+    let (mut reported, mut landed, mut calls) = (0_u64, 0_u64, 0);
+    while from < snapshot.len() {
+        let body =
+            json!({ "profile": export()["profile"], "snapshot": snapshot[from..] }).to_string();
+        let (status, loaded) = load(&mut connect, &host, &principals, ADMIN, &body);
+        assert_eq!(status, 200, "{loaded}");
+        // 100 rows at 0.1 s leave 6.4 s, eight 0.8 s commits.
+        assert!(loaded["commits"].as_u64().unwrap() <= 9, "{loaded}");
+        reported += loaded["rows"].as_u64().unwrap();
+        landed += loaded["landed"].as_u64().unwrap() + loaded["alreadyLanded"].as_u64().unwrap();
+        calls += 1;
+        assert!(calls < 30, "a load always makes progress: {loaded}");
+        match loaded["next"].as_u64() {
+            Some(next) => from += usize::try_from(next).unwrap(),
+            None => from = snapshot.len(),
+        }
+    }
+    assert!(calls > 1, "the first load stopped at its budget");
+    assert_eq!(reported, 100);
+    assert_eq!(landed, 100);
+    assert_eq!(item_label(&host, &principals), json!("L99"));
+}
+
+/// S8: a malformed field nearly as large as a dev request is retained once
+/// (the raw evidence) with a bounded diagnostic, so its page stays under the
+/// inbox row bound and the valid rows beside it still land.
+#[test]
+fn a_near_limit_malformed_row_never_aborts_its_page() {
+    let (host, _principals) = host();
+    let export = export();
+    let mut snapshot: Vec<Value> = export["snapshot"].as_array().unwrap().clone();
+    let at = snapshot
+        .iter()
+        .position(|row| row["dataset"] == "Warehouse Lot Balance")
+        .unwrap();
+    // Quotes escape on every copy: the request is under the dev body bound
+    // (512 KiB), and four escaped copies of the field were over the 2 MiB
+    // inbox row bound, which aborted the whole page's capture.
+    snapshot[at]["record"]["quantity"] = json!("\"".repeat(200_000));
+    let document = json!({ "profile": export["profile"], "snapshot": snapshot });
+    assert!(document.to_string().len() < 512 * 1024);
+    let recorded = norn_cell_do::recorded::Recorded::parse(&document).unwrap();
+    let rows = recorded.observations().unwrap();
+    let outcomes = host.ingest(&rows).expect("the page captures");
+    for (n, ingested) in outcomes.iter().enumerate() {
+        if n == at {
+            let norn_cell::MappingOutcome::Quarantined(reasons) = &ingested.outcome else {
+                panic!("{ingested:?}");
+            };
+            let reason = &reasons[0];
+            assert_eq!(reason.field.as_deref(), Some("quantity"));
+            assert!(reason.value.as_ref().unwrap().len() < 1024, "{reason:?}");
+            assert!(reason.reason.len() < 1024, "{reason:?}");
+        } else {
+            assert_eq!(
+                ingested.outcome,
+                norn_cell::MappingOutcome::Landed,
+                "{ingested:?}"
+            );
+        }
+    }
 }
 
 /// MAP-EXPLAIN-1 and MAP-DECIMAL-TEXT-1 through the route: a decimal sent as

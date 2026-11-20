@@ -5,11 +5,16 @@ use crate::{
     system::INBOX,
 };
 use norn_checker::Diagnostic;
-use norn_checker::mapping::{CompiledMapping, SourceDocument, compile_mapping_artifact};
+use norn_checker::mapping::{
+    CompiledMapping, Derivation, SourceDocument, compile_mapping_artifact,
+};
 use norn_ir::{ArtifactEnvelope, RuntimeValue, mapping::MappedRecord, provenance::UtcTimestamp};
 use norn_kernel::Observed;
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 /// Trusted source selection; every evaluation input participates in bundle identity.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,6 +52,51 @@ pub struct MappingBundle {
     pub records: Vec<MappedRecord>,
     /// Mapping failures retained as ordinary evidence.
     pub diagnostics: Vec<RuntimeValue>,
+    /// MAP-DERIVATION-1: the runtime derivation the bundle was captured
+    /// under (`1`, absent on bundles captured before it, or `2`). A bundle is
+    /// always verified under its own derivation.
+    #[serde(
+        default = "legacy_derivation",
+        skip_serializing_if = "is_legacy_derivation"
+    )]
+    pub derivation: u32,
+    /// MAP-REPROCESS-1: the quarantined `mapping-bundle:` row this bundle
+    /// explicitly re-derives under a newer derivation
+    /// ([`crate::SqliteCell::reprocess_quarantined_bundle`]); its commit
+    /// consumes that row. Never set by capture or replay.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reprocesses: Option<String>,
+}
+
+/// The derivation number new captures record ([`Derivation::CURRENT`]).
+pub(crate) const CURRENT_DERIVATION: u32 = derivation_number(Derivation::CURRENT);
+
+const fn legacy_derivation() -> u32 {
+    1
+}
+
+#[allow(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde skip_serializing_if signature"
+)]
+const fn is_legacy_derivation(derivation: &u32) -> bool {
+    *derivation == 1
+}
+
+/// The checker derivation a retained bundle names.
+fn derivation_of(version: u32) -> Result<Derivation, CellError> {
+    match version {
+        1 => Ok(Derivation::V1),
+        2 => Ok(Derivation::V2),
+        _ => Err(mismatch()),
+    }
+}
+
+const fn derivation_number(derivation: Derivation) -> u32 {
+    match derivation {
+        Derivation::V1 => 1,
+        Derivation::V2 => 2,
+    }
 }
 
 impl MappingBundle {
@@ -63,6 +113,30 @@ impl MappingBundle {
         let id = format!("mapping-bundle:{}", self.digest);
         let claims = self.records.iter().flat_map(|r| r.link_claims(&id, &scope));
         Ok(claims.collect())
+    }
+}
+
+/// INGEST-GROUP-1: the identity roots one mapping input can write, and the
+/// roots its links can name ([`StoreReader::mapping_footprint`]).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct MappingFootprint {
+    /// Roots the input's maps write.
+    pub writes: BTreeSet<String>,
+    /// Roots the input's links name.
+    pub links: BTreeSet<String>,
+}
+
+impl MappingFootprint {
+    /// Whether records of the two inputs commit the same way in either
+    /// relative order: no root both write, no link from one into the other's
+    /// writes, and no link target both name (pending-link records are kept
+    /// per target).
+    #[must_use]
+    pub fn independent(&self, other: &Self) -> bool {
+        self.writes.is_disjoint(&other.writes)
+            && self.links.is_disjoint(&other.writes)
+            && other.links.is_disjoint(&self.writes)
+            && self.links.is_disjoint(&other.links)
     }
 }
 
@@ -335,11 +409,27 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         Ok(bytes)
     }
 
+    /// A fresh capture's bundle, under the current derivation.
     pub(crate) fn mapping_bundle(
         &self,
         raw: &RuntimeValue,
         input: &MappingInput,
         version: u64,
+    ) -> Result<MappingBundle, CellError> {
+        self.derived_mapping_bundle(raw, input, version, Derivation::CURRENT, None)
+    }
+
+    /// The bundle `raw` derives under an exact `derivation` (MAP-DERIVATION-1).
+    /// Its address is the capture address every derivation shares, so a replay
+    /// of a captured event finds the row it already has; only an explicit
+    /// reprocessing (`reprocesses`) gets an address of its own.
+    pub(crate) fn derived_mapping_bundle(
+        &self,
+        raw: &RuntimeValue,
+        input: &MappingInput,
+        version: u64,
+        derivation: Derivation,
+        reprocesses: Option<String>,
     ) -> Result<MappingBundle, CellError> {
         let plan = self.mapping_plan(input, version)?;
         let field = |name: &str| {
@@ -366,8 +456,15 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         let (records, diagnostics) = if field("kind")? == "upsert" {
             let outcome = match &plan.compiled {
                 Ok(compiled) => compiled
-                    .apply_explained(&[source_document], &input.recorded_at)
-                    .map_err(|refusals| refusals.iter().map(explained).collect::<Vec<_>>()),
+                    .apply_derived(&[source_document], &input.recorded_at, derivation)
+                    .map_err(|refusals| match derivation {
+                        // Exactly the diagnostics captured before MAP-EXPLAIN-1.
+                        Derivation::V1 => refusals
+                            .iter()
+                            .map(|refusal| refusal.diagnostic().to_json())
+                            .collect::<Vec<_>>(),
+                        Derivation::V2 => refusals.iter().map(explained).collect(),
+                    }),
                 Err(diagnostics) => Err(diagnostics.iter().map(Diagnostic::to_json).collect()),
             };
             match outcome {
@@ -388,13 +485,24 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 ],
             )
         };
-        let address = digest(&(
+        let mut address = digest(&(
             digest(raw)?,
             input,
             version,
             &plan.definitions_digest,
             &plan.artifact_pins,
         ))?;
+        if let Some(original) = &reprocesses {
+            // MAP-REPROCESS-1: only the reprocessed row's own capture address,
+            // re-derived under a newer derivation, ever has one.
+            if *original != format!("mapping-bundle:{address}") || derivation == Derivation::V1 {
+                return Err(mismatch());
+            }
+            address = norn_ir::canonical::domain_hash_hex(
+                b"norn.mapping.reprocess.v1\0",
+                &(&address, derivation_number(derivation)),
+            )?;
+        }
         Ok(MappingBundle {
             digest: address,
             raw: raw.clone(),
@@ -404,6 +512,36 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             artifact_pins: plan.artifact_pins.clone(),
             records,
             diagnostics,
+            derivation: derivation_number(derivation),
+            reprocesses,
+        })
+    }
+
+    /// INGEST-GROUP-1: what records of `input` can write and link to under
+    /// the active definitions, as identity roots (a subtype and its root
+    /// share keys).
+    ///
+    /// # Errors
+    /// No active definitions, a mapping that does not compile, or a type the
+    /// model cannot root (an interface link target): the caller then keeps
+    /// the batch's own order.
+    pub fn mapping_footprint(&self, input: &MappingInput) -> Result<MappingFootprint, CellError> {
+        let version = self
+            .installed_definitions(None)?
+            .ok_or_else(mismatch)?
+            .version;
+        let plan = self.mapping_plan(input, version)?;
+        let compiled = plan.compiled.as_ref().map_err(|_diagnostics| mismatch())?;
+        let (writes, links) = compiled.footprint(&input.dataset);
+        let root = |types: BTreeSet<String>| {
+            types
+                .iter()
+                .map(|ty| self.retained_mapping_root(version, ty))
+                .collect::<Result<BTreeSet<_>, _>>()
+        };
+        Ok(MappingFootprint {
+            writes: root(writes)?,
+            links: root(links)?,
         })
     }
 
@@ -421,7 +559,16 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         {
             return Err(mismatch());
         }
-        if self.mapping_bundle(&bundle.raw, &bundle.input, bundle.definitions_version)? != *bundle {
+        // MAP-DERIVATION-1: verified under the derivation it was captured
+        // with, so a newer parser never changes what retained evidence proves.
+        if self.derived_mapping_bundle(
+            &bundle.raw,
+            &bundle.input,
+            bundle.definitions_version,
+            derivation_of(bundle.derivation)?,
+            bundle.reprocesses.clone(),
+        )? != *bundle
+        {
             return Err(mismatch());
         }
         Ok(())
@@ -443,6 +590,29 @@ impl<E: SqlEngine> CellStore<E> {
             .transaction(|| self.capture_mapping_bundle(raw, input))
     }
 
+    /// MAP-REPROCESS-1: retain an explicitly re-derived bundle at its own
+    /// address, with the provenance of the row it reprocesses. Only
+    /// [`crate::SqliteCell::reprocess_quarantined_bundle`] calls this.
+    pub(crate) fn inject_reprocessed_bundle(
+        &mut self,
+        provenance: &norn_kernel::Provenance,
+        bundle: &MappingBundle,
+    ) -> Result<String, CellError> {
+        if bundle.reprocesses.is_none() {
+            return Err(mismatch());
+        }
+        let id = format!("mapping-bundle:{}", bundle.digest);
+        let observed = Observed {
+            id: norn_kernel::ObservationId(id.clone()),
+            provenance: provenance.clone(),
+            input: norn_ir::runtime::encode(bundle).map_err(CellError::Encoding)?,
+        };
+        let encoded = norn_ir::runtime::encode(&observed).map_err(CellError::Encoding)?;
+        self.conn
+            .transaction(|| crate::store::inject_observation(&self.conn, &id, &encoded))?;
+        Ok(id)
+    }
+
     /// [`Self::inject_mapping_bundle`] inside the caller's transaction.
     pub(crate) fn capture_mapping_bundle(
         &self,
@@ -462,25 +632,58 @@ impl<E: SqlEngine> CellStore<E> {
     }
 }
 
+/// The most bytes of one retained diagnostic text: a refused row's own
+/// field can be as large as the request, and its full value is already in
+/// the retained raw evidence, so a diagnostic never repeats it unbounded.
+pub(crate) const DIAGNOSTIC_TEXT_BYTES: usize = 256;
+
+/// `text`, cut to [`DIAGNOSTIC_TEXT_BYTES`] at a character boundary.
+pub(crate) fn bounded_text(text: &str) -> String {
+    bounded(text).0
+}
+
+/// `text`, cut to [`DIAGNOSTIC_TEXT_BYTES`] at a character boundary, and
+/// whether it was cut.
+fn bounded(text: &str) -> (String, bool) {
+    if text.len() <= DIAGNOSTIC_TEXT_BYTES {
+        return (text.to_owned(), false);
+    }
+    let mut end = DIAGNOSTIC_TEXT_BYTES;
+    while !text.is_char_boundary(end) {
+        end = end.saturating_sub(1);
+    }
+    (format!("{}…", text.get(..end).unwrap_or_default()), true)
+}
+
 /// MAP-EXPLAIN-1: a row refusal as retained evidence, the mapping's
 /// diagnostic plus what it refused: the map (mapping rule) and, for a field
-/// that does not conform, the field, its value, the declared type and why.
+/// that does not conform, the field, a bounded preview of its value, the
+/// declared type and why. Every text is bounded ([`DIAGNOSTIC_TEXT_BYTES`]):
+/// the value itself is the retained raw evidence's (`valueTruncated` says a
+/// preview was cut), so a malformed field never multiplies a row's size.
 fn explained(refusal: &norn_checker::mapping::RowRefusal) -> serde_json::Value {
     let mut value = refusal.diagnostic().to_json();
+    let text = |text: &str| bounded(text).0.into();
     if let Some(fields) = value.as_object_mut() {
-        fields.insert("map".to_owned(), refusal.map.clone().into());
-        fields.insert("reason".to_owned(), refusal.reason.clone().into());
+        if let Some(message) = fields.get("message").and_then(serde_json::Value::as_str) {
+            let message = text(message);
+            fields.insert("message".to_owned(), message);
+        }
+        fields.insert("map".to_owned(), text(&refusal.map));
+        fields.insert("reason".to_owned(), text(&refusal.reason));
         if let Some(field) = &refusal.field {
-            fields.insert("field".to_owned(), field.field.clone().into());
-            fields.insert(
-                "value".to_owned(),
-                field
-                    .value
-                    .clone()
-                    .map_or(serde_json::Value::Null, Into::into),
-            );
-            fields.insert("expected".to_owned(), field.expected.clone().into());
-            fields.insert("reason".to_owned(), field.reason.clone().into());
+            fields.insert("field".to_owned(), text(&field.field));
+            if let Some(raw) = &field.value {
+                let (preview, cut) = bounded(raw);
+                fields.insert("value".to_owned(), preview.into());
+                if cut {
+                    fields.insert("valueTruncated".to_owned(), true.into());
+                }
+            } else {
+                fields.insert("value".to_owned(), serde_json::Value::Null);
+            }
+            fields.insert("expected".to_owned(), text(&field.expected));
+            fields.insert("reason".to_owned(), text(&field.reason));
         }
     }
     value

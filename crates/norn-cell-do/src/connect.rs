@@ -914,41 +914,34 @@ pub fn observations<E: SqlEngine>(
     })
 }
 
-/// What one load may carry (INGEST-BATCH-1). A load is bounded by its rows
-/// and by its estimated work, not by a bare commit count: rows of one
-/// dataset commit together whatever order the batch interleaves them in,
-/// and a row the mapping refuses commits nothing.
+/// What one load may carry (INGEST-BATCH-1): its rows, and, on a host that
+/// runs a load inside one bounded call, a work budget charged for every row
+/// captured and every commit the cell actually attempts. A load that reaches
+/// the budget stops at a page boundary and answers `next`, the row the
+/// caller resumes from.
 struct LoadBound {
     /// The most rows one load carries.
     rows: usize,
-    /// The estimated work one load may take, from a row's and a page
-    /// commit's cost on this host; `None` when the host yields the cell to
-    /// waiting reads between pages (INGEST-YIELD-1), so a load's length
-    /// never holds a read.
-    budget: Option<WorkBudget>,
-}
-
-/// A host's load work budget, in milliseconds.
-struct WorkBudget {
-    row: usize,
-    commit: usize,
-    total: usize,
+    /// The work one load may take; `None` when the host releases the cell
+    /// between commits and serves reads in between (INGEST-YIELD-1), so a
+    /// load's length never holds a read.
+    budget: Option<norn_api::host::WorkBudget>,
 }
 
 /// A hosted cell runs a load inside one cell call: a commit costs about
-/// 0.8 s and a row about 0.1 s there, so a load is kept to the work of 100
-/// rows in 8 commits (about 16 s), spent however the load needs it.
+/// 0.8 s and a row about 0.1 s there, so a load stops at the work of 100
+/// rows and 8 commits (about 16 s), however the cell splits its pages.
 const HOSTED_LOAD: LoadBound = LoadBound {
     rows: 100,
-    budget: Some(WorkBudget {
-        row: 100,
-        commit: 800,
-        total: 100 * 100 + 8 * 800,
+    budget: Some(norn_api::host::WorkBudget {
+        row_ms: 100,
+        commit_ms: 800,
+        total_ms: 100 * 100 + 8 * 800,
     }),
 };
 
 /// The dev host commits a page at a time and serves waiting reads between
-/// pages, so one load carries up to one OBS-PAGE-1 page bound of rows.
+/// commits, so one load carries up to one OBS-PAGE-1 page bound of rows.
 const DEV_LOAD: LoadBound = LoadBound {
     rows: norn_cell::mapping_page::MAX_PAGE_RECORDS,
     budget: None,
@@ -989,33 +982,22 @@ fn load_observations<E: SqlEngine>(host: &DevHost<E>, body: &str, bound: &LoadBo
         Ok(rows) => rows,
         Err(error) => return answer(&Refusal::invalid(error)),
     };
-    let commits = norn_api::host::page_count(&rows);
-    let work = bound.budget.as_ref().map(|budget| {
-        (
-            rows.len()
-                .saturating_mul(budget.row)
-                .saturating_add(commits.saturating_mul(budget.commit)),
-            budget.total,
-        )
-    });
-    if rows.len() > bound.rows || work.is_some_and(|(work, total)| work > total) {
-        let budget = work.map_or_else(String::new, |(work, total)| {
-            format!(", estimated work {work} ms of {total} ms")
-        });
+    if rows.len() > bound.rows {
         return refused(
             413,
             "observations.too_large",
             &format!(
-                "a load carries at most {} rows within this host's work budget (this one: {} rows, {commits} commits{budget}); send it in smaller slices",
+                "a load carries at most {} rows (this one: {}); send it in smaller slices",
                 bound.rows,
                 rows.len()
             ),
         );
     }
-    let ingested = match host.ingest(&rows) {
-        Ok(ingested) => ingested,
+    let report = match host.ingest_within(&rows, bound.budget) {
+        Ok(report) => report,
         Err(refusal) => return answer(&refusal),
     };
+    let ingested = &report.outcomes;
     let (mut landed, mut already, mut quarantined) = (0_usize, 0_usize, 0_usize);
     let mut reasons: BTreeMap<String, usize> = BTreeMap::new();
     let mut explained = Vec::new();
@@ -1055,7 +1037,11 @@ fn load_observations<E: SqlEngine>(host: &DevHost<E>, body: &str, bound: &LoadBo
             "quarantined": quarantined,
             "quarantineReasons": reasons,
             "quarantine": explained,
-            "pages": commits,
+            "pages": report.pages,
+            "commits": report.commits,
+            // Resume with `snapshot[next..]` when the work budget stopped
+            // the load; null when every row is reported.
+            "next": report.next,
         }),
     )
 }

@@ -24,8 +24,14 @@ pub struct DevHost<E: SqlEngine> {
     /// it maps one page of source rows under the observation profile.
     cell: Mutex<Option<ActionCell<E>>>,
     /// Requests waiting for [`Self::cell`]; a load yields to them between
-    /// pages (INGEST-YIELD-1).
+    /// its commits (INGEST-YIELD-1).
     waiting: std::sync::atomic::AtomicUsize,
+    /// INGEST-YIELD-1: a read holds this shared for its whole request, and a
+    /// load holds it exclusively for each commit, so a multi-step read sees
+    /// one snapshot and a load commits only between reads. Writers are
+    /// preferred: a read arriving while a commit waits queues behind that one
+    /// commit, so neither starves.
+    reads: RwLock<()>,
     /// PRIVACY-1: the key this cell's pseudonyms are computed under; without
     /// one a pseudonym projection redacts.
     pseudonyms: Option<crate::privacy::PseudonymKey>,
@@ -33,12 +39,20 @@ pub struct DevHost<E: SqlEngine> {
     markings: Mutex<Option<(Option<u64>, crate::privacy::MarkingCatalog)>>,
 }
 
-/// A read in progress ([`DevHost::reading`]).
-pub struct Reading<'a>(&'a std::sync::atomic::AtomicUsize);
+/// A read in progress ([`DevHost::reading`]): no load commits until it ends.
+pub struct Reading<'a> {
+    _pinned: Option<std::sync::RwLockReadGuard<'a, ()>>,
+}
+
+std::thread_local! {
+    /// Reads in progress on this thread. A load the same request starts (a
+    /// read-triggered sync) never waits for its own read.
+    static READING: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 impl Drop for Reading<'_> {
     fn drop(&mut self) {
-        self.0.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+        READING.with(|reading| reading.set(reading.get().saturating_sub(1)));
     }
 }
 
@@ -116,6 +130,42 @@ pub fn check_reopens(
     Ok(())
 }
 
+/// A load's work budget (INGEST-BATCH-1), in milliseconds of this host's
+/// measured cost: a captured row, and a commit the cell attempts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WorkBudget {
+    /// The cost of capturing one row.
+    pub row_ms: u64,
+    /// The cost of one commit attempt.
+    pub commit_ms: u64,
+    /// The most work one load may take.
+    pub total_ms: u64,
+}
+
+/// What a load within a budget did ([`DevHost::ingest_within`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IngestReport {
+    /// One outcome per reported row (`rows[..next]`, or every row), in row
+    /// order.
+    pub outcomes: Vec<Ingested>,
+    /// Where the caller resumes (`rows[next..]`), when the budget stopped
+    /// the load; `None` when every row is reported.
+    pub next: Option<usize>,
+    /// The OBS-PAGE-1 pages completed.
+    pub pages: usize,
+    /// The commits the cell attempted.
+    pub commits: usize,
+    /// The work charged, in the budget's milliseconds.
+    pub work_ms: u64,
+}
+
+impl IngestReport {
+    fn charge(&mut self, commit_ms: u64) {
+        self.commits = self.commits.saturating_add(1);
+        self.work_ms = self.work_ms.saturating_add(commit_ms);
+    }
+}
+
 /// What one captured source row came to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ingested {
@@ -142,6 +192,7 @@ impl<E: SqlEngine> DevHost<E> {
             definitions: RwLock::new(()),
             cell: Mutex::new(Some(cell)),
             waiting: std::sync::atomic::AtomicUsize::new(0),
+            reads: RwLock::new(()),
             pseudonyms: None,
             markings: Mutex::new(None),
         })
@@ -282,10 +333,10 @@ impl<E: SqlEngine> DevHost<E> {
     /// evidence with its reasons. Rows already captured are captured once.
     /// Returns one outcome per row, in row order.
     ///
-    /// INGEST-YIELD-1: the cell is locked one page at a time, not for the
-    /// whole batch. Between pages the lock is released and any request
-    /// already waiting for the cell (a read) is served first, so a read
-    /// during a load waits for at most one page commit.
+    /// INGEST-YIELD-1: the cell is locked one commit at a time (a page's
+    /// capture, each run's commit, each per-record fallback commit), never for
+    /// a whole page or batch, and each commit waits for reads in flight, so a
+    /// read waits for at most one commit and sees one snapshot.
     /// # Errors
     /// A page the cell cannot capture (framing or pins it refuses), or a
     /// store failure; pages before it stay captured and processed.
@@ -296,45 +347,235 @@ impl<E: SqlEngine> DevHost<E> {
             norn_cell::mapping_bundle::MappingInput,
         )],
     ) -> Result<Vec<Ingested>, Refusal> {
-        let _epoch = self.definition_read()?;
-        let mut out: Vec<(usize, Ingested)> = Vec::with_capacity(rows.len());
-        for (index, (input, page)) in pages(rows).into_iter().enumerate() {
-            if index > 0 {
-                self.let_waiting_requests_in();
-            }
-            let mut slot = self.cell.lock().map_err(Refusal::host)?;
-            let cell = slot
-                .take()
-                .ok_or_else(|| Refusal::host("the cell is unavailable"))?;
-            let mut observing: norn_cell::SqliteCell<
-                ObservationEvent,
-                RuntimeObject,
-                RuntimeObject,
-                E,
-            > = cell.into_profile();
-            let rows: Vec<Observed<RuntimeValue>> =
-                page.iter().map(|(_, raw)| (*raw).clone()).collect();
-            let mut outcomes = Vec::with_capacity(rows.len());
-            let result = ingest_page(&mut observing, &rows, input, &mut outcomes);
-            *slot = Some(observing.into_profile());
-            drop(slot);
-            result.map_err(Refusal::host)?;
-            out.extend(page.iter().map(|(at, _)| *at).zip(outcomes));
-        }
-        out.sort_by_key(|(at, _)| *at);
-        Ok(out.into_iter().map(|(_, ingested)| ingested).collect())
+        self.ingest_within(rows, None).map(|report| report.outcomes)
     }
 
-    /// Mark a read in progress until the guard drops. A read takes the cell
-    /// more than once (a page assembled in batches, its markings, its
-    /// findings), so a load waits between its pages while any read is in
-    /// flight (INGEST-YIELD-1) and the read sees one snapshot instead of
-    /// refusing `object.snapshot_moved` behind every page of the load.
+    /// [`Self::ingest`] within a work `budget` (INGEST-BATCH-1): every row
+    /// captured and every commit the cell actually attempts (a page run, a
+    /// per-record fallback, a page's own consumption) is charged. When the
+    /// next commit would pass the budget the load stops at the start of the
+    /// page it is in, after at least one commit, and reports only the rows
+    /// before that point; [`IngestReport::next`] is where the caller resumes.
+    /// Resuming with `rows[next..]` frames that page exactly as before (a
+    /// budgeted load frames in batch order), so its captured runs are found
+    /// again, the runs that committed are consumed and commit nothing, and
+    /// no row is lost or reported twice. A row of that page that landed
+    /// before the stop answers `AlreadyLanded` in the resumed call.
+    /// # Errors
+    /// As [`Self::ingest`].
+    pub fn ingest_within(
+        &self,
+        rows: &[(
+            Observed<RuntimeValue>,
+            norn_cell::mapping_bundle::MappingInput,
+        )],
+        budget: Option<WorkBudget>,
+    ) -> Result<IngestReport, Refusal> {
+        let _epoch = self.definition_read()?;
+        // INGEST-GROUP-1: grouping changes the order rows commit in, so it
+        // is used only for inputs proven independent, and never under a
+        // budget, whose continuation point needs batch order.
+        let independent = budget.is_none() && groupable(rows) && self.independent_inputs(rows)?;
+        let framed = pages(rows, independent);
+        let mut report = IngestReport {
+            outcomes: Vec::with_capacity(rows.len()),
+            next: None,
+            pages: 0,
+            commits: 0,
+            work_ms: 0,
+        };
+        let mut out: Vec<(usize, Ingested)> = Vec::with_capacity(rows.len());
+        let mut committed = false;
+        let spent = |work: u64, more: u64| {
+            budget.is_some_and(|budget| work.saturating_add(more) > budget.total_ms)
+        };
+        let commit_ms = budget.map_or(0, |budget| budget.commit_ms);
+        'pages: for (input, page) in framed {
+            let first = page.first().map_or(0, |(at, _)| *at);
+            let row_ms = budget.map_or(0, |budget| {
+                budget
+                    .row_ms
+                    .saturating_mul(u64::try_from(page.len()).unwrap_or(u64::MAX))
+            });
+            if committed && spent(report.work_ms, row_ms.saturating_add(commit_ms)) {
+                report.next = Some(first);
+                break;
+            }
+            let delivered: Vec<Observed<RuntimeValue>> =
+                page.iter().map(|(_, raw)| (*raw).clone()).collect();
+            let captured = self.capture_page(&delivered, input)?;
+            report.work_ms = report.work_ms.saturating_add(row_ms);
+            let mut outcomes = std::collections::BTreeMap::new();
+            for (page_id, _new) in captured.iter().flat_map(|part| &part.pages) {
+                if committed && spent(report.work_ms, commit_ms) {
+                    report.next = Some(first);
+                    break 'pages;
+                }
+                let attempt = self.observing(|cell| cell.try_mapping_page(page_id))?;
+                let members = match attempt {
+                    norn_cell::mapping_page::PageAttempt::Consumed => continue,
+                    norn_cell::mapping_page::PageAttempt::Landed(landed) => {
+                        outcomes.extend(landed);
+                        Vec::new()
+                    }
+                    norn_cell::mapping_page::PageAttempt::Refused(members) => members,
+                };
+                report.charge(commit_ms);
+                committed = true;
+                if members.is_empty() {
+                    continue;
+                }
+                // The per-record path, one commit each, as one by one.
+                for member in members {
+                    if spent(report.work_ms, commit_ms) {
+                        report.next = Some(first);
+                        break 'pages;
+                    }
+                    let outcome = self.observing(|cell| cell.process_mapping_outcome(&member))?;
+                    report.charge(commit_ms);
+                    outcomes.insert(member, outcome);
+                }
+                if self.observing(|cell| cell.finish_mapping_page(page_id))? {
+                    report.charge(commit_ms);
+                }
+            }
+            // Each member this page consumed has its outcome; any other record
+            // (refused by the mapping, a conflict or identity finding, or a row
+            // consumed before) answers as it does one by one.
+            let records = captured.into_iter().flat_map(|part| part.records);
+            for ((at, _), id) in page.iter().zip(records) {
+                let outcome = if let Some(outcome) = outcomes.remove(&id) {
+                    outcome
+                } else {
+                    let outcome = self.observing(|cell| cell.process_mapping_outcome(&id))?;
+                    if outcome == norn_cell::MappingOutcome::Landed {
+                        report.charge(commit_ms);
+                    }
+                    outcome
+                };
+                out.push((
+                    *at,
+                    Ingested {
+                        observation_id: id,
+                        outcome,
+                    },
+                ));
+            }
+            report.pages = report.pages.saturating_add(1);
+        }
+        out.sort_by_key(|(at, _)| *at);
+        report.outcomes = out.into_iter().map(|(_, ingested)| ingested).collect();
+        Ok(report)
+    }
+
+    /// Capture one page, halving a page over the cell's byte bound; the parts
+    /// in row order.
+    fn capture_page(
+        &self,
+        raws: &[Observed<RuntimeValue>],
+        input: &norn_cell::mapping_bundle::MappingInput,
+    ) -> Result<Vec<norn_cell::mapping_page::CapturedPage>, Refusal> {
+        match self.observing_raw(|cell| cell.inject_mapping_page(raws, input))? {
+            Err(CellError::OutOfRange("mapping page bytes")) if raws.len() > 1 => {
+                let (first, second) = raws.split_at(raws.len() / 2);
+                let mut parts = self.capture_page(first, input)?;
+                parts.extend(self.capture_page(second, input)?);
+                Ok(parts)
+            }
+            other => Ok(vec![other.map_err(Refusal::host)?]),
+        }
+    }
+
+    /// INGEST-GROUP-1: whether every two mapping inputs of the batch are
+    /// independent ([`norn_cell::mapping_bundle::MappingFootprint`]); `false`
+    /// when any footprint cannot be proven.
+    fn independent_inputs(
+        &self,
+        rows: &[(
+            Observed<RuntimeValue>,
+            norn_cell::mapping_bundle::MappingInput,
+        )],
+    ) -> Result<bool, Refusal> {
+        let mut inputs: Vec<&norn_cell::mapping_bundle::MappingInput> = Vec::new();
+        for (_, input) in rows {
+            if !inputs.contains(&input) {
+                inputs.push(input);
+            }
+        }
+        if inputs.len() < 2 {
+            return Ok(true);
+        }
+        let footprints = self.observing_raw(|cell| {
+            inputs
+                .iter()
+                .map(|input| cell.store().read().mapping_footprint(input))
+                .collect::<Result<Vec<_>, _>>()
+        })?;
+        let Ok(footprints) = footprints else {
+            return Ok(false);
+        };
+        Ok(footprints.iter().enumerate().all(|(at, footprint)| {
+            footprints
+                .iter()
+                .skip(at.saturating_add(1))
+                .all(|other| footprint.independent(other))
+        }))
+    }
+
+    /// One step of a load under the observation profile, holding the cell
+    /// for exactly that step (INGEST-YIELD-1): requests already waiting for
+    /// the cell go first (for at most [`YIELD_BOUND`]), and the step waits
+    /// for reads in flight.
+    fn observing<T>(
+        &self,
+        step: impl FnOnce(
+            &mut norn_cell::SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, E>,
+        ) -> Result<T, CellError>,
+    ) -> Result<T, Refusal> {
+        self.observing_raw(step)?.map_err(Refusal::host)
+    }
+
+    fn observing_raw<T>(
+        &self,
+        step: impl FnOnce(
+            &mut norn_cell::SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, E>,
+        ) -> T,
+    ) -> Result<T, Refusal> {
+        self.let_waiting_requests_in();
+        let _pinned = if READING.with(std::cell::Cell::get) > 0 {
+            None
+        } else {
+            Some(self.reads.write().map_err(Refusal::host)?)
+        };
+        let mut slot = self.cell.lock().map_err(Refusal::host)?;
+        let cell = slot
+            .take()
+            .ok_or_else(|| Refusal::host("the cell is unavailable"))?;
+        let mut observing: norn_cell::SqliteCell<
+            ObservationEvent,
+            RuntimeObject,
+            RuntimeObject,
+            E,
+        > = cell.into_profile();
+        let result = step(&mut observing);
+        *slot = Some(observing.into_profile());
+        Ok(result)
+    }
+
+    /// Pin a read to one snapshot until the guard drops (INGEST-YIELD-1): a
+    /// read takes the cell more than once (a page assembled in batches, its
+    /// markings, its findings), and no load commit lands between those steps,
+    /// so the read never refuses `object.snapshot_moved` because of a load.
     #[must_use]
     pub fn reading(&self) -> Reading<'_> {
-        self.waiting
-            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
-        Reading(&self.waiting)
+        let pinned = if READING.with(std::cell::Cell::get) > 0 {
+            // Already pinned by this thread's own read.
+            None
+        } else {
+            self.reads.read().ok()
+        };
+        READING.with(|reading| reading.set(reading.get().saturating_add(1)));
+        Reading { _pinned: pinned }
     }
 
     /// Yield the cell to requests already waiting for it (INGEST-YIELD-1),
@@ -603,11 +844,12 @@ impl<E: SqlEngine> DevHost<E> {
 /// second at no cost in rows per second.
 pub const PAGE_ROWS: usize = 100;
 
-/// How long a load yields the cell to waiting requests between two pages.
+/// How long a load yields the cell to waiting requests before a commit.
 const YIELD_BOUND: std::time::Duration = std::time::Duration::from_millis(250);
 
-/// How many OBS-PAGE-1 pages (one commit each) [`DevHost::ingest`] makes of
-/// `rows`, before any canonical-object split inside a page.
+/// How many OBS-PAGE-1 pages [`DevHost::ingest`] frames `rows` into in
+/// batch order (each at least one commit; the cell splits a page into more
+/// at overlapping keys or refused rows).
 #[must_use]
 pub fn page_count(
     rows: &[(
@@ -615,7 +857,7 @@ pub fn page_count(
         norn_cell::mapping_bundle::MappingInput,
     )],
 ) -> usize {
-    pages(rows).len()
+    pages(rows, false).len()
 }
 
 /// One OBS-PAGE-1 page: its mapping input and its rows, each with its index
@@ -629,22 +871,24 @@ type Page<'a> = (
 /// split at [`PAGE_ROWS`] and before a source record the page already
 /// carries.
 ///
-/// INGEST-GROUP-1: a batch that interleaves datasets (a case, its events,
-/// the next case...) is grouped by mapping input first, keeping each
-/// input's rows in batch order, so it is a few pages rather than one per
-/// run. Grouping only reorders rows of different inputs, and only when no
-/// source record identity appears under two inputs of the batch; otherwise
-/// the batch is framed in its own order. Each record's versions therefore
-/// arrive in batch order either way, and links between records resolve in
-/// any order (OBS-LINK-PENDING-ORDER).
+/// INGEST-GROUP-1: when the caller has proven the batch's inputs
+/// `independent` (no canonical root both write, no link from one into the
+/// other's writes or to a target both name), a batch that interleaves them is
+/// grouped by mapping input first, keeping each input's rows in batch order,
+/// so it is a few pages rather than one per run. Rows of independent inputs
+/// commit the same way in either relative order. Grouping also needs that
+/// no source record identity appears under two inputs ([`groupable`]).
+/// Otherwise the batch is framed in its own order, so overlapping writes
+/// apply in batch order and the last row wins, as one by one.
 fn pages(
     rows: &[(
         Observed<RuntimeValue>,
         norn_cell::mapping_bundle::MappingInput,
     )],
+    independent: bool,
 ) -> Vec<Page<'_>> {
     let mut order: Vec<usize> = (0..rows.len()).collect();
-    if groupable(rows) {
+    if independent && groupable(rows) {
         let mut first: Vec<&norn_cell::mapping_bundle::MappingInput> = Vec::new();
         for (_, input) in rows {
             if !first.contains(&input) {
@@ -697,44 +941,6 @@ fn groupable(
     })
 }
 
-/// Capture and commit one page, one outcome per row into `out`. A page over
-/// the cell's byte bound is halved. A row the page did not report (captured
-/// as a finding, or a page an earlier sync consumed) is processed on its own,
-/// as one-by-one delivery would.
-fn ingest_page<E: SqlEngine>(
-    cell: &mut norn_cell::SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, E>,
-    page: &[Observed<RuntimeValue>],
-    input: &norn_cell::mapping_bundle::MappingInput,
-    out: &mut Vec<Ingested>,
-) -> Result<(), CellError> {
-    let captured = match cell.inject_mapping_page(page, input) {
-        Err(CellError::OutOfRange("mapping page bytes")) if page.len() > 1 => {
-            let (first, second) = page.split_at(page.len() / 2);
-            ingest_page(cell, first, input, out)?;
-            return ingest_page(cell, second, input, out);
-        }
-        other => other?,
-    };
-    // Each member this page consumed has its outcome; any other record (a
-    // conflict or identity finding, or a row consumed before) answers as it
-    // does one by one. One outcome per row, in row order.
-    let mut outcomes = std::collections::BTreeMap::new();
-    for (id, _new) in &captured.pages {
-        outcomes.extend(cell.process_mapping_page(id)?.unwrap_or_default());
-    }
-    for id in captured.records {
-        let outcome = match outcomes.remove(&id) {
-            Some(outcome) => outcome,
-            None => cell.process_mapping_outcome(&id)?,
-        };
-        out.push(Ingested {
-            observation_id: id,
-            outcome,
-        });
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 #[allow(
     clippy::expect_used,
@@ -780,7 +986,10 @@ mod page_tests {
         let many: Vec<_> = (0..1_200)
             .map(|n| (row(&format!("r{n}")), items.clone()))
             .collect();
-        let sizes: Vec<usize> = pages(&many).iter().map(|(_, page)| page.len()).collect();
+        let sizes: Vec<usize> = pages(&many, true)
+            .iter()
+            .map(|(_, page)| page.len())
+            .collect();
         assert_eq!(sizes, vec![PAGE_ROWS; 1_200 / PAGE_ROWS]);
 
         let mixed = vec![
@@ -790,7 +999,7 @@ mod page_tests {
             (row("z"), bins),
             (row("z"), items),
         ];
-        let framed: Vec<(String, Vec<String>)> = pages(&mixed)
+        let framed: Vec<(String, Vec<String>)> = pages(&mixed, false)
             .into_iter()
             .map(|(input, page)| {
                 (
@@ -826,8 +1035,10 @@ mod page_tests {
                 batch.push((row(&format!("c{case}#{event}")), events.clone()));
             }
         }
-        let framed = pages(&batch);
-        assert_eq!(page_count(&batch), 2);
+        let framed = pages(&batch, true);
+        assert_eq!(framed.len(), 2);
+        // Inputs not proven independent keep the batch's own order.
+        assert_eq!(page_count(&batch), 60);
         let (first, second) = (&framed[0], &framed[1]);
         assert_eq!(first.0.dataset, "case");
         assert_eq!(second.0.dataset, "event");
@@ -844,9 +1055,39 @@ mod page_tests {
         assert_eq!(indices, (0..batch.len()).collect::<Vec<_>>());
         // A record's later version still follows its earlier one.
         batch.push((row("c0"), cases));
-        let framed = pages(&batch);
+        let framed = pages(&batch, true);
         assert_eq!(framed.len(), 3, "the repeat of c0 is the next page");
         assert_eq!(framed[1].1.len(), 1);
         assert_eq!(framed[1].0.dataset, "case");
+    }
+
+    /// S2: rows A, B, A of two inputs not proven independent (they may write
+    /// the same canonical property) frame in batch order, so B never moves
+    /// after the second A and the last row wins, as one by one.
+    #[test]
+    fn overlapping_inputs_keep_batch_order() {
+        let (first, second) = (input("first"), input("second"));
+        let batch = vec![
+            (row("a1"), first.clone()),
+            (row("b"), second),
+            (row("a2"), first),
+        ];
+        let framed: Vec<(String, Vec<usize>)> = pages(&batch, false)
+            .iter()
+            .map(|(input, page)| {
+                (
+                    input.dataset.clone(),
+                    page.iter().map(|(at, _)| *at).collect(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            framed,
+            vec![
+                ("first".to_owned(), vec![0]),
+                ("second".to_owned(), vec![1]),
+                ("first".to_owned(), vec![2]),
+            ]
+        );
     }
 }
