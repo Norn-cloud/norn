@@ -9,6 +9,14 @@
 //! the same gate and by the kernel's per-target authorization, laws and
 //! preconditions, so an action missing from the list is still refused when it
 //! is called directly, and one on the list may still be refused for its target.
+//!
+//! ACTION-CATALOG-STATE-1: with `objectId` (and `objectKind`), the list is the
+//! actions that can act on that object now: a `fire_transition` action is
+//! left out unless the object's current lifecycle state is one its
+//! transition fires from. The object is read with the reader's own authority
+//! (`GET /v1/objects/{type}/{id}`), so an object the reader cannot see is
+//! refused exactly as that read is, and its state is never disclosed. Guards
+//! are not evaluated here: the call decides them.
 use crate::{
     action_admission::RetainedActions,
     actions::{ActionQuery, action_denied},
@@ -85,6 +93,11 @@ pub struct ActionCatalogQuery {
     /// Only actions whose effect targets this object type.
     #[param(nullable = false)]
     pub object_kind: Option<String>,
+    /// With `objectKind`: only actions that can act on this object in its
+    /// current lifecycle state (ACTION-CATALOG-STATE-1).
+    #[param(nullable = false)]
+    #[serde(default)]
+    pub object_id: Option<String>,
 }
 
 /// How an action's admitted effect program changes its target.
@@ -134,6 +147,25 @@ pub struct NornActionSummary {
     pub input_schema: serde_json::Value,
     /// The effects a caller must handle.
     pub ui_effects: NornActionUiEffects,
+    /// Input fields that name an existing record (a link the action creates
+    /// to it), so a form offers a picker of that type's records
+    /// (ACTION-CATALOG-LINKS-1). Omitted when none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub input_links: Vec<NornActionInputLink>,
+    /// For a `fire_transition` action: the lifecycle state its transition
+    /// leaves the object in, so a receipt can say what the record is now.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to_state: Option<String>,
+}
+
+/// One input field that names a record of `objectKind`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NornActionInputLink {
+    /// The top-level input field holding the record's id.
+    pub field: String,
+    /// The object type it names.
+    pub object_kind: String,
 }
 
 /// `GET /v1/actions`: the callable actions, by action identity.
@@ -177,6 +209,30 @@ fn caller_input_schema(action: &ActionRoot) -> Result<serde_json::Value, Refusal
         required.retain(|field| field.as_str().is_none_or(|field| !derived.contains(field)));
     }
     Ok(schema)
+}
+
+/// The created links whose target is an existing record: a required slice
+/// read of the target type keyed by the link's input field, which the commit
+/// refuses when the record is absent. A target the same proposal creates
+/// (a composed transition's `created` write) is not one, so a form keeps its
+/// caller-supplied id rather than a picker of stored records.
+fn existing_targets(action: &ActionRoot) -> Vec<NornActionInputLink> {
+    action
+        .create_links
+        .iter()
+        .filter(|link| {
+            action.slice.iter().any(|entry| {
+                !entry.optional
+                    && entry.object_type.as_str() == link.target_type
+                    && matches!(&entry.key, norn_ir::SliceKey::Property { from, property }
+                        if from == "input" && property.as_str() == link.target_id_field)
+            })
+        })
+        .map(|link| NornActionInputLink {
+            field: link.target_id_field.clone(),
+            object_kind: link.target_type.clone(),
+        })
+        .collect()
 }
 
 fn summary(action: &ActionRoot) -> Result<Option<NornActionSummary>, Refusal> {
@@ -223,6 +279,8 @@ fn summary(action: &ActionRoot) -> Result<Option<NornActionSummary>, Refusal> {
         effect,
         object_id_field: object_id_field.clone(),
         input_schema: caller_input_schema(action)?,
+        input_links: existing_targets(action),
+        to_state: None,
         ui_effects: NornActionUiEffects {
             irreversible: effects.contains(&ActionUiEffect::Irreversible),
             destructive: effects.contains(&ActionUiEffect::Destructive),
@@ -250,6 +308,33 @@ pub fn list_actions<E: SqlEngine>(
     query: &ActionCatalogQuery,
     actor: Option<&str>,
 ) -> Result<NornActionCatalog, Refusal> {
+    list_actions_on(host, query, actor, None)
+}
+
+/// [`list_actions`], narrowed to one object's current state when the query
+/// names `objectId` (ACTION-CATALOG-STATE-1). The object is read through
+/// `access`, the reader's object gate; without one, `objectId` is refused.
+///
+/// # Errors
+/// As [`list_actions`]; the object read's own refusal (one opaque 403 or
+/// 404); `objectId` without `objectKind` or without an object gate (400).
+pub fn list_actions_on<E: SqlEngine>(
+    host: &DevHost<E>,
+    query: &ActionCatalogQuery,
+    actor: Option<&str>,
+    access: Option<&dyn crate::object_routes::ObjectAccess>,
+) -> Result<NornActionCatalog, Refusal> {
+    let states = match (&query.object_id, &query.object_kind, access) {
+        (None, _, _) => None,
+        (Some(id), Some(kind), Some(access)) => {
+            Some(current_states(host, query, actor, kind, id, access)?)
+        }
+        (Some(_), _, _) => {
+            return Err(Refusal::invalid(
+                "objectId narrows the catalog of one objectKind on a host that serves object reads",
+            ));
+        }
+    };
     let callable = callable_actions(
         host,
         &ActionQuery {
@@ -272,10 +357,182 @@ pub fn list_actions<E: SqlEngine>(
                 .as_deref()
                 .is_none_or(|kind| kind == item.object_kind)
         })
+        .filter(|item| {
+            states.as_ref().is_none_or(|states| {
+                callable
+                    .actions
+                    .iter()
+                    .find(|(_, action)| action.action_id == item.action_id)
+                    .is_none_or(|(_, action)| fires_from(action, states))
+            })
+        })
         .collect::<Vec<_>>();
     items.sort_by(|a, b| a.action_id.cmp(&b.action_id));
+    let targets = transition_targets(host)?;
+    for item in &mut items {
+        item.to_state = callable
+            .actions
+            .iter()
+            .find(|(_, action)| action.action_id == item.action_id)
+            .and_then(|(_, action)| match &action.effect_program {
+                Some(ActionEffectProgram::FireTransition {
+                    object_kind,
+                    lifecycle,
+                    transition,
+                    ..
+                }) => targets
+                    .get(&(
+                        object_kind.clone(),
+                        lifecycle.as_str().to_owned(),
+                        transition.as_str().to_owned(),
+                    ))
+                    .cloned(),
+                _ => None,
+            });
+    }
     Ok(NornActionCatalog {
         definitions_version: callable.version,
         items,
     })
+}
+
+/// One lifecycle of an object: its property, its declared transitions and
+/// the object's current state, if it has one.
+type LifecycleState = (
+    String,
+    Vec<norn_ir::entity_v2::lifecycle::Transition>,
+    Option<String>,
+);
+
+/// The object's current value of each lifecycle property of its type, read
+/// with the reader's authority, by lifecycle property.
+fn current_states<E: SqlEngine>(
+    host: &DevHost<E>,
+    query: &ActionCatalogQuery,
+    actor: Option<&str>,
+    kind: &str,
+    id: &str,
+    access: &dyn crate::object_routes::ObjectAccess,
+) -> Result<Vec<LifecycleState>, Refusal> {
+    let record = crate::object_routes::get_object(
+        host,
+        &crate::scope::ScopeQuery {
+            org_id: query.org_id.clone(),
+            environment_id: query.environment_id.clone(),
+        },
+        actor,
+        kind,
+        id,
+        access,
+    )?;
+    let cell = host.cell()?;
+    let reader = cell.store().read();
+    Ok(reader
+        .model()
+        .object_types()
+        .filter(|object_type| object_type.name.as_str() == kind)
+        .flat_map(|object_type| object_type.lifecycles.iter())
+        .map(|lifecycle| {
+            let property = lifecycle.property.as_str().to_owned();
+            let state = record
+                .values
+                .get(&property)
+                .and_then(norn_ir::RuntimeValue::as_str)
+                .map(str::to_owned);
+            (property, lifecycle.transitions.clone(), state)
+        })
+        .collect())
+}
+
+/// Whether `action` can act on an object in `states`: anything but a
+/// `fire_transition` can; a transition can when the object's state is one it
+/// fires from. A lifecycle this host does not find leaves the action listed,
+/// and the call decides.
+fn fires_from(action: &ActionRoot, states: &[LifecycleState]) -> bool {
+    let Some(ActionEffectProgram::FireTransition {
+        lifecycle,
+        transition,
+        ..
+    }) = &action.effect_program
+    else {
+        return true;
+    };
+    let Some((_, transitions, state)) = states
+        .iter()
+        .find(|(property, _, _)| property.as_str() == lifecycle.as_str())
+    else {
+        return true;
+    };
+    transitions
+        .iter()
+        .find(|declared| declared.id.as_str() == transition.as_str())
+        .is_none_or(|declared| {
+            state
+                .as_ref()
+                .is_some_and(|state| declared.from.iter().any(|from| from == state))
+        })
+}
+
+/// Every declared transition's target state, by (object type, lifecycle
+/// property, transition id).
+fn transition_targets<E: SqlEngine>(
+    host: &DevHost<E>,
+) -> Result<std::collections::BTreeMap<(String, String, String), String>, Refusal> {
+    let cell = host.cell()?;
+    let reader = cell.store().read();
+    Ok(reader
+        .model()
+        .object_types()
+        .flat_map(|object_type| {
+            object_type.lifecycles.iter().flat_map(move |lifecycle| {
+                lifecycle.transitions.iter().map(move |transition| {
+                    (
+                        (
+                            object_type.name.as_str().to_owned(),
+                            lifecycle.property.as_str().to_owned(),
+                            transition.id.as_str().to_owned(),
+                        ),
+                        transition.to.clone(),
+                    )
+                })
+            })
+        })
+        .collect())
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    reason = "registry fixture"
+)]
+mod tests {
+    use super::*;
+
+    fn run_create() -> ActionRoot {
+        let envelope: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../registry/packs/tracking/artifacts/tracking.run.create.action.json"
+        ))
+        .unwrap();
+        serde_json::from_value(envelope["payload"].clone()).unwrap()
+    }
+
+    /// ACTION-CATALOG-LINKS-1: only a target the commit reads as an existing
+    /// record is a picker; a proposed target keeps its caller-supplied id.
+    #[test]
+    fn only_an_existing_target_is_picked() {
+        let action = run_create();
+        let picked = existing_targets(&action);
+        assert_eq!(picked.len(), 1);
+        assert_eq!(
+            (picked[0].field.as_str(), picked[0].object_kind.as_str()),
+            ("experiment_id", "tracking.Experiment")
+        );
+        let mut optional = action.clone();
+        optional.slice[0].optional = true;
+        assert!(existing_targets(&optional).is_empty());
+        let mut proposed = action;
+        proposed.slice.clear();
+        assert!(existing_targets(&proposed).is_empty());
+    }
 }

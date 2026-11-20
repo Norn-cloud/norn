@@ -511,6 +511,32 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
         Ok(installed)
     }
 
+    /// Install a checker-admitted definition set with retained revisions
+    /// riding it, in one transaction; see
+    /// [`CellStore::install_definitions_riding`].
+    ///
+    /// # Errors
+    ///
+    /// A definitions-version or retained-revision conflict, unsafe model
+    /// migration, or store error; any of them installs nothing.
+    pub fn install_definitions_riding(
+        &mut self,
+        candidate_model: Model,
+        input: &InstalledDefinitionInput,
+        expected_version: Option<u64>,
+        riding: &[crate::retained::RetainedDefinitionChange],
+    ) -> Result<InstalledDefinitionSet, CellError> {
+        let installed = self.store.install_definitions_riding(
+            candidate_model,
+            input,
+            expected_version,
+            &self.scope,
+            riding,
+        )?;
+        self.advance_to(LogicalTime::from_millis(installed.installed_at));
+        Ok(installed)
+    }
+
     /// Check the same version-bound definition candidate against this cell's
     /// live values and return the installation preview without modifying it.
     ///

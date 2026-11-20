@@ -700,6 +700,7 @@ fn a_slipped_value_is_admitted_with_field_lineage_and_corrected_by_a_governed_ac
             org_id: Some("org_demo".into()),
             environment_id: Some("dev".into()),
             object_kind: None,
+            object_id: None,
         },
         Some(STEWARD),
     )
