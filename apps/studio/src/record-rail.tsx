@@ -140,7 +140,7 @@ export function RecentChanges({ objectType, id, actionTitles, onAll }: {
   const history = read.data
   const versions = history?.document.versions ?? []
   return (
-    <Panel icon={HistoryIcon} label={`Last ${Math.min(RECENT, versions.length) || RECENT} changes`}
+    <Panel icon={HistoryIcon} label={versions.length === 1 ? "Last change" : `Last ${Math.min(RECENT, versions.length) || RECENT} changes`}
       action={versions.length > 0 ? <button type="button" className="underline-offset-4 hover:underline" onClick={onAll}>Every change</button> : undefined}>
       <Well className="px-3.5 pb-3">
         {read.isPending ? note("Reading the history…")
