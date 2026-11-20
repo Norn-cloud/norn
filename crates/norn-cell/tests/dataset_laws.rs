@@ -21,6 +21,7 @@
 mod support;
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Write as _;
 use std::io::Write as _;
 
 use norn_cell::analytics::engine::{Engine, Settings};
@@ -243,8 +244,9 @@ fn tenant() -> TenantId {
 fn csv(lines: &[Line]) -> String {
     let mut out = format!("{}\n", FIELDS.join(","));
     for (index, line) in lines.iter().enumerate() {
-        out.push_str(&format!(
-            "line-{},{},c,{},{},{},{},{}\n",
+        writeln!(
+            out,
+            "line-{},{},c,{},{},{},{},{}",
             index + 1,
             line.invoice,
             line.quantity,
@@ -252,7 +254,8 @@ fn csv(lines: &[Line]) -> String {
             line.customer.unwrap_or_default(),
             line.country,
             line.occurred_at,
-        ));
+        )
+        .expect("a String takes the line");
     }
     out
 }
@@ -571,8 +574,8 @@ fn a_reader_sees_no_row_of_a_landing_until_it_is_stored() {
     };
     let stored = engine
         .store(&StoreRequest {
-            land: request.clone(),
-            landed: landed.clone(),
+            land: request,
+            landed,
             data: object(&data.sha256),
             held: object(&held.sha256),
         })
@@ -623,7 +626,7 @@ fn a_reader_sees_no_row_of_a_landing_until_it_is_stored() {
     assert_eq!(retried.residue_total, pending.residue_total);
     // A settle whose findings fail their check refuses and drops the attempt.
     let forged = SettleRequest {
-        land: again.clone(),
+        land: again,
         through: pending.residue.last().expect("residue").row,
         findings: vec![norn_cell::analytics::RowFinding {
             row: pending.residue[0].row,

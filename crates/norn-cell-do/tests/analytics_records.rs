@@ -107,6 +107,9 @@ impl Uploads for Files<'_> {
             file_name: format!("{id}.csv"),
         })
     }
+    fn issued(&self, id: &str, _scope_key: &str, uri: &str) -> bool {
+        self.record(id).is_some_and(|record| record.uri == uri)
+    }
     fn presigned_get(&self, uri: &str, _seconds: u64, _now_ms: u64) -> Option<String> {
         let id = uri
             .strip_prefix("s3://uploads/demo/")?
@@ -305,9 +308,6 @@ fn a_loaded_datasets_grid_equals_the_native_grid_of_the_same_rows() {
         norn_api::uploads::load_rows(&host, &generated, &table, &uri, &sha256, 2).unwrap();
     }
     let tables: BTreeMap<String, TableSchema> = host
-        .cell()
-        .unwrap()
-        .store()
         .analytics_tables()
         .unwrap()
         .into_iter()
