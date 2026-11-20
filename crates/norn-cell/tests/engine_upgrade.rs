@@ -126,7 +126,11 @@ fn every_open_refuses(path: &Path, check: impl Fn(&CellError) -> bool) {
         let refusal = refusal.expect("the open refuses");
         assert!(check(&refusal), "unexpected refusal: {refusal}");
     }
-    assert_eq!(bytes(path), file, "a refused open leaves the file byte-identical");
+    assert_eq!(
+        bytes(path),
+        file,
+        "a refused open leaves the file byte-identical"
+    );
     assert_eq!(
         engine_fixture::image_of(path),
         before,
@@ -351,7 +355,8 @@ fn a_v1_cell_that_fails_verification_stays_byte_identical() {
         rowid += 1;
         meta.push(serde_json::json!([rowid, key, value]));
     }
-    let cases: [(&str, Value, fn(&CellError) -> bool); 2] = [
+    type Refused = fn(&CellError) -> bool;
+    let cases: [(&str, Value, Refused); 2] = [
         ("ledger", tampered_ledger, ledger_refused),
         ("fork pin", pinned_past_head, pin_refused),
     ];
@@ -391,7 +396,11 @@ fn a_newer_cell_refuses_a_journal_mode_change() {
         Err(CellError::EngineDowngrade { .. })
     ));
     assert_eq!(bytes(&path), before, "the file is byte-identical");
-    assert_eq!(journal_mode(&path), "delete", "the journal mode is unchanged");
+    assert_eq!(
+        journal_mode(&path),
+        "delete",
+        "the journal mode is unchanged"
+    );
     assert!(!dir.path().join("cell.sqlite-wal").exists());
 }
 
@@ -442,7 +451,7 @@ fn provision_input() -> InstalledDefinitionInput {
 fn provision<E: SqlEngine>(engine: E) -> Result<CellStore<E>, CellError> {
     CellStore::provision_definitions(
         engine,
-        Model::from_definitions(&[], &[]).expect("model"),
+        Model::from_definitions(&[], &[])?,
         &provision_input(),
         engine_fixture::SCOPE,
     )
@@ -568,8 +577,14 @@ async fn a_legacy_export_restores_as_storage_version_1() {
     .expect("a legacy export restores");
     let restored = open(&target).expect("restored cell");
     for seq in 1..=3 {
-        let record = restored.export_record(seq).expect("journal").expect("record");
-        assert_eq!(record.storage_version, None, "a replayed record keeps no version");
+        let record = restored
+            .export_record(seq)
+            .expect("journal")
+            .expect("record");
+        assert_eq!(
+            record.storage_version, None,
+            "a replayed record keeps no version"
+        );
     }
     drop(restored);
     assert_eq!(
@@ -628,7 +643,9 @@ async fn an_export_a_newer_engine_wrote_refuses_before_staging() {
         refused.err()
     );
     assert_eq!(
-        std::fs::read_dir(&staging).expect("target directory").count(),
+        std::fs::read_dir(&staging)
+            .expect("target directory")
+            .count(),
         0,
         "nothing is staged"
     );
