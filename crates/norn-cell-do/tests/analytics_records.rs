@@ -224,6 +224,15 @@ fn csv(table: &TableSchema, records: &[Value]) -> Option<String> {
 /// takes `eq`, `ne` and `in` only).
 fn clauses(column: &Column, value: &Value) -> Vec<Value> {
     let id = column.id.as_str();
+    // A query value is a JSON string (a boolean excepted): a number the grid
+    // answers is asked back by its text.
+    let text;
+    let value = if let Value::Number(number) = value {
+        text = Value::String(number.to_string());
+        &text
+    } else {
+        value
+    };
     let enumerated = column
         .laws
         .iter()
