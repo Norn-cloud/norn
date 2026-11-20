@@ -81,6 +81,25 @@ pub fn manifest_digest(
     ))
 }
 
+/// The digest the binding check derived before #1429, for retained payloads
+/// only: `raw` read by serde_json's default float parser, which can land a
+/// schema number one ULP off the double nearest its text. `None` when `raw`
+/// has no connector to digest.
+fn legacy_digest(raw: &str) -> Option<String> {
+    let Ok(Value::Object(payload)) = serde_json::from_str::<Value>(raw) else {
+        return None;
+    };
+    let connector = payload.get("connector").and_then(Value::as_object)?;
+    manifest_digest(
+        text(connector, "gateway")?,
+        text(connector, "app")?,
+        text(connector, "tool")?,
+        payload.get("inputSchema").unwrap_or(&Value::Null),
+        payload.get("outputSchema").unwrap_or(&Value::Null),
+    )
+    .ok()
+}
+
 /// The version a gateway tool without one is named by: `sha256-` and the
 /// first 12 hex of its digest.
 #[must_use]
@@ -154,9 +173,13 @@ fn text<'v>(object: &'v Map<String, Value>, key: &str) -> Option<&'v str> {
 
 /// Every finding for a binding payload. `raw` is the submitted payload text,
 /// so numbers in its schemas are read exactly as JCS reads them; `roles` are
-/// the roles the cell declares.
+/// the roles the cell declares. `retained_digest` is the `manifestDigest` of
+/// the latest retained revision of this binding's id, if any: a revision
+/// whose manifest carries that same digest may instead match the digest the
+/// check derived before #1429 ([`legacy_digest`]), so a binding retained then
+/// stays revisable. A new id, or a changed digest, uses the exact reader only.
 #[must_use]
-pub fn check(raw: &str, roles: &[&str]) -> Vec<RefusalDiagnostic> {
+pub fn check(raw: &str, roles: &[&str], retained_digest: Option<&str>) -> Vec<RefusalDiagnostic> {
     let mut findings = Vec::new();
     let Ok(Value::Object(payload)) = jcs::read(raw) else {
         findings.push(error(codes::INVALID_PAYLOAD, "a binding is an object", ""));
@@ -205,7 +228,18 @@ pub fn check(raw: &str, roles: &[&str]) -> Vec<RefusalDiagnostic> {
         match manifest_digest(gateway, app, tool, &input_schema, &output_schema) {
             Err(detail) => findings.push(error(codes::INVALID_PAYLOAD, detail, "/inputSchema")),
             Ok(digest) => {
-                if text(&payload, "manifestDigest") != Some(digest.as_str()) {
+                let submitted = text(&payload, "manifestDigest");
+                let digest = match submitted {
+                    Some(submitted)
+                        if submitted != digest
+                            && retained_digest == Some(submitted)
+                            && legacy_digest(raw).as_deref() == Some(submitted) =>
+                    {
+                        submitted.to_owned()
+                    }
+                    _ => digest,
+                };
+                if submitted != Some(digest.as_str()) {
                     findings.push(error(
                         codes::DIGEST_MISMATCH,
                         format!("the tool manifest digests to {digest}"),

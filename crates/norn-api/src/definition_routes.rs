@@ -697,7 +697,12 @@ fn validate<E: SqlEngine>(
         }
         "binding" => {
             let roles: Vec<&str> = kinds.roles.iter().map(String::as_str).collect();
-            findings.extend(crate::binding_definitions::check(payload.get(), &roles));
+            let retained = retained_binding_digest(host, id)?;
+            findings.extend(crate::binding_definitions::check(
+                payload.get(),
+                &roles,
+                retained.as_deref(),
+            ));
         }
         "approval" => {
             let roles: Vec<&str> = kinds.roles.iter().map(String::as_str).collect();
@@ -850,6 +855,29 @@ fn binding_versions<E: SqlEngine>(
         }
         after = page.last().map(|record| record.definition.id.clone());
     }
+}
+
+/// The `manifestDigest` of the latest retained revision of binding `id`, if
+/// one is retained: the digest its install admitted.
+fn retained_binding_digest<E: SqlEngine>(
+    host: &DevHost<E>,
+    id: &str,
+) -> Result<Option<String>, Refusal> {
+    let cell = host.cell()?;
+    let reader = cell.store().read();
+    let Some(record) = reader
+        .retained_definition(id, None)
+        .map_err(Refusal::host)?
+        .filter(|record| record.definition.kind == "binding")
+    else {
+        return Ok(None);
+    };
+    let payload: Value =
+        serde_json::from_str(&record.definition.payload).map_err(Refusal::host)?;
+    Ok(payload
+        .get("manifestDigest")
+        .and_then(Value::as_str)
+        .map(str::to_owned))
 }
 
 /// The cell's installed, non-retired binding definitions as agent tool
