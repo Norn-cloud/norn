@@ -1,0 +1,24 @@
+# A norn-cell-rivet runner: hosts cell actors for the engines and serves the
+# public router on NORN_LISTEN. Run two or more, on any machines that reach
+# the engines' load balancer. /etc/norn/cell-rivet.env holds RIVET_ENDPOINT
+# (http://default:<admin token>@<lb>:6420), NORN_LISTEN, NORN_HOST_ISSUER,
+# NORN_HOST_JWKS_URL and NORN_LINEAGE_KEY (owner-only: it holds secrets).
+[Unit]
+Description=Norn cells on Rivet (norn-cell-rivet runner)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=norn
+Group=norn
+EnvironmentFile=/etc/norn/cell-rivet.env
+ExecStart=/usr/local/bin/norn-cell-rivet
+Restart=always
+RestartSec=2
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

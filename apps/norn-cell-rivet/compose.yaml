@@ -1,0 +1,148 @@
+# Self-hosted Norn cells on Rivet (D131): three Rivet Engine instances, each
+# with its own log disk; one S3-compatible bucket; a load balancer; and two
+# norn-cell-rivet runners. README.md lists every variable and covers Hetzner
+# Object Storage in place of the bundled test bucket (profile s3).
+#
+#   cp apps/norn-cell-rivet/env.example apps/norn-cell-rivet/.env   # then edit it
+#   docker compose -f apps/norn-cell-rivet/compose.yaml --profile s3 up -d --build
+#
+# Ports: the runners' 8787 is published (put TLS in front of it), and the
+# engines' 6420 (through `lb`) on loopback only, for the operator. 6421
+# (between instances: plaintext and unauthenticated) stays on the compose
+# network.
+name: norn-rivet
+
+x-engine: &engine
+  # Rivet Engine 3.1.1, the release RivetKit 3.1.1 (crates/norn-cell-rivet) pins.
+  image: rivetdev/engine@sha256:55cdfe9a92c0ee2f7d3ce5f388dab2ef8e0be1bab8e3f1adb7ba972f862e25d4
+  restart: unless-stopped
+  # Rivet's own systemd unit allows 660 s for a clean stop.
+  stop_grace_period: 660s
+  # The bundled bucket exists before an engine starts (only with --profile s3).
+  depends_on:
+    s3-bucket:
+      condition: service_completed_successfully
+      required: false
+
+x-engine-env: &engine-env
+  RIVET__AUTH__ADMIN_TOKEN: ${RIVET_ADMIN_TOKEN:?set RIVET_ADMIN_TOKEN}
+  RIVET__STORAGE__LOG_DIRECTORY: /var/lib/rivet/log
+  RIVET__API_PEER__HOST: 0.0.0.0
+  RIVET__OBJECT_STORAGE__PRIMARY__S3__BUCKET: ${S3_BUCKET:?set S3_BUCKET}
+  RIVET__OBJECT_STORAGE__PRIMARY__S3__ENDPOINT: ${S3_ENDPOINT:?set S3_ENDPOINT}
+  RIVET__OBJECT_STORAGE__PRIMARY__S3__REGION: ${S3_REGION:?set S3_REGION}
+  RIVET__OBJECT_STORAGE__PRIMARY__S3__ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?set S3_ACCESS_KEY_ID}
+  RIVET__OBJECT_STORAGE__PRIMARY__S3__SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?set S3_SECRET_ACCESS_KEY}
+  RIVET__TELEMETRY__ENABLED: "false"
+  # Plain-http S3 endpoints are refused unless this is true (object_store reads
+  # AWS_* settings from the environment). Only for a bucket on the compose
+  # network (profile s3); Hetzner Object Storage is https.
+  AWS_ALLOW_HTTP: ${S3_ALLOW_HTTP:-false}
+
+x-runner: &runner
+  build:
+    context: ../..
+    dockerfile: apps/norn-cell-rivet/Dockerfile
+  image: norn-cell-rivet:local
+  restart: unless-stopped
+  depends_on:
+    pool:
+      condition: service_completed_successfully
+
+x-runner-env: &runner-env
+  RIVET_ENDPOINT: http://default:${RIVET_ADMIN_TOKEN}@lb:6420
+  NORN_HOST_ISSUER: ${NORN_HOST_ISSUER:?set NORN_HOST_ISSUER}
+  NORN_HOST_JWKS_URL: ${NORN_HOST_JWKS_URL:?set NORN_HOST_JWKS_URL}
+  NORN_LINEAGE_KEY: ${NORN_LINEAGE_KEY:?set NORN_LINEAGE_KEY}
+  NORN_TENANT_ENVIRONMENTS: ${NORN_TENANT_ENVIRONMENTS:-dev,prod}
+  ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+
+services:
+  engine-1:
+    <<: *engine
+    environment:
+      <<: *engine-env
+      RIVET__API_PEER__ADVERTISE_ADDRESS: engine-1:6421
+      RIVET__STORAGE__ZONE: zone-1
+    volumes: [engine-1-log:/var/lib/rivet/log]
+  engine-2:
+    <<: *engine
+    environment:
+      <<: *engine-env
+      RIVET__API_PEER__ADVERTISE_ADDRESS: engine-2:6421
+      RIVET__STORAGE__ZONE: zone-2
+    volumes: [engine-2-log:/var/lib/rivet/log]
+  engine-3:
+    <<: *engine
+    environment:
+      <<: *engine-env
+      RIVET__API_PEER__ADVERTISE_ADDRESS: engine-3:6421
+      RIVET__STORAGE__ZONE: zone-3
+    volumes: [engine-3-log:/var/lib/rivet/log]
+
+  lb:
+    image: haproxy:3.0.31-alpine3.24
+    restart: unless-stopped
+    volumes: [./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro]
+    depends_on: [engine-1, engine-2, engine-3]
+    ports: ["127.0.0.1:${RIVET_LB_PORT:-6420}:6420"]
+
+  # The `default` pool, created before any runner connects (idempotent).
+  pool:
+    image: curlimages/curl:8.17.0
+    restart: "no"
+    depends_on: [lb]
+    environment:
+      RIVET_ADMIN_TOKEN: ${RIVET_ADMIN_TOKEN}
+    command:
+      - sh
+      - -c
+      - >-
+        for i in $$(seq 120); do
+        curl -sf -X PUT "http://lb:6420/pools/default?namespace=default"
+        -H "authorization: Bearer $$RIVET_ADMIN_TOKEN" -H "content-type: application/json" -d '{}' && exit 0;
+        sleep 2; done; exit 1
+
+  runner-1:
+    <<: *runner
+    environment: *runner-env
+    ports: ["${NORN_PORT:-8787}:8787"]
+  runner-2:
+    <<: *runner
+    environment: *runner-env
+
+  # Tests and local trials only: an S3-compatible bucket on this machine
+  # (RustFS 1.0.6, Apache-2.0; MinIO no longer publishes community images or
+  # binaries). Production points S3_* at Hetzner Object Storage (README.md).
+  s3:
+    profiles: [s3]
+    image: rustfs/rustfs@sha256:ee717072290bec9b11abfc0365f8310b00df1cd9b3639943edae47bdef05044a
+    restart: unless-stopped
+    environment:
+      RUSTFS_ACCESS_KEY: ${S3_ACCESS_KEY_ID}
+      RUSTFS_SECRET_KEY: ${S3_SECRET_ACCESS_KEY}
+    volumes: [s3-data:/data]
+  s3-bucket:
+    profiles: [s3]
+    image: curlimages/curl:8.17.0
+    restart: "no"
+    depends_on: [s3]
+    environment:
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY}
+      S3_BUCKET: ${S3_BUCKET}
+      S3_REGION: ${S3_REGION}
+    command:
+      - sh
+      - -c
+      - >-
+        for i in $$(seq 60); do
+        code=$$(curl -s -o /dev/null -w '%{http_code}' -X PUT --aws-sigv4 "aws:amz:$$S3_REGION:s3"
+        --user "$$S3_ACCESS_KEY_ID:$$S3_SECRET_ACCESS_KEY" "http://s3:9000/$$S3_BUCKET");
+        case "$$code" in 200|409) exit 0;; esac; sleep 1; done; exit 1
+
+volumes:
+  engine-1-log:
+  engine-2-log:
+  engine-3-log:
+  s3-data:
