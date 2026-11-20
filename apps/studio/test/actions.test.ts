@@ -257,3 +257,21 @@ test("a receipt says what the record is now, from the cell's answer, never a gue
   expect(receiptVerb(action("fire_transition", "on_hold"), 2)).toBe("is now on hold")
   expect(receiptVerb(action("fire_transition"), 2)).toBe("updated")
 })
+
+test("a refusal's request is the input as sent: every member, lists, objects and explicit nulls too, digit for digit", async () => {
+  const { sentMembers } = await import("../src/lib/actions.ts")
+  const sent = '{"id":"SCAN-INV-1041","total":"30.00","qty":12345678901234567890.10,"note":null,"lines":[{"amount":"18.50"},{"amount":"12.00"}],"meta":{"by":"scan \\"7\\""},"empty":""}'
+  expect(sentMembers(sent)).toEqual([
+    { name: "id", text: "SCAN-INV-1041" },
+    { name: "total", text: "30.00" },
+    // A number the form sent goes back as its own digits, never through a float.
+    { name: "qty", text: "12345678901234567890.10" },
+    { name: "note", text: "null" },
+    { name: "lines", text: '[{"amount":"18.50"},{"amount":"12.00"}]' },
+    { name: "meta", text: '{"by":"scan \\"7\\""}' },
+    { name: "empty", text: "" },
+  ])
+  expect(sentMembers("{}")).toEqual([])
+  expect(sentMembers(' { "a" : 1 , "b" : [ 1 , 2 ] } ')).toEqual([{ name: "a", text: "1" }, { name: "b", text: "[ 1 , 2 ]" }])
+  for (const text of ["", "null", "[1]", "{"]) expect(sentMembers(text)).toBeNull()
+})

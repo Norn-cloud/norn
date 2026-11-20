@@ -21,13 +21,29 @@ interface Retained { readonly status: number; readonly body: unknown }
 const retained = (name: string): Retained =>
   JSON.parse(readFileSync(new URL(`../../../fixtures/refusal/${name}`, import.meta.url), "utf8")) as Retained
 
+/** The whole input each answer was recorded for (`requests.json`, written by the same test). */
+export const REQUESTS = JSON.parse(readFileSync(new URL("../../../fixtures/refusal/requests.json", import.meta.url), "utf8")) as { readonly refusal: Readonly<Record<string, unknown>>; readonly receipt: Readonly<Record<string, unknown>> }
+
+/** The same JSON value: every member, nested ones too, whatever order the members were sent in. */
+function same(left: unknown, right: unknown): boolean {
+  if (Array.isArray(left) || Array.isArray(right)) return Array.isArray(left) && Array.isArray(right) && left.length === right.length && left.every((item, index) => same(item, right[index]))
+  if (left !== null && right !== null && typeof left === "object" && typeof right === "object") {
+    const a = Object.keys(left), b = Object.keys(right)
+    return a.length === b.length && a.every((key) => Object.hasOwn(right, key) && same((left as Record<string, unknown>)[key], (right as Record<string, unknown>)[key]))
+  }
+  return left === right
+}
+
 export interface RefusalCell {
   /** Each call's input, as the form sent it. */
   readonly calls: unknown[]
+  /** The reader's refusal-detail grant is revoked: the next refusal is the redacted one, while what the page already read stays as it was read. */
+  readonly revokeDisclosure: () => void
 }
 
 export async function refusalCell(page: Page, reader: Reader): Promise<RefusalCell> {
   const calls: unknown[] = []
+  let refusedAs: Reader = reader
   const serve = (name: string) => {
     const { status, body } = retained(name)
     return { status, json: body }
@@ -45,10 +61,13 @@ export async function refusalCell(page: Page, reader: Reader): Promise<RefusalCe
   await page.route("**/api/host/v1/actions**", (route) => {
     const url = new URL(route.request().url())
     if (route.request().method() === "POST" && url.pathname.endsWith(`/v1/actions/${CORRECT}`)) {
-      const body = JSON.parse(route.request().postData() ?? "null") as { input?: { total?: unknown } } | null
+      const body = JSON.parse(route.request().postData() ?? "null") as { input?: unknown } | null
       calls.push(body?.input)
-      // The total the lines sum to is admitted (recorded for the admin); any other is the recorded refusal.
-      return route.fulfill(serve(reader === "admin" && body?.input?.total === "30.50" ? "receipt.admin.json" : `refusal.${reader}.json`))
+      // Each answer is served only for the whole input it was recorded for: the admin's correction to the
+      // total the lines sum to is admitted, the inconsistent one refused. Any other input was never recorded.
+      if (refusedAs === "admin" && same(body?.input, REQUESTS.receipt)) return route.fulfill(serve("receipt.admin.json"))
+      if (same(body?.input, REQUESTS.refusal)) return route.fulfill(serve(`refusal.${refusedAs}.json`))
+      return route.fulfill({ status: 400, json: { code: "replay.unrecorded", message: "The cell's answer to this input was not recorded." } })
     }
     if (route.request().method() === "GET" && url.pathname.endsWith("/v1/actions")) return route.fulfill(serve(`actions.${reader}.json`))
     return route.fulfill({ status: 404, json: { code: "route.not_found", message: "not found" } })
@@ -66,5 +85,5 @@ export async function refusalCell(page: Page, reader: Reader): Promise<RefusalCe
     if (line !== null) return route.fulfill(serve(`${line[1]}.${line[2] ?? "object"}.${reader}.json`))
     return route.fulfill(notFound)
   })
-  return { calls }
+  return { calls, revokeDisclosure: () => { refusedAs = "member" } }
 }

@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 import {
-  ACTIONS_UNAVAILABLE, callAction, decimalExample, inputPointer, itemNoun, newIdempotencyKey, receiptVerb, risky as isRisky, writesWhole, draftAt, emptyDraft, emptyFor, encodeObject, fieldsOf, groupsOf, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt,
+  ACTIONS_UNAVAILABLE, callAction, decimalExample, sentMembers, inputPointer, itemNoun, newIdempotencyKey, receiptVerb, risky as isRisky, writesWhole, draftAt, emptyDraft, emptyFor, encodeObject, fieldsOf, groupsOf, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt,
   type ActionReceipt, type ActionSummary, type Diagnostic, type Draft, type FormField, type Section, type Spec,
 } from "../lib/actions.ts"
 import type { Phase } from "../lib/screen/call.ts"
@@ -82,23 +82,21 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
   const diagnostics = phase.kind === "refused" ? phase.diagnostics : []
   // When this refusal reached the form: the refusal document carries no time, and the cell keeps no receipt of it.
   const refusedAt = useMemo(() => phase.kind === "refused" ? new Date() : null, [phase])
-  // What a refusal's request step shows: the action, its record, and every value this form sent. It is
-  // read when the refusal arrives (the form is locked while a call is out), so fixing a field after it
-  // does not rewrite what was asked.
+  // What a refusal's request step shows: the action, its record, and every member of the input this
+  // form sent, as the encoded call carried it (a list, an object or an explicit null too, digit for
+  // digit). It is the call the cell answered, so fixing a field after it does not rewrite what was asked.
+  const sentInput = machine.sent?.input
   const request = useMemo((): RefusalRequest => {
-    const values = draft as { readonly [name: string]: Draft }
-    const targetId = values[action.objectIdField]
+    const members = sentInput === undefined ? null : sentMembers(sentInput)
+    const target = members?.find(({ name }) => name === action.objectIdField)
+    const labelOf = (name: string) => fields.find((field) => field.name === name)?.label ?? name.replaceAll("_", " ")
     return {
       action: action.title,
       objectType: action.objectKind,
-      objectId: typeof targetId === "string" && targetId !== "" ? targetId : undefined,
-      values: fields.flatMap((field) => {
-        if (field.name === action.objectIdField) return []
-        const value = values[field.name]
-        return typeof value === "string" && value !== "" ? [{ label: field.label, value }] : []
-      }),
+      objectId: target === undefined || target.text === "" ? undefined : target.text,
+      values: (members ?? []).filter(({ name }) => name !== action.objectIdField).map(({ name, text }) => ({ label: labelOf(name), value: text })),
     }
-  }, [phase])
+  }, [sentInput, action, fields])
   const guard = phase.kind === "refused" ? refusedGuardWords(phase.explanation ?? phase.message) ?? refusedGuardWords(phase.message) : null
   // A commit leaves nothing unsent; a refusal in a wizard opens the first step it names (one on no field stays on the review).
   useEffect(() => {
@@ -147,8 +145,7 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
       {blocked !== null && <p role="alert" className="rounded-lg border border-node-border bg-muted/50 p-3 text-sm">Studio can't build a form for this action yet ({blocked}). It's listed so you know it exists.</p>}
       {phase.kind === "refused" && phase.reason !== undefined && phase.code === "core.laws.violated" && <LawRefusal code={phase.code} reason={phase.reason} explanation={phase.explanation ?? phase.message} fields={(action.inputSchema as { properties?: Readonly<Record<string, InputField>> } | null)?.properties ?? {}} technical={technical} onUse={(path, text) => edit(`/${path}`, text)} request={request} at={refusedAt ?? new Date()} />}
       {phase.kind === "refused" && phase.reason === undefined && phase.code === "core.laws.violated" && (
-        <RedactedLawRefusal objectType={action.objectKind} id={(() => { const value = (draft as { readonly [name: string]: Draft })[action.objectIdField]; return typeof value === "string" && value !== "" ? value : undefined })()}
-          code={phase.code} message={phase.explanation ?? phase.message} technical={technical} request={request} at={refusedAt ?? new Date()} />
+        <RedactedLawRefusal code={phase.code} message={phase.explanation ?? phase.message} technical={technical} request={request} at={refusedAt ?? new Date()} />
       )}
       {phase.kind === "refused" && phase.code !== "core.laws.violated" && (
         <div role="alert" className="grid gap-1.5 rounded-xl border border-border bg-card px-3 py-2.5 text-sm">

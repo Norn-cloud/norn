@@ -307,13 +307,18 @@ impl Cell {
 /// A response the Studio refusal walk replays (`fixtures/refusal`), checked
 /// against what the cell answers now; `NORN_BLESS=1` rewrites it.
 fn retained(name: &str, response: &Response) {
-    let root = root().join("fixtures/refusal");
     let document: Value = serde_json::from_str(&response.body).unwrap_or(Value::Null);
-    let text = format!(
-        "{}\n",
-        serde_json::to_string_pretty(&json!({ "status": response.status, "body": document }))
-            .unwrap()
+    retained_value(
+        name,
+        &json!({ "status": response.status, "body": document }),
     );
+}
+
+/// A document the refusal walk replays, checked against `value`;
+/// `NORN_BLESS=1` rewrites it.
+fn retained_value(name: &str, value: &Value) {
+    let root = root().join("fixtures/refusal");
+    let text = format!("{}\n", serde_json::to_string_pretty(value).unwrap());
     let file = root.join(name);
     if std::env::var("NORN_BLESS").as_deref() == Ok("1") {
         std::fs::create_dir_all(&root).unwrap();
@@ -338,6 +343,10 @@ fn retained_refusal_documents_are_the_cells_own() {
     let directory = tempfile::tempdir().unwrap();
     let mut cell = loaded(&directory.path().join("a.sqlite"));
     let record = "/v1/objects/docs.ScannedDocument/SCAN-INV-1041";
+    // The inconsistent correction each role sends: a total the printed lines do not sum to.
+    let refused = json!({ "input": { "id": "SCAN-INV-1041", "currency": "USD", "total": "30.00",
+                                     "correction_reason": "typo",
+                                     "correction_evidence": "SCAN-INV-1041~total" } });
     retained(
         "definitions.json",
         &cell.read("admin", "/v1/definitions", ""),
@@ -388,10 +397,7 @@ fn retained_refusal_documents_are_the_cells_own() {
             &format!("type-access.{role}.json"),
             &cell.read(role, "/v1/access", "&objectType=docs.ScannedDocument"),
         );
-        let body = json!({ "idempotencyKey": format!("inv-0041-{role}-30.00"),
-            "input": { "id": "SCAN-INV-1041", "currency": "USD", "total": "30.00",
-                       "correction_reason": "typo",
-                       "correction_evidence": "SCAN-INV-1041~total" } });
+        let body = json!({ "idempotencyKey": format!("inv-0041-{role}-30.00"), "input": refused["input"] });
         retained(
             &format!("refusal.{role}.json"),
             &cell.call(
@@ -406,6 +412,12 @@ fn retained_refusal_documents_are_the_cells_own() {
         "input": { "id": "SCAN-INV-1041", "currency": "USD", "total": "30.50",
                    "correction_reason": "typo",
                    "correction_evidence": "SCAN-INV-1041~total" } });
+    // The inputs each answer was recorded for: the replay answers a call only
+    // when its whole input is one of them.
+    retained_value(
+        "requests.json",
+        &json!({ "refusal": refused["input"], "receipt": body["input"] }),
+    );
     retained(
         "receipt.admin.json",
         &cell.call(
