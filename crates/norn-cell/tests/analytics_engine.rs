@@ -24,8 +24,8 @@ use norn_cell::analytics::{
     MembershipDigest, Source, StoreRequest, StoredObject, SyncRequest, TenantId, bucket_value,
     lower, table_schema,
 };
-use norn_cell::dataset_manifest::ManifestPins;
 use norn_cell::compute::{QueryContext, QueryResult};
+use norn_cell::dataset_manifest::ManifestPins;
 use norn_cell::{CellError, CellStore, CommitBatch, FactWriteRow, Model};
 use norn_checker::EffectiveCatalog;
 use norn_checker::metric::compute::{QuestionPlan, admit};
@@ -2198,7 +2198,10 @@ fn begin_landing(engine: &Engine, plan: &QuestionPlan, attempt: &str) -> LandReq
     }
 }
 
-fn store_request(request: &LandRequest, landed: &norn_cell::analytics::LandResponse) -> StoreRequest {
+fn store_request(
+    request: &LandRequest,
+    landed: &norn_cell::analytics::LandResponse,
+) -> StoreRequest {
     let object = |sha: &str| StoredObject {
         uri: format!("s3://synthetic/datasets/{sha}.parquet"),
         url: String::new(),
@@ -2257,7 +2260,10 @@ fn a_landing_is_staged_by_attempt_and_read_only_at_its_stored_cache_identity() {
         assert_eq!(u64::try_from(bytes.len()).expect("size"), file.bytes);
         assert!(bytes.starts_with(b"PAR1"), "a Parquet file");
         assert!(
-            std::fs::metadata(path).expect("meta").permissions().readonly(),
+            std::fs::metadata(path)
+                .expect("meta")
+                .permissions()
+                .readonly(),
             "sealed before it was hashed"
         );
     }
@@ -2344,7 +2350,10 @@ fn a_landing_is_staged_by_attempt_and_read_only_at_its_stored_cache_identity() {
         (Some(data_file), Some(held_file)),
         "the same rows land as the same bytes"
     );
-    assert_eq!(totals(&ask(&reopened, &cache).expect("answer")), totals(&landed_answer));
+    assert_eq!(
+        totals(&ask(&reopened, &cache).expect("answer")),
+        totals(&landed_answer)
+    );
 }
 
 /// MANIFEST-COMMIT-1 / MANIFEST-PIN-1 / MANIFEST-CURRENT-1 / MANIFEST-04: a
@@ -2464,7 +2473,11 @@ fn a_manifest_commits_once_per_request_and_is_the_current_dataset() {
     assert_eq!(refused(&versioned, &mut store), "dataset.stale_pins");
     let mut retyped = manifest.clone();
     retyped.table.pin = "other".into();
-    assert_eq!(refused(&retyped, &mut store), "dataset.invalid", "its cache identity is not its own");
+    assert_eq!(
+        refused(&retyped, &mut store),
+        "dataset.invalid",
+        "its cache identity is not its own"
+    );
     let mut miscounted = manifest.clone();
     miscounted.counts.admitted += 1;
     assert_eq!(refused(&miscounted, &mut store), "dataset.invalid");

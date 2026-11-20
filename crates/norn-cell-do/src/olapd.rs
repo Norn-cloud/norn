@@ -346,14 +346,18 @@ fn upload(agent: &ureq::Agent, url: &str, path: &std::path::Path, sha256: &str) 
             response.status()
         )));
     }
-    let sent = std::mem::take(&mut *hasher.lock().unwrap_or_else(std::sync::PoisonError::into_inner))
-        .finalize()
-        .iter()
-        .fold(String::new(), |mut out, b| {
-            use std::fmt::Write as _;
-            let _infallible = write!(out, "{b:02x}");
-            out
-        });
+    let sent = std::mem::take(
+        &mut *hasher
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner),
+    )
+    .finalize()
+    .iter()
+    .fold(String::new(), |mut out, b| {
+        use std::fmt::Write as _;
+        let _infallible = write!(out, "{b:02x}");
+        out
+    });
     if sent == sha256 {
         Ok(())
     } else {
@@ -369,7 +373,8 @@ fn upload(agent: &ureq::Agent, url: &str, path: &std::path::Path, sha256: &str) 
 fn land(engine: &Engine, request: &LandRequest) -> Outcome<LandResponse> {
     let tenant = &request.load.tenant;
     let (_path, file) = engine.begin_attempt(tenant, &request.attempt)?;
-    let landed = download(&agent(), &request.load.file.url, file).and_then(|()| engine.land(request));
+    let landed =
+        download(&agent(), &request.load.file.url, file).and_then(|()| engine.land(request));
     if landed.is_err() {
         engine.end_attempt(tenant, &request.attempt);
     }
@@ -392,16 +397,21 @@ fn settle(engine: &Engine, request: &SettleRequest) -> Outcome<LandResponse> {
 fn store(engine: &Engine, request: &StoreRequest) -> Outcome<LandResponse> {
     let tenant = &request.land.load.tenant;
     let attempt = &request.land.attempt;
-    let stored = engine.landed_files(tenant, attempt).and_then(|(data, held)| {
-        let (Some(data_file), Some(held_file)) = (&request.landed.data, &request.landed.held)
-        else {
-            return Err(refusal("analytics.invalid", "the landing has residue to settle"));
-        };
-        let agent = agent();
-        upload(&agent, &request.data.url, &data, &data_file.sha256)?;
-        upload(&agent, &request.held.url, &held, &held_file.sha256)?;
-        engine.store(request)
-    });
+    let stored = engine
+        .landed_files(tenant, attempt)
+        .and_then(|(data, held)| {
+            let (Some(data_file), Some(held_file)) = (&request.landed.data, &request.landed.held)
+            else {
+                return Err(refusal(
+                    "analytics.invalid",
+                    "the landing has residue to settle",
+                ));
+            };
+            let agent = agent();
+            upload(&agent, &request.data.url, &data, &data_file.sha256)?;
+            upload(&agent, &request.held.url, &held, &held_file.sha256)?;
+            engine.store(request)
+        });
     engine.end_attempt(tenant, attempt);
     stored
 }

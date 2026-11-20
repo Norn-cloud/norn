@@ -215,7 +215,10 @@ impl Engine {
             && attempt.len() <= 80
             && attempt.bytes().all(|b| b.is_ascii_alphanumeric());
         if !valid {
-            return Err(refusal("analytics.invalid", "an attempt is 1 to 80 letters and digits"));
+            return Err(refusal(
+                "analytics.invalid",
+                "an attempt is 1 to 80 letters and digits",
+            ));
         }
         Ok(self.private(tenant)?.join("scratch").join(attempt))
     }
@@ -718,7 +721,10 @@ impl Engine {
             return Err(refusal(STALE, "the answer is not this landing's"));
         }
         let (Some(data_file), Some(held_file)) = (&landed.data, &landed.held) else {
-            return Err(refusal("analytics.invalid", "the landing has residue to settle"));
+            return Err(refusal(
+                "analytics.invalid",
+                "the landing has residue to settle",
+            ));
         };
         let (data, held) = self.landed_files(tenant, &land.attempt)?;
         let objects = self.private(tenant)?.join("objects");
@@ -753,7 +759,9 @@ impl Engine {
         };
         let text = serde_json::to_string(&record)
             .map_err(|error| refusal("analytics.engine", error.to_string()))?;
-        self.with(tenant, |conn| set_meta(conn, &format!("landing:{cache}"), &text))?;
+        self.with(tenant, |conn| {
+            set_meta(conn, &format!("landing:{cache}"), &text)
+        })?;
         self.end_attempt(tenant, &land.attempt);
         Ok(LandResponse {
             stored: Some(cache),
@@ -2436,7 +2444,8 @@ fn check_file(conn: &Connection, request: &LoadRequest, file: &Path) -> Outcome<
         };
         let text = match (column.kind, data_type.as_str()) {
             (ColumnKind::Timestamp, "TIMESTAMP_NS") => {
-                let fraction = format!("(((epoch_ns({f}) % 1000000000) + 1000000000) % 1000000000)");
+                let fraction =
+                    format!("(((epoch_ns({f}) % 1000000000) + 1000000000) % 1000000000)");
                 format!(
                     "strftime(make_timestamp((epoch_ns({f}) - {fraction}) // 1000), '%Y-%m-%dT%H:%M:%S') \
                      || '.' || lpad(CAST({fraction} AS VARCHAR), 9, '0') || 'Z'"
@@ -3207,7 +3216,12 @@ struct KeptFile {
 /// identity was made of before any of it is read. The table is replaced in
 /// one transaction, so a reader sees the old dataset or the new one whole.
 fn hydrate(conn: &Connection, table: &str, load: &str) -> Outcome<()> {
-    let cold = || refusal(DATASET_COLD, "the dataset's files are not kept by this engine");
+    let cold = || {
+        refusal(
+            DATASET_COLD,
+            "the dataset's files are not kept by this engine",
+        )
+    };
     let text = meta(conn, &format!("landing:{load}"))?.ok_or_else(cold)?;
     let kept: KeptLanding = serde_json::from_str(&text)
         .map_err(|error| refusal("analytics.engine", error.to_string()))?;
@@ -3335,7 +3349,10 @@ fn seal(path: &Path) -> Outcome<()> {
 }
 
 fn is_hex64(text: &str) -> bool {
-    text.len() == 64 && text.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    text.len() == 64
+        && text
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 /// A kept object must hash to its digest before it is read.
