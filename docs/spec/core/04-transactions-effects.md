@@ -235,6 +235,35 @@ decision moves its run. Named scenarios (`crates/norn-cell-do/tests/approvals.rs
 **APPROVAL-STEP-PARKS**, **APPROVAL-STEP-REJECTED**, and on hosts serving MCP
 **APPROVAL-MCP-PARKS** (a tool call answers the same pending decision).
 
+### APPROVAL-RECOVERY-1 — an approved call survives a crash
+
+PARKED-CRASH for approvals (#1481). The approved call commits after the commit
+that records its approval, so a host can stop in between. The commit that
+records an approval of a parked call also records the call as due
+(`_norn_approved_call`, derived from the decision ledger in the same
+transaction, so export replay rebuilds it). The call stays due until the host
+settles it: `committed`, or `refused` with its code. While it is due it is
+due work (TIMER-ALARM-1): the host's next wake, and the cold open that arms
+one, commits it as its requester through the same dispatch and the same fence
+as the first try (the action's digest, the gate's definition and revision,
+the requester's definitions pin, compared inside the dispatch's own epoch and
+cell hold). No request is in flight at a wake, so the host acts as the
+recorded requester only under its own declared role table; a host that cannot
+act as the requester keeps the call due on its backoff (TIMER-RETRY-1). A call
+that committed before its settlement was recorded is settled from its
+idempotency record and never dispatched again, and a dispatch that replays
+commits nothing. A refused call is settled with its code, never retried, and
+the approver's replay of the decide answers `call: {committed: false, code}`;
+a call whose action or gate changed while the host was down settles
+`approval.definition_changed`, and the requester's retry parks it anew for a
+fresh approval. The approver's replay of a still-due call commits it, once.
+A flow step's recovered call moves the run waiting on it. Named scenarios
+(`crates/norn-cell-do/tests/approval_recovery.rs`): **APPROVAL-RECOVERY-BEFORE**
+(crash before the commit: it commits once after a reopen),
+**APPROVAL-RECOVERY-AFTER** (crash after it: no second commit),
+**APPROVAL-RECOVERY-CHANGED** (definitions changed while down: a visible
+refusal), **APPROVAL-RECOVERY-STEP** (a step's call: its run completes).
+
 ### DECISION-LEDGER-1 — resolved decisions
 
 The commit that consumes a parked decision's result carries one

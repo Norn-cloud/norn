@@ -186,8 +186,8 @@ fn retry<E: SqlEngine>(cell: &Cell<E>) -> (u16, Value) {
     )
 }
 
-/// APPROVAL-RECOVERY-1, crash before the commit: the host dies between
-/// recording the approval and committing the call. On main this lost the
+/// APPROVAL-RECOVERY-BEFORE: crash before the commit. The host dies between
+/// recording the approval and committing the call. Before #1481 this lost the
 /// call: nothing was due after the reopen. Now the approval leaves the call
 /// due: the reopened cell wakes at once, a wake that cannot act as the
 /// requester keeps it due on its backoff, and the alarm commits it exactly
@@ -233,7 +233,7 @@ fn an_approved_call_lost_to_a_crash_commits_once_after_a_reopen() {
     );
 }
 
-/// APPROVAL-RECOVERY-1, crash after the commit: the call committed but the
+/// APPROVAL-RECOVERY-AFTER: crash after the commit. The call committed but the
 /// host died before recording so. The wake settles it from the call's
 /// idempotency record and dispatches nothing: no second commit.
 #[test]
@@ -258,7 +258,7 @@ fn an_approved_call_committed_before_a_crash_never_commits_twice() {
     assert_eq!(replayed["outcome"], json!("replayed"), "{replayed}");
 }
 
-/// APPROVAL-RECOVERY-1 with APPROVAL-REVISION-1: the action changed while
+/// APPROVAL-RECOVERY-CHANGED (with APPROVAL-REVISION-1): the action changed while
 /// the host was down. The wake never runs the call under the changed
 /// action: it settles `approval.definition_changed`, which the approver's
 /// replay shows, and the requester's call asks for a fresh approval. The
@@ -353,7 +353,7 @@ fn pending_ids<E: SqlEngine>(cell: &Cell<E>) -> Vec<String> {
         .collect()
 }
 
-/// APPROVAL-RECOVERY-1 for a flow step's call: the host dies between the
+/// APPROVAL-RECOVERY-STEP: a flow step's call. The host dies between the
 /// approval and the call. The wake commits the call as the run's starter
 /// and moves the run that waited on it, which completes.
 #[test]
