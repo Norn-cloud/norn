@@ -127,7 +127,7 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
             });
         }
         let Some(pending) = self.store().read().pending_observation(observation_id)? else {
-            return Ok(MappingOutcome::AlreadyLanded);
+            return self.redelivered_outcome(observation_id);
         };
         let observed: Observed<RuntimeValue> =
             norn_ir::runtime::decode(&pending.observed).map_err(CellError::Encoding)?;
@@ -150,7 +150,7 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
         }
         match self.process_mapping_bundle(observation_id) {
             Ok(true) => self.landed_outcome(&bundle),
-            Ok(false) => Ok(MappingOutcome::AlreadyLanded),
+            Ok(false) => self.redelivered_outcome(observation_id),
             Err(error @ (CellError::Sqlite(_) | CellError::Engine(_))) => Err(error),
             Err(error) => Ok(MappingOutcome::Quarantined(vec![refusal_code(&error)])),
         }
@@ -174,11 +174,34 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
 }
 
 impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S> {
+    /// The outcome of a row consumed before: still [`MappingOutcome::Withheld`]
+    /// while SOURCE-RESOLVE-1 withholds some of its records (their deciding
+    /// source has not reported), so a redelivery never counts it as landed;
+    /// otherwise [`MappingOutcome::AlreadyLanded`].
+    fn redelivered_outcome(&self, observation_id: &str) -> Result<MappingOutcome, CellError> {
+        let reader = self.store().read();
+        let Some(bundle) = reader.consumed_mapping_bundle(observation_id)? else {
+            return Ok(MappingOutcome::AlreadyLanded);
+        };
+        let withheld = reader.withheld_subjects(&bundle)?;
+        Ok(if withheld.is_empty() {
+            MappingOutcome::AlreadyLanded
+        } else {
+            MappingOutcome::Withheld(withheld)
+        })
+    }
+}
+
+impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S> {
     /// SOURCE-RESOLVE-1: after definitions with changed authorities are
     /// activated, write every subject whose stored values differ from what
     /// the active definitions decide over its retained reports, so the
     /// current resolution read and the stored value agree. Hosts call it
     /// right after each activation; it writes nothing when they agree.
+    /// The activation commit marks it pending and this clears the mark once
+    /// every chunk has committed, so a host that reopens a cell with the
+    /// mark set ([`crate::CellStore::source_resolution_pending`]) resumes it before
+    /// serving; a resumed pass recomputes and skips chunks already consumed.
     /// Returns the number of subjects written.
     ///
     /// # Errors
@@ -186,6 +209,7 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
     pub fn reconcile_source_resolution(&mut self) -> Result<usize, CellError> {
         let changes = self.store().read().reconciliation()?;
         if changes.is_empty() {
+            self.store().finish_source_resolution()?;
             return Ok(0);
         }
         let model = self.store().model().clone();
@@ -262,6 +286,7 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
                 .map_err(|e| CellError::ObservationCommit(Box::new(e)))?;
             written = written.saturating_add(chunk.len());
         }
+        self.store().finish_source_resolution()?;
         Ok(written)
     }
 }

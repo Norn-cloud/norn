@@ -113,6 +113,11 @@ pub(crate) fn source_records_of(selection: &str) -> String {
     )
 }
 
+/// SOURCE-RESOLVE-1: the [`META`] key a definitions activation sets, in its
+/// own commit, until [`crate::SqliteCell::reconcile_source_resolution`] has
+/// written every subject the activated authorities decide differently.
+pub(crate) const SOURCE_RESOLUTION_PENDING: &str = "source_resolution_pending";
+
 /// Version high-water table.
 pub(crate) const VERSIONS: &str = "_norn_version";
 /// Link version table (#3013).

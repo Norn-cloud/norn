@@ -3244,6 +3244,20 @@ impl<E: SqlEngine> CellStore<E> {
                     &format!("UPDATE \"{META}\" SET \"value\" = ?1 WHERE \"key\" = 'ddl_hash'"),
                     params![install.candidate_model.ddl_hash()],
                 )?;
+                // SOURCE-RESOLVE-1: the activation and its pending
+                // reconciliation commit together; the reconciliation clears
+                // it, and a host resumes it on open before serving.
+                if !matches!(origin, CommitOrigin::Retained(_)) {
+                    self.conn.execute(
+                        &format!(
+                            "INSERT OR REPLACE INTO \"{META}\" (\"key\", \"value\") VALUES (?1, ?2)"
+                        ),
+                        params![
+                            crate::system::SOURCE_RESOLUTION_PENDING,
+                            version.to_string()
+                        ],
+                    )?;
+                }
                 Some(record)
             } else {
                 None

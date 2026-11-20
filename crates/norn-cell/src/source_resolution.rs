@@ -25,7 +25,9 @@ use crate::CellError;
 use crate::engine::{SqlEngine, SqlRow, params};
 use crate::mapping_bundle::MappingBundle;
 use crate::read::{StoreReader, to_i64, to_u64};
-use crate::system::{INBOX, RECORD_ID, SOURCE_RECORD, SOURCE_SUBJECT};
+use crate::system::{
+    INBOX, META, RECORD_ID, SOURCE_RECORD, SOURCE_RESOLUTION_PENDING, SOURCE_SUBJECT,
+};
 
 pub use crate::mapping_links::LinkConflict;
 
@@ -176,19 +178,6 @@ fn reported(record: &MappedRecord) -> Option<RuntimeObject> {
 fn later(a: &SourceReport, b: &SourceReport) -> bool {
     (a.source_version.as_str(), a.commit_seq.unwrap_or(u64::MAX))
         > (b.source_version.as_str(), b.commit_seq.unwrap_or(u64::MAX))
-}
-
-/// Each mapping's latest report of `reports`.
-fn latest(reports: BTreeMap<String, Vec<SourceReport>>) -> BTreeMap<String, SourceReport> {
-    reports
-        .into_iter()
-        .filter_map(|(mapping, reports)| {
-            reports
-                .into_iter()
-                .reduce(|best, report| if later(&report, &best) { report } else { best })
-                .map(|report| (mapping, report))
-        })
-        .collect()
 }
 
 fn report_of(
@@ -422,46 +411,6 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         Ok(report_of(&bundle, object_type, key, Some(commit_seq)))
     }
 
-    /// Every consumed report of each mapping on `object_type`/`key` at
-    /// `frontier`, in commit order.
-    fn retained_reports(
-        &self,
-        object_type: &str,
-        key: &str,
-        frontier: Option<u64>,
-    ) -> Result<BTreeMap<String, Vec<SourceReport>>, CellError> {
-        let frontier = frontier.map(|f| to_i64(f, "frontier")).transpose()?;
-        let bound = i64::try_from(BOUND.saturating_add(1)).unwrap_or(i64::MAX);
-        let rows = self.conn.query(
-            &format!(
-                "SELECT s.\"mapping\", s.\"commit_seq\", i.\"observation_id\", i.\"observed\" FROM \"{SOURCE_SUBJECT}\" s JOIN \"{INBOX}\" i ON i.\"observation_id\" = s.\"observation_id\" WHERE s.\"object_type\" = ?1 AND s.\"key\" = ?2 AND (?3 IS NULL OR s.\"commit_seq\" <= ?3) ORDER BY s.\"commit_seq\", s.\"position\" LIMIT ?4"
-            ),
-            params![object_type, key, frontier, bound],
-        )?;
-        if rows.len() > BOUND {
-            return Err(CellError::ComputeRefused("core.compute.bound_exceeded"));
-        }
-        let mut out: BTreeMap<String, Vec<SourceReport>> = BTreeMap::new();
-        for row in rows {
-            let row = SqlRow(row);
-            let mapping: String = row.get(0)?;
-            let commit_seq = to_u64(row.get(1)?, "commit_seq")?;
-            let stored_id: String = row.get(2)?;
-            let observed: Observed<RuntimeValue> = serde_json::from_str(&row.get::<String>(3)?)?;
-            let bundle: MappingBundle =
-                norn_ir::runtime::decode(&observed.input).map_err(CellError::Encoding)?;
-            if stored_id != format!("mapping-bundle:{}", bundle.digest)
-                || bundle.input.mapping != mapping
-            {
-                return Err(CellError::MappingBundleMismatch);
-            }
-            if let Some(report) = report_of(&bundle, object_type, key, Some(commit_seq)) {
-                out.entry(mapping).or_default().push(report);
-            }
-        }
-        Ok(out)
-    }
-
     /// SOURCE-RESOLVE-1 for one subject at `frontier` under the active
     /// definitions: each reported property's decision with every source's
     /// report and lineage, and the SOURCE-AGREE-2 findings. `None` when no
@@ -552,10 +501,14 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         let incoming = report_of(bundle, object_type, &record.key, None)
             .ok_or(CellError::UnsupportedMappingProfile)?;
         // An older version of a source that already reported a newer one is
-        // kept as evidence and decides nothing.
-        if reports
-            .get(&incoming.mapping)
-            .is_none_or(|newer| !later(newer, &incoming))
+        // kept as evidence and decides nothing: neither where that source
+        // still reports (`later`), nor at a key its source record has since
+        // moved away from (`superseded`), so a late version never creates or
+        // updates an object at its stale key.
+        if !self.superseded(bundle)?
+            && reports
+                .get(&incoming.mapping)
+                .is_none_or(|newer| !later(newer, &incoming))
         {
             reports.insert(incoming.mapping.clone(), incoming);
         }
@@ -574,6 +527,53 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             }
         }
         Ok(Applied::Values(values))
+    }
+
+    /// Whether `bundle`'s source record already has a higher source version
+    /// consumed (whatever subjects that version reports).
+    fn superseded(&self, bundle: &MappingBundle) -> Result<bool, CellError> {
+        let newest: Option<String> = self.conn.query_optional(
+            &format!(
+                "SELECT r.\"source_version\" FROM \"{SOURCE_RECORD}\" r WHERE r.\"mapping\" = ?2 AND r.\"record_id\" = (SELECT {RECORD_ID} FROM \"{INBOX}\" i WHERE i.\"observation_id\" = ?1) \
+                 ORDER BY r.\"source_version\" DESC LIMIT 1"
+            ),
+            params![
+                format!("mapping-bundle:{}", bundle.digest),
+                bundle.input.mapping.as_str()
+            ],
+            |row| row.get(0),
+        )?;
+        let incoming = bundle
+            .raw
+            .get("source_version")
+            .and_then(RuntimeValue::as_str)
+            .unwrap_or_default();
+        Ok(newest.is_some_and(|newest| newest.as_str() > incoming))
+    }
+
+    /// The consumed mapping bundle `observation_id` (`None` when it is not
+    /// one, or still pending).
+    pub(crate) fn consumed_mapping_bundle(
+        &self,
+        observation_id: &str,
+    ) -> Result<Option<MappingBundle>, CellError> {
+        if !observation_id.starts_with("mapping-bundle:") {
+            return Ok(None);
+        }
+        let encoded: Option<String> = self.conn.query_optional(
+            &format!(
+                "SELECT \"observed\" FROM \"{INBOX}\" WHERE \"observation_id\" = ?1 AND \"consumed_commit_seq\" IS NOT NULL"
+            ),
+            params![observation_id],
+            |row| row.get(0),
+        )?;
+        let Some(encoded) = encoded else {
+            return Ok(None);
+        };
+        let observed: Observed<RuntimeValue> = serde_json::from_str(&encoded)?;
+        let bundle: MappingBundle =
+            norn_ir::runtime::decode(&observed.input).map_err(CellError::Encoding)?;
+        Ok(Some(bundle))
     }
 
     /// The changed values `reports` decide for `object_type`/`key` under
@@ -767,11 +767,17 @@ impl<E: SqlEngine> StoreReader<'_, E> {
 
     /// SOURCE-RESOLVE-1 over valid time: the canonical values of
     /// `object_type`/`key` at each valid time (`time_property`) its retained
-    /// reports known at `frontier` carry. Each slice decides over every
-    /// source's latest report valid by then, laid over `base` (the canonical
-    /// record), so an as-of answer depends on the reports, not on the order
-    /// they were synced in. A slice with an undecided property is absent.
-    /// `None` when the type is not resolved across sources.
+    /// reports known at `frontier` carry, decided under the definitions in
+    /// force at `frontier` (as [`Self::source_resolution`] decides). Each
+    /// slice decides over every source record's latest version effective by
+    /// then, laid over `base` (the canonical record), so an as-of answer
+    /// depends on the reports, not on the order they were synced in. A
+    /// version that moved its record to another key, or out of the map,
+    /// withdraws that record's report from its own valid time on (from every
+    /// valid time when it carries none), as the live value withdraws it. A
+    /// slice with an undecided property is absent; one no report decides
+    /// carries the previous slice forward. `None` when the type is not
+    /// resolved across sources.
     ///
     /// # Errors
     /// As [`Self::source_resolution`].
@@ -783,34 +789,78 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         time_property: &str,
         base: &RuntimeObject,
     ) -> Result<Option<Vec<RuntimeObject>>, CellError> {
-        let retained = self.retained_reports(object_type, key, frontier)?;
-        let Some(mapping) = retained.keys().next() else {
+        let streams = self.record_streams(object_type, key, frontier)?;
+        let Some(mapping) = streams.keys().next().map(|(m, _)| m.clone()) else {
             return Ok(None);
         };
-        let Some(table) = self.active_resolution(mapping)? else {
+        let version = match frontier {
+            Some(frontier) => self.definitions_version_at(frontier)?,
+            None => self.active_definitions_version()?,
+        };
+        let Some(table) = self.resolution_at(&mapping, version)? else {
             return Ok(None);
         };
         if !table.governs(object_type) {
             return Ok(None);
         }
-        let at = |report: &SourceReport| {
-            let text = report.values.get(time_property)?.as_str()?;
-            instant_key(text, false).or_else(|| instant_key(text, true))
+        let at = |values: &RuntimeObject| {
+            let text = values.get(time_property)?.as_str()?;
+            instant_key(text, false)
+                .or_else(|| instant_key(text, true))
+                .map(|instant| (instant, text.to_owned()))
         };
-        let mut times: Vec<_> = retained.values().flatten().filter_map(at).collect();
+        // Each version's effective time: its report's valid time here; for
+        // one that no longer reports this subject, the valid time of the
+        // record it reports instead (`Some(None)`: none, so from the start).
+        let mut timed = Vec::new();
+        for ((mapping, _), versions) in &streams {
+            let mut stream = Vec::new();
+            for version in versions {
+                let effective = match &version.report {
+                    Some(report) => at(&report.values).map(Some),
+                    None => Some(version.moved_values.as_ref().and_then(|v| at(v))),
+                };
+                if let Some(effective) = effective {
+                    stream.push((effective, version));
+                }
+            }
+            timed.push((mapping.as_str(), stream));
+        }
+        let mut times: Vec<(_, String)> = timed
+            .iter()
+            .flat_map(|(_, stream)| stream.iter().filter_map(|(t, _)| t.clone()))
+            .collect();
         times.sort_unstable();
-        times.dedup();
+        times.dedup_by(|a, b| a.0 == b.0);
         let mut slices = Vec::with_capacity(times.len());
-        'slices: for time in times {
-            let valid = retained
-                .iter()
-                .map(|(mapping, reports)| {
-                    let valid = reports.iter().filter(|r| at(r).is_some_and(|t| t <= time));
-                    (mapping.clone(), valid.cloned().collect())
-                })
+        'slices: for (time, text) in times {
+            // Each mapping's best current report among its source records.
+            let mut reports: BTreeMap<String, (&RecordVersion, &SourceReport)> = BTreeMap::new();
+            for (mapping, stream) in &timed {
+                let current = stream
+                    .iter()
+                    .filter(|(t, _)| t.as_ref().is_none_or(|(t, _)| *t <= time))
+                    .map(|(_, v)| *v)
+                    .max_by(|a, b| a.order.cmp(&b.order));
+                let Some(report) = current.and_then(|v| v.report.as_ref().map(|r| (v, r))) else {
+                    continue;
+                };
+                if reports
+                    .get(*mapping)
+                    .is_none_or(|(best, _)| report.0.order > best.order)
+                {
+                    reports.insert((*mapping).to_owned(), report);
+                }
+            }
+            if reports.is_empty() {
+                continue;
+            }
+            let reports = reports
+                .into_iter()
+                .map(|(m, (_, r))| (m, r.clone()))
                 .collect();
             let mut values = base.clone();
-            for property in decide(&table, object_type, &latest(valid)).properties {
+            for property in decide(&table, object_type, &reports).properties {
                 let value = match property.decision {
                     PropertyDecision::Single { value }
                     | PropertyDecision::Decided { value, .. }
@@ -820,10 +870,112 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 };
                 values.insert(property.property, value);
             }
+            // The slice holds from its own valid time, whichever report decided.
+            values.insert(time_property.to_owned(), RuntimeValue::from(text.as_str()));
             slices.push(values);
         }
         Ok(Some(slices))
     }
+
+    /// Every consumed version, at `frontier`, of each source record (by
+    /// mapping and record identity) that reported `object_type`/`key`:
+    /// its report here, or, once it reports this subject no more, the
+    /// values of the record of `object_type` it reports instead.
+    fn record_streams(
+        &self,
+        object_type: &str,
+        key: &str,
+        frontier: Option<u64>,
+    ) -> Result<BTreeMap<(String, String), Vec<RecordVersion>>, CellError> {
+        let frontier = frontier.map(|f| to_i64(f, "frontier")).transpose()?;
+        let bound = i64::try_from(BOUND.saturating_add(1)).unwrap_or(i64::MAX);
+        let rows = self.conn.query(
+            &format!(
+                "SELECT r.\"mapping\", r.\"record_id\", r.\"source_version\", r.\"commit_seq\", r.\"position\", i.\"observation_id\", i.\"observed\" FROM \"{SOURCE_RECORD}\" r JOIN \"{INBOX}\" i ON i.\"observation_id\" = r.\"observation_id\" \
+                 WHERE (?3 IS NULL OR r.\"commit_seq\" <= ?3) AND EXISTS (SELECT 1 FROM \"{SOURCE_SUBJECT}\" s WHERE s.\"object_type\" = ?1 AND s.\"key\" = ?2 AND s.\"mapping\" = r.\"mapping\" AND s.\"record_id\" = r.\"record_id\" AND (?3 IS NULL OR s.\"commit_seq\" <= ?3)) \
+                 ORDER BY r.\"commit_seq\", r.\"position\" LIMIT ?4"
+            ),
+            params![object_type, key, frontier, bound],
+        )?;
+        if rows.len() > BOUND {
+            return Err(CellError::ComputeRefused("core.compute.bound_exceeded"));
+        }
+        let mut out: BTreeMap<(String, String), Vec<RecordVersion>> = BTreeMap::new();
+        for row in rows {
+            let row = SqlRow(row);
+            let mapping: String = row.get(0)?;
+            let record_id: String = row.get(1)?;
+            let commit_seq = to_u64(row.get(3)?, "commit_seq")?;
+            let order = (row.get::<String>(2)?, commit_seq, row.get::<i64>(4)?);
+            let stored_id: String = row.get(5)?;
+            let observed: Observed<RuntimeValue> = serde_json::from_str(&row.get::<String>(6)?)?;
+            let bundle: MappingBundle =
+                norn_ir::runtime::decode(&observed.input).map_err(CellError::Encoding)?;
+            if stored_id != format!("mapping-bundle:{}", bundle.digest)
+                || bundle.input.mapping != mapping
+            {
+                return Err(CellError::MappingBundleMismatch);
+            }
+            let report = report_of(&bundle, object_type, key, Some(commit_seq));
+            let moved_values = if report.is_none() {
+                bundle
+                    .records
+                    .iter()
+                    .rev()
+                    .find(|r| r.object_type.as_str() == object_type)
+                    .and_then(reported)
+            } else {
+                None
+            };
+            out.entry((mapping, record_id))
+                .or_default()
+                .push(RecordVersion {
+                    order,
+                    report,
+                    moved_values,
+                });
+        }
+        Ok(out)
+    }
+}
+
+impl<E: SqlEngine> crate::CellStore<E> {
+    /// SOURCE-RESOLVE-1: whether a definitions activation committed without
+    /// its reconciliation having finished (the cell was interrupted between
+    /// them). A host resumes it with
+    /// [`crate::SqliteCell::reconcile_source_resolution`] before serving.
+    ///
+    /// # Errors
+    /// Store failures.
+    pub fn source_resolution_pending(&self) -> Result<bool, CellError> {
+        Ok(self
+            .conn
+            .query_optional(
+                &format!("SELECT 1 FROM \"{META}\" WHERE \"key\" = ?1"),
+                params![SOURCE_RESOLUTION_PENDING],
+                |row| row.get::<i64>(0),
+            )?
+            .is_some())
+    }
+
+    /// Clear the pending mark once every reconciliation chunk committed.
+    pub(crate) fn finish_source_resolution(&self) -> Result<(), CellError> {
+        self.conn.execute(
+            &format!("DELETE FROM \"{META}\" WHERE \"key\" = ?1"),
+            params![SOURCE_RESOLUTION_PENDING],
+        )?;
+        Ok(())
+    }
+}
+
+/// One consumed version of a source record, for [`StoreReader::resolved_slices`].
+struct RecordVersion {
+    /// (source version, commit, position): later versions order higher.
+    order: (String, u64, i64),
+    /// Its report on the subject, when it still reports it.
+    report: Option<SourceReport>,
+    /// The values it reports instead (the record moved to another key).
+    moved_values: Option<RuntimeObject>,
 }
 
 /// A record a consumed bundle reported but SOURCE-RESOLVE-1 did not write:
@@ -845,27 +997,6 @@ mod tests {
     use norn_checker::mapping::resolution::ResolutionTable;
     use norn_ir::RuntimeValue;
     use std::collections::BTreeMap;
-
-    #[test]
-    fn a_sources_latest_report_is_its_highest_version_whatever_the_consumption_order() {
-        let report = |version: &str, commit: u64| SourceReport {
-            mapping: "a".into(),
-            system: "s".into(),
-            observation_id: format!("mapping-bundle:{version}"),
-            commit_seq: Some(commit),
-            source_version: version.into(),
-            values: BTreeMap::new(),
-            lineage: BTreeMap::new(),
-            record: None,
-        };
-        for consumed in [
-            [report("2", 1), report("1", 2)],
-            [report("1", 1), report("2", 2)],
-        ] {
-            let latest = super::latest(BTreeMap::from([("a".to_owned(), consumed.to_vec())]));
-            assert_eq!(latest["a"].source_version, "2");
-        }
-    }
 
     #[test]
     fn a_type_no_mapping_resolves_decides_each_property_from_its_one_writer() {

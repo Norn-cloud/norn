@@ -143,7 +143,21 @@ impl<E: SqlEngine> DevHost<E> {
         responder: impl FnMut(&Command<RuntimeObject>) -> RuntimeObject + Send + 'static,
     ) -> Result<Self, Refusal> {
         scope.admit(Some(&scope.org_id), Some(&scope.environment_id))?;
-        let cell = ActionCell::new(store, scope.key(), responder).map_err(Refusal::host)?;
+        let mut cell = ActionCell::new(store, scope.key(), responder).map_err(Refusal::host)?;
+        // SOURCE-RESOLVE-1: an activation whose reconciliation was
+        // interrupted (or that a seed upgrade committed on its own) finishes
+        // reconciling before this host serves the revision.
+        if cell.store().source_resolution_pending().map_err(Refusal::host)? {
+            let mut observing: norn_cell::SqliteCell<
+                ObservationEvent,
+                RuntimeObject,
+                RuntimeObject,
+                E,
+            > = cell.into_profile();
+            let resumed = observing.reconcile_source_resolution();
+            cell = observing.into_profile();
+            resumed.map_err(Refusal::host)?;
+        }
         Ok(Self {
             scope,
             authorizer: Box::new(DenyAll),

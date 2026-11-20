@@ -1275,3 +1275,266 @@ fn source_resolve_1_accumulated_versions_never_make_a_subject_unwritable() {
         })
     );
 }
+
+/// The north holding's amount in each week of a stock answer.
+fn north_by_week(result: norn_cell::compute::QueryResult) -> BTreeMap<String, String> {
+    result
+        .rows
+        .into_iter()
+        .filter_map(|(key, row)| {
+            let week = serde_json::from_str::<Value>(&key)
+                .ok()
+                .and_then(|k| k.get(0).and_then(Value::as_str).map(str::to_owned))?;
+            row.members
+                .get(NORTH)
+                .map(|member| (week, format!("{:?}", member.amounts)))
+        })
+        .collect()
+}
+
+/// The stock answer at the cell's current frontier, as a reader then knew it.
+fn stock_known_now(cell: &Cell) -> (norn_cell::KnowledgeCutoff, BTreeMap<String, String>) {
+    let cutoff = norn_cell::KnowledgeCutoff {
+        recorded_at: norn_kernel::LogicalTime::from_millis(context().now_ms),
+        frontier: cell.store().verified_head().expect("head").commits,
+    };
+    (cutoff, stock_at(cell, cutoff))
+}
+
+fn stock_at(cell: &Cell, cutoff: norn_cell::KnowledgeCutoff) -> BTreeMap<String, String> {
+    north_by_week(
+        cell.store()
+            .evaluate_question_known_at(&stock_plan(), context(), cutoff, |_| Ok(true))
+            .expect("historical answer")
+            .result,
+    )
+}
+
+fn stock_live(cell: &Cell) -> BTreeMap<String, String> {
+    north_by_week(
+        cell.store()
+            .evaluate_question(&stock_plan(), context(), |_| Ok(true))
+            .expect("answer"),
+    )
+}
+
+/// SOURCE-RESOLVE-1 (Sol S3): Odoo reports north gold at 2458 g on
+/// 2026-10-20 and `ERPNext` at 2765 g on 2026-11-03; on 2026-11-12 a newer
+/// `ERPNext` upsert moves that record to another holding. The live value
+/// falls back to Odoo, and so does the stock answer from the move's valid
+/// time on, in either delivery order; a reader who knew only what came
+/// before the move still sees `ERPNext`'s report there.
+#[test]
+fn source_resolve_1_a_moved_record_withdraws_from_the_stock_answer_at_its_valid_time() {
+    let directory = tempfile::tempdir().expect("directory");
+    let moved = format!("{NORTH}/moved");
+    let erpnext: Edit = |r| {
+        r.insert("quantity".into(), json!(2765));
+        r.insert("modified".into(), json!("2026-11-03T00:00:00Z"));
+    };
+    let odoo: Edit = |r| {
+        r.insert("quantity".into(), json!(2458));
+        r.insert("write_date".into(), json!("2026-10-20T00:00:00Z"));
+    };
+    let mut answers = Vec::new();
+    for late in [false, true] {
+        let mut cell = setup_with(
+            &directory.path().join(format!("moved-{late}.sqlite")),
+            |_| {},
+        );
+        let moved_ref = moved.clone();
+        let move_it = |cell: &mut Cell| {
+            let moved_ref = moved_ref.clone();
+            sync_rows(cell, "erpnext", "v2", is_north, move |r| {
+                erpnext(r);
+                r.insert("custom_norn_ref".into(), json!(moved_ref.clone()));
+                r.insert("modified".into(), json!("2026-11-12T00:00:00Z"));
+            });
+        };
+        let before_move = if late {
+            sync_north(&mut cell, "odoo", "snapshot", odoo);
+            move_it(&mut cell);
+            sync_north(&mut cell, "erpnext", "snapshot", erpnext);
+            None
+        } else {
+            sync_north(&mut cell, "erpnext", "snapshot", erpnext);
+            sync_north(&mut cell, "odoo", "snapshot", odoo);
+            let known = stock_known_now(&cell);
+            move_it(&mut cell);
+            Some(known)
+        };
+        assert_eq!(quantity_of(&cell), Some(grams(2458)), "late {late}");
+        let live = stock_live(&cell);
+        let (_, known) = stock_known_now(&cell);
+        assert_eq!(known, live, "late {late}: the snapshot is the live answer");
+        let (odoo_week, erpnext_week, moved_week) =
+            (&live["2026-10-26"], &live["2026-11-02"], &live["2026-11-16"]);
+        assert_ne!(odoo_week, erpnext_week, "late {late}: {live:#?}");
+        assert_eq!(moved_week, odoo_week, "late {late}: Odoo after the move");
+        if let Some((cutoff, before)) = before_move {
+            assert_eq!(&before["2026-11-16"], erpnext_week, "{before:#?}");
+            assert_eq!(stock_at(&cell, cutoff), before, "history keeps it");
+        }
+        answers.push(live);
+    }
+    assert_eq!(answers[0], answers[1]);
+}
+
+/// SOURCE-RESOLVE-1 (Sol S7a): the stock answer at a frontier before an
+/// activation that ranks Odoo over `ERPNext` decides under the definitions
+/// then in force, as the resolution read at that frontier does.
+#[test]
+fn source_resolve_1_a_stock_answer_decides_under_its_frontiers_definitions() {
+    let directory = tempfile::tempdir().expect("directory");
+    let mut cell = setup_with(&directory.path().join("frontier.sqlite"), |_| {});
+    let erpnext: Edit = |r| {
+        r.insert("quantity".into(), json!(2765));
+        r.insert("modified".into(), json!("2026-11-03T00:00:00Z"));
+    };
+    let odoo: Edit = |r| {
+        r.insert("quantity".into(), json!(2458));
+        r.insert("write_date".into(), json!("2026-10-20T00:00:00Z"));
+    };
+    sync_north(&mut cell, "erpnext", "snapshot", erpnext);
+    sync_north(&mut cell, "odoo", "snapshot", odoo);
+    let (cutoff, before) = stock_known_now(&cell);
+    let active = cell
+        .store()
+        .read()
+        .installed_definitions(None)
+        .expect("read")
+        .expect("active")
+        .version;
+    let (artifacts, model) = edited_set(odoo_first);
+    cell.install_definitions(
+        model,
+        definition_input(&artifacts, 1_793_702_500_000),
+        Some(active),
+    )
+    .expect("activate");
+    cell.reconcile_source_resolution().expect("reconcile");
+    let after = stock_live(&cell);
+    assert_eq!(after["2026-11-16"], after["2026-10-26"], "Odoo decides now");
+    assert_ne!(before["2026-11-16"], before["2026-10-26"], "ERPNext decided");
+    assert_eq!(stock_at(&cell, cutoff), before, "history keeps ERPNext");
+}
+
+/// SOURCE-RESOLVE-1 (Sol S4): with `ERPNext` the holding's system of record,
+/// a check's withheld row delivered again is still withheld (never already
+/// landed) while `ERPNext` has not reported, and already landed once it has;
+/// in the other order it lands and its redelivery is already landed.
+#[test]
+fn source_resolve_1_a_redelivered_withheld_row_stays_withheld_in_either_order() {
+    let directory = tempfile::tempdir().expect("directory");
+    let north_ids = |cell: &mut Cell, system: &str| -> Vec<String> {
+        fixture(system)["snapshot"]
+            .as_array()
+            .expect("rows")
+            .iter()
+            .filter(|row| is_north(row["record"].as_object().expect("record")))
+            .map(|row| retain_in(cell, system, row, "snapshot", "snapshot"))
+            .collect()
+    };
+    let mut backward = setup_with(
+        &directory.path().join("backward.sqlite"),
+        holding_system_of_record,
+    );
+    let ids = north_ids(&mut backward, "odoo");
+    for id in &ids {
+        assert!(matches!(
+            backward.process_mapping_outcome(id).expect("first"),
+            MappingOutcome::Withheld(_)
+        ));
+        let again = backward.process_mapping_outcome(id).expect("redelivered");
+        assert!(matches!(again, MappingOutcome::Withheld(_)), "{again:?}");
+        assert_eq!(
+            again.held_back(),
+            Some(vec![norn_cell::WITHHELD_REASON.to_owned()])
+        );
+    }
+    sync_north(&mut backward, "erpnext", "snapshot", |_| {});
+    for id in &ids {
+        assert_eq!(
+            backward.process_mapping_outcome(id).expect("after ERPNext"),
+            MappingOutcome::AlreadyLanded
+        );
+    }
+    let mut forward = setup_with(
+        &directory.path().join("forward.sqlite"),
+        holding_system_of_record,
+    );
+    sync_north(&mut forward, "erpnext", "snapshot", |_| {});
+    for id in north_ids(&mut forward, "odoo") {
+        assert_eq!(
+            forward.process_mapping_outcome(&id).expect("first"),
+            MappingOutcome::Landed
+        );
+        assert_eq!(
+            forward.process_mapping_outcome(&id).expect("redelivered"),
+            MappingOutcome::AlreadyLanded
+        );
+    }
+    assert_eq!(north_state(&forward), north_state(&backward));
+}
+
+/// SOURCE-RESOLVE-1 (Sol S8): `ERPNext` v1 reports north gold (2765 g), v2
+/// moves that source record to another holding (3000 g), and Odoo reports
+/// north (2458 g). Delivered v1 before or after v2, north ends at Odoo's
+/// value and the moved holding at v2's; a late v1 never writes north. Alone,
+/// a late v1 never creates north at all.
+#[test]
+fn source_resolve_1_a_late_older_version_never_writes_its_stale_key() {
+    let directory = tempfile::tempdir().expect("directory");
+    let moved = format!("{NORTH}/moved");
+    let v1 = |cell: &mut Cell| {
+        sync_rows(cell, "erpnext", "v1", is_north, |r| {
+            r.insert("quantity".into(), json!(2765));
+        })
+    };
+    let moved_ref = moved.clone();
+    let v2 = move |cell: &mut Cell| {
+        let moved_ref = moved_ref.clone();
+        sync_rows(cell, "erpnext", "v2", is_north, move |r| {
+            r.insert("custom_norn_ref".into(), json!(moved_ref.clone()));
+            r.insert("quantity".into(), json!(3000));
+        })
+    };
+    let odoo: Edit = |r| {
+        r.insert("quantity".into(), json!(2458));
+    };
+    let holding = |cell: &Cell, key: &str| {
+        cell.store()
+            .read()
+            .object(MAIN_WORLD, "canon.Holding", key)
+            .expect("read")
+            .and_then(|record| record.values.get("quantity").cloned())
+    };
+    let mut states = Vec::new();
+    for late in [false, true] {
+        let mut cell = setup_with(&directory.path().join(format!("late-{late}.sqlite")), |_| {});
+        sync_north(&mut cell, "odoo", "snapshot", odoo);
+        if late {
+            v2(&mut cell);
+            v1(&mut cell);
+        } else {
+            v1(&mut cell);
+            v2(&mut cell);
+        }
+        assert_eq!(holding(&cell, NORTH), Some(grams(2458)), "late {late}");
+        assert_eq!(holding(&cell, &moved), Some(grams(3000)), "late {late}");
+        let state = north_state(&cell);
+        assert!(
+            state.1.iter().all(|(_, _, reports)| reports
+                .iter()
+                .all(|(mapping, _)| mapping != "erpnext.three.mapping")),
+            "late {late}: {state:#?}"
+        );
+        states.push(state);
+    }
+    assert_eq!(states[0], states[1]);
+    let mut alone = setup_with(&directory.path().join("alone.sqlite"), |_| {});
+    v2(&mut alone);
+    v1(&mut alone);
+    assert_eq!(holding(&alone, NORTH), None, "a late v1 creates nothing");
+    assert_eq!(holding(&alone, &moved), Some(grams(3000)));
+}
