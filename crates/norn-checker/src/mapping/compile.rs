@@ -1694,7 +1694,7 @@ impl CompiledMapping {
                             code: refused.code,
                             map: map.id.clone(),
                             document: index,
-                            field: refused.field,
+                            field: refused.field.map(|field| *field),
                             reason: refused.reason,
                         }),
                     }
@@ -2294,12 +2294,12 @@ impl CompiledMapping {
             let value = conform(raw, ty).map_err(|reason| Refused {
                 code: codes::INVALID_RECORD,
                 reason: format!("field {field:?} {reason}"),
-                field: Some(FieldRefusal {
+                field: Some(Box::new(FieldRefusal {
                     field: field.clone(),
                     value: raw.map(json_text),
                     expected: type_name(ty),
                     reason,
-                }),
+                })),
             })?;
             input.insert(field.clone(), value);
         }
@@ -3096,7 +3096,7 @@ impl RowRefusal {
 struct Refused {
     code: &'static str,
     reason: String,
-    field: Option<FieldRefusal>,
+    field: Option<Box<FieldRefusal>>,
 }
 
 impl From<(&'static str, String)> for Refused {
