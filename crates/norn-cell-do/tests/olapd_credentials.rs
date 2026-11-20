@@ -492,9 +492,10 @@ fn concurrent_loads_with_the_same_load_id_never_share_bytes() {
     let daemon = daemon(&[&host]);
     let (a, b) = (tenant("org_a/prod"), tenant("org_b/prod"));
     let csv = |prefix: &str, rows: usize| {
+        use std::fmt::Write as _;
         let mut text = String::from("n\n");
         for i in 0..rows {
-            text.push_str(&format!("{prefix}{i:06}\n"));
+            writeln!(text, "{prefix}{i:06}").unwrap();
         }
         text.into_bytes()
     };
@@ -539,14 +540,11 @@ fn concurrent_loads_with_the_same_load_id_never_share_bytes() {
     ];
     let (on, minting) = (&daemon, &host);
     let answers: Vec<Vec<u8>> = std::thread::scope(|scope| {
-        let running: Vec<_> = loads
-            .iter()
-            .map(|(of, body)| scope.spawn(move || on.by(minting, of, "load", body)))
-            .collect();
-        running
-            .into_iter()
-            .map(|load| load.join().unwrap())
-            .collect()
+        let ((a_of, a_body), (b_of, b_body)) = (&loads[0], &loads[1]);
+        // Both loads are in flight before either is awaited.
+        let first = scope.spawn(move || on.by(minting, a_of, "load", a_body));
+        let second = scope.spawn(move || on.by(minting, b_of, "load", b_body));
+        vec![first.join().unwrap(), second.join().unwrap()]
     });
     for (answer, rows) in answers.iter().zip([4000, 6000]) {
         assert_eq!(status(answer), "200", "{}", body(answer));
