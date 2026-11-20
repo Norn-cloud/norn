@@ -188,7 +188,9 @@ mod tests {
     //! The dev host answers ad-hoc questions over the metrics its active
     //! revision derives, through the same dispatch the HTTP transport uses,
     //! and re-derives them when a new revision is installed.
+    // #1485 S6: fixtures write through the kernel path, never a raw door.
     use super::*;
+    use crate::seed::governed::GovernedCommit as _;
     use crate::server::{Request, handle_with};
     use norn_api::host::DevHost;
     use norn_api::question_routes::AdHocQuestions;
@@ -521,8 +523,10 @@ mod tests {
     }
 
     /// The measurement behind the question scan bound (ruling 2026-11-12):
-    /// `NORN_SCAN_ROWS=<n> cargo test --release -p norn-cell-do --lib
-    /// measure_question_scan -- --ignored --nocapture`, one process per `n`.
+    /// `NORN_SCAN_ROWS=<n> cargo test --release --config
+    /// 'profile.release.debug-assertions=true' -p norn-cell-do --lib
+    /// measure_question_scan -- --ignored --nocapture`, one process per `n`
+    /// (the fixtures commit through the kernel path).
     /// Prints the exact engine's time for one ad-hoc evaluation over `n` rows
     /// and the process's peak resident memory during it (Linux only).
     #[test]

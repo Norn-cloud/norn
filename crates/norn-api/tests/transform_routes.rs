@@ -20,6 +20,10 @@ use norn_api::transform_routes::{
     get_transform_rows, refresh_transform,
 };
 use norn_cell::engine::NativeEngine;
+// #1485 S6: fixtures write through the kernel path, never the raw door.
+#[path = "../../norn-cell/tests/support/governed.rs"]
+mod governed;
+use governed::GovernedCommit as _;
 use norn_cell::{CellStore, CommitBatch, FactWriteRow, LinkChange, MAIN_WORLD, ObjectRecord};
 use norn_ir::{Decimal, ObjectTypeDef, RuntimeValue as V};
 use norn_kernel::LogicalTime;

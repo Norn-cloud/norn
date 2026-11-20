@@ -6,6 +6,7 @@
 )]
 use norn_cell::classification::{ClassificationError, evaluate};
 use norn_cell::reactive::{Dependency, VisibleItem};
+use norn_cell::test_door::TestCommit as _;
 use norn_cell::{
     CellStore, CommitBatch, FactWriteRow, InstalledDefinitionInput, MAIN_WORLD, Model, StoreOptions,
 };

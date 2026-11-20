@@ -75,7 +75,7 @@ command = ["target/demo-kani-0.68/bin/kani", "verification/canonical-values-v1/d
 slow-timeout = { period = "300s", terminate-after = 1 }
 
 [profile.drop-01]
-default-filter = '''binary_id(norn-cell::exact_values) | binary_id(norn-expr::profile_conformance) | binary_id(norn-checker::core_units) | (binary_id(norn-checker) & (test(/^property_codec::tests::/) | test(/^quantity_ledger::decimal::tests::/)))'''
+default-filter = '''(binary_id(norn-cell) & test(/^suites::exact_values::/)) | binary_id(norn-expr::profile_conformance) | binary_id(norn-checker::core_units) | (binary_id(norn-checker) & (test(/^property_codec::tests::/) | test(/^quantity_ledger::decimal::tests::/)))'''
 
 [[profile.drop-01.scripts]]
 filter = "all()"
@@ -113,18 +113,18 @@ setup = ["fold-authoring"]
 run-wrapper = "sampled-evidence"
 
 [profile.drop-05]
-default-filter = '''binary_id(norn-cell::definitions_install) & (test(=obs_bad_scrap_yield_purity_120_is_captured_but_native_write_refuses) |
-  test(=data_quarantine_redelivery_persists_one_finding_and_correction_recovers) |
-  test(=obs_evidence_redelivery_persists_one_law_finding_after_restart) |
-  test(=obs_recovery_upgrade_uses_each_findings_retained_model) |
-  test(=obs_evidence_historical_governing_laws_do_not_follow_current_definitions) |
-  test(=obs_evidence_install_refuses_missing_or_substituted_governing_laws) |
-  test(=obs_evidence_snapshot_roundtrip_preserves_generated_governing_identity) |
-  test(=obs_evidence_idempotent_capture_reuses_the_original_finding_cutoff) |
-  test(=obs_evidence_legacy_candidates_do_not_block_a_verified_producer) |
-  test(=law_interface_inherited_scope_governs_and_effective_scopes_refuse_until_b2) |
-  test(=legacy_law_snapshot_refuses_without_effects) |
-  test(=legacy_version_zero_finding_refuses_without_effects))'''
+default-filter = '''binary_id(norn-cell) & (test(=suites::definitions_install::obs_bad_scrap_yield_purity_120_is_captured_but_native_write_refuses) |
+  test(=suites::definitions_install::data_quarantine_redelivery_persists_one_finding_and_correction_recovers) |
+  test(=suites::definitions_install::obs_evidence_redelivery_persists_one_law_finding_after_restart) |
+  test(=suites::definitions_install::obs_recovery_upgrade_uses_each_findings_retained_model) |
+  test(=suites::definitions_install::obs_evidence_historical_governing_laws_do_not_follow_current_definitions) |
+  test(=suites::definitions_install::obs_evidence_install_refuses_missing_or_substituted_governing_laws) |
+  test(=suites::definitions_install::obs_evidence_snapshot_roundtrip_preserves_generated_governing_identity) |
+  test(=suites::definitions_install::obs_evidence_idempotent_capture_reuses_the_original_finding_cutoff) |
+  test(=suites::definitions_install::obs_evidence_legacy_candidates_do_not_block_a_verified_producer) |
+  test(=suites::definitions_install::law_interface_inherited_scope_governs_and_effective_scopes_refuse_until_b2) |
+  test(=suites::definitions_install::legacy_law_snapshot_refuses_without_effects) |
+  test(=suites::definitions_install::legacy_version_zero_finding_refuses_without_effects))'''
 
 [[profile.drop-05.scripts]]
 filter = "all()"
@@ -139,25 +139,25 @@ setup = ["rate-authoring"]
 run-wrapper = "sampled-evidence"
 
 [profile.drop-07]
-default-filter = '''package(=norn-cell) & binary(/^incremental_question$/) & (test(=data_delta_incremental_equals_recompute_with_redelivery_and_restart) |
-  test(=empty_generation_refuses_a_new_foreign_scope_binding) |
-  test(=skipped_receipt_or_changed_population_refuses_without_partial_publication))'''
+default-filter = '''binary_id(norn-cell) & (test(=suites::incremental_question::data_delta_incremental_equals_recompute_with_redelivery_and_restart) |
+  test(=suites::incremental_question::empty_generation_refuses_a_new_foreign_scope_binding) |
+  test(=suites::incremental_question::skipped_receipt_or_changed_population_refuses_without_partial_publication))'''
 
 [[profile.drop-07.scripts]]
 filter = "all()"
 run-wrapper = "sampled-evidence"
 
 [profile.drop-08]
-default-filter = '''package(=norn-cell) & binary(/^restatement_activation$/) & (test(=clock_ahead_cutoff_survives_lower_receipts_and_failed_preparation_restart) |
-  test(=generated_clock_leads_preserve_pinned_restatement_and_recovery) |
-  test(=governed_activation_switches_all_slices_and_preserves_old_answers) |
-  test(=missing_incomplete_and_stale_candidates_never_replace_the_complete_output) |
-  test(=activated_deltas_equal_full_recompute_through_redelivery_and_restart) |
-  test(=declared_restatement_law_and_reviewer_actions_are_admitted_together) |
-  test(=prepared_candidates_stay_bound_to_their_native_host) |
-  test(=candidate_budget_includes_the_complete_staged_slot) |
-  test(=resumed_slice_declarations_keep_the_same_admission_bound) |
-  test(=approved_candidate_refuses_an_alternate_kernel_writer_before_activation))'''
+default-filter = '''binary_id(norn-cell) & (test(=suites::restatement_activation::clock_ahead_cutoff_survives_lower_receipts_and_failed_preparation_restart) |
+  test(=suites::restatement_activation::generated_clock_leads_preserve_pinned_restatement_and_recovery) |
+  test(=suites::restatement_activation::governed_activation_switches_all_slices_and_preserves_old_answers) |
+  test(=suites::restatement_activation::missing_incomplete_and_stale_candidates_never_replace_the_complete_output) |
+  test(=suites::restatement_activation::activated_deltas_equal_full_recompute_through_redelivery_and_restart) |
+  test(=suites::restatement_activation::declared_restatement_law_and_reviewer_actions_are_admitted_together) |
+  test(=suites::restatement_activation::prepared_candidates_stay_bound_to_their_native_host) |
+  test(=suites::restatement_activation::candidate_budget_includes_the_complete_staged_slot) |
+  test(=suites::restatement_activation::resumed_slice_declarations_keep_the_same_admission_bound) |
+  test(=suites::restatement_activation::approved_candidate_refuses_an_alternate_kernel_writer_before_activation))'''
 
 [[profile.drop-08.scripts]]
 filter = "all()"
