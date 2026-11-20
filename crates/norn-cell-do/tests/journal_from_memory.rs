@@ -14,7 +14,7 @@ use norn_cell::engine::NativeEngine;
 use norn_cell_do::seed;
 use serde_json::{Value, json};
 
-/// The ERPNext synthetic export with `lines` distinct sales-order lines.
+/// The `ERPNext` synthetic export with `lines` distinct sales-order lines.
 fn export(lines: usize) -> Value {
     let export: Value = serde_json::from_str(include_str!(
         "../../../registry/packs/erpnext/synthetic.json"

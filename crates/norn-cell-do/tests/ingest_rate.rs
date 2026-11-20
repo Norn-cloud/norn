@@ -10,6 +10,7 @@
     clippy::indexing_slicing,
     clippy::print_stdout,
     clippy::cast_precision_loss,
+    clippy::as_conversions,
     reason = "a bench"
 )]
 use norn_api::host::DevHost;
@@ -25,7 +26,7 @@ fn env(name: &str, default: usize) -> usize {
         .unwrap_or(default)
 }
 
-/// The ERPNext synthetic export with `lines` distinct sales-order lines.
+/// The `ERPNext` synthetic export with `lines` distinct sales-order lines.
 fn export(lines: usize) -> Value {
     let export: Value = serde_json::from_str(include_str!(
         "../../../registry/packs/erpnext/synthetic.json"
@@ -76,7 +77,7 @@ fn round(lines: usize, file: bool) -> (f64, usize, usize, usize) {
         .filter(|row| row.outcome == norn_cell::MappingOutcome::Landed)
         .count();
     drop(host);
-    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::remove_dir_all(&dir).ok();
     (
         rows.len() as f64 / elapsed,
         landed,
