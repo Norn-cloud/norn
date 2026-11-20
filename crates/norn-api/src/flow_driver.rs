@@ -581,13 +581,7 @@ pub fn drive_run<E: SqlEngine>(
             let Some(step) = pending_step(&cell, run_id)? else {
                 return Ok(());
             };
-            let waiting = match step_approval(&cell, &step)? {
-                Some((decision_id, _at, StepApproval::Waiting)) => {
-                    let binding = crate::approvals::binding_of(&cell, &decision_id)?;
-                    Some((decision_id, binding))
-                }
-                _other => None,
-            };
+            let waiting = waiting_approval(&cell, &step)?;
             (step, waiting)
         };
         // S5a: the step attempt this dispatch runs the call for, carried to
@@ -599,9 +593,10 @@ pub fn drive_run<E: SqlEngine>(
         };
         let parsed = norn_cell::flow_run::parse_action_step(&step.input);
         // What the try ends with, and whether it is a denial of authority.
-        // APPROVAL-LIVE-1: whether the requester's current authority, as the
-        // organization answered it, does not cover the approved call.
-        let mut refused_live = false;
+        // APPROVAL-LIVE-1: the approval whose call the requester's current
+        // authority no longer covers; `settle` records that refusal, final,
+        // under its hold, and gives the step that recorded outcome.
+        let mut unauthorized: Option<&str> = None;
         let (outcome, denied) = match (step.starter.as_ref(), parsed) {
             (_, Err(refused)) => (failure("Refused", Some(refused.code())), false),
             (None, Ok(_)) => (failure("Denied", None), true),
@@ -652,16 +647,12 @@ pub fn drive_run<E: SqlEngine>(
                     // The requester's current authority cannot be
                     // established: the approved call waits.
                     None if waiting.is_some() => return Ok(()),
-                    // APPROVAL-LIVE-1: the requester's current authority
-                    // does not cover its approved call: the refusal is
-                    // recorded on the approval, final, and `settle` gives the
-                    // step that recorded outcome.
                     Some(Err(refused))
                         if refused.code
                             == crate::approvals::approval_codes::REQUESTER_UNAUTHORIZED
                             && waiting.is_some() =>
                     {
-                        refused_live = true;
+                        unauthorized = waiting.as_ref().map(|(decision, _)| decision.as_str());
                         (failure("Refused", Some(&refused.code)), false)
                     }
                     None => (failure("Denied", None), true),
@@ -688,18 +679,26 @@ pub fn drive_run<E: SqlEngine>(
                 }
             }
         };
-        // APPROVAL-LIVE-1: the approval whose call the requester's current
-        // authority no longer covers; `settle` records that refusal, final,
-        // under its hold, and gives the step that recorded outcome.
-        let unauthorized = waiting
-            .as_ref()
-            .filter(|_| refused_live)
-            .map(|(decision_id, _binding)| decision_id.as_str());
         if !settle(host, &step, outcome, denied, unauthorized, now)? {
             return Ok(());
         }
     }
     Ok(())
+}
+
+/// The approval `step`'s call waits on, approved and not yet executed, and
+/// its binding (APPROVAL-LIVE-1): what a lookup of its requester answers.
+fn waiting_approval<E: SqlEngine>(
+    cell: &ActionCell<E>,
+    step: &StepCall,
+) -> Result<Option<(String, String)>, Refusal> {
+    match step_approval(cell, step)? {
+        Some((decision_id, _at, StepApproval::Waiting)) => {
+            let binding = crate::approvals::binding_of(cell, &decision_id)?;
+            Ok(Some((decision_id, binding)))
+        }
+        _other => Ok(None),
+    }
 }
 
 /// S7: record what a try of `step`'s call ended with, reconciled with the
