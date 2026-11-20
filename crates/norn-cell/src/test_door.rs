@@ -7,12 +7,13 @@
 //! shared admission ran on that exact commit. A host's own actorless writes
 //! are the fixed-input operations in [`crate::provision`].
 //!
-//! [`TestCommit`] re-exposes the raw commits to test fixtures. It is not a
-//! Cargo feature, so no dependency can switch it on: the module exists only
-//! in debug builds for a native target
-//! (`cfg(all(debug_assertions, not(target_arch = "wasm32")))`), and every
-//! shipped build (release, or the Worker's wasm32) is compiled without it.
-//! Production code must never import it.
+//! [`TestCommit`] re-exposes the raw commits to this crate's own tests. It
+//! is not a Cargo feature, so no dependency can switch it on, and it is not
+//! part of any build but this crate's `#[cfg(test)]` one (#1485 S6): no
+//! debug, release or wasm32 build of `norn-cell` that another crate links
+//! has it. The suites under `tests/` that use it are compiled inside the
+//! crate (`crate::suites`); a fixture in another crate commits through the
+//! kernel path (`tests/support/governed.rs`).
 
 use crate::engine::SqlEngine;
 use crate::error::CellError;
@@ -20,7 +21,7 @@ use crate::read::StoreReader;
 use crate::store::{CellStore, CommitBatch, CommitOutcome, CommitPoint, GuardedError};
 
 /// Raw, unchecked commits for test fixtures. See the [module](self).
-pub trait TestCommit<E: SqlEngine> {
+pub(crate) trait TestCommit<E: SqlEngine> {
     /// `CellStore::commit_unchecked`: commit `batch` atomically, with no law check.
     ///
     /// # Errors

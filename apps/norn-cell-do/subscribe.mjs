@@ -23,7 +23,13 @@ export const MAX_SOCKETS = 256;
  * socket never shapes what an outsider sees, and outsiders never crowd out members.
  */
 export const MAX_OUTSIDE_SOCKETS = 32;
+/**
+ * S3: every socket's attachment carries the membership decision made when it was accepted
+ * (`role`): MEMBER or OUTSIDE. A socket without one (accepted before the gate) is neither: it is
+ * never counted, answered or published to as a member, only closed (`reclassify`).
+ */
 export const OUTSIDE = "outside";
+export const MEMBER = "member";
 const MAX_ATTACHMENT = 2000;
 const MAX_MESSAGE = 4096;
 
@@ -56,6 +62,7 @@ const send = (ws, message) => {
  * data; every answer comes later from `evaluate`.
  */
 export function accept(ctx, scope, authorization, requested = "", { outside = false } = {}) {
+  closeUnclassified(ctx);
   // An outsider is counted only among outsiders; a member among members.
   const open = outside ? ctx.getWebSockets(OUTSIDE).length : members(ctx).length;
   const limit = outside ? MAX_OUTSIDE_SOCKETS : MAX_SOCKETS;
@@ -63,17 +70,37 @@ export function accept(ctx, scope, authorization, requested = "", { outside = fa
     return Response.json({ format: "norn/refusal@2", retryable: true, reason: null, code: "live.too_many_sockets", category: "limit", message: "this cell has too many live readers", explanation: `at most ${limit} sockets per cell` }, { status: 429 });
   }
   const [client, server] = Object.values(new WebSocketPair());
-  if (outside) ctx.acceptWebSocket(server, [OUTSIDE]);
-  else ctx.acceptWebSocket(server);
-  server.serializeAttachment(outside ? { scope, authorization, subs: {}, outside: true } : { scope, authorization, subs: {} });
+  const role = outside ? OUTSIDE : MEMBER;
+  ctx.acceptWebSocket(server, [role]);
+  server.serializeAttachment({ scope, authorization, subs: {}, role });
   // Echo the protocol only when the client asked for it: a strict client refuses an unasked one.
   const asked = requested.split(",").map((name) => name.trim()).includes(PROTOCOL);
   return new Response(null, { status: 101, webSocket: client, ...(asked ? { headers: { "sec-websocket-protocol": PROTOCOL } } : {}) });
 }
 
-/** The object's members' sockets: every socket but an outsider's. */
+/** The membership decision an attachment carries: MEMBER, OUTSIDE, or null (unclassified). */
+export function roleOf(attachment) {
+  const role = attachment?.role;
+  return role === MEMBER || role === OUTSIDE ? role : null;
+}
+
+/** The object's members' sockets: only those classified MEMBER when accepted. */
 export function members(ctx) {
-  return ctx.getWebSockets().filter((ws) => !ws.deserializeAttachment()?.outside);
+  return ctx.getWebSockets().filter((ws) => roleOf(ws.deserializeAttachment()) === MEMBER);
+}
+
+/** Close a socket no membership decision classified; the client reconnects through the gate. */
+export function reclassify(ws) {
+  try {
+    ws.close(1012, "reconnect");
+  } catch {
+    // Already closed.
+  }
+}
+
+/** Close every unclassified socket on `ctx` (S3). */
+export function closeUnclassified(ctx) {
+  for (const ws of ctx.getWebSockets()) if (roleOf(ws.deserializeAttachment()) === null) reclassify(ws);
 }
 
 /**

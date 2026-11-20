@@ -60,6 +60,9 @@ export class Cell {
     this.gating = null;
     // The last failed cold open and when it failed (see open()).
     this.openFailure = null;
+    // S1: the last failed gate and when it failed, apart from the cell's: a failed open (storage,
+    // alarms) never changes what an outsider is answered.
+    this.gateFailure = null;
     // TIMER-ALARM-1: the object's alarm follows the cell's deadlines (wake.mjs).
     this.wake = new Wake(ctx.storage);
     // Whether this instance has stored the scope it serves.
@@ -82,16 +85,19 @@ export class Cell {
   static scopeOf(request) {
     return JSON.parse(request.headers.get(CELL_HEADER));
   }
-  /** A failed open (or gate) is cached for OPEN_RETRY_MS: the cached error, or null to try again. */
-  failedRecently() {
-    // A failed open is cached for OPEN_RETRY_MS and refused at once with the same
-    // error: no JWKS fetch, no provisioning reads and no 5 s hold on the object per
-    // request while the issuer is unreachable or the stage is misconfigured.
-    if (this.openFailure !== null) {
+  /**
+   * A failed open (`which` = "openFailure") or gate ("gateFailure") is cached for OPEN_RETRY_MS:
+   * the cached error, or null to try again. Each is refused at once with the same error: no JWKS
+   * fetch, no provisioning reads and no 5 s hold on the object per request while the issuer is
+   * unreachable or the stage is misconfigured.
+   */
+  failedRecently(which = "openFailure") {
+    const failure = this[which];
+    if (failure !== null) {
       // A clock that moved backwards (negative elapsed) expires the entry too, so recovery is never delayed past the interval.
-      const elapsed = Date.now() - this.openFailure.at;
-      if (elapsed >= 0 && elapsed < OPEN_RETRY_MS) return this.openFailure.error;
-      this.openFailure = null;
+      const elapsed = Date.now() - failure.at;
+      if (elapsed >= 0 && elapsed < OPEN_RETRY_MS) return failure.error;
+      this[which] = null;
     }
     return null;
   }
@@ -110,7 +116,7 @@ export class Cell {
    */
   async gate(scope) {
     if (isDemo(scope)) return null;
-    const failed = this.failedRecently();
+    const failed = this.failedRecently("gateFailure");
     if (failed !== null) throw failed;
     this.gating ??= (async () => {
       this.checkStage();
@@ -120,8 +126,8 @@ export class Cell {
       return new NornGate(org, env, issuer, jwks?.text, this.env.NORN_LINEAGE_KEY, this.env.NORN_SOURCES ?? "[]", connectVars(this.env), jwks?.at ?? Date.now());
     })().catch((error) => {
       this.gating = null;
-      this.openFailure = { error, at: Date.now() };
-      console.error(`cell open refused: ${error}`);
+      this.gateFailure = { error, at: Date.now() };
+      console.error(`cell gate refused: ${error}`);
       throw error;
     });
     const gate = await this.gating;
@@ -273,12 +279,18 @@ export class Cell {
   async webSocketMessage(ws, message) {
     const attachment = ws.deserializeAttachment();
     if (!attachment) return ws.close(1011, "no live state");
-    if (attachment.outside) {
+    const role = live.roleOf(attachment);
+    if (role === live.OUTSIDE) {
       // TENANT-ISOLATION-1: an outsider's socket is answered by the gate; the cell is never opened for it.
       const gate = await this.gate(attachment.scope);
       if (gate === null) return ws.close(1011, "no live state");
       return live.message(ws, message, (path, query, authorization) => this.askOutside(gate, path, query, authorization));
     }
+    // S3: a socket no membership decision classified (accepted before the gate existed) is never
+    // taken for a member: it is closed, and the client reconnects through the gate.
+    if (role !== live.MEMBER) return live.reclassify(ws);
+    // A member's socket woken from hibernation is a member again before storage is reopened for it.
+    if (!(await this.member(attachment.scope, attachment.authorization))) return ws.close(4401, "not a member");
     await this.ready(attachment.scope);
     await live.message(ws, message, (path, query, authorization) => this.ask(path, query, authorization));
   }
@@ -289,9 +301,19 @@ export class Cell {
       // Already closed.
     }
   }
+  /** Whether `authorization` reaches the cell at `scope` (S3): the gate admits it, or the scope is a demo one. */
+  async member(scope, authorization) {
+    const gate = await this.gate(scope);
+    if (gate === null) return true;
+    const [org, env] = scope;
+    const query = `orgId=${encodeURIComponent(org)}&environmentId=${encodeURIComponent(env)}`;
+    return gate.check("GET", "/v1/subscribe", query, authorization ?? undefined, Date.now(), undefined) == null;
+  }
   /** After a commit, every live subscription on this object is answered again; resolves to the changed snapshots sent. */
   publish() {
-    // An outsider's socket is never re-asked after a commit: its answer is the gate's, which no commit changes.
+    // S3: only a socket classified a member is re-asked. An outsider's answer is the gate's, which
+    // no commit changes; an unclassified socket is closed, never answered by the cell.
+    live.closeUnclassified(this.ctx);
     const members = live.members(this.ctx);
     if (members.length === 0) return Promise.resolve(0);
     return live.publish({ getWebSockets: () => members }, (path, query, authorization) => this.ask(path, query, authorization)).catch((error) => {

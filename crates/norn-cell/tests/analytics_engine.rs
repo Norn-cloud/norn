@@ -31,7 +31,13 @@ use norn_ir::{
     ArtifactEnvelope, ArtifactKind, ArtifactPayload, Decimal, EntityIrVersion, EntityRootV2,
     RuntimeValue,
 };
-use query_support::{CLOCK, TYPE, WORLD, fixture, load, put};
+use query_support::{CLOCK, TYPE, WORLD, fixture, load_batch, put};
+
+/// [`query_support::load_batch`], committed raw (this suite is compiled in
+/// the crate, #1485 S6).
+fn load(store: &mut CellStore) {
+    store.commit(&load_batch()).expect("native fixture commit");
+}
 
 fn engine() -> (tempfile::TempDir, Engine) {
     let dir = tempfile::tempdir().expect("engine dir");

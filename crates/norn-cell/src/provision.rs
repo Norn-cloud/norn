@@ -20,6 +20,12 @@
 //! // The former trusted door is gone.
 //! use norn_cell::trusted::TrustedCommit;
 //! ```
+//!
+//! ```compile_fail
+//! // Nor is the raw test door reachable from another crate, in any build:
+//! // doctests link the ordinary debug build (#1485 S6).
+//! use norn_cell::test_door::TestCommit;
+//! ```
 
 use std::collections::BTreeMap;
 

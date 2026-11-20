@@ -16,7 +16,10 @@
     reason = "privacy correspondence"
 )]
 
-use norn_cell::test_door::TestCommit as _;
+// #1485 S6: fixtures write through the kernel path, never the raw door.
+#[path = "../../norn-cell/tests/support/governed.rs"]
+mod governed;
+use governed::GovernedCommit as _;
 use std::collections::{BTreeMap, BTreeSet};
 
 use norn_api::authz::{AccessRequest, Authorizer, ReadCapability, ReadRequest};

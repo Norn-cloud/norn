@@ -6667,6 +6667,14 @@ fn host_provision_atomic_crash_child() {
     reason = "crash conformance requires an isolated copy of this test executable"
 )]
 fn host_provision_atomic_at_every_storage_boundary() {
+    fn crash_child_name() -> String {
+        let module = module_path!().split_once("::").map_or("", |(_, rest)| rest);
+        if module.is_empty() {
+            "host_provision_atomic_crash_child".to_owned()
+        } else {
+            format!("{module}::host_provision_atomic_crash_child")
+        }
+    }
     let engine = ProvisionFault {
         inner: NativeEngine::open_in_memory().expect("open"),
         step: std::rc::Rc::new(std::cell::Cell::new(0)),
@@ -6686,7 +6694,9 @@ fn host_provision_atomic_at_every_storage_boundary() {
             if crash {
                 let output =
                     std::process::Command::new(std::env::current_exe().expect("test binary"))
-                        .args(["--exact", "host_provision_atomic_crash_child"])
+                        // The child's test name as this binary lists it (#1485 S6:
+                        // the suite runs inside the crate, as `suites::…`).
+                        .args(["--exact", &crash_child_name()])
                         .env("NORN_PROVISION_CRASH_PATH", &path)
                         .env("NORN_PROVISION_CRASH_STEP", fail.to_string())
                         .output()

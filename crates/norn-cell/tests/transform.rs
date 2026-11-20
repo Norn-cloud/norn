@@ -356,7 +356,7 @@ fn a_materialization_is_served_exact_until_its_inputs_change() {
     // snapshot, labelled stale with its frontier; an older one refreshes.
     let aged = plan_with(json!({"maintenance": "materialized",
         "refresh": {"policy": "on_read", "maxAgeMs": 10_000}}));
-    let mut store = crate::store();
+    let mut store = self::store();
     load(&mut store);
     let stored = store
         .serve_transform(&aged, (WORLD, SCOPE), whole, 1_000)

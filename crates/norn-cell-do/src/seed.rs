@@ -196,15 +196,20 @@ fn seed_rows<E: SqlEngine>(store: &mut CellStore<E>, scope: &CellScope) -> Resul
     norn_cell::provision::demo_rows(store, &scope.key()).map_err(|e| fail("demo rows")(&e))
 }
 
+// #1485 S6: this crate's fixtures write through the kernel path, never a raw door.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "../../norn-cell/tests/support/governed.rs"]
+pub(crate) mod governed;
+
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     #![allow(clippy::unwrap_used, reason = "seed regression")]
+    use super::governed::GovernedCommit as _;
     use super::{
         DEFINITIONS, INSTALLED_AT, SEED_ITEMS, SEED_PARTIES, SEED_ROWS_KEY, demo_scope,
         open_governed, seed_rows,
     };
     use norn_cell::engine::NativeEngine;
-    use norn_cell::test_door::TestCommit as _;
     use norn_cell::{CellStore, CommitBatch, FactWriteRow, MAIN_WORLD, Model};
     use norn_ir::{ArtifactEnvelope, ArtifactKind};
     use std::collections::BTreeMap;

@@ -10,6 +10,12 @@ use norn_cell::engine::{NativeEngine, SqlEngine, SqlValue};
 use norn_cell::test_door::TestCommit as _;
 use norn_cell::{CellError, CellStore, CommitBatch, CommitOutcome, FactWriteRow, StoreOptions};
 use query_support::*;
+
+/// [`query_support::load_batch`], committed raw (this suite is compiled in
+/// the crate, #1485 S6).
+fn load(store: &mut norn_cell::CellStore) {
+    store.commit(&load_batch()).expect("native fixture commit");
+}
 use std::{cell::Cell, rc::Rc, time::Instant};
 
 struct CountedEngine(NativeEngine, Rc<Cell<(usize, usize)>>);

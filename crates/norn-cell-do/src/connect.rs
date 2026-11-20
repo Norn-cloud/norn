@@ -34,11 +34,13 @@
 //! UPLOAD-ID-1: an upload id carries its store and object key, sealed with the
 //! store's secret, so `:complete`, `:load` and `:read` work after the Durable
 //! Object restarts; an id resolves only in the scope whose prefix its key names
-//! (or a read-only host fixture, `synthetic/`).
+//! (or a read-only host fixture, `fixtures/`).
 //! UPLOAD-SCOPE-1: every key a tenant creates is under its own
-//! `uploads/<scope>/`; `synthetic/` holds the operator's shared fixtures,
+//! `uploads/<scope>/`; `fixtures/` holds the operator's shared fixtures,
 //! which every scope may read and none may write (no `PUT` is ever signed
-//! there).
+//! there, under these rules or the ones before them). A bare `synthetic/`
+//! key is a legacy tenant write (the old rules signed `PUT`s there for any
+//! scope), so it is read by no scope, by URI or by sealed id.
 //! UPLOAD-RECORD-1: `:complete` keeps what the cell read back (URI, SHA-256,
 //! size, the CSV profile, who completed it) as a `source.Upload` object
 //! before it answers; after a restart `:load`, `:define` and the bulk loader
@@ -209,10 +211,15 @@ fn owns(key: &str, scope_key: &str) -> bool {
         && !key.contains("..")
 }
 
+/// The operator-only namespace of shared fixtures (UPLOAD-SCOPE-1): no
+/// tenant has ever been able to sign a write under it.
+const FIXTURES: &str = "fixtures/";
+
 /// Whether `key` is one of the operator's shared fixtures (UPLOAD-SCOPE-1):
-/// readable from every scope, writable from none.
+/// readable from every scope, writable from none. A legacy bare
+/// `synthetic/` key is not one: any tenant could write there.
 fn fixture(key: &str) -> bool {
-    key.starts_with("synthetic/") && !key.contains("..")
+    key.starts_with(FIXTURES) && !key.contains("..")
 }
 
 /// Whether the cell serving `scope_key` may read `key`: its own, or a fixture.
@@ -589,7 +596,8 @@ impl Connect {
             .take(100)
             .collect();
         // UPLOAD-SCOPE-1: a caller's prefix is a folder of its own scope's
-        // uploads, never a key outside it (not `synthetic/`, the fixtures).
+        // uploads, never a key outside it (never a bare `synthetic/` key, and
+        // never `fixtures/`, the operator's).
         let prefix = match begin.prefix.as_deref() {
             None => format!("uploads/{scope_key}"),
             Some(p)
@@ -674,7 +682,7 @@ impl Connect {
 
     /// A signed `GET` for an object this cell recorded, by upload id, or by
     /// URI under the prefix this cell writes (`uploads/<scope>/`) or of a
-    /// host fixture (`synthetic/`).
+    /// host fixture (`fixtures/`).
     fn read(&self, scope_key: &str, body: &str, now_ms: u64) -> Response {
         let not_found = || refused(404, "upload.not_found", "no such upload");
         let request: Value = serde_json::from_str(body).unwrap_or_default();
@@ -1200,12 +1208,12 @@ mod tests {
             assert_eq!(cell.read("org_b/prod", &body, 1_000).status, 200, "{body}");
         }
         assert!(cell.resolve(&b_id, "org_a/prod").is_none());
-        // What B wrote under its `synthetic/scans` is B's alone: the shared
-        // fixture of the same name is a different, read-only object.
+        // What B wrote under its `synthetic/scans` is B's alone: a shared
+        // fixture is a different, read-only object in the operator's namespace.
         assert_eq!(
             cell.read(
                 "org_a/prod",
-                &json!({"uri": "s3://uploads-bucket/synthetic/scans/rows.csv"}).to_string(),
+                &json!({"uri": "s3://uploads-bucket/fixtures/scans/rows.csv"}).to_string(),
                 1_000,
             )
             .status,
@@ -1213,6 +1221,18 @@ mod tests {
             "a fixture stays readable"
         );
         assert_ne!(b_uri, "s3://uploads-bucket/synthetic/scans/rows.csv");
+        assert!(
+            !b_uri.starts_with("s3://uploads-bucket/fixtures/"),
+            "{b_uri}"
+        );
+        // No prefix names the operator's namespace.
+        for prefix in ["fixtures/scans", "synthetic/../fixtures/scans"] {
+            assert_eq!(
+                cell.begin("org_a/prod", &body(Some(prefix)), 1_000).status,
+                400,
+                "{prefix}"
+            );
+        }
     }
 
     /// S5: a loader signs a kept record only when its upload id is one this
@@ -1249,18 +1269,48 @@ mod tests {
     }
 
     #[test]
-    fn synthetic_objects_resolve_in_every_scope() {
+    fn operator_fixtures_resolve_in_every_scope() {
         let cell = connect("secret-one");
         let s3 = cell
             .store(Store::Documents)
             .expect("documents store")
             .clone();
-        let id = upload_id(Store::Documents, "synthetic/scans/receipt-01.pdf", &s3);
-        let upload = cell.resolve(&id, "org_z/dev").expect("resolves");
-        assert_eq!(upload.file_name, "receipt-01.pdf");
-        assert_eq!(
-            upload.uri,
-            "s3://documents-bucket/synthetic/scans/receipt-01.pdf"
-        );
+        let id = upload_id(Store::Documents, "fixtures/scans/receipt-01.pdf", &s3);
+        for scope in ["org_z/dev", "org_a/prod"] {
+            let upload = cell.resolve(&id, scope).expect("resolves");
+            assert_eq!(upload.file_name, "receipt-01.pdf");
+            assert_eq!(
+                upload.uri,
+                "s3://documents-bucket/fixtures/scans/receipt-01.pdf"
+            );
+        }
+    }
+
+    /// S4: a bare `synthetic/` key is what the old rules let any tenant
+    /// sign a `PUT` for, so it is no shared fixture: no scope (the writer's
+    /// included) reads it, by sealed id or by URI, in either store.
+    #[test]
+    fn a_legacy_bare_synthetic_key_is_read_by_no_scope() {
+        let cell = connect("secret-one");
+        for (store, bucket) in [
+            (Store::Uploads, "uploads-bucket"),
+            (Store::Documents, "documents-bucket"),
+        ] {
+            let s3 = cell.store(store).expect("store").clone();
+            // The id the old `:begin` sealed for org_b's `synthetic/scans` prefix.
+            let key = "synthetic/scans/rows.csv";
+            let id = upload_id(store, key, &s3);
+            let uri = format!("s3://{bucket}/{key}");
+            for scope in ["org_a/prod", "org_b/prod", "org_z/dev"] {
+                assert!(cell.resolve(&id, scope).is_none(), "{scope}: {key}");
+                assert!(!cell.issued_upload(&id, scope, &uri), "{scope}: {key}");
+                for request in [json!({"uploadId": id}), json!({"uri": uri})] {
+                    let body = request.to_string();
+                    let read = cell.read(scope, &body, 1_000);
+                    assert_eq!(read.status, 404, "{scope}: {body}");
+                    assert!(!read.body.contains("X-Amz-Signature"), "{scope}: {body}");
+                }
+            }
+        }
     }
 }

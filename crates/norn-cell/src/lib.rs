@@ -75,9 +75,22 @@ pub mod source_agreement;
 pub mod source_provenance;
 pub mod store;
 pub mod system;
-#[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
-#[doc(hidden)]
-pub mod test_door;
+// #1485 S6: the raw commits exist only in this crate's own tests, and the
+// suites under `tests/` that need them are compiled here (`suites`), naming
+// the crate `norn_cell` as an integration test does.
+#[cfg(test)]
+extern crate self as norn_cell;
+#[cfg(test)]
+#[allow(
+    dead_code,
+    unreachable_pub,
+    clippy::duplicate_mod,
+    reason = "integration suites compiled in the crate keep their own visibility and \
+              each loads its shared helpers, as its own test binary did"
+)]
+mod suites;
+#[cfg(test)]
+mod test_door;
 pub mod transparency;
 mod write;
 

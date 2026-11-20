@@ -11,6 +11,12 @@ use norn_cell::{CommitBatch, KnowledgeCutoff};
 use norn_kernel::LogicalTime;
 use query_support::*;
 
+/// [`query_support::load_batch`], committed raw (this suite is compiled in
+/// the crate, #1485 S6).
+fn load(store: &mut norn_cell::CellStore) {
+    store.commit(&load_batch()).expect("native fixture commit");
+}
+
 const DIRECTORY: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/demo/answers");
 
 fn retained(name: &str, document: &(impl serde::Serialize + ?Sized)) {

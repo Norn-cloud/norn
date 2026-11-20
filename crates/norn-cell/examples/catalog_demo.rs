@@ -1,14 +1,11 @@
 //! Bounded catalog reads of compiled Norn definitions through the kernel PDP.
-use norn_cell::test_door::TestCommit as _;
 use std::{
     collections::BTreeMap, collections::BTreeSet, error::Error, io::Read as _, io::Write as _,
 };
 
 use norn_cell::catalog::{CatalogSnapshot, resource_types};
-use norn_cell::reactive::{ReactiveLimits, SliceQuery};
-use norn_cell::{
-    CellError, CellStore, CommitBatch, FactWriteRow, InstalledDefinitionInput, MAIN_WORLD, Model,
-};
+use norn_cell::reactive::{ReactiveLimits, SliceItem, SliceQuery};
+use norn_cell::{CellError, CellStore, InstalledDefinitionInput, Model, SqliteCell};
 use norn_checker::{
     EntityArtifactSetContext,
     receipt::{ReceiptSources, check_artifact_set_with_receipt},
@@ -20,6 +17,11 @@ use norn_ir::{
 use norn_kernel::authz::{
     self, AccessRequest, ActorKind, AuthzSchema, CapabilityGrant, Delegation, Pdp, PrincipalInput,
     ResourceInput, ScopeKey,
+};
+use norn_kernel::cell_host::JsonObject;
+use norn_kernel::{
+    CellCommit, CellHost as _, CommitError, FactKey, FactMutation, FactVersion, FactWrite,
+    LogicalTime,
 };
 
 type DemoResult<T> = Result<T, Box<dyn Error>>;
@@ -140,6 +142,37 @@ fn access(scope: &ScopeKey, capabilities: Vec<String>) -> DemoResult<(Pdp, Acces
     Ok((pdp, request))
 }
 
+/// #1485 S6: a catalog row written the way an embedder's write must go,
+/// through the kernel path (`SqliteCell`'s checked commit): refused there for
+/// its virtual type. Returns the store and the refusal.
+fn refused_write(store: CellStore, row: SliceItem) -> DemoResult<(CellStore, CellError)> {
+    let virtual_type = row.object_type.clone();
+    let mut cell: SqliteCell<RuntimeValue, JsonObject, JsonObject> = SqliteCell::new(
+        store,
+        "org_demo/dev",
+        |command: &norn_kernel::Command<JsonObject>| command.payload.clone(),
+    )?;
+    cell.advance_to(LogicalTime::from_millis(2));
+    let result = cell.commit(CellCommit {
+        writes: vec![FactWrite {
+            key: FactKey::new(row.object_type, row.key),
+            expected: FactVersion::ABSENT,
+            mutation: FactMutation::Put { values: row.values },
+        }],
+        ..CellCommit::empty()
+    });
+    let store = cell.into_store();
+    match result {
+        Err(CommitError::Host(CellError::UnknownObjectType(object_type)))
+            if object_type == virtual_type =>
+        {
+            Ok((store, CellError::UnknownObjectType(object_type)))
+        }
+        Err(error) => Err(format!("unexpected catalog write error: {error}").into()),
+        Ok(_) => Err("catalog write admitted".into()),
+    }
+}
+
 fn rehearse(input: &str) -> DemoResult<()> {
     if input.len() > 1_048_576 {
         return Err("catalog input exceeds 1 MiB".into());
@@ -148,7 +181,7 @@ fn rehearse(input: &str) -> DemoResult<()> {
     artifacts.push(serde_json::from_str(include_str!(
         "../../../registry/core/artifacts/core.units.json"
     ))?);
-    let mut store = install(&artifacts)?;
+    let store = install(&artifacts)?;
     let snapshot = CatalogSnapshot::read_active(&store, &BTreeSet::new())?;
     let head = store.verified_head()?;
     // This local fixture's physical scope and read grant are host-owned inputs.
@@ -210,25 +243,7 @@ fn rehearse(input: &str) -> DemoResult<()> {
         .err()
         .ok_or("missing scope admitted")?;
     writeln!(stdout, "CURRENT: missing trusted scope refused: {error}")?;
-    let virtual_type = row.object_type.clone();
-    let result = store.commit(&CommitBatch {
-        world: MAIN_WORLD.into(),
-        scope: "org_demo/dev".into(),
-        logical_time: 2,
-        writes: vec![FactWriteRow::Put {
-            object_type: row.object_type,
-            key: row.key,
-            values: row.values,
-        }],
-        ..CommitBatch::default()
-    });
-    let error = match result {
-        Err(CellError::UnknownObjectType(object_type)) if object_type == virtual_type => {
-            CellError::UnknownObjectType(object_type)
-        }
-        Err(error) => return Err(format!("unexpected catalog write error: {error}").into()),
-        Ok(_) => return Err("catalog write admitted".into()),
-    };
+    let (store, error) = refused_write(store, row)?;
     writeln!(stdout, "CURRENT: catalog write refused: {error}")?;
     if store.verified_head()? != head {
         return Err("catalog reads/refusals changed the cell".into());

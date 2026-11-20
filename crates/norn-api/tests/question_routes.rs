@@ -21,7 +21,7 @@ use norn_api::{
     refusal::{Refusal, RefusalCategory},
     scope::{CellScope, ScopeQuery},
 };
-use norn_cell::test_door::TestCommit as _;
+// #1485 S6: fixtures write through the kernel path, never the raw door.
 use norn_cell::{
     CellStore, CommitBatch, FactWriteRow, KnowledgeCutoff, LedgerHead, ObjectRecord,
     compute::{
@@ -39,6 +39,7 @@ use norn_kernel::{
         AccessRequest as PdpRequest, ActorKind, Delegation, PrincipalInput, ResourceInput, ScopeKey,
     },
 };
+use query_support::governed::GovernedCommit as _;
 use query_support::*;
 use std::{
     collections::BTreeMap,
@@ -201,9 +202,11 @@ impl QuestionRuntime<NativeEngine> for Runtime {
 fn configured(mode: Mode) -> (DevHost<NativeEngine>, Runtime) {
     let (mut store, mut plan, mut context) = fixture();
     context.scope = physical().key();
+    // #1485 S6: fixtures land through the kernel path, in the main world.
+    context.world = norn_cell::MAIN_WORLD.into();
     let initial = store
         .commit(&CommitBatch {
-            world: WORLD.into(),
+            world: norn_cell::MAIN_WORLD.into(),
             scope: context.scope.clone(),
             logical_time: CLOCK,
             writes: fixture_writes(),
@@ -231,7 +234,7 @@ fn configured(mode: Mode) -> (DevHost<NativeEngine>, Runtime) {
             cutoff_receipt = Some(receipt.hash.clone());
             let corrected = store
                 .commit(&CommitBatch {
-                    world: WORLD.into(),
+                    world: norn_cell::MAIN_WORLD.into(),
                     scope: context.scope.clone(),
                     logical_time: CLOCK + 1000,
                     writes: vec![put(
@@ -274,7 +277,7 @@ fn configured(mode: Mode) -> (DevHost<NativeEngine>, Runtime) {
             assert_eq!(moved.len(), 3, "WEEK has three other members");
             store
                 .commit(&CommitBatch {
-                    world: WORLD.into(),
+                    world: norn_cell::MAIN_WORLD.into(),
                     scope: context.scope.clone(),
                     logical_time: CLOCK + 1000,
                     writes: moved,
@@ -1043,10 +1046,12 @@ fn a_historical_cutoff_on_a_restricted_single_write_withholds_its_receipt_hash()
 fn with_value_events(historical: bool) -> (DevHost<NativeEngine>, Runtime, Chain) {
     let (mut store, base, mut context) = fixture();
     context.scope = physical().key();
+    // #1485 S6: fixtures land through the kernel path, in the main world.
+    context.world = norn_cell::MAIN_WORLD.into();
     let writes = fixture_writes();
     store
         .commit(&CommitBatch {
-            world: WORLD.into(),
+            world: norn_cell::MAIN_WORLD.into(),
             scope: context.scope.clone(),
             logical_time: CLOCK,
             events: created_events(&writes),
@@ -1064,7 +1069,7 @@ fn with_value_events(historical: bool) -> (DevHost<NativeEngine>, Runtime, Chain
     );
     let k2 = store
         .commit(&CommitBatch {
-            world: WORLD.into(),
+            world: norn_cell::MAIN_WORLD.into(),
             scope: context.scope.clone(),
             logical_time: CLOCK + 1000,
             events: vec![set_event(&corrected, "recovered").expect("set event")],
@@ -1111,7 +1116,7 @@ fn with_value_events(historical: bool) -> (DevHost<NativeEngine>, Runtime, Chain
         );
         store
             .commit(&CommitBatch {
-                world: WORLD.into(),
+                world: norn_cell::MAIN_WORLD.into(),
                 scope: context.scope.clone(),
                 logical_time: CLOCK + 2000,
                 events: vec![set_event(&later, "recovered").expect("set event")],
@@ -1381,7 +1386,7 @@ fn the_public_lineage_handle_is_keyed_and_not_a_guessing_oracle() {
     let (mut store, plan, _) = fixture();
     store
         .commit(&CommitBatch {
-            world: WORLD.into(),
+            world: norn_cell::MAIN_WORLD.into(),
             scope: physical().key(),
             logical_time: CLOCK,
             writes: fixture_writes(),
@@ -1759,6 +1764,8 @@ fn a_question_on_a_field_whose_values_carry_a_runtime_label_is_refused_at_answer
     let labeled = |labels: bool| {
         let (mut store, plan, mut context) = fixture();
         context.scope = physical().key();
+        // #1485 S6: fixtures land through the kernel path, in the main world.
+        context.world = norn_cell::MAIN_WORLD.into();
         let model = store.model().clone();
         let artifacts = serde_json::json!([
             {"irVersion":"0.1","artifactId":"demo.Conversion.entity","kind":"entity","namespace":"demo","name":"Conversion","version":"0.1.0","lifecycle":"draft","scope":{"orgId":"org_demo","environmentId":"dev"},"dependencies":[],"provenance":{"source":"authoring_sdk"},"payload":{"entityVersion":"2.0","objectType":object_type()}},
@@ -1809,7 +1816,7 @@ fn a_question_on_a_field_whose_values_carry_a_runtime_label_is_refused_at_answer
         };
         store
             .commit(&CommitBatch {
-                world: WORLD.into(),
+                world: norn_cell::MAIN_WORLD.into(),
                 scope: context.scope.clone(),
                 logical_time: CLOCK,
                 writes,

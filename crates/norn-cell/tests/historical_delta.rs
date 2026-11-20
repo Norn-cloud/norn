@@ -13,6 +13,12 @@ use norn_cell::{
 };
 use norn_kernel::LogicalTime;
 use query_support::*;
+
+/// [`query_support::load_batch`], committed raw (this suite is compiled in
+/// the crate, #1485 S6).
+fn load(store: &mut norn_cell::CellStore) {
+    store.commit(&load_batch()).expect("native fixture commit");
+}
 fn coordinate(store: &norn_cell::CellStore, context: &QueryContext) -> KnowledgeCutoff {
     KnowledgeCutoff {
         recorded_at: LogicalTime::from_millis(context.now_ms),

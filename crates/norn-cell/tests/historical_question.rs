@@ -11,6 +11,12 @@ use norn_cell::test_door::TestCommit as _;
 use norn_cell::{CommitBatch, KnowledgeCutoff};
 use norn_kernel::LogicalTime;
 use query_support::*;
+
+/// [`query_support::load_batch`], committed raw (this suite is compiled in
+/// the crate, #1485 S6).
+fn load(store: &mut norn_cell::CellStore) {
+    store.commit(&load_batch()).expect("native fixture commit");
+}
 #[test]
 fn late_scrap_correction_preserves_the_original_bitemporal_answer() {
     let (mut store, plan, context) = fixture();

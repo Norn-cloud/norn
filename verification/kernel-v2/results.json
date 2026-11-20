@@ -24,7 +24,7 @@
       "harnessSha256": "08f30f999d8755b3ef4ca5108272df0083b65f07e882c53b676c6f923d24c109",
       "traceIndexSha256": "1559ac6e8f7565c80398d6a20757a4820519cde26aa328bf269a54a7a9fb81ac",
       "logSha256": "757ccab531bfba11596190b9cbb577b5fc017015d3066138d9640bb5e66858ef",
-      "command": "cargo test --locked --offline -p norn-testkit --test kernel_quint -- --nocapture"
+      "command": "cargo test --locked --offline -p norn-cell --lib suites::kernel_quint:: -- --nocapture"
     },
     "modelChecks": {
       "quint": "0.32.0",
@@ -276,7 +276,7 @@
       "voidSliceTerminalVsInvalid": 12,
       "sensitivityMutantsDetected": 4
     },
-    "command": "cargo test --locked -p norn-testkit --test kernel_quint -- --include-ignored --nocapture",
+    "command": "cargo test --locked -p norn-cell --lib suites::kernel_quint:: -- --include-ignored --nocapture",
     "logSha256": "dbb0bfb0bf68fcee49ade50501bb9a2c4ec2d112e95fce9af134ff37101870ee",
     "discardedRun": "shared CARGO_TARGET_DIR reused v1 artifacts; discarded"
   },

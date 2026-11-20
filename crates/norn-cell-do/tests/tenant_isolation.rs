@@ -40,11 +40,14 @@ use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
+// #1485 S6: fixtures write through the kernel path, never the raw door.
+#[path = "../../norn-cell/tests/support/governed.rs"]
+mod governed;
+
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use ed25519_dalek::{Signer, SigningKey};
 use norn_api::scope::CellScope;
 use norn_cell::engine::{NativeEngine, ReadIsolation, SqlEngine, SqlValue};
-use norn_cell::test_door::TestCommit as _;
 use norn_cell::{CellError, CommitBatch, FactWriteRow, MAIN_WORLD};
 use norn_cell_do::analytics::{self, DemoQuestions};
 use norn_cell_do::connect::Connect;
@@ -247,8 +250,9 @@ fn seeded(scope: &CellScope, own: Option<&str>) -> Host {
     if let Some(id) = own {
         let text = |value: &str| norn_ir::RuntimeValue::from(value);
         let floor = store.read().clock_floor().unwrap();
-        store
-            .commit(&CommitBatch {
+        store = governed::commit_owned(
+            store,
+            &CommitBatch {
                 world: MAIN_WORLD.into(),
                 scope: scope.key(),
                 logical_time: floor.max(1),
@@ -262,8 +266,10 @@ fn seeded(scope: &CellScope, own: Option<&str>) -> Host {
                     ]),
                 }],
                 ..CommitBatch::default()
-            })
-            .unwrap();
+            },
+        )
+        .unwrap()
+        .0;
     }
     let tenant = Tenant::seeded(scope.clone(), &DEMO_GRANTS, store, None).unwrap();
     host(tenant, calls)

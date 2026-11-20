@@ -16,11 +16,13 @@ const OUTSIDER = "Bearer member-of-org_a";
 const OUTSIDE_BODY = JSON.stringify({ format: "norn/refusal@2", code: "authz.denied", category: "permission" });
 
 /** What the fake Wasm saw, per test. */
-const world = { opened: 0, served: 0, gates: 0 };
+const world = { opened: 0, served: 0, gates: 0, failOpen: false };
 
 class FakeCell {
   constructor(storage, org, env) {
     world.opened += 1;
+    // A cell whose storage or alarms fail to open.
+    if (world.failOpen) throw new Error("storage unavailable");
     this.storage = storage;
     this.scope = [org, env];
     // The real cell reads its definitions and binding when it opens.
@@ -119,7 +121,9 @@ class FakeSocket {
   send(data) {
     this.sent.push(JSON.parse(data));
   }
-  close() {}
+  close(code, reason) {
+    this.closed = [code, reason];
+  }
 }
 globalThis.WebSocketPair = class {
   constructor() {
@@ -135,7 +139,7 @@ function object({ provisioned = false, scope = null, alarm = null, sockets = 0 }
   const ops = [];
   const kv = new Map(scope === null ? [] : [["norn.cell.scope", scope]]);
   const socketList = [];
-  for (let n = 0; n < sockets; n += 1) socketList.push({ ws: new FakeSocket({ scope, authorization: "Bearer member-of-org_b", subs: {} }), tags: [] });
+  for (let n = 0; n < sockets; n += 1) socketList.push({ ws: new FakeSocket({ scope, authorization: "Bearer member-of-org_b", subs: {}, role: "member" }), tags: ["member"] });
   const storage = {
     alarm,
     async get(key) {
@@ -236,6 +240,7 @@ function quiet(objs) {
   }
   world.opened = 0;
   world.served = 0;
+  world.failOpen = false;
 }
 
 describe("an outsider at another tenant's cell", () => {
@@ -284,6 +289,87 @@ describe("an outsider at another tenant's cell", () => {
     expect(world.opened).toBe(1);
     expect(objs.get(keyOf(B)).ops.some((op) => op.startsWith("sql "))).toBe(true);
     expect(objs.get(keyOf(B)).ops).toContain("getAlarm");
+  });
+});
+
+describe("a failed cell open (S1)", () => {
+  test("never changes an outsider's answer: the gate's own failure state is apart from the cell's", async () => {
+    const objs = objects();
+    const env = deploy(objs, { warm: true });
+    quiet(objs);
+    const vacant = await raw(await router.fetch(request(NOWHERE), env));
+    // B's member makes the object open its cell, and the open fails (its storage or alarms).
+    world.failOpen = true;
+    await expect(router.fetch(request(B, { authorization: "Bearer member-of-org_b" }), env)).rejects.toThrow("storage unavailable");
+    // Inside the failed open's retry interval the outsider still gets the normal refusal.
+    world.failOpen = false;
+    const atB = await raw(await router.fetch(request(B), env));
+    expect(atB).toEqual(vacant);
+    expect(atB.status).toBe(403);
+    // The member still sees the cached open failure until it may retry.
+    await expect(router.fetch(request(B, { authorization: "Bearer member-of-org_b" }), env)).rejects.toThrow("storage unavailable");
+  });
+});
+
+describe("an unclassified or lapsed socket (S3)", () => {
+  // A socket a Worker from before the gate accepted: its attachment has no membership decision.
+  const legacy = () => new FakeSocket({ scope: B, authorization: "Bearer member-of-org_b", subs: { a: { pathname: "/v1/objects/canon.Item", query: "", digest: "" } } });
+
+  test("a message on a socket without classification closes it; storage is never opened for it", async () => {
+    const objs = objects();
+    const env = deploy(objs, { warm: false });
+    quiet(objs);
+    const ws = legacy();
+    await new Cell(objs.get(keyOf(B)).ctx, env).webSocketMessage(ws, JSON.stringify({ type: "subscribe", id: "b", path: "/v1/objects/canon.Item" }));
+    expect(ws.closed).toEqual([1012, "reconnect"]);
+    expect(ws.sent).toEqual([]);
+    expect(world.opened).toBe(0);
+    expect(objs.get(keyOf(B)).ops).toEqual([]);
+  });
+
+  test("an unclassified socket is never counted, published to or answered as a member", async () => {
+    const objs = new Map([[keyOf(B), object({ provisioned: true, scope: B, alarm: Date.now() + 60_000 })]]);
+    const { ctx, sockets } = objs.get(keyOf(B));
+    // 256 unclassified sockets would fill the member quota if they counted as members.
+    const old = [];
+    for (let n = 0; n < 256; n += 1) {
+      const ws = legacy();
+      old.push(ws);
+      sockets.push({ ws, tags: [] });
+    }
+    const env = deploy(objs, { warm: true });
+    const member = await router.fetch(request(B, { path: "/v1/subscribe", authorization: "Bearer member-of-org_b", headers: { upgrade: "websocket" } }), env);
+    expect(member.status).toBe(101);
+    for (const ws of old) expect(ws.closed).toEqual([1012, "reconnect"]);
+    // A commit's publish asks the cell only for classified members.
+    quiet(objs);
+    for (const ws of old) ws.closed = undefined;
+    const cell = new Cell(ctx, env);
+    await cell.ready(B);
+    world.served = 0;
+    await cell.publish();
+    for (const ws of old) {
+      expect(ws.closed).toEqual([1012, "reconnect"]);
+      expect(ws.sent).toEqual([]);
+    }
+    expect(world.served).toBe(0);
+  });
+
+  test("a member socket whose token is no longer a member is closed before storage is reopened", async () => {
+    const objs = objects();
+    const env = deploy(objs, { warm: false });
+    quiet(objs);
+    const ws = new FakeSocket({ scope: B, authorization: OUTSIDER, subs: {}, role: "member" });
+    await new Cell(objs.get(keyOf(B)).ctx, env).webSocketMessage(ws, JSON.stringify({ type: "subscribe", id: "b", path: "/v1/objects/canon.Item" }));
+    expect(ws.closed).toEqual([4401, "not a member"]);
+    expect(world.opened).toBe(0);
+    expect(objs.get(keyOf(B)).ops).toEqual([]);
+    // Positive control: a member's socket reopens the cell and is answered by it.
+    const ok = new FakeSocket({ scope: B, authorization: "Bearer member-of-org_b", subs: {}, role: "member" });
+    await new Cell(objs.get(keyOf(B)).ctx, env).webSocketMessage(ok, JSON.stringify({ type: "subscribe", id: "b", path: "/v1/objects/canon.Item" }));
+    expect(ok.closed).toBeUndefined();
+    expect(world.opened).toBe(1);
+    expect(ok.sent.map((m) => m.status)).toEqual([200]);
   });
 });
 

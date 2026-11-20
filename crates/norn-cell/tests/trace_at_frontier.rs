@@ -15,7 +15,13 @@ use norn_cell::compute::{QueryContext, QueryResult};
 use norn_cell::test_door::TestCommit as _;
 use norn_cell::{CellStore, CommitBatch};
 use norn_checker::metric::compute::QuestionPlan;
-use query_support::{CLOCK, WORLD, fixture, load, loss_plan, put};
+use query_support::{CLOCK, WORLD, fixture, load_batch, loss_plan, put};
+
+/// [`query_support::load_batch`], committed raw (this suite is compiled in
+/// the crate, #1485 S6).
+fn load(store: &mut CellStore) {
+    store.commit(&load_batch()).expect("native fixture commit");
+}
 
 /// Trace `bucket` of `answer` at the frontier and clock it was given at.
 fn trace_at(

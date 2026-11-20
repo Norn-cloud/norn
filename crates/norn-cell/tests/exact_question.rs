@@ -9,6 +9,12 @@ use norn_cell::test_door::TestCommit as _;
 use norn_cell::{CellError, CommitBatch, compute::Freshness};
 use query_support::*;
 
+/// [`query_support::load_batch`], committed raw (this suite is compiled in
+/// the crate, #1485 S6).
+fn load(store: &mut norn_cell::CellStore) {
+    store.commit(&load_batch()).expect("native fixture commit");
+}
+
 #[test]
 fn scrap_yield_live_revisions_use_the_real_cell_evaluator_and_result_frontier() {
     let (mut store, plan, mut context) = fixture();
