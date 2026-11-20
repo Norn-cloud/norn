@@ -283,9 +283,6 @@ impl Gate {
             Denied::UnknownKey
         })?;
         let tenant = keyring.verify(credential, op, &digest, self.clock.now().as_millis())?;
-        if request.method != "POST" {
-            return Err(Denied::Malformed);
-        }
         let named: Named = serde_json::from_slice(&request.body).map_err(|_e| Denied::Unscoped)?;
         if named.tenant != tenant {
             return Err(Denied::OtherTenant);
@@ -365,6 +362,13 @@ fn connection(stream: &TcpStream, engine: &Engine, gate: &Gate) -> std::io::Resu
         Ok(tenant) => tenant,
         Err(denied) => return unauthorized(stream, denied),
     };
+    if request.method != "POST" {
+        return refuse(
+            stream,
+            404,
+            &refusal("analytics.unknown", "no such operation"),
+        );
+    }
     let call = Call {
         stream,
         request: &request,
@@ -536,10 +540,19 @@ fn exclusive_file(directory: &Path, prefix: &str) -> std::io::Result<(PathBuf, s
 /// Export into a scratch file, stream it as the body, then delete it.
 fn export(call: &Call<'_>, engine: &Engine) -> std::io::Result<()> {
     let stream = call.stream;
-    let parsed: ExportRequest = match call.parse() {
+    let parsed: ExportRequest = match serde_json::from_slice(&call.request.body) {
         Ok(parsed) => parsed,
-        Err(sent) => return sent,
+        Err(error) => {
+            return refuse(
+                stream,
+                400,
+                &refusal("analytics.invalid", &error.to_string()),
+            );
+        }
     };
+    if parsed.tenant() != call.tenant {
+        return unauthorized(stream, Denied::OtherTenant);
+    }
     let kind = match parsed.format {
         norn_cell::analytics::ExportFormat::Parquet => "application/vnd.apache.parquet",
         norn_cell::analytics::ExportFormat::Jsonl => "application/x-ndjson",
