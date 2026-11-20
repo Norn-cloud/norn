@@ -279,8 +279,9 @@ fn a_load_the_cell_splits_is_charged_per_commit_and_resumes() {
             json!({ "profile": export()["profile"], "snapshot": snapshot[from..] }).to_string();
         let (status, loaded) = load(&mut connect, &host, &principals, ADMIN, &body);
         assert_eq!(status, 200, "{loaded}");
-        // 100 rows at 0.1 s leave 6.4 s, eight 0.8 s commits.
-        assert!(loaded["commits"].as_u64().unwrap() <= 9, "{loaded}");
+        // 100 rows at 0.1 s leave 6.4 s, eight 0.8 s commits; a page's own
+        // consumption commit is charged too, so none runs past them (S3).
+        assert!(loaded["commits"].as_u64().unwrap() <= 8, "{loaded}");
         reported += loaded["rows"].as_u64().unwrap();
         landed += loaded["landed"].as_u64().unwrap() + loaded["alreadyLanded"].as_u64().unwrap();
         calls += 1;
