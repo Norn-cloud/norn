@@ -13,6 +13,9 @@
 //! source lineage, as `/lineage?version=` serves it) or an admitted action
 //! (the action-call record of that commit: which action, which verified actor,
 //! and the effective input, which carries a correction's reason and evidence).
+//! An action's call record is disclosed under its own read decision: a caller
+//! who may not read it (Population and Values on that record) is told no
+//! writer, never the call's actor or input.
 
 use std::collections::BTreeMap;
 
@@ -96,7 +99,9 @@ pub enum NornVersionWriter {
         #[schema(schema_with = free_form)]
         input: RuntimeValue,
     },
-    /// Another writer (an import, a migration or a kernel rule).
+    /// Another writer (an import, a migration or a kernel rule), or one this
+    /// caller is not told: an action whose call record (its actor and input)
+    /// the caller may not read, or a marked version.
     Other,
 }
 
@@ -292,8 +297,16 @@ fn budget() -> DecodeBudget {
     ))
 }
 
-/// The action-call record written in `commit`, if an action wrote it.
+/// The action-call record written in `commit`, if an action wrote it and
+/// the caller may read it.
+///
+/// The writer's actor and effective input (a correction's free-text reason
+/// among them) are the call record's own values, so they are disclosed only
+/// under the read decision that covers that record: Population and Values on
+/// it, unmarked. Otherwise the version names no writer
+/// ([`NornVersionWriter::Other`]), never the raw input.
 fn action_writer<E: SqlEngine>(
+    (host, access, actor): (&DevHost<E>, &dyn ObjectAccess, &str),
     reader: &StoreReader<'_, E>,
     receipt: &norn_cell::Receipt,
 ) -> Result<Option<NornVersionWriter>, Refusal> {
@@ -311,6 +324,18 @@ fn action_writer<E: SqlEngine>(
     else {
         return Ok(None);
     };
+    let disclosed = [Population, Values]
+        .into_iter()
+        .all(|capability| permitted(host, access, actor, &record, capability));
+    if !disclosed {
+        return Ok(None);
+    }
+    let catalog = host.marking_catalog(reader)?;
+    let marked = crate::privacy::version_markings(reader, &catalog, &record)?
+        .is_none_or(|markings| markings.values().any(|ids| !ids.is_empty()));
+    if marked {
+        return Ok(None);
+    }
     let text = |name: &str| {
         record
             .values
@@ -334,7 +359,7 @@ fn action_writer<E: SqlEngine>(
 
 /// One version with its receipt and writer.
 fn version_entry<E: SqlEngine>(
-    (host, actor): (&DevHost<E>, &str),
+    (host, access, actor): (&DevHost<E>, &dyn ObjectAccess, &str),
     reader: &StoreReader<'_, E>,
     row: &ObjectRecord,
     version: u64,
@@ -369,7 +394,8 @@ fn version_entry<E: SqlEngine>(
             .map_err(Refusal::host)?
         {
             Some(lineage) => NornVersionWriter::Mapping { lineage },
-            None => action_writer(reader, &receipt)?.unwrap_or(NornVersionWriter::Other),
+            None => action_writer((host, access, actor), reader, &receipt)?
+                .unwrap_or(NornVersionWriter::Other),
         }
     };
     Ok(NornObjectVersion {
@@ -407,7 +433,7 @@ pub fn get_object_history<E: SqlEngine>(
     locked(host, access, &mut start, |reader| {
         let versions = (oldest..=row.version)
             .rev()
-            .map(|version| version_entry((host, &actor), reader, &row, version))
+            .map(|version| version_entry((host, access, &actor), reader, &row, version))
             .collect::<Result<Vec<_>, _>>()?;
         Ok(NornObjectHistory {
             object_type: row.object_type.clone(),

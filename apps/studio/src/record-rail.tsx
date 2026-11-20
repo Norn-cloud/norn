@@ -18,7 +18,7 @@ export function useTypeAccess(objectType: string, live: boolean) {
 type Decision = "permit" | "deny" | "conditional" | "partial"
 
 const DECISION_WORDS: Readonly<Record<Decision, string>> = {
-  permit: "allowed",
+  permit: "allowed for the collection",
   deny: "not allowed",
   conditional: "depends on the record or on who calls; the cell decides at each call",
   partial: "sees which records exist, not their values",
@@ -39,7 +39,8 @@ function Verb({ icon: Icon, label, decision, verb }: { readonly icon: LucideIcon
 }
 
 function RoleRow({ entry, you }: { readonly entry: RoleAccess; readonly you: boolean }) {
-  const see: Decision = entry.read.values.decision === "permit" ? "permit" : entry.read.population.decision === "permit" ? "partial" : "deny"
+  // The cell's own answer, over the collection: a marked fact is still masked or withheld per record.
+  const see = entry.see.decision
   return (
     <li data-role={entry.role} className="flex flex-col gap-1.5 py-2 first:pt-0 last:pb-0">
       <div className="flex items-center gap-2 text-sm">
@@ -88,6 +89,7 @@ function RoleList({ access, yours }: { readonly access: TypeAccess; readonly you
         {access.roles.map((entry) => <RoleRow key={entry.role} entry={entry} you={yours.has(entry.role)} />)}
       </ul>
       {access.roles.every(({ actions }) => actions.length === 0) && <p className="pt-2 text-meta text-muted-foreground">No action changes records of this type.</p>}
+      {access.roles.some(({ scope }) => scope === "collection") && <p data-access-scope="collection" className="pt-2 text-meta text-pretty text-muted-foreground">Each answer is for every record of this type, not this one: a marked fact can still be masked or withheld for a role that sees values.</p>}
     </>
   )
 }
@@ -154,7 +156,7 @@ export function RecentChanges({ objectType, id, actionTitles, onAll }: {
                 const { writer } = version
                 const what = writer.kind === "action" ? actionTitles.get(writer.actionId) ?? humanize(writer.actionId)
                   : writer.kind === "mapping" ? `Imported from ${systemName(writer.lineage.sourceRecordRef.system)}`
-                  : "Written by a rule or an import"
+                  : "Written by a rule, an import, or a call not shown to you"
                 const reason = why(writer)
                 const when = readableTime(new Date(version.logicalTime).toISOString())
                 return (

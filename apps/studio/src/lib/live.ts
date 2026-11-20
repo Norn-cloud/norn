@@ -151,9 +151,22 @@ export interface RoleAction {
   readonly decision: "permit" | "deny" | "conditional"
 }
 
+/**
+ * Whether one role sees a collection's records, as the cell answered it: `permit` (its values),
+ * `partial` (which records exist, not their values) or `deny`. Always over the collection: a marked
+ * fact is still masked or withheld for each reader at each read.
+ */
+export interface SeeDecision {
+  readonly decision: "permit" | "partial" | "deny"
+  readonly scope: "collection"
+}
+
 /** What one declared role alone may read of a collection and which of its actions it may call. */
 export interface RoleAccess {
   readonly role: string
+  /** What every answer here is over: the collection, never one record. */
+  readonly scope: "collection"
+  readonly see: SeeDecision
   readonly read: Access["capabilities"]
   readonly actions: readonly RoleAction[]
 }
@@ -167,8 +180,11 @@ export interface TypeAccess extends Access {
 const isRoleAction = (value: unknown): boolean =>
   isRecord(value) && typeof value.actionId === "string" && typeof value.title === "string" && (value.decision === "permit" || value.decision === "deny" || value.decision === "conditional")
 
+const isSeeDecision = (value: unknown): boolean =>
+  isRecord(value) && (value.decision === "permit" || value.decision === "partial" || value.decision === "deny") && value.scope === "collection"
+
 const isRoleAccess = (value: unknown): boolean =>
-  isRecord(value) && typeof value.role === "string" && isRecord(value.read) &&
+  isRecord(value) && typeof value.role === "string" && value.scope === "collection" && isSeeDecision(value.see) && isRecord(value.read) &&
   (["population", "values", "sources"] as const).every((name) => isCapability((value.read as Record<string, unknown>)[name])) &&
   Array.isArray(value.actions) && value.actions.every(isRoleAction)
 

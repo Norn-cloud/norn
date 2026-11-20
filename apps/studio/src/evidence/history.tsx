@@ -22,7 +22,7 @@ function Writer({ version }: { readonly version: ObjectVersion }) {
     return <span>Imported from {systemName(writer.lineage.sourceRecordRef.system)} record <code className="text-xs">{writer.lineage.sourceRecordRef.record}</code> by <code className="text-xs">{writer.lineage.mappingPin.artifactId}</code></span>
   }
   if (writer.kind === "action") return <span><span className="font-medium">{writer.actor}</span> ran <code className="text-xs">{writer.actionId}</code></span>
-  return <span>Written by a rule, an import or a migration</span>
+  return <span>Written by a rule, an import, or a call not shown to you</span>
 }
 
 const KIND: Readonly<Record<WriterKind, { readonly label: string; readonly icon: LucideIcon }>> = {
