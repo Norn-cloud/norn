@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { RouterProvider, createRootRoute, createRouter } from "@tanstack/react-router"
+import { Outlet, RouterProvider, createRootRoute, createRouter, useRouterState } from "@tanstack/react-router"
 import { Blend, ChartLine, Database, Fingerprint, House, Inbox, LayoutDashboard, Network, Plug, ShieldCheck, Workflow } from "lucide-react"
 import { StrictMode } from "react"
 import { Button } from "@/components/ui/button"
@@ -36,6 +36,12 @@ const SECTIONS: readonly Section[] = [
  * A failed check keeps the last known account; with none, it offers a retry, never the sign-in page.
  */
 function Root() {
+  // The pitch's static slides (src/preview) read no cell and need no session: they render bare.
+  const preview = useRouterState({ select: ({ location }) => location.pathname.startsWith("/preview/") })
+  return preview ? <Outlet /> : <Studio />
+}
+
+function Studio() {
   const account = useAccount()
   // Sidekick is offered only where a bridge serves it (a private deployment); elsewhere the rail shows no entry for it.
   const sidekick = useSidekickServed()

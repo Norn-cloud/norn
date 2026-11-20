@@ -18,6 +18,7 @@ import { ObjectTypePage, SourcesPage } from "./sources.tsx"
 import { TransformPage, TransformsPage } from "./transforms.tsx"
 import { ToolBindings } from "./tool-bindings.tsx"
 import { WorkflowsPage } from "./workflows.tsx"
+import { PreviewPage } from "./preview/preview-page.tsx"
 
 const ConnectionsWithBindings = () => <ConnectionsPage><ToolBindings /></ConnectionsPage>
 
@@ -46,6 +47,7 @@ export const COMPONENTS: { readonly [P in PagePath]: RouteComponent } = {
   "/guarantees": GuaranteesPage,
   "/markings": MarkingsPage,
   "/connections": ConnectionsWithBindings,
+  "/preview/$screen": PreviewPage,
 }
 
 /** Where an old address now lives: Questions became Metrics, and a saved link still opens its page. */

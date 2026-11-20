@@ -28,6 +28,8 @@ export const PAGES = {
   "/guarantees": "/guarantees",
   "/markings": "/markings",
   "/connections": "/connections",
+  // The finale pitch's static slides (src/preview): outside the product nav, rendered without the shell or a session.
+  "/preview/$screen": "/preview/hero",
 } as const
 
 export type PagePath = keyof typeof PAGES
