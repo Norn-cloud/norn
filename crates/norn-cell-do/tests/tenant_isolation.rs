@@ -48,6 +48,9 @@ use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use ed25519_dalek::{Signer, SigningKey};
 use norn_api::scope::CellScope;
 use norn_cell::engine::{NativeEngine, ReadIsolation, SqlEngine, SqlValue};
+use norn_cell::dataset_manifest::{
+    DatasetManifest, MANIFEST_VERSION, ManifestCounts, ManifestFile, ManifestSource,
+};
 use norn_cell::{CellError, CommitBatch, FactWriteRow, MAIN_WORLD};
 use norn_cell_do::analytics::{self, DemoQuestions};
 use norn_cell_do::connect::Connect;
@@ -1007,25 +1010,47 @@ fn analytics_b() -> Host {
     let scope = analytics::analytics_scope();
     let calls = Rc::new(Cell::new(0));
     let analytics::Analytics {
-        store,
+        mut store,
         plan,
         definitions,
         catalog,
     } = analytics::provision(Counting::new(&calls), &scope).unwrap();
-    let recorded_at = store.verified_head().unwrap().commits;
+    // A loaded dataset is a committed manifest (#1381 MANIFEST-COMMIT-1).
+    let table = store.analytics_table(analytics::TYPE).unwrap();
+    let binding = BTreeMap::new();
+    let (data, held) = ("ab".repeat(32), "cd".repeat(32));
+    let file = |sha256: &str, rows| ManifestFile {
+        uri: format!("s3://uploads-bucket/uploads/org_demo%2Fanalytics/{sha256}.parquet"),
+        sha256: sha256.to_owned(),
+        rows,
+        bytes: 1,
+    };
+    let manifest = DatasetManifest {
+        version: MANIFEST_VERSION.into(),
+        object_type: analytics::TYPE.into(),
+        load: norn_cell::analytics::dataset_cache_id(&table, &data, &held),
+        source: ManifestSource {
+            uri: "s3://uploads-bucket/uploads/org_demo%2Fanalytics/b-dataset.csv".into(),
+            sha256: "ef".repeat(32),
+            format: norn_cell::analytics::FileFormat::Csv,
+            bytes: 1,
+        },
+        pins: store
+            .dataset_pins(analytics::TYPE, &binding, "b.mapping@1")
+            .unwrap(),
+        binding,
+        table,
+        data: file(&data, 3),
+        held: file(&held, 0),
+        counts: ManifestCounts {
+            source: 3,
+            admitted: 3,
+            held: BTreeMap::new(),
+        },
+        valid_time: Vec::new(),
+    };
     store
-        .record_analytics_dataset(
-            analytics::TYPE,
-            &norn_cell::analytics::DatasetRecord {
-                load: "l-b-dataset-1".into(),
-                uri: "s3://uploads-bucket/uploads/org_demo%2Fanalytics/b-dataset.csv".into(),
-                sha256: "ab".repeat(32),
-                rows: 3,
-                rejected: 0,
-                reasons: BTreeMap::new(),
-                recorded_at,
-            },
-        )
+        .commit_dataset_manifest(MAIN_WORLD, "synthetic", 1, &manifest, None)
         .unwrap();
     assert!(!definitions.is_empty(), "the fixture publishes metrics");
     let questions = DemoQuestions::new(plan, scope.clone())
@@ -1103,7 +1128,8 @@ fn an_outsider_at_a_cell_with_metrics_and_a_dataset_learns_nothing() {
                 assert_eq!(served, absent, "{method} {path}?{query} as {outsider:?}");
                 assert_eq!(served.calls, 0, "{method} {path}");
                 assert!(!served.engine && !served.continued && !served.scheduled);
-                assert!(!served.response.body.contains("l-b-dataset-1"));
+                assert!(!served.response.body.contains("b-dataset"));
+                assert!(!served.response.body.contains(&"ab".repeat(32)));
                 compared += 1;
             }
         }
