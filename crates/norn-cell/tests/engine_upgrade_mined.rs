@@ -353,11 +353,14 @@ fn corrupt(mut image: Value, corruption: &Corruption) -> Value {
             let base =
                 serde_json::json!({"seq": commits, "hash": "0".repeat(64), "commits": commits})
                     .to_string();
+            // The horizon is the base's own, so the pin's one fault is a base
+            // past the head (a horizon past the base refuses for another reason).
+            let horizon = commits.to_string();
             for (key, value) in [
                 ("fork:world", "what-if"),
                 ("fork:parent", "main"),
                 ("fork:base", base.as_str()),
-                ("fork:main_horizon", "99"),
+                ("fork:main_horizon", horizon.as_str()),
             ] {
                 rowid += 1;
                 meta.push(serde_json::json!([rowid, key, value]));
