@@ -143,8 +143,7 @@ authority each mapping declares on the map or the property rule
 (`authority`): `system_of_record` (that source decides; every other writer is a
 `check`), `precedence` with a rank (the best-ranked writer that has reported
 decides), `check` (never decides) or `conflict` (peers: an agreed report is the
-value, a disagreement is an explicit conflict stored as null). A rule whose
-value is the map's subject writes the key itself and needs no authority.
+value, a disagreement is an explicit conflict stored as null).
 Admission refuses a property two mappings write when a writer declares nothing
 (`mapping.resolution.undeclared`), when the declarations do not single out who
 decides (`mapping.resolution.ambiguous`: two systems of record, a system of
@@ -152,21 +151,50 @@ record beside a precedence, a repeated rank, two authorities in one mapping),
 when every writer is a check (`mapping.resolution.no_authority`), when conflict
 peers are mixed with other authorities (`mapping.resolution.mixed`) or when a
 conflict property is not nullable (`mapping.resolution.conflict_not_nullable`).
-At runtime every consumed report stays retained evidence, indexed by subject;
-a mapped record of a resolved type writes, for each property, the value its
-authorities decide over the latest report of every source, so the canonical
-value does not depend on arrival order. A report that does not decide is kept
-and not written; a subject whose property has no deciding report yet is not
-created (no guess). `source_resolution` reads each property's decision with
-every source's report and field lineage, and a **SOURCE-AGREE-2** finding for
-each report that differs from the canonical value (or every peer report of a
-conflict). Like SOURCE-AGREE-1 it is recomputed, never stored, and never
-excludes the subject. The three-system packs rank every shared type `ERPNext`,
-Odoo, Shopify (precedence, so each pack still installs on its own); a set may
-instead name a system of record with the others as checks. Follow-ups: source-side total mappings, locale-aware
-names as distinct facts, reconciliation lists on answers, an API/Studio surface
-for the resolution read, and field-level trace for a version whose fields were
-decided by several sources.
+Only a proven identity write is exempt: a rule writing the map's subject to a
+property that holds the key exactly (the one component of a key without
+normalization), and only while every writer of that property does; any other
+rule, `label` written as the subject included, is a writer like the rest.
+Admission also refuses a lifecycle property more than one mapping observes
+(`mapping.resolution.lifecycle_overlap`): snapshots are reconciled by
+transitions, not decided by authority, so overlapping lifecycle writers wait
+until resolution supports them.
+At runtime every consumed report stays retained evidence, indexed by subject
+and by source record (connector instance, partition, source, source id). A
+source record contributes its highest `source_version` consumed by the
+frontier, whatever order its versions arrived in; the consuming commit only
+bounds what a read at a frontier sees. A newer upsert of a record that moves it
+to another key or out of the map withdraws its contribution, and the subject it
+left is decided again over the remaining reports in the same commit
+(withdrawing the last report is a delete, outside the upsert profile).
+Superseded versions are skipped before the 4,096-report work bound applies, so
+accumulated history never makes a subject unwritable. A mapped record of a
+resolved type writes, for each property, the value its authorities decide over
+every source's current report, so the canonical value does not depend on
+arrival order. A report that does not decide is kept and not written. A record
+with a property no deciding writer has reported is withheld whether or not the
+subject exists: an explicit outcome naming the writers it awaits, counted by a
+sync as held back (`source.resolution.withheld`), never as landed. Sources that
+report an exclusive link with different targets are an explicit link conflict:
+the link changes no edge until they agree, while the bundle's property
+decisions still apply. `source_resolution` reads each property's decision with
+every source's report and field lineage, the link conflicts, and a
+**SOURCE-AGREE-2** finding for each report that differs from the canonical
+value (or every peer report of a conflict). A read at a frontier decides under
+the definitions in force then; after definitions with changed authorities are
+activated, the host reconciles every resolved subject in a cell-owned delivery,
+so the current read and the stored value agree. A snapshot (as-of) answer over
+a resolved type is computed per valid-time slice of the reports known at its
+frontier, never from the version history the sync order wrote; the analytics
+mirror holds only that history, so it refuses such a question
+(`core.compute.unsupported_engine`). Like SOURCE-AGREE-1 the findings are
+recomputed, never stored, and never exclude the subject. The three-system packs
+rank every shared type `ERPNext`, Odoo, Shopify (precedence, so each pack still
+installs on its own); a set may instead name a system of record with the others
+as checks. Follow-ups: source-side total mappings, locale-aware names as
+distinct facts, reconciliation lists on answers, an API/Studio surface for the
+resolution read, and field-level trace for a version whose fields were decided
+by several sources.
 
 **OBS-PAGE-1** (coordinator ruling 2026-11-12, pending maintainer review; an
 addition beside OBS-EVIDENCE-1, T4-CELL-1 unchanged): a raw observation may carry

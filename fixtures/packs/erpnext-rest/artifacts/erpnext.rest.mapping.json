@@ -89,6 +89,10 @@
     ],
     "maps": [
       {
+        "authority": {
+          "kind": "precedence",
+          "rank": 3
+        },
         "id": "item",
         "ignoredFields": [
           {
@@ -125,6 +129,10 @@
         }
       },
       {
+        "authority": {
+          "kind": "precedence",
+          "rank": 3
+        },
         "id": "holding",
         "links": [
           {
@@ -196,6 +204,10 @@
         }
       },
       {
+        "authority": {
+          "kind": "precedence",
+          "rank": 3
+        },
         "id": "party",
         "ignoredFields": [
           {
@@ -224,6 +236,10 @@
         }
       },
       {
+        "authority": {
+          "kind": "precedence",
+          "rank": 3
+        },
         "gaps": [
           {
             "member": "counterparty",
@@ -270,6 +286,10 @@
         }
       },
       {
+        "authority": {
+          "kind": "precedence",
+          "rank": 3
+        },
         "id": "order",
         "links": [
           {

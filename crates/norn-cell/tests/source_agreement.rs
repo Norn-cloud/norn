@@ -151,7 +151,12 @@ fn setup_with(path: &Path, edit: impl FnOnce(&mut Vec<ArtifactEnvelope>)) -> Cel
     // Bound before the first commit, so every exported record carries it.
     store.bind("scope", "org_demo/dev").expect("scope");
     store
-        .install_definitions(model, definition_input(&artifacts, 1_793_702_400_000), None, "org_demo/dev")
+        .install_definitions(
+            model,
+            definition_input(&artifacts, 1_793_702_400_000),
+            None,
+            "org_demo/dev",
+        )
         .expect("install");
     SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("cell")
 }
@@ -1103,7 +1108,7 @@ fn odoo_first(artifacts: &mut Vec<ArtifactEnvelope>) {
     }
 }
 
-fn decision_at(cell: &Cell, frontier: Option<u64>) -> Option<PropertyDecision> {
+fn decision_at(cell: &Cell, frontier: Option<u64>) -> PropertyDecision {
     cell.store()
         .read()
         .source_resolution("canon.Holding", NORTH, frontier)
@@ -1111,6 +1116,7 @@ fn decision_at(cell: &Cell, frontier: Option<u64>) -> Option<PropertyDecision> {
         .expect("resolved")
         .decision("quantity")
         .cloned()
+        .expect("quantity is reported")
 }
 
 /// SOURCE-RESOLVE-1 (Sol S7): activating definitions that rank Odoo over
@@ -1149,14 +1155,14 @@ fn source_resolve_1_an_activated_authority_reconciles_and_history_keeps_the_old_
         mapping: "odoo.three.mapping".into(),
         value: grams(2458),
     };
-    assert_eq!(decision_at(&cell, None), Some(odoo_decides));
+    assert_eq!(decision_at(&cell, None), odoo_decides);
     assert_eq!(quantity_of(&cell), Some(grams(2458)));
     assert_eq!(
         decision_at(&cell, Some(before)),
-        Some(PropertyDecision::Decided {
+        PropertyDecision::Decided {
             mapping: "erpnext.three.mapping".into(),
             value: grams(2765),
-        })
+        }
     );
     // Reconciled: a second pass writes nothing.
     assert_eq!(cell.reconcile_source_resolution().expect("again"), 0);
@@ -1212,10 +1218,10 @@ fn source_resolve_1_a_record_that_moves_or_stops_matching_withdraws_its_contribu
         assert_eq!(quantity_of(&cell), Some(grams(2458)), "{case}");
         assert_eq!(
             decision_at(&cell, None),
-            Some(PropertyDecision::Decided {
+            PropertyDecision::Decided {
                 mapping: "odoo.three.mapping".into(),
                 value: grams(2458),
-            }),
+            },
             "{case}"
         );
         let moved_quantity = cell
