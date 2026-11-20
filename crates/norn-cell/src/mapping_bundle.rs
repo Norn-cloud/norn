@@ -54,15 +54,21 @@ impl MappingBundle {
     pub(crate) fn link_claims(
         &self,
     ) -> Result<Vec<norn_ir::mapping::ObservedLinkClaim>, CellError> {
-        let [connector, partition, source, row, _] =
-            crate::mapping_identity::keys(&self.raw, &self.input)?;
-        let scope = norn_ir::canonical::domain_hash_hex(
-            b"norn.link.scope.v1\0",
-            &(connector, partition, source, row),
-        )?;
+        let scope = self.claim_scope()?;
         let id = format!("mapping-bundle:{}", self.digest);
         let claims = self.records.iter().flat_map(|r| r.link_claims(&id, &scope));
         Ok(claims.collect())
+    }
+
+    /// The capture namespace of this bundle's source record (connector,
+    /// partition, source and source id): every version of one record shares it.
+    pub(crate) fn claim_scope(&self) -> Result<String, CellError> {
+        let [connector, partition, source, row, _] =
+            crate::mapping_identity::keys(&self.raw, &self.input)?;
+        Ok(norn_ir::canonical::domain_hash_hex(
+            b"norn.link.scope.v1\0",
+            &(connector, partition, source, row),
+        )?)
     }
 }
 

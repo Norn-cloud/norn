@@ -52,7 +52,7 @@ pub mod mapping_conflict;
 mod mapping_identity;
 mod mapping_links;
 #[doc(hidden)]
-pub use mapping_links::check_link_plans_against_wide_scope;
+pub use mapping_links::{check_link_plans_against_wide_scope, plan_as_claim_journal_v1};
 pub mod mapping_page;
 mod mapping_process;
 mod migration;

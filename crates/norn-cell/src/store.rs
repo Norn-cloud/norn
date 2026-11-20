@@ -2377,6 +2377,9 @@ impl<E: SqlEngine> CellStore<E> {
         // SOURCE-RESOLVE-1: likewise the subjects of bundles consumed before.
         conn.execute(&crate::system::source_subjects_of("1"), params![])?;
         conn.execute(&crate::system::source_records_of("1"), params![])?;
+        // SOURCE-RESOLVE-1 (claim journal v2): the claim sources of each
+        // source record, likewise.
+        conn.execute(&crate::system::claim_records_of("1"), params![])?;
         crate::system::intern_marking_subjects(conn)?;
         export_journal::init(conn)?;
         crate::retained::init(conn)?;

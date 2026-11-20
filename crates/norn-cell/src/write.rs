@@ -735,6 +735,10 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                         &crate::system::source_records_of("i.\"observation_id\" = ?1"),
                         params![observation_id],
                     )?;
+                    self.conn.execute(
+                        &crate::system::claim_records_of("i.\"observation_id\" = ?1"),
+                        params![observation_id],
+                    )?;
                 }
                 if observation_id.starts_with(crate::mapping_page::PAGE_PREFIX) {
                     // OBS-PAGE-1: the page's still-pending members are consumed
@@ -763,6 +767,12 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                     )?;
                     self.conn.execute(
                         &crate::system::source_records_of(&format!(
+                            "i.\"consumed_commit_seq\" = ?1 AND i.\"observation_id\" IN ({members})"
+                        )),
+                        params![commit_seq, observation_id],
+                    )?;
+                    self.conn.execute(
+                        &crate::system::claim_records_of(&format!(
                             "i.\"consumed_commit_seq\" = ?1 AND i.\"observation_id\" IN ({members})"
                         )),
                         params![commit_seq, observation_id],

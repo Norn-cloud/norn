@@ -26,6 +26,18 @@ static WIDE_SCOPE_CHECK: std::sync::atomic::AtomicBool = std::sync::atomic::Atom
 pub fn check_link_plans_against_wide_scope(on: bool) {
     WIDE_SCOPE_CHECK.store(on, std::sync::atomic::Ordering::Relaxed);
 }
+
+std::thread_local! {
+    static CLAIM_JOURNAL_V1: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// On this thread, plan new bundles as claim journal v1 did, publishing no
+/// withdrawals. For tests: it builds the history an older cell left, to check
+/// that it still opens, recomputes and verifies unchanged.
+#[doc(hidden)]
+pub fn plan_as_claim_journal_v1(on: bool) {
+    CLAIM_JOURNAL_V1.with(|v1| v1.set(on));
+}
 const MAX_CLAIM_BUNDLES: usize = 1000;
 const MAX_CLAIM_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_CLAIMS: usize = 20_000;
@@ -98,19 +110,63 @@ fn source_version(bundle: &MappingBundle) -> Result<&str, CellError> {
         .ok_or(CellError::MappingBundleMismatch)
 }
 
+/// Whether `o` supersedes `k` under the kernel's rule: a recorded
+/// `supersedes` entry of the same contribution, and retained evidence never
+/// supersedes a fresh claim.
+fn supersedes(o: &Entry, k: &Entry) -> bool {
+    o.contribution == k.contribution && o.claim.supersedes.contains(&k.id) && (o.fresh || !k.fresh)
+}
+
+/// A journal group as a plan ranks it. A stale claim (SOURCE-RESOLVE-1)
+/// takes part only once a claim the group keeps supersedes it: then it can
+/// only lose, and its edge is withdrawn. Otherwise it stays evidence with no
+/// canonical effect; a stale withdrawal is no exception, so what it superseded
+/// is left out with it rather than standing again.
+fn ranked_group<'e>(group: &[&'e Entry]) -> Vec<&'e Entry> {
+    let mut kept: Vec<bool> = group.iter().map(|e| !e.stale).collect();
+    loop {
+        let next: Vec<bool> = group
+            .iter()
+            .zip(&kept)
+            .map(|(k, &is)| {
+                is || group
+                    .iter()
+                    .zip(&kept)
+                    .any(|(o, &o_kept)| o_kept && supersedes(o, k))
+            })
+            .collect();
+        if next == kept {
+            break;
+        }
+        kept = next;
+    }
+    group
+        .iter()
+        .zip(kept)
+        .filter_map(|(e, kept)| kept.then_some(*e))
+        .collect()
+}
+
+/// The claims that decide what a link is: current, and not a withdrawal (a
+/// withdrawal asserts nothing, so it never conflicts with another source).
+fn deciding<'g, 'e>(
+    group: &'g [&'e Entry],
+    ranked: &'g [Standing],
+) -> impl Iterator<Item = &'e Entry> + 'g {
+    group
+        .iter()
+        .zip(ranked)
+        .filter(|(e, s)| **s == Standing::Current && !e.claim.withdrawal)
+        .map(|(e, _)| *e)
+}
+
 /// OBS-LINK-CONTRIBUTION-1, mirroring the kernel's final-set rule: only a
 /// recorded `supersedes` orders two claims of one contribution, retained
 /// evidence never supersedes a fresh claim, and unordered rivals are contested.
 fn standings(group: &[&Entry], target: impl Fn(&Entry) -> Option<FactKey>) -> Vec<Standing> {
     let superseded: Vec<bool> = group
         .iter()
-        .map(|k| {
-            group.iter().any(|o| {
-                o.contribution == k.contribution
-                    && o.claim.supersedes.contains(&k.id)
-                    && (o.fresh || !k.fresh)
-            })
-        })
+        .map(|k| group.iter().any(|o| supersedes(o, k)))
         .collect();
     group
         .iter()
@@ -128,13 +184,9 @@ fn standings(group: &[&Entry], target: impl Fn(&Entry) -> Option<FactKey>) -> Ve
         .collect()
 }
 
-/// Whether a group's current claims come from more than one mapping.
+/// Whether a group's deciding claims come from more than one mapping.
 fn rival_sources(group: &[&Entry], ranked: &[Standing]) -> bool {
-    let mut mappings = group
-        .iter()
-        .zip(ranked)
-        .filter(|(_, s)| **s == Standing::Current)
-        .map(|(e, _)| e.mapping.as_str());
+    let mut mappings = deciding(group, ranked).map(|e| e.mapping.as_str());
     let first = mappings.next();
     mappings.any(|m| Some(m) != first)
 }
@@ -172,7 +224,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         };
         let entries = self.claim_journal(&[], Some(&scope))?;
         let mut groups = BTreeMap::<String, Vec<&Entry>>::new();
-        for entry in entries.iter().filter(|e| !e.disputed && !e.stale) {
+        for entry in entries.iter().filter(|e| !e.disputed) {
             let source = FactKey::new(entry.claim.source_type.as_str(), &entry.claim.source_key);
             if model.canonical(&source) == subject {
                 groups
@@ -192,13 +244,9 @@ impl<S: SqlEngine> StoreReader<'_, S> {
             let exclusive = model
                 .link(&subject.object_type, &role)
                 .is_some_and(|link| link.cardinality.to == norn_ir::Multiplicity::One);
+            let group = ranked_group(&group);
             let ranked = standings(&group, target);
-            let current: Vec<_> = group
-                .iter()
-                .zip(&ranked)
-                .filter(|(_, s)| **s == Standing::Current)
-                .map(|(e, _)| *e)
-                .collect();
+            let current: Vec<_> = deciding(&group, &ranked).collect();
             let targets: BTreeSet<_> = current.iter().map(|e| target(e)).collect();
             if !exclusive || targets.len() < 2 || !rival_sources(&group, &ranked) {
                 continue;
@@ -259,10 +307,27 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                 )?),
             }
         };
+        // Claim journal v2: every consumed version of each source record that
+        // claimed a scoped source, so the versions that withdraw it are read
+        // with the claims they withdraw (a withdrawing version may name none).
+        let records = {
+            let (record, source) = (crate::system::CLAIM_RECORD, crate::system::SOURCE_RECORD);
+            let select = format!(
+                "SELECT b.\"commit_seq\", b.\"observation_id\", octet_length(i.\"observed\") FROM \"{record}\" k JOIN \"{source}\" b ON b.\"mapping\" = k.\"mapping\" AND b.\"record_id\" = k.\"record_id\" JOIN \"{INBOX}\" i ON i.\"observation_id\" = b.\"observation_id\""
+            );
+            match scope.map(|scope| &scope.sources) {
+                None => self.conn.query(&select, params![])?,
+                Some(keys) => self.conn.query(
+                    &format!("{select} WHERE k.\"key\" IN (SELECT value FROM json_each(?1))"),
+                    params![serde_json::to_string(keys)?],
+                )?,
+            }
+        };
         let mut selected = BTreeMap::new();
         for rows in [
             side("source", scope.map(|scope| &scope.sources))?,
             side("target", scope.map(|scope| &scope.targets))?,
+            records,
         ] {
             for row in rows {
                 let row = crate::engine::SqlRow(row);
@@ -349,16 +414,13 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         Ok(out)
     }
 
-    /// Recomputed claims in consumption order, then `current` as fresh evidence.
-    /// A claim supersedes every earlier-consumed claim of its contribution with a
-    /// lower source version, so retained identities recompute exactly and a late
-    /// older occurrence records no order over a newer one. With a scope, the read
-    /// closes over touching claims' sources, and only their source/role groups return.
-    fn claim_journal(
+    /// The bundles a journal read recomputes, in consumption order, each with
+    /// whether it is fresh and whether its event is disputed.
+    fn journal_bundles(
         &self,
         current: &[MappingBundle],
         scope: Option<&ClaimScope>,
-    ) -> Result<Vec<Entry>, CellError> {
+    ) -> Result<Vec<(MappingBundle, bool, bool)>, CellError> {
         let mut cache = BTreeMap::new();
         let selection = match scope {
             None => None,
@@ -399,14 +461,47 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         for bundle in current {
             bundles.push((bundle.clone(), true, false));
         }
+        Ok(bundles)
+    }
+
+    /// Recomputed claims in consumption order, then `current` as fresh evidence.
+    /// A claim supersedes every earlier-consumed claim of its contribution with a
+    /// lower source version, so retained identities recompute exactly and a late
+    /// older occurrence records no order over a newer one. With a scope, the read
+    /// closes over touching claims' sources, and only their source/role groups return.
+    fn claim_journal(
+        &self,
+        current: &[MappingBundle],
+        scope: Option<&ClaimScope>,
+    ) -> Result<Vec<Entry>, CellError> {
+        let bundles = self.journal_bundles(current, scope)?;
         let superseded = self.superseded_tables(bundles.iter().map(|(b, ..)| b))?;
         let mut history = BTreeMap::<String, Vec<(String, String)>>::new();
+        // Claim journal v2: each contribution's entries (version, entry
+        // index), and the contributions of each source record (scope, mapping).
+        let mut recorded_entries = BTreeMap::<String, Vec<(String, usize)>>::new();
+        let mut by_record = BTreeMap::<(String, String), BTreeSet<String>>::new();
         let mut entries = Vec::new();
         for (bundle, fresh, disputed) in &bundles {
             let version = source_version(bundle)?;
             let resolution = superseded.get(&bundle.digest);
             let mut recorded = Vec::new();
-            for mut claim in bundle.link_claims()? {
+            let claims = bundle.link_claims()?;
+            let carried = claims
+                .iter()
+                .map(ObservedLinkClaim::contribution_id)
+                .collect::<Result<BTreeSet<_>, _>>()?;
+            let withdrawals = self.withdrawals(
+                bundle,
+                *fresh,
+                version,
+                &carried,
+                &entries,
+                &recorded_entries,
+                &by_record,
+                &history,
+            )?;
+            for mut claim in claims.into_iter().chain(withdrawals) {
                 let stale =
                     resolution.is_some_and(|table| table.governs(claim.source_type.as_str()));
                 let contribution = claim.contribution_id()?;
@@ -418,7 +513,11 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                     .map(|(_, id)| id.clone())
                     .collect();
                 let id = claim.id()?;
-                recorded.push((contribution.clone(), id.clone()));
+                recorded.push((contribution.clone(), id.clone(), entries.len()));
+                by_record
+                    .entry((claim.source_scope.clone(), bundle.input.mapping.clone()))
+                    .or_default()
+                    .insert(contribution.clone());
                 entries.push(Entry {
                     claim,
                     id,
@@ -429,7 +528,11 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                     stale,
                 });
             }
-            for (contribution, id) in recorded {
+            for (contribution, id, index) in recorded {
+                recorded_entries
+                    .entry(contribution.clone())
+                    .or_default()
+                    .push((version.to_owned(), index));
                 history
                     .entry(contribution)
                     .or_default()
@@ -449,6 +552,127 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                 .retain(|e| groups.contains(&(e.claim.source_key.clone(), e.claim.role.clone())));
         }
         Ok(entries)
+    }
+
+    /// SOURCE-RESOLVE-1 (claim journal v2): the withdrawals `bundle`
+    /// publishes. For each contribution an earlier-recorded, lower version of
+    /// its source record (same capture scope and mapping) made, that `bundle`
+    /// no longer carries, and whose latest earlier claim is not already a
+    /// withdrawal: a claim with no target that the planner then orders after
+    /// the contribution's earlier claims, so the kernel sees them superseded.
+    /// Only for types resolved across sources, where a stale claim otherwise
+    /// keeps its edge. Each is the contribution's own (scope, source, role,
+    /// provenance), so it can never touch another source's or contribution's
+    /// claim.
+    ///
+    /// Versioned: a retained bundle publishes a withdrawal only when the
+    /// commit that consumed it wrote that claim, so a bundle consumed under
+    /// journal v1 recomputes exactly what it published then.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the journal state of one recomputation"
+    )]
+    fn withdrawals(
+        &self,
+        bundle: &MappingBundle,
+        fresh: bool,
+        version: &str,
+        carried: &BTreeSet<String>,
+        entries: &[Entry],
+        recorded: &BTreeMap<String, Vec<(String, usize)>>,
+        by_record: &BTreeMap<(String, String), BTreeSet<String>>,
+        history: &BTreeMap<String, Vec<(String, String)>>,
+    ) -> Result<Vec<ObservedLinkClaim>, CellError> {
+        if fresh && CLAIM_JOURNAL_V1.with(std::cell::Cell::get) {
+            return Ok(Vec::new());
+        }
+        let record = (bundle.claim_scope()?, bundle.input.mapping.clone());
+        let Some(contributions) = by_record.get(&record) else {
+            return Ok(Vec::new());
+        };
+        let mut table = None;
+        let mut out = Vec::new();
+        for contribution in contributions.difference(carried) {
+            // The contribution's latest claim below this version, the last
+            // recorded of equal versions.
+            let Some(&(_, index)) = recorded
+                .get(contribution)
+                .into_iter()
+                .flatten()
+                .filter(|(earlier, _)| earlier.as_str() < version)
+                .max_by(|a, b| a.0.cmp(&b.0))
+            else {
+                continue;
+            };
+            let latest = &entries
+                .get(index)
+                .ok_or(CellError::OutOfRange("link claim entry"))?
+                .claim;
+            if latest.withdrawal {
+                continue;
+            }
+            if table.is_none() {
+                table = Some(std::sync::Arc::clone(
+                    &self
+                        .mapping_plan(&bundle.input, bundle.definitions_version)?
+                        .resolution,
+                ));
+            }
+            if !table
+                .as_ref()
+                .is_some_and(|table| table.governs(latest.source_type.as_str()))
+            {
+                continue;
+            }
+            let claim = ObservedLinkClaim {
+                observation_id: format!("mapping-bundle:{}", bundle.digest),
+                source_scope: latest.source_scope.clone(),
+                source_type: latest.source_type.clone(),
+                source_key: latest.source_key.clone(),
+                role: latest.role.clone(),
+                target: None,
+                provenance: latest.provenance.clone(),
+                supersedes: history
+                    .get(contribution)
+                    .into_iter()
+                    .flatten()
+                    .filter(|(earlier, _)| earlier.as_str() < version)
+                    .map(|(_, id)| id.clone())
+                    .collect(),
+                withdrawal: true,
+            };
+            if fresh
+                || self.version(
+                    MAIN_WORLD,
+                    norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE,
+                    &claim.id()?,
+                )? != 0
+            {
+                out.push(claim);
+            }
+        }
+        Ok(out)
+    }
+
+    /// The source keys that consumed versions of `bundles`' source records
+    /// claim: a new version may withdraw any of them, so its plan reads them.
+    fn record_sources(&self, bundles: &[MappingBundle]) -> Result<BTreeSet<String>, CellError> {
+        let mut keys = BTreeSet::new();
+        for bundle in bundles {
+            let [connector, partition, source, row, _] =
+                crate::mapping_identity::keys(&bundle.raw, &bundle.input)?;
+            let rows = self.conn.query(
+                &format!(
+                    "SELECT \"key\" FROM \"{}\" WHERE \"mapping\" = ?1 AND \"record_id\" = json_array(?2, ?3, ?4, ?5)",
+                    crate::system::CLAIM_RECORD
+                ),
+                params![bundle.input.mapping.as_str(), connector, partition, source, row],
+            )?;
+            for row in rows {
+                keys.insert(crate::engine::SqlRow(row).get::<String>(0)?);
+            }
+        }
+        Ok(keys)
     }
 
     /// Retained claims about one canonical link identity; membership is read separately.
@@ -494,7 +718,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         // Equivalence check for the narrowed scope (tests turn it on): the same
         // plan over the wide scope, every record and claim key at both ends.
         if WIDE_SCOPE_CHECK.load(std::sync::atomic::Ordering::Relaxed) {
-            let mut keys = BTreeSet::new();
+            let mut keys = self.record_sources(bundles)?;
             for bundle in bundles {
                 for record in &bundle.records {
                     keys.insert(record.key.clone());
@@ -533,7 +757,10 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         // (`standings` is per (source, role)) and its endpoint presence, so it
         // writes no link and is never sealed: leaving it out changes no plan,
         // while reading it cost time linear in the target's other claims.
-        let mut scope = ClaimScope::default();
+        let mut scope = ClaimScope {
+            sources: self.record_sources(bundles)?,
+            targets: BTreeSet::new(),
+        };
         for record in bundles.iter().flat_map(|b| &b.records) {
             scope.sources.insert(record.key.clone());
             let key = FactKey::new(record.object_type.as_str(), &record.key);
@@ -578,7 +805,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                 .map(|t| fact(&t.object_type, &t.key))
         };
         let mut groups = BTreeMap::<_, Vec<&Entry>>::new();
-        for entry in entries.iter().filter(|e| !e.disputed && !e.stale) {
+        for entry in entries.iter().filter(|e| !e.disputed) {
             let source = fact(&entry.claim.source_type, &entry.claim.source_key);
             groups
                 .entry((source, entry.claim.role.clone()))
@@ -592,13 +819,9 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         let mut links = BTreeMap::new();
         let mut sealed = Vec::new();
         for ((source, role), group) in &groups {
+            let group = &ranked_group(group);
             let ranked = standings(group, target);
-            let current: BTreeSet<_> = group
-                .iter()
-                .zip(&ranked)
-                .filter(|(_, s)| **s == Standing::Current)
-                .map(|(e, _)| target(e))
-                .collect();
+            let current: BTreeSet<_> = deciding(group, &ranked).map(&target).collect();
             if current.len() > 1
                 && model
                     .link(&source.object_type, role.as_str())

@@ -859,6 +859,15 @@ pub struct ObservedLinkClaim {
     /// necessarily acyclic chain. An empty set is absent from the preimage.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub supersedes: BTreeSet<String>,
+    /// SOURCE-RESOLVE-1 (claim journal v2): a withdrawal, not an observed
+    /// clear. A newer version of the source record no longer carries this
+    /// contribution, so it publishes this claim with no target, superseding
+    /// the contribution's earlier claims. It asserts nothing about the link:
+    /// it never conflicts with another source and never holds an edge.
+    /// Mapping evaluation never sets it; the claim planner does. `false` is
+    /// absent from the preimage, so every claim without it keeps its identity.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub withdrawal: bool,
 }
 
 /// Registry concept used for immutable, ordinary claim snapshots.
@@ -1008,6 +1017,7 @@ impl MappedRecord {
                 }),
                 provenance: patch.provenance.clone(),
                 supersedes: BTreeSet::new(),
+                withdrawal: false,
             })
             .chain(self.cleared_links.iter().map(|role| ObservedLinkClaim {
                 observation_id: observation_id.to_owned(),
@@ -1022,6 +1032,7 @@ impl MappedRecord {
                     provenance
                 },
                 supersedes: BTreeSet::new(),
+                withdrawal: false,
             }))
             .collect()
     }
