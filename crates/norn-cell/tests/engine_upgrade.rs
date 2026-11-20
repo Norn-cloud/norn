@@ -318,6 +318,9 @@ fn an_unknown_future_engine_stamp_refuses() {
     }
 }
 
+/// How a refused open is recognised.
+type Refused = fn(&CellError) -> bool;
+
 fn ledger_refused(error: &CellError) -> bool {
     matches!(error, CellError::LedgerCorrupt { .. })
 }
@@ -355,7 +358,6 @@ fn a_v1_cell_that_fails_verification_stays_byte_identical() {
         rowid += 1;
         meta.push(serde_json::json!([rowid, key, value]));
     }
-    type Refused = fn(&CellError) -> bool;
     let cases: [(&str, Value, Refused); 2] = [
         ("ledger", tampered_ledger, ledger_refused),
         ("fork pin", pinned_past_head, pin_refused),
