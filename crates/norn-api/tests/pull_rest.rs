@@ -1001,7 +1001,11 @@ fn a_dataset_load_commits_one_manifest_of_its_stored_files() {
     assert_eq!(manifest.commit_seq, loaded.commit_seq);
     assert_eq!(
         manifest.manifest.data.uri,
-        format!("s3://uploads/datasets/{}/upload.Items/{}.parquet", host.scope().key(), "cd".repeat(32))
+        format!(
+            "s3://uploads/datasets/{}/upload.Items/{}.parquet",
+            host.scope().key(),
+            "cd".repeat(32)
+        )
     );
     assert_eq!(
         manifest.manifest.load,
@@ -1160,11 +1164,23 @@ fn a_request_key_binds_one_request_and_its_first_receipt() {
     let first = load("u1", Some("load-1")).expect("loaded");
     let again = load("u1", Some("load-1")).expect("replayed");
     assert_eq!(
-        (again.manifest.as_str(), again.receipt.as_str(), again.commit_seq),
-        (first.manifest.as_str(), first.receipt.as_str(), first.commit_seq),
+        (
+            again.manifest.as_str(),
+            again.receipt.as_str(),
+            again.commit_seq
+        ),
+        (
+            first.manifest.as_str(),
+            first.receipt.as_str(),
+            first.commit_seq
+        ),
         "the same request keeps its first receipt"
     );
-    assert_eq!(engine.landed.lock().expect("calls").len(), 1, "a replay lands nothing");
+    assert_eq!(
+        engine.landed.lock().expect("calls").len(),
+        1,
+        "a replay lands nothing"
+    );
     let other = load("u2", Some("load-1")).expect_err("another request");
     assert_eq!(
         (other.status, other.code.as_str()),
@@ -1172,7 +1188,10 @@ fn a_request_key_binds_one_request_and_its_first_receipt() {
     );
     let unkeyed = load("u1", None).expect("loaded");
     let unkeyed_again = load("u1", None).expect("loaded");
-    assert!(unkeyed_again.commit_seq > unkeyed.commit_seq, "no key: every load commits");
+    assert!(
+        unkeyed_again.commit_seq > unkeyed.commit_seq,
+        "no key: every load commits"
+    );
     assert_eq!(
         norn_api::analytics_routes::current_manifest(&host, "upload.Items")
             .expect("read")
@@ -1193,8 +1212,16 @@ fn a_dataset_load_is_decided_as_an_observation_load_and_reported_as_its_run() {
     let host = items_host(false);
     let engine = ThreeAndOne::default();
     for actor in [None, Some("viewer"), Some("uploader")] {
-        let refused = load_dataset(&host, &scope(), actor, &items("u1", None), &OneUpload, &engine, 0)
-            .expect_err("only the destination's loader loads");
+        let refused = load_dataset(
+            &host,
+            &scope(),
+            actor,
+            &items("u1", None),
+            &OneUpload,
+            &engine,
+            0,
+        )
+        .expect_err("only the destination's loader loads");
         assert_eq!(refused.status, 403, "{actor:?}");
     }
     // canon.Item is mapped by two REST mappings: a load names one, and one
@@ -1204,8 +1231,16 @@ fn a_dataset_load_is_decided_as_an_observation_load_and_reported_as_its_run() {
         if let Some(mapping) = mapping {
             body["mapping"] = json!(mapping);
         }
-        load_dataset(&host, &scope(), Some("loader"), &body.to_string(), &OneUpload, &engine, 0)
-            .expect_err("refused")
+        load_dataset(
+            &host,
+            &scope(),
+            Some("loader"),
+            &body.to_string(),
+            &OneUpload,
+            &engine,
+            0,
+        )
+        .expect_err("refused")
     };
     assert_eq!(canon(None).status, 400);
     assert_eq!(
@@ -1246,7 +1281,10 @@ fn a_dataset_load_is_decided_as_an_observation_load_and_reported_as_its_run() {
     let calls = engine.landed.lock().expect("calls");
     assert_eq!(calls.len(), 1);
     assert_eq!(calls[0].load.table.name, "upload.Items");
-    assert!(calls[0].load.file.url.is_empty(), "the URL is not part of the landing");
+    assert!(
+        calls[0].load.file.url.is_empty(),
+        "the URL is not part of the landing"
+    );
     let text = |object: &norn_ir::RuntimeObject, field: &str| {
         object
             .get(field)

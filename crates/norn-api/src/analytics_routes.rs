@@ -700,7 +700,12 @@ pub fn load_dataset<E: SqlEngine>(
     if let Some(keyed) = &keyed
         && let Some(first) = committed_request(host, keyed)?
     {
-        return Ok(replayed(&request.object_type, connection_id, &record, first));
+        return Ok(replayed(
+            &request.object_type,
+            connection_id,
+            &record,
+            first,
+        ));
     }
     let landed = land_upload(
         host,
@@ -711,28 +716,28 @@ pub fn load_dataset<E: SqlEngine>(
         transport,
         now_ms,
     )?;
-    let (manifest, hash, receipt) = match commit_manifest(
-        host,
-        &request.object_type,
-        &record,
-        &landed,
-        keyed.as_ref(),
-    ) {
-        Ok(committed) => committed,
-        // A concurrent commit of the same key: its request decides.
-        Err(conflict) if conflict.code == "dataset.request_conflict" => {
-            let Some(first) = keyed
-                .as_ref()
-                .map(|keyed| committed_request(host, keyed))
-                .transpose()?
-                .flatten()
-            else {
-                return Err(conflict);
-            };
-            return Ok(replayed(&request.object_type, connection_id, &record, first));
-        }
-        Err(refusal) => return Err(refusal),
-    };
+    let (manifest, hash, receipt) =
+        match commit_manifest(host, &request.object_type, &record, &landed, keyed.as_ref()) {
+            Ok(committed) => committed,
+            // A concurrent commit of the same key: its request decides.
+            Err(conflict) if conflict.code == "dataset.request_conflict" => {
+                let Some(first) = keyed
+                    .as_ref()
+                    .map(|keyed| committed_request(host, keyed))
+                    .transpose()?
+                    .flatten()
+                else {
+                    return Err(conflict);
+                };
+                return Ok(replayed(
+                    &request.object_type,
+                    connection_id,
+                    &record,
+                    first,
+                ));
+            }
+            Err(refusal) => return Err(refusal),
+        };
     let loaded = &landed.land.load;
     // Reported after the cell is released: the report commits through it.
     crate::sources::report_upload(
@@ -849,7 +854,9 @@ fn bulk_contract<E: SqlEngine>(
         .iter()
         .filter(|artifact| {
             kind(artifact).as_deref() == Some("entity")
-                && artifact.pointer("/payload/objectType/name").and_then(serde_json::Value::as_str)
+                && artifact
+                    .pointer("/payload/objectType/name")
+                    .and_then(serde_json::Value::as_str)
                     == Some(object_type)
         })
         .map(id_of)
@@ -881,7 +888,9 @@ fn bulk_contract<E: SqlEngine>(
         [] => {
             return Err(unsupported(
                 "bulk.unmapped",
-                format!("no admitted mapping onto {object_type} binds the load; admit one, as an observation load needs"),
+                format!(
+                    "no admitted mapping onto {object_type} binds the load; admit one, as an observation load needs"
+                ),
             ));
         }
         _ => {
@@ -965,7 +974,9 @@ fn bulk_contract<E: SqlEngine>(
     }) {
         return Err(unsupported(
             "bulk.unsupported_marking",
-            format!("{column} is marked, and a dataset load attaches no markings; load it through observations"),
+            format!(
+                "{column} is marked, and a dataset load attaches no markings; load it through observations"
+            ),
         ));
     }
     drop(guard);
@@ -977,22 +988,31 @@ fn bulk_contract<E: SqlEngine>(
     let marked = set
         .iter()
         .filter(|artifact| id_of(artifact) == schema_id)
-        .filter_map(|schema| schema.pointer("/payload/fields").and_then(serde_json::Value::as_array))
+        .filter_map(|schema| {
+            schema
+                .pointer("/payload/fields")
+                .and_then(serde_json::Value::as_array)
+        })
         .flatten()
         .find(|field| {
-            field.get("name").and_then(serde_json::Value::as_str).is_some_and(|name| {
-                read.iter().any(|read| *read == name)
-            }) && field
-                .get("markings")
-                .and_then(serde_json::Value::as_array)
-                .is_some_and(|markings| !markings.is_empty())
+            field
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|name| read.iter().any(|read| *read == name))
+                && field
+                    .get("markings")
+                    .and_then(serde_json::Value::as_array)
+                    .is_some_and(|markings| !markings.is_empty())
         });
     if let Some(field) = marked {
         return Err(unsupported(
             "bulk.unsupported_marking",
             format!(
                 "the source field {} is marked, and a dataset load attaches no markings; load it through observations",
-                field.get("name").and_then(serde_json::Value::as_str).unwrap_or_default()
+                field
+                    .get("name")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
             ),
         ));
     }
@@ -1189,7 +1209,9 @@ fn land_upload<E: SqlEngine>(
         landing: String::new(),
         attempt: String::new(),
     };
-    let identity = EngineCall::new("land", &request).map_err(engine_failure)?.digest;
+    let identity = EngineCall::new("land", &request)
+        .map_err(engine_failure)?
+        .digest;
     request.load.load = format!("l{identity}");
     request.landing.clone_from(&identity);
     let store_digest = hex_digest(format!("store\n{identity}").as_bytes());

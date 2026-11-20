@@ -261,7 +261,11 @@ impl<E: SqlEngine> CellStore<E> {
             || manifest.counts.admitted != manifest.data.rows
             || manifest.counts.held.values().sum::<u64>() != manifest.held.rows
             || manifest.load
-                != dataset_cache_id(&manifest.table, &manifest.data.sha256, &manifest.held.sha256)
+                != dataset_cache_id(
+                    &manifest.table,
+                    &manifest.data.sha256,
+                    &manifest.held.sha256,
+                )
             || binding_pin(&manifest.binding)? != manifest.pins.binding
         {
             return Err(refused(
@@ -410,7 +414,10 @@ impl<E: SqlEngine> CellStore<E> {
 }
 
 /// A manifest event's manifest and identity, checked against the hash it records.
-fn decode_event(commit_seq: u64, text: &str) -> Result<(DatasetManifest, String, Value), CellError> {
+fn decode_event(
+    commit_seq: u64,
+    text: &str,
+) -> Result<(DatasetManifest, String, Value), CellError> {
     let event: Value = serde_json::from_str(text)?;
     let manifest: DatasetManifest =
         serde_json::from_value(event.get("manifest").cloned().unwrap_or(Value::Null))?;

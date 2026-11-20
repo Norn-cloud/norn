@@ -208,7 +208,10 @@ impl Engine {
             && attempt.len() <= 80
             && attempt.bytes().all(|b| b.is_ascii_alphanumeric());
         if !valid {
-            return Err(refusal("analytics.invalid", "an attempt is 1 to 80 letters and digits"));
+            return Err(refusal(
+                "analytics.invalid",
+                "an attempt is 1 to 80 letters and digits",
+            ));
         }
         Ok(self.private(tenant)?.join("scratch").join(attempt))
     }
@@ -570,7 +573,9 @@ impl Engine {
         };
         let text = serde_json::to_string(&record)
             .map_err(|error| refusal("analytics.engine", error.to_string()))?;
-        self.with(tenant, |conn| set_meta(conn, &format!("landing:{cache}"), &text))?;
+        self.with(tenant, |conn| {
+            set_meta(conn, &format!("landing:{cache}"), &text)
+        })?;
         self.end_attempt(tenant, &land.attempt);
         Ok(LandResponse {
             stored: Some(cache),
@@ -2488,7 +2493,12 @@ struct KeptFile {
 /// identity was made of before any of it is read. The table is replaced in
 /// one transaction, so a reader sees the old dataset or the new one whole.
 fn hydrate(conn: &Connection, table: &str, load: &str) -> Outcome<()> {
-    let cold = || refusal(DATASET_COLD, "the dataset's files are not kept by this engine");
+    let cold = || {
+        refusal(
+            DATASET_COLD,
+            "the dataset's files are not kept by this engine",
+        )
+    };
     let text = meta(conn, &format!("landing:{load}"))?.ok_or_else(cold)?;
     let kept: KeptLanding = serde_json::from_str(&text)
         .map_err(|error| refusal("analytics.engine", error.to_string()))?;
@@ -2615,7 +2625,10 @@ fn seal(path: &Path) -> Outcome<()> {
 }
 
 fn is_hex64(text: &str) -> bool {
-    text.len() == 64 && text.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    text.len() == 64
+        && text
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 /// A kept object must hash to its digest before it is read.

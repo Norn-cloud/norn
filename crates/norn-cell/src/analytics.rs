@@ -735,7 +735,13 @@ pub struct LandResponse {
 pub fn dataset_cache_id(table: &TableSchema, data_sha256: &str, held_sha256: &str) -> String {
     format!(
         "l{}",
-        hex_digest(format!("{}\n{}\n{data_sha256}\n{held_sha256}", table.name, table.pin).as_bytes())
+        hex_digest(
+            format!(
+                "{}\n{}\n{data_sha256}\n{held_sha256}",
+                table.name, table.pin
+            )
+            .as_bytes()
+        )
     )
 }
 
