@@ -33,6 +33,9 @@ const READS: Readonly<Record<string, { population: unknown; values: unknown; sou
   owner: { population: permit("owner"), values: permit("owner"), sources: permit("owner") },
 }
 
+/** What the cell answers each role's "See" on the collection: Population and Values read together, as it does. */
+const SEES: Readonly<Record<string, string>> = { viewer: "partial", member: "permit", admin: "permit", owner: "permit" }
+
 /** The action the stand-in's policy governs on each type, and each role's decision on it. */
 export const VERIFY = { actionId: "canon.party.verify_contact", title: "Verify contact" }
 const ACTS: Readonly<Record<string, string>> = { viewer: "deny", member: "conditional", admin: "permit", owner: "permit" }
@@ -47,6 +50,8 @@ export function typeAccess(reader: Reader, objectType: string) {
     objectType,
     roles: Object.entries(READS).map(([role, read]) => ({
       role,
+      scope: "collection",
+      see: { decision: SEES[role], scope: "collection" },
       read,
       actions: objectType === "canon.Party" ? [{ ...VERIFY, decision: ACTS[role] }] : [],
     })),
@@ -77,8 +82,10 @@ const lineage = (objectType: string, id: string): string | null =>
  * with the reason its input carried. Values are the record's own, as the server projected them.
  */
 function history(objectType: string, id: string, values: Record<string, unknown>, source: unknown) {
+  // The fact the action changed, and what it read before: a Party was first imported as an organization.
   const changed = objectType === "canon.Party" ? "kind" : Object.keys(values).find((key) => typeof values[key] === "string") ?? "id"
-  const before = { ...values, [changed]: `${String(values[changed] ?? "")}-before` }
+  const earlier = objectType === "canon.Party" ? (values.kind === "organization" ? "person" : "organization") : `Earlier ${String(values[changed] ?? "value")}`
+  const before = { ...values, [changed]: earlier }
   return {
     objectType, id, truncated: false,
     versions: [
@@ -91,12 +98,18 @@ function history(objectType: string, id: string, values: Record<string, unknown>
 export interface RecordCell {
   readonly reveals: unknown[]
   readonly asked: string[]
+  /** Change who the cell answers as from the next read on (a grant revoked: the same record, projected for another role). */
+  readonly become: (next: Reader) => void
+  /** Hold the next reveal's answer until the returned release is called. */
+  readonly holdReveal: () => () => void
 }
 
 /** Serve the record reads for `reader`; `access` replaces the access answer (a refusal, say). */
-export async function recordCell(page: Page, reader: Reader, access?: { status: number; body: unknown }): Promise<RecordCell> {
+export async function recordCell(page: Page, initial: Reader, access?: { status: number; body: unknown }): Promise<RecordCell> {
   const reveals: unknown[] = []
   const asked: string[] = []
+  let reader = initial
+  let held: Promise<void> | null = null
   await page.route("**/api/**", (route) => route.fulfill({ status: 404, json: { error: "not found" } }))
   await session(page)
   await page.route("**/api/host/v1/definitions**", (route) => route.fulfill({ json: { artifacts: ARTIFACTS } }))
@@ -124,14 +137,22 @@ export async function recordCell(page: Page, reader: Reader, access?: { status: 
       case "/links": return route.fulfill({ body: explorer(objectType, id, "links") ?? JSON.stringify({ objectType, id, items: [], next: null }), contentType: "application/json" })
       case "/lineage": return sources === null ? notFound() : route.fulfill({ body: sources, contentType: "application/json" })
       case "/findings": return route.fulfill({ json: { objectType, id, quarantined: false, findings: [], evidence: [] } })
-      case "/history": return route.fulfill({ json: history(objectType, id, found.values as Record<string, unknown>, sources === null ? null : JSON.parse(sources)) })
+      // The cell serves a record's history to a role that reads its sources, as its lineage.
+      case "/history": return sources === null ? notFound() : route.fulfill({ json: history(objectType, id, found.values as Record<string, unknown>, sources === null ? null : JSON.parse(sources)) })
       case "/reveal": {
         reveals.push(JSON.parse(route.request().postData() ?? "null"))
-        if (reader !== "admin") return route.fulfill({ status: 403, json: { code: "authz.denied", message: "The reveal is not authorized." } })
+        // The cell decided the reveal when it was asked, for who was asking then.
+        const asking = reader
+        if (held !== null) { const wait = held; held = null; await wait }
+        if (asking !== "admin") return route.fulfill({ status: 403, json: { code: "authz.denied", message: "The reveal is not authorized." } })
         return route.fulfill({ body: file("fixtures/privacy/canon.Party.reveal.json"), contentType: "application/json" })
       }
       default: return notFound()
     }
   })
-  return { reveals, asked }
+  return {
+    reveals, asked,
+    become: (next) => { reader = next },
+    holdReveal: () => { let release = () => {}; held = new Promise<void>((resolve) => { release = resolve }); return () => release() },
+  }
 }

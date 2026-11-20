@@ -1186,6 +1186,24 @@ fn each_role_is_told_what_it_may_read_and_call_on_a_collection() {
             json!("permit")
         ],
     );
+    // "See" is the cell's own answer, read from Population and Values for the
+    // role, and says it is the collection's: a marked fact is still projected
+    // per record.
+    let see = |role: &str| {
+        let entry = roles.iter().find(|entry| entry["role"] == role).unwrap();
+        assert_eq!(entry["scope"], json!("collection"), "{entry}");
+        assert_eq!(entry["see"]["scope"], json!("collection"), "{entry}");
+        entry["see"]["decision"].clone()
+    };
+    assert_eq!(
+        ["viewer", "member", "admin", "owner"].map(see),
+        [
+            json!("partial"),
+            json!("permit"),
+            json!("permit"),
+            json!("permit")
+        ]
+    );
     let melt_decision = |role: &str| {
         let actions = roles.iter().find(|entry| entry["role"] == role).unwrap()["actions"]
             .as_array()
