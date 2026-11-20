@@ -593,6 +593,8 @@ pub fn handle_all<E: SqlEngine>(
     }
     // The verified principal lives exactly as long as this request.
     let _request = RequestScope::new(principals);
+    // INGEST-YIELD-1: a load waits between its pages while a read is served.
+    let _reading = (request.method == "GET").then(|| host.reading());
     let actor = principals.resolve(request.authorization, request.now);
     if let Some(response) = crate::runs::dispatch(
         host,
