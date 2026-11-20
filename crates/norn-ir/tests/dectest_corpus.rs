@@ -21,7 +21,8 @@
 //! Claimed subset, the operations `Decimal` has:
 //! - **parse** (`toSci`, `toEng`, `apply`): `Decimal::parse` accepts exactly the
 //!   JSON number grammar. Every operand outside it (`NaN`, `Inf`, `.5`, `1.`,
-//!   `+1`, `01`, spaces) must be refused. A JSON number whose exact value is in
+//!   `+1`, `01`, inner spaces) must be refused. Deliberate divergence: as a
+//!   JSON text, RFC 8259 whitespace around the number is accepted. A JSON number whose exact value is in
 //!   range (96-bit coefficient, scale at most 28) must read back as that value,
 //!   in canonical text; one out of range must be refused, never rounded.
 //! - **add**, **subtract**: `checked_add`/`checked_sub` return the exact result
@@ -172,6 +173,9 @@ fn cases(text: &str) -> Vec<Case> {
     out
 }
 
+/// RFC 8259 §2 insignificant whitespace.
+const JSON_WHITESPACE: [char; 4] = [' ', '\t', '\n', '\r'];
+
 /// Whether `text` is one JSON number token (RFC 8259 §6).
 fn json_number(text: &str) -> bool {
     let bytes = text.as_bytes();
@@ -320,7 +324,7 @@ impl Tally {
         *self.passed.entry(kind).or_default() += 1;
     }
 
-    fn fail(&mut self, case: &Case, detail: String) {
+    fn fail(&mut self, case: &Case, detail: &str) {
         self.failed.push(format!(
             "{} {} {:?} -> {}: {detail}",
             case.id, case.operation, case.operands, case.result
@@ -346,10 +350,29 @@ fn run_parse(case: &Case, tally: &mut Tally) {
         return;
     };
     let parsed = Decimal::parse(text);
+    // Deliberate divergence: `Decimal::parse` reads a JSON text, and RFC 8259
+    // §2 allows insignificant whitespace around its value; dectest's number
+    // strings allow none (`basx512 "12 " -> NaN`).
+    let token = text.trim_matches(JSON_WHITESPACE);
+    if token != text && json_number(token) {
+        match (Exact::read(token).filter(Exact::in_range), parsed) {
+            (Some(expected), Ok(value)) if value.canonical() == expected.canonical() => {
+                tally.pass(
+                    "parse: JSON whitespace around a number accepted (deliberate divergence)",
+                );
+            }
+            (None, Err(_)) => tally.pass("parse: out-of-range refused"),
+            (expected, parsed) => tally.fail(
+                case,
+                &format!("whitespace-padded number: want {expected:?}, read {parsed:?}"),
+            ),
+        }
+        return;
+    }
     if !json_number(text) {
         match parsed {
             Err(_) => tally.pass("parse: non-JSON syntax refused"),
-            Ok(value) => tally.fail(case, format!("accepted non-JSON text as {value}")),
+            Ok(value) => tally.fail(case, &format!("accepted non-JSON text as {value}")),
         }
         return;
     }
@@ -366,10 +389,7 @@ fn run_parse(case: &Case, tally: &mut Tally) {
         return;
     };
     if Exact::read(text).as_ref() != Some(&expected) {
-        tally.fail(
-            case,
-            "testcase result is not the operand's value".to_owned(),
-        );
+        tally.fail(case, "testcase result is not the operand's value");
         return;
     }
     match (expected.in_range(), parsed) {
@@ -378,11 +398,11 @@ fn run_parse(case: &Case, tally: &mut Tally) {
         }
         (true, Ok(value)) => tally.fail(
             case,
-            format!("read {} want {}", value.canonical(), expected.canonical()),
+            &format!("read {} want {}", value.canonical(), expected.canonical()),
         ),
-        (true, Err(error)) => tally.fail(case, format!("refused an in-range value: {error}")),
+        (true, Err(error)) => tally.fail(case, &format!("refused an in-range value: {error}")),
         (false, Err(_)) => tally.pass("parse: out-of-range refused"),
-        (false, Ok(value)) => tally.fail(case, format!("accepted out-of-range as {value}")),
+        (false, Ok(value)) => tally.fail(case, &format!("accepted out-of-range as {value}")),
     }
 }
 
@@ -415,7 +435,7 @@ fn run_arithmetic(case: &Case, tally: &mut Tally) {
         if left.cmp(&right) == expected {
             tally.pass("compare");
         } else {
-            tally.fail(case, format!("Ord gave {:?}", left.cmp(&right)));
+            tally.fail(case, &format!("Ord gave {:?}", left.cmp(&right)));
         }
         return;
     }
@@ -440,11 +460,11 @@ fn run_arithmetic(case: &Case, tally: &mut Tally) {
         (true, Some(value)) if value.canonical() == expected.canonical() => tally.pass(kind),
         (true, Some(value)) => tally.fail(
             case,
-            format!("got {} want {}", value.canonical(), expected.canonical()),
+            &format!("got {} want {}", value.canonical(), expected.canonical()),
         ),
-        (true, None) => tally.fail(case, "refused an exact in-range result".to_owned()),
+        (true, None) => tally.fail(case, "refused an exact in-range result"),
         (false, None) => tally.pass("add/subtract: out-of-range result refused"),
-        (false, Some(value)) => tally.fail(case, format!("held out-of-range result as {value}")),
+        (false, Some(value)) => tally.fail(case, &format!("held out-of-range result as {value}")),
     }
 }
 
@@ -476,6 +496,37 @@ fn dectest_cases_hold_for_the_claimed_decimal_operations() {
         tally.failed.join("\n")
     );
     assert!(passed >= 2000, "only {passed} dectest cases ran");
+}
+
+/// The two defects the corpus found (#1429), pinned without the corpus:
+/// `addx6326` (a sum kept its operands' trailing zeros, so equal values
+/// hashed apart) and `dqadd75034` (a sum at the 96-bit limit was rounded).
+#[test]
+fn sums_are_normalized_and_never_rounded() {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash as _, Hasher as _};
+    let decimal = |text: &str| Decimal::parse(text).expect("decimal");
+    let hash = |value: &Decimal| {
+        let mut hasher = DefaultHasher::new();
+        value.hash(&mut hasher);
+        hasher.finish()
+    };
+    let one = decimal("0.99").checked_add(decimal("0.01")).expect("sum");
+    assert_eq!(one.canonical(), "1");
+    assert_eq!(hash(&one), hash(&decimal("1")));
+    let zero = decimal("1.25")
+        .checked_sub(decimal("1.25"))
+        .expect("difference");
+    assert_eq!(zero.canonical(), "0");
+    let big = decimal("12398765432112345678945678");
+    assert_eq!(big.checked_add(decimal("0.1234")), None);
+    assert_eq!(big.checked_sub(decimal("-0.1234")), None);
+    assert_eq!(
+        big.checked_add(decimal("0.12"))
+            .map(|sum| sum.canonical())
+            .as_deref(),
+        Some("12398765432112345678945678.12")
+    );
 }
 
 #[test]

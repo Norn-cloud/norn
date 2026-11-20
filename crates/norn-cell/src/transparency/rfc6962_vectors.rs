@@ -11,8 +11,10 @@
 //! proofs, and the RFC 9162 §2.1.3/§2.1.4 verification algorithms. Not claimed,
 //! so not vendored: the `subtree*` probes (C2SP tlog subtree proofs). Skipped
 //! with a reason: probes whose leaf hash has no preimage among the eight leaves
-//! (Norn verifies leaf values, never bare leaf hashes) and the deliberate
-//! divergence below.
+//! (Norn verifies leaf values, never bare leaf hashes), probes whose proof list
+//! holds an element that is not one hash, or whose root is not one SHA-256
+//! digest (Norn's proofs are concatenated hashes and its checkpoints hold a
+//! digest, so neither can be expressed), and the deliberate divergence below.
 //!
 //! Deliberate divergence: Norn refuses a consistency proof from the empty tree
 //! (`old_size == 0`), even where RFC 9162 accepts an empty proof between two
@@ -106,6 +108,21 @@ fn log_of(leaves: &[String]) -> ReceiptLog {
 
 fn bytes64(text: &str) -> Vec<u8> {
     STANDARD.decode(text).expect("probe base64")
+}
+
+/// A probe's proof as Norn's wire form, concatenated SHA-256 hashes. A list
+/// element that is not one hash (the `*-garbage` probes add an empty one)
+/// has no such encoding, so the probe cannot be posed to Norn.
+fn wire_path(proof: Option<Vec<String>>) -> Option<Vec<u8>> {
+    let mut path = Vec::new();
+    for hash in proof.unwrap_or_default() {
+        let hash = bytes64(&hash);
+        if hash.len() != 32 {
+            return None;
+        }
+        path.extend(hash);
+    }
+    Some(path)
 }
 
 fn checkpoint(root: &[u8], size: u64) -> Option<Checkpoint> {
@@ -238,16 +255,16 @@ fn inclusion_vectors_verify_and_regenerate() {
             tally.skip("leaf hash has no preimage among the vector leaves");
             continue;
         };
-        let path = probe
-            .proof
-            .unwrap_or_default()
-            .iter()
-            .flat_map(|hash| bytes64(hash))
-            .collect::<Vec<_>>();
-        let accepted = checkpoint(&bytes64(&probe.root), probe.tree_size).is_some_and(|root| {
-            InclusionProof::try_from_bytes(path.clone())
-                .is_ok_and(|proof| root.verify_inclusion(leaf, probe.leaf_idx, &proof).is_ok())
-        });
+        let Some(path) = wire_path(probe.proof) else {
+            tally.skip("a proof element is not one hash: no Norn wire encoding");
+            continue;
+        };
+        let Some(root) = checkpoint(&bytes64(&probe.root), probe.tree_size) else {
+            tally.skip("a root is not one SHA-256 digest: no Norn checkpoint holds it");
+            continue;
+        };
+        let accepted = InclusionProof::try_from_bytes(path.clone())
+            .is_ok_and(|proof| root.verify_inclusion(leaf, probe.leaf_idx, &proof).is_ok());
         tally.check(&name, accepted != probe.want_err, || {
             format!(
                 "{}: wantErr {} but Norn accepted={accepted}",
@@ -279,19 +296,19 @@ fn consistency_vectors_verify_and_regenerate() {
             tally.skip("deliberate divergence: Norn refuses consistency from the empty tree");
             continue;
         }
-        let path = probe
-            .proof
-            .unwrap_or_default()
-            .iter()
-            .flat_map(|hash| bytes64(hash))
-            .collect::<Vec<_>>();
-        let old = checkpoint(&bytes64(&probe.root1), probe.size1);
-        let new = checkpoint(&bytes64(&probe.root2), probe.size2);
-        let accepted = match (old, new) {
-            (Some(old), Some(new)) => ConsistencyProof::try_from_bytes(path.clone())
-                .is_ok_and(|proof| new.verify_consistency(&old, &proof).is_ok()),
-            _ => false,
+        let Some(path) = wire_path(probe.proof) else {
+            tally.skip("a proof element is not one hash: no Norn wire encoding");
+            continue;
         };
+        let (Some(old), Some(new)) = (
+            checkpoint(&bytes64(&probe.root1), probe.size1),
+            checkpoint(&bytes64(&probe.root2), probe.size2),
+        ) else {
+            tally.skip("a root is not one SHA-256 digest: no Norn checkpoint holds it");
+            continue;
+        };
+        let accepted = ConsistencyProof::try_from_bytes(path.clone())
+            .is_ok_and(|proof| new.verify_consistency(&old, &proof).is_ok());
         tally.check(&name, accepted != probe.want_err, || {
             format!(
                 "{}: wantErr {} but Norn accepted={accepted}",

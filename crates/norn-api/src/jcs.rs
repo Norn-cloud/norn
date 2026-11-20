@@ -8,6 +8,7 @@
 //! `tools/norn-ts/src/builder/fixtures/binding-manifest-digest.vectors.json`
 //! pin both sides.
 
+use norn_ir::canonical::{JsonValue, parse_json_verbatim};
 use serde_json::Value;
 
 /// JCS text of `value`.
@@ -20,14 +21,46 @@ pub fn canonicalize(value: &Value) -> Result<String, String> {
     Ok(out)
 }
 
-/// JCS text of the JSON document `text`, parsed with every number as a
-/// double.
+/// JCS text of the JSON document `text`, parsed with every number as the
+/// double nearest its decimal text.
 ///
 /// # Errors
-/// Malformed JSON, or a number that is not finite as a double.
+/// Malformed JSON (including duplicate member names, which I-JSON forbids),
+/// or a number that is not finite as a double.
 pub fn canonicalize_text(text: &str) -> Result<String, String> {
-    let value: Value = serde_json::from_str(text).map_err(|error| error.to_string())?;
-    canonicalize(&value)
+    let value = parse_json_verbatim(text).map_err(|error| error.to_string())?;
+    canonicalize(&doubles(&value)?)
+}
+
+/// `value` with every number the double nearest its exact decimal text, read
+/// by the standard library's correctly rounded parse. `serde_json`'s default
+/// float parser can land one ULP off (RFC 8785 `values.json`:
+/// `333333333.33333329` must be `333333333.3333333`, #1429). Strings and
+/// member names stay verbatim: JCS never normalizes them.
+fn doubles(value: &JsonValue) -> Result<Value, String> {
+    Ok(match value {
+        JsonValue::Null => Value::Null,
+        JsonValue::Bool(flag) => Value::Bool(*flag),
+        JsonValue::Number(text) => {
+            let double: f64 = text
+                .parse()
+                .map_err(|_unparsed| format!("{text} is not a number"))?;
+            Value::Number(
+                serde_json::Number::from_f64(double)
+                    .ok_or_else(|| format!("{text} is not a finite number"))?,
+            )
+        }
+        JsonValue::String(text) => Value::String(text.clone()),
+        JsonValue::Array(items) => {
+            Value::Array(items.iter().map(doubles).collect::<Result<_, _>>()?)
+        }
+        JsonValue::Object(members) => Value::Object(
+            members
+                .iter()
+                .map(|(name, member)| Ok((name.clone(), doubles(member)?)))
+                .collect::<Result<_, String>>()?,
+        ),
+    })
 }
 
 fn write(value: &Value, out: &mut String) -> Result<(), String> {
