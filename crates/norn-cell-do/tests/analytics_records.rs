@@ -285,13 +285,15 @@ fn a_loaded_datasets_grid_equals_the_native_grid_of_the_same_rows() {
         .unwrap()
         .with_authorizer(policy);
     // MANIFEST-03: types an admitted mapping binds, loaded as observations.
-    for (name, text) in [
+    // After the demo rows (`DEMO_ROWS_AT`), each install and load at its own
+    // later time: the cell's clock never runs back.
+    for (at, (name, text)) in (norn_cell::provision::DEMO_ROWS_AT + 1..).step_by(2).zip([
         (
             "Orders",
             "order,region,units,price,paid,placed\nO1,north,3,1.50,true,2026-10-21T08:00:00Z\nO2,south,5,2.25,false,2026-10-22T09:30:00Z\nO3,north,1,10.00,true,2026-10-23T12:00:00Z\n",
         ),
         ("Regions", "code,label\nN,North\nS,South\nE,East\n"),
-    ] {
+    ]) {
         let table = norn_api::uploads::parse_csv(text).unwrap();
         let request: norn_api::uploads::LoadRequest =
             serde_json::from_value(json!({"typeName": name})).unwrap();
@@ -300,8 +302,8 @@ fn a_loaded_datasets_grid_equals_the_native_grid_of_the_same_rows() {
         let generated =
             norn_api::uploads::generate(&table, &request, &uri, &sha256, "2026-11-12T12:00:00Z")
                 .unwrap();
-        norn_api::uploads::install(&host, &generated, 1).unwrap();
-        norn_api::uploads::load_rows(&host, &generated, &table, &uri, &sha256, 2).unwrap();
+        norn_api::uploads::install(&host, &generated, at).unwrap();
+        norn_api::uploads::load_rows(&host, &generated, &table, &uri, &sha256, at + 1).unwrap();
     }
     let tables: BTreeMap<String, TableSchema> = host
         .analytics_tables()
