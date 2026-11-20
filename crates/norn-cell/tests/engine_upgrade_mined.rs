@@ -32,7 +32,7 @@
 #[path = "support/engine_fixture.rs"]
 mod engine_fixture;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 
 use norn_cell::engine::{NativeEngine, ReadIsolation, SqlEngine, SqlValue};
@@ -81,8 +81,9 @@ fn wal_path(path: &Path) -> PathBuf {
 }
 
 fn journal_mode(path: &Path) -> String {
-    let conn = rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
-        .expect("sqlite");
+    let conn =
+        rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .expect("sqlite");
     let mode: String = conn
         .query_row("PRAGMA journal_mode", [], |row| row.get(0))
         .expect("journal mode");
@@ -113,7 +114,9 @@ fn set_journal_mode(path: &Path, mode: JournalMode) {
         JournalMode::Wal => "WAL",
     };
     let _mode: String = conn
-        .query_row(&format!("PRAGMA journal_mode = {pragma}"), [], |row| row.get(0))
+        .query_row(&format!("PRAGMA journal_mode = {pragma}"), [], |row| {
+            row.get(0)
+        })
         .expect("journal mode");
 }
 
@@ -137,11 +140,9 @@ enum Refusing {
 impl Refusing {
     fn text(&self) -> String {
         match self {
-            Self::Newer(n) => stamp_text(
-                STAMP_FORMAT,
-                &(STORAGE_VERSION + n).to_string(),
-                "drop-99",
-            ),
+            Self::Newer(n) => {
+                stamp_text(STAMP_FORMAT, &(STORAGE_VERSION + n).to_string(), "drop-99")
+            }
             Self::FutureFormat(n) => stamp_text("norn.cell.engine/2", &n.to_string(), "drop-120"),
             Self::BadNumber(number) => stamp_text(STAMP_FORMAT, number, "dev"),
             Self::Garbage(text) => text.clone(),
@@ -201,7 +202,11 @@ fn open_path() -> impl Strategy<Value = OpenPath> {
 }
 
 fn mode_of(wal: bool) -> JournalMode {
-    if wal { JournalMode::Wal } else { JournalMode::Delete }
+    if wal {
+        JournalMode::Wal
+    } else {
+        JournalMode::Delete
+    }
 }
 
 fn provision_input() -> InstalledDefinitionInput {
@@ -233,20 +238,16 @@ fn try_open(path: &Path, how: OpenPath) -> Option<CellError> {
         OpenPath::Store(wal) => {
             CellStore::open(path, engine_fixture::model(), options(mode_of(wal))).err()
         }
-        OpenPath::ReadBinding => {
-            CellStore::<NativeEngine>::read_binding(&raw(path), "scope").err()
-        }
+        OpenPath::ReadBinding => CellStore::<NativeEngine>::read_binding(&raw(path), "scope").err(),
         OpenPath::ReadActiveDefinitions => {
             CellStore::<NativeEngine>::read_active_definitions(&raw(path)).err()
         }
         OpenPath::FromEngine => CellStore::from_engine(raw(path), engine_fixture::model()).err(),
         OpenPath::DiagnoseHistory => CellStore::diagnose_history(path).err(),
-        OpenPath::Provision => {
-            match NativeEngine::open(path, StoreOptions::default()) {
-                Ok(engine) => provision(engine).err(),
-                Err(error) => Some(error),
-            }
-        }
+        OpenPath::Provision => match NativeEngine::open(path, StoreOptions::default()) {
+            Ok(engine) => provision(engine).err(),
+            Err(error) => Some(error),
+        },
     }
 }
 
@@ -292,9 +293,9 @@ fn corrupt(mut image: Value, corruption: &Corruption) -> Value {
             let column = columns
                 .iter_mut()
                 .find(|value| {
-                    value
-                        .as_str()
-                        .is_some_and(|text| text.len() == 64 && text.bytes().all(|b| b.is_ascii_hexdigit()))
+                    value.as_str().is_some_and(|text| {
+                        text.len() == 64 && text.bytes().all(|b| b.is_ascii_hexdigit())
+                    })
                 })
                 .expect("a chained hash column");
             let mut hash = column.as_str().expect("hash").to_owned();
@@ -317,8 +318,9 @@ fn corrupt(mut image: Value, corruption: &Corruption) -> Value {
                 .max()
                 .expect("meta rowid");
             let commits = 3 + past;
-            let base = serde_json::json!({"seq": commits, "hash": "0".repeat(64), "commits": commits})
-                .to_string();
+            let base =
+                serde_json::json!({"seq": commits, "hash": "0".repeat(64), "commits": commits})
+                    .to_string();
             for (key, value) in [
                 ("fork:world", "what-if"),
                 ("fork:parent", "main"),
@@ -338,7 +340,9 @@ fn corrupt(mut image: Value, corruption: &Corruption) -> Value {
 struct Racing {
     inner: NativeEngine,
     path: PathBuf,
-    stamp: RefCell<Option<Option<String>>>,
+    /// The stamp the opener writes, or `None` to remove it.
+    stamp: Option<String>,
+    fired: Cell<bool>,
     raced: RefCell<Option<Vec<u8>>>,
 }
 
@@ -356,8 +360,8 @@ impl SqlEngine for Racing {
         self.inner.execute_batch(sql)
     }
     fn transaction<T, X: From<CellError>>(&self, f: impl FnOnce() -> Result<T, X>) -> Result<T, X> {
-        if let Some(stamp) = self.stamp.borrow_mut().take() {
-            set_stamp(&self.path, stamp.as_deref());
+        if !self.fired.replace(true) {
+            set_stamp(&self.path, self.stamp.as_deref());
             self.raced.replace(Some(bytes(&self.path)));
         }
         self.inner.transaction(f)
@@ -549,7 +553,8 @@ proptest! {
         let racing = std::rc::Rc::new(Racing {
             inner: NativeEngine::open(&path, StoreOptions::default()).expect("engine"),
             path: path.clone(),
-            stamp: RefCell::new(Some(stamp.as_ref().map(Refusing::text))),
+            stamp: stamp.as_ref().map(Refusing::text),
+            fired: Cell::new(false),
             raced: RefCell::default(),
         });
         let outcome = provision(Shared(std::rc::Rc::clone(&racing)));
