@@ -72,7 +72,11 @@ fn fields() -> Vec<Field> {
 /// The laws the benchmark admits: each reads present values, and one reads
 /// a value that is sometimes absent.
 const LAWS: [(&str, &str, &str); 3] = [
-    ("bpi_net_worth_nonnegative", "error", "(self.net_worth ?? 0) >= 0"),
+    (
+        "bpi_net_worth_nonnegative",
+        "error",
+        "(self.net_worth ?? 0) >= 0",
+    ),
     ("bpi_activity_named", "error", "not (self.activity == '')"),
     ("bpi_case_named", "warning", "self.case_id != ''"),
 ];
@@ -254,7 +258,11 @@ fn per_row_rate(cell: &mut Cell, path: &str, limit: u64) -> serde_json::Value {
             }
         }
         rows += 1;
-        let id = payload["event_id"].as_str().unwrap_or_default().to_owned();
+        let id = payload
+            .get("event_id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
         let text = serde_json::Value::Object(payload).to_string();
         let observed = Observed {
             id: ObservationId(format!("row-{rows}")),
