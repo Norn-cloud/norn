@@ -127,5 +127,5 @@ export const BOOK = {
   activeLoans: "12,480",
   live: { threshold: 2, loans: 37, exposure: "EGP 6,214,500", calls: 37, mona: true },
   fork: { threshold: 3, loans: 14, exposure: "EGP 2,486,300", calls: 14, mona: false },
-  difference: { loans: "−23", exposure: "−EGP 3,728,200" },
+  difference: { loans: "23", exposure: "EGP 3,728,200" },
 } as const

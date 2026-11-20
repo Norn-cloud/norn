@@ -40,14 +40,13 @@ export function ForkSlide() {
   return (
     <Slide eyebrow="The Weave · forks" title="Try a change before it's real." preview="The fork comparison is a preview."
       lead="Fork the live model, change one rule, and see what it would do to the whole book. Then promote it or throw it away.">
-      <div className="grid grid-cols-[1fr_220px_1fr] items-stretch gap-5">
+      <div className="grid grid-cols-[1fr_260px_1fr] items-stretch gap-5">
         <Column side={BOOK.live} forked={false} />
         <div className="flex flex-col items-center justify-center gap-3 text-center">
           <span className="flex size-11 items-center justify-center rounded-full bg-background text-muted-foreground shadow-[var(--elevation-float)] ring-1 ring-foreground/5"><TrendingDown aria-hidden className="size-5" /></span>
           <div className="text-meta text-muted-foreground">If the fork went live</div>
-          <div className="text-[1.75rem] leading-none font-semibold tracking-tight tabular-nums">{BOOK.difference.loans} loans</div>
-          <div className="text-sm font-medium tabular-nums">{BOOK.difference.exposure}</div>
-          <div className="text-xs text-muted-foreground">at risk, no longer flagged</div>
+          <div className="text-[1.6rem] leading-none font-semibold tracking-tight tabular-nums text-balance">{BOOK.difference.loans} fewer loans watched</div>
+          <div className="text-sm font-medium tabular-nums text-balance">{BOOK.difference.exposure} no longer flagged</div>
         </div>
         <Column side={BOOK.fork} forked />
       </div>

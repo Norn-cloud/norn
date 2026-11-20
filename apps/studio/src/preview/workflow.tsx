@@ -22,7 +22,7 @@ const Joint = () => <ArrowRight aria-hidden className="size-5 shrink-0 self-cent
 export function WorkflowSlide() {
   return (
     <Slide eyebrow="The Weave · rules in plain words" title="Write the rule once. Norn runs it safely." preview="The visual rule builder is a preview."
-      lead="An analyst turns the insight into a rule in minutes. Norn checks it against every law and permission before it can run.">
+      lead="An analyst turns the insight into a rule in minutes. Norn checks it against every rule and permission before it can run.">
       <section className="rounded-[22px] bg-background p-2.5 shadow-[var(--elevation-node-hover)] ring-1 ring-foreground/5">
         <header className="flex items-center gap-3 px-4 pt-2 pb-4">
           <span className="flex size-10 items-center justify-center rounded-xl bg-tone-violet/10 text-tone-violet"><GitBranch aria-hidden className="size-5" /></span>
