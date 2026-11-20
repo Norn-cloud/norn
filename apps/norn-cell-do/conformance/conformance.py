@@ -17,6 +17,7 @@ Every row is pass, fail, not tested (the run could not show it) or measured
 
     conformance.py --reference REF --host celld  --project DIR [--out OUT]
     conformance.py --reference REF --host rivet  --project DIR [--out OUT]
+    NORN_CELL_RIVET=BIN conformance.py --reference REF --host rivet-native [--out OUT]
     conformance.py --reference REF --host url --url https://cell.example [--out OUT]
 
 `celld` and `rivet` start and stop the host themselves (state in a fresh temp directory, or
@@ -49,6 +50,8 @@ import urllib.parse
 import urllib.request
 
 ENGINE_IMAGE = "rivetdev/engine@sha256:6e585002b700dd4d3630808eb67884aa15d1a602d83781984edac47023b6d40f"
+# Rivet Engine 3.1.1 (`rivetdev/engine:3.1.1`), the release the native host's RivetKit pins.
+NATIVE_ENGINE_IMAGE = "rivetdev/engine@sha256:55cdfe9a92c0ee2f7d3ce5f388dab2ef8e0be1bab8e3f1adb7ba972f862e25d4"
 ORANGE_VERSION = "1.0.3"
 # The locked, test-only OpenOrange install (bun install --frozen-lockfile in this directory).
 LOCKED_ORANGE = Path(__file__).resolve().parent / "node_modules" / ".bin" / "orange"
@@ -351,7 +354,7 @@ class RivetHost:
             "-v", f"{engine / 'config.json'}:/etc/rivet/config.json:ro",
             "-v", f"{engine / 'log'}:/var/lib/rivet/log",
             "-v", f"{engine / 'objects'}:/var/lib/rivet/objects",
-            ENGINE_IMAGE,
+            getattr(self, "image", ENGINE_IMAGE),
         ], check=True, capture_output=True)
         stop_at = time.time() + 120
         while time.time() < stop_at:
@@ -412,6 +415,46 @@ class RivetHost:
 
     def data(self):
         return [self.state / "engine" / "log", self.state / "engine" / "objects"]
+
+
+class RivetNativeHost(RivetHost):
+    """The native Rivet host (crates/norn-cell-rivet, D131): a self-hosted Rivet Engine 3.1.1 (Docker,
+    pinned digest) with `norn-cell-rivet` runner processes, RivetKit's Rust SDK with the cell's SQLite
+    in process. The binary is a `conformance` build, named by NORN_CELL_RIVET."""
+
+    name = "rivet-native"
+
+    def __init__(self, state, lineage_key, runners=2):
+        self.project, self.state = None, state
+        self.runners = runners
+        self.lineage_key = lineage_key
+        self.token = secrets.token_hex(24)
+        self.ports = [free_port() for _ in range(runners)]
+        self.children = [None] * runners
+        self.container = f"norn-conformance-engine-{os.getpid()}"
+        self.binary = os.environ.get("NORN_CELL_RIVET")
+        if not self.binary or not Path(self.binary).is_file():
+            raise SystemExit("NORN_CELL_RIVET names the norn-cell-rivet binary (cargo build --features conformance in crates/norn-cell-rivet)")
+        self.image = NATIVE_ENGINE_IMAGE
+        self.version = f"norn-cell-rivet (rivetkit 3.1.1) on {NATIVE_ENGINE_IMAGE.split('@')[1][:19]}…"
+        config = {
+            "storage": {"log_directory": "/var/lib/rivet/log", "auto_provision_partitions": 1, "balancing": {"enabled": False}},
+            "object_storage": {"primary": {"file_system": {"path": "/var/lib/rivet/objects"}}},
+        }
+        (state / "engine").mkdir(parents=True, exist_ok=True)
+        (state / "engine" / "config.json").write_text(json.dumps(config))
+
+    def start_runner(self, index):
+        env = {
+            **os.environ,
+            "RIVET_ENDPOINT": f"http://default:{self.token}@127.0.0.1:6420",
+            "NORN_LISTEN": f"127.0.0.1:{self.ports[index]}",
+            "NORN_STAGE": "test",
+            "NORN_CONFORMANCE": "synthetic",
+            "NORN_LINEAGE_KEY": self.lineage_key,
+        }
+        log = open(self.state / f"runner-{index}.log", "ab")
+        self.children[index] = subprocess.Popen([self.binary], env=env, stdout=log, stderr=log, start_new_session=True)
 
 
 # ------------------------------------------------------------------ tests
@@ -1193,7 +1236,7 @@ def local_copy(source, lineage_key):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--reference", required=True, type=Path)
-    parser.add_argument("--host", required=True, choices=["celld", "rivet", "url"])
+    parser.add_argument("--host", required=True, choices=["celld", "rivet", "rivet-native", "url"])
     parser.add_argument("--project", type=Path)
     parser.add_argument("--state", type=Path)
     parser.add_argument("--url")
@@ -1216,6 +1259,12 @@ def main():
 def run(args, reference, cleanup):
     if args.host == "url":
         host = UrlHost(args.url)
+    elif args.host == "rivet-native":
+        # No Worker project: the runner is the norn-cell-rivet binary.
+        state = fresh_state(args.state, Path(tempfile.gettempdir()) / "norn-conformance-no-project")
+        if args.state is None:
+            cleanup.append(lambda: shutil.rmtree(state, ignore_errors=True))
+        host = RivetNativeHost(state, reference["lineageKey"])
     else:
         source = args.project.resolve()
         # State and logs never reach the project: by default a fresh temp directory; a supplied --state
