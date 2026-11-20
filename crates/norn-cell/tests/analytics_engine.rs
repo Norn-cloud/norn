@@ -7,6 +7,7 @@
     clippy::expect_used,
     clippy::indexing_slicing,
     clippy::panic,
+    clippy::too_many_lines,
     missing_docs,
     reason = "QUERY-ENGINE-1 engine correspondence"
 )]
@@ -2391,7 +2392,7 @@ fn a_manifest_commits_once_per_request_and_is_the_current_dataset() {
         load: norn_cell::analytics::dataset_cache_id(&table, &data_file.sha256, &held_file.sha256),
         source: ManifestSource {
             uri: request.load.file.uri.clone(),
-            sha256: request.load.file.sha256.clone(),
+            sha256: request.load.file.sha256,
             format: FileFormat::Csv,
             bytes: response.load.bytes,
         },
@@ -2409,7 +2410,7 @@ fn a_manifest_commits_once_per_request_and_is_the_current_dataset() {
             findings: BTreeMap::new(),
             held_by_rules: 0,
         },
-        valid_time: response.valid_time.clone(),
+        valid_time: response.valid_time,
     };
     assert!(store.dataset_manifest(WORLD, TYPE).expect("read").is_none());
     let head = store.verified_head().expect("head").commits;
