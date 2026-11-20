@@ -130,6 +130,9 @@ test("refusal codes are allowlisted: a known code is kept, anything else is othe
   expect(refusalCode('{"code":"acme.customer_42"}')).toBe("other")
   expect(refusalCode('{"code":"acme customer 42"}')).toBe("other")
   expect(refusalCode("<html>")).toBe("other")
+  // A withheld row keeps its detailed code in the sync; telemetry counts it under a bounded one.
+  expect(refusalCodeOf("source.resolution.withheld")).toBe("source.ingest")
+  expect(refusalCode('{"code":"source.resolution.withheld"}')).toBe("source.ingest")
   expect(refusalCode(`{"code":"authz.denied","pad":"${"x".repeat(9000)}"}`)).toBe("other")
 })
 

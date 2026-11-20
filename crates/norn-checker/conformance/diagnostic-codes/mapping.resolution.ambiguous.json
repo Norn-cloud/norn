@@ -1,0 +1,7 @@
+{
+  "code": "mapping.resolution.ambiguous",
+  "message": "a canonical property's writers do not single out who decides it: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

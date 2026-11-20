@@ -1558,6 +1558,30 @@
       "message": "مخطط المصدر {$schemaId} بالإصدار {$version} ليس أداة source_schema في المجموعة أو القاعدة",
       "review": "needs_review"
     },
+    "mapping.resolution.ambiguous": {
+      "message": "كاتبو خاصية قانونية لا يحددون من يقرر قيمتها: {$detail}",
+      "review": "needs_review"
+    },
+    "mapping.resolution.conflict_not_nullable": {
+      "message": "خاصية قانونية معلنة تعارضًا غير قابلة للقيمة الفارغة، فلا يمكن تخزين الخلاف فارغًا: {$detail}",
+      "review": "needs_review"
+    },
+    "mapping.resolution.lifecycle_overlap": {
+      "message": "خاصية دورة حياة يرصدها أكثر من تعيين واحد، ولا يحسمها حل المصادر بعد: {$detail}",
+      "review": "needs_review"
+    },
+    "mapping.resolution.mixed": {
+      "message": "أقران التعارض مختلطون بسلطات أخرى لخاصية قانونية واحدة: {$detail}",
+      "review": "needs_review"
+    },
+    "mapping.resolution.no_authority": {
+      "message": "كل كاتبي خاصية قانونية مراجِعون، فلا أحد يقرر قيمتها: {$detail}",
+      "review": "needs_review"
+    },
+    "mapping.resolution.undeclared": {
+      "message": "خاصية قانونية يكتبها أكثر من تعيين واحد دون سلطة معلنة: {$detail}",
+      "review": "needs_review"
+    },
     "mapping.runtime.evaluation_failed": {
       "message": "التعيين {$map}: {$detail}",
       "review": "needs_review"

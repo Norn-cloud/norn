@@ -2374,6 +2374,9 @@ impl<E: SqlEngine> CellStore<E> {
         // Claim endpoints of bundles consumed before the table existed; a
         // no-op for every bundle already indexed.
         conn.execute(&crate::system::claim_endpoints_of("1"), params![])?;
+        // SOURCE-RESOLVE-1: likewise the subjects of bundles consumed before.
+        conn.execute(&crate::system::source_subjects_of("1"), params![])?;
+        conn.execute(&crate::system::source_records_of("1"), params![])?;
         crate::system::intern_marking_subjects(conn)?;
         export_journal::init(conn)?;
         crate::retained::init(conn)?;
@@ -3240,6 +3243,17 @@ impl<E: SqlEngine> CellStore<E> {
                 self.conn.execute(
                     &format!("UPDATE \"{META}\" SET \"value\" = ?1 WHERE \"key\" = 'ddl_hash'"),
                     params![install.candidate_model.ddl_hash()],
+                )?;
+                // SOURCE-RESOLVE-1: the activation and its pending
+                // reconciliation commit together (a replayed activation too,
+                // so a rebuilt or restored cell is reconciled before it is
+                // served); the reconciliation clears it, and a host resumes
+                // it on open before serving.
+                self.conn.execute(
+                    &format!(
+                        "INSERT OR REPLACE INTO \"{META}\" (\"key\", \"value\") VALUES (?1, ?2)"
+                    ),
+                    params![crate::system::SOURCE_RESOLUTION_PENDING, version.to_string()],
                 )?;
                 Some(record)
             } else {

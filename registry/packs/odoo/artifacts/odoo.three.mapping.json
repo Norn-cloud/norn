@@ -128,6 +128,10 @@
     ],
     "maps": [
       {
+        "authority": {
+          "kind": "precedence",
+          "rank": 1
+        },
         "id": "item",
         "ignoredFields": [
           {
@@ -164,6 +168,10 @@
         }
       },
       {
+        "authority": {
+          "kind": "precedence",
+          "rank": 1
+        },
         "id": "holding",
         "links": [
           {
@@ -235,6 +243,10 @@
         }
       },
       {
+        "authority": {
+          "kind": "precedence",
+          "rank": 1
+        },
         "id": "party",
         "ignoredFields": [
           {
@@ -263,6 +275,10 @@
         }
       },
       {
+        "authority": {
+          "kind": "precedence",
+          "rank": 1
+        },
         "gaps": [
           {
             "member": "counterparty",
@@ -309,6 +325,10 @@
         }
       },
       {
+        "authority": {
+          "kind": "precedence",
+          "rank": 1
+        },
         "id": "order",
         "links": [
           {
@@ -360,6 +380,10 @@
         }
       },
       {
+        "authority": {
+          "kind": "precedence",
+          "rank": 1
+        },
         "gaps": [
           {
             "member": "reverses",
@@ -429,6 +453,10 @@
         }
       },
       {
+        "authority": {
+          "kind": "precedence",
+          "rank": 1
+        },
         "id": "posting",
         "ignoredFields": [
           {
@@ -476,6 +504,10 @@
         }
       },
       {
+        "authority": {
+          "kind": "precedence",
+          "rank": 1
+        },
         "gaps": [
           {
             "member": "event",

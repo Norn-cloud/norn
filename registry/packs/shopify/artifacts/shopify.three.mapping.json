@@ -115,6 +115,10 @@
     ],
     "maps": [
       {
+        "authority": {
+          "kind": "precedence",
+          "rank": 2
+        },
         "id": "item",
         "ignoredFields": [
           {
@@ -151,6 +155,10 @@
         }
       },
       {
+        "authority": {
+          "kind": "precedence",
+          "rank": 2
+        },
         "gaps": [
           {
             "member": "stock_cost",
@@ -226,6 +234,10 @@
         }
       },
       {
+        "authority": {
+          "kind": "precedence",
+          "rank": 2
+        },
         "id": "party",
         "ignoredFields": [
           {
@@ -254,6 +266,10 @@
         }
       },
       {
+        "authority": {
+          "kind": "precedence",
+          "rank": 2
+        },
         "gaps": [
           {
             "member": "counterparty",
@@ -300,6 +316,10 @@
         }
       },
       {
+        "authority": {
+          "kind": "precedence",
+          "rank": 2
+        },
         "id": "order",
         "links": [
           {
@@ -351,6 +371,10 @@
         }
       },
       {
+        "authority": {
+          "kind": "precedence",
+          "rank": 2
+        },
         "gaps": [
           {
             "member": "reverses",
@@ -420,6 +444,10 @@
         }
       },
       {
+        "authority": {
+          "kind": "precedence",
+          "rank": 2
+        },
         "gaps": [
           {
             "member": "event",

@@ -524,6 +524,46 @@ pub struct ObjectMap {
     /// empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ignored_fields: Vec<IgnoredField>,
+    /// SOURCE-RESOLVE-1: how this map's writes decide the target's
+    /// properties when another mapping writes them too. A property rule's own
+    /// `authority` overrides it. Omitted when this mapping is the only writer
+    /// of every property it maps; admission refuses a property two mappings
+    /// write with no declared authority.
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "SourceAuthority")]
+    pub authority: Option<SourceAuthority>,
+}
+
+/// SOURCE-RESOLVE-1: how one mapping's write decides a canonical property
+/// that several mappings (several source systems) write. The canonical value
+/// is decided by these declarations, never by which source wrote last; every
+/// source's own report is kept with its lineage either way.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SourceAuthority {
+    /// This source is the system of record: its report is the canonical
+    /// value, and every other writer of the property is a check.
+    SystemOfRecord,
+    /// Ordered precedence: of the writers that have reported, the one with
+    /// the lowest rank decides. Ranks of one property's writers are distinct.
+    Precedence {
+        /// Lower ranks win.
+        #[serde(deserialize_with = "crate::members::deserialize_u32")]
+        rank: u32,
+    },
+    /// Never decides: the report is kept and compared with the canonical
+    /// value; a difference is a source-agreement finding.
+    Check,
+    /// Peers without precedence: when every peer's report agrees that is the
+    /// value; when they disagree the property reads as an explicit conflict
+    /// listing each report, and its stored value is null.
+    Conflict,
 }
 
 impl ObjectMap {
@@ -596,6 +636,15 @@ pub struct PropertyMap {
     )]
     #[schemars(with = "NestedPropertySource")]
     pub nested: Option<NestedPropertySource>,
+    /// SOURCE-RESOLVE-1: this property's authority, overriding the map's.
+    /// Omitted: the map's `authority` applies.
+    #[serde(
+        default,
+        deserialize_with = "present_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(with = "SourceAuthority")]
+    pub authority: Option<SourceAuthority>,
 }
 
 /// A source-schema-declared child collection whose unique matching row

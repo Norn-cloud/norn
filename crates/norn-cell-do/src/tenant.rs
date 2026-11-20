@@ -572,11 +572,23 @@ impl<E: SqlEngine> Tenant<E> {
                 // over its derived metrics; a revision whose metrics do not
                 // derive serves receipt handles only.
                 let derived = match (&serving.questions, &self.derived) {
-                    // A revision whose metrics do not derive publishes none.
-                    (None, Some(derived)) => derived
-                        .questions(&serving.host)
-                        .ok()
-                        .filter(|runtime| !AdHocQuestions::<E>::definitions(runtime).is_empty()),
+                    (None, Some(derived)) => match derived.questions(&serving.host) {
+                        Ok(runtime) => Some(runtime).filter(|runtime| {
+                            !AdHocQuestions::<E>::definitions(runtime).is_empty()
+                        }),
+                        // SOURCE-RESOLVE-1: while the active revision's
+                        // values are still reconciling, a verified member's
+                        // question gets the retryable refusal, never the 404
+                        // or denial of a cell that publishes no questions.
+                        Err(refusal)
+                            if norn_api::host::is_reconciling(&refusal)
+                                && is_question_request(request.path) =>
+                        {
+                            return crate::incident::respond(refusal);
+                        }
+                        // A revision whose metrics do not derive publishes none.
+                        Err(_) => None,
+                    },
                     _ => None,
                 };
                 let questions = serving
@@ -965,4 +977,10 @@ fn collections<'a>(
         })
         .map(str::to_owned)
         .collect()
+}
+
+/// Whether `path` is a question route: a named question's answer or trace,
+/// an ad-hoc question, its metrics or its catalog.
+fn is_question_request(path: &str) -> bool {
+    path.starts_with("/v1/questions/") || path.starts_with("/v1/questions:")
 }

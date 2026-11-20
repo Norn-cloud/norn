@@ -1,0 +1,7 @@
+{
+  "code": "mapping.resolution.conflict_not_nullable",
+  "message": "a canonical property declared conflict is not nullable, so a disagreement cannot be stored as null: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

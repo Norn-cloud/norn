@@ -72,6 +72,7 @@ pub mod restore;
 pub mod retained;
 pub mod source_agreement;
 pub mod source_provenance;
+pub mod source_resolution;
 pub mod store;
 pub mod system;
 pub mod transparency;
@@ -82,7 +83,7 @@ pub use error::CellError;
 pub use fork::{ForkEngine, ForkPin, StoreImage};
 pub use history::{FactSnapshot, FactVersionEvidence, HistoricalEvidence, KnowledgeCutoff};
 pub use host::{CommitRecord, PerformClaim, Responder, SqliteCell};
-pub use mapping_process::MappingOutcome;
+pub use mapping_process::{MappingOutcome, WITHHELD_REASON};
 pub use model::{BindingIndexSpec, Model, ModelDefinitionSnapshot};
 pub use read::{
     BindingSortValue, BindingSortedCandidate, BindingSortedPosition, FindingLedgerPage,

@@ -3113,6 +3113,54 @@
       "no_fix": null
     },
     {
+      "code": "mapping.resolution.ambiguous",
+      "tier": "T3",
+      "severity": "error",
+      "message": "a canonical property's writers do not single out who decides it: {detail}",
+      "fix": "Keep at most one system_of_record per property, do not combine it with precedence, give every precedence writer a distinct rank, and declare one authority per mapping.",
+      "no_fix": null
+    },
+    {
+      "code": "mapping.resolution.conflict_not_nullable",
+      "tier": "T3",
+      "severity": "error",
+      "message": "a canonical property declared conflict is not nullable, so a disagreement cannot be stored as null: {detail}",
+      "fix": "Make the property nullable, or decide it with a system_of_record or precedence instead of conflict.",
+      "no_fix": null
+    },
+    {
+      "code": "mapping.resolution.lifecycle_overlap",
+      "tier": "T3",
+      "severity": "error",
+      "message": "a lifecycle property is observed by more than one mapping, which source resolution does not decide yet: {detail}",
+      "fix": "Observe the lifecycle property from one mapping only, and report the other sources' state as an ordinary property they check.",
+      "no_fix": null
+    },
+    {
+      "code": "mapping.resolution.mixed",
+      "tier": "T3",
+      "severity": "error",
+      "message": "conflict peers are mixed with other authorities for one canonical property: {detail}",
+      "fix": "Declare conflict on every writer of the property, or on none of them.",
+      "no_fix": null
+    },
+    {
+      "code": "mapping.resolution.no_authority",
+      "tier": "T3",
+      "severity": "error",
+      "message": "every writer of a canonical property is a check, so nobody decides it: {detail}",
+      "fix": "Name one writer system_of_record, or give the writers precedence ranks.",
+      "no_fix": null
+    },
+    {
+      "code": "mapping.resolution.undeclared",
+      "tier": "T3",
+      "severity": "error",
+      "message": "a canonical property is written by more than one mapping without a declared authority: {detail}",
+      "fix": "Declare authority on every writer of the property (the map's or the property rule's): one system_of_record with the others as check, distinct precedence ranks, or conflict on every writer of a nullable property.",
+      "no_fix": null
+    },
+    {
       "code": "mapping.runtime.evaluation_failed",
       "tier": "T6",
       "severity": "error",

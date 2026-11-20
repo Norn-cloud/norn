@@ -1,0 +1,7 @@
+{
+  "code": "mapping.resolution.mixed",
+  "message": "conflict peers are mixed with other authorities for one canonical property: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

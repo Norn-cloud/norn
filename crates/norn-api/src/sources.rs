@@ -795,11 +795,12 @@ fn drain<E: SqlEngine>(host: &DevHost<E>, run: &mut Run) -> Result<Next, Failure
             .ingest(&chunk)
             .map_err(|refusal| fail("source.ingest", refusal.message))?;
         for ingested in outcomes {
-            match ingested.outcome {
-                MappingOutcome::Landed | MappingOutcome::AlreadyLanded => {
+            // SOURCE-RESOLVE-1: a withheld row is held back, not landed.
+            match ingested.outcome.held_back() {
+                None => {
                     run.landed = run.landed.saturating_add(1);
                 }
-                MappingOutcome::Quarantined(codes) => {
+                Some(codes) => {
                     run.quarantined = run.quarantined.saturating_add(1);
                     for code in codes {
                         let n = run.reasons.entry(code).or_insert(0);
@@ -1301,9 +1302,9 @@ pub fn keep_upload<E: SqlEngine>(
         .map_err(|refusal| refusal.message)?;
     match ingested.first().map(|i| &i.outcome) {
         Some(MappingOutcome::Landed | MappingOutcome::AlreadyLanded) => Ok(()),
-        Some(MappingOutcome::Quarantined(reasons)) => Err(format!(
+        Some(outcome) => Err(format!(
             "the cell refused the upload record: {}",
-            reasons.join(", ")
+            outcome.held_back().unwrap_or_default().join(", ")
         )),
         None => Err("the cell captured no upload record".to_owned()),
     }

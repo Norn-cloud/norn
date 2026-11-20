@@ -78,6 +78,9 @@ pub(crate) struct MappingPlan {
     /// Journal model snapshot the full retained proof ran on; a hit requires
     /// the journal to still hold exactly this snapshot.
     model_snapshot: crate::ModelDefinitionSnapshot,
+    /// SOURCE-RESOLVE-1: who decides each canonical property several
+    /// mappings of the retained set write.
+    pub(crate) resolution: Arc<norn_checker::mapping::resolution::ResolutionTable>,
 }
 
 /// MAPPING-PLAN-1: retained-definition work is memoized per store, keyed by the
@@ -100,6 +103,15 @@ pub(crate) struct MappingPlanCache {
     /// inbox id, with the exact row text they were decoded from: a row whose
     /// text is unchanged needs no second decode and recomputation.
     pub(crate) claims: BTreeMap<String, (String, MappingBundle)>,
+    /// SOURCE-RESOLVE-1 tables by version and set digest, with the journal
+    /// model snapshot each was read under.
+    tables: BTreeMap<
+        (u64, String),
+        (
+            crate::ModelDefinitionSnapshot,
+            Arc<norn_checker::mapping::resolution::ResolutionTable>,
+        ),
+    >,
 }
 
 /// Most claim bundles [`MappingPlanCache`] keeps.
@@ -192,11 +204,82 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     /// MAPPING-PLAN-1: the installed row, export-journal record and receipt are
     /// re-read and compared on every call; only the pure model projection,
     /// governing-law check and mapping compilation are reused.
-    fn mapping_plan(
+    pub(crate) fn mapping_plan(
         &self,
         input: &MappingInput,
         version: u64,
     ) -> Result<Arc<MappingPlan>, CellError> {
+        let (installed, set_digest, installation) = self.verified_install(version)?;
+        let key = (version, set_digest, input.mapping.clone());
+        let cached = self
+            .mapping_plans
+            .and_then(|cache| cache.borrow().plans.get(&key).cloned());
+        if let Some(plan) = cached
+            && plan.model_snapshot == installation.model
+        {
+            return Ok(plan);
+        }
+        Self::retained_model_from(&installed, &installation)?;
+        let artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(&installed.canonical_set)?;
+        self.plan_from(&artifacts, input, key, installation)
+    }
+
+    /// SOURCE-RESOLVE-1: who decides each canonical property several
+    /// mappings of installed definitions `version` write, read from that
+    /// installed set itself (verified as [`Self::mapping_plan`] verifies it),
+    /// never through a mapping's plan, so it does not depend on which
+    /// mappings still report.
+    ///
+    /// # Errors
+    /// Missing or corrupt retained definitions.
+    pub(crate) fn resolution_table(
+        &self,
+        version: u64,
+    ) -> Result<Arc<norn_checker::mapping::resolution::ResolutionTable>, CellError> {
+        let (installed, set_digest, installation) = self.verified_install(version)?;
+        let key = (version, set_digest);
+        let cached = self.mapping_plans.and_then(|cache| {
+            cache
+                .borrow()
+                .tables
+                .get(&key)
+                .filter(|(model, _)| *model == installation.model)
+                .map(|(_, table)| Arc::clone(table))
+        });
+        if let Some(table) = cached {
+            return Ok(table);
+        }
+        Self::retained_model_from(&installed, &installation)?;
+        let artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(&installed.canonical_set)?;
+        let table = Arc::new(
+            norn_checker::mapping::resolution::ResolutionTable::from_artifacts(&artifacts, &[]),
+        );
+        if let Some(cache) = self.mapping_plans {
+            let mut cache = cache.borrow_mut();
+            if cache.tables.len() >= MAX_MAPPING_PLANS {
+                cache.tables.clear();
+            }
+            cache
+                .tables
+                .insert(key, (installation.model, Arc::clone(&table)));
+        }
+        Ok(table)
+    }
+
+    /// MAPPING-PLAN-1: installed definitions `version`, its canonical digest
+    /// and its journal install record, verified (or matched byte for byte to
+    /// the last copy that verified).
+    fn verified_install(
+        &self,
+        version: u64,
+    ) -> Result<
+        (
+            crate::InstalledDefinitionSet,
+            String,
+            crate::store::DefinitionInstallRecord,
+        ),
+        CellError,
+    > {
         let Some(installed) = self.installed_definitions(Some(version))? else {
             self.retained_definition_model(version)?;
             return Err(mismatch());
@@ -230,17 +313,17 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             }
             proved
         };
-        let key = (version, set_digest, input.mapping.clone());
-        let cached = self
-            .mapping_plans
-            .and_then(|cache| cache.borrow().plans.get(&key).cloned());
-        if let Some(plan) = cached
-            && plan.model_snapshot == installation.model
-        {
-            return Ok(plan);
-        }
-        Self::retained_model_from(&installed, &installation)?;
-        let artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(&installed.canonical_set)?;
+        Ok((installed, set_digest, installation))
+    }
+
+    /// The plan of `input`'s mapping in the verified `artifacts`, cached as `key`.
+    fn plan_from(
+        &self,
+        artifacts: &[ArtifactEnvelope],
+        input: &MappingInput,
+        key: (u64, String, String),
+        installation: crate::store::DefinitionInstallRecord,
+    ) -> Result<Arc<MappingPlan>, CellError> {
         let mapping = artifacts
             .iter()
             .find(|a| a.artifact_id == input.mapping)
@@ -265,10 +348,13 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             source_system: schema.source.system,
             source_instance: schema.source.instance,
             datasets: schema.datasets.into_iter().map(|d| d.id).collect(),
-            compiled: compile_mapping_artifact(mapping, &artifacts, &[]),
+            compiled: compile_mapping_artifact(mapping, artifacts, &[]),
             artifact_pins,
-            definitions_digest: semantic_definitions_digest(&artifacts)?,
+            definitions_digest: semantic_definitions_digest(artifacts)?,
             model_snapshot: installation.model,
+            resolution: Arc::new(
+                norn_checker::mapping::resolution::ResolutionTable::from_artifacts(artifacts, &[]),
+            ),
         });
         if let Some(cache) = self.mapping_plans {
             let mut cache = cache.borrow_mut();

@@ -267,6 +267,7 @@ export const RestMapping = Norn.mapping({
       target: {type: Item, interface: Catalog},
       subject: "input.custom_norn_ref",
       sourceRecord: "'erpnext/rest/Item/' + input.name",
+      authority: {kind: "precedence", rank: 3},
       properties: [{property: "id", value: "input.custom_norn_ref"}, {property: "code", value: "input.code"}, {property: "label", value: "input.label"}],
       ignoredFields: [
         {field: "sku", reason: "Alias only; duplicate SKUs do not establish identity."},
@@ -279,6 +280,7 @@ export const RestMapping = Norn.mapping({
       target: {type: Holding, interface: Resource},
       subject: "input.custom_norn_ref",
       sourceRecord: "'erpnext/rest/Warehouse Lot Balance/' + input.name",
+      authority: {kind: "precedence", rank: 3},
       properties: [
         {property: "resource_code", value: "input.resource_code"},
         {property: "quantity", value: "input.quantity"},
@@ -306,6 +308,7 @@ export const RestMapping = Norn.mapping({
       target: {type: Party, interface: Agent},
       subject: "input.custom_norn_ref",
       sourceRecord: "'erpnext/rest/Customer/' + input.name",
+      authority: {kind: "precedence", rank: 3},
       properties: [{property: "display_name", value: "input.label"}, {property: "kind", value: "'organization'"}],
       ignoredFields: [{field: "role", reason: "Mapped separately as an AgentRole; a customer role is not an Agent subtype."}]
     },
@@ -315,6 +318,7 @@ export const RestMapping = Norn.mapping({
       target: {type: PartyRole, interface: AgentRole},
       subject: "input.custom_norn_ref + '/role/' + input.role",
       sourceRecord: "'erpnext/rest/Customer/' + input.name",
+      authority: {kind: "precedence", rank: 3},
       properties: [{property: "role", value: "input.role"}, {property: "valid_from", value: "null"}, {property: "valid_to", value: "null"}],
       links: [{link: "agent", targetMap: "party", key: "input.custom_norn_ref"}],
       gaps: [
@@ -332,6 +336,7 @@ export const RestMapping = Norn.mapping({
       target: {type: OrderLine, interface: Commitment},
       subject: "input.custom_norn_ref",
       sourceRecord: "'erpnext/rest/Sales Order Item/' + input.name",
+      authority: {kind: "precedence", rank: 3},
       properties: [
         {property: "quantity", value: "input.quantity"},
         {property: "unit", value: "input.unit"},

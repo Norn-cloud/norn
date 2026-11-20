@@ -307,6 +307,7 @@ export const RestMapping = Norn.mapping({
       target: {type: Item, interface: Catalog},
       subject: "input.x_norn_ref",
       sourceRecord: "'odoo/rest/product.product/' + input.id",
+      authority: {kind: "precedence", rank: 4},
       properties: [{property: "id", value: "input.x_norn_ref"}, {property: "code", value: "input.code"}, {property: "label", value: "input.label"}],
       ignoredFields: [
         {field: "sku", reason: "Alias only; duplicate SKUs do not establish identity."},
@@ -319,6 +320,7 @@ export const RestMapping = Norn.mapping({
       target: {type: Holding, interface: Resource},
       subject: "input.x_norn_ref",
       sourceRecord: "'odoo/rest/stock.quant/' + input.id",
+      authority: {kind: "precedence", rank: 4},
       properties: [
         {property: "resource_code", value: "input.resource_code"},
         {property: "quantity", value: "input.quantity"},
@@ -346,6 +348,7 @@ export const RestMapping = Norn.mapping({
       target: {type: Party, interface: Agent},
       subject: "input.x_norn_ref",
       sourceRecord: "'odoo/rest/res.partner/' + input.id",
+      authority: {kind: "precedence", rank: 4},
       properties: [{property: "display_name", value: "input.label"}, {property: "kind", value: "'organization'"}],
       ignoredFields: [{field: "role", reason: "Mapped separately as an AgentRole; a customer role is not an Agent subtype."}]
     },
@@ -355,6 +358,7 @@ export const RestMapping = Norn.mapping({
       target: {type: PartyRole, interface: AgentRole},
       subject: "input.x_norn_ref + '/role/' + input.role",
       sourceRecord: "'odoo/rest/res.partner/' + input.id",
+      authority: {kind: "precedence", rank: 4},
       properties: [{property: "role", value: "input.role"}, {property: "valid_from", value: "null"}, {property: "valid_to", value: "null"}],
       links: [{link: "agent", targetMap: "party", key: "input.x_norn_ref"}],
       gaps: [
@@ -372,6 +376,7 @@ export const RestMapping = Norn.mapping({
       target: {type: OrderLine, interface: Commitment},
       subject: "input.x_norn_ref",
       sourceRecord: "'odoo/rest/sale.order.line/' + input.id",
+      authority: {kind: "precedence", rank: 4},
       properties: [
         {property: "quantity", value: "input.quantity"},
         {property: "unit", value: "input.unit"},

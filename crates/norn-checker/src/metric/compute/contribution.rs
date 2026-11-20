@@ -241,6 +241,35 @@ pub fn as_of(
     plan: &QuestionPlan,
     versions: &[(u64, RuntimeObject)],
 ) -> Result<Vec<(u64, Contribution)>, &'static str> {
+    as_of_series(
+        plan,
+        versions.iter().map(|(version, row)| (*version, row, false)),
+    )
+}
+
+/// [`as_of`] over a series where some entries are explicit withdrawals
+/// (`true`): a bucket whose last entry before its end is a withdrawal has the
+/// subject absent, exactly as if it had no earlier entry. A withdrawal reads
+/// only its time property.
+///
+/// # Errors
+/// As [`as_of`].
+pub fn as_of_withdrawing(
+    plan: &QuestionPlan,
+    versions: &[(u64, RuntimeObject, bool)],
+) -> Result<Vec<(u64, Contribution)>, &'static str> {
+    as_of_series(
+        plan,
+        versions
+            .iter()
+            .map(|(version, row, withdrawn)| (*version, row, *withdrawn)),
+    )
+}
+
+fn as_of_series<'a>(
+    plan: &QuestionPlan,
+    versions: impl Iterator<Item = (u64, &'a RuntimeObject, bool)>,
+) -> Result<Vec<(u64, Contribution)>, &'static str> {
     let [sum] = plan.sums() else {
         return Err(UNSUPPORTED_ENGINE);
     };
@@ -252,16 +281,16 @@ pub fn as_of(
     let start = parse(window.start.as_str()).map_err(|_time| UNSUPPORTED_ENGINE)?;
     let end = parse(window.end.as_str()).map_err(|_time| UNSUPPORTED_ENGINE)?;
     let mut series = versions
-        .iter()
-        .map(|(version, row)| {
+        .map(|(version, row, withdrawn)| {
             Ok((
                 instant(plan, row, sum.time_property.as_str())?,
-                *version,
+                version,
                 row,
+                withdrawn,
             ))
         })
         .collect::<Result<Vec<_>, &'static str>>()?;
-    series.sort_by_key(|(at, version, _)| (*at, *version));
+    series.sort_by_key(|(at, version, ..)| (*at, *version));
     let dimensions = &plan.question().dimensions;
     let timed: Vec<_> = dimensions.iter().filter(|d| d.grain.is_some()).collect();
     let buckets = match timed.as_slice() {
@@ -273,9 +302,14 @@ pub fn as_of(
     };
     let mut contributions = Vec::new();
     for (label, bucket_end) in buckets {
-        let Some((_, version, row)) = series.iter().rev().find(|(at, ..)| *at < bucket_end) else {
+        let Some((_, version, row, withdrawn)) =
+            series.iter().rev().find(|(at, ..)| *at < bucket_end)
+        else {
             continue;
         };
+        if *withdrawn {
+            continue;
+        }
         if !matches_filters(plan, row, &plan.question().filters)?
             || !matches_filters(plan, row, &sum.filters)?
         {

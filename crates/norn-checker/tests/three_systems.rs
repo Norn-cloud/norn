@@ -749,3 +749,188 @@ fn the_stock_cost_is_summed_per_its_currency_each_week() {
         .collect();
     assert_eq!(grouped, ["observed_at", "cost_currency"]);
 }
+
+/// SOURCE-RESOLVE-1: the three-system set with `edit` applied to the
+/// `authority` of map `map` (and, with `property`, that property rule) of
+/// `system`'s mapping, checked as the cell's admission checks it.
+fn resolution_codes(edits: &[(&str, &str, Option<&str>, Option<Value>)]) -> Vec<String> {
+    let mut set = artifacts();
+    for (system, map, property, authority) in edits {
+        let artifact = set
+            .iter_mut()
+            .find(|a| a.artifact_id == format!("{system}.three.mapping"))
+            .expect("mapping");
+        let mut wire = serde_json::to_value(&*artifact).expect("wire");
+        let rule = wire["payload"]["maps"]
+            .as_array_mut()
+            .expect("maps")
+            .iter_mut()
+            .find(|m| m["id"] == *map)
+            .expect("map");
+        let target = match property {
+            None => rule,
+            Some(property) => rule["properties"]
+                .as_array_mut()
+                .expect("properties")
+                .iter_mut()
+                .find(|p| p["property"] == *property)
+                .expect("property rule"),
+        };
+        match authority {
+            Some(authority) => target["authority"] = authority.clone(),
+            None => {
+                target.as_object_mut().expect("rule").remove("authority");
+            }
+        }
+        *artifact = serde_json::from_value(wire).expect("edited envelope");
+    }
+    admission_codes(set)
+}
+
+/// The error codes admission reports for `set`, sorted and distinct.
+fn admission_codes(set: Vec<ArtifactEnvelope>) -> Vec<String> {
+    let (base, candidate): (Vec<_>, Vec<_>) = set
+        .into_iter()
+        .partition(|a| a.artifact_id.starts_with("core.") || a.artifact_id.starts_with("std."));
+    let mut codes: Vec<String> = check_artifact_set(
+        &candidate,
+        &EntityArtifactSetContext {
+            registry: &BTreeSet::new(),
+            base: &base,
+            tenant: None,
+        },
+    )
+    .into_iter()
+    .filter(|d| d.severity == norn_ir::DiagnosticSeverity::Error)
+    .map(|d| d.code.as_str().to_owned())
+    .collect();
+    codes.sort();
+    codes.dedup();
+    codes
+}
+
+#[test]
+fn source_resolve_1_two_writers_without_a_declared_authority_are_refused() {
+    // The holding's writers rank ERPNext, Odoo, Shopify; without Odoo's
+    // declaration the holding's properties have a writer and no rule.
+    assert_eq!(
+        resolution_codes(&[("odoo", "holding", None, None)]),
+        ["mapping.resolution.undeclared"]
+    );
+}
+
+#[test]
+fn source_resolve_1_declarations_must_single_out_who_decides() {
+    let record = Some(json!({"kind": "system_of_record"}));
+    let check = Some(json!({"kind": "check"}));
+    // Two systems of record.
+    assert_eq!(
+        resolution_codes(&[
+            ("erpnext", "holding", None, record.clone()),
+            ("odoo", "holding", None, record.clone()),
+            ("shopify", "holding", None, check.clone()),
+        ]),
+        ["mapping.resolution.ambiguous"]
+    );
+    // One system of record and checks: admitted.
+    assert_eq!(
+        resolution_codes(&[
+            ("erpnext", "holding", None, record.clone()),
+            ("odoo", "holding", None, check.clone()),
+            ("shopify", "holding", None, check.clone()),
+        ]),
+        Vec::<String>::new()
+    );
+    // A repeated precedence rank.
+    assert_eq!(
+        resolution_codes(&[(
+            "odoo",
+            "item",
+            None,
+            Some(json!({"kind": "precedence", "rank": 0}))
+        )]),
+        ["mapping.resolution.ambiguous"]
+    );
+    // A system of record beside a precedence.
+    assert_eq!(
+        resolution_codes(&[("erpnext", "item", None, record)]),
+        ["mapping.resolution.ambiguous"]
+    );
+    // Nobody may decide.
+    assert_eq!(
+        resolution_codes(&[
+            ("erpnext", "holding", None, check.clone()),
+            ("odoo", "holding", None, check.clone()),
+            ("shopify", "holding", None, check),
+        ]),
+        ["mapping.resolution.no_authority"]
+    );
+}
+
+#[test]
+fn source_resolve_1_conflict_peers_are_all_or_none_and_only_on_nullable_properties() {
+    let conflict = Some(json!({"kind": "conflict"}));
+    // One conflict peer beside precedence writers.
+    assert_eq!(
+        resolution_codes(&[("odoo", "party_role", Some("valid_from"), conflict.clone())]),
+        ["mapping.resolution.mixed"]
+    );
+    // Every writer of a nullable property a conflict peer: admitted.
+    assert_eq!(
+        resolution_codes(&[
+            (
+                "erpnext",
+                "party_role",
+                Some("valid_from"),
+                conflict.clone()
+            ),
+            ("odoo", "party_role", Some("valid_from"), conflict.clone()),
+            (
+                "shopify",
+                "party_role",
+                Some("valid_from"),
+                conflict.clone()
+            ),
+        ]),
+        Vec::<String>::new()
+    );
+    // A required quantity cannot store a disagreement as null.
+    assert_eq!(
+        resolution_codes(&[
+            ("erpnext", "holding", Some("quantity"), conflict.clone()),
+            ("odoo", "holding", Some("quantity"), conflict.clone()),
+            ("shopify", "holding", Some("quantity"), conflict),
+        ]),
+        ["mapping.resolution.conflict_not_nullable"]
+    );
+}
+
+/// SOURCE-RESOLVE-1 (Sol S5): only a rule writing the map's subject to the
+/// key property is exempt, and only while every writer of that property
+/// does. Odoo writing the item `label` as its subject, undeclared, is a
+/// writer like any other, so the label is refused as undeclared.
+#[test]
+fn source_resolve_1_only_identity_writes_of_the_key_need_no_authority() {
+    let mut set = artifacts();
+    let artifact = set
+        .iter_mut()
+        .find(|a| a.artifact_id == "odoo.three.mapping")
+        .expect("mapping");
+    let mut wire = serde_json::to_value(&*artifact).expect("wire");
+    let item = wire["payload"]["maps"]
+        .as_array_mut()
+        .expect("maps")
+        .iter_mut()
+        .find(|m| m["id"] == "item")
+        .expect("item map");
+    item.as_object_mut().expect("map").remove("authority");
+    for rule in item["properties"].as_array_mut().expect("properties") {
+        match rule["property"].as_str() {
+            Some("code") => rule["authority"] = json!({"kind": "precedence", "rank": 1}),
+            Some("label") => rule["value"] = json!("input.x_norn_ref"),
+            _ => {}
+        }
+    }
+    *artifact = serde_json::from_value(wire).expect("edited envelope");
+    assert_eq!(admission_codes(set), ["mapping.resolution.undeclared"]);
+}

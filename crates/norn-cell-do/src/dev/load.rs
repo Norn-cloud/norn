@@ -119,7 +119,9 @@ pub(crate) fn load(
                 {
                     match outcome {
                         MappingOutcome::Landed => entry.1 = entry.1.saturating_add(1),
-                        MappingOutcome::AlreadyLanded => {}
+                        // SOURCE-RESOLVE-1: kept as evidence, written once
+                        // a deciding source reports.
+                        MappingOutcome::AlreadyLanded | MappingOutcome::Withheld(_) => {}
                         MappingOutcome::Quarantined(reasons) => {
                             return Err(format!(
                                 "{file}: {dataset} {member} was refused by the mapping: {}",

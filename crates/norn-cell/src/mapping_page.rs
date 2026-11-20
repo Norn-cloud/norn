@@ -252,12 +252,11 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
             .pending_page_members(&pending.observed)?;
         match self.commit_page(&observed, &members) {
             Ok(()) => {
-                return Ok(Some(
-                    members
-                        .into_iter()
-                        .map(|(id, _)| (id, MappingOutcome::Landed))
-                        .collect(),
-                ));
+                let mut outcomes = Vec::with_capacity(members.len());
+                for (id, bundle) in &members {
+                    outcomes.push((id.clone(), self.landed_outcome(bundle)?));
+                }
+                return Ok(Some(outcomes));
             }
             Err(error @ (CellError::Sqlite(_) | CellError::Engine(_))) => return Err(error),
             Err(_refused) => {}

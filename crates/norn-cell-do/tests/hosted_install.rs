@@ -28,14 +28,16 @@ use ed25519_dalek::{Signer, SigningKey};
 use norn_api::cell_definitions::{APPLY_PATH, PLAN_PATH};
 use norn_api::provision::PROVISION_PATH;
 use norn_api::scope::CellScope;
-use norn_cell::StoreOptions;
-use norn_cell::engine::NativeEngine;
+use norn_cell::engine::{NativeEngine, ReadIsolation, SqlEngine, SqlValue};
+use norn_cell::{CellError, StoreOptions};
 use norn_cell_do::base;
 use norn_cell_do::policy::DEMO_GRANTS;
 use norn_cell_do::principal::TokenPrincipals;
 use norn_cell_do::server::{Request, Response};
-use norn_cell_do::tenant::Tenant;
+use norn_cell_do::tenant::{OpenEngine, Tenant};
 use serde_json::{Value, json};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 const ISSUER: &str = "https://studio-preview.example";
 const NOW: u64 = 1_800_000_000;
@@ -113,24 +115,23 @@ fn with_law(expression: &str) -> Vec<Value> {
     artifacts
 }
 
-struct Cell {
-    tenant: Tenant<NativeEngine>,
+struct Cell<E: SqlEngine = NativeEngine> {
+    tenant: Tenant<E>,
     tokens: TokenPrincipals,
 }
 
 impl Cell {
     fn opened(path: &Path) -> Self {
         let file = path.to_owned();
-        let tenant = Tenant::open(
-            scope(),
-            &DEMO_GRANTS,
-            Box::new(move || {
-                NativeEngine::open(&file, StoreOptions::default())
-                    .map_err(|error| error.to_string())
-            }),
-            Some(&HANDLE_KEY),
-        )
-        .unwrap();
+        Self::over(Box::new(move || {
+            NativeEngine::open(&file, StoreOptions::default()).map_err(|error| error.to_string())
+        }))
+    }
+}
+
+impl<E: SqlEngine> Cell<E> {
+    fn over(open: OpenEngine<E>) -> Self {
+        let tenant = Tenant::open(scope(), &DEMO_GRANTS, open, Some(&HANDLE_KEY)).unwrap();
         let tokens = TokenPrincipals::new(ISSUER, &jwks(), scope(), tenant.caller(), NOW).unwrap();
         Self { tenant, tokens }
     }
@@ -197,7 +198,10 @@ fn json_of(response: &Response) -> Value {
 }
 
 fn provisioned(path: &Path) -> Cell {
-    let mut cell = Cell::opened(path);
+    provision(Cell::opened(path))
+}
+
+fn provision<E: SqlEngine>(mut cell: Cell<E>) -> Cell<E> {
     let body =
         json!({ "baseSha256": base::trusted_base().unwrap().sha256(), "artifacts": tenant_set() });
     let response = cell.call(
@@ -476,4 +480,108 @@ fn an_agent_plans_and_applies_a_pack_through_mcp() {
         &json!({"action": "lab.batch.erase", "input": {}}),
     );
     assert_eq!(unknown["isError"], true, "{unknown}");
+}
+
+/// A native engine whose next `failures` source-resolution reconciliations
+/// fail at their last step (clearing the pending mark): an interrupted
+/// reconciliation, injected from the test alone.
+struct Interrupting {
+    inner: NativeEngine,
+    failures: Arc<AtomicUsize>,
+}
+
+impl SqlEngine for Interrupting {
+    fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
+        let clears_mark = sql.starts_with("DELETE")
+            && params
+                .iter()
+                .any(|p| matches!(p, SqlValue::Text(t) if t == "source_resolution_pending"));
+        if clears_mark
+            && self
+                .failures
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                    left.checked_sub(1)
+                })
+                .is_ok()
+        {
+            return Err(CellError::Engine("reconciliation interrupted".to_owned()));
+        }
+        self.inner.execute(sql, params)
+    }
+    fn query(&self, sql: &str, params: &[SqlValue]) -> Result<Vec<Vec<SqlValue>>, CellError> {
+        self.inner.query(sql, params)
+    }
+    fn execute_batch(&self, sql: &str) -> Result<(), CellError> {
+        self.inner.execute_batch(sql)
+    }
+    fn transaction<T, X: From<CellError>>(&self, f: impl FnOnce() -> Result<T, X>) -> Result<T, X> {
+        self.inner.transaction(f)
+    }
+    fn read_isolation(&self) -> ReadIsolation {
+        self.inner.read_isolation()
+    }
+    fn read_cache_revision(&self) -> Result<Option<(u64, u64)>, CellError> {
+        self.inner.read_cache_revision()
+    }
+}
+
+/// SOURCE-RESOLVE-1 (#1478 r5 S2, S4): `POST /v1/cell/definitions:apply`
+/// whose first reconciliation attempt fails answers the committed revision
+/// (never `503 defs.stale` for a revision that is already active), and the
+/// next request finishes it. While a reconciliation keeps failing, a member's
+/// question (a named answer or an ad-hoc evaluation over the derived metrics)
+/// gets the typed, retryable refusal, never the 404 or the denial of a cell
+/// that publishes no questions.
+#[test]
+fn an_apply_reports_its_committed_revision_and_questions_wait_for_reconciliation() {
+    let directory = tempfile::tempdir().unwrap();
+    let file = directory.path().join("cell.sqlite");
+    let failures = Arc::new(AtomicUsize::new(0));
+    let shared = Arc::clone(&failures);
+    let mut cell = provision(Cell::over(Box::new(move || {
+        Ok(Interrupting {
+            inner: NativeEngine::open(&file, StoreOptions::default())
+                .map_err(|error| error.to_string())?,
+            failures: Arc::clone(&shared),
+        })
+    })));
+    let base = cell.version();
+
+    failures.store(1, Ordering::SeqCst);
+    let applied = cell.change(APPLY_PATH, Some("admin"), &batches_pack(), Some(base));
+    assert_eq!(applied.status, 200, "{}", applied.body);
+    let receipt = json_of(&applied);
+    assert_eq!(receipt["outcome"], "installed", "{receipt}");
+    assert_eq!(receipt["definitionsVersion"], base + 1);
+    assert!(receipt["plan"]["checkedObjects"].is_u64(), "{receipt}");
+    assert_eq!(failures.load(Ordering::SeqCst), 0, "the attempt failed");
+    assert_eq!(cell.version(), base + 1, "the next request finishes it");
+
+    failures.store(usize::MAX, Ordering::SeqCst);
+    let looser = with_law("self.input_g >= self.output_g + self.loss_g");
+    let applied = cell.change(APPLY_PATH, Some("owner"), &looser, Some(base + 1));
+    assert_eq!(applied.status, 200, "{}", applied.body);
+    let member = user("member");
+    let answer = cell.call(
+        "GET",
+        "/v1/questions/canon.stock_by_week/answer",
+        Some(&member),
+        "",
+    );
+    let evaluated = cell.call("POST", "/v1/questions:evaluate", Some(&member), "{}");
+    for response in [&answer, &evaluated] {
+        assert_eq!(response.status, 503, "{}", response.body);
+        let refusal = json_of(response);
+        assert_eq!(refusal["code"], "defs.stale", "{refusal}");
+        assert_eq!(refusal["retryable"], true, "{refusal}");
+    }
+    failures.store(0, Ordering::SeqCst);
+    let answer = cell.call(
+        "GET",
+        "/v1/questions/canon.stock_by_week/answer",
+        Some(&member),
+        "",
+    );
+    assert_ne!(answer.status, 503, "{}", answer.body);
+    assert_eq!(cell.version(), base + 2);
 }

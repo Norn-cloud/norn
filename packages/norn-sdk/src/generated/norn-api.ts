@@ -7470,6 +7470,14 @@ export interface components {
          */
         NornIrObjectMap: {
             /**
+             * @description SOURCE-RESOLVE-1: how this map's writes decide the target's
+             *     properties when another mapping writes them too. A property rule's own
+             *     `authority` overrides it. Omitted when this mapping is the only writer
+             *     of every property it maps; admission refuses a property two mappings
+             *     write with no declared authority.
+             */
+            authority?: components["schemas"]["NornIrSourceAuthority"];
+            /**
              * @description Target members deliberately left unmapped, with a reason. Omitted
              *     when empty.
              */
@@ -8126,6 +8134,11 @@ export interface components {
         NornIrPropertyId: string;
         /** @description One property rule. */
         NornIrPropertyMap: {
+            /**
+             * @description SOURCE-RESOLVE-1: this property's authority, overriding the map's.
+             *     Omitted: the map's `authority` applies.
+             */
+            authority?: components["schemas"]["NornIrSourceAuthority"];
             /**
              * @description The parent collection and child-row predicate for a nested pivot.
              *     Exactly one matching row supplies `value`; more than one is refused.
@@ -9559,6 +9572,51 @@ export interface components {
             name: string;
             /** @description Adapter version. */
             version: string;
+        };
+        /**
+         * @description SOURCE-RESOLVE-1: how one mapping's write decides a canonical property
+         *     that several mappings (several source systems) write. The canonical value
+         *     is decided by these declarations, never by which source wrote last; every
+         *     source's own report is kept with its lineage either way.
+         */
+        NornIrSourceAuthority: components["schemas"]["NornIrSourceAuthorityOneOf0"] | components["schemas"]["NornIrSourceAuthorityOneOf1"] | components["schemas"]["NornIrSourceAuthorityOneOf2"] | components["schemas"]["NornIrSourceAuthorityOneOf3"];
+        /**
+         * @description This source is the system of record: its report is the canonical
+         *     value, and every other writer of the property is a check.
+         */
+        NornIrSourceAuthorityOneOf0: {
+            /** @enum {string} */
+            kind: "system_of_record";
+        };
+        /**
+         * @description Ordered precedence: of the writers that have reported, the one with
+         *     the lowest rank decides. Ranks of one property's writers are distinct.
+         */
+        NornIrSourceAuthorityOneOf1: {
+            /** @enum {string} */
+            kind: "precedence";
+            /**
+             * Format: uint32
+             * @description Lower ranks win.
+             */
+            rank: number;
+        };
+        /**
+         * @description Never decides: the report is kept and compared with the canonical
+         *     value; a difference is a source-agreement finding.
+         */
+        NornIrSourceAuthorityOneOf2: {
+            /** @enum {string} */
+            kind: "check";
+        };
+        /**
+         * @description Peers without precedence: when every peer's report agrees that is the
+         *     value; when they disagree the property reads as an explicit conflict
+         *     listing each report, and its stored value is null.
+         */
+        NornIrSourceAuthorityOneOf3: {
+            /** @enum {string} */
+            kind: "conflict";
         };
         /** @description The `source_schema` artifact a mapping binds to. */
         NornIrSourceBinding: {

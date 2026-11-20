@@ -16,6 +16,10 @@
 //   propagates so the runtime retries too.
 // - Opening a serving cell arms for whatever is already due (cells from
 //   before alarms existed, a lost alarm).
+// - SOURCE-RESOLVE-1: while the cell is still reconciling its values to an
+//   activation (its deadline lookup refuses `defs.stale`), the deadline is
+//   unknown: the recovery wake stands in for it, and the open or the request
+//   goes on, so dispatch answers with its own typed, retryable refusal.
 //
 // The alarm only ever moves earlier outside an alarm run, so a later
 // deadline never postpones a guard or a recovery wake; an extra wake finds
@@ -23,6 +27,22 @@
 
 /** How long a guard or recovery wake waits: the longest a lost wake can delay a deadline. */
 export const RECOVERY_MS = 60_000;
+
+/** The refusal code a deadline lookup throws while the cell is still reconciling (SOURCE-RESOLVE-1). */
+export const RECONCILING = "defs.stale";
+
+/**
+ * The cell's next deadline at `now`; while the cell is still reconciling, the
+ * recovery wake instead, so a later wake retries. Any other error propagates.
+ */
+function nextDeadline(cell, now) {
+  try {
+    return cell.nextDue(now);
+  } catch (error) {
+    if (String(error) === RECONCILING) return now + RECOVERY_MS;
+    throw error;
+  }
+}
 
 export class Wake {
   /** `storage` is the object's storage: getAlarm, setAlarm, deleteAlarm. */
@@ -42,7 +62,7 @@ export class Wake {
   /** A serving cell opened: arm for whatever is already due. */
   async opened(cell, now) {
     if (!cell.serving()) return;
-    await this.earliest(cell.nextDue(now), now);
+    await this.earliest(nextDeadline(cell, now), now);
   }
   /** Before a request that may write: the guard wake is durable first. */
   async beforeWrite(cell, now) {
@@ -60,7 +80,7 @@ export class Wake {
   async afterWrite(cell, now) {
     this.writing = Math.max(0, this.writing - 1);
     if (!cell.serving()) return;
-    await this.earliest(cell.nextDue(now), now);
+    await this.earliest(nextDeadline(cell, now), now);
   }
   /**
    * One alarm run at `now`: the recovery wake, the due work, a due sync's

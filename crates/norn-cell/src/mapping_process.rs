@@ -79,11 +79,30 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
 pub enum MappingOutcome {
     /// Its canonical objects were committed now.
     Landed,
+    /// It was consumed and kept as evidence, but SOURCE-RESOLVE-1 wrote
+    /// none of these records: a property of each has no deciding report yet
+    /// (only checks reported it). Each names the writers it awaits; the
+    /// record is written once one of them reports. A sync counts it as held
+    /// back (`source.resolution.withheld`), never as landed.
+    Withheld(Vec<crate::source_resolution::WithheldSubject>),
     /// It was already consumed (the same source event, captured before).
     AlreadyLanded,
     /// It stays in the inbox as quarantined evidence, for these reasons
     /// (mapping diagnostic codes, or the cell's refusal code).
     Quarantined(Vec<String>),
+}
+
+impl MappingOutcome {
+    /// Why a sync holds the row back, by code; `None` when it landed (now or
+    /// before). A withheld row is held back as [`WITHHELD_REASON`].
+    #[must_use]
+    pub fn held_back(&self) -> Option<Vec<String>> {
+        match self {
+            Self::Landed | Self::AlreadyLanded => None,
+            Self::Withheld(_) => Some(vec![WITHHELD_REASON.to_owned()]),
+            Self::Quarantined(codes) => Some(codes.clone()),
+        }
+    }
 }
 
 impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S> {
@@ -108,7 +127,7 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
             });
         }
         let Some(pending) = self.store().read().pending_observation(observation_id)? else {
-            return Ok(MappingOutcome::AlreadyLanded);
+            return self.redelivered_outcome(observation_id);
         };
         let observed: Observed<RuntimeValue> =
             norn_ir::runtime::decode(&pending.observed).map_err(CellError::Encoding)?;
@@ -130,13 +149,153 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
             return Ok(MappingOutcome::Quarantined(codes));
         }
         match self.process_mapping_bundle(observation_id) {
-            Ok(true) => Ok(MappingOutcome::Landed),
-            Ok(false) => Ok(MappingOutcome::AlreadyLanded),
+            Ok(true) => self.landed_outcome(&bundle),
+            Ok(false) => self.redelivered_outcome(observation_id),
             Err(error @ (CellError::Sqlite(_) | CellError::Engine(_))) => Err(error),
             Err(error) => Ok(MappingOutcome::Quarantined(vec![refusal_code(&error)])),
         }
     }
 }
+
+impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S> {
+    /// The outcome of a bundle just consumed: landed, or withheld when
+    /// SOURCE-RESOLVE-1 wrote none of some of its records.
+    pub(crate) fn landed_outcome(
+        &self,
+        bundle: &MappingBundle,
+    ) -> Result<MappingOutcome, CellError> {
+        let withheld = self.store().read().withheld_subjects(bundle)?;
+        Ok(if withheld.is_empty() {
+            MappingOutcome::Landed
+        } else {
+            MappingOutcome::Withheld(withheld)
+        })
+    }
+}
+
+impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S> {
+    /// The outcome of a row consumed before: still [`MappingOutcome::Withheld`]
+    /// while SOURCE-RESOLVE-1 withholds some of its records (their deciding
+    /// source has not reported), so a redelivery never counts it as landed;
+    /// otherwise [`MappingOutcome::AlreadyLanded`].
+    fn redelivered_outcome(&self, observation_id: &str) -> Result<MappingOutcome, CellError> {
+        let reader = self.store().read();
+        let Some(bundle) = reader.consumed_mapping_bundle(observation_id)? else {
+            return Ok(MappingOutcome::AlreadyLanded);
+        };
+        let withheld = reader.withheld_subjects(&bundle)?;
+        Ok(if withheld.is_empty() {
+            MappingOutcome::AlreadyLanded
+        } else {
+            MappingOutcome::Withheld(withheld)
+        })
+    }
+}
+
+impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S> {
+    /// SOURCE-RESOLVE-1: after definitions with changed authorities are
+    /// activated, write every subject whose stored values differ from what
+    /// the active definitions decide over its retained reports, so the
+    /// current resolution read and the stored value agree. Hosts call it
+    /// right after each activation; it writes nothing when they agree.
+    /// The activation commit marks it pending and this clears the mark once
+    /// every chunk has committed, so a host that reopens a cell with the
+    /// mark set ([`crate::CellStore::source_resolution_pending`]) resumes it before
+    /// serving; a resumed pass recomputes and skips chunks already consumed.
+    /// Returns the number of subjects written.
+    ///
+    /// # Errors
+    /// Store failures, or a write the kernel refuses.
+    pub fn reconcile_source_resolution(&mut self) -> Result<usize, CellError> {
+        let changes = self.store().read().reconciliation()?;
+        if changes.is_empty() {
+            self.store().finish_source_resolution()?;
+            return Ok(0);
+        }
+        let model = self.store().model().clone();
+        let catalog = TypeCatalog::new(model.object_types())
+            .with_interfaces(model.interfaces())
+            .with_property_types(model.property_types())
+            .with_governing_laws(model.law_artifacts());
+        let version = self
+            .store()
+            .read()
+            .active_definitions_version()?
+            .unwrap_or(0);
+        let mut written: usize = 0;
+        for chunk in changes.chunks(RECONCILE_CHUNK) {
+            // The kernel admits observed writes only as a delivery: each
+            // chunk is a cell-owned one naming the activation and subjects,
+            // addressed by its content so a retry consumes the same one.
+            let subjects: Vec<RuntimeValue> = chunk
+                .iter()
+                .map(|(t, k, ..)| RuntimeValue::Array(vec![t.as_str().into(), k.as_str().into()]))
+                .collect();
+            let input = norn_ir::runtime_object! {
+                "contract"=>"norn.source_resolution/v1", "definitions_version"=>version, "subjects"=>RuntimeValue::Array(subjects),
+            }
+            .as_object()
+            .cloned()
+            .ok_or(CellError::MappingBundleMismatch)?;
+            let digest = norn_ir::canonical::domain_hash_hex(
+                b"norn.source.resolution.v1\0",
+                &serde_json::to_value(&input)?,
+            )?;
+            let observed = Observed {
+                id: norn_kernel::ObservationId(format!("source-resolution:{digest}")),
+                provenance: norn_kernel::Provenance {
+                    source: "norn.cell".into(),
+                    source_id: format!("definitions/{version}"),
+                    mapping_version: "source-resolution/1".into(),
+                    observed_at: self.now(),
+                },
+                input,
+            };
+            if !self.inject(&observed)?
+                && self
+                    .store()
+                    .read()
+                    .pending_observation(&observed.id.0)?
+                    .is_none()
+            {
+                // Already consumed: this exact reconciliation was committed.
+                continue;
+            }
+            let turn = DecisionTurn {
+                id: observed.id.0.clone(),
+                now: self.now(),
+                world: self.store().world(),
+                consumes: Some(observed.consumed()),
+            };
+            let mut commit = CellCommit::empty().consuming(observed.consumed());
+            let mut authorization = ObservationAuthorization::empty();
+            let reader = self.store().read();
+            for (object_type, key, values, provenance) in chunk {
+                reader.prepare_resolved_write(
+                    &catalog,
+                    &turn,
+                    (object_type, key, values, provenance),
+                    &mut commit,
+                    &mut authorization,
+                )?;
+            }
+            authorization
+                .seal_snapshot_event_chunks(&commit)
+                .map_err(|e| CellError::ObservationPreparation(Box::new(e)))?;
+            self.commit_observed_evidence(commit, &authorization, &[])
+                .map_err(|e| CellError::ObservationCommit(Box::new(e)))?;
+            written = written.saturating_add(chunk.len());
+        }
+        self.store().finish_source_resolution()?;
+        Ok(written)
+    }
+}
+
+/// Subjects one reconciliation commit writes.
+const RECONCILE_CHUNK: usize = 256;
+
+/// The reason SOURCE-RESOLVE-1 withholds a row, as a sync counts it.
+pub const WITHHELD_REASON: &str = "source.resolution.withheld";
 
 /// The reason a cell refusal quarantines a row: the leading dotted code of
 /// its message when it has one; otherwise the generic mapping refusal with
@@ -185,6 +344,18 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         commit: &mut CellCommit<ObservationEvent, RuntimeObject, RuntimeObject>,
         authorization: &mut ObservationAuthorization,
     ) -> Result<(), CellError> {
+        // SOURCE-RESOLVE-1: a subject this source record contributed to and
+        // no longer reports is decided again over the remaining reports.
+        let id = format!("mapping-bundle:{}", bundle.digest);
+        for (object_type, key, values, provenance) in self.withdrawn_changes(bundle, &id)? {
+            self.prepare_resolved_write(
+                catalog,
+                turn,
+                (&object_type, &key, &values, &provenance),
+                commit,
+                authorization,
+            )?;
+        }
         for record in &bundle.records {
             if record.invocations.len() != 1 {
                 return Err(CellError::UnsupportedMappingProfile);
@@ -198,6 +369,21 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 .input
                 .clone();
             values.remove(norn_checker::mapping::OBJECT_ID_FIELD);
+            // SOURCE-RESOLVE-1: a property several sources write takes the
+            // value its declared authorities decide over every source's
+            // latest report, never this report's merely for arriving last.
+            let current = slice.get(&key).and_then(|state| state.values.as_ref());
+            match self.resolve_mapped_record(bundle, record, current)? {
+                crate::source_resolution::Applied::AsMapped => {}
+                crate::source_resolution::Applied::Withheld
+                | crate::source_resolution::Applied::Superseded => continue,
+                crate::source_resolution::Applied::Values(resolved) => {
+                    if resolved.is_empty() && record.lifecycle_snapshots.is_empty() {
+                        continue;
+                    }
+                    values = resolved;
+                }
+            }
             let prepared = prepare_observed_snapshot(
                 catalog,
                 &slice,
@@ -215,6 +401,39 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 .map_err(|e| CellError::ObservationPreparation(Box::new(e)))?;
         }
         Ok(())
+    }
+
+    /// Append the observed write of `values` (decided by SOURCE-RESOLVE-1,
+    /// attributed to `provenance`) to `object_type`/`key`.
+    pub(crate) fn prepare_resolved_write(
+        &self,
+        catalog: &TypeCatalog<'_>,
+        turn: &DecisionTurn,
+        (object_type, key, values, provenance): (
+            &str,
+            &str,
+            &RuntimeObject,
+            &norn_ir::provenance::InstanceProvenance,
+        ),
+        commit: &mut CellCommit<ObservationEvent, RuntimeObject, RuntimeObject>,
+        authorization: &mut ObservationAuthorization,
+    ) -> Result<(), CellError> {
+        let key = FactKey::new(object_type, key);
+        let slice = self.mapping_observation_slice(&key)?;
+        prepare_observed_snapshot(
+            catalog,
+            &slice,
+            turn,
+            ObservedSnapshot {
+                key: &key,
+                values,
+                lifecycles: &[],
+                provenance,
+            },
+        )
+        .map_err(|e| CellError::ObservationPreparation(Box::new(e)))?
+        .append_to(commit, authorization)
+        .map_err(|e| CellError::ObservationPreparation(Box::new(e)))
     }
 
     // OBS-EVIDENCE-1: cell-owned observation preparation retains raw versions in quarantine.

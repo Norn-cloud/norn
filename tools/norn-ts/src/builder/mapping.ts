@@ -31,6 +31,16 @@ export interface ArtifactPin {
 
 export type GapReason = "not_in_source" | "defaulted" | "deferred" | "derived_elsewhere"
 
+/**
+ * SOURCE-RESOLVE-1: how a map's writes decide a canonical property other
+ * mappings write too (`SourceAuthority` in `crates/norn-ir/src/mapping.rs`).
+ */
+export type SourceAuthority =
+  | { readonly kind: "system_of_record" }
+  | { readonly kind: "precedence"; readonly rank: number }
+  | { readonly kind: "check" }
+  | { readonly kind: "conflict" }
+
 export interface ObjectMapDecl {
   readonly id: string
   readonly source: { readonly dataset: string; readonly nestedIn?: { readonly dataset: string; readonly field: string } }
@@ -38,11 +48,13 @@ export interface ObjectMapDecl {
   readonly when?: string
   readonly subject: string
   readonly sourceRecord: string
-  readonly properties?: ReadonlyArray<{ readonly property: string; readonly value: string }>
+  readonly properties?: ReadonlyArray<{ readonly property: string; readonly value: string; readonly authority?: SourceAuthority }>
   readonly links?: ReadonlyArray<{ readonly link: string; readonly targetMap: string; readonly key: string }>
   readonly lifecycles?: ReadonlyArray<{ readonly property: string; readonly state?: string; readonly transition?: string; readonly onDelete?: string }>
   readonly gaps?: ReadonlyArray<{ readonly member: string; readonly reason: GapReason; readonly note?: string }>
   readonly ignoredFields?: ReadonlyArray<{ readonly field: string; readonly reason: string }>
+  /** The map's authority over the properties it writes; a property rule's own overrides it. */
+  readonly authority?: SourceAuthority
 }
 
 /** API terms are access evidence, independent of artifact redistribution provenance. */
@@ -127,6 +139,7 @@ export function lowerMapping(def: MappingDef, options: EnvelopeOptions): Mapping
       lifecycles: omitEmpty(m.lifecycles),
       gaps: omitEmpty(m.gaps),
       ignoredFields: omitEmpty(m.ignoredFields),
+      authority: m.authority,
     })),
   }
   const artifact = envelope(

@@ -128,6 +128,12 @@ impl<E: SqlEngine> CellStore<E> {
             return Err(refused(UNSUPPORTED_ENGINE));
         }
         crate::compute::check_question_cutoff(plan, cutoff)?;
+        // SOURCE-RESOLVE-1: the mirror holds version history only; a snapshot
+        // over reports several sources resolve is answered from per-slice
+        // resolution, which only the exact engine reads.
+        if plan.as_of() && self.read().resolves_reports_of(plan.grain().as_str())? {
+            return Err(refused(UNSUPPORTED_ENGINE));
+        }
         let bound = self.check_question_plan(plan)?;
         let mut query = lower(plan)?;
         let (revision, receipt) = match cutoff {

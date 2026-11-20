@@ -57,6 +57,7 @@
 mod compile;
 pub mod evidence;
 pub mod lens;
+pub mod resolution;
 mod set;
 mod snapshot_lint;
 pub mod vendor;
@@ -181,6 +182,24 @@ pub mod codes {
 
     /// A principal key is not backed by an explicit reviewed binding.
     pub const INVALID_IDENTITY_BINDING: &str = "mapping.validation.invalid_identity_binding";
+
+    /// SOURCE-RESOLVE-1: a canonical property is written by more than one
+    /// mapping and some writer declares no authority.
+    pub const RESOLUTION_UNDECLARED: &str = "mapping.resolution.undeclared";
+    /// SOURCE-RESOLVE-1: a canonical property's writers do not single out who
+    /// decides it (two systems of record, a system of record beside a
+    /// precedence, a repeated rank, or two authorities in one mapping).
+    pub const RESOLUTION_AMBIGUOUS: &str = "mapping.resolution.ambiguous";
+    /// SOURCE-RESOLVE-1: every writer of a canonical property is a check.
+    pub const RESOLUTION_NO_AUTHORITY: &str = "mapping.resolution.no_authority";
+    /// SOURCE-RESOLVE-1: conflict peers are mixed with other authorities.
+    pub const RESOLUTION_MIXED: &str = "mapping.resolution.mixed";
+    /// SOURCE-RESOLVE-1: a conflict property is not nullable, so a
+    /// disagreement could not store null.
+    pub const RESOLUTION_CONFLICT_NOT_NULLABLE: &str = "mapping.resolution.conflict_not_nullable";
+    /// SOURCE-RESOLVE-1: more than one mapping observes one lifecycle
+    /// property, which source resolution does not decide yet.
+    pub const RESOLUTION_LIFECYCLE_OVERLAP: &str = "mapping.resolution.lifecycle_overlap";
 }
 
 /// Decode a `MappingIR` document from its wire JSON and run
@@ -520,6 +539,9 @@ struct ModelType {
     markings: BTreeMap<String, Vec<MarkingId>>,
     /// The states and declared transitions by lifecycle property.
     lifecycles: BTreeMap<String, ModelLifecycle>,
+    /// SOURCE-RESOLVE-1: the properties that hold the object's key exactly
+    /// (each a single-component key without normalization).
+    keys: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -602,6 +624,7 @@ impl MappingModel {
                             })
                             .collect(),
                         lifecycles,
+                        keys: resolution::key_properties(object_type),
                     },
                 );
             }
@@ -630,6 +653,15 @@ impl MappingModel {
             object_types,
             interfaces,
         })
+    }
+
+    /// SOURCE-RESOLVE-1: the properties of `object_type` that hold its key
+    /// exactly, so a rule writing the map's subject to one writes the key.
+    pub(crate) fn key_properties(&self, object_type: &str) -> BTreeSet<String> {
+        self.types
+            .get(object_type)
+            .map(|t| t.keys.clone())
+            .unwrap_or_default()
     }
 
     /// The object type the `entity` artifact `artifact_id` defines.
