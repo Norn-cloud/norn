@@ -308,9 +308,6 @@ fn a_loaded_datasets_grid_equals_the_native_grid_of_the_same_rows() {
         norn_api::uploads::load_rows(&host, &generated, &table, &uri, &sha256, 2).unwrap();
     }
     let tables: BTreeMap<String, TableSchema> = host
-        .cell()
-        .unwrap()
-        .store()
         .analytics_tables()
         .unwrap()
         .into_iter()
