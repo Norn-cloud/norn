@@ -313,7 +313,7 @@ impl Connect {
     ///
     /// # Errors
     /// Malformed configuration, or a deployment secret under a connection
-    /// secret's name ([`connection_secrets`]).
+    /// secret's name (`NORN_SECRET_S3_*`, `NORN_SECRET_OLAP_*`, `NORN_SECRET_DUCKDB_*`).
     pub fn new(config: &str, vars: &str) -> Result<Self, String> {
         let vars: BTreeMap<String, String> =
             serde_json::from_str(vars).map_err(|e| format!("server variables: {e}"))?;
