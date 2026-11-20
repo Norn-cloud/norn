@@ -5,6 +5,7 @@
 //! any cell: requests reach the actor through the engine's gateway.
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result};
 use norn_cell_rivet::config::{self, HostConfig};
@@ -34,14 +35,7 @@ async fn main() -> Result<()> {
     runner_config.engine_spawn = rivetkit::EngineSpawnMode::Never;
     runner_config.engine_auto_download = false;
     let shutdown = CancellationToken::new();
-    let runner = tokio::spawn({
-        let shutdown = shutdown.clone();
-        async move {
-            norn_cell_rivet::registry()
-                .serve_with_config(runner_config, shutdown)
-                .await
-        }
-    });
+    let runner = tokio::spawn(serve_actors(runner_config, shutdown.clone()));
     let client = Client::new(ClientConfig::new(endpoint));
     let router = Arc::new(Router::new(client, Arc::clone(&config)));
     let listener = tokio::net::TcpListener::bind(&listen)
@@ -59,4 +53,40 @@ async fn main() -> Result<()> {
     }
     shutdown.cancel();
     Ok(())
+}
+
+/// Serve the actors until shutdown. A runner that cannot join the engine (the
+/// engine restarting, its storage still settling after a restart, the load
+/// balancer between instances) retries with backoff instead of exiting: the
+/// cells it hosts come back as soon as the control plane does.
+async fn serve_actors(config: rivetkit::ServeConfig, shutdown: CancellationToken) -> Result<()> {
+    const FIRST: Duration = Duration::from_secs(1);
+    const LONGEST: Duration = Duration::from_secs(30);
+    let mut backoff = FIRST;
+    loop {
+        let started = Instant::now();
+        let served = norn_cell_rivet::registry()
+            .serve_with_config(config.clone(), shutdown.clone())
+            .await;
+        if shutdown.is_cancelled() {
+            return served;
+        }
+        match served {
+            Ok(()) => {
+                tracing::warn!("the engine connection ended; rejoining");
+            }
+            Err(error) => {
+                tracing::warn!(error = %format!("{error:#}"), retry_in = ?backoff, "joining the engine failed; retrying");
+            }
+        }
+        // A connection that lasted resets the backoff.
+        if started.elapsed() > LONGEST.saturating_mul(2) {
+            backoff = FIRST;
+        }
+        tokio::select! {
+            () = tokio::time::sleep(backoff) => {}
+            () = shutdown.cancelled() => return Ok(()),
+        }
+        backoff = backoff.saturating_mul(2).min(LONGEST);
+    }
 }
