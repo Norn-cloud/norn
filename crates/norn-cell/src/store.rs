@@ -2185,6 +2185,7 @@ impl<E: SqlEngine> CellStore<E> {
             ));
         }
         conn.transaction(|| Self::init_schema(&conn, &model, &mut |_| Ok(cell_id.clone())))?;
+        conn.admitted()?;
         Ok(Self::unverified(conn, model))
     }
 
@@ -2318,6 +2319,7 @@ impl<E: SqlEngine> CellStore<E> {
             .map_err(|error| match error {
                 GuardedError::Guard(error) | GuardedError::Store(error) => error,
             })?;
+        store.conn.admitted()?;
         Ok(store)
     }
 
@@ -2575,6 +2577,8 @@ impl<E: SqlEngine> CellStore<E> {
         store.quantity_boundary.set(boundary);
         store.transparency.replace(transparency);
         store.fork = fork;
+        // Only an accepted file takes the requested journal mode (#1504).
+        store.conn.admitted()?;
         Ok(store)
     }
 }
