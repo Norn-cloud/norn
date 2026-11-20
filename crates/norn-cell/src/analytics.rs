@@ -629,6 +629,273 @@ pub struct LoadResponse {
     pub millis: u64,
 }
 
+/// MANIFEST-LAWS-1: a row predicate the engine evaluates set-based, lowered
+/// from an admitted ZEN expression (the VIEW-ENGINE-1 row subset). It carries
+/// no SQL: the engine builds its statement from this tree, its own table
+/// schema and bound literals, and refuses a tree its kinds do not type.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "op", content = "args")]
+pub enum RowPredicate {
+    /// `null`: only as an operand of `==` or `!=`.
+    Null,
+    /// A Boolean literal.
+    Bool(bool),
+    /// An exact decimal literal, canonical.
+    Number(String),
+    /// A text literal.
+    Text(String),
+    /// `self.<column>`.
+    Column(String),
+    /// `not x`.
+    Not(Box<RowPredicate>),
+    /// `-x`.
+    Negate(Box<RowPredicate>),
+    /// `x + y`.
+    Add(Box<RowPredicate>, Box<RowPredicate>),
+    /// `x - y`.
+    Subtract(Box<RowPredicate>, Box<RowPredicate>),
+    /// `x * y`.
+    Multiply(Box<RowPredicate>, Box<RowPredicate>),
+    /// `x == y`.
+    Equal(Box<RowPredicate>, Box<RowPredicate>),
+    /// `x != y`.
+    NotEqual(Box<RowPredicate>, Box<RowPredicate>),
+    /// `x < y`, on numbers.
+    Less(Box<RowPredicate>, Box<RowPredicate>),
+    /// `x <= y`, on numbers.
+    LessOrEqual(Box<RowPredicate>, Box<RowPredicate>),
+    /// `x > y`, on numbers.
+    Greater(Box<RowPredicate>, Box<RowPredicate>),
+    /// `x >= y`, on numbers.
+    GreaterOrEqual(Box<RowPredicate>, Box<RowPredicate>),
+    /// `x and y`.
+    And(Box<RowPredicate>, Box<RowPredicate>),
+    /// `x or y`.
+    Or(Box<RowPredicate>, Box<RowPredicate>),
+    /// `c ? x : y`.
+    Conditional(Box<RowPredicate>, Box<RowPredicate>, Box<RowPredicate>),
+}
+
+/// The kind of a [`RowPredicate`] node over a table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PredicateKind {
+    /// The `null` literal.
+    Null,
+    /// A Boolean.
+    Bool,
+    /// Text.
+    Text,
+    /// An exact decimal with this many fractional digits.
+    Number(u32),
+}
+
+/// The largest scale a lowered number may reach: past it the per-row
+/// evaluator's decimal cannot hold the value exactly.
+pub const MAX_PREDICATE_SCALE: u32 = 28;
+
+impl RowPredicate {
+    /// MANIFEST-LAWS-1: the kind of this node over `table`, when every node is
+    /// typed the way both the per-row evaluator and the engine compute it
+    /// exactly: numbers compare and compute only with numbers, text and
+    /// Booleans only compare for equality, `null` only appears as an
+    /// operand of `==` or `!=`, and no scale passes
+    /// [`MAX_PREDICATE_SCALE`]. `None` for anything else; such a check is
+    /// left to the per-row evaluator.
+    #[must_use]
+    pub fn kind(&self, table: &TableSchema) -> Option<PredicateKind> {
+        self.kind_in(table, false)
+    }
+
+    fn kind_in(&self, table: &TableSchema, null_allowed: bool) -> Option<PredicateKind> {
+        use PredicateKind as K;
+        let number = |a: &Self, b: &Self| match (a.kind_in(table, false)?, b.kind_in(table, false)?)
+        {
+            (K::Number(x), K::Number(y)) => Some((x, y)),
+            _ => None,
+        };
+        let kind = match self {
+            Self::Null => null_allowed.then_some(K::Null)?,
+            Self::Bool(_) => K::Bool,
+            Self::Number(text) => {
+                let exact = norn_ir::Decimal::parse(text).ok()?;
+                if exact.canonical() != *text {
+                    return None;
+                }
+                K::Number(u32::try_from(text.split_once('.').map_or(0, |(_, f)| f.len())).ok()?)
+            }
+            Self::Text(_) => K::Text,
+            Self::Column(id) => match table.columns.iter().find(|c| c.id == *id)?.kind {
+                ColumnKind::Integer => K::Number(0),
+                ColumnKind::Decimal { scale } => K::Number(scale),
+                ColumnKind::Text => K::Text,
+                ColumnKind::Boolean => K::Bool,
+                ColumnKind::Timestamp | ColumnKind::Date | ColumnKind::Opaque => return None,
+            },
+            Self::Not(inner) => (inner.kind_in(table, false)? == K::Bool).then_some(K::Bool)?,
+            Self::Negate(inner) => match inner.kind_in(table, false)? {
+                K::Number(scale) => K::Number(scale),
+                K::Null | K::Bool | K::Text => return None,
+            },
+            Self::Add(a, b) | Self::Subtract(a, b) => {
+                let (x, y) = number(a, b)?;
+                K::Number(x.max(y))
+            }
+            Self::Multiply(a, b) => {
+                let (x, y) = number(a, b)?;
+                K::Number(x.checked_add(y)?)
+            }
+            Self::Equal(a, b) | Self::NotEqual(a, b) => {
+                let (x, y) = (a.kind_in(table, true)?, b.kind_in(table, true)?);
+                let same = match (x, y) {
+                    (K::Number(_), K::Number(_)) | (K::Null, _) | (_, K::Null) => true,
+                    (x, y) => x == y,
+                };
+                same.then_some(K::Bool)?
+            }
+            Self::Less(a, b)
+            | Self::LessOrEqual(a, b)
+            | Self::Greater(a, b)
+            | Self::GreaterOrEqual(a, b) => {
+                number(a, b)?;
+                K::Bool
+            }
+            Self::And(a, b) | Self::Or(a, b) => (a.kind_in(table, false)? == K::Bool
+                && b.kind_in(table, false)? == K::Bool)
+                .then_some(K::Bool)?,
+            Self::Conditional(test, then, otherwise) => {
+                if test.kind_in(table, false)? != K::Bool {
+                    return None;
+                }
+                match (
+                    then.kind_in(table, false)?,
+                    otherwise.kind_in(table, false)?,
+                ) {
+                    (K::Number(left), K::Number(right)) => K::Number(left.max(right)),
+                    (left, right) if left == right => left,
+                    _ => return None,
+                }
+            }
+        };
+        match kind {
+            K::Number(scale) if scale > MAX_PREDICATE_SCALE => None,
+            kind @ (K::Null | K::Bool | K::Text | K::Number(_)) => Some(kind),
+        }
+    }
+
+    /// Every column the predicate reads, in order of first read.
+    #[must_use]
+    pub fn reads(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        self.collect_reads(&mut out);
+        out
+    }
+
+    fn collect_reads(&self, out: &mut Vec<String>) {
+        match self {
+            Self::Null | Self::Bool(_) | Self::Number(_) | Self::Text(_) => {}
+            Self::Column(id) => {
+                if !out.contains(id) {
+                    out.push(id.clone());
+                }
+            }
+            Self::Not(inner) | Self::Negate(inner) => inner.collect_reads(out),
+            Self::Add(a, b)
+            | Self::Subtract(a, b)
+            | Self::Multiply(a, b)
+            | Self::Equal(a, b)
+            | Self::NotEqual(a, b)
+            | Self::Less(a, b)
+            | Self::LessOrEqual(a, b)
+            | Self::Greater(a, b)
+            | Self::GreaterOrEqual(a, b)
+            | Self::And(a, b)
+            | Self::Or(a, b) => {
+                a.collect_reads(out);
+                b.collect_reads(out);
+            }
+            Self::Conditional(c, a, b) => {
+                c.collect_reads(out);
+                a.collect_reads(out);
+                b.collect_reads(out);
+            }
+        }
+    }
+}
+
+/// MANIFEST-LAWS-1: one law or invariant, as the engine checks it over a
+/// landing. Where the condition holds, the predicate must equal `expect`;
+/// a row where it does not fails the rule.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RuleCheck {
+    /// The rule identity findings carry: canonical JSON of its reference.
+    pub rule: String,
+    /// The law or invariant id, for people.
+    pub label: String,
+    /// DATA-QUARANTINE: whether a failing row is held back.
+    pub holds: bool,
+    /// The activation condition, if the rule has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub condition: Option<RowPredicate>,
+    /// The predicate, or `None` for a rule outside the lowered subset: every
+    /// row is then left to the per-row evaluator.
+    pub predicate: Option<RowPredicate>,
+    /// The value the predicate must have (`always`: true, `never`: false).
+    pub expect: bool,
+}
+
+/// One rule a row fails, as the per-row evaluator found it for a residue row.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RowFinding {
+    /// The source row offset.
+    pub row: u64,
+    /// The rule identity.
+    pub rule: String,
+    /// The law or invariant id, for people.
+    pub label: String,
+    /// Whether it holds the row back.
+    pub holds: bool,
+}
+
+/// A row the engine left to the per-row evaluator: a value a rule reads is
+/// absent, a value is out of the exactly computed range, or a rule is
+/// outside the lowered subset.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ResidueRow {
+    /// The source row offset.
+    pub row: u64,
+    /// Every present value of the row.
+    pub values: BTreeMap<String, Value>,
+}
+
+/// Findings of one rule over a landing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RuleCount {
+    /// The law or invariant id.
+    pub label: String,
+    /// Rows that fail it.
+    pub rows: u64,
+    /// Whether it holds a failing row back.
+    pub holds: bool,
+}
+
+/// MANIFEST-LAWS-1: settle a landing's residue rows up to `through` with the
+/// findings the per-row evaluator gave them; once no residue remains, the
+/// landing's files are written and sent as [`LandRequest`] says.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SettleRequest {
+    /// The landing, with fresh URLs.
+    pub land: LandRequest,
+    /// The last residue row these findings cover.
+    pub through: u64,
+    /// Every finding of the residue rows up to `through`.
+    pub findings: Vec<RowFinding>,
+}
+
 /// MANIFEST-LAND-1: load a dataset file and land it as columnar files. The
 /// typed rows go to the data file and the held-back rows to the held file,
 /// each written to its presigned PUT URL. The engine table that answers
@@ -642,6 +909,11 @@ pub struct LandRequest {
     pub data_url: String,
     /// A presigned PUT URL for the held-set file (Parquet).
     pub held_url: String,
+    /// MANIFEST-LAWS-1: every law and invariant that governs the type.
+    #[serde(default)]
+    pub checks: Vec<RuleCheck>,
+    /// Residue rows an answer carries at most.
+    pub residue_page: u32,
 }
 
 /// One landed file: its content identity as the engine wrote it.
@@ -674,12 +946,22 @@ pub struct ValidRange {
 pub struct LandResponse {
     /// The load's counts, as [`LoadResponse`].
     pub load: LoadResponse,
-    /// The data file: every admitted row with its source row offset.
-    pub data: LandedFile,
-    /// The held-set file: one row per held-back source row and reason.
-    pub held: LandedFile,
+    /// The data file: every admitted row with its source row offset; absent
+    /// while residue remains.
+    pub data: Option<LandedFile>,
+    /// The held-set file: each held-back source row and its reason, and each
+    /// finding; absent while residue remains.
+    pub held: Option<LandedFile>,
     /// Each temporal column's range over the admitted rows.
     pub valid_time: Vec<ValidRange>,
+    /// Findings by rule.
+    pub findings: BTreeMap<String, RuleCount>,
+    /// Admitted rows held back by a rule.
+    pub held_by_rules: u64,
+    /// Residue rows left to settle.
+    pub residue_total: u64,
+    /// The next residue rows, in row order.
+    pub residue: Vec<ResidueRow>,
 }
 
 /// MANIFEST-CACHE-1: rebuild the engine's table of a landing from its

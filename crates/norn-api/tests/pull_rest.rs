@@ -865,9 +865,13 @@ impl norn_api::analytics_routes::Transport for ThreeAndOne {
                 bytes: 64,
                 millis: 5,
             },
-            data: file(3),
-            held: file(1),
+            data: Some(file(3)),
+            held: Some(file(1)),
             valid_time: Vec::new(),
+            findings: BTreeMap::new(),
+            held_by_rules: 0,
+            residue_total: 0,
+            residue: Vec::new(),
         };
         assert!(
             request.data_url.ends_with("/data.parquet"),

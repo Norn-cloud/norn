@@ -19,7 +19,9 @@ use std::sync::Mutex;
 use norn_api::analytics_routes::{EngineAnswer, EngineCall, Transport, UploadRecord, Uploads};
 use norn_api::host::DevHost;
 use norn_cell::analytics::engine::{Engine, Settings};
-use norn_cell::analytics::{Column, ColumnKind, LandRequest, PointLaw, TableSchema, hex_digest};
+use norn_cell::analytics::{
+    Column, ColumnKind, LandRequest, PointLaw, SettleRequest, TableSchema, hex_digest,
+};
 use norn_cell::engine::NativeEngine;
 use norn_cell_do::olap::InProcess;
 use norn_cell_do::policy::{DEMO_GRANTS, ReadPolicy};
@@ -39,19 +41,27 @@ impl Transport for Loading {
         None
     }
     fn call(&self, call: &EngineCall) -> Option<EngineAnswer> {
-        if call.op != "land" {
-            return self.0.call(call);
-        }
-        let request: LandRequest = serde_json::from_str(&call.body).expect("a landing");
-        let bytes = self.1.lock().unwrap()[&request.load.file.url].clone();
-        let path = self
-            .0
-            .0
-            .scratch()
-            .join(format!("load-{}", request.load.load));
-        std::fs::write(&path, bytes).expect("scratch file");
-        let landed = self.0.0.land(&request.load, &path);
-        std::fs::remove_file(&path).expect("scratch removed");
+        let (request, landed) = match call.op.as_str() {
+            "land" => {
+                let request: LandRequest = serde_json::from_str(&call.body).expect("a landing");
+                let bytes = self.1.lock().unwrap()[&request.load.file.url].clone();
+                let path = self
+                    .0
+                    .0
+                    .scratch()
+                    .join(format!("load-{}", request.load.load));
+                std::fs::write(&path, bytes).expect("scratch file");
+                let landed = self.0.0.land(&request, &path);
+                std::fs::remove_file(&path).expect("scratch removed");
+                (request, landed)
+            }
+            "settle" => {
+                let request: SettleRequest = serde_json::from_str(&call.body).expect("a settle");
+                let landed = self.0.0.settle(&request);
+                (request.land, landed)
+            }
+            _ => return self.0.call(call),
+        };
         let (status, body) = match landed {
             Ok(landed) => {
                 // MANIFEST-LAND-1: the landed files go to their PUT URLs.
@@ -60,8 +70,10 @@ impl Transport for Loading {
                     (&request.data_url, &landed.data),
                     (&request.held_url, &landed.held),
                 ] {
-                    files.insert(url.clone(), std::fs::read(file).expect("landed file"));
-                    std::fs::remove_file(file).expect("landed file removed");
+                    if let Some(file) = file {
+                        files.insert(url.clone(), std::fs::read(file).expect("landed file"));
+                        std::fs::remove_file(file).expect("landed file removed");
+                    }
                 }
                 (200, serde_json::to_string(&landed.response).unwrap())
             }

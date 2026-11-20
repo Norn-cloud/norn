@@ -31,6 +31,10 @@ required-features = ["duckdb", "native"]
 name = "duckdb_transform"
 required-features = ["duckdb", "native"]
 
+[[test]]
+name = "dataset_laws"
+required-features = ["duckdb", "native"]
+
 [features]
 default = ["native"]
 native = ["dep:rusqlite", "dep:object_store", "dep:tokio", "dep:tempfile"]
@@ -46,6 +50,8 @@ ct-merkle = "=0.3.0"
 transparency-sha2 = { package = "sha2", version = "0.11" }
 base64 = { version = "0.23.1", default-features = false, features = ["std"] }
 norn-checker = { path = "../norn-checker" }
+# MANIFEST-LAWS-1: a dataset's rules are lowered through the row subset.
+norn-expr = { path = "../norn-expr" }
 norn-ir = { path = "../norn-ir" }
 norn-builtins = { path = "../norn-builtins" }
 norn-kernel = { path = "../norn-kernel" }

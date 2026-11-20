@@ -17,7 +17,7 @@ use std::time::Duration;
 use norn_cell::analytics::engine::{Engine, Outcome, Settings};
 use norn_cell::analytics::{
     EngineRefusal, EvaluateRequest, ExportRequest, FrontierRequest, LandRequest, LandResponse,
-    MembersRequest, PageRequest, ProfileRequest, SyncRequest,
+    MembersRequest, PageRequest, ProfileRequest, SettleRequest, SyncRequest,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -184,6 +184,7 @@ fn connection(stream: &TcpStream, engine: &Engine, token: &str) -> std::io::Resu
         "/v1/profile" => answer(stream, &request, |r: ProfileRequest| engine.profile(&r)),
         "/v1/page" => answer(stream, &request, |r: PageRequest| engine.page(&r)),
         "/v1/land" => answer(stream, &request, |r: LandRequest| land(engine, &r)),
+        "/v1/settle" => answer(stream, &request, |r: SettleRequest| settle(engine, &r)),
         "/v1/export" => export(stream, &request, engine),
         _ => refuse(
             stream,
@@ -331,14 +332,30 @@ fn land(engine: &Engine, request: &LandRequest) -> Outcome<LandResponse> {
             .load
             .replace(|c: char| !c.is_ascii_alphanumeric(), "_")
     ));
-    let landed = download(&agent, &request.load.file.url, &path)
-        .and_then(|()| engine.land(&request.load, &path));
+    let landed =
+        download(&agent, &request.load.file.url, &path).and_then(|()| engine.land(request, &path));
     let _removed = std::fs::remove_file(&path);
-    let landed = landed?;
-    let sent = upload(&agent, &request.data_url, &landed.data)
-        .and_then(|()| upload(&agent, &request.held_url, &landed.held));
-    let _data = std::fs::remove_file(&landed.data);
-    let _held = std::fs::remove_file(&landed.held);
+    send(&agent, request, landed?)
+}
+
+/// MANIFEST-LAWS-1: settle residue rows; once none remains, upload the files.
+fn settle(engine: &Engine, request: &SettleRequest) -> Outcome<LandResponse> {
+    send(&agent(), &request.land, engine.settle(request)?)
+}
+
+/// Upload a landing's files, if it wrote them, then delete them.
+fn send(
+    agent: &ureq::Agent,
+    request: &LandRequest,
+    landed: norn_cell::analytics::engine::Landed,
+) -> Outcome<LandResponse> {
+    let (Some(data), Some(held)) = (&landed.data, &landed.held) else {
+        return Ok(landed.response);
+    };
+    let sent = upload(agent, &request.data_url, data)
+        .and_then(|()| upload(agent, &request.held_url, held));
+    let _data = std::fs::remove_file(data);
+    let _held = std::fs::remove_file(held);
     sent.map(|()| landed.response)
 }
 

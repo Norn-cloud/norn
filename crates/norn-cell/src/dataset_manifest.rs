@@ -28,7 +28,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::analytics::{FileFormat, TableSchema, ValidRange};
+use crate::analytics::{FileFormat, RuleCount, TableSchema, ValidRange};
 use crate::engine::{SqlEngine, params};
 use crate::system::LEDGER;
 use crate::{CellError, CellStore, CommitBatch, GuardedError, Receipt};
@@ -94,8 +94,22 @@ pub struct ManifestCounts {
     pub source: u64,
     /// Rows admitted to the data file.
     pub admitted: u64,
-    /// Rows held back, by reason.
+    /// Rows held back before admission (not typed), by reason.
     pub held: BTreeMap<String, u64>,
+    /// MANIFEST-LAWS-1: findings by rule, over the admitted rows.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub findings: BTreeMap<String, RuleCount>,
+    /// Admitted rows a rule holds back; every other admitted row is trusted.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub held_by_rules: u64,
+}
+
+#[allow(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde's skip_serializing_if passes a reference"
+)]
+const fn is_zero(value: &u64) -> bool {
+    *value == 0
 }
 
 /// MANIFEST-1: one dataset, governed as a whole.
@@ -224,7 +238,14 @@ impl<E: SqlEngine> CellStore<E> {
         if manifest.version != MANIFEST_VERSION
             || manifest.table.name != manifest.object_type
             || manifest.counts.admitted != manifest.data.rows
-            || manifest.counts.held.values().sum::<u64>() != manifest.held.rows
+            || manifest
+                .counts
+                .held
+                .values()
+                .chain(manifest.counts.findings.values().map(|count| &count.rows))
+                .sum::<u64>()
+                != manifest.held.rows
+            || manifest.counts.held_by_rules > manifest.counts.admitted
         {
             return Err(refused(
                 "dataset.invalid",

@@ -20,8 +20,8 @@ use std::collections::BTreeMap;
 
 use norn_cell::analytics::{
     EngineRefusal, EvaluateRequest, EvaluateResponse, ExportFormat, ExportRequest, FileFormat,
-    FileSource, FrontierResponse, LandRequest, LandResponse, LoadRequest, Source, TenantId,
-    hex_digest,
+    FileSource, FrontierResponse, LandRequest, LandResponse, LoadRequest, SettleRequest, Source,
+    TenantId, hex_digest,
 };
 use norn_cell::compute::{ALL_MEMBERS, QueryContext, QueryResult};
 use norn_cell::dataset_manifest::{
@@ -568,10 +568,27 @@ pub struct NornDatasetLoad {
     pub rejected: u64,
     /// Quarantined rows per reason code (`bulk.*`).
     pub reasons: BTreeMap<String, u64>,
+    /// MANIFEST-LAWS-1: findings of each law and invariant, by rule.
+    pub findings: BTreeMap<String, NornRuleFindings>,
+    /// Admitted rows a law or invariant holds back; every other admitted row
+    /// is trusted.
+    pub held_by_rules: u64,
     /// Source file size in bytes.
     pub bytes: u64,
     /// Load time in milliseconds.
     pub millis: u64,
+}
+
+/// MANIFEST-LAWS-1: one law or invariant's findings over a dataset.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NornRuleFindings {
+    /// The law (`law:<id>`) or invariant (`invariant:<id>`).
+    pub label: String,
+    /// Rows that fail it.
+    pub rows: u64,
+    /// Whether a failing row is held back.
+    pub holds: bool,
 }
 
 /// One landed dataset file, named by content.
@@ -694,6 +711,22 @@ pub fn load_dataset<E: SqlEngine>(
         rows: loaded.rows,
         rejected: loaded.rejected,
         reasons: loaded.reasons.clone(),
+        findings: manifest
+            .counts
+            .findings
+            .iter()
+            .map(|(rule, count)| {
+                (
+                    rule.clone(),
+                    NornRuleFindings {
+                        label: count.label.clone(),
+                        rows: count.rows,
+                        holds: count.holds,
+                    },
+                )
+            })
+            .collect(),
+        held_by_rules: manifest.counts.held_by_rules,
         bytes: loaded.bytes,
         millis: loaded.millis,
     })
@@ -732,26 +765,10 @@ fn land_upload<E: SqlEngine>(
     let table = store
         .analytics_table(object_type)
         .map_err(|_unknown| dataset_not_found())?;
-    // MANIFEST-PIN-1: no law or invariant is checked on this path yet, so a
-    // type that declares one is refused rather than admitted unchecked.
-    if !store
-        .model()
-        .governing_laws(object_type)
-        .map_err(Refusal::host)?
-        .is_empty()
-        || !store
-            .model()
-            .effective_invariants(object_type)
-            .map_err(Refusal::host)?
-            .is_empty()
-    {
-        return Err(Refusal::new(
-            http::StatusCode::UNPROCESSABLE_ENTITY,
-            "bulk.unsupported_law",
-            "the dataset was not loaded",
-            "the type declares laws or invariants, which a dataset load does not check yet; load it through observations",
-        ));
-    }
+    // MANIFEST-LAWS-1: every law and invariant of the type, checked set-based.
+    let checks = store
+        .dataset_checks(object_type, &table)
+        .map_err(dataset_refusal)?;
     let format = if record.content_type.contains("parquet") || record.uri.ends_with(".parquet") {
         FileFormat::Parquet
     } else {
@@ -786,6 +803,8 @@ fn land_upload<E: SqlEngine>(
         },
         data_url: String::new(),
         held_url: String::new(),
+        checks,
+        residue_page: RESIDUE_PAGE,
     };
     // The URLs are minted per request; the call's identity is the landing without them.
     let mut call = EngineCall::new("land", &request).map_err(engine_failure)?;
@@ -802,18 +821,24 @@ fn land_upload<E: SqlEngine>(
     request.data_url = data_put;
     request.held_url = held_put;
     call.body = serde_json::to_string(&request).map_err(Refusal::host)?;
-    let answer =
-        exchange(store, transport, &request.load.tenant, None, &call).map_err(engine_failure)?;
-    if answer.status != 200 {
-        let refusal: EngineRefusal = decode(&answer.body).map_err(engine_failure)?;
-        return Err(Refusal::new(
-            http::StatusCode::UNPROCESSABLE_ENTITY,
-            &refusal.code,
-            "the dataset was not loaded",
-            &refusal.detail,
-        ));
-    }
-    let land: LandResponse = decode(&answer.body).map_err(engine_failure)?;
+    let land = land_steps(transport, &call, &request.load.load, |answer| {
+        // MANIFEST-LAWS-1: the residue rows are decided by the per-row
+        // evaluator, then settled on the engine.
+        let findings = store
+            .residue_findings(object_type, &table, &answer.residue)
+            .map_err(dataset_refusal)?;
+        let through = answer
+            .residue
+            .last()
+            .map(|row| row.row)
+            .ok_or_else(|| Refusal::host("the engine reported residue without rows"))?;
+        let settle = SettleRequest {
+            land: request.clone(),
+            through,
+            findings,
+        };
+        EngineCall::new("settle", &settle).map_err(engine_failure)
+    })?;
     Ok(Landing {
         load: land.load.clone(),
         land,
@@ -821,6 +846,67 @@ fn land_upload<E: SqlEngine>(
         format,
         uris: [data_object, held_object],
     })
+}
+
+/// Residue rows one landing answer carries at most.
+const RESIDUE_PAGE: u32 = 2_000;
+/// Landing steps one load may take before it refuses.
+const MAX_LAND_STEPS: usize = 100_000;
+
+/// MANIFEST-LAWS-1: a landing's exchange, from its first call to the answer
+/// that carries its files. Each answer decides the next call: a settle of
+/// the residue rows it names, until none remains. The exchange is
+/// stateless: a host that re-enters with an answer to a step of this
+/// landing (its landing identity) continues from it.
+fn land_steps(
+    transport: &dyn Transport,
+    first: &EngineCall,
+    load: &str,
+    mut settle: impl FnMut(&LandResponse) -> Result<EngineCall, Refusal>,
+) -> Result<LandResponse, Refusal> {
+    let ours = |answer: &EngineAnswer| {
+        answer.digest == first.digest
+            || (matches!(answer.op.as_str(), "land" | "settle")
+                && decode::<LandResponse>(&answer.body).is_ok_and(|r| r.load.load == load))
+    };
+    let mut answer = transport.resumed().filter(ours);
+    let mut call = first.clone();
+    for _ in 0..MAX_LAND_STEPS {
+        let done = match answer.take() {
+            Some(done) => done,
+            None => transport
+                .call(&call)
+                .ok_or_else(pending)
+                .map_err(engine_failure)?,
+        };
+        if done.status != 200 {
+            let refusal: EngineRefusal = decode(&done.body).map_err(engine_failure)?;
+            return Err(Refusal::new(
+                http::StatusCode::UNPROCESSABLE_ENTITY,
+                &refusal.code,
+                "the dataset was not loaded",
+                &refusal.detail,
+            ));
+        }
+        let land: LandResponse = decode(&done.body).map_err(engine_failure)?;
+        if land.residue_total == 0 {
+            return Ok(land);
+        }
+        call = settle(&land)?;
+    }
+    Err(Refusal::host("the landing did not settle"))
+}
+
+fn dataset_refusal(error: CellError) -> Refusal {
+    if let CellError::DatasetRefused { code, detail } = &error {
+        return Refusal::new(
+            http::StatusCode::UNPROCESSABLE_ENTITY,
+            code,
+            "the dataset was not loaded",
+            detail,
+        );
+    }
+    Refusal::host(error)
 }
 
 /// MANIFEST-COMMIT-1: commit the landing's manifest as the type's current dataset.
@@ -838,6 +924,11 @@ fn commit_manifest<E: SqlEngine>(
         .map_err(Refusal::host)?;
     let [data_uri, held_uri] = landing.uris.clone();
     let land = &landing.land;
+    let unlanded = || Refusal::host("the engine answered a landing without its files");
+    let (data, held) = (
+        land.data.as_ref().ok_or_else(unlanded)?,
+        land.held.as_ref().ok_or_else(unlanded)?,
+    );
     let manifest = DatasetManifest {
         version: MANIFEST_VERSION.to_owned(),
         object_type: object_type.to_owned(),
@@ -853,20 +944,22 @@ fn commit_manifest<E: SqlEngine>(
         pins,
         data: ManifestFile {
             uri: data_uri,
-            sha256: land.data.sha256.clone(),
-            rows: land.data.rows,
-            bytes: land.data.bytes,
+            sha256: data.sha256.clone(),
+            rows: data.rows,
+            bytes: data.bytes,
         },
         held: ManifestFile {
             uri: held_uri,
-            sha256: land.held.sha256.clone(),
-            rows: land.held.rows,
-            bytes: land.held.bytes,
+            sha256: held.sha256.clone(),
+            rows: held.rows,
+            bytes: held.bytes,
         },
         counts: ManifestCounts {
             source: land.load.rows.saturating_add(land.load.rejected),
             admitted: land.load.rows,
             held: land.load.reasons.clone(),
+            findings: land.findings.clone(),
+            held_by_rules: land.held_by_rules,
         },
         valid_time: land.valid_time.clone(),
     };

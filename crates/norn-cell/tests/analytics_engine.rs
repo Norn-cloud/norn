@@ -2146,6 +2146,17 @@ mod known_at {
     }
 }
 
+/// A landing of `load` that checks no rule.
+fn unchecked(load: LoadRequest) -> norn_cell::analytics::LandRequest {
+    norn_cell::analytics::LandRequest {
+        load,
+        data_url: String::new(),
+        held_url: String::new(),
+        checks: Vec::new(),
+        residue_page: 100,
+    }
+}
+
 const LANDED_CSV: [&str; 5] = [
     "metal,occurred_at,input,recovered,loss",
     "gold,2026-10-23T12:00:00Z,1.5,1.25,0",
@@ -2163,14 +2174,21 @@ fn a_landing_writes_content_hashed_parquet_and_rebuilds_the_same_dataset() {
     let (_store, plan, _context) = by_metal(true, 100);
     let (file, sha256) = csv(&engine, &LANDED_CSV);
     let request = load_request(&plan, "land-1", sha256);
-    let landed = engine.land(&request, file.path()).expect("landed");
+    let landed = engine
+        .land(&unchecked(request.clone()), file.path())
+        .expect("landed");
     let response = &landed.response;
+    let (data, held) = (
+        landed.data.as_ref().expect("data file"),
+        landed.held.as_ref().expect("held file"),
+    );
+    let (data_file, held_file) = (
+        response.data.as_ref().expect("data"),
+        response.held.as_ref().expect("held"),
+    );
     assert_eq!((response.load.rows, response.load.rejected), (2, 2));
-    assert_eq!((response.data.rows, response.held.rows), (2, 2));
-    for (path, file) in [
-        (&landed.data, &response.data),
-        (&landed.held, &response.held),
-    ] {
+    assert_eq!((data_file.rows, held_file.rows), (2, 2));
+    for (path, file) in [(data, data_file), (held, held_file)] {
         let bytes = std::fs::read(path).expect("landed file");
         assert_eq!(norn_cell::analytics::hex_digest(&bytes), file.sha256);
         assert_eq!(u64::try_from(bytes.len()).expect("size"), file.bytes);
@@ -2208,7 +2226,7 @@ fn a_landing_writes_content_hashed_parquet_and_rebuilds_the_same_dataset() {
         std::fs::copy(path, &to).expect("copied");
         to
     };
-    let (data_copy, held_copy) = (copy(&landed.data), copy(&landed.held));
+    let (data_copy, held_copy) = (copy(data), copy(held));
     let hydrate = |data_sha: &str| norn_cell::analytics::HydrateRequest {
         tenant: tenant(),
         table: request.table.clone(),
@@ -2222,7 +2240,7 @@ fn a_landing_writes_content_hashed_parquet_and_rebuilds_the_same_dataset() {
         held: FileSource {
             url: String::new(),
             uri: "s3://synthetic/datasets/held.parquet".into(),
-            sha256: response.held.sha256.clone(),
+            sha256: held_file.sha256.clone(),
             format: FileFormat::Parquet,
         },
     };
@@ -2234,7 +2252,7 @@ fn a_landing_writes_content_hashed_parquet_and_rebuilds_the_same_dataset() {
         "bulk.digest_mismatch"
     );
     other
-        .hydrate(&hydrate(&response.data.sha256), &data_copy, &held_copy)
+        .hydrate(&hydrate(&data_file.sha256), &data_copy, &held_copy)
         .expect("rebuilt");
     let rebuilt = ask(&other);
     assert_eq!(totals(&rebuilt), totals(&landed_answer));
@@ -2253,21 +2271,16 @@ fn a_landing_writes_content_hashed_parquet_and_rebuilds_the_same_dataset() {
     assert_eq!(profile(&other).rows, 2);
 }
 
-/// MANIFEST-COMMIT-1 / MANIFEST-PIN-1 / MANIFEST-CURRENT-1: a manifest commits
-/// as one governed command with one receipt; the same manifest again keeps
-/// that receipt; stale pins or a malformed manifest refuse; the latest
-/// manifest of a type is its current dataset.
-#[test]
-fn a_manifest_commits_once_and_is_the_current_dataset() {
+/// The manifest of a landing of `request` with no rule checked.
+fn manifest_of(
+    store: &CellStore,
+    request: LoadRequest,
+    sha256: String,
+    response: &norn_cell::analytics::LandResponse,
+) -> norn_cell::dataset_manifest::DatasetManifest {
     use norn_cell::dataset_manifest::{
         DatasetManifest, MANIFEST_VERSION, ManifestCounts, ManifestFile, ManifestSource,
     };
-    let (_dir, engine) = engine();
-    let (mut store, plan, _context) = by_metal(true, 100);
-    let (file, sha256) = csv(&engine, &LANDED_CSV);
-    let request = load_request(&plan, "land-1", sha256.clone());
-    let landed = engine.land(&request, file.path()).expect("landed");
-    let response = landed.response;
     let binding = BTreeMap::new();
     let file_of = |uri: &str, landed: &norn_cell::analytics::LandedFile| ManifestFile {
         uri: uri.into(),
@@ -2275,7 +2288,7 @@ fn a_manifest_commits_once_and_is_the_current_dataset() {
         rows: landed.rows,
         bytes: landed.bytes,
     };
-    let manifest = DatasetManifest {
+    DatasetManifest {
         version: MANIFEST_VERSION.into(),
         object_type: TYPE.into(),
         load: "land-1".into(),
@@ -2288,15 +2301,41 @@ fn a_manifest_commits_once_and_is_the_current_dataset() {
         binding: binding.clone(),
         table: store.analytics_table(TYPE).expect("table"),
         pins: store.dataset_pins(TYPE, &binding).expect("pins"),
-        data: file_of("s3://synthetic/datasets/data.parquet", &response.data),
-        held: file_of("s3://synthetic/datasets/held.parquet", &response.held),
+        data: file_of(
+            "s3://synthetic/datasets/data.parquet",
+            response.data.as_ref().expect("data"),
+        ),
+        held: file_of(
+            "s3://synthetic/datasets/held.parquet",
+            response.held.as_ref().expect("held"),
+        ),
         counts: ManifestCounts {
             source: 4,
             admitted: response.load.rows,
             held: response.load.reasons.clone(),
+            findings: BTreeMap::new(),
+            held_by_rules: 0,
         },
         valid_time: response.valid_time.clone(),
-    };
+    }
+}
+
+/// MANIFEST-COMMIT-1 / MANIFEST-PIN-1 / MANIFEST-CURRENT-1: a manifest commits
+/// as one governed command with one receipt; the same manifest again keeps
+/// that receipt; stale pins or a malformed manifest refuse; the latest
+/// manifest of a type is its current dataset.
+#[test]
+fn a_manifest_commits_once_and_is_the_current_dataset() {
+    use norn_cell::dataset_manifest::DatasetManifest;
+    let (_dir, engine) = engine();
+    let (mut store, plan, _context) = by_metal(true, 100);
+    let (file, sha256) = csv(&engine, &LANDED_CSV);
+    let request = load_request(&plan, "land-1", sha256.clone());
+    let landed = engine
+        .land(&unchecked(request.clone()), file.path())
+        .expect("landed");
+    let response = landed.response;
+    let manifest = manifest_of(&store, request, sha256, &response);
     assert!(store.dataset_manifest(WORLD, TYPE).expect("read").is_none());
     let head = store.verified_head().expect("head").commits;
     let (hash, receipt) = store
