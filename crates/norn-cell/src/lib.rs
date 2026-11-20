@@ -17,7 +17,7 @@
 //! - [`CellStore`]: the normalized store (T2-ST-1 #2540, T2-ST-2 #2541),
 //!   shared by native and host adapters:
 //!   object and link tables, and the ledger, receipt, outbox, timer, and run
-//!   system tables ([`system`]). One [`CellStore::commit`] writes the
+//!   system tables ([`system`]). One `CellStore::commit_unchecked` writes the
 //!   consumed delivery, facts, events, the receipt, enqueued commands, and
 //!   timers in one SQLite transaction; reopening verifies the ledger hash
 //!   chain ([`StoreReader::verify_ledger`]).
@@ -58,6 +58,7 @@ mod mapping_process;
 mod migration;
 pub mod mining;
 mod observation_quality;
+pub mod provision;
 pub use observation_quality::AuthoritativePage;
 mod identity;
 pub mod model;
@@ -74,6 +75,22 @@ pub mod source_agreement;
 pub mod source_provenance;
 pub mod store;
 pub mod system;
+// #1485 S6: the raw commits exist only in this crate's own tests, and the
+// suites under `tests/` that need them are compiled here (`suites`), naming
+// the crate `norn_cell` as an integration test does.
+#[cfg(test)]
+extern crate self as norn_cell;
+#[cfg(test)]
+#[allow(
+    dead_code,
+    unreachable_pub,
+    clippy::duplicate_mod,
+    reason = "integration suites compiled in the crate keep their own visibility and \
+              each loads its shared helpers, as its own test binary did"
+)]
+mod suites;
+#[cfg(test)]
+mod test_door;
 pub mod transparency;
 mod write;
 
