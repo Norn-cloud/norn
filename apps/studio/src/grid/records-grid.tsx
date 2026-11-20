@@ -367,7 +367,7 @@ function RecordDrawer({ concept, fields, row, origin, actions, actionsOff, onClo
   const markings = useMarkingCatalog()
   // What can act on this record now: the cell narrows the type's catalog to the record's state.
   const narrowed = useActions(record?.objectType ?? "", record?.id, record !== undefined && origin === "live")
-  const offered = recordCatalog(origin === "live", narrowed.data, actions)
+  const offered = recordCatalog(origin === "live", narrowed, actions)
   const object = useQuery({
     queryKey: ["object", record?.objectType, record?.id],
     queryFn: () => record ? transport.object(record.objectType, record.id) : null,
@@ -406,12 +406,11 @@ function RecordDrawer({ concept, fields, row, origin, actions, actionsOff, onClo
               <h3 className="text-sm font-medium">Actions</h3>
               {actionsOff !== undefined
                 ? <p className="text-meta text-muted-foreground">{actionsOff}</p>
-                : offered === null
-                  ? narrowed.isPending ? <Skeleton className="h-8" aria-label="Reading the actions on this record" />
-                    : <p className="text-meta text-muted-foreground">The cell's actions on this record could not be read.</p>
-                : offeredFor(offered, record).length === 0
+                : offered.kind === "reading" ? <Skeleton className="h-8" aria-label="Reading the actions on this record" />
+                : offered.kind === "unreadable" ? <p className="text-meta text-muted-foreground">The cell's actions on this record could not be read.</p>
+                : offeredFor(offered.items, record).length === 0
                   ? <p className="text-meta text-muted-foreground">The cell offers you no actions on {concept.title.toLowerCase()} records.</p>
-                  : <div className="flex flex-wrap gap-2">{offeredFor(offered, record).map((action) => (
+                  : <div className="flex flex-wrap gap-2">{offeredFor(offered.items, record).map((action) => (
                     <Button key={action.actionId} variant="outline" size="sm" className="border-node-border shadow-node" onClick={() => onAction(action, record.id)}>
                       <Play /> {writesWhole(action) ? `${action.title} (edit)` : action.title}
                     </Button>

@@ -90,6 +90,36 @@ test("apply sends the pack's approvals with the set, signing the plan's restatem
   }
 })
 
+// #1469: an approval the cell refuses at apply (admitted at plan, refused when the apply re-admits
+// it) fails the command with the cell's refusal, and nothing else is sent: the client never installs
+// the set or an approval in a request of its own, so the one refused apply is all there is. The cell's
+// side (nothing published, no call commits) is pinned by
+// crates/norn-cell-do/tests/hosted_install.rs `a_failed_apply_installs_no_ungated_action_and_no_call_commits`.
+test("an approval refused at apply fails the command and nothing else is sent", async () => {
+  const seen: string[] = []
+  const server = Bun.serve({
+    port: 0,
+    async fetch(request) {
+      const url = new URL(request.url)
+      seen.push(`${request.method} ${url.pathname.replace("/api/host", "")}`)
+      await request.text()
+      if (url.pathname.endsWith(PLAN_PATH)) return Response.json({ baseVersion: 2, nextVersion: 3, unchanged: false, added: [{ artifactId: "lab.batch.close", kind: "action", toVersion: "0.1.0" }], changed: [], same: [], newObjectTypes: [], checkedObjects: 0, diagnostics: [], approvals: [{ id: "lab.close_approval", unchanged: false, restatement: "words", restatementSha256: "cd" }] })
+      return Response.json({ code: "definition.signoff_mismatch", message: "the approval's words changed", diagnostics: [{ severity: "error", code: "definition.signoff_mismatch", message: "signed other words", span: { pointer: "/approvals/0/signoff" } }] }, { status: 422 })
+    },
+  })
+  try {
+    const target = { url: `http://127.0.0.1:${server.port}/api/host`, org: "o", env: "e", headers: {} }
+    const approval = { kind: "approval" as const, id: "lab.close_approval", payload: { action: "lab.batch.close", decider: { roles: ["admin"] }, question: "Close?", risk: "low" } }
+    const refused = await change(target, "apply", [{ artifactId: "lab.batch.close" }], false, undefined, [approval])
+    expect(refused.ok).toBe(false)
+    expect(seen).toEqual([`POST ${PLAN_PATH}`, `POST ${APPLY_PATH}`])
+    expect(refused.out.join("\n")).toContain("refused (422) definition.signoff_mismatch")
+    expect(refused.out.join("\n")).not.toContain("installed revision")
+  } finally {
+    server.stop(true)
+  }
+})
+
 test("credentials go only over HTTPS or to loopback", () => {
   expect(credentialsAllowed("https://studio.example/api/host")).toBe(true)
   expect(credentialsAllowed("http://127.0.0.1:8787")).toBe(true)

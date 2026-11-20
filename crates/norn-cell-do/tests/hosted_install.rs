@@ -464,6 +464,84 @@ fn a_new_action_is_never_live_without_its_gate() {
     assert_eq!(json_of(&again)["outcome"], "unchanged", "{}", again.body);
 }
 
+/// #1469: an apply whose gate cannot install leaves the new action out
+/// entirely, and no call commits it ungated at any point. The tenant serves
+/// one request at a time (`Tenant::handle` takes `&mut self`, as the Durable
+/// Object's input gate does), so the only moments a call can arrive are
+/// between requests; a member's call is made at every one of them, after the
+/// plan, after each refused apply (a stale set with a well-signed gate, the
+/// gate twice, a gate on an action the set lacks) and after the apply that
+/// installs. None commits: before the install the action is not callable,
+/// after it every call waits for a decision.
+#[test]
+fn a_failed_apply_installs_no_ungated_action_and_no_call_commits() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("cell.sqlite");
+    let mut cell = provisioned(&path);
+    let base = cell.version();
+    let mut calls = 0_u32;
+    let mut call_between = |cell: &mut Cell| {
+        calls += 1;
+        let answer = cell.batch(&format!("c{calls}"), "100.000", "98.000", "2.000");
+        assert_ne!(answer.status, 200, "a call committed: {}", answer.body);
+        let recorded = json_of(&cell.batches())["records"]
+            .as_array()
+            .map_or(0, Vec::len);
+        assert_eq!(recorded, 0, "no batch was recorded");
+        answer.status
+    };
+
+    let planned = cell.change_with(PLAN_PATH, &[record_gate(&["admin"])], None);
+    assert_eq!(planned.status, 200, "{}", planned.body);
+    let sha = json_of(&planned)["approvals"][0]["restatementSha256"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let mut gate = record_gate(&["admin"]);
+    gate["signoff"] = json!({ "restatementSha256": sha });
+    gate["expectedVersion"] = Value::Null;
+    assert!(
+        call_between(&mut cell) >= 400,
+        "not callable before the install"
+    );
+
+    // A gate on an action the set does not declare refuses the set with it.
+    let mut stray = gate.clone();
+    stray["id"] = json!("lab.batch.stray_approval");
+    stray["payload"]["action"] = json!("lab.batch.unknown");
+    let refusals: [(Vec<Value>, u64); 3] = [
+        // The gate is admissible and signed, but the set's revision moved.
+        (vec![gate.clone()], base + 1),
+        // The gate twice: the change is refused whole.
+        (vec![gate.clone(), gate.clone()], base),
+        (vec![gate.clone(), stray], base),
+    ];
+    for (approvals, expected) in &refusals {
+        let refused = cell.change_with(APPLY_PATH, approvals, Some(*expected));
+        assert!(
+            (400..500).contains(&refused.status),
+            "refused: {}",
+            refused.body
+        );
+        assert_eq!(
+            cell.version(),
+            base,
+            "nothing was published: {}",
+            refused.body
+        );
+        assert!(
+            call_between(&mut cell) >= 400,
+            "not callable after a refused apply"
+        );
+    }
+
+    let applied = cell.change_with(APPLY_PATH, &[gate], Some(base));
+    assert_eq!(applied.status, 200, "{}", applied.body);
+    for _ in 0..3 {
+        assert_eq!(call_between(&mut cell), 202, "every call waits on the gate");
+    }
+}
+
 #[test]
 fn a_reserved_or_empty_change_is_refused() {
     let directory = tempfile::tempdir().unwrap();

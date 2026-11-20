@@ -51,6 +51,40 @@ test("signing out forgets the reader's reads", async () => {
   expect(client.getQueryCache().find({ queryKey: ["session"] })).toBeDefined()
 })
 
+// #1469: a session that ends without a sign-out (it expired, and /api/me answers 401) forgets the
+// reader's reads at that boundary too, so whoever signs in next in this tab never sees the previous
+// reader's picker choices or records, not even before they are read again.
+test("a session that expires forgets the reader's reads before the next reader signs in", async () => {
+  const { accountQuery } = await import("../src/lib/session.ts")
+  const alice = { user: { id: "u1", name: "Alice", email: "a@example.com" }, organization: { id: "o1", name: "Org", role: "member" } }
+  const bob = { user: { id: "u2", name: "Bob", email: "b@example.com" }, organization: { id: "o1", name: "Org", role: "member" } }
+  const answers: Response[] = []
+  const client = new QueryClient()
+  const read = (answer: Response) => {
+    answers.push(answer)
+    return client.fetchQuery({ ...accountQuery(client, async () => answers.shift() as Response), staleTime: 0 })
+  }
+  const cached = () => client.getQueryCache().findAll().filter((query) => query.queryKey[0] !== "session" && query.state.data !== undefined).map((query) => query.queryKey)
+
+  expect(await read(Response.json(alice))).toEqual(alice)
+  client.setQueryData(["picker", "purchasing.Supplier"], [{ id: "SUP-0001", label: "Acme" }])
+  client.setQueryData(["records", "purchasing.PurchaseRequest"], [{ id: "PR-1" }])
+  // The same reader read again keeps the reads.
+  expect(await read(Response.json(alice))).toEqual(alice)
+  expect(cached()).toHaveLength(2)
+  // The session expires: no sign-out ran, and the reads are forgotten all the same.
+  expect(await read(new Response(null, { status: 401 }))).toBeNull()
+  expect(cached()).toEqual([])
+  // Someone else signs in: nothing of the previous reader's is there to show.
+  expect(await read(Response.json(bob))).toEqual(bob)
+  expect(client.getQueryData(["picker", "purchasing.Supplier"])).toBeUndefined()
+  expect(client.getQueryData(["records", "purchasing.PurchaseRequest"])).toBeUndefined()
+  // A reader who changes without a 401 between (another tab signed in as someone else) forgets too.
+  client.setQueryData(["picker", "purchasing.Supplier"], [{ id: "SUP-0002", label: "Bob's" }])
+  expect(await read(Response.json(alice))).toEqual(alice)
+  expect(cached()).toEqual([])
+})
+
 // #1469 S6: a kept draft belongs to the session that wrote it: another reader in this tab never
 // sees it, and a completed sign-out forgets it.
 test("kept drafts are the session's and a sign-out forgets them", async () => {

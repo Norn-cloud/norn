@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
-import type { ActionReceipt, ActionSummary, CallResult } from "../src/lib/actions.ts"
+import { QueryClient, QueryObserver } from "@tanstack/react-query"
+import type { ActionReceipt, ActionSummary, CallResult, CatalogRead } from "../src/lib/actions.ts"
 import { inFlight, init, offeredFor, recordCatalog, undoOf, update, type Cmd, type Msg, type State } from "../src/lib/screen/call.ts"
 
 // Properties of the renderer core over seeded random message sequences (D79: properties, not cases).
@@ -158,8 +159,37 @@ test("an approval-gated call commits nothing: it waits for a decider, reads noth
 test("a live record waits for its narrowed catalog; a recorded one keeps the type's", () => {
   const typeLevel = [{ actionId: "submit" }, { actionId: "approve" }] as unknown as ActionSummary[]
   const narrowed = [{ actionId: "approve" }] as unknown as ActionSummary[]
-  expect(recordCatalog(true, undefined, typeLevel)).toBeNull()
-  expect(recordCatalog(true, { kind: "unavailable" }, typeLevel)).toBeNull()
-  expect(recordCatalog(true, { kind: "catalog", items: narrowed }, typeLevel)).toBe(narrowed)
-  expect(recordCatalog(false, undefined, typeLevel)).toBe(typeLevel)
+  const read = (data: CatalogRead | undefined, isFetching = false, isError = false) => ({ data, isFetching, isError })
+  expect(recordCatalog(true, read(undefined, true), typeLevel)).toEqual({ kind: "reading" })
+  expect(recordCatalog(true, read(undefined), typeLevel)).toEqual({ kind: "reading" })
+  expect(recordCatalog(true, read({ kind: "unavailable" }), typeLevel)).toEqual({ kind: "unreadable" })
+  expect(recordCatalog(true, read({ kind: "catalog", items: narrowed }), typeLevel)).toEqual({ kind: "catalog", items: narrowed })
+  expect(recordCatalog(false, read(undefined), typeLevel)).toEqual({ kind: "catalog", items: typeLevel })
+})
+
+// #1469: a cached narrowed catalog answers for the record's state when it was read, which a commit
+// may have moved since. While it is read again the drawer offers nothing (a skeleton), and when the
+// read again throws it offers nothing (an error), never the cached buttons. Driven by the query
+// states TanStack Query itself reports for a refetch over cached data.
+test("a live record's cached catalog offers nothing while it is read again, or after that read fails", async () => {
+  const typeLevel = [{ actionId: "submit" }, { actionId: "approve" }] as unknown as ActionSummary[]
+  const cached = [{ actionId: "submit" }] as unknown as ActionSummary[]
+  const client = new QueryClient()
+  const key = ["actions", "purchasing.PurchaseRequest", "PR-1"]
+  const seeded: CatalogRead = { kind: "catalog", items: cached }
+  client.setQueryData(key, seeded)
+  const pending: { fail?: (error: Error) => void } = {}
+  const observer = new QueryObserver<CatalogRead>(client, { queryKey: key, queryFn: () => new Promise<CatalogRead>((_, reject) => { pending.fail = reject }), retry: false, staleTime: 0, refetchOnMount: false })
+  const offer = () => recordCatalog(true, observer.getCurrentResult(), typeLevel)
+  expect(offer()).toEqual({ kind: "catalog", items: cached })
+  const unsubscribe = observer.subscribe(() => {})
+  const refetch = observer.refetch()
+  expect(observer.getCurrentResult().data).toEqual({ kind: "catalog", items: cached })
+  expect(offer()).toEqual({ kind: "reading" })
+  while (pending.fail === undefined) await new Promise((resolve) => setTimeout(resolve, 0))
+  pending.fail(new Error("offline"))
+  await refetch
+  expect(observer.getCurrentResult().data).toEqual({ kind: "catalog", items: cached })
+  expect(offer()).toEqual({ kind: "unreadable" })
+  unsubscribe()
 })

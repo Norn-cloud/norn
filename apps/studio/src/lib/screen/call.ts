@@ -160,15 +160,35 @@ export function undoOf(receipt: ActionReceipt): UndoOffer | null {
   return { actionId: undo.actionId, input: JSON.stringify(undo.input) }
 }
 
+/** The state of a live record's narrowed catalog read, as its query reports it. */
+export interface NarrowedRead {
+  readonly data: CatalogRead | undefined
+  /** A read is in flight: the first one, or a refetch over cached data. */
+  readonly isFetching: boolean
+  /** The latest read threw; `data` may still hold an earlier answer. */
+  readonly isError: boolean
+}
+
+/** What one record's drawer offers: the catalog, a read still running, or a read that failed. */
+export type RecordOffer =
+  | { readonly kind: "catalog"; readonly items: readonly ActionSummary[] }
+  | { readonly kind: "reading" }
+  | { readonly kind: "unreadable" }
+
 /**
  * The catalog to offer on one record: for a live record, only the cell's catalog narrowed to the
- * record's state (ACTION-CATALOG-STATE-1), and `null` until that read succeeds, so a type-level
- * action its state cannot take is never shown; a recorded record has no state to narrow by and
- * keeps the type's catalog.
+ * record's state (ACTION-CATALOG-STATE-1), and only while that answer is the current one. A read in
+ * flight (the first, or a refetch over a cached answer the record's state may have outrun) offers
+ * nothing yet; a read that failed offers nothing, even with an earlier answer cached. So a
+ * type-level action, or one the record's state no longer takes, is never shown. A recorded record
+ * has no state to narrow by and keeps the type's catalog.
  */
-export function recordCatalog(live: boolean, narrowed: CatalogRead | undefined, typeLevel: readonly ActionSummary[]): readonly ActionSummary[] | null {
-  if (!live) return typeLevel
-  return narrowed?.kind === "catalog" ? narrowed.items : null
+export function recordCatalog(live: boolean, narrowed: NarrowedRead, typeLevel: readonly ActionSummary[]): RecordOffer {
+  if (!live) return { kind: "catalog", items: typeLevel }
+  if (narrowed.isFetching) return { kind: "reading" }
+  if (narrowed.isError) return { kind: "unreadable" }
+  if (narrowed.data === undefined) return { kind: "reading" }
+  return narrowed.data.kind === "catalog" ? { kind: "catalog", items: narrowed.data.items } : { kind: "unreadable" }
 }
 
 /**
