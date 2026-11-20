@@ -11,7 +11,7 @@
 mod common;
 
 use norn_cell::export::{Exporter, MANIFEST_PATH, object_path};
-use norn_cell::trusted::TrustedCommit as _;
+use norn_cell::test_door::TestCommit as _;
 use norn_cell::{CellStore, CommitBatch, StoreOptions};
 use serde_json::json;
 

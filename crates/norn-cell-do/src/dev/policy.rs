@@ -195,7 +195,7 @@ mod tests {
     use norn_api::scope::CellScope;
     use norn_cell::CellStore;
     use norn_cell::engine::NativeEngine;
-    use norn_cell::trusted::TrustedCommit as _;
+    use norn_cell::test_door::TestCommit as _;
     use norn_cell::{CommitBatch, FactWriteRow, StoreOptions};
     use norn_ir::{Decimal, RuntimeValue};
     use serde_json::{Value, json};
@@ -522,8 +522,11 @@ mod tests {
     }
 
     /// The measurement behind the question scan bound (ruling 2026-11-12):
-    /// `NORN_SCAN_ROWS=<n> cargo test --release -p norn-cell-do --lib
-    /// measure_question_scan -- --ignored --nocapture`, one process per `n`.
+    /// `NORN_SCAN_ROWS=<n> cargo test --release --config
+    /// 'profile.release.debug-assertions=true' -p norn-cell-do --lib
+    /// measure_question_scan -- --ignored --nocapture`, one process per `n`
+    /// (the fixtures commit through `norn_cell::test_door`, which exists only
+    /// with debug assertions).
     /// Prints the exact engine's time for one ad-hoc evaluation over `n` rows
     /// and the process's peak resident memory during it (Linux only).
     #[test]

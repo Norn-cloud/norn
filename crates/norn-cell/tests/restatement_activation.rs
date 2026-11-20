@@ -8,7 +8,7 @@
     reason = "native restatement scenarios"
 )]
 mod query_support;
-use norn_cell::trusted::TrustedCommit as _;
+use norn_cell::test_door::TestCommit as _;
 use norn_cell::{
     CellStore, CommitBatch, CommitPoint, KnowledgeCutoff, MAIN_WORLD, Model, SqliteCell,
     StoreOptions,

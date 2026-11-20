@@ -16,7 +16,7 @@
     reason = "privacy correspondence"
 )]
 
-use norn_cell::trusted::TrustedCommit as _;
+use norn_cell::test_door::TestCommit as _;
 use std::collections::{BTreeMap, BTreeSet};
 
 use norn_api::authz::{AccessRequest, Authorizer, ReadCapability, ReadRequest};

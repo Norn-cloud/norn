@@ -16,7 +16,9 @@
 //! - the same work: the storage statements the request ran (an outsider's
 //!   request reads nothing at B, as nothing exists to read at a vacant
 //!   scope), so no timing shape tells the two apart;
-//! - no engine call (olapd is never asked for an outsider);
+//! - the same token verifications (S2), and no storage statement at all;
+//! - no engine call (olapd is never asked for an outsider), no continuation
+//!   or sync left for the host, and no deadline moved (S8);
 //! - none of B's identifiers or data in the body.
 //!
 //! Inside A's own cell, a member naming B's scope, or B's decision and run
@@ -42,14 +44,15 @@ use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use ed25519_dalek::{Signer, SigningKey};
 use norn_api::scope::CellScope;
 use norn_cell::engine::{NativeEngine, ReadIsolation, SqlEngine, SqlValue};
-use norn_cell::trusted::TrustedCommit as _;
+use norn_cell::test_door::TestCommit as _;
 use norn_cell::{CellError, CommitBatch, FactWriteRow, MAIN_WORLD};
+use norn_cell_do::analytics::{self, DemoQuestions};
 use norn_cell_do::connect::Connect;
-use norn_cell_do::policy::DEMO_GRANTS;
-use norn_cell_do::principal::TokenPrincipals;
+use norn_cell_do::policy::{CallerSlot, DEMO_GRANTS};
+use norn_cell_do::principal::{PrincipalResolver, TokenPrincipals};
 use norn_cell_do::seed;
 use norn_cell_do::server::{Request, Response, Route};
-use norn_cell_do::tenant::{ACCESS_DECIDE_PATH, Served, Tenant};
+use norn_cell_do::tenant::{ACCESS_DECIDE_PATH, Gate, Served, Tenant};
 use serde_json::{Value, json};
 
 const ISSUER: &str = "https://studio-preview.example";
@@ -142,13 +145,33 @@ fn user(org: &str, role: &str) -> String {
     signed(&key(), "user", org, role)
 }
 
+/// The host's token resolver, counting every verification a request asks
+/// for (S2: a foreign token is verified as often at B as at a vacant scope).
+struct Counted {
+    inner: TokenPrincipals,
+    resolves: Cell<u64>,
+}
+
+impl PrincipalResolver for Counted {
+    fn resolve(&self, authorization: Option<&str>, now: u64) -> Option<String> {
+        self.resolves.set(self.resolves.get() + 1);
+        self.inner.resolve(authorization, now)
+    }
+    fn end_request(&self) {
+        self.inner.end_request();
+    }
+    fn caller(&self) -> Option<&CallerSlot> {
+        self.inner.caller()
+    }
+}
+
 // ------------------------------------------------------------------- cells
 
 /// One scope's cell as the deployed host serves it: its tenant, token
 /// resolver and source/upload routes, with the analytics engine enabled.
 struct Host {
     tenant: Tenant<Counting>,
-    tokens: TokenPrincipals,
+    tokens: Counted,
     connect: Connect,
     calls: Rc<Cell<u64>>,
 }
@@ -161,6 +184,13 @@ struct Answer {
     calls: u64,
     /// Whether it asked the analytics engine (olapd) anything.
     engine: bool,
+    /// Token verifications the request asked for (S2).
+    resolves: u64,
+    /// Whether it left work for the host to continue: a fetch to make and
+    /// resume, or a sync to run (S8).
+    continued: bool,
+    /// Whether the cell's next deadline moved: an alarm the host would arm (S8).
+    scheduled: bool,
 }
 
 fn scope(org: &str, environment: &str) -> CellScope {
@@ -190,14 +220,17 @@ fn connect() -> Connect {
 fn host(tenant: Tenant<Counting>, calls: Rc<Cell<u64>>) -> Host {
     let mut tenant = tenant.with_receipt_handles(Some(&LINEAGE_KEY)).unwrap();
     tenant.enable_analytics();
-    let tokens = TokenPrincipals::new(
-        ISSUER,
-        &jwks(),
-        tenant.scope().clone(),
-        tenant.caller(),
-        NOW,
-    )
-    .unwrap();
+    let tokens = Counted {
+        inner: TokenPrincipals::new(
+            ISSUER,
+            &jwks(),
+            tenant.scope().clone(),
+            tenant.caller(),
+            NOW,
+        )
+        .unwrap(),
+        resolves: Cell::new(0),
+    };
     Host {
         tenant,
         tokens,
@@ -261,7 +294,9 @@ fn send(
 ) -> Answer {
     // Nothing left over from setting the cell up, or an earlier request.
     drop(host.tenant.take_engine_call());
+    let due = host.tenant.next_due().unwrap();
     host.calls.set(0);
+    host.tokens.resolves.set(0);
     let request = Request {
         method,
         path,
@@ -270,22 +305,30 @@ fn send(
         now: NOW,
         body,
     };
-    let response =
+    let (response, continued) =
         match host
             .tenant
             .serve(Some(&mut host.connect), &host.tokens, &request, NOW * 1000)
         {
-            Served::Connect(routed) => routed.response,
-            Served::Cell(response) => response,
+            Served::Connect(routed) => (
+                routed.response,
+                routed.then.is_some() || routed.start_sync.is_some(),
+            ),
+            Served::Cell(response) => (response, false),
         };
+    let calls = host.calls.get();
+    let resolves = host.tokens.resolves.get();
     let response = Response {
         status: response.status,
         body: without_incident_ids(&response.body),
     };
     Answer {
         response,
-        calls: host.calls.get(),
+        calls,
         engine: host.tenant.take_engine_call().is_some(),
+        resolves,
+        continued,
+        scheduled: host.tenant.next_due().unwrap() != due,
     }
 }
 
@@ -296,11 +339,11 @@ fn without_incident_ids(body: &str) -> String {
     let mut out = String::with_capacity(body.len());
     let mut rest = body;
     while let Some(at) = rest.find("\"inc-") {
-        out.push_str(&rest[..=at]);
-        let tail = &rest[at + 1..];
+        let (head, tail) = rest.split_at(at + 1);
+        out.push_str(head);
         let end = tail.find('"').unwrap_or(tail.len());
         out.push_str("<incident>");
-        rest = &tail[end..];
+        rest = tail.get(end..).unwrap_or_default();
     }
     out.push_str(rest);
     out
@@ -788,6 +831,13 @@ fn another_tenants_principal_at_b_learns_nothing() {
                     !served.engine,
                     "{method} {path}: olapd asked for an outsider"
                 );
+                assert!(
+                    !served.continued && !served.scheduled,
+                    "{method} {path}: an outsider left the host work"
+                );
+                // S2: the token is verified once, at the gate, and no
+                // storage is touched for an outsider at all.
+                assert_eq!(served.calls, 0, "{method} {path}?{query}");
                 for id in ids.private() {
                     assert!(
                         !served.response.body.contains(id),
@@ -940,4 +990,175 @@ fn a_member_naming_another_tenant_in_its_own_cell_learns_nothing() {
         }
     }
     assert!(compared > 400, "{compared}");
+}
+
+// --------------------------------------------------- live data, and the gate
+
+/// The analytics cell as the deployed host builds it (its K1 rows, its
+/// published metrics), with a loaded dataset recorded: a cell whose live
+/// runtimes would shape an answer if any reached an outsider.
+fn analytics_b() -> Host {
+    let scope = analytics::analytics_scope();
+    let calls = Rc::new(Cell::new(0));
+    let analytics::Analytics {
+        store,
+        plan,
+        definitions,
+        catalog,
+    } = analytics::provision(Counting::new(&calls), &scope).unwrap();
+    let recorded_at = store.verified_head().unwrap().commits;
+    store
+        .record_analytics_dataset(
+            analytics::TYPE,
+            &norn_cell::analytics::DatasetRecord {
+                load: "l-b-dataset-1".into(),
+                uri: "s3://uploads-bucket/uploads/org_demo%2Fanalytics/b-dataset.csv".into(),
+                sha256: "ab".repeat(32),
+                rows: 3,
+                rejected: 0,
+                reasons: BTreeMap::new(),
+                recorded_at,
+            },
+        )
+        .unwrap();
+    assert!(!definitions.is_empty(), "the fixture publishes metrics");
+    let questions = DemoQuestions::new(plan, scope.clone())
+        .try_with_handle_key(Some(&LINEAGE_KEY))
+        .unwrap()
+        .with_metrics(definitions, catalog);
+    let tenant = Tenant::seeded(scope, &DEMO_GRANTS, store, Some(questions)).unwrap();
+    host(tenant, calls)
+}
+
+/// S8: at a cell that publishes metrics and holds a loaded dataset, the owner
+/// sees both (the fixture is live), and every outsider is answered as at a
+/// vacant scope, with no storage, engine call, continuation or alarm.
+#[test]
+fn an_outsider_at_a_cell_with_metrics_and_a_dataset_learns_nothing() {
+    let mut b = analytics_b();
+    let scope = analytics::analytics_scope();
+    let mut nowhere = vacant(&scope);
+    let at_b = query(&scope);
+    let owner = user(&scope.org_id, "owner");
+    // Positive controls: the owner lists the published metrics, and the
+    // dataset's grid is the engine's (only a loaded dataset routes there).
+    let metrics = send(
+        &mut b,
+        "GET",
+        "/v1/questions:metrics",
+        &at_b,
+        Some(&owner),
+        "",
+    );
+    assert_eq!(metrics.response.status, 200, "{}", metrics.response.body);
+    let listed = json_of(&metrics.response)["metrics"].clone();
+    assert!(!listed.as_array().unwrap().is_empty(), "{listed}");
+    let grid = send(
+        &mut b,
+        "GET",
+        &format!("/v1/objects/{}", analytics::TYPE),
+        &at_b,
+        Some(&owner),
+        "",
+    );
+    assert!(
+        grid.engine,
+        "the dataset is not loaded: {:?}",
+        grid.response
+    );
+    let ids = Ids {
+        scope,
+        kind: analytics::TYPE.into(),
+        object: "k1-row-1".into(),
+        decision: "decision-b-1".into(),
+        run: "run-b-1".into(),
+        definition: "demo.metrics".into(),
+        action: "canon.rename".into(),
+        question: analytics::QUESTION.into(),
+        transform: "ops.daily".into(),
+        row: "row-1".into(),
+        guard: "guard-b-1".into(),
+        upload: "upload-b-1".into(),
+        connection: "acme.main".into(),
+    };
+    let mut compared = 0;
+    for (method, path, body) in rows(&ids) {
+        for query in [at_b.clone(), String::new()] {
+            for outsider in outsiders() {
+                let served = send(&mut b, method, &path, &query, outsider.as_deref(), &body);
+                let absent = send(
+                    &mut nowhere,
+                    method,
+                    &path,
+                    &query,
+                    outsider.as_deref(),
+                    &body,
+                );
+                assert_eq!(served, absent, "{method} {path}?{query} as {outsider:?}");
+                assert_eq!(served.calls, 0, "{method} {path}");
+                assert!(!served.engine && !served.continued && !served.scheduled);
+                assert!(!served.response.body.contains("l-b-dataset-1"));
+                compared += 1;
+            }
+        }
+    }
+    assert!(compared > 1000, "{compared}");
+}
+
+/// S1: the storage-free gate the Worker asks before it opens a cell answers
+/// every outsider exactly as the cell does (and a vacant scope does), and
+/// lets a member through.
+#[test]
+fn the_storage_free_gate_answers_outsiders_as_the_cell_does() {
+    let (mut b, ids) = tenant_b();
+    let gate = Gate::new(ids.scope.clone(), &DEMO_GRANTS, Some(&LINEAGE_KEY), true).unwrap();
+    let tokens = Counted {
+        inner: TokenPrincipals::new(ISSUER, &jwks(), ids.scope.clone(), gate.caller(), NOW)
+            .unwrap(),
+        resolves: Cell::new(0),
+    };
+    let at_b = query(&ids.scope);
+    let mut compared = 0;
+    for (method, path, body) in rows(&ids) {
+        for outsider in outsiders() {
+            let request = Request {
+                method,
+                path: &path,
+                query: &at_b,
+                authorization: outsider.as_deref(),
+                now: NOW,
+                body: &body,
+            };
+            tokens.resolves.set(0);
+            let gated = gate
+                .outsider::<Counting>(&tokens, &request)
+                .unwrap_or_else(|| panic!("{method} {path}: an outsider passed the gate"));
+            let served = send(&mut b, method, &path, &at_b, outsider.as_deref(), &body);
+            assert_eq!(
+                (
+                    gated.status,
+                    without_incident_ids(&gated.body),
+                    tokens.resolves.get()
+                ),
+                (
+                    served.response.status,
+                    served.response.body,
+                    served.resolves
+                ),
+                "{method} {path} as {outsider:?}"
+            );
+            compared += 1;
+        }
+    }
+    assert!(compared > 500, "{compared}");
+    let owner = user(&ids.scope.org_id, "owner");
+    let request = Request {
+        method: "GET",
+        path: "/v1/objects/canon.Item",
+        query: &at_b,
+        authorization: Some(&owner),
+        now: NOW,
+        body: "",
+    };
+    assert!(gate.outsider::<Counting>(&tokens, &request).is_none());
 }

@@ -5,7 +5,7 @@ mod common;
 
 use norn_cell::engine::{MAX_SAFE_INTEGER, NativeEngine, SqlEngine, SqlValue};
 use norn_cell::store::MAX_OBSERVATION_BYTES;
-use norn_cell::trusted::TrustedCommit as _;
+use norn_cell::test_door::TestCommit as _;
 use norn_cell::{
     CellError, CellStore, CommitBatch, EffectRow, MAIN_WORLD, OutboxCommand, StoreOptions,
 };

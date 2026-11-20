@@ -8,7 +8,7 @@
 )]
 use norn_api::objects::{NornLinkPage, NornObjectRecord};
 use norn_cell::read::LinkDirection;
-use norn_cell::trusted::TrustedCommit as _;
+use norn_cell::test_door::TestCommit as _;
 use norn_cell::{CellStore, CommitBatch, LinkChange, MAIN_WORLD, Model};
 use norn_ir::FactChange;
 

@@ -1045,7 +1045,7 @@ pub fn list_metrics<E: SqlEngine>(
     // other route refuses it, never answered with an empty list.
     host.scope()
         .admit(scope.org_id.as_deref(), scope.environment_id.as_deref())
-        .map_err(|_| read_denied())?;
+        .map_err(|_refusal| read_denied())?;
     let named: &dyn QuestionRuntime<E> = runtime;
     let readable = |object_type: &str| {
         mapped(host, named, actor, object_type, Population, None).is_ok_and(|access| {

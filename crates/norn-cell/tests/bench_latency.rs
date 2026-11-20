@@ -22,7 +22,7 @@
 )]
 #[path = "stress_purchase.rs"]
 mod stress;
-use norn_cell::trusted::TrustedCommit as _;
+use norn_cell::test_door::TestCommit as _;
 use norn_cell::{CellStore, CommitBatch, FactWriteRow, Model, StoreOptions};
 use norn_ir::{
     ArtifactEnvelope, ArtifactPayload, Decimal, EntityRootV2, ObjectTypeDef, RuntimeValue as V,

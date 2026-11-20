@@ -9,7 +9,7 @@
 
 //! Legacy temporal spellings are canonical at every object-value read boundary.
 
-use norn_cell::trusted::TrustedCommit as _;
+use norn_cell::test_door::TestCommit as _;
 use std::collections::BTreeMap;
 use std::convert::Infallible;
 

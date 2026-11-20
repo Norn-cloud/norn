@@ -1,7 +1,7 @@
 //! Derived attempt identities deduplicate real SQLite effects across reopen.
 #![allow(clippy::expect_used, missing_docs, reason = "integration assertions")]
 
-use norn_cell::trusted::TrustedCommit as _;
+use norn_cell::test_door::TestCommit as _;
 use norn_cell::{CellStore, CommitBatch, CommitOutcome, Model, StoreOptions};
 use norn_ir::RuntimeValue;
 use norn_kernel::flow_identity::FlowStepIdentity;

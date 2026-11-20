@@ -13,7 +13,7 @@
 
 mod common;
 
-use norn_cell::trusted::TrustedCommit as _;
+use norn_cell::test_door::TestCommit as _;
 use std::collections::BTreeMap;
 
 use norn_cell::{CellError, CellStore, CommitBatch, MAIN_WORLD, StoreOptions};

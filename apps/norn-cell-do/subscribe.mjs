@@ -17,6 +17,13 @@ export const PROTOCOL = "norn.live.v1";
 export const MAX_SUBSCRIPTIONS = 8;
 /** Sockets per cell object. */
 export const MAX_SOCKETS = 256;
+/**
+ * TENANT-ISOLATION-1 (S3): sockets per cell object of callers who are not its members. They are
+ * counted apart (by this tag) and answered by the membership gate, never the cell, so a member's
+ * socket never shapes what an outsider sees, and outsiders never crowd out members.
+ */
+export const MAX_OUTSIDE_SOCKETS = 32;
+export const OUTSIDE = "outside";
 const MAX_ATTACHMENT = 2000;
 const MAX_MESSAGE = 4096;
 
@@ -48,16 +55,25 @@ const send = (ws, message) => {
  * Accept one live socket on `ctx` for `scope` as `authorization`. The upgrade itself carries no
  * data; every answer comes later from `evaluate`.
  */
-export function accept(ctx, scope, authorization, requested = "") {
-  if (ctx.getWebSockets().length >= MAX_SOCKETS) {
-    return Response.json({ format: "norn/refusal@2", retryable: true, reason: null, code: "live.too_many_sockets", category: "limit", message: "this cell has too many live readers", explanation: `at most ${MAX_SOCKETS} sockets per cell` }, { status: 429 });
+export function accept(ctx, scope, authorization, requested = "", { outside = false } = {}) {
+  // An outsider is counted only among outsiders; a member among members.
+  const open = outside ? ctx.getWebSockets(OUTSIDE).length : members(ctx).length;
+  const limit = outside ? MAX_OUTSIDE_SOCKETS : MAX_SOCKETS;
+  if (open >= limit) {
+    return Response.json({ format: "norn/refusal@2", retryable: true, reason: null, code: "live.too_many_sockets", category: "limit", message: "this cell has too many live readers", explanation: `at most ${limit} sockets per cell` }, { status: 429 });
   }
   const [client, server] = Object.values(new WebSocketPair());
-  ctx.acceptWebSocket(server);
-  server.serializeAttachment({ scope, authorization, subs: {} });
+  if (outside) ctx.acceptWebSocket(server, [OUTSIDE]);
+  else ctx.acceptWebSocket(server);
+  server.serializeAttachment(outside ? { scope, authorization, subs: {}, outside: true } : { scope, authorization, subs: {} });
   // Echo the protocol only when the client asked for it: a strict client refuses an unasked one.
   const asked = requested.split(",").map((name) => name.trim()).includes(PROTOCOL);
   return new Response(null, { status: 101, webSocket: client, ...(asked ? { headers: { "sec-websocket-protocol": PROTOCOL } } : {}) });
+}
+
+/** The object's members' sockets: every socket but an outsider's. */
+export function members(ctx) {
+  return ctx.getWebSockets().filter((ws) => !ws.deserializeAttachment()?.outside);
 }
 
 /**

@@ -10,7 +10,8 @@
 //! Routes (all `POST`, scoped by `orgId` and `environmentId` like every other):
 //! - `/v1/sources/{id}:sync`: sync now; 202 `{"run": …}`.
 //! - `/v1/uploads:begin`: `{fileName, contentType, size, prefix?}` → a signed
-//!   `PUT` the browser sends the bytes to.
+//!   `PUT` the browser sends the bytes to, always under `uploads/<scope>/`
+//!   (a `prefix` names a folder there, UPLOAD-SCOPE-1).
 //! - `/v1/uploads/{id}:complete`: the cell reads the object, records its URI
 //!   and SHA-256 and profiles it.
 //! - `/v1/uploads/{id}:define`: [`LoadRequest`]; installs the generated
@@ -33,7 +34,11 @@
 //! UPLOAD-ID-1: an upload id carries its store and object key, sealed with the
 //! store's secret, so `:complete`, `:load` and `:read` work after the Durable
 //! Object restarts; an id resolves only in the scope whose prefix its key names
-//! (or `synthetic/`).
+//! (or a read-only host fixture, `synthetic/`).
+//! UPLOAD-SCOPE-1: every key a tenant creates is under its own
+//! `uploads/<scope>/`; `synthetic/` holds the operator's shared fixtures,
+//! which every scope may read and none may write (no `PUT` is ever signed
+//! there).
 //! UPLOAD-RECORD-1: `:complete` keeps what the cell read back (URI, SHA-256,
 //! size, the CSV profile, who completed it) as a `source.Upload` object
 //! before it answers; after a restart `:load`, `:define` and the bulk loader
@@ -196,12 +201,23 @@ fn same(a: &[u8], b: &[u8]) -> bool {
     a.len() == b.len() && a.iter().zip(b).fold(0u8, |diff, (x, y)| diff | (x ^ y)) == 0
 }
 
-/// Whether `key` lies under a prefix the cell serving `scope_key` writes.
+/// Whether `key` lies under the prefix the cell serving `scope_key` writes.
 fn owns(key: &str, scope_key: &str) -> bool {
     key.strip_prefix("uploads/")
         .and_then(|rest| rest.strip_prefix(scope_key))
         .is_some_and(|rest| rest.starts_with('/'))
-        || key.starts_with("synthetic/")
+        && !key.contains("..")
+}
+
+/// Whether `key` is one of the operator's shared fixtures (UPLOAD-SCOPE-1):
+/// readable from every scope, writable from none.
+fn fixture(key: &str) -> bool {
+    key.starts_with("synthetic/") && !key.contains("..")
+}
+
+/// Whether the cell serving `scope_key` may read `key`: its own, or a fixture.
+fn readable(key: &str, scope_key: &str) -> bool {
+    owns(key, scope_key) || fixture(key)
 }
 
 enum Route<'a> {
@@ -212,6 +228,13 @@ enum Route<'a> {
     Load(&'a str),
     Read,
     Observations,
+}
+
+/// Whether `path` is one of the source and upload routes [`Connect::route`]
+/// serves (TENANT-ISOLATION-1: the membership gate answers an outsider there
+/// as these routes do).
+pub(crate) fn serves(path: &str) -> bool {
+    route_of(path).is_some()
 }
 
 fn route_of(path: &str) -> Option<Route<'_>> {
@@ -326,7 +349,18 @@ impl Connect {
                 columns: Vec::new(),
             }
         };
-        owns(&upload.key, scope_key).then_some(upload)
+        readable(&upload.key, scope_key).then_some(upload)
+    }
+
+    /// Whether `id` is an upload id this host issued (sealed, UPLOAD-ID-1),
+    /// readable from the cell serving `scope_key`, for the object at exactly
+    /// `uri`: what a loader checks a kept record against before it signs
+    /// anything (S5), since a record names a URI but only the seal is the
+    /// host's.
+    #[must_use]
+    pub fn issued_upload(&self, id: &str, scope_key: &str, uri: &str) -> bool {
+        self.resolve(id, scope_key)
+            .is_some_and(|upload| upload.uri == uri)
     }
 
     /// The upload `id` names in the cell `host` serves: [`Self::resolve`], its
@@ -495,7 +529,7 @@ impl Connect {
                     Routed::reply(refused(404, "source.unknown", "no such connection"))
                 }
             },
-            Route::Begin => Routed::reply(self.begin(host, request.body, now_ms)),
+            Route::Begin => Routed::reply(self.begin(&host.scope().key(), request.body, now_ms)),
             Route::Complete(id) => {
                 let actor = actor.clone();
                 self.fetch_object((id, &host.scope().key()), now_ms, |upload| {
@@ -520,12 +554,12 @@ impl Connect {
                     Err(e) => Routed::reply(refused(400, "upload.invalid_request", &e.to_string())),
                 }
             }
-            Route::Read => Routed::reply(self.read(host, request.body, now_ms)),
+            Route::Read => Routed::reply(self.read(&host.scope().key(), request.body, now_ms)),
             Route::Observations => Routed::reply(load_observations(host, request.body)),
         })
     }
 
-    fn begin<E: SqlEngine>(&mut self, host: &DevHost<E>, body: &str, now_ms: u64) -> Response {
+    fn begin(&mut self, scope_key: &str, body: &str, now_ms: u64) -> Response {
         let begin: Begin = match serde_json::from_str(body) {
             Ok(begin) => begin,
             Err(e) => return refused(400, "upload.invalid_request", &e.to_string()),
@@ -554,8 +588,10 @@ impl Connect {
             })
             .take(100)
             .collect();
+        // UPLOAD-SCOPE-1: a caller's prefix is a folder of its own scope's
+        // uploads, never a key outside it (not `synthetic/`, the fixtures).
         let prefix = match begin.prefix.as_deref() {
-            None => format!("uploads/{}", host.scope().key()),
+            None => format!("uploads/{scope_key}"),
             Some(p)
                 if p.starts_with("synthetic/")
                     && p.len() <= 100
@@ -563,7 +599,7 @@ impl Connect {
                         .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '-' | '_'))
                     && !p.contains("//") =>
             {
-                p.trim_end_matches('/').to_owned()
+                format!("uploads/{scope_key}/{}", p.trim_end_matches('/'))
             }
             Some(_) => {
                 return refused(
@@ -574,8 +610,8 @@ impl Connect {
             }
         };
         let nonce = self.token(now_ms);
-        // Seeded synthetic objects keep their names, so their URIs are known in
-        // advance; a person's upload gets the id in its key.
+        // Named synthetic objects keep their names (in this scope), so their
+        // URIs are known in advance; a person's upload gets the id in its key.
         let key = if begin.prefix.is_some() {
             format!("{prefix}/{name}")
         } else {
@@ -637,16 +673,15 @@ impl Connect {
     }
 
     /// A signed `GET` for an object this cell recorded, by upload id, or by
-    /// URI under a prefix this cell writes (`uploads/<scope>/`, `synthetic/`).
-    fn read<E: SqlEngine>(&self, host: &DevHost<E>, body: &str, now_ms: u64) -> Response {
+    /// URI under the prefix this cell writes (`uploads/<scope>/`) or of a
+    /// host fixture (`synthetic/`).
+    fn read(&self, scope_key: &str, body: &str, now_ms: u64) -> Response {
         let not_found = || refused(404, "upload.not_found", "no such upload");
         let request: Value = serde_json::from_str(body).unwrap_or_default();
-        let scope_key = host.scope().key();
         let found = if let Some(id) = request.get("uploadId").and_then(Value::as_str) {
-            self.resolve(id, &scope_key)
+            self.resolve(id, scope_key)
                 .and_then(|u| Some((self.store(u.store)?, u.key)))
         } else {
-            let own = format!("uploads/{scope_key}/");
             let uri = request
                 .get("uri")
                 .and_then(Value::as_str)
@@ -656,9 +691,7 @@ impl Connect {
                 .filter_map(|store| self.store(store))
                 .find_map(|s3| {
                     let key = uri.strip_prefix(&format!("s3://{}/", s3.bucket))?;
-                    ((key.starts_with(&own) || key.starts_with("synthetic/"))
-                        && !key.contains(".."))
-                    .then(|| (s3, key.to_owned()))
+                    readable(key, scope_key).then(|| (s3, key.to_owned()))
                 })
         };
         let Some((s3, key)) = found else {
@@ -936,6 +969,19 @@ fn load_observations<E: SqlEngine>(host: &DevHost<E>, body: &str) -> Response {
     if recorded.rows.is_empty() {
         return answer(&Refusal::invalid("a load carries at least one row"));
     }
+    // UPLOAD-RECORD-2 (S5): the cell's own reports (connections, sync runs,
+    // upload records) land only from the cell itself, never from a caller's
+    // export: a forged `source.Upload` would name an object to sign.
+    if recorded.source == norn_api::sources::REPORT_SOURCE
+        || recorded.mapping == norn_api::sources::REPORT_MAPPING
+        || recorded.instance == norn_api::sources::CELL_INSTANCE
+    {
+        return refused(
+            403,
+            "observations.host_owned",
+            "the cell's own records are written by the cell, never loaded",
+        );
+    }
     // A mapping this cell has not admitted refuses before anything is
     // captured, naming the mapping (not a host failure).
     match host.installed_artifact(&recorded.mapping) {
@@ -1100,6 +1146,106 @@ mod tests {
                 "{garbage}"
             );
         }
+    }
+
+    /// The answer's JSON document.
+    fn document(response: &Response) -> Value {
+        serde_json::from_str(&response.body).expect("a JSON answer")
+    }
+
+    /// UPLOAD-SCOPE-1 (S4): every key a tenant begins is under its own
+    /// `uploads/<scope>/`, a `synthetic/` prefix included, so no tenant
+    /// signs a `PUT` outside its scope or over a shared fixture, and no
+    /// tenant gets a signed read of another's object by id or by URI.
+    #[test]
+    fn a_tenant_never_signs_another_scopes_key_or_writes_a_fixture() {
+        let mut cell = connect("secret-one");
+        let body = |prefix: Option<&str>| {
+            json!({"fileName": "rows.csv", "contentType": "text/csv", "size": 3, "prefix": prefix})
+                .to_string()
+        };
+        let begun = |cell: &mut Connect, scope: &str, prefix: Option<&str>| {
+            let response = cell.begin(scope, &body(prefix), 1_000);
+            assert_eq!(response.status, 200, "{}", response.body);
+            let document = document(&response);
+            (
+                document["uploadId"].as_str().expect("an id").to_owned(),
+                document["uri"].as_str().expect("a uri").to_owned(),
+                document["putUrl"].as_str().expect("a put url").to_owned(),
+            )
+        };
+        for prefix in [None, Some("synthetic/scans"), Some("synthetic/")] {
+            let (_, uri, put) = begun(&mut cell, "org_a/prod", prefix);
+            assert!(
+                uri.starts_with("s3://uploads-bucket/uploads/org_a/prod/"),
+                "{prefix:?}: {uri}"
+            );
+            assert!(put.contains("/uploads/org_a/prod/"), "{prefix:?}: {put}");
+            assert!(!uri.starts_with("s3://uploads-bucket/synthetic/"), "{uri}");
+        }
+        // A prefix outside `synthetic/…` (another scope's) is refused outright.
+        for prefix in [
+            "uploads/org_b/prod",
+            "../uploads/org_b/prod",
+            "synthetic//x",
+        ] {
+            let response = cell.begin("org_a/prod", &body(Some(prefix)), 1_000);
+            assert_eq!(response.status, 400, "{prefix}");
+        }
+        // B's object, by id or by URI, is not A's to read; B reads it.
+        let (b_id, b_uri, _) = begun(&mut cell, "org_b/prod", Some("synthetic/scans"));
+        for request in [json!({"uploadId": b_id}), json!({"uri": b_uri})] {
+            let body = request.to_string();
+            assert_eq!(cell.read("org_a/prod", &body, 1_000).status, 404, "{body}");
+            assert_eq!(cell.read("org_b/prod", &body, 1_000).status, 200, "{body}");
+        }
+        assert!(cell.resolve(&b_id, "org_a/prod").is_none());
+        // What B wrote under its `synthetic/scans` is B's alone: the shared
+        // fixture of the same name is a different, read-only object.
+        assert_eq!(
+            cell.read(
+                "org_a/prod",
+                &json!({"uri": "s3://uploads-bucket/synthetic/scans/rows.csv"}).to_string(),
+                1_000,
+            )
+            .status,
+            200,
+            "a fixture stays readable"
+        );
+        assert_ne!(b_uri, "s3://uploads-bucket/synthetic/scans/rows.csv");
+    }
+
+    /// S5: a loader signs a kept record only when its upload id is one this
+    /// host sealed, readable from the scope, for exactly the record's URI.
+    #[test]
+    fn only_an_issued_upload_for_its_scope_and_uri_is_issued() {
+        let mut cell = connect("secret-one");
+        let response = cell.begin(
+            "org_a/prod",
+            &json!({"fileName": "rows.csv", "contentType": "text/csv", "size": 3}).to_string(),
+            1_000,
+        );
+        let begun = document(&response);
+        let id = begun["uploadId"].as_str().expect("an id");
+        let uri = begun["uri"].as_str().expect("a uri");
+        assert!(cell.issued_upload(id, "org_a/prod", uri));
+        // After a restart the seal alone still answers.
+        assert!(connect("secret-one").issued_upload(id, "org_a/prod", uri));
+        assert!(!cell.issued_upload(id, "org_b/prod", uri));
+        assert!(!cell.issued_upload(
+            id,
+            "org_a/prod",
+            "s3://uploads-bucket/uploads/org_b/prod/x.csv"
+        ));
+        assert!(!connect("secret-two").issued_upload(id, "org_a/prod", uri));
+        let s3 = cell.store(Store::Uploads).expect("uploads store").clone();
+        let other = upload_id(Store::Uploads, "uploads/org_b/prod/x.csv", &s3);
+        assert!(!cell.issued_upload(
+            &other,
+            "org_a/prod",
+            "s3://uploads-bucket/uploads/org_b/prod/x.csv"
+        ));
+        assert!(!cell.issued_upload("u-forged", "org_a/prod", uri));
     }
 
     #[test]

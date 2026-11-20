@@ -1,5 +1,5 @@
 //! Bounded catalog reads of compiled Norn definitions through the kernel PDP.
-use norn_cell::trusted::TrustedCommit as _;
+use norn_cell::test_door::TestCommit as _;
 use std::{
     collections::BTreeMap, collections::BTreeSet, error::Error, io::Read as _, io::Write as _,
 };

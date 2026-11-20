@@ -31,8 +31,6 @@ utoipa = "6.0.0"
 norn-cell = { path = "../norn-cell", default-features = false, features = ["native"] }
 
 [dev-dependencies]
-# The route tests commit their fixtures as a trusted embedder.
-norn-cell = { path = "../norn-cell", default-features = false, features = ["native", "trusted-commit"] }
 tempfile = "3.27.0"
 jsonschema = { version = "=0.47.0", default-features = false }
 proptest = "1.11.0"

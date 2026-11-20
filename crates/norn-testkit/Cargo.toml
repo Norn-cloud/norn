@@ -22,7 +22,7 @@ proptest-state-machine = "0.8.0"
 workspace = true
 
 [dev-dependencies]
-norn-cell = { path = "../norn-cell", features = ["trusted-commit"] }
+norn-cell = { path = "../norn-cell" }
 tempfile = "3.27.0"
 # The decide -> commit seam test (tests/decide_commit.rs): a norn-decisions
 # evaluation committed through norn-kernel against MemoryCell. Dev-only.

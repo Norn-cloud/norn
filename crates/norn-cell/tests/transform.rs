@@ -10,7 +10,7 @@
 //! A `ViewIR` v1 transform evaluated over one authorized cell snapshot
 //! (VIEW-ROWS-1, VIEW-LINEAGE-1, VIEW-ENGINE-1).
 
-use norn_cell::trusted::TrustedCommit as _;
+use norn_cell::test_door::TestCommit as _;
 use std::collections::{BTreeMap, BTreeSet};
 
 use norn_cell::compute::transform::{RowAccess, TransformMember};

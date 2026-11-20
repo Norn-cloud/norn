@@ -11,7 +11,7 @@
 //! carried forward and summed across subjects, never over time. The generated
 //! histories are the oracle vectors every other engine's lowering must match.
 
-use norn_cell::trusted::TrustedCommit as _;
+use norn_cell::test_door::TestCommit as _;
 use std::collections::{BTreeMap, BTreeSet};
 
 use norn_cell::compute::{QueryContext, QueryResult};

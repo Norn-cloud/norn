@@ -6,7 +6,7 @@
 //! Dependency discovery and admission must agree before selecting a remainder.
 mod quantity_support;
 
-use norn_cell::trusted::TrustedCommit as _;
+use norn_cell::test_door::TestCommit as _;
 use norn_cell::{CellError, CellStore, CommitBatch, CommitOutcome, Model, StoreOptions};
 use norn_ir::quantity_ledger::{
     LedgerFundingPolicy, QuantityBalanceVersion, QuantityOperation, QuantityRequest,

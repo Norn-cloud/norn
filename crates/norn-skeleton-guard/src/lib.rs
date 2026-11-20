@@ -976,7 +976,6 @@ pub fn check_dependencies(metadata: &Metadata) -> Vec<Violation> {
         if name == "norn-cell" {
             check_norn_cell_native_feature(pkg, &mut out);
         }
-        check_trusted_commit_feature(pkg, &mut out);
         for dep in &pkg.dependencies {
             let dep_name = dep.name.as_str();
             if dep_name == GUARD_CRATE {
@@ -1081,63 +1080,6 @@ fn check_calendar_dependencies(name: &str, dep: &Dependency, out: &mut Vec<Viola
             "norn-expr-timezone-features",
             "`norn-expr` must pin jiff-tzdb = 0.1.4 (tzdb 2025b) with no features".to_owned(),
         ));
-    }
-}
-
-/// The crates that may enable `norn-cell`'s `trusted-commit` feature in a
-/// shipped build: the host, which seeds its demo cells and the trusted K1
-/// rows without an actor. Every other crate takes it only as a
-/// dev-dependency (#1375 S4, #1444 fix 5).
-pub const TRUSTED_COMMIT_HOSTS: &[&str] = &["norn-cell-do"];
-
-/// `trusted-commit-feature`: the raw, unchecked store commit
-/// (`norn_cell::trusted`) is reachable only from tests and the host. A normal
-/// or build dependency on `norn-cell` with the feature, or a feature of a
-/// crate's own that forwards it, is a violation outside
-/// [`TRUSTED_COMMIT_HOSTS`]; `norn-cell` must never turn it on by default.
-fn check_trusted_commit_feature(pkg: &Package, out: &mut Vec<Violation>) {
-    const RULE: &str = "trusted-commit-feature";
-    const FEATURE: &str = "trusted-commit";
-    let name = pkg.name.as_str();
-    if name == "norn-cell" {
-        if pkg
-            .features
-            .get("default")
-            .is_some_and(|features| features.iter().any(|feature| feature == FEATURE))
-        {
-            out.push(violation(
-                RULE,
-                "`norn-cell` must not enable `trusted-commit` by default".to_owned(),
-            ));
-        }
-        return;
-    }
-    if TRUSTED_COMMIT_HOSTS.contains(&name) {
-        return;
-    }
-    for dep in &pkg.dependencies {
-        if dep.name == "norn-cell"
-            && dep.kind != DependencyKind::Development
-            && dep.features.iter().any(|feature| feature == FEATURE)
-        {
-            out.push(violation(
-                RULE,
-                format!(
-                    "`{name}` enables `norn-cell/trusted-commit` as a {} dependency; the raw commit is for tests and the host only",
-                    kind_label(dep.kind)
-                ),
-            ));
-        }
-    }
-    for (feature_name, features) in &pkg.features {
-        if features.iter().any(|feature| {
-            feature.trim_start_matches("dep:").replace('?', "") == "norn-cell/trusted-commit"
-        }) {
-            out.push(violation(
-                RULE,
-                format!("`{name}` feature `{feature_name}` forwards `norn-cell/trusted-commit`"),
-            ));
-        }
     }
 }
 

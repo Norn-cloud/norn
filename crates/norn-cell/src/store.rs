@@ -2735,8 +2735,8 @@ impl<E: SqlEngine> CellStore<E> {
     /// authored/observed authority. Canonical `FactChange::Create` still refuses reuse.
     ///
     /// Crate-private (#1375 S4, #1444 fix 5): no law check runs here, so a
-    /// crate outside the kernel path cannot reach it. The host's trusted
-    /// embedding door is [`crate::trusted`] (feature `trusted-commit`).
+    /// crate outside the kernel path cannot reach it. A host's own actorless
+    /// writes are the fixed-input [`crate::provision`] operations.
     ///
     /// ```compile_fail,E0624
     /// // A raw, unchecked write from outside the kernel does not compile:

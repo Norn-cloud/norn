@@ -1,26 +1,26 @@
-//! The trusted embedding door to the raw store commit (feature
-//! `trusted-commit`).
+//! Raw, unchecked store commits for tests only (#1375 S4, #1444 fix 5).
 //!
 //! `CellStore::commit_unchecked`, `commit_probed_unchecked` and
-//! `commit_guarded_unchecked` run no law
-//! check, so they are private to this crate (#1375 S4, #1444 fix 5): an
-//! authored write reaches storage only through the kernel path, whose
-//! `Checked` stage (`norn_kernel::cell_host::Checked`) proves the shared
-//! admission ran on that exact commit.
+//! `commit_guarded_unchecked` run no law check, so they are private to this
+//! crate: an authored write reaches storage only through the kernel path,
+//! whose `Checked` stage (`norn_kernel::cell_host::Checked`) proves the
+//! shared admission ran on that exact commit. A host's own actorless writes
+//! are the fixed-input operations in [`crate::provision`].
 //!
-//! [`TrustedCommit`] re-exposes them for the two callers that write without
-//! an actor: a host's own provisioning (the trusted base's rows, a demo
-//! seed) and tests. The skeleton guard (`trusted-commit-feature`) admits the
-//! feature only as a dev-dependency or from the hosting crate; any other
-//! crate that enables it fails CI.
+//! [`TestCommit`] re-exposes the raw commits to test fixtures. It is not a
+//! Cargo feature, so no dependency can switch it on: the module exists only
+//! in debug builds for a native target
+//! (`cfg(all(debug_assertions, not(target_arch = "wasm32")))`), and every
+//! shipped build (release, or the Worker's wasm32) is compiled without it.
+//! Production code must never import it.
 
 use crate::engine::SqlEngine;
 use crate::error::CellError;
 use crate::read::StoreReader;
 use crate::store::{CellStore, CommitBatch, CommitOutcome, CommitPoint, GuardedError};
 
-/// Raw, unchecked commits for a trusted embedder. See the [module](self).
-pub trait TrustedCommit<E: SqlEngine> {
+/// Raw, unchecked commits for test fixtures. See the [module](self).
+pub trait TestCommit<E: SqlEngine> {
     /// `CellStore::commit_unchecked`: commit `batch` atomically, with no law check.
     ///
     /// # Errors
@@ -55,7 +55,7 @@ pub trait TrustedCommit<E: SqlEngine> {
     ) -> Result<(T, CommitOutcome), GuardedError<X>>;
 }
 
-impl<E: SqlEngine> TrustedCommit<E> for CellStore<E> {
+impl<E: SqlEngine> TestCommit<E> for CellStore<E> {
     fn commit(&mut self, batch: &CommitBatch) -> Result<CommitOutcome, CellError> {
         CellStore::commit_unchecked(self, batch)
     }

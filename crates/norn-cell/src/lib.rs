@@ -58,6 +58,7 @@ mod mapping_process;
 mod migration;
 pub mod mining;
 mod observation_quality;
+pub mod provision;
 pub use observation_quality::AuthoritativePage;
 mod identity;
 pub mod model;
@@ -74,9 +75,10 @@ pub mod source_agreement;
 pub mod source_provenance;
 pub mod store;
 pub mod system;
+#[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
+#[doc(hidden)]
+pub mod test_door;
 pub mod transparency;
-#[cfg(feature = "trusted-commit")]
-pub mod trusted;
 mod write;
 
 pub use error::CellError;

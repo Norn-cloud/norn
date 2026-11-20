@@ -20,7 +20,7 @@ use norn_api::objects::{NornLinkCount, NornLinkDirection, NornObjectLinkPage};
 use norn_api::refusal::Refusal;
 use norn_api::scope::{CellScope, ScopeQuery};
 use norn_cell::engine::NativeEngine;
-use norn_cell::trusted::TrustedCommit as _;
+use norn_cell::test_door::TestCommit as _;
 use norn_cell::{CellStore, CommitBatch, LinkChange, MAIN_WORLD, Model, ObjectRecord};
 use norn_ir::FactChange;
 use norn_kernel::authz::{

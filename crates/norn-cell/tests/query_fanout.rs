@@ -6,7 +6,7 @@
 )]
 mod query_support;
 use norn_cell::compute::{Engine, ivm::IncrementalQuestion, lineage::LineageDisclosure};
-use norn_cell::trusted::TrustedCommit as _;
+use norn_cell::test_door::TestCommit as _;
 use norn_checker::metric::compute::{AMBIGUOUS_GRAIN, admit};
 use norn_ir::metric::{DimensionPath, QuestionDimension, SafeAggregation};
 use norn_ir::{Decimal, LinkId, PropertyId};

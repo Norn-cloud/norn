@@ -24,7 +24,7 @@ use norn_api::refusal::Refusal;
 use norn_api::routes::object_counts;
 use norn_api::scope::{CellScope, ScopeQuery};
 use norn_cell::engine::NativeEngine;
-use norn_cell::trusted::TrustedCommit as _;
+use norn_cell::test_door::TestCommit as _;
 use norn_cell::{CellStore, CommitBatch, FactWriteRow, MAIN_WORLD, ObjectRecord};
 use norn_ir::RuntimeValue as V;
 use norn_kernel::authz::{
