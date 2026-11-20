@@ -1763,34 +1763,8 @@ pub fn analytics<E: SqlEngine>(
         });
         return Some(respond(answer));
     }
-    // MANIFEST-LINEAGE-1: one dataset row traced to its manifest and files.
-    let lineage = request
-        .path
-        .strip_prefix("/v1/datasets/")
-        .and_then(|rest| rest.strip_suffix(":lineage"))
-        .and_then(|rest| rest.split_once("/rows/"))
-        .filter(|(kind, row)| {
-            request.method == "GET"
-                && !kind.is_empty()
-                && !kind.contains('/')
-                && !row.is_empty()
-                && !row.contains('/')
-        });
-    if let Some((kind, row)) = lineage {
-        let _request = RequestScope::new(principals);
-        let actor = principals.resolve(request.authorization, request.now);
-        let answer = scope_of(request.query).and_then(|scope| {
-            let (kind, row) = (decoded(kind)?, decoded(row)?);
-            document_json(&norn_api::analytics_routes::dataset_lineage(
-                host,
-                &scope,
-                actor.as_deref(),
-                (&kind, &row),
-                &CellObjectAccess,
-                transport,
-            )?)
-        });
-        return Some(respond(answer));
+    if let Some(answered) = dataset_lineage(host, principals, transport, request) {
+        return Some(answered);
     }
     if export.is_none() && profile.is_none() && request.path != "/v1/datasets:load" {
         return None;
@@ -1823,6 +1797,43 @@ pub fn analytics<E: SqlEngine>(
         )),
     };
     Some(respond(result))
+}
+
+/// MANIFEST-LINEAGE-1: `GET /v1/datasets/{type}/rows/{row}:lineage`, one
+/// dataset row traced to its manifest and files; `None` for any other request.
+fn dataset_lineage<E: SqlEngine>(
+    host: &DevHost<E>,
+    principals: &dyn PrincipalResolver,
+    transport: &dyn norn_api::analytics_routes::Transport,
+    request: &Request<'_>,
+) -> Option<Response> {
+    let lineage = request
+        .path
+        .strip_prefix("/v1/datasets/")
+        .and_then(|rest| rest.strip_suffix(":lineage"))
+        .and_then(|rest| rest.split_once("/rows/"))
+        .filter(|(kind, row)| {
+            request.method == "GET"
+                && !kind.is_empty()
+                && !kind.contains('/')
+                && !row.is_empty()
+                && !row.contains('/')
+        });
+    let (kind, row) = lineage?;
+    let _request = RequestScope::new(principals);
+    let actor = principals.resolve(request.authorization, request.now);
+    let answer = scope_of(request.query).and_then(|scope| {
+        let (kind, row) = (decoded(kind)?, decoded(row)?);
+        document_json(&norn_api::analytics_routes::dataset_lineage(
+            host,
+            &scope,
+            actor.as_deref(),
+            (&kind, &row),
+            &CellObjectAccess,
+            transport,
+        )?)
+    });
+    Some(respond(answer))
 }
 
 fn decoded(kind: &str) -> Result<String, Refusal> {
