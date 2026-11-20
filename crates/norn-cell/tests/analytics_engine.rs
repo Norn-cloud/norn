@@ -491,9 +491,10 @@ fn a_sync_that_skips_commits_is_refused() {
     );
 }
 
-/// A CSV in the engine's scratch directory, the only place a load reads.
+/// A CSV in the tenant's scratch directory, the only place its load reads.
 fn csv(engine: &Engine, lines: &[&str]) -> (tempfile::NamedTempFile, String) {
-    let mut file = tempfile::NamedTempFile::new_in(engine.scratch()).expect("file");
+    let mut file =
+        tempfile::NamedTempFile::new_in(engine.scratch(&tenant()).expect("scratch")).expect("file");
     for line in lines {
         writeln!(file, "{line}").expect("write");
     }
