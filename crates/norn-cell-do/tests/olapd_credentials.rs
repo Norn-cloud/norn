@@ -6,6 +6,14 @@
 //! exists. Expired and rotated-out credentials are refused, and rotation
 //! needs no restart.
 #![cfg(all(feature = "duckdb", not(target_arch = "wasm32")))]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::arithmetic_side_effects,
+    clippy::indexing_slicing,
+    clippy::panic,
+    reason = "credential fixtures must build before the daemon's answers are compared"
+)]
 
 use std::io::{Read as _, Write as _};
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -38,10 +46,12 @@ fn tenant(scope: &str) -> TenantId {
 
 /// Replace the keyring as an operator does: write a copy, rename it over.
 fn write_keyring(path: &Path, issuers: &[&Issuer]) {
-    let text: String = issuers
+    let mut text = issuers
         .iter()
-        .map(|issuer| format!("{}\n", issuer.public_spec()))
-        .collect();
+        .map(|issuer| issuer.public_spec())
+        .collect::<Vec<_>>()
+        .join("\n");
+    text.push('\n');
     let staged = path.with_extension("new");
     std::fs::write(&staged, text).unwrap();
     std::fs::rename(&staged, path).unwrap();

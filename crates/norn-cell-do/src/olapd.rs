@@ -108,7 +108,10 @@ impl Config {
 fn read_keyring(path: &std::path::Path) -> Result<Keyring, String> {
     let mut text = String::new();
     std::fs::File::open(path)
-        .and_then(|file| file.take(MAX_KEYRING_BYTES + 1).read_to_string(&mut text))
+        .and_then(|file| {
+            file.take(MAX_KEYRING_BYTES.saturating_add(1))
+                .read_to_string(&mut text)
+        })
         .map_err(|e| format!("the keyring {} is unreadable: {e}", path.display()))?;
     if u64::try_from(text.len()).unwrap_or(u64::MAX) > MAX_KEYRING_BYTES {
         return Err(format!("the keyring {} is too long", path.display()));

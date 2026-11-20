@@ -182,16 +182,16 @@ impl Keyring {
     /// No key, too many keys, a repeated key id, or a malformed line.
     pub fn parse(text: &str) -> Result<Self, String> {
         let mut keys = BTreeMap::new();
-        for (number, line) in text.lines().enumerate() {
+        for (number, line) in (1_usize..).zip(text.lines()) {
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') {
                 continue;
             }
-            let (kid, bytes) = key_spec(line).map_err(|e| format!("line {}: {e}", number + 1))?;
+            let (kid, bytes) = key_spec(line).map_err(|e| format!("line {number}: {e}"))?;
             let key = VerifyingKey::from_bytes(&bytes)
-                .map_err(|_e| format!("line {}: not an Ed25519 public key", number + 1))?;
+                .map_err(|_e| format!("line {number}: not an Ed25519 public key"))?;
             if keys.insert(kid.clone(), key).is_some() {
-                return Err(format!("line {}: key id {kid} is repeated", number + 1));
+                return Err(format!("line {number}: key id {kid} is repeated"));
             }
         }
         if keys.is_empty() {
@@ -239,7 +239,7 @@ impl Keyring {
         if expires_ms <= now_ms {
             return Err(Denied::Expired);
         }
-        if expires_ms - now_ms > MAX_CREDENTIAL_LIFETIME_MS {
+        if expires_ms.saturating_sub(now_ms) > MAX_CREDENTIAL_LIFETIME_MS {
             return Err(Denied::TooLong);
         }
         Ok(tenant)
@@ -247,6 +247,11 @@ impl Keyring {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::arithmetic_side_effects,
+    reason = "credential fixtures must build before verification assertions"
+)]
 mod tests {
     use super::*;
 
