@@ -165,7 +165,8 @@ pub fn admit(stored: &StoredVersion, engine: EngineVersion) -> Result<Admission,
         StoredVersion::Fresh => return Ok(Admission::Fresh),
         StoredVersion::Unstamped => (1, "a release before the engine stamp".to_owned()),
         StoredVersion::Stamped(text) => {
-            let stamp: EngineStamp = serde_json::from_str(text).map_err(|_| unknown(text))?;
+            let stamp: EngineStamp =
+                serde_json::from_str(text).map_err(|_unreadable| unknown(text))?;
             if stamp.format != STAMP_FORMAT || stamp.storage == 0 {
                 return Err(unknown(text));
             }

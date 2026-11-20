@@ -8,8 +8,13 @@
 //! logical database.
 
 #![allow(
+    clippy::arithmetic_side_effects,
     clippy::expect_used,
+    clippy::format_collect,
+    clippy::indexing_slicing,
     clippy::panic,
+    clippy::string_slice,
+    clippy::wildcard_enum_match_arm,
     dead_code,
     unreachable_pub,
     reason = "test support shared by the upgrade test and its recorder"
@@ -198,15 +203,16 @@ pub fn image(engine: &NativeEngine) -> Value {
         .query("SELECT value FROM \"_norn_meta\" WHERE key = 'engine'", &[])
         .ok()
         .and_then(|rows| rows.into_iter().next())
-        .map_or(1, |row| {
-            let stamp: Value = serde_json::from_str(&text(&row[0])).expect("stamp");
-            stamp["storage"].as_u64().expect("storage version")
+        // The stamp's storage version as written, or null for a stamp that
+        // is not JSON; an unstamped store is storage version 1.
+        .map_or(Value::from(1), |row| {
+            serde_json::from_str::<Value>(&text(&row[0]))
+                .map_or(Value::Null, |stamp| stamp["storage"].clone())
         });
     json!({ "format": IMAGE_FORMAT, "storage": storage, "schema": schema, "tables": tables })
 }
 
-/// Rebuild `image` into a new SQLite file at `path`: tables, their rows,
-/// then indexes, views and triggers, so no trigger fires on the load.
+/// Rebuild `image` into a new SQLite file at `path`.
 pub fn load(image: &Value, path: &Path) {
     assert_eq!(image["format"], IMAGE_FORMAT, "image format");
     assert!(!path.exists(), "load writes a new file");
@@ -214,8 +220,15 @@ pub fn load(image: &Value, path: &Path) {
     let schema = image["schema"].as_array().expect("schema");
     engine
         .transaction(|| {
-            for entry in schema.iter().filter(|entry| entry["type"] == "table") {
+            // Tables and indexes in catalog order, so the loaded catalog
+            // lists them as the original does; views and triggers after the
+            // rows, so no trigger fires on the load.
+            let deferred =
+                |entry: &Value| matches!(entry["type"].as_str(), Some("view" | "trigger"));
+            for entry in schema.iter().filter(|entry| !deferred(entry)) {
                 engine.execute_batch(entry["sql"].as_str().expect("sql"))?;
+            }
+            for entry in schema.iter().filter(|entry| entry["type"] == "table") {
                 let name = entry["name"].as_str().expect("name");
                 let table = &image["tables"][name];
                 let columns: Vec<String> = table["columns"]
@@ -239,7 +252,7 @@ pub fn load(image: &Value, path: &Path) {
                     engine.execute(&insert, &values)?;
                 }
             }
-            for entry in schema.iter().filter(|entry| entry["type"] != "table") {
+            for entry in schema.iter().filter(|entry| deferred(entry)) {
                 engine.execute_batch(entry["sql"].as_str().expect("sql"))?;
             }
             Ok::<_, norn_cell::CellError>(())

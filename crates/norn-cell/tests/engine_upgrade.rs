@@ -136,7 +136,7 @@ fn a_storage_v1_cell_opens_on_this_engine_with_identical_receipts() {
     // Storage version 2 adds the stamp and changes nothing else. A later data
     // migration lists what it changes here.
     let stamp = serde_json::to_string(&EngineStamp::current()).expect("stamp");
-    let mut expected = before.clone();
+    let mut expected = before;
     let meta = expected["tables"]["_norn_meta"]["rows"]
         .as_array_mut()
         .expect("meta rows");
@@ -156,7 +156,7 @@ fn a_storage_v1_cell_opens_on_this_engine_with_identical_receipts() {
 
     // A reopen at the current version migrates nothing, and the upgraded
     // cell keeps committing on the chain it inherited.
-    let mut store = open(&path).expect("reopen");
+    let store = open(&path).expect("reopen");
     assert_eq!(store.read().verify_ledger().expect("ledger"), head);
     drop(store);
     assert_eq!(
