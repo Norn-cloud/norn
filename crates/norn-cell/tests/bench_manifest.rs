@@ -180,7 +180,7 @@ fn bpi_2019_through_one_manifest() {
     let response = engine
         .store(&StoreRequest {
             land: request.clone(),
-            landed: landed.clone(),
+            landed: landed,
             data: object(&data.sha256),
             held: object(&held.sha256),
         })
@@ -197,9 +197,9 @@ fn bpi_2019_through_one_manifest() {
             format: FileFormat::Csv,
             bytes: source_bytes,
         },
-        binding: binding.clone(),
+        binding: binding,
         table,
-        pins: request.pins.clone(),
+        pins: request.pins,
         data: ManifestFile {
             uri: "s3://bench/datasets/data.parquet".into(),
             sha256: data.sha256.clone(),
@@ -232,7 +232,7 @@ fn bpi_2019_through_one_manifest() {
     let at = Instant::now();
     let profiled = engine
         .profile(&norn_cell::analytics::ProfileRequest {
-            tenant: tenant.clone(),
+            tenant,
             source: norn_cell::analytics::Source::Dataset {
                 table: TYPE.into(),
                 load: cache,
