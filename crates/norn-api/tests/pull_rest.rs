@@ -1027,29 +1027,31 @@ fn a_dataset_load_commits_one_manifest_of_its_stored_files() {
     assert_eq!(stored[0].land.attempt, landed[0].attempt);
 }
 
-/// MANIFEST-01: definitions installed while a landing is in flight refuse
-/// its commit as stale: the pins the rows were typed by are carried from
-/// the landing's first step, never read again at commit.
+/// MANIFEST-01: a law installed while a landing is in flight refuses its
+/// commit as stale: the landing was checked by the laws pinned at its first
+/// step, and the commit takes those pins, never the definitions read again.
 #[test]
-fn definitions_installed_between_landing_and_commit_refuse_the_commit() {
+fn a_law_installed_between_landing_and_commit_refuses_the_commit() {
     use norn_api::analytics_routes::load_dataset;
     let host = std::sync::Arc::new(items_host(false));
     let installer = std::sync::Arc::clone(&host);
     let engine = ThreeAndOne {
         between: Some(Box::new(move || {
-            let table = norn_api::uploads::parse_csv("code\nx\n").expect("csv");
-            let request: norn_api::uploads::LoadRequest =
-                serde_json::from_value(json!({"typeName": "Other"})).expect("request");
-            let generated = norn_api::uploads::generate(
-                &table,
-                &request,
-                "s3://uploads/demo/other.csv",
-                &"aa".repeat(32),
-                RECORDED_AT,
-            )
-            .expect("generated");
-            norn_api::uploads::install(&installer, &generated, EXTRACTED_AT_MS + 1)
-                .expect("installed in flight");
+            let law: ArtifactEnvelope = serde_json::from_value(json!({
+                "artifactId": "upload.items.qty_nonnegative.law", "kind": "law",
+                "dependencies": [{"artifactId": "upload.Items.entity", "kind": "entity", "required": true, "version": "0.1.0"}],
+                "irVersion": "0.1", "lifecycle": "active", "name": "qty_nonnegative", "namespace": "upload",
+                "provenance": {"source": "system"}, "scope": {}, "version": "0.1.0",
+                "payload": {"id": "qty_nonnegative", "lawVersion": "0.1", "modality": {"kind": "always"},
+                    "owner": "upload", "provenance": {"source": "system"}, "rationale": "qty_nonnegative",
+                    "response": {"kind": "predicate", "expression": "self.qty >= 0"},
+                    "scope": {"objectTypes": ["upload.Items"], "root": {"kind": "entity", "id": "upload.Items"}},
+                    "severity": "error", "subject": "upload.Items"}
+            }))
+            .expect("law");
+            installer
+                .install_artifacts(&[law], EXTRACTED_AT_MS + 1)
+                .expect("a law installed in flight");
         })),
         ..ThreeAndOne::default()
     };
@@ -1066,6 +1068,10 @@ fn definitions_installed_between_landing_and_commit_refuse_the_commit() {
     assert_eq!(
         (refused.status, refused.code.as_str()),
         (409, "dataset.stale_pins")
+    );
+    assert!(
+        engine.landed.lock().expect("calls")[0].checks.is_empty(),
+        "the landing was checked by no law"
     );
     assert!(
         norn_api::analytics_routes::current_manifest(&host, "upload.Items")
