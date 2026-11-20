@@ -206,12 +206,15 @@ pub fn image(engine: &NativeEngine) -> Value {
         .ok()
         .and_then(|rows| rows.into_iter().next())
         // The stamp's storage version as written, or null for a stamp that
-        // is not JSON; an unstamped store is storage version 1.
+        // is not JSON text; an unstamped store is storage version 1.
         .map_or_else(
             || Value::from(1),
-            |row| {
-                serde_json::from_str::<Value>(&text(&row[0]))
-                    .map_or(Value::Null, |stamp| stamp["storage"].clone())
+            |row| match &row[0] {
+                SqlValue::Text(stamp) => serde_json::from_str::<Value>(stamp)
+                    .map_or(Value::Null, |stamp| stamp["storage"].clone()),
+                SqlValue::Null | SqlValue::Integer(_) | SqlValue::Real(_) | SqlValue::Blob(_) => {
+                    Value::Null
+                }
             },
         );
     json!({ "format": IMAGE_FORMAT, "storage": storage, "schema": schema, "tables": tables })
