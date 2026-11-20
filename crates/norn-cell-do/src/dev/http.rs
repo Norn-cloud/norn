@@ -110,18 +110,37 @@ pub(crate) fn serve(
     std::thread::scope(|scope| {
         for stream in listener.incoming().flatten() {
             let (handler, open) = (&handler, &open);
-            if open.fetch_add(1, Ordering::SeqCst) < MAX_CONNECTIONS {
+            let slot = Slot::take(open);
+            if slot.within_bound {
                 scope.spawn(move || {
-                    // A broken connection affects only itself.
+                    // A broken connection, even a panicking one, affects only itself.
                     let _ignored = connection(&stream, handler, true);
-                    open.fetch_sub(1, Ordering::SeqCst);
+                    drop(slot);
                 });
             } else {
                 let _ignored = connection(&stream, handler, false);
-                open.fetch_sub(1, Ordering::SeqCst);
             }
         }
     });
+}
+
+/// One open connection, counted against [`MAX_CONNECTIONS`] until dropped.
+struct Slot<'a> {
+    open: &'a AtomicUsize,
+    within_bound: bool,
+}
+
+impl<'a> Slot<'a> {
+    fn take(open: &'a AtomicUsize) -> Self {
+        let within_bound = open.fetch_add(1, Ordering::SeqCst) < MAX_CONNECTIONS;
+        Self { open, within_bound }
+    }
+}
+
+impl Drop for Slot<'_> {
+    fn drop(&mut self) {
+        self.open.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 /// Answer `stream`'s requests in order; with `persistent` false, only its first.
