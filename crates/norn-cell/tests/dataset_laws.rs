@@ -115,12 +115,12 @@ const WIDENED: [(&str, &str, &str); 3] = [
     (
         "customer_null_or_named",
         "warning",
-        "self.customer == null or self.customer != 'void'",
+        "self.customer == null or (self.customer ?? '') != 'void'",
     ),
     (
         "customer_not_composed",
         "warning",
-        "self.customer != '\u{e9}'",
+        "(self.customer ?? '') != '\u{e9}'",
     ),
 ];
 
@@ -386,7 +386,7 @@ fn set_based(cell: &Cell, lines: &[Line]) -> SetBased {
             held.insert(row);
         }
     }
-    let data: BTreeSet<u64> = parquet_rows(&data, "NULL, NULL")
+    let data: BTreeSet<u64> = parquet_rows(&data, "CAST(NULL AS VARCHAR), CAST(NULL AS BOOLEAN)")
         .into_iter()
         .map(|(row, _, _)| row)
         .collect();
@@ -488,6 +488,12 @@ fn laws(
         .collect()
 }
 
+/// Whether the engine decides `line`'s laws itself: every read present and
+/// every text in NFC (the decomposed `e\u{301}` is not).
+fn decided(line: &Line) -> bool {
+    line.customer.is_some_and(|customer| customer != "e\u{301}")
+}
+
 proptest::proptest! {
     #![proptest_config(proptest::test_runner::Config::with_cases(16))]
     /// MANIFEST-LAWS-1 / LAW-05: lowered laws decide every row whose reads
@@ -502,9 +508,10 @@ proptest::proptest! {
         proptest::prop_assert_eq!(&set.findings, &row_findings);
         proptest::prop_assert_eq!(&set.held, &row_held);
         proptest::prop_assert_eq!(&set.data, &row_trusted);
-        // Only rows with an absent read are left to the per-row evaluator.
-        let absent = u64::try_from(lines.iter().filter(|line| line.customer.is_none()).count()).expect("count");
-        proptest::prop_assert_eq!(set.residue, absent);
+        // Only rows with an absent read, or text not in NFC, are left to the
+        // per-row evaluator.
+        let undecided = u64::try_from(lines.iter().filter(|line| !decided(line)).count()).expect("count");
+        proptest::prop_assert_eq!(set.residue, undecided);
     }
 
     /// MANIFEST-LAWS-1 / LAW-04: a law outside the lowered subset leaves
@@ -529,7 +536,7 @@ proptest::proptest! {
             .rule;
         for row in &set.rows {
             let line = &lines[usize::try_from(row.row - 1).expect("row")];
-            if line.customer.is_some() {
+            if decided(line) {
                 proptest::prop_assert_eq!(&row.rules, &vec![function.clone()]);
             }
         }
@@ -701,7 +708,7 @@ fn parquet_instants_import_with_every_nanosecond_and_their_instant() {
         assert_eq!(landed.residue_total, 0);
         let (data, _) = engine.landed_files(&tenant(), attempt).expect("files");
         landed_instants.extend(
-            parquet_rows(&data, "occurred_at, NULL")
+            parquet_rows(&data, "occurred_at, CAST(NULL AS BOOLEAN)")
                 .into_iter()
                 .map(|(_, text, _)| text.expect("an instant")),
         );

@@ -2755,6 +2755,13 @@ fn in_range(value: &Frag, scale: u32) -> Outcome<Frag> {
 
 const LAW: &str = "bulk.unsupported_law";
 
+/// LAW-05: the per-row evaluator compares text by its NFC form, the engine
+/// by its bytes. They agree exactly where the text is already NFC, so text
+/// that is not is left to the per-row evaluator as residue.
+fn nfc_guard(text: &Frag) -> Frag {
+    Frag::fmt("(nfc_normalize({}) = {})", &[text, text])
+}
+
 /// One lowered predicate: its SQL, null-free over rows whose reads are all
 /// present, and the guards that must all hold for it to be exact.
 struct LoweredRule {
@@ -2798,11 +2805,15 @@ fn lower_leaf(node: &RowPredicate, table: &TableSchema) -> Outcome<LoweredRule> 
                 guards: vec![guard],
             }
         }
-        P::Text(text) => LoweredRule {
-            sql: Frag::bind("CAST(? AS VARCHAR)", Sql::Text(text.clone())),
-            kind: K::Text,
-            guards: Vec::new(),
-        },
+        P::Text(text) => {
+            let sql = Frag::bind("CAST(? AS VARCHAR)", Sql::Text(text.clone()));
+            let guards = vec![nfc_guard(&sql)];
+            LoweredRule {
+                sql,
+                kind: K::Text,
+                guards,
+            }
+        }
         P::Column(id) => {
             let kind = node
                 .kind(table)
@@ -2810,7 +2821,8 @@ fn lower_leaf(node: &RowPredicate, table: &TableSchema) -> Outcome<LoweredRule> 
             let sql = Frag::raw(ident(id));
             let guards = match kind {
                 K::Number(scale) => vec![in_range(&sql, scale)?],
-                K::Null | K::Bool | K::Text => Vec::new(),
+                K::Text => vec![nfc_guard(&sql)],
+                K::Null | K::Bool => Vec::new(),
             };
             LoweredRule { sql, kind, guards }
         }

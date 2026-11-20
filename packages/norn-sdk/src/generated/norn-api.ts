@@ -175,13 +175,22 @@ export interface paths {
          *     dataset `objectType`, typed by that admitted definition. The engine reads
          *     the object through a presigned URL, verifies its SHA-256, types every row,
          *     and quarantines a row it cannot type (or that misses a required value)
-         *     with its reason. The load becomes the dataset's current one; each row
-         *     traces to `(uri, sha256, row)`. Decided like any upload load
-         *     (`SyncSource("upload")`); the load is reported as a run of the type's
-         *     `upload` connection, as the cell's own observations (SYNC-REPORT-1).
-         * @description # Errors
+         *     with its reason. The load becomes the dataset's current one when its
+         *     manifest commits; each row traces to `(uri, sha256, row)`. The load is
+         *     reported as a run of the type's `upload` connection, as the cell's own
+         *     observations (SYNC-REPORT-1).
+         * @description MANIFEST-03: a load is decided exactly as an observation load of the
+         *     same rows: `SyncSource("upload")` and the destination connection's own
+         *     grant (`SyncSource("upload.<type>")`), an admitted mapping onto the type
+         *     that the load binds its columns by, and the markings a write of those
+         *     rows would carry. A mapping or marking bulk ingest cannot enforce is
+         *     refused, never loaded unchecked.
+         *
+         *     # Errors
          *     A denied caller (one opaque 403), an unknown upload or type (404), a
-         *     changed file (`bulk.digest_mismatch`, 422), or an unreachable engine.
+         *     changed file (`bulk.digest_mismatch`, 422), a mapping or marking bulk
+         *     ingest cannot enforce (422), stale pins or a reused request key (409), or
+         *     an unreachable engine.
          */
         post: operations["load_dataset"];
         delete?: never;
@@ -1192,8 +1201,20 @@ export interface components {
         };
         /** @description `POST /v1/datasets:load` body. */
         DatasetLoadRequest: {
+            /**
+             * @description MANIFEST-03: the admitted mapping onto the type the load binds its
+             *     columns by; needed only when more than one maps onto it.
+             */
+            mapping?: string | null;
             /** @description The admitted object type the rows are typed by. */
             objectType: string;
+            /**
+             * @description MANIFEST-04: the caller's key for this load. A retry with the same
+             *     key and the same request answers with the first load's receipt; the
+             *     same key with another request is refused (409
+             *     `dataset.request_conflict`). A load without a key always commits.
+             */
+            requestKey?: string | null;
             /** @description A completed upload of this cell. */
             uploadId: string;
         };
@@ -2363,8 +2384,8 @@ export interface components {
             held: components["schemas"]["NornDatasetFile"];
             /**
              * Format: int64
-             * @description Admitted rows a law or invariant holds back; every other admitted row
-             *     is trusted.
+             * @description Typed rows a law or invariant holds back: in the held-set file, not
+             *     among `rows`.
              */
             heldByRules: number;
             /** @description The landing identity; answers over the dataset name it. */
@@ -2386,12 +2407,12 @@ export interface components {
             receipt: string;
             /**
              * Format: int64
-             * @description Rows quarantined.
+             * @description Rows quarantined because they could not be typed.
              */
             rejected: number;
             /**
              * Format: int64
-             * @description Rows admitted.
+             * @description Rows admitted as trusted: typed, and held back by no rule (LAW-02).
              */
             rows: number;
             /** @description The source file's SHA-256, verified by the engine. */
@@ -13774,6 +13795,15 @@ export interface operations {
             };
             /** @description The request was refused: not found. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The definitions changed while the dataset landed, or the request key names another request. */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

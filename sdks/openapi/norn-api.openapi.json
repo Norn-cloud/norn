@@ -754,8 +754,8 @@
         "tags": [
           "crate::analytics_routes"
         ],
-        "summary": "BULK-LOAD-1: load a completed upload into the tenant's engine as the\ndataset `objectType`, typed by that admitted definition. The engine reads\nthe object through a presigned URL, verifies its SHA-256, types every row,\nand quarantines a row it cannot type (or that misses a required value)\nwith its reason. The load becomes the dataset's current one; each row\ntraces to `(uri, sha256, row)`. Decided like any upload load\n(`SyncSource(\"upload\")`); the load is reported as a run of the type's\n`upload` connection, as the cell's own observations (SYNC-REPORT-1).",
-        "description": "# Errors\nA denied caller (one opaque 403), an unknown upload or type (404), a\nchanged file (`bulk.digest_mismatch`, 422), or an unreachable engine.",
+        "summary": "BULK-LOAD-1: load a completed upload into the tenant's engine as the\ndataset `objectType`, typed by that admitted definition. The engine reads\nthe object through a presigned URL, verifies its SHA-256, types every row,\nand quarantines a row it cannot type (or that misses a required value)\nwith its reason. The load becomes the dataset's current one when its\nmanifest commits; each row traces to `(uri, sha256, row)`. The load is\nreported as a run of the type's `upload` connection, as the cell's own\nobservations (SYNC-REPORT-1).",
+        "description": "MANIFEST-03: a load is decided exactly as an observation load of the\nsame rows: `SyncSource(\"upload\")` and the destination connection's own\ngrant (`SyncSource(\"upload.<type>\")`), an admitted mapping onto the type\nthat the load binds its columns by, and the markings a write of those\nrows would carry. A mapping or marking bulk ingest cannot enforce is\nrefused, never loaded unchecked.\n\n# Errors\nA denied caller (one opaque 403), an unknown upload or type (404), a\nchanged file (`bulk.digest_mismatch`, 422), a mapping or marking bulk\ningest cannot enforce (422), stale pins or a reused request key (409), or\nan unreachable engine.",
         "operationId": "load_dataset",
         "parameters": [
           {
@@ -820,6 +820,16 @@
           },
           "404": {
             "description": "The request was refused: not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The definitions changed while the dataset landed, or the request key names another request.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5331,9 +5341,23 @@
           "objectType"
         ],
         "properties": {
+          "mapping": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "MANIFEST-03: the admitted mapping onto the type the load binds its\ncolumns by; needed only when more than one maps onto it."
+          },
           "objectType": {
             "type": "string",
             "description": "The admitted object type the rows are typed by."
+          },
+          "requestKey": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "MANIFEST-04: the caller's key for this load. A retry with the same\nkey and the same request answers with the first load's receipt; the\nsame key with another request is refused (409\n`dataset.request_conflict`). A load without a key always commits."
           },
           "uploadId": {
             "type": "string",
@@ -8122,7 +8146,7 @@
           "heldByRules": {
             "type": "integer",
             "format": "int64",
-            "description": "Admitted rows a law or invariant holds back; every other admitted row\nis trusted.",
+            "description": "Typed rows a law or invariant holds back: in the held-set file, not\namong `rows`.",
             "minimum": 0
           },
           "load": {
@@ -8162,13 +8186,13 @@
           "rejected": {
             "type": "integer",
             "format": "int64",
-            "description": "Rows quarantined.",
+            "description": "Rows quarantined because they could not be typed.",
             "minimum": 0
           },
           "rows": {
             "type": "integer",
             "format": "int64",
-            "description": "Rows admitted.",
+            "description": "Rows admitted as trusted: typed, and held back by no rule (LAW-02).",
             "minimum": 0
           },
           "sha256": {
