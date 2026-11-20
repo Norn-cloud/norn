@@ -1397,7 +1397,10 @@ fn a_forged_upload_record_is_refused_before_any_signing_or_engine_call() {
         (404, "dataset.not_found")
     );
     assert_eq!(*uploads.0.lock().expect("signed"), 0, "nothing was signed");
-    assert!(engine.landed.lock().expect("calls").is_empty(), "no engine call");
+    assert!(
+        engine.landed.lock().expect("calls").is_empty(),
+        "no engine call"
+    );
 }
 
 /// UPLOAD-RECORD-1: a completed upload is kept in the cell through its own
