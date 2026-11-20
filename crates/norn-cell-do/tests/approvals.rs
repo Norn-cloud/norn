@@ -862,9 +862,9 @@ fn a_refusal_racing_an_exact_commit_never_masks_it() {
         before,
         "no refusal was recorded over the commit"
     );
-    let call = decided.call.expect("the approved call's state");
+    let standing = decided.call.expect("the approved call's state");
     assert_eq!(
-        (call.committed, call.state),
+        (standing.committed, standing.state),
         (true, norn_api::decisions::DecidedCallState::Committed)
     );
     assert_eq!(melt_status(&cell), 200);

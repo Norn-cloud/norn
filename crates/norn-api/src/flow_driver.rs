@@ -445,7 +445,7 @@ fn failure(tag: &str, code: Option<&str>) -> StepOutcome {
 ///
 /// APPROVAL-RECOVERY-1: a step result recorded but not yet consumed, or an
 /// approved call's outcome, is delivered first, the same way the wake
-/// delivers it ([`deliver_recorded`]). An approved call not yet executed
+/// delivers it (`deliver_recorded`). An approved call not yet executed
 /// runs only under `as_requester`: the requester's own authenticated
 /// request, with its current authority. When there is none, or its try is
 /// a denial of authority (decided anew on every try), the step stays

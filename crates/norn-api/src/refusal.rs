@@ -50,7 +50,7 @@ pub enum RefusalCategory {
 impl RefusalCategory {
     /// Its wire name (`snake_case`), as served.
     #[must_use]
-    pub const fn name(self) -> &'static str {
+    pub const fn wire_name(self) -> &'static str {
         match self {
             Self::Visibility => "visibility",
             Self::Permission => "permission",
@@ -62,9 +62,9 @@ impl RefusalCategory {
         }
     }
 
-    /// The category named `name` ([`Self::name`]).
+    /// The category named `name` ([`Self::wire_name`]).
     #[must_use]
-    pub fn from_name(name: &str) -> Option<Self> {
+    pub fn from_wire_name(name: &str) -> Option<Self> {
         [
             Self::Visibility,
             Self::Permission,
@@ -75,7 +75,7 @@ impl RefusalCategory {
             Self::Internal,
         ]
         .into_iter()
-        .find(|category| category.name() == name)
+        .find(|category| category.wire_name() == name)
     }
 
     /// The category of a host check refused with `status`. The host's own

@@ -669,7 +669,7 @@ pub(crate) fn recorded_refusal<E: SqlEngine>(
             // S11: the category it was served with, never one rebuilt from
             // the status.
             .with_category(
-                crate::refusal::RefusalCategory::from_name(&refused.category)
+                crate::refusal::RefusalCategory::from_wire_name(&refused.category)
                     .unwrap_or_else(|| crate::refusal::RefusalCategory::of_status(status)),
             )
         }))
@@ -723,7 +723,7 @@ pub(crate) fn refuse<E: SqlEngine>(
         decision_id: decision_id.to_owned(),
         status: refusal.status,
         code: refusal.code.clone(),
-        category: refusal.category.name().to_owned(),
+        category: refusal.category.wire_name().to_owned(),
     };
     match cell.commit_approval_refusal(&refused) {
         Ok(_receipt) => Ok(refusal),

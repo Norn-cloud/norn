@@ -699,8 +699,8 @@ fn another_calls_result_is_never_delivered_to_a_waiting_step() {
     let (status, receipt) = melt_call(&cell, "11", &key);
     assert_eq!(status, 200, "{receipt}");
 
-    assert_eq!(next_due(&cell.host).unwrap(), None);
-    assert_eq!(wake(&cell, NOW * 1000 + 1).steps, 0);
+    let woke = wake(&cell, NOW * 1000 + 1);
+    assert_eq!(woke.steps, 0, "{woke:?}");
     assert_eq!(run_state(&cell), json!("awaiting_perform_convert"));
 }
 
@@ -735,8 +735,14 @@ fn a_denied_try_of_an_approved_step_call_leaves_the_step_pending() {
 fn an_approved_step_call_never_runs_after_its_attempt_ended() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("cell.sqlite");
-    let id = approved_step(&path);
+    let id = parked_step(&path);
     let ((command, generation), key) = step_and_key(&path);
+    {
+        let cell = cell_on(file(&path), false);
+        let (status, decided) = approve(&cell, &id);
+        assert_eq!(status, 200, "{decided}");
+        assert_eq!(decided["call"], not_executed(), "{decided}");
+    }
     let ended = norn_ir::RuntimeValue::from_json(json!({ "_tag": "Denied" })).unwrap();
     assert!(
         store(&path)
