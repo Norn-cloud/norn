@@ -1141,7 +1141,7 @@ impl ObservationAuthorization {
             || commit.links.iter().any(|write| {
                 !authorized_links
                     .get(&write.key)
-                    .is_some_and(|links| links.iter().any(|link| *link == write))
+                    .is_some_and(|links| links.contains(&write))
             })
             || commit.writes.iter().any(|write| {
                 write.key.object_type.as_str() == "norn.PendingLinks"
@@ -1186,7 +1186,7 @@ impl ObservationAuthorization {
             BTreeMap::new();
         for authorized in &self.read_findings {
             let earlier = findings_by_key.entry(&authorized.key).or_default();
-            if earlier.iter().any(|prior| *prior == authorized)
+            if earlier.contains(&authorized)
                 || reads
                     .get(&(&authorized.key, authorized.expected.0))
                     .copied()
