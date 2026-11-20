@@ -29,7 +29,7 @@ use std::path::Path;
 use norn_api::host::DevHost;
 use norn_api::scope::CellScope;
 use norn_api::timers::{MAX_DUE_STEPS, STUCK_RETRY_MS, next_due, run_due};
-use norn_cell::engine::{NativeEngine, SqlEngine};
+use norn_cell::engine::{NativeEngine, SqlEngine, SqlValue};
 use norn_cell::{CellStore, Model, StoreOptions};
 use norn_kernel::LogicalTime;
 use quint_itf::{int, map, traces};
@@ -142,12 +142,43 @@ fn seed(path: &Path, slot: i64, s: &Slot) {
 
 /// How many of a slot's rows are still pending.
 fn pending(path: &Path, slot: i64, kind: &str) -> usize {
-    let reader_store = store(path);
-    let reader = reader_store.read();
-    let all = reader.pending_timers().unwrap();
-    all.iter()
-        .filter(|pending| (0..ROWS).any(|row| pending.timer.timer_id == row_id(slot, kind, row)))
+    // Read the table itself: the store's typed reader refuses the corrupt
+    // rows a failing slot is made of.
+    let engine = NativeEngine::open(path, StoreOptions::default()).unwrap();
+    engine
+        .query(r#"SELECT "timer_id" FROM "_norn_timer""#, &[])
+        .unwrap()
+        .iter()
+        .filter(|row| {
+            matches!(row.first(), Some(SqlValue::Text(id))
+                if (0..ROWS).any(|n| *id == row_id(slot, kind, n)))
+        })
         .count()
+}
+
+/// The retry records (TIMER-RETRY-1), item -> (attempts, eligibility),
+/// read from the table as the cell left it.
+fn retries(path: &Path) -> BTreeMap<String, (i64, u64)> {
+    let engine = NativeEngine::open(path, StoreOptions::default()).unwrap();
+    engine
+        .query(
+            r#"SELECT "item","attempts","eligible_at" FROM "_norn_due_retry""#,
+            &[],
+        )
+        .unwrap()
+        .into_iter()
+        .map(|row| match row.as_slice() {
+            [
+                SqlValue::Text(item),
+                SqlValue::Integer(attempts),
+                SqlValue::Integer(at),
+            ] => (
+                item.clone(),
+                (*attempts, u64::try_from(*at).expect("eligibility")),
+            ),
+            other => panic!("retry row {other:?}"),
+        })
+        .collect()
 }
 
 /// The model's wake as the alarm time (`None` = no alarm).
@@ -210,7 +241,7 @@ fn hosted_timers_quint_traces() {
                 wake_ms(after),
                 "{name} step {step}: the wake the pass returns"
             );
-            let retries = store(&path).read().due_retries("timer/").unwrap();
+            let retries = retries(&path);
             for (&slot, s) in &new {
                 assert_eq!(
                     pending(&path, slot, &s.kind),
@@ -222,16 +253,8 @@ fn hosted_timers_quint_traces() {
                     match retries.get(&key) {
                         Some(retry) => {
                             assert!(s.live && s.attempts > 0, "{name} step {step}: stray {key}");
-                            assert_eq!(
-                                i64::from(retry.attempts),
-                                s.attempts,
-                                "{name} {key} attempts"
-                            );
-                            assert_eq!(
-                                retry.eligible_at,
-                                ms(s.retry_at),
-                                "{name} {key} eligibility"
-                            );
+                            assert_eq!(retry.0, s.attempts, "{name} {key} attempts");
+                            assert_eq!(retry.1, ms(s.retry_at), "{name} {key} eligibility");
                         }
                         None => assert!(
                             !s.live || s.attempts == 0,

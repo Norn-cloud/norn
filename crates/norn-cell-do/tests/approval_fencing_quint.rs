@@ -16,11 +16,6 @@
 #[path = "support/quint_itf.rs"]
 mod quint_itf;
 #[path = "support/step_cell.rs"]
-#[allow(
-    dead_code,
-    unreachable_pub,
-    reason = "the shared step-cell fixtures serve other tests too"
-)]
 mod step_cell;
 
 use std::collections::BTreeMap;
@@ -109,14 +104,18 @@ fn approval_fencing_quint_traces() {
         for (step, pair) in trace.windows(2).enumerate() {
             let (before, after) = (&pair[0], &pair[1]);
             if int(after, "revisions") > int(before, "revisions") {
-                let changed =
-                    str_map(&after["active"])["action"] != str_map(&before["active"])["action"];
+                // The writer the model's action version names: a revision
+                // that changes the action installs the other writer, any
+                // other one reinstalls the current writer unchanged.
+                let action = str_map(&after["active"])["action"]
+                    .as_i64()
+                    .expect("version");
                 revise(
                     &cell,
-                    if changed {
-                        step_cell::action_cell::OMITS_LOSS
-                    } else {
+                    if action == 0 {
                         step_cell::DERIVES_LOSS
+                    } else {
+                        step_cell::action_cell::OMITS_LOSS
                     },
                 );
                 revisions += 1;
