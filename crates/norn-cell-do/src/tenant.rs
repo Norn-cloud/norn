@@ -146,6 +146,8 @@ struct Serving<E: SqlEngine> {
     questions: Option<DemoQuestions>,
     /// The cell's collections, for `GET /v1/access`.
     object_types: Vec<String>,
+    /// The read PDP, asked about one role at a time (`GET /v1/access?objectType=`).
+    role_reads: crate::policy::RoleReads,
     /// Where the cell's action policy is installed.
     actions: ActionSlot,
     /// Where the cell's reveal policy is installed (PRIVACY-2).
@@ -172,6 +174,7 @@ impl<E: SqlEngine> Serving<E> {
             .with_caller(Arc::clone(caller));
         let actions = policy.action_slot();
         let reveal = policy.reveal_slot();
+        let role_reads = policy.role_reads();
         let object_types = collections(store.model().object_types());
         let host = DevHost::from_store(store, scope.clone(), |command| command.payload.clone())
             .map_err(|refusal| SeedError(refusal.code))?
@@ -180,6 +183,7 @@ impl<E: SqlEngine> Serving<E> {
             host,
             questions,
             object_types,
+            role_reads,
             actions,
             reveal,
             compiled: None,
@@ -819,13 +823,20 @@ impl<E: SqlEngine> Tenant<E> {
             State::Serving(serving) if request.path == ACCESS_DECIDE_PATH => {
                 self.decide_access(&serving.host, request, &caller)
             }
-            State::Serving(serving) if request.path == "/v1/access" => server::access(
-                &serving.host,
-                principals,
-                &self.caller,
-                &serving.object_types,
-                request,
-            ),
+            State::Serving(serving) if request.path == "/v1/access" => {
+                let actions = serving.actions.read().ok().and_then(|slot| slot.clone());
+                server::access(
+                    &serving.host,
+                    principals,
+                    &self.caller,
+                    &serving.object_types,
+                    &server::RoleExplainer {
+                        reads: &serving.role_reads,
+                        actions: actions.as_deref(),
+                    },
+                    request,
+                )
+            }
             State::Serving(serving) => {
                 if let Some(engine) = &self.engine
                     && let Some(response) =

@@ -1,0 +1,116 @@
+import { expect, test, type Page } from "@playwright/test"
+import { recordCell, VERIFY } from "./record-cell.ts"
+
+// The record page, one test per row of its verb matrix: each value with the system it was read from,
+// a marked value as the server projected it (and its reveal, with receipt, where the server allows),
+// who may see or act by role as the cell decided, the rules the type keeps, and the last changes with
+// who, when and why. SHOTS=<dir> saves the page in light and dark.
+
+const PARTY = "/sources/canon.Party/demo/party/0001"
+const shots = process.env.SHOTS
+
+async function shoot(page: Page, name: string) {
+  if (!shots) return
+  for (const scheme of ["light", "dark"] as const) {
+    await page.emulateMedia({ colorScheme: scheme })
+    await page.waitForTimeout(400)
+    await page.screenshot({ path: `${shots}/studio-ui-record-${name}-${scheme}.png`, fullPage: true })
+  }
+  await page.emulateMedia({ colorScheme: "light" })
+}
+
+const fact = (page: Page, id: string) => page.locator(`[data-fact="${id}"]`)
+const role = (page: Page, name: string) => page.locator(`li[data-role="${name}"]`)
+const verb = (page: Page, name: string, which: string) => role(page, name).locator(`[data-verb="${which}"]`)
+
+test.beforeEach(({ }, info) => { test.skip(Boolean(process.env.E2E_BASE), `${info.title}: replays recorded cell documents`) })
+test.beforeEach(async ({ page }) => { await page.setViewportSize({ width: 1440, height: 1000 }) })
+
+test("facts: each value carries the system it was read from, and the panel names every system", async ({ page }) => {
+  await recordCell(page, "admin")
+  await page.goto(PARTY)
+  await expect(fact(page, "kind").locator('[data-source="ERPNext"]')).toBeVisible()
+  await expect(page.getByLabel("Read from").locator('[data-source="ERPNext"]')).toBeVisible()
+  await shoot(page, "party-admin")
+})
+
+test("facts: a role without Sources is told so, and no value claims a source", async ({ page }) => {
+  await recordCell(page, "member")
+  await page.goto(PARTY)
+  await expect(fact(page, "kind")).toBeVisible()
+  await expect(page.getByText("Your role does not see where these values came from.")).toBeVisible()
+  await expect(page.locator("[data-fact] [data-source]")).toHaveCount(0)
+})
+
+test("markings: a marked value shows the server's projection, tagged hidden from your role, with no reveal", async ({ page }) => {
+  await recordCell(page, "member")
+  await page.goto(PARTY)
+  const name = fact(page, "display_name")
+  await expect(name.locator("[data-hidden-tag]")).toHaveText("Hidden from your role")
+  await expect(name.locator('[data-masked="pseudonym"]')).toBeVisible()
+  await expect(name.locator('[data-marking="pii.contact"]')).toBeVisible()
+  await expect(name.locator("[data-reveal]")).toHaveCount(0)
+  await shoot(page, "party-member")
+})
+
+test("markings: a role that may reveal reveals with a purpose, and the value comes back with its receipt", async ({ page }) => {
+  const cell = await recordCell(page, "admin")
+  await page.goto(PARTY)
+  const name = fact(page, "display_name")
+  await expect(name.locator("[data-hidden-tag]")).toHaveText("Masked · you may reveal")
+  await name.locator("[data-reveal]").click()
+  await page.getByLabel("Purpose").fill("KYC review for refund #4471")
+  await page.locator("[data-confirm-reveal]").click()
+  await expect(name.locator("[data-revealed]")).toContainText("Amira Haddad")
+  await expect(name.locator("[data-revealed]")).toContainText("receipt #3")
+  expect(cell.reveals).toEqual([expect.objectContaining({ property: "display_name", purpose: "KYC review for refund #4471" })])
+})
+
+test("who can: each role's reads and actions are the cell's decisions, and your role is marked", async ({ page }) => {
+  const cell = await recordCell(page, "member")
+  await page.goto(PARTY)
+  await expect(role(page, "member").getByText("You", { exact: true })).toBeVisible()
+  await expect(role(page, "admin").getByText("You", { exact: true })).toHaveCount(0)
+  const decided = async (name: string, which: string) => verb(page, name, which).getAttribute("data-decision")
+  await expect(verb(page, "viewer", "see")).toHaveText("Names only")
+  expect(await decided("viewer", "see")).toBe("partial")
+  expect(await decided("member", "see")).toBe("permit")
+  expect(await decided("member", "sources")).toBe("deny")
+  expect(await decided("admin", "sources")).toBe("permit")
+  const act = `act:${VERIFY.actionId}`
+  await expect(verb(page, "admin", act)).toHaveText(VERIFY.title)
+  expect([await decided("viewer", act), await decided("member", act), await decided("admin", act), await decided("owner", act)]).toEqual(["deny", "conditional", "permit", "permit"])
+  // Asked of the cell for this type, never decided here.
+  expect(cell.asked.some((search) => new URLSearchParams(search).get("objectType") === "canon.Party")).toBe(true)
+})
+
+test("who can: a refused access read shows the cell's refusal, not a guess", async ({ page }) => {
+  await recordCell(page, "member", { status: 403, body: { code: "authz.denied", message: "Your role may not read this type's access." } })
+  await page.goto(PARTY)
+  await expect(page.getByText("Your role may not read this type's access.")).toBeVisible()
+  await expect(page.locator("li[data-role]")).toHaveCount(0)
+})
+
+test("changes: the last changes say what wrote them, who, when and why; Every change opens the full history", async ({ page }) => {
+  await recordCell(page, "admin")
+  await page.goto(PARTY)
+  const recent = page.getByRole("list", { name: "Recent changes" })
+  const newest = recent.locator("li").first()
+  await expect(newest).toContainText(VERIFY.title)
+  await expect(newest).toContainText("user:sara")
+  await expect(newest).toContainText("20 Nov 2026")
+  await expect(newest).toContainText("changed kind")
+  await expect(newest).toContainText("Why: Confirmed by phone with the customer")
+  await expect(recent.locator("li").nth(1)).toContainText("Imported from ERPNext")
+  await page.getByRole("button", { name: "Every change" }).click()
+  await expect(page.locator("#record-history")).toBeInViewport()
+})
+
+test("rules: the rail lists the rules the type keeps, and All rules opens the rules page", async ({ page }) => {
+  await recordCell(page, "admin")
+  await page.goto("/sources/canon.Holding/demo/holding/owner/north/gold")
+  await expect(page.getByRole("heading", { name: "Rules it keeps" })).toBeVisible()
+  await shoot(page, "holding-admin")
+  await page.getByRole("link", { name: "All rules" }).click()
+  await expect(page).toHaveURL(/\/guarantees$/)
+})
