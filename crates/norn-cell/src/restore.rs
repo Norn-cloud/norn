@@ -353,6 +353,9 @@ impl CellStore<NativeEngine> {
 /// cache).
 fn diagnose(engine: &NativeEngine) -> Result<(HistoryDiagnosis, Vec<ExportRecord>), CellError> {
     engine.read_transaction(|| {
+        // ENGINE-UPGRADE-1: an older tool never diagnoses, and so never
+        // restores a prefix of, a cell a newer engine wrote.
+        crate::engine_release::admission(engine)?;
         let records = journal(engine)?;
         let model = latest_model(&records)?;
         let pass = std::cell::RefCell::default();

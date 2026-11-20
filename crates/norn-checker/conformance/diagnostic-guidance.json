@@ -480,6 +480,18 @@
     "fix": "Replace the unsupported construct with a declaration admitted by the selected profile and run admission again."
   },
   {
+    "code": "core.engine.downgrade",
+    "fix": "Open the cell with a release whose storage version is at least the cell's, or restore a backup taken before the upgrade."
+  },
+  {
+    "code": "core.engine.unknown_version",
+    "fix": "Open the cell with the release that wrote it or a newer one; if no release wrote this stamp, restore the cell from its export."
+  },
+  {
+    "code": "core.engine.upgrade_unsupported",
+    "fix": "Open the cell first with the bridge release the refusal names, then with this one; if a migration refused the data, restore the cell from its export."
+  },
+  {
     "code": "core.graph.catalog_write",
     "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },

@@ -39,6 +39,7 @@ pub mod definitions_diff;
 pub mod deontic;
 mod diagnostic;
 pub mod duties;
+pub mod engine_release;
 pub mod entity_artifacts;
 pub mod entity_instance;
 pub mod entity_lowering;
@@ -191,6 +192,7 @@ pub use diagnostic::{
     DiagnosticWitness, SourceSpan, Span, StructuralEvidence, WitnessMove, WitnessSide, WitnessStep,
     diagnostics_to_json,
 };
+pub use engine_release::{ENGINE_DOWNGRADE, ENGINE_UNKNOWN_VERSION, ENGINE_UPGRADE_UNSUPPORTED};
 pub use entity_artifacts::{
     EntityArtifactSetContext, TenantLayer, check_artifact_set_entity_model, check_entity_artifacts,
     check_property_type_catalog_local,

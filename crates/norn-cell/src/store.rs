@@ -2070,7 +2070,10 @@ impl CellStore<NativeEngine> {
 }
 
 // Check before DDL, definition decoding, or host model selection touches old data.
+// ENGINE-UPGRADE-1: a cell newer than this engine, or one it cannot order,
+// refuses here, before the format check names it a pre-alpha store.
 fn validate_store_format<E: SqlEngine>(engine: &E) -> Result<(), CellError> {
+    crate::engine_release::admission(engine)?;
     let exists = engine
         .query_optional(
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1",
@@ -2120,6 +2123,9 @@ impl<E: SqlEngine> CellStore<E> {
     ///
     /// [`CellError::StoreFormat`] or [`CellError::SchemaMismatch`] when the
     /// engine already contains a store for another format or model;
+    /// [`CellError::EngineDowngrade`], [`CellError::EngineUnknownVersion`] or
+    /// [`CellError::EngineUpgradeUnsupported`] when its storage version is one
+    /// this engine cannot serve ([`crate::engine_release`]);
     /// [`CellError::LedgerCorrupt`] when its ledger does not verify; engine
     /// errors otherwise.
     /// Fresh stores use SQLite's `lower`, `hex`, and `randomblob` functions.
@@ -2363,6 +2369,9 @@ impl<E: SqlEngine> CellStore<E> {
         source: &mut impl FnMut(&E) -> Result<norn_ir::cell_id::CellId, CellError>,
     ) -> Result<(), CellError> {
         validate_store_format(conn)?;
+        // Ordered migrations see the layout they were written for: before
+        // this engine's schema statements, inside the open transaction.
+        crate::engine_release::upgrade(conn)?;
         for statement in SYSTEM_DDL
             .iter()
             .chain(&crate::flow_run::DDL)
@@ -2402,6 +2411,7 @@ impl<E: SqlEngine> CellStore<E> {
                 )?;
                 conn.execute(&insert, params!["format", STORE_FORMAT])?;
                 conn.execute(&insert, params!["ddl_hash", model.ddl_hash()])?;
+                crate::engine_release::stamp_fresh(conn)?;
             }
             (Some(format), Some(found)) if format == STORE_FORMAT && found == model.ddl_hash() => {}
             // Older formats lack exact encoding or durable marking coverage.
