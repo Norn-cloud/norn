@@ -34768,7 +34768,7 @@
           },
           {
             "type": "object",
-            "description": "Another writer (an import, a migration or a kernel rule).",
+            "description": "Another writer (an import, a migration or a kernel rule), or one this\ncaller is not told: an action whose call record (its actor and input)\nthe caller may not read, or a marked version.",
             "required": [
               "kind"
             ],
