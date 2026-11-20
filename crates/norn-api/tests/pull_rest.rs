@@ -11,7 +11,9 @@
     clippy::indexing_slicing,
     clippy::arithmetic_side_effects,
     clippy::string_slice,
+    clippy::too_many_lines,
     clippy::type_complexity,
+    clippy::unwrap_in_result,
     reason = "recorded REST scenarios"
 )]
 use norn_api::host::{DevHost, Ingested};
