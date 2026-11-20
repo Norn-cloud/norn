@@ -54,6 +54,10 @@ export interface ActionSummary {
   readonly inputSchema: unknown
   /** The kernel's effective effects: destructive can be true without being declared. */
   readonly uiEffects: UiEffects
+  /** Input fields that name an existing record of `objectKind`: the form offers a picker (ACTION-CATALOG-LINKS-1). */
+  readonly inputLinks?: readonly { readonly field: string; readonly objectKind: string }[]
+  /** A transition's target state, so the receipt says what the record is now. */
+  readonly toState?: string
 }
 
 /** Whether an action writes a record whole (creating it when the id is new): offered as "New …". */
@@ -130,11 +134,15 @@ async function scoped(fetcher: Fetch) {
   return scope === null ? null : scopedHostFetch(fetcher, "/api/host", async () => scope)
 }
 
-export async function listActions(objectKind: string | undefined, fetcher: Fetch = defaultFetch): Promise<CatalogRead> {
+/**
+ * The catalog for `objectKind`; with `objectId`, only what can act on that record in its current
+ * state (ACTION-CATALOG-STATE-1). The cell decides the list; Studio filters nothing.
+ */
+export async function listActions(objectKind: string | undefined, fetcher: Fetch = defaultFetch, objectId?: string): Promise<CatalogRead> {
   let call
   try { call = await scoped(fetcher) } catch (error) { if (error instanceof CellUnavailable) return { kind: "unavailable" }; throw error }
   if (call === null) return { kind: "no-cell" }
-  const query = objectKind === undefined ? "" : `?${new URLSearchParams({ objectKind })}`
+  const query = objectKind === undefined ? "" : `?${new URLSearchParams({ objectKind, ...objectId === undefined ? {} : { objectId } })}`
   const response = await call(`/v1/actions${query}`, { headers: { accept: "application/json" } })
   const text = await response.text()
   if (response.status === 404 || response.status === 503) return { kind: "unavailable" }
@@ -376,6 +384,16 @@ export const decimalExample = (scale: number | null) => scale === null || scale 
 const IRREGULAR: Readonly<Record<string, string>> = { send: "sent", make: "made", pay: "paid", set: "set", put: "put", run: "ran", take: "taken", give: "given", get: "got", hold: "held", sell: "sold", buy: "bought", split: "split", write: "written", begin: "begun", shut: "shut", cut: "cut", reset: "reset" }
 
 /** The past tense of an action's leading verb ("Open a holding" → "opened"), for the business sentence; null when it isn't a plain verb. */
+/**
+ * What the record is after a committed call, from the cell's own answer: a transition's target
+ * state ("is now submitted"), a first version ("created") or a later one ("updated"). Never a
+ * verb guessed from the action's title.
+ */
+export function receiptVerb(action: ActionSummary, version: number): string {
+  if (action.effect === "fire_transition") return action.toState === undefined ? "updated" : `is now ${action.toState.replaceAll("_", " ")}`
+  return version === 1 ? "created" : "updated"
+}
+
 export function pastTense(title: string): string | null {
   const verb = title.trim().split(/\s+/)[0]?.toLowerCase() ?? ""
   if (!/^[a-z]{2,}$/.test(verb)) return null

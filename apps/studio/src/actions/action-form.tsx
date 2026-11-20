@@ -1,7 +1,8 @@
 import { ShieldX } from "lucide-react"
+import { refusedGuardWords } from "../lib/guard-words.ts"
 import { Chip } from "@/components/chip"
 import { AlertTriangle, CheckCircle2, ChevronLeft, Hourglass, Inbox, Lock, Pencil, Plus, Undo2, X } from "lucide-react"
-import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react"
+import { createContext, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react"
 import { CopyId } from "@/components/copy-id"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -9,19 +10,22 @@ import { Textarea } from "@/components/ui/textarea"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 import {
-  ACTIONS_UNAVAILABLE, callAction, decimalExample, inputPointer, itemNoun, newIdempotencyKey, pastTense, risky as isRisky, writesWhole, draftAt, emptyDraft, emptyFor, encodeObject, fieldsOf, groupsOf, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt,
+  ACTIONS_UNAVAILABLE, callAction, decimalExample, inputPointer, itemNoun, newIdempotencyKey, receiptVerb, risky as isRisky, writesWhole, draftAt, emptyDraft, emptyFor, encodeObject, fieldsOf, groupsOf, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt,
   type ActionReceipt, type ActionSummary, type Diagnostic, type Draft, type FormField, type Section, type Spec,
 } from "../lib/actions.ts"
 import type { Phase } from "../lib/screen/call.ts"
 import { useCall, type Call } from "../lib/screen/use-call.ts"
 import { LawRefusal, RedactedLawRefusal, type InputField } from "./law-refusal.tsx"
+import { RecordPicker, control, type Aria } from "./record-picker.tsx"
 
 const newKey = newIdempotencyKey
+
+/** The form's input fields that name a record, by pointer → object type (the cell's `inputLinks`). */
+const Links = createContext<ReadonlyMap<string, string>>(new Map())
 
 /** The words for a call that never reached a deciding cell. */
 const unreachable = (phase: Extract<Phase, { kind: "failed" }>) =>
   phase.reason === "no-cell" ? "This workspace has no data cell yet." : phase.reason === "unavailable" ? ACTIONS_UNAVAILABLE : phase.message ?? "The cell did not answer; nothing was saved."
-const control = "h-9 w-full rounded-lg border border-node-border bg-background px-3 text-sm aria-invalid:border-destructive aria-invalid:ring-2 aria-invalid:ring-destructive/20"
 
 /**
  * One governed action as a form built from its admitted input schema. The cell validates and
@@ -76,6 +80,7 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
   const committed = phase.kind === "done" || phase.kind === "undoing" || phase.kind === "undo-failed" || phase.kind === "undone"
   const dirty = JSON.stringify(draft) !== JSON.stringify(initial) && !committed
   const diagnostics = phase.kind === "refused" ? phase.diagnostics : []
+  const guard = phase.kind === "refused" ? refusedGuardWords(phase.explanation ?? phase.message) ?? refusedGuardWords(phase.message) : null
   // A commit leaves nothing unsent; a refusal in a wizard opens the first step it names (one on no field stays on the review).
   useEffect(() => {
     if (phase.kind === "done") { onDirty?.(false); onCommitted?.() }
@@ -106,10 +111,12 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
   }
 
   const top = unplaced(diagnostics, fields)
+  const links = new Map((action.inputLinks ?? []).map(({ field, objectKind }) => [`/${field}`, objectKind] as const))
   const counts = problemsBySection(sections, diagnostics)
   const go = (to: number) => { moved.current = true; setStep(to); setReached((r) => Math.max(r, to)); dispatch({ kind: "back" }) }
   const shown = wizard ? (step < review ? [sections[step]!] : []) : sections
   return (
+    <Links.Provider value={links}>
     <form ref={formRef} noValidate className="grid gap-5" aria-label={action.title} aria-busy={phase.kind === "sending"}
       onSubmit={(event) => {
         event.preventDefault()
@@ -127,7 +134,9 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
       {phase.kind === "refused" && phase.code !== "core.laws.violated" && (
         <div role="alert" className="grid gap-1.5 rounded-xl border border-border bg-card px-3 py-2.5 text-sm">
           <span className="flex flex-wrap items-center gap-2"><Chip tone="red" icon={ShieldX}>Refused</Chip><span className="font-medium">{REFUSED[phase.code] ?? phase.message}</span></span>
-          {phase.explanation ? <span className="text-meta text-foreground">{phase.explanation}</span> : REFUSED[phase.code] !== undefined && <span className="text-meta text-foreground">{phase.message}</span>}
+          {guard !== null && <span className="text-sm text-foreground">Requires: {guard}</span>}
+          {/* A guard the cell quoted is shown in words above; its declared text stays under Technical. */}
+          {(guard === null || technical) && (phase.explanation ? <span className="text-meta text-foreground">{phase.explanation}</span> : REFUSED[phase.code] !== undefined && <span className="text-meta text-foreground">{phase.message}</span>)}
           <span className="font-mono text-xs text-muted-foreground">{phase.code}</span>
           {top.map((d) => <span key={`${d.pointer}:${d.code}:${d.message}`} className="text-meta text-destructive-text">{d.message}</span>)}
           {top.length === 0 && phase.diagnostics.length > 0 && <span className="text-meta">Each problem is shown at its field below.</span>}
@@ -178,6 +187,7 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
         </Button>
       </div>
     </form>
+    </Links.Provider>
   )
 }
 
@@ -193,6 +203,7 @@ const REFUSED: Readonly<Record<string, string>> = {
   "action.invalid_input": "The input doesn't fit this action",
   "action.idempotency_conflict": "This request was already used for a different change",
   "authz.denied": "Not allowed",
+  "decision.guard_false": "This step isn't open for this record",
   "defs.stale": "The definitions changed: open the action again",
 }
 
@@ -251,7 +262,6 @@ function Nullable({ field, value, onEdit, widget }: { readonly field: FormField;
   )
 }
 
-type Aria = Record<string, string | boolean | undefined>
 
 /** Fields of a record item re-pointed from the schema's item `0` to the item they edit. */
 const rebase = (fields: readonly FormField[], from: string, to: string): readonly FormField[] =>
@@ -262,8 +272,11 @@ function Widget({ spec, pointer, label, value, root, diagnostics, onEdit, aria, 
   readonly onEdit: (pointer: string, value: Draft) => void; readonly aria: Aria
 }) {
   const text = typeof value === "string" ? value : ""
+  const picks = useContext(Links).get(pointer)
   switch (spec.kind) {
-    case "text": return <Input {...aria} className="h-9" value={text} onChange={(e) => onEdit(pointer, e.target.value)} />
+    case "text": return picks !== undefined
+      ? <RecordPicker objectKind={picks} value={text} onPick={(id) => onEdit(pointer, id)} aria={aria} />
+      : <Input {...aria} className="h-9" value={text} onChange={(e) => onEdit(pointer, e.target.value)} />
     case "integer":
     case "number":
     case "decimal":
@@ -451,7 +464,7 @@ function Receipt({ action, objectTitle, technical, phase, onView, onAgain, onUnd
 }) {
   const { receipt } = phase
   const at = new Date(receipt.receipt.recordedAtMs)
-  const verb = pastTense(action.title) ?? "saved"
+  const verb = receiptVerb(action, receipt.version)
   const sentence = `${objectTitle} ${receipt.objectId} ${verb} · ${when(receipt.receipt.recordedAtMs)}`
   return (
     <section aria-label="Receipt" className="grid gap-4">

@@ -519,7 +519,7 @@ impl<E: SqlEngine> CellStore<E> {
             ..CommitBatch::default()
         };
         let ((), outcome) = self
-            .commit_guarded(
+            .commit_guarded_unchecked(
                 &batch,
                 |reader| {
                     if reader.version(&context.world, RESTATEMENT_TYPE, id)? != expected {

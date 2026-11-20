@@ -176,7 +176,7 @@
     "safety": "always(invariant), all three models; bounded safety checked through invariants",
     "expiryProgress": "stated, not proved: requires advancing time and eventual fresh scheduled Expire; no scheduler fairness theorem"
   },
-  "conformanceCommand": "cargo test --locked --offline -p norn-testkit --test kernel_quint -- --nocapture",
+  "conformanceCommand": "cargo test --locked --offline -p norn-cell --lib suites::kernel_quint:: -- --nocapture",
   "residuals": [
     "Finite models and sampled traces are not unbounded Rust refinement.",
     "No OS/fs durability, host scheduler fairness, external delivery, authorization noninterference, or i128 overflow theorem.",

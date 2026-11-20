@@ -12,7 +12,7 @@ export const live = {
   "effectiveAsOf": "2026-10-26T00:00:00Z",
   "knownAsOf": 1,
   "grain": "demo.Conversion",
-  "lineageRef": "644c82e8a67bc40ec4e21756d2504750bb21338a09608526994766675230cf0f",
+  "lineageRef": "596725d02fee6a77b7676e8043cff64334f9d22dfb288bc8794df6998c239379",
   "rows": {
     "\"2026-07-06\"": {
       "bucket": "2026-07-06",
@@ -497,7 +497,7 @@ export const live = {
   },
   "freshness": "exact",
   "complete": true,
-  "world": "synthetic-k1",
+  "world": "main",
   "scope": "org_demo/dev",
   "populationPin": "fixture:reader",
   "authorizationEpoch": 1,
@@ -531,7 +531,7 @@ export const fresh = {
   "effectiveAsOf": "2026-10-26T00:00:00Z",
   "knownAsOf": 1,
   "grain": "demo.Conversion",
-  "lineageRef": "c371dfcfdfebbc2fde11abf5854c6227fd72ec579af9253437cf7e9e84fa826a",
+  "lineageRef": "9dc1c63d2beeb4b957ead355fa35c19c11688ce85dd74b79461bb7bb4d08a0cd",
   "rows": {
     "\"2026-07-06\"": {
       "bucket": "2026-07-06",
@@ -1016,7 +1016,7 @@ export const fresh = {
   },
   "freshness": "fresh",
   "complete": true,
-  "world": "synthetic-k1",
+  "world": "main",
   "scope": "org_demo/dev",
   "populationPin": "fixture:reader",
   "authorizationEpoch": 1,
@@ -1050,7 +1050,7 @@ export const stale = {
   "effectiveAsOf": "2026-10-26T00:00:00Z",
   "knownAsOf": 1,
   "grain": "demo.Conversion",
-  "lineageRef": "09f9f082602182b351b6145a9d1a9c274a1edf50e69ff886d9a13a6cec5d360a",
+  "lineageRef": "90965a1ada58108757d0739c2a07bd8b338e4df50bc17a4a1f765305dfa4a35b",
   "rows": {
     "\"2026-07-06\"": {
       "bucket": "2026-07-06",
@@ -1535,7 +1535,7 @@ export const stale = {
   },
   "freshness": "stale",
   "complete": true,
-  "world": "synthetic-k1",
+  "world": "main",
   "scope": "org_demo/dev",
   "populationPin": "fixture:reader",
   "authorizationEpoch": 1,
@@ -1569,7 +1569,7 @@ export const incomplete = {
   "effectiveAsOf": "2026-10-26T00:00:00Z",
   "knownAsOf": 1,
   "grain": "demo.Conversion",
-  "lineageRef": "1fd7dab408a988ab73cdb6a6ccd959ff7c4ad9b402cdc82e3e0ea8c6c2cd1e88",
+  "lineageRef": "ae614b32e31fbad557f974b809fe08dc9e00331c60bcd82cf5912fa6e8bd61d2",
   "rows": {
     "\"2026-07-06\"": {
       "bucket": "2026-07-06",
@@ -2054,7 +2054,7 @@ export const incomplete = {
   },
   "freshness": "incomplete",
   "complete": false,
-  "world": "synthetic-k1",
+  "world": "main",
   "scope": "org_demo/dev",
   "populationPin": "fixture:reader",
   "authorizationEpoch": 1,
@@ -2079,7 +2079,7 @@ export const incomplete = {
 export const historical = {
   "world": {
     "historical": {
-      "commit": "7fa0070300972bc4c90be57ffb2e0bb7436290afa72cc2299b2363a4ce546ee1"
+      "commit": "df4f9ac7fa12e580b0bae163320acbd893dfd8bfd818cbcc73bcc9bf92e75321"
     }
   },
   "knowledgeTimeMs": 1792972800000,
@@ -2095,7 +2095,7 @@ export const historical = {
     "effectiveAsOf": "2026-10-26T00:00:00Z",
     "knownAsOf": 1,
     "grain": "demo.Conversion",
-    "lineageRef": "6d034fdd2ce30f4590c791e72524f47ee0e562c2ee0b1b57548a3fefdc0f5916",
+    "lineageRef": "c465315caa0bb10c48fd09186c73d6dbb2a291f74d1423bcc22caa6b110f73bb",
     "rows": {
       "\"2026-07-06\"": {
         "bucket": "2026-07-06",
@@ -2580,7 +2580,7 @@ export const historical = {
     },
     "freshness": "exact",
     "complete": true,
-    "world": "synthetic-k1",
+    "world": "main",
     "scope": "org_demo/dev",
     "populationPin": "fixture:reader",
     "authorizationEpoch": 1,
@@ -2616,7 +2616,7 @@ export const restricted_trace = {
     "effectiveAsOf": "2026-10-26T00:00:00Z",
     "knownAsOf": 1,
     "grain": "demo.Conversion",
-    "lineageRef": "644c82e8a67bc40ec4e21756d2504750bb21338a09608526994766675230cf0f",
+    "lineageRef": "596725d02fee6a77b7676e8043cff64334f9d22dfb288bc8794df6998c239379",
     "rows": {
       "\"2026-07-06\"": {
         "bucket": "2026-07-06",
@@ -3101,7 +3101,7 @@ export const restricted_trace = {
     },
     "freshness": "exact",
     "complete": true,
-    "world": "synthetic-k1",
+    "world": "main",
     "scope": "org_demo/dev",
     "populationPin": "fixture:reader",
     "authorizationEpoch": 1,
@@ -3208,7 +3208,7 @@ export const unavailable_trace = {
     "effectiveAsOf": "2026-10-26T00:00:00Z",
     "knownAsOf": 1,
     "grain": "demo.Conversion",
-    "lineageRef": "bf0102def47098fb26545da87a73d33981ce368c37b3efd75c9e2426c173adce",
+    "lineageRef": "b89e0bec9d23d181523258cd360286a63b9546b84eee42f15e513a93b34c2ba2",
     "rows": {
       "\"2026-07-06\"": {
         "bucket": "2026-07-06",
@@ -3821,7 +3821,7 @@ export const unavailable_trace = {
     },
     "freshness": "exact",
     "complete": true,
-    "world": "synthetic-k1",
+    "world": "main",
     "scope": "org_demo/dev",
     "populationPin": "fixture:auditor",
     "authorizationEpoch": 1,
@@ -3855,8 +3855,8 @@ export const unavailable_trace = {
         58.8,
         60
       ],
-      "receiptHash": "a60d4a56514a6e47970a3425339521c58b4d5d6d3e656202b564f2c4c423d7c2",
-      "factDigest": "ba60e50f4e68c0875a821c3c8c51888287fd607d6d8cec13a74fae3e2d65c887",
+      "receiptHash": "6e82fb690412760acbcf05d3c8fda1709c50823ba059b49025615e838260566f",
+      "factDigest": "cfec21722e96edd5f2ca4666bdad348ce0ee019af63053caf3cbde28a04b1e5f",
       "source": {
         "status": "unavailable"
       },
@@ -3881,8 +3881,8 @@ export const unavailable_trace = {
         73.5,
         75
       ],
-      "receiptHash": "a60d4a56514a6e47970a3425339521c58b4d5d6d3e656202b564f2c4c423d7c2",
-      "factDigest": "de0e3a8aad5bbe370a49a877b48ac42e9e2dd1f485bea2dc3884cada2461fa10",
+      "receiptHash": "6e82fb690412760acbcf05d3c8fda1709c50823ba059b49025615e838260566f",
+      "factDigest": "22d4a0afd786abcdf431398af982879c97387fb8d8538ca607795579c99c40da",
       "source": {
         "status": "unavailable"
       },
@@ -3907,8 +3907,8 @@ export const unavailable_trace = {
         78.4,
         80
       ],
-      "receiptHash": "a60d4a56514a6e47970a3425339521c58b4d5d6d3e656202b564f2c4c423d7c2",
-      "factDigest": "f32d9335d51294b1d13455b7ca0e9fa87ded962da448dc9a81f1acc191870196",
+      "receiptHash": "6e82fb690412760acbcf05d3c8fda1709c50823ba059b49025615e838260566f",
+      "factDigest": "9b6092a970574c37260347242ca1c08edcf0c37afb051136e75c603a16338020",
       "source": {
         "status": "unavailable"
       },
@@ -3933,8 +3933,8 @@ export const unavailable_trace = {
         83.3,
         85
       ],
-      "receiptHash": "a60d4a56514a6e47970a3425339521c58b4d5d6d3e656202b564f2c4c423d7c2",
-      "factDigest": "13293c31f2e0eb695d7899b4e4c7d70e010654f044ab438f62cd84447b220725",
+      "receiptHash": "6e82fb690412760acbcf05d3c8fda1709c50823ba059b49025615e838260566f",
+      "factDigest": "7eb7ac23d2611cdc4017a71c8a8f6fd8197ed839769686cde19c9919d37073a3",
       "source": {
         "status": "unavailable"
       },
