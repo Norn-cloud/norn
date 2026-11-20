@@ -82,7 +82,7 @@ impl Config {
     /// # Errors
     /// As [`Config::from_vars`].
     pub fn from_env() -> Result<Self, String> {
-        Self::from_vars(std::env::var_os::<&str>)
+        Self::from_vars(env_var)
     }
 
     /// Read the configuration from `var`. The keyring must be readable now;
@@ -128,6 +128,12 @@ impl Config {
             },
         })
     }
+}
+
+/// The process environment's `name`, as it is: empty and non-UTF-8 values
+/// included (OLAP-05).
+fn env_var(name: &str) -> Option<OsString> {
+    std::env::var_os(name)
 }
 
 /// Read and parse the keyring file, bounded.
@@ -514,7 +520,7 @@ fn load(engine: &Engine, request: &LoadRequest) -> Outcome<norn_cell::analytics:
 fn exclusive_file(directory: &Path, prefix: &str) -> std::io::Result<(PathBuf, std::fs::File)> {
     use std::fmt::Write as _;
     let mut nonce = [0_u8; 16];
-    getrandom::fill(&mut nonce).map_err(std::io::Error::other)?;
+    getrandom::fill(&mut nonce).map_err(|e| std::io::Error::other(e.to_string()))?;
     let name = nonce.iter().fold(format!("{prefix}-"), |mut out, byte| {
         let _infallible = write!(out, "{byte:02x}");
         out
