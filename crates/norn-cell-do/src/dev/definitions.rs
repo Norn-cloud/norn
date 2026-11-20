@@ -2,54 +2,76 @@
 //!
 //! An approval (`Norn.approval`, or a `{ kind, id, payload }` JSON document
 //! in a source directory) is not an artifact of the definition set: the cell
-//! retains it beside the set, and on a hosted cell it is installed through
-//! `POST /v1/definitions:admit`, then `:install` with the signer's sign-off
-//! of the server's restatement. The dev host installs each one from the
-//! sources through exactly that path, in process, as the manifest's actor
+//! retains it beside the set. On a hosted cell a pack's approvals ride its
+//! `:apply`: admitted against the candidate set's actions, restated, signed
+//! and installed with the set in one transaction. The dev host commits the
+//! sources' approvals exactly that way, in process, as the manifest's actor
 //! (DEV-ONE-AUTHORITY-1: still no network route installs): the same
 //! admission, the same restatement, the same sign-off check. The developer
 //! signs by saving the source; the recorded sign-off names them.
 //!
-//! - A definition whose payload equals the installed one installs nothing.
-//! - A changed one installs as the next version of its id.
-//! - An approval the sources no longer declare is retired.
-//! - Every changed definition is admitted before anything installs or
-//!   retires: one the cell refuses refuses the whole sync, so nothing
-//!   installs, nothing retires, and the active gates stay; its findings are
-//!   the compile's diagnostics.
-//! - An approval that takes over the action of one the sources no longer
-//!   declare (a renamed approval) installs right after that one retires.
+//! - DEV-DEFINITIONS-ATOMIC-1 (#1469 S2, S1 of #1477): the set, every changed
+//!   approval, every retirement and the action policy are committed in one
+//!   step under the serving write lock: one store transaction, one
+//!   definitions version, and the policy recompiled before any call is
+//!   served again. A refused approval publishes nothing: the set stays, the
+//!   active gates stay, and the new action is not installed.
+//! - A definition whose payload equals the installed one appends nothing.
+//! - A changed one appends the next revision of its id.
+//! - An approval the sources no longer declare retires in the same commit,
+//!   so a renamed approval takes over its action with no ungated window.
 //! - A declaration that is not `{ kind, id, payload }`, or an id declared
-//!   twice, refuses the whole sync: nothing installs and nothing retires, so
-//!   a malformed source never retires the approval it meant to declare.
-use norn_api::definition_routes::{
-    self, AdmitDefinitionRequest, DefinitionKinds, GetDefinitionQuery, InstallDefinitionRequest,
-    ListDefinitionsQuery, RetireDefinitionRequest, SignoffRequest,
-};
+//!   twice, refuses before the cell is asked anything.
+use norn_api::cell_definitions::source_approvals;
+use norn_api::definition_routes::DefinitionKinds;
 use norn_api::host::DevHost;
 use norn_api::refusal::Refusal;
-use norn_api::scope::{CellScope, ScopeQuery};
+use norn_cell::InstalledDefinitionSet;
 use norn_cell::engine::SqlEngine;
+use norn_cell::retained::{RetainedDefinitionChange, RetainedLifecycle};
 use serde_json::value::RawValue;
 use serde_json::{Value, json};
+
+use super::admit::Admitted;
+use super::policy::{self, DevActions};
 
 /// The retained kinds a project's sources may declare.
 pub(crate) const SOURCE_KINDS: [&str; 1] = ["approval"];
 
-/// What one sync did: one event per definition installed or retired, and one
-/// diagnostic per definition refused.
+/// The approval revisions to commit with a set, and the events that report
+/// them once committed.
 #[derive(Debug, Default)]
-pub(crate) struct Synced {
-    pub(crate) changed: Vec<Value>,
-    pub(crate) refused: Vec<Value>,
+pub(crate) struct Prepared {
+    pub(crate) riding: Vec<RetainedDefinitionChange>,
+    pub(crate) events: Vec<Value>,
+}
+
+/// Why nothing was published: the phase and its diagnostics.
+#[derive(Debug)]
+pub(crate) struct Rejected {
+    pub(crate) phase: &'static str,
+    pub(crate) diagnostics: Vec<Value>,
+}
+
+/// What one commit did.
+#[derive(Debug)]
+pub(crate) enum Committed {
+    /// The set and every approval were already active: nothing was written.
+    Unchanged,
+    /// One new revision: the installed set and the approval events.
+    Installed(Box<InstalledDefinitionSet>, Vec<Value>),
 }
 
 fn finding(id: &str, code: &str, message: impl Into<String>) -> Value {
     json!({ "code": code, "severity": "error", "message": message.into(), "definitionId": id })
 }
 
-fn tagged(id: &str, diagnostics: &[norn_api::refusal::RefusalDiagnostic]) -> Vec<Value> {
-    diagnostics
+fn from_refusal(id: &str, refusal: &Refusal) -> Vec<Value> {
+    if refusal.diagnostics.is_empty() {
+        return vec![finding(id, &refusal.code, &refusal.explanation)];
+    }
+    refusal
+        .diagnostics
         .iter()
         .filter_map(|diagnostic| serde_json::to_value(diagnostic).ok())
         .map(|mut diagnostic| {
@@ -61,28 +83,16 @@ fn tagged(id: &str, diagnostics: &[norn_api::refusal::RefusalDiagnostic]) -> Vec
         .collect()
 }
 
-fn from_refusal(id: &str, refusal: &Refusal) -> Vec<Value> {
-    if refusal.diagnostics.is_empty() {
-        vec![finding(id, &refusal.code, &refusal.explanation)]
-    } else {
-        tagged(id, &refusal.diagnostics)
-    }
-}
-
-/// One declared definition: `{ kind, id, payload }`.
-struct Declared<'a> {
-    kind: &'a str,
-    id: &'a str,
-    payload: &'a Value,
-}
-
-fn declared(value: &Value) -> Result<Declared<'_>, Value> {
+/// One declared definition `{ kind, id, payload }`, as `(id, payload)`.
+fn declared(value: &Value) -> Result<(String, Box<RawValue>), Value> {
     let id = value.get("id").and_then(Value::as_str).unwrap_or_default();
     let kind = value.get("kind").and_then(Value::as_str);
     let payload = value.get("payload").filter(|payload| payload.is_object());
     match (kind, payload) {
         (Some(kind), Some(payload)) if SOURCE_KINDS.contains(&kind) && !id.is_empty() => {
-            Ok(Declared { kind, id, payload })
+            let raw = RawValue::from_string(payload.to_string())
+                .map_err(|error| finding(id, "norn.dev.definition_shape", error.to_string()))?;
+            Ok((id.to_owned(), raw))
         }
         (Some(kind), Some(_)) if !SOURCE_KINDS.contains(&kind) => Err(finding(
             id,
@@ -100,364 +110,340 @@ fn declared(value: &Value) -> Result<Declared<'_>, Value> {
     }
 }
 
-/// Install, revise or retire the cell's source-declared definitions so they
-/// equal `definitions`.
-pub(crate) fn sync<E: SqlEngine>(
+/// Parse `definitions` and admit, restate and sign each approval against
+/// `canonical_set` (the candidate set), with the retirement of every active
+/// approval the sources no longer declare. Writes nothing.
+pub(crate) fn prepare<E: SqlEngine>(
     host: &DevHost<E>,
-    scope: &CellScope,
     actor: &str,
     kinds: &DefinitionKinds,
     definitions: &[Value],
+    canonical_set: &str,
     now_ms: u64,
-) -> Synced {
-    let query = ScopeQuery {
-        org_id: Some(scope.org_id.clone()),
-        environment_id: Some(scope.environment_id.clone()),
-    };
-    let mut synced = Synced::default();
-    let mut declarations = Vec::new();
-    let mut declared_ids: Vec<String> = Vec::new();
+) -> Result<Prepared, Vec<Value>> {
+    let mut refused = Vec::new();
+    let mut declarations: Vec<(String, Box<RawValue>)> = Vec::new();
     for value in definitions {
         match declared(value) {
-            Ok(definition) if declared_ids.iter().any(|id| id == definition.id) => {
-                synced.refused.push(finding(
-                    definition.id,
-                    "norn.dev.definition_duplicate",
-                    format!("{} is declared more than once", definition.id),
-                ));
-            }
-            Ok(definition) => {
-                declared_ids.push(definition.id.to_owned());
-                declarations.push(definition);
-            }
-            Err(refused) => synced.refused.push(refused),
-        }
-    }
-    if !synced.refused.is_empty() {
-        return synced;
-    }
-    let (first, after_retire) = match plan(host, &query, actor, kinds, &declarations, &declared_ids)
-    {
-        Ok(Ok(order)) => order,
-        Ok(Err(refused)) => {
-            synced.refused = refused;
-            return synced;
-        }
-        Err(refusal) => {
-            synced.refused.extend(from_refusal("approval", &refusal));
-            return synced;
-        }
-    };
-    for definition in first {
-        match install(host, &query, actor, kinds, definition, now_ms) {
-            Ok(Some(event)) => synced.changed.push(event),
-            Ok(None) => {}
-            Err(refusal) => synced.refused.extend(from_refusal(definition.id, &refusal)),
-        }
-    }
-    if !synced.refused.is_empty() {
-        // Nothing retires while a declared gate failed to install.
-        return synced;
-    }
-    for kind in SOURCE_KINDS {
-        match retire_undeclared(host, &query, actor, kind, &declared_ids, now_ms) {
-            Ok(events) => synced.changed.extend(events),
-            Err(refusal) => synced.refused.extend(from_refusal(kind, &refusal)),
-        }
-    }
-    for definition in after_retire {
-        match install(host, &query, actor, kinds, definition, now_ms) {
-            Ok(Some(event)) => synced.changed.push(event),
-            Ok(None) => {}
-            Err(refusal) => synced.refused.extend(from_refusal(definition.id, &refusal)),
-        }
-    }
-    synced
-}
-
-/// Which declarations install before the undeclared approvals retire, and
-/// which only after (one that takes over an action from a retiring approval,
-/// as a rename does); or every finding when any declaration is refused, so a
-/// refused set installs nothing and retires nothing (#1469 S2).
-type Order<'d, 'a> = (Vec<&'d Declared<'a>>, Vec<&'d Declared<'a>>);
-
-fn plan<'d, 'a, E: SqlEngine>(
-    host: &DevHost<E>,
-    query: &ScopeQuery,
-    actor: &str,
-    kinds: &DefinitionKinds,
-    declarations: &'d [Declared<'a>],
-    declared_ids: &[String],
-) -> Result<Result<Order<'d, 'a>, Vec<Value>>, Refusal> {
-    // The active approvals, as (id, the action it gates): an approval's
-    // listed title is its action.
-    let mut active: Vec<(String, String)> = Vec::new();
-    let mut cursor = None;
-    loop {
-        let page = definition_routes::list_definitions(
-            host,
-            &ListDefinitionsQuery {
-                org_id: query.org_id.clone(),
-                environment_id: query.environment_id.clone(),
-                kind: Some("approval".to_owned()),
-                include: None,
-                limit: Some(100),
-                cursor: cursor.take(),
-                uses: None,
-            },
-            Some(actor),
-        )?;
-        active.extend(page.items.into_iter().map(|item| (item.id, item.title)));
-        match page.cursor {
-            Some(next) => cursor = Some(next),
-            None => break,
-        }
-    }
-    let mut refused = Vec::new();
-    let mut order: Order<'d, 'a> = (Vec::new(), Vec::new());
-    let mut actions: Vec<&str> = Vec::new();
-    for definition in declarations {
-        let action = definition.payload.get("action").and_then(Value::as_str);
-        if let Some(action) = action {
-            if actions.contains(&action) {
+            Ok((id, _)) if declarations.iter().any(|(other, _)| *other == id) => {
                 refused.push(finding(
-                    definition.id,
-                    norn_api::approval_definitions::codes::DUPLICATE,
-                    format!("another declared approval already gates {action}"),
+                    &id,
+                    "norn.dev.definition_duplicate",
+                    format!("{id} is declared more than once"),
                 ));
-                continue;
             }
-            actions.push(action);
-        }
-        if let Some((_, true, payload)) = installed(host, query, actor, kinds, definition.id)?
-            && payload == *definition.payload
-        {
-            continue;
-        }
-        let admitted = definition_routes::admit_definition(
-            host,
-            query,
-            Some(actor),
-            kinds,
-            None,
-            &AdmitDefinitionRequest {
-                kind: definition.kind.to_owned(),
-                id: definition.id.to_owned(),
-                payload: RawValue::from_string(definition.payload.to_string())
-                    .map_err(Refusal::host)?,
-            },
-        )?;
-        if admitted.admitted {
-            order.0.push(definition);
-            continue;
-        }
-        // Its only error is that the action is gated, and every approval
-        // gating it retires in this sync: it installs once they have.
-        let only_duplicate = admitted
-            .diagnostics
-            .iter()
-            .filter(|diagnostic| diagnostic.severity == "error")
-            .all(|diagnostic| diagnostic.code == norn_api::approval_definitions::codes::DUPLICATE);
-        let gaters_retire = active
-            .iter()
-            .filter(|(id, gated)| id != definition.id && Some(gated.as_str()) == action)
-            .all(|(id, _)| !declared_ids.contains(id));
-        if only_duplicate && gaters_retire {
-            order.1.push(definition);
-        } else {
-            refused.extend(tagged(definition.id, &admitted.diagnostics));
+            Ok(declaration) => declarations.push(declaration),
+            Err(finding) => refused.push(finding),
         }
     }
-    Ok(if refused.is_empty() {
-        Ok(order)
-    } else {
-        Err(refused)
-    })
-}
-
-/// The installed version and payload of `id`, if it is active.
-fn installed<E: SqlEngine>(
-    host: &DevHost<E>,
-    query: &ScopeQuery,
-    actor: &str,
-    kinds: &DefinitionKinds,
-    id: &str,
-) -> Result<Option<(u64, bool, Value)>, Refusal> {
-    let get = GetDefinitionQuery {
-        org_id: query.org_id.clone(),
-        environment_id: query.environment_id.clone(),
-        version: None,
-    };
-    match definition_routes::get_definition(host, &get, Some(actor), kinds, None, id) {
-        Ok(document) => {
-            let payload = serde_json::from_str(document.payload.get()).map_err(Refusal::host)?;
-            Ok(Some((
-                document.version,
-                document.lifecycle == "active",
-                payload,
-            )))
-        }
-        Err(refusal) if refusal.code == "definition.not_found" => Ok(None),
-        Err(refusal) => Err(refusal),
+    if !refused.is_empty() {
+        return Err(refused);
     }
+    let approvals = source_approvals(host, actor, kinds, canonical_set, &declarations, now_ms)
+        .map_err(|refused| from_refusal(&refused.0, &refused.1))?;
+    let mut prepared = Prepared::default();
+    for approval in approvals {
+        let definition = &approval.change.definition;
+        let lifecycle = match definition.lifecycle {
+            RetainedLifecycle::Active => "active",
+            RetainedLifecycle::Retired => "retired",
+        };
+        let mut event = json!({
+            "event": "definition", "kind": definition.kind, "id": definition.id,
+            "version": definition.revision, "lifecycle": lifecycle,
+        });
+        if let (Some(restatement), Some(object)) = (approval.restatement, event.as_object_mut()) {
+            object.insert("restatement".to_owned(), json!(restatement));
+        }
+        prepared.events.push(event);
+        prepared.riding.push(approval.change);
+    }
+    Ok(prepared)
 }
 
-fn install<E: SqlEngine>(
+/// DEV-DEFINITIONS-ATOMIC-1: commit `admitted` over the active revision
+/// `expected` with the sources' approvals, in one install, then recompile
+/// `actions` from the new revision. The caller holds the serving write lock
+/// across this call, so no call is served between the install and the
+/// policy. Any refusal writes nothing and leaves the policy as it was.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the one commit takes the host, the actor's kinds, the set and the policy slot"
+)]
+pub(crate) fn commit<E: SqlEngine>(
     host: &DevHost<E>,
-    query: &ScopeQuery,
     actor: &str,
     kinds: &DefinitionKinds,
-    definition: &Declared<'_>,
+    definitions: &[Value],
+    admitted: Admitted,
+    active: &InstalledDefinitionSet,
+    actions: &DevActions,
     now_ms: u64,
-) -> Result<Option<Value>, Refusal> {
-    let current = installed(host, query, actor, kinds, definition.id)?;
-    if let Some((_, true, payload)) = &current
-        && payload == definition.payload
-    {
-        return Ok(None);
-    }
-    let raw = || RawValue::from_string(definition.payload.to_string()).map_err(Refusal::host);
-    let admitted = definition_routes::admit_definition(
+) -> Result<Committed, Rejected> {
+    let prepared = prepare(
         host,
-        query,
-        Some(actor),
+        actor,
         kinds,
-        None,
-        &AdmitDefinitionRequest {
-            kind: definition.kind.to_owned(),
-            id: definition.id.to_owned(),
-            payload: raw()?,
-        },
-    )?;
-    if !admitted.admitted {
-        let mut refusal = Refusal::invalid("the definition is not admissible");
-        "definition.refused".clone_into(&mut refusal.code);
-        refusal.diagnostics = admitted.diagnostics;
-        return Err(refusal);
-    }
-    let installed = definition_routes::install_definition(
-        host,
-        query,
-        Some(actor),
-        kinds,
-        None,
-        &InstallDefinitionRequest {
-            kind: definition.kind.to_owned(),
-            id: definition.id.to_owned(),
-            payload: raw()?,
-            expected_version: current.map(|(version, _, _)| version),
-            signoff: admitted
-                .restatement_sha256
-                .map(|restatement_sha256| SignoffRequest { restatement_sha256 }),
-        },
+        definitions,
+        &admitted.input.canonical_set,
         now_ms,
-    )?;
-    Ok(Some(json!({
-        "event": "definition", "kind": definition.kind, "id": installed.id,
-        "version": installed.version, "lifecycle": "active",
-        "restatement": admitted.restatement,
-    })))
-}
-
-fn retire_undeclared<E: SqlEngine>(
-    host: &DevHost<E>,
-    query: &ScopeQuery,
-    actor: &str,
-    kind: &str,
-    declared: &[String],
-    now_ms: u64,
-) -> Result<Vec<Value>, Refusal> {
-    let mut events = Vec::new();
-    let mut cursor = None;
-    loop {
-        let page = definition_routes::list_definitions(
-            host,
-            &ListDefinitionsQuery {
-                org_id: query.org_id.clone(),
-                environment_id: query.environment_id.clone(),
-                kind: Some(kind.to_owned()),
-                include: None,
-                limit: Some(100),
-                cursor: cursor.take(),
-                uses: None,
-            },
-            Some(actor),
-        )?;
-        for item in page.items {
-            if declared.contains(&item.id) {
-                continue;
-            }
-            let retired = definition_routes::retire_definition(
-                host,
-                query,
-                Some(actor),
-                None,
-                &item.id,
-                &RetireDefinitionRequest {
-                    expected_version: item.version,
-                },
-                now_ms,
-            )?;
-            events.push(json!({
-                "event": "definition", "kind": kind, "id": retired.id,
-                "version": retired.version, "lifecycle": "retired",
-            }));
-        }
-        match page.cursor {
-            Some(next) => cursor = Some(next),
-            None => return Ok(events),
-        }
+    )
+    .map_err(|diagnostics| Rejected {
+        phase: "definitions",
+        diagnostics,
+    })?;
+    if active.canonical_set == admitted.input.canonical_set && prepared.riding.is_empty() {
+        return Ok(Committed::Unchanged);
     }
+    let installed = host
+        .install_definitions_riding(
+            admitted.model,
+            admitted.input,
+            Some(active.version),
+            &prepared.riding,
+        )
+        .map_err(|refusal| Rejected {
+            phase: "install",
+            diagnostics: vec![serde_json::to_value(&refusal).unwrap_or(Value::Null)],
+        })?;
+    // The report is read later; the policy is in the slot before the lock
+    // is released.
+    let _ungoverned = policy::refresh_actions(actions, host);
+    Ok(Committed::Installed(Box::new(installed), prepared.events))
 }
 
 #[cfg(test)]
 #[allow(
     clippy::indexing_slicing,
     clippy::expect_used,
-    reason = "sync fixtures"
+    clippy::unwrap_used,
+    clippy::unwrap_in_result,
+    clippy::arithmetic_side_effects,
+    reason = "commit fixtures"
 )]
 mod tests {
-    //! DEV-DEFINITIONS-1: a malformed or duplicated declaration refuses the
-    //! whole sync before the cell is asked anything, so nothing installs and
-    //! no installed approval retires.
+    //! DEV-DEFINITIONS-1 and DEV-DEFINITIONS-ATOMIC-1: a malformed or
+    //! duplicated declaration refuses before the cell is asked anything; a
+    //! refused approval publishes nothing (no new action, the old gate
+    //! stays); a renamed approval retires and replaces in the set's one
+    //! commit, so no call can see the action ungated in between.
     use super::*;
-    use crate::dev::policy::tests::{host, scope};
+    use crate::dev::http::action_cell::{
+        DERIVES_LOSS, MELT_ACTION, melt_install_edited, melt_store,
+    };
+    use crate::dev::policy::{dev_actions, dev_kinds};
+    use norn_api::scope::CellScope;
+    use norn_cell::engine::NativeEngine;
 
-    fn approval(id: &str) -> Value {
+    const ACTOR: &str = "local:developer";
+    const RECONVERT: &str = "constitution.melt.reconvert";
+
+    fn cell() -> DevHost<NativeEngine> {
+        let store = melt_store(
+            DERIVES_LOSS,
+            norn_api::action_admission::prepare_action_model,
+        );
+        let scope = CellScope {
+            org_id: "org_demo".into(),
+            environment_id: "dev".into(),
+        };
+        DevHost::from_store(store, scope, |command| command.payload.clone()).unwrap()
+    }
+
+    /// The melt set, with a second action `RECONVERT` when `extra`.
+    fn candidate(extra: bool, installed_at: u64) -> Admitted {
+        let (model, input) = melt_install_edited(
+            DERIVES_LOSS,
+            |documents| {
+                if extra {
+                    let mut action = documents
+                        .iter()
+                        .find(|document| document["kind"] == "action")
+                        .cloned()
+                        .unwrap();
+                    action["artifactId"] = json!(format!("{RECONVERT}.action"));
+                    action["payload"]["actionId"] = json!(RECONVERT);
+                    documents.push(action);
+                }
+            },
+            norn_api::action_admission::prepare_action_model,
+            installed_at,
+        );
+        Admitted { model, input }
+    }
+
+    fn approval(id: &str, action: &str, role: &str) -> Value {
         json!({ "kind": "approval", "id": id, "payload": {
-            "action": "shop.sale.record", "decider": { "roles": ["admin"] },
-            "question": "Record this sale?", "risk": "low" } })
+            "action": action, "decider": { "roles": [role] },
+            "question": "Convert this melt?", "risk": "high" } })
     }
 
-    fn sync_of(definitions: &[Value]) -> Synced {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let host = host(dir.path());
-        let kinds = crate::dev::policy::dev_kinds();
-        sync(&host, &scope(), "dev@example", &kinds, definitions, 1)
+    fn commit_of(
+        host: &DevHost<NativeEngine>,
+        extra: bool,
+        definitions: &[Value],
+        at: u64,
+    ) -> Result<Committed, Rejected> {
+        let active = host.active_definitions().unwrap().unwrap();
+        commit(
+            host,
+            ACTOR,
+            &dev_kinds(),
+            definitions,
+            candidate(extra, at),
+            &active,
+            &dev_actions(),
+            at,
+        )
     }
 
-    fn codes(synced: &Synced) -> Vec<&str> {
-        synced
-            .refused
+    fn record(
+        host: &DevHost<NativeEngine>,
+        id: &str,
+    ) -> Option<norn_cell::retained::RetainedDefinitionRecord> {
+        host.retained_definition(id).unwrap()
+    }
+
+    fn codes(refused: &[Value]) -> Vec<&str> {
+        refused
             .iter()
             .filter_map(|finding| finding.get("code").and_then(Value::as_str))
             .collect()
     }
 
     #[test]
-    fn a_malformed_declaration_refuses_the_sync() {
-        let mut malformed = approval("shop.b");
+    fn a_malformed_declaration_refuses_before_the_cell() {
+        let host = cell();
+        let mut malformed = approval("ops.b", MELT_ACTION, "admin");
         malformed["payload"] = json!([]);
-        let synced = sync_of(&[approval("shop.a"), malformed]);
-        assert!(synced.changed.is_empty());
-        assert_eq!(codes(&synced), ["norn.dev.definition_shape"]);
+        let refused = prepare(
+            &host,
+            ACTOR,
+            &dev_kinds(),
+            &[approval("ops.a", MELT_ACTION, "admin"), malformed],
+            "[]",
+            1,
+        )
+        .expect_err("refused");
+        assert_eq!(codes(&refused), ["norn.dev.definition_shape"]);
     }
 
     #[test]
-    fn a_duplicated_id_refuses_the_sync() {
-        let synced = sync_of(&[approval("shop.a"), approval("shop.a")]);
-        assert!(synced.changed.is_empty());
-        assert_eq!(codes(&synced), ["norn.dev.definition_duplicate"]);
-        assert_eq!(synced.refused[0]["definitionId"], json!("shop.a"));
+    fn a_duplicated_id_refuses_before_the_cell() {
+        let host = cell();
+        let gate = approval("ops.a", MELT_ACTION, "admin");
+        let refused = prepare(&host, ACTOR, &dev_kinds(), &[gate.clone(), gate], "[]", 1)
+            .expect_err("refused");
+        assert_eq!(codes(&refused), ["norn.dev.definition_duplicate"]);
+        assert_eq!(refused[0]["definitionId"], json!("ops.a"));
+    }
+
+    /// #1469 S2: the set adds an action whose approval is refused: nothing
+    /// is published, so the action is never live ungated.
+    #[test]
+    fn a_refused_approval_installs_no_new_action() {
+        let host = cell();
+        let before = host.active_definitions().unwrap().unwrap();
+        let rejected = commit_of(
+            &host,
+            true,
+            &[approval("ops.reconvert", RECONVERT, "no-such-role")],
+            5_000,
+        )
+        .expect_err("the approval is refused");
+        assert_eq!(rejected.phase, "definitions");
+        let after = host.active_definitions().unwrap().unwrap();
+        assert_eq!(after.version, before.version);
+        assert!(!after.canonical_set.contains(RECONVERT));
+        assert!(record(&host, "ops.reconvert").is_none());
+    }
+
+    /// #1469 S2 + S1 of #1477: a rename retires the old approval and
+    /// installs the new one in the set's one commit: both revisions name the
+    /// same definitions version and commit, so no call is served between.
+    #[test]
+    fn a_rename_retires_and_replaces_in_one_commit() {
+        let host = cell();
+        let first = commit_of(
+            &host,
+            true,
+            &[approval("ops.old", RECONVERT, "admin")],
+            5_000,
+        )
+        .expect("gated");
+        let Committed::Installed(first, _) = first else {
+            panic!("the gate and the new action install");
+        };
+        assert!(first.canonical_set.contains(RECONVERT));
+        let old = record(&host, "ops.old").unwrap();
+        assert_eq!(
+            old.definitions_version, first.version,
+            "set and gate together"
+        );
+
+        let renamed = commit_of(
+            &host,
+            true,
+            &[approval("ops.new", RECONVERT, "admin")],
+            6_000,
+        )
+        .expect("renamed");
+        let Committed::Installed(renamed, events) = renamed else {
+            panic!("the rename installs");
+        };
+        assert_eq!(renamed.version, first.version + 1, "one commit");
+        let old = record(&host, "ops.old").unwrap();
+        let new = record(&host, "ops.new").unwrap();
+        assert_eq!(old.definition.lifecycle, RetainedLifecycle::Retired);
+        assert_eq!(new.definition.lifecycle, RetainedLifecycle::Active);
+        assert_eq!(old.commit_seq, new.commit_seq);
+        assert_eq!(old.definitions_version, renamed.version);
+        assert_eq!(new.definitions_version, renamed.version);
+        let lifecycles: Vec<_> = events
+            .iter()
+            .map(|event| event["lifecycle"].clone())
+            .collect();
+        assert_eq!(lifecycles, [json!("active"), json!("retired")]);
+    }
+
+    /// A refused replacement keeps the old gate active and the set as it was.
+    #[test]
+    fn a_refused_replacement_keeps_the_old_gate() {
+        let host = cell();
+        commit_of(
+            &host,
+            false,
+            &[approval("ops.old", MELT_ACTION, "admin")],
+            5_000,
+        )
+        .expect("gated");
+        let before = host.active_definitions().unwrap().unwrap();
+        let rejected = commit_of(
+            &host,
+            false,
+            &[approval("ops.new", MELT_ACTION, "no-such-role")],
+            6_000,
+        )
+        .expect_err("refused");
+        assert_eq!(rejected.phase, "definitions");
+        assert_eq!(
+            host.active_definitions().unwrap().unwrap().version,
+            before.version
+        );
+        let old = record(&host, "ops.old").unwrap();
+        assert_eq!(old.definition.lifecycle, RetainedLifecycle::Active);
+        assert!(record(&host, "ops.new").is_none());
+    }
+
+    /// The same set with the same approvals writes nothing.
+    #[test]
+    fn an_unchanged_source_commits_nothing() {
+        let host = cell();
+        let gate = [approval("ops.old", MELT_ACTION, "admin")];
+        commit_of(&host, false, &gate, 5_000).expect("gated");
+        assert!(matches!(
+            commit_of(&host, false, &gate, 6_000).expect("same"),
+            Committed::Unchanged
+        ));
     }
 }

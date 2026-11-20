@@ -512,7 +512,17 @@ impl<'a, E: SqlEngine> WouldCommit<'a, E> {
 /// (the object the kernel's `norn.ActionCall` record names) is compared; a
 /// target with no proposed values or without the property, or values the
 /// comparison cannot order, hold the call (fail closed).
-pub(crate) fn applies(gate: &Gate, writes: &[FactWrite]) -> bool {
+///
+/// #1469 S9: how values compare comes from the target property's declared
+/// type (`semantics` of the target's object type and the property): a
+/// number compares as an exact decimal, text and other literals compare as
+/// written (`"1"` and `"1.0"` differ), and a type with no comparison holds
+/// the call.
+pub(crate) fn applies(
+    gate: &Gate,
+    writes: &[FactWrite],
+    semantics: impl Fn(&str, &str) -> Option<Compared>,
+) -> bool {
     let Some(when) = gate.payload.get("when") else {
         return true;
     };
@@ -551,17 +561,71 @@ pub(crate) fn applies(gate: &Gate, writes: &[FactWrite]) -> bool {
             },
             FactMutation::Delete => None,
         });
-    let Some(actual) = target
-        .as_ref()
-        .and_then(values_of)
-        .and_then(|values| values.get(property))
-    else {
+    let Some(target) = target else {
         return true;
     };
-    compare(actual, op, expected).unwrap_or(true)
+    let Some(actual) = values_of(&target).and_then(|values| values.get(property)) else {
+        return true;
+    };
+    match semantics(target.object_type.as_str(), property) {
+        Some(Compared::Decimal) => compare(actual, op, expected).unwrap_or(true),
+        Some(Compared::Literal) => literal(actual, op, expected).unwrap_or(true),
+        None => true,
+    }
 }
 
-/// `actual op expected`, or `None` when the values do not support `op`.
+/// How a `when` condition compares a property, from its declared type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Compared {
+    /// An integer or decimal: ordered, as exact decimals.
+    Decimal,
+    /// Text, an enum, a boolean, a date or a reference: equal as written.
+    Literal,
+}
+
+/// The comparison `object_type.property` takes in `model`; `None` when its
+/// type has none (or is unknown), which holds the call.
+pub(crate) fn semantics_in(
+    model: &norn_cell::Model,
+    object_type: &str,
+    property: &str,
+) -> Option<Compared> {
+    use norn_ir::PropertyType;
+    let types = model.effective_property_types(object_type).ok()?;
+    let (_, kind) = types.into_iter().find(|(id, _)| id == property)?;
+    match kind? {
+        PropertyType::Integer { .. }
+        | PropertyType::Decimal { .. }
+        | PropertyType::DecimalBinding { .. } => Some(Compared::Decimal),
+        PropertyType::Text { .. }
+        | PropertyType::Enum { .. }
+        | PropertyType::Boolean {}
+        | PropertyType::Date {}
+        | PropertyType::Ref { .. } => Some(Compared::Literal),
+        PropertyType::Timestamp { .. }
+        | PropertyType::Duration { .. }
+        | PropertyType::Record { .. }
+        | PropertyType::JsonExt { .. } => None,
+    }
+}
+
+/// `actual op expected` for a literal: only `eq` and `ne`, of the same JSON
+/// shape, compared as written; `None` otherwise.
+fn literal(actual: &RuntimeValue, op: &str, expected: &Value) -> Option<bool> {
+    let equal = match (actual, expected) {
+        (RuntimeValue::String(left), Value::String(right)) => left == right,
+        (RuntimeValue::Bool(left), Value::Bool(right)) => left == right,
+        _ => return None,
+    };
+    match op {
+        "eq" => Some(equal),
+        "ne" => Some(!equal),
+        _ => None,
+    }
+}
+
+/// `actual op expected` as exact decimals, or `None` when either is not one
+/// or `op` is not a comparison.
 fn compare(actual: &RuntimeValue, op: &str, expected: &Value) -> Option<bool> {
     use std::cmp::Ordering;
     let decimal = |value: &RuntimeValue| match value {
@@ -586,27 +650,15 @@ fn compare(actual: &RuntimeValue, op: &str, expected: &Value) -> Option<bool> {
         (Some(left), Some(right)) => left.partial_cmp(&right),
         _ => None,
     };
-    if let Some(ordering) = ordering {
-        return Some(match op {
-            "eq" => ordering == Ordering::Equal,
-            "ne" => ordering != Ordering::Equal,
-            "lt" => ordering == Ordering::Less,
-            "le" => ordering != Ordering::Greater,
-            "gt" => ordering == Ordering::Greater,
-            "ge" => ordering != Ordering::Less,
-            _ => return None,
-        });
-    }
-    let equal = match (actual, expected) {
-        (RuntimeValue::String(left), Value::String(right)) => left == right,
-        (RuntimeValue::Bool(left), Value::Bool(right)) => left == right,
+    Some(match (op, ordering?) {
+        ("eq", ordering) => ordering == Ordering::Equal,
+        ("ne", ordering) => ordering != Ordering::Equal,
+        ("lt", ordering) => ordering == Ordering::Less,
+        ("le", ordering) => ordering != Ordering::Greater,
+        ("gt", ordering) => ordering == Ordering::Greater,
+        ("ge", ordering) => ordering != Ordering::Less,
         _ => return None,
-    };
-    match op {
-        "eq" => Some(equal),
-        "ne" => Some(!equal),
-        _ => None,
-    }
+    })
 }
 
 impl<E: SqlEngine> CellHost for WouldCommit<'_, E> {
@@ -732,6 +784,16 @@ mod tests {
         }
     }
 
+    /// The purchase request's declared types: `amount` a decimal, `status`
+    /// and `code` text.
+    fn typed(object_type: &str, property: &str) -> Option<Compared> {
+        match (object_type, property) {
+            ("purchasing.PurchaseRequest", "amount") => Some(Compared::Decimal),
+            ("purchasing.PurchaseRequest", "status" | "code") => Some(Compared::Literal),
+            _ => None,
+        }
+    }
+
     fn put_at(object_type: &str, key: &str, values: Value) -> FactWrite {
         let values = if let RuntimeValue::Object(values) = RuntimeValue::from_json(values).unwrap()
         {
@@ -792,18 +854,18 @@ mod tests {
                 json!({ "amount": "2500.00" }),
             ),
         ];
-        assert!(applies(&large, &writes), "the target's 2500 waits");
+        assert!(applies(&large, &writes, typed), "the target's 2500 waits");
         let untouched = vec![
             call_of("PR-9"),
             put_at("purchasing.Line", "A-1", json!({ "amount": "5" })),
         ];
-        assert!(applies(&large, &untouched), "no target values: held");
+        assert!(applies(&large, &untouched, typed), "no target values: held");
         let unnamed = vec![put_at(
             "purchasing.PurchaseRequest",
             "PR-9",
             json!({ "amount": "5" }),
         )];
-        assert!(applies(&large, &unnamed), "no call record: held");
+        assert!(applies(&large, &unnamed, typed), "no call record: held");
     }
 
     /// #1469 S10: a decimal threshold compares exactly as written.
@@ -812,19 +874,19 @@ mod tests {
         let over = gate(Some(
             json!({ "property": "amount", "op": "gt", "value": "1000.10" }),
         ));
-        assert!(!applies(&over, &request(&json!("1000.10"))));
-        assert!(applies(&over, &request(&json!("1000.11"))));
-        assert!(!applies(&over, &request(&json!("1000.100"))));
+        assert!(!applies(&over, &request(&json!("1000.10")), typed));
+        assert!(applies(&over, &request(&json!("1000.11")), typed));
+        assert!(!applies(&over, &request(&json!("1000.100")), typed));
         let at_least = gate(Some(
             json!({ "property": "amount", "op": "ge", "value": "1000.10" }),
         ));
-        assert!(applies(&at_least, &request(&json!("1000.10"))));
-        assert!(!applies(&at_least, &request(&json!("1000.09"))));
+        assert!(applies(&at_least, &request(&json!("1000.10")), typed));
+        assert!(!applies(&at_least, &request(&json!("1000.09")), typed));
         // A fractional JSON number is not exact: it holds the call.
         let inexact = gate(Some(
             json!({ "property": "amount", "op": "gt", "value": 2000.5 }),
         ));
-        assert!(applies(&inexact, &request(&json!("5"))));
+        assert!(applies(&inexact, &request(&json!("5")), typed));
     }
 
     #[test]
@@ -832,12 +894,12 @@ mod tests {
         let large = gate(Some(
             json!({ "property": "amount", "op": "gt", "value": "1000" }),
         ));
-        assert!(applies(&large, &request(&json!("2500.00"))));
-        assert!(applies(&large, &request(&json!(1000.01))));
-        assert!(!applies(&large, &request(&json!("1000.00"))));
-        assert!(!applies(&large, &request(&json!("990"))));
+        assert!(applies(&large, &request(&json!("2500.00")), typed));
+        assert!(applies(&large, &request(&json!(1000.01)), typed));
+        assert!(!applies(&large, &request(&json!("1000.00")), typed));
+        assert!(!applies(&large, &request(&json!("990")), typed));
         // The kernel's own records never stand in for the call's record.
-        assert!(!applies(&large, &request(&json!("12"))));
+        assert!(!applies(&large, &request(&json!("12")), typed));
     }
 
     #[test]
@@ -845,21 +907,55 @@ mod tests {
         let status = gate(Some(
             json!({ "property": "status", "op": "eq", "value": "submitted" }),
         ));
-        assert!(applies(&status, &request(&json!("5"))));
+        assert!(applies(&status, &request(&json!("5")), typed));
         let other = gate(Some(
             json!({ "property": "status", "op": "ne", "value": "submitted" }),
         ));
-        assert!(!applies(&other, &request(&json!("5"))));
+        assert!(!applies(&other, &request(&json!("5")), typed));
         // Fail closed: an unordered comparison, a missing property, no record.
         let ordered = gate(Some(
             json!({ "property": "status", "op": "lt", "value": "z" }),
         ));
-        assert!(applies(&ordered, &request(&json!("5"))));
+        assert!(applies(&ordered, &request(&json!("5")), typed));
         let missing = gate(Some(
             json!({ "property": "priority", "op": "eq", "value": "high" }),
         ));
-        assert!(applies(&missing, &request(&json!("5"))));
-        assert!(applies(&missing, &[]));
-        assert!(applies(&gate(None), &request(&json!("5"))));
+        assert!(applies(&missing, &request(&json!("5")), typed));
+        assert!(applies(&missing, &[], typed));
+        assert!(applies(&gate(None), &request(&json!("5")), typed));
+    }
+
+    /// #1469 S9: a text property compares as written, never as a decimal:
+    /// `"1"` and `"1.0"` differ, so `ne "1"` holds `"1.0"`.
+    #[test]
+    fn text_compares_as_written() {
+        let coded = |code: &str| {
+            vec![
+                call_of("PR-1"),
+                put(
+                    "purchasing.PurchaseRequest",
+                    json!({ "amount": "5", "code": code }),
+                ),
+            ]
+        };
+        let not_one = gate(Some(
+            json!({ "property": "code", "op": "ne", "value": "1" }),
+        ));
+        assert!(applies(&not_one, &coded("1.0"), typed));
+        assert!(!applies(&not_one, &coded("1"), typed));
+        let is_one = gate(Some(
+            json!({ "property": "code", "op": "eq", "value": "1" }),
+        ));
+        assert!(!applies(&is_one, &coded("1.0"), typed));
+        // Text is not ordered: an ordered comparison holds the call.
+        let above = gate(Some(
+            json!({ "property": "code", "op": "gt", "value": "1" }),
+        ));
+        assert!(applies(&above, &coded("0"), typed));
+        // A property whose type has no comparison holds the call.
+        let untyped = gate(Some(
+            json!({ "property": "amount", "op": "gt", "value": "1" }),
+        ));
+        assert!(applies(&untyped, &coded("1"), |_, _| None));
     }
 }

@@ -29,8 +29,11 @@
 //!   and the refusal; the session never serves after a refused load, and a
 //!   restart loads the same snapshot again (rows already landed stay landed).
 //! - DEV-DEFINITIONS-1: the sources' retained definitions (approvals) are
-//!   installed after each admitted set through the hosted admit, sign-off and
-//!   install path, in process, as the manifest's actor (`dev/definitions.rs`).
+//!   admitted, signed and installed through the hosted riding-apply path, in
+//!   process, as the manifest's actor (`dev/definitions.rs`).
+//! - DEV-DEFINITIONS-ATOMIC-1: a reload commits the set, its approvals (with
+//!   retirements) and the action policy in one step under the serving write
+//!   lock; a refused approval publishes nothing.
 //! - DEV-ACCESS-1: an action whose `access` names a policy is decided by that
 //!   policy for every local principal, as on a hosted cell
 //!   (`dev/policy.rs`).
@@ -663,57 +666,62 @@ impl Session<'_> {
                 return Ok(None);
             }
         };
-        if current
-            .as_ref()
-            .is_some_and(|set| set.canonical_set == admitted.input.canonical_set)
-        {
-            out.emit(
-                &json!({ "event": "unchanged", "gen": event.get("gen"), "sourceDigest": event.get("sourceDigest") }),
-                "· unchanged (same definitions)",
-            );
-            self.settle(out, serving, event);
-            return Ok(None);
-        }
+        let definitions = event
+            .get("definitions")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        // DEV-DEFINITIONS-ATOMIC-1: the set, its approvals and the action
+        // policy commit together under the serving write lock.
         let result = match current {
             Some(set) => {
-                let guard = serving.read().map_err(|_poisoned| {
+                let guard = serving.write().map_err(|_poisoned| {
                     Failure::setup("norn.cell.unreadable", "serving state poisoned")
                 })?;
-                guard
-                    .as_ref()
-                    .map(|host| {
-                        host.install_definitions(admitted.model, admitted.input, Some(set.version))
-                    })
-                    .ok_or_else(|| {
-                        Failure::setup("norn.cell.unreadable", "the serving host disappeared")
-                    })?
-                    .map_err(|refusal| serde_json::to_value(&refusal).unwrap_or(Value::Null))
+                let host = guard.as_ref().ok_or_else(|| {
+                    Failure::setup("norn.cell.unreadable", "the serving host disappeared")
+                })?;
+                definitions::commit(
+                    host,
+                    &self.manifest.dev.actor,
+                    &policy::dev_kinds(),
+                    &definitions,
+                    admitted,
+                    &set,
+                    &self.actions,
+                    now_ms(),
+                )
             }
-            None => self.provision(serving, cell_path, admitted),
+            None => self.provision(serving, cell_path, admitted, &definitions),
         };
         match result {
-            Ok(installed) => {
+            Ok(definitions::Committed::Unchanged) => {
+                out.emit(
+                    &json!({ "event": "unchanged", "gen": event.get("gen"), "sourceDigest": event.get("sourceDigest") }),
+                    "· unchanged (same definitions)",
+                );
+                self.access(out, serving);
+                Ok(None)
+            }
+            Ok(definitions::Committed::Installed(installed, events)) => {
                 if let Some(loaded) = self.loaded.take() {
                     out.emit(
                         &json!({ "event": "loaded", "files": loaded.files }),
                         &format!("· loaded {} recorded snapshot(s)", loaded.files.len()),
                     );
                 }
-                self.settle(out, serving, event);
-                Ok(Some(installed))
+                Self::definitions(out, &events);
+                self.access(out, serving);
+                Ok(Some(*installed))
             }
-            Err(refusal) => {
-                Self::rejected(
-                    out,
-                    serving,
-                    event,
-                    "install",
-                    std::slice::from_ref(&refusal),
-                );
+            Err(definitions::Rejected { phase, diagnostics }) => {
+                Self::rejected(out, serving, event, phase, &diagnostics);
                 // DEV-LOAD-REFUSED-1: a `--load` the cell refuses ends the
                 // session with that refusal; it never waits unserved for a
                 // source save that cannot change the snapshot.
-                if refusal.get("code").and_then(Value::as_str) == Some("norn.dev.load_refused") {
+                if let Some(refusal) = diagnostics.iter().find(|refusal| {
+                    refusal.get("code").and_then(Value::as_str) == Some("norn.dev.load_refused")
+                }) {
                     let message = refusal
                         .get("message")
                         .and_then(Value::as_str)
@@ -726,32 +734,9 @@ impl Session<'_> {
         }
     }
 
-    /// After an admitted set is serving: install the sources' retained
-    /// definitions (DEV-DEFINITIONS-1) and recompile the action policy
-    /// (DEV-ACCESS-1). A refused definition is reported and changes nothing.
-    fn settle(&self, out: &mut Events, serving: &http::Serving, compiled: &Value) {
-        let definitions = compiled
-            .get("definitions")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        let synced = {
-            let Ok(guard) = serving.read() else {
-                return;
-            };
-            let Some(host) = guard.as_ref() else {
-                return;
-            };
-            definitions::sync(
-                host,
-                self.scope,
-                &self.manifest.dev.actor,
-                &policy::dev_kinds(),
-                &definitions,
-                now_ms(),
-            )
-        };
-        for event in &synced.changed {
+    /// Report each approval revision a commit appended.
+    fn definitions(out: &mut Events, events: &[Value]) {
+        for event in events {
             let text = |key: &str| event.get(key).and_then(Value::as_str).unwrap_or_default();
             out.emit(
                 event,
@@ -764,10 +749,6 @@ impl Session<'_> {
                 ),
             );
         }
-        if !synced.refused.is_empty() {
-            Self::rejected(out, serving, compiled, "definitions", &synced.refused);
-        }
-        self.access(out, serving);
     }
 
     /// Recompile the active revision's action policy and report what it
@@ -802,47 +783,96 @@ impl Session<'_> {
         self.ungoverned.replace(Some(refreshed));
     }
 
-    /// The first revision of a new cell.
+    /// The first revision of a new cell, with the sources' approvals in the
+    /// provisioning transaction (DEV-DEFINITIONS-ATOMIC-1). The approvals
+    /// are admitted first against the candidate on a scratch in-memory cell,
+    /// so a refused one writes no file; the host is served only once its
+    /// action policy is compiled.
     fn provision(
         &self,
         serving: &http::Serving,
         cell_path: &Path,
         admitted: admit::Admitted,
-    ) -> Result<InstalledDefinitionSet, Value> {
-        let refused = |message: String| json!({ "code": "defs.provision_refused", "severity": "error", "message": message });
+        definitions: &[Value],
+    ) -> Result<definitions::Committed, definitions::Rejected> {
+        let install = |diagnostic: Value| definitions::Rejected {
+            phase: "install",
+            diagnostics: vec![diagnostic],
+        };
+        let refused = |message: String| {
+            install(
+                json!({ "code": "defs.provision_refused", "severity": "error", "message": message }),
+            )
+        };
+        let host_refused = |refusal: norn_api::refusal::Refusal| {
+            install(serde_json::to_value(&refusal).unwrap_or(Value::Null))
+        };
+        let prepared = {
+            let scratch = NativeEngine::open_in_memory()
+                .and_then(|engine| {
+                    CellStore::provision_definitions(
+                        engine,
+                        admitted.model.clone(),
+                        &admitted.input,
+                        &self.scope.key(),
+                    )
+                })
+                .map_err(|error| refused(error.to_string()))?;
+            let scratch = DevHost::from_store(scratch, self.scope.clone(), |command| {
+                command.payload.clone()
+            })
+            .map_err(host_refused)?;
+            definitions::prepare(
+                &scratch,
+                &self.manifest.dev.actor,
+                &policy::dev_kinds(),
+                definitions,
+                &admitted.input.canonical_set,
+                now_ms(),
+            )
+            .map_err(|diagnostics| definitions::Rejected {
+                phase: "definitions",
+                diagnostics,
+            })?
+        };
         let engine = NativeEngine::open(cell_path, StoreOptions::default())
             .map_err(|error| refused(error.to_string()))?;
-        let store = CellStore::provision_definitions(
+        let store = CellStore::provision_definitions_riding(
             engine,
             admitted.model,
             &admitted.input,
             &self.scope.key(),
+            &prepared.riding,
         )
         .map_err(|error| refused(error.to_string()))?;
         let store = if self.loads.is_empty() {
             store
         } else {
             let (store, loaded) = load::load(store, &self.scope.key(), self.loads).map_err(
-                |message| json!({ "code": "norn.dev.load_refused", "severity": "error", "message": message }),
+                |message| install(json!({ "code": "norn.dev.load_refused", "severity": "error", "message": message })),
             )?;
             self.loaded.replace(Some(loaded));
             store
         };
         let host =
             DevHost::from_store(store, self.scope.clone(), |command| command.payload.clone())
-                .map_err(|refusal| serde_json::to_value(&refusal).unwrap_or(Value::Null))?
+                .map_err(host_refused)?
                 .with_authorizer(LocalDeveloper::for_actor(
                     &self.manifest.dev.actor,
                     std::sync::Arc::clone(&self.actions),
                 ));
         let installed = host
             .active_definitions()
-            .map_err(|refusal| serde_json::to_value(&refusal).unwrap_or(Value::Null))?
+            .map_err(host_refused)?
             .ok_or_else(|| refused("the provisioned cell has no active revision".to_owned()))?;
+        let _ungoverned = policy::refresh_actions(&self.actions, &host);
         *serving
             .write()
             .map_err(|_poisoned| refused("serving state poisoned".to_owned()))? = Some(host);
-        Ok(installed)
+        Ok(definitions::Committed::Installed(
+            Box::new(installed),
+            prepared.events,
+        ))
     }
 }
 

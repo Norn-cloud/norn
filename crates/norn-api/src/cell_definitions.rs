@@ -485,7 +485,14 @@ fn riding<E: SqlEngine>(
             )]));
         }
         admitted.push(crate::definition_routes::riding_approval(
-            host, actor, kinds, request, &actions, signed_at, &pointer,
+            host,
+            actor,
+            kinds,
+            request,
+            &actions,
+            signed_at,
+            &pointer,
+            &std::collections::BTreeSet::new(),
         )?);
     }
     Ok(admitted)
@@ -499,7 +506,7 @@ fn planned_approvals(
         .map(|approval| PlannedApproval {
             id: approval.id.clone(),
             from_revision: approval.from_revision,
-            unchanged: approval.change.is_none(),
+            unchanged: approval.unchanged,
             restatement: approval.restatement.clone(),
             restatement_sha256: approval.restatement_sha256.clone(),
         })
@@ -620,8 +627,125 @@ pub fn plan_definitions<E: SqlEngine>(
     let (candidate, _expected, approvals) = candidate(host, body)?;
     let approvals = riding(host, actor, kinds, &candidate, &approvals, None)?;
     let mut plan = candidate.plan;
-    plan.approvals = planned_approvals(&approvals);
+    with_approvals(&mut plan, &approvals);
     Ok(plan)
+}
+
+/// Record the change's approvals in `plan`. #1469 S3: each one is changed
+/// or unchanged by its own payload, signed or not, and a changed gate
+/// installs the next version even over an unchanged set.
+fn with_approvals(
+    plan: &mut DefinitionsPlan,
+    approvals: &[crate::definition_routes::RidingApproval],
+) {
+    plan.approvals = planned_approvals(approvals);
+    if plan.unchanged && plan.approvals.iter().any(|approval| !approval.unchanged) {
+        plan.unchanged = false;
+        plan.next_version = plan.base_version.saturating_add(1);
+    }
+}
+
+/// One source approval revision the dev host commits with its set.
+#[derive(Debug)]
+pub struct SourceApproval {
+    /// The revision to append: the next active revision of a declared
+    /// approval, or the retirement of one the sources no longer declare.
+    pub change: norn_cell::retained::RetainedDefinitionChange,
+    /// The server's words the actor signed, for an active revision.
+    pub restatement: Option<String>,
+}
+
+/// The dev host's source approvals (DEV-DEFINITIONS-1, #1469 S2): each of
+/// `declared` (`(id, payload)`) admitted, restated and signed by `actor` at
+/// `signed_at` the way `:apply` admits an approval riding a set, against
+/// `canonical_set`'s actions; and the retirement of every active approval
+/// `declared` does not name. An approval that takes over the action of a
+/// retiring one (a rename) admits, because both commit together. Unchanged
+/// approvals append nothing. The revisions ride one install of the set
+/// ([`DevHost::install_definitions_riding`]), so none of them, and no
+/// action of the set, is ever live without the others.
+///
+/// # Errors
+/// The id of the first refused approval and its refusal; a refusal returns
+/// nothing to commit.
+pub fn source_approvals<E: SqlEngine>(
+    host: &DevHost<E>,
+    actor: &str,
+    kinds: &DefinitionKinds,
+    canonical_set: &str,
+    declared: &[(String, Box<RawValue>)],
+    signed_at: u64,
+) -> Result<Vec<SourceApproval>, Box<(String, Refusal)>> {
+    use crate::definition_routes::{InstallDefinitionRequest, SignoffRequest};
+    let whole = |refusal: Refusal| Box::new(("approval".to_owned(), refusal));
+    let actions = set_actions(canonical_set).map_err(whole)?;
+    let active = crate::definition_routes::active_approvals(host).map_err(whole)?;
+    let retiring: std::collections::BTreeSet<String> = active
+        .iter()
+        .filter(|record| declared.iter().all(|(id, _)| *id != record.id))
+        .map(|record| record.id.clone())
+        .collect();
+    let mut out = Vec::new();
+    let mut gated = std::collections::BTreeSet::new();
+    for (id, payload) in declared {
+        let at = |refusal: Refusal| Box::new((id.clone(), refusal));
+        let action = serde_json::from_str::<serde_json::Value>(payload.get())
+            .ok()
+            .and_then(|payload| payload.get("action")?.as_str().map(str::to_owned));
+        if action.is_some_and(|action| !gated.insert(action)) {
+            return Err(at(refused(vec![RefusalDiagnostic::error(
+                crate::approval_definitions::codes::DUPLICATE,
+                "another declared approval already gates this action",
+                "/action",
+            )])));
+        }
+        let mut request = InstallDefinitionRequest {
+            kind: "approval".to_owned(),
+            id: id.clone(),
+            payload: payload.clone(),
+            expected_version: None,
+            signoff: None,
+        };
+        let admit = |request: &InstallDefinitionRequest, signed_at| {
+            crate::definition_routes::riding_approval(
+                host, actor, kinds, request, &actions, signed_at, "", &retiring,
+            )
+        };
+        let planned = admit(&request, None).map_err(at)?;
+        if planned.unchanged {
+            continue;
+        }
+        // The actor signs the server's own words, through the same check.
+        request.expected_version = planned.from_revision;
+        request.signoff = Some(SignoffRequest {
+            restatement_sha256: planned.restatement_sha256,
+        });
+        let signed = admit(&request, Some(signed_at)).map_err(at)?;
+        let change = signed
+            .change
+            .ok_or_else(|| at(Refusal::host("a changed approval produced no revision")))?;
+        out.push(SourceApproval {
+            change,
+            restatement: Some(signed.restatement),
+        });
+    }
+    for mut definition in active
+        .into_iter()
+        .filter(|record| retiring.contains(&record.id))
+    {
+        let expected = definition.revision;
+        definition.revision = expected.saturating_add(1);
+        definition.lifecycle = norn_cell::retained::RetainedLifecycle::Retired;
+        definition.signoff = None;
+        out.push(SourceApproval {
+            change: norn_cell::retained::RetainedDefinitionChange {
+                definition,
+                expected_revision: Some(expected),
+            },
+            restatement: None,
+        });
+    }
+    Ok(out)
 }
 
 /// `POST /v1/cell/definitions:apply`: install the submission over the active
@@ -663,7 +787,7 @@ pub fn apply_definitions<E: SqlEngine>(
         mut plan,
         ..
     } = candidate;
-    plan.approvals = planned_approvals(&approvals);
+    with_approvals(&mut plan, &approvals);
     if expected != active.version {
         return Err(preflight_refusal(CellError::DefinitionVersionConflict {
             expected: Some(expected),

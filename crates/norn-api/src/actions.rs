@@ -468,7 +468,9 @@ fn through_gate<E: SqlEngine>(
         // commits as an ungated call does.
         Err(error)
             if crate::approvals::would_have_committed(&error)
-                && !crate::approvals::applies(&gate, &writes) =>
+                && !crate::approvals::applies(&gate, &writes, |object_type, property| {
+                    crate::approvals::semantics_in(cell.store().model(), object_type, property)
+                }) =>
         {
             Ok(Gated::Commit)
         }

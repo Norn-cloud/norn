@@ -272,3 +272,67 @@ test("a decimal approval threshold compiles exactly as written", async () => {
     rmSync(root, { recursive: true, force: true })
   }
 }, 120_000)
+
+// #1469 S10: a JSON source's numbers are checked as written, before any
+// rounding: a fractional threshold (`1000.00000000000001` would parse as
+// 1000) refuses the compile; an integer keeps its exact value.
+test("a JSON approval threshold is refused unless it is exact as written", async () => {
+  const { readProject } = await import("../src/project.ts")
+  const { compileProjectPack } = await import("../src/worker.ts")
+  const root = mkdtempSync(join(tmpdir(), "norn-purchase-requests-json-"))
+  const dir = join(root, "purchase-requests")
+  const compiled = (value: string) => {
+    rmSync(dir, { recursive: true, force: true })
+    cpSync(FIXTURE, dir, { recursive: true, filter: (path) => !path.includes(".norn") })
+    writeFileSync(join(dir, "src/other.json"), `{ "kind": "approval", "id": "purchasing.other", "payload": { "action": "purchasing.request.approve", "decider": { "roles": ["admin"] }, "question": "Sign off?", "risk": "low", "when": { "property": "amount", "op": "gt", "value": ${value} } } }`)
+    const { root: projectRoot, manifest } = readProject(dir)
+    return compileProjectPack(projectRoot, manifest)
+  }
+  const message = (value: string) => {
+    const pack = compiled(value)
+    if (pack.ok) throw new Error(`compiled ${value}`)
+    return pack.failures.flatMap((f) => f.diagnostics).map((d) => d.message).join("\n")
+  }
+  try {
+    expect(message("1000.00000000000001")).toContain("writes the number 1000.00000000000001")
+    expect(message("1000.5")).toContain("writes the number 1000.5")
+    expect(message("1e3")).toContain("writes the number 1e3")
+    const pack = compiled("1000")
+    if (!pack.ok) throw new Error(JSON.stringify(pack.failures))
+    const other = pack.retained.find((definition) => definition.id === "purchasing.other")!
+    expect((other.payload as { when: { value: unknown } }).when.value).toBe(1000)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+}, 120_000)
+
+// #1469 S10: the compiler lowers a threshold from its source text, through a
+// `const` reference, before any Number conversion.
+test("a const or long decimal approval threshold compiles exactly", async () => {
+  const { readProject } = await import("../src/project.ts")
+  const { compileProjectPack } = await import("../src/worker.ts")
+  const root = mkdtempSync(join(tmpdir(), "norn-purchase-requests-const-"))
+  const dir = join(root, "purchase-requests")
+  const compile = (literal: string, prelude = "") => {
+    rmSync(dir, { recursive: true, force: true })
+    cpSync(FIXTURE, dir, { recursive: true, filter: (path) => !path.includes(".norn") })
+    const file = join(dir, "src/purchasing.ts")
+    writeFileSync(file, `${prelude}\n${readFileSync(file, "utf8").replace('op: "gt", value: "1000" }', `op: "gt", value: ${literal} }`)}`)
+    const { root: projectRoot, manifest } = readProject(dir)
+    return compileProjectPack(projectRoot, manifest)
+  }
+  const threshold = (literal: string, prelude = "") => {
+    const pack = compile(literal, prelude)
+    if (!pack.ok) throw new Error(JSON.stringify(pack.failures))
+    return (pack.retained[0]!.payload as { when: { value: unknown } }).when.value
+  }
+  try {
+    expect(threshold("1000.00000000000001")).toBe("1000.00000000000001")
+    expect(threshold("LIMIT", "const LIMIT = 1000.10")).toBe("1000.10")
+    expect(threshold("LIMIT", "const LIMIT = 1000")).toBe(1000)
+    const exponent = compile("1e3")
+    expect(exponent.ok).toBe(false)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+}, 120_000)

@@ -2226,7 +2226,42 @@ impl<E: SqlEngine> CellStore<E> {
         model: Model,
         input: &InstalledDefinitionInput,
         scope: &str,
+        source: impl FnMut(&E) -> Result<norn_ir::cell_id::CellId, CellError>,
+    ) -> Result<Self, CellError> {
+        Self::provision_inner(conn, model, input, scope, source, &[])
+    }
+
+    /// [`Self::provision_definitions`], with every `riding` retained revision
+    /// (a pack's approvals) appended in the provisioning transaction: the
+    /// first set is never live without them (#1469 S2).
+    ///
+    /// # Errors
+    /// As [`Self::provision_definitions`], plus a riding revision that is not
+    /// the first of its id; any of them provisions nothing.
+    pub fn provision_definitions_riding(
+        conn: E,
+        model: Model,
+        input: &InstalledDefinitionInput,
+        scope: &str,
+        riding: &[crate::retained::RetainedDefinitionChange],
+    ) -> Result<Self, CellError> {
+        Self::provision_inner(
+            conn,
+            model,
+            input,
+            scope,
+            crate::cell_identity::generate,
+            riding,
+        )
+    }
+
+    fn provision_inner(
+        conn: E,
+        model: Model,
+        input: &InstalledDefinitionInput,
+        scope: &str,
         mut source: impl FnMut(&E) -> Result<norn_ir::cell_id::CellId, CellError>,
+        riding: &[crate::retained::RetainedDefinitionChange],
     ) -> Result<Self, CellError> {
         let identity = hash_json(&(scope, model.model_hash(), model.ddl_hash(), input))?;
         let mut store = Self::unverified(conn, model);
@@ -2255,7 +2290,7 @@ impl<E: SqlEngine> CellStore<E> {
             input,
             expected_version: Some(0),
             retained: None,
-            riding: &[],
+            riding,
         };
         let fresh_identity = RefCell::new(|| source(&store.conn));
         store

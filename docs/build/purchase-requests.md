@@ -77,7 +77,9 @@ Norn.approval({
 A submit over 1000 does not commit right away. It waits as a decision, and its
 requester can neither see nor decide it. `norn dev` installs the approval from
 the source the way a hosted installer does: admit, read the server's
-restatement, then install signed. The `definition` event prints that
+restatement, then install signed. The approval commits with the set in one
+step, so the submit action is never live without its gate, and an approval the
+cell refuses publishes nothing. The `definition` event prints that
 restatement.
 
 ## The ERPNext export

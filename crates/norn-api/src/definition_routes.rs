@@ -770,41 +770,65 @@ fn approval_context<E: SqlEngine>(
     host: &DevHost<E>,
     id: &str,
 ) -> Result<(BTreeSet<String>, BTreeSet<String>), Refusal> {
+    let actions = {
+        let cell = host.cell()?;
+        let reader = cell.store().read();
+        reader
+            .installed_definitions(None)
+            .map_err(Refusal::host)?
+            .map(|active| serde_json::from_str::<Vec<Value>>(&active.canonical_set))
+            .transpose()
+            .map_err(Refusal::host)?
+            .unwrap_or_default()
+            .iter()
+            .filter(|artifact| artifact.get("kind").and_then(Value::as_str) == Some("action"))
+            .filter_map(|artifact| {
+                artifact
+                    .pointer("/payload/actionId")?
+                    .as_str()
+                    .map(str::to_owned)
+            })
+            .collect()
+    };
+    Ok((actions, gated_except(host, &|other| other == id)?))
+}
+
+/// The actions an active approval gates, skipping the approvals `skip` names.
+fn gated_except<E: SqlEngine>(
+    host: &DevHost<E>,
+    skip: &dyn Fn(&str) -> bool,
+) -> Result<BTreeSet<String>, Refusal> {
+    let mut gated = BTreeSet::new();
+    for record in active_approvals(host)? {
+        if skip(&record.id) {
+            continue;
+        }
+        let payload: Value = serde_json::from_str(&record.payload).map_err(Refusal::host)?;
+        if let Some(action) = payload.get("action").and_then(Value::as_str) {
+            gated.insert(action.to_owned());
+        }
+    }
+    Ok(gated)
+}
+
+/// Every active approval revision, ordered by id.
+pub(crate) fn active_approvals<E: SqlEngine>(
+    host: &DevHost<E>,
+) -> Result<Vec<RetainedDefinition>, Refusal> {
     let cell = host.cell()?;
     let reader = cell.store().read();
-    let actions = reader
-        .installed_definitions(None)
-        .map_err(Refusal::host)?
-        .map(|active| serde_json::from_str::<Vec<Value>>(&active.canonical_set))
-        .transpose()
-        .map_err(Refusal::host)?
-        .unwrap_or_default()
-        .iter()
-        .filter(|artifact| artifact.get("kind").and_then(Value::as_str) == Some("action"))
-        .filter_map(|artifact| {
-            artifact
-                .pointer("/payload/actionId")?
-                .as_str()
-                .map(str::to_owned)
-        })
-        .collect();
-    let mut gated = BTreeSet::new();
+    let mut approvals = Vec::new();
     let mut after: Option<String> = None;
     loop {
         let page = reader
             .retained_definitions("approval", false, after.as_deref(), MAX_LIST_LIMIT)
             .map_err(Refusal::host)?;
-        for record in page.iter().filter(|record| record.definition.id != id) {
-            let payload: Value =
-                serde_json::from_str(&record.definition.payload).map_err(Refusal::host)?;
-            if let Some(action) = payload.get("action").and_then(Value::as_str) {
-                gated.insert(action.to_owned());
-            }
-        }
-        if page.len() < usize::try_from(MAX_LIST_LIMIT).unwrap_or(usize::MAX) {
-            return Ok((actions, gated));
-        }
+        let full = page.len() >= usize::try_from(MAX_LIST_LIMIT).unwrap_or(usize::MAX);
         after = page.last().map(|record| record.definition.id.clone());
+        approvals.extend(page.into_iter().map(|record| record.definition));
+        if !full {
+            return Ok(approvals);
+        }
     }
 }
 
@@ -1633,7 +1657,9 @@ pub(crate) struct RidingApproval {
     pub(crate) id: String,
     /// The id's current revision, if any.
     pub(crate) from_revision: Option<u64>,
-    /// The revision to append; `None` when the active revision is identical.
+    /// Whether the active revision is already this approval, signed or not.
+    pub(crate) unchanged: bool,
+    /// The revision to append: on an apply, `None` only when `unchanged`.
     pub(crate) change: Option<RetainedDefinitionChange>,
     /// The server's restatement and its digest: what the signer signs.
     pub(crate) restatement: String,
@@ -1645,11 +1671,16 @@ pub(crate) struct RidingApproval {
 /// `signed_at`, it is an apply: the request's sign-off must match the
 /// restatement and its `expectedVersion` the id's current revision, and the
 /// revision to append is signed by `actor` at that time. `pointer` places the
-/// findings in the change request.
+/// findings in the change request. An approval in `retiring` retires in the
+/// same commit, so the action it gates is free for this one (a rename).
 ///
 /// # Errors
 /// A non-approval kind, a refused approval, a missing or mismatched sign-off,
 /// a stale revision, or a host failure.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the approval, the candidate's actions, the apply's time and the retiring approvals decide one admission"
+)]
 pub(crate) fn riding_approval<E: SqlEngine>(
     host: &DevHost<E>,
     actor: &str,
@@ -1658,6 +1689,7 @@ pub(crate) fn riding_approval<E: SqlEngine>(
     actions: &BTreeSet<String>,
     signed_at: Option<u64>,
     pointer: &str,
+    retiring: &BTreeSet<String>,
 ) -> Result<RidingApproval, Refusal> {
     let place = |mut findings: Vec<RefusalDiagnostic>| {
         for finding in &mut findings {
@@ -1682,7 +1714,9 @@ pub(crate) fn riding_approval<E: SqlEngine>(
     let canonical = canonical(&request.payload)?;
     let value: Value = serde_json::from_str(&canonical).map_err(Refusal::host)?;
     let roles: Vec<&str> = kinds.roles.iter().map(String::as_str).collect();
-    let (_, gated) = approval_context(host, &request.id)?;
+    let gated = gated_except(host, &|other| {
+        other == request.id || retiring.contains(other)
+    })?;
     let findings = crate::approval_definitions::check(&value, actions, &roles, &gated);
     if !admitted(&findings) {
         return Err(place(findings));
@@ -1716,6 +1750,7 @@ pub(crate) fn riding_approval<E: SqlEngine>(
     Ok(RidingApproval {
         id: request.id.clone(),
         from_revision,
+        unchanged,
         change,
         restatement,
         restatement_sha256,

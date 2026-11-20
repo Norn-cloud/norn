@@ -593,3 +593,87 @@ fn an_agent_plans_and_applies_a_pack_through_mcp() {
     );
     assert_eq!(unknown["isError"], true, "{unknown}");
 }
+
+/// #1469 S3 through MCP: the hosted plan and apply tools carry the pack's
+/// approvals and their sign-offs to the same routes as HTTP. A refused
+/// approval publishes nothing; a signed apply makes the action live already
+/// gated, so its first call waits.
+#[test]
+fn an_agent_applies_a_pack_with_its_gate_through_mcp() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut cell = provisioned(&directory.path().join("cell.sqlite"));
+    let base = cell.version();
+    let planned = cell.mcp(
+        "owner",
+        "norn_plan_definitions",
+        &json!({"artifacts": batches_pack(), "approvals": [record_gate(&["admin"])]}),
+    );
+    assert_eq!(planned["isError"], false, "{planned}");
+    let approval = &planned["structuredContent"]["approvals"][0];
+    assert_eq!(approval["id"], "lab.batch.record_approval", "{planned}");
+    assert_eq!(approval["unchanged"], false, "{planned}");
+    let sha = approval["restatementSha256"].as_str().unwrap().to_owned();
+    let signed = |roles: &[&str]| {
+        let mut gate = record_gate(roles);
+        gate["signoff"] = json!({ "restatementSha256": sha });
+        gate
+    };
+
+    let refused = cell.mcp(
+        "owner",
+        "norn_apply_definitions",
+        &json!({"artifacts": batches_pack(), "expectedVersion": base, "approvals": [signed(&["auditor"])]}),
+    );
+    assert_eq!(refused["isError"], true, "{refused}");
+    assert_eq!(cell.version(), base, "nothing was published");
+    assert!(
+        cell.batch("m0", "100.000", "98.000", "2.000").status >= 400,
+        "the action is not live"
+    );
+
+    let applied = cell.mcp(
+        "owner",
+        "norn_apply_definitions",
+        &json!({"artifacts": batches_pack(), "expectedVersion": base, "approvals": [signed(&["admin"])]}),
+    );
+    assert_eq!(applied["isError"], false, "{applied}");
+    assert_eq!(
+        cell.version(),
+        base + 1,
+        "one version: the set and its gate"
+    );
+    let first = cell.batch("m1", "100.000", "98.000", "2.000");
+    assert_eq!(first.status, 202, "the first call waits: {}", first.body);
+}
+
+/// #1469 S3: a plan reports each approval changed or unchanged by its own
+/// payload, signed or not; a gate-only change plans the next version, and
+/// the same gate again plans nothing.
+#[test]
+fn a_plan_reports_each_gate_change() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut cell = provisioned(&directory.path().join("cell.sqlite"));
+    let base = cell.version();
+    let fresh = json_of(&cell.change_with(PLAN_PATH, &[record_gate(&["admin"])], None));
+    assert_eq!(fresh["approvals"][0]["unchanged"], false, "{fresh}");
+    let sha = fresh["approvals"][0]["restatementSha256"].clone();
+    let mut gate = record_gate(&["admin"]);
+    gate["signoff"] = json!({ "restatementSha256": sha });
+    let applied = cell.change_with(APPLY_PATH, &[gate], Some(base));
+    assert_eq!(applied.status, 200, "{}", applied.body);
+    let installed = cell.version();
+
+    let same = json_of(&cell.change_with(PLAN_PATH, &[record_gate(&["admin"])], None));
+    assert_eq!(same["approvals"][0]["unchanged"], true, "{same}");
+    assert_eq!(same["unchanged"], true, "{same}");
+    assert_eq!(same["nextVersion"], installed, "{same}");
+
+    let revised = json_of(&cell.change_with(PLAN_PATH, &[record_gate(&["admin", "member"])], None));
+    assert_eq!(revised["approvals"][0]["unchanged"], false, "{revised}");
+    assert_eq!(revised["approvals"][0]["fromRevision"], 1, "{revised}");
+    assert_eq!(
+        revised["unchanged"], false,
+        "a gate-only change installs: {revised}"
+    );
+    assert_eq!(revised["nextVersion"], installed + 1, "{revised}");
+}

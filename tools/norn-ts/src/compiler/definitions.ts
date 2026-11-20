@@ -452,14 +452,8 @@ class DefinitionCompiler {
       const w = this.closedRecord(whenNode, ["property", "op", "value"], ["property", "op", "value"])
       const op = this.string(w.get("op")!)
       if (!["eq", "ne", "lt", "le", "gt", "ge"].includes(op)) throw new CompileError("NORN-FLOW-LITERAL", "when.op is eq, ne, lt, le, gt or ge", w.get("op")!)
-      const value = this.json(w.get("value")!)
+      const value = this.whenValue(w.get("value")!)
       if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") throw new CompileError("NORN-FLOW-LITERAL", "when.value is text, a number or a boolean", w.get("value")!)
-      // #1469 S10: a fractional threshold stays exact: its decimal source text, never a JS double.
-      if (typeof value === "number" && !Number.isSafeInteger(value)) {
-        const text = w.get("value")!.getText().replace(/_/g, "")
-        if (!/^-?\d+\.\d+$/.test(text)) throw new CompileError("NORN-FLOW-LITERAL", "a fractional when.value is a plain decimal, such as 1000.10", w.get("value")!)
-        return { property: this.string(w.get("property")!), op, value: text }
-      }
       return { property: this.string(w.get("property")!), op, value }
     })()
     const law = decider.get("law")
@@ -475,6 +469,28 @@ class DefinitionCompiler {
         ...(when === undefined ? {} : { when }),
       } as Json,
     }
+  }
+
+  /**
+   * #1469 S10: a `when.value`, with a numeric literal (through `const`
+   * references) lowered from its source text before any Number conversion:
+   * a fractional one is its exact decimal text (`1000.10`,
+   * `1000.00000000000001`), an integer stays a number, and anything that
+   * would need a binary round trip (an exponent, a radix prefix, an integer
+   * past 2^53) is refused.
+   */
+  private whenValue(input: ts.Expression): Json {
+    const e = this.deref(input)
+    const negative = ts.isPrefixUnaryExpression(e) && e.operator === ts.SyntaxKind.MinusToken
+    const literal = negative ? this.deref(e.operand) : e
+    if (!ts.isNumericLiteral(literal)) return this.json(input)
+    const text = literal.getText().replace(/_/g, "")
+    if (!DECIMAL_TEXT.test(text)) throw new CompileError("NORN-FLOW-LITERAL", "a numeric when.value is a plain decimal literal, such as 1000 or 1000.10 (no exponent or radix prefix)", literal)
+    const signed = negative ? `-${text}` : text
+    if (text.includes(".")) return signed
+    const value = Number(signed)
+    if (!Number.isSafeInteger(value)) throw new CompileError("NORN-FLOW-LITERAL", "an integer when.value past 2^53 has no exact number; write it as decimal text", literal)
+    return value
   }
 
   questions(source: ts.SourceFile): Json[] {

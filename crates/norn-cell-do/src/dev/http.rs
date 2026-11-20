@@ -277,12 +277,13 @@ fn refusal(refused: &Refusal) -> Response {
     dead_code,
     reason = "the shared fixture module serves the action tests too"
 )]
-mod action_cell;
+pub(in crate::dev) mod action_cell;
 
 #[cfg(test)]
 #[allow(
     clippy::unwrap_used,
     clippy::expect_used,
+    clippy::unwrap_in_result,
     clippy::indexing_slicing,
     reason = "dev-host dispatch scenarios"
 )]
@@ -503,17 +504,31 @@ mod tests {
         );
     }
 
-    /// The source sync of `approvals`, as norn dev runs it on a save.
-    fn sync(dev: &Dev, approvals: &[Value]) -> crate::dev::definitions::Synced {
-        crate::dev::definitions::sync(
+    /// The source commit of `approvals` over the active melt set, as norn
+    /// dev runs it on a save.
+    fn sync(
+        dev: &Dev,
+        approvals: &[Value],
+    ) -> Result<crate::dev::definitions::Committed, crate::dev::definitions::Rejected> {
+        let active = dev
+            .host
+            .active_definitions()
+            .ok()
+            .flatten()
+            .expect("active");
+        let (model, input) = super::action_cell::melt_install(
+            DERIVES_LOSS,
+            norn_api::action_admission::prepare_action_model,
+            active.installed_at.saturating_add(1),
+        );
+        crate::dev::definitions::commit(
             &dev.host,
-            &CellScope {
-                org_id: "org_demo".into(),
-                environment_id: "dev".into(),
-            },
             DEVELOPER,
             &crate::dev::policy::dev_kinds(),
             approvals,
+            crate::dev::admit::Admitted { model, input },
+            &active,
+            &dev_actions(),
             1_800_000_000_000,
         )
     }
@@ -545,10 +560,8 @@ mod tests {
     #[test]
     fn a_renamed_approval_keeps_its_action_gated() {
         let dev = dev();
-        let synced = sync(&dev, &[named("ops.old_gate", &["admin"])]);
-        assert!(synced.refused.is_empty(), "{:?}", synced.refused);
-        let synced = sync(&dev, &[named("ops.new_gate", &["admin"])]);
-        assert!(synced.refused.is_empty(), "{:?}", synced.refused);
+        sync(&dev, &[named("ops.old_gate", &["admin"])]).expect("gated");
+        sync(&dev, &[named("ops.new_gate", &["admin"])]).expect("renamed");
         assert_eq!(gates(&dev), ["ops.new_gate"]);
         let action = format!("/v1/actions/{MELT_ACTION}");
         let body = melt_body("melt-7", "12", "10", "dev-1");
@@ -559,15 +572,10 @@ mod tests {
     #[test]
     fn a_refused_approval_set_keeps_the_active_gates() {
         let dev = dev();
-        assert!(
-            sync(&dev, &[named("ops.old_gate", &["admin"])])
-                .refused
-                .is_empty()
-        );
-        let synced = sync(&dev, &[named("ops.new_gate", &["auditor"])]);
-        assert!(synced.changed.is_empty(), "{:?}", synced.changed);
-        let codes: Vec<&Value> = synced
-            .refused
+        sync(&dev, &[named("ops.old_gate", &["admin"])]).expect("gated");
+        let refused = sync(&dev, &[named("ops.new_gate", &["auditor"])]).expect_err("refused");
+        let codes: Vec<&Value> = refused
+            .diagnostics
             .iter()
             .map(|finding| &finding["code"])
             .collect();

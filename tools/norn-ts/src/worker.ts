@@ -136,6 +136,22 @@ export class DefinitionSourceError extends Error {
 }
 
 /**
+ * A `JSON.parse` reviver that keeps each number token's exact source text and
+ * records, in `inexact`, every one that is not a plain safe integer (a
+ * fraction, an exponent, or an integer past 2^53): its parsed double may
+ * already be rounded (`1000.00000000000001` parses as 1000). Without the
+ * source text (a runtime that does not pass it) every number is inexact.
+ */
+function exactNumbers(inexact: string[]): (key: string, value: unknown, context?: { readonly source?: string }) => unknown {
+  return (_key, value, context) => {
+    if (typeof value !== "number") return value
+    const source = context?.source
+    if (source === undefined || !/^-?(0|[1-9][0-9]*)$/.test(source) || !Number.isSafeInteger(value)) inexact.push(source ?? String(value))
+    return value
+  }
+}
+
+/**
  * Retained definitions (`{ kind, id, payload }`, kind `approval`) carried as
  * JSON files at the top level of each source directory, read exactly as
  * `projectArtifacts` reads artifact envelopes. A document whose `kind` is a
@@ -150,9 +166,14 @@ export function projectDefinitions(root: string, manifest: Project): RetainedDef
   return sourceDirs(root, manifest).flatMap((dir) => readdirSync(dir).filter((f) => f.endsWith(".json")).sort().map((f) => join(dir, f))).flatMap((file) => {
     const path = posix(relative(root, file))
     if (!insideProject(realRoot, file)) throw outside(`definition ${path}`)
-    const value = JSON.parse(readFileSync(file, "utf8")) as { readonly kind?: unknown; readonly id?: unknown; readonly payload?: unknown }
+    const inexact: string[] = []
+    const value = JSON.parse(readFileSync(file, "utf8"), exactNumbers(inexact)) as { readonly kind?: unknown; readonly id?: unknown; readonly payload?: unknown }
     const named = typeof value === "object" && value !== null && !Array.isArray(value) && typeof value.kind === "string" && RETAINED_KINDS.has(value.kind)
     if (!named) return []
+    // #1469 S10: a number is checked as written, before any rounding.
+    if (inexact.length > 0) {
+      throw new DefinitionSourceError(path, `${path} writes the number ${inexact[0]}, which JSON cannot carry exactly: write an integer such as 1000, or the exact decimal as text, such as "1000.10"`)
+    }
     if (typeof value.id !== "string" || value.id === "" || typeof value.payload !== "object" || value.payload === null || Array.isArray(value.payload)) {
       throw new DefinitionSourceError(path, `${path} declares an ${String(value.kind)} that is not { kind, id, payload } with a non-empty id and an object payload`)
     }
