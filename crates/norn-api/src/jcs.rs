@@ -8,7 +8,7 @@
 //! `tools/norn-ts/src/builder/fixtures/binding-manifest-digest.vectors.json`
 //! pin both sides.
 
-use norn_ir::canonical::{JsonValue, parse_json_verbatim};
+use norn_ir::canonical::{JsonValue, parse_json_tokens};
 use serde_json::Value;
 
 /// JCS text of `value`.
@@ -31,16 +31,19 @@ pub fn canonicalize_text(text: &str) -> Result<String, String> {
 }
 
 /// The JSON document `text` as JCS reads it: every number the double
-/// nearest its decimal text, strings and member names verbatim.
+/// nearest its decimal text, strings and member names verbatim. Each
+/// validated number token goes straight to the binary64 parse, never through
+/// the Norn1 decimal expansion: `1e-1048576` reads as `0`, as JavaScript's
+/// `JSON.parse` reads it (#1526).
 ///
 /// # Errors
 /// Malformed JSON (including duplicate member names, which I-JSON forbids),
 /// or a number that is not finite as a double.
 pub fn read(text: &str) -> Result<Value, String> {
-    doubles(&parse_json_verbatim(text).map_err(|error| error.to_string())?)
+    doubles(&parse_json_tokens(text).map_err(|error| error.to_string())?)
 }
 
-/// `value` with every number the double nearest its exact decimal text, read
+/// `value` with every number token the double nearest its decimal text, read
 /// by the standard library's correctly rounded parse. `serde_json`'s default
 /// float parser can land one ULP off (RFC 8785 `values.json`:
 /// `333333333.33333329` must be `333333333.3333333`, #1429). Strings and
