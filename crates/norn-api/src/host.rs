@@ -817,7 +817,7 @@ mod page_tests {
         indices.sort_unstable();
         assert_eq!(indices, (0..batch.len()).collect::<Vec<_>>());
         // A record's later version still follows its earlier one.
-        batch.push((row("c0"), cases.clone()));
+        batch.push((row("c0"), cases));
         let framed = pages(&batch);
         assert_eq!(framed.len(), 3, "the repeat of c0 is the next page");
         assert_eq!(framed[1].1.len(), 1);

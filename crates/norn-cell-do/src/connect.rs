@@ -930,9 +930,9 @@ struct LoadBound {
 
 /// A host's load work budget, in milliseconds.
 struct WorkBudget {
-    row_ms: usize,
-    commit_ms: usize,
-    total_ms: usize,
+    row: usize,
+    commit: usize,
+    total: usize,
 }
 
 /// A hosted cell runs a load inside one cell call: a commit costs about
@@ -941,9 +941,9 @@ struct WorkBudget {
 const HOSTED_LOAD: LoadBound = LoadBound {
     rows: 100,
     budget: Some(WorkBudget {
-        row_ms: 100,
-        commit_ms: 800,
-        total_ms: 100 * 100 + 8 * 800,
+        row: 100,
+        commit: 800,
+        total: 100 * 100 + 8 * 800,
     }),
 };
 
@@ -993,9 +993,9 @@ fn load_observations<E: SqlEngine>(host: &DevHost<E>, body: &str, bound: &LoadBo
     let work = bound.budget.as_ref().map(|budget| {
         (
             rows.len()
-                .saturating_mul(budget.row_ms)
-                .saturating_add(commits.saturating_mul(budget.commit_ms)),
-            budget.total_ms,
+                .saturating_mul(budget.row)
+                .saturating_add(commits.saturating_mul(budget.commit)),
+            budget.total,
         )
     });
     if rows.len() > bound.rows || work.is_some_and(|(work, total)| work > total) {
