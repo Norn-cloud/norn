@@ -376,8 +376,19 @@ pub(crate) fn check<E: SqlEngine>(
             return Err(refused("decision.resolved"));
         }
     }
+    // S8: an approval is never refused by the commit that consumes it (both
+    // would pass against the state before the commit).
+    let refused_now = refusals(batch)?;
+    let consumed_now = consumptions(batch)?;
+    if consumed_now.iter().any(|consumed| {
+        refused_now
+            .iter()
+            .any(|refusal| refusal.decision_id == consumed.decision_id)
+    }) {
+        return Err(refused("approval.consumption_invalid"));
+    }
     // APPROVAL-RECOVERY-1: a refusal is recorded once, for an approved call.
-    for refusal in refusals(batch)? {
+    for refusal in refused_now {
         match reader.approved_call(&batch.world, &refusal.decision_id)? {
             Some(call) if call.refused.is_none() && call.consumed_seq.is_none() => {}
             Some(_) => return Err(refused("approval.refused")),
@@ -385,16 +396,8 @@ pub(crate) fn check<E: SqlEngine>(
         }
     }
     // S6c: an approval is consumed once, by a commit, only while no refusal
-    // is recorded for it, and never refused by the commit that consumes it
-    // (S8: both would pass against the state before the commit).
-    let refused_now = refusals(batch)?;
-    for consumed in consumptions(batch)? {
-        if refused_now
-            .iter()
-            .any(|refusal| refusal.decision_id == consumed.decision_id)
-        {
-            return Err(refused("approval.consumption_invalid"));
-        }
+    // is recorded for it.
+    for consumed in consumed_now {
         match reader.approved_call(&batch.world, &consumed.decision_id)? {
             Some(call) if call.refused.is_none() && call.consumed_seq.is_none() => {}
             Some(_) => return Err(refused("approval.refused")),
@@ -833,5 +836,60 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             params![world, decision_id],
             decode,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ApprovalConsumed, ApprovalRefused};
+    use crate::error::CellError;
+    use crate::model::Model;
+    use crate::store::{CellStore, CommitBatch, MAIN_WORLD};
+    use crate::test_door::TestCommit;
+
+    /// S8: one commit never both refuses and consumes the same approval.
+    /// Each would pass its check against the state before the commit, so the
+    /// store refuses the pair together, and nothing is written.
+    #[test]
+    fn a_commit_never_both_refuses_and_consumes_an_approval() {
+        let mut store =
+            CellStore::open_in_memory(Model::from_definitions(&[], &[]).unwrap()).unwrap();
+        store.bind("scope", "org_demo/dev").unwrap();
+        let refused = ApprovalRefused {
+            decision_id: "decision-1".to_owned(),
+            status: 409,
+            code: "action.conflict".to_owned(),
+            category: "conflict".to_owned(),
+        }
+        .event()
+        .unwrap();
+        let consumed = ApprovalConsumed {
+            decision_id: "decision-1".to_owned(),
+        }
+        .event()
+        .unwrap();
+        let refusal = store
+            .commit(&CommitBatch {
+                world: MAIN_WORLD.to_owned(),
+                scope: "org_demo/dev".to_owned(),
+                logical_time: 1_000,
+                events: vec![refused, consumed],
+                ..CommitBatch::default()
+            })
+            .unwrap_err();
+        assert!(
+            matches!(
+                refusal,
+                CellError::DecisionRefused("approval.consumption_invalid")
+            ),
+            "{refusal:?}"
+        );
+        assert!(
+            store
+                .read()
+                .approval_consumed_at(MAIN_WORLD, 1)
+                .unwrap()
+                .is_none()
+        );
     }
 }

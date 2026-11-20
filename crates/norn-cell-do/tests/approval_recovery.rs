@@ -1298,50 +1298,6 @@ fn an_opened_file_and_its_restored_export_attribute_a_commit_alike() {
     }
 }
 
-/// S8: one commit never both refuses and consumes the same approval. Each
-/// would pass its check against the state before the commit, so the store
-/// refuses the pair together, and nothing is recorded.
-#[test]
-fn a_commit_never_both_refuses_and_consumes_an_approval() {
-    use norn_cell::decision_ledger::{ApprovalConsumed, ApprovalRefused};
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("cell.sqlite");
-    let id = approved(&path);
-    let refused = ApprovalRefused {
-        decision_id: id.clone(),
-        status: 409,
-        code: "action.conflict".to_owned(),
-        category: "conflict".to_owned(),
-    }
-    .event()
-    .unwrap();
-    let consumed = ApprovalConsumed {
-        decision_id: id.clone(),
-    }
-    .event()
-    .unwrap();
-    let before = commit_count(&path);
-    let refusal = store(&path)
-        .commit(&norn_cell::CommitBatch {
-            world: MAIN_WORLD.to_owned(),
-            scope: "org_demo/dev".to_owned(),
-            logical_time: NOW * 1000 + 60_000,
-            events: vec![refused, consumed],
-            ..norn_cell::CommitBatch::default()
-        })
-        .unwrap_err();
-    assert!(
-        matches!(
-            refusal,
-            norn_cell::CellError::DecisionRefused("approval.consumption_invalid")
-        ),
-        "{refusal:?}"
-    );
-    assert_eq!(commit_count(&path), before);
-    let cell = cell_on(file(&path), false);
-    assert_eq!(standing(&cell, &id), not_executed());
-}
-
 /// S7: a stale drive of a step (it read the step before its call was
 /// approved) tries the call on the starter's recorded authority. Meanwhile
 /// the call is approved and its requester's own request commits it, and
