@@ -535,6 +535,24 @@ mod tests {
         assert!(outliers(&[]).is_none());
     }
 
+    /// #1526 S2: a value past a fence counts even when its distance from the
+    /// fence overflows the exact decimal; only its ranked example is dropped.
+    #[test]
+    fn a_crossing_whose_distance_overflows_still_counts() {
+        let decimal = |text: &str| Decimal::parse(text).unwrap();
+        let half = decimal("-0.5");
+        let rows = [
+            ("a", half),
+            ("b", half),
+            ("c", half),
+            ("d", decimal("7922816251426433759354395033.5")),
+        ];
+        let found = outliers(&rows).unwrap();
+        assert_eq!(found.upper_fence, RuntimeValue::Number(half));
+        assert_eq!(found.count, 1, "the overflowing crossing is counted");
+        assert!(found.examples.is_empty(), "its distance cannot be ranked");
+    }
+
     #[test]
     fn nearest_rank_quantiles_never_interpolate() {
         let sorted: Vec<u32> = (1..=10).collect();

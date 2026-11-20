@@ -212,6 +212,21 @@ mod tests {
         );
     }
 
+    /// #1526 S3: an exponent is read by the binary64 parse, never expanded,
+    /// so values JavaScript reads as 0 or a plain double are read so here.
+    #[test]
+    fn exponents_are_read_as_doubles_without_expansion() {
+        assert_eq!(canonicalize_text("[1e-1048576]").unwrap(), "[0]");
+        assert_eq!(canonicalize_text("[-1e-1048576]").unwrap(), "[0]");
+        assert_eq!(canonicalize_text("[1E+2,25e-1]").unwrap(), "[100,2.5]");
+        assert!(canonicalize_text("[1e1048576]").is_err(), "not finite");
+        assert!(canonicalize_text("[01]").is_err(), "the token is validated");
+        assert!(
+            canonicalize_text("{\"a\":1e-1048576,\"a\":2}").is_err(),
+            "duplicate names are still refused"
+        );
+    }
+
     #[test]
     fn members_sort_by_utf16_code_units() {
         // U+FB33 sorts after U+1F600 in UTF-16 (0xD83D < 0xFB33), unlike in UTF-8.

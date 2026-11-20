@@ -1093,6 +1093,100 @@ fn bindings_are_admitted_against_their_recomputed_digest_and_declared_roles() {
     assert_eq!(status, 422, "{refused}");
 }
 
+/// #1526 S1: a binding installed before #1429, whose digest the old check
+/// derived with serde_json's default float parser, stays revisable with its
+/// stored payload; a new id with that digest is refused by the exact reader.
+#[test]
+fn a_binding_retained_before_the_exact_reader_is_revisable_with_its_stored_payload() {
+    use norn_api::binding_definitions::{derived_version, manifest_digest};
+    use norn_cell::retained::{
+        RetainedDefinition, RetainedDefinitionChange, RetainedLifecycle, payload_sha256,
+    };
+    const ID: &str = "studio.binding.legacy";
+    // A schema number serde_json's default parser reads one ULP off.
+    let input = r#"{"type":"object","properties":{"limit":{"type":"number","minimum":333333333.33333329}}}"#;
+    let output = json!({ "type": "object" });
+    let digest_of = |schema: &Value| {
+        manifest_digest("executor", "github", "list_issues", schema, &output).unwrap()
+    };
+    // The old code path's digest: the payload text read by serde_json::from_str.
+    let legacy = digest_of(&serde_json::from_str(input).unwrap());
+    assert_ne!(
+        legacy,
+        digest_of(&norn_api::jcs::read(input).unwrap()),
+        "the number tells the readers apart"
+    );
+    let raw = format!(
+        r#"{{"connector":{{"gateway":"executor","origin":"https://executor.example","app":"github","tool":"list_issues","version":"{}"}},"inputSchema":{input},"outputSchema":{{"type":"object"}},"manifestDigest":"{legacy}","label":"Legacy","inputMapping":{{}},"runRole":"member"}}"#,
+        derived_version(&legacy)
+    );
+    // What the old install stored: the Norn1 canonical text, exact decimal kept.
+    let stored = String::from_utf8(
+        norn_ir::RuntimeValue::from_json_text(&raw)
+            .unwrap()
+            .canonical_json()
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(stored.contains("333333333.33333329"), "{stored}");
+    let seeded = stored.clone();
+    let cell = cell_seeded(
+        NativeEngine::open_in_memory().unwrap(),
+        DefinitionKinds::default().with_roles(ROLES),
+        move |store, scope| {
+            let active = store.read().installed_definitions(None).unwrap().unwrap();
+            let change = RetainedDefinitionChange {
+                definition: RetainedDefinition {
+                    kind: "binding".to_owned(),
+                    id: ID.to_owned(),
+                    revision: 1,
+                    lifecycle: RetainedLifecycle::Active,
+                    title: "Legacy".to_owned(),
+                    payload_sha256: payload_sha256(&seeded),
+                    payload: seeded,
+                    signoff: None,
+                },
+                expected_revision: None,
+            };
+            let input = norn_cell::InstalledDefinitionInput {
+                canonical_set: active.canonical_set.clone(),
+                registry: active.registry.clone(),
+                receipt_sha256: active.receipt_sha256.clone(),
+                admission_receipt: active.admission_receipt.clone(),
+                readmission: None,
+                diff: json!({ "added": [], "removed": [], "changed": [], "narrowing": [] }),
+                installed_at: active.installed_at,
+                layout: None,
+            };
+            let model = store.model().clone();
+            store
+                .install_retained_definition(model, &input, Some(active.version), scope, &change)
+                .unwrap();
+        },
+    );
+    let install = |id: &str, expected: Option<u64>| {
+        let expected = expected.map_or(String::new(), |v| format!(r#","expectedVersion":{v}"#));
+        let body = format!(r#"{{"kind":"binding","id":"{id}"{expected},"payload":{stored}}}"#);
+        let response = call(&cell, "POST", "/v1/definitions:install", SCOPE, ADMIN, &body);
+        let document: Value = serde_json::from_str(&response.body).unwrap();
+        (response.status, document)
+    };
+    // Re-admitting the retained payload keeps the digest its install admitted.
+    let (status, revised) = install(ID, Some(1));
+    assert_eq!(status, 200, "{revised}");
+    assert_eq!(revised["version"], json!(2), "{revised}");
+    // A new install is read exactly: the old derivation is refused.
+    let (status, refused) = install("studio.binding.fresh", None);
+    assert_eq!(status, 422, "{refused}");
+    assert!(
+        pointers(&refused).contains(&(
+            "definition.binding_digest_mismatch".to_owned(),
+            "/manifestDigest".to_owned()
+        )),
+        "{refused}"
+    );
+}
+
 /// An agent may name only the cell's installed, active bindings, by the
 /// connector string the browser check uses.
 fn binding_agent(payload: &str, context: &AgentAdmissionContext) -> Vec<Diagnostic> {
