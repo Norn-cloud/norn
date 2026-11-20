@@ -348,6 +348,122 @@ fn a_pack_is_planned_and_applied_on_a_running_cell() {
 }
 
 /// A reserved artifact or an empty change is refused before admission.
+/// The approval gating the batches pack's action.
+fn record_gate(roles: &[&str]) -> Value {
+    json!({ "kind": "approval", "id": "lab.batch.record_approval", "payload": {
+        "action": RECORD, "decider": { "roles": roles },
+        "question": "Record this batch?", "risk": "high" } })
+}
+
+impl Cell {
+    fn change_with(&mut self, path: &str, approvals: &[Value], expected: Option<u64>) -> Response {
+        let mut body = json!({ "artifacts": batches_pack(), "approvals": approvals });
+        if let Some(version) = expected {
+            body["expectedVersion"] = json!(version);
+        }
+        let auth = user("owner");
+        self.call("POST", path, Some(&auth), &body.to_string())
+    }
+}
+
+/// #1469: a pack's approval installs with its action in one transaction. A
+/// refusal anywhere (an unknown role, a sign-off of other words, a stale
+/// revision) publishes nothing: the action is not live at all. A good apply
+/// makes it live already gated: its first call waits for a decision.
+#[test]
+fn a_new_action_is_never_live_without_its_gate() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("cell.sqlite");
+    let mut cell = provisioned(&path);
+    let base = cell.version();
+
+    let planned = cell.change_with(PLAN_PATH, &[record_gate(&["admin"])], None);
+    assert_eq!(planned.status, 200, "{}", planned.body);
+    let plan = json_of(&planned);
+    let approval = &plan["approvals"][0];
+    assert_eq!(approval["id"], "lab.batch.record_approval", "{plan}");
+    assert!(approval["restatement"].as_str().unwrap().contains(RECORD));
+    let sha = approval["restatementSha256"].as_str().unwrap().to_owned();
+    let signed = |roles: &[&str], sha: &str, expected: Option<u64>| {
+        let mut gate = record_gate(roles);
+        gate["signoff"] = json!({ "restatementSha256": sha });
+        gate["expectedVersion"] = json!(expected);
+        gate
+    };
+    let untouched = |cell: &mut Cell| {
+        assert_eq!(cell.version(), base, "nothing was published");
+        assert_ne!(cell.batches().status, 200, "the action's type is not live");
+        let refused = cell.batch("u1", "100.000", "98.000", "2.000");
+        assert!(
+            refused.status >= 400,
+            "the action is not callable: {}",
+            refused.body
+        );
+    };
+
+    // A role the cell does not declare: refused at plan and at apply.
+    let unknown = cell.change_with(APPLY_PATH, &[signed(&["auditor"], &sha, None)], Some(base));
+    assert_eq!(unknown.status, 422, "{}", unknown.body);
+    untouched(&mut cell);
+    // Signing other words, or no words at all.
+    let other = cell.change_with(
+        APPLY_PATH,
+        &[signed(&["admin"], &"0".repeat(64), None)],
+        Some(base),
+    );
+    assert_eq!(
+        json_of(&other)["code"],
+        "definition.signoff_mismatch",
+        "{}",
+        other.body
+    );
+    untouched(&mut cell);
+    let unsigned = cell.change_with(APPLY_PATH, &[record_gate(&["admin"])], Some(base));
+    assert_eq!(
+        json_of(&unsigned)["code"],
+        "definition.signoff_required",
+        "{}",
+        unsigned.body
+    );
+    untouched(&mut cell);
+    // A revision the approval does not have.
+    let stale = cell.change_with(APPLY_PATH, &[signed(&["admin"], &sha, Some(4))], Some(base));
+    assert_eq!(
+        json_of(&stale)["code"],
+        "definition.version_conflict",
+        "{}",
+        stale.body
+    );
+    untouched(&mut cell);
+
+    let applied = cell.change_with(APPLY_PATH, &[signed(&["admin"], &sha, None)], Some(base));
+    assert_eq!(applied.status, 200, "{}", applied.body);
+    assert_eq!(json_of(&applied)["definitionsVersion"], base + 1);
+    assert_eq!(
+        cell.version(),
+        base + 1,
+        "one version: the set and its gate"
+    );
+    let first = cell.batch("g1", "100.000", "98.000", "2.000");
+    assert_eq!(
+        first.status, 202,
+        "the first call already waits: {}",
+        first.body
+    );
+    assert_eq!(
+        json_of(&cell.batches())["records"].as_array().map(Vec::len),
+        Some(0),
+        "a waiting call commits nothing"
+    );
+    // The same apply again is unchanged, gate included.
+    let again = cell.change_with(
+        APPLY_PATH,
+        &[signed(&["admin"], &sha, Some(1))],
+        Some(base + 1),
+    );
+    assert_eq!(json_of(&again)["outcome"], "unchanged", "{}", again.body);
+}
+
 #[test]
 fn a_reserved_or_empty_change_is_refused() {
     let directory = tempfile::tempdir().unwrap();

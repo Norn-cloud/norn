@@ -1514,6 +1514,15 @@ export interface components {
         };
         /** @description `POST /v1/cell/definitions:plan` and `:apply`. */
         DefinitionsChangeRequest: {
+            /**
+             * @description The pack's approvals (#1469): admitted against the submitted set's
+             *     actions, and installed with it in one transaction, so a new action
+             *     is never live without its gate. A plan returns each one's
+             *     restatement; an apply carries each one's `signoff` of it and the
+             *     `expectedVersion` (revision) the plan reported. Any refusal installs
+             *     nothing.
+             */
+            approvals?: components["schemas"]["InstallDefinitionRequest"][];
             /** @description The pack's artifact envelopes; none in a reserved namespace (core., std.). Each one is added, or replaces the active artifact of its id. */
             artifacts: components["schemas"]["NornArtifactEnvelope"][];
             /**
@@ -1527,6 +1536,8 @@ export interface components {
         DefinitionsPlan: {
             /** @description Artifacts the change adds. */
             added: components["schemas"]["PlannedArtifact"][];
+            /** @description The approvals the change installs with the set. */
+            approvals?: components["schemas"]["PlannedApproval"][];
             /**
              * Format: int64
              * @description The active definitions version the plan was made against: apply's
@@ -12732,6 +12743,25 @@ export interface components {
             expiresAtMs: number;
             /** @description The decision id (`POST /v1/decisions/{id}:decide`). */
             id: string;
+        };
+        /** @description An approval the change installs with the set. */
+        PlannedApproval: {
+            /**
+             * Format: int64
+             * @description The id's current revision, if any: the apply's `expectedVersion`.
+             */
+            fromRevision?: number | null;
+            /** @description The approval id. */
+            id: string;
+            /** @description The server's words for the approval: what the signer signs. */
+            restatement: string;
+            /**
+             * @description Lower-case hex SHA-256 of the restatement: the apply's
+             *     `signoff.restatementSha256`.
+             */
+            restatementSha256: string;
+            /** @description Whether the active revision is already this approval. */
+            unchanged: boolean;
         };
         /** @description One artifact the change adds or replaces. */
         PlannedArtifact: {

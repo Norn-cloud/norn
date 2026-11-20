@@ -366,6 +366,25 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
     /// # Errors
     /// Corrupt timer/reservation correspondence or normal commit refusals.
     pub fn expire_quantity_due(&mut self) -> Result<bool, CellError> {
+        let Some(pending) = self.store.read().due_quantity_timer(self.now.as_millis())? else {
+            return Ok(false);
+        };
+        self.expire_quantity(&pending)?;
+        Ok(true)
+    }
+
+    /// TIMER-RETRY-1: submit the quantity Expire of exactly `pending` (a
+    /// due quantity timer the host selected) through the ordinary atomic
+    /// commit path, consuming that timer incarnation with the release. One
+    /// reservation that cannot expire never blocks another's expiry.
+    ///
+    /// # Errors
+    /// Corrupt timer/reservation correspondence or normal commit refusals;
+    /// nothing is committed.
+    pub fn expire_quantity(
+        &mut self,
+        pending: &crate::read::PendingTimer,
+    ) -> Result<(), CellError> {
         #[derive(serde::Deserialize)]
         #[serde(deny_unknown_fields)]
         struct Deadline {
@@ -374,9 +393,6 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             reservation: String,
             due: u64,
         }
-        let Some(pending) = self.store.read().due_quantity_timer(self.now.as_millis())? else {
-            return Ok(false);
-        };
         let deadline: Deadline = from_runtime(&pending.timer.timer)?;
         let id = crate::quantity::expiry_timer_id(
             &deadline.world,
@@ -419,7 +435,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             quantity: Some(request.into()),
             ..CommitBatch::default()
         })?;
-        Ok(true)
+        Ok(())
     }
 
     /// The driver's current logical time.
@@ -490,6 +506,32 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             expected_version,
             &self.scope,
             change,
+        )?;
+        self.advance_to(LogicalTime::from_millis(installed.installed_at));
+        Ok(installed)
+    }
+
+    /// Install a checker-admitted definition set with retained revisions
+    /// riding it, in one transaction; see
+    /// [`CellStore::install_definitions_riding`].
+    ///
+    /// # Errors
+    ///
+    /// A definitions-version or retained-revision conflict, unsafe model
+    /// migration, or store error; any of them installs nothing.
+    pub fn install_definitions_riding(
+        &mut self,
+        candidate_model: Model,
+        input: &InstalledDefinitionInput,
+        expected_version: Option<u64>,
+        riding: &[crate::retained::RetainedDefinitionChange],
+    ) -> Result<InstalledDefinitionSet, CellError> {
+        let installed = self.store.install_definitions_riding(
+            candidate_model,
+            input,
+            expected_version,
+            &self.scope,
+            riding,
         )?;
         self.advance_to(LogicalTime::from_millis(installed.installed_at));
         Ok(installed)

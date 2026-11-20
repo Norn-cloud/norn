@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { resolve } from "node:path"
-import { ADMIT_PATH, APPLY_PATH, INSTALL_PATH, PLAN_PATH, change, credentialsAllowed } from "../src/apply.ts"
+import { APPLY_PATH, PLAN_PATH, change, credentialsAllowed } from "../src/apply.ts"
 
 // HOST-INSTALL-1 client: `norn apply` plans first, applies against the planned
 // revision, and stops at the cell's refusal. The cell itself is pinned by
@@ -41,26 +41,23 @@ test("apply plans first, applies against the planned revision, and stops at a re
   }
 })
 
-// A pack's approvals are admitted before its set is applied and installed
-// after it, by signing the cell's restatement; one the cell refuses fails the
-// apply and applies nothing (#1469 S3).
-test("apply admits the pack's approvals first and installs them after the set, signing their restatement", async () => {
+// #1469: a pack's approvals travel with its set. The plan returns the words
+// to sign for each; the one apply carries each sign-off, so the cell installs
+// the set and its approvals together. No request installs an approval on its
+// own, and a refusal at plan applies nothing.
+test("apply sends the pack's approvals with the set, signing the plan's restatement", async () => {
   const seen: { method: string; path: string; body: any }[] = []
   let admissible = true
-  let actionUnknown = false
+  const words = "Every call of lab.batch.close waits for a person to approve it."
   const server = Bun.serve({
     port: 0,
     async fetch(request) {
       const url = new URL(request.url)
       seen.push({ method: request.method, path: url.pathname.replace("/api/host", ""), body: request.method === "POST" ? await request.json() : null })
-      if (url.pathname.endsWith(PLAN_PATH)) return Response.json({ baseVersion: 2, nextVersion: 3, unchanged: false, added: [], changed: [], same: [], newObjectTypes: [], checkedObjects: 0, diagnostics: [] })
-      if (url.pathname.endsWith(APPLY_PATH)) return Response.json({ outcome: "installed", definitionsVersion: 3, previousVersion: 2, receiptSha256: "ab", commitSeq: 9 })
-      if (request.method === "GET") return Response.json({ code: "definition.not_found", message: "no such definition" }, { status: 404 })
-      if (url.pathname.endsWith(ADMIT_PATH) && actionUnknown) return Response.json({ admitted: false, diagnostics: [{ severity: "error", code: "definition.approval_action_unknown", message: "the action is not admitted in this cell", span: { pointer: "/action" } }], restatement: null, restatementSha256: null })
-      if (url.pathname.endsWith(ADMIT_PATH)) return Response.json(admissible
-        ? { admitted: true, diagnostics: [], restatement: "Every call of lab.batch.close waits for a person to approve it.", restatementSha256: "cd" }
-        : { admitted: false, diagnostics: [{ severity: "error", code: "definition.approval_role_unknown", message: "no such role", span: { pointer: "/decider/roles/0" } }], restatement: null, restatementSha256: null })
-      return Response.json({ id: "lab.close_approval", version: 1 })
+      if (url.pathname.endsWith(PLAN_PATH)) return admissible
+        ? Response.json({ baseVersion: 2, nextVersion: 3, unchanged: false, added: [], changed: [], same: [], newObjectTypes: [], checkedObjects: 0, diagnostics: [], approvals: [{ id: "lab.close_approval", unchanged: false, restatement: words, restatementSha256: "cd" }] })
+        : Response.json({ code: "defs.refused", message: "not admissible", diagnostics: [{ severity: "error", code: "definition.approval_role_unknown", message: "no such role", span: { pointer: "/approvals/0/payload/decider/roles/0" } }] }, { status: 422 })
+      return Response.json({ outcome: "installed", definitionsVersion: 3, previousVersion: 2, receiptSha256: "ab", commitSeq: 9, plan: { approvals: [{ id: "lab.close_approval", unchanged: false, restatement: words, restatementSha256: "cd" }] } })
     },
   })
   try {
@@ -68,32 +65,26 @@ test("apply admits the pack's approvals first and installs them after the set, s
     const approval = { kind: "approval" as const, id: "lab.close_approval", payload: { action: "lab.batch.close", decider: { roles: ["admin"] }, question: "Close?", risk: "low" } }
     const applied = await change(target, "apply", [{ artifactId: "lab.Batch.entity" }], false, undefined, [approval])
     expect(applied.ok).toBe(true)
-    expect(seen.map((s) => `${s.method} ${s.path}`)).toEqual([`POST ${PLAN_PATH}`, `POST ${ADMIT_PATH}`, `POST ${APPLY_PATH}`, "GET /v1/definitions/lab.close_approval", `POST ${ADMIT_PATH}`, `POST ${INSTALL_PATH}`])
-    expect(seen[5]!.body).toEqual({ ...approval, expectedVersion: null, signoff: { restatementSha256: "cd" } })
-    expect(applied.out.join("\n")).toContain("+ approval lab.close_approval v1, signing:\n    Every call of lab.batch.close waits")
+    expect(seen.map((s) => `${s.method} ${s.path}`)).toEqual([`POST ${PLAN_PATH}`, `POST ${APPLY_PATH}`])
+    expect(seen[0]!.body.approvals).toEqual([approval])
+    expect(seen[1]!.body).toEqual({ artifacts: [{ artifactId: "lab.Batch.entity" }], expectedVersion: 2,
+      approvals: [{ ...approval, expectedVersion: null, signoff: { restatementSha256: "cd" } }] })
+    expect(applied.out.join("\n")).toContain(`+ approval lab.close_approval, signed:\n      ${words}`)
+
+    // A given --expected-version still plans, for the words to sign.
+    seen.length = 0
+    expect((await change(target, "apply", [], false, 2, [approval])).ok).toBe(true)
+    expect(seen.map((s) => s.path)).toEqual([PLAN_PATH, APPLY_PATH])
 
     const planned = await change(target, "plan", [], false, undefined, [approval])
-    expect(planned.out.join("\n")).toContain("then approval lab.close_approval, signed on apply")
+    expect(planned.out.join("\n")).toContain(`+ approval lab.close_approval, signs:\n      ${words}`)
 
     admissible = false
     seen.length = 0
     const refused = await change(target, "apply", [], false, undefined, [approval])
     expect(refused.ok).toBe(false)
-    expect(seen.map((s) => s.path)).toEqual([PLAN_PATH, ADMIT_PATH])
-    expect(refused.out.join("\n")).toContain("error definition.approval_role_unknown at /decider/roles/0: no such role")
-
-    // An approval of an action the set itself adds is not refused for naming
-    // an action the cell has not applied yet; any other action is.
-    actionUnknown = true
-    seen.length = 0
-    const unknown = await change(target, "apply", [], false, undefined, [approval])
-    expect(unknown.ok).toBe(false)
-    expect(seen.map((s) => s.path)).toEqual([PLAN_PATH, ADMIT_PATH])
-    seen.length = 0
-    const action = { kind: "action", artifactId: "lab.batch.close.action", payload: { actionId: "lab.batch.close" } }
-    const added = await change(target, "apply", [action], false, undefined, [approval])
-    expect(seen.map((s) => s.path)).toContain(APPLY_PATH)
-    expect(added.ok).toBe(false)
+    expect(seen.map((s) => s.path)).toEqual([PLAN_PATH])
+    expect(refused.out.join("\n")).toContain("error definition.approval_role_unknown at /approvals/0/payload/decider/roles/0: no such role")
   } finally {
     server.stop(true)
   }

@@ -13,15 +13,13 @@
  * directly). Credentials are read from the environment, never arguments.
  *
  * A pack's retained definitions (`Norn.approval`) are not artifacts of the
- * set: `apply` installs each after the set, through `POST
- * /v1/definitions:admit` and `:install` with the caller's sign-off of the
- * server's restatement (DEV-DEFINITIONS-1's path), and prints the words it
- * signed. `plan` names them. `apply` admits every one before it applies the
- * set: an approval the cell refuses fails the command and applies nothing.
+ * set, but they travel with it (#1469): `plan` sends them with the set and
+ * prints the server's words for each; `apply` signs those words and the cell
+ * installs the set and its approvals in one transaction. An approval the
+ * cell refuses fails the command and applies nothing.
  */
 import { existsSync, statSync } from "node:fs"
 import { join, resolve } from "node:path"
-import { isDeepStrictEqual } from "node:util"
 import type { RetainedDefinitionDoc } from "./compiler/definitions.ts"
 import { loadChecker } from "./checker-abi.ts"
 import { bindSourceSchemas, checkPack, compilePack, pendingSourceSchemas, type PackResult } from "./pack.ts"
@@ -30,8 +28,6 @@ import { compileProjectPack } from "./worker.ts"
 
 export const PLAN_PATH = "/v1/cell/definitions:plan"
 export const APPLY_PATH = "/v1/cell/definitions:apply"
-export const ADMIT_PATH = "/v1/definitions:admit"
-export const INSTALL_PATH = "/v1/definitions:install"
 
 type Doc = Record<string, any>
 
@@ -97,56 +93,24 @@ export function appliedSummary(applied: Doc): string {
   return `${verb} revision ${applied.definitionsVersion} over ${applied.previousVersion} (receipt sha256 ${applied.receiptSha256}, commit ${applied.commitSeq})`
 }
 
-/**
- * Install `definition` as the caller, signing the server's restatement: the
- * same admit → install path the dev host takes. Unchanged when the active
- * version's payload equals it.
- */
-async function installDefinition(target: Target, definition: RetainedDefinitionDoc, show: (status: number, document: Doc, summary: (d: Doc) => string) => boolean): Promise<boolean> {
-  const current = await post(target, `/v1/definitions/${encodeURIComponent(definition.id)}`)
-  if (current.status !== 200 && current.document.code !== "definition.not_found") return show(current.status, current.document, () => "")
-  const installed = current.status === 200 ? current.document : undefined
-  if (installed?.lifecycle === "active" && isDeepStrictEqual(installed.payload, definition.payload)) {
-    return show(200, { kind: definition.kind, id: definition.id, version: installed.version, outcome: "unchanged" }, (d) => `= ${d.kind} ${d.id} v${d.version} (unchanged)`)
-  }
-  const doc = { kind: definition.kind, id: definition.id, payload: definition.payload }
-  const admitted = await post(target, ADMIT_PATH, doc)
-  if (admitted.status !== 200) return show(admitted.status, admitted.document, () => "")
-  if (!admitted.document.admitted) return show(422, { code: "definition.refused", message: `${definition.kind} ${definition.id} is not admissible`, diagnostics: admitted.document.diagnostics }, () => "")
-  const signoff = admitted.document.restatementSha256 ? { signoff: { restatementSha256: admitted.document.restatementSha256 } } : {}
-  const done = await post(target, INSTALL_PATH, { ...doc, expectedVersion: installed?.version ?? null, ...signoff })
-  return show(done.status, { ...done.document, restatement: admitted.document.restatement }, (d) =>
-    [`+ ${definition.kind} ${d.id} v${d.version}${d.restatement ? ", signing:" : ""}`, ...(d.restatement ? String(d.restatement).split("\n").map((line) => `    ${line}`) : [])].join("\n"))
-}
-
-/** The action ids `artifacts` declare. */
-function declaredActions(artifacts: ReadonlyArray<unknown>): Set<string> {
-  return new Set(artifacts.flatMap((artifact) => {
-    const doc = artifact as Doc
-    return doc?.kind === "action" && typeof doc.payload?.actionId === "string" ? [doc.payload.actionId] : []
-  }))
+/** The approval lines of a plan or apply: unchanged, or the words signed. */
+function approvalLines(document: Doc, verb: "signs" | "signed"): string[] {
+  return (document.approvals ?? []).map((a: Doc) => a.unchanged
+    ? `  = approval ${a.id} (unchanged)`
+    : [`  + approval ${a.id}${a.fromRevision === undefined ? "" : ` over revision ${a.fromRevision}`}, ${verb}:`, ...String(a.restatement).split("\n").map((line) => `      ${line}`)].join("\n"))
 }
 
 /**
- * Admit `definition` before anything is applied (#1469 S3): the refusal to
- * show, or undefined when it is admissible. An approval of an action the set
- * itself adds cannot name an active action yet, so that one finding alone is
- * excused; every other finding refuses.
- */
-async function preadmit(target: Target, definition: RetainedDefinitionDoc, actions: Set<string>): Promise<{ status: number; document: Doc } | undefined> {
-  const admitted = await post(target, ADMIT_PATH, { kind: definition.kind, id: definition.id, payload: definition.payload })
-  if (admitted.status !== 200) return admitted
-  if (admitted.document.admitted) return undefined
-  const errors = (admitted.document.diagnostics ?? []).filter((d: Doc) => d.severity === "error")
-  const pending = definition.kind === "approval" && actions.has((definition.payload as Doc)?.action)
-  if (pending && errors.every((d: Doc) => d.code === "definition.approval_action_unknown")) return undefined
-  return { status: 422, document: { code: "definition.refused", message: `${definition.kind} ${definition.id} is not admissible`, diagnostics: admitted.document.diagnostics } }
-}
-
-/**
- * Plan, or plan then apply, `artifacts` on `target`, then install the pack's
- * retained `definitions` once the set is applied; the lines to print and
- * whether the cell accepted all of it.
+ * Plan, or plan then apply, `artifacts` on `target` with the pack's retained
+ * `definitions` (its approvals); the lines to print and whether the cell
+ * accepted all of it.
+ *
+ * #1469: the approvals travel in the same requests as the set. The plan
+ * admits them against the submitted set's actions and returns the words to
+ * sign; the apply carries each sign-off, and the cell installs the set and
+ * its approvals in one transaction. A refused approval, a stale revision or
+ * a failure anywhere publishes nothing, so a new action is never live
+ * without its gate.
  */
 export async function change(target: Target, command: "plan" | "apply", artifacts: ReadonlyArray<unknown>, json: boolean, expectedVersion?: number, definitions: ReadonlyArray<RetainedDefinitionDoc> = []): Promise<{ out: string[]; ok: boolean }> {
   const out: string[] = []
@@ -155,30 +119,23 @@ export async function change(target: Target, command: "plan" | "apply", artifact
     out.push(json ? JSON.stringify(document) : ok ? summary(document) : refusalSummary(status, document))
     return ok
   }
+  const approvals = definitions.map((definition) => ({ kind: definition.kind, id: definition.id, payload: definition.payload }))
+  const body = (extra: Doc) => ({ artifacts, ...(approvals.length > 0 ? { approvals: approvals.map((approval) => ({ ...approval, ...extra[approval.id] })) } : {}) })
   let expected = expectedVersion
-  if (command === "plan" || expected === undefined) {
-    const planned = await post(target, PLAN_PATH, { artifacts })
-    if (!show(planned.status, planned.document, planSummary)) return { out, ok: false }
-    if (command === "plan") {
-      for (const definition of definitions) out.push(json ? JSON.stringify({ kind: definition.kind, id: definition.id, installs: "after apply" }) : `  then ${definition.kind} ${definition.id}, signed on apply`)
-      return { out, ok: true }
-    }
-    expected = planned.document.baseVersion
+  let planned: Doc | undefined
+  if (command === "plan" || expected === undefined || approvals.length > 0) {
+    const plan = await post(target, PLAN_PATH, body({}))
+    if (!show(plan.status, plan.document, (d) => [planSummary(d), ...approvalLines(d, "signs")].join("\n"))) return { out, ok: false }
+    if (command === "plan") return { out, ok: true }
+    planned = plan.document
+    expected ??= planned.baseVersion
     if (typeof expected !== "number") throw new Error("the plan names no base revision")
   }
-  // Every retained definition is admitted before the set is applied: one
-  // the cell refuses applies nothing, so no action goes live ungated.
-  const actions = declaredActions(artifacts)
-  for (const definition of definitions) {
-    const refused = await preadmit(target, definition, actions)
-    if (refused) { show(refused.status, refused.document, () => ""); return { out, ok: false } }
-  }
-  const applied = await post(target, APPLY_PATH, { artifacts, expectedVersion: expected })
-  if (!show(applied.status, applied.document, appliedSummary)) return { out, ok: false }
-  for (const definition of definitions) {
-    if (!await installDefinition(target, definition, show)) return { out, ok: false }
-  }
-  return { out, ok: true }
+  // Each approval is signed with the words the plan returned for it.
+  const signed: Doc = Object.fromEntries((planned?.approvals ?? []).map((a: Doc) =>
+    [a.id, { expectedVersion: a.fromRevision ?? null, signoff: { restatementSha256: a.restatementSha256 } }]))
+  const applied = await post(target, APPLY_PATH, { ...body(signed), expectedVersion: expected })
+  return { out, ok: show(applied.status, applied.document, (d) => [appliedSummary(d), ...approvalLines(d.plan ?? {}, "signed")].join("\n")) }
 }
 
 /**

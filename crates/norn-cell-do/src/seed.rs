@@ -388,4 +388,60 @@ mod tests {
         assert_eq!(rows, SEED_PARTIES.len());
         assert_eq!(SEED_ITEMS.len(), 6);
     }
+
+    /// HOST-INSTALL-LIVE-1 on the seed upgrade: a seed whose new law every
+    /// seeded item breaks is refused over the live rows, as any install is,
+    /// and the cell keeps its definitions; nothing bypasses the live check.
+    #[test]
+    fn a_seed_upgrade_is_refused_over_rows_its_laws_break() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("seed.sqlite");
+        let open = || NativeEngine::open(&path, norn_cell::StoreOptions::default()).unwrap();
+        let mut store = open_governed(open(), &demo_scope(), &seed(), INSTALLED_AT).unwrap();
+        seed_rows(&mut store, &demo_scope()).unwrap();
+        let before = store.read().installed_definitions(None).unwrap().unwrap();
+        drop(store);
+
+        let mut upgraded = seed();
+        upgraded.push(
+            serde_json::from_value(serde_json::json!({
+                "artifactId": "canon.Item.code_is_never.law",
+                "dependencies": [{"artifactId": "canon.Item.entity", "kind": "entity", "required": true, "version": "0.1.0"}],
+                "irVersion": "0.1", "kind": "law", "lifecycle": "active",
+                "name": "No item's code is ever valid", "namespace": "canon",
+                "provenance": {"source": "system", "sourcePath": "seed test"},
+                "scope": {}, "version": "0.1.0",
+                "payload": {
+                    "id": "canon.Item.code_is_never", "lawVersion": "0.1",
+                    "modality": {"kind": "always"}, "owner": "canon",
+                    "provenance": {"source": "authoring_sdk", "sourcePath": "seed test"},
+                    "rationale": "A law every seeded item breaks.",
+                    "response": {"expression": "self.code == 'never'", "kind": "predicate"},
+                    "scope": {"objectTypes": ["canon.Item"], "root": {"id": "canon.Item", "kind": "entity"}},
+                    "severity": "error", "subject": "canon.Item"
+                }
+            }))
+            .unwrap(),
+        );
+        let refused =
+            open_governed(open(), &demo_scope(), &upgraded, INSTALLED_AT + 1).unwrap_err();
+        assert!(
+            refused.0.contains("candidate governing laws refuse"),
+            "{refused:?}"
+        );
+        let store = open_governed(open(), &demo_scope(), &seed(), INSTALLED_AT).unwrap();
+        assert_eq!(
+            store
+                .read()
+                .installed_definitions(None)
+                .unwrap()
+                .unwrap()
+                .version,
+            before.version
+        );
+    }
+
+    fn seed() -> Vec<ArtifactEnvelope> {
+        serde_json::from_str(DEFINITIONS).unwrap()
+    }
 }

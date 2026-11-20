@@ -454,6 +454,12 @@ class DefinitionCompiler {
       if (!["eq", "ne", "lt", "le", "gt", "ge"].includes(op)) throw new CompileError("NORN-FLOW-LITERAL", "when.op is eq, ne, lt, le, gt or ge", w.get("op")!)
       const value = this.json(w.get("value")!)
       if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") throw new CompileError("NORN-FLOW-LITERAL", "when.value is text, a number or a boolean", w.get("value")!)
+      // #1469 S10: a fractional threshold stays exact: its decimal source text, never a JS double.
+      if (typeof value === "number" && !Number.isSafeInteger(value)) {
+        const text = w.get("value")!.getText().replace(/_/g, "")
+        if (!/^-?\d+\.\d+$/.test(text)) throw new CompileError("NORN-FLOW-LITERAL", "a fractional when.value is a plain decimal, such as 1000.10", w.get("value")!)
+        return { property: this.string(w.get("property")!), op, value: text }
+      }
       return { property: this.string(w.get("property")!), op, value }
     })()
     const law = decider.get("law")

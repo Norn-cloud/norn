@@ -185,14 +185,17 @@ fn check_when(when: &Value, findings: &mut Vec<RefusalDiagnostic>) {
                 .get("op")
                 .and_then(Value::as_str)
                 .is_some_and(|op| WHEN_OPS.contains(&op))
-            && when
-                .get("value")
-                .is_some_and(|value| value.is_string() || value.is_number() || value.is_boolean())
+            && when.get("value").is_some_and(|value| {
+                // #1469 S10: a JSON number is exact only as an integer; a
+                // fractional threshold is decimal text, so it is compared
+                // and restated exactly as written.
+                value.is_string() || value.is_i64() || value.is_u64() || value.is_boolean()
+            })
     });
     if !shaped {
         findings.push(finding(
             codes::INVALID,
-            "when is {property: a property id, op: eq|ne|lt|le|gt|ge, value: text, number or boolean}",
+            "when is {property: a property id, op: eq|ne|lt|le|gt|ge, value: text, an integer or boolean; a fractional value is decimal text such as \"1000.10\"}",
             "/when",
         ));
     }
@@ -289,6 +292,23 @@ mod tests {
             ),
             "{words}"
         );
+    }
+
+    /// #1469 S10: a decimal threshold is admitted and restated exactly as
+    /// written; a fractional JSON number, which a double would round, is
+    /// refused.
+    #[test]
+    fn a_decimal_threshold_stays_exact() {
+        let payload = approval(&json!({ "property": "amount", "op": "gt", "value": "1000.10" }));
+        assert!(findings(&payload).is_empty());
+        let words = restate(&payload.to_string()).unwrap_or_default();
+        assert!(words.contains("with amount > 1000.10 waits"), "{words}");
+        let integer = approval(&json!({ "property": "amount", "op": "gt", "value": 1000 }));
+        assert!(findings(&integer).is_empty());
+        let fractional = approval(&json!({ "property": "amount", "op": "gt", "value": 1000.1 }));
+        let found = findings(&fractional);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].code, codes::INVALID);
     }
 
     #[test]

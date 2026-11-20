@@ -247,3 +247,28 @@ test("a malformed, duplicated or default-exported approval refuses the compile",
     rmSync(root, { recursive: true, force: true })
   }
 }, 120_000)
+
+// #1469 S10: a fractional threshold compiles to its exact decimal text, never
+// a double (`1000.10`, not `1000.1`); an integer stays a number.
+test("a decimal approval threshold compiles exactly as written", async () => {
+  const { readProject } = await import("../src/project.ts")
+  const { compileProjectPack } = await import("../src/worker.ts")
+  const root = mkdtempSync(join(tmpdir(), "norn-purchase-requests-when-"))
+  const dir = join(root, "purchase-requests")
+  const threshold = (literal: string) => {
+    rmSync(dir, { recursive: true, force: true })
+    cpSync(FIXTURE, dir, { recursive: true, filter: (path) => !path.includes(".norn") })
+    const file = join(dir, "src/purchasing.ts")
+    writeFileSync(file, readFileSync(file, "utf8").replace('op: "gt", value: "1000" }', `op: "gt", value: ${literal} }`))
+    const { root: projectRoot, manifest } = readProject(dir)
+    const pack = compileProjectPack(projectRoot, manifest)
+    if (!pack.ok) throw new Error(JSON.stringify(pack.failures))
+    return (pack.retained[0]!.payload as { when: { value: unknown } }).when.value
+  }
+  try {
+    expect(threshold("1000.10")).toBe("1000.10")
+    expect(threshold("1000")).toBe(1000)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+}, 120_000)

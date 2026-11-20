@@ -5318,7 +5318,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/DecidedCall",
-                "description": "For an approved action call (APPROVAL-1), what committing it as its\nrequester answered; absent otherwise and on a replay."
+                "description": "For an approved action call (APPROVAL-1), what committing it as its\nrequester answered; on a replay, present only while a run's step still\nwaits on the call, as what dispatching it again through the\napproval's fence answered."
               },
               {
                 "type": "null"
@@ -6046,6 +6046,13 @@
           "artifacts"
         ],
         "properties": {
+          "approvals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InstallDefinitionRequest"
+            },
+            "description": "The pack's approvals (#1469): admitted against the submitted set's\nactions, and installed with it in one transaction, so a new action\nis never live without its gate. A plan returns each one's\nrestatement; an apply carries each one's `signoff` of it and the\n`expectedVersion` (revision) the plan reported. Any refusal installs\nnothing."
+          },
           "artifacts": {
             "type": "array",
             "items": {
@@ -6087,6 +6094,13 @@
               "$ref": "#/components/schemas/PlannedArtifact"
             },
             "description": "Artifacts the change adds."
+          },
+          "approvals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlannedApproval"
+            },
+            "description": "The approvals the change installs with the set."
           },
           "baseVersion": {
             "type": "integer",
@@ -34861,6 +34875,43 @@
           "id": {
             "type": "string",
             "description": "The decision id (`POST /v1/decisions/{id}:decide`)."
+          }
+        }
+      },
+      "PlannedApproval": {
+        "type": "object",
+        "description": "An approval the change installs with the set.",
+        "required": [
+          "id",
+          "unchanged",
+          "restatement",
+          "restatementSha256"
+        ],
+        "properties": {
+          "fromRevision": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The id's current revision, if any: the apply's `expectedVersion`.",
+            "minimum": 0
+          },
+          "id": {
+            "type": "string",
+            "description": "The approval id."
+          },
+          "restatement": {
+            "type": "string",
+            "description": "The server's words for the approval: what the signer signs."
+          },
+          "restatementSha256": {
+            "type": "string",
+            "description": "Lower-case hex SHA-256 of the restatement: the apply's\n`signoff.restatementSha256`."
+          },
+          "unchanged": {
+            "type": "boolean",
+            "description": "Whether the active revision is already this approval."
           }
         }
       },

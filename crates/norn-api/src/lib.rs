@@ -74,6 +74,8 @@ pub mod routes;
 pub mod run_routes;
 /// In-cell source sync over the pull engine: claims, steps and run reports.
 pub mod sources;
+/// TIMER-ALARM-1: the cell's due work (expiries, flow timers, decision deadlines), run from the host's clock.
+pub mod timers;
 /// Native numeric trace schema projections.
 pub mod trace_contract;
 /// Typed transform reads (`ViewIR` v1): rows, row lineage and the admitted plan.

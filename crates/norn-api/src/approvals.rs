@@ -17,6 +17,14 @@
 //! laws the cell checks only when it commits. Nothing bypasses the dispatch:
 //! the approver's decision executes the call by calling it as the requester.
 //!
+//! APPROVAL-REVISION-1: an approval is given for the action as it was
+//! defined when the call parked. The parked call carries the action
+//! definition's digest, and its command id hashes it, so an approval never
+//! lets the call commit under a changed action: approving a call whose action
+//! changed since it parked refuses it (`approval.definition_changed`), and
+//! the requester's call under the new definition parks anew for a fresh
+//! approval.
+//!
 //! APPROVAL-PIN-1: a call pinned to a definitions version (`?version=`)
 //! parks with that pin, and its approval commits it pinned the same way: a
 //! catalog that changed between parking and approval refuses the commit
@@ -54,6 +62,9 @@ pub(crate) const WOULD_COMMIT: &str = "approval.would_commit";
 /// The step id a parked call's decision carries.
 pub const APPROVAL_STEP: &str = "approval";
 
+/// The command id prefix of every parked call ([`command_id`]).
+pub(crate) const COMMAND_PREFIX: &str = "norn.approval/";
+
 /// The option that approves a parked call.
 pub const APPROVE: &str = "approve";
 
@@ -66,6 +77,9 @@ pub mod approval_codes {
     pub const REJECTED: &str = "approval.rejected";
     /// The decision this call waited on expired.
     pub const EXPIRED: &str = "approval.expired";
+    /// APPROVAL-REVISION-1: the action changed after the call parked, so
+    /// its approval does not cover it; call again to request a new one.
+    pub const DEFINITION_CHANGED: &str = "approval.definition_changed";
 }
 
 /// The active approval gating one action.
@@ -83,6 +97,10 @@ pub(crate) struct ParkedCall {
     pub(crate) input: RuntimeObject,
     pub(crate) idempotency_key: String,
     pub(crate) requester: RunStarter,
+    /// APPROVAL-REVISION-1: the digest of the action's definition the call
+    /// was admitted under; empty for a call parked before digests were bound,
+    /// which matches no definition.
+    pub(crate) action_digest: String,
     /// APPROVAL-PIN-1: the definitions version the requester pinned the call
     /// to (`?version=`), if any. Its approval commits it only while that
     /// version is still active (`defs.stale` otherwise).
@@ -121,6 +139,7 @@ pub(crate) fn held_call(approval: &RuntimeValue) -> Option<HeldCall> {
             input: input.clone(),
             idempotency_key: text("idempotencyKey")?,
             requester: norn_ir::runtime::decode(approval.get("requester")?).ok()?,
+            action_digest: text("actionDigest").unwrap_or_default(),
             definitions_version: match approval.get("definitionsVersion") {
                 None => None,
                 Some(pin) => Some(norn_ir::runtime::decode(pin).ok()?),
@@ -222,28 +241,54 @@ fn request(gate: &Gate) -> Value {
     request
 }
 
-/// The command id of a parked call: one per action, input, idempotency key,
-/// requester and definitions pin, so the same call parks once, and an
-/// approval approves exactly the call it was asked about.
+/// The command id of a parked call: one per action, its effective
+/// definition's digest, the gate revision holding it, input, idempotency
+/// key, requester and definitions pin, so the same call parks once, and an
+/// approval approves exactly the call it was asked about under the action
+/// it was asked about (APPROVAL-REVISION-1).
 ///
 /// APPROVAL-PIN-1: a pinned call's id also hashes its pin, under its own
 /// domain tag, so the requester's retry under another catalog (unpinned, or
 /// pinned to another version) is another call that parks for a fresh
 /// decision, never the earlier approval.
-///
-/// #1469 S5: the id also hashes the gate (its definition and revision), so a
-/// call made again after its gate changed (another decider, a renamed
-/// approval) parks for a fresh decision under the gate now in force, never
-/// the decision the earlier gate's deciders made.
 fn command_id(gate: &Gate, parked_call: &ParkedCall) -> Result<String, Refusal> {
+    call_command_id(
+        gate,
+        &CallParts {
+            action: &parked_call.action,
+            action_digest: &parked_call.action_digest,
+            idempotency_key: &parked_call.idempotency_key,
+            requester: &parked_call.requester.subject,
+            input: &parked_call.input,
+            definitions_version: parked_call.definitions_version,
+        },
+    )
+}
+
+/// What identifies a parked call besides its gate ([`command_id`]).
+pub(crate) struct CallParts<'a> {
+    pub(crate) action: &'a str,
+    pub(crate) action_digest: &'a str,
+    pub(crate) idempotency_key: &'a str,
+    pub(crate) requester: &'a str,
+    pub(crate) input: &'a RuntimeObject,
+    pub(crate) definitions_version: Option<u64>,
+}
+
+/// [`command_id`] from the call's parts: what an approval replay compares.
+pub(crate) fn call_command_id(gate: &Gate, parts: &CallParts<'_>) -> Result<String, Refusal> {
     let call = (
-        &parked_call.action,
-        &parked_call.idempotency_key,
-        &parked_call.requester.subject,
-        &parked_call.input,
-        (&gate.definition, gate.revision),
+        parts.action,
+        parts.action_digest,
+        // The gate revision the decider roles come from: a changed gate
+        // asks anew.
+        &gate.definition,
+        gate.revision,
+        parts.idempotency_key,
+        parts.requester,
+        parts.input,
     );
-    let digest = match parked_call.definitions_version {
+    let digest = match parts.definitions_version {
         None => norn_ir::canonical::domain_hash_hex(b"norn.approval.call/2\0", &call),
         Some(pin) => {
             norn_ir::canonical::domain_hash_hex(b"norn.approval.pinned-call/2\0", &(call, pin))
@@ -251,13 +296,24 @@ fn command_id(gate: &Gate, parked_call: &ParkedCall) -> Result<String, Refusal> 
     }
     .map_err(Refusal::host)?;
     Ok(format!(
-        "norn.approval/{}",
+        "{COMMAND_PREFIX}{}",
         digest.get(..32).unwrap_or(&digest)
     ))
 }
 
 fn runtime(value: &Value) -> Result<RuntimeValue, Refusal> {
     RuntimeValue::from_json(value.clone()).map_err(Refusal::host)
+}
+
+/// APPROVAL-REVISION-1: the action or its gate changed after the call
+/// parked; its approval does not cover the call as it would run now.
+pub(crate) fn definition_changed() -> Refusal {
+    Refusal::new(
+        StatusCode::CONFLICT,
+        approval_codes::DEFINITION_CHANGED,
+        "the action changed since this call was approved",
+        "the approval covers the action and gate as they were when the call parked; call again to request a new approval",
+    )
 }
 
 fn rejected() -> Refusal {
@@ -365,6 +421,7 @@ fn park<E: SqlEngine>(
             norn_ir::runtime::encode(&gate.revision).map_err(Refusal::host)?,
         ),
         ("action".to_owned(), text(&parked_call.action)),
+        ("actionDigest".to_owned(), text(&parked_call.action_digest)),
         (
             "input".to_owned(),
             RuntimeValue::Object(parked_call.input.clone()),
@@ -451,10 +508,10 @@ impl<'a, E: SqlEngine> WouldCommit<'a, E> {
 }
 
 /// APPROVAL-WHEN-1: whether `gate` holds a call whose commit carries
-/// `writes`. Without `when`, every call. Otherwise the call's record (its
-/// first object write that is not a kernel record) is compared; a record
-/// without the property, or values the comparison cannot order, hold the
-/// call (fail closed).
+/// `writes`. Without `when`, every call. Otherwise the call's target record
+/// (the object the kernel's `norn.ActionCall` record names) is compared; a
+/// target with no proposed values or without the property, or values the
+/// comparison cannot order, hold the call (fail closed).
 pub(crate) fn applies(gate: &Gate, writes: &[FactWrite]) -> bool {
     let Some(when) = gate.payload.get("when") else {
         return true;
@@ -466,14 +523,39 @@ pub(crate) fn applies(gate: &Gate, writes: &[FactWrite]) -> bool {
     ) else {
         return true;
     };
-    let record = writes
+    // #1469 S9: the call's record is its target, by the exact key the
+    // kernel's own call record names, never by order among the writes. A
+    // call whose target has no proposed values is held (fail closed).
+    let values_of = |key: &FactKey| {
+        writes
+            .iter()
+            .filter(|write| write.key == *key)
+            .find_map(|write| match &write.mutation {
+                FactMutation::Put { values } => Some(values),
+                FactMutation::Delete => None,
+            })
+    };
+    let target = writes
         .iter()
-        .filter(|write| !write.key.object_type.as_str().starts_with("norn."))
+        .filter(|write| write.key.object_type.as_str() == norn_kernel::ACTION_CALL_TYPE)
         .find_map(|write| match &write.mutation {
-            FactMutation::Put { values } => Some(values),
+            FactMutation::Put { values } => match values.get("object") {
+                Some(RuntimeValue::Object(object)) => match (
+                    object.get("objectType").and_then(RuntimeValue::as_str),
+                    object.get("key").and_then(RuntimeValue::as_str),
+                ) {
+                    (Some(object_type), Some(key)) => Some(FactKey::new(object_type, key)),
+                    _ => None,
+                },
+                _ => None,
+            },
             FactMutation::Delete => None,
         });
-    let Some(actual) = record.and_then(|values| values.get(property)) else {
+    let Some(actual) = target
+        .as_ref()
+        .and_then(values_of)
+        .and_then(|values| values.get(property))
+    else {
         return true;
     };
     compare(actual, op, expected).unwrap_or(true)
@@ -491,7 +573,12 @@ fn compare(actual: &RuntimeValue, op: &str, expected: &Value) -> Option<bool> {
         | RuntimeValue::Object(_) => None,
     };
     let expected_decimal = match expected {
-        Value::Number(number) => norn_ir::Decimal::parse(&number.to_string()).ok(),
+        // Only an integer is exact as a JSON number (#1469 S10); admission
+        // refuses any other, and so does this comparison (fail closed).
+        Value::Number(number) if number.is_i64() || number.is_u64() => {
+            norn_ir::Decimal::parse(&number.to_string()).ok()
+        }
+        Value::Number(_) => return None,
         Value::String(text) => norn_ir::Decimal::parse(text).ok(),
         Value::Null | Value::Bool(_) | Value::Array(_) | Value::Object(_) => None,
     };
@@ -645,34 +732,7 @@ mod tests {
         }
     }
 
-    /// #1469 S5: the same unpinned call behind a revised gate, or behind
-    /// another gate, is another parked call with its own decision.
-    #[test]
-    fn a_call_parks_anew_when_its_gate_changes() {
-        let call = ParkedCall {
-            action: "purchasing.request.submit".to_owned(),
-            input: RuntimeObject::new(),
-            idempotency_key: "k1".to_owned(),
-            requester: RunStarter {
-                subject: "local:developer".to_owned(),
-                actor_kind: "user".to_owned(),
-                roles: vec!["member".to_owned()],
-                role_table: "studio-roles/1".to_owned(),
-            },
-            definitions_version: None,
-        };
-        let first = gate(None);
-        let mut revised = first.clone();
-        revised.revision = 2;
-        let mut renamed = first.clone();
-        "purchasing.renamed".clone_into(&mut renamed.definition);
-        let id = |gate: &Gate| command_id(gate, &call).unwrap();
-        assert_eq!(id(&first), id(&first.clone()));
-        assert_ne!(id(&first), id(&revised));
-        assert_ne!(id(&first), id(&renamed));
-    }
-
-    fn put(object_type: &str, values: Value) -> FactWrite {
+    fn put_at(object_type: &str, key: &str, values: Value) -> FactWrite {
         let values = if let RuntimeValue::Object(values) = RuntimeValue::from_json(values).unwrap()
         {
             values
@@ -680,20 +740,91 @@ mod tests {
             RuntimeObject::new()
         };
         FactWrite {
-            key: FactKey::new(object_type, "PR-1"),
+            key: FactKey::new(object_type, key),
             expected: FactVersion(1),
             mutation: FactMutation::Put { values },
         }
     }
 
+    fn put(object_type: &str, values: Value) -> FactWrite {
+        put_at(object_type, "PR-1", values)
+    }
+
+    /// The kernel's call record, naming `key` of a purchase request as the
+    /// call's target.
+    fn call_of(key: &str) -> FactWrite {
+        put_at(
+            "norn.ActionCall",
+            "purchasing.request.submit/k1",
+            json!({ "amount": "1",
+                "object": { "objectType": "purchasing.PurchaseRequest", "key": key } }),
+        )
+    }
+
     fn request(amount: &Value) -> Vec<FactWrite> {
         vec![
-            put("norn.ActionCall", json!({ "amount": "1" })),
+            call_of("PR-1"),
             put(
                 "purchasing.PurchaseRequest",
                 json!({ "amount": amount.clone(), "status": "submitted" }),
             ),
         ]
+    }
+
+    /// #1469 S9: `when` reads the call's target, never whichever write sorts
+    /// first; a target with no proposed values holds the call.
+    #[test]
+    fn when_reads_the_target_record_by_its_exact_key() {
+        let large = gate(Some(
+            json!({ "property": "amount", "op": "gt", "value": "1000" }),
+        ));
+        let writes = vec![
+            call_of("PR-9"),
+            put_at("purchasing.Line", "A-1", json!({ "amount": "5" })),
+            put_at(
+                "purchasing.PurchaseRequest",
+                "PR-1",
+                json!({ "amount": "3" }),
+            ),
+            put_at(
+                "purchasing.PurchaseRequest",
+                "PR-9",
+                json!({ "amount": "2500.00" }),
+            ),
+        ];
+        assert!(applies(&large, &writes), "the target's 2500 waits");
+        let untouched = vec![
+            call_of("PR-9"),
+            put_at("purchasing.Line", "A-1", json!({ "amount": "5" })),
+        ];
+        assert!(applies(&large, &untouched), "no target values: held");
+        let unnamed = vec![put_at(
+            "purchasing.PurchaseRequest",
+            "PR-9",
+            json!({ "amount": "5" }),
+        )];
+        assert!(applies(&large, &unnamed), "no call record: held");
+    }
+
+    /// #1469 S10: a decimal threshold compares exactly as written.
+    #[test]
+    fn a_decimal_threshold_compares_exactly() {
+        let over = gate(Some(
+            json!({ "property": "amount", "op": "gt", "value": "1000.10" }),
+        ));
+        assert!(!applies(&over, &request(&json!("1000.10"))));
+        assert!(applies(&over, &request(&json!("1000.11"))));
+        assert!(!applies(&over, &request(&json!("1000.100"))));
+        let at_least = gate(Some(
+            json!({ "property": "amount", "op": "ge", "value": "1000.10" }),
+        ));
+        assert!(applies(&at_least, &request(&json!("1000.10"))));
+        assert!(!applies(&at_least, &request(&json!("1000.09"))));
+        // A fractional JSON number is not exact: it holds the call.
+        let inexact = gate(Some(
+            json!({ "property": "amount", "op": "gt", "value": 2000.5 }),
+        ));
+        assert!(applies(&inexact, &request(&json!("5"))));
     }
 
     #[test]

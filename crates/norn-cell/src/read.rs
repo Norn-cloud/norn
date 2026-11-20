@@ -4265,6 +4265,21 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         )
     }
 
+    /// TIMER-ALARM-1: the earliest deadline strictly after `after`, across
+    /// ordinary and quantity timers, through the same covering index. A host
+    /// re-arms its alarm with it once the work due at `after` was run, so a
+    /// timer it could not deliver never re-arms the alarm in a tight loop.
+    ///
+    /// # Errors
+    /// SQL engine or decode errors.
+    pub fn next_timer_due_after(&self, after: u64) -> Result<Option<u64>, CellError> {
+        self.conn.query_optional(
+            r#"SELECT "due" FROM "_norn_timer" INDEXED BY "_norn_timer/due" WHERE "due">?1 ORDER BY "due","timer_id" LIMIT 1"#,
+            params![to_i64(after, "timer time")?],
+            |row| to_u64(row.get(0)?, "timer due"),
+        )
+    }
+
     /// The earliest ordinary timer due at `now` (ties by id), if any.
     /// The partial index excludes host-owned quantity timers before seeking,
     /// so even an overdue quantity backlog cannot amplify this read.
@@ -4281,6 +4296,37 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
                 timer: TimerEntry { timer_id: row.get(1)?, due: to_u64(row.get(2)?, "timer due")?, timer: serde_json::from_str(&row.get::<String>(3)?)? },
             }),
         )
+    }
+
+    /// TIMER-ALARM-1: up to `limit` ordinary timers due at `now`, earliest
+    /// first (ties by id), through the same partial index as
+    /// [`Self::due_timer`]: a host delivers each on its own, so one it cannot
+    /// deliver never hides the ones behind it.
+    ///
+    /// # Errors
+    /// SQL engine or decode errors.
+    pub fn due_timers(&self, now: u64, limit: usize) -> Result<Vec<PendingTimer>, CellError> {
+        let rows = self.conn.query(
+            r#"SELECT "commit_seq","timer_id","due","timer" FROM "_norn_timer" INDEXED BY "_norn_timer/ordinary_due" WHERE ("timer_id"<'norn.quantity.expiry/' OR "timer_id">='norn.quantity.expiry0') AND "due"<=?1 ORDER BY "due","timer_id" LIMIT ?2"#,
+            params![
+                to_i64(now, "timer time")?,
+                i64::try_from(limit).unwrap_or(i64::MAX)
+            ],
+        )?;
+        let mut out = Vec::with_capacity(rows.len());
+        for values in rows {
+            let row = SqlRow(values);
+            let timer: String = row.get(3)?;
+            out.push(PendingTimer {
+                commit_seq: to_u64(row.get(0)?, "timer incarnation")?,
+                timer: TimerEntry {
+                    timer_id: row.get(1)?,
+                    due: to_u64(row.get(2)?, "timer due")?,
+                    timer: serde_json::from_str(&timer)?,
+                },
+            });
+        }
+        Ok(out)
     }
 
     /// Earliest due host-owned quantity deadline, using the timer due index.

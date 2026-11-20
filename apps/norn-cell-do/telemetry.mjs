@@ -37,7 +37,7 @@ const REFUSAL_CODES = new Set(Object.entries({
   analytics:
     "engine frontier_behind frontier_moved invalid too_large unauthorized unavailable unconfigured " +
     "unknown unsettled",
-  approval: "expired rejected would_commit",
+  approval: "definition_changed expired rejected would_commit",
   artifact_set: "action.effect_kind_mismatch",
   authn: "required",
   authz:
@@ -66,6 +66,9 @@ const REFUSAL_CODES = new Set(Object.entries({
     "link_read_conflict link_read_too_large link_required link_target not_pending " +
     "observation_authorization overflow owned_rows_protected predicate_read_conflict " +
     "traversal_limit_exceeded type_mismatch unsupported_link_read unsupported_predicate_read",
+  connection:
+    "conflict egress grant_forbidden invalid not_found oauth_callback oauth_pending oauth_received " +
+    "oauth_state provider_refused provider_unsupported reconnect_needed unavailable vault vault_key",
   connector: "bind read run",
   dataset: "not_found uploads_unconfigured",
   decision:
@@ -74,6 +77,10 @@ const REFUSAL_CODES = new Set(Object.entries({
     "not_pending note_too_long object_exists object_missing overflow perform_outside_main " +
     "read_only_world resolution_invalid resolved source_owned_target stale_state " +
     "turn_envelope_exceeded unknown_choice unknown_type unresolved_lifecycle",
+  defs:
+    "dev_sources_only live_data_refused live_data_unbounded live_data_unchecked live_data_violation " +
+    "migration_refused not_installed not_provisioned provision_refused receipt_context_unavailable " +
+    "refused stale version_not_found",
   definition:
     "already_retired approval_action_unknown approval_duplicate approval_invalid " +
     "approval_role_unknown binding_connector_invalid binding_digest_mismatch binding_invalid_payload " +

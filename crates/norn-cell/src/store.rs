@@ -581,6 +581,11 @@ pub struct DefinitionInstallRecord {
     /// The retained (non-kernel) definition revision this commit appended.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retained: Option<crate::retained::RetainedDefinitionChange>,
+    /// Retained revisions committed with this install's kernel set, in the
+    /// same transaction (#1469: a pack's approvals publish with its actions,
+    /// or not at all).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub riding: Vec<crate::retained::RetainedDefinitionChange>,
 }
 
 /// Construct the exact ledger event emitted for a typed definition install.
@@ -1844,6 +1849,9 @@ pub struct CellStore<E: SqlEngine = DefaultEngine> {
     quantity_boundary: Cell<Option<crate::quantity::FormatBoundary>>,
     /// FORK-PIN-1: the durable pin of a forked store, loaded at open.
     pub(crate) fork: Option<crate::fork::ForkPin>,
+    /// HOST-INSTALL-LIVE-1: how many live objects the last definitions
+    /// check or install evaluated under the candidate's governing laws.
+    law_checked: Cell<u64>,
 }
 
 #[derive(Clone, Copy)]
@@ -1852,6 +1860,7 @@ struct DefinitionInstallContext<'a> {
     input: &'a InstalledDefinitionInput,
     expected_version: Option<u64>,
     retained: Option<&'a crate::retained::RetainedDefinitionChange>,
+    riding: &'a [crate::retained::RetainedDefinitionChange],
 }
 
 struct DefinitionPreflight {
@@ -1907,6 +1916,33 @@ fn preflight_retained(
     Ok(())
 }
 
+/// Revisions riding a kernel set install (#1469): never a flow (a flow
+/// installs its own set), never alongside a single retained revision, each
+/// id once, and each the next revision of its id.
+fn preflight_riding<E: SqlEngine>(
+    engine: &E,
+    install: &DefinitionInstallContext<'_>,
+) -> Result<(), CellError> {
+    if install.riding.is_empty() {
+        return Ok(());
+    }
+    if install.retained.is_some() {
+        return Err(CellError::DefinitionReceiptInvalid(
+            "a retained revision and riding revisions never share one install".to_owned(),
+        ));
+    }
+    let mut ids = std::collections::BTreeSet::new();
+    for change in install.riding {
+        if change.definition.kind == "flow" || !ids.insert(change.definition.id.as_str()) {
+            return Err(CellError::DefinitionReceiptInvalid(
+                "a riding revision is one non-flow revision per id".to_owned(),
+            ));
+        }
+        crate::retained::preflight(engine, change)?;
+    }
+    Ok(())
+}
+
 fn preflight_definition_install<E: SqlEngine>(
     engine: &E,
     previous_model: &Model,
@@ -1935,6 +1971,7 @@ fn preflight_definition_install<E: SqlEngine>(
         preflight_retained(previous.as_ref(), previous_model, install, change)?;
         crate::retained::preflight(engine, change)?;
     }
+    preflight_riding(engine, install)?;
     let (layout, layout_revision) =
         resolve_layout_snapshot(previous.as_ref(), install.input.layout.as_deref())?;
     if install.input.readmission.is_some() {
@@ -2218,6 +2255,7 @@ impl<E: SqlEngine> CellStore<E> {
             input,
             expected_version: Some(0),
             retained: None,
+            riding: &[],
         };
         let fresh_identity = RefCell::new(|| source(&store.conn));
         store
@@ -2333,6 +2371,7 @@ impl<E: SqlEngine> CellStore<E> {
             verified_receipts: RefCell::default(),
             quantity_boundary: Cell::new(None),
             fork: None,
+            law_checked: Cell::new(0),
         }
     }
 
@@ -2363,6 +2402,7 @@ impl<E: SqlEngine> CellStore<E> {
             .iter()
             .chain(&crate::flow_run::DDL)
             .chain(&crate::decision_ledger::DDL)
+            .chain(&crate::due_retry::DDL)
         {
             conn.execute_batch(statement)?;
         }
@@ -2822,12 +2862,12 @@ impl<E: SqlEngine> CellStore<E> {
             diff: install.diff.clone(),
             layout: install.installed.layout.clone(),
         };
-        self.install_definitions_from_origin(
+        self.install_definitions_inner(
             Model::from_retained_snapshot(&install.model)?,
             &input,
             Some(install.installed.version.saturating_sub(1)),
             &record.batch.scope,
-            install.retained.as_ref(),
+            (install.retained.as_ref(), &install.riding),
             CommitOrigin::Retained(record),
         )
     }
@@ -2890,6 +2930,33 @@ impl<E: SqlEngine> CellStore<E> {
         )
     }
 
+    /// Install `input`'s kernel set with `candidate_model`, and append every
+    /// `riding` retained revision, in one transaction: the set and its
+    /// retained revisions (a pack's approvals) are published together or not
+    /// at all. Each revision is compare-and-set on its id's current revision.
+    ///
+    /// # Errors
+    ///
+    /// A definitions-version or retained-revision conflict, unsafe live-data
+    /// migration, or a store error; any of them installs nothing.
+    pub fn install_definitions_riding(
+        &mut self,
+        candidate_model: Model,
+        input: &InstalledDefinitionInput,
+        expected_version: Option<u64>,
+        scope: &str,
+        riding: &[crate::retained::RetainedDefinitionChange],
+    ) -> Result<InstalledDefinitionSet, CellError> {
+        self.install_definitions_inner(
+            candidate_model,
+            input,
+            expected_version,
+            scope,
+            (None, riding),
+            CommitOrigin::Current,
+        )
+    }
+
     fn install_definitions_from_origin(
         &mut self,
         candidate_model: Model,
@@ -2897,6 +2964,28 @@ impl<E: SqlEngine> CellStore<E> {
         expected_version: Option<u64>,
         scope: &str,
         retained: Option<&crate::retained::RetainedDefinitionChange>,
+        origin: CommitOrigin<'_>,
+    ) -> Result<InstalledDefinitionSet, CellError> {
+        self.install_definitions_inner(
+            candidate_model,
+            input,
+            expected_version,
+            scope,
+            (retained, &[]),
+            origin,
+        )
+    }
+
+    fn install_definitions_inner(
+        &mut self,
+        candidate_model: Model,
+        input: &InstalledDefinitionInput,
+        expected_version: Option<u64>,
+        scope: &str,
+        (retained, riding): (
+            Option<&crate::retained::RetainedDefinitionChange>,
+            &[crate::retained::RetainedDefinitionChange],
+        ),
         origin: CommitOrigin<'_>,
     ) -> Result<InstalledDefinitionSet, CellError> {
         let batch = CommitBatch {
@@ -2910,6 +2999,7 @@ impl<E: SqlEngine> CellStore<E> {
             input,
             expected_version,
             retained,
+            riding,
         };
         let result = self.commit_guarded_inner(
             &batch,
@@ -2953,12 +3043,21 @@ impl<E: SqlEngine> CellStore<E> {
             input,
             expected_version,
             retained: None,
+            riding: &[],
         };
         let actual_version = active_definition_version(&self.conn)?;
-        Ok(
-            preflight_definition_install(&self.conn, &self.model, &install, actual_version, None)?
-                .installed,
-        )
+        let preflight =
+            preflight_definition_install(&self.conn, &self.model, &install, actual_version, None)?;
+        self.law_checked.set(preflight.migration.law_checked);
+        Ok(preflight.installed)
+    }
+
+    /// HOST-INSTALL-LIVE-1: how many live objects the last definitions check
+    /// or install on this store evaluated under the candidate's governing
+    /// laws (every install checks them; a violation refuses it).
+    #[must_use]
+    pub fn live_law_checked(&self) -> u64 {
+        self.law_checked.get()
     }
 
     #[allow(
@@ -3004,7 +3103,8 @@ impl<E: SqlEngine> CellStore<E> {
                     for statement in SYSTEM_DDL
             .iter()
             .chain(&crate::flow_run::DDL)
-            .chain(&crate::decision_ledger::DDL) {
+            .chain(&crate::decision_ledger::DDL)
+            .chain(&crate::due_retry::DDL) {
                         self.conn.execute_batch(statement)?;
                     }
                     crate::retained::init(&self.conn)?;
@@ -3040,6 +3140,7 @@ impl<E: SqlEngine> CellStore<E> {
                     actual_version,
                     match origin { CommitOrigin::Retained(record) => Some(record), CommitOrigin::Current | CommitOrigin::Provisioning(..) => None },
                 )?;
+                self.law_checked.set(preflight.migration.law_checked);
                 crate::migration::apply_model_migration(
                     &self.conn,
                     &self.model,
@@ -3067,6 +3168,7 @@ impl<E: SqlEngine> CellStore<E> {
                     diff: install.input.diff.clone(),
                     readmission: install.input.readmission.clone(),
                     retained: install.retained.cloned(),
+                    riding: install.riding.to_vec(),
                 };
                 (version, Some(record), Some(event_batch))
             } else {
@@ -3203,7 +3305,7 @@ impl<E: SqlEngine> CellStore<E> {
                         ],
                     )?;
                 }
-                if let Some(change) = &record.retained {
+                for change in record.retained.iter().chain(&record.riding) {
                     crate::retained::insert(
                         &self.conn,
                         &change.definition,

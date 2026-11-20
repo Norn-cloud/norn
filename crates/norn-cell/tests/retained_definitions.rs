@@ -417,3 +417,111 @@ fn provisioning_reopen_adds_the_retained_table_to_an_older_file() {
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].definition.id, "studio.dashboard.old");
 }
+
+/// #1469: a kernel set and the retained revisions riding it commit in one
+/// transaction. One revision that is not the next of its id refuses the
+/// whole install: the set stays the active one and no revision is written.
+/// A good install commits both, and its journal record replays on restore.
+#[tokio::test]
+async fn riding_revisions_publish_with_their_set_or_not_at_all() {
+    let directory = tempfile::tempdir().expect("directory");
+    let (model, canonical) = definitions();
+    let mut store = CellStore::open_in_memory(model.clone()).expect("store");
+    store.bind("scope", SCOPE).expect("bind");
+    store
+        .install_definitions(model.clone(), input(&canonical, 10), Some(0), SCOPE)
+        .expect("kernel definitions");
+    let next = canonical.replace("\"0.1.0\"", "\"0.2.0\"");
+    assert_ne!(next, canonical);
+    let gate = change("lab.gate", 1, RetainedLifecycle::Active, "G", None);
+    let stale = change("lab.other", 2, RetainedLifecycle::Active, "O", Some(1));
+    assert!(matches!(
+        store.install_definitions_riding(
+            model.clone(),
+            &input(&next, 20),
+            Some(1),
+            SCOPE,
+            &[gate.clone(), stale]
+        ),
+        Err(CellError::RetainedDefinitionConflict { .. })
+    ));
+    let active = store
+        .read()
+        .installed_definitions(None)
+        .expect("read")
+        .expect("active");
+    assert_eq!((active.version, &active.canonical_set), (1, &canonical));
+    assert!(
+        store
+            .read()
+            .retained_definition("lab.gate", None)
+            .expect("read")
+            .is_none(),
+        "no revision of a refused install is written"
+    );
+
+    let other = change("lab.other", 1, RetainedLifecycle::Active, "O", None);
+    let installed = store
+        .install_definitions_riding(
+            model.clone(),
+            &input(&next, 30),
+            Some(1),
+            SCOPE,
+            &[gate.clone(), other.clone()],
+        )
+        .expect("set and revisions");
+    assert_eq!((installed.version, &installed.canonical_set), (2, &next));
+    for id in ["lab.gate", "lab.other"] {
+        let record = store
+            .read()
+            .retained_definition(id, None)
+            .expect("read")
+            .expect("installed");
+        assert_eq!(record.definitions_version, 2, "{id}");
+    }
+
+    let records: Vec<_> = (1..=2)
+        .map(|seq| store.export_record(seq).expect("journal").expect("record"))
+        .collect();
+    assert_eq!(
+        records[1]
+            .definition_install
+            .as_ref()
+            .expect("install")
+            .riding,
+        vec![gate, other]
+    );
+    let mut exporter = Exporter::local(&directory.path().join("export")).expect("exporter");
+    for record in &records {
+        exporter.append(record).await.expect("append");
+    }
+    exporter.verify().await.expect("verify");
+    let restored_path = directory.path().join("restored.sqlite");
+    let bindings = BTreeMap::from([
+        ("scope".to_owned(), SCOPE.to_owned()),
+        ("cell_id".to_owned(), records[0].bindings["cell_id"].clone()),
+        (
+            "cell_identity_format".to_owned(),
+            norn_cell::cell_identity::FORMAT.to_owned(),
+        ),
+    ]);
+    CellStore::restore_from(
+        &mut exporter,
+        &restored_path,
+        model.clone(),
+        SCOPE,
+        &bindings,
+        StoreOptions::default(),
+    )
+    .await
+    .expect("restore");
+    let restored = CellStore::open(&restored_path, model, StoreOptions::default()).expect("reopen");
+    assert_eq!(
+        restored
+            .read()
+            .retained_definitions("dashboard", false, None, 10)
+            .expect("restored list")
+            .len(),
+        2
+    );
+}

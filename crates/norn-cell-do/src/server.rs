@@ -711,7 +711,7 @@ fn route<E: SqlEngine>(
     } else if let Some(route) =
         route_of.filter(|route| matches!(route, Route::DefinitionsPlan | Route::DefinitionsApply))
     {
-        cell_definitions(host, actor, route, request)
+        cell_definitions(host, kinds, actor, route, request)
     } else if let Some(route) = definitions_route(path) {
         definitions(host, questions, kinds, actor, route, request)
     } else if path == "/v1/actions" {
@@ -827,6 +827,7 @@ fn provisioned<E: SqlEngine>(
 /// Authorized with the explicit scope before the body is read.
 fn cell_definitions<E: SqlEngine>(
     host: Option<&DevHost<E>>,
+    kinds: &DefinitionKinds,
     actor: Option<&str>,
     route: Route,
     request: &Request<'_>,
@@ -851,6 +852,7 @@ fn cell_definitions<E: SqlEngine>(
             host,
             &scope,
             actor,
+            kinds,
             request.body,
         )?)
     } else {
@@ -858,6 +860,7 @@ fn cell_definitions<E: SqlEngine>(
             host,
             &scope,
             actor,
+            kinds,
             request.body,
             request.now.saturating_mul(1000),
         )?)
