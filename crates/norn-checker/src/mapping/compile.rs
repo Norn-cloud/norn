@@ -3627,7 +3627,12 @@ mod conform_tests {
         }
         // A source field typed `decimal` reads as a number.
         assert_eq!(
-            conform(Some(&Json::String("7800.00".to_owned())), &Type::Number, true).unwrap(),
+            conform(
+                Some(&Json::String("7800.00".to_owned())),
+                &Type::Number,
+                true
+            )
+            .unwrap(),
             number_value("7800.00").unwrap()
         );
         // Text stays text for an integer.
@@ -3637,7 +3642,8 @@ mod conform_tests {
     #[test]
     fn a_refused_value_names_itself_and_the_type_expected() {
         // Text outside the wire grammar names the grammar (MAP-DECIMAL-TEXT-1).
-        let text = conform(Some(&Json::String("1,000.00".to_owned())), &decimal(), true).unwrap_err();
+        let text =
+            conform(Some(&Json::String("1,000.00".to_owned())), &decimal(), true).unwrap_err();
         assert!(text.contains("JSON decimal"), "{text}");
         let refused = conform(Some(&Json::Bool(true)), &decimal(), true).unwrap_err();
         assert_eq!(
@@ -3649,7 +3655,12 @@ mod conform_tests {
             "is required (expected a date (text such as \"2026-11-19\"))"
         );
         assert_eq!(
-            conform(Some(&Json::Bool(true)), &Type::enumeration(["EGP", "USD"]), true).unwrap_err(),
+            conform(
+                Some(&Json::Bool(true)),
+                &Type::enumeration(["EGP", "USD"]),
+                true
+            )
+            .unwrap_err(),
             "value true is not one of EGP, USD"
         );
     }
