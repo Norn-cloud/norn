@@ -10,7 +10,7 @@
 //! per-row decimal holds exactly, and the predicate is in the typed subset
 //! ([`RowPredicate::kind`]). Every other row is residue. A rule outside the
 //! subset makes every row residue. The cell decides residue rows with the
-//! per-row path's own evaluator ([`residue_findings`]), so the held-back set
+//! per-row path's own evaluator ([`CellStore::residue_findings`]), so the held-back set
 //! and the findings are the per-row path's by construction.
 //!
 //! The held-back rule is the per-row one (DATA-QUARANTINE,
