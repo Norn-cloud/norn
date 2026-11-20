@@ -1182,6 +1182,12 @@ fn a_binding_retained_before_the_exact_reader_is_revisable_with_its_stored_paylo
     let (status, revised) = install(ID, Some(1));
     assert_eq!(status, 200, "{revised}");
     assert_eq!(revised["version"], json!(2), "{revised}");
+    // The same manifest with its number spelled otherwise is the same revision.
+    let respelled = stored.replace("333333333.33333329", "3.3333333333333329e8");
+    assert_ne!(respelled, stored);
+    let (status, revised) = install_raw(&cell, ID, Some(2), &respelled);
+    assert_eq!(status, 200, "{revised}");
+    assert_eq!(revised["version"], json!(3), "{revised}");
     // A new install is read exactly: the old derivation is refused.
     let (status, refused) = install("studio.binding.fresh", None);
     assert_eq!(status, 422, "{refused}");
@@ -1192,6 +1198,82 @@ fn a_binding_retained_before_the_exact_reader_is_revisable_with_its_stored_paylo
         )),
         "{refused}"
     );
+    // A digest change retires the legacy anchor: the old payload no longer
+    // revises the binding it replaced.
+    let changed = stored.replace("333333333.33333329", "5");
+    let changed: Value = serde_json::from_str(&changed).unwrap();
+    let exact = digest_of(&changed["inputSchema"]);
+    let mut changed = changed;
+    changed["manifestDigest"] = json!(exact);
+    changed["connector"]["version"] = json!(derived_version(&exact));
+    let (status, revised) = install_binding(&cell, ID, &changed, Some(3));
+    assert_eq!(status, 200, "{revised}");
+    assert_eq!(revised["version"], json!(4), "{revised}");
+    let (status, refused) = install_raw(&cell, ID, Some(4), &stored);
+    assert_eq!(status, 422, "{refused}");
+    assert!(
+        pointers(&refused).contains(&(
+            "definition.binding_digest_mismatch".to_owned(),
+            "/manifestDigest".to_owned()
+        )),
+        "{refused}"
+    );
+}
+
+/// Install a binding payload given as text, so its numbers keep their spelling.
+fn install_raw(cell: &Cell, id: &str, expected: Option<u64>, payload: &str) -> (u16, Value) {
+    let expected = expected.map_or(String::new(), |v| format!(r#","expectedVersion":{v}"#));
+    let body = format!(r#"{{"kind":"binding","id":"{id}"{expected},"payload":{payload}}}"#);
+    let response = call(cell, "POST", "/v1/definitions:install", SCOPE, ADMIN, &body);
+    let document: Value = serde_json::from_str(&response.body).unwrap();
+    (response.status, document)
+}
+
+/// #1526 S1 round 2: a binding installed under the exact reader cannot seed
+/// the legacy fallback. Its manifest's exact digest D is also the legacy
+/// derivation of a different manifest (a schema number one ULP away); that
+/// revision, submitted with D, is a schema change and is refused.
+#[test]
+fn a_fresh_binding_cannot_seed_the_legacy_digest_fallback() {
+    use norn_api::binding_definitions::{derived_version, manifest_digest};
+    const ID: &str = "studio.binding.seeded";
+    let output = json!({ "type": "object" });
+    let digest_of = |schema: &Value| {
+        manifest_digest("executor", "github", "list_issues", schema, &output).unwrap()
+    };
+    // serde_json's default parser reads this number one ULP off.
+    let attack_schema = r#"{"type":"object","properties":{"limit":{"type":"number","minimum":333333333.33333329}}}"#;
+    // The first manifest spells exactly the double the legacy reader lands on.
+    let legacy_value: Value = serde_json::from_str(attack_schema).unwrap();
+    let first_schema = serde_json::to_string(&legacy_value).unwrap();
+    let seeded = digest_of(&norn_api::jcs::read(&first_schema).unwrap());
+    assert_eq!(seeded, digest_of(&legacy_value), "a real legacy collision");
+    let attack_exact = digest_of(&norn_api::jcs::read(attack_schema).unwrap());
+    assert_ne!(attack_exact, seeded, "the two manifests differ exactly");
+    let payload = |schema: &str, digest: &str| {
+        format!(
+            r#"{{"connector":{{"gateway":"executor","origin":"https://executor.example","app":"github","tool":"list_issues","version":"{}"}},"inputSchema":{schema},"outputSchema":{{"type":"object"}},"manifestDigest":"{digest}","label":"Seeded","inputMapping":{{}},"runRole":"member"}}"#,
+            derived_version(digest)
+        )
+    };
+    let cell = cell(DefinitionKinds::default().with_roles(ROLES));
+    let (status, installed) = install_raw(&cell, ID, None, &payload(&first_schema, &seeded));
+    assert_eq!(status, 200, "{installed}");
+    // The other manifest under the same digest and digest-named version.
+    let (status, refused) = install_raw(&cell, ID, Some(1), &payload(attack_schema, &seeded));
+    assert_eq!(status, 422, "{refused}");
+    assert!(
+        pointers(&refused).contains(&(
+            "definition.binding_digest_mismatch".to_owned(),
+            "/manifestDigest".to_owned()
+        )),
+        "{refused}"
+    );
+    // Under its own exact digest it is an ordinary revision.
+    let (status, revised) =
+        install_raw(&cell, ID, Some(1), &payload(attack_schema, &attack_exact));
+    assert_eq!(status, 200, "{revised}");
+    assert_eq!(revised["version"], json!(2), "{revised}");
 }
 
 /// An agent may name only the cell's installed, active bindings, by the

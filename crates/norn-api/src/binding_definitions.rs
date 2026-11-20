@@ -81,19 +81,47 @@ pub fn manifest_digest(
     ))
 }
 
+/// What a binding revision is checked against when it replaces a retained
+/// revision: that revision's stored `manifestDigest`, and the exact digest of
+/// the manifest its stored payload holds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RetainedAnchor {
+    /// The `manifestDigest` the replaced revision carries.
+    pub digest: String,
+    /// The exact (JCS) digest of the replaced revision's stored manifest.
+    pub exact: String,
+}
+
+/// The anchor of a retained binding revision, from its stored payload.
+/// `None` when the payload carries no digest or no manifest to digest.
+#[must_use]
+pub fn retained_anchor(stored: &str) -> Option<RetainedAnchor> {
+    let Ok(Value::Object(payload)) = jcs::read(stored) else {
+        return None;
+    };
+    Some(RetainedAnchor {
+        digest: text(&payload, "manifestDigest")?.to_owned(),
+        exact: payload_digest(&payload)?,
+    })
+}
+
 /// The digest a binding is checked against: the exact `digest`, or, for a
-/// revision whose `submitted` digest is the one `retained` under its id, that
-/// digest when the pre-#1429 derivation of `raw` gives it.
+/// revision of the same manifest as the one it replaces (`exact` digest
+/// equal to the anchor's) whose `submitted` digest is the anchor's, that
+/// digest when the pre-#1429 derivation of `raw` gives it. A binding first
+/// installed under the exact reader has an anchor whose two digests agree,
+/// so it never reaches the fallback.
 fn admitted_digest(
     digest: String,
     submitted: Option<&str>,
-    retained: Option<&str>,
+    anchor: Option<&RetainedAnchor>,
     raw: &str,
 ) -> String {
-    match submitted {
-        Some(submitted)
+    match (submitted, anchor) {
+        (Some(submitted), Some(anchor))
             if submitted != digest
-                && retained == Some(submitted)
+                && anchor.exact == digest
+                && anchor.digest == submitted
                 && legacy_digest(raw).as_deref() == Some(submitted) =>
         {
             submitted.to_owned()
@@ -110,6 +138,12 @@ fn legacy_digest(raw: &str) -> Option<String> {
     let Ok(Value::Object(payload)) = serde_json::from_str::<Value>(raw) else {
         return None;
     };
+    payload_digest(&payload)
+}
+
+/// The digest of the manifest in a binding `payload`, read however its
+/// numbers were read. `None` when it has no connector to digest.
+fn payload_digest(payload: &Map<String, Value>) -> Option<String> {
     let connector = payload.get("connector").and_then(Value::as_object)?;
     manifest_digest(
         text(connector, "gateway")?,
@@ -194,13 +228,18 @@ fn text<'v>(object: &'v Map<String, Value>, key: &str) -> Option<&'v str> {
 
 /// Every finding for a binding payload. `raw` is the submitted payload text,
 /// so numbers in its schemas are read exactly as JCS reads them; `roles` are
-/// the roles the cell declares. `retained_digest` is the `manifestDigest` of
-/// the latest retained revision of this binding's id, if any: a revision
-/// whose manifest carries that same digest may instead match the digest the
-/// check derived before #1429 (`serde_json`'s default float read), so a binding retained then
-/// stays revisable. A new id, or a changed digest, uses the exact reader only.
+/// the roles the cell declares. `anchor` is the [`RetainedAnchor`] of the
+/// retained revision this one replaces, if any: a revision of that same
+/// manifest, carrying that revision's digest, may instead match the digest
+/// the check derived before #1429 (`serde_json`'s default float read), so a
+/// binding retained then stays revisable. A new id, a changed manifest or a
+/// changed digest uses the exact reader only.
 #[must_use]
-pub fn check(raw: &str, roles: &[&str], retained_digest: Option<&str>) -> Vec<RefusalDiagnostic> {
+pub fn check(
+    raw: &str,
+    roles: &[&str],
+    anchor: Option<&RetainedAnchor>,
+) -> Vec<RefusalDiagnostic> {
     let mut findings = Vec::new();
     let Ok(Value::Object(payload)) = jcs::read(raw) else {
         findings.push(error(codes::INVALID_PAYLOAD, "a binding is an object", ""));
@@ -250,7 +289,7 @@ pub fn check(raw: &str, roles: &[&str], retained_digest: Option<&str>) -> Vec<Re
             Err(detail) => findings.push(error(codes::INVALID_PAYLOAD, detail, "/inputSchema")),
             Ok(digest) => {
                 let submitted = text(&payload, "manifestDigest");
-                let digest = admitted_digest(digest, submitted, retained_digest, raw);
+                let digest = admitted_digest(digest, submitted, anchor, raw);
                 if submitted != Some(digest.as_str()) {
                     findings.push(error(
                         codes::DIGEST_MISMATCH,
