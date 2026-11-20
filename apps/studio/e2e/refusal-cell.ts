@@ -4,8 +4,8 @@ import { session } from "./object-cell.ts"
 
 /**
  * A replay of the cell's own documents for one refused correction: the scanned invoice
- * SCAN-INV-1041 and its reads, the actions offered on it, what each role may do with scanned
- * documents, and the cell's refusal of a total that breaks its laws. Every document is what
+ * SCAN-INV-1041 and its reads, its two printed lines and theirs, the actions offered on it, what
+ * each role may do with scanned documents, and the cell's refusal of a total that breaks its laws. Every document is what
  * `crates/norn-cell-do/tests/refusal_detail.rs` (`retained_refusal_documents_are_the_cells_own`)
  * records from a tenant cell for an admin (who holds the refusal-detail grant) and a member (who
  * does not). Each is served with the status the cell answered; nothing here decides anything.
@@ -52,14 +52,18 @@ export async function refusalCell(page: Page, reader: Reader): Promise<RefusalCe
     if (route.request().method() === "GET" && url.pathname.endsWith("/v1/actions")) return route.fulfill(serve(`actions.${reader}.json`))
     return route.fulfill({ status: 404, json: { code: "route.not_found", message: "not found" } })
   })
-  const base = `/v1/objects/${RECORD.objectType}/${RECORD.id}`
+  const notFound = { status: 404, json: { code: "object.not_found", message: "No such readable object." } }
   await page.route("**/api/host/v1/objects/**", (route) => {
     const path = decodeURIComponent(new URL(route.request().url()).pathname.replace(/^.*\/api\/host/, ""))
-    const leaf = path === base ? "object" : path.startsWith(`${base}/`) ? path.slice(base.length + 1) : null
-    if (leaf === null || !["object", "lineage", "links", "history", "findings"].includes(leaf)) {
-      return route.fulfill({ status: 404, json: { code: "object.not_found", message: "No such readable object." } })
+    const record = `/v1/objects/${RECORD.objectType}/${RECORD.id}`
+    if (path === record || path.startsWith(`${record}/`)) {
+      const leaf = path === record ? "object" : path.slice(record.length + 1)
+      return ["object", "lineage", "links", "history", "findings"].includes(leaf) ? route.fulfill(serve(`${leaf}.${reader}.json`)) : route.fulfill(notFound)
     }
-    return route.fulfill(serve(`${leaf}.${reader}.json`))
+    // The printed lines the law sums: their own record and where each value was read from.
+    const line = /^\/v1\/objects\/docs\.DocumentLine\/(SCAN-INV-1041~line-[12])(?:\/(links|lineage))?$/.exec(path)
+    if (line !== null) return route.fulfill(serve(`${line[1]}.${line[2] ?? "object"}.${reader}.json`))
+    return route.fulfill(notFound)
   })
   return { calls }
 }

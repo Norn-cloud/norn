@@ -26,16 +26,13 @@ const retained = (name: string) => (JSON.parse(readFileSync(new URL(`../../../fi
 const principal = (reader: Reader) => retained(`access.${reader}.json`).principal as { subjectId: string }
 const actionTitle = () => ((retained("actions.admin.json").items as { actionId: string; title: string }[]).find(({ actionId }) => actionId === CORRECT))!.title
 
-/** Open the record, open the correction, set the total the law refuses, and send it. */
+/** Open the record, open the correction, set the total the law refuses, and send it (USD, its one currency, is set for it). */
 async function refuse(page: Page, reader: Reader) {
   const cell = await refusalCell(page, reader)
   await page.goto(`/sources/${RECORD.objectType}/${RECORD.id}`)
   await page.getByRole("button", { name: actionTitle() }).click()
   const form = page.getByRole("dialog")
   await form.getByLabel("Corrected total").fill("30.00")
-  const currency = form.getByLabel("Currency")
-  if (await currency.evaluate((node) => node.tagName === "SELECT")) await currency.selectOption("USD")
-  else await currency.fill("USD")
   await form.getByLabel("Reason").fill("typo")
   await form.getByLabel("Evidence").fill(`${RECORD.id}~total`)
   await form.locator('button[type="submit"]').click()
@@ -55,9 +52,8 @@ test("disclosed: the request, each value the law compared with where it came fro
   const check = panel.getByRole("region", { name: "The check" })
   await expect(check.locator('[data-verdict="fails"]')).toHaveText("Fails")
   await expect(check.locator('[data-checked="total"] [data-checked-from="request"]')).toHaveText("This request")
-  const held = check.locator("[data-checked]").filter({ hasNot: page.locator('[data-checked-from="request"]') })
-  await expect(held.first()).toBeVisible()
-  await expect(held.first().locator('[data-source], [data-checked-from="record"]')).toHaveCount(1)
+  // The sum of the printed lines: each line's amount was read from the scans, as its own provenance says.
+  await expect(check.locator('[data-checked="lines.amount"] [data-source="Document scans"]')).toBeVisible()
   // The result: the verified caller as the cell named them, when the answer arrived, and the law's sentence.
   const result = panel.getByRole("region", { name: "The result" })
   await expect(result).toContainText(principal("admin").subjectId)

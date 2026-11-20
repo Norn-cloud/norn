@@ -1,7 +1,7 @@
-import { useQuery } from "@tanstack/react-query"
+import { useQueries, useQuery } from "@tanstack/react-query"
 import { useLocale } from "@/lib/locale"
 import { useView } from "@/lib/view"
-import { catalogOf } from "../lib/catalog.ts"
+import { catalogOf, systemName } from "../lib/catalog.ts"
 import { atScale, factDisplay } from "../lib/objects.ts"
 import { readFindings, readHistory, versionValue } from "../evidence/review.ts"
 import { Hand, ShieldCheck, ShieldX, type LucideIcon } from "lucide-react"
@@ -115,14 +115,45 @@ function RefusalSteps({ variant, request, check, why, at: answered }: { readonly
   )
 }
 
-/** Where a checked value came from: this request, or the system the record's lineage names for it. */
+/**
+ * The link a role reads through: the entity whose link to `objectType` declares `role` as its
+ * inverse (a document's `lines` are the line records that link to it), as the definitions say.
+ */
+function inverseOf(artifacts: readonly Artifact[], objectType: string, role: string): { readonly sourceType: string; readonly link: string } | undefined {
+  for (const artifact of artifacts) {
+    if (artifact.kind !== "entity") continue
+    const type = (artifact.payload as { objectType?: { name?: string; links?: readonly { id: string; inverse?: string; target?: string }[] } } | undefined)?.objectType
+    const link = type?.links?.find((candidate) => candidate.inverse === role && candidate.target === objectType)
+    if (type?.name !== undefined && link !== undefined) return { sourceType: type.name, link: link.id }
+  }
+  return undefined
+}
+
+/** Linked records read for their sources, at most: a refusal's sum rarely spans more. */
+const LINKED = 25
+
+/**
+ * Where a checked value came from: this request; or the system the record's field provenance names
+ * for it, read through a link from each linked record's own provenance (a summed line amount), when
+ * this reader may see sources. Otherwise it is the value the cell holds, and says only that.
+ */
 function CheckedFrom({ path, fromRequest, objectType, id }: { readonly path: string; readonly fromRequest: boolean; readonly objectType: string | undefined; readonly id: string | undefined }) {
+  const catalog = useQuery({ queryKey: ["catalog"], queryFn: transport.catalog })
   const object = useQuery({ queryKey: ["object", objectType, id], queryFn: () => transport.object(objectType!, id!), enabled: objectType !== undefined && id !== undefined && !fromRequest, retry: false })
+  const dot = path.indexOf(".")
+  const through = dot < 0 || objectType === undefined ? undefined : inverseOf(catalog.data?.document ?? [], objectType, path.slice(0, dot))
+  const linked = through === undefined || id === undefined ? [] : (object.data?.links.document.items ?? [])
+    .filter((item) => item.sourceType === through.sourceType && item.link === through.link && item.targetType === objectType && item.target === id)
+    .slice(0, LINKED).map((item) => item.source)
+  const lines = useQueries({ queries: linked.map((source) => ({ queryKey: ["object", through?.sourceType, source], queryFn: () => transport.object(through!.sourceType, source), retry: false })) })
   if (fromRequest) return <Chip tone="gray" data-checked-from="request" title="The value this request sent">This request</Chip>
-  const system = object.data?.source?.document.fieldProvenance[path]?.source.system
-  return system === undefined
-    ? <Chip tone="gray" data-checked-from="record" title="The value the cell holds">On record</Chip>
-    : <SourceChip system={system} title={`The value the record holds, read from ${system}`} />
+  const systems = dot < 0
+    ? [object.data?.source?.document.fieldProvenance[path]?.source.system].filter((system) => system !== undefined)
+    : lines.every((line) => line.data?.source?.document.fieldProvenance[path.slice(dot + 1)] !== undefined) && lines.length > 0
+      ? [...new Set(lines.map((line) => line.data!.source!.document.fieldProvenance[path.slice(dot + 1)]!.source.system))]
+      : []
+  if (systems.length === 0) return <Chip tone="gray" data-checked-from="record" title="The value the cell holds; your role does not see where it came from, or it was written in Norn">On record</Chip>
+  return <>{systems.map((system) => <SourceChip key={system} system={system} title={`${dot < 0 ? "The value the record holds" : `Each of the ${lines.length} linked records`}, read from ${systemName(system)}`} />)}</>
 }
 
 /**

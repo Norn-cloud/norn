@@ -327,11 +327,11 @@ fn retained(name: &str, response: &Response) {
 }
 
 /// The documents Studio's refusal panel replays are the cell's own: the
-/// scanned invoice and its reads for an admin (who reads the refusal's law
-/// and values) and a member (who gets the redacted refusal), the actions each
-/// may call on it, what each declared role may read and call on scanned
-/// documents, each role's refusal of the inconsistent correction, and the
-/// cell's definitions.
+/// scanned invoice, its printed lines and their reads for an admin (who reads
+/// the refusal's law and values) and a member (who gets the redacted
+/// refusal), the actions each may call on it, what each declared role may
+/// read and call on scanned documents, each role's refusal of the
+/// inconsistent correction, and the cell's definitions.
 #[test]
 fn retained_refusal_documents_are_the_cells_own() {
     let directory = tempfile::tempdir().unwrap();
@@ -352,6 +352,17 @@ fn retained_refusal_documents_are_the_cells_own() {
                 &format!("{leaf}.{role}.json"),
                 &cell.read(role, &format!("{record}/{leaf}"), ""),
             );
+        }
+        // The printed lines the law sums, each with where its amount was read from.
+        for line in ["SCAN-INV-1041~line-1", "SCAN-INV-1041~line-2"] {
+            let path = format!("/v1/objects/docs.DocumentLine/{line}");
+            retained(&format!("{line}.object.{role}.json"), &cell.read(role, &path, ""));
+            for leaf in ["links", "lineage"] {
+                retained(
+                    &format!("{line}.{leaf}.{role}.json"),
+                    &cell.read(role, &format!("{path}/{leaf}"), ""),
+                );
+            }
         }
         retained(
             &format!("findings.{role}.json"),
