@@ -789,6 +789,33 @@ impl<E: SqlEngine> DevHost<E> {
         expected_version: Option<u64>,
         check: impl FnOnce(&CellStore<E>) -> Result<(), Refusal>,
     ) -> Result<InstalledDefinitionSet, Refusal> {
+        self.install_definitions_with(candidate_model, input, expected_version, check, &[])
+    }
+
+    /// [`Self::install_definitions`], with every `riding` retained revision
+    /// (a pack's approvals) appended in the same store transaction: the set
+    /// and its approvals are published together or not at all (#1469).
+    /// # Errors
+    /// As [`Self::install_definitions`]; a retained revision that is not the
+    /// next one of its id refuses with `defs.stale`, and installs nothing.
+    pub fn install_definitions_riding(
+        &self,
+        candidate_model: Model,
+        input: InstalledDefinitionInput,
+        expected_version: Option<u64>,
+        riding: &[norn_cell::retained::RetainedDefinitionChange],
+    ) -> Result<InstalledDefinitionSet, Refusal> {
+        self.install_definitions_with(candidate_model, input, expected_version, |_| Ok(()), riding)
+    }
+
+    fn install_definitions_with(
+        &self,
+        candidate_model: Model,
+        input: InstalledDefinitionInput,
+        expected_version: Option<u64>,
+        check: impl FnOnce(&CellStore<E>) -> Result<(), Refusal>,
+        riding: &[norn_cell::retained::RetainedDefinitionChange],
+    ) -> Result<InstalledDefinitionSet, Refusal> {
         let _epoch = self.definition_write()?;
         let mut cell = self.cell()?;
         check(cell.store())?;
@@ -797,13 +824,25 @@ impl<E: SqlEngine> DevHost<E> {
             &input.canonical_set,
             serves_actions(cell.store().model()),
         )?;
-        let installed = cell
-            .install_definitions(candidate_model, input, expected_version)
+        let installed = if riding.is_empty() {
+            cell.install_definitions(candidate_model, input, expected_version)
+        } else {
+            cell.install_definitions_riding(candidate_model, &input, expected_version, riding)
+        };
+        let installed = installed
             .map_err(|error| {
                 // HOST-INSTALL-LIVE-1: every install path refuses live data the
                 // candidate's laws break with the same typed 409.
                 if let Some(refusal) = crate::cell_definitions::live_law_refusal(&error) {
                     return refusal;
+                }
+                if let CellError::RetainedDefinitionConflict { id, expected, actual } = &error {
+                    return Refusal::new(
+                        StatusCode::CONFLICT,
+                        "defs.stale",
+                        "an approval changed since this revision was planned",
+                        format!("{id} was planned at revision {expected:?}, the cell has {actual:?}; re-plan"),
+                    );
                 }
                 if let CellError::DefinitionVersionConflict { expected, actual } = &error {
                     return Refusal::new(

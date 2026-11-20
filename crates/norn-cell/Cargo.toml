@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 description = "shared cell store with native SQLite adapters (ring 1; see AGENTS.md)"
+# #1485 S6: the suites that commit raw are compiled inside the crate
+# (src/suites.rs); the integration tests are listed below.
+autotests = false
 
 [lib]
 path = "src/lib.rs"
@@ -24,12 +27,67 @@ name = "constitution"
 test = true
 
 [[test]]
-name = "analytics_engine"
-required-features = ["duckdb", "native"]
+name = "bench_clauses"
 
 [[test]]
-name = "duckdb_transform"
-required-features = ["duckdb", "native"]
+name = "bench_import"
+
+[[test]]
+name = "bench_mapping"
+
+[[test]]
+name = "bench_rules"
+
+[[test]]
+name = "cell_host"
+
+[[test]]
+name = "commit_path"
+
+[[test]]
+name = "explorer_documents"
+
+[[test]]
+name = "jewelry_pricing"
+
+[[test]]
+name = "label_identity"
+
+[[test]]
+name = "mapping_links"
+
+[[test]]
+name = "model_interfaces"
+
+[[test]]
+name = "parent_rows"
+
+[[test]]
+name = "query_envelope"
+
+[[test]]
+name = "query_lineage_sources"
+
+[[test]]
+name = "rea_inventory"
+
+[[test]]
+name = "read_envelope"
+
+[[test]]
+name = "receipt_consume"
+
+[[test]]
+name = "retained_definitions"
+
+[[test]]
+name = "source_agreement"
+
+[[test]]
+name = "stress_purchase"
+
+[[test]]
+name = "synchronous_action"
 
 [features]
 default = ["native"]

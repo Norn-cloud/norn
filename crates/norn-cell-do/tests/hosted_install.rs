@@ -348,6 +348,200 @@ fn a_pack_is_planned_and_applied_on_a_running_cell() {
 }
 
 /// A reserved artifact or an empty change is refused before admission.
+/// The approval gating the batches pack's action.
+fn record_gate(roles: &[&str]) -> Value {
+    json!({ "kind": "approval", "id": "lab.batch.record_approval", "payload": {
+        "action": RECORD, "decider": { "roles": roles },
+        "question": "Record this batch?", "risk": "high" } })
+}
+
+impl Cell {
+    fn change_with(&mut self, path: &str, approvals: &[Value], expected: Option<u64>) -> Response {
+        let mut body = json!({ "artifacts": batches_pack(), "approvals": approvals });
+        if let Some(version) = expected {
+            body["expectedVersion"] = json!(version);
+        }
+        let auth = user("owner");
+        self.call("POST", path, Some(&auth), &body.to_string())
+    }
+}
+
+/// #1469: a pack's approval installs with its action in one transaction. A
+/// refusal anywhere (an unknown role, a sign-off of other words, a stale
+/// revision) publishes nothing: the action is not live at all. A good apply
+/// makes it live already gated: its first call waits for a decision.
+#[test]
+fn a_new_action_is_never_live_without_its_gate() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("cell.sqlite");
+    let mut cell = provisioned(&path);
+    let base = cell.version();
+
+    let planned = cell.change_with(PLAN_PATH, &[record_gate(&["admin"])], None);
+    assert_eq!(planned.status, 200, "{}", planned.body);
+    let plan = json_of(&planned);
+    let approval = &plan["approvals"][0];
+    assert_eq!(approval["id"], "lab.batch.record_approval", "{plan}");
+    assert!(approval["restatement"].as_str().unwrap().contains(RECORD));
+    let sha = approval["restatementSha256"].as_str().unwrap().to_owned();
+    let signed = |roles: &[&str], sha: &str, expected: Option<u64>| {
+        let mut gate = record_gate(roles);
+        gate["signoff"] = json!({ "restatementSha256": sha });
+        gate["expectedVersion"] = json!(expected);
+        gate
+    };
+    let untouched = |cell: &mut Cell| {
+        assert_eq!(cell.version(), base, "nothing was published");
+        assert_ne!(cell.batches().status, 200, "the action's type is not live");
+        let refused = cell.batch("u1", "100.000", "98.000", "2.000");
+        assert!(
+            refused.status >= 400,
+            "the action is not callable: {}",
+            refused.body
+        );
+    };
+
+    // A role the cell does not declare: refused at plan and at apply.
+    let unknown = cell.change_with(APPLY_PATH, &[signed(&["auditor"], &sha, None)], Some(base));
+    assert_eq!(unknown.status, 422, "{}", unknown.body);
+    untouched(&mut cell);
+    // Signing other words, or no words at all.
+    let other = cell.change_with(
+        APPLY_PATH,
+        &[signed(&["admin"], &"0".repeat(64), None)],
+        Some(base),
+    );
+    assert_eq!(
+        json_of(&other)["code"],
+        "definition.signoff_mismatch",
+        "{}",
+        other.body
+    );
+    untouched(&mut cell);
+    let unsigned = cell.change_with(APPLY_PATH, &[record_gate(&["admin"])], Some(base));
+    assert_eq!(
+        json_of(&unsigned)["code"],
+        "definition.signoff_required",
+        "{}",
+        unsigned.body
+    );
+    untouched(&mut cell);
+    // A revision the approval does not have.
+    let stale = cell.change_with(APPLY_PATH, &[signed(&["admin"], &sha, Some(4))], Some(base));
+    assert_eq!(
+        json_of(&stale)["code"],
+        "definition.version_conflict",
+        "{}",
+        stale.body
+    );
+    untouched(&mut cell);
+
+    let applied = cell.change_with(APPLY_PATH, &[signed(&["admin"], &sha, None)], Some(base));
+    assert_eq!(applied.status, 200, "{}", applied.body);
+    assert_eq!(json_of(&applied)["definitionsVersion"], base + 1);
+    assert_eq!(
+        cell.version(),
+        base + 1,
+        "one version: the set and its gate"
+    );
+    let first = cell.batch("g1", "100.000", "98.000", "2.000");
+    assert_eq!(
+        first.status, 202,
+        "the first call already waits: {}",
+        first.body
+    );
+    assert_eq!(
+        json_of(&cell.batches())["records"].as_array().map(Vec::len),
+        Some(0),
+        "a waiting call commits nothing"
+    );
+    // The same apply again is unchanged, gate included.
+    let again = cell.change_with(
+        APPLY_PATH,
+        &[signed(&["admin"], &sha, Some(1))],
+        Some(base + 1),
+    );
+    assert_eq!(json_of(&again)["outcome"], "unchanged", "{}", again.body);
+}
+
+/// #1469: an apply whose gate cannot install leaves the new action out
+/// entirely, and no call commits it ungated at any point. The tenant serves
+/// one request at a time (`Tenant::handle` takes `&mut self`, as the Durable
+/// Object's input gate does), so the only moments a call can arrive are
+/// between requests; a member's call is made at every one of them, after the
+/// plan, after each refused apply (a stale set with a well-signed gate, the
+/// gate twice, a gate on an action the set lacks) and after the apply that
+/// installs. None commits: before the install the action is not callable,
+/// after it every call waits for a decision.
+#[test]
+fn a_failed_apply_installs_no_ungated_action_and_no_call_commits() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("cell.sqlite");
+    let mut cell = provisioned(&path);
+    let base = cell.version();
+    let mut calls = 0_u32;
+    let mut call_between = |cell: &mut Cell| {
+        calls += 1;
+        let answer = cell.batch(&format!("c{calls}"), "100.000", "98.000", "2.000");
+        assert_ne!(answer.status, 200, "a call committed: {}", answer.body);
+        let recorded = json_of(&cell.batches())["records"]
+            .as_array()
+            .map_or(0, Vec::len);
+        assert_eq!(recorded, 0, "no batch was recorded");
+        answer.status
+    };
+
+    let planned = cell.change_with(PLAN_PATH, &[record_gate(&["admin"])], None);
+    assert_eq!(planned.status, 200, "{}", planned.body);
+    let sha = json_of(&planned)["approvals"][0]["restatementSha256"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let mut gate = record_gate(&["admin"]);
+    gate["signoff"] = json!({ "restatementSha256": sha });
+    gate["expectedVersion"] = Value::Null;
+    assert!(
+        call_between(&mut cell) >= 400,
+        "not callable before the install"
+    );
+
+    // A gate on an action the set does not declare refuses the set with it.
+    let mut stray = gate.clone();
+    stray["id"] = json!("lab.batch.stray_approval");
+    stray["payload"]["action"] = json!("lab.batch.unknown");
+    let refusals: [(Vec<Value>, u64); 3] = [
+        // The gate is admissible and signed, but the set's revision moved.
+        (vec![gate.clone()], base + 1),
+        // The gate twice: the change is refused whole.
+        (vec![gate.clone(), gate.clone()], base),
+        (vec![gate.clone(), stray], base),
+    ];
+    for (approvals, expected) in &refusals {
+        let refused = cell.change_with(APPLY_PATH, approvals, Some(*expected));
+        assert!(
+            (400..500).contains(&refused.status),
+            "refused: {}",
+            refused.body
+        );
+        assert_eq!(
+            cell.version(),
+            base,
+            "nothing was published: {}",
+            refused.body
+        );
+        assert!(
+            call_between(&mut cell) >= 400,
+            "not callable after a refused apply"
+        );
+    }
+
+    let applied = cell.change_with(APPLY_PATH, &[gate], Some(base));
+    assert_eq!(applied.status, 200, "{}", applied.body);
+    for _ in 0..3 {
+        assert_eq!(call_between(&mut cell), 202, "every call waits on the gate");
+    }
+}
+
 #[test]
 fn a_reserved_or_empty_change_is_refused() {
     let directory = tempfile::tempdir().unwrap();
@@ -476,4 +670,186 @@ fn an_agent_plans_and_applies_a_pack_through_mcp() {
         &json!({"action": "lab.batch.erase", "input": {}}),
     );
     assert_eq!(unknown["isError"], true, "{unknown}");
+}
+
+/// #1469 S3 through MCP: the hosted plan and apply tools carry the pack's
+/// approvals and their sign-offs to the same routes as HTTP. A refused
+/// approval publishes nothing; a signed apply makes the action live already
+/// gated, so its first call waits.
+#[test]
+fn an_agent_applies_a_pack_with_its_gate_through_mcp() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut cell = provisioned(&directory.path().join("cell.sqlite"));
+    let base = cell.version();
+    let planned = cell.mcp(
+        "owner",
+        "norn_plan_definitions",
+        &json!({"artifacts": batches_pack(), "approvals": [record_gate(&["admin"])]}),
+    );
+    assert_eq!(planned["isError"], false, "{planned}");
+    let approval = &planned["structuredContent"]["approvals"][0];
+    assert_eq!(approval["id"], "lab.batch.record_approval", "{planned}");
+    assert_eq!(approval["unchanged"], false, "{planned}");
+    let sha = approval["restatementSha256"].as_str().unwrap().to_owned();
+    let signed = |roles: &[&str]| {
+        let mut gate = record_gate(roles);
+        gate["signoff"] = json!({ "restatementSha256": sha });
+        gate
+    };
+
+    let refused = cell.mcp(
+        "owner",
+        "norn_apply_definitions",
+        &json!({"artifacts": batches_pack(), "expectedVersion": base, "approvals": [signed(&["auditor"])]}),
+    );
+    assert_eq!(refused["isError"], true, "{refused}");
+    assert_eq!(cell.version(), base, "nothing was published");
+    assert!(
+        cell.batch("m0", "100.000", "98.000", "2.000").status >= 400,
+        "the action is not live"
+    );
+
+    let applied = cell.mcp(
+        "owner",
+        "norn_apply_definitions",
+        &json!({"artifacts": batches_pack(), "expectedVersion": base, "approvals": [signed(&["admin"])]}),
+    );
+    assert_eq!(applied["isError"], false, "{applied}");
+    assert_eq!(
+        cell.version(),
+        base + 1,
+        "one version: the set and its gate"
+    );
+    let first = cell.batch("m1", "100.000", "98.000", "2.000");
+    assert_eq!(first.status, 202, "the first call waits: {}", first.body);
+}
+
+/// #1469 S3: a plan reports each approval changed or unchanged by its own
+/// payload, signed or not; a gate-only change plans the next version, and
+/// the same gate again plans nothing.
+#[test]
+fn a_plan_reports_each_gate_change() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut cell = provisioned(&directory.path().join("cell.sqlite"));
+    let base = cell.version();
+    let fresh = json_of(&cell.change_with(PLAN_PATH, &[record_gate(&["admin"])], None));
+    assert_eq!(fresh["approvals"][0]["unchanged"], false, "{fresh}");
+    let sha = fresh["approvals"][0]["restatementSha256"].clone();
+    let mut gate = record_gate(&["admin"]);
+    gate["signoff"] = json!({ "restatementSha256": sha });
+    let applied = cell.change_with(APPLY_PATH, &[gate], Some(base));
+    assert_eq!(applied.status, 200, "{}", applied.body);
+    let installed = cell.version();
+
+    let same = json_of(&cell.change_with(PLAN_PATH, &[record_gate(&["admin"])], None));
+    assert_eq!(same["approvals"][0]["unchanged"], true, "{same}");
+    assert_eq!(same["unchanged"], true, "{same}");
+    assert_eq!(same["nextVersion"], installed, "{same}");
+
+    let revised = json_of(&cell.change_with(PLAN_PATH, &[record_gate(&["admin", "member"])], None));
+    assert_eq!(revised["approvals"][0]["unchanged"], false, "{revised}");
+    assert_eq!(revised["approvals"][0]["fromRevision"], 1, "{revised}");
+    assert_eq!(
+        revised["unchanged"], false,
+        "a gate-only change installs: {revised}"
+    );
+    assert_eq!(revised["nextVersion"], installed + 1, "{revised}");
+}
+
+/// #1469 S9: a gate on text `"1"` and one on the number `1` compare
+/// differently, so their restatements differ: a sign-off of one's words is
+/// refused for the other, over HTTP and over MCP, and nothing is published.
+#[test]
+fn a_signoff_pins_the_operand_type() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut cell = provisioned(&directory.path().join("cell.sqlite"));
+    let base = cell.version();
+    let gate = |value: Value| {
+        let mut gate = record_gate(&["admin"]);
+        gate["payload"]["when"] = json!({ "property": "unit", "op": "eq", "value": value });
+        gate
+    };
+    let sha_of = |cell: &mut Cell, value: Value| {
+        let plan = json_of(&cell.change_with(PLAN_PATH, &[gate(value)], None));
+        plan["approvals"][0]["restatementSha256"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{plan}"))
+            .to_owned()
+    };
+    let text = sha_of(&mut cell, json!("1"));
+    let number = sha_of(&mut cell, json!(1));
+    assert_ne!(text, number, "text and a number restate apart");
+    let mut crossed = gate(json!(1));
+    crossed["signoff"] = json!({ "restatementSha256": text });
+
+    let http = cell.change_with(APPLY_PATH, &[crossed.clone()], Some(base));
+    assert_eq!(
+        json_of(&http)["code"],
+        "definition.signoff_mismatch",
+        "{}",
+        http.body
+    );
+    assert_eq!(cell.version(), base, "nothing was published");
+    let mcp = cell.mcp(
+        "owner",
+        "norn_apply_definitions",
+        &json!({"artifacts": batches_pack(), "expectedVersion": base, "approvals": [crossed]}),
+    );
+    assert_eq!(mcp["isError"], true, "{mcp}");
+    assert!(
+        mcp.to_string().contains("definition.signoff_mismatch"),
+        "{mcp}"
+    );
+    assert_eq!(cell.version(), base, "nothing was published");
+}
+
+/// #1469 S2 over HTTP: one gate per action is of the change's final set. A
+/// change that moves gate G off the pack's action while a new G' gates it
+/// plans and applies in one version; both revisions are compare-and-set.
+#[test]
+fn a_change_moves_a_gate_and_replaces_it() {
+    const OTHER: &str = "canon.valuation_policy.set";
+    let directory = tempfile::tempdir().unwrap();
+    let mut cell = provisioned(&directory.path().join("cell.sqlite"));
+    let base = cell.version();
+    let gate = |id: &str, action: &str| {
+        json!({ "kind": "approval", "id": id, "payload": {
+            "action": action, "decider": { "roles": ["admin"] },
+            "question": "Record this batch?", "risk": "high" } })
+    };
+    let sign = |cell: &mut Cell, gates: Vec<Value>, expected: u64| {
+        let plan = json_of(&cell.change_with(PLAN_PATH, &gates, None));
+        let approvals = plan["approvals"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{plan}"));
+        let signed: Vec<Value> = gates
+            .into_iter()
+            .zip(approvals)
+            .map(|(mut gate, planned)| {
+                gate["signoff"] = json!({ "restatementSha256": planned["restatementSha256"] });
+                gate["expectedVersion"] = planned["fromRevision"].clone();
+                gate
+            })
+            .collect();
+        cell.change_with(APPLY_PATH, &signed, Some(expected))
+    };
+    let first = sign(&mut cell, vec![gate("lab.g", RECORD)], base);
+    assert_eq!(first.status, 200, "{}", first.body);
+    let moved = sign(
+        &mut cell,
+        vec![gate("lab.g", OTHER), gate("lab.g2", RECORD)],
+        base + 1,
+    );
+    assert_eq!(moved.status, 200, "{}", moved.body);
+    assert_eq!(
+        cell.version(),
+        base + 2,
+        "the move and its replacement: one version"
+    );
+    let twice = cell.change_with(
+        PLAN_PATH,
+        &[gate("lab.g", RECORD), gate("lab.g2", RECORD)],
+        None,
+    );
+    assert_eq!(twice.status, 422, "two gates on one action: {}", twice.body);
 }

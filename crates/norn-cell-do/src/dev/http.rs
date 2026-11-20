@@ -1,10 +1,18 @@
-//! A bounded HTTP/1.1 transport for the dev host: one request per
-//! connection, a few served at once (DEV-CONCURRENT-1), over the same
-//! dispatch the Durable Object host uses (`norn_cell_do::server`). It carries method, path, query,
-//! the `Authorization` header and a bounded body, nothing else.
-use std::io::{BufRead as _, BufReader, Read as _, Write as _};
+//! A bounded HTTP/1.1 transport for the dev host over the same dispatch the
+//! Durable Object host uses (`norn_cell_do::server`). It carries method, path,
+//! query, the `Authorization` header and a bounded body, nothing else.
+//!
+//! DEV-KEEPALIVE-1 (#1480): a connection stays open for the client's next
+//! request until the client closes it, asks `connection: close` or idles past
+//! [`IDLE`]. Bun's `fetch` reuses a pooled connection even after a
+//! `connection: close` answer, so a host that closed after one answer reset
+//! that client's next request. Each connection gets its own thread, and at
+//! most [`WORKERS`] requests are answered at once (DEV-CONCURRENT-1), so a long
+//! request (a load) never holds the others back.
+use std::io::{BufRead, BufReader, Read as _, Write as _};
 use std::net::{TcpListener, TcpStream};
-use std::sync::{Arc, RwLock};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::time::Duration;
 
 use crate::server::{self, Request, Response};
@@ -19,6 +27,15 @@ use super::policy::{DevMetrics, DevPrincipals};
 const MAX_HEAD_BYTES: usize = 16 * 1024;
 /// Longest accepted body, in bytes; the action route's own bound is lower.
 const MAX_BODY_BYTES: usize = 512 * 1024;
+/// How long a connection waits for a request (the first or the next) before
+/// it closes.
+const IDLE: Duration = Duration::from_secs(10);
+/// Most connections held open at once. Past it a connection is answered once
+/// and closed on the accepting thread, so a flood of idle connections cannot
+/// grow the host's threads without bound.
+const MAX_CONNECTIONS: usize = 32;
+/// Requests the dev host answers at once (DEV-CONCURRENT-1).
+const WORKERS: usize = 4;
 
 /// The serving state shared with the session: `None` until the first
 /// revision is installed.
@@ -47,15 +64,71 @@ pub(crate) fn dev_connections(cell_path: std::path::PathBuf) -> Result<DevConnec
     ))
 }
 
-/// Requests the dev host serves at once (DEV-CONCURRENT-1).
-const WORKERS: usize = 4;
+/// What every connection answers with.
+struct Handler<'a> {
+    serving: &'a Serving,
+    principals: &'a DevPrincipals,
+    questions: &'a DevMetrics,
+    engine: Option<&'a dyn Transport>,
+    connections: &'a DevConnections,
+    /// DEV-CONCURRENT-1: how many requests are being answered, at most
+    /// [`WORKERS`]. Each request runs on its connection's thread from start to
+    /// answer, so its verified caller stays its own
+    /// ([`crate::policy::CallerSlot`]); the cell is shared under its own lock,
+    /// which a load takes one commit at a time (INGEST-YIELD-1).
+    /// Ordering contract: requests on one connection are answered in the
+    /// order they arrive. Across connections, requests are answered
+    /// concurrently, once fully read; the cell orders their steps. A client
+    /// that waits for an answer before sending its next request (every dev
+    /// client) sees its causal order kept.
+    answering: (Mutex<usize>, Condvar),
+}
 
-/// Serve `listener` until the process exits, [`WORKERS`] requests at a time
-/// (DEV-CONCURRENT-1): a long request (a load) never holds the others back.
-/// Each request runs on one worker from start to answer, so its verified
-/// caller stays its own ([`crate::policy::CallerSlot`]), and the cell itself
-/// is shared under its own lock, which a load yields between pages
-/// (INGEST-YIELD-1).
+/// One of the [`WORKERS`] turns to answer a request, given back when dropped.
+struct Turn<'a>(&'a (Mutex<usize>, Condvar));
+
+impl<'a> Turn<'a> {
+    fn take(gate: &'a (Mutex<usize>, Condvar)) -> Self {
+        let (count, freed) = gate;
+        let mut answering = count
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        while *answering >= WORKERS {
+            answering = freed
+                .wait(answering)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+        *answering = answering.saturating_add(1);
+        Self(gate)
+    }
+}
+
+impl Drop for Turn<'_> {
+    fn drop(&mut self) {
+        let (count, freed) = self.0;
+        let mut answering = count
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *answering = answering.saturating_sub(1);
+        freed.notify_one();
+    }
+}
+
+impl Handler<'_> {
+    fn answer(&self, parsed: &Parsed) -> Response {
+        let _turn = Turn::take(&self.answering);
+        dispatch(
+            parsed,
+            self.serving,
+            self.principals,
+            self.questions,
+            self.engine,
+            self.connections,
+        )
+    }
+}
+
+/// Serve `listener` until the process exits.
 pub(crate) fn serve(
     listener: &TcpListener,
     serving: &Serving,
@@ -64,45 +137,79 @@ pub(crate) fn serve(
     engine: Option<&dyn Transport>,
     connections: &DevConnections,
 ) {
-    let (sender, receiver) = std::sync::mpsc::channel::<TcpStream>();
-    let receiver = std::sync::Mutex::new(receiver);
+    let handler = Handler {
+        serving,
+        principals,
+        questions,
+        engine,
+        connections,
+        answering: (Mutex::new(0), Condvar::new()),
+    };
+    let open = AtomicUsize::new(0);
     std::thread::scope(|scope| {
-        for _ in 0..WORKERS {
-            scope.spawn(|| {
-                loop {
-                    // The guard is released before the request is served.
-                    let next = receiver.lock().map(|receiver| receiver.recv());
-                    let Ok(Ok(stream)) = next else {
-                        return;
-                    };
-                    // A broken connection affects only itself.
-                    let _ignored =
-                        connection(stream, serving, principals, questions, engine, connections);
-                }
+        for stream in listener.incoming().flatten() {
+            let (handler, open) = (&handler, &open);
+            let slot = Slot::take(open);
+            // Every connection, even one over the bound, is read on its own
+            // thread, so a silent client never holds up the accept loop. Over
+            // the bound it gets one answer and closes, as before keep-alive;
+            // the per-request deadline bounds how long that thread lives.
+            scope.spawn(move || {
+                // A broken connection, even a panicking one, affects only itself.
+                let _ignored = connection(&stream, handler, slot.within_bound);
+                drop(slot);
             });
         }
-        for stream in listener.incoming().flatten() {
-            if sender.send(stream).is_err() {
-                break;
-            }
-        }
-        drop(sender);
     });
 }
 
-fn connection(
-    mut stream: TcpStream,
-    serving: &Serving,
-    principals: &DevPrincipals,
-    questions: &DevMetrics,
-    engine: Option<&dyn Transport>,
-    connections: &DevConnections,
-) -> std::io::Result<()> {
-    stream.set_read_timeout(Some(Duration::from_secs(10)))?;
-    let response = match read_request(&stream) {
-        Ok(parsed) => dispatch(&parsed, serving, principals, questions, engine, connections),
-        Err(refused) => refusal(&refused),
-    };
+/// One open connection, counted against [`MAX_CONNECTIONS`] until dropped.
+struct Slot<'a> {
+    open: &'a AtomicUsize,
+    within_bound: bool,
+}
+
+impl<'a> Slot<'a> {
+    fn take(open: &'a AtomicUsize) -> Self {
+        let within_bound = open.fetch_add(1, Ordering::SeqCst) < MAX_CONNECTIONS;
+        Self { open, within_bound }
+    }
+}
+
+impl Drop for Slot<'_> {
+    fn drop(&mut self) {
+        self.open.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// Answer `stream`'s requests in order; with `persistent` false, only its first.
+fn connection(stream: &TcpStream, handler: &Handler<'_>, persistent: bool) -> std::io::Result<()> {
+    stream.set_read_timeout(Some(IDLE))?;
+    stream.set_write_timeout(Some(IDLE))?;
+    let mut reader = BufReader::new(stream);
+    for served in 0_usize.. {
+        // Between requests, a closed, failed or idle connection just ends:
+        // an unasked answer would be read as the reply to the next request.
+        if served > 0 {
+            reader.get_ref().set_read_timeout(Some(IDLE))?;
+            if reader.fill_buf().map_or(true, <[u8]>::is_empty) {
+                return Ok(());
+            }
+        }
+        let (response, open) = match read_request(&mut reader) {
+            Ok(parsed) => (handler.answer(&parsed), persistent && parsed.keep_alive),
+            // The request's framing is unknown past a refused head or body.
+            Err(refused) => (refusal(&refused), false),
+        };
+        write_response(stream, &response, open)?;
+        if !open {
+            break;
+        }
+    }
+    Ok(())
+}
+
+fn write_response(mut stream: &TcpStream, response: &Response, open: bool) -> std::io::Result<()> {
     let reason = match response.status {
         200 => "OK",
         201 => "Created",
@@ -118,9 +225,10 @@ fn connection(
     };
     write!(
         stream,
-        "HTTP/1.1 {} {reason}\r\ncontent-type: application/json\r\ncache-control: no-store\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+        "HTTP/1.1 {} {reason}\r\ncontent-type: application/json\r\ncache-control: no-store\r\ncontent-length: {}\r\nconnection: {}\r\n\r\n{}",
         response.status,
         response.body.len(),
+        if open { "keep-alive" } else { "close" },
         response.body
     )?;
     stream.flush()
@@ -132,18 +240,40 @@ struct Parsed {
     query: String,
     authorization: Option<String>,
     body: String,
+    /// The client keeps the connection for another request: HTTP/1.1
+    /// without `connection: close`, or HTTP/1.0 with `connection: keep-alive`.
+    keep_alive: bool,
 }
 
-fn read_request(stream: &TcpStream) -> Result<Parsed, Refusal> {
-    let mut reader = BufReader::new(
-        stream
-            .take(u64::try_from(MAX_HEAD_BYTES.saturating_add(MAX_BODY_BYTES)).unwrap_or(u64::MAX)),
-    );
+/// Arm the read timeout with what is left of `deadline`, so one request
+/// cannot take longer than [`IDLE`] however slowly its bytes trickle in.
+fn arm(reader: &BufReader<&TcpStream>, deadline: std::time::Instant) -> Result<(), Refusal> {
+    let left = deadline.saturating_duration_since(std::time::Instant::now());
+    if left.is_zero() {
+        return Err(Refusal::invalid(
+            "the request was not complete within the host bound",
+        ));
+    }
+    reader
+        .get_ref()
+        .set_read_timeout(Some(left))
+        .map_err(|error| Refusal::invalid(format!("unreadable request: {error}")))
+}
+
+fn read_request(reader: &mut BufReader<&TcpStream>) -> Result<Parsed, Refusal> {
+    let deadline = std::time::Instant::now()
+        .checked_add(IDLE)
+        .ok_or_else(|| Refusal::invalid("the host clock cannot bound this request"))?;
     let mut line = String::new();
     let mut head_bytes = 0_usize;
-    let mut next = |reader: &mut BufReader<_>, line: &mut String| -> Result<(), Refusal> {
+    let mut next = |reader: &mut BufReader<&TcpStream>, line: &mut String| -> Result<(), Refusal> {
+        arm(reader, deadline)?;
         line.clear();
+        // One byte past the bound, so an over-long head is told apart.
+        let left = MAX_HEAD_BYTES.saturating_sub(head_bytes).saturating_add(1);
         let read = reader
+            .by_ref()
+            .take(u64::try_from(left).unwrap_or(u64::MAX))
             .read_line(line)
             .map_err(|error| Refusal::invalid(format!("unreadable request: {error}")))?;
         head_bytes = head_bytes.saturating_add(read);
@@ -154,15 +284,17 @@ fn read_request(stream: &TcpStream) -> Result<Parsed, Refusal> {
         }
         Ok(())
     };
-    next(&mut reader, &mut line)?;
+    next(reader, &mut line)?;
     let mut parts = line.split_whitespace();
     let (Some(method), Some(target)) = (parts.next(), parts.next()) else {
         return Err(Refusal::invalid("the request line is malformed"));
     };
+    let http_1_1 = parts.next() != Some("HTTP/1.0");
+    let (mut asked_close, mut asked_keep_alive) = (false, false);
     let (method, target) = (method.to_owned(), target.to_owned());
-    let (mut length, mut authorization) = (0_usize, None);
+    let (mut length, mut authorization, mut chunked) = (None::<usize>, None, false);
     loop {
-        next(&mut reader, &mut line)?;
+        next(reader, &mut line)?;
         let header = line.trim_end();
         if header.is_empty() {
             break;
@@ -170,14 +302,38 @@ fn read_request(stream: &TcpStream) -> Result<Parsed, Refusal> {
         if let Some((name, value)) = header.split_once(':') {
             let value = value.trim();
             if name.eq_ignore_ascii_case("content-length") {
-                length = value
-                    .parse()
-                    .map_err(|error| Refusal::invalid(format!("content-length: {error}")))?;
+                // A repeated length makes the body boundary ambiguous, and a
+                // wrong boundary would leak bytes into the next request.
+                if length.is_some() {
+                    return Err(Refusal::invalid("content-length is repeated"));
+                }
+                if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+                    return Err(Refusal::invalid("content-length is not a decimal length"));
+                }
+                length = Some(
+                    value
+                        .parse()
+                        .map_err(|error| Refusal::invalid(format!("content-length: {error}")))?,
+                );
             } else if name.eq_ignore_ascii_case("authorization") {
                 authorization = Some(value.to_owned());
+            } else if name.eq_ignore_ascii_case("transfer-encoding") {
+                // Unframed here, as before: the connection ends after it.
+                chunked = true;
+            } else if name.eq_ignore_ascii_case("connection") {
+                for option in value.split(',').map(str::trim) {
+                    if option.eq_ignore_ascii_case("close") {
+                        asked_close = true;
+                    } else if option.eq_ignore_ascii_case("keep-alive") {
+                        asked_keep_alive = true;
+                    }
+                }
             }
         }
     }
+    let length = length.unwrap_or(0);
+    // `close` wins wherever it appears, in one header or across several.
+    let keep_alive = !asked_close && (http_1_1 || asked_keep_alive);
     if length > MAX_BODY_BYTES {
         return Err(Refusal::new(
             http::StatusCode::PAYLOAD_TOO_LARGE,
@@ -187,6 +343,7 @@ fn read_request(stream: &TcpStream) -> Result<Parsed, Refusal> {
         ));
     }
     let mut body = vec![0_u8; length];
+    arm(reader, deadline)?;
     reader.read_exact(&mut body).map_err(|error| {
         Refusal::invalid(format!("the body is shorter than content-length: {error}"))
     })?;
@@ -199,6 +356,7 @@ fn read_request(stream: &TcpStream) -> Result<Parsed, Refusal> {
         method,
         authorization,
         body,
+        keep_alive: keep_alive && !chunked,
     })
 }
 
@@ -305,12 +463,13 @@ fn refusal(refused: &Refusal) -> Response {
     dead_code,
     reason = "the shared fixture module serves the action tests too"
 )]
-mod action_cell;
+pub(in crate::dev) mod action_cell;
 
 #[cfg(test)]
 #[allow(
     clippy::unwrap_used,
     clippy::expect_used,
+    clippy::unwrap_in_result,
     clippy::indexing_slicing,
     reason = "dev-host dispatch scenarios"
 )]
@@ -320,7 +479,7 @@ mod tests {
     //! waits as one open decision, its requester never decides it, and the
     //! local reviewer's approval commits it as the requester.
     use super::*;
-    use crate::dev::policy::{LocalDeveloper, reviewer};
+    use crate::dev::policy::{LocalDeveloper, dev_actions, refresh_actions, reviewer};
     use norn_api::scope::CellScope;
     use serde_json::{Value, json};
 
@@ -346,10 +505,16 @@ mod tests {
             DERIVES_LOSS,
             norn_api::action_admission::prepare_action_model,
         );
+        let actions = dev_actions();
+        let host = DevHost::from_store(store, scope.clone(), |command| command.payload.clone())
+            .unwrap()
+            .with_authorizer(LocalDeveloper::for_actor(
+                DEVELOPER,
+                std::sync::Arc::clone(&actions),
+            ));
+        refresh_actions(&actions, &host).unwrap();
         Dev {
-            host: DevHost::from_store(store, scope.clone(), |command| command.payload.clone())
-                .unwrap()
-                .with_authorizer(LocalDeveloper::for_actor(DEVELOPER)),
+            host,
             principals: DevPrincipals::new(vec![
                 (DEVELOPER_TOKEN.into(), DEVELOPER.into()),
                 (REVIEWER_TOKEN.into(), reviewer(DEVELOPER)),
@@ -525,6 +690,88 @@ mod tests {
         );
     }
 
+    /// The source commit of `approvals` over the active melt set, as norn
+    /// dev runs it on a save.
+    fn sync(
+        dev: &Dev,
+        approvals: &[Value],
+    ) -> Result<crate::dev::definitions::Committed, crate::dev::definitions::Rejected> {
+        let active = dev
+            .host
+            .active_definitions()
+            .ok()
+            .flatten()
+            .expect("active");
+        let (model, input) = super::action_cell::melt_install(
+            DERIVES_LOSS,
+            norn_api::action_admission::prepare_action_model,
+            active.installed_at.saturating_add(1),
+        );
+        crate::dev::definitions::commit(
+            &dev.host,
+            DEVELOPER,
+            &crate::dev::policy::dev_kinds(),
+            approvals,
+            crate::dev::admit::Admitted { model, input },
+            &active,
+            &dev_actions(),
+            1_800_000_000_000,
+        )
+    }
+
+    fn named(id: &str, roles: &[&str]) -> Value {
+        let mut approval = approval(roles);
+        approval["id"] = json!(id);
+        approval
+    }
+
+    /// The ids of the active approvals.
+    fn gates(dev: &Dev) -> Vec<String> {
+        let query = format!("{SCOPE}&kind=approval");
+        let (status, listed) = call(
+            dev,
+            Some(DEVELOPER_TOKEN),
+            ("GET", "/v1/definitions:list", &query),
+            "",
+        );
+        assert_eq!(status, 200, "{listed}");
+        listed["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["id"].as_str().unwrap().to_owned())
+            .collect()
+    }
+
+    #[test]
+    fn a_renamed_approval_keeps_its_action_gated() {
+        let dev = dev();
+        sync(&dev, &[named("ops.old_gate", &["admin"])]).expect("gated");
+        sync(&dev, &[named("ops.new_gate", &["admin"])]).expect("renamed");
+        assert_eq!(gates(&dev), ["ops.new_gate"]);
+        let action = format!("/v1/actions/{MELT_ACTION}");
+        let body = melt_body("melt-7", "12", "10", "dev-1");
+        let (status, parked) = call(&dev, Some(DEVELOPER_TOKEN), ("POST", &action, SCOPE), &body);
+        assert_eq!(status, 202, "the action is still gated: {parked}");
+    }
+
+    #[test]
+    fn a_refused_approval_set_keeps_the_active_gates() {
+        let dev = dev();
+        sync(&dev, &[named("ops.old_gate", &["admin"])]).expect("gated");
+        let refused = sync(&dev, &[named("ops.new_gate", &["auditor"])]).expect_err("refused");
+        let codes: Vec<&Value> = refused
+            .diagnostics
+            .iter()
+            .map(|finding| &finding["code"])
+            .collect();
+        assert!(
+            codes.contains(&&json!("definition.approval_role_unknown")),
+            "{codes:?}"
+        );
+        assert_eq!(gates(&dev), ["ops.old_gate"], "nothing retired");
+    }
+
     #[test]
     fn an_approval_admits_against_the_hosted_roles() {
         let dev = dev();
@@ -669,7 +916,7 @@ mod oauth_tests {
         });
         write!(
             stream,
-            "{method} {target} HTTP/1.1\r\nhost: 127.0.0.1\r\n{auth}content-length: {}\r\n\r\n{body}",
+            "{method} {target} HTTP/1.1\r\nhost: 127.0.0.1\r\n{auth}content-length: {}\r\nconnection: close\r\n\r\n{body}",
             body.len()
         )
         .unwrap();
@@ -695,7 +942,10 @@ mod oauth_tests {
         .unwrap();
         let host = DevHost::from_store(store, scope.clone(), |_| BTreeMap::new())
             .unwrap()
-            .with_authorizer(LocalDeveloper::for_actor(ACTOR));
+            .with_authorizer(LocalDeveloper::for_actor(
+                ACTOR,
+                super::super::policy::dev_actions(),
+            ));
         let bodies = Arc::new(Mutex::new(Vec::new()));
         let token_port = token_endpoint(Arc::clone(&bodies));
         let opens = Arc::new(AtomicUsize::new(0));
@@ -824,5 +1074,197 @@ mod oauth_tests {
         let (status, _) = send(port, "POST", &complete, Some(BEARER), &body);
         assert_eq!(status, 400);
         assert_eq!(opens.load(Ordering::SeqCst), 1);
+    }
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "transport scenarios over a real socket"
+)]
+mod keepalive_tests {
+    //! DEV-KEEPALIVE-1 (#1480) at the real entry point: a client that sends
+    //! its next request on the connection it already has is answered, never
+    //! reset, and `connection: close` still ends the connection.
+    use super::*;
+    use norn_api::scope::CellScope;
+
+    /// A dev host with no admitted revision: every request is answered 409.
+    fn host() -> (u16, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let connections = dev_connections(dir.path().join("cell.sqlite")).unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let scope = CellScope {
+                org_id: "local".into(),
+                environment_id: "dev".into(),
+            };
+            let serving: Serving = Arc::new(RwLock::new(None));
+            let principals = DevPrincipals::new(vec![("t".repeat(32), "local:dev".into())]);
+            let questions = DevMetrics::new([5; 32], scope);
+            serve(
+                &listener,
+                &serving,
+                &principals,
+                &questions,
+                None,
+                &connections,
+            );
+        });
+        (port, dir)
+    }
+
+    /// One answer read off `reader`: its status, `connection` header and body.
+    fn answer(reader: &mut BufReader<TcpStream>) -> (u16, String, String) {
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        let status = line.split_whitespace().nth(1).unwrap().parse().unwrap();
+        let (mut length, mut connection) = (0, String::new());
+        loop {
+            line.clear();
+            reader.read_line(&mut line).unwrap();
+            let Some((name, value)) = line.trim_end().split_once(':') else {
+                break;
+            };
+            if name.eq_ignore_ascii_case("content-length") {
+                length = value.trim().parse().unwrap();
+            } else if name.eq_ignore_ascii_case("connection") {
+                value.trim().clone_into(&mut connection);
+            }
+        }
+        let mut body = vec![0; length];
+        reader.read_exact(&mut body).unwrap();
+        (status, connection, String::from_utf8(body).unwrap())
+    }
+
+    fn request(stream: &mut TcpStream, sku: u32, close: bool) {
+        let body = format!(r#"{{"input":{{"sku":"SKU-{sku}"}},"idempotencyKey":"add-{sku}"}}"#);
+        let connection = if close { "connection: close\r\n" } else { "" };
+        write!(
+            stream,
+            "POST /v1/actions/shop.product.add?orgId=local&environmentId=dev HTTP/1.1\r\nhost: 127.0.0.1\r\n{connection}content-length: {}\r\n\r\n{body}",
+            body.len()
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn the_next_request_on_an_answered_connection_is_answered_not_reset() {
+        let (port, _dir) = host();
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(30)))
+            .unwrap();
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        // Three requests on one connection, as Bun's fetch reuses its pool;
+        // a host that closed after the first answer reset the second.
+        for sku in 0..3 {
+            request(&mut stream, sku, false);
+            let (status, connection, body) = answer(&mut reader);
+            assert_eq!((status, connection.as_str()), (409, "keep-alive"), "{body}");
+            assert!(body.contains("defs.not_provisioned"), "{body}");
+        }
+        // Two pipelined requests, the second asking to close: both are
+        // answered in order, then the connection ends.
+        request(&mut stream, 3, false);
+        request(&mut stream, 4, true);
+        assert_eq!(answer(&mut reader).1, "keep-alive");
+        assert_eq!(answer(&mut reader).1, "close");
+        let mut rest = Vec::new();
+        assert_eq!(reader.read_to_end(&mut rest).unwrap(), 0);
+    }
+
+    #[test]
+    fn an_idle_connection_does_not_hold_up_another_client() {
+        let (port, _dir) = host();
+        // A client that connects and stays silent, as a browser's spare
+        // connection does, gets its own thread: the next client is answered.
+        let _idle = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        request(&mut stream, 0, true);
+        assert_eq!(answer(&mut reader).0, 409);
+    }
+
+    /// Send a raw request head (and body) and read the single answer.
+    fn raw(port: u16, head: &str, body: &str) -> (u16, String, Vec<u8>) {
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(30)))
+            .unwrap();
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        write!(stream, "{head}\r\n\r\n{body}").unwrap();
+        let (status, connection, _) = answer(&mut reader);
+        let mut rest = Vec::new();
+        // A read error here leaves `rest` as read so far; callers assert on it.
+        if let Err(_closed) = reader.read_to_end(&mut rest) {}
+        (status, connection, rest)
+    }
+
+    #[test]
+    fn a_repeated_or_malformed_content_length_is_refused_and_closes() {
+        let (port, _dir) = host();
+        let target =
+            "POST /v1/actions/shop.product.add?orgId=local&environmentId=dev HTTP/1.1\r\nhost: x";
+        // Two lengths make the body boundary ambiguous: refuse and close, so
+        // no leftover byte is ever read as a second request. (No body is sent:
+        // unread bytes at close would make the kernel reset the connection.)
+        let (status, connection, rest) = raw(
+            port,
+            &format!("{target}\r\ncontent-length: 2\r\ncontent-length: 40"),
+            "",
+        );
+        assert_eq!((status, connection.as_str()), (400, "close"));
+        assert!(rest.is_empty(), "nothing after the refusal");
+        for bad in ["+2", "2 2", "0x2", ""] {
+            let (status, connection, _) =
+                raw(port, &format!("{target}\r\ncontent-length: {bad}"), "");
+            assert_eq!((status, connection.as_str()), (400, "close"), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn close_wins_over_keep_alive_in_either_order() {
+        let (port, _dir) = host();
+        let target = "POST /v1/actions/shop.product.add?orgId=local&environmentId=dev HTTP/1.1\r\nhost: x\r\ncontent-length: 2";
+        for connection in [
+            "connection: close, keep-alive",
+            "connection: keep-alive, close",
+            "connection: close\r\nconnection: keep-alive",
+            "connection: keep-alive\r\nconnection: close",
+        ] {
+            let (status, answered, rest) = raw(port, &format!("{target}\r\n{connection}"), "{}");
+            assert_eq!(
+                (status, answered.as_str()),
+                (409, "close"),
+                "{connection:?}"
+            );
+            assert!(rest.is_empty(), "{connection:?}: the connection ends");
+        }
+    }
+
+    #[test]
+    fn a_client_over_the_bound_does_not_stall_the_accept_loop() {
+        let (port, _dir) = host();
+        // Fill every slot, plus one over the bound, with silent clients.
+        let _silent: Vec<_> = (0..=MAX_CONNECTIONS)
+            .map(|_| TcpStream::connect(("127.0.0.1", port)).unwrap())
+            .collect();
+        // A further client is still answered promptly (one answer, then close).
+        let started = std::time::Instant::now();
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(30)))
+            .unwrap();
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        request(&mut stream, 0, false);
+        let (status, connection, _) = answer(&mut reader);
+        assert_eq!((status, connection.as_str()), (409, "close"));
+        assert!(started.elapsed() < IDLE, "answered before any idle timeout");
     }
 }
