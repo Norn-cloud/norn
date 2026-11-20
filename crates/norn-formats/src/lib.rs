@@ -24,6 +24,7 @@ pub mod contract;
 pub mod ntriples;
 /// OWL 2 reader.
 pub mod owl;
+pub mod owl_align;
 mod owl_lower;
 mod owl_model;
 pub mod pack;

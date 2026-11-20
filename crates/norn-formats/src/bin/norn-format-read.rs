@@ -1,5 +1,5 @@
 //! `norn-format-read <manifest.json> --originals <dir> [--emit <file>]`
-//! `norn-format-read <owl manifest.json> --originals <dir> --emit-dir <dir>`
+//! `norn-format-read <owl manifest.json> --originals <dir> --emit-dir <dir> [--align <table>]`
 //!
 //! An `owl` manifest (`registry/standards/imports/*.read.json`) names a
 //! normalised graph: `--originals` is the directory `owl_sources.py fetch`
@@ -24,6 +24,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use norn_formats::owl::{OwlConfig, OwlGraph, OwlNamespace, OwlNormaliser, OwlReader};
+use norn_formats::owl_align::{OwlAlignment, align as align_vocabulary};
 use norn_formats::{Disposition, SchemaImporter};
 use norn_formats::pack::{ProjectionSpec, check_contract, project, render_review_module};
 use norn_formats::xsd::{
@@ -198,7 +199,13 @@ fn outside_repository(target: &Path, manifest_path: &Path) -> Result<(), String>
 }
 
 /// Read an OWL manifest's graph and write its import to `emit_dir`.
-fn run_owl(manifest_path: &Path, text: &str, originals: &Path, emit_dir: &Path) -> Result<(), String> {
+fn run_owl(
+    manifest_path: &Path,
+    text: &str,
+    originals: &Path,
+    emit_dir: &Path,
+    align: Option<&Path>,
+) -> Result<(), String> {
     let manifest: OwlManifest =
         serde_json::from_str(text).map_err(|e| format!("{}: {e}", manifest_path.display()))?;
     if manifest.format != "owl" {
@@ -280,7 +287,7 @@ fn run_owl(manifest_path: &Path, text: &str, originals: &Path, emit_dir: &Path) 
             .map(|value| value["payload"]["interface"][name].as_array().map_or(0, Vec::len))
             .sum()
     };
-    let report = serde_json::json!({
+    let mut report = serde_json::json!({
         "graphSha256": config.graph_sha256,
         "interfaces": artifacts.len(),
         "links": members("links"),
@@ -295,12 +302,40 @@ fn run_owl(manifest_path: &Path, text: &str, originals: &Path, emit_dir: &Path) 
         "deferredByCode": deferred,
         "degradedByCode": degraded,
     });
+    if let Some(table) = align {
+        let table: OwlAlignment = serde_json::from_str(
+            &std::fs::read_to_string(table).map_err(|e| format!("{}: {e}", table.display()))?,
+        )
+        .map_err(|e| format!("{}: {e}", table.display()))?;
+        let vocabulary: Vec<_> = import
+            .layers
+            .iter()
+            .filter(|layer| layer.name == norn_formats::owl::VOCABULARY_LAYER)
+            .flat_map(|layer| layer.artifacts.iter().cloned())
+            .collect();
+        let aligned = align_vocabulary(&vocabulary, &config.admission, &table)?;
+        write("packs.json", serde_json::to_string(&aligned.packs).map_err(|e| e.to_string())?)?;
+        let alignment = serde_json::json!({
+            "summary": aligned.summary(),
+            "findings": aligned.findings,
+        });
+        write(
+            "alignment.json",
+            serde_json::to_string_pretty(&alignment).map_err(|e| e.to_string())?,
+        )?;
+        report["alignment"] = aligned.summary();
+    }
     let text = serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?;
     writeln!(std::io::stdout().lock(), "{text}").map_err(|e| e.to_string())?;
     write("summary.json", text)
 }
 
-fn run(manifest_path: &Path, originals: &Path, emit: Option<&Path>) -> Result<(), String> {
+fn run(
+    manifest_path: &Path,
+    originals: &Path,
+    emit: Option<&Path>,
+    align: Option<&Path>,
+) -> Result<(), String> {
     let text = std::fs::read_to_string(manifest_path)
         .map_err(|e| format!("{}: {e}", manifest_path.display()))?;
     let format = serde_json::from_str::<serde_json::Value>(&text)
@@ -308,7 +343,7 @@ fn run(manifest_path: &Path, originals: &Path, emit: Option<&Path>) -> Result<()
         .and_then(|value| value.get("format").and_then(|f| f.as_str()).map(str::to_owned));
     if format.as_deref() == Some("owl") {
         let emit_dir = emit.ok_or("an owl manifest needs --emit-dir <dir>")?;
-        return run_owl(manifest_path, &text, originals, emit_dir);
+        return run_owl(manifest_path, &text, originals, emit_dir, align);
     }
     let manifest: Manifest =
         serde_json::from_str(&text).map_err(|e| format!("{}: {e}", manifest_path.display()))?;
@@ -372,10 +407,12 @@ fn main() -> ExitCode {
     let mut manifest = None;
     let mut originals = None;
     let mut emit = None;
+    let mut align = None;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--originals" => originals = args.next().map(PathBuf::from),
             "--emit" | "--emit-dir" => emit = args.next().map(PathBuf::from),
+            "--align" => align = args.next().map(PathBuf::from),
             "--check" => {}
             _ if manifest.is_none() => manifest = Some(PathBuf::from(arg)),
             _ => return report(&format!("unexpected argument {arg}"), 2),
@@ -383,11 +420,11 @@ fn main() -> ExitCode {
     }
     let (Some(manifest), Some(originals)) = (manifest, originals) else {
         return report(
-            "usage: norn-format-read <manifest.json> --originals <dir> [--emit <file> | --emit-dir <dir>]",
+            "usage: norn-format-read <manifest.json> --originals <dir> [--emit <file> | --emit-dir <dir> [--align <table.json>]]",
             2,
         );
     };
-    match run(&manifest, &originals, emit.as_deref()) {
+    match run(&manifest, &originals, emit.as_deref(), align.as_deref()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => report(&error, 1),
     }
