@@ -25,7 +25,8 @@ use std::time::Instant;
 
 use norn_cell::analytics::engine::{Engine, Settings};
 use norn_cell::analytics::{
-    FileFormat, FileSource, LandRequest, LoadRequest, SettleRequest, TenantId,
+    FileFormat, FileSource, LandRequest, LoadRequest, SettleRequest, StoreRequest, StoredObject,
+    TenantId,
 };
 use norn_cell::dataset_manifest::{
     DatasetManifest, MANIFEST_VERSION, ManifestCounts, ManifestFile, ManifestSource,
@@ -110,15 +111,22 @@ fn bpi_2019_through_one_manifest() {
         threads,
     })
     .expect("engine");
-    let copy = engine.scratch().join("bpi19.csv");
-    std::fs::copy(&path, &copy).expect("scratch copy");
+    let tenant = TenantId::of_scope("bench");
+    let (_source, mut source_file) = engine.begin_attempt(&tenant, "a1").expect("attempt");
+    std::io::copy(
+        &mut std::fs::File::open(&path).expect("log"),
+        &mut source_file,
+    )
+    .expect("attempt source");
+    drop(source_file);
     let store = cell.store();
     let table = store.analytics_table(TYPE).expect("table");
     let checks = store.dataset_checks(TYPE, &table).expect("checks");
     let lowered = checks.iter().filter(|c| c.predicate.is_some()).count();
+    let binding = BTreeMap::new();
     let request = LandRequest {
         load: LoadRequest {
-            tenant: TenantId::of_scope("bench"),
+            tenant: tenant.clone(),
             table: table.clone(),
             load: "bpi19".into(),
             file: FileSource {
@@ -129,17 +137,20 @@ fn bpi_2019_through_one_manifest() {
             },
             headers: BTreeMap::new(),
         },
-        data_url: String::new(),
-        held_url: String::new(),
+        pins: store
+            .dataset_pins(TYPE, &binding, "bench.dataset.mapping@bench")
+            .expect("pins"),
+        landing: "bpi19".into(),
+        attempt: "a1".into(),
         checks,
         residue_page: 2_000,
     };
     let at = Instant::now();
-    let mut landed = engine.land(&request, &copy).expect("landed");
+    let mut landed = engine.land(&request).expect("landed");
     let land = at.elapsed();
     let (mut residue_rows, mut residue_eval, mut settle_time) = (0u64, 0f64, 0f64);
-    while landed.response.residue_total > 0 {
-        let page = landed.response.residue.clone();
+    while landed.residue_total > 0 {
+        let page = landed.residue.clone();
         residue_rows += page.len() as u64;
         let at = Instant::now();
         let findings = store
@@ -156,16 +167,30 @@ fn bpi_2019_through_one_manifest() {
             .expect("settled");
         settle_time += at.elapsed().as_secs_f64();
     }
-    let response = landed.response;
     let (data, held) = (
-        response.data.clone().expect("data file"),
-        response.held.clone().expect("held file"),
+        landed.data.clone().expect("data file"),
+        landed.held.clone().expect("held file"),
     );
-    let binding = BTreeMap::new();
+    // MANIFEST-CACHE-1: the files are verified and kept by digest.
+    let at = Instant::now();
+    let object = |sha: &str| StoredObject {
+        uri: format!("s3://bench/datasets/{sha}.parquet"),
+        url: String::new(),
+    };
+    let response = engine
+        .store(&StoreRequest {
+            land: request.clone(),
+            landed: landed.clone(),
+            data: object(&data.sha256),
+            held: object(&held.sha256),
+        })
+        .expect("stored");
+    let stored = at.elapsed();
+    let cache = response.stored.clone().expect("cache identity");
     let manifest = DatasetManifest {
         version: MANIFEST_VERSION.into(),
         object_type: TYPE.into(),
-        load: "bpi19".into(),
+        load: cache.clone(),
         source: ManifestSource {
             uri: "s3://bench/uploads/bpi19.csv".into(),
             sha256,
@@ -174,7 +199,7 @@ fn bpi_2019_through_one_manifest() {
         },
         binding: binding.clone(),
         table,
-        pins: store.dataset_pins(TYPE, &binding).expect("pins"),
+        pins: request.pins.clone(),
         data: ManifestFile {
             uri: "s3://bench/datasets/data.parquet".into(),
             sha256: data.sha256.clone(),
@@ -189,7 +214,7 @@ fn bpi_2019_through_one_manifest() {
         },
         counts: ManifestCounts {
             source: response.load.rows + response.load.rejected,
-            admitted: response.load.rows,
+            admitted: data.rows,
             held: response.load.reasons.clone(),
             findings: response.findings.clone(),
             held_by_rules: response.held_by_rules,
@@ -198,10 +223,25 @@ fn bpi_2019_through_one_manifest() {
     };
     let at = Instant::now();
     let (hash, receipt) = cell
-        .commit_dataset_manifest(&manifest)
+        .commit_dataset_manifest(&manifest, None)
         .expect("manifest committed");
     let commit = at.elapsed();
     let total = started.elapsed();
+    // The first read at the committed identity rebuilds the table from the
+    // kept files (a cache miss), after checking their digests.
+    let at = Instant::now();
+    let profiled = engine
+        .profile(&norn_cell::analytics::ProfileRequest {
+            tenant: tenant.clone(),
+            source: norn_cell::analytics::Source::Dataset {
+                table: TYPE.into(),
+                load: cache,
+            },
+            columns: vec!["activity".into()],
+        })
+        .expect("first read");
+    let first_read = at.elapsed();
+    assert_eq!(profiled.rows, data.rows);
     let rows = response.load.rows + response.load.rejected;
 
     // The per-row path on the first rows of the same log, for the same laws.
@@ -218,7 +258,8 @@ fn bpi_2019_through_one_manifest() {
             "engine": {"threads": threads, "memory": memory},
             "seconds": {"hashSource": hashed.as_secs_f64(), "landAndCheck": land.as_secs_f64(),
                 "residuePerRow": residue_eval, "residueSettle": settle_time,
-                "commit": commit.as_secs_f64(), "total": total.as_secs_f64()},
+                "store": stored.as_secs_f64(), "commit": commit.as_secs_f64(),
+                "total": total.as_secs_f64(), "firstReadHydrate": first_read.as_secs_f64()},
             "rowsPerSecond": rows as f64 / total.as_secs_f64(),
             "perRowBaseline": baseline,
         })
