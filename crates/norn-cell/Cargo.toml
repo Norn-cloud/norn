@@ -35,6 +35,10 @@ required-features = ["duckdb", "native"]
 name = "dataset_laws"
 required-features = ["duckdb", "native"]
 
+[[test]]
+name = "bench_manifest"
+required-features = ["duckdb", "native"]
+
 [features]
 default = ["native"]
 native = ["dep:rusqlite", "dep:object_store", "dep:tokio", "dep:tempfile"]
