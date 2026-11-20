@@ -55,7 +55,7 @@ const REFUSAL_CODES = new Set(Object.entries({
     "entitlement.scope_invalid entitlement.target_type_mismatch entitlement.value_invalid " +
     "grant.invalid policy.invalid policy.lint policy.parse schema.invalid schema.parse " +
     "schema.scope_type",
-  bulk: "above_max below_min digest_mismatch missing_column unreadable unsupported_law unwritable",
+  bulk: "above_max below_min digest_mismatch missing_column invalid_finding unreadable unsupported_law unwritable",
   cell:
     "base_mismatch not_provisioned provision_conflict provision_refused reserved_artifact " +
     "scope_conflict sqlite unopenable",
