@@ -188,8 +188,9 @@ pending maintainer review; additions beside OBS-PAGE-1, which is unchanged):
   record's versions keep their order; links resolve in any order
   (OBS-LINK-PENDING-ORDER).
 - **INGEST-BATCH-1:** a record whose bundle the mapping refused joins no page
-  row; it is quarantined before any commit, exactly as one by one, so the rest
-  of its page commits together. A load is bounded by rows and by its
+  row; it is quarantined before any commit, exactly as one by one, and it ends
+  the run, so the records before it and after it each commit together
+  (OBS-PAGE-EQUIV holds: no two records share a commit across a refusal). A load is bounded by rows and by its
   estimated work on the host, not by a bare commit count.
 - **INGEST-YIELD-1:** a host holds the cell one page at a time during a load
   and serves requests already waiting for it between pages, so a read waits

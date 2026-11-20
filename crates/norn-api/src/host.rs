@@ -598,7 +598,7 @@ impl<E: SqlEngine> DevHost<E> {
 /// The most rows one OBS-PAGE-1 page carries; the cell's own bound is higher.
 /// A page is one commit, and the cell is held for it (INGEST-YIELD-1), so a
 /// read during a load waits for at most one page. A page commit costs about
-/// 7 to 9 ms a row on a 4-vCPU host, flat in the page size (the ERPNext
+/// 7 to 9 ms a row on a 4-vCPU host, flat in the page size (the `ERPNext`
 /// mapping, 50 to 1,000 rows a page), so 100 rows keep that wait under a
 /// second at no cost in rows per second.
 pub const PAGE_ROWS: usize = 100;

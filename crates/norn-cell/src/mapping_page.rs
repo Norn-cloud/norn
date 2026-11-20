@@ -9,8 +9,8 @@
 //! write per key per commit then never merges two records' writes, so
 //! versions, events and the CAS chain are the one-by-one ones. A record the
 //! mapping refused (its bundle retains diagnostics) joins no page row: it is
-//! quarantined evidence before any commit, exactly as one by one, so the rest
-//! of its page still lands in one commit. A record the cell refuses at commit
+//! quarantined evidence before any commit, exactly as one by one, and it ends
+//! the run, so the records before it and after it each commit together. A record the cell refuses at commit
 //! stays pending as quarantined evidence, as it does one by one: such a page
 //! is applied record by record, and its row is consumed (applying nothing)
 //! once no member is left pending.
@@ -109,6 +109,7 @@ impl<E: SqlEngine> CellStore<E> {
             let mut runs: Vec<(Vec<String>, BTreeSet<FactKey>, &Observed<RuntimeValue>)> =
                 Vec::new();
             let mut records = Vec::with_capacity(raws.len());
+            let mut split = false;
             for raw in raws {
                 let (id, _new) = self.capture_mapping_bundle(raw, input)?;
                 records.push(id.clone());
@@ -118,9 +119,13 @@ impl<E: SqlEngine> CellStore<E> {
                 }
                 let bundle = self.read().inbox_bundle(&id)?;
                 if !bundle.diagnostics.is_empty() {
-                    // MAP-EXPLAIN-1: a record the mapping refused is quarantined
+                    // INGEST-BATCH-1: a record the mapping refused is quarantined
                     // evidence before any commit, as one by one; it joins no
                     // page, so it never sends its page down the per-record path.
+                    // It still ends the run: records on either side of it never
+                    // share a commit they would not share one by one
+                    // (OBS-PAGE-EQUIV).
+                    split = true;
                     continue;
                 }
                 let keys: BTreeSet<FactKey> = bundle
@@ -129,12 +134,13 @@ impl<E: SqlEngine> CellStore<E> {
                     .map(|r| canonical.canonical(&FactKey::new(r.object_type.as_str(), &r.key)))
                     .collect();
                 match runs.last_mut() {
-                    Some((ids, written, _)) if written.is_disjoint(&keys) => {
+                    Some((ids, written, _)) if !split && written.is_disjoint(&keys) => {
                         ids.push(id);
                         written.extend(keys);
                     }
                     _ => runs.push((vec![id], keys, raw)),
                 }
+                split = false;
             }
             let mut pages = Vec::with_capacity(runs.len());
             for (ids, _, first) in runs {
