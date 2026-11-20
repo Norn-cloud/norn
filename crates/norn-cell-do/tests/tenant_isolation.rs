@@ -1050,7 +1050,13 @@ fn analytics_b() -> Host {
         valid_time: Vec::new(),
     };
     store
-        .commit_dataset_manifest(MAIN_WORLD, "synthetic", 1, &manifest, None)
+        .commit_dataset_manifest(
+            MAIN_WORLD,
+            "synthetic",
+            norn_cell::provision::K1_CLOCK,
+            &manifest,
+            None,
+        )
         .unwrap();
     assert!(!definitions.is_empty(), "the fixture publishes metrics");
     let questions = DemoQuestions::new(plan, scope.clone())
