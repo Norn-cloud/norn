@@ -1842,7 +1842,7 @@ pub struct CellStore<E: SqlEngine = DefaultEngine> {
     /// then [`Self::verified_head`] extends it over later commits only.
     verified: RefCell<LedgerHead>,
     source_disputes: RefCell<crate::mapping_conflict::SourceDisputeIndex>,
-    mapping_plans: RefCell<crate::mapping_bundle::MappingPlanCache>,
+    pub(crate) mapping_plans: RefCell<crate::mapping_bundle::MappingPlanCache>,
     verified_receipts: RefCell<crate::history::VerifiedReceipts>,
     /// Immutable quantity boundary found at open or established by a committed
     /// upgrade. Mutable metadata is checked against it, never used as authority.
@@ -3323,7 +3323,12 @@ impl<E: SqlEngine> CellStore<E> {
             if effective_batch.logical_time < reader.clock_floor()? {
                 return Err(CellError::Quantity(norn_kernel::quantity::QuantityError::ClockRegression).into());
             }
-            let admitted = guard(&reader).map_err(GuardedError::Guard)?;
+            let admitted = {
+                // The guard only reads: a plan it proves holds for every
+                // bundle it checks (INGEST-DERIVE-ONCE-1).
+                let _pinned = crate::mapping_bundle::PinnedPlans::open(&self.mapping_plans);
+                guard(&reader).map_err(GuardedError::Guard)?
+            };
             let consumed_input = export_journal::consumed_input(&reader, effective_batch.consumes.as_ref())?;
             let commit_seq = reader.next_commit_seq()?;
             let commit_model = installation
