@@ -88,7 +88,7 @@ Build into a directory outside the checkout, then smoke it:
 ```sh
 export NORN_CELL_DO_PROJECT="${CARGO_TARGET_DIR:?}/norn-cell-do"
 mkdir -p "$NORN_CELL_DO_PROJECT"
-cp apps/norn-cell-do/{worker.mjs,subscribe.mjs,wake.mjs,telemetry.mjs,otlp.mjs,wrangler.json} "$NORN_CELL_DO_PROJECT/"
+cp apps/norn-cell-do/{worker.mjs,subscribe.mjs,wake.mjs,connect_vars.mjs,telemetry.mjs,otlp.mjs,wrangler.json} "$NORN_CELL_DO_PROJECT/"
 cargo build --locked -p norn-cell-do --features fixtures --target wasm32-unknown-unknown --profile wasm-release
 wasm-bindgen "$CARGO_TARGET_DIR/wasm32-unknown-unknown/wasm-release/norn_cell_do.wasm" \
   --target web --out-name norn_cell_do --out-dir "$NORN_CELL_DO_PROJECT/pkg"
