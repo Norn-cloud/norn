@@ -449,7 +449,7 @@ impl Engine {
     /// exactly for a row is left as that row's residue for the per-row
     /// evaluator ([`Self::settle`]); every other decision stands (LAW-04).
     /// With no residue the attempt's two Parquet files are written
-    /// ([`Self::landing`]).
+    /// (`Self::landing`).
     ///
     /// LAW-01: nothing a reader sees changes. Staging is the attempt's own,
     /// a retry is another attempt, and a dataset is read only at a stored
