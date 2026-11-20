@@ -307,6 +307,32 @@ fn a_load_the_cell_splits_is_charged_per_commit_and_resumes() {
 /// four stay quarantined as evidence and the rest land.
 #[test]
 fn a_load_resumes_after_the_runs_it_refused() {
+    let (reported, quarantined, landed, calls) = load_past_disputes(&[0, 1, 2, 3], 96);
+    assert!(calls > 1, "the first load stopped at its budget");
+    assert_eq!((reported, quarantined, landed), (100, 4, 96));
+}
+
+/// S3 (#1488): the same disputed observation five times over and 87 valid
+/// rows, 92 in all, so a call's budget leaves an odd nine commits: four
+/// refused runs spend eight and the fifth's attempt the ninth. The stop
+/// resumes at that run's own row, not the first row repeating its
+/// observation id, so every continuation makes progress.
+#[test]
+fn a_load_resumes_past_a_repeated_refused_observation() {
+    let (reported, quarantined, landed, calls) = load_past_disputes(&[0; 5], 87);
+    assert!(calls > 1, "the first load stopped at its budget");
+    assert_eq!((reported, quarantined, landed), (92, 5, 87));
+}
+
+/// Load `disputed` (the disputed records' numbers, in batch order, each a
+/// run the cell refuses) then `valid` rows through the hosted route, each
+/// call resuming at the `next` the last answered, in at most nine calls;
+/// the rows reported, quarantined and landed, and the calls.
+#[allow(
+    clippy::arithmetic_side_effects,
+    reason = "bounded test counters, as in a #[test] body"
+)]
+fn load_past_disputes(disputed: &[usize], valid: usize) -> (u64, u64, u64, u32) {
     let export = export();
     let holding = export["snapshot"]
         .as_array()
@@ -322,17 +348,16 @@ fn a_load_resumes_after_the_runs_it_refused() {
         row["record"]["quantity"] = json!(quantity);
         row
     };
-    // The four refused rows key one holding, so each is a run of its own.
-    let mut snapshot: Vec<Value> = (0..4)
-        .map(|k| {
-            row(
-                format!("SYN-disputed-{k}"),
-                "demo/holding/disputed".into(),
-                1,
-            )
-        })
-        .collect();
-    snapshot.extend((0..96).map(|k| {
+    // The refused rows key one holding, so each is a run of its own.
+    let refused = |k: usize, quantity: i64| {
+        row(
+            format!("SYN-disputed-{k}"),
+            "demo/holding/disputed".into(),
+            quantity,
+        )
+    };
+    let mut snapshot: Vec<Value> = disputed.iter().map(|&k| refused(k, 1)).collect();
+    snapshot.extend((0..valid).map(|k| {
         row(
             format!("SYN-valid-{k:02}"),
             format!("demo/holding/valid/{k:02}"),
@@ -349,17 +374,12 @@ fn a_load_resumes_after_the_runs_it_refused() {
     };
     let scope = seed::demo_scope();
     let mut store = seed::provision(NativeEngine::open_in_memory().unwrap(), &scope).unwrap();
-    let disputed = parse(&snapshot[..4]);
-    let conflicting: Vec<Value> = (0..4)
-        .map(|k| {
-            row(
-                format!("SYN-disputed-{k}"),
-                "demo/holding/disputed".into(),
-                9,
-            )
-        })
-        .collect();
-    for ((raw, input), (other, _)) in disputed.iter().zip(parse(&conflicting)) {
+    let mut distinct = disputed.to_vec();
+    distinct.sort_unstable();
+    distinct.dedup();
+    let first: Vec<Value> = distinct.iter().map(|&k| refused(k, 1)).collect();
+    let conflicting: Vec<Value> = distinct.iter().map(|&k| refused(k, 9)).collect();
+    for ((raw, input), (other, _)) in parse(&first).iter().zip(parse(&conflicting)) {
         store.inject_mapping_bundle(raw, input).unwrap();
         store.inject_mapping_bundle(&other, input).unwrap();
     }
@@ -370,7 +390,7 @@ fn a_load_resumes_after_the_runs_it_refused() {
         .with_authorizer(policy);
     let mut connect = connect();
     let mut from = 0_usize;
-    let (mut reported, mut landed, mut quarantined, mut calls) = (0_u64, 0_u64, 0_u64, 0);
+    let (mut reported, mut landed, mut quarantined, mut calls) = (0_u64, 0_u64, 0_u64, 0_u32);
     while from < snapshot.len() {
         let body =
             json!({ "profile": export["profile"], "snapshot": snapshot[from..] }).to_string();
@@ -386,10 +406,7 @@ fn a_load_resumes_after_the_runs_it_refused() {
             None => from = snapshot.len(),
         }
     }
-    assert!(calls > 1, "the first load stopped at its budget");
-    assert_eq!(reported, 100);
-    assert_eq!(quarantined, 4);
-    assert_eq!(landed, 96);
+    (reported, quarantined, landed, calls)
 }
 
 /// S8: a malformed field nearly as large as a dev request is retained once
