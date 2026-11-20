@@ -136,12 +136,34 @@ pub type AsStarter<'a> = &'a dyn Fn(
     &mut dyn FnMut() -> Result<ActionAnswer, Refusal>,
 ) -> Option<Result<ActionAnswer, Refusal>>;
 
+/// The prefix of every step attempt's call key ([`step_call_key`]).
+const STEP_CALL_PREFIX: &str = "step-";
+
+/// How many hex digits of the digest a step attempt's call key keeps.
+const STEP_CALL_DIGITS: usize = 48;
+
 /// The idempotency key of a step attempt's action call: one per attempt,
 /// bounded, so a re-drive replays the same call instead of calling twice.
 fn step_call_key(step_key: &str, attempt: &RuntimeValue) -> Result<String, Refusal> {
     let key = norn_ir::canonical::domain_hash_hex(b"norn.action.step/1\0", &(step_key, attempt))
         .map_err(Refusal::host)?;
-    Ok(format!("step-{}", key.get(..48).unwrap_or(&key)))
+    Ok(format!(
+        "{STEP_CALL_PREFIX}{}",
+        key.get(..STEP_CALL_DIGITS).unwrap_or(&key)
+    ))
+}
+
+/// S5a: whether `key` has the shape of a step attempt's call key: the
+/// host's own identity for a flow step's call, which a direct call never
+/// takes.
+#[must_use]
+pub fn is_step_call_key(key: &str) -> bool {
+    key.strip_prefix(STEP_CALL_PREFIX).is_some_and(|digest| {
+        digest.len() == STEP_CALL_DIGITS
+            && digest
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    })
 }
 
 /// The run whose pending action step makes the call keyed `idempotency_key`,
@@ -156,14 +178,15 @@ pub(crate) fn run_waiting_on<E: SqlEngine>(
     Ok(waiting_attempt(store, idempotency_key)?.map(|attempt| attempt.run_id))
 }
 
-/// S6b: the pending action step attempt that makes the call keyed
+/// The pending action step attempt that makes the call keyed
 /// `idempotency_key`, if one does: its run, and its parked command at that
-/// generation. A call parks with it, so its approval runs it only for that
-/// exact attempt.
+/// generation. Only a call parked before attempts were recorded is placed
+/// this way; a call parks with the attempt its trusted invocation names
+/// (S5a).
 ///
 /// # Errors
 /// A host failure.
-pub(crate) fn waiting_attempt<E: SqlEngine>(
+fn waiting_attempt<E: SqlEngine>(
     store: &norn_cell::CellStore<E>,
     idempotency_key: &str,
 ) -> Result<Option<crate::approvals::StepAttempt>, Refusal> {
@@ -194,6 +217,44 @@ pub(crate) fn waiting_attempt<E: SqlEngine>(
         }
     }
     Ok(None)
+}
+
+/// S5a: whether `attempt` still waits and makes exactly the call keyed
+/// `idempotency_key`: its `norn.action@1` command is parked at its
+/// generation with no result, for its run, and its call key is that key.
+/// Read under the caller's cell hold.
+///
+/// # Errors
+/// A host failure.
+pub(crate) fn attempt_makes<E: SqlEngine>(
+    store: &norn_cell::CellStore<E>,
+    attempt: &crate::approvals::StepAttempt,
+    idempotency_key: &str,
+) -> Result<bool, Refusal> {
+    let Some(pending) = store
+        .read()
+        .pending_command(&attempt.command)
+        .map_err(Refusal::host)?
+    else {
+        return Ok(false);
+    };
+    if pending.command.generation != attempt.generation || pending.result.is_some() {
+        return Ok(false);
+    }
+    let Some(payload) = pending.command.command.get("payload") else {
+        return Ok(false);
+    };
+    let text = |name: &str| payload.get(name).and_then(RuntimeValue::as_str);
+    let (Some(norn_cell::flow_run::ACTION_FUNCTION), Some(run), Some(step), Some(number)) = (
+        text("function"),
+        text("runId"),
+        text("step"),
+        payload.get("attempt"),
+    ) else {
+        return Ok(false);
+    };
+    Ok(run == attempt.run_id
+        && step_call_key(text("idempotencyKey").unwrap_or(step), number)? == idempotency_key)
 }
 
 /// A parked `norn.action@1` step: its delivery coordinates, its step
@@ -474,7 +535,10 @@ fn failure(tag: &str, code: Option<&str>) -> StepOutcome {
 /// runs only under `as_requester`: the requester's own authenticated
 /// request, with its current authority. When there is none, or its try is
 /// a denial of authority (decided anew on every try), the step stays
-/// pending and its approval stays executable.
+/// pending and its approval stays executable. S7: what a try ends with is
+/// reconciled with the step's approval and recorded under one cell hold
+/// (`settle`): an approved call that has its outcome by then (another
+/// request committed it) gives the step that outcome, never this try's.
 ///
 /// # Errors
 /// A host failure; the step stays pending and the next drive retries it, and
@@ -507,10 +571,18 @@ pub fn drive_run<E: SqlEngine>(
             );
             (step, waiting)
         };
+        // S5a: the step attempt this dispatch runs the call for, carried to
+        // the gate by this trusted invocation.
+        let attempt = crate::approvals::StepAttempt {
+            run_id: step.run_id.clone(),
+            command: step.command.0.clone(),
+            generation: step.generation.0,
+        };
         let parsed = norn_cell::flow_run::parse_action_step(&step.input);
-        let outcome = match (step.starter.as_ref(), parsed) {
-            (_, Err(refused)) => failure("Refused", Some(refused.code())),
-            (None, Ok(_)) => failure("Denied", None),
+        // What the try ends with, and whether it is a denial of authority.
+        let (outcome, denied) = match (step.starter.as_ref(), parsed) {
+            (_, Err(refused)) => (failure("Refused", Some(refused.code())), false),
+            (None, Ok(_)) => (failure("Denied", None), true),
             (Some(starter), Ok(action)) => {
                 let scope = crate::actions::ActionQuery {
                     org_id: Some(host.scope().org_id.clone()),
@@ -536,6 +608,7 @@ pub fn drive_run<E: SqlEngine>(
                             query: &scope,
                             actor: Some(&starter.subject),
                             principal: principal.as_ref(),
+                            attempt: Some(&attempt),
                             action_id: &action.action,
                             request: &request,
                             now,
@@ -548,64 +621,60 @@ pub fn drive_run<E: SqlEngine>(
                 match acting(starter, &mut call) {
                     // The requester is not here to run its approved call.
                     None if waiting => return Ok(()),
-                    None => failure("Denied", None),
+                    None => (failure("Denied", None), true),
                     // An approval gates the action: the step waits on its
                     // decision, and the run moves once someone decides.
                     Some(Ok(ActionAnswer::Pending(_))) => return Ok(()),
-                    Some(Ok(ActionAnswer::Receipt(receipt))) => {
-                        output(receipt.object_type, receipt.object_id, receipt.version)?
-                    }
+                    Some(Ok(ActionAnswer::Receipt(receipt))) => (
+                        output(receipt.object_type, receipt.object_id, receipt.version)?,
+                        false,
+                    ),
                     Some(Err(refused)) => match refused.category {
                         crate::refusal::RefusalCategory::Internal => return Err(refused),
-                        // A denial of authority is decided anew on every try:
-                        // the approved call stays executable, its step pending.
-                        // S2: credentials are judged under the dispatch's
-                        // hold; reacquired, a step whose call an approval
-                        // now waits on stays pending for its requester.
                         crate::refusal::RefusalCategory::Permission
-                        | crate::refusal::RefusalCategory::Visibility
-                            if waiting || approval_waiting(host, &step)? =>
-                        {
-                            return Ok(());
+                        | crate::refusal::RefusalCategory::Visibility => {
+                            (failure("Denied", None), true)
                         }
-                        crate::refusal::RefusalCategory::Permission
-                        | crate::refusal::RefusalCategory::Visibility => failure("Denied", None),
                         crate::refusal::RefusalCategory::Precondition
                         | crate::refusal::RefusalCategory::Conflict
                         | crate::refusal::RefusalCategory::Invalid
                         | crate::refusal::RefusalCategory::Limit => {
-                            failure("Refused", Some(&refused.code))
+                            (failure("Refused", Some(&refused.code)), false)
                         }
                     },
                 }
             }
         };
-        deliver(host, &step, outcome, now)?;
+        if !settle(host, &step, outcome, denied, now)? {
+            return Ok(());
+        }
     }
     Ok(())
 }
 
-/// Whether an approval of `step`'s exact call waits, approved and not yet
-/// executed, read under the cell's hold.
-fn approval_waiting<E: SqlEngine>(host: &DevHost<E>, step: &StepCall) -> Result<bool, Refusal> {
-    let _epoch = host.definition_read()?;
-    let cell = host.cell()?;
-    Ok(matches!(
-        step_approval(&cell, step)?,
-        Some((.., StepApproval::Waiting))
-    ))
-}
-
-/// Record `outcome` as the step's result and commit the run's result turn
-/// consuming it. A result recorded meanwhile by another drive is left to it.
-fn deliver<E: SqlEngine>(
+/// S7: record what a try of `step`'s call ended with, reconciled with the
+/// step's approval under one cell hold: an approved call with an outcome by
+/// now (committed, or its refusal recorded, by any request) gives the step
+/// that outcome instead of the try's; a denial of authority (`denied`,
+/// decided anew on every try) leaves the step pending while an approval of
+/// its call stands approved and not executed (S2: credentials are judged
+/// under the dispatch's hold, so a step whose call an approval now waits on
+/// stays pending for its requester). `false` when the step stays pending. A result recorded
+/// meanwhile by another drive is left to it.
+fn settle<E: SqlEngine>(
     host: &DevHost<E>,
     step: &StepCall,
-    outcome: StepOutcome,
+    tried: StepOutcome,
+    denied: bool,
     now: LogicalTime,
-) -> Result<(), Refusal> {
+) -> Result<bool, Refusal> {
     let _epoch = host.definition_read()?;
     let mut cell = host.cell()?;
+    let outcome = match step_approval(&cell, step)? {
+        Some((.., StepApproval::Outcome(recorded))) => recorded,
+        Some((.., StepApproval::Waiting)) if denied => return Ok(false),
+        Some((.., StepApproval::Waiting | StepApproval::Superseded)) | None => tried,
+    };
     deliver_in(
         &mut cell,
         Delivery {
@@ -618,10 +687,11 @@ fn deliver<E: SqlEngine>(
         },
         false,
         now,
-    )
+    )?;
+    Ok(true)
 }
 
-/// [`deliver`] under `cell`; `recorded` when the result is recorded already
+/// Record a step's result and commit its run's result turn under `cell`; `recorded` when the result is recorded already
 /// and only its consumption is due.
 fn deliver_in<E: SqlEngine>(
     cell: &mut ActionCell<E>,
