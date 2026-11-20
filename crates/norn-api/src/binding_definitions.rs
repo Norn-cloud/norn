@@ -81,8 +81,29 @@ pub fn manifest_digest(
     ))
 }
 
+/// The digest a binding is checked against: the exact `digest`, or, for a
+/// revision whose `submitted` digest is the one `retained` under its id, that
+/// digest when the pre-#1429 derivation of `raw` gives it.
+fn admitted_digest(
+    digest: String,
+    submitted: Option<&str>,
+    retained: Option<&str>,
+    raw: &str,
+) -> String {
+    match submitted {
+        Some(submitted)
+            if submitted != digest
+                && retained == Some(submitted)
+                && legacy_digest(raw).as_deref() == Some(submitted) =>
+        {
+            submitted.to_owned()
+        }
+        _ => digest,
+    }
+}
+
 /// The digest the binding check derived before #1429, for retained payloads
-/// only: `raw` read by serde_json's default float parser, which can land a
+/// only: `raw` read by `serde_json`'s default float parser, which can land a
 /// schema number one ULP off the double nearest its text. `None` when `raw`
 /// has no connector to digest.
 fn legacy_digest(raw: &str) -> Option<String> {
@@ -176,7 +197,7 @@ fn text<'v>(object: &'v Map<String, Value>, key: &str) -> Option<&'v str> {
 /// the roles the cell declares. `retained_digest` is the `manifestDigest` of
 /// the latest retained revision of this binding's id, if any: a revision
 /// whose manifest carries that same digest may instead match the digest the
-/// check derived before #1429 ([`legacy_digest`]), so a binding retained then
+/// check derived before #1429 (`serde_json`'s default float read), so a binding retained then
 /// stays revisable. A new id, or a changed digest, uses the exact reader only.
 #[must_use]
 pub fn check(raw: &str, roles: &[&str], retained_digest: Option<&str>) -> Vec<RefusalDiagnostic> {
@@ -229,16 +250,7 @@ pub fn check(raw: &str, roles: &[&str], retained_digest: Option<&str>) -> Vec<Re
             Err(detail) => findings.push(error(codes::INVALID_PAYLOAD, detail, "/inputSchema")),
             Ok(digest) => {
                 let submitted = text(&payload, "manifestDigest");
-                let digest = match submitted {
-                    Some(submitted)
-                        if submitted != digest
-                            && retained_digest == Some(submitted)
-                            && legacy_digest(raw).as_deref() == Some(submitted) =>
-                    {
-                        submitted.to_owned()
-                    }
-                    _ => digest,
-                };
+                let digest = admitted_digest(digest, submitted, retained_digest, raw);
                 if submitted != Some(digest.as_str()) {
                     findings.push(error(
                         codes::DIGEST_MISMATCH,

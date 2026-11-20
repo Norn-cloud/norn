@@ -1167,7 +1167,14 @@ fn a_binding_retained_before_the_exact_reader_is_revisable_with_its_stored_paylo
     let install = |id: &str, expected: Option<u64>| {
         let expected = expected.map_or(String::new(), |v| format!(r#","expectedVersion":{v}"#));
         let body = format!(r#"{{"kind":"binding","id":"{id}"{expected},"payload":{stored}}}"#);
-        let response = call(&cell, "POST", "/v1/definitions:install", SCOPE, ADMIN, &body);
+        let response = call(
+            &cell,
+            "POST",
+            "/v1/definitions:install",
+            SCOPE,
+            ADMIN,
+            &body,
+        );
         let document: Value = serde_json::from_str(&response.body).unwrap();
         (response.status, document)
     };

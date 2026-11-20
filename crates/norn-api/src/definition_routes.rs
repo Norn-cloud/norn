@@ -872,8 +872,7 @@ fn retained_binding_digest<E: SqlEngine>(
     else {
         return Ok(None);
     };
-    let payload: Value =
-        serde_json::from_str(&record.definition.payload).map_err(Refusal::host)?;
+    let payload: Value = serde_json::from_str(&record.definition.payload).map_err(Refusal::host)?;
     Ok(payload
         .get("manifestDigest")
         .and_then(Value::as_str)
