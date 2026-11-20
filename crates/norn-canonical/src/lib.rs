@@ -1650,9 +1650,9 @@ fn write_string(value: &str, output: &mut String) {
     // controls (all ASCII) are escaped, exactly as one character at a time.
     let normalized = nfc_borrowed(value);
     let mut rest: &str = &normalized;
-    while let Some(at) = rest.find(|character: char| {
-        matches!(character, '"' | '\\' | '\u{0}'..='\u{1f}')
-    }) {
+    while let Some(at) =
+        rest.find(|character: char| matches!(character, '"' | '\\' | '\u{0}'..='\u{1f}'))
+    {
         let (plain, tail) = rest.split_at(at);
         output.push_str(plain);
         let mut characters = tail.chars();
@@ -1680,10 +1680,8 @@ fn write_escaped(character: char, output: &mut String) {
                 clippy::let_underscore_must_use,
                 reason = "fmt::Write for String is infallible; its trait signature still returns Result"
             )]
-            let _ = std::fmt::Write::write_fmt(
-                output,
-                format_args!("\\u{:04x}", u32::from(character)),
-            );
+            let _ =
+                std::fmt::Write::write_fmt(output, format_args!("\\u{:04x}", u32::from(character)));
         }
     }
 }
