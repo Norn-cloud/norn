@@ -85,6 +85,9 @@ pub struct SqliteCell<E, C, I, S: SqlEngine = DefaultEngine> {
     now: LogicalTime,
     responder: Responder<C, I>,
     published: Vec<CommitReceipt>,
+    /// S6c: the bookkeeping event the next commit carries, set only for the
+    /// span of [`Self::attributed`].
+    attached: Option<norn_ir::RuntimeValue>,
     events: PhantomData<fn() -> E>,
 }
 
@@ -125,6 +128,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             now,
             responder: Box::new(responder),
             published: Vec::new(),
+            attached: None,
             events: PhantomData,
         })
     }
@@ -154,6 +158,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             now: self.now,
             responder: self.responder,
             published: self.published,
+            attached: self.attached,
             events: PhantomData,
         }
     }
@@ -1370,6 +1375,7 @@ where
             if crate::flow_run::is_run_start(&entry.event)
                 || crate::decision_ledger::is_decision_resolved(&entry.event)
                 || crate::decision_ledger::is_approval_refused(&entry.event)
+                || crate::decision_ledger::is_approval_consumed(&entry.event)
             {
                 continue;
             }
@@ -1682,6 +1688,21 @@ where
         self.commit_with_authorization(commit, None, None, None, &[], &[], &[], &[], Some(event))
     }
 
+    /// S6c: run `act` with `event`, a bookkeeping event, attached to the
+    /// first commit it makes that carries none of its own, so that commit
+    /// and its record are one transaction; detached afterwards on every
+    /// return, whether or not anything committed.
+    pub fn attributed<T>(
+        &mut self,
+        event: norn_ir::RuntimeValue,
+        act: impl FnOnce(&mut Self) -> T,
+    ) -> T {
+        self.attached = Some(event);
+        let answer = act(self);
+        self.attached = None;
+        answer
+    }
+
     /// APPROVAL-RECOVERY-1: commit the refusal an approved action call got,
     /// alone, so the ledger records it and export replay rebuilds it. The
     /// decision must have approved a call with no refusal recorded yet;
@@ -1814,7 +1835,7 @@ where
             }
         }
         let mut batch = self.batch(&commit).map_err(CommitError::Host)?;
-        if let Some(event) = bookkeeping {
+        if let Some(event) = bookkeeping.or_else(|| self.attached.take()) {
             // RUN-LEDGER-1 / DECISION-LEDGER-1: the store records the run start
             // or the decision's resolution in this commit's transaction.
             batch.events.push(event);

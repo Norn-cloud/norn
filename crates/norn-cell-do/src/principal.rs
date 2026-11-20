@@ -510,6 +510,8 @@ pub struct FixturePrincipals {
     slot: Arc<CallerSlot>,
     /// Whether the fixtures belong to this cell's organization.
     member: bool,
+    /// The role table the fixtures report.
+    role_table: &'static str,
     /// How a requester's authority is answered (APPROVAL-LIVE-1).
     lookup: FixtureLookup,
 }
@@ -549,6 +551,7 @@ impl FixturePrincipals {
             slot,
             member: true,
             lookup: FixtureLookup::None,
+            role_table: FIXTURE_ROLES,
         }
     }
 
@@ -556,6 +559,14 @@ impl FixturePrincipals {
     #[must_use]
     pub const fn with_lookup(mut self, lookup: FixtureLookup) -> Self {
         self.lookup = lookup;
+        self
+    }
+
+    /// The fixtures as verified from another role table (a redeployed
+    /// table): the same subjects, another principal.
+    #[must_use]
+    pub const fn with_role_table(mut self, role_table: &'static str) -> Self {
+        self.role_table = role_table;
         self
     }
 
@@ -574,7 +585,7 @@ impl PrincipalResolver for FixturePrincipals {
             .filter(|_| self.member)
             .and_then(|value| value.strip_prefix("Bearer fixture:"))
             .and_then(|name| self.names.iter().find(|(known, _)| *known == name))
-            .map(|(name, roles)| fixture_caller(name, roles));
+            .map(|(name, roles)| fixture_caller(name, roles, self.role_table));
         let subject = caller.as_ref().map(|caller| caller.subject_id.clone());
         self.slot.record(caller);
         subject
@@ -597,17 +608,17 @@ impl PrincipalResolver for FixturePrincipals {
                 .filter(|_| self.member && requester.actor_kind == "user")
                 .find(|(name, _)| *name == requester.subject)
                 .map_or(Authority::Revoked, |(name, roles)| {
-                    Authority::Current(fixture_caller(name, roles))
+                    Authority::Current(fixture_caller(name, roles, self.role_table))
                 }),
         }
     }
 }
 
-fn fixture_caller(name: &str, roles: &[&str]) -> Caller {
+fn fixture_caller(name: &str, roles: &[&str], role_table: &'static str) -> Caller {
     Caller {
         subject_id: name.to_owned(),
         roles: roles.iter().map(|role| (*role).to_owned()).collect(),
         actor_kind: "user",
-        role_table: FIXTURE_ROLES,
+        role_table,
     }
 }

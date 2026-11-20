@@ -247,11 +247,16 @@ an action call without a request: no wake, alarm or cold open dispatches one.
 
 The commit that records an approval of a parked call also records the call
 (`_norn_approved_call`, derived from the decision ledger in the same
-transaction). Where the call stands is derived, never a log line:
-**committed** when its idempotency record holds exactly the approved call (its
-action, requester and input; another call under the same key is
-`action.idempotency_conflict`, never this call's commit), **refused** once a
-refusal is recorded for it, and otherwise **not executed** (approved, not yet
+transaction). The commit that runs an approved call carries one
+`norn.approval.consumed` ledger event naming the approval it consumed, in the
+same transaction, so every commit is attributed to exactly one approval. Where
+the call stands is derived, never a log line: **refused** once a refusal is
+recorded for it (final: no later commit under the same key, under another
+gate revision's approval or not, turns it into committed); **committed** when
+the commit that consumed this approval wrote its idempotency record (a cell's
+approvals recorded before consumption was are matched by their exact record:
+action, requester and input); `action.idempotency_conflict` when another
+commit used the key; and otherwise **not executed** (approved, not yet
 executed). The decide answer carries it as `call: {committed, code?, state}`
 (`state` is `committed`, `refused` or `not_executed`), on a first decide and on
 every replay; the approver's decide with another key answers
@@ -263,12 +268,21 @@ the call (for a flow step, the starter's retry of the run). A request by
 anyone else, the approver's decide and its replay included, cannot establish
 that authority and runs nothing: the call stays `not_executed` for the
 requester's authenticated retry, so a role revoked after the call parked is
-revoked for it. The try runs through the shared dispatch, and only as exactly
+revoked for it. The dispatch takes the request's authenticated principal apart
+from the subject the call runs as, and consumes an approval only when that
+principal is the parked requester (the same subject, actor kind and role
+table), compared under its own hold; any other principal gets the opaque
+action denial and nothing is recorded. A flow drive chooses whose credentials
+try a step's call before it holds the cell, so a try under the starter's
+recorded authority carries no authenticated principal and never consumes an
+approval recorded meanwhile: the step stays pending for its requester. The try runs through the shared dispatch, and only as exactly
 the approved call: its command id (requester, input, idempotency key, action
 digest, gate definition and revision, definitions pin) must be the approved
 one, compared inside the dispatch's epoch and cell hold (APPROVAL-REVISION-1,
-APPROVAL-PIN-1); a flow step's call runs only while that exact step attempt
-waits on it (`approval.attempt_ended` otherwise). A refusal that decides the
+APPROVAL-PIN-1); a flow step's call carries the exact step attempt it was made
+for (its run, its parked command and generation) from the moment it parks,
+and runs only while that attempt waits on it (`approval.attempt_ended`
+otherwise, also when the attempt ended before anyone decided). A refusal that decides the
 call there (anything but a host failure or a denial of authority, which is
 decided again on every try) is recorded in its own commit, under the same
 cell hold, as one `norn.approval.refused` ledger event carrying its status,
@@ -282,10 +296,13 @@ approvals were recorded before approved calls were gains their records from
 its decision rows when it opens, exactly as export replay rebuilds them.
 
 A flow step's approved call is the same call. An approval binds a step only
-when its parked call is exactly the call the step attempt makes (the run, the
-attempt's idempotency key, the action, the input, and the run's starter as
-requester); another call under the same key never delivers its result to the
-step, and of several bound approvals the latest supersedes. A step whose call
+when its parked call is exactly the call the step attempt makes (parked for
+that attempt, under its idempotency key, the action, the input, no definitions
+pin, and the run's starter, its whole recorded identity, as requester);
+another call under the same key never delivers its result to the step, and of
+several bound approvals the one the ledger committed last supersedes. A call
+that commits without rewriting its target reports the target's version as of
+its own commit, on its replay and its recovery alike. A step whose call
 already has an outcome (committed, or refused other than
 `approval.definition_changed`) takes that outcome without the action being
 called again: the run's drive and the host's wake (TIMER-ALARM-1) deliver it

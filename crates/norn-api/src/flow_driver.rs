@@ -153,6 +153,20 @@ pub(crate) fn run_waiting_on<E: SqlEngine>(
     store: &norn_cell::CellStore<E>,
     idempotency_key: &str,
 ) -> Result<Option<String>, Refusal> {
+    Ok(waiting_attempt(store, idempotency_key)?.map(|attempt| attempt.run_id))
+}
+
+/// S6b: the pending action step attempt that makes the call keyed
+/// `idempotency_key`, if one does: its run, and its parked command at that
+/// generation. A call parks with it, so its approval runs it only for that
+/// exact attempt.
+///
+/// # Errors
+/// A host failure.
+pub(crate) fn waiting_attempt<E: SqlEngine>(
+    store: &norn_cell::CellStore<E>,
+    idempotency_key: &str,
+) -> Result<Option<crate::approvals::StepAttempt>, Refusal> {
     if !idempotency_key.starts_with("step-") {
         return Ok(None);
     }
@@ -172,7 +186,11 @@ pub(crate) fn run_waiting_on<E: SqlEngine>(
         if pending.result.is_none()
             && step_call_key(text("idempotencyKey").unwrap_or(step), attempt)? == idempotency_key
         {
-            return Ok(Some(run.to_owned()));
+            return Ok(Some(crate::approvals::StepAttempt {
+                run_id: run.to_owned(),
+                command: pending.command.command_id.clone(),
+                generation: pending.command.generation,
+            }));
         }
     }
     Ok(None)
@@ -325,10 +343,13 @@ enum StepApproval {
 /// The approval bound to `step`'s exact call, if one approved it: its
 /// decision, when it was approved, and where it leaves the step. An
 /// approval binds a step only when its parked call is exactly the call the
-/// step attempt makes: the run, the attempt's idempotency key, the action,
-/// the input and the run's starter as requester. Another call under the
-/// same key never delivers its result to the step. Of several bound
-/// approvals the latest supersedes the earlier ones.
+/// step attempt makes: parked for that exact attempt (its run, its command
+/// and generation), under the attempt's idempotency key, the action, the
+/// input, no definitions pin (a step calls the active catalog), and the
+/// run's starter, its whole recorded identity, as requester (S5a). Another
+/// call under the same key never delivers its result to the step. Of
+/// several bound approvals the one the ledger committed last supersedes the
+/// earlier ones (S5c).
 fn step_approval<E: SqlEngine>(
     cell: &ActionCell<E>,
     step: &StepCall,
@@ -345,26 +366,30 @@ fn step_approval<E: SqlEngine>(
         .read()
         .approved_calls_of_run(MAIN_WORLD, &step.run_id)
         .map_err(Refusal::host)?;
+    let attempt = crate::approvals::StepAttempt {
+        run_id: step.run_id.clone(),
+        command: step.command.0.clone(),
+        generation: step.generation.0,
+    };
     let mut bound: Option<(
-        u64,
         norn_cell::decision_ledger::ApprovedCall,
         crate::approvals::HeldCall,
         CallState,
     )> = None;
+    // In the ledger order of the approving commits: the last exact one binds.
     for row in rows {
         let (held, state) = crate::approvals::approved_state(cell, &row)?;
-        let exact = held.call.idempotency_key == step.call_key
+        let exact = held.call.attempt.as_ref() == Some(&attempt)
+            && held.call.idempotency_key == step.call_key
             && held.call.action == action.action
             && held.call.input == action.input
-            && held.call.requester.subject == starter.subject;
-        let later = bound
-            .as_ref()
-            .is_none_or(|(at, ..)| row.resolved_at_ms >= *at);
-        if exact && later {
-            bound = Some((row.resolved_at_ms, row, held, state));
+            && held.call.definitions_version.is_none()
+            && held.call.requester == *starter;
+        if exact {
+            bound = Some((row, held, state));
         }
     }
-    let Some((_at, row, held, state)) = bound else {
+    let Some((row, held, state)) = bound else {
         return Ok(None);
     };
     let approval = match state {
@@ -500,15 +525,27 @@ pub fn drive_run<E: SqlEngine>(
                     input: RuntimeValue::Object(action.input),
                     idempotency_key: step.call_key.clone(),
                 };
+                // S2: the request's own authenticated principal, read before
+                // any recorded authority stands in for it. Only a try run as
+                // the requester carries it; a try under the starter's
+                // recorded authority never consumes an approval, even one
+                // recorded after this drive read the step.
+                let principal = waiting
+                    .then(|| host.authorizer.verified_principal(&starter.subject))
+                    .flatten();
                 let mut call = || {
-                    crate::actions::call_action(
+                    crate::actions::call_action_bound(
                         host,
-                        &scope,
-                        Some(&starter.subject),
-                        &action.action,
-                        &request,
+                        &crate::actions::ActionCall {
+                            query: &scope,
+                            actor: Some(&starter.subject),
+                            principal: principal.as_ref(),
+                            action_id: &action.action,
+                            request: &request,
+                            now,
+                        },
                         disclosure,
-                        now,
+                        None,
                     )
                 };
                 let acting = if waiting.is_some() {
@@ -547,9 +584,12 @@ pub fn drive_run<E: SqlEngine>(
                         crate::refusal::RefusalCategory::Internal => return Err(refused),
                         // A denial of authority is decided anew on every try:
                         // the approved call stays executable, its step pending.
+                        // S2: credentials are judged under the dispatch's
+                        // hold; reacquired, a step whose call an approval
+                        // now waits on stays pending for its requester.
                         crate::refusal::RefusalCategory::Permission
                         | crate::refusal::RefusalCategory::Visibility
-                            if waiting.is_some() =>
+                            if waiting.is_some() || approval_waiting(host, &step)? =>
                         {
                             return Ok(());
                         }
@@ -568,6 +608,17 @@ pub fn drive_run<E: SqlEngine>(
         deliver(host, &step, outcome, now)?;
     }
     Ok(())
+}
+
+/// Whether an approval of `step`'s exact call waits, approved and not yet
+/// executed, read under the cell's hold.
+fn approval_waiting<E: SqlEngine>(host: &DevHost<E>, step: &StepCall) -> Result<bool, Refusal> {
+    let _epoch = host.definition_read()?;
+    let cell = host.cell()?;
+    Ok(matches!(
+        step_approval(&cell, step)?,
+        Some((.., StepApproval::Waiting))
+    ))
 }
 
 /// Record `outcome` as the step's result and commit the run's result turn

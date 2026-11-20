@@ -35,14 +35,21 @@
 //! APPROVAL-RECOVERY-1: the approval of a parked call is recorded first and
 //! the call commits after it, so a host can stop in between. Nothing ever
 //! runs the call without a request: an approved call that did not commit
-//! stays visibly approved and not executed (`not_executed`), and a request
-//! runs it once, under the requester's current authority, only as exactly
-//! the approved call (its command id: requester, input, idempotency key,
-//! action digest, gate definition and revision, definitions pin). Whether it
-//! committed is its idempotency record, matched to that exact call; a
-//! refusal decided while it ran is recorded on the ledger and is final. A
-//! denial of authority on the requester's own request is not recorded:
-//! authority is decided anew on every try.
+//! stays visibly approved and not executed (`not_executed`), and only the
+//! requester's own retry runs it, once, under the requester's current
+//! authority (no other request can establish it), only as exactly the
+//! approved call (its command id: requester, input, idempotency key, action
+//! digest, gate definition and revision, definitions pin), and only for the
+//! authenticated principal of the request that runs it: the parked
+//! requester's subject, actor kind and role table, compared under the
+//! dispatch's own hold (S2). The commit that runs it names the approval it
+//! consumed, so whether this approval's call committed is that record (S6c);
+//! a refusal decided while it ran is recorded on the ledger and is final,
+//! whatever commits under the same key later. A call a flow step parked
+//! carries that exact step attempt (its run, its parked command and
+//! generation) from the moment it parks, and runs only while that attempt
+//! waits on it (S6b). A denial of authority is not recorded: authority is
+//! decided anew on every try.
 //!
 //! APPROVAL-LIVE-1: the requester's current authority is established by
 //! the requester's own verified credential on its retry, or, for the
@@ -50,10 +57,12 @@
 //! it, looked up by the host from the organization's authority at that
 //! moment (Studio's membership on a hosted cell, the local principal table
 //! on `norn dev`), never taken from the roles recorded when the call parked.
-//! A requester who no longer holds it gets the call refused for good,
+//! While the host looks requesters up, every attempt that can run the call
+//! (the requester's own retry included) runs under that lookup. A requester
+//! who no longer holds the authority gets the call refused for good,
 //! `approval.requester_unauthorized`, recorded like any other final refusal
-//! while the approval stands. A lookup that cannot answer runs nothing: the
-//! call stays `not_executed` (`approval.authority_unavailable`).
+//! while the approval stands. A lookup that cannot answer runs nothing and
+//! records nothing (`approval.authority_unavailable`, retryable).
 
 use std::collections::BTreeMap;
 
@@ -139,6 +148,64 @@ pub(crate) struct ParkedCall {
     /// to (`?version=`), if any. Its approval commits it only while that
     /// version is still active (`defs.stale` otherwise).
     pub(crate) definitions_version: Option<u64>,
+    /// S6b: the flow step attempt waiting on this call when it parked, if
+    /// one was. Its approval runs it only while that attempt waits.
+    pub(crate) attempt: Option<StepAttempt>,
+}
+
+/// S6b: one flow step attempt making an action call: its run and its parked
+/// `norn.action@1` command at that generation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct StepAttempt {
+    pub(crate) run_id: String,
+    pub(crate) command: String,
+    pub(crate) generation: u64,
+}
+
+impl StepAttempt {
+    fn decode(value: &RuntimeValue) -> Option<Self> {
+        let text = |name: &str| {
+            value
+                .get(name)
+                .and_then(RuntimeValue::as_str)
+                .map(str::to_owned)
+        };
+        Some(Self {
+            run_id: text("runId")?,
+            command: text("command")?,
+            generation: norn_ir::runtime::decode(value.get("generation")?).ok()?,
+        })
+    }
+
+    fn encode(&self) -> Result<RuntimeValue, Refusal> {
+        Ok(RuntimeValue::Object(BTreeMap::from([
+            (
+                "runId".to_owned(),
+                RuntimeValue::String(self.run_id.clone()),
+            ),
+            (
+                "command".to_owned(),
+                RuntimeValue::String(self.command.clone()),
+            ),
+            (
+                "generation".to_owned(),
+                norn_ir::runtime::encode(&self.generation).map_err(Refusal::host)?,
+            ),
+        ])))
+    }
+
+    /// Whether this attempt still waits: its command is parked at its
+    /// generation with no result recorded.
+    pub(crate) fn waiting<E: SqlEngine>(
+        &self,
+        store: &norn_cell::CellStore<E>,
+    ) -> Result<bool, Refusal> {
+        Ok(store
+            .read()
+            .pending_command(&self.command)
+            .map_err(Refusal::host)?
+            .is_some_and(|row| row.command.generation == self.generation && row.result.is_none()))
+    }
 }
 
 /// A parked call as its decision carries it: the approval that held it and
@@ -177,6 +244,10 @@ pub(crate) fn held_call(approval: &RuntimeValue) -> Option<HeldCall> {
             definitions_version: match approval.get("definitionsVersion") {
                 None => None,
                 Some(pin) => Some(norn_ir::runtime::decode(pin).ok()?),
+            },
+            attempt: match approval.get("attempt") {
+                None => None,
+                Some(attempt) => Some(StepAttempt::decode(attempt)?),
             },
         },
     })
@@ -404,9 +475,9 @@ pub(crate) fn refuse_unauthorized<E: SqlEngine>(
 }
 
 /// S6b: whether the approved call of `decision_id` may still run: a direct
-/// call always may; a flow step's call only while that exact step attempt
-/// (its run, its attempt's idempotency key) is pending, or once it
-/// committed (its replay).
+/// call always may; a flow step's call only while the exact step attempt it
+/// parked for (recorded when it parked) waits on it, or once it committed
+/// (its replay).
 ///
 /// # Errors
 /// A host failure.
@@ -421,6 +492,15 @@ pub(crate) fn attempt_live<E: SqlEngine>(
     else {
         return Ok(true);
     };
+    let (held, state) = approved_state(cell, &row)?;
+    // A committed call replays, live or not.
+    if matches!(state, CallState::Committed(_)) {
+        return Ok(true);
+    }
+    if let Some(attempt) = &held.call.attempt {
+        return attempt.waiting(cell.store());
+    }
+    // Parked before attempts were recorded: the run its approval names.
     if reader
         .flow_run(MAIN_WORLD, &row.run_id)
         .map_err(Refusal::host)?
@@ -428,15 +508,41 @@ pub(crate) fn attempt_live<E: SqlEngine>(
     {
         return Ok(true);
     }
-    let (held, state) = approved_state(cell, &row)?;
-    // A committed call replays, live or not.
-    if matches!(state, CallState::Committed(_)) {
-        return Ok(true);
-    }
     Ok(
         crate::flow_driver::run_waiting_on(cell.store(), &held.call.idempotency_key)?.as_deref()
             == Some(row.run_id.as_str()),
     )
+}
+
+/// S2: whether `principal`, the authenticated principal of the request
+/// running a call, is the parked call's requester: the same subject, actor
+/// kind and role table. Its roles are the ones verified now.
+pub(crate) fn is_requester(principal: Option<&RunStarter>, requester: &RunStarter) -> bool {
+    principal.is_some_and(|principal| {
+        principal.subject == requester.subject
+            && principal.actor_kind == requester.actor_kind
+            && principal.role_table == requester.role_table
+    })
+}
+
+/// S2: the approval `decision_id` is consumed only by its parked
+/// requester's own authenticated request; any other principal is denied,
+/// and nothing is recorded.
+///
+/// # Errors
+/// The opaque action denial; a host failure.
+pub(crate) fn require_requester<E: SqlEngine>(
+    cell: &ActionCell<E>,
+    decision_id: &str,
+    principal: Option<&RunStarter>,
+) -> Result<(), Refusal> {
+    let (held, _state) = approved_call(cell, decision_id)?
+        .ok_or_else(|| Refusal::host("an approved call lost its record"))?;
+    if is_requester(principal, &held.call.requester) {
+        Ok(())
+    } else {
+        Err(crate::actions::action_denied())
+    }
 }
 
 fn rejected() -> Refusal {
@@ -561,6 +667,9 @@ fn park<E: SqlEngine>(
             norn_ir::runtime::encode(&pin).map_err(Refusal::host)?,
         );
     }
+    if let Some(attempt) = &parked_call.attempt {
+        approval.insert("attempt".to_owned(), attempt.encode()?);
+    }
     let payload: RuntimeObject = BTreeMap::from([
         ("kind".to_owned(), text("perform")),
         (
@@ -651,33 +760,40 @@ pub(crate) fn approved_state<E: SqlEngine>(
                 .and_then(held_call)
         })
         .ok_or_else(|| Refusal::host("an approved call's parked command is missing"))?;
+    // S6c: a recorded refusal is final: no later commit under the same key
+    // (another gate revision's approval of the same call) makes it committed.
+    if let Some(refused) = &row.refused {
+        return Ok((held, CallState::Refused(refused.code.clone())));
+    }
     let key = FactKey::new(
         ACTION_CALL_TYPE,
         format!("{}/{}", held.call.action, held.call.idempotency_key),
     );
     let recorded = CellHost::load(cell, &key).map_err(Refusal::host)?;
-    let state = match recorded.values.as_ref() {
-        // A recorded refusal is final, and no exact commit can follow it.
-        None => match &row.refused {
-            Some(refused) => CallState::Refused(refused.code.clone()),
-            None => CallState::NotExecuted,
-        },
-        Some(values) => match ActionCallRecord::from_values(values) {
-            // Exactly the approved call: its action, its requester, its
-            // input. Another call under the same key is a conflict, never
-            // this call's commit.
-            Some(record)
-                if record.action_id == held.call.action
-                    && record.actor == held.call.requester.subject
-                    && record.input == held.call.input =>
-            {
-                CallState::Committed(Box::new(record))
-            }
-            _conflict => CallState::Refused(row.refused.as_ref().map_or_else(
-                || "action.idempotency_conflict".to_owned(),
-                |refused| refused.code.clone(),
-            )),
-        },
+    // Exactly the approved call: its action, its requester, its input.
+    let exact = recorded.values.as_ref().map(|values| {
+        ActionCallRecord::from_values(values).filter(|record| {
+            record.action_id == held.call.action
+                && record.actor == held.call.requester.subject
+                && record.input == held.call.input
+        })
+    });
+    let state = match (row.consumed_seq, exact) {
+        // S6c: the commit that consumed this approval wrote the record.
+        (Some(_seq), Some(Some(record))) => CallState::Committed(Box::new(record)),
+        (Some(_seq), _missing) => {
+            return Err(Refusal::host(
+                "an approved call's consuming commit lost its record",
+            ));
+        }
+        (None, None) => CallState::NotExecuted,
+        // Backfilled: its commits name no approval, so the exact record is
+        // its commit.
+        (None, Some(Some(record))) if row.legacy => CallState::Committed(Box::new(record)),
+        // Another commit used the key (another call, or the same call under
+        // another approval): never this approval's commit, and it can never
+        // run.
+        (None, Some(_other)) => CallState::Refused("action.idempotency_conflict".to_owned()),
     };
     Ok((held, state))
 }
