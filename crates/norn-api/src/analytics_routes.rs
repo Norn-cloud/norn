@@ -1203,7 +1203,10 @@ const RESIDUE_PAGE: u32 = 2_000;
 /// typed and checked by. An answer continues this landing only if it names
 /// that identity; the attempt is then the one the answer ran as, and its
 /// pins are carried to the commit unchanged.
-#[allow(clippy::too_many_lines, reason = "one landing, step by step: begin, land, settle, store")]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one landing, step by step: begin, land, settle, store"
+)]
 fn land_upload<E: SqlEngine>(
     host: &DevHost<E>,
     object_type: &str,
