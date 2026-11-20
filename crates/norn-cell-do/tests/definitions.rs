@@ -1094,7 +1094,7 @@ fn bindings_are_admitted_against_their_recomputed_digest_and_declared_roles() {
 }
 
 /// #1526 S1: a binding installed before #1429, whose digest the old check
-/// derived with serde_json's default float parser, stays revisable with its
+/// derived with `serde_json`'s default float parser, stays revisable with its
 /// stored payload; a new id with that digest is refused by the exact reader.
 #[test]
 fn a_binding_retained_before_the_exact_reader_is_revisable_with_its_stored_payload() {
