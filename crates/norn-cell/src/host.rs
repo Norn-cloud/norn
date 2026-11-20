@@ -1369,6 +1369,7 @@ where
             // hash-chained ledger but is not an `E` to decode.
             if crate::flow_run::is_run_start(&entry.event)
                 || crate::decision_ledger::is_decision_resolved(&entry.event)
+                || crate::decision_ledger::is_approval_refused(&entry.event)
             {
                 continue;
             }
@@ -1679,6 +1680,31 @@ where
     ) -> Result<CommitReceipt, CommitError<CellError>> {
         let event = resolved.event().map_err(CommitError::Host)?;
         self.commit_with_authorization(commit, None, None, None, &[], &[], &[], &[], Some(event))
+    }
+
+    /// APPROVAL-RECOVERY-1: commit the refusal an approved action call got,
+    /// alone, so the ledger records it and export replay rebuilds it. The
+    /// decision must have approved a call with no refusal recorded yet;
+    /// otherwise the store refuses (`approval.*`) and nothing commits.
+    ///
+    /// # Errors
+    /// A [`CommitError`]; nothing was applied.
+    pub fn commit_approval_refusal(
+        &mut self,
+        refused: &crate::decision_ledger::ApprovalRefused,
+    ) -> Result<CommitReceipt, CommitError<CellError>> {
+        let event = refused.event().map_err(CommitError::Host)?;
+        self.commit_with_authorization(
+            CellCommit::empty(),
+            None,
+            None,
+            None,
+            &[],
+            &[],
+            &[],
+            &[],
+            Some(event),
+        )
     }
 
     pub(crate) fn commit_observed_evidence(

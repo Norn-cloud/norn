@@ -91,6 +91,8 @@ libc = "0.2.189"
 # norn-cell's test-only fault-injecting Durable Object engine.
 norn-cell = { path = "../norn-cell", default-features = false, features = ["native", "fault-injection"] }
 tempfile = "3.27.0"
+# Drives the export and restore of a cell in the approval recovery tests.
+tokio = { version = "1.53.1", features = ["rt"] }
 # Signs host tokens in the native correspondence tests.
 ed25519-dalek = { version = "2.2.0", default-features = false, features = ["std"] }
 

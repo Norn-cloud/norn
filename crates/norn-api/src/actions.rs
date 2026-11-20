@@ -227,30 +227,18 @@ pub(crate) struct ActionCall<'a> {
     pub(crate) now: LogicalTime,
 }
 
-/// APPROVAL-REVISION-1: what an approval was given for.
-pub(crate) enum Approved<'a> {
-    /// A call approved now: the action's effective definition digest and the
-    /// gate (its definition and revision) the call parked behind.
-    Held {
-        action_digest: &'a str,
-        gate_definition: &'a str,
-        gate_revision: u64,
-    },
-    /// A replayed approval: the call must park, under the active gate and
-    /// the action as defined now, as exactly the approved command.
-    Parked(&'a str),
-}
-
-/// [`call_action`], for an approved call when `approved` is given: inside
-/// the same definitions epoch and cell hold as the dispatch, before anything
-/// parks or writes, the action's current digest and the active gate must be
-/// exactly what was approved, else the call is refused
-/// `approval.definition_changed` and nothing is written.
+/// [`call_action`], for an approved call when `approved` (the approved
+/// parked command's id) is given: inside the same definitions epoch and cell
+/// hold as the dispatch, before anything writes, the call must park as
+/// exactly that command under the gate and the action as defined now, else
+/// it is refused `approval.definition_changed` and nothing is written
+/// (APPROVAL-REVISION-1). A refusal that decides an approved call is
+/// recorded as final (APPROVAL-RECOVERY-1).
 pub(crate) fn call_action_bound<E: SqlEngine>(
     host: &DevHost<E>,
     invocation: &ActionCall<'_>,
     disclosure: &dyn QuestionRuntime<E>,
-    approved: Option<&Approved<'_>>,
+    approved: Option<&str>,
 ) -> Result<ActionAnswer, Refusal> {
     let ActionCall {
         query,
@@ -295,12 +283,22 @@ pub(crate) fn call_action_bound<E: SqlEngine>(
         .find(|(_, action)| action.action_id == action_id)
         .ok_or_else(action_denied)?;
     if query.version.is_some_and(|pin| pin != installed.version) {
-        return Err(Refusal::new(
+        let stale = Refusal::new(
             StatusCode::CONFLICT,
             "defs.stale",
             "the definitions changed; refresh the action catalog",
             "the call pins a definitions version that is no longer active",
-        ));
+        );
+        // APPROVAL-PIN-1: an approved call pinned to another catalog never
+        // runs under its approval.
+        return Err(match approved {
+            Some(command) => crate::approvals::refuse(
+                &mut cell,
+                &crate::decisions::decision_id(command, 1)?,
+                stale,
+            )?,
+            None => stale,
+        });
     }
     let model = cell.store().model().clone();
     let catalog = TypeCatalog::new(model.object_types())
@@ -343,13 +341,21 @@ pub(crate) fn call_action_bound<E: SqlEngine>(
     )? {
         Gated::Pending(pending) => return Ok(ActionAnswer::Pending(pending)),
         Gated::Replayed(outcome) => *outcome,
-        Gated::Commit => norn_kernel::commit_action(
+        Gated::Commit(approval) => match norn_kernel::commit_action(
             &mut *cell,
             &catalog,
             &kernel_call,
             &KernelAuthorizer(host.authorizer.as_ref()),
-        )
-        .map_err(|error| kernel_refusal(host, actor, action_id, &error))?,
+        ) {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                let refusal = kernel_refusal(host, actor, action_id, &error);
+                return Err(match approval {
+                    Some(decision) => crate::approvals::refuse(&mut cell, &decision, refusal)?,
+                    None => refusal,
+                });
+            }
+        },
     };
     let store = cell.store();
     let raw_hash = world_values(host, disclosure, store, actor);
@@ -394,8 +400,9 @@ fn kernel_refusal<E: SqlEngine>(
 
 /// What an approval gate (APPROVAL-1) does with a call.
 enum Gated {
-    /// No gate, or a decider approved exactly this call: commit it.
-    Commit,
+    /// No gate, or a decider approved exactly this call: commit it, under
+    /// the approving decision when one approved it.
+    Commit(Option<String>),
     /// An identical earlier call committed: its replay.
     Replayed(Box<ActionOutcome>),
     /// It parked, or waits on the decision it parked as.
@@ -406,53 +413,65 @@ enum Gated {
 /// pipeline decides the call for its caller against a host that stops at the
 /// commit point. A call that reaches it parks, unless a decider already
 /// approved exactly this call; a refusal is the ungated one, and parks
-/// nothing.
+/// nothing. APPROVAL-RECOVERY-1: an approved call whose refusal is recorded
+/// gets that refusal and is never decided again; a refusal that decides it
+/// now is recorded, under this same cell hold.
 fn through_gate<E: SqlEngine>(
     host: &DevHost<E>,
     cell: &mut crate::host::ActionCell<E>,
     catalog: &TypeCatalog<'_>,
     kernel_call: &norn_kernel::ActionCall<'_>,
     action_digest: String,
-    approved: Option<&Approved<'_>>,
+    approved: Option<&str>,
     definitions_version: Option<u64>,
 ) -> Result<Gated, Refusal> {
     let action_id = kernel_call.action.action_id.as_str();
     let gate = crate::approvals::gate(cell, action_id)?;
-    // APPROVAL-REVISION-1: an approved call is fenced here, under the epoch
-    // and the cell the dispatch holds, before anything parks or writes.
-    let covered = match approved {
-        None => true,
-        Some(Approved::Held {
-            action_digest: approved_digest,
-            gate_definition,
-            gate_revision,
-        }) => {
-            gate.as_ref().is_some_and(|gate| {
-                gate.definition == *gate_definition && gate.revision == *gate_revision
-            }) && action_digest == *approved_digest
-        }
-        Some(Approved::Parked(command)) => match &gate {
-            None => false,
-            Some(gate) => {
-                crate::approvals::call_command_id(
-                    gate,
-                    &crate::approvals::CallParts {
-                        action: action_id,
-                        action_digest: &action_digest,
-                        idempotency_key: &kernel_call.idempotency_key,
-                        requester: &kernel_call.actor,
-                        input: &kernel_call.input,
-                        definitions_version,
-                    },
-                )? == *command
+    // The parked command this exact call is under the gate and the action as
+    // defined now.
+    let command = gate
+        .as_ref()
+        .map(|gate| {
+            crate::approvals::call_command_id(
+                gate,
+                &crate::approvals::CallParts {
+                    action: action_id,
+                    action_digest: &action_digest,
+                    idempotency_key: &kernel_call.idempotency_key,
+                    requester: &kernel_call.actor,
+                    input: &kernel_call.input,
+                    definitions_version,
+                },
+            )
+        })
+        .transpose()?;
+    // The approval this call runs under, if one does. APPROVAL-REVISION-1:
+    // an approver's try is fenced here, under the epoch and the cell the
+    // dispatch holds, before anything parks or writes.
+    let approval = match approved {
+        Some(approved) => {
+            let decision = crate::decisions::decision_id(approved, 1)?;
+            if command.as_deref() != Some(approved) {
+                return Err(crate::approvals::refuse(
+                    cell,
+                    &decision,
+                    crate::approvals::definition_changed(),
+                )?);
             }
+            Some(decision)
+        }
+        None => match &command {
+            Some(command) => crate::approvals::approving_decision(cell, command)?,
+            None => None,
         },
     };
-    if !covered {
-        return Err(crate::approvals::definition_changed());
+    if let Some(decision) = &approval
+        && let Some(refused) = crate::approvals::recorded_refusal(cell, decision)?
+    {
+        return Err(refused);
     }
     let Some(gate) = gate else {
-        return Ok(Gated::Commit);
+        return Ok(Gated::Commit(None));
     };
     let dry = norn_kernel::commit_action(
         &mut crate::approvals::WouldCommit(&*cell),
@@ -463,6 +482,9 @@ fn through_gate<E: SqlEngine>(
     match dry {
         Ok(replayed) => Ok(Gated::Replayed(Box::new(replayed))),
         Err(error) if crate::approvals::would_have_committed(&error) => {
+            if approval.is_some() {
+                return Ok(Gated::Commit(approval));
+            }
             let requester = host
                 .authorizer
                 .verified_principal(&kernel_call.actor)
@@ -478,11 +500,17 @@ fn through_gate<E: SqlEngine>(
             Ok(
                 match crate::approvals::hold(cell, &gate, &parked, kernel_call.turn.now)? {
                     crate::approvals::Held::Pending(pending) => Gated::Pending(pending),
-                    crate::approvals::Held::Approved => Gated::Commit,
+                    crate::approvals::Held::Approved => Gated::Commit(None),
                 },
             )
         }
-        Err(error) => Err(kernel_refusal(host, &kernel_call.actor, action_id, &error)),
+        Err(error) => {
+            let refusal = kernel_refusal(host, &kernel_call.actor, action_id, &error);
+            Err(match approval {
+                Some(decision) => crate::approvals::refuse(cell, &decision, refusal)?,
+                None => refusal,
+            })
+        }
     }
 }
 
@@ -617,23 +645,24 @@ fn caller_receipt<E: SqlEngine>(
     })
 }
 
-/// Whether the call keyed `idempotency_key` of `action_id` committed: its
-/// idempotency record exists (APPROVAL-RECOVERY-1 settles an approved call
-/// that committed before the host recorded so).
+/// The target `record`'s call wrote and its version as that commit wrote
+/// it: what a run's action step takes as its output when the call committed
+/// (APPROVAL-RECOVERY-1).
 ///
 /// # Errors
 /// A host failure.
-pub(crate) fn call_recorded<E: SqlEngine>(
+pub(crate) fn recorded_target<E: SqlEngine>(
     store: &norn_cell::CellStore<E>,
-    action_id: &str,
+    record: &ActionCallRecord,
     idempotency_key: &str,
-) -> Result<bool, Refusal> {
-    let record_key = format!("{action_id}/{idempotency_key}");
-    Ok(store
-        .read()
-        .version(MAIN_WORLD, ACTION_CALL_TYPE, &record_key)
-        .map_err(Refusal::host)?
-        > 0)
+) -> Result<(String, String, u64), Refusal> {
+    let receipt = original_receipt(store, &record.action_id, idempotency_key)?;
+    let version = target_version(store, &receipt, record)?;
+    Ok((
+        record.object.object_type.as_str().to_owned(),
+        record.object.key.clone(),
+        version,
+    ))
 }
 
 /// The authenticated receipt of the commit that wrote this call's

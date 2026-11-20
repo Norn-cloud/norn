@@ -238,31 +238,52 @@ decision moves its run. Named scenarios (`crates/norn-cell-do/tests/approvals.rs
 ### APPROVAL-RECOVERY-1 — an approved call survives a crash
 
 PARKED-CRASH for approvals (#1481). The approved call commits after the commit
-that records its approval, so a host can stop in between. The commit that
-records an approval of a parked call also records the call as due
+that records its approval, so a host can stop in between. Nothing ever runs
+an action call without a request: no wake, alarm or cold open dispatches one.
+
+The commit that records an approval of a parked call also records the call
 (`_norn_approved_call`, derived from the decision ledger in the same
-transaction, so export replay rebuilds it). The call stays due until the host
-settles it: `committed`, or `refused` with its code. While it is due it is
-due work (TIMER-ALARM-1): the host's next wake, and the cold open that arms
-one, commits it as its requester through the same dispatch and the same fence
-as the first try (the action's digest, the gate's definition and revision,
-the requester's definitions pin, compared inside the dispatch's own epoch and
-cell hold). No request is in flight at a wake, so the host acts as the
-recorded requester only under its own declared role table; a host that cannot
-act as the requester keeps the call due on its backoff (TIMER-RETRY-1). A call
-that committed before its settlement was recorded is settled from its
-idempotency record and never dispatched again, and a dispatch that replays
-commits nothing. A refused call is settled with its code, never retried, and
-the approver's replay of the decide answers `call: {committed: false, code}`;
-a call whose action or gate changed while the host was down settles
-`approval.definition_changed`, and the requester's retry parks it anew for a
-fresh approval. The approver's replay of a still-due call commits it, once.
-A flow step's recovered call moves the run waiting on it. Named scenarios
+transaction). Where the call stands is derived, never a log line:
+**committed** when its idempotency record holds exactly the approved call (its
+action, requester and input; another call under the same key is
+`action.idempotency_conflict`, never this call's commit), **refused** once a
+refusal is recorded for it, and otherwise **not executed** (approved, not yet
+executed). The decide answer carries it as `call: {committed, code?, state}`
+(`state` is `committed`, `refused` or `not_executed`), on a first decide and on
+every replay; the approver's decide with another key answers
+`decision.resolved` with the same `call`, read only.
+
+An approved call that is not executed runs only on a request: the requester's
+retry of the call, or the approver's replay of the decide. Either runs it
+through the shared dispatch under the authority decided for that request
+(APPROVAL-1's requester switch for the approver), and only as exactly the
+approved call: its command id (requester, input, idempotency key, action
+digest, gate definition and revision, definitions pin) must be the approved
+one, compared inside the dispatch's epoch and cell hold (APPROVAL-REVISION-1,
+APPROVAL-PIN-1). A refusal that decides the call there (anything but a host
+failure or a denial of authority, which is decided again on every try) is
+recorded in its own commit, under the same cell hold, as one
+`norn.approval.refused` ledger event, so it is final: a later try gets the
+recorded refusal without anything being decided again, and export replay
+rebuilds it, so a restored cell never makes a refused call due again. A replay
+of a committed or refused call answers its recorded outcome and runs nothing.
+
+A flow step's approved call is the same call. A step whose call already has an
+outcome (committed, or refused other than `approval.definition_changed`)
+takes that outcome without the action being called again: the run's drive
+delivers it, and so does the host's wake (TIMER-ALARM-1), which treats it as due
+work until the run consumes it, including a result recorded but not consumed.
+A step whose approval no longer covers the call (`approval.definition_changed`)
+parks anew for a fresh approval on its next drive. Named scenarios
 (`crates/norn-cell-do/tests/approval_recovery.rs`): **APPROVAL-RECOVERY-BEFORE**
-(crash before the commit: it commits once after a reopen),
-**APPROVAL-RECOVERY-AFTER** (crash after it: no second commit),
-**APPROVAL-RECOVERY-CHANGED** (definitions changed while down: a visible
-refusal), **APPROVAL-RECOVERY-STEP** (a step's call: its run completes).
+(crash before the commit: visible as not executed, nothing due, the requester's
+retry commits it once), **APPROVAL-RECOVERY-REPLAY** (the approver's replay
+commits it once), **APPROVAL-RECOVERY-CONFLICT** (another call under the key is
+a conflict, never a commit), **APPROVAL-RECOVERY-REFUSED** (a recorded refusal
+stays final after its cause clears and after a restore),
+**APPROVAL-RECOVERY-STEP-BEFORE** (a step's call runs once on the approver's
+replay) and **APPROVAL-RECOVERY-STEP-AFTER** (a committed step call's outcome
+reaches its run on the wake, with no second call).
 
 ### DECISION-LEDGER-1 — resolved decisions
 

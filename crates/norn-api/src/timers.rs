@@ -22,14 +22,13 @@
 //! A flow timer runs under its run's pinned rule and environment
 //! (TIMER-PIN-1).
 //!
-//! APPROVAL-RECOVERY-1: an approved action call is due from the commit that
-//! records its approval until it settles. A host that stopped before the
-//! call committed leaves it due, and the next wake (or the cold open that
-//! arms one) commits it exactly once as its requester
-//! ([`crate::decisions`]), or settles its refusal. A host that cannot act as
-//! the requester at the wake ([`run_due`](crate::timers::run_due) has no
-//! [`Requester`](crate::timers::Requester)) keeps it due
-//! on its backoff.
+//! APPROVAL-RECOVERY-1: a wake never calls an action. An action step whose
+//! approved call already has its outcome (it committed, or its refusal is
+//! recorded) while its run has not consumed it is due work: the wake
+//! delivers that outcome to the run, and it stays due until the run
+//! consumes it ([`crate::flow_driver::recorded_steps`]). An approved call
+//! that did not commit is not due work: it stays visibly approved and not
+//! executed until the requester's retry or the approver's replay runs it.
 
 use norn_cell::MAIN_WORLD;
 use norn_cell::due_retry::{approval_item, decision_item, timer_item};
@@ -41,10 +40,9 @@ use norn_kernel::{
     TypeCatalog, World,
 };
 
-use crate::decisions::{OpenDecision, Resumed, Settle};
-use crate::flow_driver::AsStarter;
+use crate::decisions::OpenDecision;
+use crate::flow_driver::RecordedStep;
 use crate::host::{ActionCell, DevHost};
-use crate::question_routes::QuestionRuntime;
 use crate::refusal::Refusal;
 
 /// The most items one [`run_due`] call tries, handled or failed alike; the
@@ -73,11 +71,9 @@ pub struct DueWork {
     pub timers: u32,
     /// Decisions resolved as expired.
     pub decisions: u32,
-    /// Approved action calls committed (APPROVAL-RECOVERY-1).
-    pub approved_calls: u32,
-    /// Approved action calls refused for good, with why, for the operator's
-    /// log; each refusal is settled on its decision and never retried.
-    pub refused_calls: Vec<String>,
+    /// Approved action steps whose recorded outcome was delivered to their
+    /// runs (APPROVAL-RECOVERY-1); no action was called.
+    pub steps: u32,
     /// Why each item that was due could not be handled, for the operator's
     /// log; such an item stays due and is retried after its backoff.
     pub failed: Vec<String>,
@@ -92,28 +88,14 @@ impl DueWork {
     /// Whether anything was committed.
     #[must_use]
     pub const fn committed(&self) -> bool {
-        self.expired_reservations > 0
-            || self.timers > 0
-            || self.decisions > 0
-            || self.approved_calls > 0
-            || !self.refused_calls.is_empty()
+        self.expired_reservations > 0 || self.timers > 0 || self.decisions > 0 || self.steps > 0
     }
-}
-
-/// How a wake acts as an approved call's requester (APPROVAL-RECOVERY-1):
-/// the host's principal switch ([`AsStarter`]) and the cell's disclosure
-/// runtime the dispatch answers with.
-pub struct Requester<'a, E: SqlEngine> {
-    /// Runs one call as a recorded principal.
-    pub as_requester: AsStarter<'a>,
-    /// The cell's disclosure runtime.
-    pub disclosure: &'a dyn QuestionRuntime<E>,
 }
 
 /// The earliest time the cell has work to try (logical milliseconds): a
 /// timer (quantity or flow), an open decision's expiry, a recorded expiry
-/// still to resolve, or an approved call still to commit, each no earlier
-/// than its retry eligibility when it
+/// still to resolve, or an approved step's outcome still to deliver, each no
+/// earlier than its retry eligibility when it
 /// failed before (TIMER-RETRY-1). It may already have passed: the host then
 /// wakes at once. `None` when nothing is pending.
 ///
@@ -130,6 +112,7 @@ enum Item {
     Quantity(PendingTimer),
     Timer(PendingTimer),
     Decision(Box<OpenDecision>),
+    Step(Box<RecordedStep>),
 }
 
 impl Item {
@@ -139,6 +122,7 @@ impl Item {
             Self::Quantity(pending) => (pending.timer.due, 0, &pending.timer.timer_id),
             Self::Timer(pending) => (pending.timer.due, 1, &pending.timer.timer_id),
             Self::Decision(decision) => (decision.expires_at_ms, 2, &decision.id),
+            Self::Step(step) => (step.approved_at_ms, 3, &step.decision_id),
         }
     }
 
@@ -149,6 +133,7 @@ impl Item {
                 (timer_item(&pending.timer.timer_id), pending.commit_seq)
             }
             Self::Decision(decision) => (decision_item(&decision.id), decision.generation.0),
+            Self::Step(step) => (approval_item(&step.decision_id), 1),
         }
     }
 }
@@ -166,24 +151,6 @@ impl Item {
 /// A host failure reading the cell or recording a failure. An item that
 /// fails is not an error of the call: it stays due.
 pub fn run_due<E: SqlEngine>(host: &DevHost<E>, now: LogicalTime) -> Result<DueWork, Refusal> {
-    run_due_with(host, now, None)
-}
-
-/// [`run_due`], first committing the approved calls still due as their
-/// requesters through `requester` (APPROVAL-RECOVERY-1). They count toward
-/// the same budget, oldest approval first; without a `requester` each is
-/// a failure kept due on its backoff.
-///
-/// # Errors
-/// As [`run_due`].
-pub fn run_due_with<E: SqlEngine>(
-    host: &DevHost<E>,
-    now: LogicalTime,
-    requester: Option<&Requester<'_, E>>,
-) -> Result<DueWork, Refusal> {
-    let mut work = DueWork::default();
-    let (tried, calls_left) = resume_calls(host, now, requester, &mut work)?;
-    let budget = MAX_DUE_STEPS.saturating_sub(tried);
     let _epoch = host.definition_read()?;
     let mut cell = host.cell()?;
     let now = crate::actions::turn_clock(&mut cell, now)?;
@@ -191,8 +158,9 @@ pub fn run_due_with<E: SqlEngine>(
     cell.store().prune_timer_retries().map_err(Refusal::host)?;
     let mut items = eligible(&cell, at)?;
     // One more than the budget tells whether work is left for the next wake.
-    let more = calls_left || items.len() > budget;
-    items.truncate(budget);
+    let more = items.len() > MAX_DUE_STEPS;
+    items.truncate(MAX_DUE_STEPS);
+    let mut work = DueWork::default();
     for item in items {
         let (key, incarnation) = item.retry_key();
         let handled = match &item {
@@ -216,6 +184,11 @@ pub fn run_due_with<E: SqlEngine>(
             Item::Decision(decision) => expire_decision(&mut cell, decision, now)
                 .map(|()| &mut work.decisions)
                 .map_err(|why| format!("decision {}: {why}", decision.id)),
+            Item::Step(step) => crate::flow_driver::deliver_recorded(&mut cell, step, now)
+                .map(|()| &mut work.steps)
+                .map_err(|refusal| {
+                    format!("approved step {}: {}", step.decision_id, why(&refusal))
+                }),
         };
         match handled {
             Ok(count) => {
@@ -232,135 +205,6 @@ pub fn run_due_with<E: SqlEngine>(
     }
     work.next = if more { Some(at) } else { next_wake(&cell)? };
     Ok(work)
-}
-
-/// APPROVAL-RECOVERY-1: try the approved calls still due at `now`, oldest
-/// approval first, at most [`MAX_DUE_STEPS`]; each is tried with the cell
-/// released, so it goes through the ordinary dispatch. How many were tried,
-/// and whether more are left for the next wake.
-fn resume_calls<E: SqlEngine>(
-    host: &DevHost<E>,
-    now: LogicalTime,
-    requester: Option<&Requester<'_, E>>,
-    work: &mut DueWork,
-) -> Result<(usize, bool), Refusal> {
-    let (now, mut calls) = {
-        let _epoch = host.definition_read()?;
-        let mut cell = host.cell()?;
-        let now = crate::actions::turn_clock(&mut cell, now)?;
-        let calls = cell
-            .store()
-            .read()
-            .eligible_approved_calls(MAIN_WORLD, now.as_millis(), MAX_DUE_STEPS.saturating_add(1))
-            .map_err(Refusal::host)?;
-        (now, calls)
-    };
-    let left = calls.len() > MAX_DUE_STEPS;
-    calls.truncate(MAX_DUE_STEPS);
-    for call in &calls {
-        let key = approval_item(&call.decision_id);
-        let resumed = resume_call(host, &call.decision_id, now, requester, work);
-        let _epoch = host.definition_read()?;
-        let cell = host.cell()?;
-        match resumed {
-            Ok(()) => cell.store().clear_due_retry(&key).map_err(Refusal::host)?,
-            Err(why) => {
-                cell.store()
-                    .record_due_failure(&key, 1, now.as_millis(), (STUCK_RETRY_MS, MAX_RETRY_MS))
-                    .map_err(Refusal::host)?;
-                work.failed
-                    .push(format!("approved call {}: {why}", call.decision_id));
-            }
-        }
-    }
-    Ok((calls.len(), left))
-}
-
-/// Commit one approved call still due, as its requester, and move a run
-/// whose step waits on it; why it could not be.
-fn resume_call<E: SqlEngine>(
-    host: &DevHost<E>,
-    decision_id: &str,
-    now: LogicalTime,
-    requester: Option<&Requester<'_, E>>,
-    work: &mut DueWork,
-) -> Result<(), String> {
-    let Some(requester) = requester else {
-        return Err("no requester principal at this wake".to_owned());
-    };
-    let resumed = crate::decisions::resume_approved(
-        host,
-        decision_id,
-        requester.disclosure,
-        now,
-        requester.as_requester,
-    )
-    .map_err(|refusal| why(&refusal).to_owned())?;
-    match resumed {
-        // Settled by someone else meanwhile.
-        None | Some(Resumed::Committed | Resumed::Refused(_)) => Ok(()),
-        Some(Resumed::Dispatched(call, Settle::Committed)) => {
-            debug_assert!(call.committed);
-            work.approved_calls = work.approved_calls.saturating_add(1);
-            drive_waiting(host, decision_id, now, requester)
-        }
-        Some(Resumed::Dispatched(call, Settle::Refused)) => {
-            work.refused_calls.push(format!(
-                "approved call {decision_id}: {}",
-                call.code.as_deref().unwrap_or_default()
-            ));
-            Ok(())
-        }
-        Some(Resumed::Dispatched(call, Settle::Retry)) => {
-            Err(call.code.unwrap_or_else(|| "not committed".to_owned()))
-        }
-    }
-}
-
-/// Move the run whose action step waits on the approved call of
-/// `decision_id`, if one does (ACTION-STEP-1): its drive replays the
-/// committed call and delivers its result.
-fn drive_waiting<E: SqlEngine>(
-    host: &DevHost<E>,
-    decision_id: &str,
-    now: LogicalTime,
-    requester: &Requester<'_, E>,
-) -> Result<(), String> {
-    let run = {
-        let _epoch = host
-            .definition_read()
-            .map_err(|refusal| why(&refusal).to_owned())?;
-        let cell = host.cell().map_err(|refusal| why(&refusal).to_owned())?;
-        let reader = cell.store().read();
-        let key = reader
-            .approved_call(MAIN_WORLD, decision_id)
-            .map_err(|error| error.to_string())?
-            .and_then(|row| reader.outbox_command(&row.command_id).ok().flatten())
-            .and_then(|command| {
-                command
-                    .command
-                    .get("payload")
-                    .and_then(|payload| payload.get("approval"))
-                    .and_then(crate::approvals::held_call)
-            })
-            .map(|held| held.call.idempotency_key);
-        match key {
-            Some(key) => crate::flow_driver::run_waiting_on(cell.store(), &key)
-                .map_err(|refusal| why(&refusal).to_owned())?,
-            None => None,
-        }
-    };
-    if let Some(run) = run {
-        crate::flow_driver::drive_run(
-            host,
-            &run,
-            requester.as_requester,
-            requester.disclosure,
-            now,
-        )
-        .map_err(|refusal| format!("its run {run} did not move: {}", why(&refusal)))?;
-    }
-    Ok(())
 }
 
 /// Every item due at `at` and eligible to be tried, earliest deadline first
@@ -397,6 +241,20 @@ fn eligible<E: SqlEngine>(cell: &ActionCell<E>, at: u64) -> Result<Vec<Item>, Re
             })
             .map(|decision| Item::Decision(Box::new(decision))),
     );
+    let step_retries = reader
+        .due_retries(&approval_item(""))
+        .map_err(Refusal::host)?;
+    items.extend(
+        crate::flow_driver::recorded_steps(cell)?
+            .into_iter()
+            .filter(|step| {
+                step.approved_at_ms <= at
+                    && step_retries
+                        .get(&approval_item(&step.decision_id))
+                        .is_none_or(|retry| retry.eligible_at <= at)
+            })
+            .map(|step| Item::Step(Box::new(step))),
+    );
     items.sort_by(|left, right| left.order().cmp(&right.order()));
     items.truncate(bound);
     Ok(items)
@@ -432,8 +290,8 @@ fn expire_decision<E: SqlEngine>(
 }
 
 /// When the cell next has work to try: the earliest timer or decision
-/// deadline, or approved call still due, each no earlier than its retry
-/// eligibility (TIMER-RETRY-1).
+/// deadline, or approved step outcome to deliver, each no earlier than its
+/// retry eligibility (TIMER-RETRY-1).
 fn next_wake<E: SqlEngine>(cell: &ActionCell<E>) -> Result<Option<u64>, Refusal> {
     let reader = cell.store().read();
     let timer = reader.next_eligible_timer().map_err(Refusal::host)?;
@@ -450,10 +308,19 @@ fn next_wake<E: SqlEngine>(cell: &ActionCell<E>) -> Result<Option<u64>, Refusal>
             decision.expires_at_ms.max(eligible)
         })
         .min();
-    let approved = reader
-        .next_approved_call(MAIN_WORLD)
+    let step_retries = reader
+        .due_retries(&approval_item(""))
         .map_err(Refusal::host)?;
-    Ok(min(min(timer, decision), approved))
+    let step = crate::flow_driver::recorded_steps(cell)?
+        .into_iter()
+        .map(|step| {
+            let eligible = step_retries
+                .get(&approval_item(&step.decision_id))
+                .map_or(0, |retry| retry.eligible_at);
+            step.approved_at_ms.max(eligible)
+        })
+        .min();
+    Ok(min(min(timer, decision), step))
 }
 
 /// What an item's refusal says for the operator: its host cause, else its code.

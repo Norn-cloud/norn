@@ -15,6 +15,12 @@
 //! "who decided, when, and what" after the parked command is consumed; it is
 //! an index for reads, never authority, and every read goes through the
 //! caller's gates.
+//!
+//! APPROVAL-RECOVERY-1: the commit that approves a parked action call also
+//! records the call in `_norn_approved_call`, and a refusal the call gets is
+//! recorded by its own commit carrying one [`APPROVAL_REFUSED`] event. Both
+//! are ledger-derived, so a restored cell holds the same approved calls and
+//! the same refusals; whether a call committed is its idempotency record.
 
 /// The `norn.decision@1` request a parked decision carries, and its bounds.
 /// Hosts reach built-ins through the cell (`norn_cell::builtin_registered`).
@@ -64,18 +70,20 @@ pub(crate) const DDL: [&str; 4] = [
   PRIMARY KEY ("world", "decision_id")
 )"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_decision/run" ON "_norn_decision" ("world", "run_id", "decision_id")"#,
-    // APPROVAL-RECOVERY-1: every approved action call, due until the host
-    // settles it (committed, or refused with its code).
+    // APPROVAL-RECOVERY-1: every approved action call, and its refusal once
+    // one is recorded ([`APPROVAL_REFUSED`]). Whether it committed is its
+    // idempotency record, never this row.
     r#"CREATE TABLE IF NOT EXISTS "_norn_approved_call" (
   "world" TEXT NOT NULL,
   "decision_id" TEXT NOT NULL,
   "command_id" TEXT NOT NULL,
+  "run_id" TEXT NOT NULL,
   "resolved_at_ms" INTEGER NOT NULL,
-  "state" TEXT NOT NULL,
-  "code" TEXT,
+  "refused_status" INTEGER,
+  "refused_code" TEXT,
   PRIMARY KEY ("world", "decision_id")
 )"#,
-    r#"CREATE INDEX IF NOT EXISTS "_norn_approved_call/due" ON "_norn_approved_call" ("world", "state", "resolved_at_ms", "decision_id")"#,
+    r#"CREATE INDEX IF NOT EXISTS "_norn_approved_call/run" ON "_norn_approved_call" ("world", "run_id", "decision_id")"#,
 ];
 
 /// How a decision was resolved (DECISION-TERMINAL-1).
@@ -230,6 +238,30 @@ fn resolutions(batch: &CommitBatch) -> Result<Vec<DecisionResolved>, CellError> 
     Ok(found)
 }
 
+fn refusals(batch: &CommitBatch) -> Result<Vec<ApprovalRefused>, CellError> {
+    let mut found = Vec::new();
+    for event in batch.events.iter().filter(|event| is_approval_refused(event)) {
+        let object = event
+            .as_object()
+            .ok_or_else(|| refused("approval.refusal_invalid"))?;
+        if object.len() != 2 {
+            return Err(refused("approval.refusal_invalid"));
+        }
+        let refusal: ApprovalRefused = object
+            .get("refused")
+            .and_then(|refused| norn_ir::runtime::decode(refused).ok())
+            .ok_or_else(|| refused("approval.refusal_invalid"))?;
+        if refusal.code.is_empty() {
+            return Err(refused("approval.refusal_invalid"));
+        }
+        found.push(refusal);
+    }
+    if found.len() > 1 {
+        return Err(refused("approval.refusal_invalid"));
+    }
+    Ok(found)
+}
+
 /// Before `batch`'s writes apply: a decision it resolves must be open.
 ///
 /// # Errors
@@ -246,40 +278,63 @@ pub(crate) fn check<E: SqlEngine>(
             return Err(refused("decision.resolved"));
         }
     }
+    // APPROVAL-RECOVERY-1: a refusal is recorded once, for an approved call.
+    for refusal in refusals(batch)? {
+        match reader.approved_call(&batch.world, &refusal.decision_id)? {
+            Some(call) if call.refused.is_none() => {}
+            Some(_) => return Err(refused("approval.refused")),
+            None => return Err(refused("approval.refusal_invalid")),
+        }
+    }
     Ok(())
 }
 
-/// APPROVAL-RECOVERY-1: where an approved action call stands.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ApprovedCallState {
-    /// Approved and not yet settled: the host commits it.
-    Due,
-    /// The call committed.
-    Committed,
-    /// The call was refused (its code is recorded); the approval never
-    /// executes it.
-    Refused,
+/// APPROVAL-RECOVERY-1: the `type` of the ledger event that records the
+/// refusal of an approved action call. Once recorded the approval never
+/// runs the call again, and export replay rebuilds the refusal with the rest
+/// of the ledger.
+pub const APPROVAL_REFUSED: &str = "norn.approval.refused";
+
+/// What an [`APPROVAL_REFUSED`] event records: the approving decision and
+/// the refusal its call got.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ApprovalRefused {
+    /// The approving decision.
+    pub decision_id: String,
+    /// The refusal's HTTP status.
+    pub status: u16,
+    /// The refusal's code.
+    pub code: String,
 }
 
-impl ApprovedCallState {
-    const fn as_str(self) -> &'static str {
-        match self {
-            Self::Due => "due",
-            Self::Committed => "committed",
-            Self::Refused => "refused",
-        }
+impl ApprovalRefused {
+    /// The ledger event a settling commit carries.
+    ///
+    /// # Errors
+    /// A value outside the runtime value domain.
+    pub fn event(&self) -> Result<Value, CellError> {
+        Ok(Value::Object(
+            [
+                (
+                    "type".to_owned(),
+                    Value::String(APPROVAL_REFUSED.to_owned()),
+                ),
+                (
+                    "refused".to_owned(),
+                    norn_ir::runtime::encode(self).map_err(CellError::Encoding)?,
+                ),
+            ]
+            .into(),
+        ))
     }
+}
 
-    fn parse(text: &str) -> Result<Self, CellError> {
-        match text {
-            "due" => Ok(Self::Due),
-            "committed" => Ok(Self::Committed),
-            "refused" => Ok(Self::Refused),
-            _unknown => Err(CellError::Engine(format!(
-                "unknown approved call state {text}"
-            ))),
-        }
-    }
+/// Whether a ledger event records an approved call's refusal (host
+/// bookkeeping, not a domain event a typed commit reader decodes).
+#[must_use]
+pub fn is_approval_refused(event: &Value) -> bool {
+    event.get("type").and_then(Value::as_str) == Some(APPROVAL_REFUSED)
 }
 
 /// APPROVAL-RECOVERY-1: one approved action call.
@@ -289,12 +344,13 @@ pub struct ApprovedCall {
     pub decision_id: String,
     /// The parked command that carries the call.
     pub command_id: String,
+    /// The run whose step makes the call, or for a direct call the parked
+    /// command's id.
+    pub run_id: String,
     /// When the approval committed (logical milliseconds).
     pub resolved_at_ms: u64,
-    /// Where it stands.
-    pub state: ApprovedCallState,
-    /// The refusal code, when refused.
-    pub code: Option<String>,
+    /// The refusal recorded for it (status, code), if one was.
+    pub refused: Option<(u16, String)>,
 }
 
 /// Whether `resolved` approves a parked action call.
@@ -340,35 +396,54 @@ pub(crate) fn apply<E: SqlEngine>(
         if approves_call(&resolved) {
             reader.conn.execute(
                 &format!(
-                    r#"INSERT INTO "{APPROVED_CALL}" ("world","decision_id","command_id","resolved_at_ms","state","code") VALUES (?1,?2,?3,?4,'due',NULL)"#
+                    r#"INSERT INTO "{APPROVED_CALL}" ("world","decision_id","command_id","run_id","resolved_at_ms") VALUES (?1,?2,?3,?4,?5)"#
                 ),
                 params![
                     batch.world,
                     resolved.decision_id,
                     resolved.command_id,
+                    resolved.run_id,
                     to_i64(batch.logical_time, "logical time")?
                 ],
             )?;
         }
     }
+    for refusal in refusals(batch)? {
+        reader.conn.execute(
+            &format!(
+                r#"UPDATE "{APPROVED_CALL}" SET "refused_status"=?3,"refused_code"=?4 WHERE "world"=?1 AND "decision_id"=?2 AND "refused_code" IS NULL"#
+            ),
+            params![
+                batch.world,
+                refusal.decision_id,
+                i64::from(refusal.status),
+                refusal.code
+            ],
+        )?;
+    }
     Ok(())
 }
 
 fn decode_approved(row: &SqlRow) -> Result<ApprovedCall, CellError> {
+    let status: Option<i64> = row.get(4)?;
+    let code: Option<String> = row.get(5)?;
     Ok(ApprovedCall {
         decision_id: row.get(0)?,
         command_id: row.get(1)?,
-        resolved_at_ms: u64::try_from(row.get::<i64>(2)?)
+        run_id: row.get(2)?,
+        resolved_at_ms: u64::try_from(row.get::<i64>(3)?)
             .map_err(|_negative| CellError::OutOfRange("approval time"))?,
-        state: ApprovedCallState::parse(&row.get::<String>(3)?)?,
-        code: row.get(4)?,
+        refused: match (status, code) {
+            (Some(status), Some(code)) => Some((
+                u16::try_from(status).map_err(|_bad| CellError::OutOfRange("refusal status"))?,
+                code,
+            )),
+            _unrefused => None,
+        },
     })
 }
 
-const APPROVED_COLUMNS: &str =
-    r#"a."decision_id",a."command_id",a."resolved_at_ms",a."state",a."code""#;
-const APPROVED_RETRY: &str =
-    r#"LEFT JOIN "_norn_due_retry" AS r ON r."item"=('approval/'||a."decision_id")"#;
+const APPROVED_COLUMNS: &str = r#""decision_id","command_id","run_id","resolved_at_ms","refused_status","refused_code""#;
 
 fn decode(row: &SqlRow) -> Result<DecisionRow, CellError> {
     let unsigned = |index: usize, what: &'static str| {
@@ -406,57 +481,32 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     ) -> Result<Option<ApprovedCall>, CellError> {
         self.conn.query_optional(
             &format!(
-                r#"SELECT {APPROVED_COLUMNS} FROM "{APPROVED_CALL}" AS a WHERE a."world"=?1 AND a."decision_id"=?2"#
+                r#"SELECT {APPROVED_COLUMNS} FROM "{APPROVED_CALL}" WHERE "world"=?1 AND "decision_id"=?2"#
             ),
             params![world, decision_id],
             decode_approved,
         )
     }
 
-    /// APPROVAL-RECOVERY-1 with TIMER-RETRY-1: up to `limit` approved calls
-    /// still due in `world` and eligible at `now` (no retry record, or one
-    /// whose backoff has passed), oldest approval first.
+    /// APPROVAL-RECOVERY-1: the approved calls of `run_id`'s steps, oldest
+    /// decision id first.
     ///
     /// # Errors
     /// SQL engine or decode errors.
-    pub fn eligible_approved_calls(
+    pub fn approved_calls_of_run(
         &self,
         world: &str,
-        now: u64,
-        limit: usize,
+        run_id: &str,
     ) -> Result<Vec<ApprovedCall>, CellError> {
         let rows = self.conn.query(
             &format!(
-                r#"SELECT {APPROVED_COLUMNS} FROM "{APPROVED_CALL}" AS a {APPROVED_RETRY} WHERE a."world"=?1 AND a."state"='due' AND (r."item" IS NULL OR r."eligible_at"<=?2) ORDER BY a."resolved_at_ms",a."decision_id" LIMIT ?3"#
+                r#"SELECT {APPROVED_COLUMNS} FROM "{APPROVED_CALL}" WHERE "world"=?1 AND "run_id"=?2 ORDER BY "decision_id""#
             ),
-            params![
-                world,
-                to_i64(now, "approval time")?,
-                i64::try_from(limit).unwrap_or(i64::MAX)
-            ],
+            params![world, run_id],
         )?;
         rows.into_iter()
             .map(|values| decode_approved(&SqlRow(values)))
             .collect()
-    }
-
-    /// APPROVAL-RECOVERY-1 with TIMER-RETRY-1: when the earliest approved
-    /// call still due in `world` may be tried (its approval time, or its
-    /// retry eligibility after a failure); `None` when none is due.
-    ///
-    /// # Errors
-    /// SQL engine or decode errors.
-    pub fn next_approved_call(&self, world: &str) -> Result<Option<u64>, CellError> {
-        let next = self.conn.query_optional(
-            &format!(
-                r#"SELECT MIN(MAX(a."resolved_at_ms",COALESCE(r."eligible_at",0))) FROM "{APPROVED_CALL}" AS a {APPROVED_RETRY} WHERE a."world"=?1 AND a."state"='due'"#
-            ),
-            params![world],
-            |row| row.get::<Option<i64>>(0),
-        )?;
-        next.flatten()
-            .map(|at| u64::try_from(at).map_err(|_negative| CellError::OutOfRange("approval time")))
-            .transpose()
     }
 
     /// How `decision_id` was resolved in `world`, once it was.
@@ -475,52 +525,5 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             params![world, decision_id],
             decode,
         )
-    }
-}
-
-impl<E: SqlEngine> crate::store::CellStore<E> {
-    /// APPROVAL-RECOVERY-1: settle the approved call of `decision_id` as
-    /// committed, or as refused with `code`. Host bookkeeping outside the
-    /// ledger, in its own transaction. Only a due call settles as refused;
-    /// a call settles as committed from due or refused (the requester's own
-    /// retry may commit a call refused earlier), and a committed call never
-    /// changes. `true` when this call changed it.
-    ///
-    /// # Errors
-    /// SQL engine errors.
-    pub fn settle_approved_call(
-        &self,
-        world: &str,
-        decision_id: &str,
-        refused: Option<&str>,
-    ) -> Result<bool, CellError> {
-        let (state, from) = match refused {
-            Some(_) => (ApprovedCallState::Refused, "'due'"),
-            None => (ApprovedCallState::Committed, "'due','refused'"),
-        };
-        self.conn.transaction(|| -> Result<bool, CellError> {
-            let before = self.conn.query_optional(
-                &format!(
-                    r#"SELECT 1 FROM "{APPROVED_CALL}" WHERE "world"=?1 AND "decision_id"=?2 AND "state" IN ({from})"#
-                ),
-                params![world, decision_id],
-                |_row| Ok(()),
-            )?;
-            if before.is_none() {
-                return Ok(false);
-            }
-            self.conn.execute(
-                &format!(
-                    r#"UPDATE "{APPROVED_CALL}" SET "state"=?3,"code"=?4 WHERE "world"=?1 AND "decision_id"=?2 AND "state" IN ({from})"#
-                ),
-                params![
-                    world,
-                    decision_id,
-                    state.as_str(),
-                    refused.map(str::to_owned)
-                ],
-            )?;
-            Ok(true)
-        })
     }
 }

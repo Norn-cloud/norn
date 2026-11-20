@@ -159,13 +159,6 @@ impl TokenVerifier {
         })
     }
 
-    /// The declared role table the principals this verifier yields take
-    /// their roles from.
-    #[must_use]
-    pub const fn role_table(&self) -> &'static str {
-        self.roles.version
-    }
-
     /// Verify one bearer token for this cell at `now` (Unix seconds).
     ///
     /// # Errors

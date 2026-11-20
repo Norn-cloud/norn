@@ -18,12 +18,6 @@
 //! APPROVAL-1: approving a parked action call commits it through the same
 //! dispatch with its requester made the slot's caller for that one call, the
 //! same way.
-//!
-//! APPROVAL-RECOVERY-1: an approved call the host stopped before committing
-//! stays due, and the alarm's due work ([`run_due`]) commits it as its
-//! requester the same way. No request is in flight at a wake, so the
-//! requester is acted as under the resolver's own declared role table, the
-//! table its verified callers' roles come from.
 
 use std::collections::BTreeMap;
 
@@ -40,47 +34,7 @@ use norn_cell::engine::SqlEngine;
 use norn_cell::flow_run::RunStarter;
 
 use crate::policy::{Caller, CallerSlot, collection_access};
-use crate::principal::PrincipalResolver;
 use crate::server::{Request, Response, document_json, parse};
-
-/// TIMER-ALARM-1 with APPROVAL-RECOVERY-1: the cell's work due at `now`,
-/// approved calls still due committed first, each as its requester made the
-/// slot's caller for that one call and restored after it. A cell without a
-/// disclosure runtime decides nothing, and a resolver without a caller slot
-/// or a declared role table cannot act as anyone: its approved calls stay
-/// due on their backoff.
-///
-/// # Errors
-/// As [`norn_api::timers::run_due`].
-pub(crate) fn run_due<E: SqlEngine>(
-    host: &DevHost<E>,
-    questions: Option<&dyn AdHocQuestions<E>>,
-    principals: &dyn PrincipalResolver,
-    now: norn_kernel::LogicalTime,
-) -> Result<norn_api::timers::DueWork, Refusal> {
-    let (Some(runtime), Some(slot), Some(table)) =
-        (questions, principals.caller(), principals.role_table())
-    else {
-        return norn_api::timers::run_due(host, now);
-    };
-    let as_requester =
-        |principal: &RunStarter, call: &mut dyn FnMut() -> Result<ActionAnswer, Refusal>| {
-            let current = slot.current();
-            let table = current.as_ref().map_or(table, |caller| caller.role_table);
-            let acting = acting_as(principal, table)?;
-            let _restore = Restore {
-                slot,
-                previous: current,
-            };
-            slot.record(Some(acting));
-            Some(call())
-        };
-    let requester = norn_api::timers::Requester {
-        as_requester: &as_requester,
-        disclosure: runtime,
-    };
-    norn_api::timers::run_due_with(host, now, Some(&requester))
-}
 
 /// Serve `request` when its path is a run or decision route; `None` for
 /// every other path. `questions` is the cell's receipt-disclosure authority
@@ -394,21 +348,14 @@ pub(crate) fn principal_of(caller: Caller) -> RunStarter {
 /// deployment's table); anything else cannot be acted as, and the step is
 /// denied.
 fn acting_caller(starter: &RunStarter, current: Option<&Caller>) -> Option<Caller> {
-    acting_as(starter, current?.role_table)
-}
-
-/// The recorded principal as this cell's verified caller under `role_table`:
-/// only an actor kind this cell issues, and only roles recorded from that
-/// same table.
-fn acting_as(starter: &RunStarter, role_table: &'static str) -> Option<Caller> {
     let actor_kind = match starter.actor_kind.as_str() {
         "user" => "user",
         "service" => "service",
         _other => return None,
     };
-    if starter.role_table != role_table {
-        return None;
-    }
+    let role_table = current
+        .map(|caller| caller.role_table)
+        .filter(|table| *table == starter.role_table)?;
     Some(Caller {
         subject_id: starter.subject.clone(),
         roles: starter.roles.clone(),

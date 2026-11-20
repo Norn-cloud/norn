@@ -1,7 +1,11 @@
 //! APPROVAL-RECOVERY-1 (#1481, PARKED-CRASH for hosted approvals): the host
-//! dies after an approval is recorded but before the approved call commits.
-//! After a reopen the call commits exactly once, or its refusal is visible on
-//! the decision; it is never silently dropped.
+//! dies after an approval is recorded but before the approved call commits,
+//! or after the call commits but before its run takes the outcome. Nothing
+//! runs a call without a request: the call stays visibly approved and not
+//! executed until the requester's retry or the approver's replay runs it,
+//! exactly once, and a run takes a recorded outcome from the wake without
+//! the action being called again. A refusal is recorded on the ledger and
+//! stays final, also on a restored cell.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -13,17 +17,19 @@
 #[path = "support/step_cell.rs"]
 mod step_cell;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use norn_api::timers::next_due;
+use norn_api::timers::{DueWork, next_due, run_due};
 use norn_cell::engine::{
     EngineFault, EngineFaultKind, FaultEngine, FaultSwitch, NativeEngine, SqlEngine,
 };
-use norn_cell::{MAIN_WORLD, StoreOptions};
+use norn_cell::export::Exporter;
+use norn_cell::{CellStore, MAIN_WORLD, StoreOptions};
 use norn_kernel::LogicalTime;
 use serde_json::{Value, json};
 use step_cell::{
-    APPROVER, Cell, FLOW_ID, MELT_ACTION, NOW, OPERATOR, SCOPE, call, call_with, cell_on, melt_body,
+    APPROVER, Cell, DERIVES_LOSS, FLOW_ID, MELT_ACTION, NOW, OPERATOR, SCOPE, call, call_with,
+    cell_on, melt_body, melt_store_on,
 };
 
 const APPROVAL_ID: &str = "ops.melt_approval";
@@ -32,8 +38,17 @@ fn file(path: &Path) -> NativeEngine {
     NativeEngine::open(path, StoreOptions::default()).unwrap()
 }
 
+/// The melt cell's store on `path`, opened alone.
+fn store(path: &Path) -> CellStore<NativeEngine> {
+    melt_store_on(
+        file(path),
+        DERIVES_LOSS,
+        norn_api::action_admission::prepare_action_model,
+    )
+}
+
 /// Install the approval gating the melt action, deciders `admin`.
-fn gate<E: norn_cell::engine::SqlEngine>(cell: &Cell<E>) {
+fn gate<E: SqlEngine>(cell: &Cell<E>) {
     let mut body = json!({ "kind": "approval", "id": APPROVAL_ID, "payload": {
         "action": MELT_ACTION, "decider": { "roles": ["admin"] },
         "question": "Convert this melt?", "risk": "high" } });
@@ -56,7 +71,8 @@ fn gate<E: norn_cell::engine::SqlEngine>(cell: &Cell<E>) {
     assert_eq!(status, 200, "{installed}");
 }
 
-fn melt_status<E: norn_cell::engine::SqlEngine>(cell: &Cell<E>) -> u16 {
+/// The melt object as the operator reads it: its status and document.
+fn melt<E: SqlEngine>(cell: &Cell<E>) -> (u16, Value) {
     call(
         cell,
         "GET",
@@ -64,7 +80,23 @@ fn melt_status<E: norn_cell::engine::SqlEngine>(cell: &Cell<E>) -> u16 {
         OPERATOR,
         "",
     )
-    .0
+}
+
+/// The operator's melt call with key `key` and fine input `input`.
+fn melt_call<E: SqlEngine>(cell: &Cell<E>, input: &str, key: &str) -> (u16, Value) {
+    call(
+        cell,
+        "POST",
+        &format!("/v1/actions/{MELT_ACTION}"),
+        OPERATOR,
+        &melt_body("melt-7", input, "10", key),
+    )
+}
+
+/// The requester calls again with the same key and input: what the cell
+/// answers.
+fn retry<E: SqlEngine>(cell: &Cell<E>) -> (u16, Value) {
+    melt_call(cell, "12", "operator-1")
 }
 
 /// A gated cell on `path` with the operator's melt call parked; its
@@ -72,25 +104,41 @@ fn melt_status<E: norn_cell::engine::SqlEngine>(cell: &Cell<E>) -> u16 {
 fn parked(path: &Path) -> String {
     let cell = cell_on(file(path), true);
     gate(&cell);
-    let (status, parked) = call(
-        &cell,
-        "POST",
-        &format!("/v1/actions/{MELT_ACTION}"),
-        OPERATOR,
-        &melt_body("melt-7", "12", "10", "operator-1"),
-    );
+    let (status, parked) = retry(&cell);
     assert_eq!(status, 202, "{parked}");
     parked["decision"]["id"].as_str().unwrap().to_owned()
 }
 
-fn approve<E: norn_cell::engine::SqlEngine>(cell: &Cell<E>, id: &str) -> (u16, Value) {
+fn decide_with<E: SqlEngine>(cell: &Cell<E>, id: &str, key: &str) -> (u16, Value) {
     call(
         cell,
         "POST",
         &format!("/v1/decisions/{id}:decide"),
         APPROVER,
-        &json!({ "choice": "approve", "idempotencyKey": "approve-1" }).to_string(),
+        &json!({ "choice": "approve", "idempotencyKey": key }).to_string(),
     )
+}
+
+/// The approver approves `id` (or replays that approval).
+fn approve<E: SqlEngine>(cell: &Cell<E>, id: &str) -> (u16, Value) {
+    decide_with(cell, id, "approve-1")
+}
+
+/// Where the approved call of `id` stands, read only: the approver's decide
+/// with another key answers `decision.resolved` with it, and runs nothing.
+fn standing<E: SqlEngine>(cell: &Cell<E>, id: &str) -> Value {
+    let (status, resolved) = decide_with(cell, id, "look-again");
+    assert_eq!(status, 409, "{resolved}");
+    assert_eq!(resolved["code"], json!("decision.resolved"), "{resolved}");
+    resolved["resolution"]["call"].clone()
+}
+
+/// How many commits the cell on `path` holds, read from the file.
+fn commit_count(path: &Path) -> usize {
+    file(path)
+        .query(r#"SELECT 1 FROM "_norn_receipt""#, &[])
+        .unwrap()
+        .len()
 }
 
 /// What a decide that crashed at transaction `at` left on disk: whether the
@@ -110,7 +158,7 @@ fn crash_at(path: &Path, id: &str, at: u32) -> Option<(bool, bool)> {
     }
     drop(cell);
     let reopened = cell_on(file(path), false);
-    Some((resolved(path, id), melt_status(&reopened) == 200))
+    Some((resolved(path, id), melt(&reopened).0 == 200))
 }
 
 /// Whether the cell on `path` recorded the resolution of `id`.
@@ -124,197 +172,217 @@ fn resolved(path: &Path, id: &str) -> bool {
         .is_empty()
 }
 
-/// The approved call's settlement as the cell on `path` records it.
-fn settlement(path: &Path, id: &str) -> Option<(String, Option<String>)> {
-    let rows = file(path)
-        .query(
-            r#"SELECT "state","code" FROM "_norn_approved_call" WHERE "world"=?1 AND "decision_id"=?2"#,
-            &[MAIN_WORLD.into(), id.into()],
-        )
-        .unwrap();
-    rows.into_iter().next().map(|row| {
-        let row = norn_cell::engine::SqlRow(row);
-        (row.get(0).unwrap(), row.get(1).unwrap())
-    })
-}
-
-/// The first crash point whose aftermath is `want` (approval recorded, melt
-/// committed), on a fresh copy of the parked cell each try; the cell and the
-/// decision.
-fn crash_leaving(directory: &Path, want: (bool, bool)) -> (std::path::PathBuf, String) {
-    crash_leaving_after(directory, want, parked)
-}
-
-/// [`crash_leaving`], with the call parked by `park`.
-fn crash_leaving_after(
+/// Every crash point of the decide whose aftermath is `want` (approval
+/// recorded, melt committed), each on a fresh copy of the call parked by
+/// `park`: the cell and the decision.
+fn crashes_leaving(
     directory: &Path,
     want: (bool, bool),
     park: fn(&Path) -> String,
-) -> (std::path::PathBuf, String) {
+) -> Vec<(PathBuf, String)> {
+    let mut found = Vec::new();
     for at in 0..64 {
         let path = directory.join(format!("cell-{at}.sqlite"));
         let id = park(&path);
         match crash_at(&path, &id, at) {
-            Some(left) if left == want => return (path, id),
+            Some(left) if left == want => found.push((path, id)),
             Some(_) => {}
             None => break,
         }
     }
-    panic!("no crash point of the decide leaves {want:?}");
+    assert!(!found.is_empty(), "no crash point of the decide leaves {want:?}");
+    found
 }
 
-/// The alarm's due work at `at` (logical milliseconds), as the hosted cell
-/// runs it.
-fn wake<E: SqlEngine>(cell: &Cell<E>, at: u64) -> norn_api::timers::DueWork {
-    norn_cell_do::server::run_due(
-        &cell.host,
-        &cell.principals,
-        Some(&cell.handles),
-        LogicalTime::from_millis(at),
-    )
-    .unwrap()
+/// The first crash point leaving `want` for a direct call.
+fn crash_leaving(directory: &Path, want: (bool, bool)) -> (PathBuf, String) {
+    crashes_leaving(directory, want, parked).swap_remove(0)
 }
 
-/// The requester calls again with the same key: what the cell answers.
-fn retry<E: SqlEngine>(cell: &Cell<E>) -> (u16, Value) {
-    call(
-        cell,
-        "POST",
-        &format!("/v1/actions/{MELT_ACTION}"),
-        OPERATOR,
-        &melt_body("melt-7", "12", "10", "operator-1"),
-    )
+fn wake<E: SqlEngine>(cell: &Cell<E>, at: u64) -> DueWork {
+    run_due(&cell.host, LogicalTime::from_millis(at)).unwrap()
 }
 
-/// APPROVAL-RECOVERY-BEFORE: crash before the commit. The host dies between
-/// recording the approval and committing the call. Before #1481 this lost the
-/// call: nothing was due after the reopen. Now the approval leaves the call
-/// due: the reopened cell wakes at once, a wake that cannot act as the
-/// requester keeps it due on its backoff, and the alarm commits it exactly
-/// once as its requester; a repeated wake and the requester's retry replay.
+fn not_executed() -> Value {
+    json!({ "committed": false, "state": "not_executed" })
+}
+
+fn committed() -> Value {
+    json!({ "committed": true, "state": "committed" })
+}
+
+/// APPROVAL-RECOVERY-BEFORE: crash before the commit. Before #1481 this lost
+/// the call silently. Now the reopened cell shows it approved and not
+/// executed; the wake runs nothing; the requester's retry commits it once,
+/// under its own authority, and every later look and replay answers the
+/// same commit.
 #[test]
-fn an_approved_call_lost_to_a_crash_commits_once_after_a_reopen() {
+fn an_approved_call_lost_to_a_crash_is_visible_and_the_retry_commits_it_once() {
     let directory = tempfile::tempdir().unwrap();
     let (path, id) = crash_leaving(directory.path(), (true, false));
     let reopened = cell_on(file(&path), false);
-    assert_eq!(melt_status(&reopened), 404, "the crash lost the commit");
-    assert_eq!(settlement(&path, &id), Some(("due".to_owned(), None)));
-    let due = next_due(&reopened.host)
-        .unwrap()
-        .expect("the approved call is due");
-    let at = due.max(NOW * 1000);
-
-    // A wake with no principal to act as commits nothing and backs off.
-    let alone = norn_api::timers::run_due(&reopened.host, LogicalTime::from_millis(at)).unwrap();
-    assert_eq!(alone.failed.len(), 1, "{alone:?}");
-    assert!(!alone.committed());
-    assert_eq!(melt_status(&reopened), 404);
-    let retry_at = at + norn_api::timers::STUCK_RETRY_MS;
-    assert_eq!(next_due(&reopened.host).unwrap(), Some(retry_at));
-
-    let woke = wake(&reopened, retry_at);
-    assert_eq!(woke.approved_calls, 1, "{woke:?}");
-    assert!(woke.failed.is_empty(), "{woke:?}");
-    assert_eq!(melt_status(&reopened), 200);
-    assert_eq!(settlement(&path, &id), Some(("committed".to_owned(), None)));
+    assert_eq!(melt(&reopened).0, 404, "the crash lost the commit");
+    assert_eq!(standing(&reopened, &id), not_executed());
+    // Nothing is due: no wake ever calls an action as anyone.
     assert_eq!(next_due(&reopened.host).unwrap(), None);
-    // Delivered again, the wake finds nothing; the requester's retry replays.
-    assert_eq!(
-        wake(&reopened, retry_at),
-        norn_api::timers::DueWork::default()
-    );
-    let (status, replayed) = retry(&reopened);
-    assert_eq!(status, 200, "{replayed}");
-    assert_eq!(replayed["outcome"], json!("replayed"), "{replayed}");
-    assert_eq!(
-        reopened.caller.current(),
-        None,
-        "no caller outlives the wake"
-    );
-}
+    assert_eq!(wake(&reopened, NOW * 1000 + 1), DueWork::default());
+    assert_eq!(melt(&reopened).0, 404);
 
-/// APPROVAL-RECOVERY-AFTER: crash after the commit. The call committed but the
-/// host died before recording so. The wake settles it from the call's
-/// idempotency record and dispatches nothing: no second commit.
-#[test]
-fn an_approved_call_committed_before_a_crash_never_commits_twice() {
-    let directory = tempfile::tempdir().unwrap();
-    let (path, id) = crash_leaving(directory.path(), (true, true));
-    assert_eq!(settlement(&path, &id), Some(("due".to_owned(), None)));
-    let reopened = cell_on(file(&path), false);
-    let due = next_due(&reopened.host)
-        .unwrap()
-        .expect("the settlement is due");
-    let woke = wake(&reopened, due.max(NOW * 1000));
-    assert_eq!(woke.approved_calls, 0, "nothing was dispatched: {woke:?}");
-    assert!(
-        woke.failed.is_empty() && woke.refused_calls.is_empty(),
-        "{woke:?}"
-    );
-    assert_eq!(settlement(&path, &id), Some(("committed".to_owned(), None)));
-    assert_eq!(next_due(&reopened.host).unwrap(), None);
-    let (status, replayed) = retry(&reopened);
-    assert_eq!(status, 200, "{replayed}");
-    assert_eq!(replayed["outcome"], json!("replayed"), "{replayed}");
-}
-
-/// APPROVAL-RECOVERY-CHANGED (with APPROVAL-REVISION-1): the action changed while
-/// the host was down. The wake never runs the call under the changed
-/// action: it settles `approval.definition_changed`, which the approver's
-/// replay shows, and the requester's call asks for a fresh approval. The
-/// decision is never silently consumed.
-#[test]
-fn an_approved_call_whose_action_changed_while_down_is_refused_visibly() {
-    let directory = tempfile::tempdir().unwrap();
-    let (path, id) = crash_leaving(directory.path(), (true, false));
-    let reopened = cell_on(file(&path), false);
-    let version = reopened.host.active_definitions_version().unwrap();
-    let (model, input) = step_cell::action_cell::melt_install(
-        step_cell::action_cell::OMITS_LOSS,
-        norn_api::action_admission::prepare_action_model,
-        NOW * 1000 + 1,
-    );
-    reopened
-        .host
-        .install_definitions(model, input, version)
-        .expect("the next revision installs");
-
-    let due = next_due(&reopened.host)
-        .unwrap()
-        .expect("the approved call is due");
-    let woke = wake(&reopened, due.max(NOW * 1000 + 1));
-    assert_eq!(woke.approved_calls, 0, "{woke:?}");
-    assert_eq!(woke.refused_calls.len(), 1, "{woke:?}");
-    assert!(
-        woke.refused_calls[0].ends_with("approval.definition_changed"),
-        "{woke:?}"
-    );
-    assert_eq!(
-        melt_status(&reopened),
-        404,
-        "nothing ran under the new action"
-    );
-    assert_eq!(
-        settlement(&path, &id),
-        Some((
-            "refused".to_owned(),
-            Some("approval.definition_changed".to_owned())
-        ))
-    );
-    assert_eq!(next_due(&reopened.host).unwrap(), None);
-
+    let (status, receipt) = retry(&reopened);
+    assert_eq!(status, 200, "{receipt}");
+    assert_eq!(receipt["outcome"], json!("committed"), "{receipt}");
+    assert_eq!(standing(&reopened, &id), committed());
+    let before = commit_count_of(&reopened, &path);
     let (status, replayed) = approve(&reopened, &id);
     assert_eq!(status, 200, "{replayed}");
     assert_eq!(replayed["outcome"], json!("replayed"), "{replayed}");
-    assert_eq!(
-        replayed["call"],
-        json!({ "committed": false, "code": "approval.definition_changed" }),
-        "{replayed}"
-    );
+    assert_eq!(replayed["call"], committed(), "{replayed}");
     let (status, again) = retry(&reopened);
-    assert_eq!(status, 202, "{again}");
-    assert_ne!(again["decision"]["id"], json!(id), "{again}");
-    assert_eq!(melt_status(&reopened), 404);
+    assert_eq!(status, 200, "{again}");
+    assert_eq!(again["outcome"], json!("replayed"), "{again}");
+    assert_eq!(commit_count_of(&reopened, &path), before, "nothing new");
+}
+
+/// [`commit_count`] while `cell` is open on `path`.
+fn commit_count_of<E: SqlEngine>(_open: &Cell<E>, path: &Path) -> usize {
+    commit_count(path)
+}
+
+/// APPROVAL-RECOVERY-REPLAY: crash before the commit; the approver's replay
+/// of the decide runs the call once, as its requester, through the
+/// approval's fence; the requester's retry then replays it.
+#[test]
+fn the_approvers_replay_commits_an_approved_call_lost_to_a_crash_once() {
+    let directory = tempfile::tempdir().unwrap();
+    let (path, id) = crash_leaving(directory.path(), (true, false));
+    let reopened = cell_on(file(&path), false);
+    let (status, replayed) = approve(&reopened, &id);
+    assert_eq!(status, 200, "{replayed}");
+    assert_eq!(replayed["outcome"], json!("replayed"), "{replayed}");
+    assert_eq!(replayed["call"], committed(), "{replayed}");
+    assert_eq!(melt(&reopened).0, 200);
+    let before = commit_count_of(&reopened, &path);
+    let (status, again) = approve(&reopened, &id);
+    assert_eq!(status, 200, "{again}");
+    assert_eq!(again["call"], committed(), "{again}");
+    let (status, receipt) = retry(&reopened);
+    assert_eq!(status, 200, "{receipt}");
+    assert_eq!(receipt["outcome"], json!("replayed"), "{receipt}");
+    assert_eq!(commit_count_of(&reopened, &path), before, "never twice");
+}
+
+/// APPROVAL-RECOVERY-CONFLICT: another call committed under the approved
+/// call's idempotency key (same requester and key, other input, approved on
+/// its own). The approved call never reads as committed: it is an
+/// idempotency conflict, and nothing runs.
+#[test]
+fn another_call_under_the_approved_key_is_a_conflict_never_a_commit() {
+    let directory = tempfile::tempdir().unwrap();
+    let (path, id) = crash_leaving(directory.path(), (true, false));
+    let reopened = cell_on(file(&path), false);
+    let (status, other) = melt_call(&reopened, "11", "operator-1");
+    assert_eq!(status, 202, "{other}");
+    let other_id = other["decision"]["id"].as_str().unwrap().to_owned();
+    assert_ne!(other_id, id);
+    let (status, decided) = decide_with(&reopened, &other_id, "approve-other");
+    assert_eq!(status, 200, "{decided}");
+    assert_eq!(decided["call"], committed(), "{decided}");
+
+    let conflict = json!({ "committed": false, "code": "action.idempotency_conflict",
+        "state": "refused" });
+    assert_eq!(standing(&reopened, &id), conflict);
+    let before = commit_count_of(&reopened, &path);
+    let (status, replayed) = approve(&reopened, &id);
+    assert_eq!(status, 200, "{replayed}");
+    assert_eq!(replayed["call"], conflict, "{replayed}");
+    assert_eq!(commit_count_of(&reopened, &path), before, "nothing ran");
+    let (_status, object) = melt(&reopened);
+    assert_eq!(object["values"]["input_fine_g"], json!("11"), "{object}");
+}
+
+/// Install the melt definitions `set` as the next version at `at`.
+fn install_set<E: SqlEngine>(cell: &Cell<E>, set: &str, at: u64) {
+    let version = cell.host.active_definitions_version().unwrap();
+    let (model, input) = step_cell::action_cell::melt_install(
+        set,
+        norn_api::action_admission::prepare_action_model,
+        at,
+    );
+    cell.host
+        .install_definitions(model, input, version)
+        .expect("the next revision installs");
+}
+
+/// Export every commit of the cell on `path` and restore it to `target`.
+fn restore(path: &Path, target: &Path, directory: &Path) {
+    let source = store(path);
+    let model = source.model().clone();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let mut exporter = Exporter::local(&directory.join("export")).unwrap();
+        for seq in 1..=source.export_commit_count().unwrap() {
+            exporter
+                .append(&source.export_record(seq).unwrap().unwrap())
+                .await
+                .unwrap();
+        }
+        let manifest = exporter.verify().await.unwrap();
+        CellStore::restore_from(
+            &mut exporter,
+            target,
+            model,
+            "org_demo/dev",
+            &manifest.bindings,
+            StoreOptions::default(),
+        )
+        .await
+        .unwrap();
+    });
+}
+
+/// APPROVAL-RECOVERY-REFUSED (with APPROVAL-REVISION-1): the approved call
+/// is refused when it runs (its action changed after it parked), and the
+/// refusal is final: once the action is back as it was, neither the
+/// requester's retry nor the approver's replay runs it, and a cell restored
+/// from the export still holds the refusal.
+#[test]
+fn a_recorded_refusal_stays_final_after_the_cause_clears_and_after_a_restore() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("cell.sqlite");
+    let id = parked(&path);
+    let cell = cell_on(file(&path), false);
+    install_set(&cell, step_cell::action_cell::OMITS_LOSS, NOW * 1000 + 1);
+    let refused = json!({ "committed": false, "code": "approval.definition_changed",
+        "state": "refused" });
+    let (status, decided) = approve(&cell, &id);
+    assert_eq!(status, 200, "{decided}");
+    assert_eq!(decided["call"], refused, "{decided}");
+
+    // The cause clears: the action is defined as it was when the call parked.
+    install_set(&cell, DERIVES_LOSS, NOW * 1000 + 2);
+    let (status, again) = retry(&cell);
+    assert_eq!(status, 409, "{again}");
+    assert_eq!(again["code"], json!("approval.definition_changed"), "{again}");
+    let (status, replayed) = approve(&cell, &id);
+    assert_eq!(status, 200, "{replayed}");
+    assert_eq!(replayed["call"], refused, "{replayed}");
+    assert_eq!(melt(&cell).0, 404);
+    drop(cell);
+
+    let target = directory.path().join("restored.sqlite");
+    restore(&path, &target, directory.path());
+    let restored = cell_on(file(&target), false);
+    assert_eq!(standing(&restored, &id), refused);
+    let (status, replayed) = approve(&restored, &id);
+    assert_eq!(status, 200, "{replayed}");
+    assert_eq!(replayed["call"], refused, "{replayed}");
+    let (status, again) = retry(&restored);
+    assert_eq!(status, 409, "{again}");
+    assert_eq!(again["code"], json!("approval.definition_changed"), "{again}");
+    assert_eq!(melt(&restored).0, 404, "the restore never runs it");
+    assert_eq!(next_due(&restored.host).unwrap(), None);
 }
 
 /// A gated cell on `path` whose melt run's convert step parked its call
@@ -353,23 +421,64 @@ fn pending_ids<E: SqlEngine>(cell: &Cell<E>) -> Vec<String> {
         .collect()
 }
 
-/// APPROVAL-RECOVERY-STEP: a flow step's call. The host dies between the
-/// approval and the call. The wake commits the call as the run's starter
-/// and moves the run that waited on it, which completes.
-#[test]
-fn an_approved_step_call_lost_to_a_crash_moves_its_run_after_a_reopen() {
-    let directory = tempfile::tempdir().unwrap();
-    let (path, _id) = crash_leaving_after(directory.path(), (true, false), parked_step);
-    let reopened = cell_on(file(&path), false);
-    let due = next_due(&reopened.host)
-        .unwrap()
-        .expect("the approved call is due");
-    let woke = wake(&reopened, due.max(NOW * 1000));
-    assert_eq!(woke.approved_calls, 1, "{woke:?}");
-    assert!(woke.failed.is_empty(), "{woke:?}");
-    assert_eq!(melt_status(&reopened), 200);
-    let (status, run) = call_with(&reopened, "GET", "/v1/runs/melt-run", SCOPE, OPERATOR, "");
+fn run_state<E: SqlEngine>(cell: &Cell<E>) -> Value {
+    let (status, run) = call_with(cell, "GET", "/v1/runs/melt-run", SCOPE, OPERATOR, "");
     assert_eq!(status, 200, "{run}");
-    assert_eq!(run["state"], json!("completed"), "{run}");
+    run["state"].clone()
+}
+
+/// APPROVAL-RECOVERY-STEP-BEFORE: a flow step's approved call is lost to a
+/// crash before it commits. The step waits, approved and not executed, and
+/// the wake calls nothing; the approver's replay runs it once and the run
+/// completes.
+#[test]
+fn an_approved_step_call_lost_before_its_commit_runs_once_on_the_approvers_replay() {
+    let directory = tempfile::tempdir().unwrap();
+    let (path, id) = crashes_leaving(directory.path(), (true, false), parked_step).swap_remove(0);
+    let reopened = cell_on(file(&path), false);
+    assert_eq!(run_state(&reopened), json!("awaiting_perform_convert"));
+    assert_eq!(standing(&reopened, &id), not_executed());
     assert_eq!(next_due(&reopened.host).unwrap(), None);
+    assert_eq!(wake(&reopened, NOW * 1000 + 1), DueWork::default());
+    assert_eq!(melt(&reopened).0, 404);
+
+    let (status, replayed) = approve(&reopened, &id);
+    assert_eq!(status, 200, "{replayed}");
+    assert_eq!(replayed["call"], committed(), "{replayed}");
+    assert_eq!(melt(&reopened).0, 200);
+    assert_eq!(run_state(&reopened), json!("completed"));
+}
+
+/// APPROVAL-RECOVERY-STEP-AFTER: a flow step's approved call committed, and
+/// the host died before its run took the outcome (before the result was
+/// recorded, or after it was recorded and before the run consumed it). The
+/// wake delivers the recorded outcome, durably, without calling the action:
+/// one new commit, the run's result turn.
+#[test]
+fn a_committed_step_call_lost_before_its_delivery_moves_its_run_on_the_wake() {
+    let directory = tempfile::tempdir().unwrap();
+    let crashes = crashes_leaving(directory.path(), (true, true), parked_step);
+    let mut delivered = 0;
+    for (path, id) in crashes {
+        let reopened = cell_on(file(&path), false);
+        if run_state(&reopened) == json!("completed") {
+            continue;
+        }
+        delivered += 1;
+        assert_eq!(standing(&reopened, &id), committed());
+        let (_status, before) = melt(&reopened);
+        let due = next_due(&reopened.host)
+            .unwrap()
+            .expect("the outcome is due");
+        let count = commit_count_of(&reopened, &path);
+        let woke = wake(&reopened, due.max(NOW * 1000));
+        assert_eq!(woke.steps, 1, "{woke:?}");
+        assert!(woke.failed.is_empty(), "{woke:?}");
+        assert_eq!(run_state(&reopened), json!("completed"));
+        assert_eq!(melt(&reopened).1, before, "the action never ran again");
+        assert_eq!(commit_count_of(&reopened, &path), count + 1);
+        assert_eq!(next_due(&reopened.host).unwrap(), None);
+        assert_eq!(wake(&reopened, due.max(NOW * 1000)), DueWork::default());
+    }
+    assert!(delivered > 0, "no crash point leaves the outcome undelivered");
 }

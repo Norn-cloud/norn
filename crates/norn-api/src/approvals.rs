@@ -31,11 +31,24 @@
 //! (`defs.stale`) and commits nothing. The pin is part of the call's
 //! identity: the requester's retry under another catalog parks anew and
 //! waits for a fresh decision.
+//!
+//! APPROVAL-RECOVERY-1: the approval of a parked call is recorded first and
+//! the call commits after it, so a host can stop in between. Nothing ever
+//! runs the call without a request: an approved call that did not commit
+//! stays visibly approved and not executed ([`CallState::NotExecuted`]), and
+//! the requester's retry, or the approver's replay of the decide, runs it
+//! once under the caller's authority decided then, only as exactly the
+//! approved call (its command id: requester, input, idempotency key, action
+//! digest, gate definition and revision, definitions pin). Whether it
+//! committed is its idempotency record, matched to that exact call; a
+//! refusal decided while it ran is recorded on the ledger and is final. A
+//! denial of authority is not recorded: authority is decided anew on every
+//! try.
 
 use std::collections::BTreeMap;
 
 use http::StatusCode;
-use norn_cell::decision_ledger::{DecisionRow, Resolution};
+use norn_cell::decision_ledger::{ApprovalRefused, DecisionRow, Resolution};
 use norn_cell::engine::SqlEngine;
 use norn_cell::flow_run::RunStarter;
 use norn_cell::{CellError, MAIN_WORLD};
@@ -45,8 +58,8 @@ use norn_kernel::cell_host::{
     LinkReadTarget, LinkState, Observed, Performed, PredicateObject, PredicateQuery,
 };
 use norn_kernel::{
-    Command, CommandId, Effect, FactEvent, FactKey, FreshnessPolicy, Generation, IdempotencyKey,
-    LinkKey, LogicalTime,
+    ACTION_CALL_TYPE, ActionCallRecord, Command, CommandId, Effect, FactEvent, FactKey,
+    FreshnessPolicy, Generation, IdempotencyKey, LinkKey, LogicalTime,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -62,10 +75,10 @@ pub(crate) const WOULD_COMMIT: &str = "approval.would_commit";
 pub const APPROVAL_STEP: &str = "approval";
 
 /// The command id prefix of every parked call ([`command_id`]).
-pub(crate) const COMMAND_PREFIX: &str = norn_cell::decision_ledger::APPROVAL_COMMAND_PREFIX;
+pub(crate) const COMMAND_PREFIX: &str = "norn.approval/";
 
 /// The option that approves a parked call.
-pub const APPROVE: &str = norn_cell::decision_ledger::APPROVE_CHOICE;
+pub const APPROVE: &str = "approve";
 
 /// The option that rejects a parked call.
 pub const REJECT: &str = "reject";
@@ -472,6 +485,167 @@ fn park<E: SqlEngine>(
     // host's.
     CellHost::commit(cell, commit).map_err(|error| Refusal::host(format!("{error:?}")))?;
     Ok(())
+}
+
+/// APPROVAL-RECOVERY-1: where an approved call stands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CallState {
+    /// Approved, not yet executed: the requester's retry or the approver's
+    /// replay runs it.
+    NotExecuted,
+    /// Exactly this call committed; its idempotency record.
+    Committed(Box<ActionCallRecord>),
+    /// It was refused while it ran, for good (status, code).
+    Refused(u16, String),
+}
+
+/// The approved call of `decision_id` and where it stands; `None` when the
+/// decision approved no call.
+///
+/// # Errors
+/// A host failure.
+pub(crate) fn approved_call<E: SqlEngine>(
+    cell: &ActionCell<E>,
+    decision_id: &str,
+) -> Result<Option<(HeldCall, CallState)>, Refusal> {
+    let Some(row) = cell
+        .store()
+        .read()
+        .approved_call(MAIN_WORLD, decision_id)
+        .map_err(Refusal::host)?
+    else {
+        return Ok(None);
+    };
+    approved_state(cell, &row).map(Some)
+}
+
+/// The parked call `row` approved and where it stands.
+///
+/// # Errors
+/// A host failure: the parked command is gone or unreadable.
+pub(crate) fn approved_state<E: SqlEngine>(
+    cell: &ActionCell<E>,
+    row: &norn_cell::decision_ledger::ApprovedCall,
+) -> Result<(HeldCall, CallState), Refusal> {
+    let held = cell
+        .store()
+        .read()
+        .outbox_command(&row.command_id)
+        .map_err(Refusal::host)?
+        .and_then(|command| {
+            command
+                .command
+                .get("payload")
+                .and_then(|payload| payload.get("approval"))
+                .and_then(held_call)
+        })
+        .ok_or_else(|| Refusal::host("an approved call's parked command is missing"))?;
+    if let Some((status, code)) = &row.refused {
+        return Ok((held, CallState::Refused(*status, code.clone())));
+    }
+    let key = FactKey::new(
+        ACTION_CALL_TYPE,
+        format!("{}/{}", held.call.action, held.call.idempotency_key),
+    );
+    let recorded = CellHost::load(cell, &key).map_err(Refusal::host)?;
+    let state = match recorded.values.as_ref() {
+        None => CallState::NotExecuted,
+        Some(values) => match ActionCallRecord::from_values(values) {
+            // Exactly the approved call: its action, its requester, its
+            // input. Another call under the same key is a conflict, never
+            // this call's commit.
+            Some(record)
+                if record.action_id == held.call.action
+                    && record.actor == held.call.requester.subject
+                    && record.input == held.call.input =>
+            {
+                CallState::Committed(Box::new(record))
+            }
+            _conflict => CallState::Refused(
+                StatusCode::CONFLICT.as_u16(),
+                "action.idempotency_conflict".to_owned(),
+            ),
+        },
+    };
+    Ok((held, state))
+}
+
+/// The decision that approved the parked call `command`, if one did.
+///
+/// # Errors
+/// A host failure.
+pub(crate) fn approving_decision<E: SqlEngine>(
+    cell: &ActionCell<E>,
+    command: &str,
+) -> Result<Option<String>, Refusal> {
+    let decision_id = crate::decisions::decision_id(command, 1)?;
+    let row = cell
+        .store()
+        .read()
+        .decision_resolution(MAIN_WORLD, &decision_id)
+        .map_err(Refusal::host)?;
+    Ok(row
+        .filter(|row| {
+            row.resolved.resolution == Resolution::Decided
+                && row.resolved.choice.as_deref() == Some(APPROVE)
+        })
+        .map(|_| decision_id))
+}
+
+/// The refusal recorded for the approved call of `decision_id`, as its
+/// callers get it, if one is recorded.
+///
+/// # Errors
+/// A host failure.
+pub(crate) fn recorded_refusal<E: SqlEngine>(
+    cell: &ActionCell<E>,
+    decision_id: &str,
+) -> Result<Option<Refusal>, Refusal> {
+    Ok(cell
+        .store()
+        .read()
+        .approved_call(MAIN_WORLD, decision_id)
+        .map_err(Refusal::host)?
+        .and_then(|row| row.refused)
+        .map(|(status, code)| {
+            Refusal::new(
+                StatusCode::from_u16(status).unwrap_or(StatusCode::CONFLICT),
+                &code,
+                "this approved call was refused when it ran",
+                "its approval never runs it again; call with a new idempotency key to ask for a new approval",
+            )
+        }))
+}
+
+/// Record `refusal` as final for the approved call of `decision_id` when it
+/// decides the call (anything but a host failure or a denial of authority,
+/// which is decided anew on every try), in its own commit under the cell
+/// the refused try holds; `refusal` back.
+///
+/// # Errors
+/// A host failure recording it; nothing is recorded and the call stays
+/// approved and not executed.
+pub(crate) fn refuse<E: SqlEngine>(
+    cell: &mut ActionCell<E>,
+    decision_id: &str,
+    refusal: Refusal,
+) -> Result<Refusal, Refusal> {
+    use crate::refusal::RefusalCategory;
+    if matches!(
+        refusal.category,
+        RefusalCategory::Internal | RefusalCategory::Permission | RefusalCategory::Visibility
+    ) {
+        return Ok(refusal);
+    }
+    let refused = ApprovalRefused {
+        decision_id: decision_id.to_owned(),
+        status: refusal.status,
+        code: refusal.code.clone(),
+    };
+    match cell.commit_approval_refusal(&refused) {
+        Ok(_receipt) => Ok(refusal),
+        Err(error) => Err(Refusal::host(format!("{error:?}"))),
+    }
 }
 
 /// A host for one dry run of the kernel's action pipeline over `cell`: every

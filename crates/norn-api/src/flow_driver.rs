@@ -8,6 +8,12 @@
 //! that delivery, so the run advances exactly once per result. This is host
 //! code: the decide route and the host call it after their own
 //! authorization, never a client directly.
+//!
+//! APPROVAL-RECOVERY-1: an action step whose approved call already has an
+//! outcome (it committed, or its refusal is recorded) takes that outcome
+//! without the action being called again ([`recorded_steps`]), and a result
+//! recorded but not yet consumed stays due until the run consumes it. The
+//! host's wake delivers both; it never calls an action.
 
 use http::StatusCode;
 use norn_cell::MAIN_WORLD;
@@ -29,6 +35,7 @@ use crate::run_routes::InstalledFlow;
 
 /// One perform step's delivery: the command, its run and step, and how the
 /// step ended.
+#[derive(Clone)]
 pub(crate) struct Delivery<'a> {
     pub(crate) command: &'a CommandId,
     pub(crate) generation: Generation,
@@ -224,48 +231,160 @@ fn pending_step<E: SqlEngine>(
     Ok(None)
 }
 
-/// The action call `run_id`'s pending `norn.action@1` step makes, as its
-/// recorded starter: what an approval of that call approved.
-pub(crate) struct WaitingCall {
-    pub(crate) starter: RunStarter,
-    pub(crate) action: String,
-    pub(crate) input: RuntimeObject,
-    pub(crate) idempotency_key: String,
+/// APPROVAL-RECOVERY-1: a pending action step whose approved call already
+/// has its outcome, and that outcome as the step's result.
+pub(crate) struct RecordedStep {
+    /// The approving decision.
+    pub(crate) decision_id: String,
+    /// When its approval committed (logical milliseconds): due from then.
+    pub(crate) approved_at_ms: u64,
+    run_id: String,
+    command: CommandId,
+    generation: Generation,
+    step: String,
+    attempt: RuntimeValue,
+    outcome: StepOutcome,
+    /// The result is recorded already and only its consumption is due.
+    recorded: bool,
 }
 
-/// The call `run_id`'s pending action step waits to make, read under the
-/// definitions epoch and the cell; `None` when no well-formed step with a
-/// recorded starter waits.
+/// Every pending action step whose approved call has an outcome: the call
+/// committed (exactly the approved call), or its refusal is recorded, or the
+/// step's result is recorded and not yet consumed. A refusal of a call
+/// whose action or gate changed since it parked is not the step's outcome:
+/// the step's next drive asks for a new approval (APPROVAL-REVISION-1).
 ///
 /// # Errors
 /// A host failure.
-pub(crate) fn waiting_call<E: SqlEngine>(
-    host: &DevHost<E>,
-    run_id: &str,
-) -> Result<Option<WaitingCall>, Refusal> {
-    let _epoch = host.definition_read()?;
-    let cell = host.cell()?;
-    let Some(step) = pending_step(&cell, run_id)? else {
-        return Ok(None);
-    };
-    let Some(starter) = cell
+pub(crate) fn recorded_steps<E: SqlEngine>(
+    cell: &ActionCell<E>,
+) -> Result<Vec<RecordedStep>, Refusal> {
+    let mut found = Vec::new();
+    for pending in cell
         .store()
         .read()
-        .run_start(MAIN_WORLD, run_id)
+        .parked_commands()
         .map_err(Refusal::host)?
-        .and_then(|start| start.started_by)
-    else {
-        return Ok(None);
-    };
-    let Ok(action) = norn_cell::flow_run::parse_action_step(&step.input) else {
-        return Ok(None);
-    };
-    Ok(Some(WaitingCall {
-        starter,
-        action: action.action,
-        input: action.input,
-        idempotency_key: step_call_key(&step.idempotency_key, &step.attempt)?,
-    }))
+    {
+        let Some(payload) = pending.command.command.get("payload") else {
+            continue;
+        };
+        let text = |name: &str| payload.get(name).and_then(RuntimeValue::as_str);
+        let (Some(norn_cell::flow_run::ACTION_FUNCTION), Some(run_id), Some(step), Some(attempt)) = (
+            text("function"),
+            text("runId"),
+            text("step"),
+            payload.get("attempt"),
+        ) else {
+            continue;
+        };
+        let key = step_call_key(text("idempotencyKey").unwrap_or(step), attempt)?;
+        let Some((decision_id, approved_at_ms, outcome)) =
+            approved_outcome(cell, run_id, &key)?
+        else {
+            continue;
+        };
+        let (outcome, recorded) = match pending.result {
+            Some(RuntimeValue::Object(result)) if result.contains_key("_tag") => {
+                (StepOutcome::Failure(result), true)
+            }
+            Some(RuntimeValue::Object(result)) => (StepOutcome::Output(result), true),
+            Some(_other) => return Err(Refusal::host("an action step's result is not an object")),
+            None => match outcome {
+                Some(outcome) => (outcome, false),
+                None => continue,
+            },
+        };
+        found.push(RecordedStep {
+            decision_id,
+            approved_at_ms,
+            run_id: run_id.to_owned(),
+            command: CommandId(pending.command.command_id.clone()),
+            generation: Generation(pending.command.generation),
+            step: step.to_owned(),
+            attempt: attempt.clone(),
+            outcome,
+            recorded,
+        });
+    }
+    Ok(found)
+}
+
+/// The approval of `run_id`'s step call keyed `key`, if one approved it:
+/// its decision, when it was approved, and the step's outcome once the call
+/// has one.
+fn approved_outcome<E: SqlEngine>(
+    cell: &ActionCell<E>,
+    run_id: &str,
+    key: &str,
+) -> Result<Option<(String, u64, Option<StepOutcome>)>, Refusal> {
+    use crate::approvals::CallState;
+    let rows = cell
+        .store()
+        .read()
+        .approved_calls_of_run(MAIN_WORLD, run_id)
+        .map_err(Refusal::host)?;
+    for row in rows {
+        let (held, state) = crate::approvals::approved_state(cell, &row)?;
+        if held.call.idempotency_key != key {
+            continue;
+        }
+        let outcome = match state {
+            CallState::NotExecuted => None,
+            CallState::Refused(_, code)
+                if code == crate::approvals::approval_codes::DEFINITION_CHANGED =>
+            {
+                None
+            }
+            CallState::Refused(_, code) => Some(failure("Refused", Some(&code))),
+            CallState::Committed(record) => {
+                let (object_type, object_id, version) =
+                    crate::actions::recorded_target(cell.store(), &record, key)?;
+                Some(output(object_type, object_id, version)?)
+            }
+        };
+        return Ok(Some((row.decision_id, row.resolved_at_ms, outcome)));
+    }
+    Ok(None)
+}
+
+fn output(object_type: String, object_id: String, version: u64) -> Result<StepOutcome, Refusal> {
+    Ok(StepOutcome::Output(std::collections::BTreeMap::from([
+        ("objectType".to_owned(), RuntimeValue::String(object_type)),
+        ("objectId".to_owned(), RuntimeValue::String(object_id)),
+        (
+            "version".to_owned(),
+            norn_ir::runtime::encode(&version).map_err(Refusal::host)?,
+        ),
+    ])))
+}
+
+/// Deliver one [`RecordedStep`] to its run, under `cell`: the outcome is
+/// recorded as the step's result (unless it is already) and the run's
+/// result turn commits consuming it. A result recorded meanwhile by another
+/// delivery is left to it.
+///
+/// # Errors
+/// The flow refused the result; the run object is gone; a host failure.
+/// The step stays due.
+pub(crate) fn deliver_recorded<E: SqlEngine>(
+    cell: &mut ActionCell<E>,
+    step: &RecordedStep,
+    now: LogicalTime,
+) -> Result<(), Refusal> {
+    deliver_in(
+        cell,
+        Delivery {
+            command: &step.command,
+            generation: step.generation,
+            run_id: &step.run_id,
+            step: &step.step,
+            attempt: step.attempt.clone(),
+            outcome: step.outcome.clone(),
+        },
+        step.recorded,
+        now,
+    )
 }
 
 fn failure(tag: &str, code: Option<&str>) -> StepOutcome {
@@ -299,7 +418,7 @@ pub fn drive_run<E: SqlEngine>(
     now: LogicalTime,
 ) -> Result<(), Refusal> {
     for _ in 0..MAX_ACTION_STEPS {
-        let (step, starter) = {
+        let (step, starter, recorded) = {
             let _epoch = host.definition_read()?;
             let cell = host.cell()?;
             let Some(step) = pending_step(&cell, run_id)? else {
@@ -311,12 +430,19 @@ pub fn drive_run<E: SqlEngine>(
                 .run_start(MAIN_WORLD, run_id)
                 .map_err(Refusal::host)?
                 .and_then(|start| start.started_by);
-            (step, starter)
+            // APPROVAL-RECOVERY-1: an approved call with its outcome is never
+            // called again; the step takes the outcome.
+            let key = step_call_key(&step.idempotency_key, &step.attempt)?;
+            let recorded =
+                approved_outcome(&cell, run_id, &key)?.and_then(|(.., outcome)| outcome);
+            (step, starter, recorded)
         };
-        let outcome = match (starter, norn_cell::flow_run::parse_action_step(&step.input)) {
-            (_, Err(refused)) => failure("Refused", Some(refused.code())),
-            (None, Ok(_)) => failure("Denied", None),
-            (Some(starter), Ok(action)) => {
+        let parsed = norn_cell::flow_run::parse_action_step(&step.input);
+        let outcome = match (recorded, starter, parsed) {
+            (Some(recorded), ..) => recorded,
+            (None, _, Err(refused)) => failure("Refused", Some(refused.code())),
+            (None, None, Ok(_)) => failure("Denied", None),
+            (None, Some(starter), Ok(action)) => {
                 let scope = crate::actions::ActionQuery {
                     org_id: Some(host.scope().org_id.clone()),
                     environment_id: Some(host.scope().environment_id.clone()),
@@ -343,21 +469,7 @@ pub fn drive_run<E: SqlEngine>(
                     // decision, and the run moves once someone decides.
                     Some(Ok(ActionAnswer::Pending(_))) => return Ok(()),
                     Some(Ok(ActionAnswer::Receipt(receipt))) => {
-                        StepOutcome::Output(std::collections::BTreeMap::from([
-                            (
-                                "objectType".to_owned(),
-                                RuntimeValue::String(receipt.object_type),
-                            ),
-                            (
-                                "objectId".to_owned(),
-                                RuntimeValue::String(receipt.object_id),
-                            ),
-                            (
-                                "version".to_owned(),
-                                norn_ir::runtime::encode(&receipt.version)
-                                    .map_err(Refusal::host)?,
-                            ),
-                        ]))
+                        output(receipt.object_type, receipt.object_id, receipt.version)?
                     }
                     Some(Err(refused)) => match refused.category {
                         crate::refusal::RefusalCategory::Internal => return Err(refused),
@@ -389,36 +501,52 @@ fn deliver<E: SqlEngine>(
 ) -> Result<(), Refusal> {
     let _epoch = host.definition_read()?;
     let mut cell = host.cell()?;
+    deliver_in(
+        &mut cell,
+        Delivery {
+            command: &step.command,
+            generation: step.generation,
+            run_id,
+            step: &step.step,
+            attempt: step.attempt.clone(),
+            outcome,
+        },
+        false,
+        now,
+    )
+}
+
+/// [`deliver`] under `cell`; `recorded` when the result is recorded already
+/// and only its consumption is due.
+fn deliver_in<E: SqlEngine>(
+    cell: &mut ActionCell<E>,
+    delivery: Delivery<'_>,
+    recorded: bool,
+    now: LogicalTime,
+) -> Result<(), Refusal> {
     let row = cell
         .store()
         .read()
-        .flow_run(MAIN_WORLD, run_id)
+        .flow_run(MAIN_WORLD, delivery.run_id)
         .map_err(Refusal::host)?
         .ok_or_else(|| Refusal::host("a run lost its ledger row"))?;
     let flow = crate::run_routes::installed_flow(cell.store(), &row.flow.id)?;
-    let now = crate::actions::turn_clock(&mut cell, now)?;
-    let recorded = match &outcome {
+    let now = crate::actions::turn_clock(cell, now)?;
+    let result = match &delivery.outcome {
         StepOutcome::Output(object) | StepOutcome::Failure(object) => object.clone(),
     };
-    let delivery = |outcome| Delivery {
-        command: &step.command,
-        generation: step.generation,
-        run_id,
-        step: &step.step,
-        attempt: step.attempt.clone(),
-        outcome,
-    };
     // The flow must accept the result before anything is recorded.
-    result_turn(&cell, &flow, delivery(outcome.clone()), now)?;
-    if cell
-        .complete_parked(&step.command, step.generation, recorded)
-        .map_err(Refusal::host)?
-        .is_none()
+    result_turn(cell, &flow, delivery.clone(), now)?;
+    if !recorded
+        && cell
+            .complete_parked(delivery.command, delivery.generation, result)
+            .map_err(Refusal::host)?
+            .is_none()
     {
         return Ok(());
     }
-    let commit = result_turn(&cell, &flow, delivery(outcome), now)?;
-    norn_kernel::CellHost::commit(&mut *cell, commit).map_err(|error| {
+    let commit = result_turn(cell, &flow, delivery, now)?;
+    norn_kernel::CellHost::commit(cell, commit).map_err(|error| {
         let norn_kernel::CommitError::Host(host_error) = error else {
             return Refusal::new(
                 StatusCode::CONFLICT,

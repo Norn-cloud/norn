@@ -422,36 +422,14 @@ impl<E: SqlEngine> Tenant<E> {
 
     /// TIMER-ALARM-1: run the cell's work due at `now_ms` (the host's clock)
     /// through its ordinary commit paths; what it did and when to wake next.
-    /// APPROVAL-RECOVERY-1: an approved call the host stopped before
-    /// committing commits first, as its requester under `principals`' role
-    /// table ([`server::run_due`]). A vacant cell has nothing due.
+    /// A vacant cell has nothing due.
     ///
     /// # Errors
     /// A host failure reading the cell; an item that fails stays due.
-    pub fn run_due(
-        &self,
-        principals: &dyn PrincipalResolver,
-        now_ms: u64,
-    ) -> Result<norn_api::timers::DueWork, Refusal> {
-        let State::Serving(serving) = &self.state else {
-            return Ok(norn_api::timers::DueWork::default());
-        };
-        // The disclosure authority a decision answers with (a cell with none
-        // decides nothing, so nothing of it is approved).
-        let questions = serving
-            .questions
-            .as_ref()
-            .map(|questions| -> &dyn AdHocQuestions<E> { questions })
-            .or_else(|| {
-                self.handles
-                    .as_ref()
-                    .map(|handles| -> &dyn AdHocQuestions<E> { handles })
-            });
-        server::run_due(
-            &serving.host,
-            principals,
-            questions,
-            norn_kernel::LogicalTime::from_millis(now_ms),
+    pub fn run_due(&self, now_ms: u64) -> Result<norn_api::timers::DueWork, Refusal> {
+        self.serving_host().map_or_else(
+            || Ok(norn_api::timers::DueWork::default()),
+            |host| norn_api::timers::run_due(host, norn_kernel::LogicalTime::from_millis(now_ms)),
         )
     }
 
