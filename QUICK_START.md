@@ -142,4 +142,7 @@ bun run local --project /tmp/packs --as reviewer --port 5181
 (`.norn/dev.token`) and its reviewer (`.norn/dev.reviewer.token`). An approval
 admits against the hosted roles (`viewer`, `member`, `admin`, `owner`); a call
 it gates waits until someone other than its requester decides it, so ask in one
-Studio and decide in the reviewer's.
+Studio and decide in the reviewer's. Holding every role is not holding every
+action: an action whose `access` names a policy is decided by that policy for
+both principals, as on a hosted cell. A worked example with an approval, a law
+and an ERPNext export is [docs/build/purchase-requests.md](docs/build/purchase-requests.md).

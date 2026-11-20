@@ -226,7 +226,7 @@ mod tests {
         let model = crate::Model::from_definitions(&[definition], &[]).expect("model");
         let mut store = CellStore::open_in_memory(model).expect("store");
         store
-            .commit(&crate::CommitBatch {
+            .commit_unchecked(&crate::CommitBatch {
                 world: crate::MAIN_WORLD.into(),
                 scope: "synthetic".into(),
                 logical_time: 7,

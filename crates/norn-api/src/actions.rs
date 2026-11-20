@@ -630,14 +630,26 @@ fn through_gate<E: SqlEngine>(
     let Some(gate) = gate else {
         return Ok(Gated::Commit(None));
     };
+    let mut dry_run = crate::approvals::WouldCommit::new(&*cell);
     let dry = norn_kernel::commit_action(
-        &mut crate::approvals::WouldCommit(&*cell),
+        &mut dry_run,
         catalog,
         kernel_call,
         &KernelAuthorizer(host.authorizer.as_ref()),
     );
+    let writes = dry_run.into_writes();
     match dry {
         Ok(replayed) => Ok(Gated::Replayed(Box::new(replayed))),
+        // APPROVAL-WHEN-1: a call whose record the gate's `when` excludes
+        // commits as an ungated call does.
+        Err(error)
+            if crate::approvals::would_have_committed(&error)
+                && !crate::approvals::applies(&gate, &writes, |object_type, property| {
+                    crate::approvals::semantics_in(cell.store().model(), object_type, property)
+                }) =>
+        {
+            Ok(Gated::Commit)
+        }
         Err(error) if crate::approvals::would_have_committed(&error) => {
             if approval.is_some() {
                 return Ok(Gated::Commit(approval));

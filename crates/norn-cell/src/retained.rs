@@ -34,7 +34,11 @@ const RETAINED_DDL: &[&str] = &[
   "recorded_at" INTEGER NOT NULL,
   PRIMARY KEY ("id", "revision")
 )"#,
-    r#"CREATE UNIQUE INDEX IF NOT EXISTS "_norn_retained_definition/version" ON "_norn_retained_definition" ("definitions_version")"#,
+    // One revision per id per definitions version: a kernel set install
+    // carries its pack's approvals in its one version (#1469). Replaces the
+    // older one-revision-per-version index on files that have it.
+    r#"DROP INDEX IF EXISTS "_norn_retained_definition/version""#,
+    r#"CREATE UNIQUE INDEX IF NOT EXISTS "_norn_retained_definition/version_id" ON "_norn_retained_definition" ("definitions_version", "id")"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_retained_definition/kind" ON "_norn_retained_definition" ("kind", "id", "revision")"#,
 ];
 

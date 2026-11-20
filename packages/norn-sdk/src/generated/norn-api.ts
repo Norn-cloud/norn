@@ -1527,6 +1527,15 @@ export interface components {
         };
         /** @description `POST /v1/cell/definitions:plan` and `:apply`. */
         DefinitionsChangeRequest: {
+            /**
+             * @description The pack's approvals (#1469): admitted against the submitted set's
+             *     actions, and installed with it in one transaction, so a new action
+             *     is never live without its gate. A plan returns each one's
+             *     restatement; an apply carries each one's `signoff` of it and the
+             *     `expectedVersion` (revision) the plan reported. Any refusal installs
+             *     nothing.
+             */
+            approvals?: components["schemas"]["InstallDefinitionRequest"][];
             /** @description The pack's artifact envelopes; none in a reserved namespace (core., std.). Each one is added, or replaces the active artifact of its id. */
             artifacts: components["schemas"]["NornArtifactEnvelope"][];
             /**
@@ -1540,6 +1549,8 @@ export interface components {
         DefinitionsPlan: {
             /** @description Artifacts the change adds. */
             added: components["schemas"]["PlannedArtifact"][];
+            /** @description The approvals the change installs with the set. */
+            approvals?: components["schemas"]["PlannedApproval"][];
             /**
              * Format: int64
              * @description The active definitions version the plan was made against: apply's
@@ -1781,6 +1792,13 @@ export interface components {
         NornActionInput: {
             [key: string]: unknown;
         };
+        /** @description One input field that names a record of `objectKind`. */
+        NornActionInputLink: {
+            /** @description The top-level input field holding the record's id. */
+            field: string;
+            /** @description The object type it names. */
+            objectKind: string;
+        };
         /**
          * @description Qualified name of an object type: dotted lower-case namespace segments and
          *     a PascalCase type name (`retail.Sku`, `hr.Employee`), the form v1
@@ -1796,6 +1814,12 @@ export interface components {
             description?: string | null;
             /** @description How its effect changes that object. */
             effect: components["schemas"]["NornActionEffect"];
+            /**
+             * @description Input fields that name an existing record (a link the action creates
+             *     to it), so a form offers a picker of that type's records
+             *     (ACTION-CATALOG-LINKS-1). Omitted when none.
+             */
+            inputLinks?: components["schemas"]["NornActionInputLink"][];
             /** @description The input a caller supplies: the admitted input schema, in the action's closed input dialect, without the fields the server derives from the verified actor (ACTION-ACTOR-1), which a caller never supplies. */
             inputSchema: {
                 [key: string]: unknown;
@@ -1806,6 +1830,11 @@ export interface components {
             objectKind: string;
             /** @description Its title, or its identity when it declares none. */
             title: string;
+            /**
+             * @description For a `fire_transition` action: the lifecycle state its transition
+             *     leaves the object in, so a receipt can say what the record is now.
+             */
+            toState?: string | null;
             /** @description The effects a caller must handle. */
             uiEffects: components["schemas"]["NornActionUiEffects"];
         };
@@ -12728,6 +12757,25 @@ export interface components {
             /** @description The decision id (`POST /v1/decisions/{id}:decide`). */
             id: string;
         };
+        /** @description An approval the change installs with the set. */
+        PlannedApproval: {
+            /**
+             * Format: int64
+             * @description The id's current revision, if any: the apply's `expectedVersion`.
+             */
+            fromRevision?: number | null;
+            /** @description The approval id. */
+            id: string;
+            /** @description The server's words for the approval: what the signer signs. */
+            restatement: string;
+            /**
+             * @description Lower-case hex SHA-256 of the restatement: the apply's
+             *     `signoff.restatementSha256`.
+             */
+            restatementSha256: string;
+            /** @description Whether the active revision is already this approval. */
+            unchanged: boolean;
+        };
         /** @description One artifact the change adds or replaces. */
         PlannedArtifact: {
             /** @description The artifact id. */
@@ -13065,6 +13113,11 @@ export interface operations {
                 environmentId: string;
                 /** @description Only actions whose effect targets this object type. */
                 objectKind?: string;
+                /**
+                 * @description With `objectKind`: only actions that can act on this object in its
+                 *     current lifecycle state (ACTION-CATALOG-STATE-1).
+                 */
+                objectId?: string;
             };
             header?: never;
             path?: never;

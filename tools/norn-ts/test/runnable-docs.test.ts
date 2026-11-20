@@ -38,7 +38,7 @@ const STATUS_TEST_TIMEOUT_MS = STATUS_ROWS * STATUS_COMMAND_TIMEOUT_MS + 60_000
 
 releaseTest("each core status row executes one named release test", () => {
   const matrix = readFileSync(join(root, "docs/authoring/runnable/status.md"), "utf8")
-  const commands = [...matrix.matchAll(/`(cargo test --locked -p [a-z-]+ --test [a-z_]+ [a-z_]+ -- --exact)`/g)]
+  const commands = [...matrix.matchAll(/`(cargo test --locked -p [a-z-]+ (?:--test [a-z_]+ [a-z_]+|--lib [a-z_:]+) -- --exact)`/g)]
   expect(commands).toHaveLength(STATUS_ROWS)
   for (const [, command] of commands) {
     const run = spawnSync("bash", ["-euo", "pipefail", "-c", command!], {cwd: root, encoding: "utf8", timeout: STATUS_COMMAND_TIMEOUT_MS})

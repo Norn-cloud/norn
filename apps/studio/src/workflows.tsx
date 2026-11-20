@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
+import { guardsWords } from "./lib/guard-words.ts"
 import { createContext, use, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react"
 import { Background, Handle, MarkerType, Position, ReactFlow, type Edge, type Node, type NodeProps, type ReactFlowInstance } from "@xyflow/react"
 import "@xyflow/react/dist/style.css"
@@ -150,7 +151,8 @@ function Chart({ workflow, pinned, onPin }: { readonly workflow: Workflow; reado
     }
     const guards = node.transition.guards ?? []
     const fields = guardedFields(guards)
-    return { id: node.id, type: "step", position, data: { ...common, id: node.id, order: node.order, label: state(node.transition.id), sub: node.transition.description ?? (guards.length === 0 ? "Always" : `Requires: ${fields.join(", ")}`) } }
+    const plain = guardsWords(guards)
+    return { id: node.id, type: "step", position, data: { ...common, id: node.id, order: node.order, label: state(node.transition.id), sub: node.transition.description ?? (guards.length === 0 ? "Always" : `Requires: ${plain ?? fields.join(", ")}`) } }
   })
   if (folded > 0) {
     const below = Math.max(...nodes.map(({ position }) => position.y)) + CARD_H + GAP_Y
@@ -220,7 +222,7 @@ function Condition({ transition }: { readonly transition: Workflow["steps"][numb
   const fields = guardedFields(guards)
   return (
     <div className="space-y-1">
-      <div>{transition.description ?? (fields.length > 0 ? `Requires: ${fields.join(", ")}` : "A declared condition")}</div>
+      <div>{transition.description ?? (guardsWords(guards) !== null ? `Requires: ${guardsWords(guards)}` : fields.length > 0 ? `Requires: ${fields.join(", ")}` : "A declared condition")}</div>
       <details className="text-meta text-muted-foreground">
         <summary className="cursor-pointer select-none">Declared rule</summary>
         <code className="block pt-1 font-mono text-xs break-words whitespace-normal">{guards.join(" and ")}</code>

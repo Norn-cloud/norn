@@ -138,6 +138,38 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
     }
 }
 
+impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S> {
+    /// The mapping's own findings for a quarantined bundle, as
+    /// `code: message` lines (`mapping.runtime.invalid_record: field
+    /// "grand_total" value "7,800" is not a number …`): what a load refusal
+    /// shows its author. Empty when the bundle has none or is not pending.
+    ///
+    /// # Errors
+    /// Store or decoding failures.
+    pub fn mapping_findings(&self, observation_id: &str) -> Result<Vec<String>, CellError> {
+        let Some(pending) = self.store().read().pending_observation(observation_id)? else {
+            return Ok(Vec::new());
+        };
+        let observed: Observed<RuntimeValue> =
+            norn_ir::runtime::decode(&pending.observed).map_err(CellError::Encoding)?;
+        let bundle: MappingBundle =
+            norn_ir::runtime::decode(&observed.input).map_err(CellError::Encoding)?;
+        Ok(bundle
+            .diagnostics
+            .iter()
+            .map(|diagnostic| {
+                let text = |key: &str| {
+                    diagnostic
+                        .get(key)
+                        .and_then(RuntimeValue::as_str)
+                        .unwrap_or_default()
+                };
+                format!("{}: {}", text("code"), text("message"))
+            })
+            .collect())
+    }
+}
+
 /// The reason a cell refusal quarantines a row: the leading dotted code of
 /// its message when it has one; otherwise the generic mapping refusal with
 /// the underlying error after it, so the cause is never hidden behind the
