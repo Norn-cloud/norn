@@ -41,7 +41,21 @@ class Dev {
         this.waiters.splice(0).forEach((wake) => wake())
       }
     })
-    this.child.on("exit", () => this.waiters.splice(0).forEach((wake) => wake()))
+    // The host's and worker's stderr, kept (and drained, so a full pipe
+    // never stalls them) for the failure report.
+    this.child.stderr.on("data", (chunk: Buffer) => { this.stderr = (this.stderr + chunk.toString()).slice(-16_384) })
+    this.child.on("exit", (code, signal) => {
+      this.exit = { code, signal }
+      this.waiters.splice(0).forEach((wake) => wake())
+    })
+  }
+  stderr = ""
+  exit: { code: number | null; signal: string | null } | undefined
+  /** `error` with what `norn dev` printed and how it ended, so a failure names the host's side. */
+  explain(error: unknown): Error {
+    const message = error instanceof Error ? error.message : String(error)
+    const exit = this.exit ? `exited code=${this.exit.code} signal=${this.exit.signal}` : "still running"
+    return new Error(`${message}\n--- norn dev (pid ${this.child.pid}, ${exit})\n--- stderr (tail):\n${this.stderr}\n--- events:\n${this.events.map((event) => JSON.stringify(event)).join("\n")}`, { cause: error })
   }
   /** The next event after index `from` matching `kind`; fails on timeout or exit. */
   async next(kind: string, from: number, timeoutMs = 60_000): Promise<Event> {
@@ -146,6 +160,8 @@ test("developer_loop_roundtrip: author, observe, break, repair and restart throu
       headers: { authorization: `Bearer ${readFileSync(join(dir, ".norn/dev.token"), "utf8").trim()}` },
     })
     expect({ status: after.status, body: await after.text() }).toMatchObject({ status: 200, body: expect.stringContaining("19.99") })
+  } catch (error) {
+    throw dev ? dev.explain(error) : error
   } finally {
     await dev?.stop()
     rmSync(root, { recursive: true, force: true })
