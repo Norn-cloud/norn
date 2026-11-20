@@ -421,13 +421,7 @@ fn pack(
             }
             references.push(AtPath {
                 path: path.clone(),
-                reference: store_at(
-                    engine,
-                    scope.to_owned(),
-                    world.to_owned(),
-                    &body.text,
-                    hash,
-                )?,
+                reference: store_at(engine, scope.to_owned(), world.to_owned(), &body.text, hash)?,
             });
             return Ok(Value::Null);
         }

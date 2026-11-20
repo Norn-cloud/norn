@@ -725,9 +725,7 @@ pub fn canonical_json_of<T: Serialize + ?Sized>(value: &T) -> Result<Vec<u8>, Ca
 }
 
 /// [`canonical_json_of`] through Serde JSON text: encode, parse, re-serialize.
-fn canonical_json_of_text<T: Serialize + ?Sized>(
-    value: &T,
-) -> Result<Vec<u8>, CanonicalJsonError> {
+fn canonical_json_of_text<T: Serialize + ?Sized>(value: &T) -> Result<Vec<u8>, CanonicalJsonError> {
     let bytes = serde_json::to_vec(value).map_err(|error| CanonicalJsonError::Serialize {
         message: error.to_string(),
     })?;
@@ -1297,6 +1295,16 @@ fn normalize_unicode(value: &str) -> String {
     nfc(value)
 }
 
+/// [`nfc`] without copying text that is already in NFC (nearly all of it).
+fn nfc_borrowed(value: &str) -> std::borrow::Cow<'_, str> {
+    if unicode_normalization::is_nfc_quick(value.chars())
+        == unicode_normalization::IsNormalized::Yes
+    {
+        return std::borrow::Cow::Borrowed(value);
+    }
+    std::borrow::Cow::Owned(value.nfc().collect())
+}
+
 /// Unicode Normalization Form C of `value`: the form Norn1 canonicalizes
 /// strings to, also an `EntityIR` v2 identity-key normalization step (#2848).
 #[must_use]
@@ -1605,7 +1613,7 @@ fn write_object(
 ) -> Result<(), CanonicalJsonError> {
     let mut entries = Vec::with_capacity(values.len());
     for (key, value) in values {
-        let normalized_key = normalize_unicode(key);
+        let normalized_key = nfc_borrowed(key);
         entries.push((normalized_key, value));
     }
     entries.sort_unstable_by(|left, right| left.0.cmp(&right.0));
@@ -1614,7 +1622,7 @@ fn write_object(
             && left.0 == right.0
         {
             return Err(CanonicalJsonError::DuplicateKey {
-                key: left.0.clone(),
+                key: left.0.to_string(),
                 offset: 0,
             });
         }
@@ -1627,7 +1635,7 @@ fn write_object(
             output.push(',');
         }
         first = false;
-        write_string(key.as_str(), output);
+        write_string(&key, output);
         output.push(':');
         let child_depth = next_depth(depth, 0)?;
         write_value(value, output, child_depth)?;
@@ -1638,29 +1646,46 @@ fn write_object(
 
 fn write_string(value: &str, output: &mut String) {
     output.push('"');
-    for character in normalize_unicode(value).chars() {
-        match character {
-            '"' => output.push_str("\\\""),
-            '\\' => output.push_str("\\\\"),
-            '\u{8}' => output.push_str("\\b"),
-            '\u{c}' => output.push_str("\\f"),
-            '\n' => output.push_str("\\n"),
-            '\r' => output.push_str("\\r"),
-            '\t' => output.push_str("\\t"),
-            character if character <= '\u{1f}' => {
-                #[expect(
-                    clippy::let_underscore_must_use,
-                    reason = "fmt::Write for String is infallible; its trait signature still returns Result"
-                )]
-                let _ = std::fmt::Write::write_fmt(
-                    output,
-                    format_args!("\\u{:04x}", u32::from(character)),
-                );
-            }
-            character => output.push(character),
+    // Runs that need no escape are copied whole; only `"`, `\\` and the C0
+    // controls (all ASCII) are escaped, exactly as one character at a time.
+    let normalized = nfc_borrowed(value);
+    let mut rest: &str = &normalized;
+    while let Some(at) = rest.find(|character: char| {
+        matches!(character, '"' | '\\' | '\u{0}'..='\u{1f}')
+    }) {
+        let (plain, tail) = rest.split_at(at);
+        output.push_str(plain);
+        let mut characters = tail.chars();
+        if let Some(character) = characters.next() {
+            write_escaped(character, output);
+        }
+        rest = characters.as_str();
+    }
+    output.push_str(rest);
+    output.push('"');
+}
+
+/// One character [`write_string`] escapes.
+fn write_escaped(character: char, output: &mut String) {
+    match character {
+        '"' => output.push_str("\\\""),
+        '\\' => output.push_str("\\\\"),
+        '\u{8}' => output.push_str("\\b"),
+        '\u{c}' => output.push_str("\\f"),
+        '\n' => output.push_str("\\n"),
+        '\r' => output.push_str("\\r"),
+        '\t' => output.push_str("\\t"),
+        character => {
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "fmt::Write for String is infallible; its trait signature still returns Result"
+            )]
+            let _ = std::fmt::Write::write_fmt(
+                output,
+                format_args!("\\u{:04x}", u32::from(character)),
+            );
         }
     }
-    output.push('"');
 }
 
 /// INGEST-CANONICAL-ONCE-1: a typed value straight to the Norn1 value
@@ -2722,7 +2747,15 @@ mod direct_equivalence {
         };
         assert!(accepted(&record));
         assert!(agrees(&record));
-        for value in [0.0, "-0.0".parse::<f64>().unwrap(), 1.5e-7, 123_456_789.125, f64::MAX, f64::NAN, f64::INFINITY] {
+        for value in [
+            0.0,
+            "-0.0".parse::<f64>().unwrap(),
+            1.5e-7,
+            123_456_789.125,
+            f64::MAX,
+            f64::NAN,
+            f64::INFINITY,
+        ] {
             assert!(agrees(&value));
             assert!(agrees(&vec![value]));
         }
@@ -2809,11 +2842,57 @@ mod direct_equivalence {
         })
     }
 
+    /// The string writer as it was: NFC, then one character at a time.
+    fn write_string_by_character(value: &str) -> String {
+        let mut output = String::from("\"");
+        for character in super::nfc(value).chars() {
+            match character {
+                '"' => output.push_str("\\\""),
+                '\\' => output.push_str("\\\\"),
+                '\u{8}' => output.push_str("\\b"),
+                '\u{c}' => output.push_str("\\f"),
+                '\n' => output.push_str("\\n"),
+                '\r' => output.push_str("\\r"),
+                '\t' => output.push_str("\\t"),
+                character if character <= '\u{1f}' => {
+                    std::fmt::Write::write_fmt(
+                        &mut output,
+                        format_args!("\\u{:04x}", u32::from(character)),
+                    )
+                    .unwrap();
+                }
+                character => output.push(character),
+            }
+        }
+        output.push('"');
+        output
+    }
+
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(2_000))]
         #[test]
         fn arbitrary_values_agree(value in arb_value()) {
             prop_assert!(agrees(&value));
+        }
+
+        #[test]
+        fn strings_are_written_as_one_character_at_a_time(value in arb_string()) {
+            let mut output = String::new();
+            super::write_string(&value, &mut output);
+            prop_assert_eq!(output, write_string_by_character(&value));
+        }
+    }
+
+    #[test]
+    fn every_ascii_and_control_character_is_written_as_before() {
+        for code in 0_u32..0x250 {
+            let Some(character) = char::from_u32(code) else {
+                continue;
+            };
+            let text = format!("a{character}b{character}");
+            let mut output = String::new();
+            super::write_string(&text, &mut output);
+            assert_eq!(output, write_string_by_character(&text), "U+{code:04X}");
         }
     }
 }
