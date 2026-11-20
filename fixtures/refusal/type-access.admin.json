@@ -1,0 +1,128 @@
+{
+  "status": 200,
+  "body": {
+    "principal": {
+      "subjectId": "user:user-admin",
+      "actorKind": "user",
+      "roles": [
+        "admin"
+      ],
+      "roleTable": "studio-roles/1"
+    },
+    "policy": "demo.host.read",
+    "grantTable": "norn-cell-do-grants/3",
+    "capabilities": {
+      "population": {
+        "decision": "permit",
+        "rule": "norn-cell-do-grants/3:admin"
+      },
+      "sources": {
+        "decision": "permit",
+        "rule": "norn-cell-do-grants/3:admin"
+      },
+      "values": {
+        "decision": "permit",
+        "rule": "norn-cell-do-grants/3:admin"
+      }
+    },
+    "objectType": "docs.ScannedDocument",
+    "roles": [
+      {
+        "role": "viewer",
+        "read": {
+          "population": {
+            "decision": "permit",
+            "rule": "norn-cell-do-grants/3:viewer"
+          },
+          "sources": {
+            "decision": "deny",
+            "rule": null
+          },
+          "values": {
+            "decision": "deny",
+            "rule": null
+          }
+        },
+        "actions": [
+          {
+            "actionId": "docs.scanned_document.correct",
+            "title": "Correct an extracted total",
+            "decision": "deny"
+          }
+        ]
+      },
+      {
+        "role": "member",
+        "read": {
+          "population": {
+            "decision": "permit",
+            "rule": "norn-cell-do-grants/3:member"
+          },
+          "sources": {
+            "decision": "deny",
+            "rule": null
+          },
+          "values": {
+            "decision": "permit",
+            "rule": "norn-cell-do-grants/3:member"
+          }
+        },
+        "actions": [
+          {
+            "actionId": "docs.scanned_document.correct",
+            "title": "Correct an extracted total",
+            "decision": "permit"
+          }
+        ]
+      },
+      {
+        "role": "admin",
+        "read": {
+          "population": {
+            "decision": "permit",
+            "rule": "norn-cell-do-grants/3:admin"
+          },
+          "sources": {
+            "decision": "permit",
+            "rule": "norn-cell-do-grants/3:admin"
+          },
+          "values": {
+            "decision": "permit",
+            "rule": "norn-cell-do-grants/3:admin"
+          }
+        },
+        "actions": [
+          {
+            "actionId": "docs.scanned_document.correct",
+            "title": "Correct an extracted total",
+            "decision": "permit"
+          }
+        ]
+      },
+      {
+        "role": "owner",
+        "read": {
+          "population": {
+            "decision": "permit",
+            "rule": "norn-cell-do-grants/3:owner"
+          },
+          "sources": {
+            "decision": "permit",
+            "rule": "norn-cell-do-grants/3:owner"
+          },
+          "values": {
+            "decision": "permit",
+            "rule": "norn-cell-do-grants/3:owner"
+          }
+        },
+        "actions": [
+          {
+            "actionId": "docs.scanned_document.correct",
+            "title": "Correct an extracted total",
+            "decision": "permit"
+          }
+        ]
+      }
+    ]
+  }
+}

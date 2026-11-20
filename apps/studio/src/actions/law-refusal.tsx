@@ -21,6 +21,12 @@ function rationaleOf(artifacts: readonly Artifact[], artifactId: string | undefi
   return typeof payload?.rationale === "string" ? payload.rationale : undefined
 }
 
+/** The law's own name ("An itemized document's total equals the sum of its lines"), as its definition declares it. */
+function lawNameOf(artifacts: readonly Artifact[], artifactId: string | undefined): string | undefined {
+  const law = artifacts.find((artifact) => artifact.kind === "law" && artifact.artifactId === artifactId)
+  return typeof law?.name === "string" && law.name !== "" ? law.name : undefined
+}
+
 /** A checked value's path in words, when no input field declares it: `ledger_entry.amount` → "ledger entry amount". */
 const words = (path: string) => path.replaceAll(".", " ").replaceAll("_", " ")
 
@@ -62,7 +68,7 @@ function Step({ icon: Icon, label, children, last = false }: { readonly icon: Lu
 /** A two-column list of labelled values: the request, or who · when · why. */
 function Rows({ rows, label }: { readonly rows: readonly (readonly [string, ReactNode])[]; readonly label: string }) {
   return (
-    <dl aria-label={label} className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 rounded-lg bg-muted/60 px-3 py-2 text-sm">
+    <dl aria-label={label} className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-sm">
       {rows.map(([key, value]) => <div key={key} className="contents"><dt className="text-muted-foreground">{key}</dt><dd className="min-w-0 font-medium [overflow-wrap:anywhere]">{value}</dd></div>)}
     </dl>
   )
@@ -184,7 +190,7 @@ export function LawRefusal({ code, reason, explanation, fields, technical, onUse
   const parts = (value: unknown) => isList(value) ? value.map((part) => atDeclared(part, listScale)).join(" + ") : undefined
   const from = (path: string) => <CheckedFrom path={path} fromRequest={Object.hasOwn(fields, path)} objectType={request?.objectType} id={request?.objectId} />
   return (
-    <RefusalSteps variant="disclosed" request={request} at={at} why={rationale ?? explanation} check={
+    <RefusalSteps variant="disclosed" request={request} at={at} why={lawNameOf(catalog.data?.document ?? [], reason.pin?.artifactId) ?? rationale ?? explanation} check={
       <div className="grid gap-2.5">
         {rationale !== undefined && <p className="flex items-start gap-2 font-medium text-pretty text-foreground"><span className="min-w-0 flex-1">{rationale}</span><Chip tone="red" icon={ShieldX} data-verdict="fails">Fails</Chip></p>}
         {checked.length === 2 && held.length === 1 ? (() => {
@@ -270,7 +276,7 @@ export function RedactedLawRefusal({ objectType, id, code, message, technical, r
     return { label: field?.label ?? path.replaceAll(".", " ").replaceAll("_", " "), value: atScale(String(value), field?.decimal?.scale ?? scale) }
   }
   return (
-    <RefusalSteps variant="redacted" request={request} at={at} why={message} check={
+    <RefusalSteps variant="redacted" request={request} at={at} why="A law this change would break. Your role is not told which." check={
       <div className="grid gap-2.5">
         <p className="text-meta text-muted-foreground">The cell said: “{message}”. It does not say which law, or which values, to your role.</p>
         {open.length > 0 && (
