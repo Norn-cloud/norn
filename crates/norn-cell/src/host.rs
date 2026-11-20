@@ -158,6 +158,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             now: self.now,
             responder: self.responder,
             published: self.published,
+            attached: self.attached,
             events: PhantomData,
         }
     }

@@ -341,31 +341,49 @@ pub(crate) fn call_action_bound<E: SqlEngine>(
         Gated::Pending(pending) => return Ok(ActionAnswer::Pending(pending)),
         Gated::Replayed(outcome) => *outcome,
         Gated::Commit(approval) => {
-            let authorizer = KernelAuthorizer(host.authorizer.as_ref());
-            let committed = match approval.as_deref() {
-                // S6c: the commit names the approval it consumes, in its
-                // own transaction.
-                Some(decision) => {
-                    let consumed = norn_cell::decision_ledger::ApprovalConsumed {
-                        decision_id: decision.to_owned(),
-                    }
-                    .event()
-                    .map_err(Refusal::host)?;
-                    cell.attributed(consumed, |cell| {
-                        norn_kernel::commit_action(cell, &catalog, &kernel_call, &authorizer)
-                    })
-                }
-                None => norn_kernel::commit_action(&mut *cell, &catalog, &kernel_call, &authorizer),
-            };
-            committed.map_err(|error| {
-                let refusal = kernel_refusal(host, actor, action_id, &error);
-                crate::approvals::refused_under(&mut cell, approval.as_deref(), refusal)
-            })?
+            commit_call(host, &mut cell, &catalog, &kernel_call, approval.as_deref())?
         }
     };
     let store = cell.store();
     let raw_hash = world_values(host, disclosure, store, actor);
     caller_receipt(store, action_id, request, outcome, raw_hash, key).map(ActionAnswer::Receipt)
+}
+
+/// Commit a call past its gate, as the caller gets it: under an approval,
+/// the commit names the approval it consumes in its own transaction (S6c),
+/// and a refusal that decides the approved call is recorded.
+fn commit_call<E: SqlEngine>(
+    host: &DevHost<E>,
+    cell: &mut crate::host::ActionCell<E>,
+    catalog: &TypeCatalog<'_>,
+    kernel_call: &norn_kernel::ActionCall<'_>,
+    approval: Option<&str>,
+) -> Result<ActionOutcome, Refusal> {
+    let kernel_authorizer = KernelAuthorizer(host.authorizer.as_ref());
+    let commit = |cell: &mut crate::host::ActionCell<E>| {
+        norn_kernel::commit_action(cell, catalog, kernel_call, &kernel_authorizer).map_err(
+            |error| {
+                kernel_refusal(
+                    host,
+                    &kernel_call.actor,
+                    &kernel_call.action.action_id,
+                    &error,
+                )
+            },
+        )
+    };
+    let committed = match approval {
+        Some(decision) => {
+            let consumed = norn_cell::decision_ledger::ApprovalConsumed {
+                decision_id: decision.to_owned(),
+            }
+            .event()
+            .map_err(Refusal::host)?;
+            cell.attributed(consumed, commit)
+        }
+        None => commit(cell),
+    };
+    committed.map_err(|refusal| crate::approvals::refused_under(cell, approval, refusal))
 }
 
 /// `defs.stale`: the call pins a definitions version that is no longer
@@ -495,28 +513,7 @@ fn through_gate<E: SqlEngine>(
             )
         })
         .transpose()?;
-    // The approval this call runs under, if one does. APPROVAL-REVISION-1:
-    // an approver's try is fenced here, under the epoch and the cell the
-    // dispatch holds, before anything parks or writes.
-    let approval = match approved {
-        Some(approved) => Some(crate::decisions::decision_id(approved, 1)?),
-        None => match &command {
-            Some(command) => crate::approvals::approving_decision(cell, command)?,
-            None => None,
-        },
-    };
-    if let Some(decision) = &approval {
-        crate::approvals::require_requester(cell, decision, principal)?;
-    }
-    if let (Some(approved), Some(decision)) = (approved, &approval)
-        && command.as_deref() != Some(approved)
-    {
-        return Err(crate::approvals::refuse(
-            cell,
-            decision,
-            crate::approvals::definition_changed(),
-        )?);
-    }
+    let approval = approval_of(cell, approved, command.as_deref(), principal)?;
     if let Some(decision) = &approval
         && let Some(refused) = crate::approvals::recorded_refusal(cell, decision)?
     {
@@ -579,6 +576,37 @@ fn through_gate<E: SqlEngine>(
             ))
         }
     }
+}
+
+/// The approval a call runs under, if one does: the approver's dispatch's
+/// own (`approved`), or the approval of exactly this call's parked command.
+/// S2: consumed only by its parked requester's authenticated principal.
+/// APPROVAL-REVISION-1: an approver's try is fenced here, under the epoch
+/// and the cell the dispatch holds, before anything parks or writes.
+fn approval_of<E: SqlEngine>(
+    cell: &mut crate::host::ActionCell<E>,
+    approved: Option<&str>,
+    command: Option<&str>,
+    principal: Option<&norn_cell::flow_run::RunStarter>,
+) -> Result<Option<String>, Refusal> {
+    let approval = match (approved, command) {
+        (Some(approved), _command) => Some(crate::decisions::decision_id(approved, 1)?),
+        (None, Some(command)) => crate::approvals::approving_decision(cell, command)?,
+        (None, None) => None,
+    };
+    if let Some(decision) = &approval {
+        crate::approvals::require_requester(cell, decision, principal)?;
+    }
+    if let (Some(approved), Some(decision)) = (approved, &approval)
+        && command != Some(approved)
+    {
+        return Err(crate::approvals::refuse(
+            cell,
+            decision,
+            crate::approvals::definition_changed(),
+        )?);
+    }
+    Ok(approval)
 }
 
 /// APPROVAL-REVISION-1: the digest an approval of `action` binds to: the

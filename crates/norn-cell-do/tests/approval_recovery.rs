@@ -920,10 +920,70 @@ fn a_pinned_call_under_a_steps_key_never_supplies_the_steps_outcome() {
     assert_eq!(run_state(&cell), json!("awaiting_perform_convert"));
 }
 
-/// S5c: of two approvals of a step's exact call (the gate revised between
-/// them), the one the ledger committed last binds the step, whatever their
-/// decision ids: here the later approval's id sorts first, and its commit
-/// is the step's outcome.
+/// The approver approves `id` through the decide service, and the gate is
+/// revised after the approval is recorded and before its call dispatches as
+/// its requester: the approval is refused `approval.definition_changed`.
+fn approve_racing_a_revision<E: SqlEngine>(cell: &Cell<E>, id: &str) {
+    use norn_api::actions::ActionAnswer;
+    use norn_api::refusal::Refusal;
+    use norn_cell::flow_run::RunStarter;
+    use norn_cell_do::policy::Caller;
+    let as_caller = |subject: &str, roles: &[String]| Caller {
+        subject_id: subject.to_owned(),
+        roles: roles.to_vec(),
+        actor_kind: "user",
+        role_table: norn_cell_do::principal::FIXTURE_ROLES,
+    };
+    cell.caller
+        .record(Some(as_caller("approver@steps", &["admin".to_owned()])));
+    let scope = norn_api::scope::ScopeQuery {
+        org_id: Some("org_demo".into()),
+        environment_id: Some("dev".into()),
+    };
+    let body = norn_api::decisions::DecideRequest {
+        choice: "approve".into(),
+        note: None,
+        idempotency_key: "race-1".into(),
+    };
+    let reads = |capability: norn_api::authz::ReadCapability, object_type: &str| {
+        norn_cell_do::policy::collection_access(
+            cell.host.scope(),
+            "approver@steps",
+            capability,
+            object_type,
+        )
+    };
+    let as_requester =
+        |requester: &RunStarter, dispatch: &mut dyn FnMut() -> Result<ActionAnswer, Refusal>| {
+            revise_gate(cell);
+            cell.caller
+                .record(Some(as_caller(&requester.subject, &requester.roles)));
+            Some(dispatch())
+        };
+    let decided = norn_api::decisions::decide(
+        &cell.host,
+        &norn_api::decisions::DecideCall {
+            scope: &scope,
+            actor: Some("approver@steps"),
+            id,
+            body: &body,
+            now: LogicalTime::from_millis(NOW * 1000),
+        },
+        &reads,
+        &cell.handles,
+        &as_requester,
+    )
+    .unwrap();
+    cell.caller.record(None);
+    let call = decided.call.expect("the approved call was dispatched");
+    assert_eq!(call.code.as_deref(), Some("approval.definition_changed"));
+}
+
+/// S5c: of two approvals of a step's exact call, the one the ledger
+/// committed last binds the step, whatever their decision ids. The first
+/// approval was superseded (the gate changed under its dispatch); the
+/// second, approved later at the same logical time, has an id that sorts
+/// first, and its commit is the step's outcome.
 #[test]
 fn of_two_approvals_of_a_steps_call_the_later_commit_binds() {
     let directory = tempfile::tempdir().unwrap();
@@ -931,13 +991,10 @@ fn of_two_approvals_of_a_steps_call_the_later_commit_binds() {
     let first = parked_step(&path);
     let (_step, key) = step_and_key(&path);
     let cell = cell_on(file(&path), false);
-    let (status, decided) = approve(&cell, &first);
-    assert_eq!(status, 200, "{decided}");
-    // Revise until the call's next parking has an id sorting before the
-    // first approval's.
+    approve_racing_a_revision(&cell, &first);
+    // Park the call anew until its id sorts before the first approval's.
     let mut later = None;
-    for revision in 1..=16 {
-        revise_gate_from(&cell, revision);
+    for revision in 2..=17 {
         let (status, parked) = melt_call(&cell, "12", &key);
         assert_eq!(status, 202, "{parked}");
         let id = parked["decision"]["id"].as_str().unwrap().to_owned();
@@ -945,6 +1002,7 @@ fn of_two_approvals_of_a_steps_call_the_later_commit_binds() {
             later = Some(id);
             break;
         }
+        revise_gate_from(&cell, revision);
     }
     let later = later.expect("a revision whose call id sorts first");
     let (status, decided) = decide_with(&cell, &later, "approve-later");
