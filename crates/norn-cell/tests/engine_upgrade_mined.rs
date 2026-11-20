@@ -11,8 +11,7 @@
 //! - M3 a refused open, on any open path and in any journal mode, leaves the
 //!   file byte-identical, its journal mode unchanged and no WAL created.
 //! - M4 a storage version 1 cell whose ledger or fork pin does not verify
-//!   refuses and stays byte-identical and unstamped (in its own journal mode;
-//!   #1525 is the open that asks for the other one).
+//!   refuses and stays byte-identical and unstamped, in any journal mode.
 //! - M5 an upgrade keeps the ledger and receipts, stamps this engine, and any
 //!   sequence of later opens writes nothing to them.
 //! - M6 provisioning against a second opener that restamps the cell before
@@ -486,14 +485,16 @@ proptest! {
     }
 
     /// M4: a v1 cell that fails verification refuses, unstamped and
-    /// byte-identical. The open asks for the file's own journal mode: with
-    /// the other one the refused open still switches it (#1525).
+    /// byte-identical, whatever journal mode the open asks for (#1525).
     #[test]
-    fn m4_a_v1_cell_that_fails_verification_is_untouched(corruption in corruption()) {
+    fn m4_a_v1_cell_that_fails_verification_is_untouched(
+        corruption in corruption(),
+        wal in any::<bool>(),
+    ) {
         let dir = tempfile::tempdir().expect("directory");
         let path = load(dir.path(), &corrupt(image_v1(), &corruption));
         let before = bytes(&path);
-        let opened = CellStore::open(&path, engine_fixture::model(), options(JournalMode::Delete));
+        let opened = CellStore::open(&path, engine_fixture::model(), options(mode_of(wal)));
         prop_assert!(opened.is_err(), "a corrupt v1 cell opened: {:?}", corruption);
         prop_assert!(bytes(&path) == before, "a refused upgrade changed the file: {:?}", corruption);
         prop_assert_eq!(
