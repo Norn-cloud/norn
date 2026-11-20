@@ -69,6 +69,11 @@ struct Handler<'a> {
     engine: Option<&'a dyn Transport>,
     connections: &'a DevConnections,
     /// Held while a request is answered: one request at a time, as before.
+    /// Ordering contract: requests on one connection are answered in the
+    /// order they arrive. Across connections, a request enters the order when
+    /// its head and body are fully read and it takes this lock, not when its
+    /// connection was accepted. A client that waits for an answer before
+    /// sending its next request (every dev client) sees its causal order kept.
     one_at_a_time: Mutex<()>,
 }
 
@@ -111,15 +116,15 @@ pub(crate) fn serve(
         for stream in listener.incoming().flatten() {
             let (handler, open) = (&handler, &open);
             let slot = Slot::take(open);
-            if slot.within_bound {
-                scope.spawn(move || {
-                    // A broken connection, even a panicking one, affects only itself.
-                    let _ignored = connection(&stream, handler, true);
-                    drop(slot);
-                });
-            } else {
-                let _ignored = connection(&stream, handler, false);
-            }
+            // Every connection, even one over the bound, is read on its own
+            // thread, so a silent client never holds up the accept loop. Over
+            // the bound it gets one answer and closes, as before keep-alive;
+            // the per-request deadline bounds how long that thread lives.
+            scope.spawn(move || {
+                // A broken connection, even a panicking one, affects only itself.
+                let _ignored = connection(&stream, handler, slot.within_bound);
+                drop(slot);
+            });
         }
     });
 }
@@ -146,12 +151,16 @@ impl Drop for Slot<'_> {
 /// Answer `stream`'s requests in order; with `persistent` false, only its first.
 fn connection(stream: &TcpStream, handler: &Handler<'_>, persistent: bool) -> std::io::Result<()> {
     stream.set_read_timeout(Some(IDLE))?;
+    stream.set_write_timeout(Some(IDLE))?;
     let mut reader = BufReader::new(stream);
     for served in 0_usize.. {
         // Between requests, a closed, failed or idle connection just ends:
         // an unasked answer would be read as the reply to the next request.
-        if served > 0 && reader.fill_buf().map_or(true, <[u8]>::is_empty) {
-            return Ok(());
+        if served > 0 {
+            reader.get_ref().set_read_timeout(Some(IDLE))?;
+            if reader.fill_buf().map_or(true, <[u8]>::is_empty) {
+                return Ok(());
+            }
         }
         let (response, open) = match read_request(&mut reader) {
             Ok(parsed) => (handler.answer(&parsed), persistent && parsed.keep_alive),
@@ -202,10 +211,25 @@ struct Parsed {
     keep_alive: bool,
 }
 
+/// Arm the read timeout with what is left of `deadline`, so one request
+/// cannot take longer than [`IDLE`] however slowly its bytes trickle in.
+fn arm(reader: &BufReader<&TcpStream>, deadline: std::time::Instant) -> Result<(), Refusal> {
+    let left = deadline.saturating_duration_since(std::time::Instant::now());
+    if left.is_zero() {
+        return Err(Refusal::invalid("the request was not complete within the host bound"));
+    }
+    reader
+        .get_ref()
+        .set_read_timeout(Some(left))
+        .map_err(|error| Refusal::invalid(format!("unreadable request: {error}")))
+}
+
 fn read_request(reader: &mut BufReader<&TcpStream>) -> Result<Parsed, Refusal> {
+    let deadline = std::time::Instant::now() + IDLE;
     let mut line = String::new();
     let mut head_bytes = 0_usize;
     let mut next = |reader: &mut BufReader<&TcpStream>, line: &mut String| -> Result<(), Refusal> {
+        arm(reader, deadline)?;
         line.clear();
         // One byte past the bound, so an over-long head is told apart.
         let left = MAX_HEAD_BYTES.saturating_sub(head_bytes).saturating_add(1);
@@ -227,9 +251,10 @@ fn read_request(reader: &mut BufReader<&TcpStream>) -> Result<Parsed, Refusal> {
     let (Some(method), Some(target)) = (parts.next(), parts.next()) else {
         return Err(Refusal::invalid("the request line is malformed"));
     };
-    let mut keep_alive = parts.next() != Some("HTTP/1.0");
+    let http_1_1 = parts.next() != Some("HTTP/1.0");
+    let (mut asked_close, mut asked_keep_alive) = (false, false);
     let (method, target) = (method.to_owned(), target.to_owned());
-    let (mut length, mut authorization, mut chunked) = (0_usize, None, false);
+    let (mut length, mut authorization, mut chunked) = (None::<usize>, None, false);
     loop {
         next(reader, &mut line)?;
         let header = line.trim_end();
@@ -239,9 +264,19 @@ fn read_request(reader: &mut BufReader<&TcpStream>) -> Result<Parsed, Refusal> {
         if let Some((name, value)) = header.split_once(':') {
             let value = value.trim();
             if name.eq_ignore_ascii_case("content-length") {
-                length = value
-                    .parse()
-                    .map_err(|error| Refusal::invalid(format!("content-length: {error}")))?;
+                // A repeated length makes the body boundary ambiguous, and a
+                // wrong boundary would leak bytes into the next request.
+                if length.is_some() {
+                    return Err(Refusal::invalid("content-length is repeated"));
+                }
+                if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+                    return Err(Refusal::invalid("content-length is not a decimal length"));
+                }
+                length = Some(
+                    value
+                        .parse()
+                        .map_err(|error| Refusal::invalid(format!("content-length: {error}")))?,
+                );
             } else if name.eq_ignore_ascii_case("authorization") {
                 authorization = Some(value.to_owned());
             } else if name.eq_ignore_ascii_case("transfer-encoding") {
@@ -250,14 +285,17 @@ fn read_request(reader: &mut BufReader<&TcpStream>) -> Result<Parsed, Refusal> {
             } else if name.eq_ignore_ascii_case("connection") {
                 for option in value.split(',').map(str::trim) {
                     if option.eq_ignore_ascii_case("close") {
-                        keep_alive = false;
+                        asked_close = true;
                     } else if option.eq_ignore_ascii_case("keep-alive") {
-                        keep_alive = true;
+                        asked_keep_alive = true;
                     }
                 }
             }
         }
     }
+    let length = length.unwrap_or(0);
+    // `close` wins wherever it appears, in one header or across several.
+    let keep_alive = !asked_close && (http_1_1 || asked_keep_alive);
     if length > MAX_BODY_BYTES {
         return Err(Refusal::new(
             http::StatusCode::PAYLOAD_TOO_LARGE,
@@ -267,6 +305,7 @@ fn read_request(reader: &mut BufReader<&TcpStream>) -> Result<Parsed, Refusal> {
         ));
     }
     let mut body = vec![0_u8; length];
+    arm(reader, deadline)?;
     reader.read_exact(&mut body).map_err(|error| {
         Refusal::invalid(format!("the body is shorter than content-length: {error}"))
     })?;
@@ -1020,5 +1059,77 @@ mod keepalive_tests {
         let mut reader = BufReader::new(stream.try_clone().unwrap());
         request(&mut stream, 0, true);
         assert_eq!(answer(&mut reader).0, 409);
+    }
+
+
+    /// Send a raw request head (and body) and read the single answer.
+    fn raw(port: u16, head: &str, body: &str) -> (u16, String, Vec<u8>) {
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(30)))
+            .unwrap();
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        write!(stream, "{head}\r\n\r\n{body}").unwrap();
+        let (status, connection, _) = answer(&mut reader);
+        let mut rest = Vec::new();
+        let _ = reader.read_to_end(&mut rest);
+        (status, connection, rest)
+    }
+
+    #[test]
+    fn a_repeated_or_malformed_content_length_is_refused_and_closes() {
+        let (port, _dir) = host();
+        let target = "POST /v1/actions/shop.product.add?orgId=local&environmentId=dev HTTP/1.1\r\nhost: x";
+        // Two lengths make the body boundary ambiguous: refuse and close, so
+        // no leftover byte is ever read as a second request. (No body is sent:
+        // unread bytes at close would make the kernel reset the connection.)
+        let (status, connection, rest) = raw(
+            port,
+            &format!("{target}\r\ncontent-length: 2\r\ncontent-length: 40"),
+            "",
+        );
+        assert_eq!((status, connection.as_str()), (400, "close"));
+        assert!(rest.is_empty(), "nothing after the refusal");
+        for bad in ["+2", "2 2", "0x2", ""] {
+            let (status, connection, _) =
+                raw(port, &format!("{target}\r\ncontent-length: {bad}"), "");
+            assert_eq!((status, connection.as_str()), (400, "close"), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn close_wins_over_keep_alive_in_either_order() {
+        let (port, _dir) = host();
+        let target = "POST /v1/actions/shop.product.add?orgId=local&environmentId=dev HTTP/1.1\r\nhost: x\r\ncontent-length: 2";
+        for connection in [
+            "connection: close, keep-alive",
+            "connection: keep-alive, close",
+            "connection: close\r\nconnection: keep-alive",
+            "connection: keep-alive\r\nconnection: close",
+        ] {
+            let (status, answered, rest) = raw(port, &format!("{target}\r\n{connection}"), "{}");
+            assert_eq!((status, answered.as_str()), (409, "close"), "{connection:?}");
+            assert!(rest.is_empty(), "{connection:?}: the connection ends");
+        }
+    }
+
+    #[test]
+    fn a_client_over_the_bound_does_not_stall_the_accept_loop() {
+        let (port, _dir) = host();
+        // Fill every slot, plus one over the bound, with silent clients.
+        let _silent: Vec<_> = (0..=MAX_CONNECTIONS)
+            .map(|_| TcpStream::connect(("127.0.0.1", port)).unwrap())
+            .collect();
+        // A further client is still answered promptly (one answer, then close).
+        let started = std::time::Instant::now();
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(30)))
+            .unwrap();
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        request(&mut stream, 0, false);
+        let (status, connection, _) = answer(&mut reader);
+        assert_eq!((status, connection.as_str()), (409, "close"));
+        assert!(started.elapsed() < IDLE, "answered before any idle timeout");
     }
 }
