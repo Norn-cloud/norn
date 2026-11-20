@@ -645,7 +645,7 @@ else:
     reason = f"changed: {', '.join(sorted(touched)) or 'Markdown only'}"
 parts = rest if "norn-cell" in reached else 1
 selected_heavy = [f"heavy-{i}" for i, expression in enumerate(heavy, 1)
-                  if set(re.findall(r"binary_id\(([^:]+)::", expression)) & reached]
+                  if set(re.findall(r"binary_id\(([^:)]+)(?:::[^)]*)?\)", expression)) & reached]
 # Studio changes already plan in full; a checker change reaches the Studio's WASM package.
 browser = ["browser"] if "norn-checker-wasm" in reached else []
 # The DuckDB backend lives in norn-cell: a change that reaches it builds and tests it (#1206).
