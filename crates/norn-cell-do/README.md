@@ -36,13 +36,29 @@ authorized read services and `norn-cell`'s portable store on
   admission or install keeps the last good revision serving.
 - `norn-olapd` (native, `duckdb` feature): the tenant analytics engine as a
   sidecar next to the cell host. It serves `norn_cell::analytics`' typed
-  operations over HTTP to one caller, the cell, which authenticates with a
-  shared bearer token (`NORN_SECRET_DUCKDB_TOKEN`, at least 32 bytes). It
-  decides no access; the cell authorizes every request and checks every
-  answer. Other settings: `NORN_OLAP_ADDR` (default `0.0.0.0:8790`),
-  `NORN_OLAP_DATA` (default `/data`), `NORN_OLAP_MEMORY_LIMIT` (default
-  `512MB`), `NORN_OLAP_THREADS`. `norn-olapd --health` exits 0 when the running
-  daemon answers `/healthz`. `apps/norn-olapd/Dockerfile` builds an image:
+  operations over HTTP to the cells. OLAP-CRED-1 (#1493): each call carries
+  the calling cell's own credential, an Ed25519-signed `nolap1.<kid>.<tenant>.
+  <expires_ms>.<sig>` the cell mints for its own tenant only, living two
+  minutes (`norn_api::olap_credential`). The daemon holds public keys only,
+  in the keyring file `NORN_OLAP_KEYS_FILE` (one `<kid>:<base64url public
+  key>` per line), read on every call. It serves a call only for the tenant
+  its credential names; every refused credential (missing, malformed,
+  unknown or rotated-out key, bad signature, expired, longer-lived than ten
+  minutes, or another tenant's) gets one identical `401`, before any tenant
+  database is opened. The retired shared token `NORN_SECRET_DUCKDB_TOKEN`
+  refuses startup if it is still set. Beyond that it decides no access; the
+  cell authorizes every request and checks every answer. Other settings:
+  `NORN_OLAP_ADDR` (default `0.0.0.0:8790`), `NORN_OLAP_DATA` (default
+  `/data`), `NORN_OLAP_MEMORY_LIMIT` (default `512MB`), `NORN_OLAP_THREADS`.
+  `norn-olapd --health` exits 0 when the running daemon answers `/healthz`;
+  `norn-olapd --new-key <kid>` prints a fresh signing key for the cell host
+  and its keyring line. `apps/norn-olapd/Dockerfile` builds an image.
+
+  Rotation, with no downtime: (1) append the new key's keyring line to the
+  keyring file (atomically: write a copy, then rename it over); (2) set the
+  cell host's `NORN_SECRET_OLAP_SIGNING_KEY` to the new signing key; (3) ten
+  minutes later, remove the old line. Removing a line refuses that key's
+  credentials on the next call.
 
 ```sh
 cargo build --locked --release -p norn-cell-do --features duckdb --bin norn-olapd

@@ -137,6 +137,15 @@ The analytics cell keys its lineage handles (D53) with a third Worker secret,
 the cell refuses to open and the Worker logs `cell open refused`; answers and
 traces are never served unkeyed.
 
+With `NORN_OLAP_URL` set, the cells sign their calls to the analytics engine
+(`norn-olapd`) with a fourth Worker secret, `NORN_SECRET_OLAP_SIGNING_KEY`
+(`<kid>:<base64url Ed25519 seed>`, from `norn-olapd --new-key <kid>`), set with
+`wrangler secret put NORN_SECRET_OLAP_SIGNING_KEY`. Each call carries a
+two-minute credential for the calling cell's own tenant (OLAP-CRED-1, #1493);
+there is no shared engine token. Without a valid key the Worker logs
+`analytics not enabled` and the cells serve without analytics. Rotation is
+described under `norn-olapd` in `crates/norn-cell-do/README.md`.
+
 ## Guarantees and their mechanism here
 
 | Guarantee | Native | Durable Object |

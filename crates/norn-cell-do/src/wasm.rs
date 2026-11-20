@@ -180,9 +180,26 @@ impl NornCell {
 
     /// D102: answer questions on the tenant analytics engine the Worker
     /// reaches (`NORN_OLAP_URL`); without it this cell has no analytics.
+    /// OLAP-CRED-1: `signing_key` (`NORN_SECRET_OLAP_SIGNING_KEY`,
+    /// `<kid>:<base64url Ed25519 seed>`) mints this cell's credential for
+    /// each engine call; without a valid one the cell has no analytics.
+    ///
+    /// # Errors
+    /// A missing or malformed signing key.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "wasm-bindgen passes an optional string by value"
+    )]
     #[wasm_bindgen(js_name = enableAnalytics)]
-    pub fn enable_analytics(&mut self) {
-        self.tenant.enable_analytics();
+    pub fn enable_analytics(&mut self, signing_key: Option<String>) -> Result<(), JsValue> {
+        let issuer = norn_api::olap_credential::Issuer::parse(
+            signing_key
+                .as_deref()
+                .ok_or_else(|| JsValue::from_str("NORN_SECRET_OLAP_SIGNING_KEY is required"))?,
+        )
+        .map_err(|e| JsValue::from_str(&format!("NORN_SECRET_OLAP_SIGNING_KEY: {e}")))?;
+        self.tenant.enable_analytics(issuer);
+        Ok(())
     }
 
     /// The cell's verified ledger head as JSON (`{seq, hash, commits}`), for
@@ -335,7 +352,7 @@ impl NornCell {
         };
         let engine = self
             .tenant
-            .take_engine_call()
+            .take_engine_call(millis(now_ms))
             .and_then(|call| serde_json::to_string(&call).ok());
         Reply {
             status: response.status,

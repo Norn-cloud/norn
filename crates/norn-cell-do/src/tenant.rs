@@ -488,9 +488,12 @@ impl<E: SqlEngine> Tenant<E> {
 
     /// D102: answer questions, loads and exports on the tenant analytics
     /// engine the host reaches; without it the cell has no analytics.
-    pub fn enable_analytics(&mut self) {
+    /// OLAP-CRED-1: `issuer` is the host's signing key; every call carries a
+    /// credential it mints for this cell's own tenant.
+    pub fn enable_analytics(&mut self, issuer: norn_api::olap_credential::Issuer) {
+        let tenant = norn_cell::analytics::TenantId::of_scope(&self.scope.key());
         self.engine
-            .get_or_insert_with(crate::olap::Exchange::default);
+            .get_or_insert_with(|| crate::olap::Exchange::new(issuer, tenant));
     }
 
     /// Re-enter with the engine's answer to the call the last request ended with.
@@ -500,12 +503,13 @@ impl<E: SqlEngine> Tenant<E> {
         }
     }
 
-    /// The engine call the last request ended with, if any; taken once.
+    /// The engine call the last request ended with, if any, with its
+    /// credential minted at `now_ms` (Unix milliseconds); taken once.
     #[must_use]
-    pub fn take_engine_call(&self) -> Option<norn_api::analytics_routes::EngineCall> {
+    pub fn take_engine_call(&self, now_ms: u64) -> Option<norn_api::analytics_routes::EngineCall> {
         self.engine
             .as_ref()
-            .and_then(crate::olap::Exchange::take_pending)
+            .and_then(|engine| engine.take_pending(now_ms))
     }
 
     /// D102: a load or an export on a served cell with an engine, reading

@@ -109,7 +109,14 @@ export class Cell {
         console.error(`source connections not configured: ${error}`);
       }
       // D102: questions are answered on the tenant analytics engine when the Worker has one.
-      if (this.env.NORN_OLAP_URL !== undefined) this.cell.enableAnalytics();
+      // OLAP-CRED-1 (#1493): the cell signs each engine call for its own tenant; no shared token.
+      if (this.env.NORN_OLAP_URL !== undefined) {
+        try {
+          this.cell.enableAnalytics(this.env.NORN_SECRET_OLAP_SIGNING_KEY);
+        } catch (error) {
+          console.error(`analytics not enabled: ${error}`);
+        }
+      }
       // TIMER-ALARM-1: a serving cell keeps its scope for alarms, and arms for whatever was
       // already due when it opened (a cell from before alarms, a lost alarm).
       await this.keepScope(scope);
@@ -133,14 +140,14 @@ export class Cell {
     return this.cell.fetch(request.method, url.pathname, url.search.slice(1), request.headers.get("authorization") ?? undefined, Date.now(), body);
   }
   /**
-   * D102: perform one engine call the cell asked for. The engine trusts only
-   * this Worker's token; the cell decided the call and checks the answer.
+   * D102: perform one engine call the cell asked for, with the credential the
+   * cell minted for it; the cell decided the call and checks the answer.
    */
   async engine(call) {
     try {
       const response = await fetch(`${this.env.NORN_OLAP_URL}/v1/${call.op}`, {
         method: "POST",
-        headers: { authorization: `Bearer ${this.env.NORN_SECRET_DUCKDB_TOKEN}`, "content-type": "application/json" },
+        headers: { authorization: `Bearer ${call.credential}`, "content-type": "application/json" },
         body: call.body,
         redirect: "manual",
         signal: AbortSignal.timeout(ENGINE_TIMEOUT_MS),
@@ -159,7 +166,7 @@ export class Cell {
     try {
       const response = await fetch(`${this.env.NORN_OLAP_URL}/v1/${call.op}`, {
         method: "POST",
-        headers: { authorization: `Bearer ${this.env.NORN_SECRET_DUCKDB_TOKEN}`, "content-type": "application/json" },
+        headers: { authorization: `Bearer ${call.credential}`, "content-type": "application/json" },
         body: call.body,
         redirect: "manual",
         signal: AbortSignal.timeout(ENGINE_TIMEOUT_MS),

@@ -1,24 +1,34 @@
 //! `norn-olapd` (D102): the tenant analytics engine as a native sidecar next
 //! to the cell host. It serves the typed operations of
 //! [`norn_cell::analytics`] over a bounded HTTP/1.1 transport to one caller,
-//! the cell, which proves itself with a shared bearer token. It decides
-//! nothing about who may read: the cell authorizes every request before it
-//! sends it, names the tenant from the scope it verified, and checks every
-//! answer. It holds no storage credentials; a load reads a presigned URL the
-//! cell minted for that one object.
+//! the cell. OLAP-CRED-1 (#1493): every call carries the calling cell's own
+//! credential ([`norn_api::olap_credential`]), and the daemon serves it only
+//! for the one tenant that credential names; there is no shared token. The
+//! daemon holds public keys only, read from its keyring file on every call,
+//! so a key is added or rotated out without a restart. Every refused
+//! credential (missing, malformed, unknown or rotated-out key, bad
+//! signature, expired, or another tenant's) gets the same answer, before any
+//! tenant database is opened, so a caller learns nothing about whether
+//! another tenant exists. The cell still authorizes every request before it
+//! sends it and checks every answer. The daemon holds no storage
+//! credentials; a load reads a presigned URL the cell minted for that one
+//! object.
 
 use std::io::{BufRead as _, BufReader, Read as _, Write as _};
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use norn_api::clock::Clock;
+use norn_api::olap_credential::{Denied, Keyring};
 use norn_cell::analytics::engine::{Engine, Outcome, Settings};
 use norn_cell::analytics::{
     EngineRefusal, EvaluateRequest, ExportRequest, FrontierRequest, LoadRequest, MembersRequest,
-    PageRequest, ProfileRequest, SyncRequest,
+    PageRequest, ProfileRequest, SyncRequest, TenantId,
 };
+use norn_kernel::LogicalTime;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -30,27 +40,51 @@ const MAX_BODY_BYTES: usize = 64 * 1024 * 1024;
 const MAX_FILE_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 /// Connections served at once; more are answered 503.
 const MAX_CONNECTIONS: usize = 8;
+/// Longest accepted keyring file, in bytes.
+const MAX_KEYRING_BYTES: u64 = 64 * 1024;
+/// The variable of the retired shared token; its presence refuses startup.
+const RETIRED_TOKEN: &str = "NORN_SECRET_DUCKDB_TOKEN";
 
 /// The daemon's configuration, read from its environment.
 pub struct Config {
     /// Listen address, `NORN_OLAP_ADDR` (default `0.0.0.0:8790`).
     pub addr: String,
-    /// Shared bearer token, `NORN_SECRET_DUCKDB_TOKEN`, at least 32 bytes.
-    pub token: String,
+    /// OLAP-CRED-1: the keyring file, `NORN_OLAP_KEYS_FILE`: one
+    /// `<kid>:<base64url Ed25519 public key>` per line. Read on every call.
+    pub keys_file: PathBuf,
     /// Engine settings: `NORN_OLAP_DATA`, `NORN_OLAP_MEMORY_LIMIT`, `NORN_OLAP_THREADS`.
     pub settings: Settings,
 }
 
 impl Config {
-    /// Read the configuration, refusing a missing or short token.
+    /// Read the configuration from the process environment.
     ///
     /// # Errors
-    /// A missing or short token, or an unreadable thread count.
+    /// As [`Config::from_vars`].
     pub fn from_env() -> Result<Self, String> {
-        let var = |name: &str| std::env::var(name).ok().filter(|v| !v.is_empty());
-        let token = var("NORN_SECRET_DUCKDB_TOKEN")
-            .filter(|t| t.len() >= 32)
-            .ok_or("NORN_SECRET_DUCKDB_TOKEN must hold at least 32 bytes")?;
+        Self::from_vars(|name| std::env::var(name).ok())
+    }
+
+    /// Read the configuration from `var`. The keyring must be readable now;
+    /// the retired shared token must be absent, so no deployment believes
+    /// it is still protected by it.
+    ///
+    /// # Errors
+    /// The retired shared token is set, the keyring file is missing or
+    /// unreadable, or the thread count is unreadable.
+    pub fn from_vars(var: impl Fn(&str) -> Option<String>) -> Result<Self, String> {
+        let var = |name: &str| var(name).filter(|v| !v.is_empty());
+        if var(RETIRED_TOKEN).is_some() {
+            return Err(format!(
+                "{RETIRED_TOKEN} is retired (#1493): cells present their own credentials; \
+                 remove it and set NORN_OLAP_KEYS_FILE"
+            ));
+        }
+        let keys_file = PathBuf::from(
+            var("NORN_OLAP_KEYS_FILE")
+                .ok_or("NORN_OLAP_KEYS_FILE must name the keyring of the cells' public keys")?,
+        );
+        read_keyring(&keys_file)?;
         let threads = var("NORN_OLAP_THREADS")
             .map(|t| {
                 t.parse::<u32>()
@@ -60,13 +94,62 @@ impl Config {
             .unwrap_or(1);
         Ok(Self {
             addr: var("NORN_OLAP_ADDR").unwrap_or_else(|| "0.0.0.0:8790".to_owned()),
-            token,
+            keys_file,
             settings: Settings {
                 root: PathBuf::from(var("NORN_OLAP_DATA").unwrap_or_else(|| "/data".to_owned())),
                 memory_limit: var("NORN_OLAP_MEMORY_LIMIT").unwrap_or_else(|| "512MB".to_owned()),
                 threads,
             },
         })
+    }
+}
+
+/// Read and parse the keyring file, bounded.
+fn read_keyring(path: &std::path::Path) -> Result<Keyring, String> {
+    let mut text = String::new();
+    std::fs::File::open(path)
+        .and_then(|file| file.take(MAX_KEYRING_BYTES + 1).read_to_string(&mut text))
+        .map_err(|e| format!("the keyring {} is unreadable: {e}", path.display()))?;
+    if u64::try_from(text.len()).unwrap_or(u64::MAX) > MAX_KEYRING_BYTES {
+        return Err(format!("the keyring {} is too long", path.display()));
+    }
+    Keyring::parse(&text).map_err(|e| format!("the keyring {}: {e}", path.display()))
+}
+
+/// A fresh signing key `kid` for the cell host, and the keyring line that
+/// verifies its credentials: (`<kid>:<seed>`, `<kid>:<public key>`).
+///
+/// # Errors
+/// A malformed key id, or no randomness.
+pub fn new_key(kid: &str) -> Result<(String, String), String> {
+    use base64::Engine as _;
+    let mut seed = [0_u8; 32];
+    getrandom::fill(&mut seed).map_err(|e| format!("no randomness: {e}"))?;
+    let secret = format!(
+        "{kid}:{}",
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(seed)
+    );
+    zeroize::Zeroize::zeroize(&mut seed);
+    let issuer = norn_api::olap_credential::Issuer::parse(&secret)?;
+    Ok((secret, issuer.public_spec()))
+}
+
+/// The daemon's wall clock: credential expiry is checked against it.
+pub struct SystemClock;
+
+impl Clock for SystemClock {
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the daemon is the trusted boundary that checks credential expiry"
+    )]
+    fn now(&self) -> LogicalTime {
+        LogicalTime::from_millis(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_or(0, |elapsed| {
+                    u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
+                }),
+        )
     }
 }
 
@@ -95,9 +178,20 @@ pub fn healthy() -> bool {
 /// # Errors
 /// The engine directory or the listener cannot be opened.
 pub fn run(config: Config) -> std::io::Result<()> {
-    let engine = Arc::new(Engine::new(config.settings)?);
-    let token = Arc::new(config.token);
     let listener = TcpListener::bind(&config.addr)?;
+    serve(listener, config, Arc::new(SystemClock))
+}
+
+/// Serve `listener` until it fails, checking credential expiry against `clock`.
+///
+/// # Errors
+/// The engine directory cannot be opened.
+pub fn serve(listener: TcpListener, config: Config, clock: Arc<dyn Clock>) -> std::io::Result<()> {
+    let engine = Arc::new(Engine::new(config.settings)?);
+    let gate = Arc::new(Gate {
+        keys_file: config.keys_file,
+        clock,
+    });
     let active = Arc::new(AtomicUsize::new(0));
     for stream in listener.incoming().flatten() {
         if active.fetch_add(1, Ordering::SeqCst) >= MAX_CONNECTIONS {
@@ -110,16 +204,63 @@ pub fn run(config: Config) -> std::io::Result<()> {
             );
             continue;
         }
-        let (engine, token, active) =
-            (Arc::clone(&engine), Arc::clone(&token), Arc::clone(&active));
+        let (engine, gate, active) = (Arc::clone(&engine), Arc::clone(&gate), Arc::clone(&active));
         std::thread::spawn(move || {
             // A broken connection affects only itself.
-            let _ignored = connection(&stream, &engine, &token);
+            let _ignored = connection(&stream, &engine, &gate);
             active.fetch_sub(1, Ordering::SeqCst);
         });
     }
     Ok(())
 }
+
+/// OLAP-CRED-1: who may call. The keyring is read on every call, so adding
+/// or removing a key takes effect without a restart; an unreadable keyring
+/// refuses every call.
+struct Gate {
+    keys_file: PathBuf,
+    clock: Arc<dyn Clock>,
+}
+
+impl Gate {
+    /// The tenant the request's credential was minted for.
+    fn tenant(&self, authorization: Option<&str>) -> Result<TenantId, Denied> {
+        let credential = authorization
+            .and_then(|h| h.strip_prefix("Bearer "))
+            .ok_or(Denied::Malformed)?;
+        let keyring = read_keyring(&self.keys_file).map_err(|error| {
+            let _logged = writeln!(std::io::stderr(), "norn-olapd: {error}");
+            Denied::UnknownKey
+        })?;
+        keyring.verify(credential, self.clock.now().as_millis())
+    }
+}
+
+/// A request that reads or writes one tenant's database.
+trait Scoped {
+    fn tenant(&self) -> &TenantId;
+}
+
+macro_rules! scoped {
+    ($($request:ty),*) => {$(
+        impl Scoped for $request {
+            fn tenant(&self) -> &TenantId {
+                &self.tenant
+            }
+        }
+    )*};
+}
+
+scoped!(
+    FrontierRequest,
+    SyncRequest,
+    EvaluateRequest,
+    MembersRequest,
+    ProfileRequest,
+    PageRequest,
+    LoadRequest,
+    ExportRequest
+);
 
 struct Request {
     method: String,
@@ -153,7 +294,7 @@ const fn reason(status: u16) -> &'static str {
     }
 }
 
-fn connection(stream: &TcpStream, engine: &Engine, token: &str) -> std::io::Result<()> {
+fn connection(stream: &TcpStream, engine: &Engine, gate: &Gate) -> std::io::Result<()> {
     stream.set_read_timeout(Some(Duration::from_secs(30)))?;
     let request = match read_request(stream) {
         Ok(request) => request,
@@ -162,13 +303,10 @@ fn connection(stream: &TcpStream, engine: &Engine, token: &str) -> std::io::Resu
     if request.method == "GET" && request.path == "/healthz" {
         return respond(stream, 200, "application/json", b"{\"ok\":true}");
     }
-    if !authorized(request.authorization.as_deref(), token) {
-        return refuse(
-            stream,
-            401,
-            &refusal("analytics.unauthorized", "the caller is not the cell"),
-        );
-    }
+    let tenant = match gate.tenant(request.authorization.as_deref()) {
+        Ok(tenant) => tenant,
+        Err(denied) => return unauthorized(stream, denied),
+    };
     if request.method != "POST" {
         return refuse(
             stream,
@@ -176,15 +314,20 @@ fn connection(stream: &TcpStream, engine: &Engine, token: &str) -> std::io::Resu
             &refusal("analytics.unknown", "no such operation"),
         );
     }
+    let call = Call {
+        stream,
+        request: &request,
+        tenant: &tenant,
+    };
     match request.path.as_str() {
-        "/v1/frontier" => answer(stream, &request, |r: FrontierRequest| engine.frontier(&r)),
-        "/v1/sync" => answer(stream, &request, |r: SyncRequest| engine.sync(&r)),
-        "/v1/evaluate" => answer(stream, &request, |r: EvaluateRequest| engine.evaluate(&r)),
-        "/v1/members" => answer(stream, &request, |r: MembersRequest| engine.members(&r)),
-        "/v1/profile" => answer(stream, &request, |r: ProfileRequest| engine.profile(&r)),
-        "/v1/page" => answer(stream, &request, |r: PageRequest| engine.page(&r)),
-        "/v1/load" => answer(stream, &request, |r: LoadRequest| load(engine, &r)),
-        "/v1/export" => export(stream, &request, engine),
+        "/v1/frontier" => call.answer(|r: FrontierRequest| engine.frontier(&r)),
+        "/v1/sync" => call.answer(|r: SyncRequest| engine.sync(&r)),
+        "/v1/evaluate" => call.answer(|r: EvaluateRequest| engine.evaluate(&r)),
+        "/v1/members" => call.answer(|r: MembersRequest| engine.members(&r)),
+        "/v1/profile" => call.answer(|r: ProfileRequest| engine.profile(&r)),
+        "/v1/page" => call.answer(|r: PageRequest| engine.page(&r)),
+        "/v1/load" => call.answer(|r: LoadRequest| load(engine, &r)),
+        "/v1/export" => export(&call, engine),
         _ => refuse(
             stream,
             404,
@@ -193,18 +336,66 @@ fn connection(stream: &TcpStream, engine: &Engine, token: &str) -> std::io::Resu
     }
 }
 
-/// Constant-time comparison of the bearer token.
-fn authorized(header: Option<&str>, token: &str) -> bool {
-    let Some(given) = header.and_then(|h| h.strip_prefix("Bearer ")) else {
-        return false;
-    };
-    let (given, token) = (given.as_bytes(), token.as_bytes());
-    given.len() == token.len()
-        && given
-            .iter()
-            .zip(token)
-            .fold(0u8, |acc, (a, b)| acc | (a ^ b))
-            == 0
+/// The one answer to every refused credential, whatever the reason and
+/// whichever tenant was asked for; the reason goes to the operator log.
+fn unauthorized(stream: &TcpStream, denied: Denied) -> std::io::Result<()> {
+    let _logged = writeln!(
+        std::io::stderr(),
+        "norn-olapd: refused credential: {}",
+        denied.label()
+    );
+    let body = serde_json::to_string(&refusal(
+        "analytics.unauthorized",
+        "the caller is not the cell",
+    ))
+    .unwrap_or_else(|_e| String::from("{}"));
+    respond(stream, 401, "application/json", body.as_bytes())
+}
+
+/// One authenticated call: the credential's tenant is the only one it may touch.
+struct Call<'a> {
+    stream: &'a TcpStream,
+    request: &'a Request,
+    tenant: &'a TenantId,
+}
+
+impl Call<'_> {
+    /// The typed request, when it parses and names the credential's tenant.
+    /// `Err` holds the refusal already sent.
+    fn parse<T: DeserializeOwned + Scoped>(&self) -> Result<T, std::io::Result<()>> {
+        let parsed: T = serde_json::from_slice(&self.request.body).map_err(|error| {
+            refuse(
+                self.stream,
+                400,
+                &refusal("analytics.invalid", &error.to_string()),
+            )
+        })?;
+        if parsed.tenant() != self.tenant {
+            return Err(unauthorized(self.stream, Denied::OtherTenant));
+        }
+        Ok(parsed)
+    }
+
+    fn answer<T: DeserializeOwned + Scoped, R: Serialize>(
+        &self,
+        operation: impl FnOnce(T) -> Outcome<R>,
+    ) -> std::io::Result<()> {
+        let parsed = match self.parse::<T>() {
+            Ok(parsed) => parsed,
+            Err(sent) => return sent,
+        };
+        match operation(parsed) {
+            Ok(result) => match serde_json::to_string(&result) {
+                Ok(body) => respond(self.stream, 200, "application/json", body.as_bytes()),
+                Err(error) => refuse(
+                    self.stream,
+                    500,
+                    &refusal("analytics.engine", &error.to_string()),
+                ),
+            },
+            Err(refused) => refuse(self.stream, status_of(&refused), &refused),
+        }
+    }
 }
 
 fn refusal(code: &str, detail: &str) -> EngineRefusal {
@@ -229,34 +420,6 @@ fn refuse(stream: &TcpStream, status: u16, refused: &EngineRefusal) -> std::io::
     );
     let body = serde_json::to_string(refused).unwrap_or_else(|_e| String::from("{}"));
     respond(stream, status, "application/json", body.as_bytes())
-}
-
-fn answer<T: DeserializeOwned, R: Serialize>(
-    stream: &TcpStream,
-    request: &Request,
-    operation: impl FnOnce(T) -> Outcome<R>,
-) -> std::io::Result<()> {
-    let parsed: T = match serde_json::from_slice(&request.body) {
-        Ok(parsed) => parsed,
-        Err(error) => {
-            return refuse(
-                stream,
-                400,
-                &refusal("analytics.invalid", &error.to_string()),
-            );
-        }
-    };
-    match operation(parsed) {
-        Ok(result) => match serde_json::to_string(&result) {
-            Ok(body) => respond(stream, 200, "application/json", body.as_bytes()),
-            Err(error) => refuse(
-                stream,
-                500,
-                &refusal("analytics.engine", &error.to_string()),
-            ),
-        },
-        Err(refused) => refuse(stream, status_of(&refused), &refused),
-    }
 }
 
 /// Download the presigned object into the engine's scratch directory, then load it.
@@ -302,16 +465,11 @@ fn load(engine: &Engine, request: &LoadRequest) -> Outcome<norn_cell::analytics:
 }
 
 /// Export into a scratch file, stream it as the body, then delete it.
-fn export(stream: &TcpStream, request: &Request, engine: &Engine) -> std::io::Result<()> {
-    let parsed: ExportRequest = match serde_json::from_slice(&request.body) {
+fn export(call: &Call<'_>, engine: &Engine) -> std::io::Result<()> {
+    let stream = call.stream;
+    let parsed: ExportRequest = match call.parse() {
         Ok(parsed) => parsed,
-        Err(error) => {
-            return refuse(
-                stream,
-                400,
-                &refusal("analytics.invalid", &error.to_string()),
-            );
-        }
+        Err(sent) => return sent,
     };
     let kind = match parsed.format {
         norn_cell::analytics::ExportFormat::Parquet => "application/vnd.apache.parquet",
