@@ -1110,6 +1110,162 @@ fn definitions_installed_between_landing_and_commit_refuse_the_commit() {
     );
 }
 
+/// The admitted Items mapping, renamed to its `revision`: an edit of the
+/// mapping artifact that changes its pin and nothing it reads.
+fn renamed_items_mapping(
+    host: &DevHost<norn_cell::engine::NativeEngine>,
+    revision: u64,
+) -> ArtifactEnvelope {
+    let active = host.active_definitions().expect("read").expect("installed");
+    let set: Vec<Value> = serde_json::from_str(&active.canonical_set).expect("set");
+    let mut mapping = set
+        .into_iter()
+        .find(|artifact| artifact["artifactId"] == "upload.items.mapping")
+        .expect("the Items mapping");
+    mapping["name"] = json!(format!("Items rows, revision {revision}"));
+    serde_json::from_value(mapping).expect("envelope")
+}
+
+/// The active definitions version and the pin of its Items mapping, as a
+/// manifest names it (`<id>@<sha256 of the canonical artifact>`).
+fn items_mapping_pin(host: &DevHost<norn_cell::engine::NativeEngine>) -> (u64, String) {
+    let active = host.active_definitions().expect("read").expect("installed");
+    let set: Vec<Value> = serde_json::from_str(&active.canonical_set).expect("set");
+    let mapping = set
+        .iter()
+        .find(|artifact| artifact["artifactId"] == "upload.items.mapping")
+        .expect("the Items mapping");
+    let digest = norn_api::uploads::sha256_hex(&serde_json::to_vec(mapping).expect("bytes"));
+    (active.version, format!("upload.items.mapping@{digest}"))
+}
+
+/// MANIFEST-01/03: mapping edits installed while loads run never commit a
+/// manifest that pairs one revision's mapping with another's pins: every
+/// committed manifest's mapping pin is the mapping of the definitions
+/// version it is pinned to, and every other load refuses as stale. The
+/// loads pause between them, so the edits are not starved of the cell.
+#[test]
+fn mapping_edits_racing_loads_never_commit_a_mixed_snapshot() {
+    use norn_api::analytics_routes::load_dataset;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    /// Ends the loads however the edits end, a panic among them.
+    struct Finished<'a>(&'a AtomicBool);
+    impl Drop for Finished<'_> {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+    const EDITS: u64 = 12;
+    let host = items_host(false);
+    let (version, pin) = items_mapping_pin(&host);
+    let pins = std::sync::Mutex::new(BTreeMap::from([(version, pin)]));
+    let done = AtomicBool::new(false);
+    let committed = std::thread::scope(|threads| {
+        threads.spawn(|| {
+            let _finished = Finished(&done);
+            for revision in 1..=EDITS {
+                host.install_artifacts(
+                    &[renamed_items_mapping(&host, revision)],
+                    EXTRACTED_AT_MS + revision,
+                )
+                .expect("the edit installs");
+                let (version, pin) = items_mapping_pin(&host);
+                pins.lock().expect("pins").insert(version, pin);
+            }
+        });
+        let engine = ThreeAndOne::default();
+        let mut committed = Vec::new();
+        loop {
+            let last = done.load(Ordering::SeqCst);
+            match load_dataset(
+                &host,
+                &scope(),
+                Some("loader"),
+                &items("u1", None),
+                &OneUpload,
+                &engine,
+                EXTRACTED_AT_MS,
+            ) {
+                Ok(_) => committed.push(
+                    norn_api::analytics_routes::current_manifest(&host, "upload.Items")
+                        .expect("read")
+                        .expect("the committed manifest")
+                        .manifest
+                        .pins,
+                ),
+                Err(refused) => assert_eq!(
+                    (refused.status, refused.code.as_str()),
+                    (409, "dataset.stale_pins"),
+                    "a racing load refuses only as stale"
+                ),
+            }
+            if last {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        committed
+    });
+    assert!(!committed.is_empty(), "the last load commits");
+    let pins = pins.into_inner().expect("pins");
+    for manifest in &committed {
+        assert_eq!(
+            Some(&manifest.mapping),
+            pins.get(&manifest.definitions_version),
+            "a manifest pinned to version {} names that version's mapping",
+            manifest.definitions_version
+        );
+    }
+}
+
+/// MANIFEST-04: a request is fingerprinted by what it asks, not by what the
+/// definitions resolve it to: an identical retry after a mapping edit keeps
+/// its first receipt and lands nothing.
+#[test]
+fn a_retry_after_a_mapping_edit_keeps_its_first_receipt() {
+    use norn_api::analytics_routes::load_dataset;
+    let host = items_host(false);
+    let engine = ThreeAndOne::default();
+    let load = || {
+        load_dataset(
+            &host,
+            &scope(),
+            Some("loader"),
+            &items("u1", Some("load-1")),
+            &OneUpload,
+            &engine,
+            EXTRACTED_AT_MS,
+        )
+    };
+    let first = load().expect("loaded");
+    let (before, _) = items_mapping_pin(&host);
+    host.install_artifacts(&[renamed_items_mapping(&host, 1)], EXTRACTED_AT_MS + 1)
+        .expect("the edit installs");
+    assert!(
+        items_mapping_pin(&host).0 > before,
+        "the mapping was edited"
+    );
+    let again = load().expect("the retry replays");
+    assert_eq!(
+        (
+            again.manifest.as_str(),
+            again.receipt.as_str(),
+            again.commit_seq
+        ),
+        (
+            first.manifest.as_str(),
+            first.receipt.as_str(),
+            first.commit_seq
+        ),
+        "the retry keeps its first receipt"
+    );
+    assert_eq!(
+        engine.landed.lock().expect("calls").len(),
+        1,
+        "a replay lands nothing"
+    );
+}
+
 /// MANIFEST-01: an answer resumes a landing only if it names that landing's
 /// whole identity; an answer of another landing of the same file (another
 /// typing) is never continued.

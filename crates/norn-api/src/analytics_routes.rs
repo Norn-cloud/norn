@@ -21,12 +21,12 @@ use std::collections::BTreeMap;
 use norn_cell::analytics::{
     EngineRefusal, EvaluateRequest, EvaluateResponse, ExportFormat, ExportRequest, FileFormat,
     FileSource, FrontierResponse, LandRequest, LandResponse, LoadRequest, Source, StoreRequest,
-    StoredObject, TenantId, dataset_cache_id, hex_digest,
+    StoredObject, TableSchema, TenantId, dataset_cache_id, hex_digest,
 };
 use norn_cell::compute::{ALL_MEMBERS, QueryContext, QueryResult};
 use norn_cell::dataset_manifest::{
     CommittedManifest, DatasetManifest, DatasetRequest, MANIFEST_VERSION, ManifestCounts,
-    ManifestFile, ManifestSource,
+    ManifestFile, ManifestPins, ManifestSource,
 };
 use norn_cell::engine::SqlEngine;
 use norn_cell::{CellError, CellStore, ObjectRecord};
@@ -694,13 +694,15 @@ pub fn load_dataset<E: SqlEngine>(
     if !uploads.issued(&request.upload_id, &host.scope().key(), &record.uri) {
         return Err(dataset_not_found());
     }
-    let contract = bulk_contract(host, &request.object_type, request.mapping.as_deref())?;
+    // MANIFEST-04: a request is fingerprinted by what it asks (the upload,
+    // the type and the mapping it names), never by what the definitions
+    // resolve it to now: a retry after a mapping edit keeps its first
+    // receipt. A request already committed answers with that receipt.
     let keyed = request
         .request_key
         .as_deref()
-        .map(|key| keyed_request(key, &request, &record, &contract))
+        .map(|key| keyed_request(key, &request, &record))
         .transpose()?;
-    // MANIFEST-04: a request already committed answers with its first receipt.
     if let Some(keyed) = &keyed
         && let Some(first) = committed_request(host, keyed)?
     {
@@ -711,6 +713,7 @@ pub fn load_dataset<E: SqlEngine>(
             first,
         ));
     }
+    let contract = bulk_contract(host, &request.object_type, request.mapping.as_deref())?;
     let landed = land_upload(
         host,
         &request.object_type,
@@ -783,15 +786,20 @@ pub fn load_dataset<E: SqlEngine>(
 }
 
 /// MANIFEST-03: what an observation load of the type would be decided by,
-/// as bulk ingest enforces it: the admitted mapping onto the type and the
-/// column binding it reads.
+/// as bulk ingest enforces it: the admitted mapping onto the type, the
+/// column binding it reads, and the table and pins the landing is typed
+/// and checked by. MANIFEST-01: all of it is read from one definitions
+/// revision, so a landing never pairs one revision's mapping with
+/// another's pins.
 struct BulkContract {
     /// The mapping's artifact id.
     mapping_id: String,
-    /// `<artifact id>@<sha256 of its canonical artifact>`.
-    mapping_pin: String,
     /// The file column of each property read from a differently named field.
     binding: BTreeMap<String, String>,
+    /// The type's table.
+    table: TableSchema,
+    /// The pins, the resolved mapping's (`<artifact id>@<sha256>`) among them.
+    pins: ManifestPins,
 }
 
 fn unsupported(code: &str, detail: impl Into<String>) -> Refusal {
@@ -832,16 +840,27 @@ fn plain_read(value: &str) -> Option<&str> {
 /// write-side markings check: a load of a type whose rows a write would
 /// mark (a declared property marking, or a marked source field) is refused,
 /// as bulk ingest attaches no per-row markings.
+///
+/// MANIFEST-01: the definitions epoch and the cell are held from reading
+/// the set to capturing the pins, so the mapping, the markings, the table
+/// and the pins are one revision's; the commit then refuses any later one.
 #[allow(
     clippy::too_many_lines,
-    reason = "one contract, read top to bottom: the mapping, its reads, then the markings"
+    reason = "one contract, read top to bottom: the mapping, its reads, the markings, then the pins"
 )]
 fn bulk_contract<E: SqlEngine>(
     host: &DevHost<E>,
     object_type: &str,
     named: Option<&str>,
 ) -> Result<BulkContract, Refusal> {
-    let set: Vec<serde_json::Value> = match host.active_definitions()? {
+    let _epoch = host.definition_read()?;
+    let guard = host.cell()?;
+    let store = guard.store();
+    let set: Vec<serde_json::Value> = match store
+        .read()
+        .installed_definitions(None)
+        .map_err(Refusal::host)?
+    {
         Some(active) => serde_json::from_str(&active.canonical_set).map_err(Refusal::host)?,
         None => Vec::new(),
     };
@@ -930,8 +949,6 @@ fn bulk_contract<E: SqlEngine>(
             "the mapping does more than read fields; load it through observations",
         ));
     }
-    let guard = host.cell()?;
-    let store = guard.store();
     let table = store
         .analytics_table(object_type)
         .map_err(|_unknown| dataset_not_found())?;
@@ -987,7 +1004,6 @@ fn bulk_contract<E: SqlEngine>(
             ),
         ));
     }
-    drop(guard);
     let schema_id = mapping
         .pointer("/payload/source/schemaId")
         .and_then(serde_json::Value::as_str)
@@ -1024,22 +1040,48 @@ fn bulk_contract<E: SqlEngine>(
             ),
         ));
     }
+    // MANIFEST-PIN-1: no law or invariant is checked on this path yet, so
+    // a type that declares one is refused rather than admitted unchecked.
+    if !store
+        .model()
+        .governing_laws(object_type)
+        .map_err(Refusal::host)?
+        .is_empty()
+        || !store
+            .model()
+            .effective_invariants(object_type)
+            .map_err(Refusal::host)?
+            .is_empty()
+    {
+        return Err(Refusal::new(
+            http::StatusCode::UNPROCESSABLE_ENTITY,
+            "bulk.unsupported_law",
+            "the dataset was not loaded",
+            "the type declares laws or invariants, which a dataset load does not check yet; load it through observations",
+        ));
+    }
     let mapping_id = id_of(mapping);
     let canonical = serde_json::to_vec(mapping).map_err(Refusal::host)?;
+    let mapping_pin = format!("{mapping_id}@{}", hex_digest(&canonical));
+    let pins = store
+        .dataset_pins(object_type, &binding, &mapping_pin)
+        .map_err(Refusal::host)?;
     Ok(BulkContract {
-        mapping_pin: format!("{mapping_id}@{}", hex_digest(&canonical)),
         mapping_id,
         binding,
+        table,
+        pins,
     })
 }
 
 /// MANIFEST-04: a request key and the fingerprint of what it asks: the
-/// upload (by its recorded identity), the type and the mapping.
+/// upload (by its recorded identity), the type and the mapping it names
+/// (`null` for the type's only one). The mapping it resolved to is the
+/// manifest's own pin, not the request's.
 fn keyed_request(
     key: &str,
     request: &DatasetLoadRequest,
     record: &UploadRecord,
-    contract: &BulkContract,
 ) -> Result<DatasetRequest, Refusal> {
     let valid = !key.is_empty()
         && key.len() <= 128
@@ -1058,7 +1100,7 @@ fn keyed_request(
             "uploadId": request.upload_id,
             "uri": record.uri,
             "sha256": record.sha256,
-            "mapping": contract.mapping_pin,
+            "mapping": request.mapping,
         }),
     )
     .map_err(Refusal::host)?;
@@ -1164,40 +1206,10 @@ fn land_upload<E: SqlEngine>(
     transport: &dyn Transport,
     now_ms: u64,
 ) -> Result<Landing, Refusal> {
-    // The cell is held only while the landing is typed; the steps run
-    // without it, so the definitions may change under them, and the commit
-    // decides by the pins carried here.
-    let (table, pins) = {
-        let guard = host.cell()?;
-        let store = guard.store();
-        let table = store
-            .analytics_table(object_type)
-            .map_err(|_unknown| dataset_not_found())?;
-        // MANIFEST-PIN-1: no law or invariant is checked on this path yet, so
-        // a type that declares one is refused rather than admitted unchecked.
-        if !store
-            .model()
-            .governing_laws(object_type)
-            .map_err(Refusal::host)?
-            .is_empty()
-            || !store
-                .model()
-                .effective_invariants(object_type)
-                .map_err(Refusal::host)?
-                .is_empty()
-        {
-            return Err(Refusal::new(
-                http::StatusCode::UNPROCESSABLE_ENTITY,
-                "bulk.unsupported_law",
-                "the dataset was not loaded",
-                "the type declares laws or invariants, which a dataset load does not check yet; load it through observations",
-            ));
-        }
-        let pins = store
-            .dataset_pins(object_type, &contract.binding, &contract.mapping_pin)
-            .map_err(Refusal::host)?;
-        (table, pins)
-    };
+    // The steps run without the cell, so the definitions may change under
+    // them; the commit decides by the contract's pins, carried here.
+    let table = contract.table.clone();
+    let pins = contract.pins.clone();
     let format = if record.content_type.contains("parquet") || record.uri.ends_with(".parquet") {
         FileFormat::Parquet
     } else {
