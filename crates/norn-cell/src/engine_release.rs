@@ -27,7 +27,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::engine::{SqlEngine, params};
+use crate::engine::{SqlEngine, SqlValue, params};
 use crate::error::CellError;
 use crate::system::META;
 
@@ -227,7 +227,7 @@ fn order(cell: u32, writer: String, engine: EngineVersion) -> Result<Admission, 
 ///
 /// # Errors
 /// Engine failures, or [`CellError::EngineUnknownVersion`] for a stamp on a
-/// store that records no format.
+/// store that records no format, or a stamp that is not text.
 pub fn stored_version<E: SqlEngine>(engine: &E) -> Result<StoredVersion, CellError> {
     let has_meta = engine
         .query_optional(
@@ -243,14 +243,22 @@ pub fn stored_version<E: SqlEngine>(engine: &E) -> Result<StoredVersion, CellErr
         engine.query_optional(
             &format!("SELECT \"value\" FROM \"{META}\" WHERE \"key\" = ?1"),
             params![key],
-            |row| row.get::<String>(0),
+            |row| row.get_ref(0).cloned(),
         )
+    };
+    // The column is TEXT but not STRICT, so it can hold a non-text value: a
+    // stamp that is not text is unreadable, as malformed JSON is.
+    let text = |stamp: SqlValue| match stamp {
+        SqlValue::Text(stamp) => Ok(stamp),
+        SqlValue::Null | SqlValue::Integer(_) | SqlValue::Real(_) | SqlValue::Blob(_) => {
+            Err(unknown("a stamp that is not text"))
+        }
     };
     match (meta("format")?, meta(STAMP_KEY)?) {
         (None, None) => Ok(StoredVersion::Fresh),
         (Some(_), None) => Ok(StoredVersion::Unstamped),
-        (Some(_), Some(stamp)) => Ok(StoredVersion::Stamped(stamp)),
-        (None, Some(stamp)) => Err(unknown(&stamp)),
+        (Some(_), Some(stamp)) => Ok(StoredVersion::Stamped(text(stamp)?)),
+        (None, Some(stamp)) => Err(unknown(&text(stamp)?)),
     }
 }
 

@@ -981,7 +981,7 @@
       "tier": "T6",
       "severity": "error",
       "message": "the cell's storage version cannot be upgraded in place by this engine",
-      "fix": "Open the cell first with the bridge release the refusal names, then with this one; if a migration refused the data, restore the cell from its export.",
+      "fix": "Open the cell first with a release whose upgrade floor admits the cell's storage version, then with this one; if a migration refused the data, restore the cell from its export.",
       "no_fix": null
     },
     {

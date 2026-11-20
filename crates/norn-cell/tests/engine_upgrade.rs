@@ -63,6 +63,16 @@ fn set_stamp(path: &Path, stamp: &str) {
     .expect("stamp");
 }
 
+/// Store `stamp` as a BLOB: the column is not STRICT, so SQLite keeps it.
+fn set_blob_stamp(path: &Path, stamp: &[u8]) {
+    let conn = rusqlite::Connection::open(path).expect("sqlite");
+    conn.execute(
+        "UPDATE \"_norn_meta\" SET \"value\" = ?1 WHERE \"key\" = ?2",
+        rusqlite::params![stamp, STAMP_KEY],
+    )
+    .expect("stamp");
+}
+
 /// Remove the stamp, as a cell written before it existed has none.
 fn unstamp(path: &Path) {
     let conn = rusqlite::Connection::open(path).expect("sqlite");
@@ -282,11 +292,13 @@ fn a_new_cell_is_stamped_with_this_engine() {
 }
 
 #[test]
-fn an_older_engine_refuses_a_cell_this_engine_upgraded() {
+fn the_v1_window_does_not_admit_a_cell_this_engine_upgraded() {
     let dir = tempfile::tempdir().expect("directory");
     let path = v1_cell(dir.path());
     drop(open(&path).expect("upgrade"));
-    // The storage version 1 engine's window, against the upgraded cell.
+    // Simulated: this engine's admission with the storage version 1 window,
+    // against the upgraded cell. The shipped version 1 engines read no stamp,
+    // so they cannot refuse it themselves (`docs/platform/engine-upgrades.md`).
     let previous = EngineVersion {
         storage: 1,
         upgrades_from: 1,
@@ -300,7 +312,13 @@ fn an_older_engine_refuses_a_cell_this_engine_upgraded() {
             ..
         })
     ));
+}
 
+#[test]
+fn every_open_refuses_a_cell_a_newer_engine_wrote() {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = v1_cell(dir.path());
+    drop(open(&path).expect("upgrade"));
     // This engine, against a cell the next storage version wrote: every open
     // path refuses with the registered code and names the writer.
     let next = STORAGE_VERSION + 1;
@@ -336,6 +354,15 @@ fn an_unknown_future_engine_stamp_refuses() {
                     .starts_with(norn_checker::ENGINE_UNKNOWN_VERSION)
         });
     }
+    // A stamp that is not text is as unreadable as malformed JSON.
+    let stamp = serde_json::to_string(&EngineStamp::current()).expect("stamp");
+    set_blob_stamp(&path, stamp.as_bytes());
+    every_open_refuses(&path, |refusal| {
+        matches!(refusal, CellError::EngineUnknownVersion { .. })
+            && refusal
+                .to_string()
+                .starts_with(norn_checker::ENGINE_UNKNOWN_VERSION)
+    });
 }
 
 /// How a refused open is recognised.
