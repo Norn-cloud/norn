@@ -351,7 +351,8 @@ fn pin_refused(error: &CellError) -> bool {
 
 /// U1: an open commits its upgrade only after every check that can refuse
 /// the file has passed. A v1 cell whose ledger does not verify, or whose
-/// fork pin is past its head, refuses and stays byte-identical, unstamped.
+/// fork pin is past its head, refuses and stays byte-identical, unstamped,
+/// in its stored journal mode, with default and with WAL options.
 #[test]
 fn a_v1_cell_that_fails_verification_stays_byte_identical() {
     let image: Value = serde_json::from_str(STORAGE_V1).expect("fixture");
@@ -383,18 +384,36 @@ fn a_v1_cell_that_fails_verification_stays_byte_identical() {
         ("fork pin", pinned_past_head, pin_refused),
     ];
     for (name, image, refused) in cases {
-        let dir = tempfile::tempdir().expect("directory");
-        let path = dir.path().join("cell.sqlite");
-        engine_fixture::load(&image, &path);
-        let before = bytes(&path);
-        let error = open(&path).expect_err(name);
-        assert!(refused(&error), "{name}: unexpected refusal: {error}");
-        assert_eq!(bytes(&path), before, "{name}: the file is byte-identical");
-        assert_eq!(
-            engine_release::stored_version(&raw(&path)).expect("version"),
-            StoredVersion::Unstamped,
-            "{name}: the stamp is not committed"
-        );
+        // A refused open keeps the stored journal mode, even one that asked for WAL.
+        for (mode, options) in [("delete", StoreOptions::default()), ("wal", wal())] {
+            let dir = tempfile::tempdir().expect("directory");
+            let path = dir.path().join("cell.sqlite");
+            engine_fixture::load(&image, &path);
+            assert_eq!(journal_mode(&path), "delete", "{name}: the fixture is DELETE");
+            let before = bytes(&path);
+            let error = CellStore::open(&path, engine_fixture::model(), options)
+                .expect_err(name);
+            assert!(refused(&error), "{name}/{mode}: unexpected refusal: {error}");
+            assert_eq!(
+                bytes(&path),
+                before,
+                "{name}/{mode}: the file is byte-identical"
+            );
+            assert_eq!(
+                journal_mode(&path),
+                "delete",
+                "{name}/{mode}: the journal mode is unchanged"
+            );
+            assert!(
+                !dir.path().join("cell.sqlite-wal").exists(),
+                "{name}/{mode}: no WAL sidecar"
+            );
+            assert_eq!(
+                engine_release::stored_version(&raw(&path)).expect("version"),
+                StoredVersion::Unstamped,
+                "{name}/{mode}: the stamp is not committed"
+            );
+        }
     }
 }
 
@@ -427,12 +446,26 @@ fn a_newer_cell_refuses_a_journal_mode_change() {
 }
 
 /// An engine over the cell file whose first transaction starts only after
-/// another opener has written `stamp`: provisioning races that opener.
+/// another opener has written `stamp`: provisioning races that opener. It
+/// counts the schema statements it is asked to run.
 struct Racing {
     inner: NativeEngine,
     path: PathBuf,
     stamp: RefCell<Option<String>>,
     raced: RefCell<Option<Vec<u8>>>,
+    ddl: std::cell::Cell<usize>,
+}
+
+impl Racing {
+    fn count_ddl(&self, sql: &str) {
+        let head = sql.trim_start().get(..6).unwrap_or_default();
+        if ["CREATE", "ALTER ", "DROP T", "DROP I"]
+            .iter()
+            .any(|verb| head.eq_ignore_ascii_case(verb))
+        {
+            self.ddl.set(self.ddl.get() + 1);
+        }
+    }
 }
 
 impl SqlEngine for Racing {
@@ -440,12 +473,14 @@ impl SqlEngine for Racing {
         self.inner.read_isolation()
     }
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
+        self.count_ddl(sql);
         self.inner.execute(sql, params)
     }
     fn query(&self, sql: &str, params: &[SqlValue]) -> Result<Vec<Vec<SqlValue>>, CellError> {
         self.inner.query(sql, params)
     }
     fn execute_batch(&self, sql: &str) -> Result<(), CellError> {
+        self.count_ddl(sql);
         self.inner.execute_batch(sql)
     }
     fn transaction<T, X: From<CellError>>(&self, f: impl FnOnce() -> Result<T, X>) -> Result<T, X> {
@@ -499,6 +534,7 @@ fn provisioning_admits_and_upgrades_inside_its_transaction() {
         path: path.clone(),
         stamp: RefCell::new(Some(newer_stamp())),
         raced: RefCell::default(),
+        ddl: std::cell::Cell::new(0),
     };
     let raced = std::rc::Rc::new(racing);
     let refused = provision(RcEngine(std::rc::Rc::clone(&raced)));
@@ -512,6 +548,11 @@ fn provisioning_admits_and_upgrades_inside_its_transaction() {
     );
     let after_race = raced.raced.borrow().clone().expect("the opener raced");
     assert_eq!(bytes(&path), after_race, "provisioning wrote nothing");
+    assert_eq!(
+        raced.ddl.get(),
+        0,
+        "the raced admission refuses before any schema statement runs"
+    );
 
     unstamp(&path);
     let store = provision(raw(&path)).expect("retried provisioning");
