@@ -46,6 +46,8 @@ use norn_kernel::{
 };
 
 use crate::actions::ActionPolicy;
+use crate::principal::Authority;
+use norn_cell::flow_run::RunStarter;
 
 use crate::seed::SeedError;
 
@@ -474,21 +476,187 @@ pub struct Caller {
 /// Where the resolver records the current request's verified principal for
 /// the policy. Every request records first (possibly nobody), so a caller
 /// never outlives its request; the cell serves one request at a time.
+///
+/// APPROVAL-LIVE-1: it also carries what the organization's authority
+/// answered during this request, so the policy can require, wherever an
+/// approval of a call not yet run is consumed, that the consuming principal
+/// is the authority's current answer for exactly that approval
+/// ([`CallerSlot::live_authority`]).
 #[derive(Debug, Default)]
-pub struct CallerSlot(Mutex<Option<Caller>>);
+pub struct CallerSlot {
+    caller: Mutex<Option<Caller>>,
+    live: Mutex<Live>,
+}
+
+/// APPROVAL-LIVE-1: the slot's live-authority state.
+#[derive(Debug, Default)]
+struct Live {
+    /// The host looks requesters up: consuming an approval of a call not
+    /// yet run needs the organization's answer, never a credential alone.
+    required: bool,
+    /// The approval (its binding) the current caller is the authority's
+    /// answer for, when the host put it there for that one attempt.
+    established: Option<String>,
+    /// The answers verified this request: subject, binding, verdict.
+    verdicts: Vec<(String, String, Authority)>,
+    /// The attempt that needed an answer this request and had none.
+    needed: Option<(RunStarter, String)>,
+}
+
+/// The caller and the approval it was established for, to put back.
+#[derive(Debug)]
+pub(crate) struct Snapshot(Option<Caller>, Option<String>);
 
 impl CallerSlot {
     /// Record the request's verified principal, or nobody.
     pub fn record(&self, caller: Option<Caller>) {
-        if let Ok(mut slot) = self.0.lock() {
+        if let Ok(mut slot) = self.caller.lock() {
             *slot = caller;
+        }
+        if let Ok(mut live) = self.live.lock() {
+            live.established = None;
         }
     }
 
     /// The current request's verified principal, if any.
     #[must_use]
     pub fn current(&self) -> Option<Caller> {
-        self.0.lock().ok().and_then(|slot| slot.clone())
+        self.caller.lock().ok().and_then(|slot| slot.clone())
+    }
+
+    /// APPROVAL-LIVE-1: record `caller`, the organization's current answer
+    /// for the requester of the approval `binding` names, as the principal
+    /// for that one attempt.
+    pub fn record_live(&self, caller: Caller, binding: &str) {
+        self.record(Some(caller));
+        if let Ok(mut live) = self.live.lock() {
+            live.established = Some(binding.to_owned());
+        }
+    }
+
+    /// The caller and what it was established for, to [`Self::put_back`].
+    pub(crate) fn snapshot(&self) -> Snapshot {
+        let established = self
+            .live
+            .lock()
+            .ok()
+            .and_then(|live| live.established.clone());
+        Snapshot(self.current(), established)
+    }
+
+    /// Put back a [`Self::snapshot`].
+    pub(crate) fn put_back(&self, snapshot: Snapshot) {
+        let Snapshot(caller, established) = snapshot;
+        self.record(caller);
+        if let Ok(mut live) = self.live.lock() {
+            live.established = established;
+        }
+    }
+
+    /// APPROVAL-LIVE-1: whether the host looks requesters up.
+    pub fn require_live(&self, required: bool) {
+        if let Ok(mut live) = self.live.lock() {
+            live.required = required;
+        }
+    }
+
+    /// APPROVAL-LIVE-1: whether the host looks requesters up.
+    #[must_use]
+    pub fn live_required(&self) -> bool {
+        self.live.lock().is_ok_and(|live| live.required)
+    }
+
+    /// APPROVAL-LIVE-1: keep `verdict`, the authority's verified answer for
+    /// `subject` and the attempt `binding` names, for the rest of this
+    /// request.
+    pub fn remember(&self, subject: &str, binding: &str, verdict: Authority) {
+        if let Ok(mut live) = self.live.lock() {
+            live.verdicts
+                .retain(|(known, bound, _)| known != subject || bound != binding);
+            live.verdicts
+                .push((subject.to_owned(), binding.to_owned(), verdict));
+        }
+    }
+
+    /// APPROVAL-LIVE-1: the answer verified this request for `subject` and
+    /// the attempt `binding` names, if one was.
+    #[must_use]
+    pub fn verdict(&self, subject: &str, binding: &str) -> Option<Authority> {
+        let live = self.live.lock().ok()?;
+        live.verdicts
+            .iter()
+            .find(|(known, bound, _)| known == subject && bound == binding)
+            .map(|(.., verdict)| verdict.clone())
+    }
+
+    /// APPROVAL-LIVE-1: forget this request's answers and needs; called
+    /// when the request ends, so no answer outlives it.
+    pub fn forget_answers(&self) {
+        if let Ok(mut live) = self.live.lock() {
+            live.verdicts.clear();
+            live.needed = None;
+            live.established = None;
+        }
+    }
+
+    /// APPROVAL-LIVE-1: the attempt that needed the authority's answer this
+    /// request and had none, once.
+    pub(crate) fn take_needed(&self) -> Option<(RunStarter, String)> {
+        self.live.lock().ok()?.needed.take()
+    }
+
+    /// APPROVAL-LIVE-1: [`Authorizer::live_authority`] for a policy reading
+    /// this slot. Without a lookup the request's own verified credential
+    /// stands. With one, the consuming principal must be the authority's
+    /// answer for exactly this approval: established for it by the host,
+    /// or verified this request for the requester (then it becomes the
+    /// slot's principal with its current roles); a "no member" answer
+    /// refuses; no answer refuses retryably and records what is needed, so
+    /// the host asks the authority and serves the request again.
+    ///
+    /// # Errors
+    /// `approval.requester_unauthorized` or `approval.authority_unavailable`.
+    pub fn live_authority(&self, principal: &RunStarter, binding: &str) -> Result<(), Refusal> {
+        let Ok(mut live) = self.live.lock() else {
+            return Err(norn_api::approvals::authority_unavailable());
+        };
+        if !live.required {
+            return Ok(());
+        }
+        let current = self.current();
+        let same = |caller: &Caller| {
+            caller.subject_id == principal.subject
+                && caller.actor_kind == principal.actor_kind
+                && caller.role_table == principal.role_table
+        };
+        if live.established.as_deref() == Some(binding) && current.as_ref().is_some_and(same) {
+            return Ok(());
+        }
+        let verdict = live
+            .verdicts
+            .iter()
+            .find(|(known, bound, _)| *known == principal.subject && bound == binding)
+            .map(|(.., verdict)| verdict.clone());
+        match verdict {
+            Some(Authority::Current(member)) if same(&member) => {
+                live.established = Some(binding.to_owned());
+                drop(live);
+                if let Ok(mut slot) = self.caller.lock() {
+                    *slot = Some(member);
+                }
+                Ok(())
+            }
+            Some(Authority::Current(_) | Authority::Revoked) => {
+                Err(norn_api::approvals::requester_unauthorized())
+            }
+            Some(Authority::Unavailable | Authority::Pending | Authority::Unknown) => {
+                Err(norn_api::approvals::authority_unavailable())
+            }
+            None => {
+                live.needed = Some((principal.clone(), binding.to_owned()));
+                Err(norn_api::approvals::authority_unavailable())
+            }
+        }
     }
 }
 
@@ -967,6 +1135,10 @@ impl Authorizer for ReadPolicy {
         caller
             .filter(|caller| caller.subject_id == actor)
             .map(crate::runs::principal_of)
+    }
+
+    fn live_authority(&self, principal: &RunStarter, binding: &str) -> Result<(), Refusal> {
+        self.caller.live_authority(principal, binding)
     }
 
     fn admits_model(&self, object_types: &[ObjectTypeDef]) -> Result<(), Refusal> {

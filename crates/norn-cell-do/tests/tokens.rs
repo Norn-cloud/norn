@@ -15,7 +15,8 @@ use norn_api::host::DevHost;
 use norn_cell::engine::NativeEngine;
 use norn_cell_do::policy::{DEMO_GRANTS, ReadPolicy};
 use norn_cell_do::principal::{
-    JWKS_MAX_AGE_SECS, JWKS_MAX_STALE_SECS, JWKS_RETRY_SECS, TokenPrincipals,
+    Authority, JWKS_MAX_AGE_SECS, JWKS_MAX_STALE_SECS, JWKS_RETRY_SECS, PrincipalResolver, Resume,
+    TokenPrincipals, Wanted,
 };
 use norn_cell_do::{seed, server};
 use serde_json::{Value, json};
@@ -518,18 +519,19 @@ fn provisioning_a_served_cell_tells_only_its_owner_that_it_exists() {
     assert_eq!(call("GET", Some(&owner), "").status, 405);
 }
 
-/// APPROVAL-LIVE-1: a membership attestation for `subject`, as Studio's
-/// authority signs it (no `Bearer ` prefix).
-fn attestation(seed: u8, sub: &str, org: &str, role: &str) -> String {
-    let mut body = claims("user", org, role, "membership");
-    body["aud"] = json!("norn-authority");
-    body["sub"] = json!(sub);
-    body["iat"] = json!(NOW - 5);
-    body["exp"] = json!(NOW + 55);
-    sign(seed, "k1", &body)
-        .strip_prefix("Bearer ")
-        .unwrap()
-        .to_owned()
+/// APPROVAL-LIVE-1: Studio's signed answer about `sub` for `wanted`'s
+/// challenge and attempt: a member with `role`, or (`None`) not a member.
+fn answer_for(seed: u8, sub: &str, role: Option<&str>, wanted: &Wanted) -> String {
+    let mut norn = json!({ "kind": "user", "org": "org_demo", "amr": "membership",
+        "member": role.is_some(), "nonce": wanted.challenge, "bind": wanted.binding });
+    if let Some(role) = role {
+        norn["role"] = json!(role);
+    }
+    let body = json!({ "iss": ISSUER, "aud": "norn-authority", "sub": sub,
+        "iat": NOW - 5, "exp": NOW + 55, "norn": norn });
+    let token = sign(seed, "k1", &body);
+    json!({ "challenge": wanted.challenge, "token": token.strip_prefix("Bearer ").unwrap() })
+        .to_string()
 }
 
 fn requester(subject: &str, roles: &[&str]) -> norn_cell::flow_run::RunStarter {
@@ -541,80 +543,156 @@ fn requester(subject: &str, roles: &[&str]) -> norn_cell::flow_run::RunStarter {
     }
 }
 
+const BOUND: &str = "norn.approval/1:dec_1:cmd_1";
+
+/// The demo cell looking requesters up, with `ada` asked for `BOUND`.
+fn asking(demo: &Demo, ada: &norn_cell::flow_run::RunStarter) -> Wanted {
+    demo.tokens
+        .ask_authority(ada, BOUND, Resume::Request, NOW);
+    demo.tokens.take_authority_wanted().expect("asked")
+}
+
 /// APPROVAL-LIVE-1: the hosted resolver answers a requester's authority only
-/// from what Studio's authority attested for this request: it asks the host
-/// first, verifies the attestation like a host token (keys, issuer, its own
-/// audience, organization, lifetime), takes the role it attests now (never
-/// the parked one), reads "no member" as revoked and anything else as
-/// unavailable, and forgets the answer when the request ends.
+/// from what Studio's authority signed for this cell's own one-use challenge
+/// and the attempt it is bound to: it asks first, verifies the statement
+/// like a host token (keys, issuer, its own audience, organization), takes
+/// the role attested now (never the parked one), and forgets the answer
+/// when the request ends.
 #[test]
 fn a_requesters_authority_comes_only_from_a_verified_attestation() {
-    use norn_cell_do::principal::{Authority, PrincipalResolver, Wanted};
     let demo = demo();
     let ada = requester("user:ada", &["admin"]);
     // No lookup configured: unknown, and nothing is asked.
-    assert_eq!(demo.tokens.authority(&ada, NOW), Authority::Unknown);
-    assert_eq!(demo.tokens.take_authority_wanted(), None);
-    demo.tokens.ask_authority(&ada);
+    assert_eq!(demo.tokens.authority(&ada, BOUND, NOW), Authority::Unknown);
+    demo.tokens.ask_authority(&ada, BOUND, Resume::Request, NOW);
     assert_eq!(demo.tokens.take_authority_wanted(), None, "nothing to ask");
-    demo.tokens.enable_lookup();
-    assert_eq!(demo.tokens.authority(&ada, NOW), Authority::Pending);
-    // Only an explicit ask reaches the host.
+    // A short seed leaves lookups off.
+    demo.tokens.enable_lookup(&[7; 16]);
+    assert_eq!(demo.tokens.authority(&ada, BOUND, NOW), Authority::Unknown);
+    demo.tokens.enable_lookup(&[7; 32]);
+    assert_eq!(demo.tokens.authority(&ada, BOUND, NOW), Authority::Pending);
+    // Only an explicit ask reaches the host, with a fresh challenge each time.
     assert_eq!(demo.tokens.take_authority_wanted(), None);
-    demo.tokens.ask_authority(&ada);
+    let wanted = asking(&demo, &ada);
     assert_eq!(
-        demo.tokens.take_authority_wanted(),
-        Some(Wanted {
-            subject: "user:ada".into(),
-            kind: "user".into()
-        })
+        (wanted.subject.as_str(), wanted.kind.as_str(), wanted.binding.as_str(), wanted.resume),
+        ("user:ada", "user", BOUND, "request")
     );
+    assert_eq!(wanted.challenge.len(), 64);
     assert_eq!(demo.tokens.take_authority_wanted(), None, "asked once");
-
-    let answer = |token: &str| json!({ "subject": "user:ada", "token": token }).to_string();
+    let again = asking(&demo, &ada);
+    assert_ne!(again.challenge, wanted.challenge);
     // A current member: the role attested now, not the parked one.
-    demo.tokens
-        .provide_authority(&answer(&attestation(1, "ada", "org_demo", "viewer")));
-    let Authority::Current(caller) = demo.tokens.authority(&ada, NOW) else {
+    assert_eq!(
+        demo.tokens
+            .provide_authority(&answer_for(1, "ada", Some("viewer"), &wanted), NOW),
+        Some(Resume::Request)
+    );
+    let Authority::Current(caller) = demo.tokens.authority(&ada, BOUND, NOW) else {
         panic!("not current");
     };
     assert_eq!(
         (caller.subject_id.as_str(), caller.roles.as_slice()),
         ("user:ada", ["viewer".to_owned()].as_slice())
     );
+    // For that attempt only.
+    assert_eq!(
+        demo.tokens
+            .authority(&ada, "norn.approval/1:dec_2:cmd_2", NOW),
+        Authority::Pending
+    );
     // The answer holds for one request.
     demo.tokens.end_request();
-    assert_eq!(demo.tokens.authority(&ada, NOW), Authority::Pending);
+    assert_eq!(demo.tokens.authority(&ada, BOUND, NOW), Authority::Pending);
+    // An attestation never authenticates a request.
+    let token = answer_for(1, "ada", Some("admin"), &again);
+    let parsed: Value = serde_json::from_str(&token).unwrap();
+    let as_bearer = format!("Bearer {}", parsed["token"].as_str().unwrap());
+    assert_eq!(defs(&demo, Some(&as_bearer)).status, 403);
+}
 
-    // No member.
+/// R1-04: "no member" refuses a call for good only as the authority's
+/// signed statement for this exact lookup; an unsigned or unverifiable
+/// negative is no answer (unavailable, retryable), never a refusal.
+#[test]
+fn only_a_signed_negative_for_this_lookup_revokes() {
+    let demo = demo();
+    demo.tokens.enable_lookup(&[7; 32]);
+    let ada = requester("user:ada", &["admin"]);
+    let wanted = asking(&demo, &ada);
     demo.tokens
-        .provide_authority(&json!({ "subject": "user:ada", "member": false }).to_string());
-    assert_eq!(demo.tokens.authority(&ada, NOW), Authority::Revoked);
+        .provide_authority(&answer_for(1, "ada", None, &wanted), NOW);
+    assert_eq!(demo.tokens.authority(&ada, BOUND, NOW), Authority::Revoked);
     demo.tokens.end_request();
-    // Every answer that does not verify is no answer.
-    let host_token = sign(1, "k1", &claims("user", "org_demo", "admin", "password"));
-    for token in [
-        attestation(2, "ada", "org_demo", "admin"),
-        attestation(1, "ada", "org_other", "admin"),
-        attestation(1, "bo", "org_demo", "admin"),
-        host_token.strip_prefix("Bearer ").unwrap().to_owned(),
-    ] {
-        demo.tokens.provide_authority(&answer(&token));
-        assert_eq!(demo.tokens.authority(&ada, NOW), Authority::Unavailable);
+    // The old unsigned form, a forged negative, another subject's negative,
+    // or no answer: unavailable.
+    let cases: [fn(&Wanted) -> String; 4] = [
+        |wanted| json!({ "challenge": wanted.challenge, "member": false }).to_string(),
+        |wanted| answer_for(2, "ada", None, wanted),
+        |wanted| answer_for(1, "bo", None, wanted),
+        |wanted| json!({ "challenge": wanted.challenge }).to_string(),
+    ];
+    for case in cases {
+        let wanted = asking(&demo, &ada);
+        demo.tokens.provide_authority(&case(&wanted), NOW);
+        assert_eq!(
+            demo.tokens.authority(&ada, BOUND, NOW),
+            Authority::Unavailable
+        );
         demo.tokens.end_request();
     }
-    demo.tokens
-        .provide_authority(&json!({ "subject": "user:ada" }).to_string());
-    assert_eq!(demo.tokens.authority(&ada, NOW), Authority::Unavailable);
+}
+
+/// R1-05: an answer is one-use and bound to its challenge and attempt: it
+/// cannot be provided twice, answer another challenge or attempt, or be
+/// used past the authority's one-minute lifetime.
+#[test]
+fn an_answer_is_one_use_and_bound_to_its_challenge() {
+    let demo = demo();
+    demo.tokens.enable_lookup(&[7; 32]);
+    let ada = requester("user:ada", &["admin"]);
+    let wanted = asking(&demo, &ada);
+    let answer = answer_for(1, "ada", Some("admin"), &wanted);
+    assert!(demo.tokens.provide_authority(&answer, NOW).is_some());
+    assert!(matches!(
+        demo.tokens.authority(&ada, BOUND, NOW),
+        Authority::Current(_)
+    ));
     demo.tokens.end_request();
-    // An expired attestation is no answer either.
+    // Spent: the same answer again answers nothing.
+    assert_eq!(demo.tokens.provide_authority(&answer, NOW), None);
+    assert_eq!(demo.tokens.authority(&ada, BOUND, NOW), Authority::Pending);
+    // Signed for another challenge: no answer to this one.
+    let first = asking(&demo, &ada);
+    let second = asking(&demo, &ada);
+    let crossed = json!({
+        "challenge": second.challenge,
+        "token": serde_json::from_str::<Value>(&answer_for(1, "ada", Some("admin"), &first)).unwrap()["token"],
+    })
+    .to_string();
+    demo.tokens.provide_authority(&crossed, NOW);
+    assert_eq!(demo.tokens.authority(&ada, BOUND, NOW), Authority::Unavailable);
+    demo.tokens.end_request();
+    // Signed for another attempt: no answer.
     demo.tokens
-        .provide_authority(&answer(&attestation(1, "ada", "org_demo", "admin")));
+        .ask_authority(&ada, "norn.approval/1:dec_2:cmd_2", Resume::Request, NOW);
+    let other = demo.tokens.take_authority_wanted().unwrap();
+    let mut rebound = other.clone();
+    rebound.binding = BOUND.to_owned();
+    demo.tokens
+        .provide_authority(&answer_for(1, "ada", Some("admin"), &rebound), NOW);
     assert_eq!(
-        demo.tokens.authority(&ada, NOW + 300),
+        demo.tokens
+            .authority(&ada, "norn.approval/1:dec_2:cmd_2", NOW),
         Authority::Unavailable
     );
-    // An attestation never authenticates a request.
-    let as_bearer = format!("Bearer {}", attestation(1, "ada", "org_demo", "admin"));
-    assert_eq!(defs(&demo, Some(&as_bearer)).status, 403);
+    demo.tokens.end_request();
+    // Past the attestation's lifetime (one minute and a few seconds).
+    let late = asking(&demo, &ada);
+    demo.tokens
+        .provide_authority(&answer_for(1, "ada", Some("admin"), &late), NOW + 70);
+    assert_eq!(
+        demo.tokens.authority(&ada, BOUND, NOW + 70),
+        Authority::Unavailable
+    );
 }

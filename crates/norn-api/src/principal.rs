@@ -30,6 +30,40 @@ pub const MAX_LIFETIME_SECONDS: u64 = 300;
 /// The method a membership attestation names (APPROVAL-LIVE-1); no host
 /// token names it.
 pub const MEMBERSHIP_METHOD: &str = "membership";
+/// APPROVAL-LIVE-1: the longest lifetime a membership attestation may
+/// declare (`exp - iat`): an answer is about one lookup, now, never a
+/// session's worth of authority.
+pub const MAX_ATTESTATION_SECONDS: u64 = 60;
+/// APPROVAL-LIVE-1: the clock skew tolerated on an attestation's `exp`,
+/// `nbf` and `iat`, kept small because the attestation is short-lived.
+pub const ATTESTATION_LEEWAY_SECONDS: u64 = 5;
+
+/// APPROVAL-LIVE-1: the one lookup a membership attestation must answer:
+/// the fresh, one-use challenge the cell issued for it, and the exact
+/// attempt (decision and call) it is for. An attestation for any other
+/// challenge or attempt is no answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AuthorityChallenge<'a> {
+    /// The cell's nonce for this lookup.
+    pub nonce: &'a str,
+    /// The attempt it is bound to.
+    pub binding: &'a str,
+}
+
+/// APPROVAL-LIVE-1: what a verified membership attestation states about its
+/// subject now.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Membership {
+    /// A member of the cell's organization, with the role it holds now.
+    Member(Principal),
+    /// Not a member of the cell's organization now.
+    NotMember {
+        /// `user:<id>` or `service:<api key id>`.
+        subject_id: String,
+        /// User or service.
+        actor_kind: ActorKind,
+    },
+}
 
 /// Declared mapping from an organization membership role to Norn roles.
 pub struct RoleTable {
@@ -89,23 +123,38 @@ enum Audience {
 }
 
 #[derive(Deserialize)]
-struct Claims {
-    iss: String,
-    aud: Audience,
-    sub: String,
-    exp: u64,
-    iat: u64,
-    nbf: Option<u64>,
-    norn: NornClaims,
-}
-
-#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct NornClaims {
     kind: String,
     org: String,
     role: String,
     amr: String,
+}
+
+/// APPROVAL-LIVE-1: an attestation's own claims: both outcomes are signed
+/// and both name the challenge and the attempt they answer.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AttestationClaims {
+    kind: String,
+    org: String,
+    amr: String,
+    member: bool,
+    #[serde(default)]
+    role: Option<String>,
+    nonce: String,
+    bind: String,
+}
+
+#[derive(Deserialize)]
+struct Envelope<T> {
+    iss: String,
+    aud: Audience,
+    sub: String,
+    exp: u64,
+    iat: u64,
+    nbf: Option<u64>,
+    norn: T,
 }
 
 #[derive(Deserialize)]
@@ -168,35 +217,76 @@ impl TokenVerifier {
     /// Any malformed, forged, expired, foreign-scope or undeclared-role token
     /// returns the same `authz.denied` refusal.
     pub fn principal(&self, token: &str, cell: &CellScope, now: u64) -> Result<Principal, Refusal> {
-        self.verify(token, cell, now, false).ok_or_else(denied)
+        self.verify(token, cell, now).ok_or_else(denied)
     }
 
     /// APPROVAL-LIVE-1: verify one membership attestation for this cell at
-    /// `now`: the issuer's statement that its subject is a member of the
-    /// cell's organization now, with the role it names. It is checked like
-    /// a host token (signature, issuer, this verifier's audience, lifetime,
-    /// organization, declared role) and names the method `membership`,
-    /// which no host token does, so neither ever passes for the other.
+    /// `now`: the issuer's signed statement, answering exactly `challenge`,
+    /// that its subject is (with the role it names) or is not a member of
+    /// the cell's organization now. It is checked like a host token
+    /// (signature, issuer, this verifier's audience, organization, declared
+    /// role) under the attestation's own lifetime bound
+    /// ([`MAX_ATTESTATION_SECONDS`], [`ATTESTATION_LEEWAY_SECONDS`]), and
+    /// names the method `membership`, which no host token does, so neither
+    /// ever passes for the other.
     ///
     /// # Errors
-    /// Any token that does not verify as such an attestation returns the
-    /// same `authz.denied` refusal.
+    /// Any token that does not verify as such an attestation, for this
+    /// challenge and attempt, returns the same `authz.denied` refusal.
     pub fn membership(
         &self,
         token: &str,
         cell: &CellScope,
         now: u64,
-    ) -> Result<Principal, Refusal> {
-        self.verify(token, cell, now, true).ok_or_else(denied)
+        challenge: &AuthorityChallenge<'_>,
+    ) -> Result<Membership, Refusal> {
+        self.attested(token, cell, now, challenge)
+            .ok_or_else(denied)
     }
 
-    fn verify(
+    fn attested(
         &self,
         token: &str,
         cell: &CellScope,
         now: u64,
-        membership: bool,
-    ) -> Option<Principal> {
+        challenge: &AuthorityChallenge<'_>,
+    ) -> Option<Membership> {
+        let claims: Envelope<AttestationClaims> = self.signed(token)?;
+        if !self.admits(&claims, now, MAX_ATTESTATION_SECONDS, ATTESTATION_LEEWAY_SECONDS) {
+            return None;
+        }
+        let norn = claims.norn;
+        if norn.org != cell.org_id
+            || norn.amr != MEMBERSHIP_METHOD
+            || norn.nonce.is_empty()
+            || norn.nonce != challenge.nonce
+            || norn.bind != challenge.binding
+        {
+            return None;
+        }
+        let (actor_kind, prefix) = kind_of(&norn.kind)?;
+        let subject_id = format!("{prefix}:{}", claims.sub);
+        if !norn.member {
+            // A negative names no role.
+            return norn.role.is_none().then_some(Membership::NotMember {
+                subject_id,
+                actor_kind,
+            });
+        }
+        let role = norn.role?;
+        let roles = self.declared(&role, actor_kind)?;
+        Some(Membership::Member(Principal {
+            subject_id,
+            actor_kind,
+            org_id: norn.org,
+            roles,
+            auth_method: norn.amr,
+            role_table: self.roles.version,
+        }))
+    }
+
+    /// The claims of `token`, when one of the issuer's keys signed it.
+    fn signed<T: serde::de::DeserializeOwned>(&self, token: &str) -> Option<T> {
         let (signed, signature) = token.rsplit_once('.')?;
         let (header, payload) = signed.split_once('.')?;
         if payload.contains('.') {
@@ -209,33 +299,49 @@ impl TokenVerifier {
         let key = self.keys.get(&head.kid)?;
         let signature = Signature::from_slice(&URL_SAFE_NO_PAD.decode(signature).ok()?).ok()?;
         key.verify_strict(signed.as_bytes(), &signature).ok()?;
-        let claims: Claims = serde_json::from_slice(&URL_SAFE_NO_PAD.decode(payload).ok()?).ok()?;
+        serde_json::from_slice(&URL_SAFE_NO_PAD.decode(payload).ok()?).ok()
+    }
+
+    /// Issuer, audience, subject and freshness at `now`, under a lifetime
+    /// bound and a skew leeway.
+    fn admits<T>(&self, claims: &Envelope<T>, now: u64, lifetime: u64, leeway: u64) -> bool {
         let audience_ok = match &claims.aud {
             Audience::One(aud) => *aud == self.audience,
             Audience::Many(auds) => auds.contains(&self.audience),
         };
-        let late = now.saturating_add(LEEWAY_SECONDS);
-        let fresh = claims.exp.saturating_add(LEEWAY_SECONDS) > now
+        let late = now.saturating_add(leeway);
+        let fresh = claims.exp.saturating_add(leeway) > now
             && claims.iat <= late
             && claims.nbf.is_none_or(|nbf| nbf <= late)
-            && claims.exp.saturating_sub(claims.iat) <= MAX_LIFETIME_SECONDS;
-        if claims.iss != self.issuer || !audience_ok || !fresh || claims.sub.trim().is_empty() {
+            && claims.exp >= claims.iat
+            && claims.exp.saturating_sub(claims.iat) <= lifetime;
+        claims.iss == self.issuer && audience_ok && fresh && !claims.sub.trim().is_empty()
+    }
+
+    /// The Norn roles a membership role confers on `actor_kind`, when the
+    /// table declares it and the actor kind may hold it.
+    fn declared(&self, role: &str, actor_kind: ActorKind) -> Option<Vec<String>> {
+        let (_, roles, service_may_hold) =
+            self.roles.entries.iter().find(|(known, _, _)| *known == role)?;
+        if actor_kind == ActorKind::Service && !service_may_hold {
+            return None;
+        }
+        Some(roles.iter().map(|role| (*role).to_owned()).collect())
+    }
+
+    fn verify(&self, token: &str, cell: &CellScope, now: u64) -> Option<Principal> {
+        let claims: Envelope<NornClaims> = self.signed(token)?;
+        if !self.admits(&claims, now, MAX_LIFETIME_SECONDS, LEEWAY_SECONDS) {
             return None;
         }
         let norn = claims.norn;
         if norn.org != cell.org_id {
             return None;
         }
-        let (actor_kind, prefix) = match norn.kind.as_str() {
-            "user" => (ActorKind::User, "user"),
-            "service" => (ActorKind::Service, "service"),
-            _ => return None,
-        };
+        let (actor_kind, prefix) = kind_of(&norn.kind)?;
         // `oauth`: a person's own grant to an assistant they connected (MCP
         // authorization); the token still names that person and their role.
-        let methods: &[&str] = if membership {
-            &[MEMBERSHIP_METHOD]
-        } else if actor_kind == ActorKind::Service {
+        let methods: &[&str] = if actor_kind == ActorKind::Service {
             &["api_key"]
         } else {
             &["password", "magic_link", "oauth"]
@@ -243,22 +349,24 @@ impl TokenVerifier {
         if !methods.contains(&norn.amr.as_str()) {
             return None;
         }
-        let (_, roles, service_may_hold) = self
-            .roles
-            .entries
-            .iter()
-            .find(|(role, _, _)| *role == norn.role)?;
-        if actor_kind == ActorKind::Service && !service_may_hold {
-            return None;
-        }
+        let roles = self.declared(&norn.role, actor_kind)?;
         Some(Principal {
             subject_id: format!("{prefix}:{}", claims.sub),
             actor_kind,
             org_id: norn.org,
-            roles: roles.iter().map(|role| (*role).to_owned()).collect(),
+            roles,
             auth_method: norn.amr,
             role_table: self.roles.version,
         })
+    }
+}
+
+/// The actor kind a token's `kind` names, and its subject prefix.
+fn kind_of(kind: &str) -> Option<(ActorKind, &'static str)> {
+    match kind {
+        "user" => Some((ActorKind::User, "user")),
+        "service" => Some((ActorKind::Service, "service")),
+        _ => None,
     }
 }
 

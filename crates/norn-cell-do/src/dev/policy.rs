@@ -158,6 +158,7 @@ impl PrincipalResolver for DevPrincipals {
     }
     fn end_request(&self) {
         self.slot.record(None);
+        self.slot.forget_answers();
     }
     fn caller(&self) -> Option<&CallerSlot> {
         Some(&self.slot)
@@ -165,7 +166,7 @@ impl PrincipalResolver for DevPrincipals {
     /// APPROVAL-LIVE-1: the local principal table is the authority: a
     /// requester with a session now is a member with every role, any other
     /// is no member.
-    fn authority(&self, requester: &RunStarter, _now: u64) -> Authority {
+    fn authority(&self, requester: &RunStarter, _binding: &str, _now: u64) -> Authority {
         if requester.actor_kind == "user"
             && self
                 .sessions

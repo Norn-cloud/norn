@@ -432,6 +432,32 @@ pub(crate) fn attempt_ended() -> Refusal {
     )
 }
 
+/// APPROVAL-LIVE-1: the binding a requester's authority lookup answers for
+/// the approved call of `decision_id`, parked as `command_id` (its exact
+/// call: requester, input, key, action digest, gate and pin). An answer for
+/// another decision or call is no answer.
+#[must_use]
+pub fn approval_binding(decision_id: &str, command_id: &str) -> String {
+    format!("norn.approval/1:{decision_id}:{command_id}")
+}
+
+/// [`approval_binding`] for the approved call of `decision_id`, as recorded.
+///
+/// # Errors
+/// A host failure, or an approved call without its record.
+pub(crate) fn binding_of<E: SqlEngine>(
+    cell: &ActionCell<E>,
+    decision_id: &str,
+) -> Result<String, Refusal> {
+    let row = cell
+        .store()
+        .read()
+        .approved_call(MAIN_WORLD, decision_id)
+        .map_err(Refusal::host)?
+        .ok_or_else(|| Refusal::host("an approved call lost its record"))?;
+    Ok(approval_binding(decision_id, &row.command_id))
+}
+
 /// `approval.requester_unauthorized` (APPROVAL-LIVE-1): the requester's
 /// current authority does not cover the approved call.
 #[must_use]
@@ -448,12 +474,14 @@ pub fn requester_unauthorized() -> Refusal {
 /// current authority could not be looked up; nothing ran.
 #[must_use]
 pub fn authority_unavailable() -> Refusal {
-    Refusal::new(
+    let mut refusal = Refusal::new(
         StatusCode::SERVICE_UNAVAILABLE,
         approval_codes::AUTHORITY_UNAVAILABLE,
         "the requester's current authority could not be looked up",
-        "the approved call did not run and stays approved; retry the decision, or the requester retries the call",
-    )
+        "nothing ran and nothing was recorded; retry the decision, or the requester retries the call",
+    );
+    refusal.retryable = true;
+    refusal
 }
 
 /// APPROVAL-LIVE-1: record `approval.requester_unauthorized` as final for
@@ -527,22 +555,31 @@ pub(crate) fn is_requester(principal: Option<&RunStarter>, requester: &RunStarte
 
 /// S2: the approval `decision_id` is consumed only by its parked
 /// requester's own authenticated request; any other principal is denied,
-/// and nothing is recorded.
+/// and nothing is recorded. APPROVAL-LIVE-1: while the call is still to
+/// run, that principal must also hold the requester's current authority
+/// for it ([`Authorizer::live_authority`](crate::authz::Authorizer::live_authority)).
 ///
 /// # Errors
 /// The opaque action denial; a host failure.
 pub(crate) fn require_requester<E: SqlEngine>(
+    authorizer: &dyn crate::authz::Authorizer,
     cell: &ActionCell<E>,
     decision_id: &str,
     principal: Option<&RunStarter>,
 ) -> Result<(), Refusal> {
-    let (held, _state) = approved_call(cell, decision_id)?
+    let (held, state) = approved_call(cell, decision_id)?
         .ok_or_else(|| Refusal::host("an approved call lost its record"))?;
-    if is_requester(principal, &held.call.requester) {
-        Ok(())
-    } else {
-        Err(crate::actions::action_denied())
+    let Some(principal) = principal.filter(|_| is_requester(principal, &held.call.requester))
+    else {
+        return Err(crate::actions::action_denied());
+    };
+    // APPROVAL-LIVE-1: a call still to run runs only under the requester's
+    // current authority for exactly this approval, on every attempt (the
+    // requester's own retry included). A recorded outcome replays as is.
+    if matches!(state, CallState::NotExecuted) {
+        authorizer.live_authority(principal, &binding_of(cell, decision_id)?)?;
     }
+    Ok(())
 }
 
 fn rejected() -> Refusal {

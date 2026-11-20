@@ -16,7 +16,9 @@
 #[path = "support/step_cell.rs"]
 mod step_cell;
 use norn_cell_do::policy::CallerSlot;
-use norn_cell_do::principal::{Authority, FixtureLookup, FixturePrincipals, PrincipalResolver};
+use norn_cell_do::principal::{
+    Authority, FixtureLookup, FixturePrincipals, PrincipalResolver, Resume,
+};
 use norn_cell_do::server;
 use serde_json::{Value, json};
 use step_cell::{
@@ -737,6 +739,7 @@ fn a_revision_racing_the_approved_dispatch_is_fenced() {
     };
     let raced = std::cell::Cell::new(false);
     let as_requester = |requester: &norn_cell::flow_run::RunStarter,
+                        _binding: &str,
                         dispatch: &mut dyn FnMut() -> Result<
         norn_api::actions::ActionAnswer,
         norn_api::refusal::Refusal,
@@ -764,6 +767,7 @@ fn a_revision_racing_the_approved_dispatch_is_fenced() {
         &reads,
         &cell.handles,
         &as_requester,
+        &|_requester, _binding| Ok(()),
     )
     .unwrap();
     cell.caller.record(None);
@@ -827,6 +831,7 @@ fn a_refusal_racing_an_exact_commit_never_masks_it() {
     };
     let raced = std::cell::Cell::new(None);
     let as_requester = |requester: &norn_cell::flow_run::RunStarter,
+                        _binding: &str,
                         dispatch: &mut dyn FnMut() -> Result<
         norn_api::actions::ActionAnswer,
         norn_api::refusal::Refusal,
@@ -856,6 +861,7 @@ fn a_refusal_racing_an_exact_commit_never_masks_it() {
         &reads,
         &cell.handles,
         &as_requester,
+        &|_requester, _binding| Ok(()),
     )
     .unwrap();
     cell.caller.record(None);
@@ -976,32 +982,32 @@ fn an_approval_refuses_the_call_of_a_requester_who_lost_the_authority() {
     }
 }
 
-/// APPROVAL-LIVE-UNAVAILABLE: the lookup does not answer. Nothing runs, the
-/// call stays approved and not executed (`approval.authority_unavailable`),
-/// and once the lookup answers, the approval's replay runs it once.
+/// APPROVAL-LIVE-UNAVAILABLE (R1-06): the lookup does not answer. The
+/// decide is refused retryably (503 `approval.authority_unavailable`),
+/// nothing runs and nothing is recorded: the decision stays open. Once the
+/// lookup answers, the same decide decides and runs the call once.
 #[test]
-fn an_unanswered_lookup_runs_nothing_and_the_replay_runs_it_later() {
+fn an_unanswered_lookup_records_nothing_and_the_decide_runs_it_later() {
     let mut cell = cell();
     looked_up(&mut cell, NAMES, FixtureLookup::Unavailable);
     gate(&cell, None);
     let (status, parked) = convert(&cell, OPERATOR, &melt7("operator-down"));
     assert_eq!(status, 202, "{parked}");
     let id = parked["decision"]["id"].as_str().unwrap().to_owned();
-    let (status, decided) = decide(&cell, APPROVER, &id, "approve");
-    assert_eq!(status, 200, "{decided}");
-    assert_eq!(
-        decided["call"],
-        json!({ "committed": false, "code": "approval.authority_unavailable", "state": "not_executed" }),
-        "{decided}"
-    );
+    let (status, refused) = decide(&cell, APPROVER, &id, "approve");
+    assert_eq!(status, 503, "{refused}");
+    assert_eq!(refused["code"], json!("approval.authority_unavailable"));
+    assert_eq!(refused["retryable"], json!(true), "{refused}");
+    assert_eq!(pending(&cell, APPROVER)["total"], json!(1), "still open");
     assert_eq!(melt_seen(&cell), 404);
     looked_up(&mut cell, NAMES, FixtureLookup::Table);
-    let (status, replayed) = decide(&cell, APPROVER, &id, "approve");
-    assert_eq!(status, 200, "{replayed}");
+    let (status, decided) = decide(&cell, APPROVER, &id, "approve");
+    assert_eq!(status, 200, "{decided}");
+    assert_eq!(decided["outcome"], json!("decided"), "{decided}");
     assert_eq!(
-        replayed["call"],
+        decided["call"],
         json!({ "committed": true, "state": "committed" }),
-        "{replayed}"
+        "{decided}"
     );
     assert_eq!(melt_seen(&cell), 200);
 }
@@ -1055,6 +1061,36 @@ struct HostLookup {
     fixtures: FixturePrincipals,
     answer: std::cell::Cell<bool>,
     asked: std::cell::Cell<u32>,
+    /// Every lookup asked: subject, binding, how it resumes.
+    asks: std::cell::RefCell<Vec<(String, String, Resume)>>,
+}
+
+impl HostLookup {
+    /// A host lookup over `cell`'s slot answering from `names` once
+    /// [`Self::answer`] is set.
+    fn over(cell: &Cell, names: &'static [(&'static str, &'static [&'static str])]) -> Self {
+        Self {
+            fixtures: FixturePrincipals::new(names, std::sync::Arc::clone(&cell.caller))
+                .with_lookup(FixtureLookup::Table),
+            answer: std::cell::Cell::new(false),
+            asked: std::cell::Cell::new(0),
+            asks: std::cell::RefCell::new(Vec::new()),
+        }
+    }
+
+    /// Serve one request on `cell` through this host.
+    fn serve(&self, cell: &Cell, method: &str, path: &str, auth: Option<&str>, body: &str) -> (u16, Value) {
+        let request = server::Request {
+            method,
+            path,
+            query: SCOPE,
+            authorization: auth,
+            now: NOW,
+            body,
+        };
+        let reply = server::handle_all(&cell.host, self, Some(&cell.handles), &cell.kinds, &request);
+        (reply.status, serde_json::from_str::<Value>(&reply.body).unwrap())
+    }
 }
 
 impl PrincipalResolver for HostLookup {
@@ -1067,15 +1103,29 @@ impl PrincipalResolver for HostLookup {
     fn caller(&self) -> Option<&CallerSlot> {
         self.fixtures.caller()
     }
-    fn authority(&self, requester: &norn_cell::flow_run::RunStarter, now: u64) -> Authority {
+    fn authority(
+        &self,
+        requester: &norn_cell::flow_run::RunStarter,
+        binding: &str,
+        now: u64,
+    ) -> Authority {
         if self.answer.get() {
-            self.fixtures.authority(requester, now)
+            self.fixtures.authority(requester, binding, now)
         } else {
             Authority::Pending
         }
     }
-    fn ask_authority(&self, _requester: &norn_cell::flow_run::RunStarter) {
+    fn ask_authority(
+        &self,
+        requester: &norn_cell::flow_run::RunStarter,
+        binding: &str,
+        resume: Resume,
+        _now: u64,
+    ) {
         self.asked.set(self.asked.get().saturating_add(1));
+        self.asks
+            .borrow_mut()
+            .push((requester.subject.clone(), binding.to_owned(), resume));
     }
 }
 
@@ -1090,12 +1140,7 @@ fn a_decide_records_nothing_until_the_host_has_the_requesters_authority() {
     let (status, parked) = convert(&cell, OPERATOR, &melt7("operator-host"));
     assert_eq!(status, 202, "{parked}");
     let id = parked["decision"]["id"].as_str().unwrap().to_owned();
-    let host = HostLookup {
-        fixtures: FixturePrincipals::new(NAMES, std::sync::Arc::clone(&cell.caller))
-            .with_lookup(FixtureLookup::Table),
-        answer: std::cell::Cell::new(false),
-        asked: std::cell::Cell::new(0),
-    };
+    let host = HostLookup::over(&cell, NAMES);
     let serve_as = |path: &str, authorization: Option<&str>, body: &str| {
         let request = server::Request {
             method: "POST",
@@ -1156,4 +1201,270 @@ fn a_decide_records_nothing_until_the_host_has_the_requesters_authority() {
     );
     assert_eq!(status, 404);
     assert_eq!(host.asked.get(), asked_before);
+}
+
+/// [`NAMES`] after the approver lost the deciding role (R1-01).
+const DEMOTED: &[(&str, &[&str])] = &[
+    ("operator@steps", &["admin"]),
+    ("approver@steps", &["member"]),
+    ("member@steps", &["member"]),
+];
+
+/// R1-01: the approver's exact replay runs a call still to run only while
+/// the approver may still decide it: a demoted approver's replay runs
+/// nothing and records nothing (403 `decision.law_not_satisfied`), and a
+/// replay of a recorded outcome stays read-only whoever replays it.
+#[test]
+fn a_replay_by_a_decider_who_lost_the_role_runs_nothing() {
+    let mut cell = cell();
+    gate(&cell, None);
+    let body = melt7("operator-demoted");
+    let (status, parked) = convert(&cell, OPERATOR, &body);
+    assert_eq!(status, 202, "{parked}");
+    let id = parked["decision"]["id"].as_str().unwrap().to_owned();
+    // No lookup yet: the approval is recorded and its call waits.
+    let (status, decided) = decide(&cell, APPROVER, &id, "approve");
+    assert_eq!(status, 200, "{decided}");
+    assert_eq!(decided["call"], not_executed(), "{decided}");
+    // The host now looks requesters up; the approver lost the role.
+    looked_up(&mut cell, DEMOTED, FixtureLookup::Table);
+    let (status, replayed) = decide(&cell, APPROVER, &id, "approve");
+    assert_eq!(status, 403, "{replayed}");
+    assert_eq!(replayed["code"], json!("decision.law_not_satisfied"));
+    assert_eq!(melt_status(&cell), 404, "nothing ran");
+    // Not final: the approver holding the role again replays it into a run.
+    looked_up(&mut cell, NAMES, FixtureLookup::Table);
+    let (status, replayed) = decide(&cell, APPROVER, &id, "approve");
+    assert_eq!(status, 200, "{replayed}");
+    assert_eq!(
+        replayed["call"],
+        json!({ "committed": true, "state": "committed" }),
+        "{replayed}"
+    );
+    // A recorded outcome replays read-only, demoted or not.
+    looked_up(&mut cell, DEMOTED, FixtureLookup::Table);
+    let (status, again) = decide(&cell, APPROVER, &id, "approve");
+    assert_eq!(status, 200, "{again}");
+    assert_eq!(again["call"], replayed["call"], "{again}");
+}
+
+/// A host whose request tokens still carry the roles they were issued with
+/// (`tokens`) while the organization's authority answers now (`now`).
+struct StaleTokens {
+    tokens: FixturePrincipals,
+    now: FixturePrincipals,
+}
+
+impl PrincipalResolver for StaleTokens {
+    fn resolve(&self, authorization: Option<&str>, now: u64) -> Option<String> {
+        self.tokens.resolve(authorization, now)
+    }
+    fn end_request(&self) {
+        self.tokens.end_request();
+    }
+    fn caller(&self) -> Option<&CallerSlot> {
+        self.tokens.caller()
+    }
+    fn authority(
+        &self,
+        requester: &norn_cell::flow_run::RunStarter,
+        binding: &str,
+        now: u64,
+    ) -> Authority {
+        self.now.authority(requester, binding, now)
+    }
+}
+
+/// R1-02: with a lookup configured, the requester's own retry runs its
+/// approved call only under the organization's answer now, never the roles
+/// its (still valid) token was issued with: a requester who left, or whose
+/// roles were revoked, commits nothing on its own retry.
+#[test]
+fn a_requesters_own_retry_runs_only_under_its_current_authority() {
+    for gone in [REMOVED, REVOKED] {
+        let cell = cell();
+        gate(&cell, None);
+        let body = melt7("operator-stale");
+        let (status, parked) = convert(&cell, OPERATOR, &body);
+        assert_eq!(status, 202, "{parked}");
+        let id = parked["decision"]["id"].as_str().unwrap().to_owned();
+        let (status, decided) = decide(&cell, APPROVER, &id, "approve");
+        assert_eq!(status, 200, "{decided}");
+        assert_eq!(decided["call"], not_executed(), "{decided}");
+        let host = StaleTokens {
+            tokens: FixturePrincipals::new(NAMES, std::sync::Arc::clone(&cell.caller)),
+            now: FixturePrincipals::new(gone, std::sync::Arc::clone(&cell.caller))
+                .with_lookup(FixtureLookup::Table),
+        };
+        let request = server::Request {
+            method: "POST",
+            path: &format!("/v1/actions/{MELT_ACTION}"),
+            query: SCOPE,
+            authorization: OPERATOR,
+            now: NOW,
+            body: &body,
+        };
+        let reply = server::handle_all(&cell.host, &host, Some(&cell.handles), &cell.kinds, &request);
+        assert_ne!(reply.status, 200, "{}", reply.body);
+        assert_eq!(melt_status(&cell), 404, "nothing ran on the token's roles");
+    }
+    // A current member's own retry runs it, under the answer's roles.
+    let cell = cell();
+    gate(&cell, None);
+    let body = melt7("operator-current");
+    let (_, parked) = convert(&cell, OPERATOR, &body);
+    let id = parked["decision"]["id"].as_str().unwrap().to_owned();
+    let (status, _) = decide(&cell, APPROVER, &id, "approve");
+    assert_eq!(status, 200);
+    let host = StaleTokens {
+        tokens: FixturePrincipals::new(NAMES, std::sync::Arc::clone(&cell.caller)),
+        now: FixturePrincipals::new(NAMES, std::sync::Arc::clone(&cell.caller))
+            .with_lookup(FixtureLookup::Table),
+    };
+    let request = server::Request {
+        method: "POST",
+        path: &format!("/v1/actions/{MELT_ACTION}"),
+        query: SCOPE,
+        authorization: OPERATOR,
+        now: NOW,
+        body: &body,
+    };
+    let reply = server::handle_all(&cell.host, &host, Some(&cell.handles), &cell.kinds, &request);
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    assert_eq!(melt_status(&cell), 200);
+}
+
+/// R1-03: an approval's drive reaches the run's next action under the
+/// starter's current authority, never the roles recorded when the run
+/// started: a starter who left runs nothing there.
+#[test]
+fn an_action_an_approval_reaches_runs_under_the_starters_current_authority() {
+    let mut cell = cell();
+    let (status, opened) = call(
+        &cell,
+        "POST",
+        "/v1/runs",
+        OPERATOR,
+        &json!({ "flow": FLOW_ID, "runId": "melt-run-left" }).to_string(),
+    );
+    assert_eq!(status, 201, "{opened}");
+    let ask = pending(&cell, APPROVER)["items"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    looked_up(&mut cell, REMOVED, FixtureLookup::Table);
+    let (status, decided) = decide(&cell, APPROVER, &ask, "approve");
+    assert_eq!(status, 200, "{decided}");
+    assert_eq!(melt_status_as(&cell, APPROVER), 404, "nothing ran as the starter");
+    let (_, run) = call(&cell, "GET", "/v1/runs/melt-run-left", APPROVER, "");
+    assert_ne!(run["state"], json!("completed"), "{run}");
+    // A current starter's run moves on and completes.
+    let mut cell = step_cell::cell();
+    let (status, _) = call(
+        &cell,
+        "POST",
+        "/v1/runs",
+        OPERATOR,
+        &json!({ "flow": FLOW_ID, "runId": "melt-run-here" }).to_string(),
+    );
+    assert_eq!(status, 201);
+    let ask = pending(&cell, APPROVER)["items"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    looked_up(&mut cell, NAMES, FixtureLookup::Table);
+    let (status, decided) = decide(&cell, APPROVER, &ask, "approve");
+    assert_eq!(status, 200, "{decided}");
+    assert_eq!(decided["run"]["state"], json!("completed"), "{decided}");
+}
+
+fn melt_status_as(cell: &Cell, auth: Option<&str>) -> u16 {
+    call(cell, "GET", "/v1/objects/constitution.Melt/melt-7", auth, "").0
+}
+
+/// R1-06: a decide is validated before the host is asked anything: an
+/// unknown choice or a rejection never asks, and a rejection records at
+/// once.
+#[test]
+fn a_decide_asks_for_authority_only_once_it_is_valid_and_would_run_a_call() {
+    let cell = cell();
+    gate(&cell, None);
+    let (status, parked) = convert(&cell, OPERATOR, &melt7("operator-valid"));
+    assert_eq!(status, 202, "{parked}");
+    let id = parked["decision"]["id"].as_str().unwrap().to_owned();
+    let host = HostLookup::over(&cell, NAMES);
+    let path = format!("/v1/decisions/{id}:decide");
+    let (status, unknown) = host.serve(
+        &cell,
+        "POST",
+        &path,
+        APPROVER,
+        &json!({ "choice": "maybe", "idempotencyKey": "maybe-1" }).to_string(),
+    );
+    assert_eq!(status, 422, "{unknown}");
+    assert_eq!(host.asked.get(), 0, "an invalid decide asks nothing");
+    let (status, rejected) = host.serve(
+        &cell,
+        "POST",
+        &path,
+        APPROVER,
+        &json!({ "choice": "reject", "idempotencyKey": "reject-1" }).to_string(),
+    );
+    assert_eq!(status, 200, "{rejected}");
+    assert_eq!(rejected["decision"]["choice"], json!("reject"), "{rejected}");
+    assert_eq!(host.asked.get(), 0, "a rejection runs nothing and asks nothing");
+    assert_eq!(melt_status(&cell), 404);
+}
+
+/// R1-07: a drive that reaches an action needing the organization's answer
+/// asks for it for that step, and the host resumes only the drive: the
+/// step runs and the run completes, while the decide that asked is not
+/// served again (its answer stands, recorded once).
+#[test]
+fn a_drive_waiting_on_a_lookup_resumes_without_replaying_the_request() {
+    let cell = cell();
+    let (status, opened) = call(
+        &cell,
+        "POST",
+        "/v1/runs",
+        OPERATOR,
+        &json!({ "flow": FLOW_ID, "runId": "melt-run-resume" }).to_string(),
+    );
+    assert_eq!(status, 201, "{opened}");
+    let ask = pending(&cell, APPROVER)["items"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let host = HostLookup::over(&cell, NAMES);
+    let (status, decided) = host.serve(
+        &cell,
+        "POST",
+        &format!("/v1/decisions/{ask}:decide"),
+        APPROVER,
+        &json!({ "choice": "approve", "idempotencyKey": "approve-resume" }).to_string(),
+    );
+    assert_eq!(status, 200, "{decided}");
+    assert_eq!(decided["outcome"], json!("decided"), "{decided}");
+    assert_ne!(decided["run"]["state"], json!("completed"), "{decided}");
+    assert_eq!(melt_status(&cell), 404, "the step waits for the answer");
+    let asks = host.asks.borrow().clone();
+    assert_eq!(asks.len(), 1, "{asks:?}");
+    assert_eq!(asks[0].0, "operator@steps");
+    assert!(asks[0].1.starts_with("norn.step/1:melt-run-resume:"), "{asks:?}");
+    assert_eq!(asks[0].2, Resume::Drive("melt-run-resume".to_owned()));
+    host.answer.set(true);
+    server::resume_drive(&cell.host, &host, Some(&cell.handles), "melt-run-resume", NOW);
+    assert_eq!(melt_status(&cell), 200, "the resumed drive ran the step");
+    let (_, run) = call(&cell, "GET", "/v1/runs/melt-run-resume", APPROVER, "");
+    assert_eq!(run["state"], json!("completed"), "{run}");
+    // The decide was not served again: replaying it now is a replay.
+    let (status, replayed) = host.serve(
+        &cell,
+        "POST",
+        &format!("/v1/decisions/{ask}:decide"),
+        APPROVER,
+        &json!({ "choice": "approve", "idempotencyKey": "approve-resume" }).to_string(),
+    );
+    assert_eq!(status, 200, "{replayed}");
+    assert_eq!(replayed["outcome"], json!("replayed"), "{replayed}");
 }

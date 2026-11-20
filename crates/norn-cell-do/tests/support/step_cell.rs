@@ -238,6 +238,13 @@ impl Authorizer for StepPolicy {
             role_table: caller.role_table.to_owned(),
         })
     }
+    fn live_authority(
+        &self,
+        principal: &RunStarter,
+        binding: &str,
+    ) -> Result<(), norn_api::refusal::Refusal> {
+        self.caller.live_authority(principal, binding)
+    }
     fn action(&self, request: &ActionAuthzRequest<'_>) -> Result<(), ActionDenial> {
         self.decide(
             &request.action.action_id,

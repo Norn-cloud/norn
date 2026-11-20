@@ -16,19 +16,22 @@
 //! steps are denied.
 //!
 //! APPROVAL-1, APPROVAL-RECOVERY-1, APPROVAL-LIVE-1: an approved call (a
-//! fresh decide, its replay, or the drive of a step waiting on it) runs only
-//! under the requester's current authority, never the roles recorded when
-//! the call parked: the requester's own verified credential when the
-//! request is theirs, else the resolver's lookup of the requester at the
-//! organization's authority ([`PrincipalResolver::authority`]). Before a
-//! decide that would run such a call, a resolver whose host looks requesters
-//! up is asked for the answer, and the host serves the decide again with it,
-//! so nothing is recorded until it has one. A requester who is no longer a
-//! member, or whose current roles do not grant the call, gets it refused for
-//! good (`approval.requester_unauthorized`); a lookup that does not answer
-//! runs nothing (`approval.authority_unavailable`), and a host without a
-//! lookup leaves the call approved and not executed for the requester's own
-//! retry.
+//! fresh decide, its replay, the requester's own retry, or the drive of a
+//! step waiting on it) runs only under the requester's current authority,
+//! never the roles recorded when the call parked. A host that looks
+//! requesters up ([`PrincipalResolver::authority`]) runs every such attempt
+//! under the organization's answer for exactly that approval, the
+//! requester's own credential included; a host without one runs it only on
+//! the requester's own verified credential. A decide is validated first and
+//! asks for the answer only for an approval that would run a call: the host
+//! looks the requester up and serves the decide again, and nothing is
+//! recorded until it has one (`approval.authority_unavailable`, 503,
+//! retryable). A drive that reaches an action after an approval asks for
+//! the answer for that step and the host resumes only the drive, so nothing
+//! the request wrote is replayed. A requester whose signed answer is "no
+//! member", or whose current roles do not grant the call, gets it refused
+//! for good (`approval.requester_unauthorized`); anything unverified runs
+//! nothing and records nothing final.
 
 use std::collections::BTreeMap;
 
@@ -45,7 +48,7 @@ use norn_cell::engine::SqlEngine;
 use norn_cell::flow_run::RunStarter;
 
 use crate::policy::{Caller, CallerSlot, collection_access};
-use crate::principal::{Authority, PrincipalResolver};
+use crate::principal::{Authority, PrincipalResolver, Resume};
 use crate::server::{Request, Response, document_json, parse};
 
 /// Serve `request` when its path is a run or decision route; `None` for
@@ -133,7 +136,7 @@ fn runs<E: SqlEngine>(
             // A start, or its exact retry (APPROVAL-RECOVERY-1: the starter's
             // authenticated retry runs a step's approved call), drives the run.
             let run = if (status == StatusCode::CREATED || status == StatusCode::OK)
-                && steps.drive(&run.id, now)
+                && steps.drive(&run.id, now, Drive::Started)
             {
                 get_run(host, &scope, subject, &run.id, &reads(subject)).unwrap_or(run)
             } else {
@@ -233,16 +236,6 @@ fn decisions<E: SqlEngine>(
             let body: DecideRequest = serde_json::from_str(request.body).map_err(|error| {
                 Refusal::invalid(format!("the request body is not a decision: {error}"))
             })?;
-            // APPROVAL-LIVE-1: the requester of a call this decide would
-            // run is looked up first; the host serves the decide again with
-            // the answer, and nothing is recorded before it has one.
-            if let Some(requester) = norn_api::decisions::approval_requester(host, &id, subject)?
-                && !steps.is_requester(&requester)
-                && steps.principals.authority(&requester, steps.now) == Authority::Pending
-            {
-                steps.principals.ask_authority(&requester);
-                return Err(norn_api::approvals::authority_unavailable());
-            }
             let reads = {
                 let subject = subject.to_owned();
                 let scope = host.scope().clone();
@@ -261,10 +254,14 @@ fn decisions<E: SqlEngine>(
             };
             let as_requester =
                 |principal: &RunStarter,
+                 binding: &str,
                  call: &mut dyn FnMut() -> Result<ActionAnswer, Refusal>| {
-                    steps.as_present(principal, call)
+                    steps.as_present(principal, binding, call, None)
                 };
-            match decide(host, &call, &reads, runtime, &as_requester) {
+            // R1-06: asked only once the decide is valid and would run the
+            // call; nothing is recorded until the host has the answer.
+            let ready = |requester: &RunStarter, binding: &str| steps.ready(requester, binding);
+            match decide(host, &call, &reads, runtime, &as_requester, &ready) {
                 Ok(mut decided) => {
                     // APPROVAL-REVISION-1: an approved call refused because its
                     // action or gate changed drives nothing: the step waiting on
@@ -275,7 +272,7 @@ fn decisions<E: SqlEngine>(
                     });
                     // The decision may have moved the run onto action steps.
                     if !stale
-                        && steps.drive(&decided.run.id, now)
+                        && steps.drive(&decided.run.id, now, Drive::Live)
                         && let Ok(run) = get_run(host, &scope, subject, &decided.run.id, &reads)
                     {
                         decided.run.state = run.state;
@@ -342,7 +339,7 @@ impl<E: SqlEngine> Steps<'_, E> {
         let acting = acting_caller(principal, current.as_ref())?;
         let _restore = Restore {
             slot,
-            previous: current,
+            previous: Some(slot.snapshot()),
         };
         slot.record(Some(acting));
         Some(call())
@@ -360,38 +357,61 @@ impl<E: SqlEngine> Steps<'_, E> {
             })
     }
 
-    /// Run one approved call as its requester, under the requester's
-    /// current authority only (APPROVAL-RECOVERY-1, APPROVAL-LIVE-1):
-    /// - the request's own verified caller is the requester: as it is
-    ///   verified now, so a role revoked since the call parked is revoked;
-    /// - otherwise the resolver's lookup: a member now runs it as the slot's
-    ///   caller with its current roles, restored on every path, and a denial
-    ///   of that authority is `approval.requester_unauthorized`; no member
-    ///   is `approval.requester_unauthorized` and runs nothing; a lookup
-    ///   that does not answer is `approval.authority_unavailable` and runs
-    ///   nothing.
+    /// APPROVAL-LIVE-1 (R1-06): the decide's check before it records or
+    /// replays an approval into running its call: the host must have the
+    /// organization's answer for exactly that approval. Without one it is
+    /// asked for (the host serves the decide again with it) and nothing is
+    /// recorded; an answer that did not verify records nothing either. A
+    /// host without a lookup admits.
+    fn ready(&self, requester: &RunStarter, binding: &str) -> Result<(), Refusal> {
+        match self.principals.authority(requester, binding, self.now) {
+            Authority::Pending => {
+                self.principals
+                    .ask_authority(requester, binding, Resume::Request, self.now);
+                Err(norn_api::approvals::authority_unavailable())
+            }
+            Authority::Unavailable => Err(norn_api::approvals::authority_unavailable()),
+            Authority::Current(_) | Authority::Revoked | Authority::Unknown => Ok(()),
+        }
+    }
+
+    /// Run one attempt that can produce an effect under `principal`'s
+    /// current authority only (APPROVAL-RECOVERY-1, APPROVAL-LIVE-1), for the
+    /// one attempt `binding` names:
+    /// - a host that looks principals up runs it only under the
+    ///   organization's answer for exactly that attempt, whoever's request
+    ///   it is (the principal's own included): a member now runs it as the
+    ///   slot's caller with its current roles, restored on every path, and a
+    ///   denial of that authority is `approval.requester_unauthorized`; a
+    ///   signed "no member" is `approval.requester_unauthorized` and runs
+    ///   nothing; no answer yet asks for one (resuming the drive of `drive`,
+    ///   when the attempt is a drive's) and, like an answer that did not
+    ///   verify, runs nothing (`approval.authority_unavailable`);
+    /// - a host without a lookup runs it only when the request's own
+    ///   verified caller is the principal, as verified now.
     ///
-    /// `None` when this host has no lookup (or no slot): the call is not run
-    /// and waits for the requester's own request.
+    /// `None` when neither holds (or there is no slot): nothing runs.
     fn as_present(
         &self,
-        requester: &RunStarter,
+        principal: &RunStarter,
+        binding: &str,
         call: &mut dyn FnMut() -> Result<ActionAnswer, Refusal>,
+        drive: Option<&str>,
     ) -> Option<Result<ActionAnswer, Refusal>> {
         let slot = self.caller?;
-        if self.is_requester(requester) {
-            return Some(call());
-        }
-        match self.principals.authority(requester, self.now) {
+        match self.principals.authority(principal, binding, self.now) {
+            // No lookup: the request's own credential, as #1483.
+            Authority::Unknown => self.is_requester(principal).then(call),
             Authority::Current(member)
-                if member.subject_id == requester.subject
-                    && member.actor_kind == requester.actor_kind =>
+                if member.subject_id == principal.subject
+                    && member.actor_kind == principal.actor_kind
+                    && member.role_table == principal.role_table =>
             {
                 let _restore = Restore {
                     slot,
-                    previous: slot.current(),
+                    previous: Some(slot.snapshot()),
                 };
-                slot.record(Some(member));
+                slot.record_live(member, binding);
                 Some(call().map_err(|refusal| {
                     if matches!(
                         refusal.category,
@@ -403,31 +423,59 @@ impl<E: SqlEngine> Steps<'_, E> {
                     }
                 }))
             }
-            Authority::Current(_) | Authority::Revoked => {
-                Some(Err(norn_api::approvals::requester_unauthorized()))
-            }
-            Authority::Unavailable | Authority::Pending => {
+            // Another role table than the one the call parked under: no
+            // verified statement about that principal, so nothing final.
+            Authority::Current(_) | Authority::Unavailable => {
                 Some(Err(norn_api::approvals::authority_unavailable()))
             }
-            Authority::Unknown => None,
+            Authority::Revoked => Some(Err(norn_api::approvals::requester_unauthorized())),
+            Authority::Pending => {
+                if let Some(run) = drive {
+                    self.principals.ask_authority(
+                        principal,
+                        binding,
+                        Resume::Drive(run.to_owned()),
+                        self.now,
+                    );
+                }
+                Some(Err(norn_api::approvals::authority_unavailable()))
+            }
         }
     }
 
-    /// Run `run_id`'s pending action steps under its recorded starter;
-    /// `true` when it could try. A failure leaves the step pending for the
-    /// next drive.
-    fn drive(&self, run_id: &str, now: norn_kernel::LogicalTime) -> bool {
+    /// Run `run_id`'s pending action steps; `true` when it could try. A
+    /// failure leaves the step pending for the next drive. A step waiting on
+    /// an approved call runs under its requester's current authority
+    /// ([`Self::as_present`]). The run's other steps run under its recorded
+    /// starter for a drive the starter's own start makes
+    /// ([`Drive::Started`]); a drive an approval moved ([`Drive::Live`])
+    /// runs them, too, under the starter's current authority when the host
+    /// looks principals up (R1-03), and under the recorded starter
+    /// otherwise.
+    fn drive(&self, run_id: &str, now: norn_kernel::LogicalTime, mode: Drive) -> bool {
         let (Some(runtime), Some(_)) = (self.questions, self.caller) else {
             return false;
         };
-        let as_starter =
-            |principal: &RunStarter, call: &mut dyn FnMut() -> Result<ActionAnswer, Refusal>| {
-                self.as_principal(principal, call)
-            };
-        let as_requester =
-            |principal: &RunStarter, call: &mut dyn FnMut() -> Result<ActionAnswer, Refusal>| {
-                self.as_present(principal, call)
-            };
+        let as_starter = |principal: &RunStarter,
+                          binding: &str,
+                          call: &mut dyn FnMut() -> Result<ActionAnswer, Refusal>| {
+            match mode {
+                Drive::Started => self.as_principal(principal, call),
+                Drive::Live => self
+                    .as_present(principal, binding, &mut *call, Some(run_id))
+                    .or_else(|| {
+                        (self.principals.authority(principal, binding, self.now)
+                            == Authority::Unknown)
+                            .then(|| self.as_principal(principal, &mut *call))
+                            .flatten()
+                    }),
+            }
+        };
+        let as_requester = |principal: &RunStarter,
+                            binding: &str,
+                            call: &mut dyn FnMut() -> Result<ActionAnswer, Refusal>| {
+            self.as_present(principal, binding, call, Some(run_id))
+        };
         let driven: Result<(), Refusal> = norn_api::flow_driver::drive_run(
             self.host,
             run_id,
@@ -438,6 +486,41 @@ impl<E: SqlEngine> Steps<'_, E> {
         );
         driven.is_ok()
     }
+}
+
+/// Whose authority a drive runs a run's ordinary action steps under
+/// (APPROVAL-LIVE-1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Drive {
+    /// The drive of the starter's own start: its recorded starter.
+    Started,
+    /// A drive an approval moved, or one resumed with the organization's
+    /// answer: the starter's current authority where the host looks it up.
+    Live,
+}
+
+/// APPROVAL-LIVE-1 (R1-07): resume the drive of `run_id` that asked the
+/// organization's authority for a step's principal, now that the host has
+/// the answer: only the drive runs again, so nothing the request that asked
+/// wrote is replayed. It runs with no request caller, every step under the
+/// answered (current) authority.
+pub(crate) fn resume_drive<E: SqlEngine>(
+    host: &DevHost<E>,
+    questions: Option<&dyn AdHocQuestions<E>>,
+    principals: &dyn PrincipalResolver,
+    run_id: &str,
+    now: u64,
+) {
+    let steps = Steps {
+        host,
+        questions,
+        caller: principals.caller(),
+        principals,
+        now,
+    };
+    let at = norn_kernel::LogicalTime::from_millis(now.saturating_mul(1000));
+    // A drive that cannot run now leaves its step pending for the next.
+    let _driven = steps.drive(run_id, at, Drive::Live);
 }
 
 /// A verified caller as a recorded principal: exactly what the resolver
@@ -476,11 +559,13 @@ fn acting_caller(starter: &RunStarter, current: Option<&Caller>) -> Option<Calle
 /// on every path, including unwinding.
 struct Restore<'a> {
     slot: &'a CallerSlot,
-    previous: Option<Caller>,
+    previous: Option<crate::policy::Snapshot>,
 }
 
 impl Drop for Restore<'_> {
     fn drop(&mut self) {
-        self.slot.record(self.previous.take());
+        if let Some(previous) = self.previous.take() {
+            self.slot.put_back(previous);
+        }
     }
 }

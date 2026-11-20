@@ -87,12 +87,19 @@ pub struct Reply {
     /// no action policy: for the operator's log only, never part of the reply.
     #[wasm_bindgen(js_name = policyError)]
     pub policy_error: Option<String>,
-    /// APPROVAL-LIVE-1: the requester whose current authority the request
-    /// needs, as JSON `{subject, kind}`: the host looks it up at the
-    /// organization's authority and calls `resumeAuthority` with the
-    /// answer; that reply replaces this one, whose `status` and `body` are
-    /// then not the answer.
+    /// APPROVAL-LIVE-1: the lookup an attempt needs, as JSON `{subject,
+    /// kind, challenge, binding, resume}`: the host asks the organization's
+    /// authority about that subject for that one-use challenge and attempt,
+    /// and calls `resumeAuthority` with the answer. With `resume: "request"`
+    /// nothing was recorded, the request is served again and that reply
+    /// replaces this one, whose `status` and `body` are then not the answer;
+    /// with `resume: "drive"` this reply stands and only the run's drive is
+    /// resumed.
     pub authority: Option<String>,
+    /// APPROVAL-LIVE-1: this reply only resumed a run's drive; the reply of
+    /// the request that asked for the lookup stands as the answer.
+    #[wasm_bindgen(js_name = resumedDrive)]
+    pub resumed_drive: bool,
 }
 
 #[wasm_bindgen]
@@ -244,22 +251,29 @@ impl NornCell {
 
     /// APPROVAL-LIVE-1: this host looks requesters up at the organization's
     /// authority (`NORN_AUTHORITY_URL`), so an approval runs its call under
-    /// the requester's current membership. Without it an approved call waits
-    /// for the requester's own retry.
+    /// the requester's current membership. `seed` is at least 32 bytes of
+    /// fresh entropy (the host's `crypto.getRandomValues`), from which the
+    /// cell derives its unpredictable one-use lookup challenges; a shorter
+    /// seed leaves lookups off. Without lookups an approved call waits for
+    /// the requester's own retry.
     #[wasm_bindgen(js_name = enableAuthorityLookup)]
-    pub fn enable_authority_lookup(&self) {
+    pub fn enable_authority_lookup(&self, seed: &[u8]) {
         match &self.principals {
-            Principals::Tokens(tokens) => tokens.enable_lookup(),
+            Principals::Tokens(tokens) => tokens.enable_lookup(seed),
             #[cfg(feature = "fixtures")]
             Principals::Fixtures(_) => {}
         }
     }
 
-    /// APPROVAL-LIVE-1: serve a request again with the authority's answer
-    /// for the requester its reply named (`authority`): `{subject, token}`
-    /// with the membership attestation the authority signed, `{subject,
-    /// member: false}` when the subject is no member, or `{subject}` when
-    /// the lookup did not answer. The answer holds for this request only.
+    /// APPROVAL-LIVE-1: resume the attempt whose reply named a lookup
+    /// (`authority`) with the organization's answer: `{challenge, token}`
+    /// with the statement the authority signed for that challenge, or
+    /// `{challenge}` when the lookup did not answer. The answer is verified
+    /// for exactly that challenge and holds for this resume only. A lookup a
+    /// request asked before recording anything serves the request again (its
+    /// reply replaces the one that asked); a lookup a run's drive asked
+    /// resumes only that drive, and the reply that asked stands (this one
+    /// then carries no body, only a further lookup, if the drive needs one).
     #[must_use]
     #[allow(
         clippy::needless_pass_by_value,
@@ -277,12 +291,43 @@ impl NornCell {
         body: Option<String>,
         answer: &str,
     ) -> Reply {
-        match &self.principals {
-            Principals::Tokens(tokens) => tokens.provide_authority(answer),
+        let resume = match &self.principals {
+            Principals::Tokens(tokens) => tokens.provide_authority(answer, seconds(now_ms)),
             #[cfg(feature = "fixtures")]
-            Principals::Fixtures(_) => {}
+            Principals::Fixtures(_) => None,
+        };
+        match resume {
+            Some(crate::principal::Resume::Drive(run_id)) => {
+                self.tenant
+                    .resume_drive(self.principals.resolver(), &run_id, seconds(now_ms));
+                Reply {
+                    status: 0,
+                    body: String::new(),
+                    refresh_jwks: false,
+                    start_sync: None,
+                    then_token: None,
+                    then_request: None,
+                    engine: None,
+                    policy_error: None,
+                    authority: self.authority_wanted(),
+                    resumed_drive: true,
+                }
+            }
+            Some(crate::principal::Resume::Request) | None => {
+                self.fetch(method, path, query, authorization, now_ms, body)
+            }
         }
-        self.fetch(method, path, query, authorization, now_ms, body)
+    }
+
+    /// The lookup the last attempt asked for, as JSON, once.
+    fn authority_wanted(&self) -> Option<String> {
+        match &self.principals {
+            Principals::Tokens(tokens) => tokens
+                .take_authority_wanted()
+                .and_then(|wanted| serde_json::to_string(&wanted).ok()),
+            #[cfg(feature = "fixtures")]
+            Principals::Fixtures(_) => None,
+        }
     }
 
     /// Install a refetched JWKS from the pinned location, fetched at `now_ms`.
@@ -362,6 +407,7 @@ impl NornCell {
                 engine: None,
                 policy_error: None,
                 authority: None,
+                resumed_drive: false,
             };
         }
         // D102: loads read the cell's own uploads.
@@ -387,13 +433,7 @@ impl NornCell {
             .tenant
             .take_engine_call()
             .and_then(|call| serde_json::to_string(&call).ok());
-        let authority = match &self.principals {
-            Principals::Tokens(tokens) => tokens
-                .take_authority_wanted()
-                .and_then(|wanted| serde_json::to_string(&wanted).ok()),
-            #[cfg(feature = "fixtures")]
-            Principals::Fixtures(_) => None,
-        };
+        let authority = self.authority_wanted();
         Reply {
             status: response.status,
             body: response.body,
@@ -404,6 +444,7 @@ impl NornCell {
             engine,
             policy_error,
             authority,
+            resumed_drive: false,
         }
     }
 
@@ -546,6 +587,7 @@ impl NornCell {
             engine: None,
             policy_error: None,
             authority: None,
+            resumed_drive: false,
         }
     }
 }

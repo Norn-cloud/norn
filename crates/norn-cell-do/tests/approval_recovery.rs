@@ -828,7 +828,7 @@ fn an_approval_recorded_while_a_step_dispatches_on_recorded_authority_is_never_c
     let id = parked_step(&path);
     let cell = cell_on(file(&path), false);
     let raced = std::cell::Cell::new(false);
-    let as_starter = |starter: &RunStarter, dispatch: Dispatch<'_>| {
+    let as_starter = |starter: &RunStarter, _binding: &str, dispatch: Dispatch<'_>| {
         // After the drive read the step, before its dispatch holds the cell.
         let (status, decided) = approve(&cell, &id);
         assert_eq!(status, 200, "{decided}");
@@ -843,7 +843,7 @@ fn an_approval_recorded_while_a_step_dispatches_on_recorded_authority_is_never_c
         cell.caller.record(None);
         Some(answer)
     };
-    let as_requester = |_requester: &RunStarter, _dispatch: Dispatch<'_>| None;
+    let as_requester = |_requester: &RunStarter, _binding: &str, _dispatch: Dispatch<'_>| None;
     norn_api::flow_driver::drive_run(
         &cell.host,
         "melt-run",

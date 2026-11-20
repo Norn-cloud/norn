@@ -129,12 +129,23 @@ pub const MAX_ACTION_STEPS: usize = 64;
 /// (a run's starter for its action steps, a parked call's requester once it
 /// is approved): it makes `principal` the verified principal its policy
 /// decides for, runs `call`, and restores the request's own principal on
-/// every path. `None` when the host cannot act as that principal, which
-/// denies the call.
+/// every path. The `&str` is the attempt's binding (APPROVAL-LIVE-1): an
+/// approved call's [`approval_binding`](crate::approvals::approval_binding)
+/// or a step call's [`step_binding`], the one attempt a lookup of the
+/// principal's current authority answers for. `None` when the host cannot
+/// act as that principal, which denies the call.
 pub type AsStarter<'a> = &'a dyn Fn(
     &RunStarter,
+    &str,
     &mut dyn FnMut() -> Result<ActionAnswer, Refusal>,
 ) -> Option<Result<ActionAnswer, Refusal>>;
+
+/// APPROVAL-LIVE-1: the binding a lookup of a run's starter answers for one
+/// step call of `run_id`, keyed `call_key` (one per step attempt).
+#[must_use]
+pub fn step_binding(run_id: &str, call_key: &str) -> String {
+    format!("norn.step/1:{run_id}:{call_key}")
+}
 
 /// The idempotency key of a step attempt's action call: one per attempt,
 /// bounded, so a re-drive replays the same call instead of calling twice.
@@ -506,7 +517,10 @@ pub fn drive_run<E: SqlEngine>(
                 return Ok(());
             };
             let waiting = match step_approval(&cell, &step)? {
-                Some((decision_id, _at, StepApproval::Waiting)) => Some(decision_id),
+                Some((decision_id, _at, StepApproval::Waiting)) => {
+                    let binding = crate::approvals::binding_of(&cell, &decision_id)?;
+                    Some((decision_id, binding))
+                }
                 _other => None,
             };
             (step, waiting)
@@ -530,10 +544,15 @@ pub fn drive_run<E: SqlEngine>(
                 // the requester carries it; a try under the starter's
                 // recorded authority never consumes an approval, even one
                 // recorded after this drive read the step.
-                let principal = waiting
-                    .then(|| host.authorizer.verified_principal(&starter.subject))
-                    .flatten();
+                //
+                // APPROVAL-LIVE-1: read inside the try, after the host made
+                // the requester's current authority (its own credential, or
+                // the organization's answer for exactly this approval) the
+                // slot's principal, so the approval is consumed under that.
                 let mut call = || {
+                    let principal = waiting
+                        .as_ref()
+                        .and_then(|_| host.authorizer.verified_principal(&starter.subject));
                     crate::actions::call_action_bound(
                         host,
                         &crate::actions::ActionCall {
@@ -548,12 +567,11 @@ pub fn drive_run<E: SqlEngine>(
                         None,
                     )
                 };
-                let acting = if waiting.is_some() {
-                    as_requester
-                } else {
-                    as_starter
+                let (acting, binding) = match &waiting {
+                    Some((_decision, binding)) => (as_requester, binding.clone()),
+                    None => (as_starter, step_binding(&step.run_id, &step.call_key)),
                 };
-                match acting(starter, &mut call) {
+                match acting(starter, &binding, &mut call) {
                     // The requester's current authority cannot be
                     // established: the approved call waits.
                     None if waiting.is_some() => return Ok(()),
@@ -563,14 +581,12 @@ pub fn drive_run<E: SqlEngine>(
                     // this loop delivers it to the step as its outcome.
                     Some(Err(refused))
                         if refused.code
-                            == crate::approvals::approval_codes::REQUESTER_UNAUTHORIZED =>
+                            == crate::approvals::approval_codes::REQUESTER_UNAUTHORIZED
+                            && waiting.is_some() =>
                     {
-                        let Some(decision_id) = waiting.as_deref() else {
-                            return Err(Refusal::host(
-                                "an unapproved step call was refused as an approved one",
-                            ));
-                        };
-                        crate::approvals::refuse_unauthorized(host, decision_id)?;
+                        if let Some((decision_id, _binding)) = waiting.as_ref() {
+                            crate::approvals::refuse_unauthorized(host, decision_id)?;
+                        }
                         continue;
                     }
                     None => failure("Denied", None),

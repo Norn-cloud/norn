@@ -9,23 +9,33 @@ import type { Auth } from "./auth.ts"
  * when the call parked. The cell cannot read Studio's membership, and the
  * approver's request carries no token for the requester, so the cell host
  * asks here, service to service: "is subject X a member of organization O
- * now, and with which role?". The answer is a membership attestation this
- * Worker signs with the same keys as host tokens (published at
- * /api/auth/jwks), for its own audience and method, so it never
- * authenticates a request; or 404 `authority.not_member`.
+ * now, and with which role?". Both answers, member (with its role) and not a
+ * member, are statements this Worker signs with the same keys as host tokens
+ * (published at /api/auth/jwks), for their own audience and method, so they
+ * never authenticate a request. Each answers exactly one lookup: it names the
+ * cell's fresh one-use challenge and the attempt (decision and call) the cell
+ * bound it to, and lives at most a minute.
  *
- * Only the cell host calls this, with the shared credential
- * NORN_AUTHORITY_TOKEN (never a NORN_SECRET_* variable, which the cell's
- * connections may name). Without that credential configured the endpoint is
- * not served, and the cell leaves approved calls for the requester's retry.
+ * Only the cell host calls this, with the credential NORN_AUTHORITY_TOKEN
+ * (never a NORN_SECRET_* variable, which the cell's connections may name).
+ * The credential alone queries nothing: every lookup also carries, as
+ * `onBehalfOf`, the host token of the request the cell is serving, which this
+ * Worker signed for one organization; only that organization is looked up
+ * (the organizations the caller serves right now). Without the credential
+ * configured the endpoint is not served, and the cell leaves approved calls
+ * for the requester's retry.
  */
 export const AUTHORITY_PATH = "/api/internal/authority"
 /** The audience of an attestation: the cell verifies it apart from host tokens. */
 export const AUTHORITY_AUDIENCE = "norn-authority"
 /** The method an attestation names; no host token names it. */
 export const MEMBERSHIP_METHOD = "membership"
-/** An attestation answers one lookup: it lives a minute, so a revocation reaches the cell within it. */
+/** An attestation answers one lookup: it lives a minute (the cell admits no longer), so a revocation reaches the cell within it. */
 export const ATTESTATION_SECONDS = 60
+/** A challenge the cell issues: a lowercase hex SHA-256. */
+const CHALLENGE = /^[0-9a-f]{64}$/
+/** The attempt a lookup is bound to, as the cell names it. */
+const BINDING = /^norn\.(approval|step)\/1:[\x21-\x7e]{1,400}$/
 /** The least credential length accepted; a shorter one leaves the endpoint unserved. */
 const MIN_TOKEN_LENGTH = 32
 
@@ -67,9 +77,12 @@ async function currentRole(auth: Auth, orgId: string, kind: "user" | "service", 
 }
 
 /**
- * Answer one lookup: POST `{orgId, subject, kind}` with `Authorization: Bearer <NORN_AUTHORITY_TOKEN>`,
- * where `subject` is the cell's subject (`user:<id>` or `service:<api key id>`). 200 `{token}`: a member
- * now, attested; 404 `authority.not_member`: no member now. Anything else is no answer.
+ * Answer one lookup: POST `{orgId, subject, kind, challenge, binding, onBehalfOf}` with
+ * `Authorization: Bearer <NORN_AUTHORITY_TOKEN>`, where `subject` is the cell's subject (`user:<id>` or
+ * `service:<api key id>`), `challenge` and `binding` the cell's one-use challenge and the attempt it is for,
+ * and `onBehalfOf` the host token of the request the cell is serving, for `orgId`. 200 `{token}`: the signed
+ * statement, member with its role now or not a member, for that challenge and attempt; 403
+ * `authority.out_of_scope`: `onBehalfOf` is no current host token of `orgId`. Anything else is no answer.
  */
 export async function serveAuthority(request: Request, auth: Auth, credential: string | undefined, now = Math.floor(Date.now() / 1000)): Promise<Response> {
   if (credential === undefined || credential.length < MIN_TOKEN_LENGTH) return refusal(404, "route.not_found", "No such endpoint.")
@@ -78,13 +91,15 @@ export async function serveAuthority(request: Request, auth: Auth, credential: s
   if (presented === undefined || !(await sameSecret(presented, credential))) return refusal(401, "authn.required", "The cell host's credential is required.")
   let body: unknown
   try { body = await request.json() } catch { return refusal(400, "request.invalid", "The body is a JSON lookup.") }
-  const { orgId, subject, kind } = (typeof body === "object" && body !== null ? body : {}) as Record<string, unknown>
+  const { orgId, subject, kind, challenge, binding, onBehalfOf } = (typeof body === "object" && body !== null ? body : {}) as Record<string, unknown>
   if (typeof orgId !== "string" || orgId === "" || typeof subject !== "string" || (kind !== "user" && kind !== "service")) return refusal(400, "request.invalid", "A lookup names orgId, subject and kind.")
+  if (typeof challenge !== "string" || !CHALLENGE.test(challenge) || typeof binding !== "string" || !BINDING.test(binding)) return refusal(400, "request.invalid", "A lookup carries the cell's challenge and the attempt it is bound to.")
   const prefix = `${kind}:`
   const id = subject.startsWith(prefix) ? subject.slice(prefix.length) : ""
   if (id === "") return refusal(400, "request.invalid", "The subject is user:<id> or service:<api key id>, matching kind.")
+  // The caller's scope: the organization of the live request it serves, as this Worker signed it.
+  if (typeof onBehalfOf !== "string" || (await servedOrg(auth, onBehalfOf)) !== orgId) return refusal(403, "authority.out_of_scope", "The lookup is not for the organization of a request the cell host is serving.")
   const role = await currentRole(auth, orgId, kind, id, now)
-  if (role === null) return refusal(404, "authority.not_member", "The subject is not a member of the organization now.")
   const { token } = await auth.api.signJWT({
     body: {
       payload: {
@@ -92,9 +107,20 @@ export async function serveAuthority(request: Request, auth: Auth, credential: s
         aud: AUTHORITY_AUDIENCE,
         iat: now,
         exp: now + ATTESTATION_SECONDS,
-        norn: { kind, org: orgId, role, amr: MEMBERSHIP_METHOD },
+        norn: { kind, org: orgId, amr: MEMBERSHIP_METHOD, member: role !== null, ...role === null ? {} : { role }, nonce: challenge, bind: binding },
       },
     },
   })
   return json(200, { token })
+}
+
+/** The organization a current host token (this Worker's own, audience `norn-host`) was signed for, or null. */
+async function servedOrg(auth: Auth, token: string): Promise<string | null> {
+  try {
+    const { payload } = (await auth.api.verifyJWT({ body: { token } })) as { payload: { norn?: { org?: unknown } } | null }
+    const org = payload?.norn?.org
+    return typeof org === "string" && org !== "" ? org : null
+  } catch {
+    return null
+  }
 }

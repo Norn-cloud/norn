@@ -3,6 +3,7 @@
     clippy::expect_used,
     clippy::arithmetic_side_effects,
     clippy::indexing_slicing,
+    clippy::panic,
     reason = "token fixtures must build before verification assertions"
 )]
 use super::*;
@@ -187,61 +188,143 @@ fn a_jwks_without_ed25519_keys_is_refused() {
     assert!(TokenVerifier::from_jwks(ISSUER, "norn-host", "{}", &STUDIO_ROLES).is_err());
 }
 
+const CHALLENGE: AuthorityChallenge<'static> = AuthorityChallenge {
+    nonce: "n-1",
+    binding: "approval:dec_1:cmd_1",
+};
+
+/// An attestation as Studio's authority signs it: one minute, answering
+/// [`CHALLENGE`].
+fn attestation(kind: &str, member: bool, role: Option<&str>) -> serde_json::Value {
+    let mut norn = json!({ "kind": kind, "org": "org_a", "amr": MEMBERSHIP_METHOD,
+        "member": member, "nonce": CHALLENGE.nonce, "bind": CHALLENGE.binding });
+    if let Some(role) = role {
+        norn["role"] = json!(role);
+    }
+    json!({ "iss": ISSUER, "aud": "norn-authority", "sub": "u1", "iat": NOW - 5, "exp": NOW + 55,
+            "norn": norn })
+}
+
+fn attests() -> TokenVerifier {
+    TokenVerifier::from_jwks(ISSUER, "norn-authority", &jwks(), &STUDIO_ROLES).unwrap()
+}
+
+fn attest(claims: &serde_json::Value, now: u64) -> Result<Membership, Refusal> {
+    attests().membership(&token(claims), &cell(), now, &CHALLENGE)
+}
+
 /// APPROVAL-LIVE-1: a membership attestation verifies only as one, under its
 /// own audience, and never passes as a host token; a host token never
 /// passes as an attestation.
 #[test]
 fn a_membership_attestation_is_never_a_host_token() {
-    let attests =
-        TokenVerifier::from_jwks(ISSUER, "norn-authority", &jwks(), &STUDIO_ROLES).unwrap();
-    let mut attestation = claims("user", "admin", MEMBERSHIP_METHOD);
-    attestation["aud"] = json!("norn-authority");
-    let member = attests
-        .membership(&token(&attestation), &cell(), NOW)
-        .unwrap();
+    let member = attestation("user", true, Some("admin"));
+    let Membership::Member(principal) = attest(&member, NOW).unwrap() else {
+        panic!("not a member");
+    };
     assert_eq!(
-        (member.subject_id.as_str(), member.roles.as_slice()),
+        (principal.subject_id.as_str(), principal.roles.as_slice()),
         ("user:u1", ["admin".to_owned()].as_slice())
     );
-    let mut service = claims("service", "member", MEMBERSHIP_METHOD);
-    service["aud"] = json!("norn-authority");
-    assert_eq!(
-        attests
-            .membership(&token(&service), &cell(), NOW)
-            .unwrap()
-            .subject_id,
-        "service:u1"
-    );
+    let Membership::Member(service) =
+        attest(&attestation("service", true, Some("member")), NOW).unwrap()
+    else {
+        panic!("not a member");
+    };
+    assert_eq!(service.subject_id, "service:u1");
     // An attestation is no host token, under either audience.
-    assert!(
-        attests
-            .principal(&token(&attestation), &cell(), NOW)
-            .is_err()
-    );
-    let mut host_audience = attestation.clone();
+    assert!(attests().principal(&token(&member), &cell(), NOW).is_err());
+    let mut host_audience = member.clone();
     host_audience["aud"] = json!("norn-host");
     assert!(resolve(&token(&host_audience)).is_err());
     // A host token is no attestation.
     let session = claims("user", "admin", "password");
-    assert!(attests.membership(&token(&session), &cell(), NOW).is_err());
+    assert!(attest(&session, NOW).is_err());
     assert!(
         verifier()
-            .membership(&token(&session), &cell(), NOW)
+            .membership(&token(&session), &cell(), NOW, &CHALLENGE)
             .is_err()
     );
-    // Another organization's, an expired or a forged attestation denies.
-    let mut foreign = attestation.clone();
+    // Another organization's or a forged attestation denies.
+    let mut foreign = member.clone();
     foreign["norn"]["org"] = json!("org_b");
-    assert!(attests.membership(&token(&foreign), &cell(), NOW).is_err());
+    assert!(attest(&foreign, NOW).is_err());
+    let forged = sign(&key(2), &json!({ "alg": "EdDSA", "kid": "k1" }), &member);
     assert!(
-        attests
-            .membership(&token(&attestation), &cell(), NOW + 400)
+        attests()
+            .membership(&forged, &cell(), NOW, &CHALLENGE)
             .is_err()
     );
+}
+
+/// APPROVAL-LIVE-1 (R1-04): "no member" is a signed statement bound to the
+/// same lookup as a member's answer; it carries no role.
+#[test]
+fn a_negative_attestation_is_signed_and_names_no_role() {
+    assert_eq!(
+        attest(&attestation("user", false, None), NOW).unwrap(),
+        Membership::NotMember {
+            subject_id: "user:u1".into(),
+            actor_kind: ActorKind::User,
+        }
+    );
+    assert!(attest(&attestation("user", false, Some("admin")), NOW).is_err());
+    assert!(attest(&attestation("user", true, None), NOW).is_err());
     let forged = sign(
         &key(2),
         &json!({ "alg": "EdDSA", "kid": "k1" }),
-        &attestation,
+        &attestation("user", false, None),
     );
-    assert!(attests.membership(&forged, &cell(), NOW).is_err());
+    assert!(
+        attests()
+            .membership(&forged, &cell(), NOW, &CHALLENGE)
+            .is_err()
+    );
+}
+
+/// APPROVAL-LIVE-1 (R1-05): an attestation answers one challenge and one
+/// attempt, and lives at most a minute with a few seconds of skew: never the
+/// host token's five minutes.
+#[test]
+fn an_attestation_answers_only_its_challenge_within_a_minute() {
+    for member in [true, false] {
+        let role = member.then_some("admin");
+        let answer = attestation("user", member, role);
+        assert!(attest(&answer, NOW).is_ok());
+        let other_nonce = AuthorityChallenge {
+            nonce: "n-2",
+            binding: CHALLENGE.binding,
+        };
+        let other_call = AuthorityChallenge {
+            nonce: CHALLENGE.nonce,
+            binding: "approval:dec_1:cmd_2",
+        };
+        for challenge in [other_nonce, other_call] {
+            assert!(
+                attests()
+                    .membership(&token(&answer), &cell(), NOW, &challenge)
+                    .is_err()
+            );
+        }
+        let mut unbound = answer.clone();
+        unbound["norn"]["nonce"] = json!("");
+        let empty = AuthorityChallenge {
+            nonce: "",
+            binding: CHALLENGE.binding,
+        };
+        assert!(
+            attests()
+                .membership(&token(&unbound), &cell(), NOW, &empty)
+                .is_err()
+        );
+        // A host token's lifetime is no attestation's.
+        let mut long = answer.clone();
+        long["exp"] = json!(NOW + 295);
+        assert!(attest(&long, NOW).is_err());
+        // Expired past the small leeway.
+        assert!(attest(&answer, NOW + 55 + ATTESTATION_LEEWAY_SECONDS).is_err());
+        assert!(attest(&answer, NOW + 55 + ATTESTATION_LEEWAY_SECONDS - 1).is_ok());
+        // Issued in the future past the leeway.
+        assert!(attest(&answer, NOW - 5 - ATTESTATION_LEEWAY_SECONDS - 1).is_err());
+    }
 }

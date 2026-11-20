@@ -60,6 +60,13 @@ where
     fn verified_principal(&self, actor: &str) -> Option<norn_cell::flow_run::RunStarter> {
         self.inner.verified_principal(actor)
     }
+    fn live_authority(
+        &self,
+        principal: &norn_cell::flow_run::RunStarter,
+        binding: &str,
+    ) -> Result<(), Refusal> {
+        self.inner.live_authority(principal, binding)
+    }
     fn admits_model(&self, object_types: &[norn_ir::ObjectTypeDef]) -> Result<(), Refusal> {
         self.inner.admits_model(object_types)
     }
