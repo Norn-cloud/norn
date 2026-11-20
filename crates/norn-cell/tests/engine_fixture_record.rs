@@ -3,7 +3,7 @@
 //! storage version `N` it records, before that release's successor lands:
 //!
 //! `NORN_RECORD_ENGINE_FIXTURE=$PWD/crates/norn-cell/tests/fixtures/engine-storage-vN.json \
-//!   cargo test -p norn-cell --test engine_fixture_record -- --ignored`
+//!   cargo test -p norn-cell --lib suites::engine_fixture_record -- --ignored`
 //!
 //! It uses only APIs every storage version has, so it builds unchanged
 //! against an older checkout. `engine-storage-v1.json` was recorded this way

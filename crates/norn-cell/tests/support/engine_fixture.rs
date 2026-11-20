@@ -2,8 +2,9 @@
 //! the scenario that writes it, and a lossless JSON image of its SQLite file.
 //!
 //! Only APIs that every storage version has are used here, so the recorder
-//! (`tests/engine_fixture_record.rs`) builds unchanged against the release
-//! whose storage version it records. The image holds the catalog in creation
+//! (`tests/engine_fixture_record.rs`) builds against the release whose
+//! storage version it records; on a release before the test door (#1485 S6)
+//! drop the `TestCommit` import, as `CellStore::commit` was public there. The image holds the catalog in creation
 //! order and every table's rows by rowid, so loading it rebuilds the same
 //! logical database.
 
@@ -25,6 +26,7 @@ use std::path::Path;
 
 use norn_cell::cell_identity::CellId;
 use norn_cell::engine::{NativeEngine, SqlEngine, SqlValue};
+use norn_cell::test_door::TestCommit as _;
 use norn_cell::{CellStore, CommitBatch, FactWriteRow, MAIN_WORLD, Model, StoreOptions};
 use norn_ir::{ObjectTypeDef, RuntimeValue, runtime_object};
 use serde_json::{Value, json};

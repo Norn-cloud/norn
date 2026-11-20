@@ -26,6 +26,7 @@ use norn_cell::engine_release::{
     StoredVersion,
 };
 use norn_cell::export::Exporter;
+use norn_cell::test_door::TestCommit as _;
 use norn_cell::{
     CellError, CellStore, CommitOutcome, InstalledDefinitionInput, JournalMode, Model,
     RestoreError, StoreOptions,
