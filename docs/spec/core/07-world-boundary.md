@@ -170,6 +170,32 @@ creates or changes; a transient pending row that never commits is not part of
 the comparison; generated pages mix refusals, identities repeated
 across pages, intra-page links in both orders, and pages refused for framing).
 
+**Ingest rulings** (2026-11-20, from the distributor-1 deployment test, #1484;
+pending maintainer review; additions beside OBS-PAGE-1, which is unchanged):
+
+- **MAP-DECIMAL-TEXT-1:** a source field declared `decimal` conforms when it
+  arrives as a JSON number or as exact decimal text (`"1234.50"`), read by the
+  same strict JSON-decimal grammar the action boundary uses (VAL-EXACT-1). Any
+  other text (`"1,234"`, `"1e3"`, `" 5"`) refuses `mapping.runtime.invalid_record`.
+- **MAP-EXPLAIN-1:** every quarantined row is explained in structure, never by
+  its code alone: the record, its dataset, the code, the mapping rule (map)
+  and, for a field that does not conform, the field, the value it held and the
+  declared type, plus the reason in words. The retained bundle diagnostic
+  carries the same fields.
+- **INGEST-GROUP-1:** a host frames a batch into pages by mapping input first,
+  each input's rows in batch order, unless a source identity appears under
+  two inputs of the batch (then it frames the batch in its own order). A
+  record's versions keep their order; links resolve in any order
+  (OBS-LINK-PENDING-ORDER).
+- **INGEST-BATCH-1:** a record whose bundle the mapping refused joins no page
+  row; it is quarantined before any commit, exactly as one by one, so the rest
+  of its page commits together. A load is bounded by rows and by its
+  estimated work on the host, not by a bare commit count.
+- **INGEST-YIELD-1:** a host holds the cell one page at a time during a load
+  and serves requests already waiting for it between pages, so a read waits
+  for at most one page commit. The dev host serves several requests at once
+  (DEV-CONCURRENT-1); each request's verified caller stays its own.
+
 ## Perform and recovery semantics
 
 All Functions, including ML/heavy pure computation, run behind perform and return recorded schema-checked receipts. Pin training/input snapshots, model/code/dependency digests, seeds where relevant, bounds and result blobs. ML confidence is not proof or write authority. Reconcile output with input identity/freshness/current authority and publish only through a guarded action.

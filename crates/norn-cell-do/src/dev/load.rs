@@ -111,21 +111,32 @@ pub(crate) fn load(
             let started = std::time::Instant::now();
             let entry = mapped.entry(file.clone()).or_default();
             entry.0 = entry.0.saturating_add(rows.len());
+            let mut outcomes = BTreeMap::new();
             for (id, _new) in &ids.pages {
-                for (member, outcome) in cell
-                    .process_mapping_page(id)
-                    .map_err(|error| format!("{file}: a {dataset} page failed: {error}"))?
-                    .unwrap_or_default()
-                {
-                    match outcome {
-                        MappingOutcome::Landed => entry.1 = entry.1.saturating_add(1),
-                        MappingOutcome::AlreadyLanded => {}
-                        MappingOutcome::Quarantined(reasons) => {
-                            return Err(format!(
-                                "{file}: {dataset} {member} was refused by the mapping: {}",
-                                reasons.join(", ")
-                            ));
-                        }
+                outcomes.extend(
+                    cell.process_mapping_page(id)
+                        .map_err(|error| format!("{file}: a {dataset} page failed: {error}"))?
+                        .unwrap_or_default(),
+                );
+            }
+            // A record no page carries (refused by the mapping, or a conflict
+            // or identity finding) answers as it does one by one.
+            for (member, row) in ids.records.iter().zip(rows) {
+                let outcome = match outcomes.remove(member) {
+                    Some(outcome) => outcome,
+                    None => cell
+                        .process_mapping_outcome(member)
+                        .map_err(|error| format!("{file}: a {dataset} row failed: {error}"))?,
+                };
+                match outcome {
+                    MappingOutcome::Landed => entry.1 = entry.1.saturating_add(1),
+                    MappingOutcome::AlreadyLanded => {}
+                    MappingOutcome::Quarantined(reasons) => {
+                        return Err(format!(
+                            "{file}: {dataset} {} was refused by the mapping: {}",
+                            row.provenance.source_id,
+                            explain(&reasons)
+                        ));
                     }
                 }
             }
@@ -158,6 +169,29 @@ pub(crate) fn load(
         })
         .collect();
     Ok((cell.into_store(), Loaded { files }))
+}
+
+/// MAP-EXPLAIN-1 in words: each reason's code, map, field, value and
+/// declared type, as a refused `--load` reports them.
+fn explain(reasons: &[norn_cell::QuarantineReason]) -> String {
+    reasons
+        .iter()
+        .map(|reason| {
+            let field = reason.field.as_ref().map_or_else(String::new, |field| {
+                format!(
+                    ", field {field} = {}, expected {}",
+                    reason.value.as_deref().unwrap_or("(absent)"),
+                    reason.expected.as_deref().unwrap_or("?")
+                )
+            });
+            let map = reason
+                .map
+                .as_ref()
+                .map_or_else(String::new, |map| format!(" (map {map}{field})"));
+            format!("{}{map}: {}", reason.code, reason.reason)
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 #[cfg(test)]

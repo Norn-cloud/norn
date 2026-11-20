@@ -521,7 +521,9 @@ impl Connect {
                 }
             }
             Route::Read => Routed::reply(self.read(host, request.body, now_ms)),
-            Route::Observations => Routed::reply(load_observations(host, request.body)),
+            Route::Observations => {
+                Routed::reply(load_observations(host, request.body, &HOSTED_LOAD))
+            }
         })
     }
 
@@ -906,25 +908,60 @@ pub fn observations<E: SqlEngine>(
         )
         .is_ok();
     Some(if allowed {
-        load_observations(host, request.body)
+        load_observations(host, request.body, &DEV_LOAD)
     } else {
         server::outside::<E>(request)
     })
 }
 
-/// The most rows one load carries, and the most page commits it may make (a
-/// row repeating a record already in its page starts the next commit, as a
-/// record's history does). A load runs inside one cell call; on the hosted
-/// cell a commit costs about 0.8 s and a row about 0.1 s, so these keep a load
-/// to roughly 15 s at most, and a client sizes its loads well under them.
-const MAX_LOAD_ROWS: usize = 100;
-const MAX_LOAD_COMMITS: usize = 8;
+/// What one load may carry (INGEST-BATCH-1). A load is bounded by its rows
+/// and by its estimated work, not by a bare commit count: rows of one
+/// dataset commit together whatever order the batch interleaves them in,
+/// and a row the mapping refuses commits nothing.
+struct LoadBound {
+    /// The most rows one load carries.
+    rows: usize,
+    /// The estimated work one load may take, from a row's and a page
+    /// commit's cost on this host; `None` when the host yields the cell to
+    /// waiting reads between pages (INGEST-YIELD-1), so a load's length
+    /// never holds a read.
+    budget: Option<WorkBudget>,
+}
 
-/// `POST /v1/observations:load`: one page of a recorded export, captured and
+/// A host's load work budget, in milliseconds.
+struct WorkBudget {
+    row_ms: usize,
+    commit_ms: usize,
+    total_ms: usize,
+}
+
+/// A hosted cell runs a load inside one cell call: a commit costs about
+/// 0.8 s and a row about 0.1 s there, so a load is kept to the work of 100
+/// rows in 8 commits (about 16 s), spent however the load needs it.
+const HOSTED_LOAD: LoadBound = LoadBound {
+    rows: 100,
+    budget: Some(WorkBudget {
+        row_ms: 100,
+        commit_ms: 800,
+        total_ms: 100 * 100 + 8 * 800,
+    }),
+};
+
+/// The dev host commits a page at a time and serves waiting reads between
+/// pages, so one load carries up to one OBS-PAGE-1 page bound of rows.
+const DEV_LOAD: LoadBound = LoadBound {
+    rows: norn_cell::mapping_page::MAX_PAGE_RECORDS,
+    budget: None,
+};
+
+/// `POST /v1/observations:load`: rows of a recorded export, captured and
 /// mapped through the cell's admitted mappings exactly as a source sync's
 /// rows are (OBS-PAGE-1). No caller supplies facts: a row the mapping
-/// refuses stays in the inbox as quarantined evidence, with its reasons.
-fn load_observations<E: SqlEngine>(host: &DevHost<E>, body: &str) -> Response {
+/// refuses stays in the inbox as quarantined evidence, with its reasons,
+/// and the answer explains each one (MAP-EXPLAIN-1): the record, its
+/// dataset, the code, the mapping rule and, for a nonconforming field, the
+/// field, its value and the declared type.
+fn load_observations<E: SqlEngine>(host: &DevHost<E>, body: &str, bound: &LoadBound) -> Response {
     let answer = |refusal: &Refusal| crate::incident::respond(refusal.clone());
     let recorded = match serde_json::from_str::<Value>(body)
         .map_err(|error| error.to_string())
@@ -953,12 +990,24 @@ fn load_observations<E: SqlEngine>(host: &DevHost<E>, body: &str) -> Response {
         Err(error) => return answer(&Refusal::invalid(error)),
     };
     let commits = norn_api::host::page_count(&rows);
-    if rows.len() > MAX_LOAD_ROWS || commits > MAX_LOAD_COMMITS {
+    let work = bound.budget.as_ref().map(|budget| {
+        (
+            rows.len()
+                .saturating_mul(budget.row_ms)
+                .saturating_add(commits.saturating_mul(budget.commit_ms)),
+            budget.total_ms,
+        )
+    });
+    if rows.len() > bound.rows || work.is_some_and(|(work, total)| work > total) {
+        let budget = work.map_or_else(String::new, |(work, total)| {
+            format!(", estimated work {work} ms of {total} ms")
+        });
         return refused(
             413,
             "observations.too_large",
             &format!(
-                "a load carries at most {MAX_LOAD_ROWS} rows and {MAX_LOAD_COMMITS} commits (this one: {} rows, {commits} commits); send it in smaller slices",
+                "a load carries at most {} rows within this host's work budget (this one: {} rows, {commits} commits{budget}); send it in smaller slices",
+                bound.rows,
                 rows.len()
             ),
         );
@@ -969,16 +1018,29 @@ fn load_observations<E: SqlEngine>(host: &DevHost<E>, body: &str) -> Response {
     };
     let (mut landed, mut already, mut quarantined) = (0_usize, 0_usize, 0_usize);
     let mut reasons: BTreeMap<String, usize> = BTreeMap::new();
-    for row in &ingested {
+    let mut explained = Vec::new();
+    for (row, (raw, input)) in ingested.iter().zip(&rows) {
         match &row.outcome {
             norn_cell::MappingOutcome::Landed => landed = landed.saturating_add(1),
             norn_cell::MappingOutcome::AlreadyLanded => already = already.saturating_add(1),
-            norn_cell::MappingOutcome::Quarantined(codes) => {
+            norn_cell::MappingOutcome::Quarantined(why) => {
                 quarantined = quarantined.saturating_add(1);
-                for code in codes {
-                    let n = reasons.entry(code.clone()).or_insert(0);
+                for code in row.outcome.codes() {
+                    let n = reasons.entry(code).or_insert(0);
                     *n = n.saturating_add(1);
                 }
+                explained.extend(why.iter().map(|reason| {
+                    json!({
+                        "record": raw.provenance.source_id,
+                        "dataset": input.dataset,
+                        "code": reason.code,
+                        "map": reason.map,
+                        "field": reason.field,
+                        "value": reason.value,
+                        "expected": reason.expected,
+                        "reason": reason.reason,
+                    })
+                }));
             }
         }
     }
@@ -992,6 +1054,8 @@ fn load_observations<E: SqlEngine>(host: &DevHost<E>, body: &str) -> Response {
             "alreadyLanded": already,
             "quarantined": quarantined,
             "quarantineReasons": reasons,
+            "quarantine": explained,
+            "pages": commits,
         }),
     )
 }

@@ -365,18 +365,18 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         let source_document = SourceDocument::from_json(&input.dataset, &payload_text, None)?;
         let (records, diagnostics) = if field("kind")? == "upsert" {
             let outcome = match &plan.compiled {
-                Ok(compiled) => compiled.apply(&[source_document], &input.recorded_at),
-                Err(diagnostics) => Err(diagnostics.clone()),
+                Ok(compiled) => compiled
+                    .apply_explained(&[source_document], &input.recorded_at)
+                    .map_err(|refusals| refusals.iter().map(explained).collect::<Vec<_>>()),
+                Err(diagnostics) => Err(diagnostics.iter().map(|d| d.to_json()).collect()),
             };
             match outcome {
                 Ok(records) => (records, Vec::new()),
                 Err(diagnostics) => (
                     Vec::new(),
                     diagnostics
-                        .into_iter()
-                        .map(|d| {
-                            norn_ir::runtime::encode(&d.to_json()).map_err(CellError::Encoding)
-                        })
+                        .iter()
+                        .map(|d| norn_ir::runtime::encode(d).map_err(CellError::Encoding))
                         .collect::<Result<Vec<_>, _>>()?,
                 ),
             }
@@ -460,6 +460,30 @@ impl<E: SqlEngine> CellStore<E> {
         let bundle = self.read().mapping_bundle(&raw.input, input, version)?;
         crate::mapping_conflict::capture(self, raw, &bundle)
     }
+}
+
+/// MAP-EXPLAIN-1: a row refusal as retained evidence, the mapping's
+/// diagnostic plus what it refused: the map (mapping rule) and, for a field
+/// that does not conform, the field, its value, the declared type and why.
+fn explained(refusal: &norn_checker::mapping::RowRefusal) -> serde_json::Value {
+    let mut value = refusal.diagnostic().to_json();
+    if let Some(fields) = value.as_object_mut() {
+        fields.insert("map".to_owned(), refusal.map.clone().into());
+        fields.insert("reason".to_owned(), refusal.reason.clone().into());
+        if let Some(field) = &refusal.field {
+            fields.insert("field".to_owned(), field.field.clone().into());
+            fields.insert(
+                "value".to_owned(),
+                field
+                    .value
+                    .clone()
+                    .map_or(serde_json::Value::Null, Into::into),
+            );
+            fields.insert("expected".to_owned(), field.expected.clone().into());
+            fields.insert("reason".to_owned(), field.reason.clone().into());
+        }
+    }
+    value
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

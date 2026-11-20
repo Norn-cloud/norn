@@ -1665,18 +1665,38 @@ impl CompiledMapping {
         documents: &[SourceDocument],
         recorded_at: &UtcTimestamp,
     ) -> Result<Vec<MappedRecord>, Vec<Diagnostic>> {
+        self.apply_explained(documents, recorded_at)
+            .map_err(|refusals| refusals.iter().map(RowRefusal::diagnostic).collect())
+    }
+
+    /// [`Self::apply`], with each refusal explained (MAP-EXPLAIN-1): the
+    /// mapping rule (map) that refused the row and, when a source field does
+    /// not conform to its declared type, that field, its value and the
+    /// declared type, so a quarantined row says what to fix without parsing
+    /// a message.
+    ///
+    /// # Errors
+    /// As [`Self::apply`], one [`RowRefusal`] per refused map and row.
+    pub fn apply_explained(
+        &self,
+        documents: &[SourceDocument],
+        recorded_at: &UtcTimestamp,
+    ) -> Result<Vec<MappedRecord>, Vec<RowRefusal>> {
         let mut records = Vec::new();
         let mut findings = Vec::new();
         for map in &self.maps {
             for (index, document) in documents.iter().enumerate() {
                 for row in rows(map, document) {
-                    let at = Span::from_segments(["documents", index.to_string().as_str()]);
                     match self.apply_row(map, row, document, recorded_at) {
                         Ok(Some(record)) => records.push(record),
                         Ok(None) => {}
-                        Err((code, message)) => {
-                            findings.push(error(code, format!("map {:?}: {message}", map.id), at));
-                        }
+                        Err(refused) => findings.push(RowRefusal {
+                            code: refused.code,
+                            map: map.id.clone(),
+                            document: index,
+                            field: refused.field,
+                            reason: refused.reason,
+                        }),
                     }
                 }
             }
@@ -2260,17 +2280,27 @@ impl CompiledMapping {
         row: Option<&norn_canonical::JsonValue>,
         document: &SourceDocument,
         recorded_at: &UtcTimestamp,
-    ) -> Result<Option<MappedRecord>, (&'static str, String)> {
+    ) -> Result<Option<MappedRecord>, Refused> {
         let Some(norn_canonical::JsonValue::Object(row)) = row else {
             return Err((
                 codes::INVALID_RECORD,
                 "the record is not an object".to_owned(),
-            ));
+            )
+                .into());
         };
         let mut input = BTreeMap::new();
         for (field, ty) in &map.input_types {
-            let value = conform(row.get(field), ty)
-                .map_err(|reason| (codes::INVALID_RECORD, format!("field {field:?} {reason}")))?;
+            let raw = row.get(field);
+            let value = conform(raw, ty).map_err(|reason| Refused {
+                code: codes::INVALID_RECORD,
+                reason: format!("field {field:?} {reason}"),
+                field: Some(FieldRefusal {
+                    field: field.clone(),
+                    value: raw.map(json_text),
+                    expected: type_name(ty),
+                    reason,
+                }),
+            })?;
             input.insert(field.clone(), value);
         }
         let context = Value::object([("input", Value::Object(input))]);
@@ -3017,6 +3047,108 @@ fn text(expression: &Expression, context: &Value) -> Result<String, (&'static st
 }
 
 /// Check one raw field value against its `input` type and convert it.
+/// One map's refusal of one source row (MAP-EXPLAIN-1): the stable code, the
+/// mapping rule that refused it, the document it came from and, when a
+/// source field does not conform to its declared type, which field, what it
+/// held and what was declared.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RowRefusal {
+    /// The stable diagnostic code (`mapping.runtime.*`).
+    pub code: &'static str,
+    /// The map (mapping rule) that refused the row.
+    pub map: String,
+    /// The refused document's index in the applied batch.
+    pub document: usize,
+    /// The nonconforming field, when the refusal is one.
+    pub field: Option<FieldRefusal>,
+    /// The refusal in words, without the map prefix.
+    pub reason: String,
+}
+
+/// A source field that does not conform to its declared type.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FieldRefusal {
+    /// The source field.
+    pub field: String,
+    /// The value it held, as canonical JSON text; `None` when it was absent.
+    pub value: Option<String>,
+    /// The declared type, in words (`decimal`, `optional text`, ...).
+    pub expected: String,
+    /// Why the value does not conform.
+    pub reason: String,
+}
+
+impl RowRefusal {
+    /// The diagnostic [`CompiledMapping::apply`] reports for this refusal:
+    /// `map "<id>": <reason>` at `/documents/<index>`.
+    #[must_use]
+    pub fn diagnostic(&self) -> Diagnostic {
+        error(
+            self.code,
+            format!("map {:?}: {}", self.map, self.reason),
+            Span::from_segments(["documents", self.document.to_string().as_str()]),
+        )
+    }
+}
+
+/// A row refusal inside [`CompiledMapping::apply_row`], before the map and
+/// document are attached.
+struct Refused {
+    code: &'static str,
+    reason: String,
+    field: Option<FieldRefusal>,
+}
+
+impl From<(&'static str, String)> for Refused {
+    fn from((code, reason): (&'static str, String)) -> Self {
+        Self {
+            code,
+            reason,
+            field: None,
+        }
+    }
+}
+
+fn json_text(value: &norn_canonical::JsonValue) -> String {
+    norn_canonical::serialize_json(value)
+        .ok()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .unwrap_or_else(|| format!("{value:?}"))
+}
+
+/// A declared source type in words, for a refusal's `expected`.
+fn type_name(ty: &Type) -> String {
+    if let Type::Optional(inner) = ty {
+        return format!("optional {}", type_name(inner));
+    }
+    if let Type::List(inner) = ty {
+        return format!("list of {}", type_name(inner));
+    }
+    if let Type::Decimal { scale, .. } = ty {
+        return format!("decimal (scale {scale}; a JSON number or exact decimal text)");
+    }
+    if let Type::Enum { values } = ty {
+        return format!("one of {values:?}");
+    }
+    let named = [
+        (matches!(ty, Type::Bool), "boolean"),
+        (matches!(ty, Type::Text { .. }), "text"),
+        (matches!(ty, Type::Integer), "integer"),
+        (matches!(ty, Type::Number), "number"),
+        (
+            matches!(ty, Type::Timestamp { .. }),
+            "timestamp (RFC 3339 with an offset)",
+        ),
+        (matches!(ty, Type::Date), "date (YYYY-MM-DD)"),
+        (matches!(ty, Type::Duration), "duration"),
+        (matches!(ty, Type::Json), "JSON"),
+    ];
+    named
+        .iter()
+        .find(|(is, _)| *is)
+        .map_or_else(|| format!("{ty:?}"), |(_, name)| (*name).to_owned())
+}
+
 fn conform(raw: Option<&norn_canonical::JsonValue>, ty: &Type) -> Result<Value, String> {
     use norn_canonical::JsonValue as Json;
     match (raw, ty) {
@@ -3052,6 +3184,12 @@ fn conform(raw: Option<&norn_canonical::JsonValue>, ty: &Type) -> Result<Value, 
             number_value(number)
         }
         (Some(Json::Number(number)), Type::Number | Type::Decimal { .. }) => number_value(number),
+        // MAP-DECIMAL-TEXT-1: exact decimal text (`"1234.50"`), as the action
+        // boundary takes it (VAL-EXACT-1) and as ERP exports and careful
+        // extractors write money and quantities, conforms to a declared
+        // decimal through the same strict JSON-decimal grammar; any other
+        // text (`"1,234"`, `"1e3"`, `" 5"`) still refuses, naming the grammar.
+        (Some(Json::String(text)), Type::Decimal { .. }) => number_value(text),
         (Some(Json::Bool(flag)), Type::Bool) => Ok(Value::Bool(*flag)),
         // A declared child table is typed for the checker only; at runtime
         // its rows convert exactly as opaque JSON does, so bounds and nested

@@ -2865,6 +2865,79 @@ fn observed_lifecycle_deviations_are_advisory_and_preserve_lineage_context() {
     );
 }
 
+/// MAP-DECIMAL-TEXT-1: a declared decimal arrives as exact decimal text
+/// (`"1250.5"`, how careful extractors and many ERP exports write money) and
+/// maps exactly as the JSON number does; text outside the strict JSON-decimal
+/// grammar still refuses. MAP-EXPLAIN-1: that refusal names the map, the
+/// field, its value and the declared type, not only the code.
+#[test]
+fn decimal_text_conforms_and_a_refusal_explains_its_field() {
+    let order = |total: Value| {
+        document(
+            "Sales Order",
+            &json!({
+                "doctype": "Sales Order",
+                "name": "SAL-ORD-0001",
+                "customer": "CUST-0001",
+                "transaction_date": "2026-09-29",
+                "grand_total": total,
+                "docstatus": 1,
+                "items": []
+            }),
+        )
+    };
+    let recorded_at = UtcTimestamp("2026-10-01T00:00:00Z".to_owned());
+    let compiled = compiled();
+    let number = compiled
+        .apply(&[order(json!(1250.5))], &recorded_at)
+        .expect("a JSON number conforms");
+    let text = compiled
+        .apply(&[order(json!("1250.5"))], &recorded_at)
+        .expect("exact decimal text conforms");
+    assert_eq!(number, text, "decimal text maps exactly as the number does");
+
+    for bad in ["1,250.50", "1.25e3", " 1250.5", "EGP 1250"] {
+        let refusals = compiled
+            .apply_explained(&[order(json!(bad))], &recorded_at)
+            .expect_err("text outside the decimal grammar refuses");
+        let refusal = refusals
+            .iter()
+            .find(|refusal| refusal.code == "mapping.runtime.invalid_record")
+            .unwrap_or_else(|| panic!("{bad}: {refusals:#?}"));
+        let field = refusal.field.as_ref().expect("names the field");
+        assert_eq!(field.field, "grand_total");
+        assert_eq!(field.value.as_deref(), Some(format!("{bad:?}").as_str()));
+        assert!(field.expected.starts_with("decimal"), "{field:?}");
+        assert!(field.reason.contains("JSON decimal"), "{field:?}");
+        assert!(!refusal.map.is_empty());
+        assert_eq!(refusal.document, 0);
+        // The diagnostic `apply` reports is the same refusal, in words.
+        let diagnostic = refusal.diagnostic();
+        assert_eq!(diagnostic.code.as_str(), "mapping.runtime.invalid_record");
+        assert!(
+            diagnostic.message.contains("grand_total"),
+            "{}",
+            diagnostic.message
+        );
+    }
+    // An absent required field is explained with no value.
+    let mut missing = order(json!(1));
+    if let norn_canonical::JsonValue::Object(fields) = &mut missing.record {
+        fields.remove("grand_total");
+    }
+    let refusals = compiled
+        .apply_explained(&[missing], &recorded_at)
+        .expect_err("a required field is missing");
+    let field = refusals
+        .iter()
+        .find_map(|refusal| refusal.field.as_ref())
+        .expect("names the field");
+    assert_eq!(
+        (field.field.as_str(), field.value.as_deref()),
+        ("grand_total", None)
+    );
+}
+
 #[test]
 fn a_nonconforming_record_is_a_typed_failure() {
     let documents = [document(

@@ -82,8 +82,78 @@ pub enum MappingOutcome {
     /// It was already consumed (the same source event, captured before).
     AlreadyLanded,
     /// It stays in the inbox as quarantined evidence, for these reasons
-    /// (mapping diagnostic codes, or the cell's refusal code).
-    Quarantined(Vec<String>),
+    /// (mapping diagnostics, or the cell's refusal), each explained.
+    Quarantined(Vec<QuarantineReason>),
+}
+
+/// MAP-EXPLAIN-1: why a captured row is quarantined, in structure a client
+/// acts on without parsing a message: the stable code, the mapping rule
+/// (map) that refused it and, when a source field does not conform to its
+/// declared type, that field, the value it held and the declared type.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct QuarantineReason {
+    /// The stable code (`mapping.runtime.*`, `core.boundary.*`).
+    pub code: String,
+    /// The map (mapping rule) that refused the row, when a map did.
+    pub map: Option<String>,
+    /// The nonconforming source field, when the refusal is one.
+    pub field: Option<String>,
+    /// The value that field held, as canonical JSON text.
+    pub value: Option<String>,
+    /// The field's declared type, in words.
+    pub expected: Option<String>,
+    /// The refusal in words.
+    pub reason: String,
+}
+
+impl QuarantineReason {
+    /// A reason with only a code and words (a cell refusal or finding).
+    #[must_use]
+    pub fn coded(code: impl Into<String>, reason: impl Into<String>) -> Self {
+        Self {
+            code: code.into(),
+            map: None,
+            field: None,
+            value: None,
+            expected: None,
+            reason: reason.into(),
+        }
+    }
+
+    /// The reason a retained mapping diagnostic records (MAP-EXPLAIN-1
+    /// fields when the bundle retained them; the code and message always).
+    fn of_diagnostic(diagnostic: &RuntimeValue) -> Self {
+        let text = |key: &str| {
+            diagnostic
+                .get(key)
+                .and_then(RuntimeValue::as_str)
+                .map(str::to_owned)
+        };
+        Self {
+            code: text("code").unwrap_or_else(|| "mapping.refused".to_owned()),
+            map: text("map"),
+            field: text("field"),
+            value: text("value"),
+            expected: text("expected"),
+            reason: text("reason")
+                .or_else(|| text("message"))
+                .unwrap_or_default(),
+        }
+    }
+}
+
+impl MappingOutcome {
+    /// The stable codes of a quarantined row, sorted and unique; none otherwise.
+    #[must_use]
+    pub fn codes(&self) -> Vec<String> {
+        let Self::Quarantined(reasons) = self else {
+            return Vec::new();
+        };
+        let mut codes: Vec<String> = reasons.iter().map(|r| r.code.clone()).collect();
+        codes.sort();
+        codes.dedup();
+        codes
+    }
 }
 
 impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S> {
@@ -102,7 +172,14 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
         {
             let pending = self.store().read().pending_observation(observation_id)?;
             return Ok(if pending.is_some() {
-                MappingOutcome::Quarantined(vec!["core.boundary.import_finding".into()])
+                MappingOutcome::Quarantined(vec![QuarantineReason::coded(
+                    "core.boundary.import_finding",
+                    if observation_id.starts_with("mapping-conflict:") {
+                        "the same source event (connector, partition, source, id, version) was already captured with different content; review it to accept one (FEED-CONFLICT)"
+                    } else {
+                        "the source identity is disputed (a spelling or binding conflict); review it before it maps"
+                    },
+                )])
             } else {
                 MappingOutcome::AlreadyLanded
             });
@@ -115,25 +192,23 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
         let bundle: MappingBundle =
             norn_ir::runtime::decode(&observed.input).map_err(CellError::Encoding)?;
         if !bundle.diagnostics.is_empty() {
-            let mut codes: Vec<String> = bundle
+            let mut reasons: Vec<QuarantineReason> = bundle
                 .diagnostics
                 .iter()
-                .map(|d| {
-                    d.get("code")
-                        .and_then(RuntimeValue::as_str)
-                        .unwrap_or("mapping.refused")
-                        .to_owned()
-                })
+                .map(QuarantineReason::of_diagnostic)
                 .collect();
-            codes.sort();
-            codes.dedup();
-            return Ok(MappingOutcome::Quarantined(codes));
+            reasons.sort();
+            reasons.dedup();
+            return Ok(MappingOutcome::Quarantined(reasons));
         }
         match self.process_mapping_bundle(observation_id) {
             Ok(true) => Ok(MappingOutcome::Landed),
             Ok(false) => Ok(MappingOutcome::AlreadyLanded),
             Err(error @ (CellError::Sqlite(_) | CellError::Engine(_))) => Err(error),
-            Err(error) => Ok(MappingOutcome::Quarantined(vec![refusal_code(&error)])),
+            Err(error) => Ok(MappingOutcome::Quarantined(vec![QuarantineReason::coded(
+                refusal_code(&error),
+                error.to_string(),
+            )])),
         }
     }
 }

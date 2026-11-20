@@ -1,6 +1,6 @@
 //! A bounded HTTP/1.1 transport for the dev host: one request per
-//! connection, served in arrival order, over the same dispatch the Durable
-//! Object host uses (`norn_cell_do::server`). It carries method, path, query,
+//! connection, a few served at once (DEV-CONCURRENT-1), over the same
+//! dispatch the Durable Object host uses (`norn_cell_do::server`). It carries method, path, query,
 //! the `Authorization` header and a bounded body, nothing else.
 use std::io::{BufRead as _, BufReader, Read as _, Write as _};
 use std::net::{TcpListener, TcpStream};
@@ -47,7 +47,15 @@ pub(crate) fn dev_connections(cell_path: std::path::PathBuf) -> Result<DevConnec
     ))
 }
 
-/// Serve `listener` until the process exits.
+/// Requests the dev host serves at once (DEV-CONCURRENT-1).
+const WORKERS: usize = 4;
+
+/// Serve `listener` until the process exits, [`WORKERS`] requests at a time
+/// (DEV-CONCURRENT-1): a long request (a load) never holds the others back.
+/// Each request runs on one worker from start to answer, so its verified
+/// caller stays its own ([`crate::policy::CallerSlot`]), and the cell itself
+/// is shared under its own lock, which a load yields between pages
+/// (INGEST-YIELD-1).
 pub(crate) fn serve(
     listener: &TcpListener,
     serving: &Serving,
@@ -56,10 +64,30 @@ pub(crate) fn serve(
     engine: Option<&dyn Transport>,
     connections: &DevConnections,
 ) {
-    for stream in listener.incoming().flatten() {
-        // A broken connection affects only itself.
-        let _ignored = connection(stream, serving, principals, questions, engine, connections);
-    }
+    let (sender, receiver) = std::sync::mpsc::channel::<TcpStream>();
+    let receiver = std::sync::Mutex::new(receiver);
+    std::thread::scope(|scope| {
+        for _ in 0..WORKERS {
+            scope.spawn(|| {
+                loop {
+                    // The guard is released before the request is served.
+                    let next = receiver.lock().map(|receiver| receiver.recv());
+                    let Ok(Ok(stream)) = next else {
+                        return;
+                    };
+                    // A broken connection affects only itself.
+                    let _ignored =
+                        connection(stream, serving, principals, questions, engine, connections);
+                }
+            });
+        }
+        for stream in listener.incoming().flatten() {
+            if sender.send(stream).is_err() {
+                break;
+            }
+        }
+        drop(sender);
+    });
 }
 
 fn connection(

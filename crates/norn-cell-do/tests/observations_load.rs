@@ -101,7 +101,7 @@ fn a_recorded_page_lands_once_through_the_admitted_mapping() {
         refused.to_string().contains("nowhere.three.mapping"),
         "{refused}"
     );
-    // More rows, or more page commits, than one load may make: 413 with a
+    // More rows, or more work, than one hosted load may make: 413 with a
     // typed code, before anything is captured.
     let mut big = export.clone();
     big["snapshot"] = Value::Array(
@@ -119,26 +119,115 @@ fn a_recorded_page_lands_once_through_the_admitted_mapping() {
         refused.to_string().contains("observations.too_large"),
         "{refused}"
     );
-    // One record's nine versions; a versioned export carries no version-less
-    // incremental rows (RECORDED-INCREMENTAL-1).
-    let mut history = json!({ "profile": export["profile"] });
-    history["snapshot"] = Value::Array(
-        (0..9)
-            .map(|n| {
-                let mut row = export["snapshot"][0].clone();
-                row["sourceVersion"] = json!(format!("v{n}"));
-                row
-            })
-            .collect(),
+    // INGEST-BATCH-1: a load is a work budget, not a bare commit count. One
+    // record's nine versions are nine commits, within the budget (it was
+    // refused past 8 commits before); 21 versions are past it.
+    let history = |versions: usize| {
+        let mut history = json!({ "profile": export["profile"] });
+        history["snapshot"] = Value::Array(
+            (0..versions)
+                .map(|n| {
+                    let mut row = export["snapshot"][0].clone();
+                    row["record"]["name"] = json!("SYN-ERPNEXT-history");
+                    row["sourceVersion"] = json!(format!("v{n:02}"));
+                    row
+                })
+                .collect(),
+        );
+        history.to_string()
+    };
+    let (status, loaded) = load(&mut connect, &host, &principals, ADMIN, &history(9));
+    assert_eq!(status, 200, "{loaded}");
+    assert_eq!(loaded["pages"], 9, "{loaded}");
+    let (status, refused) = load(&mut connect, &host, &principals, ADMIN, &history(21));
+    assert_eq!(status, 413, "{refused}");
+    assert!(
+        refused.to_string().contains("21 rows, 21 commits"),
+        "{refused}"
     );
-    let (status, refused) = load(
+}
+
+/// MAP-EXPLAIN-1 and MAP-DECIMAL-TEXT-1 through the route: a decimal sent as
+/// exact text lands (it was quarantined as `mapping.runtime.invalid_record`
+/// with only the code), and a row that still does not conform is explained:
+/// its record, dataset, mapping rule, field, value and declared type.
+#[test]
+fn a_quarantined_row_is_explained_and_decimal_text_lands() {
+    let scope = seed::demo_scope();
+    let store = seed::provision(NativeEngine::open_in_memory().unwrap(), &scope).unwrap();
+    let policy = ReadPolicy::compile(store.model().object_types(), &scope, &DEMO_GRANTS).unwrap();
+    let principals = FixturePrincipals::new(DEMO_FIXTURES, policy.caller());
+    let host = DevHost::from_store(store, scope, |command| command.payload.clone())
+        .unwrap()
+        .with_authorizer(policy);
+    let mut connect = connect();
+    let export: Value = serde_json::from_str(include_str!(
+        "../../../registry/packs/erpnext/synthetic.json"
+    ))
+    .unwrap();
+    let holding = export["snapshot"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["dataset"] == "Warehouse Lot Balance")
+        .unwrap()
+        .clone();
+    let rows = |quantity: Value, name: &str| {
+        let mut row = holding.clone();
+        row["record"]["quantity"] = quantity;
+        row["record"]["name"] = json!(name);
+        // Everything but this holding is the export as committed.
+        let mut snapshot: Vec<Value> = export["snapshot"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|other| other["dataset"] != "Warehouse Lot Balance")
+            .cloned()
+            .collect();
+        snapshot.push(row);
+        json!({ "profile": export["profile"], "snapshot": snapshot }).to_string()
+    };
+    let (status, loaded) = load(
         &mut connect,
         &host,
         &principals,
         ADMIN,
-        &history.to_string(),
+        &rows(json!("200.50"), "SYN-ERPNEXT-text-decimal"),
     );
-    assert_eq!(status, 413, "{refused}");
+    assert_eq!(status, 200, "{loaded}");
+    assert_eq!(loaded["quarantined"], 0, "{loaded}");
+
+    let (status, loaded) = load(
+        &mut connect,
+        &host,
+        &principals,
+        ADMIN,
+        &rows(json!("1,234"), "SYN-ERPNEXT-comma"),
+    );
+    assert_eq!(status, 200, "{loaded}");
+    assert_eq!(loaded["quarantined"], 1, "{loaded}");
+    let why = &loaded["quarantine"][0];
+    assert_eq!(why["record"], "SYN-ERPNEXT-comma", "{why}");
+    assert_eq!(why["dataset"], "Warehouse Lot Balance", "{why}");
+    assert_eq!(why["code"], "mapping.runtime.invalid_record", "{why}");
+    assert!(
+        why["map"].as_str().is_some_and(|map| !map.is_empty()),
+        "{why}"
+    );
+    assert_eq!(why["field"], "quantity", "{why}");
+    assert_eq!(why["value"], "\"1,234\"", "{why}");
+    assert!(
+        why["expected"].as_str().unwrap().starts_with("decimal"),
+        "{why}"
+    );
+    assert!(
+        why["reason"].as_str().unwrap().contains("JSON decimal"),
+        "{why}"
+    );
+    assert_eq!(
+        loaded["quarantineReasons"]["mapping.runtime.invalid_record"],
+        1
+    );
 }
 
 /// A large page's objects keep their per-record lineage through the route.
@@ -192,5 +281,85 @@ fn objects_of_a_large_page_trace_to_their_own_source_row() {
     assert!(
         lineage.to_string().contains("SYN-ERPNEXT-order-00042"),
         "{lineage}"
+    );
+}
+
+/// INGEST-YIELD-1: a read during a long load answers between the load's
+/// pages, not after the whole load. The load is one record's 120 versions
+/// (120 commits); before, the load held the cell for all of them and every
+/// read waited for its end.
+#[test]
+fn a_read_during_a_load_answers_before_the_load_ends() {
+    let scope = seed::demo_scope();
+    let store = seed::provision(NativeEngine::open_in_memory().unwrap(), &scope).unwrap();
+    let policy = ReadPolicy::compile(store.model().object_types(), &scope, &DEMO_GRANTS).unwrap();
+    let principals = FixturePrincipals::new(DEMO_FIXTURES, policy.caller());
+    let host = DevHost::from_store(store, scope, |command| command.payload.clone())
+        .unwrap()
+        .with_authorizer(policy);
+    let export: Value = serde_json::from_str(include_str!(
+        "../../../registry/packs/erpnext/synthetic.json"
+    ))
+    .unwrap();
+    let mut history = json!({ "profile": export["profile"] });
+    history["snapshot"] = Value::Array(
+        (0..120)
+            .map(|n| {
+                let mut row = export["snapshot"][0].clone();
+                row["sourceVersion"] = json!(format!("v{n:03}"));
+                row
+            })
+            .collect(),
+    );
+    let recorded = norn_cell_do::recorded::Recorded::parse(&history).unwrap();
+    let rows = recorded.observations().unwrap();
+    let loading = std::sync::atomic::AtomicBool::new(true);
+    let started = std::sync::Barrier::new(2);
+    let (load_ms, reads) = std::thread::scope(|threads| {
+        let load = threads.spawn(|| {
+            started.wait();
+            let at = std::time::Instant::now();
+            let ingested = host.ingest(&rows).unwrap();
+            loading.store(false, std::sync::atomic::Ordering::Release);
+            assert_eq!(ingested.len(), 120);
+            at.elapsed().as_millis()
+        });
+        started.wait();
+        let mut reads = Vec::new();
+        while loading.load(std::sync::atomic::Ordering::Acquire) {
+            let at = std::time::Instant::now();
+            let response = server::handle(
+                &host,
+                &principals,
+                &server::Request {
+                    method: "GET",
+                    path: "/v1/objects/canon.Party",
+                    query: SCOPE,
+                    authorization: ADMIN,
+                    now: 0,
+                    body: "",
+                },
+            );
+            assert_eq!(response.status, 200, "{}", response.body);
+            reads.push((
+                at.elapsed().as_millis(),
+                loading.load(std::sync::atomic::Ordering::Acquire),
+            ));
+        }
+        (load.join().unwrap(), reads)
+    });
+    let during: Vec<u128> = reads
+        .iter()
+        .filter(|(_, still_loading)| *still_loading)
+        .map(|(ms, _)| *ms)
+        .collect();
+    assert!(
+        during.len() >= 2,
+        "reads answered while the {load_ms} ms load ran: {reads:?}"
+    );
+    let slowest = during.iter().max().copied().unwrap_or_default();
+    assert!(
+        slowest < load_ms / 2,
+        "a read waited {slowest} ms of a {load_ms} ms load: {reads:?}"
     );
 }

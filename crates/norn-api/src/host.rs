@@ -21,8 +21,11 @@ pub struct DevHost<E: SqlEngine> {
     pub(crate) authorizer: Box<dyn Authorizer>,
     definitions: RwLock<()>,
     /// Always `Some` outside [`DevHost::ingest`], which holds the lock while
-    /// it maps source rows under the observation profile.
+    /// it maps one page of source rows under the observation profile.
     cell: Mutex<Option<ActionCell<E>>>,
+    /// Requests waiting for [`Self::cell`]; a load yields to them between
+    /// pages (INGEST-YIELD-1).
+    waiting: std::sync::atomic::AtomicUsize,
     /// PRIVACY-1: the key this cell's pseudonyms are computed under; without
     /// one a pseudonym projection redacts.
     pseudonyms: Option<crate::privacy::PseudonymKey>,
@@ -129,6 +132,7 @@ impl<E: SqlEngine> DevHost<E> {
             authorizer: Box::new(DenyAll),
             definitions: RwLock::new(()),
             cell: Mutex::new(Some(cell)),
+            waiting: std::sync::atomic::AtomicUsize::new(0),
             pseudonyms: None,
             markings: Mutex::new(None),
         })
@@ -247,7 +251,12 @@ impl<E: SqlEngine> DevHost<E> {
         matches && allowed
     }
     pub(crate) fn cell(&self) -> Result<CellGuard<'_, E>, Refusal> {
-        let guard = self.cell.lock().map_err(Refusal::host)?;
+        self.waiting
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        let guard = self.cell.lock();
+        self.waiting
+            .fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+        let guard = guard.map_err(Refusal::host)?;
         if guard.is_none() {
             return Err(Refusal::host("the cell is unavailable"));
         }
@@ -255,14 +264,19 @@ impl<E: SqlEngine> DevHost<E> {
     }
 
     /// Capture source rows and map them through the cell's own mapping path,
-    /// under the definition epoch, in OBS-PAGE-1 pages: consecutive rows with
+    /// under the definition epoch, in OBS-PAGE-1 pages ([`pages`]): rows with
     /// the same [`MappingInput`](norn_cell::mapping_bundle::MappingInput),
     /// split at [`PAGE_ROWS`] and before a repeated source record, are
     /// captured by `inject_mapping_page` and committed by
     /// `process_mapping_page`. The trusted host's sync calls this; no caller
     /// supplies facts, and a refused row stays in the inbox as quarantined
     /// evidence with its reasons. Rows already captured are captured once.
-    /// Returns one outcome per row.
+    /// Returns one outcome per row, in row order.
+    ///
+    /// INGEST-YIELD-1: the cell is locked one page at a time, not for the
+    /// whole batch. Between pages the lock is released and any request
+    /// already waiting for the cell (a read) is served first, so a read
+    /// during a load waits for at most one page commit.
     /// # Errors
     /// A page the cell cannot capture (framing or pins it refuses), or a
     /// store failure; pages before it stay captured and processed.
@@ -274,26 +288,44 @@ impl<E: SqlEngine> DevHost<E> {
         )],
     ) -> Result<Vec<Ingested>, Refusal> {
         let _epoch = self.definition_read()?;
-        let mut slot = self.cell.lock().map_err(Refusal::host)?;
-        let cell = slot
-            .take()
-            .ok_or_else(|| Refusal::host("the cell is unavailable"))?;
-        let mut observing: norn_cell::SqliteCell<
-            ObservationEvent,
-            RuntimeObject,
-            RuntimeObject,
-            E,
-        > = cell.into_profile();
-        let mut out = Vec::with_capacity(rows.len());
-        let mut result = Ok(());
-        for (input, page) in pages(rows) {
-            result = ingest_page(&mut observing, &page, input, &mut out);
-            if result.is_err() {
-                break;
+        let mut out: Vec<(usize, Ingested)> = Vec::with_capacity(rows.len());
+        for (index, (input, page)) in pages(rows).into_iter().enumerate() {
+            if index > 0 {
+                self.let_waiting_requests_in();
             }
+            let mut slot = self.cell.lock().map_err(Refusal::host)?;
+            let cell = slot
+                .take()
+                .ok_or_else(|| Refusal::host("the cell is unavailable"))?;
+            let mut observing: norn_cell::SqliteCell<
+                ObservationEvent,
+                RuntimeObject,
+                RuntimeObject,
+                E,
+            > = cell.into_profile();
+            let rows: Vec<Observed<RuntimeValue>> =
+                page.iter().map(|(_, raw)| raw.clone()).collect();
+            let mut outcomes = Vec::with_capacity(rows.len());
+            let result = ingest_page(&mut observing, &rows, input, &mut outcomes);
+            *slot = Some(observing.into_profile());
+            drop(slot);
+            result.map_err(Refusal::host)?;
+            out.extend(page.iter().map(|(at, _)| *at).zip(outcomes));
         }
-        *slot = Some(observing.into_profile());
-        result.map(|()| out).map_err(Refusal::host)
+        out.sort_by_key(|(at, _)| *at);
+        Ok(out.into_iter().map(|(_, ingested)| ingested).collect())
+    }
+
+    /// Yield the cell to requests already waiting for it (INGEST-YIELD-1),
+    /// for at most [`YIELD_BOUND`], so a load never starves them and they
+    /// never stall it.
+    fn let_waiting_requests_in(&self) {
+        let started = std::time::Instant::now();
+        while self.waiting.load(std::sync::atomic::Ordering::Acquire) > 0
+            && started.elapsed() < YIELD_BOUND
+        {
+            std::thread::yield_now();
+        }
     }
 
     /// Install `added` over the active definitions as the next governed
@@ -545,6 +577,9 @@ impl<E: SqlEngine> DevHost<E> {
 /// The most rows one OBS-PAGE-1 page carries; the cell's own bound is higher.
 pub const PAGE_ROWS: usize = 500;
 
+/// How long a load yields the cell to waiting requests between two pages.
+const YIELD_BOUND: std::time::Duration = std::time::Duration::from_millis(250);
+
 /// How many OBS-PAGE-1 pages (one commit each) [`DevHost::ingest`] makes of
 /// `rows`, before any canonical-object split inside a page.
 #[must_use]
@@ -557,36 +592,83 @@ pub fn page_count(
     pages(rows).len()
 }
 
-/// OBS-PAGE-1 framing: consecutive rows with the same mapping input, split at
-/// [`PAGE_ROWS`] and before a source record the page already carries.
+/// One OBS-PAGE-1 page: its mapping input and its rows, each with its index
+/// in the batch.
+type Page<'a> = (
+    &'a norn_cell::mapping_bundle::MappingInput,
+    Vec<(usize, &'a Observed<RuntimeValue>)>,
+);
+
+/// OBS-PAGE-1 framing: rows with the same mapping input, in batch order,
+/// split at [`PAGE_ROWS`] and before a source record the page already
+/// carries.
+///
+/// INGEST-GROUP-1: a batch that interleaves datasets (a case, its events,
+/// the next case...) is grouped by mapping input first, keeping each
+/// input's rows in batch order, so it is a few pages rather than one per
+/// run. Grouping only reorders rows of different inputs, and only when no
+/// source record identity appears under two inputs of the batch; otherwise
+/// the batch is framed in its own order. Each record's versions therefore
+/// arrive in batch order either way, and links between records resolve in
+/// any order (OBS-LINK-PENDING-ORDER).
 fn pages(
     rows: &[(
         Observed<RuntimeValue>,
         norn_cell::mapping_bundle::MappingInput,
     )],
-) -> Vec<(
-    &norn_cell::mapping_bundle::MappingInput,
-    Vec<Observed<RuntimeValue>>,
-)> {
-    let mut pages: Vec<(
-        &norn_cell::mapping_bundle::MappingInput,
-        Vec<Observed<RuntimeValue>>,
-    )> = Vec::new();
+) -> Vec<Page<'_>> {
+    let mut order: Vec<usize> = (0..rows.len()).collect();
+    if groupable(rows) {
+        let mut first: Vec<&norn_cell::mapping_bundle::MappingInput> = Vec::new();
+        for (_, input) in rows {
+            if !first.contains(&input) {
+                first.push(input);
+            }
+        }
+        order.sort_by_key(|&at| {
+            rows.get(at)
+                .and_then(|(_, input)| first.iter().position(|seen| *seen == input))
+                .unwrap_or(usize::MAX)
+        });
+    }
+    let mut pages: Vec<Page<'_>> = Vec::new();
     let mut seen = std::collections::BTreeSet::new();
-    for (raw, input) in rows {
-        let identity = raw.provenance.source_id.clone();
+    for at in order {
+        let Some((raw, input)) = rows.get(at) else {
+            continue;
+        };
+        let identity = raw.provenance.source_id.as_str();
         let split = pages.last().is_none_or(|(current, page)| {
-            *current != input || page.len() >= PAGE_ROWS || !seen.insert(identity.clone())
+            *current != input || page.len() >= PAGE_ROWS || !seen.insert(identity)
         });
         if split {
             seen = std::collections::BTreeSet::from([identity]);
             pages.push((input, Vec::new()));
         }
         if let Some((_, page)) = pages.last_mut() {
-            page.push(raw.clone());
+            page.push((at, raw));
         }
     }
     pages
+}
+
+/// Whether no source record identity appears under two mapping inputs of
+/// the batch (INGEST-GROUP-1), so grouping by input keeps every record's
+/// rows in batch order.
+fn groupable(
+    rows: &[(
+        Observed<RuntimeValue>,
+        norn_cell::mapping_bundle::MappingInput,
+    )],
+) -> bool {
+    let mut inputs: std::collections::HashMap<&str, &norn_cell::mapping_bundle::MappingInput> =
+        std::collections::HashMap::new();
+    rows.iter().all(|(raw, input)| {
+        *inputs
+            .entry(raw.provenance.source_id.as_str())
+            .or_insert(input)
+            == input
+    })
 }
 
 /// Capture and commit one page, one outcome per row into `out`. A page over
@@ -688,7 +770,7 @@ mod page_tests {
                 (
                     input.dataset.clone(),
                     page.iter()
-                        .map(|raw| raw.provenance.source_id.clone())
+                        .map(|(_, raw)| raw.provenance.source_id.clone())
                         .collect(),
                 )
             })
@@ -702,5 +784,43 @@ mod page_tests {
                 ("items".to_owned(), vec!["z".to_owned()]),
             ]
         );
+    }
+
+    /// INGEST-GROUP-1: a batch interleaving two datasets (a case, its
+    /// events, the next case...) is two pages, one per input, each in batch
+    /// order, not one page per run; it was 2 per case before. Each row keeps
+    /// its batch index, so outcomes return in row order.
+    #[test]
+    fn an_interleaved_batch_is_one_page_per_input() {
+        let (cases, events) = (input("case"), input("event"));
+        let mut batch = Vec::new();
+        for case in 0..30 {
+            batch.push((row(&format!("c{case}")), cases.clone()));
+            for event in 0..3 {
+                batch.push((row(&format!("c{case}#{event}")), events.clone()));
+            }
+        }
+        let framed = pages(&batch);
+        assert_eq!(page_count(&batch), 2);
+        let (first, second) = (&framed[0], &framed[1]);
+        assert_eq!(first.0.dataset, "case");
+        assert_eq!(second.0.dataset, "event");
+        assert_eq!(first.1.len(), 30);
+        assert_eq!(second.1.len(), 90);
+        // Batch order inside each input, and every row once.
+        assert!(first.1.windows(2).all(|pair| pair[0].0 < pair[1].0));
+        assert!(second.1.windows(2).all(|pair| pair[0].0 < pair[1].0));
+        let mut indices: Vec<usize> = framed
+            .iter()
+            .flat_map(|(_, page)| page.iter().map(|(at, _)| *at))
+            .collect();
+        indices.sort_unstable();
+        assert_eq!(indices, (0..batch.len()).collect::<Vec<_>>());
+        // A record's later version still follows its earlier one.
+        batch.push((row("c0"), cases.clone()));
+        let framed = pages(&batch);
+        assert_eq!(framed.len(), 3, "the repeat of c0 is the next page");
+        assert_eq!(framed[1].1.len(), 1);
+        assert_eq!(framed[1].0.dataset, "case");
     }
 }

@@ -8,9 +8,12 @@
 //! that applies its still-pending records in page order; the kernel's one
 //! write per key per commit then never merges two records' writes, so
 //! versions, events and the CAS chain are the one-by-one ones. A record the
-//! mapping or the cell refuses stays pending as quarantined evidence, as it
-//! does one by one: such a page is applied record by record, and its row is
-//! consumed (applying nothing) once no member is left pending.
+//! mapping refused (its bundle retains diagnostics) joins no page row: it is
+//! quarantined evidence before any commit, exactly as one by one, so the rest
+//! of its page still lands in one commit. A record the cell refuses at commit
+//! stays pending as quarantined evidence, as it does one by one: such a page
+//! is applied record by record, and its row is consumed (applying nothing)
+//! once no member is left pending.
 use crate::{
     CellError, CellStore, SqliteCell, StoreReader,
     engine::SqlEngine,
@@ -114,6 +117,12 @@ impl<E: SqlEngine> CellStore<E> {
                     continue;
                 }
                 let bundle = self.read().inbox_bundle(&id)?;
+                if !bundle.diagnostics.is_empty() {
+                    // MAP-EXPLAIN-1: a record the mapping refused is quarantined
+                    // evidence before any commit, as one by one; it joins no
+                    // page, so it never sends its page down the per-record path.
+                    continue;
+                }
                 let keys: BTreeSet<FactKey> = bundle
                     .records
                     .iter()
