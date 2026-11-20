@@ -1029,15 +1029,8 @@ pub(crate) fn resume_approved<E: SqlEngine>(
         else {
             return Ok(None);
         };
-        match row.state {
-            ApprovedCallState::Committed => return Ok(Some(Resumed::Committed)),
-            ApprovedCallState::Refused => {
-                return Ok(Some(Resumed::Refused(DecidedCall {
-                    committed: false,
-                    code: row.code,
-                })));
-            }
-            ApprovedCallState::Due => {}
+        if row.state == ApprovedCallState::Committed {
+            return Ok(Some(Resumed::Committed));
         }
         let held = reader
             .outbox_command(&row.command_id)
@@ -1050,6 +1043,8 @@ pub(crate) fn resume_approved<E: SqlEngine>(
                     .and_then(crate::approvals::held_call)
             })
             .ok_or_else(|| Refusal::host("an approved call's parked command is missing"))?;
+        // The call committed (the requester's own retry commits an approved
+        // call too): whatever was settled, it is committed.
         if crate::actions::call_recorded(
             cell.store(),
             &held.call.action,
@@ -1059,6 +1054,12 @@ pub(crate) fn resume_approved<E: SqlEngine>(
                 .settle_approved_call(MAIN_WORLD, decision_id, None)
                 .map_err(Refusal::host)?;
             return Ok(Some(Resumed::Committed));
+        }
+        if row.state == ApprovedCallState::Refused {
+            return Ok(Some(Resumed::Refused(DecidedCall {
+                committed: false,
+                code: row.code,
+            })));
         }
         held
     };

@@ -481,8 +481,10 @@ impl<E: SqlEngine> StoreReader<'_, E> {
 impl<E: SqlEngine> crate::store::CellStore<E> {
     /// APPROVAL-RECOVERY-1: settle the approved call of `decision_id` as
     /// committed, or as refused with `code`. Host bookkeeping outside the
-    /// ledger, in its own transaction; only a due call settles, so a
-    /// settlement is never overwritten. `true` when this call settled it.
+    /// ledger, in its own transaction. Only a due call settles as refused;
+    /// a call settles as committed from due or refused (the requester's own
+    /// retry may commit a call refused earlier), and a committed call never
+    /// changes. `true` when this call changed it.
     ///
     /// # Errors
     /// SQL engine errors.
@@ -492,15 +494,14 @@ impl<E: SqlEngine> crate::store::CellStore<E> {
         decision_id: &str,
         refused: Option<&str>,
     ) -> Result<bool, CellError> {
-        let state = if refused.is_some() {
-            ApprovedCallState::Refused
-        } else {
-            ApprovedCallState::Committed
+        let (state, from) = match refused {
+            Some(_) => (ApprovedCallState::Refused, "'due'"),
+            None => (ApprovedCallState::Committed, "'due','refused'"),
         };
         self.conn.transaction(|| -> Result<bool, CellError> {
             let before = self.conn.query_optional(
                 &format!(
-                    r#"SELECT 1 FROM "{APPROVED_CALL}" WHERE "world"=?1 AND "decision_id"=?2 AND "state"='due'"#
+                    r#"SELECT 1 FROM "{APPROVED_CALL}" WHERE "world"=?1 AND "decision_id"=?2 AND "state" IN ({from})"#
                 ),
                 params![world, decision_id],
                 |_row| Ok(()),
@@ -510,9 +511,14 @@ impl<E: SqlEngine> crate::store::CellStore<E> {
             }
             self.conn.execute(
                 &format!(
-                    r#"UPDATE "{APPROVED_CALL}" SET "state"=?3,"code"=?4 WHERE "world"=?1 AND "decision_id"=?2 AND "state"='due'"#
+                    r#"UPDATE "{APPROVED_CALL}" SET "state"=?3,"code"=?4 WHERE "world"=?1 AND "decision_id"=?2 AND "state" IN ({from})"#
                 ),
-                params![world, decision_id, state.as_str(), refused.map(str::to_owned)],
+                params![
+                    world,
+                    decision_id,
+                    state.as_str(),
+                    refused.map(str::to_owned)
+                ],
             )?;
             Ok(true)
         })
