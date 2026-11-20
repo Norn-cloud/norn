@@ -115,7 +115,8 @@ def row(spec):
                         "reclaim_s": sum(step["s"] for step in steps
                                          if step["name"] == "Reclaim runner disk space"),
                         "steps": steps})
-    plan_starts = [j["started_at"] for j in entries if j["name"] == "plan" and j["started_at"]]
+    # The gate plan is the first gate step of core; runs before that change had a plan job.
+    plan_starts = [j["started_at"] for j in entries if j["name"] in ("plan", "core") and j["started_at"]]
     return {"run_id": run["id"], "attempt": attempt, "event": run["event"],
             "head_sha": run["head_sha"], "created_at": created,
             "completed_at": run["updated_at"], "conclusion": run["conclusion"],

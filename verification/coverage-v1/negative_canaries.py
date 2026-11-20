@@ -635,7 +635,7 @@ def workflow_verdict_canaries(source: str) -> None:
                                         cwd=ROOT, capture_output=True, text=True, timeout=10, check=True).stdout)
     full_plan = packed(full_plan)
     affected = packed(affected)
-    passed = dict.fromkeys(("CORE", "PLANNED", "TEST"), "success")
+    passed = dict.fromkeys(("CORE", "TEST"), "success")
     cases = [(event, full_plan, passed, True) for event in ("push", "merge_group", "workflow_dispatch")]
     cases.append(("pull_request", affected, passed, True))
     cases.extend((event, affected, passed, False)
@@ -664,6 +664,10 @@ def workflow_verdict_canaries(source: str) -> None:
     duplicate["bundle"] = [{"id": "b0", "tasks": ["test/rest-1", "test/rest-1"]}]
     cases.append(("pull_request", duplicate, passed, False))
     cases.append(("pull_request", affected, {**passed, "CORE": "Success"}, False))
+    # More bundles than the start budget allows fail, even when they cover the plan exactly.
+    spread = copy.deepcopy(full_plan)
+    spread["bundle"].append({"id": "b9", "tasks": [spread["bundle"][0]["tasks"].pop()]})
+    cases.append(("merge_group", spread, passed, False))
     for mutate in (
         lambda p: p.pop("bundle"),
         lambda p: p["bundle"][0]["tasks"].pop(),
@@ -1407,7 +1411,7 @@ def workflow_context_canaries(source: str) -> None:
                 return
             raise AssertionError(f"workflow context mutation passed: {label}")
 
-        for name in ("core", "plan", "full"):
+        for name in ("core", "full"):
             expression = workflow["jobs"][name]["if"]
             for event in ("pull_request", "push", "merge_group", "workflow_dispatch", "pull_request_target", "issue_comment"):
                 for draft in (False, True):
@@ -1418,8 +1422,7 @@ def workflow_context_canaries(source: str) -> None:
                             "github.event.pull_request.draft", str(draft)).replace("always()", "True").replace(
                             "cancelled()", "False").replace("&&", " and ").replace("||", " or ")
                         candidate_expression = re.sub(r"!(?!=)", " not ", candidate_expression)
-                        expected = event not in ("pull_request_target", "issue_comment") and not (
-                            name == "plan" and event == "pull_request" and draft)
+                        expected = event not in ("pull_request_target", "issue_comment")
                         if bool(condition_value(candidate_expression)) != expected:
                             raise AssertionError(f"{name} admission drift: {event}/{action}/{draft}")
         for event in ("pull_request", "merge_group", "push", "workflow_dispatch"):
@@ -1433,7 +1436,7 @@ def workflow_context_canaries(source: str) -> None:
         document = copy.deepcopy(workflow)
         document["run-name"] = "${{ github.event.pull_request.title }}"
         rejected("forged READY attribution", document)
-        for name in ("core", "plan", "full", "trusted-policy"):
+        for name in ("core", "full", "trusted-policy"):
             document = copy.deepcopy(workflow)
             document["jobs"][name]["name"] = "renamed"
             rejected(f"renamed control check {name}", document)
@@ -1456,18 +1459,43 @@ def workflow_context_canaries(source: str) -> None:
             document = copy.deepcopy(workflow)
             del document["on"][trigger]
             rejected(f"removed trigger {trigger}", document)
-        for name in ("core", "plan", "test", "full"):
+        for name in ("core", "test", "full"):
             document = copy.deepcopy(workflow)
             document["jobs"][name]["steps"][-1]["shell"] = "/usr/bin/true {0}"
             rejected(f"{name} shell override", document)
-        for key in ("DRAFT", "BASE", "HEAD_SHA", "CORE", "PLANNED", "TEST"):
+        for key in ("DRAFT", "BASE", "HEAD_SHA", "CORE", "TEST"):
             document = copy.deepcopy(workflow)
             document["jobs"]["full"]["steps"][0]["env"][key] = "forged"
             rejected(f"forged verdict input {key}", document)
-        for name in ("plan", "full"):
+        for name in ("test", "full"):
             document = copy.deepcopy(workflow)
             document["jobs"][name]["if"] = "!cancelled()"
             rejected(f"{name} cancellation/admission mutation", document)
+        # A draft head runs core only: bundles admitted for drafts are rejected.
+        document = copy.deepcopy(workflow)
+        document["jobs"]["test"]["if"] = "fromJSON(needs.core.outputs.plan).bundle[0] != null"
+        rejected("bundles admitted for draft heads", document)
+        # The gate plan is core's step before cheap: it must exist once, unconditional, fail
+        # closed, bound to the event base and head, and published as core's only output.
+        planner = next(i for i, step in enumerate(workflow["jobs"]["core"]["steps"]) if step.get("id") == "plan")
+        for label, mutate in (
+                ("removed", lambda job: job["steps"].pop(planner)),
+                ("conditional", lambda job: job["steps"][planner].__setitem__("if", "false")),
+                ("tolerated", lambda job: job["steps"][planner].__setitem__("continue-on-error", True)),
+                ("after cheap", lambda job: job["steps"].append(job["steps"].pop(planner))),
+                ("unbound base", lambda job: job["steps"][planner]["env"].__setitem__("BASE", "")),
+                ("forged head", lambda job: job["steps"][planner]["env"].__setitem__("HEAD_SHA", "HEAD")),
+                ("unbound output", lambda job: job["outputs"].__setitem__("plan", "{}")),
+                ("extra output", lambda job: job["outputs"].__setitem__("packages", "norn-canonical")),
+                ("missing output", lambda job: job.pop("outputs")),
+                ("renamed", lambda job: job["steps"][planner].__setitem__("id", "planned")),
+                ("duplicated", lambda job: job["steps"].insert(planner, copy.deepcopy(job["steps"][planner])))):
+            document = copy.deepcopy(workflow)
+            mutate(document["jobs"]["core"])
+            rejected(f"core gate plan {label}", document)
+        document = copy.deepcopy(workflow)
+        document["jobs"]["plan"] = copy.deepcopy(document["jobs"]["full"])
+        rejected("a separate plan job (an extra Boat start)", document)
         document = copy.deepcopy(workflow)
         document["on"]["pull_request"]["types"].remove("ready_for_review")
         rejected("missing READY activity", document)
@@ -1655,7 +1683,7 @@ def workflow_context_canaries(source: str) -> None:
                 if condition_value(concrete) != expected:
                     raise AssertionError("Boat runner evaluation drift: " + "/".join(
                         (event, merge_variable, pr_variable, head_repository, author, actor, rerunner)))
-        for name in ("core", "plan", "test", "full", "trusted-policy"):
+        for name in ("core", "test", "full", "trusted-policy"):
             unsafe = ["boat", "self-hosted", ["self-hosted", "norn-merge"], legacy,
                       "${{ vars.NORN_MERGE_RUNNER || 'ubuntu-24.04' }}",
                       "${{ vars.NORN_PR_RUNNER || 'ubuntu-24.04' }}",
@@ -1682,7 +1710,7 @@ def workflow_context_canaries(source: str) -> None:
                 unsafe.append(runner.replace("'merge_group'", repr(event)))
             for event in ("pull_request_target", "issue_comment", "push", "workflow_dispatch"):
                 unsafe.append(runner.replace("'pull_request'", repr(event)))
-            if name in ("core", "plan", "test"):
+            if name in ("core", "test"):
                 unsafe += ["ubuntu-24.04", merge_only]
             else:
                 # The required verdict and the trusted-policy control jobs stay hosted in
@@ -1695,11 +1723,11 @@ def workflow_context_canaries(source: str) -> None:
                 document["jobs"][name]["runs-on"] = value
                 rejected(f"{name} unsafe runner routing", document)
         document = copy.deepcopy(workflow)
-        for name in ("core", "plan", "test"):
+        for name in ("core", "test"):
             document["jobs"][name]["runs-on"] = runner
         candidate.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
         validator.validate_workflow_integrity([], formal_path=candidate)
-        for name in ("core", "plan", "test"):
+        for name in ("core", "test"):
             document = copy.deepcopy(workflow)
             document["jobs"][name]["steps"].insert(-1, {
                 "uses": "actions/github-script@" + "a" * 40,
@@ -1717,7 +1745,7 @@ def workflow_context_canaries(source: str) -> None:
                 document["jobs"][name]["steps"][-1].setdefault("env", {})[key] = "override"
                 rejected(f"{name} step environment {key}", document)
         document = copy.deepcopy(workflow)
-        document["jobs"]["test"]["needs"] = ["plan"]
+        document["jobs"]["test"]["needs"] = []
         rejected("bundles admitted before the cheap gate", document)
         for key in ("PLAN", "BUNDLE_ID"):
             document = copy.deepcopy(workflow)
@@ -1770,12 +1798,13 @@ def workflow_canaries() -> None:
     mutations = [
         ("missing cheap gate", "run: bash scripts/ci/core.sh cheap", "run: echo skipped"),
         ("missing bundle executor", 'run: bash scripts/ci/core.sh bundle "$PLAN" "$BUNDLE_ID"', "run: echo skipped"),
-        ("missing bundle matrix", "bundle: ${{ fromJSON(needs.plan.outputs.plan).bundle }}", "bundle: []"),
-        ("missing full verdict dependency", "needs: [core, plan, test]", "needs: [core, plan]"),
-        ("disabled planned bundles", "if: fromJSON(needs.plan.outputs.plan).bundle[0] != null", "if: false"),
+        ("missing bundle matrix", "bundle: ${{ fromJSON(needs.core.outputs.plan).bundle }}", "bundle: []"),
+        ("missing full verdict dependency", "needs: [core, test]", "needs: [core]"),
+        ("disabled planned bundles", "if: fromJSON(needs.core.outputs.plan).bundle[0] != null", "if: false"),
         ("wrong affected base", "github.event_name == 'pull_request' && github.event.pull_request.base.sha", "github.event_name == 'pull_request' && github.sha"),
-        ("unbound affected packages", "NORN_CI_PACKAGES: ${{ fromJSON(needs.plan.outputs.plan).packages }}", "NORN_CI_PACKAGES: norn-skeleton-guard"),
-        ("unbound rest partitions", "NORN_CI_REST_SHARDS: ${{ fromJSON(needs.plan.outputs.plan).rest_shards }}", "NORN_CI_REST_SHARDS: 1"),
+        ("unbound affected packages", "NORN_CI_PACKAGES: ${{ fromJSON(needs.core.outputs.plan).packages }}", "NORN_CI_PACKAGES: norn-skeleton-guard"),
+        ("unbound rest partitions", "NORN_CI_REST_SHARDS: ${{ fromJSON(needs.core.outputs.plan).rest_shards }}", "NORN_CI_REST_SHARDS: 1"),
+        ("more bundles than the start budget", "length <= 3 and all(.[];", "length <= 6 and all(.[];"),
         ("missing full-plan branch", 'else plan=$(bash scripts/ci/core.sh plan); fi', 'else plan="{}"; fi'),
         ("forged core verdict", "CORE: ${{ needs.core.result }}", "CORE: success"),
         ("missing full-plan assertion", '[ "$mode" = full ]', 'true'),
