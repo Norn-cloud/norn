@@ -1477,3 +1477,79 @@ fn retain_as_before_decimal_text(
     )
     .expect("legacy row");
 }
+
+/// The cell, holding row and inbox id of one ERPNext holding whose quantity
+/// is exact decimal text, retained but not processed. The main-era fixture
+/// (`fixtures/mapping-bundle-main-decimal-text.json`) was captured by this
+/// exact sequence on the merged main parent's code.
+fn decimal_text_holding(path: &Path) -> (Cell, Value, String) {
+    let mut cell = setup(path);
+    let source = fixture("erpnext");
+    let rows = source["snapshot"].as_array().expect("rows");
+    for row in rows
+        .iter()
+        .filter(|row| row["dataset"] != "Warehouse Lot Balance")
+    {
+        capture(&mut cell, "erpnext", row, "snapshot");
+    }
+    let mut holding = rows
+        .iter()
+        .find(|row| row["dataset"] == "Warehouse Lot Balance")
+        .expect("holding")
+        .clone();
+    holding["record"]["quantity"] = json!("200.50");
+    holding["record"]["name"] = json!("SYN-ERPNEXT-main");
+    let id = retain_in(&mut cell, "erpnext", &holding, "snapshot", "snapshot");
+    (cell, holding, id)
+}
+
+/// S1 (#1488): main already captured exact decimal text in unversioned
+/// bundles (MAPPING-DECIMAL-TEXT-1). Such a bundle, as main's code retained
+/// it, still rechecks and lands: unversioned evidence verifies under either
+/// historical derivation.
+#[test]
+fn an_unversioned_bundle_main_captured_with_decimal_text_rechecks_and_lands() {
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("main.sqlite");
+    let (mut cell, _holding, id) = decimal_text_holding(&path);
+    let main_bundle: Value = serde_json::from_str(include_str!(
+        "fixtures/mapping-bundle-main-decimal-text.json"
+    ))
+    .expect("fixture");
+    assert!(main_bundle.get("derivation").is_none(), "unversioned");
+    let db = rusqlite::Connection::open(&path).expect("open");
+    let stored: String = db
+        .query_row(
+            "SELECT observed FROM _norn_inbox WHERE observation_id = ?1",
+            [&id],
+            |row| row.get(0),
+        )
+        .expect("row");
+    let mut observed: Value = serde_json::from_str(&stored).expect("observed");
+    observed["input"] = main_bundle;
+    db.execute(
+        "UPDATE _norn_inbox SET observed = ?1 WHERE observation_id = ?2",
+        rusqlite::params![observed.to_string(), id],
+    )
+    .expect("main-era row");
+    drop(db);
+
+    let bundles = cell
+        .store()
+        .read()
+        .source_event_mapping_bundles(
+            "demo",
+            "snapshot",
+            "synthetic-erpnext",
+            "SYN-ERPNEXT-main",
+            "snapshot",
+        )
+        .expect("a bundle main retained rechecks");
+    assert_eq!(bundles.len(), 1);
+    assert_eq!(bundles[0].derivation, 1);
+    assert!(bundles[0].diagnostics.is_empty() && !bundles[0].records.is_empty());
+    assert_eq!(
+        cell.process_mapping_outcome(&id).expect("outcome"),
+        norn_cell::MappingOutcome::Landed
+    );
+}
