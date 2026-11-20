@@ -12,6 +12,7 @@
 )]
 mod query_support;
 
+use norn_cell::test_door::TestCommit as _;
 use std::collections::BTreeMap;
 use std::io::Write as _;
 
@@ -32,7 +33,13 @@ use norn_ir::{
     ArtifactEnvelope, ArtifactKind, ArtifactPayload, Decimal, EntityIrVersion, EntityRootV2,
     RuntimeValue,
 };
-use query_support::{CLOCK, TYPE, WORLD, fixture, load, put};
+use query_support::{CLOCK, TYPE, WORLD, fixture, load_batch, put};
+
+/// [`query_support::load_batch`], committed raw (this suite is compiled in
+/// the crate, #1485 S6).
+fn load(store: &mut CellStore) {
+    store.commit(&load_batch()).expect("native fixture commit");
+}
 
 fn engine() -> (tempfile::TempDir, Engine) {
     let dir = tempfile::tempdir().expect("engine dir");
@@ -751,7 +758,9 @@ fn loaded_timestamp_grammar_is_the_cells_at_its_edges() {
 /// The bulk path's numbers, on the machine that runs it: a 1M-row CSV load,
 /// the same rows as Parquet, the weekly yield question over them, a profile,
 /// and a mirror sync of 100k governed versions. Run on Boat in release:
-/// `cargo test --release -p norn-cell --features duckdb --test analytics_engine -- --ignored --nocapture`.
+/// `cargo test --release -p norn-cell --features duckdb --lib suites::analytics_engine:: -- --ignored --nocapture`
+/// (the suite is compiled into norn-cell's own test build, where its
+/// fixtures commit through the crate's test door).
 #[test]
 #[ignore = "a 1M-row measurement, run on Boat in release"]
 #[allow(
@@ -964,6 +973,7 @@ fn bulk_path_measurements() {
 mod snapshot {
     use super::{Engine, compare, engine};
     use norn_cell::compute::QueryContext;
+    use norn_cell::test_door::TestCommit as _;
     use norn_cell::{CellStore, CommitBatch, FactWriteRow, Model};
     use norn_checker::metric::compute::QuestionPlan;
     use norn_ir::{
@@ -1340,6 +1350,7 @@ mod scales {
 mod linked_time {
     use super::{compare, engine};
     use norn_cell::compute::QueryContext;
+    use norn_cell::test_door::TestCommit as _;
     use norn_cell::{CellStore, CommitBatch, FactWriteRow, LinkChange, Model};
     use norn_checker::metric::compute::QuestionPlan;
     use norn_checker::metric::derive::derive_metric_space;
@@ -1602,6 +1613,7 @@ mod linked_time {
 mod sources_pack {
     use super::{CLOCK, CellStore, CommitBatch, FactWriteRow, Model, RuntimeValue, engine, tenant};
     use norn_cell::analytics::{ExportFormat, ExportRequest, PageRequest, ProfileRequest};
+    use norn_cell::test_door::TestCommit as _;
     use norn_ir::{ArtifactEnvelope, EntityRoot};
     use std::collections::BTreeMap;
 
@@ -1750,6 +1762,7 @@ mod alias_names {
         ExportFormat, ExportRequest, PageClause, PageKey, PageOp, PageOperand, PageRequest,
         ProfileRequest,
     };
+    use norn_cell::test_door::TestCommit as _;
     use std::collections::BTreeMap;
 
     const WORLD: &str = "main";
@@ -1924,6 +1937,7 @@ mod known_at {
     };
     use norn_cell::KnowledgeCutoff;
     use norn_cell::compute::{Engine as Answered, HistoricalQuestionResult};
+    use norn_cell::test_door::TestCommit as _;
     use norn_checker::metric::compute::QuestionPlan;
 
     fn exact(

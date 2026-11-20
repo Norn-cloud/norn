@@ -3028,7 +3028,7 @@ fn conform(raw: Option<&norn_canonical::JsonValue>, ty: &Type) -> Result<Value, 
             Ok(Value::Null)
         }
         (raw, Type::Optional(inner)) => conform(raw, inner),
-        (None | Some(Json::Null), _) => Err("is required".to_owned()),
+        (None | Some(Json::Null), _) => Err(format!("is required (expected {})", expected(ty))),
         (Some(Json::String(text)), Type::Enum { values }) => {
             if values.contains(text) {
                 Ok(Value::String(text.clone()))
@@ -3052,6 +3052,14 @@ fn conform(raw: Option<&norn_canonical::JsonValue>, ty: &Type) -> Result<Value, 
             number_value(number)
         }
         (Some(Json::Number(number)), Type::Number | Type::Decimal { .. }) => number_value(number),
+        // MAPPING-DECIMAL-TEXT-1: sources (Frappe among them) send decimals
+        // as JSON strings to keep them exact. Only the exact text form
+        // (`-12.50`: no exponent, sign, spaces or leading zeros) is a number.
+        (Some(Json::String(text)), Type::Number | Type::Decimal { .. })
+            if exact_decimal_text(text) =>
+        {
+            number_value(text)
+        }
         (Some(Json::Bool(flag)), Type::Bool) => Ok(Value::Bool(*flag)),
         // A declared child table is typed for the checker only; at runtime
         // its rows convert exactly as opaque JSON does, so bounds and nested
@@ -3059,7 +3067,63 @@ fn conform(raw: Option<&norn_canonical::JsonValue>, ty: &Type) -> Result<Value, 
         (Some(value), Type::Json) | (Some(value @ Json::Array(_)), Type::List(_)) => {
             any_value(value)
         }
-        (Some(value), ty) => Err(format!("{value:?} does not conform to {ty:?}")),
+        (Some(value), ty) => Err(format!("value {} is not {}", shown(value), expected(ty))),
+    }
+}
+
+/// Whether `text` is an exact decimal in its plain text form: an optional
+/// `-`, digits without a leading zero (or a single `0`), and an optional
+/// fraction.
+fn exact_decimal_text(text: &str) -> bool {
+    let digits = text.strip_prefix('-').unwrap_or(text);
+    let (whole, fraction) = digits.split_once('.').unwrap_or((digits, ""));
+    let plain = |part: &str| part.bytes().all(|byte| byte.is_ascii_digit());
+    !whole.is_empty()
+        && plain(whole)
+        && (whole == "0" || !whole.starts_with('0'))
+        && (!digits.contains('.') || (!fraction.is_empty() && plain(fraction)))
+}
+
+/// A source value as its JSON text, cut at 80 characters.
+fn shown(value: &norn_canonical::JsonValue) -> String {
+    use norn_canonical::JsonValue as Json;
+    let text = match value {
+        Json::Null => "null".to_owned(),
+        Json::Bool(flag) => flag.to_string(),
+        Json::Number(number) => number.clone(),
+        Json::String(text) => serde_json::to_string(text).unwrap_or_default(),
+        Json::Array(items) => format!("[{} items]", items.len()),
+        Json::Object(members) => format!("{{{} members}}", members.len()),
+    };
+    if text.chars().count() > 80 {
+        format!("{}…", text.chars().take(80).collect::<String>())
+    } else {
+        text
+    }
+}
+
+/// The type a source field must have, in words.
+fn expected(ty: &Type) -> String {
+    match ty {
+        Type::Bool => "a boolean (true or false)".to_owned(),
+        Type::Text { .. } => "text (a JSON string)".to_owned(),
+        Type::Integer => "an integer (a JSON number without a fraction)".to_owned(),
+        Type::Decimal { scale, .. } => format!(
+            "a decimal with up to {scale} fraction digits (a JSON number, or exact decimal text such as \"12.50\")"
+        ),
+        Type::DecimalBinding { .. } | Type::Number => "a number (a JSON number)".to_owned(),
+        Type::Timestamp { .. } => {
+            "a timestamp (RFC 3339 text with an offset, such as \"2026-11-19T10:00:00Z\")"
+                .to_owned()
+        }
+        Type::Date => "a date (text such as \"2026-11-19\")".to_owned(),
+        Type::Duration => "a duration (text)".to_owned(),
+        Type::Enum { values } => format!("one of {}", values.join(", ")),
+        Type::Json => "JSON".to_owned(),
+        Type::Record(name) => format!("a {name} record"),
+        Type::List(item) => format!("a list of {}", expected(item)),
+        Type::Optional(inner) => format!("{} or null", expected(inner)),
+        other => format!("{other:?}"),
     }
 }
 
@@ -3260,5 +3324,66 @@ mod nested_budget_tests {
         .expect_err("the second predicate cannot restart the consumed budget");
         assert_eq!(failure.0, codes::EVALUATION_FAILED);
         assert!(failure.1.contains("budget exhausted"), "{}", failure.1);
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, reason = "fixture values")]
+mod conform_tests {
+    //! MAPPING-DECIMAL-TEXT-1 and the `invalid_record` wording.
+    use super::*;
+    use norn_canonical::JsonValue as Json;
+
+    fn decimal() -> Type {
+        Type::Decimal {
+            scale: 2,
+            unit: None,
+            currency_source: None,
+            per_unit: None,
+            rounding: norn_ir::Rounding::Refuse,
+        }
+    }
+
+    #[test]
+    fn exact_decimal_text_is_a_decimal() {
+        for text in ["2500.00", "0", "-12.5", "0.75", "1000"] {
+            assert_eq!(
+                conform(Some(&Json::String(text.to_owned())), &decimal()).unwrap(),
+                number_value(text).unwrap(),
+                "{text}"
+            );
+        }
+        for text in [
+            "", "1e3", "+5", " 5", "05", "1.", ".5", "1,000.00", "12.5.1",
+        ] {
+            assert!(
+                conform(Some(&Json::String(text.to_owned())), &decimal()).is_err(),
+                "{text:?}"
+            );
+        }
+        // A source field typed `decimal` reads as a number.
+        assert_eq!(
+            conform(Some(&Json::String("7800.00".to_owned())), &Type::Number).unwrap(),
+            number_value("7800.00").unwrap()
+        );
+        // Text stays text for an integer.
+        assert!(conform(Some(&Json::String("5".to_owned())), &Type::Integer).is_err());
+    }
+
+    #[test]
+    fn a_refused_value_names_itself_and_the_type_expected() {
+        let refused = conform(Some(&Json::String("1,000.00".to_owned())), &decimal()).unwrap_err();
+        assert_eq!(
+            refused,
+            "value \"1,000.00\" is not a decimal with up to 2 fraction digits (a JSON number, or exact decimal text such as \"12.50\")"
+        );
+        assert_eq!(
+            conform(None, &Type::Date).unwrap_err(),
+            "is required (expected a date (text such as \"2026-11-19\"))"
+        );
+        assert_eq!(
+            conform(Some(&Json::Bool(true)), &Type::enumeration(["EGP", "USD"])).unwrap_err(),
+            "value true is not one of EGP, USD"
+        );
     }
 }

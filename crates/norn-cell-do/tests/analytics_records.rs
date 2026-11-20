@@ -108,6 +108,9 @@ impl Uploads for Files<'_> {
             file_name: format!("{id}.csv"),
         })
     }
+    fn issued(&self, id: &str, _scope_key: &str, uri: &str) -> bool {
+        self.record(id).is_some_and(|record| record.uri == uri)
+    }
     fn presigned_get(&self, uri: &str, _seconds: u64, _now_ms: u64) -> Option<String> {
         let id = uri
             .strip_prefix("s3://uploads/demo/")?

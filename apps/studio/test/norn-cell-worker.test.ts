@@ -35,6 +35,10 @@ export class NornCell {
   // A vacant scope: no alarms to arm, no scope to keep.
   serving() { return false; }
 }
+// The tenant membership gate (TENANT-ISOLATION-1); the demo scope opened here is never gated.
+export class NornGate {
+  constructor() { throw new Error("no gate opens in this test"); }
+}
 `,
   )
   ;(globalThis as { __nornCellStub?: Stub }).__nornCellStub = stub

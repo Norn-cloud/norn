@@ -59,13 +59,13 @@ const GATE_FILES: [&str; 26] = [
 /// a Boat VM. The pull-request arm requires Boat CI's public-repository allowlist
 /// (`boat ci public`): author, actor and re-runner must be that user, so Dependabot or
 /// another user's pull request runs hosted instead of queueing forever. Trusted-policy
-/// jobs stay hosted.
+/// jobs stay hosted. The gate plan is a step of `core`, so no `plan` job may take a Boat start.
 const BOAT_RUNNER: &str = "${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}";
 
 fn runner_is_admitted(path: &str, job: &str, runner: Option<&str>) -> bool {
     matches!(runner, Some("ubuntu-latest" | "ubuntu-24.04"))
         || (path == ".github/workflows/ci-policy.yml"
-            && matches!(job, "core" | "plan" | "test" | "full")
+            && matches!(job, "core" | "test" | "full")
             && runner == Some(BOAT_RUNNER))
 }
 
@@ -1188,7 +1188,13 @@ mod tests {
                 "{job}: {changed}"
             );
         };
-        for job in ["core", "plan", "test", "full"] {
+        // The gate plan runs inside core: a separate plan job on Boat is one start too many.
+        assert!(!super::runner_is_admitted(
+            path,
+            "plan",
+            Some(super::BOAT_RUNNER)
+        ));
+        for job in ["core", "test", "full"] {
             assert!(super::runner_is_admitted(
                 path,
                 job,
