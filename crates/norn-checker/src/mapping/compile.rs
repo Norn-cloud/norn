@@ -3518,7 +3518,7 @@ mod nested_budget_tests {
             &value,
             &Type::Text { format: None },
             combined_budget,
-            true,
+            Derivation::V2,
         )
         .expect_err("predicate and selected value exceed one shared budget");
         assert_eq!(failure.0, codes::EVALUATION_FAILED);
@@ -3538,7 +3538,7 @@ mod nested_budget_tests {
             &value,
             &Type::Text { format: None },
             predicate_units,
-            true,
+            Derivation::V2,
         )
         .expect_err("the second predicate cannot restart the consumed budget");
         assert_eq!(failure.0, codes::EVALUATION_FAILED);
