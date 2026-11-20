@@ -195,17 +195,20 @@ fn a_cells_credential_reaches_nothing_of_another_cell_and_cannot_tell_it_exists(
         body(&uniform),
         r#"{"code":"analytics.unauthorized","detail":"the caller is not the cell"}"#
     );
-    for (op, of) in [
-        ("frontier", frontier as fn(&TenantId) -> String),
-        ("sync", |t: &TenantId| sync(t, 3, 9)),
-        ("export", export),
+    for (op, into_other, into_vacant) in [
+        ("frontier", frontier(&b), frontier(&vacant)),
+        ("sync", sync(&b, 3, 9), sync(&vacant, 3, 9)),
+        ("export", export(&b), export(&vacant)),
     ] {
-        let at_b = daemon.call(op, &as_a, &of(&b));
-        let at_vacant = daemon.call(op, &as_a, &of(&vacant));
-        assert_eq!(at_b, at_vacant, "{op}: B's existence shows");
-        assert_eq!(at_b, uniform, "{op}: unlike any other refused credential");
+        let towards_other = daemon.call(op, &as_a, &into_other);
+        let towards_vacant = daemon.call(op, &as_a, &into_vacant);
+        assert_eq!(towards_other, towards_vacant, "{op}: B's existence shows");
         assert_eq!(
-            daemon.post(op, Some("Bearer nonsense"), &of(&b)),
+            towards_other, uniform,
+            "{op}: unlike any other refused credential"
+        );
+        assert_eq!(
+            daemon.post(op, Some("Bearer nonsense"), &into_other),
             uniform,
             "{op}"
         );
