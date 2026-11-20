@@ -608,7 +608,7 @@ pub fn handle_all<E: SqlEngine>(
             response
         }
         Authority::Unknown => response,
-        verdict => {
+        verdict @ (Authority::Current(_) | Authority::Revoked | Authority::Unavailable) => {
             if let Some(slot) = principals.caller() {
                 slot.remember(&principal.subject, &binding, verdict);
             }

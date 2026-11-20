@@ -252,7 +252,12 @@ impl TokenVerifier {
         challenge: &AuthorityChallenge<'_>,
     ) -> Option<Membership> {
         let claims: Envelope<AttestationClaims> = self.signed(token)?;
-        if !self.admits(&claims, now, MAX_ATTESTATION_SECONDS, ATTESTATION_LEEWAY_SECONDS) {
+        if !self.admits(
+            &claims,
+            now,
+            MAX_ATTESTATION_SECONDS,
+            ATTESTATION_LEEWAY_SECONDS,
+        ) {
             return None;
         }
         let norn = claims.norn;
@@ -321,8 +326,11 @@ impl TokenVerifier {
     /// The Norn roles a membership role confers on `actor_kind`, when the
     /// table declares it and the actor kind may hold it.
     fn declared(&self, role: &str, actor_kind: ActorKind) -> Option<Vec<String>> {
-        let (_, roles, service_may_hold) =
-            self.roles.entries.iter().find(|(known, _, _)| *known == role)?;
+        let (_, roles, service_may_hold) = self
+            .roles
+            .entries
+            .iter()
+            .find(|(known, _, _)| *known == role)?;
         if actor_kind == ActorKind::Service && !service_may_hold {
             return None;
         }

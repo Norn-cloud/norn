@@ -954,7 +954,9 @@ fn approve_racing_a_revision<E: SqlEngine>(cell: &Cell<E>, id: &str) {
         )
     };
     let as_requester =
-        |requester: &RunStarter, dispatch: &mut dyn FnMut() -> Result<ActionAnswer, Refusal>| {
+        |requester: &RunStarter,
+         _binding: &str,
+         dispatch: &mut dyn FnMut() -> Result<ActionAnswer, Refusal>| {
             revise_gate(cell);
             cell.caller
                 .record(Some(as_caller(&requester.subject, &requester.roles)));
@@ -972,11 +974,15 @@ fn approve_racing_a_revision<E: SqlEngine>(cell: &Cell<E>, id: &str) {
         &reads,
         &cell.handles,
         &as_requester,
+        &|_requester, _binding| Ok(()),
     )
     .unwrap();
     cell.caller.record(None);
-    let call = decided.call.expect("the approved call was dispatched");
-    assert_eq!(call.code.as_deref(), Some("approval.definition_changed"));
+    let dispatched = decided.call.expect("the approved call was dispatched");
+    assert_eq!(
+        dispatched.code.as_deref(),
+        Some("approval.definition_changed")
+    );
 }
 
 /// S5c: of two approvals of a step's exact call, the one the ledger

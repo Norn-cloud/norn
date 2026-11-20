@@ -547,8 +547,7 @@ const BOUND: &str = "norn.approval/1:dec_1:cmd_1";
 
 /// The demo cell looking requesters up, with `ada` asked for `BOUND`.
 fn asking(demo: &Demo, ada: &norn_cell::flow_run::RunStarter) -> Wanted {
-    demo.tokens
-        .ask_authority(ada, BOUND, Resume::Request, NOW);
+    demo.tokens.ask_authority(ada, BOUND, Resume::Request, NOW);
     demo.tokens.take_authority_wanted().expect("asked")
 }
 
@@ -575,7 +574,12 @@ fn a_requesters_authority_comes_only_from_a_verified_attestation() {
     assert_eq!(demo.tokens.take_authority_wanted(), None);
     let wanted = asking(&demo, &ada);
     assert_eq!(
-        (wanted.subject.as_str(), wanted.kind.as_str(), wanted.binding.as_str(), wanted.resume),
+        (
+            wanted.subject.as_str(),
+            wanted.kind.as_str(),
+            wanted.binding.as_str(),
+            wanted.resume
+        ),
         ("user:ada", "user", BOUND, "request")
     );
     assert_eq!(wanted.challenge.len(), 64);
@@ -671,13 +675,16 @@ fn an_answer_is_one_use_and_bound_to_its_challenge() {
     })
     .to_string();
     demo.tokens.provide_authority(&crossed, NOW);
-    assert_eq!(demo.tokens.authority(&ada, BOUND, NOW), Authority::Unavailable);
+    assert_eq!(
+        demo.tokens.authority(&ada, BOUND, NOW),
+        Authority::Unavailable
+    );
     demo.tokens.end_request();
     // Signed for another attempt: no answer.
     demo.tokens
         .ask_authority(&ada, "norn.approval/1:dec_2:cmd_2", Resume::Request, NOW);
     let other = demo.tokens.take_authority_wanted().unwrap();
-    let mut rebound = other.clone();
+    let mut rebound = other;
     rebound.binding = BOUND.to_owned();
     demo.tokens
         .provide_authority(&answer_for(1, "ada", Some("admin"), &rebound), NOW);

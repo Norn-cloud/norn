@@ -17,11 +17,14 @@
 //! authority now ([`PrincipalResolver::authority`]), so an approval runs
 //! the call under the requester's current membership and roles, never the
 //! ones recorded when it parked. [`TokenPrincipals`] asks its host to look
-//! the requester up at the organization's authority (Studio), which answers
-//! with a membership attestation the same issuer signs for the audience
-//! [`AUTHORITY_AUDIENCE`]; the cell verifies it as it verifies a host
-//! token. Without a configured lookup the authority is
-//! [`Authority::Unknown`] and nothing runs.
+//! the requester up at the organization's authority (Studio) with a fresh
+//! one-use challenge bound to the exact attempt; Studio answers, member or
+//! not, with a statement the same issuer signs for the audience
+//! [`AUTHORITY_AUDIENCE`], naming that challenge and attempt. The cell
+//! verifies it as it verifies a host token, as the answer to that challenge
+//! only, and keeps what it establishes for the rest of the request in the
+//! caller slot. Without a configured lookup the authority is
+//! [`Authority::Unknown`].
 
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
@@ -52,7 +55,8 @@ pub const AUTHORITY_AUDIENCE: &str = "norn-authority";
 pub enum Authority {
     /// A member now: the requester verified with its current roles.
     Current(Caller),
-    /// No longer a member of this cell's organization: the approved call is
+    /// No longer a member of this cell's organization, as the authority's
+    /// signed statement for this exact lookup says: the approved call is
     /// refused for good.
     Revoked,
     /// The lookup failed, did not answer, or answered with anything that
@@ -117,8 +121,7 @@ pub trait PrincipalResolver {
     /// `binding` names, with a fresh one-use challenge, and to resume as
     /// `resume` says once it has the answer; a resolver without a host
     /// lookup ignores it.
-    fn ask_authority(&self, _requester: &RunStarter, _binding: &str, _resume: Resume, _now: u64) {
-    }
+    fn ask_authority(&self, _requester: &RunStarter, _binding: &str, _resume: Resume, _now: u64) {}
 }
 
 /// APPROVAL-LIVE-1: how the host resumes an attempt that asked for a

@@ -1079,7 +1079,14 @@ impl HostLookup {
     }
 
     /// Serve one request on `cell` through this host.
-    fn serve(&self, cell: &Cell, method: &str, path: &str, auth: Option<&str>, body: &str) -> (u16, Value) {
+    fn serve(
+        &self,
+        cell: &Cell,
+        method: &str,
+        path: &str,
+        auth: Option<&str>,
+        body: &str,
+    ) -> (u16, Value) {
         let request = server::Request {
             method,
             path,
@@ -1088,8 +1095,12 @@ impl HostLookup {
             now: NOW,
             body,
         };
-        let reply = server::handle_all(&cell.host, self, Some(&cell.handles), &cell.kinds, &request);
-        (reply.status, serde_json::from_str::<Value>(&reply.body).unwrap())
+        let reply =
+            server::handle_all(&cell.host, self, Some(&cell.handles), &cell.kinds, &request);
+        (
+            reply.status,
+            serde_json::from_str::<Value>(&reply.body).unwrap(),
+        )
     }
 }
 
@@ -1304,7 +1315,13 @@ fn a_requesters_own_retry_runs_only_under_its_current_authority() {
             now: NOW,
             body: &body,
         };
-        let reply = server::handle_all(&cell.host, &host, Some(&cell.handles), &cell.kinds, &request);
+        let reply = server::handle_all(
+            &cell.host,
+            &host,
+            Some(&cell.handles),
+            &cell.kinds,
+            &request,
+        );
         assert_ne!(reply.status, 200, "{}", reply.body);
         assert_eq!(melt_status(&cell), 404, "nothing ran on the token's roles");
     }
@@ -1329,7 +1346,13 @@ fn a_requesters_own_retry_runs_only_under_its_current_authority() {
         now: NOW,
         body: &body,
     };
-    let reply = server::handle_all(&cell.host, &host, Some(&cell.handles), &cell.kinds, &request);
+    let reply = server::handle_all(
+        &cell.host,
+        &host,
+        Some(&cell.handles),
+        &cell.kinds,
+        &request,
+    );
     assert_eq!(reply.status, 200, "{}", reply.body);
     assert_eq!(melt_status(&cell), 200);
 }
@@ -1355,7 +1378,11 @@ fn an_action_an_approval_reaches_runs_under_the_starters_current_authority() {
     looked_up(&mut cell, REMOVED, FixtureLookup::Table);
     let (status, decided) = decide(&cell, APPROVER, &ask, "approve");
     assert_eq!(status, 200, "{decided}");
-    assert_eq!(melt_status_as(&cell, APPROVER), 404, "nothing ran as the starter");
+    assert_eq!(
+        melt_status_as(&cell, APPROVER),
+        404,
+        "nothing ran as the starter"
+    );
     let (_, run) = call(&cell, "GET", "/v1/runs/melt-run-left", APPROVER, "");
     assert_ne!(run["state"], json!("completed"), "{run}");
     // A current starter's run moves on and completes.
@@ -1379,7 +1406,14 @@ fn an_action_an_approval_reaches_runs_under_the_starters_current_authority() {
 }
 
 fn melt_status_as(cell: &Cell, auth: Option<&str>) -> u16 {
-    call(cell, "GET", "/v1/objects/constitution.Melt/melt-7", auth, "").0
+    call(
+        cell,
+        "GET",
+        "/v1/objects/constitution.Melt/melt-7",
+        auth,
+        "",
+    )
+    .0
 }
 
 /// R1-06: a decide is validated before the host is asked anything: an
@@ -1411,8 +1445,16 @@ fn a_decide_asks_for_authority_only_once_it_is_valid_and_would_run_a_call() {
         &json!({ "choice": "reject", "idempotencyKey": "reject-1" }).to_string(),
     );
     assert_eq!(status, 200, "{rejected}");
-    assert_eq!(rejected["decision"]["choice"], json!("reject"), "{rejected}");
-    assert_eq!(host.asked.get(), 0, "a rejection runs nothing and asks nothing");
+    assert_eq!(
+        rejected["decision"]["choice"],
+        json!("reject"),
+        "{rejected}"
+    );
+    assert_eq!(
+        host.asked.get(),
+        0,
+        "a rejection runs nothing and asks nothing"
+    );
     assert_eq!(melt_status(&cell), 404);
 }
 
@@ -1450,10 +1492,19 @@ fn a_drive_waiting_on_a_lookup_resumes_without_replaying_the_request() {
     let asks = host.asks.borrow().clone();
     assert_eq!(asks.len(), 1, "{asks:?}");
     assert_eq!(asks[0].0, "operator@steps");
-    assert!(asks[0].1.starts_with("norn.step/1:melt-run-resume:"), "{asks:?}");
+    assert!(
+        asks[0].1.starts_with("norn.step/1:melt-run-resume:"),
+        "{asks:?}"
+    );
     assert_eq!(asks[0].2, Resume::Drive("melt-run-resume".to_owned()));
     host.answer.set(true);
-    server::resume_drive(&cell.host, &host, Some(&cell.handles), "melt-run-resume", NOW);
+    server::resume_drive(
+        &cell.host,
+        &host,
+        Some(&cell.handles),
+        "melt-run-resume",
+        NOW,
+    );
     assert_eq!(melt_status(&cell), 200, "the resumed drive ran the step");
     let (_, run) = call(&cell, "GET", "/v1/runs/melt-run-resume", APPROVER, "");
     assert_eq!(run["state"], json!("completed"), "{run}");

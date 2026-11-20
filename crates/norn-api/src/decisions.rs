@@ -604,8 +604,8 @@ fn may_still_decide<E: SqlEngine>(
                 scope: host.scope(),
                 actor: Some(actor),
                 operation: Operation::Decide {
-                    roles: request.decider.roles.clone(),
-                    law: request.decider.law.clone(),
+                    roles: request.decider.roles,
+                    law: request.decider.law,
                 },
             })
             .is_ok())

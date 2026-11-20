@@ -260,8 +260,8 @@ fn decisions<E: SqlEngine>(
                 };
             // R1-06: asked only once the decide is valid and would run the
             // call; nothing is recorded until the host has the answer.
-            let ready = |requester: &RunStarter, binding: &str| steps.ready(requester, binding);
-            match decide(host, &call, &reads, runtime, &as_requester, &ready) {
+            let gate = |requester: &RunStarter, binding: &str| steps.ready(requester, binding);
+            match decide(host, &call, &reads, runtime, &as_requester, &gate) {
                 Ok(mut decided) => {
                     // APPROVAL-REVISION-1: an approved call refused because its
                     // action or gate changed drives nothing: the step waiting on
@@ -456,26 +456,28 @@ impl<E: SqlEngine> Steps<'_, E> {
         let (Some(runtime), Some(_)) = (self.questions, self.caller) else {
             return false;
         };
-        let as_starter = |principal: &RunStarter,
-                          binding: &str,
-                          call: &mut dyn FnMut() -> Result<ActionAnswer, Refusal>| {
-            match mode {
-                Drive::Started => self.as_principal(principal, call),
-                Drive::Live => self
-                    .as_present(principal, binding, &mut *call, Some(run_id))
-                    .or_else(|| {
-                        (self.principals.authority(principal, binding, self.now)
-                            == Authority::Unknown)
-                            .then(|| self.as_principal(principal, &mut *call))
-                            .flatten()
-                    }),
-            }
-        };
-        let as_requester = |principal: &RunStarter,
-                            binding: &str,
-                            call: &mut dyn FnMut() -> Result<ActionAnswer, Refusal>| {
-            self.as_present(principal, binding, call, Some(run_id))
-        };
+        let as_starter =
+            |principal: &RunStarter,
+             binding: &str,
+             call: &mut dyn FnMut() -> Result<ActionAnswer, Refusal>| {
+                match mode {
+                    Drive::Started => self.as_principal(principal, call),
+                    Drive::Live => self
+                        .as_present(principal, binding, &mut *call, Some(run_id))
+                        .or_else(|| {
+                            (self.principals.authority(principal, binding, self.now)
+                                == Authority::Unknown)
+                                .then(|| self.as_principal(principal, &mut *call))
+                                .flatten()
+                        }),
+                }
+            };
+        let as_requester =
+            |principal: &RunStarter,
+             binding: &str,
+             call: &mut dyn FnMut() -> Result<ActionAnswer, Refusal>| {
+                self.as_present(principal, binding, call, Some(run_id))
+            };
         let driven: Result<(), Refusal> = norn_api::flow_driver::drive_run(
             self.host,
             run_id,

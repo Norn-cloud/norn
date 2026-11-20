@@ -11,7 +11,8 @@ import worker, { type Env } from "../index.ts"
 const ORIGIN = "https://studio-preview.norn.cloud"
 const CREDENTIAL = "c".repeat(40)
 
-function stage(credential: string | undefined = CREDENTIAL) {
+// `null`: no credential configured (an explicit `undefined` would take the default).
+function stage(credential: string | null = CREDENTIAL) {
   const db = new Database(":memory:")
   db.exec(readFileSync(join(import.meta.dir, "../migrations/0001_better_auth.sql"), "utf8"))
   db.exec(readFileSync(join(import.meta.dir, "../migrations/0002_workspace_provisioning.sql"), "utf8"))
@@ -21,7 +22,7 @@ function stage(credential: string | undefined = CREDENTIAL) {
     BETTER_AUTH_SECRET: "t".repeat(40),
     BETTER_AUTH_URL: ORIGIN,
     STUDIO_CLIENT_IP_HEADER: "cf-connecting-ip",
-    ...credential === undefined ? {} : { NORN_AUTHORITY_TOKEN: credential },
+    ...credential === null ? {} : { NORN_AUTHORITY_TOKEN: credential },
   }
   return { env, db, auth: createAuth({ clientIpHeader: "cf-connecting-ip", database: db, secret: env.BETTER_AUTH_SECRET, baseURL: ORIGIN }) }
 }
@@ -99,7 +100,7 @@ test("an API key is a member while it is enabled, unexpired, of the organization
   const memberOf = async () => {
     const response = await lookUp(env, service)
     expect(response.status).toBe(200)
-    return claims(((await response.json()) as { token: string }).token).norn as { member: boolean, role?: string }
+    return claims(((await response.json()) as { token: string }).token).norn as Record<string, unknown>
   }
   expect(await memberOf()).toEqual({ kind: "service", org: actor.orgId, amr: MEMBERSHIP_METHOD, member: true, role: "member", nonce: CHALLENGE, bind: BINDING })
   db.run(`update "apikey" set "enabled" = 0 where "id" = 'key_1'`)
@@ -146,7 +147,7 @@ test("only the cell host's credential is answered, and only when one is configur
   expect((await call(env, AUTHORITY_PATH, { method: "POST", body: JSON.stringify(lookup) })).status).toBe(401)
   // A session cookie is no credential here.
   expect((await call(env, AUTHORITY_PATH, { method: "GET" })).status).toBe(405)
-  const unset = stage(undefined)
+  const unset = stage(null)
   expect((await lookUp(unset.env, lookup)).status).toBe(404)
   const short = stage("short")
   expect((await lookUp(short.env, lookup, "short")).status).toBe(404)
