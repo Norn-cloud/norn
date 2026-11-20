@@ -345,6 +345,8 @@ fn a_read_during_a_load_answers_before_the_load_ends() {
                 at.elapsed().as_millis(),
                 loading.load(std::sync::atomic::Ordering::Acquire),
             ));
+            // A client polls; it does not hold the cell back-to-back.
+            std::thread::sleep(std::time::Duration::from_millis(5));
         }
         (load.join().unwrap(), reads)
     });

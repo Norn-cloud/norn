@@ -33,6 +33,15 @@ pub struct DevHost<E: SqlEngine> {
     markings: Mutex<Option<(Option<u64>, crate::privacy::MarkingCatalog)>>,
 }
 
+/// A read in progress ([`DevHost::reading`]).
+pub(crate) struct Reading<'a>(&'a std::sync::atomic::AtomicUsize);
+
+impl Drop for Reading<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+    }
+}
+
 /// The locked cell, present whenever a guard exists.
 pub(crate) struct CellGuard<'a, E: SqlEngine>(MutexGuard<'a, Option<ActionCell<E>>>);
 
@@ -314,6 +323,16 @@ impl<E: SqlEngine> DevHost<E> {
         }
         out.sort_by_key(|(at, _)| *at);
         Ok(out.into_iter().map(|(_, ingested)| ingested).collect())
+    }
+
+    /// Mark a read that takes the cell more than once (a page assembled in
+    /// batches) as in progress until the guard drops, so a load between its
+    /// pages waits for it (INGEST-YIELD-1) and the read sees one snapshot
+    /// instead of refusing `object.snapshot_moved` behind every page.
+    pub(crate) fn reading(&self) -> Reading<'_> {
+        self.waiting
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        Reading(&self.waiting)
     }
 
     /// Yield the cell to requests already waiting for it (INGEST-YIELD-1),

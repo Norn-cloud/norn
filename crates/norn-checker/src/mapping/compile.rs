@@ -3134,7 +3134,10 @@ fn type_name(ty: &Type) -> String {
         (matches!(ty, Type::Bool), "boolean"),
         (matches!(ty, Type::Text { .. }), "text"),
         (matches!(ty, Type::Integer), "integer"),
-        (matches!(ty, Type::Number), "number"),
+        (
+            matches!(ty, Type::Number),
+            "decimal (a JSON number or exact decimal text)",
+        ),
         (
             matches!(ty, Type::Timestamp { .. }),
             "timestamp (RFC 3339 with an offset)",
@@ -3187,9 +3190,10 @@ fn conform(raw: Option<&norn_canonical::JsonValue>, ty: &Type) -> Result<Value, 
         // MAP-DECIMAL-TEXT-1: exact decimal text (`"1234.50"`), as the action
         // boundary takes it (VAL-EXACT-1) and as ERP exports and careful
         // extractors write money and quantities, conforms to a declared
-        // decimal through the same strict JSON-decimal grammar; any other
+        // decimal (a source schema's `decimal` reads as an exact `Number`)
+        // through the same strict JSON-decimal grammar; any other
         // text (`"1,234"`, `"1e3"`, `" 5"`) still refuses, naming the grammar.
-        (Some(Json::String(text)), Type::Decimal { .. }) => number_value(text),
+        (Some(Json::String(text)), Type::Number | Type::Decimal { .. }) => number_value(text),
         (Some(Json::Bool(flag)), Type::Bool) => Ok(Value::Bool(*flag)),
         // A declared child table is typed for the checker only; at runtime
         // its rows convert exactly as opaque JSON does, so bounds and nested

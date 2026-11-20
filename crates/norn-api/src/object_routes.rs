@@ -236,6 +236,8 @@ pub fn get_object_page<E: SqlEngine>(
     if limit == 0 || limit > MAX_PAGE {
         return Err(Refusal::invalid(format!("limit must be 1..={MAX_PAGE}")));
     }
+    // INGEST-YIELD-1: a load waits between its pages while this page is read.
+    let _reading = host.reading();
     let mut page = NornObjectPage {
         object_type: object_type.to_owned(),
         records: Vec::new(),
