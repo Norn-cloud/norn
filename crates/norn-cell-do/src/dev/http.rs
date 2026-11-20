@@ -216,7 +216,9 @@ struct Parsed {
 fn arm(reader: &BufReader<&TcpStream>, deadline: std::time::Instant) -> Result<(), Refusal> {
     let left = deadline.saturating_duration_since(std::time::Instant::now());
     if left.is_zero() {
-        return Err(Refusal::invalid("the request was not complete within the host bound"));
+        return Err(Refusal::invalid(
+            "the request was not complete within the host bound",
+        ));
     }
     reader
         .get_ref()
@@ -225,7 +227,9 @@ fn arm(reader: &BufReader<&TcpStream>, deadline: std::time::Instant) -> Result<(
 }
 
 fn read_request(reader: &mut BufReader<&TcpStream>) -> Result<Parsed, Refusal> {
-    let deadline = std::time::Instant::now() + IDLE;
+    let deadline = std::time::Instant::now()
+        .checked_add(IDLE)
+        .ok_or_else(|| Refusal::invalid("the host clock cannot bound this request"))?;
     let mut line = String::new();
     let mut head_bytes = 0_usize;
     let mut next = |reader: &mut BufReader<&TcpStream>, line: &mut String| -> Result<(), Refusal> {
@@ -1061,7 +1065,6 @@ mod keepalive_tests {
         assert_eq!(answer(&mut reader).0, 409);
     }
 
-
     /// Send a raw request head (and body) and read the single answer.
     fn raw(port: u16, head: &str, body: &str) -> (u16, String, Vec<u8>) {
         let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
@@ -1072,14 +1075,16 @@ mod keepalive_tests {
         write!(stream, "{head}\r\n\r\n{body}").unwrap();
         let (status, connection, _) = answer(&mut reader);
         let mut rest = Vec::new();
-        let _ = reader.read_to_end(&mut rest);
+        // A read error here leaves `rest` as read so far; callers assert on it.
+        if let Err(_closed) = reader.read_to_end(&mut rest) {}
         (status, connection, rest)
     }
 
     #[test]
     fn a_repeated_or_malformed_content_length_is_refused_and_closes() {
         let (port, _dir) = host();
-        let target = "POST /v1/actions/shop.product.add?orgId=local&environmentId=dev HTTP/1.1\r\nhost: x";
+        let target =
+            "POST /v1/actions/shop.product.add?orgId=local&environmentId=dev HTTP/1.1\r\nhost: x";
         // Two lengths make the body boundary ambiguous: refuse and close, so
         // no leftover byte is ever read as a second request. (No body is sent:
         // unread bytes at close would make the kernel reset the connection.)
@@ -1108,7 +1113,11 @@ mod keepalive_tests {
             "connection: keep-alive\r\nconnection: close",
         ] {
             let (status, answered, rest) = raw(port, &format!("{target}\r\n{connection}"), "{}");
-            assert_eq!((status, answered.as_str()), (409, "close"), "{connection:?}");
+            assert_eq!(
+                (status, answered.as_str()),
+                (409, "close"),
+                "{connection:?}"
+            );
             assert!(rest.is_empty(), "{connection:?}: the connection ends");
         }
     }
