@@ -279,8 +279,11 @@ fn a_load_the_cell_splits_is_charged_per_commit_and_resumes() {
             json!({ "profile": export()["profile"], "snapshot": snapshot[from..] }).to_string();
         let (status, loaded) = load(&mut connect, &host, &principals, ADMIN, &body);
         assert_eq!(status, 200, "{loaded}");
-        // 100 rows at 0.1 s leave 6.4 s, eight 0.8 s commits.
-        assert!(loaded["commits"].as_u64().unwrap() <= 9, "{loaded}");
+        // The connect budget (16.4 s: 0.1 s a row, 0.8 s a commit) bounds each
+        // call's commits by the rows it captured: 100 rows leave eight.
+        let rows = u64::try_from(snapshot.len() - from).unwrap();
+        let fits = (16_400 - 100 * rows) / 800;
+        assert!(loaded["commits"].as_u64().unwrap() <= fits, "{loaded}");
         reported += loaded["rows"].as_u64().unwrap();
         landed += loaded["landed"].as_u64().unwrap() + loaded["alreadyLanded"].as_u64().unwrap();
         calls += 1;
