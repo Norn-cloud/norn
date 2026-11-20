@@ -368,7 +368,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 Ok(compiled) => compiled
                     .apply_explained(&[source_document], &input.recorded_at)
                     .map_err(|refusals| refusals.iter().map(explained).collect::<Vec<_>>()),
-                Err(diagnostics) => Err(diagnostics.iter().map(|d| d.to_json()).collect()),
+                Err(diagnostics) => Err(diagnostics.iter().map(Diagnostic::to_json).collect()),
             };
             match outcome {
                 Ok(records) => (records, Vec::new()),
