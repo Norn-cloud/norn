@@ -306,7 +306,7 @@ type PreparedFindingComparison<'a> = (
 
 /// [`ObservationAuthorization`]'s authorized writes, indexed by key.
 pub(crate) struct AuthorizedWrites<'a> {
-    by_key: std::collections::HashMap<&'a FactKey, Vec<&'a AuthorizedObservedWrite>>,
+    by_key: BTreeMap<&'a FactKey, Vec<&'a AuthorizedObservedWrite>>,
 }
 
 impl<'a> AuthorizedWrites<'a> {
@@ -1014,8 +1014,7 @@ impl ObservationAuthorization {
     /// The authorized writes indexed by key, for a check that asks about
     /// every write of a commit (INGEST-BATCH-1: O(1) per write, not a scan).
     pub(crate) fn indexed(&self) -> AuthorizedWrites<'_> {
-        let mut by_key: std::collections::HashMap<&FactKey, Vec<&AuthorizedObservedWrite>> =
-            std::collections::HashMap::new();
+        let mut by_key: BTreeMap<&FactKey, Vec<&AuthorizedObservedWrite>> = BTreeMap::new();
         for authorized in &self.writes {
             by_key
                 .entry(&authorized.write.key)
@@ -1107,28 +1106,34 @@ impl ObservationAuthorization {
     /// match an exact sealed mapping or pending-resolution intent.
     #[must_use]
     pub fn validates<E, C, T>(&self, commit: &CellCommit<E, C, T>) -> bool {
-        use std::collections::HashMap;
         // INGEST-BATCH-1: every membership and count below is the same check
         // as a scan of the commit, answered from indexes built once, so one
         // page of N records validates in O(N) rather than O(N²). The checks,
         // and what each refuses, are unchanged.
-        let mut writes_by_key: HashMap<&FactKey, Vec<&FactWrite>> = HashMap::new();
+        let mut writes_by_key: BTreeMap<&FactKey, Vec<&FactWrite>> = BTreeMap::new();
         for write in &commit.writes {
             writes_by_key.entry(&write.key).or_default().push(write);
         }
         let writes_of = |key: &FactKey| writes_by_key.get(key).map_or(&[][..], Vec::as_slice);
-        let mut reads: HashMap<&FactExpectation, usize> = HashMap::new();
+        // Reads by key and expected version (`FactExpectation` has no order).
+        let mut reads: BTreeMap<(&FactKey, u64), usize> = BTreeMap::new();
         for read in &commit.reads {
-            let count = reads.entry(read).or_default();
+            let count = reads.entry((&read.key, read.expected.0)).or_default();
             *count = count.saturating_add(1);
         }
-        let mut authorized_links: HashMap<&LinkKey, Vec<&LinkWrite>> = HashMap::new();
+        let read = |expectation: &FactExpectation| {
+            reads
+                .get(&(&expectation.key, expectation.expected.0))
+                .copied()
+                .unwrap_or_default()
+        };
+        let mut authorized_links: BTreeMap<&LinkKey, Vec<&LinkWrite>> = BTreeMap::new();
         for link in self.links.iter().chain(self.convergent_links()) {
             authorized_links.entry(&link.key).or_default().push(link);
         }
         if !commit.effects.is_empty()
             || self.source_scopes.iter().any(|(scope, _)| {
-                !reads.contains_key(scope)
+                read(scope) == 0
                     && !writes_of(&scope.key)
                         .iter()
                         .any(|write| write.expected == scope.expected)
@@ -1157,13 +1162,13 @@ impl ObservationAuthorization {
         if self
             .observed_reads
             .iter()
-            .any(|read| !reads.contains_key(read) || !writes_of(&read.key).is_empty())
+            .any(|expected| read(expected) == 0 || !writes_of(&expected.key).is_empty())
         {
             return false;
         }
         // Each authorized write is unique among the authorized writes and
         // appears exactly once in the commit.
-        let mut authorized_by_key: HashMap<&FactKey, Vec<&FactWrite>> = HashMap::new();
+        let mut authorized_by_key: BTreeMap<&FactKey, Vec<&FactWrite>> = BTreeMap::new();
         for authorized in &self.writes {
             let earlier = authorized_by_key.entry(&authorized.write.key).or_default();
             if earlier.iter().any(|prior| **prior == authorized.write)
@@ -1177,16 +1182,16 @@ impl ObservationAuthorization {
             }
             earlier.push(&authorized.write);
         }
-        let mut findings_by_key: HashMap<&FactKey, Vec<&AuthorizedObservedReadFinding>> =
-            HashMap::new();
+        let mut findings_by_key: BTreeMap<&FactKey, Vec<&AuthorizedObservedReadFinding>> =
+            BTreeMap::new();
         for authorized in &self.read_findings {
-            let expectation = FactExpectation {
-                key: authorized.key.clone(),
-                expected: authorized.expected,
-            };
             let earlier = findings_by_key.entry(&authorized.key).or_default();
             if earlier.iter().any(|prior| *prior == authorized)
-                || reads.get(&expectation).copied().unwrap_or_default() != 1
+                || reads
+                    .get(&(&authorized.key, authorized.expected.0))
+                    .copied()
+                    .unwrap_or_default()
+                    != 1
                 || !writes_of(&authorized.key).is_empty()
             {
                 return false;
