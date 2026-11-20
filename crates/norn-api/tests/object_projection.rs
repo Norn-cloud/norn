@@ -8,6 +8,10 @@
 )]
 use norn_api::objects::{NornLinkPage, NornObjectRecord};
 use norn_cell::read::LinkDirection;
+// #1485 S6: fixtures write through the kernel path, never the raw door.
+#[path = "../../norn-cell/tests/support/governed.rs"]
+mod governed;
+use governed::GovernedCommit as _;
 use norn_cell::{CellStore, CommitBatch, LinkChange, MAIN_WORLD, Model};
 use norn_ir::FactChange;
 
@@ -31,7 +35,7 @@ fn store() -> CellStore {
         source: "a".to_owned(),
         target: target.to_owned(),
         values: std::collections::BTreeMap::default(),
-        target_type: None,
+        target_type: Some("test.Node".to_owned()),
     };
     store
         .commit(&CommitBatch {

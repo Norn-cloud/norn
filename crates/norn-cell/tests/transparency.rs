@@ -7,6 +7,7 @@
 
 mod common;
 
+use norn_cell::test_door::TestCommit as _;
 use norn_cell::transparency::checkpoint_json;
 use norn_cell::{CellStore, CommitBatch, CommitOutcome, CommitPoint, StoreOptions};
 use serde_json::json;

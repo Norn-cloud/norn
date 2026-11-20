@@ -429,12 +429,13 @@ fn refusal(refused: &Refusal) -> Response {
     dead_code,
     reason = "the shared fixture module serves the action tests too"
 )]
-mod action_cell;
+pub(in crate::dev) mod action_cell;
 
 #[cfg(test)]
 #[allow(
     clippy::unwrap_used,
     clippy::expect_used,
+    clippy::unwrap_in_result,
     clippy::indexing_slicing,
     reason = "dev-host dispatch scenarios"
 )]
@@ -444,7 +445,7 @@ mod tests {
     //! waits as one open decision, its requester never decides it, and the
     //! local reviewer's approval commits it as the requester.
     use super::*;
-    use crate::dev::policy::{LocalDeveloper, reviewer};
+    use crate::dev::policy::{LocalDeveloper, dev_actions, refresh_actions, reviewer};
     use norn_api::scope::CellScope;
     use serde_json::{Value, json};
 
@@ -470,10 +471,16 @@ mod tests {
             DERIVES_LOSS,
             norn_api::action_admission::prepare_action_model,
         );
+        let actions = dev_actions();
+        let host = DevHost::from_store(store, scope.clone(), |command| command.payload.clone())
+            .unwrap()
+            .with_authorizer(LocalDeveloper::for_actor(
+                DEVELOPER,
+                std::sync::Arc::clone(&actions),
+            ));
+        refresh_actions(&actions, &host).unwrap();
         Dev {
-            host: DevHost::from_store(store, scope.clone(), |command| command.payload.clone())
-                .unwrap()
-                .with_authorizer(LocalDeveloper::for_actor(DEVELOPER)),
+            host,
             principals: DevPrincipals::new(vec![
                 (DEVELOPER_TOKEN.into(), DEVELOPER.into()),
                 (REVIEWER_TOKEN.into(), reviewer(DEVELOPER)),
@@ -649,6 +656,88 @@ mod tests {
         );
     }
 
+    /// The source commit of `approvals` over the active melt set, as norn
+    /// dev runs it on a save.
+    fn sync(
+        dev: &Dev,
+        approvals: &[Value],
+    ) -> Result<crate::dev::definitions::Committed, crate::dev::definitions::Rejected> {
+        let active = dev
+            .host
+            .active_definitions()
+            .ok()
+            .flatten()
+            .expect("active");
+        let (model, input) = super::action_cell::melt_install(
+            DERIVES_LOSS,
+            norn_api::action_admission::prepare_action_model,
+            active.installed_at.saturating_add(1),
+        );
+        crate::dev::definitions::commit(
+            &dev.host,
+            DEVELOPER,
+            &crate::dev::policy::dev_kinds(),
+            approvals,
+            crate::dev::admit::Admitted { model, input },
+            &active,
+            &dev_actions(),
+            1_800_000_000_000,
+        )
+    }
+
+    fn named(id: &str, roles: &[&str]) -> Value {
+        let mut approval = approval(roles);
+        approval["id"] = json!(id);
+        approval
+    }
+
+    /// The ids of the active approvals.
+    fn gates(dev: &Dev) -> Vec<String> {
+        let query = format!("{SCOPE}&kind=approval");
+        let (status, listed) = call(
+            dev,
+            Some(DEVELOPER_TOKEN),
+            ("GET", "/v1/definitions:list", &query),
+            "",
+        );
+        assert_eq!(status, 200, "{listed}");
+        listed["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["id"].as_str().unwrap().to_owned())
+            .collect()
+    }
+
+    #[test]
+    fn a_renamed_approval_keeps_its_action_gated() {
+        let dev = dev();
+        sync(&dev, &[named("ops.old_gate", &["admin"])]).expect("gated");
+        sync(&dev, &[named("ops.new_gate", &["admin"])]).expect("renamed");
+        assert_eq!(gates(&dev), ["ops.new_gate"]);
+        let action = format!("/v1/actions/{MELT_ACTION}");
+        let body = melt_body("melt-7", "12", "10", "dev-1");
+        let (status, parked) = call(&dev, Some(DEVELOPER_TOKEN), ("POST", &action, SCOPE), &body);
+        assert_eq!(status, 202, "the action is still gated: {parked}");
+    }
+
+    #[test]
+    fn a_refused_approval_set_keeps_the_active_gates() {
+        let dev = dev();
+        sync(&dev, &[named("ops.old_gate", &["admin"])]).expect("gated");
+        let refused = sync(&dev, &[named("ops.new_gate", &["auditor"])]).expect_err("refused");
+        let codes: Vec<&Value> = refused
+            .diagnostics
+            .iter()
+            .map(|finding| &finding["code"])
+            .collect();
+        assert!(
+            codes.contains(&&json!("definition.approval_role_unknown")),
+            "{codes:?}"
+        );
+        assert_eq!(gates(&dev), ["ops.old_gate"], "nothing retired");
+    }
+
     #[test]
     fn an_approval_admits_against_the_hosted_roles() {
         let dev = dev();
@@ -819,7 +908,10 @@ mod oauth_tests {
         .unwrap();
         let host = DevHost::from_store(store, scope.clone(), |_| BTreeMap::new())
             .unwrap()
-            .with_authorizer(LocalDeveloper::for_actor(ACTOR));
+            .with_authorizer(LocalDeveloper::for_actor(
+                ACTOR,
+                super::super::policy::dev_actions(),
+            ));
         let bodies = Arc::new(Mutex::new(Vec::new()));
         let token_port = token_endpoint(Arc::clone(&bodies));
         let opens = Arc::new(AtomicUsize::new(0));

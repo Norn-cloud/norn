@@ -69,7 +69,7 @@ Use Core [03](../core/03-query-compute.md), [05](https://github.com/Norn-cloud/n
 ## Native incremental correspondence acceptance
 
 The native acceptance is `crates/norn-cell/tests/scrap_yield_incremental.rs`:
-`cargo test --locked -p norn-cell --test scrap_yield_incremental`.
+`cargo test --locked -p norn-cell --lib suites::scrap_yield_incremental::`.
 `data_incremental_k1_k2_has_exact_signed_deltas_and_reproducible_ids` checks
 G4's 83.300/85.000 g insertion, K1 294.000/300.000 = 0.98, K2
 292.500/300.000 = 0.975, recovered delta -1.500 g and loss delta +1.500 g.

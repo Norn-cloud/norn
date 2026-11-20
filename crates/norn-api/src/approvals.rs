@@ -41,8 +41,9 @@ use norn_cell::flow_run::RunStarter;
 use norn_cell::{CellError, MAIN_WORLD};
 use norn_ir::{RuntimeObject, RuntimeValue};
 use norn_kernel::cell_host::{
-    BoundedFact, CellCommit, CellHost, CommitError, CommitReceipt, DueTimer, FactState,
-    LinkReadTarget, LinkState, Observed, Performed, PredicateObject, PredicateQuery,
+    BoundedFact, CellCommit, CellHost, CommitError, CommitReceipt, DueTimer, FactMutation,
+    FactState, FactWrite, LinkReadTarget, LinkState, Observed, Performed, PredicateObject,
+    PredicateQuery,
 };
 use norn_kernel::{
     Command, CommandId, Effect, FactEvent, FactKey, FreshnessPolicy, Generation, IdempotencyKey,
@@ -476,11 +477,188 @@ fn park<E: SqlEngine>(
 
 /// A host for one dry run of the kernel's action pipeline over `cell`: every
 /// read is the cell's, and every commit stops with [`WOULD_COMMIT`], so
-/// nothing is written.
-pub(crate) struct WouldCommit<'a, E: SqlEngine>(pub(crate) &'a ActionCell<E>);
+/// nothing is written. It keeps the object writes the commit carried, so a
+/// gate's `when` reads the record the call would write (APPROVAL-WHEN-1).
+pub(crate) struct WouldCommit<'a, E: SqlEngine> {
+    cell: &'a ActionCell<E>,
+    writes: Vec<FactWrite>,
+}
 
-fn stop<T>() -> Result<T, CommitError<CellError>> {
-    Err(CommitError::Host(CellError::DecisionRefused(WOULD_COMMIT)))
+impl<'a, E: SqlEngine> WouldCommit<'a, E> {
+    /// A dry run over `cell`.
+    pub(crate) const fn new(cell: &'a ActionCell<E>) -> Self {
+        Self {
+            cell,
+            writes: Vec::new(),
+        }
+    }
+
+    /// The object writes of the commit the dry run reached, if any.
+    pub(crate) fn into_writes(self) -> Vec<FactWrite> {
+        self.writes
+    }
+
+    fn stop<T>(
+        &mut self,
+        commit: CellCommit<FactEvent, RuntimeObject, RuntimeObject>,
+    ) -> Result<T, CommitError<CellError>> {
+        self.writes = commit.writes;
+        Err(CommitError::Host(CellError::DecisionRefused(WOULD_COMMIT)))
+    }
+}
+
+/// APPROVAL-WHEN-1: whether `gate` holds a call whose commit carries
+/// `writes`. Without `when`, every call. Otherwise the call's target record
+/// (the object the kernel's `norn.ActionCall` record names) is compared; a
+/// target with no proposed values or without the property, or values the
+/// comparison cannot order, hold the call (fail closed).
+///
+/// #1469 S9: how values compare comes from the target property's declared
+/// type (`semantics` of the target's object type and the property): a
+/// number compares as an exact decimal, text and other literals compare as
+/// written (`"1"` and `"1.0"` differ), and a type with no comparison holds
+/// the call.
+pub(crate) fn applies(
+    gate: &Gate,
+    writes: &[FactWrite],
+    semantics: impl Fn(&str, &str) -> Option<Compared>,
+) -> bool {
+    let Some(when) = gate.payload.get("when") else {
+        return true;
+    };
+    let (Some(property), Some(op), Some(expected)) = (
+        when.get("property").and_then(Value::as_str),
+        when.get("op").and_then(Value::as_str),
+        when.get("value"),
+    ) else {
+        return true;
+    };
+    // #1469 S9: the call's record is its target, by the exact key the
+    // kernel's own call record names, never by order among the writes. A
+    // call whose target has no proposed values is held (fail closed).
+    let values_of = |key: &FactKey| {
+        writes
+            .iter()
+            .filter(|write| write.key == *key)
+            .find_map(|write| match &write.mutation {
+                FactMutation::Put { values } => Some(values),
+                FactMutation::Delete => None,
+            })
+    };
+    let target = writes
+        .iter()
+        .filter(|write| write.key.object_type.as_str() == norn_kernel::ACTION_CALL_TYPE)
+        .find_map(|write| match &write.mutation {
+            FactMutation::Put { values } => match values.get("object") {
+                Some(RuntimeValue::Object(object)) => match (
+                    object.get("objectType").and_then(RuntimeValue::as_str),
+                    object.get("key").and_then(RuntimeValue::as_str),
+                ) {
+                    (Some(object_type), Some(key)) => Some(FactKey::new(object_type, key)),
+                    _ => None,
+                },
+                _ => None,
+            },
+            FactMutation::Delete => None,
+        });
+    let Some(target) = target else {
+        return true;
+    };
+    let Some(actual) = values_of(&target).and_then(|values| values.get(property)) else {
+        return true;
+    };
+    match semantics(target.object_type.as_str(), property) {
+        Some(Compared::Decimal) => compare(actual, op, expected).unwrap_or(true),
+        Some(Compared::Literal) => literal(actual, op, expected).unwrap_or(true),
+        None => true,
+    }
+}
+
+/// How a `when` condition compares a property, from its declared type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Compared {
+    /// An integer or decimal: ordered, as exact decimals.
+    Decimal,
+    /// Text, an enum, a boolean, a date or a reference: equal as written.
+    Literal,
+}
+
+/// The comparison `object_type.property` takes in `model`; `None` when its
+/// type has none (or is unknown), which holds the call.
+pub(crate) fn semantics_in(
+    model: &norn_cell::Model,
+    object_type: &str,
+    property: &str,
+) -> Option<Compared> {
+    use norn_ir::PropertyType;
+    let types = model.effective_property_types(object_type).ok()?;
+    let (_, kind) = types.into_iter().find(|(id, _)| id == property)?;
+    match kind? {
+        PropertyType::Integer { .. }
+        | PropertyType::Decimal { .. }
+        | PropertyType::DecimalBinding { .. } => Some(Compared::Decimal),
+        PropertyType::Text { .. }
+        | PropertyType::Enum { .. }
+        | PropertyType::Boolean {}
+        | PropertyType::Date {}
+        | PropertyType::Ref { .. } => Some(Compared::Literal),
+        PropertyType::Timestamp { .. }
+        | PropertyType::Duration { .. }
+        | PropertyType::Record { .. }
+        | PropertyType::JsonExt { .. } => None,
+    }
+}
+
+/// `actual op expected` for a literal: only `eq` and `ne`, of the same JSON
+/// shape, compared as written; `None` otherwise.
+fn literal(actual: &RuntimeValue, op: &str, expected: &Value) -> Option<bool> {
+    let equal = match (actual, expected) {
+        (RuntimeValue::String(left), Value::String(right)) => left == right,
+        (RuntimeValue::Bool(left), Value::Bool(right)) => left == right,
+        _ => return None,
+    };
+    match op {
+        "eq" => Some(equal),
+        "ne" => Some(!equal),
+        _ => None,
+    }
+}
+
+/// `actual op expected` as exact decimals, or `None` when either is not one
+/// or `op` is not a comparison.
+fn compare(actual: &RuntimeValue, op: &str, expected: &Value) -> Option<bool> {
+    use std::cmp::Ordering;
+    let decimal = |value: &RuntimeValue| match value {
+        RuntimeValue::Number(number) => Some(*number),
+        RuntimeValue::String(text) => norn_ir::Decimal::parse(text).ok(),
+        RuntimeValue::Null
+        | RuntimeValue::Bool(_)
+        | RuntimeValue::Array(_)
+        | RuntimeValue::Object(_) => None,
+    };
+    let expected_decimal = match expected {
+        // Only an integer is exact as a JSON number (#1469 S10); admission
+        // refuses any other, and so does this comparison (fail closed).
+        Value::Number(number) if number.is_i64() || number.is_u64() => {
+            norn_ir::Decimal::parse(&number.to_string()).ok()
+        }
+        Value::Number(_) => return None,
+        Value::String(text) => norn_ir::Decimal::parse(text).ok(),
+        Value::Null | Value::Bool(_) | Value::Array(_) | Value::Object(_) => None,
+    };
+    let ordering: Option<Ordering> = match (decimal(actual), expected_decimal) {
+        (Some(left), Some(right)) => left.partial_cmp(&right),
+        _ => None,
+    };
+    Some(match (op, ordering?) {
+        ("eq", ordering) => ordering == Ordering::Equal,
+        ("ne", ordering) => ordering != Ordering::Equal,
+        ("lt", ordering) => ordering == Ordering::Less,
+        ("le", ordering) => ordering != Ordering::Greater,
+        ("gt", ordering) => ordering == Ordering::Greater,
+        ("ge", ordering) => ordering != Ordering::Less,
+        _ => return None,
+    })
 }
 
 impl<E: SqlEngine> CellHost for WouldCommit<'_, E> {
@@ -490,24 +668,24 @@ impl<E: SqlEngine> CellHost for WouldCommit<'_, E> {
     type Error = CellError;
 
     fn load(&self, key: &FactKey) -> Result<FactState, CellError> {
-        self.0.load(key)
+        self.cell.load(key)
     }
     fn supports_reference_reads(&self) -> bool {
-        self.0.supports_reference_reads()
+        self.cell.supports_reference_reads()
     }
     fn load_reference(
         &self,
         key: &FactKey,
         max_bytes: u64,
     ) -> Result<Option<BoundedFact>, CellError> {
-        self.0.load_reference(key, max_bytes)
+        self.cell.load_reference(key, max_bytes)
     }
     fn load_bounded(
         &self,
         key: &FactKey,
         max_bytes: u64,
     ) -> Result<Option<BoundedFact>, CellError> {
-        self.0.load_bounded(key, max_bytes)
+        self.cell.load_bounded(key, max_bytes)
     }
     fn resolve_accepted_receipt(
         &self,
@@ -517,10 +695,10 @@ impl<E: SqlEngine> CellHost for WouldCommit<'_, E> {
         Option<norn_kernel::receipt_binding::ReceiptBinding<norn_kernel::cell_host::JsonObject>>,
         norn_kernel::receipt_binding::ReceiptBindingError<CellError>,
     > {
-        self.0.resolve_accepted_receipt(reference, manifest)
+        self.cell.resolve_accepted_receipt(reference, manifest)
     }
     fn load_link(&self, key: &LinkKey) -> Result<LinkState, CellError> {
-        self.0.load_link(key)
+        self.cell.load_link(key)
     }
     fn read_link_targets(
         &self,
@@ -529,7 +707,7 @@ impl<E: SqlEngine> CellHost for WouldCommit<'_, E> {
         max_targets: usize,
         max_key_bytes: u64,
     ) -> Result<Option<Vec<LinkReadTarget>>, CellError> {
-        self.0
+        self.cell
             .read_link_targets(source, link, max_targets, max_key_bytes)
     }
     fn read_predicate(
@@ -538,36 +716,36 @@ impl<E: SqlEngine> CellHost for WouldCommit<'_, E> {
         max_members: usize,
         max_bytes: u64,
     ) -> Result<Option<Vec<PredicateObject>>, CellError> {
-        self.0.read_predicate(predicate, max_members, max_bytes)
+        self.cell.read_predicate(predicate, max_members, max_bytes)
     }
     fn commit(
         &mut self,
-        _commit: CellCommit<FactEvent, RuntimeObject, RuntimeObject>,
+        commit: CellCommit<FactEvent, RuntimeObject, RuntimeObject>,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        stop()
+        self.stop(commit)
     }
     fn commit_action_quantity(
         &mut self,
-        _commit: CellCommit<FactEvent, RuntimeObject, RuntimeObject>,
+        commit: CellCommit<FactEvent, RuntimeObject, RuntimeObject>,
         _requests: &[norn_ir::quantity_ledger::QuantityRequest],
         _idempotency_key: &str,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        stop()
+        self.stop(commit)
     }
     fn commit_action_references(
         &mut self,
-        _commit: CellCommit<FactEvent, RuntimeObject, RuntimeObject>,
+        commit: CellCommit<FactEvent, RuntimeObject, RuntimeObject>,
         _proof: norn_kernel::action_commit::ActionReferenceReads,
         _quantity: Option<(&norn_ir::quantity_ledger::QuantityRequest, &str)>,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        stop()
+        self.stop(commit)
     }
     fn commit_owned_rows(
         &mut self,
-        _commit: CellCommit<FactEvent, RuntimeObject, RuntimeObject>,
+        commit: CellCommit<FactEvent, RuntimeObject, RuntimeObject>,
         _proof: norn_kernel::cell_host::OwnedRowsCommitProof,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        stop()
+        self.stop(commit)
     }
     fn perform(&mut self) -> Result<Option<Performed<RuntimeObject>>, CellError> {
         Ok(None)
@@ -579,9 +757,205 @@ impl<E: SqlEngine> CellHost for WouldCommit<'_, E> {
         Ok(None)
     }
     fn serialize_by(&self, key: &FactKey) -> norn_kernel::cell_host::SerializationLane {
-        self.0.serialize_by(key)
+        self.cell.serialize_by(key)
     }
     fn publish(&mut self, _receipt: &CommitReceipt) -> Result<(), CellError> {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, reason = "fixture values")]
+mod tests {
+    //! APPROVAL-WHEN-1: which calls a narrowed approval holds.
+    use super::*;
+    use norn_kernel::cell_host::FactVersion;
+    use serde_json::json;
+
+    fn gate(when: Option<Value>) -> Gate {
+        let mut payload = json!({ "action": "purchasing.request.submit" });
+        if let (Some(when), Some(object)) = (when, payload.as_object_mut()) {
+            object.insert("when".to_owned(), when);
+        }
+        Gate {
+            definition: "purchasing.large_requests".to_owned(),
+            revision: 1,
+            payload,
+        }
+    }
+
+    /// The purchase request's declared types: `amount` a decimal, `status`
+    /// and `code` text.
+    fn typed(object_type: &str, property: &str) -> Option<Compared> {
+        match (object_type, property) {
+            ("purchasing.PurchaseRequest", "amount") => Some(Compared::Decimal),
+            ("purchasing.PurchaseRequest", "status" | "code") => Some(Compared::Literal),
+            _ => None,
+        }
+    }
+
+    fn put_at(object_type: &str, key: &str, values: Value) -> FactWrite {
+        let values = if let RuntimeValue::Object(values) = RuntimeValue::from_json(values).unwrap()
+        {
+            values
+        } else {
+            RuntimeObject::new()
+        };
+        FactWrite {
+            key: FactKey::new(object_type, key),
+            expected: FactVersion(1),
+            mutation: FactMutation::Put { values },
+        }
+    }
+
+    fn put(object_type: &str, values: Value) -> FactWrite {
+        put_at(object_type, "PR-1", values)
+    }
+
+    /// The kernel's call record, naming `key` of a purchase request as the
+    /// call's target.
+    fn call_of(key: &str) -> FactWrite {
+        put_at(
+            "norn.ActionCall",
+            "purchasing.request.submit/k1",
+            json!({ "amount": "1",
+                "object": { "objectType": "purchasing.PurchaseRequest", "key": key } }),
+        )
+    }
+
+    fn request(amount: &Value) -> Vec<FactWrite> {
+        vec![
+            call_of("PR-1"),
+            put(
+                "purchasing.PurchaseRequest",
+                json!({ "amount": amount.clone(), "status": "submitted" }),
+            ),
+        ]
+    }
+
+    /// #1469 S9: `when` reads the call's target, never whichever write sorts
+    /// first; a target with no proposed values holds the call.
+    #[test]
+    fn when_reads_the_target_record_by_its_exact_key() {
+        let large = gate(Some(
+            json!({ "property": "amount", "op": "gt", "value": "1000" }),
+        ));
+        let writes = vec![
+            call_of("PR-9"),
+            put_at("purchasing.Line", "A-1", json!({ "amount": "5" })),
+            put_at(
+                "purchasing.PurchaseRequest",
+                "PR-1",
+                json!({ "amount": "3" }),
+            ),
+            put_at(
+                "purchasing.PurchaseRequest",
+                "PR-9",
+                json!({ "amount": "2500.00" }),
+            ),
+        ];
+        assert!(applies(&large, &writes, typed), "the target's 2500 waits");
+        let untouched = vec![
+            call_of("PR-9"),
+            put_at("purchasing.Line", "A-1", json!({ "amount": "5" })),
+        ];
+        assert!(applies(&large, &untouched, typed), "no target values: held");
+        let unnamed = vec![put_at(
+            "purchasing.PurchaseRequest",
+            "PR-9",
+            json!({ "amount": "5" }),
+        )];
+        assert!(applies(&large, &unnamed, typed), "no call record: held");
+    }
+
+    /// #1469 S10: a decimal threshold compares exactly as written.
+    #[test]
+    fn a_decimal_threshold_compares_exactly() {
+        let over = gate(Some(
+            json!({ "property": "amount", "op": "gt", "value": "1000.10" }),
+        ));
+        assert!(!applies(&over, &request(&json!("1000.10")), typed));
+        assert!(applies(&over, &request(&json!("1000.11")), typed));
+        assert!(!applies(&over, &request(&json!("1000.100")), typed));
+        let at_least = gate(Some(
+            json!({ "property": "amount", "op": "ge", "value": "1000.10" }),
+        ));
+        assert!(applies(&at_least, &request(&json!("1000.10")), typed));
+        assert!(!applies(&at_least, &request(&json!("1000.09")), typed));
+        // A fractional JSON number is not exact: it holds the call.
+        let inexact = gate(Some(
+            json!({ "property": "amount", "op": "gt", "value": 2000.5 }),
+        ));
+        assert!(applies(&inexact, &request(&json!("5")), typed));
+    }
+
+    #[test]
+    fn an_amount_threshold_holds_only_the_larger_requests() {
+        let large = gate(Some(
+            json!({ "property": "amount", "op": "gt", "value": "1000" }),
+        ));
+        assert!(applies(&large, &request(&json!("2500.00")), typed));
+        assert!(applies(&large, &request(&json!(1000.01)), typed));
+        assert!(!applies(&large, &request(&json!("1000.00")), typed));
+        assert!(!applies(&large, &request(&json!("990")), typed));
+        // The kernel's own records never stand in for the call's record.
+        assert!(!applies(&large, &request(&json!("12")), typed));
+    }
+
+    #[test]
+    fn text_compares_by_equality_and_anything_else_holds_the_call() {
+        let status = gate(Some(
+            json!({ "property": "status", "op": "eq", "value": "submitted" }),
+        ));
+        assert!(applies(&status, &request(&json!("5")), typed));
+        let other = gate(Some(
+            json!({ "property": "status", "op": "ne", "value": "submitted" }),
+        ));
+        assert!(!applies(&other, &request(&json!("5")), typed));
+        // Fail closed: an unordered comparison, a missing property, no record.
+        let ordered = gate(Some(
+            json!({ "property": "status", "op": "lt", "value": "z" }),
+        ));
+        assert!(applies(&ordered, &request(&json!("5")), typed));
+        let missing = gate(Some(
+            json!({ "property": "priority", "op": "eq", "value": "high" }),
+        ));
+        assert!(applies(&missing, &request(&json!("5")), typed));
+        assert!(applies(&missing, &[], typed));
+        assert!(applies(&gate(None), &request(&json!("5")), typed));
+    }
+
+    /// #1469 S9: a text property compares as written, never as a decimal:
+    /// `"1"` and `"1.0"` differ, so `ne "1"` holds `"1.0"`.
+    #[test]
+    fn text_compares_as_written() {
+        let coded = |code: &str| {
+            vec![
+                call_of("PR-1"),
+                put(
+                    "purchasing.PurchaseRequest",
+                    json!({ "amount": "5", "code": code }),
+                ),
+            ]
+        };
+        let not_one = gate(Some(
+            json!({ "property": "code", "op": "ne", "value": "1" }),
+        ));
+        assert!(applies(&not_one, &coded("1.0"), typed));
+        assert!(!applies(&not_one, &coded("1"), typed));
+        let is_one = gate(Some(
+            json!({ "property": "code", "op": "eq", "value": "1" }),
+        ));
+        assert!(!applies(&is_one, &coded("1.0"), typed));
+        // Text is not ordered: an ordered comparison holds the call.
+        let above = gate(Some(
+            json!({ "property": "code", "op": "gt", "value": "1" }),
+        ));
+        assert!(applies(&above, &coded("0"), typed));
+        // A property whose type has no comparison holds the call.
+        let untyped = gate(Some(
+            json!({ "property": "amount", "op": "gt", "value": "1" }),
+        ));
+        assert!(applies(&untyped, &coded("1"), |_, _| None));
     }
 }

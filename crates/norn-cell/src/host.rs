@@ -6,7 +6,7 @@
 //!
 //! - **commit** runs the kernel's own admission check ([`Proposed`] →
 //!   [`Checked`], [`norn_kernel::check_commit`]) *inside* the store's commit transaction
-//!   ([`CellStore::commit_guarded`]), then writes the consumed delivery, the
+//!   (`CellStore::commit_guarded_unchecked`), then writes the consumed delivery, the
 //!   whole-object writes, the ledger events, and the command/timer enqueues
 //!   in that one SQLite transaction: commit and enqueue are atomic, and a
 //!   refused commit writes nothing.
@@ -243,7 +243,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             .into_iter()
             .map(|event| to_runtime(&event))
             .collect::<Result<Vec<_>, _>>()?;
-        self.store.commit(&CommitBatch {
+        self.store.commit_unchecked(&CommitBatch {
             world: MAIN_WORLD.to_owned(),
             scope: self.scope.clone(),
             logical_time: self.now.as_millis(),
@@ -279,7 +279,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             .read()
             .receipt_by_idempotency_key(MAIN_WORLD, idempotency_key)?
             .map_or(self.now.as_millis(), |receipt| receipt.body.logical_time);
-        self.store.commit(&CommitBatch {
+        self.store.commit_unchecked(&CommitBatch {
             world: MAIN_WORLD.to_owned(),
             scope: self.scope.clone(),
             logical_time,
@@ -320,7 +320,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             .read()
             .receipt_by_idempotency_key(MAIN_WORLD, idempotency_key)?
             .map_or(self.now.as_millis(), |receipt| receipt.body.logical_time);
-        self.store.commit(&CommitBatch {
+        self.store.commit_unchecked(&CommitBatch {
             world: MAIN_WORLD.to_owned(),
             scope: self.scope.clone(),
             logical_time,
@@ -332,17 +332,23 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
 
     /// MANIFEST-COMMIT-1: commit `manifest` as the current dataset of its
     /// type in the main world, at this host's clock and bound scope, and
-    /// return its identity and receipt. A retry keeps the first receipt.
+    /// return its identity and receipt (MANIFEST-04 binds `request`).
     ///
     /// # Errors
     /// As [`CellStore::commit_dataset_manifest`].
     pub fn commit_dataset_manifest(
         &mut self,
         manifest: &crate::dataset_manifest::DatasetManifest,
+        request: Option<&crate::dataset_manifest::DatasetRequest>,
     ) -> Result<(String, crate::Receipt), CellError> {
         let logical_time = self.now.as_millis();
-        self.store
-            .commit_dataset_manifest(MAIN_WORLD, &self.scope, logical_time, manifest)
+        self.store.commit_dataset_manifest(
+            MAIN_WORLD,
+            &self.scope,
+            logical_time,
+            manifest,
+            request,
+        )
     }
 
     /// Commit one complete quantity operation using this host's injected clock
@@ -364,7 +370,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             .receipt_by_idempotency_key(MAIN_WORLD, idempotency_key)?;
         let logical_time =
             previous.map_or(self.now.as_millis(), |receipt| receipt.body.logical_time);
-        self.store.commit(&CommitBatch {
+        self.store.commit_unchecked(&CommitBatch {
             world: MAIN_WORLD.to_owned(),
             scope: self.scope.clone(),
             logical_time,
@@ -438,7 +444,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             .store
             .read()
             .quantity_balance_versions(&deadline.world, &request)?;
-        self.store.commit(&CommitBatch {
+        self.store.commit_unchecked(&CommitBatch {
             world: deadline.world,
             scope: self.scope.clone(),
             logical_time: self.now.as_millis(),
@@ -521,6 +527,32 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             expected_version,
             &self.scope,
             change,
+        )?;
+        self.advance_to(LogicalTime::from_millis(installed.installed_at));
+        Ok(installed)
+    }
+
+    /// Install a checker-admitted definition set with retained revisions
+    /// riding it, in one transaction; see
+    /// [`CellStore::install_definitions_riding`].
+    ///
+    /// # Errors
+    ///
+    /// A definitions-version or retained-revision conflict, unsafe model
+    /// migration, or store error; any of them installs nothing.
+    pub fn install_definitions_riding(
+        &mut self,
+        candidate_model: Model,
+        input: &InstalledDefinitionInput,
+        expected_version: Option<u64>,
+        riding: &[crate::retained::RetainedDefinitionChange],
+    ) -> Result<InstalledDefinitionSet, CellError> {
+        let installed = self.store.install_definitions_riding(
+            candidate_model,
+            input,
+            expected_version,
+            &self.scope,
+            riding,
         )?;
         self.advance_to(LogicalTime::from_millis(installed.installed_at));
         Ok(installed)
@@ -1499,7 +1531,7 @@ where
             self.store.refuse_perform_in_fork()?;
             return Ok(Some(PerformClaim::OutcomeUnknown(command)));
         }
-        self.store.commit(&CommitBatch {
+        self.store.commit_unchecked(&CommitBatch {
             world: MAIN_WORLD.to_owned(),
             scope: self.scope.clone(),
             logical_time: self.now.as_millis(),

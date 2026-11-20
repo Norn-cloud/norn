@@ -9,26 +9,30 @@
 //! unchanged and stay the path for actions and corrections.
 //!
 //! - MANIFEST-COMMIT-1: a manifest commits as exactly one ledger event
-//!   ([`MANIFEST_EVENT`]) under the idempotency key `dataset:<hash>`. A
-//!   retry of the same manifest returns the first receipt, and nothing else
-//!   is written.
+//!   ([`MANIFEST_EVENT`]). A load that names a request key commits under the
+//!   idempotency key `dataset.load:<key>`, bound in the same commit to the
+//!   request's fingerprint ([`DatasetRequest`]): a retry of that request
+//!   returns the first receipt and writes nothing, and the same key with
+//!   another request is refused. A load without a key always commits.
 //! - MANIFEST-PIN-1: a manifest whose pins are not the cell's current
 //!   definitions version, model, table typing and law set is refused
-//!   (`dataset.stale_pins`). A dataset is never admitted under definitions
-//!   it was not typed and checked by.
+//!   (`dataset.stale_pins`). The pins are the ones the landing was typed and
+//!   checked by, carried from its first step, never recomputed at commit:
+//!   a dataset is never admitted under definitions it was not checked by.
 //! - MANIFEST-CURRENT-1: the current dataset of a type in a world is the
 //!   latest manifest event committed to that world. It is read from the
 //!   ledger, so export, restore and replay reproduce it with no side table.
 //! - MANIFEST-CACHE-1: the engine table that answers questions is a cache of
-//!   the data file. It is keyed by the landing identity the manifest binds,
-//!   and can be rebuilt from the files, which are checked by hash.
+//!   the data file. Its identity (the manifest's `load`) is made of the
+//!   table and the two files' digests ([`dataset_cache_id`]); the engine
+//!   rebuilds it from files of exactly those digests on a miss.
 
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::analytics::{FileFormat, RuleCount, TableSchema, ValidRange};
+use crate::analytics::{FileFormat, RuleCount, TableSchema, ValidRange, dataset_cache_id};
 use crate::engine::{SqlEngine, params};
 use crate::system::LEDGER;
 use crate::{CellError, CellStore, CommitBatch, GuardedError, Receipt};
@@ -82,6 +86,9 @@ pub struct ManifestPins {
     pub model_hash: String,
     /// The column binding's pin (its mapping onto the type).
     pub binding: String,
+    /// MANIFEST-03: the admitted mapping the rows are bound by
+    /// (`<artifact id>@<sha256>`).
+    pub mapping: String,
     /// The pin of the laws and invariants that govern the type.
     pub laws: String,
 }
@@ -92,14 +99,14 @@ pub struct ManifestPins {
 pub struct ManifestCounts {
     /// Rows the source file holds.
     pub source: u64,
-    /// Rows admitted to the data file.
+    /// Rows in the data file: typed, and held back by no rule (LAW-02).
     pub admitted: u64,
     /// Rows held back before admission (not typed), by reason.
     pub held: BTreeMap<String, u64>,
-    /// MANIFEST-LAWS-1: findings by rule, over the admitted rows.
+    /// MANIFEST-LAWS-1: findings by rule, over the typed rows.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub findings: BTreeMap<String, RuleCount>,
-    /// Admitted rows a rule holds back; every other admitted row is trusted.
+    /// Typed rows a rule holds back: in the held-set file, not the data file.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub held_by_rules: u64,
 }
@@ -120,7 +127,8 @@ pub struct DatasetManifest {
     pub version: String,
     /// The admitted object type the rows are typed by.
     pub object_type: String,
-    /// The landing identity: the engine cache key (MANIFEST-CACHE-1).
+    /// The cache identity: [`dataset_cache_id`] of the table and the two
+    /// files' digests (MANIFEST-CACHE-1).
     pub load: String,
     /// The source upload.
     pub source: ManifestSource,
@@ -156,6 +164,25 @@ impl DatasetManifest {
     }
 }
 
+/// MANIFEST-04: the request a manifest was committed for: the caller's key
+/// and the request's fingerprint (what was asked, not what was landed).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DatasetRequest {
+    /// The caller's request key.
+    pub key: String,
+    /// The fingerprint of the request.
+    pub fingerprint: String,
+}
+
+impl DatasetRequest {
+    /// The idempotency key a request commits under: scoped to the operation.
+    #[must_use]
+    pub fn idempotency_key(&self) -> String {
+        format!("dataset.load:{}", self.key)
+    }
+}
+
 /// The ledger event of a committed manifest.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -165,6 +192,8 @@ struct ManifestEvent<'a> {
     object_type: &'a str,
     hash: &'a str,
     manifest: &'a DatasetManifest,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    request: Option<&'a DatasetRequest>,
 }
 
 /// A manifest as committed: its identity and where it sits in the ledger.
@@ -215,11 +244,13 @@ impl<E: SqlEngine> CellStore<E> {
         &self,
         object_type: &str,
         binding: &BTreeMap<String, String>,
+        mapping: &str,
     ) -> Result<ManifestPins, CellError> {
         Ok(ManifestPins {
             definitions_version: self.read().active_definitions_version()?.unwrap_or(0),
             model_hash: self.model().model_hash().to_owned(),
             binding: binding_pin(binding)?,
+            mapping: mapping.to_owned(),
             laws: self.dataset_laws_pin(object_type)?,
         })
     }
@@ -245,18 +276,22 @@ impl<E: SqlEngine> CellStore<E> {
 
     /// MANIFEST-COMMIT-1: commit `manifest` to `world` as one governed
     /// command and return its identity and receipt. The pins must be the
-    /// current ones (MANIFEST-PIN-1). A retry of the same manifest returns
-    /// the first receipt.
+    /// current ones (MANIFEST-PIN-1); the definitions version is read again
+    /// inside the commit. With a `request`, the commit binds its key to its
+    /// fingerprint (MANIFEST-04).
     ///
     /// # Errors
     /// `dataset.invalid` for a manifest that is not well formed,
-    /// `dataset.stale_pins` for pins that are not current, or a store error.
+    /// `dataset.stale_pins` for pins that are not current,
+    /// [`CellError::IdempotencyConflict`] for a key committed with another
+    /// manifest, or a store error.
     pub fn commit_dataset_manifest(
         &mut self,
         world: &str,
         scope: &str,
         logical_time: u64,
         manifest: &DatasetManifest,
+        request: Option<&DatasetRequest>,
     ) -> Result<(String, Receipt), CellError> {
         if manifest.version != MANIFEST_VERSION
             || manifest.table.name != manifest.object_type
@@ -268,7 +303,17 @@ impl<E: SqlEngine> CellStore<E> {
                 .chain(manifest.counts.findings.values().map(|count| &count.rows))
                 .sum::<u64>()
                 != manifest.held.rows
-            || manifest.counts.held_by_rules > manifest.counts.admitted
+            // LAW-02: the data file holds exactly the typed rows no rule
+            // holds back; every source row is in it or held.
+            || manifest.counts.source
+                != manifest
+                    .counts
+                    .admitted
+                    .saturating_add(manifest.counts.held_by_rules)
+                    .saturating_add(manifest.counts.held.values().sum::<u64>())
+            || manifest.load
+                != dataset_cache_id(&manifest.table, &manifest.data.sha256, &manifest.held.sha256)
+            || binding_pin(&manifest.binding)? != manifest.pins.binding
         {
             return Err(refused(
                 "dataset.invalid",
@@ -276,12 +321,15 @@ impl<E: SqlEngine> CellStore<E> {
             ));
         }
         let current_table = self.analytics_table(&manifest.object_type)?;
-        let current = self.dataset_pins(&manifest.object_type, &manifest.binding)?;
+        let current = self.dataset_pins(
+            &manifest.object_type,
+            &manifest.binding,
+            &manifest.pins.mapping,
+        )?;
         let markings = self.dataset_markings(&manifest.object_type, &manifest.table)?;
         if current_table != manifest.table
             || markings != manifest.markings
             || current.model_hash != manifest.pins.model_hash
-            || current.binding != manifest.pins.binding
             || current.laws != manifest.pins.laws
         {
             return Err(refused(
@@ -290,31 +338,25 @@ impl<E: SqlEngine> CellStore<E> {
             ));
         }
         let hash = manifest.hash()?;
-        let key = format!("dataset:{hash}");
-        // A retry of the same manifest is the same request: it keeps the
-        // first commit's logical time, so it replays rather than conflicts.
-        let logical_time = self
-            .read()
-            .receipt_by_idempotency_key(world, &key)?
-            .map_or(logical_time, |receipt| receipt.body.logical_time);
         let event = norn_ir::runtime::encode(&ManifestEvent {
             kind: MANIFEST_EVENT,
             object_type: &manifest.object_type,
             hash: &hash,
             manifest,
+            request,
         })
         .map_err(CellError::Encoding)?;
         let batch = CommitBatch {
             world: world.to_owned(),
             scope: scope.to_owned(),
             logical_time,
-            idempotency_key: Some(key),
+            idempotency_key: request.map(DatasetRequest::idempotency_key),
             events: vec![event],
             ..CommitBatch::default()
         };
         let pinned = manifest.pins.definitions_version;
         // The definitions version is re-read inside the commit transaction:
-        // an install between the check above and this commit refuses.
+        // an install between the landing's first step and this commit refuses.
         let guarded = self.commit_guarded(
             &batch,
             |reader| {
@@ -333,6 +375,55 @@ impl<E: SqlEngine> CellStore<E> {
             Ok(((), outcome)) => Ok((hash, outcome.receipt().clone())),
             Err(GuardedError::Guard(error) | GuardedError::Store(error)) => Err(error),
         }
+    }
+
+    /// MANIFEST-04: the manifest a request key committed, with the
+    /// fingerprint it was committed for and its receipt.
+    ///
+    /// # Errors
+    /// A store error or an undecodable manifest event.
+    pub fn dataset_request(
+        &self,
+        world: &str,
+        key: &str,
+    ) -> Result<Option<(CommittedManifest, DatasetRequest, Receipt)>, CellError> {
+        let probe = DatasetRequest {
+            key: key.to_owned(),
+            fingerprint: String::new(),
+        };
+        let Some(receipt) = self
+            .read()
+            .receipt_by_idempotency_key(world, &probe.idempotency_key())?
+        else {
+            return Ok(None);
+        };
+        let found = self.conn.query_optional(
+            &format!(
+                "SELECT \"event\" FROM \"{LEDGER}\" WHERE \"world\" = ?1 AND \"commit_seq\" = ?2 \
+                 AND json_extract(\"event\", '$.type') = ?3 ORDER BY \"seq\" LIMIT 1"
+            ),
+            params![
+                world,
+                i64::try_from(receipt.body.commit_seq).unwrap_or(i64::MAX),
+                MANIFEST_EVENT
+            ],
+            |row| row.get::<String>(0),
+        )?;
+        let Some(text) = found else {
+            return Ok(None);
+        };
+        let (manifest, hash, event) = decode_event(receipt.body.commit_seq, &text)?;
+        let request: DatasetRequest =
+            serde_json::from_value(event.get("request").cloned().unwrap_or(Value::Null))?;
+        Ok(Some((
+            CommittedManifest {
+                manifest,
+                hash,
+                commit_seq: receipt.body.commit_seq,
+            },
+            request,
+            receipt,
+        )))
     }
 
     /// MANIFEST-CURRENT-1: the current dataset of `object_type` in `world`.
@@ -362,20 +453,26 @@ impl<E: SqlEngine> CellStore<E> {
                 seq: 0,
                 reason: "a negative commit sequence".to_owned(),
             })?;
-        let event: Value = serde_json::from_str(&text)?;
-        let manifest: DatasetManifest =
-            serde_json::from_value(event.get("manifest").cloned().unwrap_or(Value::Null))?;
-        let hash = manifest.hash()?;
-        if event.get("hash").and_then(Value::as_str) != Some(hash.as_str()) {
-            return Err(CellError::LedgerCorrupt {
-                seq: commit_seq,
-                reason: "a dataset manifest event does not match its hash".to_owned(),
-            });
-        }
+        let (manifest, hash, _event) = decode_event(commit_seq, &text)?;
         Ok(Some(CommittedManifest {
             manifest,
             hash,
             commit_seq,
         }))
     }
+}
+
+/// A manifest event's manifest and identity, checked against the hash it records.
+fn decode_event(commit_seq: u64, text: &str) -> Result<(DatasetManifest, String, Value), CellError> {
+    let event: Value = serde_json::from_str(text)?;
+    let manifest: DatasetManifest =
+        serde_json::from_value(event.get("manifest").cloned().unwrap_or(Value::Null))?;
+    let hash = manifest.hash()?;
+    if event.get("hash").and_then(Value::as_str) != Some(hash.as_str()) {
+        return Err(CellError::LedgerCorrupt {
+            seq: commit_seq,
+            reason: "a dataset manifest event does not match its hash".to_owned(),
+        });
+    }
+    Ok((manifest, hash, event))
 }

@@ -7,6 +7,7 @@
     missing_docs,
     reason = "bounded native correspondence"
 )]
+use norn_cell::test_door::TestCommit as _;
 use norn_cell::{CellStore, CommitBatch, Model, SqliteCell};
 use norn_checker::obligations::lifecycle::{
     finite::{Bounds, Row},
