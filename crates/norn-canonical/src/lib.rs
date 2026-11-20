@@ -1898,7 +1898,7 @@ mod direct {
                 entries: BTreeMap::new(),
                 key: None,
                 variant: None,
-                raw: None,
+                raw: Raw::No,
             })
         }
         fn serialize_struct(self, name: &'static str, len: usize) -> Result<Map> {
@@ -1907,7 +1907,7 @@ mod direct {
             }
             let mut map = self.serialize_map(Some(len))?;
             if name == RAW_VALUE {
-                map.raw = Some(None);
+                map.raw = Raw::Pending;
             }
             Ok(map)
         }
@@ -1993,8 +1993,15 @@ mod direct {
         entries: BTreeMap<String, JsonValue>,
         key: Option<String>,
         variant: Option<&'static str>,
-        /// A `serde_json` raw value (one field, its JSON text), once read.
-        raw: Option<Option<JsonValue>>,
+        raw: Raw,
+    }
+
+    /// Whether a [`Map`] is a `serde_json` raw value (one field, its JSON
+    /// text), and that value once read.
+    enum Raw {
+        No,
+        Pending,
+        Read(JsonValue),
     }
 
     impl Map {
@@ -2006,7 +2013,7 @@ mod direct {
             Ok(())
         }
         fn finish(self) -> Result<JsonValue> {
-            if self.raw.is_some() {
+            if !matches!(self.raw, Raw::No) {
                 return Err(Declined);
             }
             let object = JsonValue::Object(self.entries);
@@ -2042,11 +2049,11 @@ mod direct {
             key: &'static str,
             value: &T,
         ) -> Result<()> {
-            if let Some(raw) = &mut self.raw {
+            if !matches!(self.raw, Raw::No) {
                 // The raw text, parsed exactly as the text path parses the
                 // document it is written into; only a scalar, so nesting
                 // stays this serializer's to bound.
-                if key != RAW_VALUE || raw.is_some() {
+                if key != RAW_VALUE || !matches!(self.raw, Raw::Pending) {
                     return Err(Declined);
                 }
                 let text = value.serialize(KeySerializer)?;
@@ -2054,7 +2061,7 @@ mod direct {
                 if matches!(parsed, JsonValue::Array(_) | JsonValue::Object(_)) {
                     return Err(Declined);
                 }
-                *raw = Some(parsed);
+                self.raw = Raw::Read(parsed);
                 return Ok(());
             }
             let value = value.serialize(self.at)?;
@@ -2062,8 +2069,9 @@ mod direct {
         }
         fn end(self) -> Result<JsonValue> {
             match self.raw {
-                Some(raw) => raw.ok_or(Declined),
-                None => self.finish(),
+                Raw::Read(value) => Ok(value),
+                Raw::Pending => Err(Declined),
+                Raw::No => self.finish(),
             }
         }
     }
