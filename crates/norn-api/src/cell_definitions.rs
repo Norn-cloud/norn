@@ -39,6 +39,7 @@ use serde_json::value::RawValue;
 use utoipa::ToSchema;
 
 use crate::authz::Operation;
+use crate::definition_routes::DefinitionKinds;
 use crate::host::{DevHost, reopen_model, serves_actions};
 use crate::kernel_set::{self, AdmittedSet, KernelRefusal};
 use crate::refusal::{Refusal, RefusalDiagnostic, RefusalSpan};
@@ -95,6 +96,32 @@ pub struct DefinitionsChangeRequest {
     /// Required by apply; a plan reports the version it planned against.
     #[serde(default)]
     pub expected_version: Option<u64>,
+    /// The pack's approvals (#1469): admitted against the submitted set's
+    /// actions, and installed with it in one transaction, so a new action
+    /// is never live without its gate. A plan returns each one's
+    /// restatement; an apply carries each one's `signoff` of it and the
+    /// `expectedVersion` (revision) the plan reported. Any refusal installs
+    /// nothing.
+    #[serde(default)]
+    pub approvals: Vec<crate::definition_routes::InstallDefinitionRequest>,
+}
+
+/// An approval the change installs with the set.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PlannedApproval {
+    /// The approval id.
+    pub id: String,
+    /// The id's current revision, if any: the apply's `expectedVersion`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from_revision: Option<u64>,
+    /// Whether the active revision is already this approval.
+    pub unchanged: bool,
+    /// The server's words for the approval: what the signer signs.
+    pub restatement: String,
+    /// Lower-case hex SHA-256 of the restatement: the apply's
+    /// `signoff.restatementSha256`.
+    pub restatement_sha256: String,
 }
 
 /// One artifact the change adds or replaces.
@@ -138,6 +165,9 @@ pub struct DefinitionsPlan {
     pub diagnostics: Vec<RefusalDiagnostic>,
     /// The candidate set's admission receipt digest.
     pub receipt_sha256: String,
+    /// The approvals the change installs with the set.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub approvals: Vec<PlannedApproval>,
 }
 
 /// Whether an apply installed a new version.
@@ -321,11 +351,14 @@ fn diff(
 
 /// Parse, bound and admit one body over the active set, then preflight the
 /// install on the store without writing. Call only after authorization.
+type Approvals = Vec<crate::definition_routes::InstallDefinitionRequest>;
+
 fn candidate<E: SqlEngine>(
     host: &DevHost<E>,
     body: &str,
-) -> Result<(Candidate, Option<u64>), Refusal> {
-    let (request, tenant) = submission(host, body)?;
+) -> Result<(Candidate, Option<u64>, Approvals), Refusal> {
+    let (mut request, tenant) = submission(host, body)?;
+    let approvals = std::mem::take(&mut request.approvals);
     let active = host.active_definitions()?.ok_or_else(|| {
         conflict(
             codes::NOT_INSTALLED,
@@ -391,13 +424,102 @@ fn candidate<E: SqlEngine>(
                 checked_objects,
                 diagnostics: Vec::new(),
                 receipt_sha256: admitted.receipt_sha256.clone(),
+                approvals: Vec::new(),
             },
             admitted,
             model,
             active,
         },
         request.expected_version,
+        approvals,
     ))
+}
+
+/// The action ids of a canonical artifact set.
+fn set_actions(canonical_set: &str) -> Result<std::collections::BTreeSet<String>, Refusal> {
+    let artifacts: Vec<serde_json::Value> =
+        serde_json::from_str(canonical_set).map_err(Refusal::host)?;
+    Ok(artifacts
+        .iter()
+        .filter(|artifact| {
+            artifact.get("kind").and_then(serde_json::Value::as_str) == Some("action")
+        })
+        .filter_map(|artifact| {
+            artifact
+                .pointer("/payload/actionId")?
+                .as_str()
+                .map(str::to_owned)
+        })
+        .collect())
+}
+
+/// Admit every approval of the change against the candidate set's actions
+/// (#1469); with `signed_at`, as an apply. One approval per action, and one
+/// refusal refuses the change.
+fn riding<E: SqlEngine>(
+    host: &DevHost<E>,
+    actor: Option<&str>,
+    kinds: &DefinitionKinds,
+    candidate: &Candidate,
+    approvals: &Approvals,
+    signed_at: Option<u64>,
+) -> Result<Vec<crate::definition_routes::RidingApproval>, Refusal> {
+    if approvals.is_empty() {
+        return Ok(Vec::new());
+    }
+    let actor = actor.ok_or_else(crate::authz::read_denied)?;
+    let actions = set_actions(&candidate.admitted.canonical_set)?;
+    let mut ids = std::collections::BTreeSet::new();
+    let mut gated = std::collections::BTreeSet::new();
+    for (index, request) in approvals.iter().enumerate() {
+        let action = serde_json::from_str::<serde_json::Value>(request.payload.get())
+            .ok()
+            .and_then(|payload| payload.get("action")?.as_str().map(str::to_owned));
+        if !ids.insert(request.id.clone()) || action.is_some_and(|action| !gated.insert(action)) {
+            return Err(refused(vec![RefusalDiagnostic::error(
+                crate::approval_definitions::codes::DUPLICATE,
+                "an approval id or its action appears more than once in the change",
+                format!("/approvals/{index}"),
+            )]));
+        }
+    }
+    // #1469 S2: one gate per action in the FINAL set. The change's own
+    // approvals were checked against each other above; an active approval
+    // the change revises gates whatever its new payload says, so it is not
+    // counted at its old action (a gate moved off an action frees it for a
+    // replacement in the same change). Each revision is still compare-and-set
+    // at commit.
+    approvals
+        .iter()
+        .enumerate()
+        .map(|(index, request)| {
+            crate::definition_routes::riding_approval(
+                host,
+                actor,
+                kinds,
+                request,
+                &actions,
+                signed_at,
+                &format!("/approvals/{index}"),
+                &ids,
+            )
+        })
+        .collect()
+}
+
+fn planned_approvals(
+    approvals: &[crate::definition_routes::RidingApproval],
+) -> Vec<PlannedApproval> {
+    approvals
+        .iter()
+        .map(|approval| PlannedApproval {
+            id: approval.id.clone(),
+            from_revision: approval.from_revision,
+            unchanged: approval.unchanged,
+            restatement: approval.restatement.clone(),
+            restatement_sha256: approval.restatement_sha256.clone(),
+        })
+        .collect()
 }
 
 fn install_input(
@@ -507,11 +629,148 @@ pub fn plan_definitions<E: SqlEngine>(
     host: &DevHost<E>,
     scope: &ScopeQuery,
     actor: Option<&str>,
+    kinds: &DefinitionKinds,
     body: &str,
 ) -> Result<DefinitionsPlan, Refusal> {
     crate::definition_routes::authorize(host, scope, actor, Operation::WriteDefinitions)?;
-    let (candidate, _expected) = candidate(host, body)?;
-    Ok(candidate.plan)
+    let (candidate, _expected, approvals) = candidate(host, body)?;
+    let approvals = riding(host, actor, kinds, &candidate, &approvals, None)?;
+    let mut plan = candidate.plan;
+    with_approvals(&mut plan, &approvals);
+    Ok(plan)
+}
+
+/// Record the change's approvals in `plan`. #1469 S3: each one is changed
+/// or unchanged by its own payload, signed or not, and a changed gate
+/// installs the next version even over an unchanged set.
+fn with_approvals(
+    plan: &mut DefinitionsPlan,
+    approvals: &[crate::definition_routes::RidingApproval],
+) {
+    plan.approvals = planned_approvals(approvals);
+    if plan.unchanged && plan.approvals.iter().any(|approval| !approval.unchanged) {
+        plan.unchanged = false;
+        plan.next_version = plan.base_version.saturating_add(1);
+    }
+}
+
+/// One source approval revision the dev host commits with its set.
+#[derive(Debug)]
+pub struct SourceApproval {
+    /// The revision to append: the next active revision of a declared
+    /// approval, or the retirement of one the sources no longer declare.
+    pub change: norn_cell::retained::RetainedDefinitionChange,
+    /// The server's words the actor signed, for an active revision.
+    pub restatement: Option<String>,
+}
+
+/// The dev host's source approvals (DEV-DEFINITIONS-1, #1469 S2): each of
+/// `declared` (`(id, payload)`) admitted, restated and signed by `actor` at
+/// `signed_at` the way `:apply` admits an approval riding a set, against
+/// `canonical_set`'s actions; and the retirement of every active approval
+/// `declared` does not name. An approval that takes over the action of a
+/// retiring one (a rename) admits, because both commit together. Unchanged
+/// approvals append nothing. The revisions ride one install of the set
+/// ([`DevHost::install_definitions_riding`]), so none of them, and no
+/// action of the set, is ever live without the others.
+///
+/// # Errors
+/// The id of the first refused approval and its refusal; a refusal returns
+/// nothing to commit.
+pub fn source_approvals<E: SqlEngine>(
+    host: &DevHost<E>,
+    actor: &str,
+    kinds: &DefinitionKinds,
+    canonical_set: &str,
+    declared: &[(String, Box<RawValue>)],
+    signed_at: u64,
+) -> Result<Vec<SourceApproval>, Box<(String, Refusal)>> {
+    use crate::definition_routes::{InstallDefinitionRequest, SignoffRequest};
+    let whole = |refusal: Refusal| Box::new(("approval".to_owned(), refusal));
+    let actions = set_actions(canonical_set).map_err(whole)?;
+    let active = crate::definition_routes::active_approvals(host).map_err(whole)?;
+    let retiring: std::collections::BTreeSet<String> = active
+        .iter()
+        .filter(|record| declared.iter().all(|(id, _)| *id != record.id))
+        .map(|record| record.id.clone())
+        .collect();
+    // #1469 S2: uniqueness is of the FINAL set. Every declared approval is
+    // checked against the other declared ones below, so no active approval
+    // this reload revises or retires counts at its old action: a gate moved
+    // to another action frees its old one for a replacement in this reload.
+    let superseded: std::collections::BTreeSet<String> = retiring
+        .iter()
+        .cloned()
+        .chain(declared.iter().map(|(id, _)| id.clone()))
+        .collect();
+    let mut out = Vec::new();
+    let mut gated = std::collections::BTreeSet::new();
+    for (id, payload) in declared {
+        let at = |refusal: Refusal| Box::new((id.clone(), refusal));
+        let action = serde_json::from_str::<serde_json::Value>(payload.get())
+            .ok()
+            .and_then(|payload| payload.get("action")?.as_str().map(str::to_owned));
+        if action.is_some_and(|action| !gated.insert(action)) {
+            return Err(at(refused(vec![RefusalDiagnostic::error(
+                crate::approval_definitions::codes::DUPLICATE,
+                "another declared approval already gates this action",
+                "/action",
+            )])));
+        }
+        let mut request = InstallDefinitionRequest {
+            kind: "approval".to_owned(),
+            id: id.clone(),
+            payload: payload.clone(),
+            expected_version: None,
+            signoff: None,
+        };
+        let admit = |request: &InstallDefinitionRequest, signed_at| {
+            crate::definition_routes::riding_approval(
+                host,
+                actor,
+                kinds,
+                request,
+                &actions,
+                signed_at,
+                "",
+                &superseded,
+            )
+        };
+        let planned = admit(&request, None).map_err(at)?;
+        if planned.unchanged {
+            continue;
+        }
+        // The actor signs the server's own words, through the same check.
+        request.expected_version = planned.from_revision;
+        request.signoff = Some(SignoffRequest {
+            restatement_sha256: planned.restatement_sha256,
+        });
+        let signed = admit(&request, Some(signed_at)).map_err(at)?;
+        let change = signed
+            .change
+            .ok_or_else(|| at(Refusal::host("a changed approval produced no revision")))?;
+        out.push(SourceApproval {
+            change,
+            restatement: Some(signed.restatement),
+        });
+    }
+    for mut definition in active
+        .into_iter()
+        .filter(|record| retiring.contains(&record.id))
+    {
+        let expected = definition.revision;
+        definition.revision = expected.saturating_add(1);
+        definition.lifecycle = norn_cell::retained::RetainedLifecycle::Retired;
+        definition.signoff = None;
+        out.push(SourceApproval {
+            change: norn_cell::retained::RetainedDefinitionChange {
+                definition,
+                expected_revision: Some(expected),
+            },
+            restatement: None,
+        });
+    }
+    Ok(out)
 }
 
 /// `POST /v1/cell/definitions:apply`: install the submission over the active
@@ -525,27 +784,42 @@ pub fn apply_definitions<E: SqlEngine>(
     host: &DevHost<E>,
     scope: &ScopeQuery,
     actor: Option<&str>,
+    kinds: &DefinitionKinds,
     body: &str,
     now_ms: u64,
 ) -> Result<DefinitionsApplied, Refusal> {
     crate::definition_routes::authorize(host, scope, actor, Operation::WriteDefinitions)?;
-    let (candidate, expected) = candidate(host, body)?;
+    let (candidate, expected, approvals) = candidate(host, body)?;
+    let input = install_input(&candidate.admitted, &candidate.active, now_ms);
+    let approvals = riding(
+        host,
+        actor,
+        kinds,
+        &candidate,
+        &approvals,
+        Some(input.installed_at),
+    )?;
+    let changes: Vec<norn_cell::retained::RetainedDefinitionChange> = approvals
+        .iter()
+        .filter_map(|approval| approval.change.clone())
+        .collect();
     let expected = expected.ok_or_else(|| {
         Refusal::invalid("an apply names the expectedVersion its plan was made against")
     })?;
     let Candidate {
-        admitted,
         model,
         active,
         mut plan,
+        ..
     } = candidate;
+    with_approvals(&mut plan, &approvals);
     if expected != active.version {
         return Err(preflight_refusal(CellError::DefinitionVersionConflict {
             expected: Some(expected),
             actual: Some(active.version),
         }));
     }
-    if plan.unchanged {
+    if plan.unchanged && changes.is_empty() {
         return Ok(DefinitionsApplied {
             outcome: ApplyOutcome::Unchanged,
             definitions_version: active.version,
@@ -557,11 +831,9 @@ pub fn apply_definitions<E: SqlEngine>(
     }
     // HOST-INSTALL-LIVE-1: the install itself runs the live-law check, under
     // the write epoch, on the migration candidate's view.
-    let installed = host.install_definitions(
-        model,
-        install_input(&admitted, &active, now_ms),
-        Some(expected),
-    )?;
+    // #1469: the set and its approvals in one store transaction; any
+    // refusal, of the set or of an approval, publishes nothing.
+    let installed = host.install_definitions_riding(model, input, Some(expected), &changes)?;
     plan.checked_objects = host.cell()?.store().live_law_checked();
     Ok(DefinitionsApplied {
         outcome: ApplyOutcome::Installed,

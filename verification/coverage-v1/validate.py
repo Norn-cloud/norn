@@ -633,8 +633,9 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
                     f"{name}: shared cache keys may reach only the sccache start step")
     require(source.count("secrets.NORN_SCCACHE_") == 2 * len(SCCACHE_SECRETS),
             "shared cache keys may appear only in the two sccache start steps")
-    require(set(jobs) == {"core", "plan", "test", "full", "trusted-policy"}, "workflow job inventory changed")
-    check_names = {"core": "core", "plan": "plan", "full": "full", "trusted-policy": "trusted-policy evaluation"}
+    # The gate plan is a step of core (one Boat start fewer per run), not a job of its own.
+    require(set(jobs) == {"core", "test", "full", "trusted-policy"}, "workflow job inventory changed")
+    check_names = {"core": "core", "full": "full", "trusted-policy": "trusted-policy evaluation"}
     require(all(jobs[name].get("name", name) == expected for name, expected in check_names.items()),
             "control and required check names must remain stable")
     require(not workflow.get("env"), "workflow must not inherit an execution environment")
@@ -674,19 +675,18 @@ await github.rest.repos.createCommitStatus({
     }, "trusted-policy: every result must publish the unchanged fail-closed head-bound status")
     boat_runner = "${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}"
     for name, job in jobs.items():
-        expected_runner = boat_runner if name in {"core", "plan", "test"} else "ubuntu-24.04"
+        expected_runner = boat_runner if name in {"core", "test"} else "ubuntu-24.04"
         require(job.get("runs-on") == expected_runner,
                 f"{name}: runner must preserve the merge-group and same-repository pull-request Boat opt-ins and hosted fallback")
     cache_env = {"SCCACHE_CACHE_SIZE": "10G", "SCCACHE_IGNORE_SERVER_IO_ERROR": "1",
                  "NORN_INTEROP_CACHE": "~/.cache/norn-interop"}
     job_env = {
         "core": cache_env,
-        "plan": {},
         "test": {**cache_env,
-                 "NORN_CI_PACKAGES": "${{ fromJSON(needs.plan.outputs.plan).packages }}",
-                 "NORN_CI_REST_SHARDS": "${{ fromJSON(needs.plan.outputs.plan).rest_shards }}",
+                 "NORN_CI_PACKAGES": "${{ fromJSON(needs.core.outputs.plan).packages }}",
+                 "NORN_CI_REST_SHARDS": "${{ fromJSON(needs.core.outputs.plan).rest_shards }}",
                  "NORN_CI_BASE": "${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before || 'origin/main' }}",
-                 "PLAN": "${{ needs.plan.outputs.plan }}", "BUNDLE_ID": "${{ matrix.bundle.id }}"},
+                 "PLAN": "${{ needs.core.outputs.plan }}", "BUNDLE_ID": "${{ matrix.bundle.id }}"},
     }
 
     def has_execution_override(job: dict, step: dict) -> bool:
@@ -695,12 +695,15 @@ await github.rest.repos.createCommitStatus({
                    for key in ("shell", "working-directory"))
     required_runs = {
         "core": "bash scripts/ci/core.sh cheap",
-        "plan": '''if [ -n "$BASE" ]; then plan=$(bash scripts/ci/core.sh plan --affected "$BASE" "$HEAD_SHA"); else plan=$(bash scripts/ci/core.sh plan); fi
-plan=$(jq -c --arg base "$BASE" --arg head "$HEAD_SHA" '. + {base_sha: $base, head_sha: $head}' <<<"$plan")
-echo "plan=$plan" >> "$GITHUB_OUTPUT"
-echo "$plan"''',
         "test": 'bash scripts/ci/core.sh bundle "$PLAN" "$BUNDLE_ID"',
     }
+    # core's step before cheap computes the gate plan that the bundles and the verdict read.
+    plan_command = '''if [ -n "$BASE" ]; then plan=$(bash scripts/ci/core.sh plan --affected "$BASE" "$HEAD_SHA"); else plan=$(bash scripts/ci/core.sh plan); fi
+plan=$(jq -c --arg base "$BASE" --arg head "$HEAD_SHA" '. + {base_sha: $base, head_sha: $head}' <<<"$plan")
+echo "plan=$plan" >> "$GITHUB_OUTPUT"
+echo "$plan"'''
+    plan_env = {"BASE": "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || '' }}",
+                "HEAD_SHA": "${{ github.event.merge_group.head_sha || github.sha }}"}
     checkout = {"uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
                 "with": {"persist-credentials": False, "fetch-depth": 0}}
     setup = [
@@ -774,30 +777,32 @@ df -h /
     candidate_condition = "github.event_name != 'pull_request_target' && github.event_name != 'issue_comment'"
     for name, command in required_runs.items():
         job = jobs.get(name, {})
-        admission = candidate_condition + " && !(github.event_name == 'pull_request' && github.event.pull_request.draft)"
-        condition = (candidate_condition if name == "core" else admission if name == "plan"
-                     else "fromJSON(needs.plan.outputs.plan).bundle[0] != null")
+        # A draft head runs core only; its bundles wait until it is ready for review.
+        condition = (candidate_condition if name == "core" else
+                     "fromJSON(needs.core.outputs.plan).bundle[0] != null"
+                     " && !(github.event_name == 'pull_request' && github.event.pull_request.draft)")
         require(job.get("if") == condition,
                 f"{name}: candidate gate condition changed")
-        require(job.get("timeout-minutes") == {"core": 110, "plan": 5, "test": 110}[name],
+        require(job.get("timeout-minutes") == {"core": 110, "test": 110}[name],
                 f"{name}: approved time budget changed")
         require(not job.get("continue-on-error"), f"{name}: gate must fail closed")
         require(job.get("env", {}) == job_env[name],
                 f"{name}: environment must bind the gate plan")
-        require(job.get("environment") == (None if name == "plan" else CACHE_WRITER_ENVIRONMENT),
+        require(job.get("environment") == CACHE_WRITER_ENVIRONMENT,
                 f"{name}: only a push to main may enter the cache-writer environment")
         job_steps = job.get("steps", [])
-        preparation = [checkout] + ([] if name == "plan" else copy.deepcopy(setup))
-        if name != "plan":
-            # Pinned, checksummed release binaries: no job compiles a tool from source (#1348).
-            preparation.append(nextest)
-            reclaim = copy.deepcopy(cleanup)
-            if name == "test":
-                reclaim["run"] = reclaim["run"].replace('if [ "$(available)" -lt "$minimum" ]; then\n  ', '').replace('\nfi\ndf -h /', '\ndf -h /')
-            preparation.insert(0, reclaim)
-            preparation.insert(1, copy.deepcopy(boat_cleanup))
-            after_checkout = preparation.index(checkout) + 1
-            preparation[after_checkout:after_checkout] = ([hosted_warning] if name == "core" else []) + [libclang]
+        preparation = [checkout] + copy.deepcopy(setup)
+        # Pinned, checksummed release binaries: no job compiles a tool from source (#1348).
+        preparation.append(nextest)
+        reclaim = copy.deepcopy(cleanup)
+        if name == "test":
+            reclaim["run"] = reclaim["run"].replace('if [ "$(available)" -lt "$minimum" ]; then\n  ', '').replace('\nfi\ndf -h /', '\ndf -h /')
+        preparation.insert(0, reclaim)
+        preparation.insert(1, copy.deepcopy(boat_cleanup))
+        after_checkout = preparation.index(checkout) + 1
+        preparation[after_checkout:after_checkout] = ([hosted_warning] if name == "core" else []) + [libclang]
+        if name == "core":
+            preparation.append({"id": "plan", "env": plan_env, "run": plan_command + "\n"})
         require(json.dumps(job_steps[:-1], sort_keys=True) == json.dumps(preparation, sort_keys=True),
                 f"{name}: preparation actions and inputs must match the approved contract")
         checkouts = [step for step in job_steps if step.get("uses", "").startswith("actions/checkout@")]
@@ -807,7 +812,7 @@ df -h /
                 and checkouts[0]["with"]["persist-credentials"] is False
                 and type(checkouts[0]["with"]["fetch-depth"]) is int,
                 f"{name}: checkout must bind the default candidate repository, ref and workspace")
-        require(len([step for step in job_steps if "run" in step]) == {"plan": 1, "core": 6, "test": 5}[name],
+        require(len([step for step in job_steps if "run" in step]) == {"core": 7, "test": 5}[name],
                 f"{name}: unexpected executable preparation step")
         require(all(not step.get("env") for step in job_steps if "run" not in step),
                 f"{name}: setup steps must not override the execution environment")
@@ -815,25 +820,28 @@ df -h /
         require(len(steps) == 1 and "if" not in steps[0] and not steps[0].get("continue-on-error")
                 and not has_execution_override(job, steps[0]),
                 f"{name}: required gate command missing or conditional")
-        require(name == "plan" or not steps[0].get("env"),
+        require(not steps[0].get("env"),
                 f"{name}: step environment must not override gate inputs")
         require(job_steps.index(checkouts[0]) < job_steps.index(steps[0]),
                 f"{name}: candidate checkout must precede the gate")
-        if name == "plan":
-            require(steps[0].get("id") == "plan" and job.get("outputs", {}).get("plan") == "${{ steps.plan.outputs.plan }}",
-                    "plan: gate plan output must bind the producer step")
-            require(steps[0].get("env") == {"BASE":
-                    "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || '' }}",
-                    "HEAD_SHA": "${{ github.event.merge_group.head_sha || github.sha }}"},
-                    "plan: affected selection must bind the event base and head")
+        if name == "core":
+            planners = [step for step in job_steps if step.get("run", "").strip() == plan_command]
+            require(len(planners) == 1 and planners[0].get("id") == "plan" and "if" not in planners[0]
+                    and not planners[0].get("continue-on-error") and not has_execution_override(job, planners[0])
+                    and job.get("outputs") == {"plan": "${{ steps.plan.outputs.plan }}"},
+                    "core: gate plan output must bind the producer step")
+            require(planners[0].get("env") == plan_env,
+                    "core: affected selection must bind the event base and head")
+            require(job_steps.index(checkouts[0]) < job_steps.index(planners[0]),
+                    "core: candidate checkout must precede the gate plan")
     job = jobs["test"]
-    require(job.get("needs") == ["core", "plan"] and job.get("strategy") == {
-        "fail-fast": False, "matrix": {"bundle": "${{ fromJSON(needs.plan.outputs.plan).bundle }}"}
+    require(job.get("needs") == ["core"] and job.get("strategy") == {
+        "fail-fast": False, "matrix": {"bundle": "${{ fromJSON(needs.core.outputs.plan).bundle }}"}
     }, "test: matrix must execute the complete bundle plan without queued surplus jobs")
     require(job.get("name") == "bundle (${{ matrix.bundle.id }})" and job.get("timeout-minutes") == 110,
             "test: bundle identity and time budget must be pinned")
     full = jobs.get("full", {})
-    require(full.get("needs") == ["core", "plan", "test"], "full: verdict must depend on every gate")
+    require(full.get("needs") == ["core", "test"], "full: verdict must depend on every gate")
     require(len(full.get("steps", [])) == 1 and not full.get("env"),
             "full: verdict must be the only step and cannot inherit shell or gate-input overrides")
     require(" ".join(full.get("if", "").split()) == "always() && " + candidate_condition
@@ -847,7 +855,7 @@ jq -e --arg base "$BASE" --arg head "$HEAD_SHA" '
   .base_sha == $base and .head_sha == $head and
   (.shard | type == "array" and all(.[]; type == "string" and length > 0) and length == (unique | length)) and
   (.phase | type == "array" and all(.[]; type == "string" and length > 0) and length == (unique | length)) and
-  (.bundle | type == "array" and length <= 6 and all(.[];
+  (.bundle | type == "array" and length <= 3 and all(.[];
     type == "object" and (.id | type == "string" and length > 0) and
     (.tasks | type == "array" and length > 0 and all(.[]; type == "string"))) and
     (map(.id) | length) == (map(.id) | unique | length)) and
@@ -855,7 +863,7 @@ jq -e --arg base "$BASE" --arg head "$HEAD_SHA" '
 ' <<<"$PLAN" >/dev/null || { echo "Malformed or unbound gate plan"; exit 1; }
 # A job may be skipped only when the plan gave it nothing to run.
 ran() { [ "$1" = success ] || { [ "$1" = skipped ] && [ "$2" -eq 0 ]; }; }
-[ "$CORE" = success ] && [ "$PLANNED" = success ] || { echo "core $CORE, plan $PLANNED"; exit 1; }
+[ "$CORE" = success ] || { echo "core $CORE"; exit 1; }
 mode=$(jq -er .mode <<<"$PLAN")
 [ "$EVENT" = pull_request ] || [ "$EVENT" = merge_group ] || [ "$mode" = full ] || { echo "$EVENT needs the full plan, got $mode"; exit 1; }
 # An affected merge-group plan must keep the always-run phases (core.sh plan).
@@ -866,8 +874,8 @@ echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN"
         "DRAFT": "${{ github.event.pull_request.draft || false }}",
         "BASE": "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || '' }}",
         "HEAD_SHA": "${{ github.event.merge_group.head_sha || github.sha }}",
-        "EVENT": "${{ github.event_name }}", "PLAN": "${{ needs.plan.outputs.plan }}",
-        "CORE": "${{ needs.core.result }}", "PLANNED": "${{ needs.plan.result }}",
+        "EVENT": "${{ github.event_name }}", "PLAN": "${{ needs.core.outputs.plan }}",
+        "CORE": "${{ needs.core.result }}",
         "TEST": "${{ needs.test.result }}",
     }
     require(any(step.get("run", "").strip() == verdict and "if" not in step
@@ -876,13 +884,13 @@ echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN"
                 and step.get("env") == verdict_env
                 for step in full.get("steps", [])), "full: every dependency must succeed")
     runner = CORE_RUNNER.read_text()
-    # Bundles may drop only Cargo build outputs, between tasks and when disk is low;
+    # Bundles may drop only Cargo build outputs, between tasks that share no build;
     # target/verification-* evidence and tools and any other target content stay. Tasks that
     # share one test build run back to back with no prune between them (#1348 CI2).
-    prune = '    shares_build() { [[ $1 == test/* || ( $1 == phase/test-shards && -z ${NORN_CI_PACKAGES:-} ) ]]; }\n    task_lines=$(while read -r task; do if shares_build "$task"; then echo "$task"; fi; done <<<"$task_lines"\n                 while read -r task; do if ! shares_build "$task"; then echo "$task"; fi; done <<<"$task_lines")\n    pruned=\'\' previous=\'\'\n    while IFS=/ read -r kind item; do\n      task="$kind/$item"\n      # Other bundle tasks never share build outputs (the planner packs them freely), so a\n      # task may drop the previous task\'s target dir when disk runs low (#1059).\n      if [[ -n $pruned ]] && ! { shares_build "$previous" && shares_build "$task"; } && (( $(df -Pk / | awk \'NR == 2 {print $4}\') < 40 * 1024 * 1024 )); then\n        prune_target\n        printf \'::notice::pruned target before %s; %s KiB free\\n\' "$task" "$(df -Pk / | awk \'NR == 2 {print $4}\')"\n      fi\n      pruned=1 previous=$task\n'
+    prune = '    shares_build() { [[ $1 == test/* || ( $1 == phase/test-shards && -z ${NORN_CI_PACKAGES:-} ) ]]; }\n    task_lines=$(while read -r task; do if shares_build "$task"; then echo "$task"; fi; done <<<"$task_lines"\n                 while read -r task; do if ! shares_build "$task"; then echo "$task"; fi; done <<<"$task_lines")\n    pruned=\'\' previous=\'\'\n    while IFS=/ read -r kind item; do\n      task="$kind/$item"\n      # Other bundle tasks never share build outputs (the planner packs them freely), so each\n      # drops the previous task\'s target dir and starts as on a fresh VM (#1059). Three bundles\n      # put disk-heavy tasks together: guards after integration ran out of a default VM\'s disk\n      # with more than 40 GiB free at the boundary (#1498), so a free-space threshold is not enough.\n      if [[ -n $pruned ]] && ! { shares_build "$previous" && shares_build "$task"; }; then\n        prune_target\n        printf \'::notice::pruned target before %s; %s KiB free\\n\' "$task" "$(df -Pk / | awk \'NR == 2 {print $4}\')"\n      fi\n      pruned=1 previous=$task\n'
     contained = 'prune_target() {\n  local root target entry name\n  root=$(realpath -m -- "$PWD") && target=$(realpath -m -- "${CARGO_TARGET_DIR:-$PWD/target}") || return 0\n  if [[ $target != "$root/target" ]]; then\n    printf \'::warning::refusing to prune %s: only %s/target may be pruned\\n\' "$target" "$root"\n    return 0\n  fi\n  for entry in "$target"/*; do\n    name=${entry##*/}\n    [[ -d $entry && ! -L $entry && $name != verification-* ]] || continue\n    if [[ $name == doc || -d $entry/.fingerprint ]] || compgen -G "$entry/*/.fingerprint" > /dev/null; then\n      rm -rf -- "$entry"\n    fi\n  done\n}\n'
     require(runner.count(prune) == 1 and runner.count(contained) == 1 and runner.count("rm -rf") == 2,
-            "bundle may prune only Cargo build outputs, between tasks and when disk is low")
+            "bundle may prune only Cargo build outputs, between tasks that share no build")
     # Studio browser rows (#1113): never a silent pass. Tests without a config fail, and so
     # does a config whose match lists no tests.
     browser = '    browser)\n      # Studio browser rows (#1113): Playwright against `vite preview` of this build, with the\n      # checker WASM package built into apps/studio/src/checker. Without a config there is\n      # nothing to run; browser tests without a config are a broken setup, never a skip.\n      if ! compgen -G \'apps/studio/playwright.config.*\' > /dev/null; then\n        if compgen -G \'apps/studio/e2e/*.e2e.ts\' > /dev/null; then\n          printf \'browser: apps/studio/e2e has browser tests but no playwright.config\\n\' >&2\n          exit 1\n        fi\n        printf \'::notice::browser: no apps/studio/playwright.config.*; no Studio browser tests to run\\n\'\n        return 0\n      fi\n      # The checker package needs the wasm32 target. CI\'s pinned toolchain step installs it;\n      # a hand run on a plain toolchain fails here, not deep inside the WASM build.\n      local wasm_lib\n      wasm_lib=$(rustc --print target-libdir --target wasm32-unknown-unknown 2> /dev/null) || wasm_lib=\'\'\n      if [[ -z $wasm_lib || ! -d $wasm_lib ]]; then\n        printf \'browser: %s has no wasm32-unknown-unknown target; run under the pinned CI toolchain (dtolnay/rust-toolchain in ci-policy.yml)\\n\' "$(rustc --version 2> /dev/null || echo \'no rustc\')" >&2\n        exit 1\n      fi\n      ensure_tool wasm-bindgen-cli 0.2.129 wasm-bindgen\n      crates/norn-checker-wasm/scripts/build-pkg.sh "$PWD/apps/studio/src/checker"\n      NORN_WASM_ENGINE=1 crates/norn-checker-wasm/scripts/build-pkg.sh "$PWD/apps/studio/src/engine"\n      (\n        cd apps/studio\n        bun install --frozen-lockfile --ignore-scripts --backend copyfile\n        # The checker-admission case needs the WASM package built above, so it runs here,\n        # not in the cheap phase, and is required: a missing package fails it, never skips.\n        decision=$(NORN_CHECKER_WASM_REQUIRED=1 bun test test/decision.test.ts 2>&1) || { printf \'%s\\n\' "$decision"; exit 1; }\n        printf \'%s\\n\' "$decision"\n        # The step proves nothing unless that named case ran and passed: skipped, renamed or deleted fails.\n        grep -qxE \'\\(pass\\) the checker admits what a drawn decision lowers to \\[[0-9.]+m?s\\]\' <<< "$decision" || { printf \'browser: the checker-admission case did not run and pass\\n\' >&2; exit 1; }\n        bun run build\n        # "No tests found" must fail: a broken testDir or testMatch is never a pass.\n        listed=$(bunx playwright test --list | sed -n \'s/^Total: \\([0-9][0-9]*\\) tests\\{0,1\\} in .*/\\1/p\')\n        [[ ${listed:-0} -gt 0 ]] || { printf \'browser: Playwright lists no tests\\n\' >&2; exit 1; }\n        # A suite of only skipped rows must fail too: require at least one executed test.\n        report="$upstream/playwright.json"\n        PLAYWRIGHT_JSON_OUTPUT_NAME="$report" bunx playwright test --reporter=list,json\n        ran=$(python3 -c \'import json, sys; stats = json.load(open(sys.argv[1]))["stats"]; print(stats.get("expected", 0) + stats.get("flaky", 0))\' "$report")\n        [[ $ran -gt 0 ]] || { printf \'browser: Playwright ran no tests (every row skipped)\\n\' >&2; exit 1; }\n      )\n      ;;\n'

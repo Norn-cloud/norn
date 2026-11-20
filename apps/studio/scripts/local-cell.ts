@@ -8,11 +8,12 @@
  * It decides nothing: no permission logic lives here. The token is read on the
  * server and never reaches the browser; `/api/me` reports exactly what it names.
  *
- * The dev host stays the only authority: it grants everything to the
- * manifest's one actor on a loopback cell (DEV-LOOPBACK-1), and this server
- * only carries that session's token to it, read from `.norn/dev.json` on every
- * call so a restarted `norn dev` needs no restart here. Because the token holds
- * every grant, nobody else may reach this server: it binds loopback only, and it
+ * The dev host stays the only authority: its local principals hold every
+ * role on a loopback cell (DEV-LOOPBACK-1), and it decides each governed action
+ * by the action's own access policy (DEV-ACCESS-1). This server only carries
+ * the session's token to it, read from `.norn/dev.json` on every call so a
+ * restarted `norn dev` needs no restart here. Because the token holds every
+ * role, nobody else may reach this server: it binds loopback only, and it
  * refuses a request whose Host is not its own address (DNS rebinding) or that
  * another site sent (Origin or Sec-Fetch-Site), so a cross-site form cannot act
  * as the developer.

@@ -45,6 +45,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "objectId",
+            "in": "query",
+            "description": "With `objectKind`: only actions that can act on this object in its\ncurrent lifecycle state (ACTION-CATALOG-STATE-1).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -6037,6 +6046,13 @@
           "artifacts"
         ],
         "properties": {
+          "approvals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InstallDefinitionRequest"
+            },
+            "description": "The pack's approvals (#1469): admitted against the submitted set's\nactions, and installed with it in one transaction, so a new action\nis never live without its gate. A plan returns each one's\nrestatement; an apply carries each one's `signoff` of it and the\n`expectedVersion` (revision) the plan reported. Any refusal installs\nnothing."
+          },
           "artifacts": {
             "type": "array",
             "items": {
@@ -6078,6 +6094,13 @@
               "$ref": "#/components/schemas/PlannedArtifact"
             },
             "description": "Artifacts the change adds."
+          },
+          "approvals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlannedApproval"
+            },
+            "description": "The approvals the change installs with the set."
           },
           "baseVersion": {
             "type": "integer",
@@ -6597,6 +6620,24 @@
           "description": "Exact JSON value. Number tokens retain decimal precision and are not binary64 values. Preserve source text or use an exact-decimal JSON parser; JavaScript JSON.parse may lose precision."
         }
       },
+      "NornActionInputLink": {
+        "type": "object",
+        "description": "One input field that names a record of `objectKind`.",
+        "required": [
+          "field",
+          "objectKind"
+        ],
+        "properties": {
+          "field": {
+            "type": "string",
+            "description": "The top-level input field holding the record's id."
+          },
+          "objectKind": {
+            "type": "string",
+            "description": "The object type it names."
+          }
+        }
+      },
       "NornActionObjectTypeName": {
         "type": "string",
         "description": "Qualified name of an object type: dotted lower-case namespace segments and\na PascalCase type name (`retail.Sku`, `hr.Employee`), the form v1\n`objectKind` already uses. The namespace segments are the type's domain\nnamespace ([`Self::domain`]).",
@@ -6630,6 +6671,13 @@
             "$ref": "#/components/schemas/NornActionEffect",
             "description": "How its effect changes that object."
           },
+          "inputLinks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornActionInputLink"
+            },
+            "description": "Input fields that name an existing record (a link the action creates\nto it), so a form offers a picker of that type's records\n(ACTION-CATALOG-LINKS-1). Omitted when none."
+          },
           "inputSchema": {
             "type": "object",
             "description": "The input a caller supplies: the admitted input schema, in the action's closed input dialect, without the fields the server derives from the verified actor (ACTION-ACTOR-1), which a caller never supplies.",
@@ -6646,6 +6694,13 @@
           "title": {
             "type": "string",
             "description": "Its title, or its identity when it declares none."
+          },
+          "toState": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "For a `fire_transition` action: the lifecycle state its transition\nleaves the object in, so a receipt can say what the record is now."
           },
           "uiEffects": {
             "$ref": "#/components/schemas/NornActionUiEffects",
@@ -34879,6 +34934,43 @@
           "id": {
             "type": "string",
             "description": "The decision id (`POST /v1/decisions/{id}:decide`)."
+          }
+        }
+      },
+      "PlannedApproval": {
+        "type": "object",
+        "description": "An approval the change installs with the set.",
+        "required": [
+          "id",
+          "unchanged",
+          "restatement",
+          "restatementSha256"
+        ],
+        "properties": {
+          "fromRevision": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The id's current revision, if any: the apply's `expectedVersion`.",
+            "minimum": 0
+          },
+          "id": {
+            "type": "string",
+            "description": "The approval id."
+          },
+          "restatement": {
+            "type": "string",
+            "description": "The server's words for the approval: what the signer signs."
+          },
+          "restatementSha256": {
+            "type": "string",
+            "description": "Lower-case hex SHA-256 of the restatement: the apply's\n`signoff.restatementSha256`."
+          },
+          "unchanged": {
+            "type": "boolean",
+            "description": "Whether the active revision is already this approval."
           }
         }
       },

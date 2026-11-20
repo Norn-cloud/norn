@@ -456,7 +456,7 @@ fn an_analytics_cell_without_definitions_upgrades_in_place_once() {
         let object = analytics::object_type().unwrap();
         let model = norn_cell::Model::from_definitions(std::slice::from_ref(&object), &[]).unwrap();
         let mut old = norn_cell::CellStore::from_engine(open(), model).unwrap();
-        old.commit(&analytics::k1_batch(&scope).unwrap()).unwrap();
+        norn_cell::provision::k1_conversions(&mut old, &scope.key()).unwrap();
         assert!(old.read().installed_definitions(None).unwrap().is_none());
     }
     let fresh = get(
