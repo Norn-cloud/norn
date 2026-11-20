@@ -9,6 +9,7 @@
     reason = "VIEW-ENGINE-1 native correspondence"
 )]
 
+use norn_cell::trusted::TrustedCommit as _;
 use std::collections::{BTreeMap, BTreeSet};
 
 use norn_cell::compute::Engine;

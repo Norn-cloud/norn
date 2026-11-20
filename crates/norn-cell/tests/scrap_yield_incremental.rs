@@ -10,6 +10,7 @@
 mod query_support;
 
 use norn_cell::compute::{Engine, QueryContext, QueryResult, ivm::IncrementalQuestion};
+use norn_cell::trusted::TrustedCommit as _;
 use norn_cell::{
     CellStore, CommitBatch, CommitOutcome, FactWriteRow, KnowledgeCutoff, Model, StoreOptions,
 };

@@ -17,7 +17,7 @@
 //! - [`CellStore`]: the normalized store (T2-ST-1 #2540, T2-ST-2 #2541),
 //!   shared by native and host adapters:
 //!   object and link tables, and the ledger, receipt, outbox, timer, and run
-//!   system tables ([`system`]). One [`CellStore::commit`] writes the
+//!   system tables ([`system`]). One `CellStore::commit_unchecked` writes the
 //!   consumed delivery, facts, events, the receipt, enqueued commands, and
 //!   timers in one SQLite transaction; reopening verifies the ledger hash
 //!   chain ([`StoreReader::verify_ledger`]).
@@ -75,6 +75,8 @@ pub mod source_provenance;
 pub mod store;
 pub mod system;
 pub mod transparency;
+#[cfg(feature = "trusted-commit")]
+pub mod trusted;
 mod write;
 
 pub use error::CellError;

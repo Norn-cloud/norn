@@ -40,6 +40,10 @@ duckdb = ["dep:duckdb"]
 fault-injection = []
 # Deterministic commit-path work counters (#1421): harnesses only.
 counters = ["norn-ir/counters"]
+# The raw, unchecked store commit (`trusted::TrustedCommit`, #1375 S4): a
+# host's own provisioning and tests. The skeleton guard admits it only as a
+# dev-dependency or from the hosting crate (`trusted-commit-feature`).
+trusted-commit = []
 
 [dependencies]
 ct-merkle = "=0.3.0"
@@ -78,7 +82,7 @@ jiff = { version = "0.2.37", default-features = false, features = ["std"] }
 # Test support only (T6-PSM-1 / T4-CELL-1): the host-agnostic CellHost laws.
 norn-testkit = { path = "../norn-testkit" }
 # This crate's own tests use the fault-injecting engine.
-norn-cell = { path = ".", features = ["fault-injection", "counters"] }
+norn-cell = { path = ".", features = ["fault-injection", "counters", "trusted-commit"] }
 tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread"] }
 
 [lints]

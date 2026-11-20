@@ -1877,7 +1877,7 @@ mod binding_read_tests {
     fn seeded_store() -> CellStore {
         let mut store = CellStore::open_in_memory(model()).expect("store");
         store
-            .commit(&CommitBatch {
+            .commit_unchecked(&CommitBatch {
                 world: MAIN_WORLD.to_owned(),
                 scope: "org_demo/dev".to_owned(),
                 writes: vec![
@@ -1960,7 +1960,7 @@ mod binding_read_tests {
         let sort_model = Model::from_snapshot(&definitions).expect("nonunique sort model");
         let mut store = CellStore::open_in_memory(sort_model).expect("store");
         store
-            .commit(&CommitBatch {
+            .commit_unchecked(&CommitBatch {
                 world: MAIN_WORLD.to_owned(),
                 scope: "org_demo/dev".to_owned(),
                 writes: vec![
@@ -2050,7 +2050,7 @@ mod binding_read_tests {
     fn binding_sorted_boundary_snapshot_survives_delete_and_update() {
         let mut store = CellStore::open_in_memory(model()).expect("store");
         store
-            .commit(&CommitBatch {
+            .commit_unchecked(&CommitBatch {
                 world: MAIN_WORLD.to_owned(),
                 scope: "org_demo/dev".to_owned(),
                 writes: vec![
@@ -2081,7 +2081,7 @@ mod binding_read_tests {
         assert_eq!(anchor.identity, "C-anchor");
 
         store
-            .commit(&CommitBatch {
+            .commit_unchecked(&CommitBatch {
                 world: MAIN_WORLD.to_owned(),
                 scope: "org_demo/dev".to_owned(),
                 writes: vec![put("test.Customer", "C-anchor", "zulu")],
@@ -2109,7 +2109,7 @@ mod binding_read_tests {
         );
         let next_position = next.position.expect("next position");
         store
-            .commit(&CommitBatch {
+            .commit_unchecked(&CommitBatch {
                 world: MAIN_WORLD.to_owned(),
                 scope: "org_demo/dev".to_owned(),
                 writes: vec![FactWriteRow::Delete {
@@ -2168,7 +2168,7 @@ mod binding_read_tests {
         assert!(first.has_more);
         assert_ne!(first.locator, 0);
         store
-            .commit(&CommitBatch {
+            .commit_unchecked(&CommitBatch {
                 world: MAIN_WORLD.to_owned(),
                 scope: "org_demo/dev".to_owned(),
                 writes: vec![put("test.Customer", "C-1", "updated@example.test")],
@@ -2190,7 +2190,7 @@ mod binding_read_tests {
             "updating the high-water version must preserve its rowid"
         );
         store
-            .commit(&CommitBatch {
+            .commit_unchecked(&CommitBatch {
                 world: MAIN_WORLD.to_owned(),
                 scope: "org_demo/dev".to_owned(),
                 writes: vec![FactWriteRow::Delete {
@@ -2233,7 +2233,7 @@ mod binding_read_tests {
         );
 
         store
-            .commit(&CommitBatch {
+            .commit_unchecked(&CommitBatch {
                 world: MAIN_WORLD.to_owned(),
                 scope: "org_demo/dev".to_owned(),
                 writes: vec![put("test.Customer", "C-1", "recreated@example.test")],

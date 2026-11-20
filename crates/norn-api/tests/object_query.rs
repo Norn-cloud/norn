@@ -22,6 +22,7 @@ use norn_api::objects::NornObjectQueryPage;
 use norn_api::refusal::Refusal;
 use norn_api::scope::{CellScope, ScopeQuery};
 use norn_cell::engine::NativeEngine;
+use norn_cell::trusted::TrustedCommit as _;
 use norn_cell::{CellStore, CommitBatch, FactWriteRow, MAIN_WORLD, ObjectRecord};
 use norn_ir::{Decimal, RuntimeValue as V};
 use norn_kernel::authz::{

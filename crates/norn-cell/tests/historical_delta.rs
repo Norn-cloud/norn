@@ -6,6 +6,7 @@
     reason = "native delta conformance"
 )]
 mod query_support;
+use norn_cell::trusted::TrustedCommit as _;
 use norn_cell::{
     CommitBatch, KnowledgeCutoff,
     compute::{Engine, QueryContext, ivm::IncrementalQuestion},

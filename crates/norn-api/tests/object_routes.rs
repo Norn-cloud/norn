@@ -17,6 +17,7 @@ use norn_api::object_routes::{ObjectAccess, get_object, get_object_page};
 use norn_api::refusal::Refusal;
 use norn_api::scope::{CellScope, ScopeQuery};
 use norn_cell::engine::NativeEngine;
+use norn_cell::trusted::TrustedCommit as _;
 use norn_cell::{CellStore, CommitBatch, MAIN_WORLD, Model, ObjectRecord};
 use norn_kernel::authz::{
     AccessRequest as PdpRequest, ActorKind, Delegation, PrincipalInput, ResourceInput, ScopeKey,

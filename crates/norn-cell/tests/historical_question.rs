@@ -7,6 +7,7 @@
     reason = "native historical query conformance"
 )]
 mod query_support;
+use norn_cell::trusted::TrustedCommit as _;
 use norn_cell::{CommitBatch, KnowledgeCutoff};
 use norn_kernel::LogicalTime;
 use query_support::*;

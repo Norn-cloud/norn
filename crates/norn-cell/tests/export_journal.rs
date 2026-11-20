@@ -10,6 +10,7 @@
 
 mod common;
 
+use norn_cell::trusted::TrustedCommit as _;
 use std::path::Path;
 
 use norn_cell::{

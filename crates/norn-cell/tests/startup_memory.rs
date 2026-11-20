@@ -12,6 +12,7 @@
 //! `--ignored --exact seed_large_startup_ledger --nocapture`, then, under the
 //! address-space cap, `--ignored --exact startup_verification_reopens_large_ledger_under_one_gib`.
 
+use norn_cell::trusted::TrustedCommit as _;
 use norn_cell::{CellStore, CommitBatch, MAIN_WORLD, Model, StoreOptions};
 use norn_ir::runtime_object;
 

@@ -8,6 +8,7 @@
 mod common;
 
 use norn_cell::transparency::checkpoint_json;
+use norn_cell::trusted::TrustedCommit as _;
 use norn_cell::{CellStore, CommitBatch, CommitOutcome, CommitPoint, StoreOptions};
 use serde_json::json;
 use std::time::Instant;

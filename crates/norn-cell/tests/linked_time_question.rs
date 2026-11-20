@@ -11,6 +11,7 @@
 //! without an event is skipped and counted (`unlinked`), never bucketed, and
 //! correcting an event's time moves its entries.
 
+use norn_cell::trusted::TrustedCommit as _;
 use std::collections::{BTreeMap, BTreeSet};
 
 use norn_cell::compute::QueryContext;

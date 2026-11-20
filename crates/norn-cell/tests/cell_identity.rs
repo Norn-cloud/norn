@@ -8,6 +8,7 @@
 use norn_cell::cell_identity::CellId;
 use norn_cell::engine::NativeEngine;
 use norn_cell::export::Exporter;
+use norn_cell::trusted::TrustedCommit as _;
 use norn_cell::{CellError, CellStore, CommitBatch, Model, RestoreError, StoreOptions};
 use std::collections::BTreeMap;
 

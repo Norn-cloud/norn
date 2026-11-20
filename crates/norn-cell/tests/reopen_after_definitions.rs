@@ -13,6 +13,7 @@
 //! commit pins, never only under today's model. (Writes before the first
 //! install, deletes, type removal and transitions are #1426.)
 
+use norn_cell::trusted::TrustedCommit as _;
 use std::collections::BTreeMap;
 
 use norn_cell::{

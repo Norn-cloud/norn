@@ -12,6 +12,7 @@ use norn_cell::CellError;
 use norn_cell::engine::{
     MAX_PARAMETERS, MAX_SAFE_INTEGER, MAX_STATEMENT_BYTES, NativeEngine, SqlEngine, SqlValue,
 };
+use norn_cell::trusted::TrustedCommit as _;
 
 fn count(engine: &impl SqlEngine) -> i64 {
     engine

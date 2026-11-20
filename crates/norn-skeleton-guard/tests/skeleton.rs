@@ -1707,3 +1707,44 @@ fn datalog_contract_has_no_checker_or_host_dependency_permission() {
         render(&violations)
     );
 }
+
+/// Metadata with `from` depending on `norn-cell` (`kind`) with
+/// `trusted-commit` enabled.
+fn with_trusted_commit(from: &str, kind: Option<&str>) -> Metadata {
+    let mut value = serde_json::to_value(with_dep_as(from, "norn-cell", kind, None))
+        .expect("serialize metadata");
+    let pkg = value["packages"]
+        .as_array_mut()
+        .expect("packages")
+        .iter_mut()
+        .find(|pkg| pkg["name"] == from)
+        .expect("package present");
+    let dep = pkg["dependencies"]
+        .as_array_mut()
+        .expect("dependencies")
+        .last_mut()
+        .expect("injected dependency");
+    dep["features"] = json!(["trusted-commit"]);
+    serde_json::from_value(value).expect("deserialize metadata")
+}
+
+/// #1375 S4: the raw store commit is reachable only from tests and the host.
+#[test]
+fn trusted_commit_is_enabled_only_by_tests_and_the_host() {
+    let shipped = check_dependencies(&with_trusted_commit("norn-api", None));
+    assert!(
+        rules_of(&shipped).contains(&"trusted-commit-feature"),
+        "{}",
+        render(&shipped)
+    );
+    let built = check_dependencies(&with_trusted_commit("norn-api", Some("build")));
+    assert!(rules_of(&built).contains(&"trusted-commit-feature"));
+    for (from, kind) in [("norn-api", Some("dev")), ("norn-cell-do", None)] {
+        let allowed = check_dependencies(&with_trusted_commit(from, kind));
+        assert!(
+            !rules_of(&allowed).contains(&"trusted-commit-feature"),
+            "{from} {kind:?}: {}",
+            render(&allowed)
+        );
+    }
+}

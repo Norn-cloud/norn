@@ -8,6 +8,7 @@
 )]
 use norn_api::host::DevHost;
 use norn_cell::engine::NativeEngine;
+use norn_cell::trusted::TrustedCommit as _;
 use norn_cell_do::analytics::{self, DemoQuestions, QUESTION};
 use norn_cell_do::policy::{DEMO_GRANTS, ReadPolicy};
 use norn_cell_do::principal::{DEMO_FIXTURES, FixturePrincipals};

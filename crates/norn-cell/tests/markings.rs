@@ -8,6 +8,7 @@
 
 //! Durable classification snapshots, mapping lineage, and declassification.
 
+use norn_cell::trusted::TrustedCommit as _;
 use std::collections::BTreeMap;
 
 use norn_cell::engine::{NativeEngine, SqlEngine, SqlRow, SqlValue};

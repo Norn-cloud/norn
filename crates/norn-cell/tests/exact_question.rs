@@ -5,6 +5,7 @@
     reason = "native query conformance"
 )]
 mod query_support;
+use norn_cell::trusted::TrustedCommit as _;
 use norn_cell::{CellError, CommitBatch, compute::Freshness};
 use query_support::*;
 

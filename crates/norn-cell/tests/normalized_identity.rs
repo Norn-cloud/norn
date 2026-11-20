@@ -7,6 +7,7 @@
     reason = "native identity conformance fixtures"
 )]
 mod common;
+use norn_cell::trusted::TrustedCommit as _;
 use norn_cell::{CellError, CellStore, CommitBatch, FactWriteRow, Model, SqliteCell, StoreOptions};
 use norn_ir::{
     ComponentNormalization, IdentityRule, KeyName, KeySpec, Normalization, ObjectTypeDef,

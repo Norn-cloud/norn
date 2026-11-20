@@ -34,7 +34,8 @@ required-features = ["duckdb"]
 
 [dependencies]
 norn-api = { path = "../norn-api" }
-norn-cell = { path = "../norn-cell", default-features = false }
+# The host seeds its demo cells and its trusted K1 rows without an actor.
+norn-cell = { path = "../norn-cell", default-features = false, features = ["trusted-commit"] }
 norn-checker = { path = "../norn-checker" }
 norn-ir = { path = "../norn-ir" }
 # The kernel PDP and the Cedar schema projected from the cell model decide data reads.

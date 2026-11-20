@@ -20,6 +20,7 @@ use norn_api::transform_routes::{
     get_transform_rows, refresh_transform,
 };
 use norn_cell::engine::NativeEngine;
+use norn_cell::trusted::TrustedCommit as _;
 use norn_cell::{CellStore, CommitBatch, FactWriteRow, LinkChange, MAIN_WORLD, ObjectRecord};
 use norn_ir::{Decimal, ObjectTypeDef, RuntimeValue as V};
 use norn_kernel::LogicalTime;

@@ -12,6 +12,7 @@
 )]
 mod query_support;
 
+use norn_cell::trusted::TrustedCommit as _;
 use std::collections::BTreeMap;
 use std::io::Write as _;
 
@@ -962,6 +963,7 @@ fn bulk_path_measurements() {
 mod snapshot {
     use super::{Engine, compare, engine};
     use norn_cell::compute::QueryContext;
+    use norn_cell::trusted::TrustedCommit as _;
     use norn_cell::{CellStore, CommitBatch, FactWriteRow, Model};
     use norn_checker::metric::compute::QuestionPlan;
     use norn_ir::{
@@ -1338,6 +1340,7 @@ mod scales {
 mod linked_time {
     use super::{compare, engine};
     use norn_cell::compute::QueryContext;
+    use norn_cell::trusted::TrustedCommit as _;
     use norn_cell::{CellStore, CommitBatch, FactWriteRow, LinkChange, Model};
     use norn_checker::metric::compute::QuestionPlan;
     use norn_checker::metric::derive::derive_metric_space;
@@ -1600,6 +1603,7 @@ mod linked_time {
 mod sources_pack {
     use super::{CLOCK, CellStore, CommitBatch, FactWriteRow, Model, RuntimeValue, engine, tenant};
     use norn_cell::analytics::{ExportFormat, ExportRequest, PageRequest, ProfileRequest};
+    use norn_cell::trusted::TrustedCommit as _;
     use norn_ir::{ArtifactEnvelope, EntityRoot};
     use std::collections::BTreeMap;
 
@@ -1748,6 +1752,7 @@ mod alias_names {
         ExportFormat, ExportRequest, PageClause, PageKey, PageOp, PageOperand, PageRequest,
         ProfileRequest,
     };
+    use norn_cell::trusted::TrustedCommit as _;
     use std::collections::BTreeMap;
 
     const WORLD: &str = "main";
@@ -1922,6 +1927,7 @@ mod known_at {
     };
     use norn_cell::KnowledgeCutoff;
     use norn_cell::compute::{Engine as Answered, HistoricalQuestionResult};
+    use norn_cell::trusted::TrustedCommit as _;
     use norn_checker::metric::compute::QuestionPlan;
 
     fn exact(

@@ -195,6 +195,7 @@ mod tests {
     use norn_api::scope::CellScope;
     use norn_cell::CellStore;
     use norn_cell::engine::NativeEngine;
+    use norn_cell::trusted::TrustedCommit as _;
     use norn_cell::{CommitBatch, FactWriteRow, StoreOptions};
     use norn_ir::{Decimal, RuntimeValue};
     use serde_json::{Value, json};

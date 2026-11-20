@@ -6,6 +6,7 @@
     reason = "shared synthetic query fixture"
 )]
 use norn_cell::compute::{QueryContext, Watermark};
+use norn_cell::trusted::TrustedCommit as _;
 use norn_cell::{CellStore, CommitBatch, FactWriteRow, Model};
 use norn_checker::{
     EffectiveCatalog,

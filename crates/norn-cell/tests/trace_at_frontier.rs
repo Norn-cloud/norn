@@ -12,6 +12,7 @@ mod query_support;
 
 use norn_cell::compute::lineage::LineageDisclosure;
 use norn_cell::compute::{QueryContext, QueryResult};
+use norn_cell::trusted::TrustedCommit as _;
 use norn_cell::{CellStore, CommitBatch};
 use norn_checker::metric::compute::QuestionPlan;
 use query_support::{CLOCK, WORLD, fixture, load, loss_plan, put};

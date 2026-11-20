@@ -273,6 +273,14 @@ impl<E: SqlEngine> Serving<E> {
     }
 }
 
+/// Which part of the cell answered a request ([`Tenant::serve`]).
+pub enum Served {
+    /// A source or upload route (#921), with what the host does next.
+    Connect(crate::connect::Routed),
+    /// Any other route.
+    Cell(Response),
+}
+
 enum State<E: SqlEngine> {
     Vacant,
     Serving(Box<Serving<E>>),
@@ -509,19 +517,49 @@ impl<E: SqlEngine> Tenant<E> {
     }
 
     /// D102: a load or an export on a served cell with an engine, reading
-    /// `uploads` for loads; `None` for any other request.
+    /// `uploads` for loads; `None` for any other request, and for a caller
+    /// who is not a verified member, whom [`Self::handle`] answers as a scope
+    /// with no cell (TENANT-ISOLATION-1): the engine routes never parse,
+    /// read or ask the engine for an outsider.
     pub fn handle_analytics(
         &self,
         principals: &dyn PrincipalResolver,
         uploads: Option<&dyn norn_api::analytics_routes::Uploads>,
         request: &Request<'_>,
     ) -> Option<Response> {
+        self.verified_member(principals, request)?;
         match (&self.state, &self.engine) {
             (State::Serving(serving), Some(engine)) => {
                 server::analytics(&serving.host, principals, engine, uploads, request)
             }
             (State::Serving(_) | State::Vacant | State::Unopenable(_), _) => None,
         }
+    }
+
+    /// Serve one request as the deployed host does, in its order: the
+    /// cell's source and upload routes (`connect`, #921), then the engine
+    /// routes (D102, reading `connect`'s uploads), then [`Self::handle`].
+    /// The Durable Object binding calls exactly this, so the native tests
+    /// drive the deployed dispatch.
+    pub fn serve(
+        &mut self,
+        mut connect: Option<&mut crate::connect::Connect>,
+        principals: &dyn PrincipalResolver,
+        request: &Request<'_>,
+        now_ms: u64,
+    ) -> Served {
+        if let Some(connect) = connect.as_deref_mut()
+            && let Some(routed) = connect.route(self.serving_host(), principals, request, now_ms)
+        {
+            return Served::Connect(routed);
+        }
+        let uploads = connect
+            .as_deref()
+            .map(|connect| -> &dyn norn_api::analytics_routes::Uploads { connect });
+        Served::Cell(
+            self.handle_analytics(principals, uploads, request)
+                .unwrap_or_else(|| self.handle(principals, request)),
+        )
     }
 
     /// Serve one request; every outcome is a status and a JSON document.
@@ -533,6 +571,18 @@ impl<E: SqlEngine> Tenant<E> {
         if request.path == PROVISION_PATH {
             return server::respond(self.provision(principals, request));
         }
+        // A caller who is not a verified member of the organization gets
+        // exactly what a scope with no cell answers, on every route: a
+        // provisioned cell's live runtimes (questions, analytics) never shape
+        // an outsider's answer (#1297 r1 B1, made structural). Decided before
+        // the cell does any work of its own (TENANT-ISOLATION-1): an outsider's
+        // request reads no storage, as at a scope with no cell, so neither its
+        // answer nor the work behind it tells the two apart.
+        if matches!(self.state, State::Serving(_))
+            && self.verified_member(principals, request).is_none()
+        {
+            return self.vacant(principals, request, None);
+        }
         if let State::Serving(serving) = &mut self.state {
             serving.refresh_definitions();
             if !serving.host.has_pseudonym_key() {
@@ -540,15 +590,6 @@ impl<E: SqlEngine> Tenant<E> {
                     .host
                     .set_pseudonym_secret(self.pseudonym_secret.as_deref());
             }
-        }
-        // A caller who is not a verified member of the organization gets
-        // exactly what a scope with no cell answers, on every route: a
-        // provisioned cell's live runtimes (questions, analytics) never shape
-        // an outsider's answer (#1297 r1 B1, made structural).
-        if matches!(self.state, State::Serving(_))
-            && self.verified_member(principals, request).is_none()
-        {
-            return self.vacant(principals, request, None);
         }
         match &self.state {
             State::Serving(serving) if request.path == ACCESS_DECIDE_PATH => {

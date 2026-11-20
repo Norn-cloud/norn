@@ -9,6 +9,7 @@
 //! artifact installed since (such as flows), never wiping the cell
 //! (`open_governed`).
 
+use norn_cell::trusted::TrustedCommit as _;
 use std::collections::BTreeMap;
 use std::fmt;
 
@@ -268,6 +269,7 @@ mod tests {
         open_governed, seed_rows,
     };
     use norn_cell::engine::NativeEngine;
+    use norn_cell::trusted::TrustedCommit as _;
     use norn_cell::{CellStore, CommitBatch, FactWriteRow, MAIN_WORLD, Model};
     use norn_ir::{ArtifactEnvelope, ArtifactKind};
     use std::collections::BTreeMap;

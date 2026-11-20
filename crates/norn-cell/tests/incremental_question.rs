@@ -7,6 +7,7 @@
 mod query_support;
 use norn_cell::compute::{Engine, ivm::IncrementalQuestion};
 use norn_cell::engine::{NativeEngine, SqlEngine, SqlValue};
+use norn_cell::trusted::TrustedCommit as _;
 use norn_cell::{CellError, CellStore, CommitBatch, CommitOutcome, FactWriteRow, StoreOptions};
 use query_support::*;
 use std::{cell::Cell, rc::Rc, time::Instant};

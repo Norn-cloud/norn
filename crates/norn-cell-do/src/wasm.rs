@@ -22,7 +22,7 @@ use wasm_bindgen::prelude::*;
 use crate::analytics::{self, DemoQuestions};
 use crate::policy::DEMO_GRANTS;
 use crate::principal::{PrincipalResolver, TokenPrincipals};
-use crate::tenant::Tenant;
+use crate::tenant::{Served, Tenant};
 use crate::{seed, server};
 
 enum Principals {
@@ -290,39 +290,34 @@ impl NornCell {
             now: seconds(now_ms),
             body: body.as_deref().unwrap_or_default(),
         };
-        // #921: the cell's source and upload routes, decided by its own policy.
-        if let Some(connect) = self.connect.as_mut()
-            && let Some(routed) = connect.route(
-                self.tenant.serving_host(),
-                self.principals.resolver(),
-                &request,
-                millis(now_ms),
-            )
-        {
-            let (then_token, then_request) =
-                routed.then.map_or((None, None), |(token, planned)| {
-                    (Some(token), serde_json::to_string(&planned).ok())
-                });
-            return Reply {
-                status: routed.response.status,
-                body: routed.response.body,
-                refresh_jwks: false,
-                start_sync: routed.start_sync,
-                then_token,
-                then_request,
-                engine: None,
-                policy_error: None,
-            };
-        }
-        // D102: loads read the cell's own uploads.
-        let uploads = self
-            .connect
-            .as_ref()
-            .map(|connect| -> &dyn norn_api::analytics_routes::Uploads { connect });
-        let response = self
-            .tenant
-            .handle_analytics(self.principals.resolver(), uploads, &request)
-            .unwrap_or_else(|| self.tenant.handle(self.principals.resolver(), &request));
+        // #921: the cell's source and upload routes, decided by its own
+        // policy; then D102's engine routes (loads read the cell's own
+        // uploads); then the cell's other routes: one portable dispatch.
+        let served = self.tenant.serve(
+            self.connect.as_mut(),
+            self.principals.resolver(),
+            &request,
+            millis(now_ms),
+        );
+        let response = match served {
+            Served::Cell(response) => response,
+            Served::Connect(routed) => {
+                let (then_token, then_request) =
+                    routed.then.map_or((None, None), |(token, planned)| {
+                        (Some(token), serde_json::to_string(&planned).ok())
+                    });
+                return Reply {
+                    status: routed.response.status,
+                    body: routed.response.body,
+                    refresh_jwks: false,
+                    start_sync: routed.start_sync,
+                    then_token,
+                    then_request,
+                    engine: None,
+                    policy_error: None,
+                };
+            }
+        };
         let policy_error = self
             .tenant
             .open_error()

@@ -6,6 +6,7 @@
 //! frontier is the recorded K1 snapshot: its cursor, watermark and observation
 //! clock are fixed, so answers are exact and reproducible across restarts.
 
+use norn_cell::trusted::TrustedCommit as _;
 use std::collections::BTreeMap;
 
 use norn_api::authz::ReadCapability;
