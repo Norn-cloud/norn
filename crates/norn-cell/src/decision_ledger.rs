@@ -27,6 +27,13 @@
 //! read the same way on every path: [`StoreReader::approval_consumed_at`]
 //! answers it from these ledger-derived rows alone, so an opened file and
 //! its restored export attribute every commit alike.
+//!
+//! S5a: the commit a flow step's own dispatch makes for its call carries
+//! one [`STEP_CALL_OWNED`] event naming that step attempt (its run, its
+//! parked command and generation), recorded in `_norn_step_call` at that
+//! commit. Only such a commit's record is ever that step's outcome; a record
+//! under a step's call key that no such event owns (a direct call's, or one
+//! committed before the event existed) never is.
 
 /// The `norn.decision@1` request a parked decision carries, and its bounds.
 /// Hosts reach built-ins through the cell (`norn_cell::builtin_registered`).
@@ -56,8 +63,10 @@ pub const APPROVE_CHOICE: &str = "approve";
 
 pub(crate) const APPROVED_CALL: &str = "_norn_approved_call";
 
+pub(crate) const STEP_CALL: &str = "_norn_step_call";
+
 /// The decision ledger's DDL, applied with the other system tables.
-pub(crate) const DDL: [&str; 5] = [
+pub(crate) const DDL: [&str; 6] = [
     r#"CREATE TABLE IF NOT EXISTS "_norn_decision" (
   "world" TEXT NOT NULL,
   "decision_id" TEXT NOT NULL,
@@ -94,6 +103,16 @@ pub(crate) const DDL: [&str; 5] = [
 )"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_approved_call/run" ON "_norn_approved_call" ("world", "run_id", "decision_id")"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_approved_call/consumed" ON "_norn_approved_call" ("world", "consumed_seq")"#,
+    // S5a: the step attempt whose own dispatch made each commit that ran a
+    // flow step's call ([`STEP_CALL_OWNED`]), from the ledger alone.
+    r#"CREATE TABLE IF NOT EXISTS "_norn_step_call" (
+  "world" TEXT NOT NULL,
+  "commit_seq" INTEGER NOT NULL,
+  "run_id" TEXT NOT NULL,
+  "command_id" TEXT NOT NULL,
+  "generation" INTEGER NOT NULL,
+  PRIMARY KEY ("world", "commit_seq")
+)"#,
 ];
 
 /// APPROVAL-RECOVERY-1, in-place upgrade: a file whose approvals were
@@ -313,6 +332,34 @@ fn consumptions(batch: &CommitBatch) -> Result<Vec<ApprovalConsumed>, CellError>
     Ok(found)
 }
 
+fn owners(batch: &CommitBatch) -> Result<Vec<StepCallOwner>, CellError> {
+    let mut found = Vec::new();
+    for event in batch
+        .events
+        .iter()
+        .filter(|event| is_step_call_owned(event))
+    {
+        let object = event
+            .as_object()
+            .ok_or_else(|| refused("step.call_owner_invalid"))?;
+        if object.len() != 2 {
+            return Err(refused("step.call_owner_invalid"));
+        }
+        let owner: StepCallOwner = object
+            .get("owner")
+            .and_then(|owner| norn_ir::runtime::decode(owner).ok())
+            .ok_or_else(|| refused("step.call_owner_invalid"))?;
+        if owner.run_id.is_empty() || owner.command_id.is_empty() {
+            return Err(refused("step.call_owner_invalid"));
+        }
+        found.push(owner);
+    }
+    if found.len() > 1 {
+        return Err(refused("step.call_owner_invalid"));
+    }
+    Ok(found)
+}
+
 /// Before `batch`'s writes apply: a decision it resolves must be open.
 ///
 /// # Errors
@@ -354,6 +401,8 @@ pub(crate) fn check<E: SqlEngine>(
             None => return Err(refused("approval.consumption_invalid")),
         }
     }
+    // S5a: a commit is owned by at most one step attempt.
+    owners(batch)?;
     Ok(())
 }
 
@@ -447,6 +496,49 @@ impl ApprovalConsumed {
 #[must_use]
 pub fn is_approval_consumed(event: &Value) -> bool {
     event.get("type").and_then(Value::as_str) == Some(APPROVAL_CONSUMED)
+}
+
+/// S5a: the `type` of the ledger event the commit a flow step's own
+/// dispatch makes for its call carries, naming that step attempt.
+pub const STEP_CALL_OWNED: &str = "norn.step.call_owned";
+
+/// What a [`STEP_CALL_OWNED`] event records: the step attempt whose own
+/// dispatch made the commit.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StepCallOwner {
+    /// The run.
+    pub run_id: String,
+    /// The step attempt's parked `norn.action@1` command.
+    pub command_id: String,
+    /// That command's generation.
+    pub generation: u64,
+}
+
+impl StepCallOwner {
+    /// The ledger event the step's commit carries.
+    ///
+    /// # Errors
+    /// A value outside the runtime value domain.
+    pub fn event(&self) -> Result<Value, CellError> {
+        Ok(Value::Object(
+            [
+                ("type".to_owned(), Value::String(STEP_CALL_OWNED.to_owned())),
+                (
+                    "owner".to_owned(),
+                    norn_ir::runtime::encode(self).map_err(CellError::Encoding)?,
+                ),
+            ]
+            .into(),
+        ))
+    }
+}
+
+/// Whether a ledger event records a step call's owner (host bookkeeping, not
+/// a domain event a typed commit reader decodes).
+#[must_use]
+pub fn is_step_call_owned(event: &Value) -> bool {
+    event.get("type").and_then(Value::as_str) == Some(STEP_CALL_OWNED)
 }
 
 /// APPROVAL-RECOVERY-1: one approved action call.
@@ -558,6 +650,20 @@ pub(crate) fn apply<E: SqlEngine>(
                 i64::from(refusal.status),
                 refusal.code,
                 refusal.category
+            ],
+        )?;
+    }
+    for owner in owners(batch)? {
+        reader.conn.execute(
+            &format!(
+                r#"INSERT INTO "{STEP_CALL}" ("world","commit_seq","run_id","command_id","generation") VALUES (?1,?2,?3,?4,?5)"#
+            ),
+            params![
+                batch.world,
+                to_i64(commit_seq, "commit sequence")?,
+                owner.run_id,
+                owner.command_id,
+                to_i64(owner.generation, "generation")?
             ],
         )?;
     }
@@ -680,6 +786,34 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             ),
             params![world, to_i64(commit_seq, "commit sequence")?],
             |row| row.get(0),
+        )
+    }
+
+    /// S5a: the step attempt whose own dispatch made the commit
+    /// `commit_seq`, if a step's dispatch made it. A commit no
+    /// [`STEP_CALL_OWNED`] event names (a direct call's, or one made before
+    /// the event existed) answers `None`, from the ledger-derived rows alone.
+    ///
+    /// # Errors
+    /// SQL engine or decode errors.
+    pub fn step_call_owner_at(
+        &self,
+        world: &str,
+        commit_seq: u64,
+    ) -> Result<Option<StepCallOwner>, CellError> {
+        self.conn.query_optional(
+            &format!(
+                r#"SELECT "run_id","command_id","generation" FROM "{STEP_CALL}" WHERE "world"=?1 AND "commit_seq"=?2"#
+            ),
+            params![world, to_i64(commit_seq, "commit sequence")?],
+            |row| {
+                Ok(StepCallOwner {
+                    run_id: row.get(0)?,
+                    command_id: row.get(1)?,
+                    generation: u64::try_from(row.get::<i64>(2)?)
+                        .map_err(|_negative| CellError::OutOfRange("generation"))?,
+                })
+            },
         )
     }
 

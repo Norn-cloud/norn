@@ -736,6 +736,223 @@ fn a_direct_call_with_a_steps_key_never_supplies_the_steps_outcome() {
     assert_eq!(standing(&cell, &id), committed());
 }
 
+/// The melt run started on an ungated cell on `path`, its ask open: the
+/// ask's decision id.
+fn asked(path: &Path) -> String {
+    let cell = cell_on(file(path), true);
+    let (status, opened) = start(&cell);
+    assert_eq!(status, 201, "{opened}");
+    let ask = pending_ids(&cell);
+    assert_eq!(ask.len(), 1, "{ask:?}");
+    ask[0].clone()
+}
+
+/// The approver approves the ask, crashed: the action for
+/// [`crashes_leaving`].
+fn approve_crashing(cell: &Cell<Faulty>, id: &str) {
+    let _answer = approve(cell, id);
+}
+
+/// Whether the cell on `path` recorded a result for its run's action step.
+fn step_result_recorded(path: &Path) -> bool {
+    store(path)
+        .read()
+        .parked_commands()
+        .unwrap()
+        .into_iter()
+        .find(|pending| {
+            pending
+                .command
+                .command
+                .get("payload")
+                .and_then(|payload| payload.get("function"))
+                .and_then(norn_ir::RuntimeValue::as_str)
+                == Some(norn_cell::flow_run::ACTION_FUNCTION)
+        })
+        .is_some_and(|step| step.result.is_some())
+}
+
+/// The file on `path` as a host before step ownership was recorded left
+/// it: no commit names the step attempt that made it, so the record under
+/// the step's call key is exactly what a direct call under that key, made
+/// before the key was reserved, would have left.
+fn before_ownership(path: &Path) {
+    file(path)
+        .execute_batch(r#"DROP TABLE IF EXISTS "_norn_step_call""#)
+        .unwrap();
+}
+
+/// The melt run's convert step as the approver reads it: its status.
+fn convert_status<E: SqlEngine>(cell: &Cell<E>) -> Value {
+    let (status, run) = call_with(cell, "GET", "/v1/runs/melt-run", SCOPE, APPROVER, "");
+    assert_eq!(status, 200, "{run}");
+    assert_eq!(run["steps"][1]["id"], json!("convert"), "{run}");
+    run["steps"][1]["status"].clone()
+}
+
+/// S5a: a record under a step's call key is the step's outcome only when
+/// that step attempt's own dispatch committed it, as the ledger records it.
+/// The step's call committed and the host died before the step took the
+/// outcome, in a file from before ownership was recorded, which a direct
+/// call under the step's key would have left the same way. The starter's
+/// retry of the run never replays that record as the step's output: the
+/// step fails `Refused`, the run never completes on it, and the action
+/// never runs again.
+#[test]
+fn a_record_under_a_steps_key_its_attempt_never_committed_is_never_replayed_as_its_outcome() {
+    let directory = tempfile::tempdir().unwrap();
+    let crashes = crashes_leaving(directory.path(), (true, true), asked, &approve_crashing);
+    let mut tried = 0;
+    for (path, _ask) in crashes {
+        if run_state(&cell_on(file(&path), false)) == json!("completed")
+            || step_result_recorded(&path)
+        {
+            continue;
+        }
+        tried += 1;
+        before_ownership(&path);
+        let cell = cell_on(file(&path), false);
+        let (_status, before) = melt(&cell);
+        let (status, run) = start(&cell);
+        assert_eq!(status, 200, "{run}");
+        assert_ne!(run_state(&cell), json!("completed"));
+        assert_eq!(convert_status(&cell), json!("failed"));
+        assert_eq!(melt(&cell).1, before, "the action never ran again");
+    }
+    assert!(
+        tried > 0,
+        "no crash point leaves the call committed and its step pending"
+    );
+}
+
+/// S5a: an approved step call's commit is the step's outcome on recovery
+/// only when the step attempt's own dispatch committed it. The same file
+/// from before ownership was recorded: the wake delivers no output for the
+/// unowned record; the step fails `Refused` and the action never runs again.
+#[test]
+fn an_unowned_record_under_a_steps_key_is_never_its_recovered_outcome() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut tried = 0;
+    for (path, _id) in undelivered(directory.path()) {
+        if step_result_recorded(&path) {
+            continue;
+        }
+        tried += 1;
+        before_ownership(&path);
+        let cell = cell_on(file(&path), false);
+        let (_status, before) = melt(&cell);
+        let due = next_due(&cell.host).unwrap().expect("the outcome is due");
+        let woke = wake(&cell, due.max(NOW * 1000));
+        assert_eq!(woke.steps, 1, "{woke:?}");
+        assert_ne!(run_state(&cell), json!("completed"));
+        assert_eq!(convert_status(&cell), json!("failed"));
+        assert_eq!(melt(&cell).1, before, "the action never ran again");
+    }
+    assert!(
+        tried > 0,
+        "no crash point leaves the step's result unrecorded"
+    );
+}
+
+/// The step call parked on `path` as a host before attempts were recorded
+/// left it: its parked call carries no step attempt.
+fn without_attempt(path: &Path) {
+    let engine = file(path);
+    engine
+        .execute_batch(
+            r#"UPDATE "_norn_outbox" SET "command"=json_remove("command",'$.payload.approval.attempt') WHERE json_extract("command",'$.payload.approval') IS NOT NULL"#,
+        )
+        .unwrap();
+    let rows = engine
+        .query(
+            r#"SELECT json_extract("command",'$.payload.approval.attempt') IS NULL FROM "_norn_outbox" WHERE json_extract("command",'$.payload.approval') IS NOT NULL"#,
+            &[],
+        )
+        .unwrap();
+    assert_eq!(rows.len(), 1, "one parked call");
+    assert_eq!(
+        rows[0],
+        vec![norn_cell::engine::SqlValue::Integer(1)],
+        "its attempt is gone"
+    );
+}
+
+/// S5a: a direct call held under a step's call key before the key was
+/// reserved (its parked call carries no step attempt) never commits
+/// through its approval's dispatch, even as its present requester: not
+/// while no step waits on the key (the refusal is recorded for the
+/// approval), and not while a step does (only that step's own dispatch
+/// runs it).
+#[test]
+fn a_held_direct_call_under_a_steps_key_never_commits_through_its_approval() {
+    let directory = tempfile::tempdir().unwrap();
+    // No step waits on the key: a direct call's approval.
+    let path = directory.path().join("ended.sqlite");
+    let id = parked_step(&path);
+    let (step, _key) = step_and_key(&path);
+    without_attempt(&path);
+    end_attempt(&path, &step);
+    let cell = cell_on(file(&path), false);
+    let dispatched = approve_dispatching(&cell, &id, &|| {});
+    let reserved = json!({ "committed": false, "code": "request.invalid", "state": "refused" });
+    assert_eq!(dispatched, reserved);
+    assert_eq!(melt(&cell).0, 404, "nothing committed");
+    assert_eq!(standing(&cell, &id), reserved, "final");
+
+    // A step waits on the key: only its own dispatch runs the call.
+    let path = directory.path().join("waiting.sqlite");
+    let id = parked_step(&path);
+    without_attempt(&path);
+    let cell = cell_on(file(&path), false);
+    let dispatched = approve_dispatching(&cell, &id, &|| {});
+    assert_eq!(dispatched["committed"], json!(false), "{dispatched}");
+    assert_eq!(dispatched["state"], json!("not_executed"), "{dispatched}");
+    assert_eq!(melt(&cell).0, 404, "nothing committed");
+    assert_eq!(standing(&cell, &id), not_executed());
+}
+
+/// S6b: a flow step's approval recorded before attempts were (its parked
+/// call carries none) is bound, under the dispatch's hold, to its recorded
+/// run's pending attempt that makes exactly that call: the starter's
+/// ordinary retry of the run consumes it and the run completes. Recorded
+/// for another run, no retry of this run consumes it.
+#[test]
+fn a_step_approval_from_before_attempts_is_consumed_by_its_own_runs_retry_only() {
+    let directory = tempfile::tempdir().unwrap();
+    for elsewhere in [false, true] {
+        let path = directory.path().join(format!("cell-{elsewhere}.sqlite"));
+        let id = parked_step(&path);
+        without_attempt(&path);
+        {
+            let cell = cell_on(file(&path), false);
+            let (status, decided) = approve(&cell, &id);
+            assert_eq!(status, 200, "{decided}");
+            assert_eq!(decided["call"], not_executed(), "{decided}");
+            assert_eq!(decided["run"]["id"], json!("melt-run"), "{decided}");
+        }
+        if elsewhere {
+            file(&path)
+                .execute(
+                    r#"UPDATE "_norn_approved_call" SET "run_id"='melt-run-elsewhere' WHERE "decision_id"=?1"#,
+                    &[id.as_str().into()],
+                )
+                .unwrap();
+        }
+        let cell = cell_on(file(&path), false);
+        let (status, run) = start(&cell);
+        assert_eq!(status, 200, "{run}");
+        if elsewhere {
+            assert_ne!(run["state"], json!("completed"), "{run}");
+            assert_eq!(melt(&cell).0, 404, "never by another run's retry");
+            assert_eq!(standing(&cell, &id), not_executed());
+        } else {
+            assert_eq!(run["state"], json!("completed"), "{run}");
+            assert_eq!(melt(&cell).0, 200);
+            assert_eq!(standing(&cell, &id), committed());
+        }
+    }
+}
+
 /// S6b: a denial of authority is decided anew on every try, so it is never
 /// the step's outcome while its approval stays executable: the starter's
 /// retry under revoked roles leaves the step waiting, and the run moves once

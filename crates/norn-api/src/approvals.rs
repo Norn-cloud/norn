@@ -49,9 +49,12 @@
 //! carries that exact step attempt (its run, its parked command and
 //! generation) from the moment it parks, named by the flow's own dispatch
 //! and never derived from the idempotency key, and runs only while that
-//! attempt waits on it (S6b), and only by that dispatch (S5a): a direct call
-//! never takes a step's call key. A denial of authority is not recorded:
-//! authority is decided anew on every try.
+//! attempt waits on it (S6b), and only by that dispatch (S5a): no other
+//! invocation, a direct call or an approval's dispatch of one, runs a call
+//! under a step's call key. A step's call parked before attempts were
+//! recorded is bound, under the dispatch's hold, to its approval's recorded
+//! run's pending attempt that makes exactly that call. A denial of
+//! authority is not recorded: authority is decided anew on every try.
 
 use std::collections::BTreeMap;
 
@@ -412,10 +415,55 @@ pub(crate) fn attempt_ended() -> Refusal {
     )
 }
 
+/// S6b: the invocation an approved call is bound to, read under the
+/// caller's cell hold.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Binding {
+    /// A direct call: only a direct call runs it.
+    Direct,
+    /// A flow step attempt's call: only that attempt's own dispatch runs it.
+    Step(StepAttempt),
+    /// A step's call parked before attempts were recorded, whose run no
+    /// longer waits on it: nothing runs it.
+    Ended,
+}
+
+/// S6b: what `row`'s approved call `held` is bound to. A call parked with
+/// its step attempt is bound to that attempt. A call parked before attempts
+/// were recorded is bound by its approval's recorded run: a direct call when
+/// that is no flow run (a direct call's approval records its own parked
+/// command), else that run's pending step attempt that makes exactly this
+/// call now, if one does.
+///
+/// # Errors
+/// A host failure.
+pub(crate) fn binding<E: SqlEngine>(
+    cell: &ActionCell<E>,
+    row: &norn_cell::decision_ledger::ApprovedCall,
+    held: &HeldCall,
+) -> Result<Binding, Refusal> {
+    if let Some(attempt) = &held.call.attempt {
+        return Ok(Binding::Step(attempt.clone()));
+    }
+    if cell
+        .store()
+        .read()
+        .flow_run(MAIN_WORLD, &row.run_id)
+        .map_err(Refusal::host)?
+        .is_none()
+    {
+        return Ok(Binding::Direct);
+    }
+    Ok(
+        crate::flow_driver::attempt_of_run(cell.store(), &row.run_id, &held.call.idempotency_key)?
+            .map_or(Binding::Ended, Binding::Step),
+    )
+}
+
 /// S6b: whether the approved call of `decision_id` may still run: a direct
 /// call always may; a flow step's call only while the exact step attempt it
-/// parked for (recorded when it parked) waits on it, or once it committed
-/// (its replay).
+/// is bound to ([`binding`]) waits on it, or once it committed (its
+/// replay).
 ///
 /// # Errors
 /// A host failure.
@@ -423,8 +471,9 @@ pub(crate) fn attempt_live<E: SqlEngine>(
     cell: &ActionCell<E>,
     decision_id: &str,
 ) -> Result<bool, Refusal> {
-    let reader = cell.store().read();
-    let Some(row) = reader
+    let Some(row) = cell
+        .store()
+        .read()
         .approved_call(MAIN_WORLD, decision_id)
         .map_err(Refusal::host)?
     else {
@@ -435,21 +484,11 @@ pub(crate) fn attempt_live<E: SqlEngine>(
     if matches!(state, CallState::Committed(_)) {
         return Ok(true);
     }
-    if let Some(attempt) = &held.call.attempt {
-        return attempt.waiting(cell.store());
+    match binding(cell, &row, &held)? {
+        Binding::Direct => Ok(true),
+        Binding::Step(attempt) => attempt.waiting(cell.store()),
+        Binding::Ended => Ok(false),
     }
-    // Parked before attempts were recorded: the run its approval names.
-    if reader
-        .flow_run(MAIN_WORLD, &row.run_id)
-        .map_err(Refusal::host)?
-        .is_none()
-    {
-        return Ok(true);
-    }
-    Ok(
-        crate::flow_driver::run_waiting_on(cell.store(), &held.call.idempotency_key)?.as_deref()
-            == Some(row.run_id.as_str()),
-    )
 }
 
 /// S2: whether `principal`, the authenticated principal of the request
@@ -465,11 +504,11 @@ pub(crate) fn is_requester(principal: Option<&RunStarter>, requester: &RunStarte
 
 /// S2: the approval `decision_id` is consumed only by its parked
 /// requester's own authenticated request; any other principal is denied,
-/// and nothing is recorded. S5a: and only by the invocation it was parked
-/// for: a flow step's call by the flow's own dispatch of that exact step
-/// attempt (`attempt`, carried by the trusted invocation, never derived from
-/// the idempotency key), a direct call by a direct call. Any other
-/// invocation is denied the same way.
+/// and nothing is recorded. S5a: and only by the invocation it is bound to
+/// ([`binding`], S6b): a flow step's call by the flow's own dispatch of that
+/// exact step attempt (`attempt`, carried by the trusted invocation, never
+/// derived from the idempotency key), a direct call by a direct call. Any
+/// other invocation is denied the same way.
 ///
 /// # Errors
 /// The opaque action denial; a host failure.
@@ -479,9 +518,19 @@ pub(crate) fn require_requester<E: SqlEngine>(
     principal: Option<&RunStarter>,
     attempt: Option<&StepAttempt>,
 ) -> Result<(), Refusal> {
-    let (held, _state) = approved_call(cell, decision_id)?
+    let row = cell
+        .store()
+        .read()
+        .approved_call(MAIN_WORLD, decision_id)
+        .map_err(Refusal::host)?
         .ok_or_else(|| Refusal::host("an approved call lost its record"))?;
-    if is_requester(principal, &held.call.requester) && held.call.attempt.as_ref() == attempt {
+    let (held, _state) = approved_state(cell, &row)?;
+    let bound = match (binding(cell, &row, &held)?, attempt) {
+        (Binding::Direct, None) => true,
+        (Binding::Step(bound), Some(attempt)) => bound == *attempt,
+        _other => false,
+    };
+    if bound && is_requester(principal, &held.call.requester) {
         Ok(())
     } else {
         Err(crate::actions::action_denied())

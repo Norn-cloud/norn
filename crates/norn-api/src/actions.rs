@@ -209,10 +209,7 @@ pub fn call_action<E: SqlEngine>(
     // consume an approval nor commit a record a step would take as its
     // outcome.
     if crate::flow_driver::is_step_call_key(&request.idempotency_key) {
-        return Err(invalid_at(
-            "/idempotencyKey",
-            "idempotencyKey is reserved for a flow step's own call",
-        ));
+        return Err(step_key_reserved());
     }
     // The transport's own verified principal for this request: the only one
     // that may consume an approval of its call (S2).
@@ -230,6 +227,26 @@ pub fn call_action<E: SqlEngine>(
         },
         disclosure,
         None,
+    )
+}
+
+/// S5a: a step's call key is reserved for the flow step attempt's own
+/// dispatch of it.
+fn step_key_reserved() -> Refusal {
+    invalid_at(
+        "/idempotencyKey",
+        "idempotencyKey is reserved for a flow step's own call",
+    )
+}
+
+/// S5a: the record under a step's call key was not committed by that step
+/// attempt's own dispatch, so it is never the step's outcome.
+pub(crate) fn foreign_step_record() -> Refusal {
+    Refusal::new(
+        StatusCode::CONFLICT,
+        "action.idempotency_conflict",
+        "another call holds this step's call key",
+        "the record under the step's call key was not committed by the step's own call",
     )
 }
 
@@ -259,7 +276,10 @@ pub(crate) struct ActionCall<'a> {
 /// exactly that command under the gate and the action as defined now, else
 /// it is refused `approval.definition_changed` and nothing is written
 /// (APPROVAL-REVISION-1). A refusal that decides an approved call is
-/// recorded as final (APPROVAL-RECOVERY-1).
+/// recorded as final (APPROVAL-RECOVERY-1). S5a: a call under a step's
+/// call key runs only for the trusted dispatch of the step attempt that
+/// makes it, and answers only with a record that attempt's own dispatch
+/// committed.
 pub(crate) fn call_action_bound<E: SqlEngine>(
     host: &DevHost<E>,
     invocation: &ActionCall<'_>,
@@ -358,10 +378,23 @@ pub(crate) fn call_action_bound<E: SqlEngine>(
     )? {
         Gated::Pending(pending) => return Ok(ActionAnswer::Pending(pending)),
         Gated::Replayed(outcome) => *outcome,
-        Gated::Commit(approval) => {
-            commit_call(host, &mut cell, &catalog, &kernel_call, approval.as_deref())?
-        }
+        Gated::Commit(approval) => commit_call(
+            host,
+            &mut cell,
+            &catalog,
+            &kernel_call,
+            approval.as_deref(),
+            attempt,
+        )?,
     };
+    // S5a: a step attempt's call answers only with the record its own
+    // dispatch committed, now or on an earlier try, never another's under
+    // its key.
+    if let Some(attempt) = attempt
+        && !crate::flow_driver::owns(cell.store(), action_id, &request.idempotency_key, attempt)?
+    {
+        return Err(foreign_step_record());
+    }
     let store = cell.store();
     let raw_hash = world_values(host, disclosure, store, actor);
     caller_receipt(store, action_id, request, outcome, raw_hash, key).map(ActionAnswer::Receipt)
@@ -369,13 +402,15 @@ pub(crate) fn call_action_bound<E: SqlEngine>(
 
 /// Commit a call past its gate, as the caller gets it: under an approval,
 /// the commit names the approval it consumes in its own transaction (S6c),
-/// and a refusal that decides the approved call is recorded.
+/// and a refusal that decides the approved call is recorded. A step
+/// attempt's call names that attempt as its owner the same way (S5a).
 fn commit_call<E: SqlEngine>(
     host: &DevHost<E>,
     cell: &mut crate::host::ActionCell<E>,
     catalog: &TypeCatalog<'_>,
     kernel_call: &norn_kernel::ActionCall<'_>,
     approval: Option<&str>,
+    attempt: Option<&crate::approvals::StepAttempt>,
 ) -> Result<ActionOutcome, Refusal> {
     let kernel_authorizer = KernelAuthorizer(host.authorizer.as_ref());
     let commit = |cell: &mut crate::host::ActionCell<E>| {
@@ -390,16 +425,31 @@ fn commit_call<E: SqlEngine>(
             },
         )
     };
-    let committed = match approval {
-        Some(decision) => {
-            let consumed = norn_cell::decision_ledger::ApprovalConsumed {
+    let mut events = Vec::new();
+    if let Some(decision) = approval {
+        events.push(
+            norn_cell::decision_ledger::ApprovalConsumed {
                 decision_id: decision.to_owned(),
             }
             .event()
-            .map_err(Refusal::host)?;
-            cell.attributed(consumed, commit)
-        }
-        None => commit(cell),
+            .map_err(Refusal::host)?,
+        );
+    }
+    if let Some(attempt) = attempt {
+        events.push(
+            norn_cell::decision_ledger::StepCallOwner {
+                run_id: attempt.run_id.clone(),
+                command_id: attempt.command.clone(),
+                generation: attempt.generation,
+            }
+            .event()
+            .map_err(Refusal::host)?,
+        );
+    }
+    let committed = if events.is_empty() {
+        commit(cell)
+    } else {
+        cell.attributed(events, commit)
     };
     committed.map_err(|refusal| crate::approvals::refused_under(cell, approval, refusal))
 }
@@ -549,6 +599,33 @@ fn through_gate<E: SqlEngine>(
             decision,
             crate::approvals::attempt_ended(),
         )?);
+    }
+    // S5a: the step-key namespace is fenced at bound dispatch, under this
+    // hold: a call under a step's call key runs only for the trusted
+    // invocation of the step attempt that makes it now. A direct call held
+    // under such a key before the fence (its approval's dispatch) never runs,
+    // and that refusal is recorded for its approval.
+    if crate::flow_driver::is_step_call_key(&kernel_call.idempotency_key) {
+        let fenced = match attempt {
+            None => Some(step_key_reserved()),
+            Some(attempt)
+                if !crate::flow_driver::attempt_makes(
+                    cell.store(),
+                    attempt,
+                    &kernel_call.idempotency_key,
+                )? =>
+            {
+                Some(crate::approvals::attempt_ended())
+            }
+            Some(_making) => None,
+        };
+        if let Some(refusal) = fenced {
+            return Err(crate::approvals::refused_under(
+                cell,
+                approval.as_deref(),
+                refusal,
+            ));
+        }
     }
     let Some(gate) = gate else {
         return Ok(Gated::Commit(None));

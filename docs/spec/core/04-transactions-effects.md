@@ -283,9 +283,21 @@ for (its run, its parked command and generation) from the moment it parks,
 named by the flow's own dispatch and never derived from the idempotency key,
 and runs only by that dispatch and only while that attempt waits on it
 (`approval.attempt_ended` otherwise, also when the attempt ended before anyone
-decided). A step attempt's call key (`step-` and 48 hex digits) is the host's
-own: a direct call under it is refused `request.invalid` before anything parks
-or commits, so a direct call never supplies a step's outcome. A refusal that decides the
+decided). A step's call parked before attempts were recorded is bound, under
+the dispatch's hold, to its approval's recorded run's pending attempt that
+makes exactly that call, so that attempt's own dispatch consumes it and no
+other run's or step's does. A step attempt's call key (`step-` and 48 hex
+digits) is the host's own: a direct call under it is refused `request.invalid`
+before anything parks or commits, and the dispatch itself refuses a call under
+it for any invocation but the trusted dispatch of the step attempt that makes
+it now, so a direct call held under such a key before the fence never commits
+through its approval (that refusal is recorded for the approval). The commit a
+step attempt's own dispatch makes names that attempt as its owner (one
+`norn.step.call_owned` ledger event), and a record under a step's call key is
+that step's outcome, on a replay or an approval's recovery, only when its
+attempt owns it; any other (a direct call's, or one committed before
+ownership was recorded) is the step's `Refused` failure
+`action.idempotency_conflict`, never its output. A refusal that decides the
 call there (anything but a host failure or a denial of authority, which is
 decided again on every try) is recorded in its own commit, under the same
 cell hold, as one `norn.approval.refused` ledger event carrying its status,

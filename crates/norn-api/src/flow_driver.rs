@@ -175,23 +175,43 @@ pub(crate) fn run_waiting_on<E: SqlEngine>(
     store: &norn_cell::CellStore<E>,
     idempotency_key: &str,
 ) -> Result<Option<String>, Refusal> {
-    Ok(waiting_attempt(store, idempotency_key)?.map(|attempt| attempt.run_id))
+    Ok(waiting_attempts(store, idempotency_key, None)?
+        .into_iter()
+        .next()
+        .map(|attempt| attempt.run_id))
 }
 
-/// The pending action step attempt that makes the call keyed
-/// `idempotency_key`, if one does: its run, and its parked command at that
-/// generation. Only a call parked before attempts were recorded is placed
-/// this way; a call parks with the attempt its trusted invocation names
-/// (S5a).
+/// S6b: `run_id`'s pending action step attempt that makes the call keyed
+/// `idempotency_key`, if one does. Read under the caller's cell hold.
 ///
 /// # Errors
 /// A host failure.
-fn waiting_attempt<E: SqlEngine>(
+pub(crate) fn attempt_of_run<E: SqlEngine>(
     store: &norn_cell::CellStore<E>,
+    run_id: &str,
     idempotency_key: &str,
 ) -> Result<Option<crate::approvals::StepAttempt>, Refusal> {
-    if !idempotency_key.starts_with("step-") {
-        return Ok(None);
+    Ok(waiting_attempts(store, idempotency_key, Some(run_id))?
+        .into_iter()
+        .next())
+}
+
+/// The pending action step attempts (of `run_id` only, when given) that
+/// make the call keyed `idempotency_key`: each one's run, and its parked
+/// command at that generation. Only a call parked before attempts were
+/// recorded is placed this way; a call parks with the attempt its trusted
+/// invocation names (S5a).
+///
+/// # Errors
+/// A host failure.
+fn waiting_attempts<E: SqlEngine>(
+    store: &norn_cell::CellStore<E>,
+    idempotency_key: &str,
+    run_id: Option<&str>,
+) -> Result<Vec<crate::approvals::StepAttempt>, Refusal> {
+    let mut found = Vec::new();
+    if !is_step_call_key(idempotency_key) {
+        return Ok(found);
     }
     for pending in store.read().parked_commands().map_err(Refusal::host)? {
         let Some(payload) = pending.command.command.get("payload") else {
@@ -207,16 +227,44 @@ fn waiting_attempt<E: SqlEngine>(
             continue;
         };
         if pending.result.is_none()
+            && run_id.is_none_or(|wanted| wanted == run)
             && step_call_key(text("idempotencyKey").unwrap_or(step), attempt)? == idempotency_key
         {
-            return Ok(Some(crate::approvals::StepAttempt {
+            found.push(crate::approvals::StepAttempt {
                 run_id: run.to_owned(),
                 command: pending.command.command_id.clone(),
                 generation: pending.command.generation,
-            }));
+            });
         }
     }
-    Ok(None)
+    Ok(found)
+}
+
+/// S5a: whether the idempotency record of `action_id`'s call keyed
+/// `idempotency_key` was committed by `attempt`'s own dispatch, as the
+/// ledger records it ([`norn_cell::decision_ledger::STEP_CALL_OWNED`]).
+/// Only such a record is ever that step's outcome: one a direct call wrote
+/// under the step's key, or one committed before ownership was recorded,
+/// never is.
+///
+/// # Errors
+/// A host failure: the record or its receipt is missing.
+pub(crate) fn owns<E: SqlEngine>(
+    store: &norn_cell::CellStore<E>,
+    action_id: &str,
+    idempotency_key: &str,
+    attempt: &crate::approvals::StepAttempt,
+) -> Result<bool, Refusal> {
+    let seq = crate::actions::record_commit_seq(store, action_id, idempotency_key)?;
+    let owner = store
+        .read()
+        .step_call_owner_at(MAIN_WORLD, seq)
+        .map_err(Refusal::host)?;
+    Ok(owner.is_some_and(|owner| {
+        owner.run_id == attempt.run_id
+            && owner.command_id == attempt.command
+            && owner.generation == attempt.generation
+    }))
 }
 
 /// S5a: whether `attempt` still waits and makes exactly the call keyed
@@ -407,10 +455,13 @@ enum StepApproval {
 /// step attempt makes: parked for that exact attempt (its run, its command
 /// and generation), under the attempt's idempotency key, the action, the
 /// input, no definitions pin (a step calls the active catalog), and the
-/// run's starter, its whole recorded identity, as requester (S5a). Another
-/// call under the same key never delivers its result to the step. Of
-/// several bound approvals the one the ledger committed last supersedes the
-/// earlier ones (S5c).
+/// run's starter, its whole recorded identity, as requester (S5a); a call
+/// parked before attempts were recorded binds by its approval's recorded
+/// run (S6b, [`crate::approvals::binding`]). Another call under the same
+/// key never delivers its result to the step, and a committed record is the
+/// step's output only when its attempt's own dispatch committed it
+/// ([`owns`]). Of several bound approvals the one the ledger committed last
+/// supersedes the earlier ones (S5c).
 fn step_approval<E: SqlEngine>(
     cell: &ActionCell<E>,
     step: &StepCall,
@@ -440,7 +491,8 @@ fn step_approval<E: SqlEngine>(
     // In the ledger order of the approving commits: the last exact one binds.
     for row in rows {
         let (held, state) = crate::approvals::approved_state(cell, &row)?;
-        let exact = held.call.attempt.as_ref() == Some(&attempt)
+        let exact = crate::approvals::binding(cell, &row, &held)?
+            == crate::approvals::Binding::Step(attempt.clone())
             && held.call.idempotency_key == step.call_key
             && held.call.action == action.action
             && held.call.input == action.input
@@ -461,6 +513,21 @@ fn step_approval<E: SqlEngine>(
             StepApproval::Superseded
         }
         CallState::Refused(code) => StepApproval::Outcome(failure("Refused", Some(&code))),
+        // S5a: a record the step attempt's own dispatch did not commit is
+        // never its outcome, as the drive's replay of it is refused.
+        CallState::Committed(_record)
+            if !owns(
+                cell.store(),
+                &held.call.action,
+                &held.call.idempotency_key,
+                &attempt,
+            )? =>
+        {
+            StepApproval::Outcome(failure(
+                "Refused",
+                Some(&crate::actions::foreign_step_record().code),
+            ))
+        }
         CallState::Committed(record) => {
             let (object_type, object_id, version) =
                 crate::actions::recorded_target(cell.store(), &record, &held.call.idempotency_key)?;
