@@ -575,7 +575,7 @@ fn a_reader_sees_no_row_of_a_landing_until_it_is_stored() {
     let stored = engine
         .store(&StoreRequest {
             land: request,
-            landed: landed,
+            landed,
             data: object(&data.sha256),
             held: object(&held.sha256),
         })
