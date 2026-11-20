@@ -18,7 +18,6 @@ pub mod authz;
 pub mod clock;
 pub mod contracts;
 pub mod decisions;
-/// OLAP-CRED-1: the per-cell credential the tenant analytics engine verifies.
 pub mod olap_credential;
 pub mod openapi;
 /// Stable host refusal wire contract.
