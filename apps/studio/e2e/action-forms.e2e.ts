@@ -74,7 +74,7 @@ test("create: a new holding commits, shows its receipt, and appears in the grid"
   await newRecord(page, "Open a holding")
   await fillHolding(page, "demo/holding/9001", "10.500")
   await sheet(page).getByRole("button", { name: "Open a holding" }).click()
-  await expect(sheet(page).getByRole("status")).toHaveText("Holding demo/holding/9001 opened · just now")
+  await expect(sheet(page).getByRole("status")).toHaveText("Holding demo/holding/9001 created · just now")
   // Receipt internals sit under Details, closed in the business view.
   await expect(sheet(page).getByText("Commit")).toBeHidden()
   await sheet(page).getByText("Details").click()
@@ -106,7 +106,7 @@ test("validate: the cell's input refusal shows on the form, which stays on the r
   await form.getByRole("navigation", { name: "Steps" }).getByRole("button").first().click()
   await fillHolding(page, "demo/holding/9002", "12.500")
   await form.getByRole("button", { name: "Open a holding" }).click()
-  await expect(form.getByRole("status")).toHaveText(/^Holding demo\/holding\/\d+ opened · just now$/)
+  await expect(form.getByRole("status")).toHaveText(/^Holding demo\/holding\/\d+ created · just now$/)
 })
 
 test("edit: a transition from the record drawer carries the record's id and moves its version", async ({ page }) => {
@@ -120,7 +120,7 @@ test("edit: a transition from the record drawer carries the record's id and move
   await form.getByLabel("Counted quantity").fill("40.000")
   await form.getByLabel("Reason").fill("Recount")
   await form.getByRole("button", { name: "Adjust quantity" }).click()
-  await expect(form.getByRole("status")).toHaveText("Holding demo/holding/0001 adjusted · just now")
+  await expect(form.getByRole("status")).toHaveText("Holding demo/holding/0001 is now counted · just now")
   await form.getByText("Details").click()
   await expect(form.locator("dd").nth(3)).toHaveText("2") // version
   await form.getByRole("button", { name: "Done" }).click()
@@ -139,7 +139,7 @@ test("delete: a destructive, irreversible action confirms first, then later acti
   await expect(form.getByRole("alertdialog")).toHaveCount(0)
   await form.getByRole("button", { name: "Retire holding" }).click()
   await form.getByRole("button", { name: "Yes, retire holding" }).click()
-  await expect(form.getByRole("status")).toHaveText("Holding demo/holding/0002 retired · just now")
+  await expect(form.getByRole("status")).toHaveText("Holding demo/holding/0002 is now retired · just now")
   await form.getByRole("button", { name: "Done" }).click()
   await rowFor(page, "demo/holding/0002").click()
   await page.getByRole("button", { name: "Adjust quantity" }).click()
@@ -167,7 +167,7 @@ test("reopen: a dirty draft asks before it is discarded; keep editing keeps it; 
   await expect(sheet(page).getByRole("button", { name: "Retry" })).toBeVisible()
   await shoot(page, "outage")
   await sheet(page).getByRole("button", { name: "Retry" }).click()
-  await expect(sheet(page).getByRole("status")).toHaveText(/^Holding demo\/holding\/\d+ opened · just now$/)
+  await expect(sheet(page).getByRole("status")).toHaveText(/^Holding demo\/holding\/\d+ created · just now$/)
   const [failed, retried] = actions.calls.slice(-2).map((c) => JSON.parse(c.body).idempotencyKey)
   expect(retried).toBe(failed)
   await sheet(page).getByRole("button", { name: "Another" }).click()
@@ -195,7 +195,7 @@ test("create: a parent with owned rows takes a list of records; the cell's input
   await form.getByRole("textbox", { name: "Lot", exact: true }).nth(1).fill("L-2")
   await form.getByLabel("Quantity").nth(1).fill("2.000")
   await form.getByRole("button", { name: "Restock holding" }).click()
-  await expect(form.getByRole("status")).toHaveText("Holding demo/holding/0003 restocked · just now")
+  await expect(form.getByRole("status")).toHaveText("Holding demo/holding/0003 updated · just now")
   expect(actions.calls.at(-1)?.body).toContain('"lots":[{"lot":"L-1","quantity":"1.250"},{"lot":"L-2","quantity":"2.000"}]')
 })
 
@@ -229,7 +229,7 @@ test("sending: the form is locked while a call is out, so nothing typed can hide
   await expect(form.getByLabel("Reason")).toBeDisabled()
   await shoot(page, "sending")
   release()
-  await expect(form.getByRole("status")).toHaveText("Holding demo/holding/0001 adjusted · just now")
+  await expect(form.getByRole("status")).toHaveText("Holding demo/holding/0001 is now counted · just now")
   expect(actions.calls.filter((c) => c.actionId === "canon.holding.adjust")).toHaveLength(1)
 })
 
@@ -250,7 +250,7 @@ test("retry: after an outage, Retry re-sends the same body under the same key; a
   expect(retried!.body).toBe(first!.body) // the same key and the same exact body
   await form.getByLabel("Counted quantity").fill("13.000")
   await form.getByRole("button", { name: "Adjust quantity" }).click()
-  await expect(form.getByRole("status")).toHaveText("Holding demo/holding/0002 adjusted · just now")
+  await expect(form.getByRole("status")).toHaveText("Holding demo/holding/0002 is now counted · just now")
   const edited = actions.calls.at(-1)!
   expect(keyOf(edited)).not.toBe(keyOf(first!))
   expect(edited.body).toMatch(/"quantity":\s*"?13\.000\b/) // the raw body keeps the exact digits, however the decimal is encoded
@@ -262,7 +262,7 @@ test("undo: a lost answer reads as unconfirmed, Retry undo re-sends it under the
   await fillHolding(page, "demo/holding/9101", "2.000")
   await sheet(page).getByRole("button", { name: "Open a holding" }).click()
   const form = sheet(page)
-  await expect(form.getByRole("status")).toHaveText(/^Holding demo\/holding\/9101 opened/)
+  await expect(form.getByRole("status")).toHaveText(/^Holding demo\/holding\/9101 created/)
   actions.failNext()
   await form.getByRole("button", { name: "Undo" }).click()
   await expect(form.getByRole("alert")).toContainText("Couldn't confirm the undo")

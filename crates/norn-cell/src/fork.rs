@@ -368,7 +368,7 @@ mod tests {
         fn fork_engine(&self) -> Result<Self, CellError> {
             let mut other =
                 CellStore::open(&self.path, self.model.clone(), StoreOptions::default())?;
-            other.commit(&CommitBatch {
+            other.commit_unchecked(&CommitBatch {
                 world: MAIN_WORLD.to_owned(),
                 scope: "s".to_owned(),
                 ..CommitBatch::default()
@@ -477,8 +477,8 @@ mod tests {
         };
         let missing = || CellError::Engine("expected a record".to_owned());
         let mut main = CellStore::open_in_memory(model)?;
-        main.commit(&empty())?;
-        main.commit(&empty())?;
+        main.commit_unchecked(&empty())?;
+        main.commit_unchecked(&empty())?;
         let id = main.cell_id()?.ok_or_else(missing)?;
         let base = main.verified_head()?;
         let mut fork = main.fork("what-if", &base)?;
@@ -498,7 +498,7 @@ mod tests {
 
         // A fork-minted commit carries the same binding but is never
         // evidence: the fence refuses it before the binding is read.
-        fork.commit(&empty())?;
+        fork.commit_unchecked(&empty())?;
         let minted = base.commits + 1;
         assert!(fork.local_export_record(minted)?.is_some());
         assert!(matches!(
@@ -544,13 +544,13 @@ mod tests {
             ..CommitBatch::default()
         };
         let mut main = CellStore::open_in_memory(model.clone())?;
-        main.commit(&empty())?;
+        main.commit_unchecked(&empty())?;
         let id = main
             .cell_id()?
             .ok_or_else(|| CellError::Engine("main is bound".to_owned()))?;
         let base = main.verified_head()?;
         let mut fork = main.fork("what-if", &base)?;
-        fork.commit(&empty())?;
+        fork.commit_unchecked(&empty())?;
         let dir = tempfile::tempdir().map_err(|error| CellError::Engine(error.to_string()))?;
         let path = dir.path().join("fork.sqlite");
         fork.conn.backup_to_file(&path)?;

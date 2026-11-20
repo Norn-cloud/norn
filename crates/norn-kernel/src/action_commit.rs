@@ -5021,19 +5021,20 @@ fn normalize_action_input<X>(
     .map_err(|violation| ActionRefusal::InvalidInput {
         field: violation.path,
     })?;
+    // ACTION-ACTOR-1: identity is never caller-supplied, not even as a value
+    // the derivation would overwrite, nor as a `null` the normalization below
+    // would drop: the raw input is checked before anything is removed.
+    if let Some(field) = actor_derived_fields(action)
+        .into_iter()
+        .find(|field| raw_input.contains_key(field))
+    {
+        return Err(ActionRefusal::InvalidInput { field });
+    }
     let mut supplied = raw_input.clone();
     for step in action.derive.iter().filter(|step| !step.input_required) {
         if supplied.get(&step.field) == Some(&RuntimeValue::Null) {
             supplied.remove(&step.field);
         }
-    }
-    // ACTION-ACTOR-1: identity is never caller-supplied, not even as a value
-    // the derivation would overwrite.
-    if let Some(field) = actor_derived_fields(action)
-        .into_iter()
-        .find(|field| supplied.contains_key(field))
-    {
-        return Err(ActionRefusal::InvalidInput { field });
     }
     let normalized = schema
         .decode_action_input(RuntimeValue::Object(supplied), "$input")

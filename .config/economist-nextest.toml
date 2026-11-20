@@ -26,7 +26,7 @@ command = ["cargo", "nextest", "run", "--locked", "--profile", "ci", "-p", "norn
 slow-timeout = { period = "120s", terminate-after = 10 }
 
 [scripts.setup."beat-1-native-run-quarantine-reason"]
-command = ["cargo", "nextest", "run", "--locked", "--profile", "ci", "-p", "norn-cell", "--test", "definitions_install", "-E", "test(=obs_bad_scrap_yield_purity_120_is_captured_but_native_write_refuses)"]
+command = ["cargo", "nextest", "run", "--locked", "--profile", "ci", "-p", "norn-cell", "--lib", "-E", "test(=suites::definitions_install::obs_bad_scrap_yield_purity_120_is_captured_but_native_write_refuses)"]
 slow-timeout = { period = "120s", terminate-after = 10 }
 
 [scripts.setup."beat-2-recorded-engine-document-exact-answer"]
@@ -34,15 +34,15 @@ command = ["bun", "test", "./apps/studio/test/format.test.ts", "--test-name-patt
 slow-timeout = { period = "120s", terminate-after = 10 }
 
 [scripts.setup."beat-2-native-run-exact-question-and-contributions"]
-command = ["cargo", "nextest", "run", "--locked", "--profile", "ci", "-p", "norn-cell", "--test", "exact_question", "-E", "test(=scrap_yield_live_revisions_use_the_real_cell_evaluator_and_result_frontier)"]
+command = ["cargo", "nextest", "run", "--locked", "--profile", "ci", "-p", "norn-cell", "--lib", "-E", "test(=suites::exact_question::scrap_yield_live_revisions_use_the_real_cell_evaluator_and_result_frontier)"]
 slow-timeout = { period = "120s", terminate-after = 10 }
 
 [scripts.setup."beat-2-native-run-incremental-equals-recompute"]
-command = { command-line = ["cargo", "nextest", "run", "--locked", "--profile", "ci", "-p", "norn-cell", "--test", "incremental_question", "-E", "test(=data_delta_incremental_equals_recompute_with_redelivery_and_restart)"], env = { PROPTEST_RNG_SEED = "21320261103", PROPTEST_RNG_ALGORITHM = "cc" } }
+command = { command-line = ["cargo", "nextest", "run", "--locked", "--profile", "ci", "-p", "norn-cell", "--lib", "-E", "test(=suites::incremental_question::data_delta_incremental_equals_recompute_with_redelivery_and_restart)"], env = { PROPTEST_RNG_SEED = "21320261103", PROPTEST_RNG_ALGORITHM = "cc" } }
 slow-timeout = { period = "120s", terminate-after = 10 }
 
 [scripts.setup."beat-2-native-run-restatement-and-old-as-of-answer"]
-command = ["cargo", "nextest", "run", "--locked", "--profile", "ci", "-p", "norn-cell", "--test", "restatement_activation", "-E", "test(=governed_activation_switches_all_slices_and_preserves_old_answers)"]
+command = ["cargo", "nextest", "run", "--locked", "--profile", "ci", "-p", "norn-cell", "--lib", "-E", "test(=suites::restatement_activation::governed_activation_switches_all_slices_and_preserves_old_answers)"]
 slow-timeout = { period = "120s", terminate-after = 10 }
 
 [scripts.setup."beat-3-native-run-authored-stock-closure"]

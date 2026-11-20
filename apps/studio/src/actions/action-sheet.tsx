@@ -6,18 +6,18 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { useView } from "@/lib/view"
 import { conceptTitle } from "../lib/catalog.ts"
 import { listActions, type ActionSummary, type CatalogRead, type Draft } from "../lib/actions.ts"
+import { useAccount } from "../lib/session.ts"
 import { ActionForm } from "./action-form.tsx"
-
-/** The actions the cell offers this reader for one object type (the server filters; Studio shows what it gets). */
-export function useActions(objectKind: string) {
-  return useQuery<CatalogRead>({ queryKey: ["actions", objectKind], queryFn: () => listActions(objectKind), retry: false, staleTime: 60_000 })
-}
+import { keptDrafts, sessionKey } from "./kept-drafts.ts"
 
 /**
- * Drafts kept for later in this tab, by action and the record it was opened on. Memory only:
- * nothing is written to the cell or the browser's storage, and a reload forgets them.
+ * The actions the cell offers this reader for one object type, or for one record in its current
+ * state (the server filters; Studio shows what it gets).
  */
-const kept = new Map<string, Draft>()
+export function useActions(objectKind: string, objectId?: string, enabled = true) {
+  return useQuery<CatalogRead>({ queryKey: ["actions", objectKind, objectId ?? null], queryFn: () => listActions(objectKind, undefined, objectId), retry: false, staleTime: objectId === undefined ? 60_000 : 0, enabled })
+}
+
 const draftKey = (open: OpenAction) => `${open.action.actionId}:${JSON.stringify(open.prefill ?? {})}`
 
 export interface OpenAction { readonly action: ActionSummary; readonly prefill?: Readonly<Record<string, string>> }
@@ -28,6 +28,9 @@ export interface OpenAction { readonly action: ActionSummary; readonly prefill?:
  */
 export function ActionSheet({ open, onClose, onView }: { readonly open: OpenAction | null; readonly onClose: () => void; readonly onView?: (objectId: string) => void }) {
   const { view } = useView()
+  // Kept drafts belong to the session that wrote them (#1469 S6).
+  const session = sessionKey(useAccount().data)
+  const kept = { get: (k: string) => keptDrafts.get(session, k), set: (k: string, d: Draft) => keptDrafts.set(session, k, d), delete: (k: string) => keptDrafts.delete(session, k) }
   const technical = view === "technical"
   const [dirty, setDirty] = useState(false)
   const [asking, setAsking] = useState(false)
@@ -36,11 +39,11 @@ export function ActionSheet({ open, onClose, onView }: { readonly open: OpenActi
   const [generation, setGeneration] = useState(0)
   const [banner, setBanner] = useState(false)
   useEffect(() => {
-    const draft = open === null ? undefined : kept.get(draftKey(open))
+    const draft = open === null ? undefined : keptDrafts.get(session, draftKey(open))
     latest.current = draft ?? null
     setRestored(draft)
     setBanner(draft !== undefined)
-  }, [open])
+  }, [open, session])
   const client = useQueryClient()
   useEffect(() => { if (open === null) { setDirty(false); setAsking(false) } }, [open])
   useEffect(() => {
@@ -50,7 +53,11 @@ export function ActionSheet({ open, onClose, onView }: { readonly open: OpenActi
     return () => window.removeEventListener("beforeunload", warn)
   }, [dirty])
   const close = () => {
-    if (open !== null) void client.invalidateQueries({ queryKey: ["records", open.action.objectKind] })
+    if (open !== null) {
+      void client.invalidateQueries({ queryKey: ["records", open.action.objectKind] })
+      // A record's offered actions follow its state.
+      void client.invalidateQueries({ queryKey: ["actions", open.action.objectKind] })
+    }
     onClose()
   }
   const request = () => (dirty ? setAsking(true) : close())
