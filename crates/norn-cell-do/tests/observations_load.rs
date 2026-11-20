@@ -279,8 +279,11 @@ fn a_load_the_cell_splits_is_charged_per_commit_and_resumes() {
             json!({ "profile": export()["profile"], "snapshot": snapshot[from..] }).to_string();
         let (status, loaded) = load(&mut connect, &host, &principals, ADMIN, &body);
         assert_eq!(status, 200, "{loaded}");
-        // 100 rows at 0.1 s leave 6.4 s, eight 0.8 s commits.
-        assert!(loaded["commits"].as_u64().unwrap() <= 9, "{loaded}");
+        // The connect budget (16.4 s: 0.1 s a row, 0.8 s a commit) bounds each
+        // call's commits by the rows it captured: 100 rows leave eight.
+        let rows = u64::try_from(snapshot.len() - from).unwrap();
+        let fits = (16_400 - 100 * rows) / 800;
+        assert!(loaded["commits"].as_u64().unwrap() <= fits, "{loaded}");
         reported += loaded["rows"].as_u64().unwrap();
         landed += loaded["landed"].as_u64().unwrap() + loaded["alreadyLanded"].as_u64().unwrap();
         calls += 1;
@@ -294,6 +297,99 @@ fn a_load_the_cell_splits_is_charged_per_commit_and_resumes() {
     assert_eq!(reported, 100);
     assert_eq!(landed, 100);
     assert_eq!(item_label(&host, &principals), json!("L99"));
+}
+
+/// S3 (#1488): a hosted load whose 100-row page starts with four one-member
+/// runs the cell refuses (each record's bundle is disputed by a conflicting
+/// capture of the same source event) spends a page attempt and a fallback
+/// on each, its whole budget, before the valid run. The continuation resumes
+/// after those runs, so it never re-attempts them: the load finishes, the
+/// four stay quarantined as evidence and the rest land.
+#[test]
+fn a_load_resumes_after_the_runs_it_refused() {
+    let export = export();
+    let holding = export["snapshot"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["dataset"] == "Warehouse Lot Balance")
+        .unwrap()
+        .clone();
+    let row = |name: String, key: String, quantity: i64| {
+        let mut row = holding.clone();
+        row["record"]["name"] = json!(name);
+        row["record"]["custom_norn_ref"] = json!(key);
+        row["record"]["quantity"] = json!(quantity);
+        row
+    };
+    // The four refused rows key one holding, so each is a run of its own.
+    let mut snapshot: Vec<Value> = (0..4)
+        .map(|k| {
+            row(
+                format!("SYN-disputed-{k}"),
+                "demo/holding/disputed".into(),
+                1,
+            )
+        })
+        .collect();
+    snapshot.extend((0..96).map(|k| {
+        row(
+            format!("SYN-valid-{k:02}"),
+            format!("demo/holding/valid/{k:02}"),
+            2,
+        )
+    }));
+    let parse = |snapshot: &[Value]| {
+        norn_cell_do::recorded::Recorded::parse(
+            &json!({ "profile": export["profile"], "snapshot": snapshot }),
+        )
+        .unwrap()
+        .observations()
+        .unwrap()
+    };
+    let scope = seed::demo_scope();
+    let mut store = seed::provision(NativeEngine::open_in_memory().unwrap(), &scope).unwrap();
+    let disputed = parse(&snapshot[..4]);
+    let conflicting: Vec<Value> = (0..4)
+        .map(|k| {
+            row(
+                format!("SYN-disputed-{k}"),
+                "demo/holding/disputed".into(),
+                9,
+            )
+        })
+        .collect();
+    for ((raw, input), (other, _)) in disputed.iter().zip(parse(&conflicting)) {
+        store.inject_mapping_bundle(raw, input).unwrap();
+        store.inject_mapping_bundle(&other, input).unwrap();
+    }
+    let policy = ReadPolicy::compile(store.model().object_types(), &scope, &DEMO_GRANTS).unwrap();
+    let principals = FixturePrincipals::new(DEMO_FIXTURES, policy.caller());
+    let host = DevHost::from_store(store, scope, |command| command.payload.clone())
+        .unwrap()
+        .with_authorizer(policy);
+    let mut connect = connect();
+    let mut from = 0_usize;
+    let (mut reported, mut landed, mut quarantined, mut calls) = (0_u64, 0_u64, 0_u64, 0);
+    while from < snapshot.len() {
+        let body =
+            json!({ "profile": export["profile"], "snapshot": snapshot[from..] }).to_string();
+        let (status, loaded) = load(&mut connect, &host, &principals, ADMIN, &body);
+        assert_eq!(status, 200, "{loaded}");
+        reported += loaded["rows"].as_u64().unwrap();
+        landed += loaded["landed"].as_u64().unwrap() + loaded["alreadyLanded"].as_u64().unwrap();
+        quarantined += loaded["quarantined"].as_u64().unwrap();
+        calls += 1;
+        assert!(calls < 10, "a continuation always makes progress: {loaded}");
+        match loaded["next"].as_u64() {
+            Some(next) => from += usize::try_from(next).unwrap(),
+            None => from = snapshot.len(),
+        }
+    }
+    assert!(calls > 1, "the first load stopped at its budget");
+    assert_eq!(reported, 100);
+    assert_eq!(quarantined, 4);
+    assert_eq!(landed, 96);
 }
 
 /// S8: a malformed field nearly as large as a dev request is retained once
@@ -567,6 +663,7 @@ fn a_load_commits_nothing_while_a_read_is_pinned() {
     )
     .unwrap();
     let rows = recorded.observations().unwrap();
+    let head = host.verified_head().unwrap();
     let reading = host.reading();
     let (done, finished) = std::sync::mpsc::channel();
     std::thread::scope(|threads| {
@@ -580,6 +677,11 @@ fn a_load_commits_nothing_while_a_read_is_pinned() {
                 .recv_timeout(std::time::Duration::from_millis(1_500))
                 .is_err(),
             "the load committed while a read was pinned"
+        );
+        assert_eq!(
+            host.verified_head().unwrap(),
+            head,
+            "the commit frontier did not move under the pin"
         );
         drop(reading);
         assert_eq!(

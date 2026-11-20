@@ -1697,13 +1697,12 @@ impl CompiledMapping {
         recorded_at: &UtcTimestamp,
         derivation: Derivation,
     ) -> Result<Vec<MappedRecord>, Vec<RowRefusal>> {
-        let decimal_text = derivation.decimal_text();
         let mut records = Vec::new();
         let mut findings = Vec::new();
         for map in &self.maps {
             for (index, document) in documents.iter().enumerate() {
                 for row in rows(map, document) {
-                    match self.apply_row(map, row, document, recorded_at, decimal_text) {
+                    match self.apply_row(map, row, document, recorded_at, derivation) {
                         Ok(Some(record)) => records.push(record),
                         Ok(None) => {}
                         Err(refused) => findings.push(RowRefusal {
@@ -2247,14 +2246,14 @@ impl CompiledMapping {
                         ),
                     ));
                 }
-                conform(raw, ty, true).map_err(|reason| {
+                conform(raw, ty, Derivation::V2).map_err(|reason| {
                     (
                         codes::INVALID_RECORD,
                         format!("delete field {field:?} {reason}"),
                     )
                 })?
             } else {
-                conform(raw, ty, true).unwrap_or(Value::Null)
+                conform(raw, ty, Derivation::V2).unwrap_or(Value::Null)
             };
             input.insert(field.clone(), value);
         }
@@ -2321,7 +2320,7 @@ impl CompiledMapping {
         row: Option<&norn_canonical::JsonValue>,
         document: &SourceDocument,
         recorded_at: &UtcTimestamp,
-        decimal_text: bool,
+        derivation: Derivation,
     ) -> Result<Option<MappedRecord>, Refused> {
         let Some(norn_canonical::JsonValue::Object(row)) = row else {
             return Err((
@@ -2333,7 +2332,7 @@ impl CompiledMapping {
         let mut input = BTreeMap::new();
         for (field, ty) in &map.input_types {
             let raw = row.get(field);
-            let value = conform(raw, ty, decimal_text).map_err(|reason| Refused {
+            let value = conform(raw, ty, derivation).map_err(|reason| Refused {
                 code: codes::INVALID_RECORD,
                 reason: format!("field {field:?} {reason}"),
                 field: Some(Box::new(FieldRefusal {
@@ -2367,7 +2366,7 @@ impl CompiledMapping {
                     &entry.property,
                     &entry.expression,
                     &entry.target_type,
-                    decimal_text,
+                    derivation,
                 )?,
                 None => evaluate(&entry.expression, &context)?,
             };
@@ -2724,7 +2723,7 @@ fn entitlement_context(
             return Err(format!("joined alias {alias:?} is not a record object"));
         };
         for (field, ty) in fields {
-            let value = conform(values.get(field), ty, true)
+            let value = conform(values.get(field), ty, Derivation::V2)
                 .map_err(|reason| format!("field {alias}.{field} {reason}"))?;
             input.insert(format!("{alias}_{field}"), value);
         }
@@ -2842,7 +2841,7 @@ fn select_nested_value(
     property: &PropertyId,
     expression: &Expression,
     target_type: &Type,
-    decimal_text: bool,
+    derivation: Derivation,
 ) -> Result<Value, (&'static str, String)> {
     select_nested_value_with_budget(
         nested,
@@ -2851,7 +2850,7 @@ fn select_nested_value(
         expression,
         target_type,
         EvaluationBudget::default().units(),
-        decimal_text,
+        derivation,
     )
 }
 
@@ -2862,7 +2861,7 @@ fn select_nested_value_with_budget(
     expression: &Expression,
     target_type: &Type,
     total_units: u64,
-    decimal_text: bool,
+    derivation: Derivation,
 ) -> Result<Value, (&'static str, String)> {
     use norn_canonical::JsonValue as Json;
 
@@ -2911,7 +2910,7 @@ fn select_nested_value_with_budget(
         };
         let mut input = BTreeMap::new();
         for (field, ty) in &nested.input_types {
-            let value = conform(child.get(field), ty, decimal_text).map_err(|reason| {
+            let value = conform(child.get(field), ty, derivation).map_err(|reason| {
                 (
                     codes::INVALID_RECORD,
                     format!(
@@ -3102,6 +3101,12 @@ pub enum Derivation {
     /// Before MAP-DECIMAL-TEXT-1: a declared decimal conforms only as a JSON
     /// number; decimal text refuses.
     V1,
+    /// The other unversioned (`1`) derivation: bundles captured after
+    /// MAPPING-DECIMAL-TEXT-1 and before MAP-DERIVATION-1, where exact plain
+    /// decimal text (`"200.50"`) conforms and any other text refuses as a
+    /// value that is not the declared type. An unversioned bundle verifies
+    /// if it matches either this or [`Self::V1`].
+    V1DecimalText,
     /// MAP-DECIMAL-TEXT-1: exact decimal text conforms to a declared decimal
     /// through the strict wire decoder ([`norn_ir::Decimal::parse_wire`]).
     V2,
@@ -3114,7 +3119,7 @@ impl Derivation {
     /// Whether exact decimal text conforms to a declared decimal.
     #[must_use]
     pub const fn decimal_text(self) -> bool {
-        matches!(self, Self::V2)
+        matches!(self, Self::V1DecimalText | Self::V2)
     }
 }
 
@@ -3223,12 +3228,12 @@ fn type_name(ty: &Type) -> String {
         .map_or_else(|| format!("{ty:?}"), |(_, name)| (*name).to_owned())
 }
 
-/// `decimal_text`: whether exact decimal text conforms to a declared decimal
+/// `derivation`: how exact decimal text conforms to a declared decimal
 /// (MAP-DECIMAL-TEXT-1, [`Derivation::V2`]); [`Derivation::V1`] refused it.
 fn conform(
     raw: Option<&norn_canonical::JsonValue>,
     ty: &Type,
-    decimal_text: bool,
+    derivation: Derivation,
 ) -> Result<Value, String> {
     use norn_canonical::JsonValue as Json;
     match (raw, ty) {
@@ -3239,7 +3244,7 @@ fn conform(
         {
             Ok(Value::Null)
         }
-        (raw, Type::Optional(inner)) => conform(raw, inner, decimal_text),
+        (raw, Type::Optional(inner)) => conform(raw, inner, derivation),
         (None | Some(Json::Null), _) => Err(format!("is required (expected {})", expected(ty))),
         (Some(Json::String(text)), Type::Enum { values }) => {
             if values.contains(text) {
@@ -3270,9 +3275,19 @@ fn conform(
         // decimal (a source schema's `decimal` reads as an exact `Number`)
         // through the same strict JSON-decimal grammar; any other
         // text (`"1,234"`, `"1e3"`, `" 5"`) still refuses, naming the grammar.
-        (Some(Json::String(text)), Type::Number | Type::Decimal { .. }) if decimal_text => {
+        (Some(Json::String(text)), Type::Number | Type::Decimal { .. })
+            if derivation == Derivation::V2 =>
+        {
             // VAL-EXACT-1: the action boundary's own strict wire decoder.
             norn_ir::Decimal::parse_wire(text).map_err(|failure| failure.to_string())?;
+            number_value(text)
+        }
+        // Derivation::V1DecimalText: the plain-text grammar it shipped with;
+        // other text falls through to the generic refusal below.
+        (Some(Json::String(text)), Type::Number | Type::Decimal { .. })
+            if derivation == Derivation::V1DecimalText
+                && norn_ir::Decimal::is_wire_decimal(text) =>
+        {
             number_value(text)
         }
         (Some(Json::Bool(flag)), Type::Bool) => Ok(Value::Bool(*flag)),
@@ -3503,7 +3518,7 @@ mod nested_budget_tests {
             &value,
             &Type::Text { format: None },
             combined_budget,
-            true,
+            Derivation::V2,
         )
         .expect_err("predicate and selected value exceed one shared budget");
         assert_eq!(failure.0, codes::EVALUATION_FAILED);
@@ -3523,7 +3538,7 @@ mod nested_budget_tests {
             &value,
             &Type::Text { format: None },
             predicate_units,
-            true,
+            Derivation::V2,
         )
         .expect_err("the second predicate cannot restart the consumed budget");
         assert_eq!(failure.0, codes::EVALUATION_FAILED);
@@ -3576,7 +3591,7 @@ mod nested_budget_tests {
             let mapped = conform(
                 Some(&norn_canonical::JsonValue::String(text.to_owned())),
                 &Type::Number,
-                true,
+                Derivation::V2,
             );
             let wired = action
                 .decode_action_input(norn_ir::RuntimeValue::String(text.to_owned()), "amount");
@@ -3612,7 +3627,12 @@ mod conform_tests {
     fn exact_decimal_text_is_a_decimal() {
         for text in ["2500.00", "0", "-12.5", "0.75", "1000"] {
             assert_eq!(
-                conform(Some(&Json::String(text.to_owned())), &decimal(), true).unwrap(),
+                conform(
+                    Some(&Json::String(text.to_owned())),
+                    &decimal(),
+                    Derivation::V2
+                )
+                .unwrap(),
                 number_value(text).unwrap(),
                 "{text}"
             );
@@ -3621,7 +3641,12 @@ mod conform_tests {
             "", "1e3", "+5", " 5", "05", "1.", ".5", "1,000.00", "12.5.1",
         ] {
             assert!(
-                conform(Some(&Json::String(text.to_owned())), &decimal(), true).is_err(),
+                conform(
+                    Some(&Json::String(text.to_owned())),
+                    &decimal(),
+                    Derivation::V2
+                )
+                .is_err(),
                 "{text:?}"
             );
         }
@@ -3630,35 +3655,68 @@ mod conform_tests {
             conform(
                 Some(&Json::String("7800.00".to_owned())),
                 &Type::Number,
-                true
+                Derivation::V2
             )
             .unwrap(),
             number_value("7800.00").unwrap()
         );
         // Text stays text for an integer.
-        assert!(conform(Some(&Json::String("5".to_owned())), &Type::Integer, true).is_err());
+        assert!(
+            conform(
+                Some(&Json::String("5".to_owned())),
+                &Type::Integer,
+                Derivation::V2
+            )
+            .is_err()
+        );
+    }
+
+    /// S1 (#1488): the second unversioned derivation is main's
+    /// MAPPING-DECIMAL-TEXT-1, exactly: plain decimal text conforms and other
+    /// text refuses with the generic wording, never the wire grammar's.
+    #[test]
+    fn the_unversioned_decimal_text_derivation_is_mains() {
+        let text = |value: &str| Json::String(value.to_owned());
+        assert_eq!(
+            conform(Some(&text("200.50")), &decimal(), Derivation::V1DecimalText).unwrap(),
+            number_value("200.50").unwrap()
+        );
+        assert!(conform(Some(&text("200.50")), &decimal(), Derivation::V1).is_err());
+        assert_eq!(
+            conform(
+                Some(&text("1,000.00")),
+                &decimal(),
+                Derivation::V1DecimalText
+            )
+            .unwrap_err(),
+            "value \"1,000.00\" is not a decimal with up to 2 fraction digits (a JSON number, or exact decimal text such as \"12.50\")"
+        );
     }
 
     #[test]
     fn a_refused_value_names_itself_and_the_type_expected() {
         // Text outside the wire grammar names the grammar (MAP-DECIMAL-TEXT-1).
-        let text =
-            conform(Some(&Json::String("1,000.00".to_owned())), &decimal(), true).unwrap_err();
+        let text = conform(
+            Some(&Json::String("1,000.00".to_owned())),
+            &decimal(),
+            Derivation::V2,
+        )
+        .unwrap_err();
         assert!(text.contains("JSON decimal"), "{text}");
-        let refused = conform(Some(&Json::Bool(true)), &decimal(), true).unwrap_err();
+        let refused = conform(Some(&Json::Bool(true)), &decimal(), Derivation::V2).unwrap_err();
         assert_eq!(
             refused,
             "value true is not a decimal with up to 2 fraction digits (a JSON number, or exact decimal text such as \"12.50\")"
         );
         assert_eq!(
-            conform(None, &Type::Date, true).unwrap_err(),
+            conform(None, &Type::Date, Derivation::V2).unwrap_err(),
             "is required (expected a date (text such as \"2026-11-19\"))"
         );
         assert_eq!(
             conform(
                 Some(&Json::Bool(true)),
                 &Type::enumeration(["EGP", "USD"]),
-                true
+                Derivation::V2
             )
             .unwrap_err(),
             "value true is not one of EGP, USD"

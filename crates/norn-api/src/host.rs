@@ -353,14 +353,18 @@ impl<E: SqlEngine> DevHost<E> {
     /// [`Self::ingest`] within a work `budget` (INGEST-BATCH-1): every row
     /// captured and every commit the cell actually attempts (a page run, a
     /// per-record fallback, a page's own consumption) is charged. When the
-    /// next commit would pass the budget the load stops at the start of the
-    /// page it is in, after at least one commit, and reports only the rows
-    /// before that point; [`IngestReport::next`] is where the caller resumes.
-    /// Resuming with `rows[next..]` frames that page exactly as before (a
-    /// budgeted load frames in batch order), so its captured runs are found
-    /// again, the runs that committed are consumed and commit nothing, and
-    /// no row is lost or reported twice. A row of that page that landed
-    /// before the stop answers `AlreadyLanded` in the resumed call.
+    /// next commit would pass the budget the load stops, after at least one
+    /// commit, at the first row of its page that no run it attempted holds
+    /// (the page's start when it attempted none there), and reports only the
+    /// rows before that point; [`IngestReport::next`] is where the caller
+    /// resumes. Resuming with `rows[next..]` frames the rest in batch order,
+    /// so runs this load already refused are not attempted again (their
+    /// quarantined members stay pending as evidence) and every continuation
+    /// makes progress (S3, #1488); captured runs are found again, runs that
+    /// committed are consumed and commit nothing, and no row is lost or
+    /// reported twice. A run whose own consumption commit does not fit
+    /// resumes from its first member, and a row of it that landed before the
+    /// stop answers `AlreadyLanded` in the resumed call.
     /// # Errors
     /// As [`Self::ingest`].
     pub fn ingest_within(
@@ -390,7 +394,7 @@ impl<E: SqlEngine> DevHost<E> {
             budget.is_some_and(|budget| work.saturating_add(more) > budget.total_ms)
         };
         let commit_ms = budget.map_or(0, |budget| budget.commit_ms);
-        'pages: for (input, page) in framed {
+        for (input, page) in framed {
             let first = page.first().map_or(0, |(at, _)| *at);
             let row_ms = budget.map_or(0, |budget| {
                 budget
@@ -405,16 +409,31 @@ impl<E: SqlEngine> DevHost<E> {
                 page.iter().map(|(_, raw)| (*raw).clone()).collect();
             let captured = self.capture_page(&delivered, input)?;
             report.work_ms = report.work_ms.saturating_add(row_ms);
+            let records: Vec<String> = captured
+                .iter()
+                .flat_map(|part| part.records.iter().cloned())
+                .collect();
+            let position = |id: &str| records.iter().position(|record| record == id);
+            // S3 (#1488): page rows before `settled` belong to runs this call
+            // attempted (or are no run's), so a stop inside the page resumes
+            // there, never at the page's start: a continuation does not
+            // re-attempt the runs it already refused, whose quarantined
+            // members stay pending as evidence.
+            let mut settled = 0_usize;
+            let mut stop: Option<usize> = None;
             let mut outcomes = std::collections::BTreeMap::new();
-            for (page_id, _new) in captured.iter().flat_map(|part| &part.pages) {
+            'runs: for (page_id, _new) in captured.iter().flat_map(|part| &part.pages) {
                 if committed && spent(report.work_ms, commit_ms) {
-                    report.next = Some(first);
-                    break 'pages;
+                    stop = Some(settled);
+                    break;
                 }
                 let attempt = self.observing(|cell| cell.try_mapping_page(page_id))?;
                 let members = match attempt {
                     norn_cell::mapping_page::PageAttempt::Consumed => continue,
                     norn_cell::mapping_page::PageAttempt::Landed(landed) => {
+                        if let Some(at) = landed.iter().filter_map(|(id, _)| position(id)).max() {
+                            settled = settled.max(at.saturating_add(1));
+                        }
                         outcomes.extend(landed);
                         Vec::new()
                     }
@@ -426,46 +445,77 @@ impl<E: SqlEngine> DevHost<E> {
                     continue;
                 }
                 // The per-record path, one commit each, as one by one.
-                for member in members {
+                let mut finishes = true;
+                for member in &members {
                     if spent(report.work_ms, commit_ms) {
-                        report.next = Some(first);
-                        break 'pages;
+                        stop = Some(position(member).unwrap_or(settled));
+                        break 'runs;
                     }
-                    let outcome = self.observing(|cell| cell.process_mapping_outcome(&member))?;
+                    let outcome = self.observing(|cell| cell.process_mapping_outcome(member))?;
                     report.charge(commit_ms);
-                    outcomes.insert(member, outcome);
+                    finishes &= !matches!(outcome, norn_cell::MappingOutcome::Quarantined(_));
+                    if let Some(at) = position(member) {
+                        settled = settled.max(at.saturating_add(1));
+                    }
+                    outcomes.insert(member.clone(), outcome);
+                }
+                // The page's own consumption commits only once no member is
+                // pending; when it cannot fit, the continuation resumes this
+                // pending page from its first member.
+                if finishes && spent(report.work_ms, commit_ms) {
+                    let resume = members.first().and_then(|id| position(id));
+                    stop = Some(resume.unwrap_or(settled));
+                    break;
                 }
                 if self.observing(|cell| cell.finish_mapping_page(page_id))? {
                     report.charge(commit_ms);
                 }
             }
-            // Each member this page consumed has its outcome; any other record
-            // (refused by the mapping, a conflict or identity finding, or a row
-            // consumed before) answers as it does one by one.
-            let records = captured.into_iter().flat_map(|part| part.records);
-            for ((at, _), id) in page.iter().zip(records) {
-                let outcome = if let Some(outcome) = outcomes.remove(&id) {
-                    outcome
-                } else {
-                    let outcome = self.observing(|cell| cell.process_mapping_outcome(&id))?;
-                    if outcome == norn_cell::MappingOutcome::Landed {
-                        report.charge(commit_ms);
-                    }
-                    outcome
-                };
-                out.push((
-                    *at,
-                    Ingested {
-                        observation_id: id,
-                        outcome,
-                    },
-                ));
+            let reported = stop.unwrap_or(page.len()).min(page.len());
+            let rows = page.iter().map(|(at, _)| *at).zip(records).take(reported);
+            out.extend(self.answer_page(rows, outcomes, &mut report, commit_ms)?);
+            if stop.is_some() {
+                report.next = Some(page.get(reported).map_or(first, |(at, _)| *at));
+                break;
             }
             report.pages = report.pages.saturating_add(1);
         }
         out.sort_by_key(|(at, _)| *at);
         report.outcomes = out.into_iter().map(|(_, ingested)| ingested).collect();
         Ok(report)
+    }
+
+    /// The answers of a page's reported rows, at their batch positions: each
+    /// member this load consumed has its outcome; any other record (refused
+    /// by the mapping, a conflict or identity finding, or a row consumed
+    /// before) answers as it does one by one.
+    fn answer_page(
+        &self,
+        rows: impl Iterator<Item = (usize, String)>,
+        mut outcomes: std::collections::BTreeMap<String, norn_cell::MappingOutcome>,
+        report: &mut IngestReport,
+        commit_ms: u64,
+    ) -> Result<Vec<(usize, Ingested)>, Refusal> {
+        let mut answers = Vec::new();
+        for (at, id) in rows {
+            let outcome = if let Some(outcome) = outcomes.remove(&id) {
+                outcome
+            } else {
+                let outcome = self.observing(|cell| cell.process_mapping_outcome(&id))?;
+                if outcome == norn_cell::MappingOutcome::Landed {
+                    report.charge(commit_ms);
+                }
+                outcome
+            };
+            answers.push((
+                at,
+                Ingested {
+                    observation_id: id,
+                    outcome,
+                },
+            ));
+        }
+        Ok(answers)
     }
 
     /// Capture one page, halving a page over the cell's byte bound; the parts
