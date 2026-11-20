@@ -329,8 +329,9 @@ fn retained(name: &str, response: &Response) {
 /// The documents Studio's refusal panel replays are the cell's own: the
 /// scanned invoice and its reads for an admin (who reads the refusal's law
 /// and values) and a member (who gets the redacted refusal), the actions each
-/// may call on it, each role's refusal of the inconsistent correction, and
-/// the cell's definitions.
+/// may call on it, what each declared role may read and call on scanned
+/// documents, each role's refusal of the inconsistent correction, and the
+/// cell's definitions.
 #[test]
 fn retained_refusal_documents_are_the_cells_own() {
     let directory = tempfile::tempdir().unwrap();
@@ -367,6 +368,10 @@ fn retained_refusal_documents_are_the_cells_own() {
         retained(
             &format!("access.{role}.json"),
             &cell.read(role, "/v1/access", ""),
+        );
+        retained(
+            &format!("type-access.{role}.json"),
+            &cell.read(role, "/v1/access", "&objectType=docs.ScannedDocument"),
         );
         let body = json!({ "idempotencyKey": format!("inv-0041-{role}-30.00"),
             "input": { "id": "SCAN-INV-1041", "currency": "USD", "total": "30.00",

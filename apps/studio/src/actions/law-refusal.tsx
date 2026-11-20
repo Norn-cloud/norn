@@ -5,7 +5,7 @@ import { catalogOf } from "../lib/catalog.ts"
 import { atScale, factDisplay } from "../lib/objects.ts"
 import { readFindings, readHistory, versionValue } from "../evidence/review.ts"
 import { Hand, ShieldCheck, ShieldX, type LucideIcon } from "lucide-react"
-import { useMemo, type ReactNode } from "react"
+import type { ReactNode } from "react"
 import { Chip, FactChip } from "@/components/chip"
 import { SourceChip } from "@/components/source-chip"
 import { liveAccess } from "@/lib/live"
@@ -81,10 +81,10 @@ function useCaller(): string {
  * or, without the disclosure grant, that it does not say), and the result with who, when and why.
  * The cell decided all of it; this only lays out its refusal.
  */
-function RefusalSteps({ variant, request, check, why }: { readonly variant: "disclosed" | "redacted"; readonly request: RefusalRequest | undefined; readonly check: ReactNode; readonly why: string }) {
+function RefusalSteps({ variant, request, check, why, at: answered }: { readonly variant: "disclosed" | "redacted"; readonly request: RefusalRequest | undefined; readonly check: ReactNode; readonly why: string
+  /** When the cell's answer reached this page: the refusal carries no time of its own, and no receipt is kept for it. */
+  readonly at: Date }) {
   const caller = useCaller()
-  // When the cell's answer reached this page: the refusal carries no time of its own, and no receipt is kept for it.
-  const answered = useMemo(() => new Date(), [])
   return (
     <div role="alert" data-refusal={variant} className="overflow-hidden rounded-xl border border-border bg-card text-sm">
       <div className="flex flex-wrap items-center gap-2 border-b border-border/70 px-3 py-2">
@@ -130,9 +130,11 @@ function CheckedFrom({ path, fromRequest, objectType, id }: { readonly path: str
  * the law's own sentence, the values it checked, and what to do. Technical view adds the code, the
  * subject and the law's pin, and the cell's own message.
  */
-export function LawRefusal({ code, reason, explanation, fields, technical, onUse, request }: { readonly code: string; readonly reason: RefusalReason; readonly explanation: string; readonly fields: Readonly<Record<string, InputField>>; readonly technical: boolean
+export function LawRefusal({ code, reason, explanation, fields, technical, onUse, request, at = new Date() }: { readonly code: string; readonly reason: RefusalReason; readonly explanation: string; readonly fields: Readonly<Record<string, InputField>>; readonly technical: boolean
   /** What was asked; the request step is left out without it. */
   readonly request?: RefusalRequest
+  /** When the refusal reached the form. */
+  readonly at?: Date
   /** Put a value the record holds into the form's field (the cell checks it again on the next submit). */
   readonly onUse?: (path: string, text: string) => void }) {
   const catalog = useQuery({ queryKey: ["catalog"], queryFn: transport.catalog })
@@ -151,7 +153,7 @@ export function LawRefusal({ code, reason, explanation, fields, technical, onUse
   const parts = (value: unknown) => isList(value) ? value.map((part) => atDeclared(part, listScale)).join(" + ") : undefined
   const from = (path: string) => <CheckedFrom path={path} fromRequest={Object.hasOwn(fields, path)} objectType={request?.objectType} id={request?.objectId} />
   return (
-    <RefusalSteps variant="disclosed" request={request} why={rationale ?? explanation} check={
+    <RefusalSteps variant="disclosed" request={request} at={at} why={rationale ?? explanation} check={
       <div className="grid gap-2.5">
         {rationale !== undefined && <p className="flex items-start gap-2 font-medium text-pretty text-foreground"><span className="min-w-0 flex-1">{rationale}</span><Chip tone="red" icon={ShieldX} data-verdict="fails">Fails</Chip></p>}
         {checked.length === 2 && held.length === 1 ? (() => {
@@ -199,9 +201,11 @@ export function LawRefusal({ code, reason, explanation, fields, technical, onUse
  * ones its page shows): which law each records and the facts it compares, with the record's values.
  * Nothing here claims which law refused this write, and nothing evaluates a law.
  */
-export function RedactedLawRefusal({ objectType, id, code, message, technical, request }: { readonly objectType: string; readonly id: string | undefined; readonly code: string; readonly message: string; readonly technical: boolean
+export function RedactedLawRefusal({ objectType, id, code, message, technical, request, at = new Date() }: { readonly objectType: string; readonly id: string | undefined; readonly code: string; readonly message: string; readonly technical: boolean
   /** What was asked; the request step is left out without it. */
-  readonly request?: RefusalRequest }) {
+  readonly request?: RefusalRequest
+  /** When the refusal reached the form. */
+  readonly at?: Date }) {
   const { locale } = useLocale()
   const { view } = useView()
   const catalog = useQuery({ queryKey: ["catalog"], queryFn: transport.catalog })
@@ -235,7 +239,7 @@ export function RedactedLawRefusal({ objectType, id, code, message, technical, r
     return { label: field?.label ?? path.replaceAll(".", " ").replaceAll("_", " "), value: atScale(String(value), field?.decimal?.scale ?? scale) }
   }
   return (
-    <RefusalSteps variant="redacted" request={request} why={message} check={
+    <RefusalSteps variant="redacted" request={request} at={at} why={message} check={
       <div className="grid gap-2.5">
         <p className="text-meta text-muted-foreground">The cell said: “{message}”. It does not say which law, or which values, to your role.</p>
         {open.length > 0 && (

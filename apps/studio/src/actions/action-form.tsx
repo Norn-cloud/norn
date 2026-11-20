@@ -80,6 +80,8 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
   const committed = phase.kind === "done" || phase.kind === "undoing" || phase.kind === "undo-failed" || phase.kind === "undone"
   const dirty = JSON.stringify(draft) !== JSON.stringify(initial) && !committed
   const diagnostics = phase.kind === "refused" ? phase.diagnostics : []
+  // When this refusal reached the form: the refusal document carries no time, and the cell keeps no receipt of it.
+  const refusedAt = useMemo(() => phase.kind === "refused" ? new Date() : null, [phase])
   const guard = phase.kind === "refused" ? refusedGuardWords(phase.explanation ?? phase.message) ?? refusedGuardWords(phase.message) : null
   // A commit leaves nothing unsent; a refusal in a wizard opens the first step it names (one on no field stays on the review).
   useEffect(() => {
@@ -138,10 +140,10 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
       }}>
       {action.description && <p className="text-sm text-muted-foreground">{action.description}</p>}
       {blocked !== null && <p role="alert" className="rounded-lg border border-node-border bg-muted/50 p-3 text-sm">Studio can't build a form for this action yet ({blocked}). It's listed so you know it exists.</p>}
-      {phase.kind === "refused" && phase.reason !== undefined && phase.code === "core.laws.violated" && <LawRefusal code={phase.code} reason={phase.reason} explanation={phase.explanation ?? phase.message} fields={(action.inputSchema as { properties?: Readonly<Record<string, InputField>> } | null)?.properties ?? {}} technical={technical} onUse={(path, text) => edit(`/${path}`, text)} request={request} />}
+      {phase.kind === "refused" && phase.reason !== undefined && phase.code === "core.laws.violated" && <LawRefusal code={phase.code} reason={phase.reason} explanation={phase.explanation ?? phase.message} fields={(action.inputSchema as { properties?: Readonly<Record<string, InputField>> } | null)?.properties ?? {}} technical={technical} onUse={(path, text) => edit(`/${path}`, text)} request={request} at={refusedAt ?? new Date()} />}
       {phase.kind === "refused" && phase.reason === undefined && phase.code === "core.laws.violated" && (
         <RedactedLawRefusal objectType={action.objectKind} id={(() => { const value = (draft as { readonly [name: string]: Draft })[action.objectIdField]; return typeof value === "string" && value !== "" ? value : undefined })()}
-          code={phase.code} message={phase.explanation ?? phase.message} technical={technical} request={request} />
+          code={phase.code} message={phase.explanation ?? phase.message} technical={technical} request={request} at={refusedAt ?? new Date()} />
       )}
       {phase.kind === "refused" && phase.code !== "core.laws.violated" && (
         <div role="alert" className="grid gap-1.5 rounded-xl border border-border bg-card px-3 py-2.5 text-sm">
