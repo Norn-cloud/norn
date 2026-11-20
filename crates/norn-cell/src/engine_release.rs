@@ -187,7 +187,11 @@ pub fn admit(stored: &StoredVersion, engine: EngineVersion) -> Result<Admission,
 /// As [`admit`]: version 0 is unknown, a newer one a downgrade.
 pub fn admit_export(storage: Option<u32>, engine: EngineVersion) -> Result<Admission, CellError> {
     match storage {
-        None => order(1, "a release before export storage versions".to_owned(), engine),
+        None => order(
+            1,
+            "a release before export storage versions".to_owned(),
+            engine,
+        ),
         Some(0) => Err(unknown("export storageVersion 0")),
         Some(version) => order(version, "the exporting engine".to_owned(), engine),
     }
@@ -458,7 +462,11 @@ mod tests {
         assert_eq!(admit_export(Some(4), ENGINE).ok(), Some(Admission::Current));
         assert!(matches!(
             admit_export(Some(5), ENGINE),
-            Err(CellError::EngineDowngrade { cell: 5, engine: 4, .. })
+            Err(CellError::EngineDowngrade {
+                cell: 5,
+                engine: 4,
+                ..
+            })
         ));
         assert!(matches!(
             admit_export(Some(0), ENGINE),
