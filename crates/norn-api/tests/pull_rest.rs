@@ -945,6 +945,10 @@ fn items_host(marked: bool) -> DevHost<norn_cell::engine::NativeEngine> {
     )
     .expect("generated");
     if marked {
+        // The `sku` field carries a declared marking; the mapping is bound
+        // again to the marked source schema's own hash.
+        let mut source_hash = None;
+        let mut scope = Value::Null;
         for artifact in &mut generated.artifacts {
             if artifact.artifact_id != generated.source_schema {
                 continue;
@@ -952,11 +956,37 @@ fn items_host(marked: bool) -> DevHost<norn_cell::engine::NativeEngine> {
             let mut value = serde_json::to_value(&*artifact).expect("value");
             for field in value["payload"]["fields"].as_array_mut().expect("fields") {
                 if field["name"] == "sku" {
-                    field["markings"] = json!(["norn.pii"]);
+                    field["markings"] = json!(["pii.contact"]);
                 }
             }
+            scope = value["scope"].clone();
             *artifact = serde_json::from_value(value).expect("artifact");
+            source_hash = Some(
+                norn_checker::ArtifactRef::of(artifact)
+                    .expect("hash")
+                    .sha256,
+            );
         }
+        let source_hash = source_hash.expect("the source schema");
+        for artifact in &mut generated.artifacts {
+            let mut value = serde_json::to_value(&*artifact).expect("value");
+            if value["kind"] == "mapping" {
+                value["payload"]["source"]["sha256"] = json!(source_hash);
+                *artifact = serde_json::from_value(value).expect("artifact");
+            }
+        }
+        generated.artifacts.push(
+            serde_json::from_value(json!({
+                "irVersion": "0.1", "artifactId": "upload.markings.entity", "kind": "entity",
+                "namespace": "upload", "name": "Markings", "version": "0.1.0", "lifecycle": "draft",
+                "scope": scope, "dependencies": [], "provenance": {"source": "authoring_sdk"},
+                "payload": {"entityVersion": "2.0", "markings": [{
+                    "id": "pii.contact", "label": "Contact", "severity": "high",
+                    "category": "pii.contact", "mask": {"kind": "redacted"}
+                }]}
+            }))
+            .expect("markings"),
+        );
     }
     norn_api::uploads::install(&host, &generated, EXTRACTED_AT_MS).expect("installed");
     host
