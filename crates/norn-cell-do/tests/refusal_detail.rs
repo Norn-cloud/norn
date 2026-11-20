@@ -284,3 +284,101 @@ fn only_admins_and_owners_read_a_law_refusal() {
     assert_eq!(status, 200, "{receipt}");
     assert_ne!(receipt["outcome"], "refused", "{receipt}");
 }
+
+impl Cell {
+    /// `GET path` as `role`, with `query` after the scope.
+    fn read(&mut self, role: &str, path: &str, query: &str) -> Response {
+        let auth = user(role);
+        let query = format!("{QUERY}{query}");
+        self.tenant.handle(
+            &self.tokens,
+            &Request {
+                method: "GET",
+                path,
+                query: &query,
+                authorization: Some(&auth),
+                now: NOW,
+                body: "",
+            },
+        )
+    }
+}
+
+/// A response the Studio refusal walk replays (`fixtures/refusal`), checked
+/// against what the cell answers now; `NORN_BLESS=1` rewrites it.
+fn retained(name: &str, response: &Response) {
+    let root = root().join("fixtures/refusal");
+    let document: Value = serde_json::from_str(&response.body).unwrap_or(Value::Null);
+    let text = format!(
+        "{}\n",
+        serde_json::to_string_pretty(&json!({ "status": response.status, "body": document }))
+            .unwrap()
+    );
+    let file = root.join(name);
+    if std::env::var("NORN_BLESS").as_deref() == Ok("1") {
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(&file, &text).unwrap();
+    }
+    let kept = std::fs::read_to_string(&file).expect("retained document; bless with NORN_BLESS=1");
+    assert!(
+        kept == text,
+        "{name} differs from the cell's output; review it and rerun with NORN_BLESS=1"
+    );
+}
+
+/// The documents Studio's refusal panel replays are the cell's own: the
+/// scanned invoice and its reads for an admin (who reads the refusal's law
+/// and values) and a member (who gets the redacted refusal), the actions each
+/// may call on it, each role's refusal of the inconsistent correction, and
+/// the cell's definitions.
+#[test]
+fn retained_refusal_documents_are_the_cells_own() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut cell = loaded(&directory.path().join("a.sqlite"));
+    let record = "/v1/objects/docs.ScannedDocument/SCAN-INV-1041";
+    retained(
+        "definitions.json",
+        &cell.read("admin", "/v1/definitions", ""),
+    );
+    for role in ["admin", "member"] {
+        retained(&format!("object.{role}.json"), &cell.read(role, record, ""));
+        retained(
+            &format!("lineage.{role}.json"),
+            &cell.read(role, &format!("{record}/lineage"), ""),
+        );
+        for leaf in ["links", "history"] {
+            retained(
+                &format!("{leaf}.{role}.json"),
+                &cell.read(role, &format!("{record}/{leaf}"), ""),
+            );
+        }
+        retained(
+            &format!("findings.{role}.json"),
+            &cell.read(role, &format!("{record}/findings"), ""),
+        );
+        retained(
+            &format!("actions.{role}.json"),
+            &cell.read(
+                role,
+                "/v1/actions",
+                "&objectKind=docs.ScannedDocument&objectId=SCAN-INV-1041",
+            ),
+        );
+        retained(
+            &format!("access.{role}.json"),
+            &cell.read(role, "/v1/access", ""),
+        );
+        let body = json!({ "idempotencyKey": format!("inv-0041-{role}-30.00"),
+            "input": { "id": "SCAN-INV-1041", "currency": "USD", "total": "30.00",
+                       "correction_reason": "typo",
+                       "correction_evidence": "SCAN-INV-1041~total" } });
+        retained(
+            &format!("refusal.{role}.json"),
+            &cell.call(
+                &format!("/v1/actions/{CORRECT}"),
+                &user(role),
+                &body.to_string(),
+            ),
+        );
+    }
+}

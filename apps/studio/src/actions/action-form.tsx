@@ -15,7 +15,7 @@ import {
 } from "../lib/actions.ts"
 import type { Phase } from "../lib/screen/call.ts"
 import { useCall, type Call } from "../lib/screen/use-call.ts"
-import { LawRefusal, RedactedLawRefusal, type InputField } from "./law-refusal.tsx"
+import { LawRefusal, RedactedLawRefusal, type InputField, type RefusalRequest } from "./law-refusal.tsx"
 import { RecordPicker, control, type Aria } from "./record-picker.tsx"
 
 const newKey = newIdempotencyKey
@@ -111,6 +111,18 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
   }
 
   const top = unplaced(diagnostics, fields)
+  // What a refusal's request step shows: the action, its record, and every value this form sent.
+  const targetId = (draft as { readonly [name: string]: Draft })[action.objectIdField]
+  const request: RefusalRequest = {
+    action: action.title,
+    objectType: action.objectKind,
+    objectId: typeof targetId === "string" && targetId !== "" ? targetId : undefined,
+    values: fields.flatMap((field) => {
+      if (field.name === action.objectIdField) return []
+      const value = (draft as { readonly [name: string]: Draft })[field.name]
+      return typeof value === "string" && value !== "" ? [{ label: field.label, value }] : []
+    }),
+  }
   const links = new Map((action.inputLinks ?? []).map(({ field, objectKind }) => [`/${field}`, objectKind] as const))
   const counts = problemsBySection(sections, diagnostics)
   const go = (to: number) => { moved.current = true; setStep(to); setReached((r) => Math.max(r, to)); dispatch({ kind: "back" }) }
@@ -126,10 +138,10 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
       }}>
       {action.description && <p className="text-sm text-muted-foreground">{action.description}</p>}
       {blocked !== null && <p role="alert" className="rounded-lg border border-node-border bg-muted/50 p-3 text-sm">Studio can't build a form for this action yet ({blocked}). It's listed so you know it exists.</p>}
-      {phase.kind === "refused" && phase.reason !== undefined && phase.code === "core.laws.violated" && <LawRefusal code={phase.code} reason={phase.reason} explanation={phase.explanation ?? phase.message} fields={(action.inputSchema as { properties?: Readonly<Record<string, InputField>> } | null)?.properties ?? {}} technical={technical} onUse={(path, text) => edit(`/${path}`, text)} />}
+      {phase.kind === "refused" && phase.reason !== undefined && phase.code === "core.laws.violated" && <LawRefusal code={phase.code} reason={phase.reason} explanation={phase.explanation ?? phase.message} fields={(action.inputSchema as { properties?: Readonly<Record<string, InputField>> } | null)?.properties ?? {}} technical={technical} onUse={(path, text) => edit(`/${path}`, text)} request={request} />}
       {phase.kind === "refused" && phase.reason === undefined && phase.code === "core.laws.violated" && (
         <RedactedLawRefusal objectType={action.objectKind} id={(() => { const value = (draft as { readonly [name: string]: Draft })[action.objectIdField]; return typeof value === "string" && value !== "" ? value : undefined })()}
-          code={phase.code} message={phase.explanation ?? phase.message} technical={technical} />
+          code={phase.code} message={phase.explanation ?? phase.message} technical={technical} request={request} />
       )}
       {phase.kind === "refused" && phase.code !== "core.laws.violated" && (
         <div role="alert" className="grid gap-1.5 rounded-xl border border-border bg-card px-3 py-2.5 text-sm">
