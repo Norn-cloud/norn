@@ -675,9 +675,11 @@ PY
     pruned='' previous=''
     while IFS=/ read -r kind item; do
       task="$kind/$item"
-      # Other bundle tasks never share build outputs (the planner packs them freely), so a
-      # task may drop the previous task's target dir when disk runs low (#1059).
-      if [[ -n $pruned ]] && ! { shares_build "$previous" && shares_build "$task"; } && (( $(df -Pk / | awk 'NR == 2 {print $4}') < 40 * 1024 * 1024 )); then
+      # Other bundle tasks never share build outputs (the planner packs them freely), so each
+      # drops the previous task's target dir and starts as on a fresh VM (#1059). Three bundles
+      # put disk-heavy tasks together: guards after integration ran out of a default VM's disk
+      # with more than 40 GiB free at the boundary (#1498), so a free-space threshold is not enough.
+      if [[ -n $pruned ]] && ! { shares_build "$previous" && shares_build "$task"; }; then
         prune_target
         printf '::notice::pruned target before %s; %s KiB free\n' "$task" "$(df -Pk / | awk 'NR == 2 {print $4}')"
       fi

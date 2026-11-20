@@ -1600,7 +1600,7 @@ def workflow_context_canaries(source: str) -> None:
                 document = copy.deepcopy(workflow)
                 change(document["jobs"][name])
                 rejected(f"{name} sccache {label}", document)
-        # The bundle may drop only the cargo target dir, between tasks, when disk is low.
+        # The bundle may drop only the cargo target dir, between tasks that share no build.
         source_runner = validator.CORE_RUNNER
         core = source_runner.read_text(encoding="utf-8")
         try:
@@ -1613,7 +1613,7 @@ def workflow_context_canaries(source: str) -> None:
                     ("unconditional", "if [[ -n $pruned ]] && ! {", "if true || [[ -n $pruned ]] && ! {"),
                     ("first task", "      pruned=1 previous=$task\n", ""),
                     ("every task shares a build", "shares_build() { [[ $1 == test/* ||", "shares_build() { [[ $1 == * ||"),
-                    ("shared build pruned", '! { shares_build "$previous" && shares_build "$task"; } && ', ""),
+                    ("shared build pruned", ' && ! { shares_build "$previous" && shares_build "$task"; }', ""),
                     ("extra deletion", "        prune_target\n", '        prune_target; rm -rf -- "$HOME/.cargo"\n')):
                 if core.count(before) != 1:
                     raise AssertionError(f"bundle prune canary target drifted: {label}")
