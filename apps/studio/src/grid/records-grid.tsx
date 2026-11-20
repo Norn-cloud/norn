@@ -21,7 +21,7 @@ import { diagnosticsAt, readRecords, type RecordsRead } from "../lib/records-sou
 import { transport } from "../lib/transport.ts"
 import { ACTIONS_UNAVAILABLE, writesWhole, type ActionSummary } from "../lib/actions.ts"
 import { ActionSheet, useActions, type OpenAction } from "../actions/action-sheet.tsx"
-import { offeredFor } from "../lib/screen/call.ts"
+import { offeredFor, recordCatalog } from "../lib/screen/call.ts"
 import { alignRight, isWithheld, TracedCell, WITHHELD_HINT, WITHHELD_ROW, WithheldMark, type GridRow, RecordName } from "./cells.tsx"
 import { blankClause, FilterEditor, filterable, fromPredicate, toPredicate, type DraftClause } from "./filter-editor.tsx"
 import { FacetsRail, FilterChips } from "./facets-rail.tsx"
@@ -136,8 +136,9 @@ export function RecordsGrid({ concept, read = readRecords, initial, onQuery }: {
   const rows = useMemo<readonly GridRow[]>(() => page === undefined ? [] : page.read.document.records.map((record, index) => ({ record, at: `/records/${index}`, numbers: page.read.numbers })), [page])
   const columns = fields.filter(({ id }) => shown.has(id))
   // Columns never squeeze below a readable width; past the card's width the grid scrolls sideways.
-  const template = `minmax(14rem,1.4fr) ${columns.map((field) => alignRight(field) ? "minmax(8rem,1fr)" : "minmax(9.5rem,1fr)").join(" ")}`
-  const width = `calc(14rem + ${columns.map((field) => alignRight(field) ? "8rem" : "9.5rem").join(" + ")})`
+  // Wide enough for a money amount with its currency ("7,800.00 USD") and a lifecycle state.
+  const template = `minmax(14rem,1.4fr) ${columns.map((field) => alignRight(field) ? "minmax(10.5rem,1fr)" : "minmax(11rem,1fr)").join(" ")}`
+  const width = `calc(14rem + ${columns.map((field) => alignRight(field) ? "10.5rem" : "11rem").join(" + ")})`
 
   const scroller = useRef<HTMLDivElement>(null)
   const [edges, setEdges] = useState({ right: false })
@@ -364,6 +365,9 @@ function RecordDrawer({ concept, fields, row, origin, actions, actionsOff, onClo
 }) {
   const record = row?.record
   const markings = useMarkingCatalog()
+  // What can act on this record now: the cell narrows the type's catalog to the record's state.
+  const narrowed = useActions(record?.objectType ?? "", record?.id, record !== undefined && origin === "live")
+  const offered = recordCatalog(origin === "live", narrowed, actions)
   const object = useQuery({
     queryKey: ["object", record?.objectType, record?.id],
     queryFn: () => record ? transport.object(record.objectType, record.id) : null,
@@ -402,9 +406,11 @@ function RecordDrawer({ concept, fields, row, origin, actions, actionsOff, onClo
               <h3 className="text-sm font-medium">Actions</h3>
               {actionsOff !== undefined
                 ? <p className="text-meta text-muted-foreground">{actionsOff}</p>
-                : offeredFor(actions, record).length === 0
+                : offered.kind === "reading" ? <Skeleton className="h-8" aria-label="Reading the actions on this record" />
+                : offered.kind === "unreadable" ? <p className="text-meta text-muted-foreground">The cell's actions on this record could not be read.</p>
+                : offeredFor(offered.items, record).length === 0
                   ? <p className="text-meta text-muted-foreground">The cell offers you no actions on {concept.title.toLowerCase()} records.</p>
-                  : <div className="flex flex-wrap gap-2">{offeredFor(actions, record).map((action) => (
+                  : <div className="flex flex-wrap gap-2">{offeredFor(offered.items, record).map((action) => (
                     <Button key={action.actionId} variant="outline" size="sm" className="border-node-border shadow-node" onClick={() => onAction(action, record.id)}>
                       <Play /> {writesWhole(action) ? `${action.title} (edit)` : action.title}
                     </Button>

@@ -330,6 +330,31 @@ fn action_actor_decimal_derivation_commits_and_forged_actor_refuses() {
     assert!(storage.ledger().is_empty());
 }
 
+/// #1469 S7: a field the action derives from the actor refuses when the
+/// caller sends it at all, `null` included.
+#[test]
+fn a_caller_null_in_an_actor_derived_field_refuses() {
+    let mut action = action();
+    action.derive = vec![norn_ir::ActionInputDerivation {
+        field: "code".into(),
+        expression: ZenExpression("actor.subjectId".into()),
+        input_required: false,
+    }];
+    let raw: JsonObject = serde_json::from_value(json!({ "code": null })).unwrap();
+    let error = prepare_action_input_for_call::<Infallible>(
+        &action,
+        &raw,
+        "test.target.create.action",
+        "1.0.0",
+        "person:authenticated",
+    )
+    .unwrap_err();
+    assert!(
+        matches!(error, norn_kernel::ActionRefusal::InvalidInput { ref field } if field == "code"),
+        "{error:?}"
+    );
+}
+
 proptest::proptest! {
     #[test]
     fn action_actor_is_identical_in_derivation_pdp_and_retained_receipt(principal in "person:[a-z0-9é\u{301}]{1,24}") {

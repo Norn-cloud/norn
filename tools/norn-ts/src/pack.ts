@@ -14,7 +14,7 @@ import type { Diagnostic } from "./check.ts"
 import type { Json } from "./canonical.ts"
 import type { CheckResult, CheckerAbi } from "./checker-abi.ts"
 import { FLOW_SOURCE_MAP_DRAFT_FORMAT, FLOW_SOURCE_MAP_FORMAT, type FlowSourceMap, type FlowSourceMapDraft, type FlowSourceMapFlow } from "./flow-source-map.ts"
-import { type DefinitionSource, compileDefinitionFiles } from "./compiler/definitions.ts"
+import { type DefinitionSource, PENDING_SOURCE_SHA256, type RetainedDefinitionDoc, compileDefinitionFiles } from "./compiler/definitions.ts"
 import type { CompiledExample } from "./examples.ts"
 import { compileFile } from "./compiler/index.ts"
 import type { FlowDef } from "./builder/flow.ts"
@@ -65,6 +65,8 @@ export type PackResult =
       readonly profile: string
       /** LAW-EXAMPLE-1 cases of every module; `norn check` runs them. */
       readonly examples: ReadonlyArray<CompiledExample>
+      /** Retained definitions (`Norn.approval`), installed beside the set. */
+      readonly retained: ReadonlyArray<RetainedDefinitionDoc>
     }
   | { readonly ok: false; readonly failures: ReadonlyArray<PackModuleFailure>; readonly profile: string }
 
@@ -156,6 +158,8 @@ export function compilePack(dir: string, options: PackOptions): PackResult {
   const flows: PackFlow[] = []
   const sourceMap: DefinitionSource[] = []
   const examples: CompiledExample[] = []
+  const retained: RetainedDefinitionDoc[] = []
+  const retainedFrom = new Map<string, string>()
   const warnings: Array<Diagnostic & { readonly file: string }> = []
   const add = (artifact: Json, from: string): void => {
     const id = artifactId(artifact)
@@ -173,6 +177,14 @@ export function compilePack(dir: string, options: PackOptions): PackResult {
     warnings.push(...result.warnings.map((warning) => ({ ...warning, file })))
     examples.push(...result.examples.map((e) => ({ ...e, at: { ...e.at, file: posix(relative(root, resolve(TOOL_ROOT, e.at.file))) } })))
     for (const artifact of result.artifacts) add(artifact, file)
+    for (const definition of result.retained) {
+      if (retainedFrom.has(definition.id)) {
+        failures.push({ file, diagnostics: [{ code: "NORN-FLOW-LITERAL", start: { line: 1, column: 1 }, end: { line: 1, column: 1 }, construct: definition.id, message: `definition ${definition.id} is also declared by ${retainedFrom.get(definition.id)}` }] })
+        continue
+      }
+      retainedFrom.set(definition.id, file)
+      retained.push(definition)
+    }
     if (result.flows > 0) {
       // A flow lowers through the syntax compiler to its Run type and decide rule (T7-EFX-2).
       const flow = compileFile(path, { ...envelope(path), sourceRoot: root })
@@ -185,7 +197,7 @@ export function compilePack(dir: string, options: PackOptions): PackResult {
         return
       }
       flows.push({ file, definition: flow.definition, artifacts: flow.artifacts, flowSourceMap })
-    } else if (result.definitions.length === 0) {
+    } else if (result.definitions.length === 0 && result.retained.length === 0) {
       failures.push({ file, diagnostics: [{ code: "NORN-FLOW-RESULT", start: { line: 1, column: 1 }, end: { line: 1, column: 1 }, construct: file, message: "a pack module declares no definition and no Norn.flow; move shared code under a subdirectory" }] })
     }
     return
@@ -202,7 +214,7 @@ export function compilePack(dir: string, options: PackOptions): PackResult {
   const flowSourceMap = flows.length > 0
     ? { format: FLOW_SOURCE_MAP_DRAFT_FORMAT, flows: flows.map((flow) => flow.flowSourceMap) }
     : undefined
-  return { ok: true, artifacts, sources, sourceMap, warnings, flows, baseArtifacts, profile, examples, ...(flowSourceMap ? { flowSourceMap } : {}) }
+  return { ok: true, artifacts, sources, sourceMap, warnings, flows, baseArtifacts, profile, examples, retained, ...(flowSourceMap ? { flowSourceMap } : {}) }
 }
 
 /** Check a compiled set with the Rust checker (the CheckReceipt hash comes from the checker). */
@@ -226,10 +238,52 @@ export function admit(
   checker: CheckerAbi,
   pack: Extract<PackResult, { readonly ok: true }>,
 ): { readonly report: CheckResult; readonly input: ReturnType<typeof admissionInput> } {
-  const checked = checkPack(checker, pack.artifacts, pack.baseArtifacts)
+  const first = checkPack(checker, pack.artifacts, pack.baseArtifacts)
+  // MAPPING-SOURCE-REF-1: pins the checker hashed, then the set again.
+  const artifacts = bindSourceSchemas(pack.artifacts, first.receipt)
+  const checked = artifacts === pack.artifacts ? first : checkPack(checker, artifacts, pack.baseArtifacts)
   const flowSourceMap = pack.flowSourceMap ? finalizeFlowSourceMap(pack.flowSourceMap, pack.flows, checked.receipt) : undefined
-  const input = admissionInput(pack.artifacts, pack.baseArtifacts, flowSourceMap)
+  const input = admissionInput(artifacts, pack.baseArtifacts, flowSourceMap)
   return { report: flowSourceMap ? checker.checkArtifactSet(input.artifacts, input.context) : checked, input }
+}
+
+/** The candidate hashes a Rust check receipt issued, by `artifactId\0version`. */
+function receiptRefs(receipt: unknown): Map<string, string> {
+  const refs = new Map<string, string>()
+  const set = typeof receipt === "object" && receipt !== null ? (receipt as { readonly artifactSet?: { readonly artifacts?: unknown } }).artifactSet : undefined
+  for (const ref of Array.isArray(set?.artifacts) ? set.artifacts : []) {
+    const { artifactId, version, sha256 } = (ref ?? {}) as { readonly artifactId?: unknown; readonly version?: unknown; readonly sha256?: unknown }
+    if (typeof artifactId === "string" && typeof version === "string" && typeof sha256 === "string") refs.set(`${artifactId}\u0000${version}`, sha256)
+  }
+  return refs
+}
+
+function pending(artifact: Json): boolean {
+  const value = artifact as { readonly kind?: unknown; readonly payload?: { readonly source?: { readonly sha256?: unknown } } }
+  return value.kind === "mapping" && value.payload?.source?.sha256 === PENDING_SOURCE_SHA256
+}
+
+/** Whether a mapping of `artifacts` still waits for its source schema's hash. */
+export function pendingSourceSchemas(artifacts: ReadonlyArray<Json>): boolean {
+  return artifacts.some(pending)
+}
+
+/**
+ * MAPPING-SOURCE-REF-1: each mapping bound by reference to a source schema of
+ * the same set gets the hash the Rust checker computed for that schema (its
+ * receipt's candidate ref). Nothing here hashes: a schema the receipt does not
+ * name leaves the pending pin, which the checker refuses. Returns `artifacts`
+ * itself when nothing was pending.
+ */
+export function bindSourceSchemas(artifacts: ReadonlyArray<Json>, receipt: unknown): ReadonlyArray<Json> {
+  if (!artifacts.some(pending)) return artifacts
+  const refs = receiptRefs(receipt)
+  return artifacts.map((artifact) => {
+    if (!pending(artifact)) return artifact
+    const value = artifact as { readonly payload: { readonly source: { readonly schemaId: string; readonly version: string } } & Record<string, unknown> } & Record<string, unknown>
+    const sha256 = refs.get(`${value.payload.source.schemaId}\u0000${value.payload.source.version}`)
+    return sha256 === undefined ? artifact : ({ ...value, payload: { ...value.payload, source: { ...value.payload.source, sha256 } } } as unknown as Json)
+  })
 }
 
 /**

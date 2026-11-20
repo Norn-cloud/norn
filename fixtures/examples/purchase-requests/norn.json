@@ -1,0 +1,8 @@
+{
+  "format": "norn-project/1",
+  "name": "purchase-requests",
+  "sources": ["src"],
+  "scope": { "orgId": "org_purchasing", "environmentId": "dev" },
+  "dev": { "port": 4174, "actor": "local:developer" },
+  "cell": ".norn/cell.sqlite"
+}

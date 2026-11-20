@@ -3,7 +3,7 @@ import { RouterProvider, createRootRoute, createRouter } from "@tanstack/react-r
 import { Blend, ChartLine, Database, Fingerprint, House, Inbox, LayoutDashboard, Network, Plug, ShieldCheck, Workflow } from "lucide-react"
 import { StrictMode } from "react"
 import { Button } from "@/components/ui/button"
-import { authApi, useAccount, useRefreshAccount } from "@/lib/session"
+import { endSession, useAccount } from "@/lib/session"
 import { LoginPage } from "./login.tsx"
 import { oauthPage } from "./oauth.tsx"
 import { createRoot } from "react-dom/client"
@@ -37,10 +37,9 @@ const SECTIONS: readonly Section[] = [
  */
 function Root() {
   const account = useAccount()
-  const refresh = useRefreshAccount()
   // Sidekick is offered only where a bridge serves it (a private deployment); elsewhere the rail shows no entry for it.
   const sidekick = useSidekickServed()
-  if (account.data != null) return <Shell sections={SECTIONS} assistant={sidekick ? { title: "Sidekick", content: <Sidekick /> } : undefined} account={account.data} onSignOut={() => void signOut(refresh)} />
+  if (account.data != null) return <Shell sections={SECTIONS} assistant={sidekick ? { title: "Sidekick", content: <Sidekick /> } : undefined} account={account.data} onSignOut={() => void signOut()} />
   if (account.isPending) return null
   if (account.isError) {
     return (
@@ -53,17 +52,16 @@ function Root() {
   return <LoginPage />
 }
 
-/** Sign out, and forget the account only once the server has ended the session. */
-async function signOut(refresh: () => Promise<void>) {
+/** Sign out, and forget the account and its reads only once the server has ended the session. */
+async function signOut() {
   try {
-    await authApi.signOut()
+    await endSession(queryClient)
   } catch {
     window.alert("Sign-out did not complete; you are still signed in. Try again.")
-    return
   }
-  await refresh()
 }
 
+const queryClient = new QueryClient()
 const root = createRootRoute({ component: Root })
 const router = createRouter({ routeTree: routeTree(root) })
 
@@ -79,7 +77,7 @@ const OAuthPage = oauthPage(window.location.pathname)
 createRoot(document.getElementById("root") as HTMLElement).render(
   <StrictMode>
     {OAuthPage === null ? (
-      <QueryClientProvider client={new QueryClient()}>
+      <QueryClientProvider client={queryClient}>
         <RouterProvider router={router} />
       </QueryClientProvider>
     ) : <OAuthPage />}

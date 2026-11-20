@@ -239,6 +239,45 @@ declare module "@norn/authoring" {
     /** Syntax only: lowers to the cell's `dashboard` definition, admitted like one built in Studio. */
     function dashboard(meta: DashboardMeta): DashboardDefinition
 
+    /** Opaque approval definition; the syntax compiler lowers the call. */
+    interface ApprovalDefinition { readonly _tag: "NornApproval" }
+    /** One comparison on the record a gated call writes (APPROVAL-WHEN-1). */
+    interface ApprovalCondition<P extends string = string> {
+      /** A property of the record the action writes. */
+      readonly property: P
+      readonly op: "eq" | "ne" | "lt" | "le" | "gt" | "ge"
+      /** Numbers compare as exact decimals (write `"1000"` for an exact amount); text and booleans with eq/ne. */
+      readonly value: string | number | boolean
+    }
+    /**
+     * APPROVAL-1: a call of `action` waits for a person's decision before it
+     * commits; with `when`, only a call whose written record satisfies it.
+     * A holder of one of `decider.roles` who is not the caller decides, and an
+     * approved call commits under the caller's own authority. Lowers to the
+     * cell's `approval` definition; `norn dev` installs it by signing the
+     * server's restatement, as a hosted installer signs it.
+     */
+    function approval<const D extends TypeDefinition<any, any> = TypeDefinition<any, any>>(meta: {
+      /** The definition id (`purchasing.large_requests`). */
+      readonly id: string
+      readonly action: ActionDefinition<any>
+      readonly decider: { readonly roles: ReadonlyArray<string>; readonly law?: string }
+      /** What the decider is asked, 1 to 500 characters. */
+      readonly question: string
+      readonly risk: "low" | "medium" | "high"
+      /** How long the decision waits, 1 ms to seven days. */
+      readonly expiresInMs?: number
+      /** The type the action writes, so `when.property` is checked against it. */
+      readonly on?: D
+      readonly when?: ApprovalCondition<[D] extends [TypeDefinition<infer T, any>] ? keyof T & string : string>
+    }): ApprovalDefinition
+
+    /**
+     * ACTION-ACTOR-1: the verified caller's subject id, in an action's
+     * `derive`. A caller never supplies the derived field; the server binds it.
+     */
+    function callerId(): Expression<string>
+
     /** Package declarations can augment these maps with registry property types. */
     interface RegistryObjectTypes {}
     interface RegistryInterfaceTypes {}
@@ -456,6 +495,12 @@ declare module "@norn/authoring" {
        * circular): give its artifact id, `<policy id>.policy`.
        */
       readonly access?: AccessDefinition | { readonly artifactId: string; readonly version?: string }
+      /**
+       * CALLER-FIELD-1: input fields the server sets to the verified caller's
+       * subject id (`requester = caller`). A caller never supplies them; a
+       * supplied value is refused.
+       */
+      readonly fromCaller?: ReadonlyArray<keyof I["Type"] & string>
     }
 
     /** An ActionIR action. */
@@ -870,7 +915,8 @@ declare module "@norn/authoring" {
         readonly collection?: string; readonly origin: "declared" | "inferred"
       }>
     }
-    function sourceSchema(meta: SourceSchemaSpec): { readonly _tag: "NornSourceSchema" }
+    interface SourceSchemaDefinition { readonly _tag: "NornSourceSchema" }
+    function sourceSchema(meta: SourceSchemaSpec): SourceSchemaDefinition
 
     /** One source-manifest entry (norn#56): pinned release, licence, redistribution, import mode, importer and checksums. */
     interface OntologySourceSpec {
@@ -964,8 +1010,12 @@ declare module "@norn/authoring" {
       readonly id: string
       readonly title: string
       readonly version: string
-      /** The pinned source schema: its artifact id, version, and envelope hash (verified by the checker). */
-      readonly source: { readonly schemaId: string; readonly version: string; readonly sha256: string }
+      /**
+       * The pinned source schema: a `Norn.sourceSchema` of this project (bound
+       * by reference; the checker's hash of it is the pin), or its artifact id,
+       * version and envelope hash (verified by the checker).
+       */
+      readonly source: SourceSchemaDefinition | { readonly schemaId: string; readonly version: string; readonly sha256: string }
       /** Exact vendor releases/revisions and separate API-access terms evidence. */
       readonly sourceContract?: { readonly kind: "generic" } | {
         readonly kind: "vendor"
