@@ -162,7 +162,7 @@ export function RecentChanges({ objectType, id, actionTitles, onAll }: {
                     <div className="font-medium [overflow-wrap:anywhere]">{what}</div>
                     <div className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
                       {writer.kind === "action" && <>{writer.actor} · </>}{when}
-                      {last ? " · created" : changed.length > 0 ? ` · changed ${changed.slice(0, 2).map((property) => property.replaceAll("_", " ")).join(", ")}${changed.length > 2 ? ` and ${changed.length - 2} more` : ""}` : " · no value changed"}
+                      {version.values === null ? " · deleted" : last ? " · created" : changed.length > 0 ? ` · changed ${changed.slice(0, 2).map((property) => property.replaceAll("_", " ")).join(", ")}${changed.length > 2 ? ` and ${changed.length - 2} more` : ""}` : " · no value changed"}
                     </div>
                     {reason && <div className="pt-0.5 text-xs text-pretty"><span className="text-muted-foreground">Why: </span>{reason}</div>}
                   </li>
