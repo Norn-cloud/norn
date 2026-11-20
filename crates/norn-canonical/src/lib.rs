@@ -700,7 +700,34 @@ pub fn canonicalize_json(input: impl AsRef<[u8]>) -> Result<Vec<u8>, CanonicalJs
 ///
 /// [`CanonicalJsonError::Serialize`] if Serde JSON cannot encode the value,
 /// or any Norn1 canonicalization error (for example a non-finite number).
+///
+/// # Panics
+///
+/// Debug builds only: if the direct encoding and the text path ever produce
+/// different bytes (INGEST-CANONICAL-ONCE-1), which is a bug in this crate.
 pub fn canonical_json_of<T: Serialize + ?Sized>(value: &T) -> Result<Vec<u8>, CanonicalJsonError> {
+    // INGEST-CANONICAL-ONCE-1: encode once, straight to the Norn1 value the
+    // text below would parse to; the text path decides whatever that
+    // declines or refuses, so results and refusals are its own. Debug builds
+    // take both and require the same bytes.
+    if let Some(direct) = direct::to_value(value)
+        && let Ok(bytes) = serialize(&direct)
+    {
+        #[cfg(debug_assertions)]
+        assert_eq!(
+            canonical_json_of_text(value).as_deref(),
+            Ok(bytes.as_slice()),
+            "the direct Norn1 encoding differs from the text path"
+        );
+        return Ok(bytes);
+    }
+    canonical_json_of_text(value)
+}
+
+/// [`canonical_json_of`] through Serde JSON text: encode, parse, re-serialize.
+fn canonical_json_of_text<T: Serialize + ?Sized>(
+    value: &T,
+) -> Result<Vec<u8>, CanonicalJsonError> {
     let bytes = serde_json::to_vec(value).map_err(|error| CanonicalJsonError::Serialize {
         message: error.to_string(),
     })?;
@@ -1636,6 +1663,543 @@ fn write_string(value: &str, output: &mut String) {
     output.push('"');
 }
 
+/// INGEST-CANONICAL-ONCE-1: a typed value straight to the Norn1 value
+/// [`canonical_json_of`] would parse back from its Serde JSON text, without
+/// writing or parsing that text. It covers the shapes Serde JSON writes
+/// plainly (scalars, strings, sequences, maps with string keys, structs, enum
+/// variants, and `serde_json` raw values, parsed as the text path parses
+/// them); anything else (non-string map keys, bytes, a repeated map key,
+/// other `serde_json` private tokens, deep nesting, any error) declines, and
+/// the caller takes the text path, so every result and every refusal is the
+/// text path's own.
+mod direct {
+    use std::collections::BTreeMap;
+    use std::fmt::{Display, Formatter};
+
+    use serde::Serialize;
+    use serde::ser::{self, Impossible};
+
+    use super::JsonValue;
+
+    /// `serde_json`'s raw-value token (`serde_json::raw::TOKEN`).
+    const RAW_VALUE: &str = "$serde_json::private::RawValue";
+    /// Nesting this deep declines, far inside the parser's own limit, so a
+    /// depth refusal is always the text path's.
+    const MAX_DEPTH: usize = 64;
+
+    /// The text path must decide.
+    #[derive(Debug)]
+    pub(super) struct Declined;
+
+    impl Display for Declined {
+        fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("declined")
+        }
+    }
+
+    impl std::error::Error for Declined {}
+
+    impl ser::Error for Declined {
+        fn custom<T: Display>(_message: T) -> Self {
+            Self
+        }
+    }
+
+    type Result<T> = std::result::Result<T, Declined>;
+
+    /// `value` as a Norn1 value, or `None` when the text path must decide.
+    pub(super) fn to_value<T: Serialize + ?Sized>(value: &T) -> Option<JsonValue> {
+        value.serialize(Direct { depth: 0 }).ok()
+    }
+
+    #[derive(Clone, Copy)]
+    struct Direct {
+        depth: usize,
+    }
+
+    impl Direct {
+        fn child(self) -> Result<Self> {
+            let depth = self.depth.checked_add(1).ok_or(Declined)?;
+            if depth > MAX_DEPTH {
+                return Err(Declined);
+            }
+            Ok(Self { depth })
+        }
+
+        fn number(text: String) -> JsonValue {
+            JsonValue::Number(text)
+        }
+
+        /// A float exactly as Serde JSON writes it (non-finite is `null`).
+        fn float<F: Serialize>(value: &F) -> Result<JsonValue> {
+            let text = serde_json::to_string(value).map_err(|_error| Declined)?;
+            Ok(if text == "null" {
+                JsonValue::Null
+            } else {
+                JsonValue::Number(text)
+            })
+        }
+    }
+
+    fn single(key: &str, value: JsonValue) -> JsonValue {
+        let mut object = BTreeMap::new();
+        object.insert(key.to_owned(), value);
+        JsonValue::Object(object)
+    }
+
+    impl ser::Serializer for Direct {
+        type Ok = JsonValue;
+        type Error = Declined;
+        type SerializeSeq = Seq;
+        type SerializeTuple = Seq;
+        type SerializeTupleStruct = Seq;
+        type SerializeTupleVariant = Seq;
+        type SerializeMap = Map;
+        type SerializeStruct = Map;
+        type SerializeStructVariant = Map;
+
+        fn serialize_bool(self, value: bool) -> Result<JsonValue> {
+            Ok(JsonValue::Bool(value))
+        }
+        fn serialize_i8(self, value: i8) -> Result<JsonValue> {
+            Ok(Self::number(value.to_string()))
+        }
+        fn serialize_i16(self, value: i16) -> Result<JsonValue> {
+            Ok(Self::number(value.to_string()))
+        }
+        fn serialize_i32(self, value: i32) -> Result<JsonValue> {
+            Ok(Self::number(value.to_string()))
+        }
+        fn serialize_i64(self, value: i64) -> Result<JsonValue> {
+            Ok(Self::number(value.to_string()))
+        }
+        fn serialize_i128(self, value: i128) -> Result<JsonValue> {
+            Ok(Self::number(value.to_string()))
+        }
+        fn serialize_u8(self, value: u8) -> Result<JsonValue> {
+            Ok(Self::number(value.to_string()))
+        }
+        fn serialize_u16(self, value: u16) -> Result<JsonValue> {
+            Ok(Self::number(value.to_string()))
+        }
+        fn serialize_u32(self, value: u32) -> Result<JsonValue> {
+            Ok(Self::number(value.to_string()))
+        }
+        fn serialize_u64(self, value: u64) -> Result<JsonValue> {
+            Ok(Self::number(value.to_string()))
+        }
+        fn serialize_u128(self, value: u128) -> Result<JsonValue> {
+            Ok(Self::number(value.to_string()))
+        }
+        fn serialize_f32(self, value: f32) -> Result<JsonValue> {
+            Self::float(&value)
+        }
+        fn serialize_f64(self, value: f64) -> Result<JsonValue> {
+            Self::float(&value)
+        }
+        fn serialize_char(self, value: char) -> Result<JsonValue> {
+            Ok(JsonValue::String(value.to_string()))
+        }
+        fn serialize_str(self, value: &str) -> Result<JsonValue> {
+            Ok(JsonValue::String(value.to_owned()))
+        }
+        fn serialize_bytes(self, _value: &[u8]) -> Result<JsonValue> {
+            Err(Declined)
+        }
+        fn serialize_none(self) -> Result<JsonValue> {
+            Ok(JsonValue::Null)
+        }
+        fn serialize_some<T: Serialize + ?Sized>(self, value: &T) -> Result<JsonValue> {
+            value.serialize(self)
+        }
+        fn serialize_unit(self) -> Result<JsonValue> {
+            Ok(JsonValue::Null)
+        }
+        fn serialize_unit_struct(self, _name: &'static str) -> Result<JsonValue> {
+            Ok(JsonValue::Null)
+        }
+        fn serialize_unit_variant(
+            self,
+            _name: &'static str,
+            _index: u32,
+            variant: &'static str,
+        ) -> Result<JsonValue> {
+            Ok(JsonValue::String(variant.to_owned()))
+        }
+        fn serialize_newtype_struct<T: Serialize + ?Sized>(
+            self,
+            name: &'static str,
+            value: &T,
+        ) -> Result<JsonValue> {
+            if name.starts_with("$serde_json::") {
+                return Err(Declined);
+            }
+            value.serialize(self)
+        }
+        fn serialize_newtype_variant<T: Serialize + ?Sized>(
+            self,
+            _name: &'static str,
+            _index: u32,
+            variant: &'static str,
+            value: &T,
+        ) -> Result<JsonValue> {
+            Ok(single(variant, value.serialize(self.child()?)?))
+        }
+        fn serialize_seq(self, len: Option<usize>) -> Result<Seq> {
+            Ok(Seq {
+                at: self.child()?,
+                items: Vec::with_capacity(len.unwrap_or(0)),
+                variant: None,
+            })
+        }
+        fn serialize_tuple(self, len: usize) -> Result<Seq> {
+            self.serialize_seq(Some(len))
+        }
+        fn serialize_tuple_struct(self, _name: &'static str, len: usize) -> Result<Seq> {
+            self.serialize_seq(Some(len))
+        }
+        fn serialize_tuple_variant(
+            self,
+            _name: &'static str,
+            _index: u32,
+            variant: &'static str,
+            len: usize,
+        ) -> Result<Seq> {
+            let mut seq = self.child()?.serialize_seq(Some(len))?;
+            seq.variant = Some(variant);
+            Ok(seq)
+        }
+        fn serialize_map(self, _len: Option<usize>) -> Result<Map> {
+            Ok(Map {
+                at: self.child()?,
+                entries: BTreeMap::new(),
+                key: None,
+                variant: None,
+                raw: None,
+            })
+        }
+        fn serialize_struct(self, name: &'static str, len: usize) -> Result<Map> {
+            if name.starts_with("$serde_json::") && name != RAW_VALUE {
+                return Err(Declined);
+            }
+            let mut map = self.serialize_map(Some(len))?;
+            if name == RAW_VALUE {
+                map.raw = Some(None);
+            }
+            Ok(map)
+        }
+        fn serialize_struct_variant(
+            self,
+            _name: &'static str,
+            _index: u32,
+            variant: &'static str,
+            len: usize,
+        ) -> Result<Map> {
+            let mut map = self.child()?.serialize_map(Some(len))?;
+            map.variant = Some(variant);
+            Ok(map)
+        }
+    }
+
+    struct Seq {
+        at: Direct,
+        items: Vec<JsonValue>,
+        variant: Option<&'static str>,
+    }
+
+    impl Seq {
+        fn push<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<()> {
+            self.items.push(value.serialize(self.at)?);
+            Ok(())
+        }
+        fn finish(self) -> JsonValue {
+            let array = JsonValue::Array(self.items);
+            match self.variant {
+                Some(variant) => single(variant, array),
+                None => array,
+            }
+        }
+    }
+
+    impl ser::SerializeSeq for Seq {
+        type Ok = JsonValue;
+        type Error = Declined;
+        fn serialize_element<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<()> {
+            self.push(value)
+        }
+        fn end(self) -> Result<JsonValue> {
+            Ok(self.finish())
+        }
+    }
+
+    impl ser::SerializeTuple for Seq {
+        type Ok = JsonValue;
+        type Error = Declined;
+        fn serialize_element<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<()> {
+            self.push(value)
+        }
+        fn end(self) -> Result<JsonValue> {
+            Ok(self.finish())
+        }
+    }
+
+    impl ser::SerializeTupleStruct for Seq {
+        type Ok = JsonValue;
+        type Error = Declined;
+        fn serialize_field<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<()> {
+            self.push(value)
+        }
+        fn end(self) -> Result<JsonValue> {
+            Ok(self.finish())
+        }
+    }
+
+    impl ser::SerializeTupleVariant for Seq {
+        type Ok = JsonValue;
+        type Error = Declined;
+        fn serialize_field<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<()> {
+            self.push(value)
+        }
+        fn end(self) -> Result<JsonValue> {
+            Ok(self.finish())
+        }
+    }
+
+    struct Map {
+        at: Direct,
+        entries: BTreeMap<String, JsonValue>,
+        key: Option<String>,
+        variant: Option<&'static str>,
+        /// A `serde_json` raw value (one field, its JSON text), once read.
+        raw: Option<Option<JsonValue>>,
+    }
+
+    impl Map {
+        fn insert(&mut self, key: String, value: JsonValue) -> Result<()> {
+            // Serde JSON writes a repeated key twice; only the parse decides.
+            if self.entries.insert(key, value).is_some() {
+                return Err(Declined);
+            }
+            Ok(())
+        }
+        fn finish(self) -> Result<JsonValue> {
+            if self.raw.is_some() {
+                return Err(Declined);
+            }
+            let object = JsonValue::Object(self.entries);
+            Ok(match self.variant {
+                Some(variant) => single(variant, object),
+                None => object,
+            })
+        }
+    }
+
+    impl ser::SerializeMap for Map {
+        type Ok = JsonValue;
+        type Error = Declined;
+        fn serialize_key<T: Serialize + ?Sized>(&mut self, key: &T) -> Result<()> {
+            self.key = Some(key.serialize(KeySerializer)?);
+            Ok(())
+        }
+        fn serialize_value<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<()> {
+            let key = self.key.take().ok_or(Declined)?;
+            let value = value.serialize(self.at)?;
+            self.insert(key, value)
+        }
+        fn end(self) -> Result<JsonValue> {
+            self.finish()
+        }
+    }
+
+    impl ser::SerializeStruct for Map {
+        type Ok = JsonValue;
+        type Error = Declined;
+        fn serialize_field<T: Serialize + ?Sized>(
+            &mut self,
+            key: &'static str,
+            value: &T,
+        ) -> Result<()> {
+            if let Some(raw) = &mut self.raw {
+                // The raw text, parsed exactly as the text path parses the
+                // document it is written into; only a scalar, so nesting
+                // stays this serializer's to bound.
+                if key != RAW_VALUE || raw.is_some() {
+                    return Err(Declined);
+                }
+                let text = value.serialize(KeySerializer)?;
+                let parsed = super::parse(text.as_bytes()).map_err(|_error| Declined)?;
+                if matches!(parsed, JsonValue::Array(_) | JsonValue::Object(_)) {
+                    return Err(Declined);
+                }
+                *raw = Some(parsed);
+                return Ok(());
+            }
+            let value = value.serialize(self.at)?;
+            self.insert(key.to_owned(), value)
+        }
+        fn end(self) -> Result<JsonValue> {
+            match self.raw {
+                Some(raw) => raw.ok_or(Declined),
+                None => self.finish(),
+            }
+        }
+    }
+
+    impl ser::SerializeStructVariant for Map {
+        type Ok = JsonValue;
+        type Error = Declined;
+        fn serialize_field<T: Serialize + ?Sized>(
+            &mut self,
+            key: &'static str,
+            value: &T,
+        ) -> Result<()> {
+            let value = value.serialize(self.at)?;
+            self.insert(key.to_owned(), value)
+        }
+        fn end(self) -> Result<JsonValue> {
+            self.finish()
+        }
+    }
+
+    /// Map keys: strings only (and what Serde JSON writes as one plainly).
+    struct KeySerializer;
+
+    impl ser::Serializer for KeySerializer {
+        type Ok = String;
+        type Error = Declined;
+        type SerializeSeq = Impossible<String, Declined>;
+        type SerializeTuple = Impossible<String, Declined>;
+        type SerializeTupleStruct = Impossible<String, Declined>;
+        type SerializeTupleVariant = Impossible<String, Declined>;
+        type SerializeMap = Impossible<String, Declined>;
+        type SerializeStruct = Impossible<String, Declined>;
+        type SerializeStructVariant = Impossible<String, Declined>;
+
+        fn serialize_str(self, value: &str) -> Result<String> {
+            Ok(value.to_owned())
+        }
+        fn serialize_char(self, value: char) -> Result<String> {
+            Ok(value.to_string())
+        }
+        fn serialize_unit_variant(
+            self,
+            _name: &'static str,
+            _index: u32,
+            variant: &'static str,
+        ) -> Result<String> {
+            Ok(variant.to_owned())
+        }
+        fn serialize_newtype_struct<T: Serialize + ?Sized>(
+            self,
+            name: &'static str,
+            value: &T,
+        ) -> Result<String> {
+            if name.starts_with("$serde_json::") {
+                return Err(Declined);
+            }
+            value.serialize(self)
+        }
+        fn serialize_bool(self, _value: bool) -> Result<String> {
+            Err(Declined)
+        }
+        fn serialize_i8(self, _value: i8) -> Result<String> {
+            Err(Declined)
+        }
+        fn serialize_i16(self, _value: i16) -> Result<String> {
+            Err(Declined)
+        }
+        fn serialize_i32(self, _value: i32) -> Result<String> {
+            Err(Declined)
+        }
+        fn serialize_i64(self, _value: i64) -> Result<String> {
+            Err(Declined)
+        }
+        fn serialize_u8(self, _value: u8) -> Result<String> {
+            Err(Declined)
+        }
+        fn serialize_u16(self, _value: u16) -> Result<String> {
+            Err(Declined)
+        }
+        fn serialize_u32(self, _value: u32) -> Result<String> {
+            Err(Declined)
+        }
+        fn serialize_u64(self, _value: u64) -> Result<String> {
+            Err(Declined)
+        }
+        fn serialize_f32(self, _value: f32) -> Result<String> {
+            Err(Declined)
+        }
+        fn serialize_f64(self, _value: f64) -> Result<String> {
+            Err(Declined)
+        }
+        fn serialize_bytes(self, _value: &[u8]) -> Result<String> {
+            Err(Declined)
+        }
+        fn serialize_none(self) -> Result<String> {
+            Err(Declined)
+        }
+        fn serialize_some<T: Serialize + ?Sized>(self, _value: &T) -> Result<String> {
+            Err(Declined)
+        }
+        fn serialize_unit(self) -> Result<String> {
+            Err(Declined)
+        }
+        fn serialize_unit_struct(self, _name: &'static str) -> Result<String> {
+            Err(Declined)
+        }
+        fn serialize_newtype_variant<T: Serialize + ?Sized>(
+            self,
+            _name: &'static str,
+            _index: u32,
+            _variant: &'static str,
+            _value: &T,
+        ) -> Result<String> {
+            Err(Declined)
+        }
+        fn serialize_seq(self, _len: Option<usize>) -> Result<Self::SerializeSeq> {
+            Err(Declined)
+        }
+        fn serialize_tuple(self, _len: usize) -> Result<Self::SerializeTuple> {
+            Err(Declined)
+        }
+        fn serialize_tuple_struct(
+            self,
+            _name: &'static str,
+            _len: usize,
+        ) -> Result<Self::SerializeTupleStruct> {
+            Err(Declined)
+        }
+        fn serialize_tuple_variant(
+            self,
+            _name: &'static str,
+            _index: u32,
+            _variant: &'static str,
+            _len: usize,
+        ) -> Result<Self::SerializeTupleVariant> {
+            Err(Declined)
+        }
+        fn serialize_map(self, _len: Option<usize>) -> Result<Self::SerializeMap> {
+            Err(Declined)
+        }
+        fn serialize_struct(
+            self,
+            _name: &'static str,
+            _len: usize,
+        ) -> Result<Self::SerializeStruct> {
+            Err(Declined)
+        }
+        fn serialize_struct_variant(
+            self,
+            _name: &'static str,
+            _index: u32,
+            _variant: &'static str,
+            _len: usize,
+        ) -> Result<Self::SerializeStructVariant> {
+            Err(Declined)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2056,6 +2620,200 @@ mod tests {
             let right: &serde_json::value::RawValue = &serde_json::value::RawValue::from_string(
                 format!(r#"{{"a":{{"x":0,"y":1}},"z":{value}}}"#)).expect("raw");
             proptest::prop_assert_eq!(canonical_json_exact_of(left).expect("left"), canonical_json_exact_of(right).expect("right"));
+        }
+    }
+}
+
+/// INGEST-CANONICAL-ONCE-1: the direct encoding agrees with the text path on
+/// every value it accepts, and declines nothing the text path would accept
+/// differently.
+#[cfg(test)]
+mod direct_equivalence {
+    #![allow(clippy::unwrap_used, clippy::expect_used, reason = "equivalence test")]
+    use std::collections::BTreeMap;
+
+    use proptest::prelude::*;
+    use serde::Serialize;
+    use serde::ser::SerializeMap as _;
+    use serde_json::Value;
+
+    use super::{canonical_json_of, canonical_json_of_text, direct, serialize};
+
+    /// Where the direct path answers, the text path answers the same bytes;
+    /// where the direct encoding refuses, so does the text path.
+    fn agrees<T: Serialize + ?Sized>(value: &T) -> bool {
+        let text = canonical_json_of_text(value);
+        let Some(direct) = direct::to_value(value) else {
+            return true;
+        };
+        match serialize(&direct) {
+            Ok(bytes) => text.as_deref() == Ok(bytes.as_slice()),
+            Err(_refused) => text.is_err(),
+        }
+    }
+
+    fn accepted<T: Serialize + ?Sized>(value: &T) -> bool {
+        direct::to_value(value).is_some_and(|direct| serialize(&direct).is_ok())
+    }
+
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Record {
+        commit_seq: u64,
+        name: Option<String>,
+        skipped: Option<u8>,
+        tags: Vec<char>,
+        kind: Kind,
+        nested: BTreeMap<String, Kind>,
+        unit: (),
+        signed: i128,
+        ratio: f64,
+        small: f32,
+    }
+
+    #[derive(Serialize)]
+    #[serde(tag = "kind", rename_all = "snake_case")]
+    enum Tagged {
+        One { value: u8 },
+    }
+
+    #[derive(Serialize)]
+    enum Kind {
+        Unit,
+        Newtype(String),
+        Tuple(u8, bool),
+        Struct { at: u64 },
+    }
+
+    #[derive(Serialize)]
+    struct Wrapper(String);
+
+    /// A map that writes one key twice.
+    struct Repeated;
+
+    impl Serialize for Repeated {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            let mut map = serializer.serialize_map(Some(2))?;
+            map.serialize_entry("a", &1)?;
+            map.serialize_entry("a", &2)?;
+            map.end()
+        }
+    }
+
+    #[test]
+    fn typed_shapes_take_the_direct_path_and_agree() {
+        let record = Record {
+            commit_seq: 7,
+            name: Some("e\u{301}\"\\\n\u{1}\u{7f}".to_owned()),
+            skipped: None,
+            tags: vec!['x', '\u{e9}'],
+            kind: Kind::Struct { at: 3 },
+            nested: [
+                ("u".to_owned(), Kind::Unit),
+                ("n".to_owned(), Kind::Newtype("v".to_owned())),
+                ("t".to_owned(), Kind::Tuple(1, false)),
+            ]
+            .into_iter()
+            .collect(),
+            unit: (),
+            signed: -170_141_183_460_469_231_731_687_303_715_884_105_728,
+            ratio: 1.0e20,
+            small: 0.1,
+        };
+        assert!(accepted(&record));
+        assert!(agrees(&record));
+        for value in [0.0, "-0.0".parse::<f64>().unwrap(), 1.5e-7, 123_456_789.125, f64::MAX, f64::NAN, f64::INFINITY] {
+            assert!(agrees(&value));
+            assert!(agrees(&vec![value]));
+        }
+        assert!(agrees(&Tagged::One { value: 1 }));
+        assert!(agrees(&Wrapper("w".to_owned())));
+        assert!(agrees(&(1_u8, "two", [3_u64], Option::<u8>::None)));
+        let raw = serde_json::value::RawValue::from_string("1.50E+3".to_owned()).unwrap();
+        assert!(accepted(&raw));
+        assert!(agrees(&raw));
+        assert!(agrees(&vec![raw.clone(), raw]));
+    }
+
+    #[test]
+    fn what_the_text_path_must_decide_is_declined_or_refused_alike() {
+        assert!(direct::to_value(&Repeated).is_none());
+        assert!(canonical_json_of(&Repeated).is_err());
+        // Keys equal under NFC: both refuse.
+        let colliding: BTreeMap<&str, u8> = [("\u{e9}", 1), ("e\u{301}", 2)].into_iter().collect();
+        assert!(agrees(&colliding));
+        assert!(canonical_json_of(&colliding).is_err());
+        // Non-string keys and bytes are the text path's.
+        let numbered: BTreeMap<u8, u8> = [(1, 2)].into_iter().collect();
+        assert!(direct::to_value(&numbered).is_none());
+        assert!(agrees(&numbered));
+        assert!(direct::to_value(&serde_bytes_like()).is_none());
+        let raw_object = serde_json::value::RawValue::from_string("{\"a\":1}".to_owned()).unwrap();
+        assert!(direct::to_value(&raw_object).is_none());
+        // Deep nesting is the text path's to refuse.
+        let mut deep = Value::Null;
+        for _ in 0..300 {
+            deep = Value::Array(vec![deep]);
+        }
+        assert!(direct::to_value(&deep).is_none());
+        assert!(canonical_json_of(&deep).is_err());
+    }
+
+    fn serde_bytes_like() -> impl Serialize {
+        struct Bytes;
+        impl Serialize for Bytes {
+            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                serializer.serialize_bytes(b"ab")
+            }
+        }
+        Bytes
+    }
+
+    fn arb_string() -> impl Strategy<Value = String> {
+        prop::collection::vec(
+            prop_oneof![
+                Just('a'),
+                Just('e'),
+                Just('\u{301}'),
+                Just('\u{e9}'),
+                Just('"'),
+                Just('\\'),
+                Just('\n'),
+                Just('\u{1}'),
+                Just('\u{1f}'),
+                Just('\u{7f}'),
+                Just('\u{2028}'),
+                Just('\u{1f600}'),
+                any::<char>(),
+            ],
+            0..6,
+        )
+        .prop_map(|chars| chars.into_iter().collect())
+    }
+
+    fn arb_value() -> impl Strategy<Value = Value> {
+        let leaf = prop_oneof![
+            Just(Value::Null),
+            any::<bool>().prop_map(Value::Bool),
+            any::<i64>().prop_map(Value::from),
+            any::<u64>().prop_map(Value::from),
+            any::<f64>().prop_map(Value::from),
+            arb_string().prop_map(Value::String),
+        ];
+        leaf.prop_recursive(4, 48, 5, |inner| {
+            prop_oneof![
+                prop::collection::vec(inner.clone(), 0..5).prop_map(Value::Array),
+                prop::collection::btree_map(arb_string(), inner, 0..5)
+                    .prop_map(|map| Value::Object(map.into_iter().collect())),
+            ]
+        })
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(2_000))]
+        #[test]
+        fn arbitrary_values_agree(value in arb_value()) {
+            prop_assert!(agrees(&value));
         }
     }
 }
