@@ -151,6 +151,9 @@ impl norn_api::analytics_routes::Uploads for crate::connect::Connect {
                 file_name: record.file_name,
             })
     }
+    fn issued(&self, id: &str, scope_key: &str, uri: &str) -> bool {
+        crate::connect::Connect::issued_upload(self, id, scope_key, uri)
+    }
     fn presigned_get(&self, uri: &str, seconds: u64, now_ms: u64) -> Option<String> {
         self.signed_get(uri, u32::try_from(seconds).ok()?, now_ms)
     }

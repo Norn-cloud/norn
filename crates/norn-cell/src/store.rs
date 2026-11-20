@@ -4,7 +4,7 @@
 //! Objects and links live in the tables the DDL projection derives from the
 //! object model ([`Model`]); events, receipts, the command outbox, timers,
 //! the observation inbox, `perform` runs, and version high-water marks live in the
-//! system tables ([`crate::system`]). One [`CellStore::commit`] is one engine
+//! system tables ([`crate::system`]). One `CellStore::commit_unchecked` is one engine
 //! transaction: the consumed delivery, object
 //! writes and fact changes, link changes, ledger events, outbox and timer
 //! effects, and the receipt either all land or none do. A crash anywhere
@@ -1766,7 +1766,7 @@ impl CommitOutcome {
     }
 }
 
-/// Where a commit is when a fault probe runs ([`CellStore::commit_probed`]).
+/// Where a commit is when a fault probe runs (`CellStore::commit_probed_unchecked`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CommitPoint {
     /// The transaction began; nothing written.
@@ -2734,14 +2734,50 @@ impl<E: SqlEngine> CellStore<E> {
     /// Authored adapters use the checked kernel boundary; raw Put carries no
     /// authored/observed authority. Canonical `FactChange::Create` still refuses reuse.
     ///
+    /// Crate-private (#1375 S4, #1444 fix 5): no law check runs here, so a
+    /// crate outside the kernel path cannot reach it. A host's own actorless
+    /// writes are the fixed-input [`crate::provision`] operations.
+    ///
+    /// ```compile_fail,E0624
+    /// // A raw, unchecked write from outside the kernel does not compile:
+    /// // the raw commit is private to `norn-cell`.
+    /// use norn_cell::{CellStore, CommitBatch};
+    /// fn bypass(store: &mut CellStore) {
+    ///     let _ = store.commit_unchecked(&CommitBatch::default());
+    /// }
+    /// ```
+    ///
+    /// ```compile_fail,E0624
+    /// // Nor does the probed variant.
+    /// use norn_cell::{CellStore, CommitBatch};
+    /// fn bypass(store: &mut CellStore) {
+    ///     let _ = store.commit_probed_unchecked(&CommitBatch::default(), &mut |_| Ok(()));
+    /// }
+    /// ```
+    ///
+    /// ```compile_fail,E0624
+    /// // Nor a guarded commit whose guard admits anything.
+    /// use norn_cell::{CellStore, CommitBatch};
+    /// fn bypass(store: &mut CellStore) {
+    ///     let _ = store.commit_guarded_unchecked(
+    ///         &CommitBatch::default(),
+    ///         |_reader| Ok::<(), ()>(()),
+    ///         &mut |_| Ok(()),
+    ///     );
+    /// }
+    /// ```
+    ///
     /// # Errors
     ///
     /// Any [`CellError`]; on error nothing was written.
-    pub fn commit(&mut self, batch: &CommitBatch) -> Result<CommitOutcome, CellError> {
-        self.commit_probed(batch, &mut |_point| Ok(()))
+    pub(crate) fn commit_unchecked(
+        &mut self,
+        batch: &CommitBatch,
+    ) -> Result<CommitOutcome, CellError> {
+        self.commit_probed_unchecked(batch, &mut |_point| Ok(()))
     }
 
-    /// [`Self::commit`] with a fault probe called at every [`CommitPoint`]
+    /// [`Self::commit_unchecked`] with a fault probe called at every [`CommitPoint`]
     /// (deterministic crash simulation). A probe error before
     /// [`CommitPoint::Committed`] rolls the transaction back; at
     /// [`CommitPoint::Committed`] the commit is already durable and the error
@@ -2750,12 +2786,12 @@ impl<E: SqlEngine> CellStore<E> {
     /// # Errors
     ///
     /// Any [`CellError`], including the probe's.
-    pub fn commit_probed(
+    pub(crate) fn commit_probed_unchecked(
         &mut self,
         batch: &CommitBatch,
         probe: &mut dyn FnMut(CommitPoint) -> Result<(), CellError>,
     ) -> Result<CommitOutcome, CellError> {
-        match self.commit_guarded(batch, |_reader| Ok::<(), CellError>(()), probe) {
+        match self.commit_guarded_unchecked(batch, |_reader| Ok::<(), CellError>(()), probe) {
             Ok(((), outcome)) => Ok(outcome),
             Err(GuardedError::Guard(error) | GuardedError::Store(error)) => Err(error),
         }
@@ -2770,8 +2806,8 @@ impl<E: SqlEngine> CellStore<E> {
     /// # Errors
     ///
     /// [`GuardedError::Guard`] when the guard refuses; otherwise as
-    /// [`Self::commit_probed`].
-    pub fn commit_guarded<T: Default, X>(
+    /// [`Self::commit_probed_unchecked`].
+    pub(crate) fn commit_guarded_unchecked<T: Default, X>(
         &mut self,
         batch: &CommitBatch,
         guard: impl FnOnce(&StoreReader<'_, E>) -> Result<T, X>,
@@ -3679,7 +3715,9 @@ mod identity_history_tests {
     fn legacy_fixture(path: &Path, steps: usize) -> (CellStore, Model) {
         let current = Model::from_snapshot(&snapshot(1)).expect("current model");
         let mut template = CellStore::open_in_memory(current.clone()).expect("template");
-        template.commit(&batch(vec![])).expect("template receipt");
+        template
+            .commit_unchecked(&batch(vec![]))
+            .expect("template receipt");
         let cell_id = template.cell_id().expect("cell id").expect("bound cell id");
         let template = template.export_record(1).expect("export").expect("record");
         let retained =
@@ -3780,7 +3818,7 @@ mod identity_history_tests {
         )
         .expect("public provisioning");
         store
-            .commit(&batch(vec![put("first", "abc")]))
+            .commit_unchecked(&batch(vec![put("first", "abc")]))
             .expect("live fact");
         let legacy = Model::from_retained_snapshot(&snapshot(17)).expect("legacy projection");
         let legacy_input = definition_input(&legacy);
@@ -3868,7 +3906,7 @@ mod identity_history_tests {
             assert_eq!(rebuilt.read().dump().expect("rebuilt state"), expected);
             let before = rebuilt.read().dump().expect("before refusal");
             assert!(matches!(
-                rebuilt.commit(&batch(vec![put("third", "Abc")])),
+                rebuilt.commit_unchecked(&batch(vec![put("third", "Abc")])),
                 Err(CellError::IdentityCollision { .. })
             ));
             assert_eq!(rebuilt.read().dump().expect("atomic refusal"), before);

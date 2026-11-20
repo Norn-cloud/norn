@@ -16,11 +16,11 @@ phases=(cheap test doctest features duckdb wasm clippy doc guards integration br
 # rest shards hash-partition every other test.
 heavy=(
   'binary_id(norn-expr::check) & test(=generated_accepted_expressions_are_total_and_typed)'
-  'binary_id(norn-testkit::kernel_quint) & test(=quantity_v2_quint_traces)'
-  'binary_id(norn-cell::quantity_reservations) & test(=partial_resolution_interleaved_lots_conserve_independent_scalar_fold)'
-  'binary_id(norn-cell::definitions_install) & test(=first_overflow_column_charges_the_same_empty_object_bytes_in_check_and_install)'
-  'binary_id(norn-cell::definitions_install) & (test(=overflow_backfill_refuses_more_than_the_row_limit_in_check_and_install) | test(=removing_an_empty_overflow_property_refuses_an_incomplete_row_scan))'
-  '(binary_id(norn-cell::quantity_reservations) & test(=generated_reservation_sequences_match_independent_scalar_fold)) | (binary_id(norn-cell::cell_host) & test(=cell_host_laws_hold_across_reopen_for_the_restricted_engine))'
+  'binary_id(norn-cell) & test(=suites::kernel_quint::quantity_v2_quint_traces)'
+  'binary_id(norn-cell) & test(=suites::quantity_reservations::partial_resolution_interleaved_lots_conserve_independent_scalar_fold)'
+  'binary_id(norn-cell) & test(=suites::definitions_install::first_overflow_column_charges_the_same_empty_object_bytes_in_check_and_install)'
+  'binary_id(norn-cell) & (test(=suites::definitions_install::overflow_backfill_refuses_more_than_the_row_limit_in_check_and_install) | test(=suites::definitions_install::removing_an_empty_overflow_property_refuses_an_incomplete_row_scan))'
+  '(binary_id(norn-cell) & test(=suites::quantity_reservations::generated_reservation_sequences_match_independent_scalar_fold)) | (binary_id(norn-cell::cell_host) & test(=cell_host_laws_hold_across_reopen_for_the_restricted_engine))'
 )
 rest_shards=3
 # Selection comes only from here: every run ignores nextest's configurable
@@ -219,7 +219,7 @@ run_phase() {
       (cd packages/norn-demo-ui && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun run typecheck && bun test)
       (cd apps/studio && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun run typecheck && bun test && bun run build)
       # TIMER-ALARM-1: the Durable Object's wake rules; OLAP-01: what connections receive (no dependencies).
-      (cd apps/norn-cell-do && bun test ./wake.test.mjs ./connect_vars.test.mjs)
+      (cd apps/norn-cell-do && bun test ./wake.test.mjs ./worker.test.mjs ./connect_vars.test.mjs)
       python3 verification/coverage-v1/negative_canaries.py --workflow-contract
       python3 scripts/ci/frontier.py self-test
       python3 scripts/ci/python_isolation.py
@@ -316,7 +316,7 @@ PY
       # tenant engine's correspondence suite and the transform backend); full plans run this
       # phase, and affected plans run it whenever norn-cell is reached. The in-process
       # `duckdb_question` target was retired with the SQL question path (#1395).
-      cargo test --locked -p norn-cell --features duckdb --test analytics_engine --test duckdb_transform
+      cargo test --locked -p norn-cell --features duckdb --lib -- suites::analytics_engine:: suites::duckdb_transform::
       ;;
     wasm)
       cargo check --locked --target wasm32-unknown-unknown -p norn-canonical -p norn-ir -p norn-expr -p norn-checker -p norn-graph -p norn-datalog -p norn-authz -p norn-kernel -p norn-builtins -p norn-projections -p norn-decisions -p norn-api
@@ -364,9 +364,14 @@ PY
       "$NORN_BIN" check --artifacts "$upstream/task.json" --context "$upstream/context.json" > "$upstream/check.json"
       cargo test --locked -p norn-checker-wasm --test parity -- --test-threads=1
       node crates/norn-checker-wasm/tests/parity/parity.mjs "$NORN_CHECKER_WASM_PKG" "$NORN_CHECKER_WASM_PARITY_OUT"
+      # TENANT-ISOLATION-1 (S8): the cell Worker's boundary over its real Wasm gate, built as it ships.
+      cargo build --locked -p norn-cell-do --lib --target wasm32-unknown-unknown --profile wasm-release
+      wasm-bindgen "${CARGO_TARGET_DIR:-$PWD/target}/wasm32-unknown-unknown/wasm-release/norn_cell_do.wasm" \
+        --target web --out-name norn_cell_do --out-dir "$upstream/norn-cell-do-pkg"
+      (cd apps/norn-cell-do && NORN_CELL_DO_PKG="$upstream/norn-cell-do-pkg" bun test ./worker.wasm.test.mjs)
       # runnable-docs runs each release test the status matrix names; build
       # them first so its bounded runs only execute (#1171 integrated gate).
-      grep -oE 'cargo test --locked -p [a-z-]+ --test [a-z_]+' docs/authoring/runnable/status.md | sort -u |
+      grep -oE 'cargo test --locked -p [a-z-]+ (--test [a-z_]+|--lib)' docs/authoring/runnable/status.md | sort -u |
         while read -r build; do $build --no-run; done
       # The ZEN-only engine package pages load (#1325): pages and the checker share one
       # evaluator so they cannot disagree, so it answers every evaluation of the shared
@@ -640,7 +645,7 @@ else:
     reason = f"changed: {', '.join(sorted(touched)) or 'Markdown only'}"
 parts = rest if "norn-cell" in reached else 1
 selected_heavy = [f"heavy-{i}" for i, expression in enumerate(heavy, 1)
-                  if set(re.findall(r"binary_id\(([^:]+)::", expression)) & reached]
+                  if set(re.findall(r"binary_id\(([^:)]+)(?:::[^)]*)?\)", expression)) & reached]
 # Studio changes already plan in full; a checker change reaches the Studio's WASM package.
 browser = ["browser"] if "norn-checker-wasm" in reached else []
 # The DuckDB backend lives in norn-cell: a change that reaches it builds and tests it (#1206).

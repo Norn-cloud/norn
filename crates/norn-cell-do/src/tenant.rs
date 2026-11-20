@@ -273,6 +273,190 @@ impl<E: SqlEngine> Serving<E> {
     }
 }
 
+/// Which part of the cell answered a request ([`Tenant::serve`]).
+pub enum Served {
+    /// A source or upload route (#921), with what the host does next.
+    Connect(crate::connect::Routed),
+    /// Any other route.
+    Cell(Response),
+}
+
+/// TENANT-ISOLATION-1 (S1, S2): a scope's membership gate, without its cell.
+///
+/// Who a request reaches the cell as is decided from the scope, the host's
+/// grant table, the request's token and the receipt handles every cell of
+/// the host is served with, and nothing else: no storage is opened or read.
+/// An outsider (a caller the table grants nothing in this organization) is
+/// answered here, with exactly what a scope with no cell answers, after
+/// exactly one verification of their token. The deployed host asks this
+/// before it opens the cell's storage (`apps/norn-cell-do/worker.mjs`), and
+/// [`Tenant::serve`] asks the same gate first, so the two never disagree.
+pub struct Gate {
+    scope: CellScope,
+    table: &'static GrantTable,
+    caller: Arc<CallerSlot>,
+    kinds: DefinitionKinds,
+    handles: Option<ReceiptHandles>,
+    connect: bool,
+}
+
+impl Gate {
+    /// The gate of `scope` under `table`, with the receipt handles keyed by
+    /// `handle_key` as the host's cells are; `connect` when the host serves
+    /// source and upload routes.
+    ///
+    /// # Errors
+    /// A key shorter than [`MIN_HANDLE_KEY_BYTES`], as [`Tenant::open`].
+    pub fn new(
+        scope: CellScope,
+        table: &'static GrantTable,
+        handle_key: Option<&[u8]>,
+        connect: bool,
+    ) -> Result<Self, SeedError> {
+        Ok(Self {
+            scope,
+            table,
+            caller: Arc::default(),
+            kinds: host_kinds(table),
+            handles: handles(handle_key)?,
+            connect,
+        })
+    }
+
+    /// The slot this gate's [`PrincipalResolver`] must record into.
+    #[must_use]
+    pub fn caller(&self) -> Arc<CallerSlot> {
+        Arc::clone(&self.caller)
+    }
+
+    /// `None` when the request reaches the cell (a verified member, or a
+    /// provisioner on `POST /v1/cell:provision`); otherwise the outsider's
+    /// whole answer.
+    #[must_use]
+    pub fn outsider<E: SqlEngine>(
+        &self,
+        principals: &dyn PrincipalResolver,
+        request: &Request<'_>,
+    ) -> Option<Response> {
+        Outside {
+            scope: &self.scope,
+            table: self.table,
+            caller: &self.caller,
+            kinds: &self.kinds,
+            handles: self.handles.as_ref(),
+            connect: self.connect,
+        }
+        .admit::<E>(principals, request)
+        .err()
+    }
+}
+
+/// Who the gate admits to the cell.
+enum Admitted {
+    /// A verified member of the organization.
+    Member(crate::policy::Caller),
+    /// A provisioner of the scope, on `POST /v1/cell:provision` only.
+    Provisioner,
+}
+
+/// The gate's inputs, borrowed from a [`Gate`] or a [`Tenant`].
+struct Outside<'a> {
+    scope: &'a CellScope,
+    table: &'static GrantTable,
+    caller: &'a Arc<CallerSlot>,
+    kinds: &'a DefinitionKinds,
+    handles: Option<&'a ReceiptHandles>,
+    connect: bool,
+}
+
+impl Outside<'_> {
+    /// Verify the request's token once; admit a member (or a provisioner to
+    /// provision), else answer as a scope with no cell answers anyone.
+    fn admit<E: SqlEngine>(
+        &self,
+        principals: &dyn PrincipalResolver,
+        request: &Request<'_>,
+    ) -> Result<Admitted, Response> {
+        {
+            // The verified principal lives exactly as long as this decision.
+            let _request = RequestScope::new(principals);
+            let subject = principals.resolve(request.authorization, request.now);
+            let member = subject.as_deref().and_then(|subject| {
+                self.caller
+                    .current()
+                    .filter(|caller| caller.subject_id == subject)
+                    .filter(|caller| !self.table.capabilities(&caller.roles).is_empty())
+            });
+            if let Some(caller) = member {
+                return Ok(Admitted::Member(caller));
+            }
+            if request.path == PROVISION_PATH {
+                return self
+                    .provisioner(subject.as_deref(), request)
+                    .map(|()| Admitted::Provisioner)
+                    .map_err(|refusal| server::respond(Err(refusal)));
+            }
+        }
+        Err(self.answer::<E>(principals, request))
+    }
+
+    /// `POST /v1/cell:provision` by a caller who is not a member: refused as
+    /// at a scope with no cell, unless the table's provisioner role asks.
+    fn provisioner(&self, actor: Option<&str>, request: &Request<'_>) -> Result<(), Refusal> {
+        provision_method(request)?;
+        let mut fields = server::parse(request.query, &["orgId", "environmentId"])?;
+        let scope = ScopeQuery {
+            org_id: fields.remove("orgId"),
+            environment_id: fields.remove("environmentId"),
+        };
+        provision::authorize(
+            &Provisioners::new(self.table, Arc::clone(self.caller)),
+            self.scope,
+            &scope,
+            actor,
+        )
+    }
+
+    /// What a scope with no cell answers a caller it verified as nobody.
+    fn answer<E: SqlEngine>(
+        &self,
+        principals: &dyn PrincipalResolver,
+        request: &Request<'_>,
+    ) -> Response {
+        if self.connect && crate::connect::serves(request.path) {
+            // The source and upload routes' own answer to a caller they deny.
+            server::outside::<E>(request)
+        } else if request.path == "/v1/access" {
+            server::access_outside::<E>(principals, request)
+        } else if request.path == ACCESS_DECIDE_PATH {
+            // The shared refusal: a caller outside the cell is denied everything.
+            server::respond(Err(norn_api::authz::read_denied()))
+        } else {
+            // Served with what a provisioned cell of this host is served
+            // with (its receipt handles, its kinds), so no route branches
+            // on whether the scope has a cell (#1297 r1).
+            let questions = self
+                .handles
+                .map(|handles| -> &dyn AdHocQuestions<E> { handles });
+            server::outside_with::<E>(questions, self.kinds, request)
+        }
+    }
+}
+
+/// A cell is provisioned with POST.
+fn provision_method(request: &Request<'_>) -> Result<(), Refusal> {
+    if request.method == "POST" {
+        Ok(())
+    } else {
+        Err(Refusal::new(
+            StatusCode::METHOD_NOT_ALLOWED,
+            "route.method_not_allowed",
+            "the route does not accept this method",
+            "a cell is provisioned with POST",
+        ))
+    }
+}
+
 enum State<E: SqlEngine> {
     Vacant,
     Serving(Box<Serving<E>>),
@@ -513,8 +697,22 @@ impl<E: SqlEngine> Tenant<E> {
     }
 
     /// D102: a load or an export on a served cell with an engine, reading
-    /// `uploads` for loads; `None` for any other request.
+    /// `uploads` for loads; `None` for any other request, and for a caller
+    /// who is not a verified member, whom [`Self::handle`] answers as a scope
+    /// with no cell (TENANT-ISOLATION-1): the engine routes never parse,
+    /// read or ask the engine for an outsider.
     pub fn handle_analytics(
+        &self,
+        principals: &dyn PrincipalResolver,
+        uploads: Option<&dyn norn_api::analytics_routes::Uploads>,
+        request: &Request<'_>,
+    ) -> Option<Response> {
+        self.verified_member(principals, request)?;
+        self.analytics_admitted(principals, uploads, request)
+    }
+
+    /// The engine routes for a caller already admitted as a member.
+    fn analytics_admitted(
         &self,
         principals: &dyn PrincipalResolver,
         uploads: Option<&dyn norn_api::analytics_routes::Uploads>,
@@ -528,15 +726,91 @@ impl<E: SqlEngine> Tenant<E> {
         }
     }
 
+    /// The membership gate of this cell, as [`Gate`] decides it.
+    fn outside(&self, connect: bool) -> Outside<'_> {
+        Outside {
+            scope: &self.scope,
+            table: self.table,
+            caller: &self.caller,
+            kinds: &self.kinds,
+            handles: self.handles.as_ref(),
+            connect,
+        }
+    }
+
+    /// Serve one request as the deployed host does, in its order: the
+    /// membership gate (decided once, TENANT-ISOLATION-1), the cell's source
+    /// and upload routes (`connect`, #921), then the engine routes (D102,
+    /// reading `connect`'s uploads), then the cell's other routes. The
+    /// Durable Object binding calls exactly this, so the native tests drive
+    /// the deployed dispatch.
+    pub fn serve(
+        &mut self,
+        mut connect: Option<&mut crate::connect::Connect>,
+        principals: &dyn PrincipalResolver,
+        request: &Request<'_>,
+        now_ms: u64,
+    ) -> Served {
+        // S2: the caller is verified once, here. An outsider is answered by
+        // the gate alone: one verification, whether or not the scope has a
+        // cell, and nothing after it runs for them.
+        let admitted = self
+            .outside(connect.is_some())
+            .admit::<E>(principals, request);
+        let member = match admitted {
+            Ok(Admitted::Member(caller)) => Some(caller),
+            Ok(Admitted::Provisioner) => None,
+            Err(response) => return Served::Cell(response),
+        };
+        if let Some(connect) = connect.as_deref_mut()
+            && let Some(routed) = connect.route(self.serving_host(), principals, request, now_ms)
+        {
+            return Served::Connect(routed);
+        }
+        let uploads = connect
+            .as_deref()
+            .map(|connect| -> &dyn norn_api::analytics_routes::Uploads { connect });
+        if member.is_some()
+            && let Some(response) = self.analytics_admitted(principals, uploads, request)
+        {
+            return Served::Cell(response);
+        }
+        Served::Cell(self.handle_admitted(principals, request, member))
+    }
+
     /// Serve one request; every outcome is a status and a JSON document.
     pub fn handle(
         &mut self,
         principals: &dyn PrincipalResolver,
         request: &Request<'_>,
     ) -> Response {
+        let admitted = self.outside(false).admit::<E>(principals, request);
+        match admitted {
+            Ok(Admitted::Member(caller)) => self.handle_admitted(principals, request, Some(caller)),
+            Ok(Admitted::Provisioner) => self.handle_admitted(principals, request, None),
+            Err(response) => response,
+        }
+    }
+
+    /// Serve a request the gate admitted: a verified member (`member`), or a
+    /// provisioner of a scope's first cell on `POST /v1/cell:provision`.
+    fn handle_admitted(
+        &mut self,
+        principals: &dyn PrincipalResolver,
+        request: &Request<'_>,
+        member: Option<crate::policy::Caller>,
+    ) -> Response {
         if request.path == PROVISION_PATH {
             return server::respond(self.provision(principals, request));
         }
+        // A caller who is not a verified member of the organization never
+        // gets here (the gate answers them as a scope with no cell answers,
+        // on every route, before the cell does any work of its own:
+        // #1297 r1 B1, TENANT-ISOLATION-1). Only a provisioner is admitted
+        // without membership, and only to provision.
+        let Some(caller) = member else {
+            return server::respond(Err(norn_api::authz::read_denied()));
+        };
         if let State::Serving(serving) = &mut self.state {
             serving.refresh_definitions();
             if !serving.host.has_pseudonym_key() {
@@ -545,18 +819,9 @@ impl<E: SqlEngine> Tenant<E> {
                     .set_pseudonym_secret(self.pseudonym_secret.as_deref());
             }
         }
-        // A caller who is not a verified member of the organization gets
-        // exactly what a scope with no cell answers, on every route: a
-        // provisioned cell's live runtimes (questions, analytics) never shape
-        // an outsider's answer (#1297 r1 B1, made structural).
-        if matches!(self.state, State::Serving(_))
-            && self.verified_member(principals, request).is_none()
-        {
-            return self.vacant(principals, request, None);
-        }
         match &self.state {
             State::Serving(serving) if request.path == ACCESS_DECIDE_PATH => {
-                self.decide_access(&serving.host, principals, request)
+                self.decide_access(&serving.host, request, &caller)
             }
             State::Serving(serving) if request.path == "/v1/access" => server::access(
                 &serving.host,
@@ -613,8 +878,8 @@ impl<E: SqlEngine> Tenant<E> {
                     .or(questions);
                 server::handle_all(&serving.host, principals, questions, &self.kinds, request)
             }
-            State::Vacant => self.vacant(principals, request, None),
-            State::Unopenable(reason) => self.vacant(principals, request, Some(reason)),
+            State::Vacant => self.vacant(principals, request, &caller, None),
+            State::Unopenable(reason) => self.vacant(principals, request, &caller, Some(reason)),
         }
     }
 
@@ -629,8 +894,8 @@ impl<E: SqlEngine> Tenant<E> {
     fn decide_access(
         &self,
         host: &DevHost<E>,
-        principals: &dyn PrincipalResolver,
         request: &Request<'_>,
+        caller: &crate::policy::Caller,
     ) -> Response {
         const MAX_CHECKS: usize = 32;
         if request.method != "POST" {
@@ -641,12 +906,9 @@ impl<E: SqlEngine> Tenant<E> {
                 "permission checks are asked with POST",
             )));
         }
-        let Some(caller) = self
-            .verified_member(principals, request)
-            .filter(|_| self.names_this_scope(request.query))
-        else {
+        if !self.names_this_scope(request.query) {
             return server::respond(Err(norn_api::authz::read_denied()));
-        };
+        }
         let checks = match serde_json::from_str::<serde_json::Value>(request.body) {
             Ok(body) => body
                 .get("checks")
@@ -695,7 +957,7 @@ impl<E: SqlEngine> Tenant<E> {
             };
             let rule = self
                 .connectors
-                .decide(&caller, &action, (&kind, &id), run_role.as_deref());
+                .decide(caller, &action, (&kind, &id), run_role.as_deref());
             decisions.push(serde_json::json!({
                 "action": action,
                 "resource": { "type": kind, "id": id },
@@ -725,17 +987,17 @@ impl<E: SqlEngine> Tenant<E> {
             })
     }
 
-    /// A request to a scope with no cell, or with one this host cannot open
-    /// (`unopenable`). Only a verified member of the organization learns
-    /// which: anyone else is answered exactly as for a scope with no cell.
+    /// A verified member's request to a scope with no cell, or with one this
+    /// host cannot open (`unopenable`). Only a member naming this scope
+    /// learns which; anyone else is answered by the gate ([`Gate`]).
     fn vacant(
         &self,
         principals: &dyn PrincipalResolver,
         request: &Request<'_>,
+        caller: &crate::policy::Caller,
         unopenable: Option<&str>,
     ) -> Response {
-        let caller = self.verified_member(principals, request);
-        if let Some(caller) = caller.filter(|_| self.names_this_scope(request.query)) {
+        if self.names_this_scope(request.query) {
             let refusal = match unopenable {
                 None => provision::not_provisioned(),
                 Some(reason) => provision::unopenable(
@@ -746,20 +1008,10 @@ impl<E: SqlEngine> Tenant<E> {
                 .with_cause(reason),
             };
             server::respond(Err(refusal))
-        } else if request.path == "/v1/access" {
-            server::access_outside::<E>(principals, request)
-        } else if request.path == ACCESS_DECIDE_PATH {
-            // The shared refusal: a caller outside the cell is denied everything.
-            server::respond(Err(norn_api::authz::read_denied()))
         } else {
-            // Served with what a provisioned cell of this host is served
-            // with (its receipt handles, its kinds), so no route branches
-            // on whether the scope has a cell (#1297 r1).
-            let questions = self
-                .handles
-                .as_ref()
-                .map(|handles| -> &dyn AdHocQuestions<E> { handles });
-            server::outside_with::<E>(questions, &self.kinds, request)
+            // Another scope named: answered as a scope with no cell answers
+            // anyone (the source and upload routes answered before this).
+            self.outside(false).answer::<E>(principals, request)
         }
     }
 
@@ -790,14 +1042,7 @@ impl<E: SqlEngine> Tenant<E> {
         let _request = RequestScope::new(principals);
         let actor = principals.resolve(request.authorization, request.now);
         let actor = actor.as_deref();
-        if request.method != "POST" {
-            return Err(Refusal::new(
-                StatusCode::METHOD_NOT_ALLOWED,
-                "route.method_not_allowed",
-                "the route does not accept this method",
-                "a cell is provisioned with POST",
-            ));
-        }
+        provision_method(request)?;
         let mut fields = server::parse(request.query, &["orgId", "environmentId"])?;
         let scope = ScopeQuery {
             org_id: fields.remove("orgId"),

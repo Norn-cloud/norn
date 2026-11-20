@@ -39,6 +39,10 @@ export class NornCell {
   static fixturesEnabled() { return stub.fixtures; }
   constructor() { throw new Error("no cell opens in this test"); }
 }
+// The tenant membership gate (TENANT-ISOLATION-1); the conformance scope is a demo scope, never gated.
+export class NornGate {
+  constructor() { throw new Error("no gate opens in this test"); }
+}
 Object.defineProperty(NornCell.prototype, "ledgerHead", { get() { return stub.fixtures ? function () { return "{}"; } : undefined; } });
 `,
   )

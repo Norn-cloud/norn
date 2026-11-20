@@ -14,7 +14,7 @@ def validate():
     manifest = json.loads((HERE / "manifest.json").read_text())
     assert manifest["schemaVersion"] == "norn.verification.kernel-v2/1"
     assert manifest["quint"] == "0.32.0" and manifest["apalache"] == "0.56.1"
-    harness = (ROOT / "crates/norn-testkit/tests/kernel_quint.rs").read_text()
+    harness = (ROOT / "crates/norn-cell/tests/kernel_quint.rs").read_text()
     gates = json.loads((HERE.parent / "coverage-v1/promoted-gates.json").read_text())["gates"]
     gates = {gate["id"]: gate for gate in gates}
     assert "check_commit(&commit" in harness and "CellStore::open" in harness
