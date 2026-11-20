@@ -160,6 +160,10 @@ fn preimage(input: &ConsumedInput) -> Result<Option<Value>, CellError> {
 }
 
 /// Persist a commit's replayable export record in the same engine transaction.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one commit's record fields, all written in the same transaction"
+)]
 pub(crate) fn record<E: SqlEngine>(
     engine: &E,
     model: &Model,
