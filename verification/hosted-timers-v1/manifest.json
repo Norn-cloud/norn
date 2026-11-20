@@ -50,7 +50,7 @@
         "lateness": 3,
         "progressStep": "stepProgress: idle time and whole alarm rounds (the clock moves at most FAIR past the alarm, then one run_due pass, completed or lost after any prefix, then the final alarm), over the deploy-time cell's items, opened at time 0",
         "newDeadlines": "1..3 units ahead",
-        "progressDepth": "Apalache depth 6 for safety (the deepest mutant needs 5 steps), depth 5 for progress (the advisory-retry mutant needs 4); seeded simulation of 10,000 traces to depth 15"
+        "progressDepth": "Apalache depth 6 for safety, not 7: depth 7 holds but takes 498 s on a 4-vCPU Boat VM, over the fast profile's 300 s per-attempt budget, so the gate claims depth 6 only (the deepest safety mutant needs 5 steps); depth 5 for progress (the advisory-retry mutant needs 4); seeded simulation of 10,000 traces to depth 15"
       },
       "assumptions": [
         "A1 a DO storage write (setAlarm, a cell commit) is durable when its await resolves; one alarm handler runs at a time",
@@ -128,6 +128,13 @@
           "invariant": "healthyNotStarved",
           "maxSteps": 5,
           "meaning": "S3/R1: retry timing is advisory, so failing items refill every pass and a healthy item behind them starves"
+        },
+        {
+          "init": "initOpened",
+          "step": "stepDeferOverflow",
+          "invariant": "healthyNotStarved",
+          "maxSteps": 5,
+          "meaning": "Sol r2 S3: a pass that leaves eligible work asks for the recovery wake instead of waking at once, so a healthy item behind older failing items is handled past its lateness bound on the pass that completes it (only the doneAt clause sees it)"
         }
       ],
       "witnesses": [
@@ -164,6 +171,12 @@
           "step": "stepProgress",
           "invariant": "witnessHealthyAfterSkip",
           "maxSteps": 5
+        },
+        {
+          "init": "initOpened",
+          "step": "stepProgress",
+          "invariant": "witnessHealthyAtLateBound",
+          "maxSteps": 7
         }
       ],
       "checks": [

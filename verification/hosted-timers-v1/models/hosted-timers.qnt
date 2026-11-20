@@ -52,12 +52,13 @@ module hosted_timers {
     scheduledRuleTimer: bool,       // P1: the timer runs the rule active when it was scheduled
     failureStopsPass: bool,         // R1: the first failure ends the pass, nothing persisted
     advisoryRetry: bool,            // R1: retry eligibility is not persisted
+    deferOverflow: bool,            // R2: a pass that leaves eligible work asks for the recovery wake, not at once
   }
   pure val NOMUT: Mut = {
     noGuard: false, laterAlarmReplaces: false, noRecoveryWake: false,
     dropRecoveryWhileWriting: false, noOpenArm: false, splitExpiry: false,
     noFirstWins: false, activeRuleTimer: false, scheduledRuleTimer: false,
-    failureStopsPass: false, advisoryRetry: false,
+    failureStopsPass: false, advisoryRetry: false, deferOverflow: false,
   }
 
   // Bounds. Three item slots against a per-wake budget of two stand in for
@@ -115,10 +116,11 @@ module hosted_timers {
   var req: int -> str              // "none" | "guarded" | "committed"
   // History, for the properties.
   var faults: int
-  var skipped: int -> int          // consecutive completed passes that left the item due and untried
+  var skipped: int -> int          // consecutive completed passes that left the item due and untried (kept once handled)
   var everSkipped: int -> bool
   var doneAt: int -> int           // when it was handled, NONE before
   var firstFail: int -> int        // when it first failed, NONE before
+  var lostIsolate: bool            // an isolate was lost (a fault apart from a failed resolving commit)
 
   def eligible(i: int): int = max(dl.get(i), retryAt.get(i))
   def writing: bool = REQS.exists(r => req.get(r) != "none")
@@ -156,7 +158,6 @@ module hosted_timers {
   // The state a pass leaves, as one simultaneous update of the item maps.
   action runDue(cut: int, lost: bool, cf: int, m: Mut): bool = {
     val t = tried(cut, lost, cf, m)
-    val c = cand
     val handled = t.filter(i => ok(i, cf))
     val failed = t.filter(i => not(ok(i, cf)))
     // A healthy decision records its expiry before the resolving commit
@@ -200,16 +201,11 @@ module hosted_timers {
       resumed' = ITEMS.mapBy(i =>
         if (handled.contains(i) and kind.get(i) == "decision" and dec.get(i) == "recorded") true
         else resumed.get(i)),
-      doneAt' = ITEMS.mapBy(i => if (handled.contains(i)) now else doneAt.get(i)),
-      firstFail' = ITEMS.mapBy(i =>
-        if (failed.contains(i) and firstFail.get(i) == NONE) now else firstFail.get(i)),
-      // Counted for completed passes only.
-      skipped' = ITEMS.mapBy(i =>
-        if (t.contains(i)) 0
-        else if (not(lost) and c.contains(i)) skipped.get(i) + 1
-        else skipped.get(i)),
-      everSkipped' = ITEMS.mapBy(i =>
-        everSkipped.get(i) or (not(lost) and c.contains(i) and not(t.contains(i)))),
+      // The progress history (doneAt, firstFail, skipped, everSkipped) is
+      // kept by the whole rounds of stepProgress (roundAt), where the
+      // progress invariants and their witnesses are checked; no safety
+      // invariant or safety-step witness reads it, so this step leaves it.
+      doneAt' = doneAt, firstFail' = firstFail, skipped' = skipped, everSkipped' = everSkipped,
     }
   }
   // wake.alarm's final set, after the due work.
@@ -253,6 +249,7 @@ module hosted_timers {
     everSkipped' = ITEMS.mapBy(_ => false),
     doneAt' = ITEMS.mapBy(_ => NONE),
     firstFail' = ITEMS.mapBy(_ => NONE),
+    lostIsolate' = false,
   }
   action initAs(op: bool, m: Mut): bool = {
     nondet d0 = ITEMS.setOfMaps(LEGACY_DEADLINES.union(Set(NONE))).oneOf()
@@ -291,6 +288,7 @@ module hosted_timers {
     decRes' = decRes, resumed' = resumed, activeRule' = activeRule, seenRules' = seenRules,
     phase' = phase, req' = req, faults' = faults, skipped' = skipped, everSkipped' = everSkipped,
     doneAt' = doneAt, firstFail' = firstFail,
+    lostIsolate' = lostIsolate,
   }
 
   // beforeWrite (W1): the guard is durable before the request may write.
@@ -305,6 +303,7 @@ module hosted_timers {
     firstRec' = firstRec, decRes' = decRes, resumed' = resumed, activeRule' = activeRule,
     seenRules' = seenRules, phase' = phase, faults' = faults, skipped' = skipped,
     everSkipped' = everSkipped, doneAt' = doneAt, firstFail' = firstFail,
+    lostIsolate' = lostIsolate,
   }
 
   // The request commits a new item with a deadline (a reservation with an
@@ -337,6 +336,7 @@ module hosted_timers {
     everSkipped' = everSkipped.set(i, false),
     doneAt' = doneAt.set(i, NONE),
     firstFail' = firstFail.set(i, NONE),
+    lostIsolate' = lostIsolate,
     now' = now, opened' = opened, wake' = wake, activeRule' = activeRule, seenRules' = seenRules,
     phase' = phase, faults' = faults,
     }
@@ -353,6 +353,7 @@ module hosted_timers {
     firstRec' = firstRec, decRes' = decRes, resumed' = resumed, activeRule' = activeRule,
     seenRules' = seenRules, phase' = phase, faults' = faults, skipped' = skipped,
     everSkipped' = everSkipped, doneAt' = doneAt, firstFail' = firstFail,
+    lostIsolate' = lostIsolate,
   }
 
   // A decider resolves an open decision: its result is recorded first
@@ -373,6 +374,7 @@ module hosted_timers {
     activeRule' = activeRule, seenRules' = seenRules, phase' = phase, req' = req,
     faults' = faults, skipped' = skipped, everSkipped' = everSkipped, doneAt' = doneAt,
     firstFail' = firstFail,
+    lostIsolate' = lostIsolate,
   }
 
   // The clock advances, never past a durable alarm by more than FAIR.
@@ -388,6 +390,7 @@ module hosted_timers {
     activeRule' = activeRule, seenRules' = seenRules, phase' = phase, req' = req,
     faults' = faults, skipped' = skipped, everSkipped' = everSkipped, doneAt' = doneAt,
     firstFail' = firstFail,
+    lostIsolate' = lostIsolate,
   }
 
   // The runtime delivers the alarm: the recovery wake goes down first (W3),
@@ -406,6 +409,7 @@ module hosted_timers {
     phase' = if (lost) "idle" else "ran",
     req' = if (lost) REQS.mapBy(_ => "none") else req,
     faults' = faults + b2i(lost) + b2i(cf != NONE),
+    lostIsolate' = (lostIsolate or lost),
     now' = now, opened' = true, dl' = dl, kind' = kind, healthy' = healthy, pinned' = pinned,
     ruleAtWrite' = ruleAtWrite, activeRule' = activeRule, seenRules' = seenRules,
   }
@@ -422,6 +426,7 @@ module hosted_timers {
     firstRec' = firstRec, decRes' = decRes, resumed' = resumed, activeRule' = activeRule,
     seenRules' = seenRules, req' = req, faults' = faults, skipped' = skipped,
     everSkipped' = everSkipped, doneAt' = doneAt, firstFail' = firstFail,
+    lostIsolate' = lostIsolate,
   }
 
   // The isolate is lost between steps (eviction, a throw the runtime gives
@@ -432,6 +437,7 @@ module hosted_timers {
     phase' = "idle",
     req' = REQS.mapBy(_ => "none"),
     faults' = faults + 1,
+    lostIsolate' = true,
     now' = now, opened' = opened, live' = live, dl' = dl, kind' = kind, healthy' = healthy,
     attempts' = attempts, retryAt' = retryAt, pinned' = pinned, ruleAtWrite' = ruleAtWrite,
     firedRule' = firedRule, activeAtFire' = activeAtFire, dec' = dec, decRec' = decRec,
@@ -451,6 +457,7 @@ module hosted_timers {
     firstRec' = firstRec, decRes' = decRes, resumed' = resumed, wake' = wake, phase' = phase,
     req' = req, faults' = faults, skipped' = skipped, everSkipped' = everSkipped,
     doneAt' = doneAt, firstFail' = firstFail,
+    lostIsolate' = lostIsolate,
   }
 
   action stepWith(m: Mut): bool = {
@@ -523,7 +530,8 @@ module hosted_timers {
       else retryAt.get(i))
     val stopped = m.failureStopsPass and ch.exists(i => not(tr.contains(i)))
     def due2(i: int): int = if (live2.get(i)) max(dl.get(i), ra2.get(i)) else NONE
-    val nx = if (ctCount > BUDGET or stopped) t
+    // Work left for the next wake: wake at once (DueWork::next = the wake time).
+    val nx = if (ctCount > BUDGET or stopped) (if (m.deferOverflow) t + RECOVERY else t)
       else minWake(minWake(due2(1), due2(2)), due2(3))
     all {
       live' = live2,
@@ -555,13 +563,15 @@ module hosted_timers {
       firstFail' = ITEMS.mapBy(i =>
         if (failed.contains(i) and firstFail.get(i) == NONE) t else firstFail.get(i)),
       skipped' = ITEMS.mapBy(i =>
-        if (tr.contains(i)) 0
+        if (failed.contains(i)) 0
+        else if (handled.contains(i)) skipped.get(i)
         else if (not(lost) and ct.contains(i)) skipped.get(i) + 1
         else skipped.get(i)),
       everSkipped' = ITEMS.mapBy(i =>
         everSkipped.get(i) or (not(lost) and ct.contains(i) and not(tr.contains(i)))),
       wake' = if (lost) t + RECOVERY else finalWake(t, nx, false, m),
       faults' = faults + b2i(lost) + b2i(cf != NONE),
+      lostIsolate' = (lostIsolate or lost),
       opened' = opened, dl' = dl, kind' = kind, healthy' = healthy, pinned' = pinned,
       ruleAtWrite' = ruleAtWrite, activeRule' = activeRule, seenRules' = seenRules,
       phase' = phase, req' = req,
@@ -598,6 +608,7 @@ module hosted_timers {
   action stepScheduledRuleTimer = stepWith({ ...NOMUT, scheduledRuleTimer: true })
   action stepFailureStopsPass = progressWith({ ...NOMUT, failureStopsPass: true })
   action stepAdvisoryRetry = progressWith({ ...NOMUT, advisoryRetry: true })
+  action stepDeferOverflow = progressWith({ ...NOMUT, deferOverflow: true })
 
   // ---- Safety -----------------------------------------------------------------
 
@@ -656,9 +667,13 @@ module hosted_timers {
 
   // R1/R2: a healthy item is handled within LATENESS of its deadline, plus a
   // recovery interval and a fairness lag per fault, however many failing
-  // items are older.
-  def healthyNotStarved: bool = ITEMS.forall(i =>
-    (live.get(i) and healthy.get(i)) implies now <= dl.get(i) + LATENESS + faults * (RECOVERY + FAIR + 1))
+  // items are older. Checked while it waits and on the pass that handles it
+  // (doneAt), so a pass that completes it late is refuted too.
+  def lateBound(i: int): int = dl.get(i) + LATENESS + faults * (RECOVERY + FAIR + 1)
+  def healthyNotStarved: bool = ITEMS.forall(i => healthy.get(i) implies and {
+    live.get(i) implies now <= lateBound(i),
+    doneAt.get(i) != NONE implies doneAt.get(i) <= lateBound(i),
+  })
 
   def safety: bool = and { typeOk, wakeCovers, expiryRecoverable, expiryAtomic, timerRunsPinnedRule }
   def progress: bool = and { typeOk, dueProgress, healthyNotStarved }
@@ -685,12 +700,17 @@ module hosted_timers {
   // guard covers a new deadline exactly: both are at least one unit ahead.)
   def witnessLateCovered: bool = not(opened and wake != NONE and ITEMS.exists(i =>
     live.get(i) and wake > eligible(i)))
-  // An isolate was lost with due work pending.
+  // An isolate was lost (not a failed resolving commit) with due work pending.
   def witnessLostWithDueWork: bool =
-    not(faults > 0 and phase == "idle" and ITEMS.exists(i => live.get(i) and eligible(i) <= now))
+    not(lostIsolate and phase == "idle" and ITEMS.exists(i => live.get(i) and eligible(i) <= now))
   // A healthy item was skipped once for older failing items, then handled.
   def witnessHealthyAfterSkip: bool = not(ITEMS.exists(j =>
     healthy.get(j) and everSkipped.get(j) and doneAt.get(j) != NONE and ITEMS.exists(i =>
       not(healthy.get(i)) and firstFail.get(i) != NONE and firstFail.get(i) <= doneAt.get(j)
         and dl.get(i) <= dl.get(j))))
+  // healthyNotStarved's bound is reached: a healthy item skipped three times
+  // (two for older failing items, one more after a fault) is handled exactly
+  // at its lateness bound.
+  def witnessHealthyAtLateBound: bool = not(ITEMS.exists(i =>
+    healthy.get(i) and doneAt.get(i) != NONE and skipped.get(i) == 3 and doneAt.get(i) == lateBound(i)))
 }

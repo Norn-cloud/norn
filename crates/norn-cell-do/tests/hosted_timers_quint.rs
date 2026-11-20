@@ -9,8 +9,10 @@
 //! failing slot's rows do not decode (an ordinary timer, or a quantity
 //! expiry for a `reservation` slot). One model time unit is
 //! `STUCK_RETRY_MS`. Every state checks the alarm the cell asks for; every
-//! pass checks which slots were handled and failed, each failed slot's
-//! persisted retry record, and the wake the pass returns.
+//! pass checks which slots were handled and failed, in the order the model
+//! tries them (the failures `run_due` reports and the timers its commits
+//! consume, each in sequence), each failed slot's persisted retry record,
+//! and the wake the pass returns.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -181,6 +183,86 @@ fn retries(path: &Path) -> BTreeMap<String, (i64, u64)> {
         .collect()
 }
 
+/// The timers consumed by the commits after `after`, in commit order.
+fn consumed_since(path: &Path, after: i64) -> (Vec<String>, i64) {
+    let engine = NativeEngine::open(path, StoreOptions::default()).unwrap();
+    let rows = engine
+        .query(
+            r#"SELECT "commit_seq", json_extract("receipt", '$.consumed.timerId') FROM "_norn_receipt" WHERE "commit_seq" > ?1 ORDER BY "commit_seq""#,
+            &[SqlValue::Integer(after)],
+        )
+        .unwrap();
+    let mut last = after;
+    let mut ids = Vec::new();
+    for row in rows {
+        match row.as_slice() {
+            [SqlValue::Integer(seq), consumed] => {
+                last = *seq;
+                if let SqlValue::Text(id) = consumed {
+                    ids.push(id.clone());
+                }
+            }
+            other => panic!("receipt row {other:?}"),
+        }
+    }
+    (ids, last)
+}
+
+/// The row a `DueWork::failed` entry names.
+fn failed_row(why: &str) -> String {
+    let rest = why
+        .strip_prefix("quantity expiry ")
+        .or_else(|| why.strip_prefix("timer "))
+        .unwrap_or_else(|| panic!("unexpected failure {why}"));
+    rest.split_once(": ").map_or(rest, |(id, _)| id).to_owned()
+}
+
+/// The model's order of trying items (R2): original deadline, kind, slot.
+fn kind_rank(kind: &str) -> u8 {
+    match kind {
+        "reservation" => 0,
+        "timer" => 1,
+        _ => 2,
+    }
+}
+
+/// R2: the failures `run_due` reports and the timers its commits consumed
+/// since commit `seen` are the model's tried slots in its order (original
+/// deadline, kind, slot), row by row; returns the last commit read.
+fn check_order(
+    path: &Path,
+    old: &BTreeMap<i64, Slot>,
+    new: &BTreeMap<i64, Slot>,
+    failed: &[String],
+    seen: i64,
+    at: &str,
+) -> i64 {
+    let mut tried: Vec<(&i64, &Slot)> = old
+        .iter()
+        .filter(|(i, s)| (s.live && !new[i].live) || new[i].attempts > s.attempts)
+        .collect();
+    tried.sort_by_key(|(i, s)| (s.dl, kind_rank(&s.kind), **i));
+    let rows = |handled: bool| -> Vec<String> {
+        tried
+            .iter()
+            .filter(|(i, _)| new[i].live != handled)
+            .flat_map(|(i, s)| (0..ROWS).map(|row| row_id(**i, &s.kind, row)))
+            .collect()
+    };
+    let (consumed, last) = consumed_since(path, seen);
+    assert_eq!(
+        failed.iter().map(|why| failed_row(why)).collect::<Vec<_>>(),
+        rows(false),
+        "{at}: the failures, in the order tried"
+    );
+    assert_eq!(
+        consumed,
+        rows(true),
+        "{at}: the timers consumed, in the order tried"
+    );
+    last
+}
+
 /// The model's wake as the alarm time (`None` = no alarm).
 fn wake_ms(state: &Value) -> Option<u64> {
     let wake = int(state, "wake");
@@ -202,6 +284,7 @@ fn hosted_timers_quint_traces() {
             }
         }
         let name = file.display();
+        let mut seen = 0_i64;
         for (step, pair) in states.windows(2).enumerate() {
             let (before, after) = (&pair[0], &pair[1]);
             let now = int(before, "now");
@@ -220,6 +303,14 @@ fn hosted_timers_quint_traces() {
             let at = int(after, "now");
             let work = run_due(&cell, LogicalTime::from_millis(ms(at))).unwrap();
             passes += 1;
+            seen = check_order(
+                &path,
+                &old,
+                &new,
+                &work.failed,
+                seen,
+                &format!("{name} step {step}"),
+            );
             let handled = old.iter().filter(|(i, s)| s.live && !new[i].live).count();
             let failed = old
                 .iter()
