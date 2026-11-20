@@ -1,12 +1,16 @@
-// Approval fencing against definition changes (APPROVAL-REVISION-1, #1464):
-// the design that Sol's round-1 review of #1464 asked for (S6 and the
-// digest-coverage finding), not the round-1 code.
+// Approval fencing against definition changes (APPROVAL-REVISION-1) as #1464
+// merged it (962938d).
 //
-// Source of truth for the shape: crates/norn-api/src/approvals.rs,
-// action_admission.rs and cell_definitions.rs as of #1464 head 0d0cbbd. A
-// parked call records its action's digest; approving compares it with the
-// current definition's digest; a definition change takes the definition
-// epoch exclusively.
+// Source of truth for the shape: crates/norn-api/src/actions.rs
+// (through_gate, effective_digest), approvals.rs (hold, call_command_id) and
+// cell_definitions.rs. A parked call records its action's effective digest
+// and the gate revision; the approved dispatch compares them with the
+// current ones under the definition epoch and the cell it holds, before
+// anything parks or writes; a definitions install takes the epoch
+// exclusively.
+//
+// A supporting check of the hosted approval path. It is not evidence for
+// INV-AUTH-STALE-REJECT (the owner-version compare-and-swap).
 //
 // The design this model fixes (each is a mechanism a mutant removes):
 //   F1 the digest comparison and the dispatch (park or write) happen inside
@@ -38,6 +42,10 @@ module approval_fencing {
   var parked: int -> Def        // the definition each call parked under
   var matched: int -> bool      // the digest comparison's result
   var ran: int -> Def           // the definition an executed step ran under
+  // History, for the witnesses.
+  var parkedAt: int -> int      // revisions when the call last parked
+  var ranAt: int -> int         // revisions when it executed
+  var refusals: int -> int      // how often it was refused
 
   pure def digest(d: Def, m: Mut): Def = (if (m.narrowDigest) NARROW else PARTS).mapBy(p => d.get(p))
 
@@ -51,6 +59,9 @@ module approval_fencing {
     parked' = CALLS.mapBy(_ => INITIAL),
     matched' = CALLS.mapBy(_ => false),
     ran' = CALLS.mapBy(_ => INITIAL),
+    parkedAt' = CALLS.mapBy(_ => 0),
+    ranAt' = CALLS.mapBy(_ => 0),
+    refusals' = CALLS.mapBy(_ => 0),
   }
 
   // A requester's call parks for approval under the active definition; a
@@ -59,7 +70,9 @@ module approval_fencing {
     state.get(c) == "none" or state.get(c) == "refused",
     state' = state.set(c, "parked"),
     parked' = parked.set(c, active),
+    parkedAt' = parkedAt.set(c, revisions),
     active' = active, revisions' = revisions, readers' = readers, matched' = matched, ran' = ran,
+    ranAt' = ranAt, refusals' = refusals,
   }
 
   // A definition change takes the epoch exclusively.
@@ -69,6 +82,7 @@ module approval_fencing {
     active' = if (p == "unrelated") active else active.set(p, active.get(p) + 1),
     revisions' = revisions + 1,
     readers' = readers, state' = state, parked' = parked, matched' = matched, ran' = ran,
+    parkedAt' = parkedAt, ranAt' = ranAt, refusals' = refusals,
   }
 
   // The approver approves: the digest is compared under the held epoch.
@@ -79,6 +93,7 @@ module approval_fencing {
     matched' = matched.set(c, digest(active, m) == digest(parked.get(c), m)),
     readers' = if (m.unfencedCheck) readers else readers.union(Set(c)),
     active' = active, revisions' = revisions, parked' = parked, ran' = ran,
+    parkedAt' = parkedAt, ranAt' = ranAt, refusals' = refusals,
   }
 
   // Still in the same epoch: run the step it licensed, or refuse with
@@ -87,8 +102,11 @@ module approval_fencing {
     state.get(c) == "checking",
     state' = state.set(c, if (matched.get(c)) "executed" else "refused"),
     ran' = if (matched.get(c)) ran.set(c, active) else ran,
+    ranAt' = if (matched.get(c)) ranAt.set(c, revisions) else ranAt,
+    refusals' = if (matched.get(c)) refusals else refusals.set(c, refusals.get(c) + 1),
     readers' = readers.exclude(Set(c)),
     active' = active, revisions' = revisions, parked' = parked, matched' = matched,
+    parkedAt' = parkedAt,
   }
 
   // Mutant only (F2): the server drives the waiting step after refusing it.
@@ -97,7 +115,9 @@ module approval_fencing {
     state.get(c) == "refused",
     state' = state.set(c, "executed"),
     ran' = ran.set(c, active),
+    ranAt' = ranAt.set(c, revisions),
     active' = active, revisions' = revisions, readers' = readers, parked' = parked, matched' = matched,
+    parkedAt' = parkedAt, refusals' = refusals,
   }
 
   action stepWith(m: Mut): bool = {
@@ -107,6 +127,19 @@ module approval_fencing {
   }
 
   action step = stepWith(NOMUT)
+  // Conformance traces (crates/norn-cell-do/tests/approval_fencing_quint.rs):
+  // the fixture has two versions of the action's writer, so the action
+  // changes at most once; any other revision reinstalls it unchanged.
+  action stepConform = {
+    nondet c = CALLS.oneOf()
+    nondet p = Set("action", "unrelated").oneOf()
+    any {
+      park(c),
+      all { p == "unrelated" or active.get("action") == 0, change(p) },
+      approve(c, NOMUT),
+      dispatch(c),
+    }
+  }
   action stepUnfencedCheck = stepWith({ ...NOMUT, unfencedCheck: true })
   action stepDriveAfterRefusal = stepWith({ ...NOMUT, driveAfterRefusal: true })
   action stepNarrowDigest = stepWith({ ...NOMUT, narrowDigest: true })
@@ -129,8 +162,11 @@ module approval_fencing {
 
   def witnessExecuted: bool = not(CALLS.exists(c => state.get(c) == "executed"))
   def witnessRefusedAfterChange: bool = not(CALLS.exists(c => state.get(c) == "refused"))
-  def witnessUnrelatedRevisionKeepsApproval: bool =
-    not(revisions > 0 and CALLS.exists(c => state.get(c) == "executed" and ran.get(c) == INITIAL))
-  def witnessReparkedThenExecuted: bool =
-    not(CALLS.exists(c => state.get(c) == "executed" and ran.get(c) != INITIAL))
+  // A revision that kept every part landed between the park and the
+  // execution, and the approval still executed the call.
+  def witnessUnrelatedRevisionKeepsApproval: bool = not(CALLS.exists(c =>
+    state.get(c) == "executed" and ranAt.get(c) > parkedAt.get(c) and ran.get(c) == parked.get(c)))
+  // Parked, refused after a change, parked anew, approved and executed.
+  def witnessReparkedThenExecuted: bool = not(CALLS.exists(c =>
+    state.get(c) == "executed" and refusals.get(c) >= 1 and parkedAt.get(c) >= 1))
 }

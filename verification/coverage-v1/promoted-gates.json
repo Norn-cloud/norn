@@ -1193,7 +1193,7 @@
     {
       "id": "hosted-timers-quint",
       "profile": "fast",
-      "command": "quint verify verification/hosted-timers-v1/models/hosted-timers.qnt --backend apalache --invariants typeOk wakeCovers expiryAtomic timerRunsPinnedRule --max-steps 7",
+      "command": "quint verify verification/hosted-timers-v1/models/hosted-timers.qnt --backend apalache --invariants typeOk wakeCovers expiryRecoverable expiryAtomic timerRunsPinnedRule --max-steps 8",
       "evidenceKind": "command",
       "role": "supporting-check",
       "classifications": [
@@ -1210,7 +1210,7 @@
     {
       "id": "hosted-timers-progress-quint",
       "profile": "full",
-      "command": "quint verify verification/hosted-timers-v1/models/hosted-timers.qnt --backend apalache --step stepProgress --invariants typeOk dueProgress healthyNotStarved --max-steps 4",
+      "command": "quint verify verification/hosted-timers-v1/models/hosted-timers.qnt --backend apalache --init initOpened --step stepProgress --invariants typeOk dueProgress healthyNotStarved --max-steps 5",
       "evidenceKind": "command",
       "role": "supporting-check",
       "classifications": [
@@ -1227,7 +1227,7 @@
     {
       "id": "hosted-timers-progress-sim",
       "profile": "fast",
-      "command": "quint run verification/hosted-timers-v1/models/hosted-timers.qnt --step stepProgress --invariant progress --max-steps 15 --max-samples 10000 --seed 1",
+      "command": "quint run verification/hosted-timers-v1/models/hosted-timers.qnt --init initOpened --step stepProgress --invariant progress --max-steps 15 --max-samples 10000 --seed 1",
       "evidenceKind": "command",
       "role": "supporting-check",
       "classifications": [
@@ -1259,7 +1259,7 @@
       "profile": "fast",
       "command": "quint verify verification/hosted-timers-v1/models/approval-fencing.qnt --backend apalache --invariants typeOk noStaleApprovedExecution --max-steps 10",
       "evidenceKind": "command",
-      "role": "claim-evidence",
+      "role": "supporting-check",
       "classifications": [
         {
           "subsystem": "transition-authority",
@@ -1281,6 +1281,21 @@
         {
           "subsystem": "transition-authority",
           "layer": "model"
+        }
+      ],
+      "resultArtifacts": [],
+      "generatedArtifacts": []
+    },
+    {
+      "id": "hosted-timers-conformance",
+      "profile": "full",
+      "command": "cargo test --locked -p norn-cell-do --test hosted_timers_quint --test approval_fencing_quint",
+      "evidenceKind": "rust-tests",
+      "role": "supporting-check",
+      "classifications": [
+        {
+          "subsystem": "transition-authority",
+          "layer": "runtime"
         }
       ],
       "resultArtifacts": [],
