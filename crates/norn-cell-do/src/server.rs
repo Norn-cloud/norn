@@ -2094,6 +2094,64 @@ const CAPABILITIES: [(ReadCapability, &str); 3] = [
     (ReadCapability::Sources, "sources"),
 ];
 
+/// The caller's decision per read capability, with the grant-table role that
+/// grants each permitted one.
+fn caller_decisions(
+    roles: &[String],
+    decisions: &[(ReadCapability, Result<(), Refusal>)],
+) -> BTreeMap<&'static str, AccessDecision> {
+    decisions
+        .iter()
+        .zip(CAPABILITIES)
+        .map(|((capability, decided), (_, name))| {
+            let rule = DEMO_GRANTS
+                .entries
+                .iter()
+                .find(|(role, granted)| {
+                    roles.iter().any(|held| held == role) && granted.contains(capability)
+                })
+                .map(|(role, _)| format!("{}:{role}", DEMO_GRANTS.version));
+            let decision = if decided.is_ok() { "permit" } else { "deny" };
+            (
+                name,
+                AccessDecision {
+                    decision,
+                    rule: decided.is_ok().then_some(rule).flatten(),
+                },
+            )
+        })
+        .collect()
+}
+
+/// What each declared role alone may do with `object_type`, as the PDPs decide.
+fn role_access(explainer: &RoleExplainer<'_>, object_type: &str) -> Vec<RoleAccess> {
+    explainer
+        .reads
+        .roles()
+        .into_iter()
+        .map(|role| RoleAccess {
+            role,
+            read: CAPABILITIES
+                .iter()
+                .map(|(capability, name)| {
+                    let permitted = explainer.reads.permits(role, *capability, object_type);
+                    (
+                        *name,
+                        AccessDecision {
+                            decision: if permitted { "permit" } else { "deny" },
+                            rule: permitted.then(|| format!("{}:{role}", explainer.reads.table())),
+                        },
+                    )
+                })
+                .collect(),
+            actions: explainer
+                .actions
+                .map(|policy| policy.role_decisions(role, object_type))
+                .unwrap_or_default(),
+        })
+        .collect()
+}
+
 fn access_document<E: SqlEngine>(
     host: Option<&DevHost<E>>,
     principals: &dyn PrincipalResolver,
@@ -2119,15 +2177,11 @@ fn access_document<E: SqlEngine>(
     // With `objectType`, the decisions are over that one collection, and the
     // document adds what each declared role may do with it.
     let asked = fields.get("objectType").cloned();
-    let one;
     let object_types = match &asked {
-        Some(object_type) => {
-            if !object_types.contains(object_type) {
-                return Err(norn_api::authz::read_denied());
-            }
-            one = [object_type.clone()];
-            &one[..]
+        Some(object_type) if !object_types.contains(object_type) => {
+            return Err(norn_api::authz::read_denied());
         }
+        Some(object_type) => std::slice::from_ref(object_type),
         None => object_types,
     };
     // The verified principal lives exactly as long as this request.
@@ -2150,14 +2204,10 @@ fn access_document<E: SqlEngine>(
         }
         first_denial.map_or(Ok(()), Err)
     };
-    let decisions: Vec<(ReadCapability, Result<(), Refusal>)> = [
-        ReadCapability::Population,
-        ReadCapability::Values,
-        ReadCapability::Sources,
-    ]
-    .into_iter()
-    .map(|capability| (capability, decide(capability)))
-    .collect();
+    let decisions: Vec<(ReadCapability, Result<(), Refusal>)> = CAPABILITIES
+        .iter()
+        .map(|(capability, _)| (*capability, decide(*capability)))
+        .collect();
     let caller = caller
         .current()
         .filter(|caller| Some(&caller.subject_id) == subject.as_ref());
@@ -2168,71 +2218,21 @@ fn access_document<E: SqlEngine>(
             .find_map(|(_, decided)| decided.err())
             .unwrap_or_else(|| Refusal::invalid("the cell publishes no collection")));
     };
-    let capabilities = decisions
-        .iter()
-        .map(|(capability, decided)| {
-            let name = match capability {
-                ReadCapability::Population => "population",
-                ReadCapability::Values => "values",
-                ReadCapability::Sources => "sources",
-            };
-            let rule = DEMO_GRANTS
-                .entries
-                .iter()
-                .find(|(role, granted)| {
-                    caller.roles.iter().any(|held| held == role) && granted.contains(capability)
-                })
-                .map(|(role, _)| format!("{}:{role}", DEMO_GRANTS.version));
-            let decision = if decided.is_ok() { "permit" } else { "deny" };
-            (
-                name,
-                AccessDecision {
-                    decision,
-                    rule: decided.is_ok().then_some(rule).flatten(),
-                },
-            )
-        })
-        .collect();
-    let roles = match (&asked, explainer) {
-        (None, _) => None,
+    let capabilities = caller_decisions(&caller.roles, &decisions);
+    let roles = match asked.as_deref() {
+        None => None,
         // The caller must read the collection's population to be told who
         // else may: a caller denied it is denied the whole document.
-        (Some(_), _)
-            if decisions.iter().any(|(capability, decided)| {
-                *capability == ReadCapability::Population && decided.is_err()
-            }) =>
-        {
-            return Err(norn_api::authz::read_denied());
-        }
-        (Some(_), None) => return Err(norn_api::authz::read_denied()),
-        (Some(object_type), Some(explainer)) => Some(
-            explainer
-                .reads
-                .roles()
-                .into_iter()
-                .map(|role| RoleAccess {
-                    role,
-                    read: CAPABILITIES
-                        .iter()
-                        .map(|(capability, name)| {
-                            let permitted = explainer.reads.permits(role, *capability, object_type);
-                            (
-                                *name,
-                                AccessDecision {
-                                    decision: if permitted { "permit" } else { "deny" },
-                                    rule: permitted
-                                        .then(|| format!("{}:{role}", explainer.reads.table())),
-                                },
-                            )
-                        })
-                        .collect(),
-                    actions: explainer
-                        .actions
-                        .map(|policy| policy.role_decisions(role, object_type))
-                        .unwrap_or_default(),
+        Some(object_type) => {
+            let Some(explainer) = explainer.filter(|_| {
+                decisions.iter().all(|(capability, decided)| {
+                    *capability != ReadCapability::Population || decided.is_ok()
                 })
-                .collect(),
-        ),
+            }) else {
+                return Err(norn_api::authz::read_denied());
+            };
+            Some(role_access(explainer, object_type))
+        }
     };
     document_json(&AccessDocument {
         principal: AccessPrincipal {

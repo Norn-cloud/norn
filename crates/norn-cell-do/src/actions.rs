@@ -107,6 +107,58 @@ fn target_kind(action: &ActionRoot) -> Option<&str> {
     Some(action.effect_program.as_ref()?.target().object_kind)
 }
 
+/// For each action, the role lists of every rule that grants it under a
+/// condition other than a role ([`ActionPolicy::role_decisions`]).
+fn conditional_rules(rules: &[AccessRule]) -> BTreeMap<String, Vec<Vec<Vec<String>>>> {
+    let mut conditional: BTreeMap<String, Vec<Vec<Vec<String>>>> = BTreeMap::new();
+    for rule in rules {
+        if rule
+            .all_of
+            .iter()
+            .all(|condition| matches!(condition, AccessCondition::Role(_)))
+        {
+            continue;
+        }
+        let named: Vec<Vec<String>> = rule
+            .all_of
+            .iter()
+            .filter_map(|condition| match condition {
+                AccessCondition::Role(role) => Some(role.any_of.clone()),
+                AccessCondition::Rel(_)
+                | AccessCondition::Context(_)
+                | AccessCondition::Resource(_)
+                | AccessCondition::Marking(_)
+                | AccessCondition::Entitlement(_) => None,
+            })
+            .collect();
+        for action in &rule.actions {
+            conditional
+                .entry(action.clone())
+                .or_default()
+                .push(named.clone());
+        }
+    }
+    conditional
+}
+
+/// Each callable action's target type and title.
+fn callable_targets<'a>(
+    actions: impl Iterator<Item = &'a ActionRoot>,
+    callable: &BTreeSet<String>,
+) -> BTreeMap<String, (String, String)> {
+    actions
+        .filter(|action| callable.contains(&action.action_id))
+        .filter_map(|action| {
+            let kind = target_kind(action)?;
+            let title = action
+                .title
+                .clone()
+                .unwrap_or_else(|| action.action_id.clone());
+            Some((action.action_id.clone(), (kind.to_owned(), title)))
+        })
+        .collect()
+}
+
 /// The rules of each governing policy, each narrowed to the actions that
 /// name that policy; a rule left with no action is dropped.
 fn narrowed(
@@ -286,42 +338,8 @@ impl ActionPolicy {
             .iter()
             .flat_map(|rule| rule.actions.iter().cloned())
             .collect();
-        let mut conditional: BTreeMap<String, Vec<Vec<Vec<String>>>> = BTreeMap::new();
-        for rule in &rules {
-            if rule
-                .all_of
-                .iter()
-                .all(|condition| matches!(condition, AccessCondition::Role(_)))
-            {
-                continue;
-            }
-            let roles: Vec<Vec<String>> = rule
-                .all_of
-                .iter()
-                .filter_map(|condition| match condition {
-                    AccessCondition::Role(role) => Some(role.any_of.clone()),
-                    _ => None,
-                })
-                .collect();
-            for action in &rule.actions {
-                conditional
-                    .entry(action.clone())
-                    .or_default()
-                    .push(roles.clone());
-            }
-        }
-        let targets: BTreeMap<String, (String, String)> = actions
-            .iter()
-            .filter(|(_, action)| callable.contains(&action.action_id))
-            .filter_map(|(_, action)| {
-                let kind = target_kind(action)?;
-                let title = action
-                    .title
-                    .clone()
-                    .unwrap_or_else(|| action.action_id.clone());
-                Some((action.action_id.clone(), (kind.to_owned(), title)))
-            })
-            .collect();
+        let conditional = conditional_rules(&rules);
+        let targets = callable_targets(actions.iter().map(|(_, action)| action), &callable);
         if callable.is_empty() {
             return Ok(None);
         }
