@@ -147,7 +147,11 @@ impl<E: SqlEngine> DevHost<E> {
         // SOURCE-RESOLVE-1: an activation whose reconciliation was
         // interrupted (or that a seed upgrade committed on its own) finishes
         // reconciling before this host serves the revision.
-        if cell.store().source_resolution_pending().map_err(Refusal::host)? {
+        if cell
+            .store()
+            .source_resolution_pending()
+            .map_err(Refusal::host)?
+        {
             let mut observing: norn_cell::SqliteCell<
                 ObservationEvent,
                 RuntimeObject,

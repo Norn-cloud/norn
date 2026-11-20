@@ -200,7 +200,11 @@ fn an_activation_interrupted_before_its_reconciliation_resumes_before_the_host_s
     cell.reconcile_source_resolution().expect("reconciled");
     let mut store = cell.into_store();
     assert!(!store.source_resolution_pending().expect("mark"));
-    assert_eq!(quantity(&store), Some(json_decimal(2765)), "ERPNext decides");
+    assert_eq!(
+        quantity(&store),
+        Some(json_decimal(2765)),
+        "ERPNext decides"
+    );
     // Shopify now outranks ERPNext; the cell stops right after activation.
     let (model, input) = admit(&catalog((2, 0)), 2);
     store
@@ -212,7 +216,11 @@ fn an_activation_interrupted_before_its_reconciliation_resumes_before_the_host_s
         reopened.source_resolution_pending().expect("mark"),
         "the activation's commit carries the pending reconciliation"
     );
-    assert_eq!(quantity(&reopened), Some(json_decimal(2765)), "not yet reconciled");
+    assert_eq!(
+        quantity(&reopened),
+        Some(json_decimal(2765)),
+        "not yet reconciled"
+    );
     let host = DevHost::from_store(
         reopened,
         CellScope {

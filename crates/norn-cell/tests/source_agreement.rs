@@ -1367,8 +1367,11 @@ fn source_resolve_1_a_moved_record_withdraws_from_the_stock_answer_at_its_valid_
         let live = stock_live(&cell);
         let (_, known) = stock_known_now(&cell);
         assert_eq!(known, live, "late {late}: the snapshot is the live answer");
-        let (odoo_week, erpnext_week, moved_week) =
-            (&live["2026-10-26"], &live["2026-11-02"], &live["2026-11-16"]);
+        let (odoo_week, erpnext_week, moved_week) = (
+            &live["2026-10-26"],
+            &live["2026-11-02"],
+            &live["2026-11-16"],
+        );
         assert_ne!(odoo_week, erpnext_week, "late {late}: {live:#?}");
         assert_eq!(moved_week, odoo_week, "late {late}: Odoo after the move");
         if let Some((cutoff, before)) = before_move {
@@ -1415,7 +1418,10 @@ fn source_resolve_1_a_stock_answer_decides_under_its_frontiers_definitions() {
     cell.reconcile_source_resolution().expect("reconcile");
     let after = stock_live(&cell);
     assert_eq!(after["2026-11-16"], after["2026-10-26"], "Odoo decides now");
-    assert_ne!(before["2026-11-16"], before["2026-10-26"], "ERPNext decided");
+    assert_ne!(
+        before["2026-11-16"], before["2026-10-26"],
+        "ERPNext decided"
+    );
     assert_eq!(stock_at(&cell, cutoff), before, "history keeps ERPNext");
 }
 
@@ -1511,7 +1517,10 @@ fn source_resolve_1_a_late_older_version_never_writes_its_stale_key() {
     };
     let mut states = Vec::new();
     for late in [false, true] {
-        let mut cell = setup_with(&directory.path().join(format!("late-{late}.sqlite")), |_| {});
+        let mut cell = setup_with(
+            &directory.path().join(format!("late-{late}.sqlite")),
+            |_| {},
+        );
         sync_north(&mut cell, "odoo", "snapshot", odoo);
         if late {
             v2(&mut cell);

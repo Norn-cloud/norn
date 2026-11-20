@@ -818,7 +818,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             for version in versions {
                 let effective = match &version.report {
                     Some(report) => at(&report.values).map(Some),
-                    None => Some(version.moved_values.as_ref().and_then(|v| at(v))),
+                    None => Some(version.moved_values.as_ref().and_then(&at)),
                 };
                 if let Some(effective) = effective {
                     stream.push((effective, version));
@@ -826,14 +826,14 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             }
             timed.push((mapping.as_str(), stream));
         }
-        let mut times: Vec<(_, String)> = timed
+        let mut instants: Vec<(_, String)> = timed
             .iter()
             .flat_map(|(_, stream)| stream.iter().filter_map(|(t, _)| t.clone()))
             .collect();
-        times.sort_unstable();
-        times.dedup_by(|a, b| a.0 == b.0);
-        let mut slices = Vec::with_capacity(times.len());
-        'slices: for (time, text) in times {
+        instants.sort_unstable();
+        instants.dedup_by(|a, b| a.0 == b.0);
+        let mut slices = Vec::with_capacity(instants.len());
+        'slices: for (time, text) in instants {
             // Each mapping's best current report among its source records.
             let mut reports: BTreeMap<String, (&RecordVersion, &SourceReport)> = BTreeMap::new();
             for (mapping, stream) in &timed {
