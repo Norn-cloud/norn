@@ -389,11 +389,17 @@ fn a_v1_cell_that_fails_verification_stays_byte_identical() {
             let dir = tempfile::tempdir().expect("directory");
             let path = dir.path().join("cell.sqlite");
             engine_fixture::load(&image, &path);
-            assert_eq!(journal_mode(&path), "delete", "{name}: the fixture is DELETE");
+            assert_eq!(
+                journal_mode(&path),
+                "delete",
+                "{name}: the fixture is DELETE"
+            );
             let before = bytes(&path);
-            let error = CellStore::open(&path, engine_fixture::model(), options)
-                .expect_err(name);
-            assert!(refused(&error), "{name}/{mode}: unexpected refusal: {error}");
+            let error = CellStore::open(&path, engine_fixture::model(), options).expect_err(name);
+            assert!(
+                refused(&error),
+                "{name}/{mode}: unexpected refusal: {error}"
+            );
             assert_eq!(
                 bytes(&path),
                 before,
