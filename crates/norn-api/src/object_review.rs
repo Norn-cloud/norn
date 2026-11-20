@@ -1,21 +1,24 @@
 //! HOST-READ-6 (#588, #343): an object's quality findings and its version
 //! history, the reads behind "why is this value what it is, and who changed it".
 //!
-//! Both are value-level and need Population, Values and Sources on the row,
-//! the same capabilities as its lineage (D67). Unlike an authoritative read,
-//! they also serve a quarantined object: OBS-EVIDENCE-1 keeps imported source
-//! truth readable to those allowed to review it, and a finding without its
-//! subject cannot be reviewed. A withheld, source-withheld or absent object
-//! refuses with the same opaque 404 as lineage.
+//! Both are value-level. The findings need Population, Values and Sources on
+//! the row, the same capabilities as its lineage (D67); the history needs
+//! Population and Values, and names a version's source lineage only to a
+//! caller who also holds Sources. Unlike an authoritative read, they also
+//! serve a quarantined object: OBS-EVIDENCE-1 keeps imported source truth
+//! readable to those allowed to review it, and a finding without its subject
+//! cannot be reviewed. A refused object refuses with the same opaque 404 as
+//! lineage.
 //!
 //! The history lists every proven version of the row, newest first, with the
 //! receipt that committed it and what wrote it: a mapping (the version's
-//! source lineage, as `/lineage?version=` serves it) or an admitted action
-//! (the action-call record of that commit: which action, which verified actor,
-//! and the effective input, which carries a correction's reason and evidence).
-//! An action's call record is disclosed under its own read decision: a caller
-//! who may not read it (Population and Values on that record) is told no
-//! writer, never the call's actor or input.
+//! source lineage, as `/lineage?version=` serves it, under Sources) or an
+//! admitted action (the action-call record of that commit: which action and
+//! which verified actor). An action's call record is disclosed under its own
+//! read decision: a caller who may not read it (Population and Values on that
+//! record) is told no writer. The call's effective input is never listed: the
+//! kernel writes it as a plain fact, and it can carry values (a derived value,
+//! a prepared input) whose disclosure the call record's read does not decide.
 
 use std::collections::BTreeMap;
 
@@ -95,13 +98,11 @@ pub enum NornVersionWriter {
         action_id: String,
         /// The verified caller the server attributed the call to.
         actor: String,
-        /// The effective input (caller input plus server derivations).
-        #[schema(schema_with = free_form)]
-        input: RuntimeValue,
     },
     /// Another writer (an import, a migration or a kernel rule), or one this
-    /// caller is not told: an action whose call record (its actor and input)
-    /// the caller may not read, or a marked version.
+    /// caller is not told: an action whose call record the caller may not
+    /// read, a mapping whose lineage the caller may not read (no Sources), or
+    /// a marked version.
     Other,
 }
 
@@ -154,16 +155,6 @@ fn lineage_schema() -> Ref {
         .build()
 }
 
-fn free_form() -> Object {
-    ObjectBuilder::new()
-        .schema_type(SchemaType::Type(utoipa::openapi::Type::Object))
-        .additional_properties(Some(AdditionalProperties::FreeForm(true)))
-        .description(Some(
-            "The effective input (caller input plus server derivations); decimals are exact JSON number tokens.",
-        ))
-        .build()
-}
-
 fn values_schema() -> Object {
     ObjectBuilder::new()
         .schema_type(SchemaType::from_iter([
@@ -183,19 +174,26 @@ fn reviewable<E: SqlEngine>(
     host: &DevHost<E>,
     access: &dyn ObjectAccess,
     actor: &str,
-    (object_type, id): (&str, &str),
+    object: (&str, &str),
     start: &mut Option<(u64, Option<(u64, u64)>)>,
 ) -> Result<ObjectRecord, Refusal> {
-    let row = locked(host, access, start, |reader| {
-        if !reader.model().has_type(object_type) {
-            return Err(not_found());
-        }
-        reader
-            .object(MAIN_WORLD, object_type, id)
-            .map_err(Refusal::host)
-    })?
-    .ok_or_else(not_found)?;
-    if [Population, Values, Sources]
+    let row = raw_row(host, access, object, start)?;
+    if permitted(host, access, actor, &row, Sources) {
+        readable(host, access, actor, row)
+    } else {
+        Err(not_found())
+    }
+}
+
+/// `row`, when the caller holds Population and Values on it; otherwise the
+/// opaque 404.
+fn readable<E: SqlEngine>(
+    host: &DevHost<E>,
+    access: &dyn ObjectAccess,
+    actor: &str,
+    row: ObjectRecord,
+) -> Result<ObjectRecord, Refusal> {
+    if [Population, Values]
         .into_iter()
         .all(|capability| permitted(host, access, actor, &row, capability))
     {
@@ -203,6 +201,24 @@ fn reviewable<E: SqlEngine>(
     } else {
         Err(not_found())
     }
+}
+
+/// The raw row, quarantined or not, before any read decision.
+fn raw_row<E: SqlEngine>(
+    host: &DevHost<E>,
+    access: &dyn ObjectAccess,
+    (object_type, id): (&str, &str),
+    start: &mut Option<(u64, Option<(u64, u64)>)>,
+) -> Result<ObjectRecord, Refusal> {
+    locked(host, access, start, |reader| {
+        if !reader.model().has_type(object_type) {
+            return Err(not_found());
+        }
+        reader
+            .object(MAIN_WORLD, object_type, id)
+            .map_err(Refusal::host)
+    })?
+    .ok_or_else(not_found)
 }
 
 /// HOST-READ-6: an object's quality findings, including while it is quarantined.
@@ -300,11 +316,13 @@ fn budget() -> DecodeBudget {
 /// The action-call record written in `commit`, if an action wrote it and
 /// the caller may read it.
 ///
-/// The writer's actor and effective input (a correction's free-text reason
-/// among them) are the call record's own values, so they are disclosed only
-/// under the read decision that covers that record: Population and Values on
-/// it, unmarked. Otherwise the version names no writer
-/// ([`NornVersionWriter::Other`]), never the raw input.
+/// The writer's action and actor are the call record's own values, so they
+/// are disclosed only under the read decision that covers that record:
+/// Population and Values on it, unmarked. Otherwise the version names no
+/// writer ([`NornVersionWriter::Other`]). The call's effective input is never
+/// disclosed here: the kernel stores it as one plain value even when
+/// preparation or a derivation put restricted values in it, so no read of the
+/// call record establishes its disclosure.
 fn action_writer<E: SqlEngine>(
     (host, access, actor): (&DevHost<E>, &dyn ObjectAccess, &str),
     reader: &StoreReader<'_, E>,
@@ -346,20 +364,13 @@ fn action_writer<E: SqlEngine>(
     let (Some(action_id), Some(actor)) = (text("actionId"), text("actor")) else {
         return Ok(None);
     };
-    Ok(Some(NornVersionWriter::Action {
-        action_id,
-        actor,
-        input: record
-            .values
-            .get("effectiveInput")
-            .cloned()
-            .unwrap_or(RuntimeValue::Null),
-    }))
+    Ok(Some(NornVersionWriter::Action { action_id, actor }))
 }
 
-/// One version with its receipt and writer.
+/// One version with its receipt and writer; its source lineage only when
+/// `sources` (the caller holds Sources on the row).
 fn version_entry<E: SqlEngine>(
-    (host, access, actor): (&DevHost<E>, &dyn ObjectAccess, &str),
+    (host, access, actor, sources): (&DevHost<E>, &dyn ObjectAccess, &str, bool),
     reader: &StoreReader<'_, E>,
     row: &ObjectRecord,
     version: u64,
@@ -386,17 +397,18 @@ fn version_entry<E: SqlEngine>(
         None => None,
     };
     let fact = FactRef::new(row.object_type.as_str(), &row.id, version);
-    let writer = if marked {
-        NornVersionWriter::Other
+    let lineage = if marked || !sources {
+        None
     } else {
-        match reader
+        reader
             .instance_source_provenance(MAIN_WORLD, &fact, &mut budget(), |_| Ok(true))
             .map_err(Refusal::host)?
-        {
-            Some(lineage) => NornVersionWriter::Mapping { lineage },
-            None => action_writer((host, access, actor), reader, &receipt)?
-                .unwrap_or(NornVersionWriter::Other),
-        }
+    };
+    let writer = match lineage {
+        _ if marked => NornVersionWriter::Other,
+        Some(lineage) => NornVersionWriter::Mapping { lineage },
+        None => action_writer((host, access, actor), reader, &receipt)?
+            .unwrap_or(NornVersionWriter::Other),
     };
     Ok(NornObjectVersion {
         version,
@@ -410,10 +422,10 @@ fn version_entry<E: SqlEngine>(
 /// HOST-READ-6: an object's proven versions, newest first, with what wrote each.
 ///
 /// # Errors
-/// A denied gate (the opaque 403); an absent, withheld or source-withheld
-/// object (one 404); a commit between the reads (409 `object.snapshot_moved`);
+/// A denied gate (the opaque 403); an absent or withheld object (one 404;
+/// Sources is not needed, and gates only each version's lineage); a commit between the reads (409 `object.snapshot_moved`);
 /// or a host failure.
-#[utoipa::path(get, path = "/v1/objects/{type}/{id}/history", operation_id = "get_object_history", params(ScopeQuery, ("type" = String, Path, description = "The object type (concept) name; percent-escapes are decoded."), ("id" = String, Path, description = "The object identity; percent-escapes are decoded.")), responses((status = 200, description = "The object's proven versions, newest first, each with its commit and what wrote it.", body = NornObjectHistory), (status = 400, description = "The request was refused as invalid (`request.invalid`): an unknown or repeated query parameter, a query over the host bound, or a path segment that is not UTF-8 once decoded.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied, with the same document whatever the reason.", body = Refusal), (status = 404, description = "The request was refused (`object.not_found`): the object is absent, withheld or source-withheld; these are not told apart. A quarantined object is served.", body = Refusal), (status = 409, description = "The request was refused (`object.snapshot_moved`, retryable): the cell committed between the reads.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal), (status = 503, description = "The request was refused (`object.snapshot_unavailable`): the engine cannot pin one snapshot for the read. The shipped engines do not return it.", body = Refusal)))]
+#[utoipa::path(get, path = "/v1/objects/{type}/{id}/history", operation_id = "get_object_history", params(ScopeQuery, ("type" = String, Path, description = "The object type (concept) name; percent-escapes are decoded."), ("id" = String, Path, description = "The object identity; percent-escapes are decoded.")), responses((status = 200, description = "The object's proven versions, newest first, each with its commit and what wrote it.", body = NornObjectHistory), (status = 400, description = "The request was refused as invalid (`request.invalid`): an unknown or repeated query parameter, a query over the host bound, or a path segment that is not UTF-8 once decoded.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied, with the same document whatever the reason.", body = Refusal), (status = 404, description = "The request was refused (`object.not_found`): the object is absent or withheld (no Population or Values); these are not told apart. Sources is not needed: without it no version names its source lineage. A quarantined object is served.", body = Refusal), (status = 409, description = "The request was refused (`object.snapshot_moved`, retryable): the cell committed between the reads.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal), (status = 503, description = "The request was refused (`object.snapshot_unavailable`): the engine cannot pin one snapshot for the read. The shipped engines do not return it.", body = Refusal)))]
 pub fn get_object_history<E: SqlEngine>(
     host: &DevHost<E>,
     scope: &ScopeQuery,
@@ -424,7 +436,11 @@ pub fn get_object_history<E: SqlEngine>(
 ) -> Result<NornObjectHistory, Refusal> {
     let (_epoch, actor) = collection(host, scope, actor, object_type, access)?;
     let mut start = None;
-    let row = reviewable(host, access, &actor, (object_type, id), &mut start)?;
+    // The history is the row's values over time: Population and Values. Its
+    // source lineage is Sources', decided once here for every version.
+    let row = raw_row(host, access, (object_type, id), &mut start)?;
+    let row = readable(host, access, &actor, row)?;
+    let sources = permitted(host, access, &actor, &row, Sources);
     let oldest = row
         .version
         .saturating_sub(MAX_HISTORY_VERSIONS)
@@ -433,7 +449,7 @@ pub fn get_object_history<E: SqlEngine>(
     locked(host, access, &mut start, |reader| {
         let versions = (oldest..=row.version)
             .rev()
-            .map(|version| version_entry((host, access, &actor), reader, &row, version))
+            .map(|version| version_entry((host, access, &actor, sources), reader, &row, version))
             .collect::<Result<Vec<_>, _>>()?;
         Ok(NornObjectHistory {
             object_type: row.object_type.clone(),
