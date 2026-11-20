@@ -5788,9 +5788,13 @@ fn mapping_bundle_store(path: &Path) -> CellStore {
     mapping["payload"]["interfaces"] = json!(["quality.Measured.interface"]);
     mapping["payload"]["maps"] = json!([{"id":"measurement", "source":{"dataset":"Rows"}, "target":{"entity":"quality.Measurement.entity", "interface":"quality.Measured.interface"}, "subject":"input.name", "sourceRecord":"input.name", "properties":[{"property":"purity", "value":"input.purity"}]}]);
     artifacts.push(source);
+    // SOURCE-RESOLVE-1: two mappings write purity, so each declares who
+    // decides it (their subjects never meet, so each still decides its own).
+    mapping["payload"]["maps"][0]["authority"] = json!({"kind":"precedence", "rank":0});
     let mut alternate = mapping.clone();
     alternate["artifactId"] = json!("quality.alternate");
     alternate["payload"]["maps"][0]["subject"] = json!("input.name + '-ALT'");
+    alternate["payload"]["maps"][0]["authority"] = json!({"kind":"precedence", "rank":1});
     artifacts.push(serde_json::from_value(alternate).expect("alternate role"));
     artifacts.push(serde_json::from_value(mapping).expect("mapping"));
     let object =
