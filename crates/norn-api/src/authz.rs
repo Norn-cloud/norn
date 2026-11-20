@@ -142,6 +142,28 @@ pub trait Authorizer: Send + Sync {
         None
     }
 
+    /// APPROVAL-LIVE-1: whether `principal`, the request's verified
+    /// principal that is about to consume the approval of a call not yet
+    /// run (bound as `binding`), holds the requester's current authority as
+    /// the organization's authority answers it now for exactly that
+    /// approval. Asked under the dispatch's hold, before anything is
+    /// recorded or committed; a refusal records nothing. A host that looks
+    /// requesters up makes the principal its answer's (current roles) for
+    /// the commit. `Ok`, the default, for a host without a lookup: the
+    /// request's own verified credential is the authority.
+    ///
+    /// # Errors
+    /// `approval.authority_unavailable` (retryable) while the host has no
+    /// verified answer for this attempt; `approval.requester_unauthorized`
+    /// when it answered that the principal no longer holds it.
+    fn live_authority(
+        &self,
+        _principal: &norn_cell::flow_run::RunStarter,
+        _binding: &str,
+    ) -> Result<(), Refusal> {
+        Ok(())
+    }
+
     /// DEFS-REOPEN-1: whether this policy can serve a cell whose model has
     /// `object_types`, checked before an install writes it. A model the
     /// policy cannot serve would leave the cell unopenable after a restart.

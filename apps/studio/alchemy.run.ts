@@ -38,6 +38,10 @@ delete process.env.OTEL_EXPORTER_OTLP_HEADERS
 const billing = polarConfig(process.env)
 delete process.env.POLAR_ACCESS_TOKEN
 delete process.env.POLAR_WEBHOOK_SECRET
+// APPROVAL-LIVE-1: the credential the cell host looks requesters up with (worker/authority.ts); an encrypted Worker secret.
+const authorityToken = process.env.NORN_AUTHORITY_TOKEN
+if (authorityToken !== undefined && authorityToken.length < 32) throw new Error("NORN_AUTHORITY_TOKEN must be at least 32 characters")
+delete process.env.NORN_AUTHORITY_TOKEN
 const stateDir = process.env.ALCHEMY_STATE_DIR ?? ".alchemy"
 // Alchemy keeps this app's state under <stateDir>/<APP>/; the post-deploy scan reads exactly that subtree.
 const APP = "norn-studio"
@@ -76,6 +80,7 @@ export const studio = await Vite("studio", {
     STUDIO_CLIENT_IP_HEADER: "cf-connecting-ip",
     ...auth.defaultOrg === undefined ? {} : { STUDIO_DEFAULT_ORG: auth.defaultOrg },
     ...host === undefined ? {} : { NORN_HOST: WorkerRef({ service: host }) },
+    ...authorityToken === undefined ? {} : { NORN_AUTHORITY_TOKEN: alchemy.secret(authorityToken) },
     BETTER_AUTH_TRUSTED_ORIGINS: JSON.stringify(auth.origins),
     ...otel === undefined ? {} : {
       OTEL_EXPORTER_OTLP_ENDPOINT: otel.endpoint,

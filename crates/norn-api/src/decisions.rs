@@ -28,6 +28,7 @@ use norn_cell::decision_ledger::{
     OptionEffect, Resolution,
 };
 use norn_cell::engine::SqlEngine;
+use norn_cell::flow_run::RunStarter;
 use norn_cell::read::PendingCommand;
 use norn_cell::{CellStore, MAIN_WORLD};
 use norn_ir::{RuntimeObject, RuntimeValue};
@@ -341,10 +342,11 @@ pub enum DecidedCallState {
     /// It was refused when it ran (`code`), for good: its approval never
     /// runs it again.
     Refused,
-    /// Approved, not yet executed: no request of the requester's has run
-    /// it yet, the host stopped before it committed, or its try could not
-    /// commit it (`code` says why). Only the requester's own retry runs it,
-    /// once, under the requester's current authority.
+    /// Approved, not yet executed: the requester's current authority could
+    /// not be established yet, the host stopped before it committed, or its
+    /// try could not commit it (`code` says why). The requester's retry, or
+    /// the approver's replay, runs it once, under the requester's current
+    /// authority.
     NotExecuted,
 }
 
@@ -524,13 +526,7 @@ fn parked_decision<E: SqlEngine>(
     ) else {
         return Ok(None);
     };
-    let Some(input) = payload.get("input").and_then(|input| input.get(step)) else {
-        return Ok(None);
-    };
-    let Ok(bytes) = input.canonical_json() else {
-        return Ok(None);
-    };
-    let Ok(request) = norn_cell::decision_ledger::parse_request(&bytes) else {
+    let Some(request) = asked_request(payload, step) else {
         return Ok(None);
     };
     let call = match payload.get("approval") {
@@ -562,6 +558,57 @@ fn parked_decision<E: SqlEngine>(
         expires_at_ms: requested_at_ms.saturating_add(wait),
         call,
     }))
+}
+
+/// The decision request a decision command's `payload` asks at `step`.
+fn asked_request(payload: &RuntimeValue, step: &str) -> Option<DecisionRequest> {
+    let input = payload.get("input").and_then(|input| input.get(step))?;
+    let bytes = input.canonical_json().ok()?;
+    norn_cell::decision_ledger::parse_request(&bytes).ok()
+}
+
+/// R1-01: whether `actor` may still decide the resolved approval `row`
+/// records, judged now exactly as an open one is ([`may_decide`]): its
+/// parked command's decider roles and law, and never its requester. `false`
+/// when the parked command can no longer be read: nothing runs on a
+/// decider's authority that cannot be checked.
+fn may_still_decide<E: SqlEngine>(
+    host: &DevHost<E>,
+    cell: &ActionCell<E>,
+    actor: &str,
+    row: &DecisionRow,
+    requester: &str,
+) -> Result<bool, Refusal> {
+    let Some(command) = cell
+        .store()
+        .read()
+        .outbox_command(&row.resolved.command_id)
+        .map_err(Refusal::host)?
+    else {
+        return Ok(false);
+    };
+    let Some(request) = command
+        .command
+        .get("payload")
+        .filter(|payload| text(payload, "function") == Some(DECISION_FUNCTION))
+        .and_then(|payload| asked_request(payload, &row.resolved.step))
+    else {
+        return Ok(false);
+    };
+    // No decider law is evaluated on this host yet: fail closed.
+    Ok(requester != actor
+        && request.decider.law.is_none()
+        && host
+            .authorizer
+            .authorize(&AccessRequest {
+                scope: host.scope(),
+                actor: Some(actor),
+                operation: Operation::Decide {
+                    roles: request.decider.roles,
+                    law: request.decider.law,
+                },
+            })
+            .is_ok())
 }
 
 /// Every open decision, oldest command first.
@@ -936,11 +983,18 @@ fn by(row: &DecisionRow, actor: &str) -> Option<String> {
 /// For the approval of a parked action call (APPROVAL-1) the decider is
 /// never the call's requester (#618), and no flow turn runs: the answer is
 /// recorded, and an approved call then runs through the shared action
-/// dispatch only under the requester's current authority ([`AsStarter`]:
-/// the host runs it only when it can establish that authority, which a
-/// decider's request never does). Otherwise the answer's `call` is
-/// `not_executed` and the requester's own authenticated retry runs it
-/// (APPROVAL-RECOVERY-1).
+/// dispatch only under the requester's current authority ([`AsStarter`]):
+/// the host looks it up from the organization's authority for the
+/// decider's request (APPROVAL-LIVE-1, [`AuthorityGate`]), never from
+/// the roles recorded when the call parked. A requester who no longer holds
+/// that authority gets the call refused for good
+/// (`approval.requester_unauthorized`, recorded). The host is asked for that
+/// authority (`ready`) only once the decide is valid and approves a call:
+/// without an answer the decide is refused retryably and nothing is
+/// recorded. An exact replay that would still run the call does so only
+/// while its decider may still decide it (else 403
+/// `decision.law_not_satisfied`, nothing runs); a replay of a recorded
+/// outcome is read-only (APPROVAL-RECOVERY-1).
 ///
 /// # Errors
 /// In this order: 404 `decision.not_found` (also for a caller who may not
@@ -948,16 +1002,20 @@ fn by(row: &DecisionRow, actor: &str) -> Option<String> {
 /// `decision.law_not_satisfied`, 422 `decision.unknown_choice` (`/choice`),
 /// `decision.note_too_long` (`/note`) or `request.invalid`, 409
 /// `decision.idempotency_conflict`; the flow's or the kernel's refusal of the
-/// run's result turn; a host failure.
-#[utoipa::path(post, path = "/v1/decisions/{id}:decide", params(ScopeQuery, ("id" = String, Path, description = "The decision id.")), request_body = DecideRequest, responses((status = 200, description = "Decided, or replayed an identical earlier call.", body = Decided), (status = 400, description = "The request was refused as invalid.", body = Refusal), (status = 403, description = "The request was refused: scope denied, or the decider law is not satisfied.", body = Refusal), (status = 404, description = "No such open decision waits on the caller.", body = Refusal), (status = 409, description = "Someone resolved it first, or the key was used for another answer.", body = DecideRefusal), (status = 410, description = "The decision expired.", body = Refusal), (status = 422, description = "The choice or note was refused.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
+/// run's result turn; a host failure. A host without the requester's
+/// current authority for an approval that would run its call refuses 503
+/// `approval.authority_unavailable` (retryable) and records nothing
+/// (APPROVAL-LIVE-1).
+#[utoipa::path(post, path = "/v1/decisions/{id}:decide", params(ScopeQuery, ("id" = String, Path, description = "The decision id.")), request_body = DecideRequest, responses((status = 200, description = "Decided, or replayed an identical earlier call.", body = Decided), (status = 400, description = "The request was refused as invalid.", body = Refusal), (status = 403, description = "The request was refused: scope denied, or the decider law is not satisfied.", body = Refusal), (status = 404, description = "No such open decision waits on the caller.", body = Refusal), (status = 409, description = "Someone resolved it first, or the key was used for another answer.", body = DecideRefusal), (status = 410, description = "The decision expired.", body = Refusal), (status = 422, description = "The choice or note was refused.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal), (status = 503, description = "The requester's current authority could not be looked up before the approval was recorded (`approval.authority_unavailable`, retryable); nothing was recorded.", body = Refusal)))]
 pub fn decide<E: SqlEngine>(
     host: &DevHost<E>,
     request: &DecideCall<'_>,
     access: ReadAccess<'_>,
     disclosure: &dyn QuestionRuntime<E>,
     as_requester: AsStarter<'_>,
+    ready: AuthorityGate<'_>,
 ) -> Result<Decided, Box<DecideRefusal>> {
-    let (mut decided, approved) = decide_held(host, request, access, disclosure)?;
+    let (mut decided, approved) = decide_held(host, request, access, disclosure, ready)?;
     // The cell and the definitions epoch are released: an approved call
     // still to run goes through the ordinary dispatch as its requester.
     if let Some(decision_id) = approved {
@@ -974,6 +1032,7 @@ fn decide_held<E: SqlEngine>(
     request: &DecideCall<'_>,
     access: ReadAccess<'_>,
     disclosure: &dyn QuestionRuntime<E>,
+    ready: AuthorityGate<'_>,
 ) -> Result<(Decided, Option<String>), Box<DecideRefusal>> {
     let DecideCall {
         scope,
@@ -1001,7 +1060,7 @@ fn decide_held<E: SqlEngine>(
         .into_iter()
         .find(|decision| decision.id == id);
     let Some(decision) = open else {
-        return resolved_answer(&reader, &cell, id, body);
+        return resolved_answer(&reader, &cell, id, body, ready);
     };
     if !may_decide(host, actor, &decision) {
         return Err(Box::from(not_found()));
@@ -1017,12 +1076,25 @@ fn decide_held<E: SqlEngine>(
         )));
     }
     check_answer(&decision, body)?;
+    // APPROVAL-LIVE-1 (R1-06): only once the decide is valid, and only for
+    // an approval that would run another principal's call, the host must
+    // have the requester's current authority for exactly this decision and
+    // call before anything is recorded; a rejection runs nothing and asks
+    // for nothing.
+    if let Some(held) = &decision.call
+        && body.choice == crate::approvals::APPROVE
+    {
+        ready(
+            &held.call.requester,
+            &crate::approvals::approval_binding(&decision.id, &decision.command.0),
+        )?;
+    }
     let recorded = match &decision.call {
         None => record(&mut cell, &decision, body, actor, now)?,
         Some(held) => record_call(&mut cell, &decision, held, body, actor)?,
     };
     if !recorded {
-        return resolved_answer(&reader, &cell, id, body);
+        return resolved_answer(&reader, &cell, id, body, ready);
     }
     let decided = answer(&reader, &cell, id, body, DecideOutcome::Decided)?;
     let approved = (decision.call.is_some() && body.choice == crate::approvals::APPROVE)
@@ -1102,12 +1174,22 @@ fn run_approved<E: SqlEngine>(
             Some(&command),
         )
     };
-    let tried = match as_requester(&held.call.requester, &mut commit) {
+    let binding = crate::approvals::approval_binding(decision_id, &command);
+    let tried = match as_requester(&held.call.requester, &binding, &mut commit) {
         Some(Ok(_answer)) => None,
+        // APPROVAL-LIVE-1: the requester's current authority does not cover
+        // the call: its refusal is recorded, final, and nothing ran.
+        Some(Err(refusal))
+            if refusal.code == crate::approvals::approval_codes::REQUESTER_UNAUTHORIZED =>
+        {
+            crate::approvals::refuse_unauthorized(host, decision_id)
+                .err()
+                .map(|host_failure| host_failure.code)
+        }
         Some(Err(refusal)) => Some(refusal.code),
-        // The requester's current authority cannot be established on this
-        // request (it is not the requester's own): nothing runs, and the call
-        // stays approved and not executed for the requester's retry.
+        // The host has no way to establish the requester's current
+        // authority on this request: nothing runs, and the call stays
+        // approved and not executed for a retry.
         None => None,
     };
     let _epoch = host.definition_read()?;
@@ -1115,6 +1197,24 @@ fn run_approved<E: SqlEngine>(
     let (_held, state) =
         crate::approvals::approved_call(&cell, decision_id)?.ok_or_else(missing)?;
     Ok(Some(DecidedCall::of(&state, tried)))
+}
+
+/// APPROVAL-LIVE-1 (R1-06): the host's check, before an approval is
+/// recorded or replayed into running its call, that it has the requester's
+/// current authority for exactly that decision and call (the binding). A
+/// refusal (`approval.authority_unavailable`, retryable) records nothing;
+/// a host without a lookup always admits.
+pub type AuthorityGate<'a> = &'a dyn Fn(&RunStarter, &str) -> Result<(), Refusal>;
+
+/// R1-01: the replaying decider may no longer decide the approval: its
+/// approved call does not run on that replay.
+fn decider_unauthorized() -> Refusal {
+    Refusal::new(
+        StatusCode::FORBIDDEN,
+        decision_codes::LAW_NOT_SATISFIED,
+        "the decider law is not satisfied",
+        "the replaying caller may no longer decide this approval, so its call does not run; the approval stays recorded",
+    )
 }
 
 /// One decide call: scope, the verified caller, the decision and the answer.
@@ -1463,6 +1563,7 @@ fn resolved_answer<E: SqlEngine>(
     cell: &ActionCell<E>,
     id: &str,
     body: &DecideRequest,
+    ready: AuthorityGate<'_>,
 ) -> Result<(Decided, Option<String>), Box<DecideRefusal>> {
     let Some(row) = cell
         .store()
@@ -1483,6 +1584,28 @@ fn resolved_answer<E: SqlEngine>(
                     .command_id
                     .starts_with(crate::approvals::COMMAND_PREFIX))
             .then(|| row.resolved.decision_id.clone());
+            // R1-01: a replay that would still run the approved call runs
+            // it only while its decider may still decide it, and only once
+            // the host has the requester's current authority for it. A
+            // replay of a recorded outcome is read-only and checks nothing.
+            if let Some(decision_id) = &approved
+                && let Some((held, CallState::NotExecuted)) =
+                    crate::approvals::approved_call(cell, decision_id)?
+            {
+                if !may_still_decide(
+                    reader.host,
+                    cell,
+                    reader.actor,
+                    &row,
+                    &held.call.requester.subject,
+                )? {
+                    return Err(Box::from(decider_unauthorized()));
+                }
+                ready(
+                    &held.call.requester,
+                    &crate::approvals::approval_binding(decision_id, &row.resolved.command_id),
+                )?;
+            }
             Ok((
                 answer(reader, cell, id, body, DecideOutcome::Replayed)?,
                 approved,

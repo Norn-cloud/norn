@@ -63,6 +63,12 @@ pub(crate) const REVOKED: &[(&str, &[&str])] = &[
     ("approver@steps", &["admin"]),
     ("member@steps", &["member"]),
 ];
+/// [`NAMES`] after the operator left the organization: no longer a member
+/// (APPROVAL-LIVE-1).
+pub(crate) const REMOVED: &[(&str, &[&str])] = &[
+    ("approver@steps", &["admin"]),
+    ("member@steps", &["member"]),
+];
 /// The subjects the melt action grant names.
 pub(crate) const CONVERTERS: [&str; 2] = ["operator@steps", "approver@steps"];
 /// `lowerFlow`'s output for `tools/norn-ts/fixtures/flows/melt.builder.ts`.
@@ -231,6 +237,13 @@ impl Authorizer for StepPolicy {
             roles: caller.roles,
             role_table: caller.role_table.to_owned(),
         })
+    }
+    fn live_authority(
+        &self,
+        principal: &RunStarter,
+        binding: &str,
+    ) -> Result<(), norn_api::refusal::Refusal> {
+        self.caller.live_authority(principal, binding)
     }
     fn action(&self, request: &ActionAuthzRequest<'_>) -> Result<(), ActionDenial> {
         self.decide(

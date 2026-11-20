@@ -201,10 +201,13 @@ export interface paths {
          * @description For the approval of a parked action call (APPROVAL-1) the decider is
          *     never the call's requester (#618), and no flow turn runs: the answer is
          *     recorded, and an approved call then runs through the shared action
-         *     dispatch only under the requester's current authority ([`AsStarter`]:
-         *     the host runs it only when it can establish that authority, which a
-         *     decider's request never does). Otherwise the answer's `call` is
-         *     `not_executed` and the requester's own authenticated retry runs it
+         *     dispatch only under the requester's current authority ([`AsStarter`]):
+         *     the host looks it up from the organization's authority for the
+         *     decider's request (APPROVAL-LIVE-1, [`approval_requester`]), never from
+         *     the roles recorded when the call parked. A requester who no longer holds
+         *     that authority gets the call refused for good
+         *     (`approval.requester_unauthorized`, recorded); when the authority cannot
+         *     be looked up, the answer's `call` is `not_executed` and a retry runs it
          *     (APPROVAL-RECOVERY-1).
          *
          *     # Errors
@@ -213,7 +216,9 @@ export interface paths {
          *     `decision.law_not_satisfied`, 422 `decision.unknown_choice` (`/choice`),
          *     `decision.note_too_long` (`/note`) or `request.invalid`, 409
          *     `decision.idempotency_conflict`; the flow's or the kernel's refusal of the
-         *     run's result turn; a host failure.
+         *     run's result turn; a host failure. A host whose requester lookup did not
+         *     answer before anything was recorded refuses 503
+         *     `approval.authority_unavailable` (APPROVAL-LIVE-1).
          */
         post: operations["decide"];
         delete?: never;
@@ -13724,6 +13729,15 @@ export interface operations {
             };
             /** @description The request was refused: host failure. */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The requester's current authority could not be looked up before the approval was recorded (`approval.authority_unavailable`, retryable); nothing was recorded. */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

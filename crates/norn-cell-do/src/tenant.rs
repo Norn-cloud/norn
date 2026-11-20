@@ -614,6 +614,39 @@ impl<E: SqlEngine> Tenant<E> {
         }
     }
 
+    /// APPROVAL-LIVE-1 (R1-07): resume the drive of `run_id` that asked the
+    /// organization's authority for a step's principal, once the host has
+    /// provided the answer: only that drive runs, under the same disclosure
+    /// runtime a request would use; nothing the asking request recorded is
+    /// replayed. A cell that is not serving resumes nothing.
+    pub fn resume_drive(&self, principals: &dyn PrincipalResolver, run_id: &str, now: u64) {
+        let State::Serving(serving) = &self.state else {
+            return;
+        };
+        let derived = match (&serving.questions, &self.derived) {
+            (None, Some(derived)) => derived
+                .questions(&serving.host)
+                .ok()
+                .filter(|runtime| !AdHocQuestions::<E>::definitions(runtime).is_empty()),
+            _ => None,
+        };
+        let questions = serving
+            .questions
+            .as_ref()
+            .map(|questions| -> &dyn AdHocQuestions<E> { questions })
+            .or_else(|| {
+                derived
+                    .as_ref()
+                    .map(|runtime| -> &dyn AdHocQuestions<E> { runtime })
+            })
+            .or_else(|| {
+                self.handles
+                    .as_ref()
+                    .map(|handles| -> &dyn AdHocQuestions<E> { handles })
+            });
+        server::resume_drive(&serving.host, principals, questions, run_id, now);
+    }
+
     /// `POST /v1/access:decide` (#1036): the connector checks Studio asks,
     /// decided for the request's verified principal under the declared
     /// [`crate::policy::CONNECTOR_GRANTS`], each check decided by the kernel

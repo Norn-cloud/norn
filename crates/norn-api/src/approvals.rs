@@ -52,6 +52,19 @@
 //! attempt waits on it (S6b), and only by that dispatch (S5a): a direct call
 //! never takes a step's call key. A denial of authority is not recorded:
 //! authority is decided anew on every try.
+//!
+//! APPROVAL-LIVE-1: the requester's current authority is established by
+//! the requester's own verified credential on its retry, or, for the
+//! approver's decide (fresh or replayed) and the drive of a step waiting on
+//! it, looked up by the host from the organization's authority at that
+//! moment (Studio's membership on a hosted cell, the local principal table
+//! on `norn dev`), never taken from the roles recorded when the call parked.
+//! While the host looks requesters up, every attempt that can run the call
+//! (the requester's own retry included) runs under that lookup. A requester
+//! who no longer holds the authority gets the call refused for good,
+//! `approval.requester_unauthorized`, recorded like any other final refusal
+//! while the approval stands. A lookup that cannot answer runs nothing and
+//! records nothing (`approval.authority_unavailable`, retryable).
 
 use std::collections::BTreeMap;
 
@@ -103,6 +116,15 @@ pub mod approval_codes {
     /// APPROVAL-RECOVERY-1: the flow step attempt this call was approved for
     /// no longer waits on it, so its approval never runs it.
     pub const ATTEMPT_ENDED: &str = "approval.attempt_ended";
+    /// APPROVAL-LIVE-1: the requester no longer holds the authority the
+    /// approved call needs (no longer a member of the organization, or its
+    /// current roles do not grant the call). The approval stands; its call
+    /// is refused for good.
+    pub const REQUESTER_UNAUTHORIZED: &str = "approval.requester_unauthorized";
+    /// APPROVAL-LIVE-1: the requester's current authority could not be
+    /// looked up, so the approved call did not run; it stays approved and
+    /// not executed, and a retry runs it.
+    pub const AUTHORITY_UNAVAILABLE: &str = "approval.authority_unavailable";
 }
 
 /// The active approval gating one action.
@@ -412,6 +434,87 @@ pub(crate) fn attempt_ended() -> Refusal {
     )
 }
 
+/// APPROVAL-LIVE-1: the binding a requester's authority lookup answers for
+/// the approved call of `decision_id`, parked as `command_id` (its exact
+/// call: requester, input, key, action digest, gate and pin). An answer for
+/// another decision or call is no answer.
+#[must_use]
+pub fn approval_binding(decision_id: &str, command_id: &str) -> String {
+    format!("norn.approval/1:{decision_id}:{command_id}")
+}
+
+/// [`approval_binding`] for the approved call of `decision_id`, as recorded.
+///
+/// # Errors
+/// A host failure, or an approved call without its record.
+pub(crate) fn binding_of<E: SqlEngine>(
+    cell: &ActionCell<E>,
+    decision_id: &str,
+) -> Result<String, Refusal> {
+    let row = cell
+        .store()
+        .read()
+        .approved_call(MAIN_WORLD, decision_id)
+        .map_err(Refusal::host)?
+        .ok_or_else(|| Refusal::host("an approved call lost its record"))?;
+    Ok(approval_binding(decision_id, &row.command_id))
+}
+
+/// `approval.requester_unauthorized` (APPROVAL-LIVE-1): the requester's
+/// current authority does not cover the approved call.
+#[must_use]
+pub fn requester_unauthorized() -> Refusal {
+    Refusal::new(
+        StatusCode::FORBIDDEN,
+        approval_codes::REQUESTER_UNAUTHORIZED,
+        "the requester no longer holds the authority this call needs",
+        "the approval stands, but its call is refused for good; the requester calls again with a new idempotency key once they hold the authority",
+    )
+}
+
+/// `approval.authority_unavailable` (APPROVAL-LIVE-1): the requester's
+/// current authority could not be looked up; nothing ran.
+#[must_use]
+pub fn authority_unavailable() -> Refusal {
+    let mut refusal = Refusal::new(
+        StatusCode::SERVICE_UNAVAILABLE,
+        approval_codes::AUTHORITY_UNAVAILABLE,
+        "the requester's current authority could not be looked up",
+        "nothing ran and nothing was recorded; retry the decision, or the requester retries the call",
+    );
+    refusal.retryable = true;
+    refusal
+}
+
+/// APPROVAL-LIVE-1: record `approval.requester_unauthorized` as final for
+/// the approved call of `decision_id`, in its own commit under the cell:
+/// the requester's current authority does not cover it. The call's state is
+/// read again under the hold first, so a refusal recorded first stands and
+/// an exact commit is never masked.
+///
+/// # Errors
+/// A host failure; nothing is recorded and the call stays approved and not
+/// executed.
+pub(crate) fn refuse_unauthorized<E: SqlEngine>(
+    host: &crate::host::DevHost<E>,
+    decision_id: &str,
+) -> Result<(), Refusal> {
+    let _epoch = host.definition_read()?;
+    let mut cell = host.cell()?;
+    refuse_unauthorized_in(&mut cell, decision_id)
+}
+
+/// [`refuse_unauthorized`] under a hold the caller already has.
+///
+/// # Errors
+/// A host failure; nothing is recorded.
+pub(crate) fn refuse_unauthorized_in<E: SqlEngine>(
+    cell: &mut ActionCell<E>,
+    decision_id: &str,
+) -> Result<(), Refusal> {
+    record_final(cell, decision_id, requester_unauthorized()).map(|_refusal| ())
+}
+
 /// S6b: whether the approved call of `decision_id` may still run: a direct
 /// call always may; a flow step's call only while the exact step attempt it
 /// parked for (recorded when it parked) waits on it, or once it committed
@@ -469,23 +572,34 @@ pub(crate) fn is_requester(principal: Option<&RunStarter>, requester: &RunStarte
 /// for: a flow step's call by the flow's own dispatch of that exact step
 /// attempt (`attempt`, carried by the trusted invocation, never derived from
 /// the idempotency key), a direct call by a direct call. Any other
-/// invocation is denied the same way.
+/// invocation is denied the same way. APPROVAL-LIVE-1: while the call is
+/// still to run, that principal must also hold the requester's current
+/// authority for it
+/// ([`Authorizer::live_authority`](crate::authz::Authorizer::live_authority)).
 ///
 /// # Errors
 /// The opaque action denial; a host failure.
 pub(crate) fn require_requester<E: SqlEngine>(
+    authorizer: &dyn crate::authz::Authorizer,
     cell: &ActionCell<E>,
     decision_id: &str,
     principal: Option<&RunStarter>,
     attempt: Option<&StepAttempt>,
 ) -> Result<(), Refusal> {
-    let (held, _state) = approved_call(cell, decision_id)?
+    let (held, state) = approved_call(cell, decision_id)?
         .ok_or_else(|| Refusal::host("an approved call lost its record"))?;
-    if is_requester(principal, &held.call.requester) && held.call.attempt.as_ref() == attempt {
-        Ok(())
-    } else {
-        Err(crate::actions::action_denied())
+    let Some(principal) = principal.filter(|_| {
+        is_requester(principal, &held.call.requester) && held.call.attempt.as_ref() == attempt
+    }) else {
+        return Err(crate::actions::action_denied());
+    };
+    // APPROVAL-LIVE-1: a call still to run runs only under the requester's
+    // current authority for exactly this approval, on every attempt (the
+    // requester's own retry included). A recorded outcome replays as is.
+    if matches!(state, CallState::NotExecuted) {
+        authorizer.live_authority(principal, &binding_of(cell, decision_id)?)?;
     }
+    Ok(())
 }
 
 fn rejected() -> Refusal {
@@ -853,6 +967,17 @@ pub(crate) fn refuse<E: SqlEngine>(
     ) {
         return Ok(refusal);
     }
+    record_final(cell, decision_id, refusal)
+}
+
+/// Record `refusal` as final for the approved call of `decision_id`,
+/// whatever its category, under `cell`: `refusal` back, or the refusal
+/// recorded first.
+fn record_final<E: SqlEngine>(
+    cell: &mut ActionCell<E>,
+    decision_id: &str,
+    refusal: Refusal,
+) -> Result<Refusal, Refusal> {
     // Under the hold the refused try holds, the call's state is read again
     // before anything is recorded: a refusal recorded first stands, and an
     // exact commit is never masked by a later refusal (it is the call's

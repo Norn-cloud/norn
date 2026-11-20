@@ -50,7 +50,7 @@ use norn_cell::engine::SqlEngine;
 use norn_api::authz::{ReadCapability, ReadRequest};
 
 use crate::policy::{CallerSlot, CellObjectAccess, DEMO_GRANTS, READ_POLICY_ID, collection_access};
-use crate::principal::{PrincipalResolver, RequestScope};
+use crate::principal::{Authority, PrincipalResolver, RequestScope, Resume};
 
 /// One finite HTTP response: a status and a JSON body. Its `Debug` shows
 /// the status and the body's length only (RESPONSE-DEBUG-1): a body can
@@ -593,14 +593,57 @@ pub fn handle_all<E: SqlEngine>(
     }
     // The verified principal lives exactly as long as this request.
     let _request = RequestScope::new(principals);
+    let response = serve_once(host, principals, questions, kinds, request);
+    // APPROVAL-LIVE-1: an attempt to run an approved call needed the
+    // organization's answer for its requester and had none; it refused
+    // before recording anything. A host that looks requesters up is asked
+    // for it and serves the request again with it; a resolver that answers
+    // at once is served again now, once, with that answer.
+    let Some((principal, binding)) = principals.caller().and_then(CallerSlot::take_needed) else {
+        return response;
+    };
+    match principals.authority(&principal, &binding, request.now) {
+        Authority::Pending => {
+            principals.ask_authority(&principal, &binding, Resume::Request, request.now);
+            response
+        }
+        Authority::Unknown => response,
+        verdict @ (Authority::Current(_) | Authority::Revoked | Authority::Unavailable) => {
+            if let Some(slot) = principals.caller() {
+                slot.remember(&principal.subject, &binding, verdict);
+            }
+            serve_once(host, principals, questions, kinds, request)
+        }
+    }
+}
+
+/// APPROVAL-LIVE-1 (R1-07): resume the drive of `run_id` once the host has
+/// the organization's answer the drive asked for, without serving again the
+/// request that asked: only the run's drive runs, so nothing that request
+/// recorded is replayed. The answer lives exactly as long as this resume.
+pub fn resume_drive<E: SqlEngine>(
+    host: &DevHost<E>,
+    principals: &dyn PrincipalResolver,
+    questions: Option<&dyn AdHocQuestions<E>>,
+    run_id: &str,
+    now: u64,
+) {
+    let _resumed = RequestScope::new(principals);
+    crate::runs::resume_drive(host, questions, principals, run_id, now);
+}
+
+/// [`handle_all`] for one pass of a request, within its request scope.
+fn serve_once<E: SqlEngine>(
+    host: &DevHost<E>,
+    principals: &dyn PrincipalResolver,
+    questions: Option<&dyn AdHocQuestions<E>>,
+    kinds: &DefinitionKinds,
+    request: &Request<'_>,
+) -> Response {
     let actor = principals.resolve(request.authorization, request.now);
-    if let Some(response) = crate::runs::dispatch(
-        host,
-        questions,
-        principals.caller(),
-        actor.as_deref(),
-        request,
-    ) {
+    if let Some(response) =
+        crate::runs::dispatch(host, questions, principals, actor.as_deref(), request)
+    {
         return response;
     }
     // APPROVAL-1: a call an approval holds answers 202, so an action call

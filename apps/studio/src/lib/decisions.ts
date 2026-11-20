@@ -12,7 +12,9 @@ import { cellCall, defaultFetch, humanize, type CellResult, type Diagnostic, typ
  *        200 { outcome: "decided" | "replayed", decision, receipt, run, call? }; the same key and body
  *        replays. `call` (an approval of a parked action call) says where the call stands:
  *        "committed", "refused" (final, with `code`) or "not_executed" (approved, not yet executed:
- *        only the requester's own retry runs it, once). Refusals, in this order: 404 decision.not_found (also a non-decider: the cell
+ *        it runs once under the requester's current authority; `code`
+ *        approval.authority_unavailable when that could not be looked up). A requester who no longer holds
+ *        that authority reads "refused" with approval.requester_unauthorized). Refusals, in this order: 404 decision.not_found (also a non-decider: the cell
  *        does not say the decision exists), 409 decision.resolved (with `resolution`), 410
  *        decision.expired, 403 decision.not_a_decider | decision.law_not_satisfied, 422
  *        decision.unknown_choice (/choice) | decision.note_too_long (/note) | request.invalid,

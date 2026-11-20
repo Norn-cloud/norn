@@ -11,6 +11,7 @@ import { polarConfig, settingsOf } from "./polar-config.ts"
 import { acceptWorkspaceInvitation, createWorkspace } from "./workspaces.ts"
 import { cellScope } from "./scope.ts"
 import { instrumented } from "./telemetry.ts"
+import { AUTHORITY_PATH, serveAuthority } from "./authority.ts"
 
 /** The Studio Worker: Better Auth under /api/auth, authenticated /api/*, static assets for everything else. */
 export interface Env {
@@ -30,6 +31,12 @@ export interface Env {
   readonly AUTH_SCRYPT?: string
   /** The Norn cell host (service binding); absent until a host is connected to this stage. */
   readonly NORN_HOST?: Fetcher
+  /**
+   * APPROVAL-LIVE-1: the credential the cell host presents to look a requester's current membership up
+   * (authority.ts); at least 32 characters. Absent: the lookup is not served, and an approved call waits
+   * for its requester's own retry.
+   */
+  readonly NORN_AUTHORITY_TOKEN?: string
   /** The organization members' sessions start in (preview: the seeded `org_demo`). */
   readonly STUDIO_DEFAULT_ORG?: string
   /** The header the edge sets to the client's address (client-ip.ts); required, the Worker refuses auth without it. */
@@ -309,6 +316,7 @@ const handler = {
     if (pathname === "/api/auth/organization/accept-invitation") return acceptInvitation(await auth(env).handler(request))
     if (pathname === "/api/workspaces" || pathname.startsWith("/api/workspaces/")) return workspaceRoute(request, env, pathname)
     if (pathname.startsWith("/api/auth/")) return auth(env).handler(request)
+    if (pathname === AUTHORITY_PATH) return serveAuthority(request, auth(env), env.NORN_AUTHORITY_TOKEN)
     if (pathname === "/api/me") return me(request, env)
     if (pathname === "/api/billing" || pathname.startsWith("/api/billing/")) return billingRoute(request, env, await billingSettings(env), pathname)
     // Every Norn call goes to the host as the resolved actor; the host and its PDP decide.

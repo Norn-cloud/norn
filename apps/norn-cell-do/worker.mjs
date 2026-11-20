@@ -49,6 +49,15 @@ const ENGINE_STEPS = 64;
 const ENGINE_TIMEOUT_MS = 120_000;
 // TIMER-ALARM-1: the scope this object serves, kept so an alarm (which carries no request) can open its cell.
 const SCOPE_KEY = "norn.cell.scope";
+// APPROVAL-LIVE-1: a hung membership lookup must not hold the object; the approved call stays not executed.
+const AUTHORITY_TIMEOUT_MS = 5000;
+// APPROVAL-LIVE-1: lookups one request may ask for (the decide's, then each step its drive reaches)
+// before its reply stands as it is and nothing more runs (a retryable refusal, or a step left pending).
+const AUTHORITY_LOOKUPS = 4;
+// APPROVAL-LIVE-1: the shortest lookup credential the host uses; a shorter one leaves lookups off.
+const MIN_AUTHORITY_TOKEN = 32;
+/** APPROVAL-LIVE-1: whether this Worker looks requesters up at the organization's authority (NORN_AUTHORITY_URL, https, and NORN_AUTHORITY_TOKEN). */
+const authorityConfigured = (env) => typeof env.NORN_AUTHORITY_URL === "string" && env.NORN_AUTHORITY_URL.startsWith("https://") && typeof env.NORN_AUTHORITY_TOKEN === "string" && env.NORN_AUTHORITY_TOKEN.length >= MIN_AUTHORITY_TOKEN;
 
 export class Cell {
   constructor(ctx, env) {
@@ -108,6 +117,9 @@ export class Cell {
       } catch (error) {
         console.error(`source connections not configured: ${error}`);
       }
+      // APPROVAL-LIVE-1: an approval runs its call under the requester's current membership, looked up here.
+      // The cell derives its one-use lookup challenges from this fresh entropy.
+      if (authorityConfigured(this.env)) this.cell.enableAuthorityLookup(crypto.getRandomValues(new Uint8Array(32)));
       // D102: questions are answered on the tenant analytics engine when the Worker has one.
       if (this.env.NORN_OLAP_URL !== undefined) this.cell.enableAnalytics();
       // TIMER-ALARM-1: a serving cell keeps its scope for alarms, and arms for whatever was
@@ -195,6 +207,34 @@ export class Cell {
     }
     return reply;
   }
+  /**
+   * APPROVAL-LIVE-1: look one requester up at the organization's authority (Studio's
+   * /api/internal/authority), service to service, for the cell's one-use challenge and the attempt it
+   * is bound to. The lookup carries the host token of the request being served, so Studio answers only
+   * for that request's organization. The answer goes to the cell unread: a statement the cell verifies
+   * against the pinned JWKS and its challenge, or no answer, which runs nothing. The subject, challenge
+   * and binding are the ones the cell named, never ones from the response.
+   */
+  async lookUpAuthority(wanted, org, authorization) {
+    const onBehalfOf = authorization?.match(/^Bearer (.+)$/)?.[1];
+    if (onBehalfOf !== undefined) {
+      try {
+        const response = await fetch(this.env.NORN_AUTHORITY_URL, {
+          method: "POST",
+          headers: { authorization: `Bearer ${this.env.NORN_AUTHORITY_TOKEN}`, "content-type": "application/json" },
+          body: JSON.stringify({ orgId: org, subject: wanted.subject, kind: wanted.kind, challenge: wanted.challenge, binding: wanted.binding, onBehalfOf }),
+          redirect: "manual",
+          signal: AbortSignal.timeout(AUTHORITY_TIMEOUT_MS),
+        });
+        const answer = await response.json().catch(() => null);
+        if (response.status === 200 && typeof answer?.token === "string") return { challenge: wanted.challenge, token: answer.token };
+        console.error(`authority lookup answered ${response.status}`);
+      } catch (error) {
+        console.error(`authority lookup failed: ${error}`);
+      }
+    }
+    return { challenge: wanted.challenge };
+  }
   /** Refetch the pinned JWKS and install it. On failure the cached keys keep aging; the cell refuses them past its stale bound. */
   async refreshJwks() {
     try {
@@ -278,6 +318,18 @@ export class Cell {
     let reply = this.serve(request, body);
     // An unknown key id, at most once per retry interval: refetch the pinned JWKS and retry once.
     if (reply.refreshJwks && (await this.refreshJwks())) reply = this.serve(request, body);
+    // APPROVAL-LIVE-1: an attempt needs a principal's current authority: look it up and resume it with the
+    // answer. A request that recorded nothing is served again (that reply replaces this one); a run's
+    // drive is resumed alone, and the reply that asked stands.
+    let wanted = reply.authority;
+    for (let lookups = 0; wanted && lookups < AUTHORITY_LOOKUPS; lookups++) {
+      const url = new URL(request.url);
+      const authorization = request.headers.get("authorization") ?? undefined;
+      const answer = await this.lookUpAuthority(JSON.parse(wanted), Cell.scopeOf(request)[0], authorization);
+      const resumed = this.cell.resumeAuthority(request.method, url.pathname, url.search.slice(1), authorization, Date.now(), body, JSON.stringify(answer));
+      if (!resumed.resumedDrive) reply = resumed;
+      wanted = resumed.authority;
+    }
     // A continuation (an upload's object read): fetch exactly what the cell planned, hand it back.
     while (reply.thenToken) {
       const { status, bytes } = await perform(JSON.parse(reply.thenRequest));

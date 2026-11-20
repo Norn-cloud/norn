@@ -148,6 +148,8 @@ async function main(argv: readonly string[]) {
   }
   assertDeployableBuild(stage.stage, await bundleFixturesEnabled(bundle))
   const otel = otelSettings(process.env)
+  const authority = process.env.NORN_AUTHORITY_TOKEN
+  if (authority !== undefined && authority.length < 32) throw new Error("NORN_AUTHORITY_TOKEN must be at least 32 characters (Studio's own NORN_AUTHORITY_TOKEN)")
   const config = join(bundle, "wrangler.json")
   writeSecretConfig(config, {
     name: "norn-cell",
@@ -157,6 +159,8 @@ async function main(argv: readonly string[]) {
     migrations: [{ tag: "v1", new_sqlite_classes: ["Cell"] }],
     vars: {
       NORN_HOST_ISSUER: stage.origin, NORN_HOST_JWKS_URL: `${stage.origin}/api/auth/jwks`, NORN_LINEAGE_KEY: env("NORN_LINEAGE_KEY"),
+      // APPROVAL-LIVE-1: with Studio's lookup credential, an approval runs its call under the requester's current membership.
+      ...authority === undefined ? {} : { NORN_AUTHORITY_URL: `${stage.origin}/api/internal/authority`, NORN_AUTHORITY_TOKEN: authority },
       ...otel === undefined ? {} : { OTEL_EXPORTER_OTLP_ENDPOINT: otel.endpoint, OTEL_RESOURCE_ATTRIBUTES: otel.resourceAttributes ?? `deployment.environment=${stage.stage}`, ...otel.headers === undefined ? {} : { OTEL_EXPORTER_OTLP_HEADERS: otel.headers } },
     },
   })

@@ -311,7 +311,13 @@ pub(crate) fn call_action_bound<E: SqlEngine>(
         .find(|(_, action)| action.action_id == action_id)
         .ok_or_else(action_denied)?;
     if query.version.is_some_and(|pin| pin != installed.version) {
-        return Err(stale_pin(&mut cell, approved, principal, attempt)?);
+        return Err(stale_pin(
+            host.authorizer.as_ref(),
+            &mut cell,
+            approved,
+            principal,
+            attempt,
+        )?);
     }
     let model = cell.store().model().clone();
     let catalog = TypeCatalog::new(model.object_types())
@@ -408,6 +414,7 @@ fn commit_call<E: SqlEngine>(
 /// active. APPROVAL-PIN-1: an approved call pinned to another catalog never
 /// runs under its approval, and that refusal is recorded for it.
 fn stale_pin<E: SqlEngine>(
+    authorizer: &dyn crate::authz::Authorizer,
     cell: &mut crate::host::ActionCell<E>,
     approved: Option<&str>,
     principal: Option<&norn_cell::flow_run::RunStarter>,
@@ -424,7 +431,7 @@ fn stale_pin<E: SqlEngine>(
         .transpose()?;
     // S2: only the requester's own request decides its approved call.
     if let Some(decision) = &approval {
-        crate::approvals::require_requester(cell, decision, principal, attempt)?;
+        crate::approvals::require_requester(authorizer, cell, decision, principal, attempt)?;
     }
     Ok(crate::approvals::refused_under(
         cell,
@@ -535,7 +542,14 @@ fn through_gate<E: SqlEngine>(
             )
         })
         .transpose()?;
-    let approval = approval_of(cell, approved, command.as_deref(), principal, attempt)?;
+    let approval = approval_of(
+        host.authorizer.as_ref(),
+        cell,
+        approved,
+        command.as_deref(),
+        principal,
+        attempt,
+    )?;
     if let Some(decision) = &approval
         && let Some(refused) = crate::approvals::recorded_refusal(cell, decision)?
     {
@@ -617,6 +631,7 @@ fn through_gate<E: SqlEngine>(
 /// APPROVAL-REVISION-1: an approver's try is fenced here, under the epoch
 /// and the cell the dispatch holds, before anything parks or writes.
 fn approval_of<E: SqlEngine>(
+    authorizer: &dyn crate::authz::Authorizer,
     cell: &mut crate::host::ActionCell<E>,
     approved: Option<&str>,
     command: Option<&str>,
@@ -629,7 +644,7 @@ fn approval_of<E: SqlEngine>(
         (None, None) => None,
     };
     if let Some(decision) = &approval {
-        crate::approvals::require_requester(cell, decision, principal, attempt)?;
+        crate::approvals::require_requester(authorizer, cell, decision, principal, attempt)?;
     }
     if let (Some(approved), Some(decision)) = (approved, &approval)
         && command != Some(approved)
