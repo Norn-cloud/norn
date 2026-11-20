@@ -22,7 +22,9 @@ use norn_cell::engine::{
 use norn_cell::{MAIN_WORLD, StoreOptions};
 use norn_kernel::LogicalTime;
 use serde_json::{Value, json};
-use step_cell::{APPROVER, Cell, MELT_ACTION, NOW, OPERATOR, call, cell_on, melt_body};
+use step_cell::{
+    APPROVER, Cell, FLOW_ID, MELT_ACTION, NOW, OPERATOR, SCOPE, call, call_with, cell_on, melt_body,
+};
 
 const APPROVAL_ID: &str = "ops.melt_approval";
 
@@ -140,9 +142,18 @@ fn settlement(path: &Path, id: &str) -> Option<(String, Option<String>)> {
 /// committed), on a fresh copy of the parked cell each try; the cell and the
 /// decision.
 fn crash_leaving(directory: &Path, want: (bool, bool)) -> (std::path::PathBuf, String) {
+    crash_leaving_after(directory, want, parked)
+}
+
+/// [`crash_leaving`], with the call parked by `park`.
+fn crash_leaving_after(
+    directory: &Path,
+    want: (bool, bool),
+    park: fn(&Path) -> String,
+) -> (std::path::PathBuf, String) {
     for at in 0..64 {
         let path = directory.join(format!("cell-{at}.sqlite"));
-        let id = parked(&path);
+        let id = park(&path);
         match crash_at(&path, &id, at) {
             Some(left) if left == want => return (path, id),
             Some(_) => {}
@@ -304,4 +315,61 @@ fn an_approved_call_whose_action_changed_while_down_is_refused_visibly() {
     assert_eq!(status, 202, "{again}");
     assert_ne!(again["decision"]["id"], json!(id), "{again}");
     assert_eq!(melt_status(&reopened), 404);
+}
+
+/// A gated cell on `path` whose melt run's convert step parked its call
+/// (its ask approved); the call's decision id.
+fn parked_step(path: &Path) -> String {
+    let cell = cell_on(file(path), true);
+    gate(&cell);
+    let (status, opened) = call(
+        &cell,
+        "POST",
+        "/v1/runs",
+        OPERATOR,
+        &json!({ "flow": FLOW_ID, "runId": "melt-run" }).to_string(),
+    );
+    assert_eq!(status, 201, "{opened}");
+    let ask = pending_ids(&cell);
+    assert_eq!(ask.len(), 1, "{ask:?}");
+    let (status, decided) = approve(&cell, &ask[0]);
+    assert_eq!(status, 200, "{decided}");
+    assert_eq!(decided["run"]["state"], json!("awaiting_perform_convert"));
+    let approval = pending_ids(&cell);
+    assert_eq!(approval.len(), 1, "{approval:?}");
+    approval[0].clone()
+}
+
+/// The decisions the approver may decide.
+fn pending_ids<E: SqlEngine>(cell: &Cell<E>) -> Vec<String> {
+    let query = format!("{SCOPE}&state=pending");
+    let (status, page) = call_with(cell, "GET", "/v1/decisions", &query, APPROVER, "");
+    assert_eq!(status, 200, "{page}");
+    page["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["id"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+/// APPROVAL-RECOVERY-1 for a flow step's call: the host dies between the
+/// approval and the call. The wake commits the call as the run's starter
+/// and moves the run that waited on it, which completes.
+#[test]
+fn an_approved_step_call_lost_to_a_crash_moves_its_run_after_a_reopen() {
+    let directory = tempfile::tempdir().unwrap();
+    let (path, _id) = crash_leaving_after(directory.path(), (true, false), parked_step);
+    let reopened = cell_on(file(&path), false);
+    let due = next_due(&reopened.host)
+        .unwrap()
+        .expect("the approved call is due");
+    let woke = wake(&reopened, due.max(NOW * 1000));
+    assert_eq!(woke.approved_calls, 1, "{woke:?}");
+    assert!(woke.failed.is_empty(), "{woke:?}");
+    assert_eq!(melt_status(&reopened), 200);
+    let (status, run) = call_with(&reopened, "GET", "/v1/runs/melt-run", SCOPE, OPERATOR, "");
+    assert_eq!(status, 200, "{run}");
+    assert_eq!(run["state"], json!("completed"), "{run}");
+    assert_eq!(next_due(&reopened.host).unwrap(), None);
 }
