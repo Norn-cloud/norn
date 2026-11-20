@@ -58,6 +58,7 @@ mod admit;
 mod http;
 mod load;
 mod policy;
+mod timers;
 
 use policy::{DevMetrics, DevPrincipals, LocalDeveloper};
 
@@ -325,6 +326,11 @@ fn run(args: &DevArgs, out: &mut Events) -> Result<(), Failure> {
                 &connections,
             );
         });
+    }
+    // TIMER-ALARM-1: the dev host's clock runs the cell's due work, as the hosted alarm does.
+    {
+        let serving = Arc::clone(&serving);
+        std::thread::spawn(move || timers::drive(&serving));
     }
     let session = Session {
         loads: &loads,

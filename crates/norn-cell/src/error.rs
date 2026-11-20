@@ -241,6 +241,28 @@ pub enum CellError {
         /// The fail-closed reason.
         reason: String,
     },
+    /// HOST-INSTALL-LIVE-1: live objects break the candidate's governing
+    /// laws, or a candidate law could not be evaluated on them (unchecked is
+    /// never admitted). Evaluated on the migration candidate's view of each
+    /// object and of the links its laws read. Nothing is installed.
+    #[error("candidate governing laws refuse {} live object finding(s) of {checked} checked", findings.len())]
+    DefinitionLawRefused {
+        /// Every finding, violations and unchecked objects alike.
+        findings: Vec<DefinitionLawFinding>,
+        /// How many live objects were evaluated.
+        checked: u64,
+    },
+    /// HOST-INSTALL-LIVE-1: the candidate's governing laws would need more
+    /// live objects evaluated than one install checks. Nothing is installed.
+    #[error(
+        "candidate governing laws would need more than {limit} live objects checked (at {object_type})"
+    )]
+    DefinitionLawUnbounded {
+        /// The object type being checked when the bound was reached.
+        object_type: String,
+        /// The bound.
+        limit: u64,
+    },
     /// Candidate identity facts exceed the bounded trusted projection.
     #[error("identity projection budget exceeded: {0}")]
     ProjectionBudgetExceeded(String),
@@ -444,6 +466,22 @@ impl std::fmt::Display for DefinitionInvariantObject {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}/{}/{}", self.world, self.object_type, self.id)
     }
+}
+
+/// HOST-INSTALL-LIVE-1: one live object the candidate's governing laws
+/// refuse, or could not be evaluated on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DefinitionLawFinding {
+    /// The object's type.
+    pub object_type: String,
+    /// The object's id.
+    pub id: String,
+    /// The law it breaks; `None` for an object no law could be evaluated on.
+    pub law: Option<String>,
+    /// What broke, or why it could not be evaluated.
+    pub message: String,
+    /// The object could not be evaluated (fuel, an unreadable link).
+    pub unchecked: bool,
 }
 
 /// One bounded invariant finding for an existing object.

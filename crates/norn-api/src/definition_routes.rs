@@ -1502,7 +1502,11 @@ fn append<E: SqlEngine>(
                     CellError::RetainedDefinitionConflict { .. }
                     | CellError::DefinitionVersionConflict { .. },
                 ) => return Err(version_conflict()),
-                Err(error) => return Err(Refusal::host(error)),
+                // HOST-INSTALL-LIVE-1: the install's live-law check refused.
+                Err(error) => {
+                    return Err(crate::cell_definitions::live_law_refusal(&error)
+                        .unwrap_or_else(|| Refusal::host(error)));
+                }
             };
         if flow.is_some() {
             // A flow added or replaced its Run type in the model.

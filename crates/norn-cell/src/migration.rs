@@ -149,6 +149,9 @@ pub(crate) fn upgrade_raw_property_columns<E: SqlEngine>(
 
 pub(crate) struct MigrationPlan {
     candidate_catalog: EffectiveCatalog,
+    /// HOST-INSTALL-LIVE-1: how many live objects the candidate's governing
+    /// laws were evaluated on.
+    pub(crate) law_checked: u64,
 }
 
 /// Prove the candidate against the live store without issuing any SQL writes.
@@ -222,7 +225,357 @@ pub(crate) fn preflight_model_migration<E: SqlEngine>(
         previous_catalog.as_ref(),
         &candidate_catalog,
     )?;
-    Ok(MigrationPlan { candidate_catalog })
+    // HOST-INSTALL-LIVE-1: every install the host makes (not a replay of
+    // retained history, which was checked when it was first installed).
+    let law_checked = if retained.is_none() {
+        validate_candidate_laws(
+            engine,
+            previous,
+            candidate,
+            previous_catalog.as_ref(),
+            &candidate_catalog,
+        )?
+    } else {
+        0
+    };
+    Ok(MigrationPlan {
+        candidate_catalog,
+        law_checked,
+    })
+}
+
+/// HOST-INSTALL-LIVE-1: the most live objects one install evaluates under
+/// the candidate's governing laws; a change that would need more is refused
+/// rather than checked in part.
+pub(crate) const MAX_LAW_CHECKED_OBJECTS: u64 = 50_000;
+/// Law evaluation fuel per live object, as a commit's law check spends it.
+const LAW_FUEL: u64 = 1_000_000;
+
+/// Whether `name`'s effective declaration or governing laws differ between
+/// the installed model and the candidate.
+fn law_input_changed(
+    name: &str,
+    previous: &Model,
+    candidate: &Model,
+    previous_catalog: Option<&EffectiveCatalog>,
+    candidate_catalog: &EffectiveCatalog,
+) -> Result<bool, CellError> {
+    let (Some(before), Some(after)) = (
+        previous.object_types().find(|t| t.name.as_str() == name),
+        candidate.object_types().find(|t| t.name.as_str() == name),
+    ) else {
+        return Ok(true);
+    };
+    if before != after {
+        return Ok(true);
+    }
+    let Some(previous_catalog) = previous_catalog else {
+        return Ok(true);
+    };
+    // A type the host adds to the model (the kernel's own, never an
+    // artifact's) has no effective contract to compare; its declaration,
+    // compared above, is the whole of it.
+    if candidate_catalog.object_type_named(name).is_some()
+        && effective_property_contract_changed(name, previous_catalog, candidate_catalog)?
+    {
+        return Ok(true);
+    }
+    // A law set that cannot be resolved is treated as changed: its subjects
+    // are evaluated, and each live object then fails closed as unchecked.
+    Ok(
+        match (
+            previous.governing_laws(name),
+            candidate.governing_laws(name),
+        ) {
+            (Ok(before), Ok(after)) => before != after,
+            _ => true,
+        },
+    )
+}
+
+/// A subject's live link targets as the migration candidate will hold them:
+/// the stored links (a link type the candidate adds has none yet), each
+/// target's values overlaid with the candidate's materialized defaults.
+struct CandidateLinks<'r, 'c, E: SqlEngine> {
+    links: crate::link_laws::CurrentLinks<'r, 'c, E>,
+    engine: &'r E,
+    previous: &'r Model,
+    candidate: &'r Model,
+    catalog: &'r EffectiveCatalog,
+}
+
+impl<E: SqlEngine> CandidateLinks<'_, '_, E> {
+    fn overlay(
+        &self,
+        mut target: norn_kernel::governing_laws::LinkedTarget,
+    ) -> Result<
+        norn_kernel::governing_laws::LinkedTarget,
+        norn_kernel::governing_laws::LawEvaluationError,
+    > {
+        overlay_candidate_object_values(
+            self.engine,
+            self.previous,
+            self.candidate,
+            self.catalog,
+            self.links.world,
+            &target.key.key,
+            target.key.object_type.as_str(),
+            &mut target.values,
+        )
+        .map_err(|error| {
+            norn_kernel::governing_laws::LawEvaluationError::Unsupported(format!(
+                "a linked object's candidate values cannot be read: {error}"
+            ))
+        })?;
+        Ok(target)
+    }
+}
+
+impl<E: SqlEngine> norn_kernel::governing_laws::LinkTargets for CandidateLinks<'_, '_, E> {
+    fn target(
+        &mut self,
+        link: &str,
+    ) -> Result<
+        Option<norn_kernel::governing_laws::LinkedTarget>,
+        norn_kernel::governing_laws::LawEvaluationError,
+    > {
+        match self.links.target(link)? {
+            Some(target) => self.overlay(target).map(Some),
+            None => Ok(None),
+        }
+    }
+
+    fn sources(
+        &mut self,
+        role: &str,
+        source: &ObjectTypeName,
+        link: &str,
+    ) -> Result<
+        Vec<norn_kernel::governing_laws::LinkedTarget>,
+        norn_kernel::governing_laws::LawEvaluationError,
+    > {
+        self.links
+            .sources(role, source, link)?
+            .into_iter()
+            .map(|target| self.overlay(target))
+            .collect()
+    }
+}
+
+/// HOST-INSTALL-LIVE-1: evaluate the candidate's governing laws on every
+/// live main-world object whose law inputs the candidate changes, on the
+/// migration candidate's view: the object's values and each linked object's
+/// values overlaid with the defaults the migration will materialize, and
+/// the links the store holds (a link type the candidate adds has none). A
+/// subject is selected by its effective law dependencies: its own
+/// declaration or laws changed, a type it extends changed, or a type a
+/// link its laws read reaches (forward target or inverse source) changed,
+/// so a change confined to a linked type rechecks its subjects. A violation
+/// or an object no candidate law could be evaluated on (exhausted fuel, an
+/// unreadable link) refuses the install; so does a catalog error. Returns
+/// how many objects were evaluated.
+#[allow(
+    clippy::too_many_lines,
+    reason = "selection and the bounded scan stay together inside the migration proof"
+)]
+fn validate_candidate_laws<E: SqlEngine>(
+    engine: &E,
+    previous: &Model,
+    candidate: &Model,
+    previous_catalog: Option<&EffectiveCatalog>,
+    candidate_catalog: &EffectiveCatalog,
+) -> Result<u64, CellError> {
+    if candidate.law_artifacts().is_empty() {
+        return Ok(0);
+    }
+    let catalog = TypeCatalog::new(candidate.object_types())
+        .with_interfaces(candidate.interfaces())
+        .with_governing_laws(candidate.law_artifacts())
+        .with_property_types(candidate.property_types());
+    // The links the candidate's laws read; when they cannot be resolved,
+    // every subject with laws is rechecked (fail closed).
+    let index = norn_kernel::governing_laws::link_law_index(&catalog).ok();
+    let mut changed = BTreeSet::new();
+    for object_type in candidate.object_types() {
+        let name = object_type.name.as_str();
+        if law_input_changed(
+            name,
+            previous,
+            candidate,
+            previous_catalog,
+            candidate_catalog,
+        )? {
+            changed.insert(object_type.name.clone());
+        }
+    }
+    if changed.is_empty() {
+        return Ok(0);
+    }
+    let reached = |declared: &ObjectTypeName| {
+        changed
+            .iter()
+            .any(|name| norn_kernel::governing_laws::reaches(&catalog, name, declared))
+    };
+    let mut subjects = Vec::new();
+    for object_type in candidate.object_types() {
+        let name = &object_type.name;
+        // A type the installed model lacks has no live objects.
+        if !previous.has_type(name.as_str())
+            // A law set that cannot be resolved still selects its subject:
+            // each live object of it is then refused as unchecked.
+            || catalog.governing_laws(name).is_ok_and(|laws| laws.is_empty())
+        {
+            continue;
+        }
+        let mut selected = changed.contains(name);
+        // A type it extends (a link its laws read may be declared there).
+        let mut parent = object_type.extends.clone();
+        while !selected && let Some(next) = parent {
+            selected = changed.contains(&next);
+            parent = candidate
+                .object_types()
+                .find(|t| t.name == next)
+                .and_then(|t| t.extends.clone());
+        }
+        selected = selected
+            || index.as_ref().is_none_or(|index| {
+                index
+                    .forward
+                    .iter()
+                    .any(|(subject, _, target)| subject == name && reached(target))
+                    || index
+                        .inverse
+                        .iter()
+                        .any(|(subject, source, _)| subject == name && reached(source))
+            });
+        if selected {
+            subjects.push(name.as_str().to_owned());
+        }
+    }
+    let reader = StoreReader::new(engine, previous);
+    let mut checked: u64 = 0;
+    let mut findings = Vec::new();
+    for name in subjects {
+        let root = previous
+            .tables(&name)?
+            .first()
+            .copied()
+            .ok_or_else(|| refused(format!("the root table of `{name}` is unavailable")))?;
+        let mut cursor: Option<InvariantScanCursor> = None;
+        loop {
+            let rows = query_invariant_object_page(
+                engine,
+                &root.table,
+                std::slice::from_ref(&name),
+                cursor.as_ref(),
+                500,
+            )?;
+            if rows.is_empty() {
+                break;
+            }
+            for values in rows {
+                let row = SqlRow(values);
+                let world: String = row.get(0)?;
+                let id: String = row.get(1)?;
+                cursor = Some(InvariantScanCursor {
+                    world: world.clone(),
+                    id: id.clone(),
+                });
+                if world != crate::MAIN_WORLD {
+                    continue;
+                }
+                // An object its findings hold back (quarantined) is not
+                // admitted data: the laws already refuse it. One whose
+                // standing cannot be decided is refused as unchecked.
+                let mut object = match reader.authoritative_object(&world, &name, &id) {
+                    Ok(Some(object)) => object,
+                    Ok(None) => continue,
+                    Err(error) => {
+                        findings.push(crate::error::DefinitionLawFinding {
+                            object_type: name.clone(),
+                            id: id.clone(),
+                            law: None,
+                            message: format!(
+                                "{name} {id} was not evaluated under the candidate laws: {error}"
+                            ),
+                            unchecked: true,
+                        });
+                        continue;
+                    }
+                };
+                checked = checked.saturating_add(1);
+                if checked > MAX_LAW_CHECKED_OBJECTS {
+                    return Err(CellError::DefinitionLawUnbounded {
+                        object_type: name.clone(),
+                        limit: MAX_LAW_CHECKED_OBJECTS,
+                    });
+                }
+                overlay_candidate_object_values(
+                    engine,
+                    previous,
+                    candidate,
+                    candidate_catalog,
+                    &world,
+                    &id,
+                    &name,
+                    &mut object.values,
+                )?;
+                let key = FactKey::new(&name, &id);
+                let mut links = CandidateLinks {
+                    links: crate::link_laws::CurrentLinks {
+                        reader: &reader,
+                        world: &world,
+                        subject: key.clone(),
+                    },
+                    engine,
+                    previous,
+                    candidate,
+                    catalog: candidate_catalog,
+                };
+                let mut fuel = LAW_FUEL;
+                match norn_kernel::governing_laws::evaluate_linked(
+                    &catalog,
+                    &key,
+                    &object.values,
+                    &mut links,
+                    &mut fuel,
+                ) {
+                    Ok(failures) => {
+                        for failure in failures {
+                            let law = match &failure.rule_ref {
+                                norn_ir::DataQualityRuleRef::Law { law_id, .. } => law_id.clone(),
+                                norn_ir::DataQualityRuleRef::Invariant { invariant_id, .. } => {
+                                    invariant_id.0.clone()
+                                }
+                                norn_ir::DataQualityRuleRef::Builtin { id, .. } => id.clone(),
+                            };
+                            findings.push(crate::error::DefinitionLawFinding {
+                                object_type: name.clone(),
+                                id: id.clone(),
+                                message: format!("{name} {id} breaks {law}: {}", failure.message),
+                                law: Some(law),
+                                unchecked: false,
+                            });
+                        }
+                    }
+                    Err(reason) => findings.push(crate::error::DefinitionLawFinding {
+                        object_type: name.clone(),
+                        id: id.clone(),
+                        law: None,
+                        message: format!(
+                            "{name} {id} was not evaluated under the candidate laws: {reason}"
+                        ),
+                        unchecked: true,
+                    }),
+                }
+            }
+        }
+    }
+    if findings.is_empty() {
+        Ok(checked)
+    } else {
+        Err(CellError::DefinitionLawRefused { findings, checked })
+    }
 }
 
 /// Apply the projected schema delta after the shared preflight admitted it.

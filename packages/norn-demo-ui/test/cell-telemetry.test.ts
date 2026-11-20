@@ -135,7 +135,7 @@ test("refusal codes are allowlisted: a known code is kept, anything else is othe
 
 test("the refusal allowlist holds every refusal-family code the host and kernel write", () => {
   const root = new URL("../../../", import.meta.url)
-  const families = /^(action|analytics|approval|artifact_set|authn|authz|bulk|cell|commit|connector|dataset|decision|definition|entitlement|guard|ingress|lifecycle|live|object|observations|query|question|request|reveal|route|run|scope|source|subscription|transform|upload)\./
+  const families = /^(action|analytics|approval|artifact_set|authn|authz|bulk|cell|commit|connection|connector|dataset|decision|definition|defs|entitlement|guard|ingress|lifecycle|live|object|observations|query|question|request|reveal|route|run|scope|source|subscription|transform|upload)\./
   const sources = ["crates/norn-kernel/src", "crates/norn-cell-do/src", "crates/norn-cell/src", "crates/norn-api/src", "crates/norn-authz/src", "crates/norn-decisions/src"]
     .flatMap((dir) => readdirSync(new URL(dir, root), { recursive: true, encoding: "utf8" }).filter((file) => file.endsWith(".rs") && !file.includes("tests")).map((file) => new URL(`${dir}/${file}`, root)))
   sources.push(...["worker.mjs", "subscribe.mjs"].map((file) => new URL(`apps/norn-cell-do/${file}`, root)))

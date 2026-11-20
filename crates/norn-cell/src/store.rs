@@ -1844,6 +1844,9 @@ pub struct CellStore<E: SqlEngine = DefaultEngine> {
     quantity_boundary: Cell<Option<crate::quantity::FormatBoundary>>,
     /// FORK-PIN-1: the durable pin of a forked store, loaded at open.
     pub(crate) fork: Option<crate::fork::ForkPin>,
+    /// HOST-INSTALL-LIVE-1: how many live objects the last definitions
+    /// check or install evaluated under the candidate's governing laws.
+    law_checked: Cell<u64>,
 }
 
 #[derive(Clone, Copy)]
@@ -2333,6 +2336,7 @@ impl<E: SqlEngine> CellStore<E> {
             verified_receipts: RefCell::default(),
             quantity_boundary: Cell::new(None),
             fork: None,
+            law_checked: Cell::new(0),
         }
     }
 
@@ -2363,6 +2367,7 @@ impl<E: SqlEngine> CellStore<E> {
             .iter()
             .chain(&crate::flow_run::DDL)
             .chain(&crate::decision_ledger::DDL)
+            .chain(&crate::due_retry::DDL)
         {
             conn.execute_batch(statement)?;
         }
@@ -2958,10 +2963,18 @@ impl<E: SqlEngine> CellStore<E> {
             retained: None,
         };
         let actual_version = active_definition_version(&self.conn)?;
-        Ok(
-            preflight_definition_install(&self.conn, &self.model, &install, actual_version, None)?
-                .installed,
-        )
+        let preflight =
+            preflight_definition_install(&self.conn, &self.model, &install, actual_version, None)?;
+        self.law_checked.set(preflight.migration.law_checked);
+        Ok(preflight.installed)
+    }
+
+    /// HOST-INSTALL-LIVE-1: how many live objects the last definitions check
+    /// or install on this store evaluated under the candidate's governing
+    /// laws (every install checks them; a violation refuses it).
+    #[must_use]
+    pub fn live_law_checked(&self) -> u64 {
+        self.law_checked.get()
     }
 
     #[allow(
@@ -3007,7 +3020,8 @@ impl<E: SqlEngine> CellStore<E> {
                     for statement in SYSTEM_DDL
             .iter()
             .chain(&crate::flow_run::DDL)
-            .chain(&crate::decision_ledger::DDL) {
+            .chain(&crate::decision_ledger::DDL)
+            .chain(&crate::due_retry::DDL) {
                         self.conn.execute_batch(statement)?;
                     }
                     crate::retained::init(&self.conn)?;
@@ -3043,6 +3057,7 @@ impl<E: SqlEngine> CellStore<E> {
                     actual_version,
                     match origin { CommitOrigin::Retained(record) => Some(record), CommitOrigin::Current | CommitOrigin::Provisioning(..) => None },
                 )?;
+                self.law_checked.set(preflight.migration.law_checked);
                 crate::migration::apply_model_migration(
                     &self.conn,
                     &self.model,

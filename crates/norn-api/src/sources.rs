@@ -230,6 +230,9 @@ struct ConnectionState {
     mapped: usize,
     last_end_ms: Option<u64>,
     watermarks: Option<BTreeMap<String, Watermark>>,
+    /// The schedule was read back from the cell's durable sync record
+    /// (TIMER-ALARM-1), so an evicted host never resyncs early.
+    restored: bool,
 }
 
 /// Every configured connection of one cell and its running syncs.
@@ -413,6 +416,95 @@ impl Sources {
         self.claim(&id, Trigger::Schedule, &format!("connection:{id}"), now_ms)
             .ok()
             .map(|_| id)
+    }
+
+    /// TIMER-ALARM-1: read each scheduled connection's last sync end back
+    /// from the cell's durable connection record (SYNC-REPORT-1), once per
+    /// host instance, so a host that was evicted keeps the schedule the
+    /// cell recorded instead of syncing every connection at once. A
+    /// connection the cell holds no ended sync for stays never synced.
+    ///
+    /// # Errors
+    /// The cell could not be read: nothing is restored, and the host claims
+    /// nothing on the schedule until it can be.
+    pub fn restore_schedule<E: SqlEngine>(&mut self, host: &DevHost<E>) -> Result<(), String> {
+        let pending = |state: Option<&ConnectionState>| !state.is_some_and(|s| s.restored);
+        if !self
+            .connections
+            .iter()
+            .any(|c| c.every_minutes > 0 && pending(self.state.get(&c.id)))
+        {
+            return Ok(());
+        }
+        // A cell from before connection records has no such type: no
+        // recorded schedule, not a restore error.
+        let recorded = host
+            .object_type_names()
+            .map_err(|refusal| format!("{}: {}", refusal.code, refusal.message))?
+            .iter()
+            .any(|name| name == CONNECTION_TYPE);
+        for connection in &self.connections {
+            let state = self.state.entry(connection.id.clone()).or_default();
+            // Only a scheduled connection has a schedule to restore.
+            if state.restored || connection.every_minutes == 0 || !recorded {
+                state.restored = true;
+                continue;
+            }
+            let ended = host
+                .host_object(CONNECTION_TYPE, &connection.id)
+                .map_err(|refusal| format!("{}: {}", refusal.code, refusal.message))?
+                .and_then(|record| {
+                    record
+                        .get("last_sync_ended_at")
+                        .and_then(RuntimeValue::as_str)
+                        .and_then(|text| text.parse::<jiff::Timestamp>().ok())
+                        .and_then(|at| u64::try_from(at.as_millisecond()).ok())
+                });
+            if let Some(ended) = ended {
+                state.last_end_ms = Some(state.last_end_ms.map_or(ended, |known| known.max(ended)));
+            }
+            state.restored = true;
+        }
+        Ok(())
+    }
+
+    /// TIMER-ALARM-1: when the next scheduled sync falls due, at or after
+    /// `now_ms` (the host wakes then and claims it with [`Self::due`]): a
+    /// connection never synced is due now, and any other one `every_minutes`
+    /// after its last run ended. While any connection's sync holds the cell
+    /// (SYNC-SERIAL-1), no other can be claimed, so the next is when that
+    /// run's lease lapses (SYNC-LEASE-1); its end re-arms the host. `None`
+    /// when no connection is scheduled.
+    #[must_use]
+    pub fn next_due(&self, now_ms: u64) -> Option<u64> {
+        let lease = self
+            .state
+            .values()
+            .filter_map(|s| s.run.as_ref())
+            .filter(|run| held(run, now_ms))
+            .map(|run| run.stepped_ms.saturating_add(RUN_LEASE_MS))
+            .min();
+        if lease.is_some() && self.connections.iter().any(|c| c.every_minutes > 0) {
+            return lease;
+        }
+        self.connections
+            .iter()
+            .filter(|c| c.every_minutes > 0)
+            .map(|c| {
+                let state = self.state.get(&c.id);
+                if let Some(run) = state
+                    .and_then(|s| s.run.as_ref())
+                    .filter(|run| held(run, now_ms))
+                {
+                    return run.stepped_ms.saturating_add(RUN_LEASE_MS);
+                }
+                let every = u64::from(c.every_minutes).saturating_mul(60_000);
+                state
+                    .and_then(|s| s.last_end_ms)
+                    .map_or(now_ms, |last| last.saturating_add(every))
+                    .max(now_ms)
+            })
+            .min()
     }
 
     /// Advance the claimed sync of `id`: `None` begins it; otherwise

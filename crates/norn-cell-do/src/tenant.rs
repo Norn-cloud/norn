@@ -409,6 +409,30 @@ impl<E: SqlEngine> Tenant<E> {
         }
     }
 
+    /// TIMER-ALARM-1: the cell's earliest deadline (logical milliseconds),
+    /// possibly already passed; `None` for a vacant cell or one with nothing
+    /// pending. The host arms its alarm with it after every request.
+    ///
+    /// # Errors
+    /// A host failure reading the cell.
+    pub fn next_due(&self) -> Result<Option<u64>, Refusal> {
+        self.serving_host()
+            .map_or(Ok(None), norn_api::timers::next_due)
+    }
+
+    /// TIMER-ALARM-1: run the cell's work due at `now_ms` (the host's clock)
+    /// through its ordinary commit paths; what it did and when to wake next.
+    /// A vacant cell has nothing due.
+    ///
+    /// # Errors
+    /// A host failure reading the cell; an item that fails stays due.
+    pub fn run_due(&self, now_ms: u64) -> Result<norn_api::timers::DueWork, Refusal> {
+        self.serving_host().map_or_else(
+            || Ok(norn_api::timers::DueWork::default()),
+            |host| norn_api::timers::run_due(host, norn_kernel::LogicalTime::from_millis(now_ms)),
+        )
+    }
+
     /// Why the cell's active definitions installed no action policy, as of
     /// the last request: for the operator's log, never for a caller (every
     /// refused call answers the one opaque action denial).
