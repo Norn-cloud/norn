@@ -29,6 +29,11 @@
     "roles": [
       {
         "role": "viewer",
+        "scope": "collection",
+        "see": {
+          "decision": "partial",
+          "scope": "collection"
+        },
         "read": {
           "population": {
             "decision": "permit",
@@ -53,6 +58,11 @@
       },
       {
         "role": "member",
+        "scope": "collection",
+        "see": {
+          "decision": "permit",
+          "scope": "collection"
+        },
         "read": {
           "population": {
             "decision": "permit",
@@ -77,6 +87,11 @@
       },
       {
         "role": "admin",
+        "scope": "collection",
+        "see": {
+          "decision": "permit",
+          "scope": "collection"
+        },
         "read": {
           "population": {
             "decision": "permit",
@@ -101,6 +116,11 @@
       },
       {
         "role": "owner",
+        "scope": "collection",
+        "see": {
+          "decision": "permit",
+          "scope": "collection"
+        },
         "read": {
           "population": {
             "decision": "permit",
