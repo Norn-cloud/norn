@@ -3129,6 +3129,14 @@
       "no_fix": null
     },
     {
+      "code": "mapping.resolution.lifecycle_overlap",
+      "tier": "T3",
+      "severity": "error",
+      "message": "a lifecycle property is observed by more than one mapping, which source resolution does not decide yet: {detail}",
+      "fix": "Observe the lifecycle property from one mapping only, and report the other sources' state as an ordinary property they check.",
+      "no_fix": null
+    },
+    {
       "code": "mapping.resolution.mixed",
       "tier": "T3",
       "severity": "error",

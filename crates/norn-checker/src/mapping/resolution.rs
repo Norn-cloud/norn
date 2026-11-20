@@ -5,7 +5,7 @@
 //! The [`ResolutionTable`] of an admitted set lists, for every canonical
 //! property, the mappings that write it and the authority each declares
 //! (a property rule's own `authority`, else its map's). Admission
-//! ([`admission_findings`]) refuses a property that two mappings write when
+//! (`admission_findings`) refuses a property that two mappings write when
 //! any writer declares nothing, when the declarations do not single out who
 //! decides, or when nobody may decide. The cell decides each written value
 //! with [`ResolutionTable::resolve`] over the latest report of every writer,
@@ -18,7 +18,7 @@ use norn_ir::ArtifactEnvelope;
 use norn_ir::mapping::{MappingIr, SourceAuthority};
 
 use super::{MappingModel, codes};
-use crate::entity_artifacts::{Decoded, decode_v2};
+use crate::entity_instance::{EffectiveCatalog, EffectiveObjectType};
 use crate::property_types::error;
 use crate::{Diagnostic, Span};
 
@@ -75,12 +75,18 @@ impl ResolutionTable {
     /// resolved against the `entity` artifacts of `artifacts` and `base`.
     #[must_use]
     pub fn from_artifacts(artifacts: &[ArtifactEnvelope], base: &[ArtifactEnvelope]) -> Self {
+        let all: Vec<ArtifactEnvelope> = base.iter().chain(artifacts).cloned().collect();
+        let catalog = EffectiveCatalog::from_artifacts(&all);
         let mut names = BTreeMap::new();
-        for artifact in base.iter().chain(artifacts) {
-            if let Decoded::Root(root) = decode_v2(artifact)
-                && let norn_ir::EntityRoot::V2(root) = *root
-            {
-                names.insert(artifact.artifact_id.clone(), root.object_type.name.0);
+        for artifact in &all {
+            if let Some(Ok(object_type)) = catalog.object_type(&artifact.artifact_id) {
+                names.insert(
+                    artifact.artifact_id.clone(),
+                    (
+                        object_type.name.as_str().to_owned(),
+                        key_properties(object_type),
+                    ),
+                );
             }
         }
         let mappings: Vec<(String, MappingIr)> = artifacts
@@ -95,26 +101,31 @@ impl ResolutionTable {
         )
     }
 
+    /// `type_of` gives a target entity's object type name and the
+    /// properties that hold its key exactly.
     fn of<'a>(
         mappings: impl IntoIterator<Item = (&'a str, &'a MappingIr)>,
-        type_of: impl Fn(&str) -> Option<String>,
+        type_of: impl Fn(&str) -> Option<(String, BTreeSet<String>)>,
     ) -> Self {
         let mut fields: BTreeMap<(String, String), BTreeMap<String, Writer>> = BTreeMap::new();
+        // Whether every rule writing a property is a proven identity write.
+        let mut identity: BTreeMap<(String, String), bool> = BTreeMap::new();
         for (mapping_id, mapping) in mappings {
             for (map_index, map) in mapping.maps.iter().enumerate() {
-                let Some(object_type) = type_of(&map.target.entity) else {
+                let Some((object_type, keys)) = type_of(&map.target.entity) else {
                     continue;
                 };
                 for (rule, property) in map.properties.iter().enumerate() {
-                    // A rule whose value is the map's subject writes the key
-                    // itself: every report on one subject agrees on it.
-                    if property.value == map.subject && property.authority.is_none() {
-                        continue;
-                    }
+                    let field = (object_type.clone(), property.property.as_str().to_owned());
+                    // A rule that writes the map's subject to a property
+                    // holding the key exactly writes the key itself.
+                    let proven = property.value == map.subject
+                        && property.authority.is_none()
+                        && keys.contains(property.property.as_str());
+                    let all = identity.entry(field.clone()).or_insert(true);
+                    *all &= proven;
                     let authority = property.authority.or(map.authority);
-                    let writers = fields
-                        .entry((object_type.clone(), property.property.as_str().to_owned()))
-                        .or_default();
+                    let writers = fields.entry(field).or_default();
                     let writer = writers.entry(mapping_id.to_owned()).or_insert(Writer {
                         authority,
                         declared: BTreeSet::new(),
@@ -127,6 +138,10 @@ impl ResolutionTable {
                 }
             }
         }
+        // Every report on one subject agrees on its key, so a property only
+        // ever written with it needs no resolution; a property any rule
+        // writes otherwise is resolved over all of its writers.
+        fields.retain(|field, _| !identity.get(field).copied().unwrap_or(false));
         Self { fields }
     }
 
@@ -239,9 +254,13 @@ pub(super) fn admission_findings(
         mappings
             .iter()
             .map(|(artifact, mapping)| (artifact.artifact_id.as_str(), mapping)),
-        |entity| model.object_type_of(entity).map(|name| name.0.clone()),
+        |entity| {
+            model
+                .object_type_of(entity)
+                .map(|name| (name.0.clone(), model.key_properties(name.as_str())))
+        },
     );
-    let mut out = Vec::new();
+    let mut out = lifecycle_overlaps(mappings, model);
     for ((object_type, property), writers) in &table.fields {
         if !resolved(writers) {
             continue;
@@ -276,6 +295,76 @@ pub(super) fn admission_findings(
         out.push(finding);
     }
     out
+}
+
+/// SOURCE-RESOLVE-1: a lifecycle property observed by more than one mapping
+/// is refused, since its snapshots are reconciled by transitions, not
+/// decided by source authority yet. One finding per such property, on the
+/// rule of each mapping after the first (in artifact id order).
+fn lifecycle_overlaps(
+    mappings: &[(&ArtifactEnvelope, MappingIr)],
+    model: &MappingModel,
+) -> Vec<Diagnostic> {
+    let mut writers: BTreeMap<(String, String), BTreeMap<&str, At>> = BTreeMap::new();
+    for (artifact, mapping) in mappings {
+        for (map_index, map) in mapping.maps.iter().enumerate() {
+            let Some(object_type) = model.object_type_of(&map.target.entity) else {
+                continue;
+            };
+            for (rule, lifecycle) in map.lifecycles.iter().enumerate() {
+                writers
+                    .entry((
+                        object_type.0.clone(),
+                        lifecycle.property.as_str().to_owned(),
+                    ))
+                    .or_default()
+                    .entry(artifact.artifact_id.as_str())
+                    .or_insert(At {
+                        map: map_index,
+                        rule,
+                    });
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for ((object_type, property), observed) in writers {
+        let ids: Vec<&str> = observed.keys().copied().collect();
+        for (id, at) in observed.iter().skip(1) {
+            let mut finding = error(
+                codes::RESOLUTION_LIFECYCLE_OVERLAP,
+                format!(
+                    "{object_type}.{property} is observed by {}; source resolution does not decide lifecycle snapshots yet, so observe it from one mapping",
+                    ids.join(", ")
+                ),
+                Span::from_segments([
+                    "maps",
+                    at.map.to_string().as_str(),
+                    "lifecycles",
+                    at.rule.to_string().as_str(),
+                ]),
+            );
+            if let Some(span) = finding.span.as_mut() {
+                span.pointer = format!("/payload{}", span.pointer);
+            }
+            finding.artifact_id = Some((*id).to_owned());
+            out.push(finding);
+        }
+    }
+    out
+}
+
+/// SOURCE-RESOLVE-1: the properties of `object_type` that hold its key
+/// exactly: each the one component of a key without normalization.
+pub(super) fn key_properties(object_type: &EffectiveObjectType) -> BTreeSet<String> {
+    object_type
+        .keys
+        .iter()
+        .filter(|key| key.normalize.values().all(Vec::is_empty))
+        .filter_map(|key| match key.components.as_slice() {
+            [property] => Some(property.as_str().to_owned()),
+            _ => None,
+        })
+        .collect()
 }
 
 /// The finding for one resolved property, and the mapping it is reported
@@ -390,8 +479,140 @@ fn field_finding(
 #[cfg(test)]
 mod tests {
     use super::{Resolution, ResolutionTable, Writer};
-    use norn_ir::mapping::SourceAuthority;
+    use norn_ir::ArtifactEnvelope;
+    use norn_ir::mapping::{MappingIr, SourceAuthority};
+    use serde_json::{Value, json};
     use std::collections::{BTreeMap, BTreeSet};
+
+    /// A mapping of `t.T` from map `maps` (each a JSON object map without
+    /// its source and target).
+    fn mapping(maps: &[Value]) -> MappingIr {
+        let maps: Vec<Value> = maps
+            .iter()
+            .enumerate()
+            .map(|(i, map)| {
+                let mut map = map.clone();
+                map["id"] = json!(format!("m{i}"));
+                map["source"] = json!({"dataset": "d"});
+                map["target"] = json!({"entity": "t.T.entity", "interface": "t.I.interface"});
+                map["sourceRecord"] = json!("input.id");
+                map
+            })
+            .collect();
+        serde_json::from_value(json!({
+            "format": "norn.mapping/1",
+            "source": {"schemaId": "s", "version": "1.0.0", "sha256": "a".repeat(64)},
+            "interfaces": [],
+            "maps": maps,
+        }))
+        .expect("mapping")
+    }
+
+    fn writers_of(mappings: &[(&str, MappingIr)], property: &str) -> Vec<String> {
+        let table = ResolutionTable::of(mappings.iter().map(|(id, m)| (*id, m)), |_| {
+            Some(("t.T".to_owned(), BTreeSet::from(["id".to_owned()])))
+        });
+        table
+            .writers("t.T", property)
+            .into_iter()
+            .map(|(id, _)| id.to_owned())
+            .collect()
+    }
+
+    #[test]
+    fn only_proven_identity_writes_of_the_key_are_exempt() {
+        let subject = |property: &str| json!({"property": property, "value": "input.id"});
+        let both = [
+            (
+                "a",
+                mapping(&[
+                    json!({"subject": "input.id", "properties": [subject("id"), subject("label")]}),
+                ]),
+            ),
+            (
+                "b",
+                mapping(&[
+                    json!({"subject": "input.id", "properties": [subject("id"), subject("label")]}),
+                ]),
+            ),
+        ];
+        // Every writer of the key writes the subject to it: no resolution.
+        assert!(writers_of(&both, "id").is_empty());
+        // `label` is no key: written as the subject, it is still resolved.
+        assert_eq!(writers_of(&both, "label"), ["a", "b"]);
+        // One writer of the key writes something else: every writer counts.
+        let mixed = [
+            (
+                "a",
+                mapping(&[json!({"subject": "input.id", "properties": [subject("id")]})]),
+            ),
+            (
+                "b",
+                mapping(&[
+                    json!({"subject": "input.id", "properties": [{"property": "id", "value": "input.other"}]}),
+                ]),
+            ),
+        ];
+        assert_eq!(writers_of(&mixed, "id"), ["a", "b"]);
+    }
+
+    #[test]
+    fn two_mappings_observing_one_lifecycle_property_are_refused() {
+        let envelope = |id: &str, kind: &str, payload: Value| -> ArtifactEnvelope {
+            serde_json::from_value(json!({
+                "irVersion": "0.1", "artifactId": id, "kind": kind, "namespace": "t",
+                "name": id, "version": "1.0.0", "lifecycle": "draft", "scope": {},
+                "dependencies": [], "provenance": {"source": "system"}, "payload": payload,
+            }))
+            .expect("envelope")
+        };
+        let entity = envelope(
+            "t.T.entity",
+            "entity",
+            json!({"entityVersion": "2.0", "objectType": {
+                "name": "t.T",
+                "properties": [
+                    {"id": "id", "type": {"kind": "text"}},
+                    {"id": "status", "type": {"kind": "enum",
+                        "values": [{"value": "open"}, {"value": "approved"}]}, "default": "open"},
+                ],
+                "identity": [{"name": "primary", "properties": ["id"]}],
+                "lifecycles": [{"property": "status", "initial": ["open"], "terminal": ["approved"],
+                    "transitions": [{"id": "approve", "from": ["open"], "to": "approved"}]}],
+            }}),
+        );
+        let model =
+            super::MappingModel::from_artifacts(std::slice::from_ref(&entity)).expect("model");
+        let observe = mapping(&[json!({
+            "subject": "input.id",
+            "properties": [{"property": "id", "value": "input.id"}],
+            "lifecycles": [{"property": "status", "state": "input.status"}],
+        })]);
+        let a = envelope(
+            "a.mapping",
+            "mapping",
+            serde_json::to_value(&observe).expect("wire"),
+        );
+        let b = envelope(
+            "b.mapping",
+            "mapping",
+            serde_json::to_value(&observe).expect("wire"),
+        );
+        let codes = |mappings: &[(&ArtifactEnvelope, MappingIr)]| -> Vec<(String, Option<String>)> {
+            super::admission_findings(mappings, &model)
+                .into_iter()
+                .map(|d| (d.code.as_str().to_owned(), d.artifact_id))
+                .collect()
+        };
+        assert!(codes(&[(&a, observe.clone())]).is_empty());
+        assert_eq!(
+            codes(&[(&a, observe.clone()), (&b, observe)]),
+            [(
+                super::codes::RESOLUTION_LIFECYCLE_OVERLAP.to_owned(),
+                Some("b.mapping".to_owned())
+            )]
+        );
+    }
 
     fn table(writers: &[(&str, Option<SourceAuthority>)]) -> ResolutionTable {
         let writers = writers

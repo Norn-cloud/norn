@@ -1564,6 +1564,10 @@
     "fix": "Make the property nullable, or decide it with a system_of_record or precedence instead of conflict."
   },
   {
+    "code": "mapping.resolution.lifecycle_overlap",
+    "fix": "Observe the lifecycle property from one mapping only, and report the other sources' state as an ordinary property they check."
+  },
+  {
     "code": "mapping.resolution.mixed",
     "fix": "Declare conflict on every writer of the property, or on none of them."
   },

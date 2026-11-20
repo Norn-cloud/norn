@@ -1,127 +1,156 @@
 {
-  "bundleDigest": "02685b21d94f842a86172ef374af53a5195df39a0dbc320a75a655cb5d8a247c",
+  "bundleDigest": "ced47d5535abcfda6eb1a9f186c962e22a388ad986086bab8ec68fd0d3040c61",
   "sourceRecordRef": {
-    "system": "synthetic-shopify",
-    "record": "InventoryLevel/shopify/demo/InventoryLevel/SYN-SHOPIFY-holding-south"
+    "system": "synthetic-erpnext",
+    "record": "Warehouse Lot Balance/erpnext/demo/Warehouse Lot Balance/SYN-ERPNEXT-holding-south"
   },
   "documentRef": {
-    "system": "synthetic-shopify",
-    "record": "SYN-SHOPIFY-holding-south"
+    "system": "synthetic-erpnext",
+    "record": "SYN-ERPNEXT-holding-south"
   },
-  "documentDigest": "602706d06000c09f8fa2140c628a6b1b516edb92988490af6228afd35513ff39",
+  "documentDigest": "20d22b480469bec441f95faa84cf41a3e16b3b73ea0e2f9ab28d0218a170066d",
   "mappingPin": {
-    "artifactId": "shopify.three.mapping",
+    "artifactId": "erpnext.three.mapping",
     "version": "0.1.0",
-    "sha256": "0b501958ae3fb3fe7ddefdcc4a49c380439fc3f9ab7a89c489042e265bd4842f"
+    "sha256": "f1e79a3613abcbf7c9a61c7e9c4861c075a7aa42844656f220ef8e894e53dfc8"
   },
   "fieldProvenance": {
+    "cost_currency": {
+      "source": {
+        "system": "synthetic-erpnext",
+        "record": "Warehouse Lot Balance/erpnext/demo/Warehouse Lot Balance/SYN-ERPNEXT-holding-south"
+      },
+      "mappingVersion": "erpnext.three.mapping@0.1.0",
+      "transform": "holding.cost_currency",
+      "recordedAt": "2026-11-02T12:00:00Z",
+      "sourceFields": [
+        "name",
+        "custom_norn_ref",
+        "cost_currency"
+      ]
+    },
     "currency": {
       "source": {
-        "system": "synthetic-shopify",
-        "record": "InventoryLevel/shopify/demo/InventoryLevel/SYN-SHOPIFY-holding-south"
+        "system": "synthetic-erpnext",
+        "record": "Warehouse Lot Balance/erpnext/demo/Warehouse Lot Balance/SYN-ERPNEXT-holding-south"
       },
-      "mappingVersion": "shopify.three.mapping@0.1.0",
+      "mappingVersion": "erpnext.three.mapping@0.1.0",
       "transform": "holding.currency",
       "recordedAt": "2026-11-02T12:00:00Z",
       "sourceFields": [
-        "id",
-        "metafield_norn_ref"
+        "name",
+        "custom_norn_ref"
       ]
     },
     "location": {
       "source": {
-        "system": "synthetic-shopify",
-        "record": "InventoryLevel/shopify/demo/InventoryLevel/SYN-SHOPIFY-holding-south"
+        "system": "synthetic-erpnext",
+        "record": "Warehouse Lot Balance/erpnext/demo/Warehouse Lot Balance/SYN-ERPNEXT-holding-south"
       },
-      "mappingVersion": "shopify.three.mapping@0.1.0",
+      "mappingVersion": "erpnext.three.mapping@0.1.0",
       "transform": "holding.location",
       "recordedAt": "2026-11-02T12:00:00Z",
       "sourceFields": [
-        "id",
-        "metafield_norn_ref",
+        "name",
+        "custom_norn_ref",
         "location"
       ]
     },
     "observed_at": {
       "source": {
-        "system": "synthetic-shopify",
-        "record": "InventoryLevel/shopify/demo/InventoryLevel/SYN-SHOPIFY-holding-south"
+        "system": "synthetic-erpnext",
+        "record": "Warehouse Lot Balance/erpnext/demo/Warehouse Lot Balance/SYN-ERPNEXT-holding-south"
       },
-      "mappingVersion": "shopify.three.mapping@0.1.0",
+      "mappingVersion": "erpnext.three.mapping@0.1.0",
       "transform": "holding.observed_at",
       "recordedAt": "2026-11-02T12:00:00Z",
       "sourceFields": [
-        "id",
-        "metafield_norn_ref",
-        "updated_at"
+        "name",
+        "custom_norn_ref",
+        "modified"
       ]
     },
     "quantity": {
       "source": {
-        "system": "synthetic-shopify",
-        "record": "InventoryLevel/shopify/demo/InventoryLevel/SYN-SHOPIFY-holding-south"
+        "system": "synthetic-erpnext",
+        "record": "Warehouse Lot Balance/erpnext/demo/Warehouse Lot Balance/SYN-ERPNEXT-holding-south"
       },
-      "mappingVersion": "shopify.three.mapping@0.1.0",
+      "mappingVersion": "erpnext.three.mapping@0.1.0",
       "transform": "holding.quantity",
       "recordedAt": "2026-11-02T12:00:00Z",
       "sourceFields": [
-        "id",
-        "metafield_norn_ref",
+        "name",
+        "custom_norn_ref",
         "quantity"
       ]
     },
     "quantity_basis": {
       "source": {
-        "system": "synthetic-shopify",
-        "record": "InventoryLevel/shopify/demo/InventoryLevel/SYN-SHOPIFY-holding-south"
+        "system": "synthetic-erpnext",
+        "record": "Warehouse Lot Balance/erpnext/demo/Warehouse Lot Balance/SYN-ERPNEXT-holding-south"
       },
-      "mappingVersion": "shopify.three.mapping@0.1.0",
+      "mappingVersion": "erpnext.three.mapping@0.1.0",
       "transform": "holding.quantity_basis",
       "recordedAt": "2026-11-02T12:00:00Z",
       "sourceFields": [
-        "id",
-        "metafield_norn_ref"
+        "name",
+        "custom_norn_ref"
       ]
     },
     "resource_code": {
       "source": {
-        "system": "synthetic-shopify",
-        "record": "InventoryLevel/shopify/demo/InventoryLevel/SYN-SHOPIFY-holding-south"
+        "system": "synthetic-erpnext",
+        "record": "Warehouse Lot Balance/erpnext/demo/Warehouse Lot Balance/SYN-ERPNEXT-holding-south"
       },
-      "mappingVersion": "shopify.three.mapping@0.1.0",
+      "mappingVersion": "erpnext.three.mapping@0.1.0",
       "transform": "holding.resource_code",
       "recordedAt": "2026-11-02T12:00:00Z",
       "sourceFields": [
-        "id",
-        "metafield_norn_ref",
+        "name",
+        "custom_norn_ref",
         "resource_code"
+      ]
+    },
+    "stock_cost": {
+      "source": {
+        "system": "synthetic-erpnext",
+        "record": "Warehouse Lot Balance/erpnext/demo/Warehouse Lot Balance/SYN-ERPNEXT-holding-south"
+      },
+      "mappingVersion": "erpnext.three.mapping@0.1.0",
+      "transform": "holding.stock_cost",
+      "recordedAt": "2026-11-02T12:00:00Z",
+      "sourceFields": [
+        "name",
+        "custom_norn_ref",
+        "stock_cost"
       ]
     },
     "unit": {
       "source": {
-        "system": "synthetic-shopify",
-        "record": "InventoryLevel/shopify/demo/InventoryLevel/SYN-SHOPIFY-holding-south"
+        "system": "synthetic-erpnext",
+        "record": "Warehouse Lot Balance/erpnext/demo/Warehouse Lot Balance/SYN-ERPNEXT-holding-south"
       },
-      "mappingVersion": "shopify.three.mapping@0.1.0",
+      "mappingVersion": "erpnext.three.mapping@0.1.0",
       "transform": "holding.unit",
       "recordedAt": "2026-11-02T12:00:00Z",
       "sourceFields": [
-        "id",
-        "metafield_norn_ref",
+        "name",
+        "custom_norn_ref",
         "unit"
       ]
     },
     "valuation_method": {
       "source": {
-        "system": "synthetic-shopify",
-        "record": "InventoryLevel/shopify/demo/InventoryLevel/SYN-SHOPIFY-holding-south"
+        "system": "synthetic-erpnext",
+        "record": "Warehouse Lot Balance/erpnext/demo/Warehouse Lot Balance/SYN-ERPNEXT-holding-south"
       },
-      "mappingVersion": "shopify.three.mapping@0.1.0",
+      "mappingVersion": "erpnext.three.mapping@0.1.0",
       "transform": "holding.valuation_method",
       "recordedAt": "2026-11-02T12:00:00Z",
       "sourceFields": [
-        "id",
-        "metafield_norn_ref"
+        "name",
+        "custom_norn_ref",
+        "valuation_method"
       ]
     }
   }

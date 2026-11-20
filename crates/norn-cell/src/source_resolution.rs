@@ -1,7 +1,9 @@
 //! SOURCE-RESOLVE-1 (07-world-boundary): when several mappings write one
 //! canonical object, each property's value is decided by its declared
 //! authority ([`norn_ir::mapping::SourceAuthority`]) over the latest report
-//! of every source, never by the source that wrote last.
+//! of every source, never by the source that wrote last. A source's latest
+//! report is its highest `source_version`, whatever order its versions were
+//! consumed in; the consuming commit only bounds what a historical read sees.
 //!
 //! Every report stays retained as consumed mapping evidence, indexed by
 //! subject (`_norn_source_subject`). A report that does not decide is kept,
@@ -13,6 +15,7 @@
 use std::collections::BTreeMap;
 
 use norn_checker::mapping::resolution::{Resolution, ResolutionTable};
+use norn_checker::metric::compute::contribution::instant_key;
 use norn_ir::mapping::{MappedRecord, SourceAuthority};
 use norn_ir::provenance::InstanceProvenance;
 use norn_ir::{RuntimeObject, RuntimeValue};
@@ -22,7 +25,9 @@ use crate::CellError;
 use crate::engine::{SqlEngine, SqlRow, params};
 use crate::mapping_bundle::MappingBundle;
 use crate::read::{StoreReader, to_i64, to_u64};
-use crate::system::{INBOX, SOURCE_SUBJECT};
+use crate::system::{INBOX, RECORD_ID, SOURCE_RECORD, SOURCE_SUBJECT};
+
+pub use crate::mapping_links::LinkConflict;
 
 /// SOURCE-AGREE-2's rule id: a source's report differs from the canonical
 /// value its declared authorities decide.
@@ -42,10 +47,17 @@ pub struct SourceReport {
     pub observation_id: String,
     /// The commit that consumed it; `None` for the report being applied.
     pub commit_seq: Option<u64>,
+    /// The raw `source_version` the bundle captured; within one source the
+    /// highest version (lexicographic, as the dataplane orders it) is its
+    /// latest report.
+    pub source_version: String,
     /// The reported values, by property.
     pub values: RuntimeObject,
     /// Field-level lineage the mapping emitted, by property.
     pub lineage: BTreeMap<String, InstanceProvenance>,
+    /// The mapped record's own provenance (where it came from and its
+    /// subject rule), which a write it decides is attributed to.
+    pub record: Option<InstanceProvenance>,
 }
 
 /// How one property of a subject is decided.
@@ -72,8 +84,13 @@ pub enum PropertyDecision {
     /// Conflict peers disagree: the value is this explicit conflict (stored
     /// as null), never a guess; `reports` lists each source's value.
     Conflict,
-    /// Only writers that may not decide (checks) have reported.
-    Undecided,
+    /// Only writers that may not decide (checks) have reported: the subject
+    /// is withheld until one of `awaiting` reports.
+    Undecided {
+        /// The writers that may decide the property (system of record,
+        /// precedence or conflict peers), none of which has reported.
+        awaiting: Vec<String>,
+    },
 }
 
 /// One source's report on one property.
@@ -126,6 +143,10 @@ pub struct SubjectResolution {
     pub properties: Vec<ResolvedProperty>,
     /// SOURCE-AGREE-2 findings, in property then mapping order.
     pub findings: Vec<SourceValueFinding>,
+    /// Exclusive links sources currently claim with different targets (as
+    /// the journal stands now): an explicit conflict that changes no edge,
+    /// while every property decision above still applies.
+    pub links: Vec<LinkConflict>,
 }
 
 impl SubjectResolution {
@@ -150,6 +171,26 @@ fn reported(record: &MappedRecord) -> Option<RuntimeObject> {
     Some(values)
 }
 
+/// Whether `a` is a later report of one source than `b`: a higher source
+/// version, or the same version consumed later.
+fn later(a: &SourceReport, b: &SourceReport) -> bool {
+    (a.source_version.as_str(), a.commit_seq.unwrap_or(u64::MAX))
+        > (b.source_version.as_str(), b.commit_seq.unwrap_or(u64::MAX))
+}
+
+/// Each mapping's latest report of `reports`.
+fn latest(reports: BTreeMap<String, Vec<SourceReport>>) -> BTreeMap<String, SourceReport> {
+    reports
+        .into_iter()
+        .filter_map(|(mapping, reports)| {
+            reports
+                .into_iter()
+                .reduce(|best, report| if later(&report, &best) { report } else { best })
+                .map(|report| (mapping, report))
+        })
+        .collect()
+}
+
 fn report_of(
     bundle: &MappingBundle,
     object_type: &str,
@@ -171,12 +212,19 @@ fn report_of(
             .to_owned(),
         observation_id: format!("mapping-bundle:{}", bundle.digest),
         commit_seq,
+        source_version: bundle
+            .raw
+            .get("source_version")
+            .and_then(RuntimeValue::as_str)
+            .unwrap_or_default()
+            .to_owned(),
         values: reported(record)?,
         lineage: record
             .property_provenance
             .iter()
             .map(|(p, l)| (p.as_str().to_owned(), l.clone()))
             .collect(),
+        record: Some(record.provenance.clone()),
     })
 }
 
@@ -198,19 +246,20 @@ fn decide(
     let mut out = SubjectResolution {
         properties: Vec::new(),
         findings: Vec::new(),
+        links: Vec::new(),
     };
     for (property, values) in properties {
         let authorities: BTreeMap<&str, Option<SourceAuthority>> =
             table.writers(object_type, &property).into_iter().collect();
         let decision = match table.resolve(object_type, &property, &values) {
-            None => values
-                .values()
-                .next_back()
-                .map_or(PropertyDecision::Undecided, |value| {
-                    PropertyDecision::Single {
-                        value: value.clone(),
-                    }
-                }),
+            None => values.values().next_back().map_or(
+                PropertyDecision::Undecided {
+                    awaiting: Vec::new(),
+                },
+                |value| PropertyDecision::Single {
+                    value: value.clone(),
+                },
+            ),
             Some(Resolution::Decided { mapping, value }) => PropertyDecision::Decided {
                 mapping: mapping.to_owned(),
                 value: value.clone(),
@@ -219,13 +268,22 @@ fn decide(
                 value: value.clone(),
             },
             Some(Resolution::Conflict) => PropertyDecision::Conflict,
-            Some(Resolution::Undecided) => PropertyDecision::Undecided,
+            Some(Resolution::Undecided) => PropertyDecision::Undecided {
+                awaiting: authorities
+                    .iter()
+                    .filter(|(mapping, authority)| {
+                        !matches!(authority, None | Some(SourceAuthority::Check))
+                            && !reports.contains_key(**mapping)
+                    })
+                    .map(|(mapping, _)| (*mapping).to_owned())
+                    .collect(),
+            },
         };
         let canonical = match &decision {
             PropertyDecision::Single { value }
             | PropertyDecision::Decided { value, .. }
             | PropertyDecision::Agreed { value } => Some(value),
-            PropertyDecision::Conflict | PropertyDecision::Undecided => None,
+            PropertyDecision::Conflict | PropertyDecision::Undecided { .. } => None,
         };
         let mut listed = Vec::new();
         for (mapping, value) in &values {
@@ -271,38 +329,122 @@ pub(crate) enum Applied {
     AsMapped,
     /// Write these values (possibly none: the report decides nothing new).
     Values(RuntimeObject),
-    /// Keep the report, write nothing: the subject does not exist yet and
-    /// some property has no deciding report.
+    /// Keep the report, write nothing: some property has no deciding report
+    /// yet (whether or not the subject exists, so the outcome is the same in
+    /// every order); [`StoreReader::withheld_subjects`] names what it awaits.
     Withheld,
 }
 
 impl<E: SqlEngine> StoreReader<'_, E> {
-    /// The latest consumed report of each mapping on `object_type`/`key` at
-    /// `frontier` (a commit; all when `None`).
-    fn latest_reports(
+    /// The current report of each mapping on `object_type`/`key` at
+    /// `frontier` (a commit; all when `None`). A source record contributes
+    /// its highest source version consumed by then, never merely the last
+    /// one consumed, and only while that version still reports this subject:
+    /// a newer upsert that moved the record to another key or out of the map
+    /// withdraws it. Superseded versions are skipped before the work bound
+    /// applies, so accumulated history never makes a subject unreadable.
+    pub(crate) fn latest_reports(
         &self,
         object_type: &str,
         key: &str,
         frontier: Option<u64>,
     ) -> Result<BTreeMap<String, SourceReport>, CellError> {
+        let at = frontier.map(|f| to_i64(f, "frontier")).transpose()?;
+        let bound = i64::try_from(BOUND.saturating_add(1)).unwrap_or(i64::MAX);
+        let rows = self.conn.query(
+            &format!(
+                "SELECT s.\"mapping\", s.\"source_version\", s.\"commit_seq\", s.\"position\", s.\"observation_id\" FROM \"{SOURCE_SUBJECT}\" s \
+                 WHERE s.\"object_type\" = ?1 AND s.\"key\" = ?2 AND (?3 IS NULL OR s.\"commit_seq\" <= ?3) \
+                 AND NOT EXISTS (SELECT 1 FROM \"{SOURCE_RECORD}\" n WHERE n.\"mapping\" = s.\"mapping\" AND n.\"record_id\" = s.\"record_id\" AND (?3 IS NULL OR n.\"commit_seq\" <= ?3) \
+                 AND (n.\"source_version\", n.\"commit_seq\", n.\"position\") > (s.\"source_version\", s.\"commit_seq\", s.\"position\")) LIMIT ?4"
+            ),
+            params![object_type, key, at, bound],
+        )?;
+        if rows.len() > BOUND {
+            return Err(CellError::ComputeRefused("core.compute.bound_exceeded"));
+        }
+        // Each mapping's best current contribution (several of its source
+        // records may report one subject).
+        let mut best: BTreeMap<String, (String, u64, i64, String)> = BTreeMap::new();
+        for row in rows {
+            let row = SqlRow(row);
+            let mapping: String = row.get(0)?;
+            let order = (
+                row.get::<String>(1)?,
+                to_u64(row.get(2)?, "commit_seq")?,
+                row.get::<i64>(3)?,
+                row.get::<String>(4)?,
+            );
+            if best
+                .get(&mapping)
+                .is_none_or(|b| (&order.0, order.1, order.2) > (&b.0, b.1, b.2))
+            {
+                best.insert(mapping, order);
+            }
+        }
+        let mut out = BTreeMap::new();
+        for (mapping, (_, commit_seq, _, observation_id)) in best {
+            if let Some(report) =
+                self.report_in(&observation_id, &mapping, object_type, key, commit_seq)?
+            {
+                out.insert(mapping, report);
+            }
+        }
+        Ok(out)
+    }
+
+    /// The report retained bundle `observation_id` of `mapping` makes on
+    /// `object_type`/`key`, rechecked against its stored identity.
+    fn report_in(
+        &self,
+        observation_id: &str,
+        mapping: &str,
+        object_type: &str,
+        key: &str,
+        commit_seq: u64,
+    ) -> Result<Option<SourceReport>, CellError> {
+        let encoded: String = self
+            .conn
+            .query_optional(
+                &format!("SELECT \"observed\" FROM \"{INBOX}\" WHERE \"observation_id\" = ?1"),
+                params![observation_id],
+                |row| row.get(0),
+            )?
+            .ok_or(CellError::MappingBundleMismatch)?;
+        let observed: Observed<RuntimeValue> = serde_json::from_str(&encoded)?;
+        let bundle: MappingBundle =
+            norn_ir::runtime::decode(&observed.input).map_err(CellError::Encoding)?;
+        if observation_id != format!("mapping-bundle:{}", bundle.digest)
+            || bundle.input.mapping != mapping
+        {
+            return Err(CellError::MappingBundleMismatch);
+        }
+        Ok(report_of(&bundle, object_type, key, Some(commit_seq)))
+    }
+
+    /// Every consumed report of each mapping on `object_type`/`key` at
+    /// `frontier`, in commit order.
+    fn retained_reports(
+        &self,
+        object_type: &str,
+        key: &str,
+        frontier: Option<u64>,
+    ) -> Result<BTreeMap<String, Vec<SourceReport>>, CellError> {
         let frontier = frontier.map(|f| to_i64(f, "frontier")).transpose()?;
         let bound = i64::try_from(BOUND.saturating_add(1)).unwrap_or(i64::MAX);
         let rows = self.conn.query(
             &format!(
-                "SELECT s.\"mapping\", s.\"commit_seq\", i.\"observation_id\", i.\"observed\" FROM \"{SOURCE_SUBJECT}\" s JOIN \"{INBOX}\" i ON i.\"observation_id\" = s.\"observation_id\" WHERE s.\"object_type\" = ?1 AND s.\"key\" = ?2 AND (?3 IS NULL OR s.\"commit_seq\" <= ?3) ORDER BY s.\"commit_seq\" DESC, s.\"position\" DESC LIMIT ?4"
+                "SELECT s.\"mapping\", s.\"commit_seq\", i.\"observation_id\", i.\"observed\" FROM \"{SOURCE_SUBJECT}\" s JOIN \"{INBOX}\" i ON i.\"observation_id\" = s.\"observation_id\" WHERE s.\"object_type\" = ?1 AND s.\"key\" = ?2 AND (?3 IS NULL OR s.\"commit_seq\" <= ?3) ORDER BY s.\"commit_seq\", s.\"position\" LIMIT ?4"
             ),
             params![object_type, key, frontier, bound],
         )?;
         if rows.len() > BOUND {
             return Err(CellError::ComputeRefused("core.compute.bound_exceeded"));
         }
-        let mut out = BTreeMap::new();
+        let mut out: BTreeMap<String, Vec<SourceReport>> = BTreeMap::new();
         for row in rows {
             let row = SqlRow(row);
             let mapping: String = row.get(0)?;
-            if out.contains_key(&mapping) {
-                continue;
-            }
             let commit_seq = to_u64(row.get(1)?, "commit_seq")?;
             let stored_id: String = row.get(2)?;
             let observed: Observed<RuntimeValue> = serde_json::from_str(&row.get::<String>(3)?)?;
@@ -314,7 +456,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 return Err(CellError::MappingBundleMismatch);
             }
             if let Some(report) = report_of(&bundle, object_type, key, Some(commit_seq)) {
-                out.insert(mapping, report);
+                out.entry(mapping).or_default().push(report);
             }
         }
         Ok(out)
@@ -335,13 +477,24 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         frontier: Option<u64>,
     ) -> Result<Option<SubjectResolution>, CellError> {
         let reports = self.latest_reports(object_type, key, frontier)?;
-        let Some(table) = self.active_resolution(&reports)? else {
+        let Some(report) = reports.values().next() else {
+            return Ok(None);
+        };
+        // A historical read decides under the definitions in force at its
+        // frontier, never under authorities activated since.
+        let version = match frontier {
+            Some(frontier) => self.definitions_version_at(frontier)?,
+            None => self.active_definitions_version()?,
+        };
+        let Some(table) = self.resolution_at(&report.mapping, version)? else {
             return Ok(None);
         };
         if !table.governs(object_type) {
             return Ok(None);
         }
-        Ok(Some(decide(&table, object_type, &reports)))
+        let mut resolution = decide(&table, object_type, &reports);
+        resolution.links = self.source_link_conflicts(object_type, key)?;
+        Ok(Some(resolution))
     }
 
     /// The resolution table of the active definitions, read through the plan
@@ -349,16 +502,24 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     /// table).
     fn active_resolution(
         &self,
-        reports: &BTreeMap<String, SourceReport>,
+        mapping: &str,
     ) -> Result<Option<std::sync::Arc<ResolutionTable>>, CellError> {
-        let Some(active) = self.active_definitions_version()? else {
-            return Ok(None);
-        };
-        let Some(report) = reports.values().next() else {
+        self.resolution_at(mapping, self.active_definitions_version()?)
+    }
+
+    /// The resolution table of definitions `version`, read through the plan
+    /// of `mapping`; `None` without definitions or when `mapping` is not in
+    /// that set.
+    fn resolution_at(
+        &self,
+        mapping: &str,
+        version: Option<u64>,
+    ) -> Result<Option<std::sync::Arc<ResolutionTable>>, CellError> {
+        let Some(active) = version else {
             return Ok(None);
         };
         let input = crate::mapping_bundle::MappingInput {
-            mapping: report.mapping.clone(),
+            mapping: mapping.to_owned(),
             dataset: String::new(),
             connector_instance: String::new(),
             partition: String::new(),
@@ -390,7 +551,14 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         let mut reports = self.latest_reports(object_type, &record.key, None)?;
         let incoming = report_of(bundle, object_type, &record.key, None)
             .ok_or(CellError::UnsupportedMappingProfile)?;
-        reports.insert(incoming.mapping.clone(), incoming);
+        // An older version of a source that already reported a newer one is
+        // kept as evidence and decides nothing.
+        if reports
+            .get(&incoming.mapping)
+            .is_none_or(|newer| !later(newer, &incoming))
+        {
+            reports.insert(incoming.mapping.clone(), incoming);
+        }
         let resolution = decide(&plan.resolution, object_type, &reports);
         let mut values = RuntimeObject::new();
         for property in resolution.properties {
@@ -399,12 +567,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 | PropertyDecision::Decided { value, .. }
                 | PropertyDecision::Agreed { value } => value,
                 PropertyDecision::Conflict => RuntimeValue::Null,
-                PropertyDecision::Undecided => {
-                    if current.is_none() {
-                        return Ok(Applied::Withheld);
-                    }
-                    continue;
-                }
+                PropertyDecision::Undecided { .. } => return Ok(Applied::Withheld),
             };
             if current.and_then(|c| c.get(&property.property)) != Some(&value) {
                 values.insert(property.property, value);
@@ -412,6 +575,268 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         }
         Ok(Applied::Values(values))
     }
+
+    /// The changed values `reports` decide for `object_type`/`key` under
+    /// `table`, against the stored object, with the provenance of the
+    /// report that decides (or of the first one): `None` when nothing is
+    /// reported, a property is undecided, or nothing changes.
+    fn decided_change(
+        &self,
+        table: &ResolutionTable,
+        object_type: &str,
+        key: &str,
+        reports: &BTreeMap<String, SourceReport>,
+    ) -> Result<Option<(RuntimeObject, InstanceProvenance)>, CellError> {
+        let current = self
+            .object(crate::MAIN_WORLD, object_type, key)?
+            .map(|r| r.values);
+        let mut values = RuntimeObject::new();
+        let mut decider = None;
+        for property in decide(table, object_type, reports).properties {
+            let value = match property.decision {
+                PropertyDecision::Decided { mapping, value } => {
+                    decider.get_or_insert(mapping);
+                    value
+                }
+                PropertyDecision::Single { value } | PropertyDecision::Agreed { value } => value,
+                PropertyDecision::Conflict => RuntimeValue::Null,
+                PropertyDecision::Undecided { .. } => return Ok(None),
+            };
+            if current.as_ref().and_then(|c| c.get(&property.property)) != Some(&value) {
+                values.insert(property.property, value);
+            }
+        }
+        let provenance = decider
+            .and_then(|m| reports.get(&m))
+            .or_else(|| reports.values().next())
+            .and_then(|r| r.record.clone());
+        Ok(match provenance {
+            Some(provenance) if !values.is_empty() => Some((values, provenance)),
+            _ => None,
+        })
+    }
+
+    /// SOURCE-RESOLVE-1: the subjects the consumed contribution of
+    /// `bundle`'s source record reported and `bundle` (a newer upsert of
+    /// it) no longer reports, each with the change its remaining reports
+    /// decide. A stale `bundle` withdraws nothing; a subject no other
+    /// source reports keeps its values (withdrawing the last report is a
+    /// delete, outside the upsert profile).
+    pub(crate) fn withdrawn_changes(
+        &self,
+        bundle: &MappingBundle,
+        observation_id: &str,
+    ) -> Result<Vec<(String, String, RuntimeObject, InstanceProvenance)>, CellError> {
+        let plan = self.mapping_plan(&bundle.input, bundle.definitions_version)?;
+        let previous: Option<(String, String)> = self.conn.query_optional(
+            &format!(
+                "SELECT r.\"observation_id\", r.\"source_version\" FROM \"{SOURCE_RECORD}\" r WHERE r.\"mapping\" = ?2 AND r.\"record_id\" = (SELECT {RECORD_ID} FROM \"{INBOX}\" i WHERE i.\"observation_id\" = ?1) \
+                 ORDER BY r.\"source_version\" DESC, r.\"commit_seq\" DESC, r.\"position\" DESC LIMIT 1"
+            ),
+            params![observation_id, bundle.input.mapping.as_str()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        let Some((previous, version)) = previous else {
+            return Ok(Vec::new());
+        };
+        let incoming = bundle
+            .raw
+            .get("source_version")
+            .and_then(RuntimeValue::as_str)
+            .unwrap_or_default();
+        if version.as_str() > incoming {
+            return Ok(Vec::new());
+        }
+        let subjects = self.conn.query(
+            &format!(
+                "SELECT \"object_type\", \"key\" FROM \"{SOURCE_SUBJECT}\" WHERE \"observation_id\" = ?1"
+            ),
+            params![previous.as_str()],
+        )?;
+        let mut out = Vec::new();
+        for row in subjects {
+            let row = SqlRow(row);
+            let (object_type, key): (String, String) = (row.get(0)?, row.get(1)?);
+            if !plan.resolution.governs(&object_type)
+                || bundle
+                    .records
+                    .iter()
+                    .any(|r| r.object_type.as_str() == object_type && r.key == key)
+            {
+                continue;
+            }
+            let mut reports = self.latest_reports(&object_type, &key, None)?;
+            reports.retain(|_, r| r.observation_id != previous);
+            if let Some((values, provenance)) =
+                self.decided_change(&plan.resolution, &object_type, &key, &reports)?
+            {
+                out.push((object_type, key, values, provenance));
+            }
+        }
+        Ok(out)
+    }
+
+    /// SOURCE-RESOLVE-1 after an activation: every subject with retained
+    /// reports whose stored values differ from what the active
+    /// definitions decide, with that change.
+    pub(crate) fn reconciliation(
+        &self,
+    ) -> Result<Vec<(String, String, RuntimeObject, InstanceProvenance)>, CellError> {
+        let rows = self.conn.query(
+            &format!(
+                "SELECT \"object_type\", \"key\", MIN(\"mapping\") FROM \"{SOURCE_SUBJECT}\" GROUP BY \"object_type\", \"key\" ORDER BY \"object_type\", \"key\""
+            ),
+            params![],
+        )?;
+        let mut out = Vec::new();
+        for row in rows {
+            let row = SqlRow(row);
+            let (object_type, key, mapping): (String, String, String) =
+                (row.get(0)?, row.get(1)?, row.get(2)?);
+            let Some(table) = self.active_resolution(&mapping)? else {
+                continue;
+            };
+            if !table.governs(&object_type) {
+                continue;
+            }
+            let reports = self.latest_reports(&object_type, &key, None)?;
+            if let Some((values, provenance)) =
+                self.decided_change(&table, &object_type, &key, &reports)?
+            {
+                out.push((object_type, key, values, provenance));
+            }
+        }
+        Ok(out)
+    }
+
+    /// The records of the consumed `bundle` that SOURCE-RESOLVE-1 withholds
+    /// as the store now stands, each with the writers its undecided
+    /// properties await.
+    pub(crate) fn withheld_subjects(
+        &self,
+        bundle: &MappingBundle,
+    ) -> Result<Vec<WithheldSubject>, CellError> {
+        let plan = self.mapping_plan(&bundle.input, bundle.definitions_version)?;
+        let mut out = Vec::new();
+        for record in &bundle.records {
+            let object_type = record.object_type.as_str();
+            if !plan.resolution.governs(object_type) {
+                continue;
+            }
+            let reports = self.latest_reports(object_type, &record.key, None)?;
+            let awaiting: Vec<(String, Vec<String>)> =
+                decide(&plan.resolution, object_type, &reports)
+                    .properties
+                    .into_iter()
+                    .filter_map(|p| match p.decision {
+                        PropertyDecision::Undecided { awaiting } => Some((p.property, awaiting)),
+                        PropertyDecision::Single { .. }
+                        | PropertyDecision::Decided { .. }
+                        | PropertyDecision::Agreed { .. }
+                        | PropertyDecision::Conflict => None,
+                    })
+                    .collect();
+            if !awaiting.is_empty() {
+                out.push(WithheldSubject {
+                    object_type: object_type.to_owned(),
+                    key: record.key.clone(),
+                    awaiting,
+                });
+            }
+        }
+        Ok(out)
+    }
+
+    /// Whether `object_type` has retained reports resolved across sources
+    /// under the active definitions.
+    pub(crate) fn resolves_reports_of(&self, object_type: &str) -> Result<bool, CellError> {
+        let rows = self.conn.query(
+            &format!(
+                "SELECT \"mapping\" FROM \"{SOURCE_SUBJECT}\" WHERE \"object_type\" = ?1 LIMIT 1"
+            ),
+            params![object_type],
+        )?;
+        let Some(row) = rows.into_iter().next() else {
+            return Ok(false);
+        };
+        let mapping: String = SqlRow(row).get(0)?;
+        Ok(self
+            .active_resolution(&mapping)?
+            .is_some_and(|table| table.governs(object_type)))
+    }
+
+    /// SOURCE-RESOLVE-1 over valid time: the canonical values of
+    /// `object_type`/`key` at each valid time (`time_property`) its retained
+    /// reports known at `frontier` carry. Each slice decides over every
+    /// source's latest report valid by then, laid over `base` (the canonical
+    /// record), so an as-of answer depends on the reports, not on the order
+    /// they were synced in. A slice with an undecided property is absent.
+    /// `None` when the type is not resolved across sources.
+    ///
+    /// # Errors
+    /// As [`Self::source_resolution`].
+    pub(crate) fn resolved_slices(
+        &self,
+        object_type: &str,
+        key: &str,
+        frontier: Option<u64>,
+        time_property: &str,
+        base: &RuntimeObject,
+    ) -> Result<Option<Vec<RuntimeObject>>, CellError> {
+        let retained = self.retained_reports(object_type, key, frontier)?;
+        let Some(mapping) = retained.keys().next() else {
+            return Ok(None);
+        };
+        let Some(table) = self.active_resolution(mapping)? else {
+            return Ok(None);
+        };
+        if !table.governs(object_type) {
+            return Ok(None);
+        }
+        let at = |report: &SourceReport| {
+            let text = report.values.get(time_property)?.as_str()?;
+            instant_key(text, false).or_else(|| instant_key(text, true))
+        };
+        let mut times: Vec<_> = retained.values().flatten().filter_map(at).collect();
+        times.sort_unstable();
+        times.dedup();
+        let mut slices = Vec::with_capacity(times.len());
+        'slices: for time in times {
+            let valid = retained
+                .iter()
+                .map(|(mapping, reports)| {
+                    let valid = reports.iter().filter(|r| at(r).is_some_and(|t| t <= time));
+                    (mapping.clone(), valid.cloned().collect())
+                })
+                .collect();
+            let mut values = base.clone();
+            for property in decide(&table, object_type, &latest(valid)).properties {
+                let value = match property.decision {
+                    PropertyDecision::Single { value }
+                    | PropertyDecision::Decided { value, .. }
+                    | PropertyDecision::Agreed { value } => value,
+                    PropertyDecision::Conflict => RuntimeValue::Null,
+                    PropertyDecision::Undecided { .. } => continue 'slices,
+                };
+                values.insert(property.property, value);
+            }
+            slices.push(values);
+        }
+        Ok(Some(slices))
+    }
+}
+
+/// A record a consumed bundle reported but SOURCE-RESOLVE-1 did not write:
+/// some property has no deciding report yet. Its reports are kept; it is
+/// written once a writer in `awaiting` reports.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WithheldSubject {
+    /// The record's object type.
+    pub object_type: String,
+    /// The record's key.
+    pub key: String,
+    /// Each undecided property, with the mappings that may decide it.
+    pub awaiting: Vec<(String, Vec<String>)>,
 }
 
 #[cfg(test)]
@@ -422,6 +847,27 @@ mod tests {
     use std::collections::BTreeMap;
 
     #[test]
+    fn a_sources_latest_report_is_its_highest_version_whatever_the_consumption_order() {
+        let report = |version: &str, commit: u64| SourceReport {
+            mapping: "a".into(),
+            system: "s".into(),
+            observation_id: format!("mapping-bundle:{version}"),
+            commit_seq: Some(commit),
+            source_version: version.into(),
+            values: BTreeMap::new(),
+            lineage: BTreeMap::new(),
+            record: None,
+        };
+        for consumed in [
+            [report("2", 1), report("1", 2)],
+            [report("1", 1), report("2", 2)],
+        ] {
+            let latest = super::latest(BTreeMap::from([("a".to_owned(), consumed.to_vec())]));
+            assert_eq!(latest["a"].source_version, "2");
+        }
+    }
+
+    #[test]
     fn a_type_no_mapping_resolves_decides_each_property_from_its_one_writer() {
         let reports = BTreeMap::from([(
             "a".to_owned(),
@@ -430,8 +876,10 @@ mod tests {
                 system: "s".into(),
                 observation_id: "mapping-bundle:x".into(),
                 commit_seq: Some(1),
+                source_version: "1".into(),
                 values: BTreeMap::from([("q".to_owned(), RuntimeValue::from("one"))]),
                 lineage: BTreeMap::new(),
+                record: None,
             },
         )]);
         let resolution = decide(&ResolutionTable::default(), "t.T", &reports);

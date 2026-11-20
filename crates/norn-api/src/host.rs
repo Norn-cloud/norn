@@ -43,6 +43,26 @@ impl<E: SqlEngine> Deref for CellGuard<'_, E> {
     }
 }
 
+impl<E: SqlEngine> CellGuard<'_, E> {
+    /// SOURCE-RESOLVE-1: reconcile the cell's resolved subjects with its
+    /// active definitions, through the observation profile.
+    fn reconcile_source_resolution(&mut self) -> Result<usize, Refusal> {
+        let cell = self
+            .0
+            .take()
+            .ok_or_else(|| Refusal::host("the cell is unavailable"))?;
+        let mut observing: norn_cell::SqliteCell<
+            ObservationEvent,
+            RuntimeObject,
+            RuntimeObject,
+            E,
+        > = cell.into_profile();
+        let result = observing.reconcile_source_resolution();
+        *self.0 = Some(observing.into_profile());
+        result.map_err(Refusal::host)
+    }
+}
+
 impl<E: SqlEngine> DerefMut for CellGuard<'_, E> {
     fn deref_mut(&mut self) -> &mut ActionCell<E> {
         self.0
@@ -524,6 +544,9 @@ impl<E: SqlEngine> DevHost<E> {
                 }
                 Refusal::host(error)
             })?;
+        // SOURCE-RESOLVE-1: changed authorities take effect on the stored
+        // values in the same definition epoch.
+        cell.reconcile_source_resolution()?;
         self.model_changed(&cell);
         Ok(installed)
     }

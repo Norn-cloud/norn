@@ -771,6 +771,21 @@ fn subject_contributions<E: SqlEngine>(
             false,
         ));
     }
+    // SOURCE-RESOLVE-1: a type several sources write answers from its
+    // retained reports resolved per valid-time slice at the frontier, not
+    // from the version history their sync order happened to write.
+    if let [sum] = plan.sums()
+        && let Some(slices) = reader.resolved_slices(
+            plan.grain().as_str(),
+            id,
+            cutoff.map(|c| c.frontier),
+            sum.time_property.as_str(),
+            &record.values,
+        )?
+    {
+        let series: Vec<_> = slices.into_iter().map(|v| (record.version, v)).collect();
+        return Ok((as_of(plan, &series).map_err(refused)?, false));
+    }
     let versions = reader
         // METRIC-SNAPSHOT-ASOF-1 at a knowledge cutoff: the versions known then.
         .object_versions_with_budget(

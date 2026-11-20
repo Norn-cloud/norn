@@ -18,7 +18,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
-use norn_cell::MappingOutcome;
 use norn_cell::engine::SqlEngine;
 use norn_cell::mapping_bundle::MappingInput;
 use norn_ir::{ArtifactEnvelope, RuntimeValue};
@@ -950,11 +949,12 @@ pub fn load_rows<E: SqlEngine>(
             .rows_read
             .saturating_add(u64::try_from(batch.len()).unwrap_or(u64::MAX));
         for ingested in host.ingest(&batch).map_err(|r| r.message)? {
-            match ingested.outcome {
-                MappingOutcome::Landed | MappingOutcome::AlreadyLanded => {
+            // SOURCE-RESOLVE-1: a withheld row is held back, not landed.
+            match ingested.outcome.held_back() {
+                None => {
                     loaded.rows_landed = loaded.rows_landed.saturating_add(1);
                 }
-                MappingOutcome::Quarantined(codes) => {
+                Some(codes) => {
                     loaded.rows_quarantined = loaded.rows_quarantined.saturating_add(1);
                     for code in codes {
                         let n = loaded.quarantine_reasons.entry(code).or_insert(0);

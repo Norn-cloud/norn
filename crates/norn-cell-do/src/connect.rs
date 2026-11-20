@@ -958,10 +958,12 @@ fn load_observations<E: SqlEngine>(host: &DevHost<E>, body: &str) -> Response {
         match &row.outcome {
             norn_cell::MappingOutcome::Landed => landed = landed.saturating_add(1),
             norn_cell::MappingOutcome::AlreadyLanded => already = already.saturating_add(1),
-            norn_cell::MappingOutcome::Quarantined(codes) => {
+            // SOURCE-RESOLVE-1: a withheld row is held back, not landed.
+            outcome @ (norn_cell::MappingOutcome::Quarantined(_)
+            | norn_cell::MappingOutcome::Withheld(_)) => {
                 quarantined = quarantined.saturating_add(1);
-                for code in codes {
-                    let n = reasons.entry(code.clone()).or_insert(0);
+                for code in outcome.held_back().unwrap_or_default() {
+                    let n = reasons.entry(code).or_insert(0);
                     *n = n.saturating_add(1);
                 }
             }

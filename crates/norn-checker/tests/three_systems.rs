@@ -784,6 +784,11 @@ fn resolution_codes(edits: &[(&str, &str, Option<&str>, Option<Value>)]) -> Vec<
         }
         *artifact = serde_json::from_value(wire).expect("edited envelope");
     }
+    admission_codes(set)
+}
+
+/// The error codes admission reports for `set`, sorted and distinct.
+fn admission_codes(set: Vec<ArtifactEnvelope>) -> Vec<String> {
     let (base, candidate): (Vec<_>, Vec<_>) = set
         .into_iter()
         .partition(|a| a.artifact_id.starts_with("core.") || a.artifact_id.starts_with("std."));
@@ -898,4 +903,34 @@ fn source_resolve_1_conflict_peers_are_all_or_none_and_only_on_nullable_properti
         ]),
         ["mapping.resolution.conflict_not_nullable"]
     );
+}
+
+/// SOURCE-RESOLVE-1 (Sol S5): only a rule writing the map's subject to the
+/// key property is exempt, and only while every writer of that property
+/// does. Odoo writing the item `label` as its subject, undeclared, is a
+/// writer like any other, so the label is refused as undeclared.
+#[test]
+fn source_resolve_1_only_identity_writes_of_the_key_need_no_authority() {
+    let mut set = artifacts();
+    let artifact = set
+        .iter_mut()
+        .find(|a| a.artifact_id == "odoo.three.mapping")
+        .expect("mapping");
+    let mut wire = serde_json::to_value(&*artifact).expect("wire");
+    let item = wire["payload"]["maps"]
+        .as_array_mut()
+        .expect("maps")
+        .iter_mut()
+        .find(|m| m["id"] == "item")
+        .expect("item map");
+    item.as_object_mut().expect("map").remove("authority");
+    for rule in item["properties"].as_array_mut().expect("properties") {
+        match rule["property"].as_str() {
+            Some("code") => rule["authority"] = json!({"kind": "precedence", "rank": 1}),
+            Some("label") => rule["value"] = json!("input.x_norn_ref"),
+            _ => {}
+        }
+    }
+    *artifact = serde_json::from_value(wire).expect("edited envelope");
+    assert_eq!(admission_codes(set), ["mapping.resolution.undeclared"]);
 }

@@ -16,7 +16,10 @@ use norn_cell::compute::QueryContext;
 use norn_cell::mapping_bundle::MappingInput;
 use norn_cell::source_agreement::{SourceDisagreementCount, SourceDisagreementCounts};
 use norn_cell::source_resolution::{PropertyDecision, SOURCE_AGREE_2};
-use norn_cell::{CellStore, InstalledDefinitionInput, MAIN_WORLD, Model, SqliteCell, StoreOptions};
+use norn_cell::{
+    CellStore, InstalledDefinitionInput, MAIN_WORLD, MappingOutcome, Model, SqliteCell,
+    StoreOptions,
+};
 use norn_checker::metric::compute::QuestionPlan;
 use norn_ir::{
     ArtifactEnvelope, DataQualityFindingStatus, DataQualityOutcome, InterfaceDef, LawRoot,
@@ -71,9 +74,8 @@ fn fixture_artifacts() -> Vec<ArtifactEnvelope> {
     artifacts
 }
 
-fn setup_with(path: &Path, edit: impl FnOnce(&mut Vec<ArtifactEnvelope>)) -> Cell {
-    // Every plan in these tests is also checked against the wide journal scope.
-    norn_cell::check_link_plans_against_wide_scope(true);
+/// The fixture set with `edit` applied, sorted, and the model it defines.
+fn edited_set(edit: impl FnOnce(&mut Vec<ArtifactEnvelope>)) -> (Vec<ArtifactEnvelope>, Model) {
     let mut artifacts = fixture_artifacts();
     edit(&mut artifacts);
     artifacts.sort_by(|a, b| a.artifact_id.cmp(&b.artifact_id));
@@ -116,33 +118,40 @@ fn setup_with(path: &Path, edit: impl FnOnce(&mut Vec<ArtifactEnvelope>)) -> Cel
         .expect("model")
         .with_governing_laws(&artifacts)
         .expect("laws");
+    (artifacts, model)
+}
+
+/// The install input of `artifacts`, installed at `installed_at`.
+fn definition_input(artifacts: &[ArtifactEnvelope], installed_at: u64) -> InstalledDefinitionInput {
+    InstalledDefinitionInput {
+        canonical_set: String::from_utf8(
+            norn_ir::canonical::canonical_json_of(&artifacts).expect("set"),
+        )
+        .expect("UTF8"),
+        registry: vec![],
+        // A well-formed digest, so the cell's history exports.
+        receipt_sha256: norn_ir::canonical::domain_hash_hex(
+            b"norn.test.receipt\0",
+            &"synthetic-mapped-links",
+        )
+        .expect("receipt digest"),
+        admission_receipt: None,
+        readmission: None,
+        diff: json!({}),
+        installed_at,
+        layout: None,
+    }
+}
+
+fn setup_with(path: &Path, edit: impl FnOnce(&mut Vec<ArtifactEnvelope>)) -> Cell {
+    // Every plan in these tests is also checked against the wide journal scope.
+    norn_cell::check_link_plans_against_wide_scope(true);
+    let (artifacts, model) = edited_set(edit);
     let mut store = CellStore::open(path, model.clone(), StoreOptions::default()).expect("store");
     // Bound before the first commit, so every exported record carries it.
     store.bind("scope", "org_demo/dev").expect("scope");
     store
-        .install_definitions(
-            model,
-            InstalledDefinitionInput {
-                canonical_set: String::from_utf8(
-                    norn_ir::canonical::canonical_json_of(&artifacts).expect("set"),
-                )
-                .expect("UTF8"),
-                registry: vec![],
-                // A well-formed digest, so the cell's history exports.
-                receipt_sha256: norn_ir::canonical::domain_hash_hex(
-                    b"norn.test.receipt\0",
-                    &"synthetic-mapped-links",
-                )
-                .expect("receipt digest"),
-                admission_receipt: None,
-                readmission: None,
-                diff: json!({}),
-                installed_at: 1_793_702_400_000,
-                layout: None,
-            },
-            None,
-            "org_demo/dev",
-        )
+        .install_definitions(model, definition_input(&artifacts, 1_793_702_400_000), None, "org_demo/dev")
         .expect("install");
     SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("cell")
 }
@@ -521,15 +530,15 @@ fn an_answer_counts_disputed_members_at_its_frontier_as_its_reader_may_see_them(
     );
 }
 
-/// SOURCE-AGREE-1 parity on the real analytics engine (D102): `DuckDB` answers
-/// the stock question itself, the host then counts disagreements as
-/// `EngineQuestions` does, and the whole envelope equals the exact engine's
-/// (only the engine label differs, as QUERY-ENGINE-1 requires).
+/// SOURCE-RESOLVE-1 on the real analytics engine (D102): the mirror holds
+/// version history only, so a snapshot question over holdings several
+/// sources resolve is refused there (`core.compute.unsupported_engine`)
+/// rather than answered from a history the sync order wrote; the exact
+/// engine answers it from per-slice resolution.
 #[cfg(feature = "duckdb")]
 #[test]
-fn the_analytics_engine_answers_and_counts_disagreements_as_the_exact_engine_does() {
+fn the_analytics_engine_refuses_a_snapshot_over_resolved_sources() {
     use norn_cell::analytics::TenantId;
-    use norn_cell::analytics::engine::{Engine, Settings};
     let directory = tempfile::tempdir().expect("directory");
     let mut cell = setup_with(&directory.path().join("engine.sqlite"), holding_precedence);
     load(&mut cell, "erpnext");
@@ -540,51 +549,16 @@ fn the_analytics_engine_answers_and_counts_disagreements_as_the_exact_engine_doe
         .evaluate_question(&plan, context(), |_| Ok(true))
         .expect("the exact engine answers");
     assert!(exact.source_disagreements.is_some(), "{exact:#?}");
-    let engine_directory = tempfile::tempdir().expect("engine directory");
-    let engine = Engine::new(Settings {
-        root: engine_directory.path().to_path_buf(),
-        memory_limit: "256MB".into(),
-        threads: 1,
-    })
-    .expect("engine");
-    let tenant = TenantId::of_scope("org_demo/dev");
-    // ANALYTICS-FRONTIER-1: bring the mirror to the cell's verified head.
-    let mut frontier = engine
-        .frontier(
-            &store
-                .analytics_frontier(&tenant, MAIN_WORLD)
-                .expect("tables"),
-        )
-        .expect("frontier")
-        .frontier;
-    loop {
-        let batch = store
-            .analytics_delta(&tenant, MAIN_WORLD, frontier, 64)
-            .expect("delta");
-        frontier = engine.sync(&batch.request).expect("sync").frontier;
-        if batch.complete {
-            break;
-        }
-    }
-    let prepared = store
-        .analytics_prepare(&plan, context(), &tenant)
-        .expect("prepared");
-    let response = engine.evaluate(&prepared.request).expect("DuckDB answers");
-    let mut answered = store
-        .analytics_answer(prepared, response)
-        .expect("the engine's answer");
-    // What EngineQuestions does after the engine (norn-api analytics_routes).
-    answered.source_disagreements = store
-        .answer_source_disagreements(
-            &plan,
-            &answered.context.clone(),
-            (answered.known_as_of, None),
-            &mut |_| Ok(true),
-        )
-        .expect("host counts");
-    assert_eq!(answered.engine, norn_cell::compute::Engine::Duckdb);
-    answered.engine = norn_cell::compute::Engine::Cell;
-    assert_eq!(answered, exact);
+    let refused = store
+        .analytics_prepare(&plan, context(), &TenantId::of_scope("org_demo/dev"))
+        .expect_err("the engine refuses");
+    assert!(
+        matches!(
+            refused,
+            norn_cell::CellError::ComputeRefused("core.compute.unsupported_engine")
+        ),
+        "{refused:?}"
+    );
 }
 
 /// The canonical values and resolution of the north gold holding, without
@@ -781,7 +755,9 @@ fn source_resolve_1_checks_never_decide_and_the_system_of_record_does_in_either_
     );
     assert_eq!(
         decision_of(&before.1, "quantity"),
-        &PropertyDecision::Undecided
+        &PropertyDecision::Undecided {
+            awaiting: vec!["erpnext.three.mapping".into()]
+        }
     );
     let state = north_state(&forward);
     assert_eq!(north_state(&backward), state);
@@ -793,5 +769,503 @@ fn source_resolve_1_checks_never_decide_and_the_system_of_record_does_in_either_
         state
             .2
             .contains(&("quantity".into(), "odoo.three.mapping".into(), grams(2458),))
+    );
+}
+
+/// Whether `record` is the north gold holding's source record.
+fn is_north(record: &serde_json::Map<String, Value>) -> bool {
+    record.contains_key("resource_code")
+        && ["custom_norn_ref", "x_norn_ref", "metafield_norn_ref"]
+            .iter()
+            .any(|field| record.get(*field).and_then(Value::as_str) == Some(NORTH))
+}
+
+type Edit = fn(&mut serde_json::Map<String, Value>);
+
+/// A stock answer's rows: totals and each member's amounts, by bucket.
+type Answer = BTreeMap<String, (Vec<String>, BTreeMap<String, String>)>;
+
+/// One sync of `system`'s snapshot as source version `event`, with `edit`
+/// applied to the north gold holding's record: each row's outcome, flagged
+/// when it is the holding's.
+fn sync_north(
+    cell: &mut Cell,
+    system: &str,
+    event: &str,
+    edit: impl Fn(&mut serde_json::Map<String, Value>),
+) -> Vec<(bool, MappingOutcome)> {
+    let mut outcomes = Vec::new();
+    for row in fixture(system)["snapshot"].as_array().expect("rows") {
+        let mut row = row.clone();
+        let record = row["record"].as_object_mut().expect("record");
+        let north = is_north(record);
+        if north {
+            edit(record);
+        }
+        let id = retain_in(cell, system, &row, event, "snapshot");
+        outcomes.push((north, cell.process_mapping_outcome(&id).expect("process")));
+    }
+    outcomes
+}
+
+/// The north holding row's outcome of a [`sync_north`].
+fn north_outcome(outcomes: &[(bool, MappingOutcome)]) -> MappingOutcome {
+    outcomes
+        .iter()
+        .find(|(north, _)| *north)
+        .map(|(_, outcome)| outcome.clone())
+        .expect("the north holding row")
+}
+
+fn quantity_of(cell: &Cell) -> Option<RuntimeValue> {
+    cell.store()
+        .read()
+        .object(MAIN_WORLD, "canon.Holding", NORTH)
+        .expect("read")
+        .and_then(|record| record.values.get("quantity").cloned())
+}
+
+/// SOURCE-RESOLVE-1 (Sol S1): one source's versions decide by source
+/// version, not by the order they were consumed in: `ERPNext` v2 (3000 g)
+/// then v1 (2765 g) and v1 then v2 both leave v2. A historical read sees what
+/// was consumed by its frontier and picks the highest version of it; a
+/// reopened cell reads the same.
+#[test]
+fn source_resolve_1_a_sources_highest_version_decides_in_either_delivery_order() {
+    let directory = tempfile::tempdir().expect("directory");
+    let v1: Edit = |r| {
+        r.insert("quantity".into(), json!(2765));
+    };
+    let v2: Edit = |r| {
+        r.insert("quantity".into(), json!(3000));
+    };
+    let late_path = directory.path().join("late.sqlite");
+    let mut late = setup_with(&late_path, |_| {});
+    sync_north(&mut late, "erpnext", "v2", v2);
+    let after_v2 = late.store().read().head_commit_seq().expect("head");
+    sync_north(&mut late, "erpnext", "v1", v1);
+    let mut ordered = setup_with(&directory.path().join("ordered.sqlite"), |_| {});
+    sync_north(&mut ordered, "erpnext", "v1", v1);
+    let after_v1 = ordered.store().read().head_commit_seq().expect("head");
+    sync_north(&mut ordered, "erpnext", "v2", v2);
+    let decided = |grams_: u64| PropertyDecision::Decided {
+        mapping: "erpnext.three.mapping".into(),
+        value: grams(grams_),
+    };
+    for cell in [&late, &ordered] {
+        assert_eq!(quantity_of(cell), Some(grams(3000)));
+        assert_eq!(
+            decision_of(&north_state(cell).1, "quantity"),
+            &decided(3000)
+        );
+    }
+    let at = |cell: &Cell, frontier: u64| {
+        cell.store()
+            .read()
+            .source_resolution("canon.Holding", NORTH, Some(frontier))
+            .expect("historical read")
+            .expect("resolved")
+            .decision("quantity")
+            .cloned()
+    };
+    assert_eq!(at(&late, after_v2), Some(decided(3000)));
+    assert_eq!(at(&ordered, after_v1), Some(decided(2765)));
+    drop(late);
+    let (_, model) = edited_set(|_| {});
+    let store = CellStore::open(&late_path, model, StoreOptions::default()).expect("reopen");
+    let reader = store.read();
+    assert_eq!(
+        reader
+            .object(MAIN_WORLD, "canon.Holding", NORTH)
+            .expect("read")
+            .and_then(|record| record.values.get("quantity").cloned()),
+        Some(grams(3000))
+    );
+    assert_eq!(
+        reader
+            .source_resolution("canon.Holding", NORTH, None)
+            .expect("read")
+            .expect("resolved")
+            .decision("quantity"),
+        Some(&decided(3000))
+    );
+}
+
+/// SOURCE-RESOLVE-1 (Sol S2): `ERPNext` and Odoo name different owners of
+/// the north holding. Neither bundle is refused: in either order the
+/// quantity `ERPNext` decides is written, and the owner link is an explicit
+/// conflict listing both sources' targets.
+#[test]
+fn source_resolve_1_sources_naming_different_owners_keep_the_conflict_and_the_decided_values() {
+    let directory = tempfile::tempdir().expect("directory");
+    let erpnext: Edit = |r| {
+        r.insert("quantity".into(), json!(2765));
+    };
+    let odoo: Edit = |r| {
+        r.insert("quantity".into(), json!(2458));
+        r.insert("owner_ref".into(), json!("demo/party/custodian"));
+    };
+    let mut forward = setup_with(&directory.path().join("forward.sqlite"), |_| {});
+    let mut outcomes = sync_north(&mut forward, "erpnext", "snapshot", erpnext);
+    outcomes.extend(sync_north(&mut forward, "odoo", "snapshot", odoo));
+    let mut backward = setup_with(&directory.path().join("backward.sqlite"), |_| {});
+    let mut reverse = sync_north(&mut backward, "odoo", "snapshot", odoo);
+    reverse.extend(sync_north(&mut backward, "erpnext", "snapshot", erpnext));
+    for (cell, outcomes) in [(&forward, outcomes), (&backward, reverse)] {
+        assert!(
+            outcomes.iter().all(|(_, o)| *o == MappingOutcome::Landed),
+            "{outcomes:#?}"
+        );
+        assert_eq!(quantity_of(cell), Some(grams(2765)));
+        let resolution = cell
+            .store()
+            .read()
+            .source_resolution("canon.Holding", NORTH, None)
+            .expect("read")
+            .expect("resolved");
+        let links: Vec<_> = resolution
+            .links
+            .iter()
+            .map(|conflict| {
+                (
+                    conflict.link.clone(),
+                    conflict
+                        .claims
+                        .iter()
+                        .map(|(mapping, target, _)| (mapping.clone(), target.clone()))
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            links,
+            [(
+                "owner".to_owned(),
+                vec![
+                    (
+                        "erpnext.three.mapping".to_owned(),
+                        Some("demo/party/owner".to_owned())
+                    ),
+                    (
+                        "odoo.three.mapping".to_owned(),
+                        Some("demo/party/custodian".to_owned())
+                    ),
+                ]
+            )]
+        );
+    }
+}
+
+/// SOURCE-RESOLVE-1 (Sol S3): Odoo reports north gold at 2458 g on
+/// 2026-10-20 and `ERPNext` at 2765 g on 2026-11-10. The weekly stock answer
+/// is the same in either sync order: Odoo's report until `ERPNext`'s valid
+/// time, `ERPNext`'s (it outranks Odoo) from then on.
+#[test]
+fn source_resolve_1_a_stock_answer_resolves_each_valid_time_in_either_sync_order() {
+    let directory = tempfile::tempdir().expect("directory");
+    let erpnext: Edit = |r| {
+        r.insert("quantity".into(), json!(2765));
+        r.insert("modified".into(), json!("2026-11-10T00:00:00Z"));
+    };
+    let odoo: Edit = |r| {
+        r.insert("quantity".into(), json!(2458));
+        r.insert("write_date".into(), json!("2026-10-20T00:00:00Z"));
+    };
+    let mut forward = setup_with(&directory.path().join("forward.sqlite"), |_| {});
+    sync_north(&mut forward, "erpnext", "snapshot", erpnext);
+    sync_north(&mut forward, "odoo", "snapshot", odoo);
+    let mut backward = setup_with(&directory.path().join("backward.sqlite"), |_| {});
+    sync_north(&mut backward, "odoo", "snapshot", odoo);
+    sync_north(&mut backward, "erpnext", "snapshot", erpnext);
+    let answer = |cell: &Cell| -> Answer {
+        cell.store()
+            .evaluate_question(&stock_plan(), context(), |_| Ok(true))
+            .expect("answer")
+            .rows
+            .into_iter()
+            .map(|(key, row)| {
+                (
+                    key,
+                    (
+                        row.totals.iter().map(|t| format!("{t:?}")).collect(),
+                        row.members
+                            .iter()
+                            .map(|(id, m)| (id.clone(), format!("{:?}", m.amounts)))
+                            .collect(),
+                    ),
+                )
+            })
+            .collect()
+    };
+    let rows = answer(&forward);
+    assert_eq!(answer(&backward), rows);
+    let north_in = |week: &str| {
+        rows.iter()
+            .filter(|(key, _)| key.starts_with(&format!("[\"{week}\"")))
+            .find_map(|(_, (_, members))| members.get(NORTH))
+            .cloned()
+    };
+    let (odoo_week, erpnext_week) = (north_in("2026-10-26"), north_in("2026-11-16"));
+    assert!(odoo_week.is_some(), "{rows:#?}");
+    assert!(erpnext_week.is_some(), "{rows:#?}");
+    assert_ne!(odoo_week, erpnext_week);
+}
+
+/// SOURCE-RESOLVE-1 (Sol S4): with `ERPNext` the holding's system of record,
+/// a check's report on a holding `ERPNext` has not reported is withheld as
+/// an explicit outcome naming `ERPNext`, counted as held back; once
+/// `ERPNext` reports, the holding lands, and either order ends the same.
+#[test]
+fn source_resolve_1_a_withheld_holding_is_an_explicit_outcome_in_either_order() {
+    let directory = tempfile::tempdir().expect("directory");
+    let mut backward = setup_with(
+        &directory.path().join("backward.sqlite"),
+        holding_system_of_record,
+    );
+    for system in ["shopify", "odoo"] {
+        let outcome = north_outcome(&sync_north(&mut backward, system, "snapshot", |_| {}));
+        let MappingOutcome::Withheld(subjects) = &outcome else {
+            panic!("{system}: {outcome:?}")
+        };
+        let north = subjects
+            .iter()
+            .find(|s| s.key == NORTH)
+            .expect("the north holding");
+        assert!(
+            north
+                .awaiting
+                .iter()
+                .any(|(p, by)| p == "quantity" && by == &["erpnext.three.mapping".to_owned()]),
+            "{north:?}"
+        );
+        assert_eq!(
+            outcome.held_back(),
+            Some(vec![norn_cell::WITHHELD_REASON.to_owned()])
+        );
+        assert_eq!(quantity_of(&backward), None);
+    }
+    assert_eq!(
+        north_outcome(&sync_north(&mut backward, "erpnext", "snapshot", |_| {})),
+        MappingOutcome::Landed
+    );
+    let mut forward = setup_with(
+        &directory.path().join("forward.sqlite"),
+        holding_system_of_record,
+    );
+    for system in ["erpnext", "odoo", "shopify"] {
+        assert_eq!(
+            north_outcome(&sync_north(&mut forward, system, "snapshot", |_| {})),
+            MappingOutcome::Landed,
+            "{system}"
+        );
+    }
+    assert_eq!(north_state(&forward), north_state(&backward));
+}
+
+/// `system`'s snapshot rows that `pick` selects, synced as source version
+/// `event` with `edit` applied: each row's outcome.
+fn sync_rows(
+    cell: &mut Cell,
+    system: &str,
+    event: &str,
+    pick: impl Fn(&serde_json::Map<String, Value>) -> bool,
+    edit: impl Fn(&mut serde_json::Map<String, Value>),
+) -> Vec<MappingOutcome> {
+    let mut outcomes = Vec::new();
+    for row in fixture(system)["snapshot"].as_array().expect("rows") {
+        let mut row = row.clone();
+        let record = row["record"].as_object_mut().expect("record");
+        if !pick(record) {
+            continue;
+        }
+        edit(record);
+        let id = retain_in(cell, system, &row, event, "snapshot");
+        outcomes.push(cell.process_mapping_outcome(&id).expect("process"));
+    }
+    outcomes
+}
+
+/// The holding's writers ranked Odoo, `ERPNext`, Shopify.
+#[allow(clippy::ptr_arg, reason = "the shape setup_with edits")]
+fn odoo_first(artifacts: &mut Vec<ArtifactEnvelope>) {
+    for (system, rank) in [("odoo", 0), ("erpnext", 1), ("shopify", 2)] {
+        let artifact = artifacts
+            .iter_mut()
+            .find(|a| a.artifact_id == format!("{system}.three.mapping"))
+            .expect("mapping");
+        let mut wire = serde_json::to_value(&*artifact).expect("wire");
+        for map in wire["payload"]["maps"].as_array_mut().expect("maps") {
+            if map["id"] == "holding" {
+                map["authority"] = json!({"kind": "precedence", "rank": rank});
+            }
+        }
+        *artifact = serde_json::from_value(wire).expect("edited mapping");
+    }
+}
+
+fn decision_at(cell: &Cell, frontier: Option<u64>) -> Option<PropertyDecision> {
+    cell.store()
+        .read()
+        .source_resolution("canon.Holding", NORTH, frontier)
+        .expect("read")
+        .expect("resolved")
+        .decision("quantity")
+        .cloned()
+}
+
+/// SOURCE-RESOLVE-1 (Sol S7): activating definitions that rank Odoo over
+/// `ERPNext` reconciles the north holding at once (the stored value is the
+/// one the current read decides), while a read at a frontier before the
+/// activation still decides under the definitions in force then.
+#[test]
+fn source_resolve_1_an_activated_authority_reconciles_and_history_keeps_the_old_one() {
+    let directory = tempfile::tempdir().expect("directory");
+    let mut cell = setup_with(&directory.path().join("activate.sqlite"), |_| {});
+    let erpnext: Edit = |r| {
+        r.insert("quantity".into(), json!(2765));
+    };
+    let odoo: Edit = |r| {
+        r.insert("quantity".into(), json!(2458));
+    };
+    sync_north(&mut cell, "erpnext", "snapshot", erpnext);
+    sync_north(&mut cell, "odoo", "snapshot", odoo);
+    let before = cell.store().read().head_commit_seq().expect("head");
+    let active = cell
+        .store()
+        .read()
+        .installed_definitions(None)
+        .expect("read")
+        .expect("active")
+        .version;
+    let (artifacts, model) = edited_set(odoo_first);
+    cell.install_definitions(
+        model,
+        definition_input(&artifacts, 1_793_702_500_000),
+        Some(active),
+    )
+    .expect("activate");
+    assert!(cell.reconcile_source_resolution().expect("reconcile") > 0);
+    let odoo_decides = PropertyDecision::Decided {
+        mapping: "odoo.three.mapping".into(),
+        value: grams(2458),
+    };
+    assert_eq!(decision_at(&cell, None), Some(odoo_decides));
+    assert_eq!(quantity_of(&cell), Some(grams(2458)));
+    assert_eq!(
+        decision_at(&cell, Some(before)),
+        Some(PropertyDecision::Decided {
+            mapping: "erpnext.three.mapping".into(),
+            value: grams(2765),
+        })
+    );
+    // Reconciled: a second pass writes nothing.
+    assert_eq!(cell.reconcile_source_resolution().expect("again"), 0);
+}
+
+/// SOURCE-RESOLVE-1 (Sol S8): `ERPNext` and Odoo report north gold (2765 g
+/// and 2458 g; `ERPNext` decides). A newer `ERPNext` upsert of the same
+/// source record that moves it to another key, or that no longer matches
+/// the holding map, withdraws its contribution: north is decided again by
+/// Odoo's report.
+#[test]
+fn source_resolve_1_a_record_that_moves_or_stops_matching_withdraws_its_contribution() {
+    let directory = tempfile::tempdir().expect("directory");
+    let erpnext: Edit = |r| {
+        r.insert("quantity".into(), json!(2765));
+    };
+    let odoo: Edit = |r| {
+        r.insert("quantity".into(), json!(2458));
+    };
+    let moved = format!("{NORTH}/moved");
+    let only_when_stocked = |artifacts: &mut Vec<ArtifactEnvelope>| {
+        let artifact = artifacts
+            .iter_mut()
+            .find(|a| a.artifact_id == "erpnext.three.mapping")
+            .expect("mapping");
+        let mut wire = serde_json::to_value(&*artifact).expect("wire");
+        for map in wire["payload"]["maps"].as_array_mut().expect("maps") {
+            if map["id"] == "holding" {
+                map["when"] = json!("input.quantity > 0");
+            }
+        }
+        *artifact = serde_json::from_value(wire).expect("edited mapping");
+    };
+    for (case, stop) in [("move", false), ("stop", true)] {
+        let mut cell = if stop {
+            setup_with(&directory.path().join("stop.sqlite"), only_when_stocked)
+        } else {
+            setup_with(&directory.path().join("move.sqlite"), |_| {})
+        };
+        sync_north(&mut cell, "erpnext", "snapshot", erpnext);
+        sync_north(&mut cell, "odoo", "snapshot", odoo);
+        assert_eq!(quantity_of(&cell), Some(grams(2765)), "{case}");
+        let moved_ref = moved.clone();
+        let outcomes = sync_rows(&mut cell, "erpnext", "v2", is_north, move |r| {
+            if stop {
+                r.insert("quantity".into(), json!(0));
+            } else {
+                r.insert("custom_norn_ref".into(), json!(moved_ref.clone()));
+                r.insert("quantity".into(), json!(2765));
+            }
+        });
+        assert_eq!(outcomes, [MappingOutcome::Landed], "{case}");
+        assert_eq!(quantity_of(&cell), Some(grams(2458)), "{case}");
+        assert_eq!(
+            decision_at(&cell, None),
+            Some(PropertyDecision::Decided {
+                mapping: "odoo.three.mapping".into(),
+                value: grams(2458),
+            }),
+            "{case}"
+        );
+        let moved_quantity = cell
+            .store()
+            .read()
+            .object(MAIN_WORLD, "canon.Holding", &moved)
+            .expect("read")
+            .and_then(|record| record.values.get("quantity").cloned());
+        assert_eq!(
+            moved_quantity,
+            (!stop).then(|| grams(2765)),
+            "{case}: the record's new subject"
+        );
+    }
+}
+
+/// SOURCE-RESOLVE-1 (Sol S9): 4,100 versions of `ERPNext`'s gold item (one
+/// source) never exhaust the resolution bound: only each source record's
+/// current version is read, so the last version still writes and reads.
+#[test]
+fn source_resolve_1_accumulated_versions_never_make_a_subject_unwritable() {
+    let directory = tempfile::tempdir().expect("directory");
+    let mut cell = setup_with(&directory.path().join("versions.sqlite"), |_| {});
+    let item = |r: &serde_json::Map<String, Value>| {
+        r.get("custom_norn_ref").and_then(Value::as_str) == Some("demo/item/gold")
+    };
+    for version in 1..=4100_u32 {
+        let label = format!("Gold v{version:04}");
+        let outcomes = sync_rows(&mut cell, "erpnext", &format!("v{version:04}"), item, |r| {
+            r.insert("label".into(), json!(label.clone()));
+        });
+        assert_eq!(outcomes, [MappingOutcome::Landed], "version {version}");
+    }
+    let reader = cell.store().read();
+    assert_eq!(
+        reader
+            .object(MAIN_WORLD, "canon.Item", "demo/item/gold")
+            .expect("read")
+            .and_then(|record| record.values.get("label").cloned()),
+        Some(RuntimeValue::from("Gold v4100"))
+    );
+    let resolution = reader
+        .source_resolution("canon.Item", "demo/item/gold", None)
+        .expect("the read stays within its bound")
+        .expect("resolved");
+    assert_eq!(
+        resolution.decision("label"),
+        Some(&PropertyDecision::Decided {
+            mapping: "erpnext.three.mapping".into(),
+            value: RuntimeValue::from("Gold v4100"),
+        })
     );
 }

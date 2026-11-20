@@ -73,18 +73,43 @@ pub(crate) fn claim_endpoints_of(selection: &str) -> String {
     )
 }
 /// SOURCE-RESOLVE-1: the canonical subjects each consumed mapping bundle
-/// reports, one row per (type, key, bundle), with the bundle's mapping, so
-/// the latest report of every source for one subject is found by lookup.
+/// reports, one row per (type, key, bundle), with the bundle's mapping,
+/// source record and source version, so the current report of every source
+/// for one subject is found by lookup.
 pub(crate) const SOURCE_SUBJECT: &str = "_norn_source_subject";
+
+/// SOURCE-RESOLVE-1: every consumed mapping bundle, one row each, by the
+/// source record it captured (connector instance, partition, source and
+/// source id), so a newer upsert of a record withdraws what an older one
+/// contributed, even when it reports no subject at all.
+pub(crate) const SOURCE_RECORD: &str = "_norn_source_record";
+
+/// The source record identity of inbox row `i`'s mapping bundle.
+pub(crate) const RECORD_ID: &str = "json_array(json_extract(i.\"observed\", '$.input.input.connectorInstance'), json_extract(i.\"observed\", '$.input.input.partition'), json_extract(i.\"observed\", '$.input.raw.source'), json_extract(i.\"observed\", '$.input.raw.source_id'))";
+
+/// The raw source version of inbox row `i`'s mapping bundle (`''` when it
+/// is not text, as the cell reads it).
+const SOURCE_VERSION: &str = "CASE WHEN json_type(i.\"observed\", '$.input.raw.source_version') = 'text' THEN json_extract(i.\"observed\", '$.input.raw.source_version') ELSE '' END";
 
 /// The [`SOURCE_SUBJECT`] rows of the consumed mapping bundles that `?1`
 /// selects (a SQL condition on `i`).
 pub(crate) fn source_subjects_of(selection: &str) -> String {
     format!(
-        "INSERT OR IGNORE INTO \"{SOURCE_SUBJECT}\" (\"object_type\", \"key\", \"mapping\", \"commit_seq\", \"position\", \"observation_id\") \
-         SELECT json_extract(record.value, '$.objectType'), json_extract(record.value, '$.key'), json_extract(i.\"observed\", '$.input.input.mapping'), i.\"consumed_commit_seq\", i.\"position\", i.\"observation_id\" \
+        "INSERT OR IGNORE INTO \"{SOURCE_SUBJECT}\" (\"object_type\", \"key\", \"mapping\", \"record_id\", \"source_version\", \"commit_seq\", \"position\", \"observation_id\") \
+         SELECT json_extract(record.value, '$.objectType'), json_extract(record.value, '$.key'), json_extract(i.\"observed\", '$.input.input.mapping'), {RECORD_ID}, {SOURCE_VERSION}, i.\"consumed_commit_seq\", i.\"position\", i.\"observation_id\" \
          FROM \"{INBOX}\" i, json_each(i.\"observed\", '$.input.records') AS record WHERE i.\"observation_id\" LIKE 'mapping-bundle:%' AND i.\"consumed_commit_seq\" IS NOT NULL AND ({selection}) \
          AND json_type(record.value, '$.objectType') = 'text' AND json_type(record.value, '$.key') = 'text' AND json_type(i.\"observed\", '$.input.input.mapping') = 'text'"
+    )
+}
+
+/// The [`SOURCE_RECORD`] rows of the consumed mapping bundles that `?1`
+/// selects (a SQL condition on `i`).
+pub(crate) fn source_records_of(selection: &str) -> String {
+    format!(
+        "INSERT OR IGNORE INTO \"{SOURCE_RECORD}\" (\"mapping\", \"record_id\", \"source_version\", \"commit_seq\", \"position\", \"observation_id\") \
+         SELECT json_extract(i.\"observed\", '$.input.input.mapping'), {RECORD_ID}, {SOURCE_VERSION}, i.\"consumed_commit_seq\", i.\"position\", i.\"observation_id\" \
+         FROM \"{INBOX}\" i WHERE i.\"observation_id\" LIKE 'mapping-bundle:%' AND i.\"consumed_commit_seq\" IS NOT NULL AND ({selection}) \
+         AND json_type(i.\"observed\", '$.input.input.mapping') = 'text'"
     )
 }
 
@@ -548,11 +573,23 @@ pub const SYSTEM_DDL: &[&str] = &[
   "object_type" TEXT NOT NULL,
   "key" TEXT NOT NULL,
   "mapping" TEXT NOT NULL,
+  "record_id" TEXT NOT NULL,
+  "source_version" TEXT NOT NULL,
   "commit_seq" INTEGER NOT NULL,
   "position" INTEGER NOT NULL,
   "observation_id" TEXT NOT NULL,
   PRIMARY KEY ("object_type", "key", "observation_id")
 )"#,
+    // SOURCE-RESOLVE-1: consumed bundles by source record (`source_records_of`).
+    r#"CREATE TABLE IF NOT EXISTS "_norn_source_record" (
+  "mapping" TEXT NOT NULL,
+  "record_id" TEXT NOT NULL,
+  "source_version" TEXT NOT NULL,
+  "commit_seq" INTEGER NOT NULL,
+  "position" INTEGER NOT NULL,
+  "observation_id" TEXT NOT NULL PRIMARY KEY
+)"#,
+    r#"CREATE INDEX IF NOT EXISTS "_norn_source_record_order" ON "_norn_source_record" ("mapping", "record_id", "source_version", "commit_seq", "position")"#,
     // The source event a mapping bundle captures (`source_event_mapping_bundles`):
     // looked up on every mapping, so an index, not a scan of every bundle.
     r#"CREATE INDEX IF NOT EXISTS "_norn_inbox/source_event" ON "_norn_inbox" (json_extract("observed", '$.input.input.connectorInstance'), json_extract("observed", '$.input.input.partition'), json_extract("observed", '$.input.raw.source'), json_extract("observed", '$.input.raw.source_id'), json_extract("observed", '$.input.raw.event_id')) WHERE "observation_id" LIKE 'mapping-bundle:%'"#,

@@ -34,6 +34,8 @@ const MAX_CLAIMS: usize = 20_000;
 struct Entry {
     claim: ObservedLinkClaim,
     id: String,
+    /// The mapping whose bundle made the claim (its source system).
+    mapping: String,
     contribution: String,
     fresh: bool,
     disputed: bool,
@@ -121,7 +123,98 @@ fn standings(group: &[&Entry], target: impl Fn(&Entry) -> Option<FactKey>) -> Ve
         .collect()
 }
 
+/// Whether a group's current claims come from more than one mapping.
+fn rival_sources(group: &[&Entry], ranked: &[Standing]) -> bool {
+    let mut mappings = group
+        .iter()
+        .zip(ranked)
+        .filter(|(_, s)| **s == Standing::Current)
+        .map(|(e, _)| e.mapping.as_str());
+    let first = mappings.next();
+    mappings.any(|m| Some(m) != first)
+}
+
+/// SOURCE-RESOLVE-1: an exclusive (to-one) link that several sources report
+/// with different targets. No edge changes for it until they agree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinkConflict {
+    /// The link.
+    pub link: String,
+    /// Each current claim: (mapping, target key or `None` for a clear,
+    /// retained bundle), in mapping order.
+    pub claims: Vec<(String, Option<String>, String)>,
+}
+
 impl<S: SqlEngine> StoreReader<'_, S> {
+    /// SOURCE-RESOLVE-1: the exclusive links of `object_type`/`key` that
+    /// several sources currently claim with different targets, as the
+    /// journal stands now.
+    ///
+    /// # Errors
+    /// The same evidence/pin/budget errors as `observed_link_claims`.
+    pub(crate) fn source_link_conflicts(
+        &self,
+        object_type: &str,
+        key: &str,
+    ) -> Result<Vec<LinkConflict>, CellError> {
+        let catalog = TypeCatalog::new(self.model().object_types())
+            .with_interfaces(self.model().interfaces());
+        let model = CommitModel::new(&catalog);
+        let subject = model.canonical(&FactKey::new(object_type, key));
+        let scope = ClaimScope {
+            sources: BTreeSet::from([key.to_owned()]),
+            targets: BTreeSet::new(),
+        };
+        let entries = self.claim_journal(&[], Some(&scope))?;
+        let mut groups = BTreeMap::<String, Vec<&Entry>>::new();
+        for entry in entries.iter().filter(|e| !e.disputed) {
+            let source = FactKey::new(entry.claim.source_type.as_str(), &entry.claim.source_key);
+            if model.canonical(&source) == subject {
+                groups
+                    .entry(entry.claim.role.as_str().to_owned())
+                    .or_default()
+                    .push(entry);
+            }
+        }
+        let target = |e: &Entry| {
+            e.claim
+                .target
+                .as_ref()
+                .map(|t| model.canonical(&FactKey::new(t.object_type.as_str(), &t.key)))
+        };
+        let mut out = Vec::new();
+        for (role, group) in groups {
+            let exclusive = model
+                .link(&subject.object_type, &role)
+                .is_some_and(|link| link.cardinality.to == norn_ir::Multiplicity::One);
+            let ranked = standings(&group, target);
+            let current: Vec<_> = group
+                .iter()
+                .zip(&ranked)
+                .filter(|(_, s)| **s == Standing::Current)
+                .map(|(e, _)| *e)
+                .collect();
+            let targets: BTreeSet<_> = current.iter().map(|e| target(e)).collect();
+            if !exclusive || targets.len() < 2 || !rival_sources(&group, &ranked) {
+                continue;
+            }
+            let mut claims: Vec<_> = current
+                .iter()
+                .map(|e| {
+                    (
+                        e.mapping.clone(),
+                        e.claim.target.as_ref().map(|t| t.key.clone()),
+                        e.claim.observation_id.clone(),
+                    )
+                })
+                .collect();
+            claims.sort();
+            claims.dedup();
+            out.push(LinkConflict { link: role, claims });
+        }
+        Ok(out)
+    }
+
     /// Immutable, recomputed source claims published by consumed mapping bundles.
     /// Missing targets remain represented here; callers enforce source disclosure.
     ///
@@ -292,6 +385,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                 entries.push(Entry {
                     claim,
                     id,
+                    mapping: bundle.input.mapping.clone(),
                     contribution,
                     fresh: *fresh,
                     disputed: *disputed,
@@ -472,6 +566,14 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                     .link(&source.object_type, role.as_str())
                     .is_some_and(|link| link.cardinality.to == norn_ir::Multiplicity::One)
             {
+                // SOURCE-RESOLVE-1: sources that disagree on an exclusive
+                // link are an explicit conflict (`source_link_conflicts`):
+                // the link changes no edge, and the bundle's other
+                // decisions still apply. One source's own rival rows still
+                // refuse.
+                if rival_sources(group, &ranked) {
+                    continue;
+                }
                 return Err(CellError::UnsupportedMappingProfile);
             }
             let before = links.len();

@@ -1566,6 +1566,10 @@
       "message": "خاصية قانونية معلنة تعارضًا غير قابلة للقيمة الفارغة، فلا يمكن تخزين الخلاف فارغًا: {$detail}",
       "review": "needs_review"
     },
+    "mapping.resolution.lifecycle_overlap": {
+      "message": "خاصية دورة حياة يرصدها أكثر من تعيين واحد، ولا يحسمها حل المصادر بعد: {$detail}",
+      "review": "needs_review"
+    },
     "mapping.resolution.mixed": {
       "message": "أقران التعارض مختلطون بسلطات أخرى لخاصية قانونية واحدة: {$detail}",
       "review": "needs_review"

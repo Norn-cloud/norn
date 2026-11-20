@@ -1175,6 +1175,9 @@
     "mapping.resolution.conflict_not_nullable": {
       "message": "a canonical property declared conflict is not nullable, so a disagreement cannot be stored as null: {$detail}"
     },
+    "mapping.resolution.lifecycle_overlap": {
+      "message": "a lifecycle property is observed by more than one mapping, which source resolution does not decide yet: {$detail}"
+    },
     "mapping.resolution.mixed": {
       "message": "conflict peers are mixed with other authorities for one canonical property: {$detail}"
     },
