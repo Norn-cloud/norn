@@ -1295,7 +1295,7 @@
       "classifications": [
         {
           "subsystem": "transition-authority",
-          "layer": "runtime"
+          "layer": "model"
         }
       ],
       "resultArtifacts": [],
