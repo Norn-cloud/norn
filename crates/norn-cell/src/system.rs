@@ -89,7 +89,7 @@ pub(crate) const RECORD_ID: &str = "json_array(json_extract(i.\"observed\", '$.i
 
 /// The raw source version of inbox row `i`'s mapping bundle (`''` when it
 /// is not text, as the cell reads it).
-const SOURCE_VERSION: &str = "CASE WHEN json_type(i.\"observed\", '$.input.raw.source_version') = 'text' THEN json_extract(i.\"observed\", '$.input.raw.source_version') ELSE '' END";
+pub(crate) const SOURCE_VERSION: &str = "CASE WHEN json_type(i.\"observed\", '$.input.raw.source_version') = 'text' THEN json_extract(i.\"observed\", '$.input.raw.source_version') ELSE '' END";
 
 /// The [`SOURCE_SUBJECT`] rows of the consumed mapping bundles that `?1`
 /// selects (a SQL condition on `i`).

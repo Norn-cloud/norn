@@ -39,6 +39,11 @@ struct Entry {
     contribution: String,
     fresh: bool,
     disputed: bool,
+    /// SOURCE-RESOLVE-1: a claim on a type resolved across sources from a
+    /// bundle whose source record has a higher version consumed. It stays
+    /// evidence but has no canonical effect: it adds no edge and takes no
+    /// part in a conflict, in whichever order the versions arrived.
+    stale: bool,
 }
 
 /// The kernel's per-contribution standing, recomputed over a journal group.
@@ -167,7 +172,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         };
         let entries = self.claim_journal(&[], Some(&scope))?;
         let mut groups = BTreeMap::<String, Vec<&Entry>>::new();
-        for entry in entries.iter().filter(|e| !e.disputed) {
+        for entry in entries.iter().filter(|e| !e.disputed && !e.stale) {
             let source = FactKey::new(entry.claim.source_type.as_str(), &entry.claim.source_key);
             if model.canonical(&source) == subject {
                 groups
@@ -316,6 +321,34 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         Ok(bundle)
     }
 
+    /// SOURCE-RESOLVE-1: the resolution table of each of `bundles` (by
+    /// digest) whose source record has a higher version consumed.
+    fn superseded_tables<'b>(
+        &self,
+        bundles: impl Iterator<Item = &'b MappingBundle> + Clone,
+    ) -> Result<
+        BTreeMap<String, std::sync::Arc<norn_checker::mapping::resolution::ResolutionTable>>,
+        CellError,
+    > {
+        let superseded = self.superseded_bundles(
+            &bundles
+                .clone()
+                .map(|b| format!("mapping-bundle:{}", b.digest))
+                .collect::<Vec<_>>(),
+        )?;
+        let mut out = BTreeMap::new();
+        for bundle in bundles {
+            if superseded.contains(&format!("mapping-bundle:{}", bundle.digest)) {
+                let plan = self.mapping_plan(&bundle.input, bundle.definitions_version)?;
+                out.insert(
+                    bundle.digest.clone(),
+                    std::sync::Arc::clone(&plan.resolution),
+                );
+            }
+        }
+        Ok(out)
+    }
+
     /// Recomputed claims in consumption order, then `current` as fresh evidence.
     /// A claim supersedes every earlier-consumed claim of its contribution with a
     /// lower source version, so retained identities recompute exactly and a late
@@ -366,12 +399,16 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         for bundle in current {
             bundles.push((bundle.clone(), true, false));
         }
+        let superseded = self.superseded_tables(bundles.iter().map(|(b, ..)| b))?;
         let mut history = BTreeMap::<String, Vec<(String, String)>>::new();
         let mut entries = Vec::new();
         for (bundle, fresh, disputed) in &bundles {
             let version = source_version(bundle)?;
+            let resolution = superseded.get(&bundle.digest);
             let mut recorded = Vec::new();
             for mut claim in bundle.link_claims()? {
+                let stale =
+                    resolution.is_some_and(|table| table.governs(claim.source_type.as_str()));
                 let contribution = claim.contribution_id()?;
                 claim.supersedes = history
                     .get(&contribution)
@@ -389,6 +426,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                     contribution,
                     fresh: *fresh,
                     disputed: *disputed,
+                    stale,
                 });
             }
             for (contribution, id) in recorded {
@@ -540,7 +578,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                 .map(|t| fact(&t.object_type, &t.key))
         };
         let mut groups = BTreeMap::<_, Vec<&Entry>>::new();
-        for entry in entries.iter().filter(|e| !e.disputed) {
+        for entry in entries.iter().filter(|e| !e.disputed && !e.stale) {
             let source = fact(&entry.claim.source_type, &entry.claim.source_key);
             groups
                 .entry((source, entry.claim.role.clone()))

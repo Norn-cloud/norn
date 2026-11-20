@@ -28,6 +28,35 @@ pub struct DevHost<E: SqlEngine> {
     pseudonyms: Option<crate::privacy::PseudonymKey>,
     /// The marking catalog of the active definitions, by definitions version.
     markings: Mutex<Option<(Option<u64>, crate::privacy::MarkingCatalog)>>,
+    /// SOURCE-RESOLVE-1: set whenever the cell's durable pending-reconcile
+    /// mark may be set (an activation is in flight or its reconciliation
+    /// failed). While the durable mark is set, live reads and actions refuse
+    /// [`reconciling`]; the next request to take the definition epoch
+    /// resumes the reconciliation.
+    reconcile_pending: std::sync::atomic::AtomicBool,
+}
+
+/// A reconciliation that failed again stays pending (and gated); any other
+/// refusal stands.
+fn still_reconciling(refusal: Refusal) -> Result<(), Refusal> {
+    if refusal.retryable && refusal.code == "defs.stale" {
+        Ok(())
+    } else {
+        Err(refusal)
+    }
+}
+
+/// SOURCE-RESOLVE-1: the retryable refusal of a live read or action while
+/// the cell's values are still being reconciled to its active definitions.
+fn reconciling() -> Refusal {
+    let mut refusal = Refusal::new(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "defs.stale",
+        "the cell is still reconciling its values to the active definitions",
+        "an activation committed and its source resolution has not finished; retry, and the next request resumes it",
+    );
+    refusal.retryable = true;
+    refusal
 }
 
 /// The locked cell, present whenever a guard exists.
@@ -44,13 +73,30 @@ impl<E: SqlEngine> Deref for CellGuard<'_, E> {
 }
 
 impl<E: SqlEngine> CellGuard<'_, E> {
+    /// SOURCE-RESOLVE-1: when the durable pending mark is set, reconcile
+    /// (its caller holds the definition epoch exclusively); clear `host`'s
+    /// flag once the mark is gone. A failed reconciliation refuses
+    /// [`reconciling`] and leaves the mark for the next attempt.
+    fn resume_reconciliation(&mut self, host: &DevHost<E>) -> Result<(), Refusal> {
+        if self
+            .store()
+            .source_resolution_pending()
+            .map_err(Refusal::host)?
+        {
+            self.reconcile_source_resolution()
+                .map_err(|error| reconciling().with_cause(error))?;
+        }
+        host.reconcile_pending
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        Ok(())
+    }
+
     /// SOURCE-RESOLVE-1: reconcile the cell's resolved subjects with its
     /// active definitions, through the observation profile.
-    fn reconcile_source_resolution(&mut self) -> Result<usize, Refusal> {
-        let cell = self
-            .0
-            .take()
-            .ok_or_else(|| Refusal::host("the cell is unavailable"))?;
+    fn reconcile_source_resolution(&mut self) -> Result<usize, CellError> {
+        let Some(cell) = self.0.take() else {
+            return Err(CellError::OutOfRange("the cell is unavailable"));
+        };
         let mut observing: norn_cell::SqliteCell<
             ObservationEvent,
             RuntimeObject,
@@ -59,7 +105,7 @@ impl<E: SqlEngine> CellGuard<'_, E> {
         > = cell.into_profile();
         let result = observing.reconcile_source_resolution();
         *self.0 = Some(observing.into_profile());
-        result.map_err(Refusal::host)
+        result
     }
 }
 
@@ -143,33 +189,23 @@ impl<E: SqlEngine> DevHost<E> {
         responder: impl FnMut(&Command<RuntimeObject>) -> RuntimeObject + Send + 'static,
     ) -> Result<Self, Refusal> {
         scope.admit(Some(&scope.org_id), Some(&scope.environment_id))?;
-        let mut cell = ActionCell::new(store, scope.key(), responder).map_err(Refusal::host)?;
-        // SOURCE-RESOLVE-1: an activation whose reconciliation was
-        // interrupted (or that a seed upgrade committed on its own) finishes
-        // reconciling before this host serves the revision.
-        if cell
-            .store()
-            .source_resolution_pending()
-            .map_err(Refusal::host)?
-        {
-            let mut observing: norn_cell::SqliteCell<
-                ObservationEvent,
-                RuntimeObject,
-                RuntimeObject,
-                E,
-            > = cell.into_profile();
-            let resumed = observing.reconcile_source_resolution();
-            cell = observing.into_profile();
-            resumed.map_err(Refusal::host)?;
-        }
-        Ok(Self {
+        let cell = ActionCell::new(store, scope.key(), responder).map_err(Refusal::host)?;
+        let host = Self {
             scope,
             authorizer: Box::new(DenyAll),
             definitions: RwLock::new(()),
             cell: Mutex::new(Some(cell)),
             pseudonyms: None,
             markings: Mutex::new(None),
-        })
+            reconcile_pending: std::sync::atomic::AtomicBool::new(true),
+        };
+        // SOURCE-RESOLVE-1: an activation whose reconciliation was
+        // interrupted (or that a seed upgrade committed on its own) finishes
+        // reconciling before this host serves the revision; if it fails
+        // again, nothing is served until a later request completes it.
+        let resumed = host.cell_unchecked()?.resume_reconciliation(&host);
+        resumed.or_else(still_reconciling)?;
+        Ok(host)
     }
     /// Supply the trusted server policy before sharing this host.
     #[must_use]
@@ -235,7 +271,24 @@ impl<E: SqlEngine> DevHost<E> {
     /// # Errors
     /// Poisoned synchronization refuses closed.
     pub fn definition_read(&self) -> Result<RwLockReadGuard<'_, ()>, Refusal> {
+        self.resume_source_resolution()?;
         self.definitions.read().map_err(Refusal::host)
+    }
+    /// SOURCE-RESOLVE-1: resume an unfinished reconciliation, holding the
+    /// definition epoch exclusively. A caller already inside the epoch (a
+    /// nested read) cannot take it; its gated read refuses and a later
+    /// request resumes.
+    fn resume_source_resolution(&self) -> Result<(), Refusal> {
+        if !self
+            .reconcile_pending
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return Ok(());
+        }
+        let Ok(_epoch) = self.definitions.try_write() else {
+            return Ok(());
+        };
+        self.cell_unchecked()?.resume_reconciliation(self)
     }
     /// Hold the epoch exclusively while a definition install commits.
     /// # Errors
@@ -284,12 +337,37 @@ impl<E: SqlEngine> DevHost<E> {
             .is_ok();
         matches && allowed
     }
+    /// The locked cell for a live read or action: refused ([`reconciling`])
+    /// while its durable pending-reconcile mark is set.
     pub(crate) fn cell(&self) -> Result<CellGuard<'_, E>, Refusal> {
+        let guard = self.cell_unchecked()?;
+        self.gate(&guard)?;
+        Ok(guard)
+    }
+    fn cell_unchecked(&self) -> Result<CellGuard<'_, E>, Refusal> {
         let guard = self.cell.lock().map_err(Refusal::host)?;
         if guard.is_none() {
             return Err(Refusal::host("the cell is unavailable"));
         }
         Ok(CellGuard(guard))
+    }
+    /// SOURCE-RESOLVE-1: refuse while `cell`'s durable pending-reconcile
+    /// mark is set; the in-memory flag only skips the read when no
+    /// activation could have set it.
+    fn gate(&self, cell: &ActionCell<E>) -> Result<(), Refusal> {
+        use std::sync::atomic::Ordering::SeqCst;
+        if !self.reconcile_pending.load(SeqCst) {
+            return Ok(());
+        }
+        if cell
+            .store()
+            .source_resolution_pending()
+            .map_err(Refusal::host)?
+        {
+            return Err(reconciling());
+        }
+        self.reconcile_pending.store(false, SeqCst);
+        Ok(())
     }
 
     /// Capture source rows and map them through the cell's own mapping path,
@@ -313,6 +391,9 @@ impl<E: SqlEngine> DevHost<E> {
     ) -> Result<Vec<Ingested>, Refusal> {
         let _epoch = self.definition_read()?;
         let mut slot = self.cell.lock().map_err(Refusal::host)?;
+        if let Some(cell) = slot.as_ref() {
+            self.gate(cell)?;
+        }
         let cell = slot
             .take()
             .ok_or_else(|| Refusal::host("the cell is unavailable"))?;
@@ -534,7 +615,9 @@ impl<E: SqlEngine> DevHost<E> {
         check: impl FnOnce(&CellStore<E>) -> Result<(), Refusal>,
     ) -> Result<InstalledDefinitionSet, Refusal> {
         let _epoch = self.definition_write()?;
-        let mut cell = self.cell()?;
+        let mut cell = self.cell_unchecked()?;
+        // An earlier activation's reconciliation finishes before another.
+        cell.resume_reconciliation(self)?;
         check(cell.store())?;
         check_reopens(
             &candidate_model,
@@ -568,9 +651,13 @@ impl<E: SqlEngine> DevHost<E> {
                 Refusal::host(error)
             })?;
         // SOURCE-RESOLVE-1: changed authorities take effect on the stored
-        // values in the same definition epoch.
-        cell.reconcile_source_resolution()?;
+        // values in the same definition epoch; if that fails, the durable
+        // mark stays and nothing is served until a later request finishes it.
+        self.reconcile_pending
+            .store(true, std::sync::atomic::Ordering::SeqCst);
         self.model_changed(&cell);
+        cell.resume_reconciliation(self)
+            .or_else(still_reconciling)?;
         Ok(installed)
     }
 

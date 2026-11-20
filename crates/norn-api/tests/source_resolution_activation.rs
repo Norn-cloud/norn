@@ -240,6 +240,60 @@ fn an_activation_interrupted_before_its_reconciliation_resumes_before_the_host_s
     );
 }
 
+/// SOURCE-RESOLVE-1 (Sol S7b): a governed install whose reconciliation
+/// fails leaves the new revision active and its durable pending mark set.
+/// On the same host (no reopen), a read while the mark is set refuses as
+/// retryable instead of serving the stale value, and the next request
+/// resumes the reconciliation under the definition epoch and reads the new
+/// revision's winner.
+#[test]
+fn a_failed_reconciliation_is_never_served_and_the_next_request_finishes_it() {
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("cell.sqlite");
+    let (model, input) = admit(&catalog((0, 2)), 1);
+    let mut store = CellStore::open(&path, model.clone(), StoreOptions::default()).expect("store");
+    store.bind("scope", SCOPE).expect("scope");
+    store
+        .install_definitions(model, input, Some(0), SCOPE)
+        .expect("installed");
+    let store = sync(store, "erpnext", 2765);
+    let store = sync(store, "shopify", 2458);
+    let mut cell = norn_cell::SqliteCell::new(store, SCOPE, |_| BTreeMap::new()).expect("cell");
+    cell.reconcile_source_resolution().expect("reconciled");
+    let host = DevHost::from_store(
+        cell.into_store(),
+        CellScope {
+            org_id: "org_demo".into(),
+            environment_id: "dev".into(),
+        },
+        |_| BTreeMap::new(),
+    )
+    .expect("host");
+    let north = |host: &DevHost<_>| {
+        host.host_object("canon.Holding", NORTH)
+            .map(|values| values.and_then(|values| values.get("quantity").cloned()))
+    };
+    assert_eq!(north(&host).expect("read"), Some(json_decimal(2765)));
+    // Shopify now outranks ERPNext. The install's reconciliation fails, and
+    // so do the next two attempts to resume it.
+    let (model, input) = admit(&catalog((2, 0)), 2);
+    let model = norn_api::host::reopen_model(&input.canonical_set, false).unwrap_or(model);
+    norn_cell::fail_source_reconciliation_chunks(3);
+    host.install_definitions(model, input, Some(1))
+        .expect("the activation commits");
+    assert_eq!(
+        host.active_definitions_version().ok(),
+        None,
+        "gated while pending"
+    );
+    let refused = north(&host).expect_err("never the stale value");
+    assert_eq!(refused.code, "defs.stale");
+    assert!(refused.retryable);
+    // The next request completes the reconciliation and reads the winner.
+    assert_eq!(north(&host).expect("read"), Some(json_decimal(2458)));
+    assert_eq!(host.active_definitions_version().expect("read"), Some(2));
+}
+
 fn json_decimal(value: u64) -> RuntimeValue {
     RuntimeValue::from_json(json!(value)).expect("decimal")
 }

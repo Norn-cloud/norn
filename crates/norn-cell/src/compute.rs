@@ -25,7 +25,7 @@ use crate::{
 };
 use norn_checker::metric::compute::{
     QuestionPlan, UNSUPPORTED_ENGINE, arithmetic as math,
-    contribution::{Contribution, Linked, as_of, project, project_linked},
+    contribution::{Contribution, Linked, as_of, as_of_withdrawing, project, project_linked},
 };
 use norn_ir::{Decimal, ObjectTypeName, RuntimeValue, UtcTimestamp};
 use norn_ir::{ResourceLimitProfile, metric::FreshnessPolicy};
@@ -540,13 +540,25 @@ impl<E: SqlEngine> CellStore<E> {
             if !complete {
                 return Err(refused("core.compute.bound_exceeded"));
             }
+            let (ids, reported_only) =
+                with_reported_subjects(&reader, plan, &context, cutoff, ids, max)?;
             let mut history = reader.history_read_seeded(frontier_receipt);
             let mut contributions = BTreeMap::new();
             let mut unlinked = 0u64;
             let mut members = BTreeSet::new();
             let mut finding_members = BTreeSet::new();
             for id in ids {
-                let selected = if let Some(cutoff) = cutoff {
+                let selected = if reported_only.contains(&id) {
+                    // Reported, never written in this delivery order: its
+                    // values are its resolved reports alone.
+                    BudgetedRead::Found(ObjectRecord {
+                        object_type: plan.grain().as_str().to_owned(),
+                        id: id.clone(),
+                        scope: context.scope.clone(),
+                        version: 0,
+                        values: BTreeMap::new(),
+                    })
+                } else if let Some(cutoff) = cutoff {
                     historical::historical_record(
                         &mut history,
                         &context.world,
@@ -783,8 +795,11 @@ fn subject_contributions<E: SqlEngine>(
             &record.values,
         )?
     {
-        let series: Vec<_> = slices.into_iter().map(|v| (record.version, v)).collect();
-        return Ok((as_of(plan, &series).map_err(refused)?, false));
+        let series: Vec<_> = slices
+            .into_iter()
+            .map(|(values, withdrawn)| (record.version, values, withdrawn))
+            .collect();
+        return Ok((as_of_withdrawing(plan, &series).map_err(refused)?, false));
     }
     let versions = reader
         // METRIC-SNAPSHOT-ASOF-1 at a knowledge cutoff: the versions known then.
@@ -800,6 +815,46 @@ fn subject_contributions<E: SqlEngine>(
         .map(|version| (version.version, version.values))
         .collect::<Vec<_>>();
     Ok((as_of(plan, &versions).map_err(refused)?, false))
+}
+
+/// SOURCE-RESOLVE-1: a snapshot sum over a type several sources write reads
+/// every subject with retained reports known at the frontier, as well as the
+/// stored ones, so its population does not depend on whether this delivery
+/// order happened to write a subject (a version that arrived after its record
+/// moved writes nothing, yet its report holds before the move). Returns the
+/// ids and those only reported.
+fn with_reported_subjects<E: SqlEngine>(
+    reader: &crate::read::StoreReader<'_, E>,
+    plan: &QuestionPlan,
+    context: &QueryContext,
+    cutoff: Option<crate::KnowledgeCutoff>,
+    mut ids: Vec<String>,
+    max: usize,
+) -> Result<(Vec<String>, BTreeSet<String>), CellError> {
+    let mut reported_only = BTreeSet::new();
+    if !plan.as_of()
+        || plan.sums().len() != 1
+        || plan.time_link().is_some()
+        || context.world != crate::MAIN_WORLD
+    {
+        return Ok((ids, reported_only));
+    }
+    let Some(keys) =
+        reader.reported_keys(plan.grain().as_str(), cutoff.map(|c| c.frontier), max)?
+    else {
+        return Ok((ids, reported_only));
+    };
+    let stored: BTreeSet<String> = ids.iter().cloned().collect();
+    for key in keys {
+        if !stored.contains(&key) {
+            reported_only.insert(key.clone());
+            ids.push(key);
+        }
+    }
+    if ids.len() > max {
+        return Err(refused("core.compute.bound_exceeded"));
+    }
+    Ok((ids, reported_only))
 }
 
 /// Every `(root identity, versioned contribution)` pair.

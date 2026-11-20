@@ -123,8 +123,17 @@ const REFUSAL_CODES = new Set(Object.entries({
     "refused storage_unconfigured too_large",
 }).flatMap(([family, codes]) => codes.split(" ").map((code) => `${family}.${code}`)));
 
-/** A refusal code when the host writes it, else "other". */
-export const refusalCodeOf = (code) => (typeof code === "string" && REFUSAL_CODES.has(code) ? code : "other");
+/**
+ * Detailed codes the host writes that telemetry reports under an existing
+ * bounded code. A row SOURCE-RESOLVE-1 withholds (`source.resolution.withheld`)
+ * is consumed evidence held back from the sync, counted as `source.ingest`; the
+ * sync's own outcome keeps the detailed code.
+ */
+const REFUSAL_ALIASES = new Map([["source.resolution.withheld", "source.ingest"]]);
+
+/** A refusal code when the host writes it (or its bounded alias), else "other". */
+export const refusalCodeOf = (code) =>
+  typeof code !== "string" ? "other" : REFUSAL_CODES.has(code) ? code : REFUSAL_ALIASES.get(code) ?? "other";
 
 /** A refusal's code from a `norn/refusal@2` body the host already holds as text, bounded; "other" when it names none we know. */
 export function refusalCode(text) {

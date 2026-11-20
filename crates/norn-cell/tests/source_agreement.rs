@@ -1547,3 +1547,166 @@ fn source_resolve_1_a_late_older_version_never_writes_its_stale_key() {
     assert_eq!(holding(&alone, NORTH), None, "a late v1 creates nothing");
     assert_eq!(holding(&alone, &moved), Some(grams(3000)));
 }
+
+/// `ERPNext`'s rows other than the north holding (its item and parties), so a
+/// holding it reports alone has its link targets.
+fn erpnext_catalog_rows(cell: &mut Cell) {
+    sync_rows(cell, "erpnext", "snapshot", |r| !is_north(r), |_| {});
+}
+
+/// SOURCE-RESOLVE-1 (Sol S3): only `ERPNext` reports north gold: v1 at
+/// 2765 g on 2026-11-03, then v2 moves that source record to another
+/// holding on 2026-11-12. Delivered v1 first or the move first, the stock
+/// answer is the same, live and as known now: north counts in the week
+/// before the move and is absent from the move's week on.
+#[test]
+fn source_resolve_1_a_single_source_holding_leaves_the_stock_answer_at_its_move_in_either_order() {
+    let directory = tempfile::tempdir().expect("directory");
+    let moved = format!("{NORTH}/moved");
+    let v1 = |cell: &mut Cell| {
+        sync_rows(cell, "erpnext", "v1", is_north, |r| {
+            r.insert("quantity".into(), json!(2765));
+            r.insert("modified".into(), json!("2026-11-03T00:00:00Z"));
+        })
+    };
+    let moved_ref = moved;
+    let v2 = move |cell: &mut Cell| {
+        let moved_ref = moved_ref.clone();
+        sync_rows(cell, "erpnext", "v2", is_north, move |r| {
+            r.insert("custom_norn_ref".into(), json!(moved_ref.clone()));
+            r.insert("quantity".into(), json!(2765));
+            r.insert("modified".into(), json!("2026-11-12T00:00:00Z"));
+        })
+    };
+    let mut answers = Vec::new();
+    for late in [false, true] {
+        let mut cell = setup_with(
+            &directory.path().join(format!("single-{late}.sqlite")),
+            |_| {},
+        );
+        erpnext_catalog_rows(&mut cell);
+        if late {
+            v2(&mut cell);
+            v1(&mut cell);
+        } else {
+            v1(&mut cell);
+            v2(&mut cell);
+        }
+        let live = stock_live(&cell);
+        let (_, known) = stock_known_now(&cell);
+        assert_eq!(known, live, "late {late}: the snapshot is the live answer");
+        assert_eq!(
+            live.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["2026-11-02"],
+            "late {late}: north before the move only: {live:#?}"
+        );
+        answers.push(live);
+    }
+    assert_eq!(answers[0], answers[1]);
+}
+
+/// SOURCE-RESOLVE-1 (Sol S7a): an activation that drops `ERPNext`'s mapping
+/// (the first that reported north) still resolves the holding across the
+/// remaining sources: the current read and the stock answer decide Odoo's
+/// report, never falling back to the stored history.
+#[test]
+fn source_resolve_1_dropping_the_first_reporting_mapping_still_resolves_the_holding() {
+    let directory = tempfile::tempdir().expect("directory");
+    let mut cell = setup_with(&directory.path().join("dropped.sqlite"), |_| {});
+    sync_north(&mut cell, "erpnext", "snapshot", |r| {
+        r.insert("quantity".into(), json!(2765));
+        r.insert("modified".into(), json!("2026-11-03T00:00:00Z"));
+    });
+    sync_north(&mut cell, "odoo", "snapshot", |r| {
+        r.insert("quantity".into(), json!(2458));
+        r.insert("write_date".into(), json!("2026-10-20T00:00:00Z"));
+    });
+    let active = cell
+        .store()
+        .read()
+        .installed_definitions(None)
+        .expect("read")
+        .expect("active")
+        .version;
+    let (artifacts, model) =
+        edited_set(|artifacts| artifacts.retain(|a| a.artifact_id != "erpnext.three.mapping"));
+    cell.install_definitions(
+        model,
+        definition_input(&artifacts, 1_793_702_500_000),
+        Some(active),
+    )
+    .expect("activate");
+    cell.reconcile_source_resolution().expect("reconcile");
+    assert_eq!(
+        decision_at(&cell, None),
+        PropertyDecision::Decided {
+            mapping: "odoo.three.mapping".into(),
+            value: grams(2458),
+        }
+    );
+    assert_eq!(quantity_of(&cell), Some(grams(2458)));
+    let after = stock_live(&cell);
+    assert_eq!(
+        after["2026-11-16"], after["2026-10-26"],
+        "Odoo decides: {after:#?}"
+    );
+    assert_eq!(
+        after["2026-11-02"], after["2026-10-26"],
+        "Odoo decides: {after:#?}"
+    );
+}
+
+/// SOURCE-RESOLVE-1 (Sol S8): Odoo reports north gold owned by the owner;
+/// `ERPNext` v2 moves its north record to another holding, and a late v1
+/// still names the customer as north's owner. Whether Odoo reports before
+/// or after the late v1, north's owner edge is Odoo's and no link conflict
+/// is reported: the superseded v1 adds no edge and blocks none.
+#[test]
+fn source_resolve_1_a_late_older_version_adds_no_edge_at_its_abandoned_key() {
+    let directory = tempfile::tempdir().expect("directory");
+    let moved = format!("{NORTH}/moved");
+    let v1 = |cell: &mut Cell| {
+        sync_rows(cell, "erpnext", "v1", is_north, |r| {
+            r.insert("owner_ref".into(), json!("demo/party/customer"));
+        })
+    };
+    let moved_ref = moved;
+    let v2 = move |cell: &mut Cell| {
+        let moved_ref = moved_ref.clone();
+        sync_rows(cell, "erpnext", "v2", is_north, move |r| {
+            r.insert("custom_norn_ref".into(), json!(moved_ref.clone()));
+        })
+    };
+    for odoo_first in [true, false] {
+        let mut cell = setup_with(
+            &directory.path().join(format!("edge-{odoo_first}.sqlite")),
+            |_| {},
+        );
+        erpnext_catalog_rows(&mut cell);
+        if odoo_first {
+            sync_north(&mut cell, "odoo", "snapshot", |_| {});
+        }
+        v2(&mut cell);
+        v1(&mut cell);
+        if !odoo_first {
+            sync_north(&mut cell, "odoo", "snapshot", |_| {});
+        }
+        let reader = cell.store().read();
+        assert_eq!(
+            reader
+                .link_targets(MAIN_WORLD, "canon.Holding", "owner", NORTH, 16, 1 << 20)
+                .expect("links"),
+            Some(vec!["demo/party/owner".to_owned()]),
+            "odoo first {odoo_first}"
+        );
+        let resolution = reader
+            .source_resolution("canon.Holding", NORTH, None)
+            .expect("read")
+            .expect("resolved");
+        assert!(
+            resolution.links.is_empty(),
+            "odoo first {odoo_first}: {:#?}",
+            resolution.links
+        );
+    }
+}

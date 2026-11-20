@@ -27,6 +27,7 @@ use crate::mapping_bundle::MappingBundle;
 use crate::read::{StoreReader, to_i64, to_u64};
 use crate::system::{
     INBOX, META, RECORD_ID, SOURCE_RECORD, SOURCE_RESOLUTION_PENDING, SOURCE_SUBJECT,
+    SOURCE_VERSION,
 };
 
 pub use crate::mapping_links::LinkConflict;
@@ -322,6 +323,10 @@ pub(crate) enum Applied {
     /// yet (whether or not the subject exists, so the outcome is the same in
     /// every order); [`StoreReader::withheld_subjects`] names what it awaits.
     Withheld,
+    /// Keep the bundle as evidence, write nothing of the record (values,
+    /// lifecycle snapshots or links): its source record already has a higher
+    /// source version consumed.
+    Superseded,
 }
 
 impl<E: SqlEngine> StoreReader<'_, E> {
@@ -426,16 +431,10 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         frontier: Option<u64>,
     ) -> Result<Option<SubjectResolution>, CellError> {
         let reports = self.latest_reports(object_type, key, frontier)?;
-        let Some(report) = reports.values().next() else {
+        if reports.is_empty() {
             return Ok(None);
-        };
-        // A historical read decides under the definitions in force at its
-        // frontier, never under authorities activated since.
-        let version = match frontier {
-            Some(frontier) => self.definitions_version_at(frontier)?,
-            None => self.active_definitions_version()?,
-        };
-        let Some(table) = self.resolution_at(&report.mapping, version)? else {
+        }
+        let Some(table) = self.resolution_at(frontier)? else {
             return Ok(None);
         };
         if !table.governs(object_type) {
@@ -446,40 +445,20 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         Ok(Some(resolution))
     }
 
-    /// The resolution table of the active definitions, read through the plan
-    /// of any reporting mapping (every plan of one set carries the same
-    /// table).
-    fn active_resolution(
-        &self,
-        mapping: &str,
-    ) -> Result<Option<std::sync::Arc<ResolutionTable>>, CellError> {
-        self.resolution_at(mapping, self.active_definitions_version()?)
-    }
-
-    /// The resolution table of definitions `version`, read through the plan
-    /// of `mapping`; `None` without definitions or when `mapping` is not in
-    /// that set.
+    /// The resolution table of the definitions installed at `frontier` (the
+    /// active ones when `None`), read from that installed set itself: a
+    /// historical read decides under the definitions in force at its
+    /// frontier, never under authorities activated since, and whichever
+    /// mappings still report. `None` without definitions.
     fn resolution_at(
         &self,
-        mapping: &str,
-        version: Option<u64>,
+        frontier: Option<u64>,
     ) -> Result<Option<std::sync::Arc<ResolutionTable>>, CellError> {
-        let Some(active) = version else {
-            return Ok(None);
+        let version = match frontier {
+            Some(frontier) => self.definitions_version_at(frontier)?,
+            None => self.active_definitions_version()?,
         };
-        let input = crate::mapping_bundle::MappingInput {
-            mapping: mapping.to_owned(),
-            dataset: String::new(),
-            connector_instance: String::new(),
-            partition: String::new(),
-            recorded_at: norn_ir::provenance::UtcTimestamp(String::new()),
-        };
-        match self.mapping_plan(&input, active) {
-            Ok(plan) => Ok(Some(std::sync::Arc::clone(&plan.resolution))),
-            // The mapping is no longer in the active set.
-            Err(CellError::MappingBundleMismatch) => Ok(None),
-            Err(error) => Err(error),
-        }
+        version.map(|v| self.resolution_table(v)).transpose()
     }
 
     /// The values `record` of `bundle` writes under its type's resolution:
@@ -497,18 +476,21 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         if !plan.resolution.governs(object_type) {
             return Ok(Applied::AsMapped);
         }
+        // A version of a source record older than one already consumed is
+        // kept as evidence and has no canonical effect at all (values,
+        // lifecycle snapshots, links), so a late version never creates or
+        // updates an object at a key its record has since moved away from.
+        if self.superseded(bundle)? {
+            return Ok(Applied::Superseded);
+        }
         let mut reports = self.latest_reports(object_type, &record.key, None)?;
         let incoming = report_of(bundle, object_type, &record.key, None)
             .ok_or(CellError::UnsupportedMappingProfile)?;
-        // An older version of a source that already reported a newer one is
-        // kept as evidence and decides nothing: neither where that source
-        // still reports (`later`), nor at a key its source record has since
-        // moved away from (`superseded`), so a late version never creates or
-        // updates an object at its stale key.
-        if !self.superseded(bundle)?
-            && reports
-                .get(&incoming.mapping)
-                .is_none_or(|newer| !later(newer, &incoming))
+        // Nor does an older report of a source that already reported a
+        // newer one here from another of its records (`later`).
+        if reports
+            .get(&incoming.mapping)
+            .is_none_or(|newer| !later(newer, &incoming))
         {
             reports.insert(incoming.mapping.clone(), incoming);
         }
@@ -532,23 +514,28 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     /// Whether `bundle`'s source record already has a higher source version
     /// consumed (whatever subjects that version reports).
     fn superseded(&self, bundle: &MappingBundle) -> Result<bool, CellError> {
-        let newest: Option<String> = self.conn.query_optional(
+        let id = format!("mapping-bundle:{}", bundle.digest);
+        Ok(self
+            .superseded_bundles(std::slice::from_ref(&id))?
+            .contains(&id))
+    }
+
+    /// The bundles of `ids` (pending or consumed) whose source record has a
+    /// higher source version consumed, as the store now stands.
+    pub(crate) fn superseded_bundles(
+        &self,
+        ids: &[String],
+    ) -> Result<std::collections::BTreeSet<String>, CellError> {
+        let rows = self.conn.query(
             &format!(
-                "SELECT r.\"source_version\" FROM \"{SOURCE_RECORD}\" r WHERE r.\"mapping\" = ?2 AND r.\"record_id\" = (SELECT {RECORD_ID} FROM \"{INBOX}\" i WHERE i.\"observation_id\" = ?1) \
-                 ORDER BY r.\"source_version\" DESC LIMIT 1"
+                "SELECT i.\"observation_id\" FROM \"{INBOX}\" i WHERE i.\"observation_id\" IN (SELECT value FROM json_each(?1)) \
+                 AND EXISTS (SELECT 1 FROM \"{SOURCE_RECORD}\" r WHERE r.\"mapping\" = json_extract(i.\"observed\", '$.input.input.mapping') AND r.\"record_id\" = {RECORD_ID} AND r.\"source_version\" > {SOURCE_VERSION})"
             ),
-            params![
-                format!("mapping-bundle:{}", bundle.digest),
-                bundle.input.mapping.as_str()
-            ],
-            |row| row.get(0),
+            params![serde_json::to_string(ids)?],
         )?;
-        let incoming = bundle
-            .raw
-            .get("source_version")
-            .and_then(RuntimeValue::as_str)
-            .unwrap_or_default();
-        Ok(newest.is_some_and(|newest| newest.as_str() > incoming))
+        rows.into_iter()
+            .map(|row| SqlRow(row).get::<String>(0))
+            .collect()
     }
 
     /// The consumed mapping bundle `observation_id` (`None` when it is not
@@ -682,20 +669,19 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     pub(crate) fn reconciliation(
         &self,
     ) -> Result<Vec<(String, String, RuntimeObject, InstanceProvenance)>, CellError> {
+        let Some(table) = self.resolution_at(None)? else {
+            return Ok(Vec::new());
+        };
         let rows = self.conn.query(
             &format!(
-                "SELECT \"object_type\", \"key\", MIN(\"mapping\") FROM \"{SOURCE_SUBJECT}\" GROUP BY \"object_type\", \"key\" ORDER BY \"object_type\", \"key\""
+                "SELECT DISTINCT \"object_type\", \"key\" FROM \"{SOURCE_SUBJECT}\" ORDER BY \"object_type\", \"key\""
             ),
             params![],
         )?;
         let mut out = Vec::new();
         for row in rows {
             let row = SqlRow(row);
-            let (object_type, key, mapping): (String, String, String) =
-                (row.get(0)?, row.get(1)?, row.get(2)?);
-            let Some(table) = self.active_resolution(&mapping)? else {
-                continue;
-            };
+            let (object_type, key): (String, String) = (row.get(0)?, row.get(1)?);
             if !table.governs(&object_type) {
                 continue;
             }
@@ -747,21 +733,53 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         Ok(out)
     }
 
+    /// SOURCE-RESOLVE-1: the keys of `object_type` with retained reports
+    /// known at `frontier` (all when `None`), when the definitions in force
+    /// there resolve the type across sources; `None` otherwise.
+    ///
+    /// # Errors
+    /// More than `max` keys (`core.compute.bound_exceeded`), or store failures.
+    pub(crate) fn reported_keys(
+        &self,
+        object_type: &str,
+        frontier: Option<u64>,
+        max: usize,
+    ) -> Result<Option<Vec<String>>, CellError> {
+        let Some(table) = self.resolution_at(frontier)? else {
+            return Ok(None);
+        };
+        if !table.governs(object_type) {
+            return Ok(None);
+        }
+        let at = frontier.map(|f| to_i64(f, "frontier")).transpose()?;
+        let limit = i64::try_from(max.saturating_add(1)).unwrap_or(i64::MAX);
+        let rows = self.conn.query(
+            &format!(
+                "SELECT DISTINCT \"key\" FROM \"{SOURCE_SUBJECT}\" WHERE \"object_type\" = ?1 AND (?2 IS NULL OR \"commit_seq\" <= ?2) ORDER BY \"key\" LIMIT ?3"
+            ),
+            params![object_type, at, limit],
+        )?;
+        if rows.len() > max {
+            return Err(CellError::ComputeRefused("core.compute.bound_exceeded"));
+        }
+        rows.into_iter()
+            .map(|row| SqlRow(row).get::<String>(0))
+            .collect::<Result<Vec<_>, _>>()
+            .map(Some)
+    }
+
     /// Whether `object_type` has retained reports resolved across sources
     /// under the active definitions.
     pub(crate) fn resolves_reports_of(&self, object_type: &str) -> Result<bool, CellError> {
         let rows = self.conn.query(
-            &format!(
-                "SELECT \"mapping\" FROM \"{SOURCE_SUBJECT}\" WHERE \"object_type\" = ?1 LIMIT 1"
-            ),
+            &format!("SELECT 1 FROM \"{SOURCE_SUBJECT}\" WHERE \"object_type\" = ?1 LIMIT 1"),
             params![object_type],
         )?;
-        let Some(row) = rows.into_iter().next() else {
+        if rows.is_empty() {
             return Ok(false);
-        };
-        let mapping: String = SqlRow(row).get(0)?;
+        }
         Ok(self
-            .active_resolution(&mapping)?
+            .resolution_at(None)?
             .is_some_and(|table| table.governs(object_type)))
     }
 
@@ -774,10 +792,12 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     /// depends on the reports, not on the order they were synced in. A
     /// version that moved its record to another key, or out of the map,
     /// withdraws that record's report from its own valid time on (from every
-    /// valid time when it carries none), as the live value withdraws it. A
-    /// slice with an undecided property is absent; one no report decides
-    /// carries the previous slice forward. `None` when the type is not
-    /// resolved across sources.
+    /// valid time when it carries none), as the live value withdraws it; a
+    /// time when every report is withdrawn is an explicit withdrawal slice
+    /// (`true`, carrying only its valid time), so the subject is absent from
+    /// then on rather than carried forward. A slice with an undecided
+    /// property is absent; one no report decides carries the previous slice
+    /// forward. `None` when the type is not resolved across sources.
     ///
     /// # Errors
     /// As [`Self::source_resolution`].
@@ -788,16 +808,12 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         frontier: Option<u64>,
         time_property: &str,
         base: &RuntimeObject,
-    ) -> Result<Option<Vec<RuntimeObject>>, CellError> {
+    ) -> Result<Option<Vec<(RuntimeObject, bool)>>, CellError> {
         let streams = self.record_streams(object_type, key, frontier)?;
-        let Some(mapping) = streams.keys().next().map(|(m, _)| m.clone()) else {
+        if streams.is_empty() {
             return Ok(None);
-        };
-        let version = match frontier {
-            Some(frontier) => self.definitions_version_at(frontier)?,
-            None => self.active_definitions_version()?,
-        };
-        let Some(table) = self.resolution_at(&mapping, version)? else {
+        }
+        let Some(table) = self.resolution_at(frontier)? else {
             return Ok(None);
         };
         if !table.governs(object_type) {
@@ -853,6 +869,13 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 }
             }
             if reports.is_empty() {
+                slices.push((
+                    RuntimeObject::from([(
+                        time_property.to_owned(),
+                        RuntimeValue::from(text.as_str()),
+                    )]),
+                    true,
+                ));
                 continue;
             }
             let reports = reports
@@ -872,7 +895,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             }
             // The slice holds from its own valid time, whichever report decided.
             values.insert(time_property.to_owned(), RuntimeValue::from(text.as_str()));
-            slices.push(values);
+            slices.push((values, false));
         }
         Ok(Some(slices))
     }
