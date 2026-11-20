@@ -27,12 +27,42 @@ export const BORROWER = {
   creditLine: "EGP 60,000",
   score: "612",
   scoreBefore: "688",
-  manager: "Karim Fouad",
+  manager: "Omar Fouad",
   phone: "+20 10 •••• 0142",
 } as const
 
 /** One fact on the borrower's record, with the system it came from. */
 export interface Fact { readonly label: string; readonly value: string; readonly from: SystemId; readonly alert?: boolean; readonly note?: string }
+
+/** The full record the object view shows, after the freeze. */
+export const RECORD: readonly Fact[] = [
+  { label: "Loan", value: `${"LN-2041"} · Personal loan`, from: "fineract" },
+  { label: "Outstanding", value: "EGP 186,400", from: "fineract" },
+  { label: "Installment", value: "EGP 7,250 · due on the 15th", from: "fineract" },
+  { label: "Missed payments", value: "2 in 60 days", from: "payments", alert: true },
+  { label: "Last payment", value: "15 Sep 2026", from: "payments" },
+  { label: "Credit limit", value: "EGP 60,000 · Frozen", from: "fineract", alert: true },
+  { label: "Credit score", value: "612", from: "bureau", note: "was 688" },
+  { label: "Phone", value: "+20 10 •••• 0142", from: "crm" },
+  { label: "Relationship manager", value: "Omar Fouad", from: "crm" },
+]
+
+/** What each system sends into the record. */
+export const FEEDS: Readonly<Record<SystemId, string>> = {
+  fineract: "Loan, balance, schedule",
+  payments: "Installments, transfers",
+  crm: "Contact, relationship",
+  bureau: "Credit score, history",
+}
+
+/** The record on 1 Sep and today, fact by fact. */
+export const THEN_NOW: readonly { readonly label: string; readonly then: string; readonly now: string; readonly from: SystemId }[] = [
+  { label: "Outstanding", then: "EGP 191,650", now: "EGP 186,400", from: "fineract" },
+  { label: "Missed payments", then: "0", now: "2 in 60 days", from: "payments" },
+  { label: "Credit score", then: "688", now: "612", from: "bureau" },
+  { label: "Credit limit", then: "EGP 60,000 · Open", now: "EGP 60,000 · Frozen", from: "fineract" },
+  { label: "Phone", then: "+20 12 •••• 7710", now: "+20 10 •••• 0142", from: "crm" },
+]
 
 export const FACTS: readonly Fact[] = [
   { label: "Loan", value: BORROWER.loan, from: "fineract" },
@@ -60,16 +90,22 @@ export const ROLES: readonly { readonly role: string; readonly can: readonly Can
 
 export const ACTOR = { name: "Sara Nabil", role: "Collections lead", initials: "SN" } as const
 
+/** Someone the action refuses: Sales may see the record, not act on it. */
+export const BLOCKED = { name: "Karim Fathy", role: "Sales", initials: "KF" } as const
+
 export const ACTION = {
   title: "Freeze limit + call",
-  detail: `Freeze the ${BORROWER.creditLine} credit line and book a call`,
+  detail: `Freeze the ${BORROWER.creditLine} credit limit and book a call`,
   when: `${TODAY}, 14:05`,
   why: "2 missed payments in 60 days",
 } as const
 
 /** The rules this record keeps, in the words they were written in. */
+/** The business rule the freeze is held to, as a check line. */
+export const RULE_CHECK = "Rule: loan over EGP 50,000 with 2 missed in 60 days"
+
 export const RULES: readonly string[] = [
-  "Only Collections or Risk can freeze a credit line.",
+  "Only Collections or Risk can freeze a credit limit.",
   "A loan over EGP 50,000 with 2 missed payments in 60 days is flagged.",
   "Phone numbers are masked for anyone outside Collections.",
 ]
@@ -78,7 +114,7 @@ export const RULES: readonly string[] = [
 export interface Change { readonly when: string; readonly who: string; readonly from?: SystemId; readonly what: string; readonly why: string; readonly tone?: Tone }
 
 export const CHANGES: readonly Change[] = [
-  { when: "20 Nov, 14:05", who: ACTOR.name, what: "Froze the credit line and booked a call", why: ACTION.why, tone: "red" },
+  { when: "20 Nov, 14:05", who: ACTOR.name, what: "Froze the credit limit and booked a call", why: ACTION.why, tone: "red" },
   { when: "18 Nov, 09:12", who: "Bureau sync", from: "bureau", what: `Credit score ${BORROWER.scoreBefore} → ${BORROWER.score}`, why: "Monthly bureau refresh" },
   { when: "15 Nov, 23:59", who: "Payments", from: "payments", what: `Installment of ${BORROWER.installment} missed`, why: "No payment by the due date", tone: "red" },
   { when: "3 Nov, 11:40", who: BORROWER.manager, from: "crm", what: "Phone number updated", why: "Customer called the branch" },

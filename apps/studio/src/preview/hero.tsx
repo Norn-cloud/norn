@@ -2,7 +2,7 @@ import { Activity, Check, Fingerprint, PhoneCall, ShieldCheck, Snowflake, Triang
 import { Chip } from "@/components/chip"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
-import { ACTION, ACTOR, BORROWER, FACTS, PAYMENTS, ROLES } from "./lending.ts"
+import { ACTION, ACTOR, BLOCKED, BORROWER, FACTS, PAYMENTS, ROLES, RULE_CHECK } from "./lending.ts"
 import { Person, RoleRow, Slide, SourceChip, StepArrow, StepCard } from "./slide.tsx"
 
 /** 01 · The signal: seven monthly installments, the last two missed. */
@@ -53,7 +53,7 @@ function Borrower() {
       </div>
       <dl className="mt-3.5 divide-y divide-border/70 rounded-xl bg-background px-3.5 shadow-[var(--elevation-1)] ring-1 ring-foreground/5">
         {FACTS.map(({ label, value, from, alert }) => (
-          <div key={label} className="flex items-center gap-3 py-2">
+          <div key={label} className="flex items-center gap-3 py-1.5">
             <dt className="w-32 shrink-0 text-meta text-muted-foreground">{label}</dt>
             <dd className={cn("min-w-0 flex-1 truncate text-sm font-medium tabular-nums", alert && "text-tone-red")}>{value}</dd>
             <SourceChip system={from} />
@@ -76,11 +76,15 @@ function Act() {
         <span className="flex size-11 items-center justify-center rounded-xl bg-background text-tone-green shadow-[var(--elevation-1)] ring-1 ring-foreground/5"><Snowflake aria-hidden className="size-5" /></span>
         <div className="min-w-0">
           <div className="text-[1.1875rem] font-semibold tracking-tight">{ACTION.title}</div>
-          <div className="text-meta text-muted-foreground">{BORROWER.loan} · credit line {BORROWER.creditLine}</div>
+          <div className="text-meta text-muted-foreground">{BORROWER.loan} · outstanding {BORROWER.outstanding}</div>
         </div>
       </div>
       <div className="mt-4 space-y-2">
-        <div className="flex items-center gap-3 rounded-xl bg-background px-3.5 py-3 shadow-[var(--elevation-1)] ring-1 ring-foreground/5">
+        <div className="flex items-center gap-2.5 rounded-xl bg-background px-3.5 py-2.5 text-sm font-medium shadow-[var(--elevation-1)] ring-1 ring-foreground/5">
+          <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-tone-green/12 text-tone-green"><Check aria-hidden className="size-4" /></span>
+          <span className="min-w-0 flex-1">{RULE_CHECK}</span>
+        </div>
+        <div className="flex items-center gap-3 rounded-xl bg-background px-3.5 py-2.5 shadow-[var(--elevation-1)] ring-1 ring-foreground/5">
           <Person initials={ACTOR.initials} tone="teal" size="sm" />
           <div className="min-w-0 flex-1">
             <div className="text-sm font-medium">{ACTOR.name}</div>
@@ -88,19 +92,19 @@ function Act() {
           </div>
           <Chip tone="green" icon={Check} className="h-6 px-2">Within your authority</Chip>
         </div>
-        <div className="flex items-center gap-3 rounded-xl bg-background/70 px-3.5 py-3 ring-1 ring-foreground/5">
-          <Person initials="YS" tone="amber" size="sm" />
+        <div className="flex items-center gap-3 rounded-xl bg-background/70 px-3.5 py-2.5 ring-1 ring-foreground/5">
+          <Person initials={BLOCKED.initials} tone="amber" size="sm" />
           <div className="min-w-0 flex-1">
-            <div className="text-sm font-medium">Youssef Samir</div>
-            <div className="text-xs text-muted-foreground">Sales</div>
+            <div className="text-sm font-medium">{BLOCKED.name}</div>
+            <div className="text-xs text-muted-foreground">{BLOCKED.role}</div>
           </div>
           <Chip tone="red" icon={X} className="h-6 px-2">Sales can't do this</Chip>
         </div>
       </div>
-      <Button className="mt-4 h-11 w-full rounded-xl text-[0.9375rem]"><PhoneCall aria-hidden /> {ACTION.title}</Button>
-      <div className="mt-auto pt-5">
-        <div className="flex items-center gap-1.5 pb-2 text-xs font-medium text-muted-foreground"><ShieldCheck aria-hidden className="size-3.5" />Recorded: who · when · why</div>
-        <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 rounded-xl bg-background/70 px-3.5 py-2.5 text-meta ring-1 ring-foreground/5">
+      <Button className="mt-3.5 h-11 w-full rounded-xl text-[0.9375rem]"><PhoneCall aria-hidden /> {ACTION.title}</Button>
+      <div className="mt-auto pt-4">
+        <div className="flex items-center gap-1.5 pb-1.5 text-xs font-medium text-muted-foreground"><ShieldCheck aria-hidden className="size-3.5" />Recorded: who · when · why</div>
+        <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-0.5 rounded-xl bg-background/70 px-3.5 py-2 text-meta ring-1 ring-foreground/5">
           <span className="text-muted-foreground">Who</span><span className="font-medium">{ACTOR.name}</span>
           <span className="text-muted-foreground">When</span><span className="font-medium tabular-nums">{ACTION.when}</span>
           <span className="text-muted-foreground">Why</span><span className="font-medium">{ACTION.why}</span>
@@ -114,7 +118,7 @@ function Act() {
 export function HeroSlide() {
   return (
     <Slide eyebrow="The Weave" title="One live model of the business." accent="Insight to action in hours."
-      lead="Data, operations and developers share one live record, so a signal becomes a checked action the same day, not a ticket that ships in weeks.">
+      preview="The role strip is a preview." lead="Data, operations and developers share one live record: a signal becomes a checked action in hours, not a ticket in weeks.">
       <div className="grid grid-cols-[1fr_auto_1fr_auto_1fr] items-stretch gap-5">
         <StepCard number="01" icon={Activity} kicker="Payments signal" tone="red" title="Spot it." sentence="Norn watches every payment and flags the borrower the moment two installments are missed.">
           <Signal />
@@ -124,7 +128,7 @@ export function HeroSlide() {
           <Borrower />
         </StepCard>
         <StepArrow />
-        <StepCard number="03" icon={ShieldCheck} kicker="Checked action" tone="green" title="Act safely." sentence="The action checks who is asking before it runs, then records who, when and why.">
+        <StepCard number="03" icon={ShieldCheck} kicker="Checked action" tone="green" title="Act safely." sentence="The action checks the rule and who is asking before it runs, then records who, when and why.">
           <Act />
         </StepCard>
       </div>

@@ -49,14 +49,16 @@ export function Slide({ eyebrow, title, accent, lead, preview, children, footer 
             <span>{eyebrow}</span>
             {preview !== undefined && <PreviewTag />}
           </div>
-          <h1 className="text-[3.125rem] leading-[1.06] font-semibold tracking-[-0.035em] text-balance">
+          <h1 className="text-[2.875rem] leading-[1.08] font-semibold tracking-[-0.035em] text-balance">
             {title}
             {accent !== undefined && <><br /><span className="text-[var(--action)]">{accent}</span></>}
           </h1>
-          {lead !== undefined && <p className="max-w-[80ch] text-[1.125rem] leading-relaxed text-pretty text-muted-foreground">{lead}</p>}
+          {lead !== undefined && <p className="max-w-[110ch] text-[1.125rem] leading-relaxed text-pretty text-muted-foreground">{lead}</p>}
         </header>
-        <div className="flex flex-1 flex-col justify-center pt-8">{children}</div>
-        <footer className="flex items-center justify-between gap-4 pt-5 text-meta text-muted-foreground">
+        {/* Projector sizes: the body's small text and chips one step larger than in the app. */}
+        <div className={cn("flex flex-1 flex-col justify-center pt-6",
+          "[&_.text-xs]:text-[0.875rem] [&_.text-meta]:text-[0.9375rem] [&_.text-sm]:text-[1.03rem] [&_[data-slot=chip]]:h-6 [&_[data-slot=chip]]:px-2 [&_[data-slot=chip]]:text-[0.875rem]")}>{children}</div>
+        <footer className="flex items-center justify-between gap-4 pt-4 text-meta text-muted-foreground">
           <span className="flex items-center gap-2"><Dot tone="gray" /> A sample story with synthetic data. {preview !== undefined && <span>{preview}</span>}</span>
           {footer}
         </footer>
@@ -79,9 +81,9 @@ export function StepCard({ number, icon: Icon, kicker, tone, title, sentence, ch
         </div>
         <div className="flex flex-1 flex-col">{children}</div>
       </div>
-      <div className="space-y-1 px-4 pt-4 pb-3">
-        <h2 className="text-[1.375rem] font-semibold tracking-[-0.02em]">{title}</h2>
-        <p className="text-[0.9375rem] leading-relaxed text-pretty text-muted-foreground">{sentence}</p>
+      <div className="space-y-1 px-4 pt-3.5 pb-3">
+        <h2 className="text-[1.5rem] font-semibold tracking-[-0.02em]">{title}</h2>
+        <p className="text-[1.0625rem] leading-relaxed text-pretty text-muted-foreground">{sentence}</p>
       </div>
     </section>
   )

@@ -1,6 +1,10 @@
 import { Link, useParams } from "@tanstack/react-router"
 import type { ComponentType } from "react"
+import { BorrowerSlide } from "./borrower.tsx"
+import { ForkSlide } from "./fork.tsx"
 import { HeroSlide } from "./hero.tsx"
+import { TimelineSlide } from "./timeline.tsx"
+import { WorkflowSlide } from "./workflow.tsx"
 
 /**
  * `/preview/$screen`: the finale pitch's slides, outside the product nav and the session. Each is a
@@ -9,6 +13,10 @@ import { HeroSlide } from "./hero.tsx"
  */
 export const SCREENS: Readonly<Record<string, ComponentType>> = {
   hero: HeroSlide,
+  borrower: BorrowerSlide,
+  workflow: WorkflowSlide,
+  timeline: TimelineSlide,
+  fork: ForkSlide,
 }
 
 export function PreviewPage() {
