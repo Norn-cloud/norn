@@ -596,7 +596,12 @@ impl<E: SqlEngine> DevHost<E> {
 }
 
 /// The most rows one OBS-PAGE-1 page carries; the cell's own bound is higher.
-pub const PAGE_ROWS: usize = 500;
+/// A page is one commit, and the cell is held for it (INGEST-YIELD-1), so a
+/// read during a load waits for at most one page. Measured on the
+/// distributor-1 load (#1484, 4 vCPU): 100-row pages committed at about
+/// 3.9 ms a row, 500-row pages at about 20 ms a row; 100 keeps a page well
+/// under a second.
+pub const PAGE_ROWS: usize = 100;
 
 /// How long a load yields the cell to waiting requests between two pages.
 const YIELD_BOUND: std::time::Duration = std::time::Duration::from_millis(250);
@@ -776,7 +781,7 @@ mod page_tests {
             .map(|n| (row(&format!("r{n}")), items.clone()))
             .collect();
         let sizes: Vec<usize> = pages(&many).iter().map(|(_, page)| page.len()).collect();
-        assert_eq!(sizes, [500, 500, 200]);
+        assert_eq!(sizes, vec![PAGE_ROWS; 1_200 / PAGE_ROWS]);
 
         let mixed = vec![
             (row("x"), items.clone()),

@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::cell_host::{
     CellCommit, CellHost, CommitError, CommitReceipt, Consumed, FactExpectation, FactKey,
-    FactMutation, FactState, FactVersion, FactWrite, JsonObject, JsonValue, LinkMutation,
+    FactMutation, FactState, FactVersion, FactWrite, JsonObject, JsonValue, LinkKey, LinkMutation,
     LinkReadExpectation, LinkWrite,
 };
 use crate::commit_check::{InvariantEvaluationError, InvariantFailure, evaluate_invariants};
@@ -303,6 +303,26 @@ type PreparedFindingComparison<'a> = (
     Result<Vec<DataQualityFinding>, ObservationRefusal>,
     &'a [DataQualityFinding],
 );
+
+/// [`ObservationAuthorization`]'s authorized writes, indexed by key.
+pub(crate) struct AuthorizedWrites<'a> {
+    by_key: std::collections::HashMap<&'a FactKey, Vec<&'a AuthorizedObservedWrite>>,
+}
+
+impl<'a> AuthorizedWrites<'a> {
+    fn find(&self, write: &FactWrite) -> Option<&'a AuthorizedObservedWrite> {
+        self.by_key
+            .get(&write.key)?
+            .iter()
+            .copied()
+            .find(|authorized| authorized.write == *write)
+    }
+
+    /// [`ObservationAuthorization::authorizes_write`], from the index.
+    pub(crate) fn authorizes(&self, write: &FactWrite) -> bool {
+        self.find(write).is_some()
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct AuthorizedObservedReadFinding {
@@ -991,6 +1011,20 @@ impl ObservationAuthorization {
             .any(|authorized| authorized.write == *write)
     }
 
+    /// The authorized writes indexed by key, for a check that asks about
+    /// every write of a commit (INGEST-BATCH-1: O(1) per write, not a scan).
+    pub(crate) fn indexed(&self) -> AuthorizedWrites<'_> {
+        let mut by_key: std::collections::HashMap<&FactKey, Vec<&AuthorizedObservedWrite>> =
+            std::collections::HashMap::new();
+        for authorized in &self.writes {
+            by_key
+                .entry(&authorized.write.key)
+                .or_default()
+                .push(authorized);
+        }
+        AuthorizedWrites { by_key }
+    }
+
     pub(crate) fn findings_for_read(
         catalog: &TypeCatalog<'_>,
         authorized: &AuthorizedObservedReadFinding,
@@ -1073,19 +1107,37 @@ impl ObservationAuthorization {
     /// match an exact sealed mapping or pending-resolution intent.
     #[must_use]
     pub fn validates<E, C, T>(&self, commit: &CellCommit<E, C, T>) -> bool {
-        let convergent = self.convergent_links();
+        use std::collections::HashMap;
+        // INGEST-BATCH-1: every membership and count below is the same check
+        // as a scan of the commit, answered from indexes built once, so one
+        // page of N records validates in O(N) rather than O(N²). The checks,
+        // and what each refuses, are unchanged.
+        let mut writes_by_key: HashMap<&FactKey, Vec<&FactWrite>> = HashMap::new();
+        for write in &commit.writes {
+            writes_by_key.entry(&write.key).or_default().push(write);
+        }
+        let writes_of = |key: &FactKey| writes_by_key.get(key).map_or(&[][..], Vec::as_slice);
+        let mut reads: HashMap<&FactExpectation, usize> = HashMap::new();
+        for read in &commit.reads {
+            let count = reads.entry(read).or_default();
+            *count = count.saturating_add(1);
+        }
+        let mut authorized_links: HashMap<&LinkKey, Vec<&LinkWrite>> = HashMap::new();
+        for link in self.links.iter().chain(self.convergent_links()) {
+            authorized_links.entry(&link.key).or_default().push(link);
+        }
         if !commit.effects.is_empty()
             || self.source_scopes.iter().any(|(scope, _)| {
-                !commit.reads.contains(scope)
-                    && !commit
-                        .writes
+                !reads.contains_key(scope)
+                    && !writes_of(&scope.key)
                         .iter()
-                        .any(|write| write.key == scope.key && write.expected == scope.expected)
+                        .any(|write| write.expected == scope.expected)
             })
-            || commit
-                .links
-                .iter()
-                .any(|write| !self.links.contains(write) && !convergent.contains(&write))
+            || commit.links.iter().any(|write| {
+                !authorized_links
+                    .get(&write.key)
+                    .is_some_and(|links| links.iter().any(|link| *link == write))
+            })
             || commit.writes.iter().any(|write| {
                 write.key.object_type.as_str() == "norn.PendingLinks"
                     && !self.pending_writes.contains(write)
@@ -1102,50 +1154,44 @@ impl ObservationAuthorization {
                 return false;
             }
         }
-        if self.observed_reads.iter().any(|read| {
-            !commit.reads.contains(read) || commit.writes.iter().any(|write| write.key == read.key)
-        }) {
+        if self
+            .observed_reads
+            .iter()
+            .any(|read| !reads.contains_key(read) || !writes_of(&read.key).is_empty())
+        {
             return false;
         }
-        for (index, authorized) in self.writes.iter().enumerate() {
-            if self
-                .writes
-                .iter()
-                .take(index)
-                .any(|prior| prior.write == authorized.write)
-                || commit
-                    .writes
+        // Each authorized write is unique among the authorized writes and
+        // appears exactly once in the commit.
+        let mut authorized_by_key: HashMap<&FactKey, Vec<&FactWrite>> = HashMap::new();
+        for authorized in &self.writes {
+            let earlier = authorized_by_key.entry(&authorized.write.key).or_default();
+            if earlier.iter().any(|prior| **prior == authorized.write)
+                || writes_of(&authorized.write.key)
                     .iter()
-                    .filter(|write| **write == authorized.write)
+                    .filter(|write| ***write == authorized.write)
                     .count()
                     != 1
             {
                 return false;
             }
+            earlier.push(&authorized.write);
         }
-        for (index, authorized) in self.read_findings.iter().enumerate() {
+        let mut findings_by_key: HashMap<&FactKey, Vec<&AuthorizedObservedReadFinding>> =
+            HashMap::new();
+        for authorized in &self.read_findings {
             let expectation = FactExpectation {
                 key: authorized.key.clone(),
                 expected: authorized.expected,
             };
-            if self
-                .read_findings
-                .iter()
-                .take(index)
-                .any(|prior| prior == authorized)
-                || commit
-                    .reads
-                    .iter()
-                    .filter(|read| **read == expectation)
-                    .count()
-                    != 1
-                || commit
-                    .writes
-                    .iter()
-                    .any(|write| write.key == authorized.key)
+            let earlier = findings_by_key.entry(&authorized.key).or_default();
+            if earlier.iter().any(|prior| *prior == authorized)
+                || reads.get(&expectation).copied().unwrap_or_default() != 1
+                || !writes_of(&authorized.key).is_empty()
             {
                 return false;
             }
+            earlier.push(authorized);
         }
         true
     }
@@ -1159,17 +1205,14 @@ impl ObservationAuthorization {
             .chain(self.observed_reads.iter().map(|read| &read.key))
     }
 
-    pub(crate) fn findings_for_write(
-        &self,
+    pub(crate) fn findings_for_write<'s>(
+        index: &AuthorizedWrites<'s>,
         catalog: &TypeCatalog<'_>,
         write: &FactWrite,
         failures: &[InvariantFailure],
         links: &mut dyn crate::governing_laws::LinkTargets,
-    ) -> Option<PreparedFindingComparison<'_>> {
-        let authorized = self
-            .writes
-            .iter()
-            .find(|authorized| authorized.write == *write)?;
+    ) -> Option<PreparedFindingComparison<'s>> {
+        let authorized = index.find(write)?;
         let FactMutation::Put { values } = &write.mutation else {
             return Some((
                 Err(ObservationRefusal::Encoding(
