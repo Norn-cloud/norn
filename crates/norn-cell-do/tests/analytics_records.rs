@@ -19,7 +19,7 @@ use std::sync::Mutex;
 use norn_api::analytics_routes::{EngineAnswer, EngineCall, Transport, UploadRecord, Uploads};
 use norn_api::host::DevHost;
 use norn_cell::analytics::engine::{Engine, Settings};
-use norn_cell::analytics::{Column, ColumnKind, LoadRequest, PointLaw, TableSchema, hex_digest};
+use norn_cell::analytics::{Column, ColumnKind, LandRequest, PointLaw, TableSchema, hex_digest};
 use norn_cell::engine::NativeEngine;
 use norn_cell_do::olap::InProcess;
 use norn_cell_do::policy::{DEMO_GRANTS, ReadPolicy};
@@ -39,17 +39,32 @@ impl Transport for Loading {
         None
     }
     fn call(&self, call: &EngineCall) -> Option<EngineAnswer> {
-        if call.op != "load" {
+        if call.op != "land" {
             return self.0.call(call);
         }
-        let request: LoadRequest = serde_json::from_str(&call.body).expect("a load");
-        let bytes = self.1.lock().unwrap()[&request.file.url].clone();
-        let path = self.0.0.scratch().join(format!("load-{}", request.load));
+        let request: LandRequest = serde_json::from_str(&call.body).expect("a landing");
+        let bytes = self.1.lock().unwrap()[&request.load.file.url].clone();
+        let path = self
+            .0
+            .0
+            .scratch()
+            .join(format!("load-{}", request.load.load));
         std::fs::write(&path, bytes).expect("scratch file");
-        let loaded = self.0.0.load(&request, &path);
+        let landed = self.0.0.land(&request.load, &path);
         std::fs::remove_file(&path).expect("scratch removed");
-        let (status, body) = match loaded {
-            Ok(loaded) => (200, serde_json::to_string(&loaded).unwrap()),
+        let (status, body) = match landed {
+            Ok(landed) => {
+                // MANIFEST-LAND-1: the landed files go to their PUT URLs.
+                let mut files = self.1.lock().unwrap();
+                for (url, file) in [
+                    (&request.data_url, &landed.data),
+                    (&request.held_url, &landed.held),
+                ] {
+                    files.insert(url.clone(), std::fs::read(file).expect("landed file"));
+                    std::fs::remove_file(file).expect("landed file removed");
+                }
+                (200, serde_json::to_string(&landed.response).unwrap())
+            }
             Err(refused) => (422, serde_json::to_string(&refused).unwrap()),
         };
         Some(EngineAnswer {
@@ -80,6 +95,9 @@ impl Uploads for Files<'_> {
             .strip_prefix("s3://uploads/demo/")?
             .strip_suffix(".csv")?;
         Some(format!("file://{id}"))
+    }
+    fn presigned_put(&self, key: &str, _seconds: u64, _now_ms: u64) -> Option<(String, String)> {
+        Some((format!("put://{key}"), format!("s3://uploads/{key}")))
     }
 }
 

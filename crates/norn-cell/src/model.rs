@@ -536,6 +536,33 @@ impl Model {
             })
     }
 
+    /// MANIFEST-LAWS-1: every invariant that applies to `object_type`, with
+    /// its owner, as the per-row evaluator checks them.
+    ///
+    /// # Errors
+    /// Unknown type, or an interface its lineage names is missing.
+    pub fn effective_invariants(
+        &self,
+        object_type: &str,
+    ) -> Result<Vec<(norn_ir::InvariantOwner, norn_ir::Invariant)>, CellError> {
+        self.entry(object_type)?;
+        norn_kernel::TypeCatalog::new(self.object_types())
+            .with_interfaces(self.interfaces())
+            .effective_invariants(&norn_ir::ObjectTypeName(object_type.to_owned()))
+            .map(|found| {
+                found
+                    .into_iter()
+                    .map(|(owner, invariant)| (owner, invariant.clone()))
+                    .collect()
+            })
+            .map_err(|missing| {
+                CellError::DefinitionReceiptInvalid(format!(
+                    "interface {} is missing",
+                    missing.as_str()
+                ))
+            })
+    }
+
     /// The projected schema.
     #[must_use]
     pub const fn schema(&self) -> &SqliteSchema {

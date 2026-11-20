@@ -19,11 +19,14 @@
 use std::collections::BTreeMap;
 
 use norn_cell::analytics::{
-    DatasetRecord, EngineRefusal, EvaluateRequest, EvaluateResponse, ExportFormat, ExportRequest,
-    FileFormat, FileSource, FrontierResponse, LoadRequest, LoadResponse, Source, TenantId,
+    EngineRefusal, EvaluateRequest, EvaluateResponse, ExportFormat, ExportRequest, FileFormat,
+    FileSource, FrontierResponse, LandRequest, LandResponse, LoadRequest, Source, TenantId,
     hex_digest,
 };
 use norn_cell::compute::{ALL_MEMBERS, QueryContext, QueryResult};
+use norn_cell::dataset_manifest::{
+    DatasetManifest, MANIFEST_VERSION, ManifestCounts, ManifestFile, ManifestSource,
+};
 use norn_cell::engine::SqlEngine;
 use norn_cell::{CellError, CellStore, ObjectRecord};
 use norn_checker::EffectiveCatalog;
@@ -43,14 +46,14 @@ use crate::scope::{CellScope, ScopeQuery};
 const SYNC_BATCH: usize = 5_000;
 /// Engine steps one answer may take before it refuses.
 pub const MAX_STEPS: usize = 64;
-/// Lifetime of the presigned URL a load reads, in seconds.
+/// Lifetime of the presigned URLs a load reads and lands through, in seconds.
 const LOAD_URL_SECONDS: u64 = 900;
 
 /// One engine operation, as the host sends it: `POST /v1/<op>` with `body`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EngineCall {
-    /// `frontier`, `sync`, `evaluate`, `members`, `profile`, `load` or `export`.
+    /// `frontier`, `sync`, `evaluate`, `members`, `profile`, `land` or `export`.
     pub op: String,
     /// Identity of the call; the answer names it, so a stale answer is never used.
     pub digest: String,
@@ -530,6 +533,9 @@ pub trait Uploads {
     fn record(&self, id: &str) -> Option<UploadRecord>;
     /// A GET URL for exactly `uri`, valid for `seconds` from `now_ms`.
     fn presigned_get(&self, uri: &str, seconds: u64, now_ms: u64) -> Option<String>;
+    /// MANIFEST-LAND-1: a PUT URL for the object `key` the cell lands a
+    /// dataset file at, valid for `seconds` from `now_ms`, and its durable URI.
+    fn presigned_put(&self, key: &str, seconds: u64, now_ms: u64) -> Option<(String, String)>;
 }
 
 /// The outcome of `POST /v1/datasets:load`.
@@ -540,22 +546,57 @@ pub struct NornDatasetLoad {
     pub object_type: String,
     /// The `upload` connection the load is reported under (SYNC-REPORT-1).
     pub connection_id: String,
-    /// The load identity; answers over the dataset name it.
+    /// The landing identity; answers over the dataset name it.
     pub load: String,
-    /// The file's durable URI.
+    /// MANIFEST-1: the committed manifest's identity.
+    pub manifest: String,
+    /// The receipt of the one commit that admitted the manifest.
+    pub receipt: String,
+    /// That commit's sequence number.
+    pub commit_seq: u64,
+    /// The source file's durable URI.
     pub uri: String,
-    /// The file's SHA-256, verified by the engine.
+    /// The source file's SHA-256, verified by the engine.
     pub sha256: String,
+    /// The landed data file: every admitted row, columnar.
+    pub data: NornDatasetFile,
+    /// The landed held-set file: every held-back row and its reason.
+    pub held: NornDatasetFile,
     /// Rows admitted.
     pub rows: u64,
     /// Rows quarantined.
     pub rejected: u64,
     /// Quarantined rows per reason code (`bulk.*`).
     pub reasons: BTreeMap<String, u64>,
-    /// File size in bytes.
+    /// Source file size in bytes.
     pub bytes: u64,
     /// Load time in milliseconds.
     pub millis: u64,
+}
+
+/// One landed dataset file, named by content.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NornDatasetFile {
+    /// The object's durable URI.
+    pub uri: String,
+    /// Its SHA-256.
+    pub sha256: String,
+    /// Rows in it.
+    pub rows: u64,
+    /// Bytes in it.
+    pub bytes: u64,
+}
+
+impl From<&ManifestFile> for NornDatasetFile {
+    fn from(file: &ManifestFile) -> Self {
+        Self {
+            uri: file.uri.clone(),
+            sha256: file.sha256.clone(),
+            rows: file.rows,
+            bytes: file.bytes,
+        }
+    }
 }
 
 /// BULK-LOAD-1: load a completed upload into the tenant's engine as the
@@ -602,7 +643,7 @@ pub fn load_dataset<E: SqlEngine>(
             })
             .ok_or_else(dataset_not_found)?,
     };
-    let loaded = load_upload(
+    let landed = land_upload(
         host,
         &request.object_type,
         &record,
@@ -610,6 +651,8 @@ pub fn load_dataset<E: SqlEngine>(
         transport,
         now_ms,
     )?;
+    let (manifest, hash, receipt) = commit_manifest(host, &request.object_type, &record, &landed)?;
+    let loaded = &landed.load;
     // The type's upload connection, whichever path loads it: an `:define`d
     // type `upload.<Name>` reports where a cell load of it does.
     let named = request.object_type.strip_prefix("upload.");
@@ -640,61 +683,127 @@ pub fn load_dataset<E: SqlEngine>(
     Ok(NornDatasetLoad {
         object_type: request.object_type,
         connection_id,
-        load: loaded.load,
+        load: manifest.load.clone(),
+        manifest: hash,
+        receipt: receipt.hash,
+        commit_seq: receipt.body.commit_seq,
         uri: record.uri,
         sha256: record.sha256,
+        data: (&manifest.data).into(),
+        held: (&manifest.held).into(),
         rows: loaded.rows,
         rejected: loaded.rejected,
-        reasons: loaded.reasons,
+        reasons: loaded.reasons.clone(),
         bytes: loaded.bytes,
         millis: loaded.millis,
     })
 }
 
-/// Load `record` into the engine as the dataset `object_type` and record it
-/// as the type's current load.
-fn load_upload<E: SqlEngine>(
+/// The object keys a landing writes: `datasets/<scope>/<type>/<load>/{data,held}.parquet`.
+fn landing_keys(scope_key: &str, object_type: &str, load: &str) -> [String; 2] {
+    let prefix = format!("datasets/{scope_key}/{object_type}/{load}");
+    [
+        format!("{prefix}/data.parquet"),
+        format!("{prefix}/held.parquet"),
+    ]
+}
+
+/// A landing that is ready to be committed: its files are in object storage.
+struct Landing {
+    load: norn_cell::analytics::LoadResponse,
+    land: LandResponse,
+    table: norn_cell::analytics::TableSchema,
+    format: FileFormat,
+    uris: [String; 2],
+}
+
+/// MANIFEST-LAND-1: type `record` by `object_type` on the engine and land it
+/// as the data and held-set Parquet files.
+fn land_upload<E: SqlEngine>(
     host: &DevHost<E>,
     object_type: &str,
     record: &UploadRecord,
     uploads: &dyn Uploads,
     transport: &dyn Transport,
     now_ms: u64,
-) -> Result<LoadResponse, Refusal> {
+) -> Result<Landing, Refusal> {
     let guard = host.cell()?;
     let store = guard.store();
     let table = store
         .analytics_table(object_type)
         .map_err(|_unknown| dataset_not_found())?;
+    // MANIFEST-PIN-1: no law or invariant is checked on this path yet, so a
+    // type that declares one is refused rather than admitted unchecked.
+    if !store
+        .model()
+        .governing_laws(object_type)
+        .map_err(Refusal::host)?
+        .is_empty()
+        || !store
+            .model()
+            .effective_invariants(object_type)
+            .map_err(Refusal::host)?
+            .is_empty()
+    {
+        return Err(Refusal::new(
+            http::StatusCode::UNPROCESSABLE_ENTITY,
+            "bulk.unsupported_law",
+            "the dataset was not loaded",
+            "the type declares laws or invariants, which a dataset load does not check yet; load it through observations",
+        ));
+    }
     let format = if record.content_type.contains("parquet") || record.uri.ends_with(".parquet") {
         FileFormat::Parquet
     } else {
         FileFormat::Csv
     };
+    let pins = store
+        .dataset_pins(object_type, &BTreeMap::new())
+        .map_err(Refusal::host)?;
     let load = format!(
         "l{}",
-        hex_digest(format!("{}\n{}\n{}", record.uri, record.sha256, table.pin).as_bytes())
+        hex_digest(
+            format!(
+                "{}\n{}\n{}\n{}\n{}",
+                record.uri, record.sha256, table.pin, pins.binding, pins.laws
+            )
+            .as_bytes()
+        )
     );
-    let mut load_request = LoadRequest {
-        tenant: TenantId::of_scope(&host.scope().key()),
-        table,
-        load,
-        file: FileSource {
-            url: String::new(),
-            uri: record.uri.clone(),
-            sha256: record.sha256.clone(),
-            format,
+    let [data_key, held_key] = landing_keys(&host.scope().key(), object_type, &load);
+    let mut request = LandRequest {
+        load: LoadRequest {
+            tenant: TenantId::of_scope(&host.scope().key()),
+            table: table.clone(),
+            load,
+            file: FileSource {
+                url: String::new(),
+                uri: record.uri.clone(),
+                sha256: record.sha256.clone(),
+                format,
+            },
+            headers: BTreeMap::new(),
         },
-        headers: BTreeMap::new(),
+        data_url: String::new(),
+        held_url: String::new(),
     };
-    // The URL is minted per request; the call's identity is the load without it.
-    let mut call = EngineCall::new("load", &load_request).map_err(engine_failure)?;
-    load_request.file.url = uploads
+    // The URLs are minted per request; the call's identity is the landing without them.
+    let mut call = EngineCall::new("land", &request).map_err(engine_failure)?;
+    let unconfigured = || Refusal::host("the object store is not configured");
+    request.load.file.url = uploads
         .presigned_get(&record.uri, LOAD_URL_SECONDS, now_ms)
-        .ok_or_else(|| Refusal::host("the object store is not configured"))?;
-    call.body = serde_json::to_string(&load_request).map_err(Refusal::host)?;
+        .ok_or_else(unconfigured)?;
+    let (data_put, data_object) = uploads
+        .presigned_put(&data_key, LOAD_URL_SECONDS, now_ms)
+        .ok_or_else(unconfigured)?;
+    let (held_put, held_object) = uploads
+        .presigned_put(&held_key, LOAD_URL_SECONDS, now_ms)
+        .ok_or_else(unconfigured)?;
+    request.data_url = data_put;
+    request.held_url = held_put;
+    call.body = serde_json::to_string(&request).map_err(Refusal::host)?;
     let answer =
-        exchange(store, transport, &load_request.tenant, None, &call).map_err(engine_failure)?;
+        exchange(store, transport, &request.load.tenant, None, &call).map_err(engine_failure)?;
     if answer.status != 200 {
         let refusal: EngineRefusal = decode(&answer.body).map_err(engine_failure)?;
         return Err(Refusal::new(
@@ -704,23 +813,93 @@ fn load_upload<E: SqlEngine>(
             &refusal.detail,
         ));
     }
-    let loaded: LoadResponse = decode(&answer.body).map_err(engine_failure)?;
-    let recorded_at = store.verified_head().map_err(Refusal::host)?.commits;
-    store
-        .record_analytics_dataset(
-            object_type,
-            &DatasetRecord {
-                load: loaded.load.clone(),
-                uri: record.uri.clone(),
-                sha256: record.sha256.clone(),
-                rows: loaded.rows,
-                rejected: loaded.rejected,
-                reasons: loaded.reasons.clone(),
-                recorded_at,
-            },
-        )
+    let land: LandResponse = decode(&answer.body).map_err(engine_failure)?;
+    Ok(Landing {
+        load: land.load.clone(),
+        land,
+        table,
+        format,
+        uris: [data_object, held_object],
+    })
+}
+
+/// MANIFEST-COMMIT-1: commit the landing's manifest as the type's current dataset.
+fn commit_manifest<E: SqlEngine>(
+    host: &DevHost<E>,
+    object_type: &str,
+    record: &UploadRecord,
+    landing: &Landing,
+) -> Result<(DatasetManifest, String, norn_cell::Receipt), Refusal> {
+    let mut guard = host.cell()?;
+    let binding = BTreeMap::new();
+    let pins = guard
+        .store()
+        .dataset_pins(object_type, &binding)
         .map_err(Refusal::host)?;
-    Ok(loaded)
+    let [data_uri, held_uri] = landing.uris.clone();
+    let land = &landing.land;
+    let manifest = DatasetManifest {
+        version: MANIFEST_VERSION.to_owned(),
+        object_type: object_type.to_owned(),
+        load: land.load.load.clone(),
+        source: ManifestSource {
+            uri: record.uri.clone(),
+            sha256: record.sha256.clone(),
+            format: landing.format,
+            bytes: land.load.bytes,
+        },
+        binding,
+        table: landing.table.clone(),
+        pins,
+        data: ManifestFile {
+            uri: data_uri,
+            sha256: land.data.sha256.clone(),
+            rows: land.data.rows,
+            bytes: land.data.bytes,
+        },
+        held: ManifestFile {
+            uri: held_uri,
+            sha256: land.held.sha256.clone(),
+            rows: land.held.rows,
+            bytes: land.held.bytes,
+        },
+        counts: ManifestCounts {
+            source: land.load.rows.saturating_add(land.load.rejected),
+            admitted: land.load.rows,
+            held: land.load.reasons.clone(),
+        },
+        valid_time: land.valid_time.clone(),
+    };
+    let (hash, receipt) = guard
+        .commit_dataset_manifest(&manifest)
+        .map_err(manifest_refusal)?;
+    Ok((manifest, hash, receipt))
+}
+
+/// MANIFEST-CURRENT-1: the current dataset manifest of `object_type`, if it is one.
+///
+/// # Errors
+/// A store failure.
+pub fn current_manifest<E: SqlEngine>(
+    host: &DevHost<E>,
+    object_type: &str,
+) -> Result<Option<norn_cell::dataset_manifest::CommittedManifest>, Refusal> {
+    host.cell()?
+        .store()
+        .dataset_manifest(norn_cell::MAIN_WORLD, object_type)
+        .map_err(Refusal::host)
+}
+
+fn manifest_refusal(error: CellError) -> Refusal {
+    if let CellError::DatasetRefused { code, detail } = &error {
+        return Refusal::new(
+            http::StatusCode::CONFLICT,
+            code,
+            "the dataset manifest was not committed",
+            detail,
+        );
+    }
+    Refusal::host(error)
 }
 
 fn dataset_not_found() -> Refusal {
@@ -748,7 +927,7 @@ pub fn serves_records<E: SqlEngine>(host: &DevHost<E>, object_type: &str) -> Res
     Ok(has_type
         && guard
             .store()
-            .analytics_dataset(object_type)
+            .dataset_manifest(norn_cell::MAIN_WORLD, object_type)
             .map_err(Refusal::host)?
             .is_some())
 }
@@ -789,9 +968,9 @@ pub fn page_objects<E: SqlEngine>(
         .analytics_source(norn_cell::MAIN_WORLD, &host.scope().key(), object_type)
         .map_err(engine_failure)?;
     let quarantined = store
-        .analytics_dataset(object_type)
+        .dataset_manifest(norn_cell::MAIN_WORLD, object_type)
         .map_err(Refusal::host)?
-        .map_or(0, |dataset| dataset.rejected);
+        .map_or(0, |dataset| dataset.manifest.held.rows);
     let digest = norn_cell::compute::lineage::keyed_lineage_handle(
         object_query::CURSOR_KEY,
         &format!("{}\n{snapshot}", query.digest(object_type)),

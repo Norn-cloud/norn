@@ -23,14 +23,12 @@ use serde::{Deserialize, Serialize};
 use transparency_sha2::{Digest as _, Sha256};
 
 mod assemble;
-mod dataset;
 #[cfg(all(feature = "duckdb", feature = "native"))]
 pub mod engine;
 mod lower;
 mod mirror;
 
 pub use assemble::{Prepared, bucket_value};
-pub use dataset::DatasetRecord;
 pub use lower::{lower, table_schema};
 pub use mirror::MirrorBatch;
 
@@ -629,6 +627,76 @@ pub struct LoadResponse {
     pub bytes: u64,
     /// Wall time of the load, for the record.
     pub millis: u64,
+}
+
+/// MANIFEST-LAND-1: load a dataset file and land it as columnar files. The
+/// typed rows go to the data file and the held-back rows to the held file,
+/// each written to its presigned PUT URL. The engine table that answers
+/// questions is a cache of the data file.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LandRequest {
+    /// The load: the source file, its typing and the landing identity.
+    pub load: LoadRequest,
+    /// A presigned PUT URL for the data file (Parquet).
+    pub data_url: String,
+    /// A presigned PUT URL for the held-set file (Parquet).
+    pub held_url: String,
+}
+
+/// One landed file: its content identity as the engine wrote it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LandedFile {
+    /// The file's SHA-256.
+    pub sha256: String,
+    /// Rows in the file.
+    pub rows: u64,
+    /// Bytes in the file.
+    pub bytes: u64,
+}
+
+/// The earliest and latest instant of one temporal column of a landing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ValidRange {
+    /// The column (a timestamp or date property).
+    pub column: String,
+    /// The earliest value's text, by its exact instant.
+    pub from: String,
+    /// The latest value's text, by its exact instant.
+    pub to: String,
+}
+
+/// The outcome of a landing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LandResponse {
+    /// The load's counts, as [`LoadResponse`].
+    pub load: LoadResponse,
+    /// The data file: every admitted row with its source row offset.
+    pub data: LandedFile,
+    /// The held-set file: one row per held-back source row and reason.
+    pub held: LandedFile,
+    /// Each temporal column's range over the admitted rows.
+    pub valid_time: Vec<ValidRange>,
+}
+
+/// MANIFEST-CACHE-1: rebuild the engine's table of a landing from its
+/// landed files, each checked against the SHA-256 the manifest records.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct HydrateRequest {
+    /// The tenant.
+    pub tenant: TenantId,
+    /// The admitted object type's table, as landed.
+    pub table: TableSchema,
+    /// The landing identity the manifest records.
+    pub load: String,
+    /// The data file.
+    pub data: FileSource,
+    /// The held-set file.
+    pub held: FileSource,
 }
 
 /// Profile columns of a source.

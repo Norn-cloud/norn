@@ -16,8 +16,8 @@ use std::time::Duration;
 
 use norn_cell::analytics::engine::{Engine, Outcome, Settings};
 use norn_cell::analytics::{
-    EngineRefusal, EvaluateRequest, ExportRequest, FrontierRequest, LoadRequest, MembersRequest,
-    PageRequest, ProfileRequest, SyncRequest,
+    EngineRefusal, EvaluateRequest, ExportRequest, FrontierRequest, LandRequest, LandResponse,
+    MembersRequest, PageRequest, ProfileRequest, SyncRequest,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -183,7 +183,7 @@ fn connection(stream: &TcpStream, engine: &Engine, token: &str) -> std::io::Resu
         "/v1/members" => answer(stream, &request, |r: MembersRequest| engine.members(&r)),
         "/v1/profile" => answer(stream, &request, |r: ProfileRequest| engine.profile(&r)),
         "/v1/page" => answer(stream, &request, |r: PageRequest| engine.page(&r)),
-        "/v1/load" => answer(stream, &request, |r: LoadRequest| load(engine, &r)),
+        "/v1/land" => answer(stream, &request, |r: LandRequest| land(engine, &r)),
         "/v1/export" => export(stream, &request, engine),
         _ => refuse(
             stream,
@@ -259,17 +259,20 @@ fn answer<T: DeserializeOwned, R: Serialize>(
     }
 }
 
-/// Download the presigned object into the engine's scratch directory, then load it.
-fn load(engine: &Engine, request: &LoadRequest) -> Outcome<norn_cell::analytics::LoadResponse> {
-    let agent: ureq::Agent = ureq::Agent::config_builder()
+fn agent() -> ureq::Agent {
+    ureq::Agent::config_builder()
         .http_status_as_error(false)
         .max_redirects(0)
         .timeout_global(Some(Duration::from_secs(600)))
         .build()
-        .into();
+        .into()
+}
+
+/// Download the presigned object into `path`, at most [`MAX_FILE_BYTES`].
+fn download(agent: &ureq::Agent, url: &str, path: &std::path::Path) -> Outcome<()> {
     let unreadable = |detail: String| refusal("bulk.unreadable", &detail);
     let mut response = agent
-        .get(&request.file.url)
+        .get(url)
         .call()
         .map_err(|e| unreadable(format!("the object could not be read: {e}")))?;
     if response.status() != 200 {
@@ -278,14 +281,8 @@ fn load(engine: &Engine, request: &LoadRequest) -> Outcome<norn_cell::analytics:
             response.status()
         )));
     }
-    let path = engine.scratch().join(format!(
-        "load-{}",
-        request
-            .load
-            .replace(|c: char| !c.is_ascii_alphanumeric(), "_")
-    ));
     let copied = (|| -> std::io::Result<()> {
-        let mut file = std::fs::File::create(&path)?;
+        let mut file = std::fs::File::create(path)?;
         let mut reader = response
             .body_mut()
             .with_config()
@@ -294,11 +291,55 @@ fn load(engine: &Engine, request: &LoadRequest) -> Outcome<norn_cell::analytics:
         std::io::copy(&mut reader, &mut file)?;
         file.sync_all()
     })();
-    let loaded = copied
-        .map_err(|e| unreadable(format!("the object could not be read: {e}")))
-        .and_then(|()| engine.load(request, &path));
+    copied.map_err(|e| unreadable(format!("the object could not be read: {e}")))
+}
+
+/// Upload `path` to the presigned PUT `url`.
+fn upload(agent: &ureq::Agent, url: &str, path: &std::path::Path) -> Outcome<()> {
+    let unwritable = |detail: String| refusal("bulk.unwritable", &detail);
+    let file = std::fs::File::open(path)
+        .map_err(|e| unwritable(format!("a landed file could not be read: {e}")))?;
+    let length = file
+        .metadata()
+        .map_err(|e| unwritable(format!("a landed file could not be read: {e}")))?
+        .len();
+    let response = agent
+        .put(url)
+        .header("content-type", "application/vnd.apache.parquet")
+        .header("content-length", &length.to_string())
+        .send(ureq::SendBody::from_owned_reader(file))
+        .map_err(|e| unwritable(format!("the object could not be written: {e}")))?;
+    if response.status().is_success() {
+        Ok(())
+    } else {
+        Err(unwritable(format!(
+            "the object store answered {}",
+            response.status()
+        )))
+    }
+}
+
+/// MANIFEST-LAND-1: download the presigned source into the engine's scratch
+/// directory, land it, and upload the data and held-set files to their
+/// presigned URLs. Every scratch file is deleted, whatever the outcome.
+fn land(engine: &Engine, request: &LandRequest) -> Outcome<LandResponse> {
+    let agent = agent();
+    let path = engine.scratch().join(format!(
+        "load-{}",
+        request
+            .load
+            .load
+            .replace(|c: char| !c.is_ascii_alphanumeric(), "_")
+    ));
+    let landed = download(&agent, &request.load.file.url, &path)
+        .and_then(|()| engine.land(&request.load, &path));
     let _removed = std::fs::remove_file(&path);
-    loaded
+    let landed = landed?;
+    let sent = upload(&agent, &request.data_url, &landed.data)
+        .and_then(|()| upload(&agent, &request.held_url, &landed.held));
+    let _data = std::fs::remove_file(&landed.data);
+    let _held = std::fs::remove_file(&landed.held);
+    sent.map(|()| landed.response)
 }
 
 /// Export into a scratch file, stream it as the body, then delete it.

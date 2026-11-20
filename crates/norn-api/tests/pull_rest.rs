@@ -828,6 +828,12 @@ impl norn_api::analytics_routes::Uploads for OneUpload {
     fn presigned_get(&self, uri: &str, _seconds: u64, _now_ms: u64) -> Option<String> {
         Some(format!("https://objects.example/{}", &uri["s3://".len()..]))
     }
+    fn presigned_put(&self, key: &str, _seconds: u64, _now_ms: u64) -> Option<(String, String)> {
+        Some((
+            format!("https://objects.example/put/{key}"),
+            format!("s3://uploads/{key}"),
+        ))
+    }
 }
 
 /// An engine that types three rows of every load and quarantines one.
@@ -842,18 +848,38 @@ impl norn_api::analytics_routes::Transport for ThreeAndOne {
         &self,
         call: &norn_api::analytics_routes::EngineCall,
     ) -> Option<norn_api::analytics_routes::EngineAnswer> {
-        assert_eq!(call.op, "load");
-        let request: norn_cell::analytics::LoadRequest =
-            serde_json::from_str(&call.body).expect("a load");
-        let answer = norn_cell::analytics::LoadResponse {
-            load: request.load.clone(),
-            rows: 3,
-            rejected: 1,
-            reasons: BTreeMap::from([("bulk.type".to_owned(), 1)]),
-            bytes: 64,
-            millis: 5,
+        assert_eq!(call.op, "land");
+        let request: norn_cell::analytics::LandRequest =
+            serde_json::from_str(&call.body).expect("a landing");
+        let file = |rows: u64| norn_cell::analytics::LandedFile {
+            sha256: "cd".repeat(32),
+            rows,
+            bytes: 128,
         };
-        self.0.lock().expect("calls").push(request);
+        let answer = norn_cell::analytics::LandResponse {
+            load: norn_cell::analytics::LoadResponse {
+                load: request.load.load.clone(),
+                rows: 3,
+                rejected: 1,
+                reasons: BTreeMap::from([("bulk.type".to_owned(), 1)]),
+                bytes: 64,
+                millis: 5,
+            },
+            data: file(3),
+            held: file(1),
+            valid_time: Vec::new(),
+        };
+        assert!(
+            request.data_url.ends_with("/data.parquet"),
+            "{}",
+            request.data_url
+        );
+        assert!(
+            request.held_url.ends_with("/held.parquet"),
+            "{}",
+            request.held_url
+        );
+        self.0.lock().expect("calls").push(request.load);
         Some(norn_api::analytics_routes::EngineAnswer {
             op: call.op.clone(),
             digest: call.digest.clone(),
@@ -861,6 +887,63 @@ impl norn_api::analytics_routes::Transport for ThreeAndOne {
             body: serde_json::to_string(&answer).expect("answer"),
         })
     }
+}
+
+/// MANIFEST-COMMIT-1 / MANIFEST-CURRENT-1: a dataset load lands two files
+/// and commits one manifest, which becomes the type's current dataset; the
+/// same landing again keeps the first receipt.
+#[test]
+fn a_dataset_load_commits_one_manifest_and_keeps_its_receipt() {
+    use norn_api::analytics_routes::load_dataset;
+    let host = host().with_authorizer(UploadsOnly);
+    let scope = norn_api::scope::ScopeQuery {
+        org_id: Some("org_demo".into()),
+        environment_id: Some("dev".into()),
+    };
+    let body = json!({"uploadId": "u1", "objectType": "canon.Item"}).to_string();
+    let engine = ThreeAndOne::default();
+    let load = || {
+        load_dataset(
+            &host,
+            &scope,
+            Some("loader"),
+            &body,
+            &OneUpload,
+            &engine,
+            EXTRACTED_AT_MS,
+        )
+        .expect("loaded")
+    };
+    let loaded = load();
+    let manifest = norn_api::analytics_routes::current_manifest(&host, "canon.Item")
+        .expect("read")
+        .expect("the current manifest");
+    assert_eq!(manifest.hash, loaded.manifest);
+    assert_eq!(manifest.commit_seq, loaded.commit_seq);
+    assert_eq!(manifest.manifest.data.uri, loaded.data.uri);
+    assert_eq!(
+        (manifest.manifest.data.rows, manifest.manifest.held.rows),
+        (3, 1)
+    );
+    assert!(
+        loaded.data.uri.starts_with("s3://uploads/datasets/"),
+        "{}",
+        loaded.data.uri
+    );
+    let again = load();
+    assert_eq!(
+        (
+            again.manifest.as_str(),
+            again.receipt.as_str(),
+            again.commit_seq
+        ),
+        (
+            manifest.hash.as_str(),
+            loaded.receipt.as_str(),
+            loaded.commit_seq
+        ),
+        "the same manifest keeps its first receipt"
+    );
 }
 
 /// BULK-LOAD-1 + SYNC-REPORT-1: a dataset load is decided like any upload

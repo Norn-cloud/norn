@@ -2241,17 +2241,45 @@ export interface components {
             diagnostics: components["schemas"]["RefusalDiagnostic"][];
             plan: components["schemas"]["NornTransformPlan"] | null;
         };
+        /** @description One landed dataset file, named by content. */
+        NornDatasetFile: {
+            /**
+             * Format: int64
+             * @description Bytes in it.
+             */
+            bytes: number;
+            /**
+             * Format: int64
+             * @description Rows in it.
+             */
+            rows: number;
+            /** @description Its SHA-256. */
+            sha256: string;
+            /** @description The object's durable URI. */
+            uri: string;
+        };
         /** @description The outcome of `POST /v1/datasets:load`. */
         NornDatasetLoad: {
             /**
              * Format: int64
-             * @description File size in bytes.
+             * @description Source file size in bytes.
              */
             bytes: number;
+            /**
+             * Format: int64
+             * @description That commit's sequence number.
+             */
+            commitSeq: number;
             /** @description The `upload` connection the load is reported under (SYNC-REPORT-1). */
             connectionId: string;
-            /** @description The load identity; answers over the dataset name it. */
+            /** @description The landed data file: every admitted row, columnar. */
+            data: components["schemas"]["NornDatasetFile"];
+            /** @description The landed held-set file: every held-back row and its reason. */
+            held: components["schemas"]["NornDatasetFile"];
+            /** @description The landing identity; answers over the dataset name it. */
             load: string;
+            /** @description MANIFEST-1: the committed manifest's identity. */
+            manifest: string;
             /**
              * Format: int64
              * @description Load time in milliseconds.
@@ -2263,6 +2291,8 @@ export interface components {
             reasons: {
                 [key: string]: number;
             };
+            /** @description The receipt of the one commit that admitted the manifest. */
+            receipt: string;
             /**
              * Format: int64
              * @description Rows quarantined.
@@ -2273,9 +2303,9 @@ export interface components {
              * @description Rows admitted.
              */
             rows: number;
-            /** @description The file's SHA-256, verified by the engine. */
+            /** @description The source file's SHA-256, verified by the engine. */
             sha256: string;
-            /** @description The file's durable URI. */
+            /** @description The source file's durable URI. */
             uri: string;
         };
         /** @description An admitted document; source and receipt travel as exact JSON text. */

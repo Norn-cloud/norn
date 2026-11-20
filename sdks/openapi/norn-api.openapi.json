@@ -7810,6 +7810,38 @@
           }
         }
       },
+      "NornDatasetFile": {
+        "type": "object",
+        "description": "One landed dataset file, named by content.",
+        "required": [
+          "uri",
+          "sha256",
+          "rows",
+          "bytes"
+        ],
+        "properties": {
+          "bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Bytes in it.",
+            "minimum": 0
+          },
+          "rows": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Rows in it.",
+            "minimum": 0
+          },
+          "sha256": {
+            "type": "string",
+            "description": "Its SHA-256."
+          },
+          "uri": {
+            "type": "string",
+            "description": "The object's durable URI."
+          }
+        }
+      },
       "NornDatasetLoad": {
         "type": "object",
         "description": "The outcome of `POST /v1/datasets:load`.",
@@ -7817,8 +7849,13 @@
           "objectType",
           "connectionId",
           "load",
+          "manifest",
+          "receipt",
+          "commitSeq",
           "uri",
           "sha256",
+          "data",
+          "held",
           "rows",
           "rejected",
           "reasons",
@@ -7829,16 +7866,34 @@
           "bytes": {
             "type": "integer",
             "format": "int64",
-            "description": "File size in bytes.",
+            "description": "Source file size in bytes.",
+            "minimum": 0
+          },
+          "commitSeq": {
+            "type": "integer",
+            "format": "int64",
+            "description": "That commit's sequence number.",
             "minimum": 0
           },
           "connectionId": {
             "type": "string",
             "description": "The `upload` connection the load is reported under (SYNC-REPORT-1)."
           },
+          "data": {
+            "$ref": "#/components/schemas/NornDatasetFile",
+            "description": "The landed data file: every admitted row, columnar."
+          },
+          "held": {
+            "$ref": "#/components/schemas/NornDatasetFile",
+            "description": "The landed held-set file: every held-back row and its reason."
+          },
           "load": {
             "type": "string",
-            "description": "The load identity; answers over the dataset name it."
+            "description": "The landing identity; answers over the dataset name it."
+          },
+          "manifest": {
+            "type": "string",
+            "description": "MANIFEST-1: the committed manifest's identity."
           },
           "millis": {
             "type": "integer",
@@ -7862,6 +7917,10 @@
               "type": "string"
             }
           },
+          "receipt": {
+            "type": "string",
+            "description": "The receipt of the one commit that admitted the manifest."
+          },
           "rejected": {
             "type": "integer",
             "format": "int64",
@@ -7876,11 +7935,11 @@
           },
           "sha256": {
             "type": "string",
-            "description": "The file's SHA-256, verified by the engine."
+            "description": "The source file's SHA-256, verified by the engine."
           },
           "uri": {
             "type": "string",
-            "description": "The file's durable URI."
+            "description": "The source file's durable URI."
           }
         }
       },

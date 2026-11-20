@@ -89,6 +89,14 @@ pub enum CellError {
     /// DECISION-LEDGER-1: a decision resolution was refused (`decision.*`).
     #[error("{0}")]
     DecisionRefused(&'static str),
+    /// MANIFEST-1: a dataset manifest was refused (`dataset.*`, `bulk.*`).
+    #[error("{code}: {detail}")]
+    DatasetRefused {
+        /// The stable refusal code.
+        code: &'static str,
+        /// What was refused, for the caller.
+        detail: String,
+    },
     /// A historical input was recorded after the requested knowledge cutoff.
     #[error("core.world.temporal_leakage")]
     TemporalLeakage,

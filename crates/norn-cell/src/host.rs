@@ -330,6 +330,21 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
         })
     }
 
+    /// MANIFEST-COMMIT-1: commit `manifest` as the current dataset of its
+    /// type in the main world, at this host's clock and bound scope, and
+    /// return its identity and receipt. A retry keeps the first receipt.
+    ///
+    /// # Errors
+    /// As [`CellStore::commit_dataset_manifest`].
+    pub fn commit_dataset_manifest(
+        &mut self,
+        manifest: &crate::dataset_manifest::DatasetManifest,
+    ) -> Result<(String, crate::Receipt), CellError> {
+        let logical_time = self.now.as_millis();
+        self.store
+            .commit_dataset_manifest(MAIN_WORLD, &self.scope, logical_time, manifest)
+    }
+
     /// Commit one complete quantity operation using this host's injected clock
     /// and bound scope. Exact retries retain the original trusted timestamp.
     ///

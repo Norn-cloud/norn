@@ -21,10 +21,11 @@ use transparency_sha2::{Digest as _, Sha256};
 use super::{
     BucketTotals, Column, ColumnKind, ColumnProfile, EngineRefusal, EvaluateRequest,
     EvaluateResponse, ExportFormat, ExportRequest, FileFormat, Filter, FrontierRequest,
-    FrontierResponse, GroupKey, Literal, LoadRequest, LoadResponse, Lowered, MemberRow,
-    MembersRequest, MembersResponse, MirrorRow, PageClause, PageOp, PageOperand, PageRequest,
-    PageResponse, PageRow, ProfileRequest, ProfileResponse, Source, SyncRequest, TIME_LINK_COLUMN,
-    TableSchema, TenantId, Test, TimeLink, Value, hex,
+    FrontierResponse, GroupKey, HydrateRequest, LandResponse, LandedFile, Literal, LoadRequest,
+    LoadResponse, Lowered, MemberRow, MembersRequest, MembersResponse, MirrorRow, PageClause,
+    PageOp, PageOperand, PageRequest, PageResponse, PageRow, ProfileRequest, ProfileResponse,
+    Source, SyncRequest, TIME_LINK_COLUMN, TableSchema, TenantId, Test, TimeLink, ValidRange,
+    Value, hex,
 };
 
 /// An engine outcome: a typed refusal the cell maps to its own answer.
@@ -357,26 +358,104 @@ impl Engine {
             ));
         }
         self.with(&request.tenant, |conn| {
-            db(conn.execute_batch("BEGIN TRANSACTION"))?;
-            let loaded = load_file(conn, request, file);
-            match loaded {
-                Ok((rows, reasons)) => {
-                    db(conn.execute_batch("COMMIT"))?;
-                    let rejected = reasons.values().sum();
-                    Ok(LoadResponse {
-                        load: request.load.clone(),
-                        rows,
-                        rejected,
-                        reasons,
-                        bytes,
-                        millis: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
-                    })
-                }
-                Err(error) => {
-                    let _rolled_back = conn.execute_batch("ROLLBACK");
-                    Err(error)
-                }
+            load_locked(conn, request, file, bytes, started)
+        })
+    }
+
+    /// MANIFEST-LAND-1: [`Self::load`], then land the load as two Parquet
+    /// files in the scratch directory, written under the same lock: the data
+    /// file (every column of the cache table but the landing identity, in
+    /// source row order) and the held-set file (each held-back source row
+    /// with its reason and its text values). The caller sends both files to
+    /// object storage and deletes them.
+    ///
+    /// # Errors
+    /// As [`Self::load`], or the files cannot be written or read back.
+    pub fn land(&self, request: &LoadRequest, file: &Path) -> Outcome<Landed> {
+        let started = Instant::now();
+        let (digest, bytes) =
+            sha256_file(file).map_err(|error| refusal("bulk.unreadable", error.to_string()))?;
+        if digest != request.file.sha256 {
+            return Err(refusal(
+                "bulk.digest_mismatch",
+                "the file is not the recorded upload",
+            ));
+        }
+        let stem = request
+            .load
+            .replace(|c: char| !c.is_ascii_alphanumeric(), "_");
+        let data = self.scratch().join(format!("land-{stem}-data.parquet"));
+        let held = self.scratch().join(format!("land-{stem}-held.parquet"));
+        let (load, valid_time) = self.with(&request.tenant, |conn| {
+            let load = load_locked(conn, request, file, bytes, started)?;
+            let table = &request.table;
+            copy_parquet(
+                conn,
+                &format!(
+                    "SELECT {} FROM {} ORDER BY \":row\"",
+                    data_columns(table).join(", "),
+                    dataset_table(&table.name)
+                ),
+                &data,
+            )?;
+            copy_parquet(
+                conn,
+                &format!(
+                    "SELECT {} FROM {} ORDER BY \":row\", \":reason\"",
+                    held_columns(table).join(", "),
+                    quarantine_table(&table.name)
+                ),
+                &held,
+            )?;
+            Ok((load, valid_ranges(conn, table)?))
+        })?;
+        let landed = |path: &Path, rows: u64| -> Outcome<LandedFile> {
+            let (sha256, bytes) = sha256_file(path)
+                .map_err(|error| refusal("analytics.engine", error.to_string()))?;
+            Ok(LandedFile {
+                sha256,
+                rows,
+                bytes,
+            })
+        };
+        let response = LandResponse {
+            data: landed(&data, load.rows)?,
+            held: landed(&held, load.rejected)?,
+            load,
+            valid_time,
+        };
+        Ok(Landed {
+            response,
+            data,
+            held,
+        })
+    }
+
+    /// MANIFEST-CACHE-1: rebuild the table of a landing from its landed
+    /// files. Each file must be the one the manifest records (its SHA-256);
+    /// the rebuilt table is the one the landing wrote, row for row.
+    ///
+    /// # Errors
+    /// `bulk.digest_mismatch`, an unreadable file, or an engine failure.
+    pub fn hydrate(&self, request: &HydrateRequest, data: &Path, held: &Path) -> Outcome<()> {
+        for (path, expected) in [(data, &request.data.sha256), (held, &request.held.sha256)] {
+            let (digest, _bytes) =
+                sha256_file(path).map_err(|error| refusal("bulk.unreadable", error.to_string()))?;
+            if digest != *expected {
+                return Err(refusal(
+                    "bulk.digest_mismatch",
+                    "a landed file is not the one the manifest records",
+                ));
             }
+        }
+        self.with(&request.tenant, |conn| {
+            db(conn.execute_batch("BEGIN TRANSACTION"))?;
+            let rebuilt = rebuild(conn, request, data, held);
+            if rebuilt.is_err() {
+                let _rolled_back = conn.execute_batch("ROLLBACK");
+                return rebuilt;
+            }
+            db(conn.execute_batch("COMMIT"))
         })
     }
 
@@ -2085,14 +2164,9 @@ fn load_file(
     let quarantine = quarantine_table(&table.name);
     db(conn.execute_batch(&format!(
         "DROP TABLE IF EXISTS {dataset}; DROP TABLE IF EXISTS {quarantine}; CREATE TABLE {dataset} ({}); \
-         CREATE TABLE {quarantine} (\":row\" UBIGINT, \":load\" VARCHAR, \":reason\" VARCHAR{});",
+         CREATE TABLE {quarantine} ({});",
         dataset_ddl(table),
-        table.columns.iter().fold(String::new(), |mut out, c| {
-            out.push_str(", ");
-            out.push_str(&ident(&c.id));
-            out.push_str(" VARCHAR");
-            out
-        }),
+        quarantine_ddl(table),
     )))?;
     let mut columns = Vec::new();
     let mut values = Vec::new();
@@ -2117,7 +2191,7 @@ fn load_file(
     ))?;
     db(conn.execute(
         &format!(
-            "INSERT INTO {quarantine} SELECT \":row\", ?, \":reason\"{} FROM \":checked\" WHERE \":reason\" IS NOT NULL ORDER BY \":row\"",
+            "INSERT INTO {quarantine} SELECT \":row\", ?, \":reason\", NULL, TRUE{} FROM \":checked\" WHERE \":reason\" IS NOT NULL ORDER BY \":row\"",
             (0..table.columns.len()).fold(String::new(), |mut out, i| {
                 out.push_str(", c");
                 out.push_str(&i.to_string());
@@ -2151,6 +2225,182 @@ fn load_file(
         &format!("{} {}", request.file.sha256, request.file.uri),
     )?;
     Ok((rows, reasons))
+}
+
+/// The load step under the tenant's lock, in one transaction.
+fn load_locked(
+    conn: &Connection,
+    request: &LoadRequest,
+    file: &Path,
+    bytes: u64,
+    started: Instant,
+) -> Outcome<LoadResponse> {
+    db(conn.execute_batch("BEGIN TRANSACTION"))?;
+    match load_file(conn, request, file) {
+        Ok((rows, reasons)) => {
+            db(conn.execute_batch("COMMIT"))?;
+            let rejected = reasons.values().sum();
+            Ok(LoadResponse {
+                load: request.load.clone(),
+                rows,
+                rejected,
+                reasons,
+                bytes,
+                millis: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            })
+        }
+        Err(error) => {
+            let _rolled_back = conn.execute_batch("ROLLBACK");
+            Err(error)
+        }
+    }
+}
+
+/// Landed files in the engine's scratch directory. The caller sends them to
+/// object storage and then deletes them.
+#[derive(Debug)]
+pub struct Landed {
+    /// What was landed.
+    pub response: LandResponse,
+    /// The data file.
+    pub data: PathBuf,
+    /// The held-set file.
+    pub held: PathBuf,
+}
+
+/// The quarantine (held-set) table: each held-back source row with its
+/// reason, the rule that holds it (none for a row that could not be typed),
+/// whether it holds the row back, and the row's text values.
+fn quarantine_ddl(table: &TableSchema) -> String {
+    let mut columns = vec![
+        format!("{} UBIGINT", ident(":row")),
+        format!("{} VARCHAR", ident(":load")),
+        format!("{} VARCHAR", ident(":reason")),
+        format!("{} VARCHAR", ident(":rule")),
+        format!("{} BOOLEAN", ident(":holds")),
+    ];
+    columns.extend(
+        table
+            .columns
+            .iter()
+            .map(|c| format!("{} VARCHAR", ident(&c.id))),
+    );
+    columns.join(", ")
+}
+
+/// The data file's columns: the cache table's, without the landing identity.
+fn data_columns(table: &TableSchema) -> Vec<String> {
+    let mut columns = vec![ident(":id"), ident(":v"), ident(":row")];
+    for column in &table.columns {
+        columns.push(ident(&column.id));
+        if matches!(column.kind, ColumnKind::Timestamp | ColumnKind::Date) {
+            columns.push(derived(&column.id, "t"));
+            columns.push(derived(&column.id, "n"));
+        }
+    }
+    columns
+}
+
+/// The held-set file's columns: the quarantine table's, without the landing identity.
+fn held_columns(table: &TableSchema) -> Vec<String> {
+    let mut columns = vec![
+        ident(":row"),
+        ident(":reason"),
+        ident(":rule"),
+        ident(":holds"),
+    ];
+    columns.extend(table.columns.iter().map(|c| ident(&c.id)));
+    columns
+}
+
+fn quoted_path(path: &Path) -> String {
+    format!("'{}'", path.to_string_lossy().replace('\'', "''"))
+}
+
+/// Write one query's rows as a zstd Parquet file, in the query's order.
+fn copy_parquet(conn: &Connection, query: &str, path: &Path) -> Outcome<()> {
+    db(conn.execute_batch(&format!(
+        "COPY ({query}) TO {} (FORMAT parquet, COMPRESSION zstd, ROW_GROUP_SIZE 122880)",
+        quoted_path(path)
+    )))
+}
+
+/// Each temporal column's earliest and latest admitted value, by instant.
+fn valid_ranges(conn: &Connection, table: &TableSchema) -> Outcome<Vec<ValidRange>> {
+    let dataset = dataset_table(&table.name);
+    let mut ranges = Vec::new();
+    for column in &table.columns {
+        if !matches!(column.kind, ColumnKind::Timestamp | ColumnKind::Date) {
+            continue;
+        }
+        let (c, t, n) = (
+            ident(&column.id),
+            derived(&column.id, "t"),
+            derived(&column.id, "n"),
+        );
+        let end = |direction: &str| -> Outcome<Option<String>> {
+            let mut statement = db(conn.prepare(&format!(
+                "SELECT {c} FROM {dataset} WHERE {c} IS NOT NULL ORDER BY {t} {direction}, {n} {direction} LIMIT 1"
+            )))?;
+            let mut rows = db(statement.query([]))?;
+            match db(rows.next())? {
+                Some(row) => Ok(Some(db(row.get(0))?)),
+                None => Ok(None),
+            }
+        };
+        if let (Some(from), Some(to)) = (end("ASC")?, end("DESC")?) {
+            ranges.push(ValidRange {
+                column: column.id.clone(),
+                from,
+                to,
+            });
+        }
+    }
+    Ok(ranges)
+}
+
+/// MANIFEST-CACHE-1: the cache table and quarantine of a landing, from its files.
+fn rebuild(conn: &Connection, request: &HydrateRequest, data: &Path, held: &Path) -> Outcome<()> {
+    let table = &request.table;
+    let dataset = dataset_table(&table.name);
+    let quarantine = quarantine_table(&table.name);
+    db(conn.execute_batch(&format!(
+        "DROP TABLE IF EXISTS {dataset}; DROP TABLE IF EXISTS {quarantine}; \
+         CREATE TABLE {dataset} ({}); CREATE TABLE {quarantine} ({});",
+        dataset_ddl(table),
+        quarantine_ddl(table),
+    )))?;
+    let columns = data_columns(table);
+    let held_cols = held_columns(table);
+    let insert = |target: &str, columns: &[String], path: &Path| -> Outcome<()> {
+        let mut names = columns.to_vec();
+        names.push(ident(":load"));
+        let mut values = columns.to_vec();
+        values.push("?".to_owned());
+        db(conn.execute(
+            &format!(
+                "INSERT INTO {target} ({}) SELECT {} FROM read_parquet({})",
+                names.join(", "),
+                values.join(", "),
+                quoted_path(path)
+            ),
+            [&request.load],
+        ))?;
+        Ok(())
+    };
+    insert(&dataset, &columns, data)?;
+    insert(&quarantine, &held_cols, held)?;
+    set_meta(conn, &format!("load:{}", table.name), &request.load)?;
+    set_meta(
+        conn,
+        &format!("dataset:{}", table.name),
+        &schema_text(table)?,
+    )?;
+    set_meta(
+        conn,
+        &format!("lineage:{}", request.load),
+        &format!("{} {}", request.data.sha256, request.data.uri),
+    )
 }
 
 fn present(
