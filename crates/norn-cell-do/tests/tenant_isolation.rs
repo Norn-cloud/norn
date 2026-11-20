@@ -1054,7 +1054,7 @@ fn analytics_b() -> Host {
     store
         .commit_dataset_manifest(
             MAIN_WORLD,
-            "synthetic",
+            &scope.key(),
             norn_cell::provision::K1_CLOCK,
             &manifest,
             None,
