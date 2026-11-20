@@ -641,14 +641,15 @@ fn through_gate<E: SqlEngine>(
     match dry {
         Ok(replayed) => Ok(Gated::Replayed(Box::new(replayed))),
         // APPROVAL-WHEN-1: a call whose record the gate's `when` excludes
-        // commits as an ungated call does.
+        // commits as an ungated call does; an approved one still names the
+        // approval it consumes (S6c), so its call reads committed.
         Err(error)
             if crate::approvals::would_have_committed(&error)
                 && !crate::approvals::applies(&gate, &writes, |object_type, property| {
                     crate::approvals::semantics_in(cell.store().model(), object_type, property)
                 }) =>
         {
-            Ok(Gated::Commit)
+            Ok(Gated::Commit(approval))
         }
         Err(error) if crate::approvals::would_have_committed(&error) => {
             if approval.is_some() {
