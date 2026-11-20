@@ -321,9 +321,21 @@ fn a_load_resumes_after_the_runs_it_refused() {
     };
     // The four refused rows key one holding, so each is a run of its own.
     let mut snapshot: Vec<Value> = (0..4)
-        .map(|k| row(format!("SYN-disputed-{k}"), "demo/holding/disputed".into(), 1))
+        .map(|k| {
+            row(
+                format!("SYN-disputed-{k}"),
+                "demo/holding/disputed".into(),
+                1,
+            )
+        })
         .collect();
-    snapshot.extend((0..96).map(|k| row(format!("SYN-valid-{k:02}"), format!("demo/holding/valid/{k:02}"), 2)));
+    snapshot.extend((0..96).map(|k| {
+        row(
+            format!("SYN-valid-{k:02}"),
+            format!("demo/holding/valid/{k:02}"),
+            2,
+        )
+    }));
     let parse = |snapshot: &[Value]| {
         norn_cell_do::recorded::Recorded::parse(
             &json!({ "profile": export["profile"], "snapshot": snapshot }),
@@ -336,7 +348,13 @@ fn a_load_resumes_after_the_runs_it_refused() {
     let mut store = seed::provision(NativeEngine::open_in_memory().unwrap(), &scope).unwrap();
     let disputed = parse(&snapshot[..4]);
     let conflicting: Vec<Value> = (0..4)
-        .map(|k| row(format!("SYN-disputed-{k}"), "demo/holding/disputed".into(), 9))
+        .map(|k| {
+            row(
+                format!("SYN-disputed-{k}"),
+                "demo/holding/disputed".into(),
+                9,
+            )
+        })
         .collect();
     for ((raw, input), (other, _)) in disputed.iter().zip(parse(&conflicting)) {
         store.inject_mapping_bundle(raw, input).unwrap();

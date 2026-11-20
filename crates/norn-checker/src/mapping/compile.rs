@@ -3285,7 +3285,8 @@ fn conform(
         // Derivation::V1DecimalText: the plain-text grammar it shipped with;
         // other text falls through to the generic refusal below.
         (Some(Json::String(text)), Type::Number | Type::Decimal { .. })
-            if derivation == Derivation::V1DecimalText && norn_ir::Decimal::is_wire_decimal(text) =>
+            if derivation == Derivation::V1DecimalText
+                && norn_ir::Decimal::is_wire_decimal(text) =>
         {
             number_value(text)
         }
@@ -3626,7 +3627,12 @@ mod conform_tests {
     fn exact_decimal_text_is_a_decimal() {
         for text in ["2500.00", "0", "-12.5", "0.75", "1000"] {
             assert_eq!(
-                conform(Some(&Json::String(text.to_owned())), &decimal(), Derivation::V2).unwrap(),
+                conform(
+                    Some(&Json::String(text.to_owned())),
+                    &decimal(),
+                    Derivation::V2
+                )
+                .unwrap(),
                 number_value(text).unwrap(),
                 "{text}"
             );
@@ -3635,7 +3641,12 @@ mod conform_tests {
             "", "1e3", "+5", " 5", "05", "1.", ".5", "1,000.00", "12.5.1",
         ] {
             assert!(
-                conform(Some(&Json::String(text.to_owned())), &decimal(), Derivation::V2).is_err(),
+                conform(
+                    Some(&Json::String(text.to_owned())),
+                    &decimal(),
+                    Derivation::V2
+                )
+                .is_err(),
                 "{text:?}"
             );
         }
@@ -3650,7 +3661,14 @@ mod conform_tests {
             number_value("7800.00").unwrap()
         );
         // Text stays text for an integer.
-        assert!(conform(Some(&Json::String("5".to_owned())), &Type::Integer, Derivation::V2).is_err());
+        assert!(
+            conform(
+                Some(&Json::String("5".to_owned())),
+                &Type::Integer,
+                Derivation::V2
+            )
+            .is_err()
+        );
     }
 
     /// S1 (#1488): the second unversioned derivation is main's
@@ -3665,7 +3683,12 @@ mod conform_tests {
         );
         assert!(conform(Some(&text("200.50")), &decimal(), Derivation::V1).is_err());
         assert_eq!(
-            conform(Some(&text("1,000.00")), &decimal(), Derivation::V1DecimalText).unwrap_err(),
+            conform(
+                Some(&text("1,000.00")),
+                &decimal(),
+                Derivation::V1DecimalText
+            )
+            .unwrap_err(),
             "value \"1,000.00\" is not a decimal with up to 2 fraction digits (a JSON number, or exact decimal text such as \"12.50\")"
         );
     }
@@ -3673,8 +3696,12 @@ mod conform_tests {
     #[test]
     fn a_refused_value_names_itself_and_the_type_expected() {
         // Text outside the wire grammar names the grammar (MAP-DECIMAL-TEXT-1).
-        let text =
-            conform(Some(&Json::String("1,000.00".to_owned())), &decimal(), Derivation::V2).unwrap_err();
+        let text = conform(
+            Some(&Json::String("1,000.00".to_owned())),
+            &decimal(),
+            Derivation::V2,
+        )
+        .unwrap_err();
         assert!(text.contains("JSON decimal"), "{text}");
         let refused = conform(Some(&Json::Bool(true)), &decimal(), Derivation::V2).unwrap_err();
         assert_eq!(

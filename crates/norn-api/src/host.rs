@@ -463,7 +463,12 @@ impl<E: SqlEngine> DevHost<E> {
                 // pending; when it cannot fit, the continuation resumes this
                 // pending page from its first member.
                 if finishes && spent(report.work_ms, commit_ms) {
-                    stop = Some(members.first().and_then(|id| position(id)).unwrap_or(settled));
+                    stop = Some(
+                        members
+                            .first()
+                            .and_then(|id| position(id))
+                            .unwrap_or(settled),
+                    );
                     break;
                 }
                 if self.observing(|cell| cell.finish_mapping_page(page_id))? {
