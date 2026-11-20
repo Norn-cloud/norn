@@ -29,6 +29,8 @@ mod duckdb_transform;
 mod engine_fixture_record;
 #[path = "../tests/engine_upgrade.rs"]
 mod engine_upgrade;
+#[path = "../tests/engine_upgrade_mined.rs"]
+mod engine_upgrade_mined;
 #[path = "../tests/exact_question.rs"]
 mod exact_question;
 #[path = "../tests/exact_values.rs"]
