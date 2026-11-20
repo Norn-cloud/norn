@@ -308,7 +308,7 @@ impl<E: SqlEngine> CellStore<E> {
         let pinned = manifest.pins.definitions_version;
         // The definitions version is re-read inside the commit transaction:
         // an install between the landing's first step and this commit refuses.
-        let guarded = self.commit_guarded(
+        let guarded = self.commit_guarded_unchecked(
             &batch,
             |reader| {
                 if reader.active_definitions_version()?.unwrap_or(0) == pinned {
