@@ -1,7 +1,7 @@
 // TIMER-ALARM-1: the Durable Object's wake rules (wake.mjs), over a fake
 // storage and cell. Run: bun test ./wake.test.mjs (from apps/norn-cell-do).
 import { describe, expect, test } from "bun:test";
-import { RECOVERY_MS, Wake } from "./wake.mjs";
+import { RECONCILING, RECOVERY_MS, Wake } from "./wake.mjs";
 
 const NOW = 1_800_000_000_000;
 
@@ -185,5 +185,49 @@ describe("opening", () => {
     const store = storage();
     await new Wake(store).opened(cell({ deadlines: [NOW - 10_000] }), NOW);
     expect(store.alarm).toBe(NOW);
+  });
+});
+
+// SOURCE-RESOLVE-1 (#1478 r5): a cell whose reconciliation failed again
+// refuses its deadline lookup (`defs.stale`). The open and the request go on
+// with the recovery wake armed, so dispatch answers with its own reply.
+describe("a cell still reconciling", () => {
+  /** A serving cell whose deadline lookup refuses as the wasm binding throws it. */
+  function reconciling() {
+    return {
+      ...cell(),
+      nextDue() {
+        throw RECONCILING;
+      },
+    };
+  }
+
+  test("a cold open keeps the recovery wake and does not throw", async () => {
+    const store = storage();
+    await new Wake(store).opened(reconciling(), NOW);
+    expect(store.alarm).toBe(NOW + RECOVERY_MS);
+  });
+
+  test("the rearm after a request keeps the recovery wake and leaves the reply standing", async () => {
+    const store = storage();
+    const wake = new Wake(store);
+    const served = reconciling();
+    await wake.beforeWrite(served, NOW);
+    const reply = await (async () => {
+      try {
+        return { status: 200, body: "applied" };
+      } finally {
+        await wake.afterWrite(served, NOW + 1_000);
+      }
+    })();
+    expect(reply).toEqual({ status: 200, body: "applied" });
+    expect(store.alarm).toBe(NOW + RECOVERY_MS);
+    expect(wake.writing).toBe(0);
+  });
+
+  test("any other lookup failure still propagates", async () => {
+    const store = storage();
+    const broken = { ...cell(), nextDue() { throw "host.error"; } };
+    await expect(new Wake(store).opened(broken, NOW)).rejects.toBe("host.error");
   });
 });

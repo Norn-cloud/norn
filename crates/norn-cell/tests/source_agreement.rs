@@ -1710,3 +1710,59 @@ fn source_resolve_1_a_late_older_version_adds_no_edge_at_its_abandoned_key() {
         );
     }
 }
+
+/// SOURCE-RESOLVE-1 (#1478 r5 S6): `ERPNext` is the holding's system of
+/// record and Odoo a check. `ERPNext` reports north gold at 2765 g on
+/// 2026-11-03, Odoo at 2458 g on 2026-10-20, and on 2026-11-12 a newer
+/// `ERPNext` upsert moves its record to another holding, leaving only the
+/// check. Delivered either way round, the stock answer counts north only in
+/// the week `ERPNext` decides it: the check never decides, before or after,
+/// and `ERPNext`'s value does not carry past the move.
+#[test]
+fn source_resolve_1_a_system_of_record_that_moves_away_leaves_no_carried_value_in_either_order() {
+    let directory = tempfile::tempdir().expect("directory");
+    let moved = format!("{NORTH}/moved");
+    let erpnext: Edit = |r| {
+        r.insert("quantity".into(), json!(2765));
+        r.insert("modified".into(), json!("2026-11-03T00:00:00Z"));
+    };
+    let odoo: Edit = |r| {
+        r.insert("quantity".into(), json!(2458));
+        r.insert("write_date".into(), json!("2026-10-20T00:00:00Z"));
+    };
+    let mut answers = Vec::new();
+    for late in [false, true] {
+        let mut cell = setup_with(
+            &directory.path().join(format!("record-moved-{late}.sqlite")),
+            holding_system_of_record,
+        );
+        let moved_ref = moved.clone();
+        let move_it = |cell: &mut Cell| {
+            let moved_ref = moved_ref.clone();
+            sync_rows(cell, "erpnext", "v2", is_north, move |r| {
+                erpnext(r);
+                r.insert("custom_norn_ref".into(), json!(moved_ref.clone()));
+                r.insert("modified".into(), json!("2026-11-12T00:00:00Z"));
+            });
+        };
+        if late {
+            sync_north(&mut cell, "odoo", "snapshot", odoo);
+            move_it(&mut cell);
+            sync_north(&mut cell, "erpnext", "snapshot", erpnext);
+        } else {
+            sync_north(&mut cell, "erpnext", "snapshot", erpnext);
+            sync_north(&mut cell, "odoo", "snapshot", odoo);
+            move_it(&mut cell);
+        }
+        let live = stock_live(&cell);
+        let (_, known) = stock_known_now(&cell);
+        assert_eq!(known, live, "late {late}: the snapshot is the live answer");
+        assert_eq!(
+            live.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["2026-11-02"],
+            "late {late}: north only while the system of record decides: {live:#?}"
+        );
+        answers.push(live);
+    }
+    assert_eq!(answers[0], answers[1]);
+}

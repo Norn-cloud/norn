@@ -83,7 +83,7 @@ pub use error::CellError;
 pub use fork::{ForkEngine, ForkPin, StoreImage};
 pub use history::{FactSnapshot, FactVersionEvidence, HistoricalEvidence, KnowledgeCutoff};
 pub use host::{CommitRecord, PerformClaim, Responder, SqliteCell};
-pub use mapping_process::{MappingOutcome, WITHHELD_REASON, fail_source_reconciliation_chunks};
+pub use mapping_process::{MappingOutcome, WITHHELD_REASON};
 pub use model::{BindingIndexSpec, Model, ModelDefinitionSnapshot};
 pub use read::{
     BindingSortValue, BindingSortedCandidate, BindingSortedPosition, FindingLedgerPage,

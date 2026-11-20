@@ -796,8 +796,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     /// time when every report is withdrawn is an explicit withdrawal slice
     /// (`true`, carrying only its valid time), so the subject is absent from
     /// then on rather than carried forward. A slice with an undecided
-    /// property is absent; one no report decides carries the previous slice
-    /// forward. `None` when the type is not resolved across sources.
+    /// property is absent: after a decided slice it is an explicit
+    /// withdrawal slice, so the subject is absent from then on; one no
+    /// report decides carries the previous slice forward. `None` when the type is not resolved across sources.
     ///
     /// # Errors
     /// As [`Self::source_resolution`].
@@ -889,7 +890,22 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                     | PropertyDecision::Decided { value, .. }
                     | PropertyDecision::Agreed { value } => value,
                     PropertyDecision::Conflict => RuntimeValue::Null,
-                    PropertyDecision::Undecided { .. } => continue 'slices,
+                    PropertyDecision::Undecided { .. } => {
+                        // The subject is withheld from here on, as its live
+                        // value is (the system of record moved away and only
+                        // checks remain): a decided slice before it must not
+                        // carry forward.
+                        if slices.last().is_some_and(|(_, absent)| !absent) {
+                            slices.push((
+                                RuntimeObject::from([(
+                                    time_property.to_owned(),
+                                    RuntimeValue::from(text.as_str()),
+                                )]),
+                                true,
+                            ));
+                        }
+                        continue 'slices;
+                    }
                 };
                 values.insert(property.property, value);
             }

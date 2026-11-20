@@ -326,7 +326,8 @@ fn candidate<E: SqlEngine>(
     body: &str,
 ) -> Result<(Candidate, Option<u64>), Refusal> {
     let (request, tenant) = submission(host, body)?;
-    let active = host.active_definitions()?.ok_or_else(|| {
+    let (active, cell) = host.definitions_for_change()?;
+    let active = active.ok_or_else(|| {
         conflict(
             codes::NOT_INSTALLED,
             "the cell has no definitions to change",
@@ -345,7 +346,6 @@ fn candidate<E: SqlEngine>(
     let (added, changed, same) = diff(&tenant, &active)?;
     let unchanged = admitted.canonical_set == active.canonical_set;
     let (model, new_object_types, next_version, checked_objects) = {
-        let cell = host.cell()?;
         let store = cell.store();
         let serving = serves_actions(store.model());
         let model = reopen_model(&admitted.canonical_set, serving)
@@ -557,12 +557,16 @@ pub fn apply_definitions<E: SqlEngine>(
     }
     // HOST-INSTALL-LIVE-1: the install itself runs the live-law check, under
     // the write epoch, on the migration candidate's view.
-    let installed = host.install_definitions(
+    // The count is read under the install's own lock: the revision has
+    // committed, so a reconciliation still pending never turns it into a
+    // refusal (SOURCE-RESOLVE-1).
+    let (installed, checked) = host.install_definitions_counted(
         model,
         install_input(&admitted, &active, now_ms),
         Some(expected),
+        |_| Ok(()),
     )?;
-    plan.checked_objects = host.cell()?.store().live_law_checked();
+    plan.checked_objects = checked;
     Ok(DefinitionsApplied {
         outcome: ApplyOutcome::Installed,
         definitions_version: installed.version,

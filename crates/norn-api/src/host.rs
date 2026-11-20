@@ -36,10 +36,18 @@ pub struct DevHost<E: SqlEngine> {
     reconcile_pending: std::sync::atomic::AtomicBool,
 }
 
+/// SOURCE-RESOLVE-1: whether `refusal` is the retryable refusal a live read
+/// or action gets while the cell's values are still being reconciled to its
+/// active definitions.
+#[must_use]
+pub fn is_reconciling(refusal: &Refusal) -> bool {
+    refusal.retryable && refusal.code == "defs.stale"
+}
+
 /// A reconciliation that failed again stays pending (and gated); any other
 /// refusal stands.
 fn still_reconciling(refusal: Refusal) -> Result<(), Refusal> {
-    if refusal.retryable && refusal.code == "defs.stale" {
+    if is_reconciling(&refusal) {
         Ok(())
     } else {
         Err(refusal)
@@ -581,6 +589,28 @@ impl<E: SqlEngine> DevHost<E> {
             .map_err(Refusal::host)
     }
 
+    /// SOURCE-RESOLVE-1: the active revision for planning a definitions
+    /// change, and the cell to preflight it on. The definitions themselves
+    /// are current while their reconciliation is pending (only the stored
+    /// values lag), so a corrective change is planned and applied over them
+    /// instead of waiting on a reconciliation that keeps failing. Live reads
+    /// and actions stay gated.
+    /// # Errors
+    /// Poisoned synchronization or a store failure refuses closed.
+    pub(crate) fn definitions_for_change(
+        &self,
+    ) -> Result<(Option<InstalledDefinitionSet>, CellGuard<'_, E>), Refusal> {
+        self.resume_source_resolution().or_else(still_reconciling)?;
+        let _epoch = self.definitions.read().map_err(Refusal::host)?;
+        let cell = self.cell_unchecked()?;
+        let active = cell
+            .store()
+            .read()
+            .installed_definitions(None)
+            .map_err(Refusal::host)?;
+        Ok((active, cell))
+    }
+
     /// Install a checker-admitted definition set as the next revision, only
     /// if the active revision is still `expected_version`. The trusted host
     /// process calls this (`norn dev`); no network route reaches it.
@@ -614,10 +644,36 @@ impl<E: SqlEngine> DevHost<E> {
         expected_version: Option<u64>,
         check: impl FnOnce(&CellStore<E>) -> Result<(), Refusal>,
     ) -> Result<InstalledDefinitionSet, Refusal> {
+        self.install_definitions_counted(candidate_model, input, expected_version, check)
+            .map(|(installed, _)| installed)
+    }
+
+    /// [`Self::install_definitions_checked`], with how many live objects the
+    /// install evaluated under the candidate's governing laws, read under the
+    /// same exclusive epoch the install committed in (HOST-INSTALL-LIVE-1).
+    /// The count never depends on the reconciliation that follows: a
+    /// committed revision is reported as committed even when its
+    /// reconciliation is still pending.
+    ///
+    /// SOURCE-RESOLVE-1: an earlier activation whose reconciliation keeps
+    /// failing does not lock the cell: this install supersedes it (the
+    /// reconciliation that follows recomputes every subject under the newer
+    /// definitions), and live reads stay gated until one finishes.
+    /// # Errors
+    /// As [`Self::install_definitions_checked`].
+    pub fn install_definitions_counted(
+        &self,
+        candidate_model: Model,
+        input: InstalledDefinitionInput,
+        expected_version: Option<u64>,
+        check: impl FnOnce(&CellStore<E>) -> Result<(), Refusal>,
+    ) -> Result<(InstalledDefinitionSet, u64), Refusal> {
         let _epoch = self.definition_write()?;
         let mut cell = self.cell_unchecked()?;
-        // An earlier activation's reconciliation finishes before another.
-        cell.resume_reconciliation(self)?;
+        // An earlier activation's reconciliation finishes before another, or
+        // is superseded by it when it fails again.
+        cell.resume_reconciliation(self)
+            .or_else(still_reconciling)?;
         check(cell.store())?;
         check_reopens(
             &candidate_model,
@@ -650,6 +706,7 @@ impl<E: SqlEngine> DevHost<E> {
                 }
                 Refusal::host(error)
             })?;
+        let checked = cell.store().live_law_checked();
         // SOURCE-RESOLVE-1: changed authorities take effect on the stored
         // values in the same definition epoch; if that fails, the durable
         // mark stays and nothing is served until a later request finishes it.
@@ -658,7 +715,7 @@ impl<E: SqlEngine> DevHost<E> {
         self.model_changed(&cell);
         cell.resume_reconciliation(self)
             .or_else(still_reconciling)?;
-        Ok(installed)
+        Ok((installed, checked))
     }
 
     /// Tell the authorizer the model changed, under the write epoch the

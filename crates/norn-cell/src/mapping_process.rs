@@ -261,9 +261,6 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
                 // Already consumed: this exact reconciliation was committed.
                 continue;
             }
-            if injected_reconcile_failure() {
-                return Err(CellError::OutOfRange("source resolution reconciliation"));
-            }
             let turn = DecisionTurn {
                 id: observed.id.0.clone(),
                 now: self.now(),
@@ -296,26 +293,6 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
 
 /// Subjects one reconciliation commit writes.
 const RECONCILE_CHUNK: usize = 256;
-
-static FAILING_RECONCILE_CHUNKS: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
-
-/// Make the next `chunks` reconciliation chunks fail before they commit,
-/// as an interrupted reconciliation does. For tests of the pending mark.
-#[doc(hidden)]
-pub fn fail_source_reconciliation_chunks(chunks: usize) {
-    FAILING_RECONCILE_CHUNKS.store(chunks, std::sync::atomic::Ordering::SeqCst);
-}
-
-fn injected_reconcile_failure() -> bool {
-    FAILING_RECONCILE_CHUNKS
-        .fetch_update(
-            std::sync::atomic::Ordering::SeqCst,
-            std::sync::atomic::Ordering::SeqCst,
-            |left| left.checked_sub(1),
-        )
-        .is_ok()
-}
 
 /// The reason SOURCE-RESOLVE-1 withholds a row, as a sync counts it.
 pub const WITHHELD_REASON: &str = "source.resolution.withheld";
