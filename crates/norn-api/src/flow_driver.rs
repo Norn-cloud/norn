@@ -157,7 +157,7 @@ fn step_call_key(step_key: &str, attempt: &RuntimeValue) -> Result<String, Refus
 /// host's own identity for a flow step's call, which a direct call never
 /// takes.
 #[must_use]
-pub fn is_step_call_key(key: &str) -> bool {
+pub(crate) fn is_step_call_key(key: &str) -> bool {
     key.strip_prefix(STEP_CALL_PREFIX).is_some_and(|digest| {
         digest.len() == STEP_CALL_DIGITS
             && digest
@@ -691,8 +691,9 @@ fn settle<E: SqlEngine>(
     Ok(true)
 }
 
-/// Record a step's result and commit its run's result turn under `cell`; `recorded` when the result is recorded already
-/// and only its consumption is due.
+/// Record a step's result and commit its run's result turn under `cell`;
+/// `recorded` when the result is recorded already and only its consumption
+/// is due.
 fn deliver_in<E: SqlEngine>(
     cell: &mut ActionCell<E>,
     delivery: Delivery<'_>,

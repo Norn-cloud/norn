@@ -956,8 +956,12 @@ fn approve_dispatching<E: SqlEngine>(cell: &Cell<E>, id: &str, before: &dyn Fn()
 /// revised after the approval is recorded and before its call dispatches as
 /// its requester: the approval is refused `approval.definition_changed`.
 fn approve_racing_a_revision<E: SqlEngine>(cell: &Cell<E>, id: &str) {
-    let call = approve_dispatching(cell, id, &|| revise_gate(cell));
-    assert_eq!(call["code"], json!("approval.definition_changed"), "{call}");
+    let dispatched = approve_dispatching(cell, id, &|| revise_gate(cell));
+    assert_eq!(
+        dispatched["code"],
+        json!("approval.definition_changed"),
+        "{dispatched}"
+    );
 }
 
 /// S5c: of two approvals of a step's exact call, the one the ledger
