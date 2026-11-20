@@ -386,6 +386,31 @@ fn a_loaded_datasets_grid_equals_the_native_grid_of_the_same_rows() {
             // CSV cannot carry as themselves, is not a correspondence case.
             continue;
         }
+        // MANIFEST-LINEAGE-1: a dataset row traces to the manifest that
+        // admitted it and to its source and data files, by content hash and
+        // row offset; a row past the source is absent.
+        let lineage_path = format!("/v1/datasets/{name}/rows/1:lineage");
+        let (traced, routed) = get(&host, &principals, &transport, ADMIN, &lineage_path, SCOPE);
+        assert!(routed, "{name}: a dataset row's lineage is the engine's");
+        assert_eq!(traced.status, 200, "{name}: {}", traced.body);
+        let traced: Value = serde_json::from_str(&traced.body).unwrap();
+        assert_eq!(traced["manifest"], loaded["manifest"], "{name}");
+        assert_eq!(traced["commitSeq"], loaded["commitSeq"], "{name}");
+        assert_eq!(traced["source"]["sha256"], loaded["sha256"], "{name}");
+        assert_eq!(traced["data"]["sha256"], loaded["data"]["sha256"], "{name}");
+        assert_eq!(
+            (&traced["data"]["row"], &traced["held"]),
+            (&json!(1), &json!(false)),
+            "{name}"
+        );
+        let past = format!("/v1/datasets/{name}/rows/{}:lineage", raw.len() + 1);
+        assert_eq!(
+            get(&host, &principals, &transport, ADMIN, &past, SCOPE)
+                .0
+                .status,
+            404,
+            "{name}"
+        );
         for ((filter, sort), native) in queries.iter().zip(&before) {
             let (engine, routed) = get(
                 &host,

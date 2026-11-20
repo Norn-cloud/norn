@@ -139,6 +139,10 @@ pub struct DatasetManifest {
     pub counts: ManifestCounts,
     /// Each temporal column's range over the admitted rows.
     pub valid_time: Vec<ValidRange>,
+    /// MANIFEST-MARK-1: the declared markings of each marked column; every
+    /// read of the dataset projects those columns as the reader's masks say.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub markings: BTreeMap<String, Vec<String>>,
 }
 
 impl DatasetManifest {
@@ -220,6 +224,25 @@ impl<E: SqlEngine> CellStore<E> {
         })
     }
 
+    /// MANIFEST-MARK-1: the declared markings of each marked column of `table`.
+    ///
+    /// # Errors
+    /// An unknown type.
+    pub fn dataset_markings(
+        &self,
+        object_type: &str,
+        table: &TableSchema,
+    ) -> Result<BTreeMap<String, Vec<String>>, CellError> {
+        Ok(self
+            .model()
+            .effective_property_markings(object_type)?
+            .into_iter()
+            .filter(|(column, markings)| {
+                !markings.is_empty() && table.columns.iter().any(|c| c.id == *column)
+            })
+            .collect())
+    }
+
     /// MANIFEST-COMMIT-1: commit `manifest` to `world` as one governed
     /// command and return its identity and receipt. The pins must be the
     /// current ones (MANIFEST-PIN-1). A retry of the same manifest returns
@@ -254,7 +277,9 @@ impl<E: SqlEngine> CellStore<E> {
         }
         let current_table = self.analytics_table(&manifest.object_type)?;
         let current = self.dataset_pins(&manifest.object_type, &manifest.binding)?;
+        let markings = self.dataset_markings(&manifest.object_type, &manifest.table)?;
         if current_table != manifest.table
+            || markings != manifest.markings
             || current.model_hash != manifest.pins.model_hash
             || current.binding != manifest.pins.binding
             || current.laws != manifest.pins.laws

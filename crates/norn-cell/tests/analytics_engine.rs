@@ -2317,6 +2317,7 @@ fn manifest_of(
             held_by_rules: 0,
         },
         valid_time: response.valid_time.clone(),
+        markings: BTreeMap::new(),
     }
 }
 

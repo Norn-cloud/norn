@@ -896,6 +896,33 @@ pub struct SettleRequest {
     pub findings: Vec<RowFinding>,
 }
 
+/// MANIFEST-LINEAGE-1: one source row of a landing, by its offset.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LineageRequest {
+    /// The tenant.
+    pub tenant: TenantId,
+    /// The dataset's table.
+    pub table: String,
+    /// The landing the manifest names.
+    pub load: String,
+    /// The source row offset (1-based, in file order).
+    pub row: u64,
+}
+
+/// What the landing holds for one source row.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LineageResponse {
+    /// Whether the row was admitted to the data file.
+    pub admitted: bool,
+    /// Why it was not, when it was not typed (`bulk.*`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refused: Option<String>,
+    /// Every rule it fails.
+    pub findings: Vec<RowFinding>,
+}
+
 /// MANIFEST-LAND-1: load a dataset file and land it as columnar files. The
 /// typed rows go to the data file and the held-back rows to the held file,
 /// each written to its presigned PUT URL. The engine table that answers

@@ -643,6 +643,103 @@
         ]
       }
     },
+    "/v1/datasets/{type}/rows/{row}:lineage": {
+      "get": {
+        "tags": [
+          "crate::analytics_routes"
+        ],
+        "summary": "MANIFEST-LINEAGE-1: trace one dataset row, as a question answer or the\nrecords grid names it, to the manifest that admitted it, the source\nupload and the data file, each by content hash and row offset, with what\nheld it back. Held-back rows are traced too. Read like the type's\nrecords; no value is disclosed.",
+        "description": "# Errors\nA denied gate (one opaque 403), no dataset or no such row (404), or an\nunreachable engine.",
+        "operationId": "dataset_lineage",
+        "parameters": [
+          {
+            "name": "type",
+            "in": "path",
+            "description": "The dataset's object type.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "row",
+            "in": "path",
+            "description": "The source row offset.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The row's lineage.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NornDatasetLineage"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The request was refused: not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
     "/v1/datasets:load": {
       "post": {
         "tags": [
@@ -7839,6 +7936,74 @@
           "uri": {
             "type": "string",
             "description": "The object's durable URI."
+          }
+        }
+      },
+      "NornDatasetLineage": {
+        "type": "object",
+        "description": "The outcome of `GET /v1/datasets/{type}/rows/{row}:lineage`.",
+        "required": [
+          "objectType",
+          "row",
+          "manifest",
+          "commitSeq",
+          "source",
+          "findings",
+          "held"
+        ],
+        "properties": {
+          "commitSeq": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The commit that admitted it.",
+            "minimum": 0
+          },
+          "data": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NornLineageFile",
+                "description": "The data file, at the row; absent when the row was not typed."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornRowFinding"
+            },
+            "description": "Every rule the row fails."
+          },
+          "held": {
+            "type": "boolean",
+            "description": "Whether the row is held back (not typed, or failing a rule that holds)."
+          },
+          "manifest": {
+            "type": "string",
+            "description": "The manifest that admitted the dataset."
+          },
+          "objectType": {
+            "type": "string",
+            "description": "The dataset's object type."
+          },
+          "refused": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the row was not typed (`bulk.*`), if it was not."
+          },
+          "row": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The source row offset; dataset answers name rows by it.",
+            "minimum": 0
+          },
+          "source": {
+            "$ref": "#/components/schemas/NornLineageFile",
+            "description": "The source upload, at the row."
           }
         }
       },
@@ -32422,6 +32587,31 @@
         },
         "additionalProperties": false
       },
+      "NornLineageFile": {
+        "type": "object",
+        "description": "One file a dataset row is traced through, and the row's offset in it.",
+        "required": [
+          "uri",
+          "sha256",
+          "row"
+        ],
+        "properties": {
+          "row": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The row's source offset (1-based, in source file order); the data\nfile carries it as its `:row` column.",
+            "minimum": 0
+          },
+          "sha256": {
+            "type": "string",
+            "description": "Its SHA-256."
+          },
+          "uri": {
+            "type": "string",
+            "description": "The object's durable URI."
+          }
+        }
+      },
       "NornLinkCount": {
         "type": "object",
         "description": "The visible links of one declared link type in one direction.",
@@ -34178,6 +34368,29 @@
           },
           "value": {
             "description": "The stored value, of the property's type; decimals are exact JSON number tokens."
+          }
+        }
+      },
+      "NornRowFinding": {
+        "type": "object",
+        "description": "One law or invariant a dataset row fails.",
+        "required": [
+          "rule",
+          "label",
+          "holds"
+        ],
+        "properties": {
+          "holds": {
+            "type": "boolean",
+            "description": "Whether it holds the row back."
+          },
+          "label": {
+            "type": "string",
+            "description": "The law (`law:<id>`) or invariant (`invariant:<id>`)."
+          },
+          "rule": {
+            "type": "string",
+            "description": "The rule identity (canonical JSON of its reference)."
           }
         }
       },
