@@ -19,9 +19,11 @@ use proptest::strategy::Strategy as _;
 
 use norn_cell::analytics::engine::{Engine, Settings};
 use norn_cell::analytics::{
-    EvaluateResponse, FileFormat, FileSource, GroupKey, LoadRequest, MembersRequest,
-    MembershipDigest, Source, SyncRequest, TenantId, bucket_value, lower, table_schema,
+    EvaluateResponse, FileFormat, FileSource, GroupKey, LandRequest, LoadRequest, MembersRequest,
+    MembershipDigest, Source, StoreRequest, StoredObject, SyncRequest, TenantId, bucket_value,
+    lower, table_schema,
 };
+use norn_cell::dataset_manifest::ManifestPins;
 use norn_cell::compute::{QueryContext, QueryResult};
 use norn_cell::{CellError, CellStore, CommitBatch, FactWriteRow, Model};
 use norn_checker::EffectiveCatalog;
@@ -2154,27 +2156,90 @@ const LANDED_CSV: [&str; 5] = [
     "gold,2026-10-25T00:00:00Z,abc,1,0",
 ];
 
-/// MANIFEST-LAND-1 / MANIFEST-CACHE-1: a landing writes the admitted rows and
-/// the held set as Parquet named by content; another engine rebuilt from those
-/// files answers exactly as the one that landed them; a changed file refuses.
+/// A landing of `LANDED_CSV` under `attempt`: the attempt begun, its source
+/// file written, and the request that lands it.
+fn begin_landing(engine: &Engine, plan: &QuestionPlan, attempt: &str) -> LandRequest {
+    let bytes = LANDED_CSV.iter().fold(String::new(), |mut out, line| {
+        out.push_str(line);
+        out.push('\n');
+        out
+    });
+    let (_path, mut file) = engine.begin_attempt(&tenant(), attempt).expect("begun");
+    file.write_all(bytes.as_bytes()).expect("written");
+    drop(file);
+    let sha256 = norn_cell::analytics::hex_digest(bytes.as_bytes());
+    LandRequest {
+        load: load_request(plan, "land-1", sha256),
+        pins: ManifestPins {
+            definitions_version: 1,
+            model_hash: "m".into(),
+            binding: "b".into(),
+            mapping: "test.mapping@x".into(),
+            laws: "l".into(),
+        },
+        landing: "landing-1".into(),
+        attempt: attempt.into(),
+    }
+}
+
+fn store_request(request: &LandRequest, landed: &norn_cell::analytics::LandResponse) -> StoreRequest {
+    let object = |sha: &str| StoredObject {
+        uri: format!("s3://synthetic/datasets/{sha}.parquet"),
+        url: String::new(),
+    };
+    StoreRequest {
+        land: request.clone(),
+        landed: landed.clone(),
+        data: object(&landed.data.sha256),
+        held: object(&landed.held.sha256),
+    }
+}
+
+/// MANIFEST-02 / MANIFEST-LAND-1 / MANIFEST-CACHE-1: a landing runs in its
+/// own attempt (begun once, in the tenant's private directory), writes
+/// read-only Parquet named by content, and changes nothing a reader sees: a
+/// dataset is read only at a stored cache identity, which a cache miss
+/// rebuilds from the kept files after checking their digests. A changed
+/// kept file refuses; an engine reopened on the same files answers alike.
 #[test]
-fn a_landing_writes_content_hashed_parquet_and_rebuilds_the_same_dataset() {
-    let (_dir, engine) = engine();
+fn a_landing_is_staged_by_attempt_and_read_only_at_its_stored_cache_identity() {
+    let dir = tempfile::tempdir().expect("dir");
+    let settings = Settings {
+        root: dir.path().to_path_buf(),
+        memory_limit: "256MB".into(),
+        threads: 1,
+    };
+    let engine = Engine::new(settings.clone()).expect("engine");
     let (_store, plan, _context) = by_metal(true, 100);
-    let (file, sha256) = csv(&engine, &LANDED_CSV);
-    let request = load_request(&plan, "land-1", sha256);
-    let landed = engine.land(&request, file.path()).expect("landed");
-    let response = &landed.response;
+    let request = begin_landing(&engine, &plan, "a1");
+    assert_eq!(
+        engine
+            .begin_attempt(&tenant(), "a1")
+            .expect_err("an attempt is begun once")
+            .code,
+        "bulk.attempt_exists"
+    );
+    let response = engine.land(&request).expect("landed");
+    assert_eq!(
+        (response.landing.as_str(), response.attempt.as_str()),
+        ("landing-1", "a1")
+    );
     assert_eq!((response.load.rows, response.load.rejected), (2, 2));
     assert_eq!((response.data.rows, response.held.rows), (2, 2));
-    for (path, file) in [
-        (&landed.data, &response.data),
-        (&landed.held, &response.held),
-    ] {
+    let (data, held) = engine.landed_files(&tenant(), "a1").expect("files");
+    assert!(
+        data.starts_with(dir.path().join("t").join(tenant().as_str())),
+        "the files are the tenant's own"
+    );
+    for (path, file) in [(&data, &response.data), (&held, &response.held)] {
         let bytes = std::fs::read(path).expect("landed file");
         assert_eq!(norn_cell::analytics::hex_digest(&bytes), file.sha256);
         assert_eq!(u64::try_from(bytes.len()).expect("size"), file.bytes);
         assert!(bytes.starts_with(b"PAR1"), "a Parquet file");
+        assert!(
+            std::fs::metadata(path).expect("meta").permissions().readonly(),
+            "sealed before it was hashed"
+        );
     }
     // The valid time spans the admitted rows by instant, not by text.
     assert_eq!(
@@ -2185,111 +2250,129 @@ fn a_landing_writes_content_hashed_parquet_and_rebuilds_the_same_dataset() {
             to: "2026-10-23T12:00:00Z".into(),
         }]
     );
-    let source = Source::Dataset {
+    let cache = norn_cell::analytics::dataset_cache_id(
+        &request.load.table,
+        &response.data.sha256,
+        &response.held.sha256,
+    );
+    let source = |load: &str| Source::Dataset {
         table: TYPE.into(),
-        load: "land-1".into(),
+        load: load.into(),
     };
-    let ask = |engine: &Engine| {
-        engine
-            .evaluate(&norn_cell::analytics::EvaluateRequest {
-                tenant: tenant(),
-                source: source.clone(),
-                query: lower(&plan).expect("lowered"),
-                inline_members: 100,
-            })
-            .expect("dataset answer")
+    let ask = |engine: &Engine, load: &str| {
+        engine.evaluate(&norn_cell::analytics::EvaluateRequest {
+            tenant: tenant(),
+            source: source(load),
+            query: lower(&plan).expect("lowered"),
+            inline_members: 100,
+        })
     };
-    let landed_answer = ask(&engine);
-    let (_other_dir, other) = self::engine();
-    // The other engine reads only its own scratch directory, as a sidecar
-    // reads the files it downloaded.
-    let copy = |path: &std::path::Path| {
-        let to = other.scratch().join(path.file_name().expect("name"));
-        std::fs::copy(path, &to).expect("copied");
-        to
-    };
-    let (data_copy, held_copy) = (copy(&landed.data), copy(&landed.held));
-    let hydrate = |data_sha: &str| norn_cell::analytics::HydrateRequest {
-        tenant: tenant(),
-        table: request.table.clone(),
-        load: "land-1".into(),
-        data: FileSource {
-            url: String::new(),
-            uri: "s3://synthetic/datasets/data.parquet".into(),
-            sha256: data_sha.to_owned(),
-            format: FileFormat::Parquet,
-        },
-        held: FileSource {
-            url: String::new(),
-            uri: "s3://synthetic/datasets/held.parquet".into(),
-            sha256: response.held.sha256.clone(),
-            format: FileFormat::Parquet,
-        },
-    };
+    // Landed but not stored: no reader sees the rows, at any identity.
+    for load in [cache.as_str(), "land-1"] {
+        assert_eq!(
+            ask(&engine, load).expect_err("not stored").code,
+            norn_cell::analytics::engine::DATASET_COLD
+        );
+    }
+    let stored = engine
+        .store(&store_request(&request, &response))
+        .expect("stored");
+    assert_eq!(stored.stored.as_deref(), Some(cache.as_str()));
+    assert!(!data.exists() && !held.exists(), "the attempt is removed");
+    // A kept file that changed refuses before it is read.
+    let kept = dir
+        .path()
+        .join("t")
+        .join(tenant().as_str())
+        .join("objects")
+        .join(format!("{}.parquet", response.data.sha256));
+    let original = std::fs::read(&kept).expect("kept");
+    let mut writable = std::fs::metadata(&kept).expect("meta").permissions();
+    #[allow(clippy::permissions_set_readonly_false, reason = "the test tampers")]
+    writable.set_readonly(false);
+    std::fs::set_permissions(&kept, writable).expect("writable");
+    std::fs::write(&kept, b"PAR1 tampered").expect("tampered");
     assert_eq!(
-        other
-            .hydrate(&hydrate(&"0".repeat(64)), &data_copy, &held_copy)
-            .expect_err("a changed file")
-            .code,
+        ask(&engine, &cache).expect_err("a changed file").code,
         "bulk.digest_mismatch"
     );
-    other
-        .hydrate(&hydrate(&response.data.sha256), &data_copy, &held_copy)
-        .expect("rebuilt");
-    let rebuilt = ask(&other);
-    assert_eq!(totals(&rebuilt), totals(&landed_answer));
-    assert_eq!(rebuilt.buckets, landed_answer.buckets);
-    // The rebuilt table profiles as the landed one: the same admitted rows.
+    std::fs::write(&kept, &original).expect("restored");
+    let landed_answer = ask(&engine, &cache).expect("dataset answer");
     let profile = |engine: &Engine| {
         engine
             .profile(&norn_cell::analytics::ProfileRequest {
                 tenant: tenant(),
-                source: source.clone(),
+                source: source(&cache),
                 columns: vec!["input".into()],
             })
             .expect("profile")
     };
-    assert_eq!(profile(&engine), profile(&other));
-    assert_eq!(profile(&other).rows, 2);
+    assert_eq!(profile(&engine).rows, 2);
+    let landed_profile = profile(&engine);
+    drop(engine);
+    // An engine reopened on the same files answers exactly as before.
+    let reopened = Engine::new(settings).expect("reopened");
+    let rebuilt = ask(&reopened, &cache).expect("rebuilt answer");
+    assert_eq!(totals(&rebuilt), totals(&landed_answer));
+    assert_eq!(rebuilt.buckets, landed_answer.buckets);
+    assert_eq!(profile(&reopened), landed_profile);
+    // Another landing of the same file is its own attempt and changes nothing read.
+    let again = begin_landing(&reopened, &plan, "a2");
+    let second = reopened.land(&again).expect("landed again");
+    assert_eq!(
+        (second.data.sha256.as_str(), second.held.sha256.as_str()),
+        (response.data.sha256.as_str(), response.held.sha256.as_str()),
+        "the same rows land as the same bytes"
+    );
+    assert_eq!(totals(&ask(&reopened, &cache).expect("answer")), totals(&landed_answer));
 }
 
-/// MANIFEST-COMMIT-1 / MANIFEST-PIN-1 / MANIFEST-CURRENT-1: a manifest commits
-/// as one governed command with one receipt; the same manifest again keeps
-/// that receipt; stale pins or a malformed manifest refuse; the latest
-/// manifest of a type is its current dataset.
+/// MANIFEST-COMMIT-1 / MANIFEST-PIN-1 / MANIFEST-CURRENT-1 / MANIFEST-04: a
+/// manifest commits as one governed command with one receipt; its cache
+/// identity must be the one its digests make; stale pins or a malformed
+/// manifest refuse; a request key binds one commit (a retry is that
+/// receipt, another manifest under the key conflicts), and a manifest
+/// without a key commits each time; the latest manifest of a type is its
+/// current dataset.
 #[test]
-fn a_manifest_commits_once_and_is_the_current_dataset() {
+fn a_manifest_commits_once_per_request_and_is_the_current_dataset() {
     use norn_cell::dataset_manifest::{
-        DatasetManifest, MANIFEST_VERSION, ManifestCounts, ManifestFile, ManifestSource,
+        DatasetManifest, DatasetRequest, MANIFEST_VERSION, ManifestCounts, ManifestFile,
+        ManifestSource,
     };
     let (_dir, engine) = engine();
     let (mut store, plan, _context) = by_metal(true, 100);
-    let (file, sha256) = csv(&engine, &LANDED_CSV);
-    let request = load_request(&plan, "land-1", sha256.clone());
-    let landed = engine.land(&request, file.path()).expect("landed");
-    let response = landed.response;
+    let request = begin_landing(&engine, &plan, "a1");
+    let response = engine.land(&request).expect("landed");
     let binding = BTreeMap::new();
-    let file_of = |uri: &str, landed: &norn_cell::analytics::LandedFile| ManifestFile {
-        uri: uri.into(),
+    let file_of = |landed: &norn_cell::analytics::LandedFile| ManifestFile {
+        uri: format!("s3://synthetic/datasets/{}.parquet", landed.sha256),
         sha256: landed.sha256.clone(),
         rows: landed.rows,
         bytes: landed.bytes,
     };
+    let table = store.analytics_table(TYPE).expect("table");
     let manifest = DatasetManifest {
         version: MANIFEST_VERSION.into(),
         object_type: TYPE.into(),
-        load: "land-1".into(),
+        load: norn_cell::analytics::dataset_cache_id(
+            &table,
+            &response.data.sha256,
+            &response.held.sha256,
+        ),
         source: ManifestSource {
-            uri: request.file.uri,
-            sha256,
+            uri: request.load.file.uri.clone(),
+            sha256: request.load.file.sha256.clone(),
             format: FileFormat::Csv,
             bytes: response.load.bytes,
         },
         binding: binding.clone(),
-        table: store.analytics_table(TYPE).expect("table"),
-        pins: store.dataset_pins(TYPE, &binding).expect("pins"),
-        data: file_of("s3://synthetic/datasets/data.parquet", &response.data),
-        held: file_of("s3://synthetic/datasets/held.parquet", &response.held),
+        table,
+        pins: store
+            .dataset_pins(TYPE, &binding, "test.mapping@x")
+            .expect("pins"),
+        data: file_of(&response.data),
+        held: file_of(&response.held),
         counts: ManifestCounts {
             source: 4,
             admitted: response.load.rows,
@@ -2299,20 +2382,40 @@ fn a_manifest_commits_once_and_is_the_current_dataset() {
     };
     assert!(store.dataset_manifest(WORLD, TYPE).expect("read").is_none());
     let head = store.verified_head().expect("head").commits;
+    let keyed = DatasetRequest {
+        key: "load-1".into(),
+        fingerprint: "f1".into(),
+    };
     let (hash, receipt) = store
-        .commit_dataset_manifest(WORLD, "synthetic", CLOCK, &manifest)
+        .commit_dataset_manifest(WORLD, "synthetic", CLOCK, &manifest, Some(&keyed))
         .expect("committed");
     assert_eq!(hash, manifest.hash().expect("hash"));
     assert_eq!(receipt.body.commit_seq, head + 1);
     assert_eq!(receipt.body.event_count, 1, "exactly one ledger event");
     let (again, replayed) = store
-        .commit_dataset_manifest(WORLD, "synthetic", CLOCK + 1, &manifest)
+        .commit_dataset_manifest(WORLD, "synthetic", CLOCK, &manifest, Some(&keyed))
         .expect("replayed");
     assert_eq!(
         (again.as_str(), replayed.hash.as_str()),
         (hash.as_str(), receipt.hash.as_str())
     );
     assert_eq!(store.verified_head().expect("head").commits, head + 1);
+    let (found, bound, found_receipt) = store
+        .dataset_request(WORLD, "load-1")
+        .expect("read")
+        .expect("the key's commit");
+    assert_eq!(
+        (found.hash.as_str(), bound, found_receipt.hash.as_str()),
+        (hash.as_str(), keyed.clone(), receipt.hash.as_str())
+    );
+    let mut other = manifest.clone();
+    other.valid_time.clear();
+    assert!(matches!(
+        store
+            .commit_dataset_manifest(WORLD, "synthetic", CLOCK, &other, Some(&keyed))
+            .expect_err("another manifest under the key"),
+        CellError::IdempotencyConflict(_)
+    ));
     let current = store
         .dataset_manifest(WORLD, TYPE)
         .expect("read")
@@ -2323,7 +2426,7 @@ fn a_manifest_commits_once_and_is_the_current_dataset() {
     );
     let refused = |manifest: &DatasetManifest, store: &mut CellStore| {
         let error = store
-            .commit_dataset_manifest(WORLD, "synthetic", CLOCK, manifest)
+            .commit_dataset_manifest(WORLD, "synthetic", CLOCK, manifest, None)
             .expect_err("refused");
         let CellError::DatasetRefused { code, .. } = error else {
             panic!("{error}");
@@ -2333,24 +2436,30 @@ fn a_manifest_commits_once_and_is_the_current_dataset() {
     let mut stale = manifest.clone();
     stale.pins.laws = "0".repeat(64);
     assert_eq!(refused(&stale, &mut store), "dataset.stale_pins");
+    let mut versioned = manifest.clone();
+    versioned.pins.definitions_version += 1;
+    assert_eq!(refused(&versioned, &mut store), "dataset.stale_pins");
     let mut retyped = manifest.clone();
     retyped.table.pin = "other".into();
-    assert_eq!(refused(&retyped, &mut store), "dataset.stale_pins");
+    assert_eq!(refused(&retyped, &mut store), "dataset.invalid", "its cache identity is not its own");
     let mut miscounted = manifest.clone();
     miscounted.counts.admitted += 1;
     assert_eq!(refused(&miscounted, &mut store), "dataset.invalid");
-    // A later manifest of the type is its current dataset.
-    let mut next = manifest;
-    next.load = "land-2".into();
-    let (next_hash, _) = store
-        .commit_dataset_manifest(WORLD, "synthetic", CLOCK + 2, &next)
+    let mut renamed = manifest.clone();
+    renamed.load = "land-1".into();
+    assert_eq!(refused(&renamed, &mut store), "dataset.invalid");
+    // Without a key a manifest commits each time; the latest is current.
+    let (next_hash, next) = store
+        .commit_dataset_manifest(WORLD, "synthetic", CLOCK + 2, &manifest, None)
         .expect("committed");
+    assert_eq!(next.body.commit_seq, head + 2);
     assert_eq!(
         store
             .dataset_manifest(WORLD, TYPE)
             .expect("read")
             .expect("current")
-            .hash,
-        next_hash
+            .commit_seq,
+        head + 2
     );
+    assert_eq!(next_hash, hash);
 }

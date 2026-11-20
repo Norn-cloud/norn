@@ -629,19 +629,56 @@ pub struct LoadResponse {
     pub millis: u64,
 }
 
-/// MANIFEST-LAND-1: load a dataset file and land it as columnar files. The
-/// typed rows go to the data file and the held-back rows to the held file,
-/// each written to its presigned PUT URL. The engine table that answers
-/// questions is a cache of the data file.
+/// MANIFEST-LAND-1: load a dataset file and land it as columnar files in
+/// the attempt's private directory: the typed rows in the data file and the
+/// held-back rows in the held file. Nothing a reader sees changes: the rows
+/// are staged under the attempt alone, and a dataset is read only at a
+/// committed manifest's cache identity ([`dataset_cache_id`]).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LandRequest {
-    /// The load: the source file, its typing and the landing identity.
+    /// The load: the source file, its typing and its binding (`headers`).
     pub load: LoadRequest,
-    /// A presigned PUT URL for the data file (Parquet).
-    pub data_url: String,
-    /// A presigned PUT URL for the held-set file (Parquet).
-    pub held_url: String,
+    /// MANIFEST-PIN-1: the pins the cell typed and checks this landing by;
+    /// the manifest commits exactly these, or is refused as stale.
+    pub pins: crate::dataset_manifest::ManifestPins,
+    /// The landing identity: the digest of this request without its
+    /// attempt. Every answer of the landing echoes it.
+    #[serde(default)]
+    pub landing: String,
+    /// The attempt: one landing's own staging and files, never another's.
+    #[serde(default)]
+    pub attempt: String,
+}
+
+/// MANIFEST-LAND-1 / MANIFEST-CACHE-1: store an attempt's landed files. Each
+/// is sent to its content-addressed object only if its bytes are the digest
+/// the landing answered, then kept by digest in the tenant's private object
+/// directory, which a cache miss rebuilds the dataset from. The answer is
+/// `landed` with its cache identity ([`LandResponse::stored`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StoreRequest {
+    /// The landing whose files are stored.
+    pub land: LandRequest,
+    /// The landing's answer: the files and what they hold.
+    pub landed: LandResponse,
+    /// The data file's object.
+    pub data: StoredObject,
+    /// The held-set file's object.
+    pub held: StoredObject,
+}
+
+/// The content-addressed object a landed file is stored at.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StoredObject {
+    /// The object's durable URI, named by the file's digest.
+    pub uri: String,
+    /// A presigned PUT URL for exactly that object; minted per call and not
+    /// part of the call's identity.
+    #[serde(default)]
+    pub url: String,
 }
 
 /// One landed file: its content identity as the engine wrote it.
@@ -668,10 +705,14 @@ pub struct ValidRange {
     pub to: String,
 }
 
-/// The outcome of a landing.
+/// The outcome of a landing step.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LandResponse {
+    /// The landing identity the request named.
+    pub landing: String,
+    /// The attempt the request named.
+    pub attempt: String,
     /// The load's counts, as [`LoadResponse`].
     pub load: LoadResponse,
     /// The data file: every admitted row with its source row offset.
@@ -680,23 +721,22 @@ pub struct LandResponse {
     pub held: LandedFile,
     /// Each temporal column's range over the admitted rows.
     pub valid_time: Vec<ValidRange>,
+    /// MANIFEST-CACHE-1: once the files are stored, the cache identity a
+    /// manifest of exactly these files reads them at.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stored: Option<String>,
 }
 
-/// MANIFEST-CACHE-1: rebuild the engine's table of a landing from its
-/// landed files, each checked against the SHA-256 the manifest records.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct HydrateRequest {
-    /// The tenant.
-    pub tenant: TenantId,
-    /// The admitted object type's table, as landed.
-    pub table: TableSchema,
-    /// The landing identity the manifest records.
-    pub load: String,
-    /// The data file.
-    pub data: FileSource,
-    /// The held-set file.
-    pub held: FileSource,
+/// MANIFEST-CACHE-1: the cache identity of a dataset: its table and the
+/// digests of its data and held-set files, and nothing a load chose. A
+/// manifest records it as its `load`; the engine answers a dataset only at
+/// it, rebuilding the table from the files of exactly those digests.
+#[must_use]
+pub fn dataset_cache_id(table: &TableSchema, data_sha256: &str, held_sha256: &str) -> String {
+    format!(
+        "l{}",
+        hex_digest(format!("{}\n{}\n{data_sha256}\n{held_sha256}", table.name, table.pin).as_bytes())
+    )
 }
 
 /// Profile columns of a source.

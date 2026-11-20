@@ -17,7 +17,7 @@ use std::time::Duration;
 use norn_cell::analytics::engine::{Engine, Outcome, Settings};
 use norn_cell::analytics::{
     EngineRefusal, EvaluateRequest, ExportRequest, FrontierRequest, LandRequest, LandResponse,
-    MembersRequest, PageRequest, ProfileRequest, SyncRequest,
+    MembersRequest, PageRequest, ProfileRequest, StoreRequest, SyncRequest,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -184,6 +184,7 @@ fn connection(stream: &TcpStream, engine: &Engine, token: &str) -> std::io::Resu
         "/v1/profile" => answer(stream, &request, |r: ProfileRequest| engine.profile(&r)),
         "/v1/page" => answer(stream, &request, |r: PageRequest| engine.page(&r)),
         "/v1/land" => answer(stream, &request, |r: LandRequest| land(engine, &r)),
+        "/v1/store" => answer(stream, &request, |r: StoreRequest| store(engine, &r)),
         "/v1/export" => export(stream, &request, engine),
         _ => refuse(
             stream,
@@ -268,8 +269,10 @@ fn agent() -> ureq::Agent {
         .into()
 }
 
-/// Download the presigned object into `path`, at most [`MAX_FILE_BYTES`].
-fn download(agent: &ureq::Agent, url: &str, path: &std::path::Path) -> Outcome<()> {
+/// MANIFEST-02: download the presigned object into `file`, the attempt's
+/// own source file (created exclusively by the engine), at most
+/// [`MAX_FILE_BYTES`].
+fn download(agent: &ureq::Agent, url: &str, mut file: std::fs::File) -> Outcome<()> {
     let unreadable = |detail: String| refusal("bulk.unreadable", &detail);
     let mut response = agent
         .get(url)
@@ -282,7 +285,6 @@ fn download(agent: &ureq::Agent, url: &str, path: &std::path::Path) -> Outcome<(
         )));
     }
     let copied = (|| -> std::io::Result<()> {
-        let mut file = std::fs::File::create(path)?;
         let mut reader = response
             .body_mut()
             .with_config()
@@ -294,8 +296,29 @@ fn download(agent: &ureq::Agent, url: &str, path: &std::path::Path) -> Outcome<(
     copied.map_err(|e| unreadable(format!("the object could not be read: {e}")))
 }
 
-/// Upload `path` to the presigned PUT `url`.
-fn upload(agent: &ureq::Agent, url: &str, path: &std::path::Path) -> Outcome<()> {
+/// A reader that hashes every byte it hands out.
+struct Hashing<R> {
+    inner: R,
+    hasher: Arc<std::sync::Mutex<sha2::Sha256>>,
+}
+
+impl<R: std::io::Read> std::io::Read for Hashing<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        use sha2::Digest as _;
+        let read = self.inner.read(buf)?;
+        self.hasher
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .update(buf.get(..read).unwrap_or_default());
+        Ok(read)
+    }
+}
+
+/// MANIFEST-02: send `path` to the presigned PUT `url`, hashing the bytes as
+/// they are sent: the object is accepted only if what was sent is `sha256`,
+/// the digest the landing answered and the manifest will name.
+fn upload(agent: &ureq::Agent, url: &str, path: &std::path::Path, sha256: &str) -> Outcome<()> {
+    use sha2::Digest as _;
     let unwritable = |detail: String| refusal("bulk.unwritable", &detail);
     let file = std::fs::File::open(path)
         .map_err(|e| unwritable(format!("a landed file could not be read: {e}")))?;
@@ -303,43 +326,67 @@ fn upload(agent: &ureq::Agent, url: &str, path: &std::path::Path) -> Outcome<()>
         .metadata()
         .map_err(|e| unwritable(format!("a landed file could not be read: {e}")))?
         .len();
+    let hasher = Arc::new(std::sync::Mutex::new(sha2::Sha256::new()));
+    let body = Hashing {
+        inner: file,
+        hasher: Arc::clone(&hasher),
+    };
     let response = agent
         .put(url)
         .header("content-type", "application/vnd.apache.parquet")
         .header("content-length", &length.to_string())
-        .send(ureq::SendBody::from_owned_reader(file))
+        .send(ureq::SendBody::from_owned_reader(body))
         .map_err(|e| unwritable(format!("the object could not be written: {e}")))?;
-    if response.status().is_success() {
-        Ok(())
-    } else {
-        Err(unwritable(format!(
+    if !response.status().is_success() {
+        return Err(unwritable(format!(
             "the object store answered {}",
             response.status()
-        )))
+        )));
+    }
+    let sent = std::mem::take(&mut *hasher.lock().unwrap_or_else(std::sync::PoisonError::into_inner))
+        .finalize()
+        .iter()
+        .fold(String::new(), |mut out, b| {
+            use std::fmt::Write as _;
+            let _infallible = write!(out, "{b:02x}");
+            out
+        });
+    if sent == sha256 {
+        Ok(())
+    } else {
+        Err(refusal(
+            "bulk.digest_mismatch",
+            "the bytes sent are not the landed file",
+        ))
     }
 }
 
-/// MANIFEST-LAND-1: download the presigned source into the engine's scratch
-/// directory, land it, and upload the data and held-set files to their
-/// presigned URLs. Every scratch file is deleted, whatever the outcome.
+/// MANIFEST-LAND-1: download the presigned source into the attempt's own
+/// directory and land it there. A failed landing removes the attempt.
 fn land(engine: &Engine, request: &LandRequest) -> Outcome<LandResponse> {
-    let agent = agent();
-    let path = engine.scratch().join(format!(
-        "load-{}",
-        request
-            .load
-            .load
-            .replace(|c: char| !c.is_ascii_alphanumeric(), "_")
-    ));
-    let landed = download(&agent, &request.load.file.url, &path)
-        .and_then(|()| engine.land(&request.load, &path));
-    let _removed = std::fs::remove_file(&path);
-    let landed = landed?;
-    let sent = upload(&agent, &request.data_url, &landed.data)
-        .and_then(|()| upload(&agent, &request.held_url, &landed.held));
-    let _data = std::fs::remove_file(&landed.data);
-    let _held = std::fs::remove_file(&landed.held);
-    sent.map(|()| landed.response)
+    let tenant = &request.load.tenant;
+    let (_path, file) = engine.begin_attempt(tenant, &request.attempt)?;
+    let landed = download(&agent(), &request.load.file.url, file).and_then(|()| engine.land(request));
+    if landed.is_err() {
+        engine.end_attempt(tenant, &request.attempt);
+    }
+    landed
+}
+
+/// MANIFEST-LAND-1: send an attempt's landed files to their content-addressed
+/// objects, each only if the bytes sent are its answered digest, then keep
+/// them for the dataset's cache identity. The attempt is removed either way.
+fn store(engine: &Engine, request: &StoreRequest) -> Outcome<LandResponse> {
+    let tenant = &request.land.load.tenant;
+    let attempt = &request.land.attempt;
+    let stored = engine.landed_files(tenant, attempt).and_then(|(data, held)| {
+        let agent = agent();
+        upload(&agent, &request.data.url, &data, &request.landed.data.sha256)?;
+        upload(&agent, &request.held.url, &held, &request.landed.held.sha256)?;
+        engine.store(request)
+    });
+    engine.end_attempt(tenant, attempt);
+    stored
 }
 
 /// Export into a scratch file, stream it as the body, then delete it.

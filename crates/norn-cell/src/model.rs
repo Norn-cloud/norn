@@ -697,7 +697,13 @@ impl Model {
         Ok(markings)
     }
 
-    pub(crate) fn effective_property_markings(
+    /// The declared markings of each property of `object_type`, from the
+    /// property, its type and the object type (MANIFEST-MARK-1 reads them for
+    /// a dataset's columns).
+    ///
+    /// # Errors
+    /// An unknown type.
+    pub fn effective_property_markings(
         &self,
         object_type: &str,
     ) -> Result<BTreeMap<String, Vec<String>>, CellError> {

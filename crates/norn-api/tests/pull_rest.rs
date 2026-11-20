@@ -794,7 +794,8 @@ fn the_scans_connector_pulls_extractor_rows_into_the_source_schema_fields() {
     );
 }
 
-/// Admits `SyncSource("upload")` for `loader` alone.
+/// Admits every `SyncSource` for `loader`; `uploader` holds only the
+/// uploads grant, not a destination connection's.
 struct UploadsOnly;
 
 impl norn_api::authz::Authorizer for UploadsOnly {
@@ -803,7 +804,8 @@ impl norn_api::authz::Authorizer for UploadsOnly {
         request: &norn_api::authz::AccessRequest<'_>,
     ) -> Result<(), norn_api::refusal::Refusal> {
         match (&request.operation, request.actor) {
-            (norn_api::authz::Operation::SyncSource(target), Some("loader"))
+            (norn_api::authz::Operation::SyncSource(_), Some("loader")) => Ok(()),
+            (norn_api::authz::Operation::SyncSource(target), Some("uploader"))
                 if target == "upload" =>
             {
                 Ok(())
@@ -813,14 +815,14 @@ impl norn_api::authz::Authorizer for UploadsOnly {
     }
 }
 
-/// One completed upload, `u1`.
+/// The completed uploads `u1` and `u2`.
 struct OneUpload;
 
 impl norn_api::analytics_routes::Uploads for OneUpload {
     fn record(&self, id: &str) -> Option<norn_api::analytics_routes::UploadRecord> {
-        (id == "u1").then(|| norn_api::analytics_routes::UploadRecord {
-            uri: "s3://uploads/demo/items.csv".into(),
-            sha256: "ab".repeat(32),
+        matches!(id, "u1" | "u2").then(|| norn_api::analytics_routes::UploadRecord {
+            uri: format!("s3://uploads/demo/{id}.csv"),
+            sha256: if id == "u1" { "ab" } else { "ba" }.repeat(32),
             content_type: "text/csv".into(),
             file_name: "items.csv".into(),
         })
@@ -836,9 +838,15 @@ impl norn_api::analytics_routes::Uploads for OneUpload {
     }
 }
 
-/// An engine that types three rows of every load and quarantines one.
+/// An engine that types three rows of every load and quarantines one, and
+/// stores the files it lands; `between` runs between the landing and the
+/// store (a change of the definitions while the files are in flight).
 #[derive(Default)]
-struct ThreeAndOne(std::sync::Mutex<Vec<norn_cell::analytics::LoadRequest>>);
+struct ThreeAndOne {
+    landed: std::sync::Mutex<Vec<norn_cell::analytics::LandRequest>>,
+    stored: std::sync::Mutex<Vec<norn_cell::analytics::StoreRequest>>,
+    between: Option<Box<dyn Fn() + Send + Sync>>,
+}
 
 impl norn_api::analytics_routes::Transport for ThreeAndOne {
     fn resumed(&self) -> Option<norn_api::analytics_routes::EngineAnswer> {
@@ -848,38 +856,64 @@ impl norn_api::analytics_routes::Transport for ThreeAndOne {
         &self,
         call: &norn_api::analytics_routes::EngineCall,
     ) -> Option<norn_api::analytics_routes::EngineAnswer> {
-        assert_eq!(call.op, "land");
-        let request: norn_cell::analytics::LandRequest =
-            serde_json::from_str(&call.body).expect("a landing");
-        let file = |rows: u64| norn_cell::analytics::LandedFile {
-            sha256: "cd".repeat(32),
-            rows,
-            bytes: 128,
+        let answer = match call.op.as_str() {
+            "land" => {
+                let request: norn_cell::analytics::LandRequest =
+                    serde_json::from_str(&call.body).expect("a landing");
+                let file = |rows: u64, byte: &str| norn_cell::analytics::LandedFile {
+                    sha256: byte.repeat(32),
+                    rows,
+                    bytes: 128,
+                };
+                let answer = norn_cell::analytics::LandResponse {
+                    landing: request.landing.clone(),
+                    attempt: request.attempt.clone(),
+                    load: norn_cell::analytics::LoadResponse {
+                        load: request.load.load.clone(),
+                        rows: 3,
+                        rejected: 1,
+                        reasons: BTreeMap::from([("bulk.type".to_owned(), 1)]),
+                        bytes: 64,
+                        millis: 5,
+                    },
+                    data: file(3, "cd"),
+                    held: file(1, "ef"),
+                    valid_time: Vec::new(),
+                    stored: None,
+                };
+                self.landed.lock().expect("calls").push(request);
+                if let Some(between) = &self.between {
+                    between();
+                }
+                answer
+            }
+            "store" => {
+                let request: norn_cell::analytics::StoreRequest =
+                    serde_json::from_str(&call.body).expect("a store");
+                for (object, file) in [
+                    (&request.data, &request.landed.data),
+                    (&request.held, &request.landed.held),
+                ] {
+                    assert!(
+                        object.uri.ends_with(&format!("/{}.parquet", file.sha256)),
+                        "an object is named by its digest: {}",
+                        object.uri
+                    );
+                }
+                let cache = norn_cell::analytics::dataset_cache_id(
+                    &request.land.load.table,
+                    &request.landed.data.sha256,
+                    &request.landed.held.sha256,
+                );
+                let answer = norn_cell::analytics::LandResponse {
+                    stored: Some(cache),
+                    ..request.landed.clone()
+                };
+                self.stored.lock().expect("calls").push(request);
+                answer
+            }
+            other => panic!("unexpected engine call {other}"),
         };
-        let answer = norn_cell::analytics::LandResponse {
-            load: norn_cell::analytics::LoadResponse {
-                load: request.load.load.clone(),
-                rows: 3,
-                rejected: 1,
-                reasons: BTreeMap::from([("bulk.type".to_owned(), 1)]),
-                bytes: 64,
-                millis: 5,
-            },
-            data: file(3),
-            held: file(1),
-            valid_time: Vec::new(),
-        };
-        assert!(
-            request.data_url.ends_with("/data.parquet"),
-            "{}",
-            request.data_url
-        );
-        assert!(
-            request.held_url.ends_with("/held.parquet"),
-            "{}",
-            request.held_url
-        );
-        self.0.lock().expect("calls").push(request.load);
         Some(norn_api::analytics_routes::EngineAnswer {
             op: call.op.clone(),
             digest: call.digest.clone(),
@@ -889,87 +923,314 @@ impl norn_api::analytics_routes::Transport for ThreeAndOne {
     }
 }
 
-/// MANIFEST-COMMIT-1 / MANIFEST-CURRENT-1: a dataset load lands two files
-/// and commits one manifest, which becomes the type's current dataset; the
-/// same landing again keeps the first receipt.
-#[test]
-fn a_dataset_load_commits_one_manifest_and_keeps_its_receipt() {
-    use norn_api::analytics_routes::load_dataset;
+/// The upload type `upload.Items` and its admitted mapping, as `:define`
+/// installs them for a CSV of `sku` and `qty`; `marked` marks the source
+/// field `sku`.
+fn items_host(marked: bool) -> DevHost<norn_cell::engine::NativeEngine> {
     let host = host().with_authorizer(UploadsOnly);
-    let scope = norn_api::scope::ScopeQuery {
+    let table = norn_api::uploads::parse_csv("sku,qty\nA,1\nB,2\n").expect("csv");
+    let request: norn_api::uploads::LoadRequest =
+        serde_json::from_value(json!({"typeName": "Items"})).expect("request");
+    let mut generated = norn_api::uploads::generate(
+        &table,
+        &request,
+        "s3://uploads/demo/u1.csv",
+        &"ab".repeat(32),
+        RECORDED_AT,
+    )
+    .expect("generated");
+    if marked {
+        for artifact in &mut generated.artifacts {
+            if artifact.artifact_id != generated.source_schema {
+                continue;
+            }
+            let mut value = serde_json::to_value(&*artifact).expect("value");
+            for field in value["payload"]["fields"].as_array_mut().expect("fields") {
+                if field["name"] == "sku" {
+                    field["markings"] = json!(["norn.pii"]);
+                }
+            }
+            *artifact = serde_json::from_value(value).expect("artifact");
+        }
+    }
+    norn_api::uploads::install(&host, &generated, EXTRACTED_AT_MS).expect("installed");
+    host
+}
+
+fn scope() -> norn_api::scope::ScopeQuery {
+    norn_api::scope::ScopeQuery {
         org_id: Some("org_demo".into()),
         environment_id: Some("dev".into()),
-    };
-    let body = json!({"uploadId": "u1", "objectType": "canon.Item"}).to_string();
+    }
+}
+
+fn items(upload: &str, key: Option<&str>) -> String {
+    let mut body = json!({"uploadId": upload, "objectType": "upload.Items"});
+    if let Some(key) = key {
+        body["requestKey"] = json!(key);
+    }
+    body.to_string()
+}
+
+/// MANIFEST-COMMIT-1 / MANIFEST-CURRENT-1 / MANIFEST-CACHE-1: a dataset load
+/// lands two files, stores each at the object its digest names, and commits
+/// one manifest whose cache identity is made of those digests; the manifest
+/// becomes the type's current dataset.
+#[test]
+fn a_dataset_load_commits_one_manifest_of_its_stored_files() {
+    use norn_api::analytics_routes::load_dataset;
+    let host = items_host(false);
     let engine = ThreeAndOne::default();
-    let load = || {
-        load_dataset(
-            &host,
-            &scope,
-            Some("loader"),
-            &body,
-            &OneUpload,
-            &engine,
-            EXTRACTED_AT_MS,
-        )
-        .expect("loaded")
-    };
-    let loaded = load();
-    let manifest = norn_api::analytics_routes::current_manifest(&host, "canon.Item")
+    let loaded = load_dataset(
+        &host,
+        &scope(),
+        Some("loader"),
+        &items("u1", None),
+        &OneUpload,
+        &engine,
+        EXTRACTED_AT_MS,
+    )
+    .expect("loaded");
+    let manifest = norn_api::analytics_routes::current_manifest(&host, "upload.Items")
         .expect("read")
         .expect("the current manifest");
     assert_eq!(manifest.hash, loaded.manifest);
     assert_eq!(manifest.commit_seq, loaded.commit_seq);
-    assert_eq!(manifest.manifest.data.uri, loaded.data.uri);
+    assert_eq!(
+        manifest.manifest.data.uri,
+        format!("s3://uploads/datasets/{}/upload.Items/{}.parquet", host.scope().key(), "cd".repeat(32))
+    );
+    assert_eq!(
+        manifest.manifest.load,
+        norn_cell::analytics::dataset_cache_id(
+            &manifest.manifest.table,
+            &"cd".repeat(32),
+            &"ef".repeat(32)
+        ),
+        "the cache identity is the committed digests'"
+    );
     assert_eq!(
         (manifest.manifest.data.rows, manifest.manifest.held.rows),
         (3, 1)
     );
-    assert!(
-        loaded.data.uri.starts_with("s3://uploads/datasets/"),
-        "{}",
-        loaded.data.uri
-    );
-    let again = load();
+    let landed = engine.landed.lock().expect("calls");
+    let stored = engine.stored.lock().expect("calls");
+    assert_eq!((landed.len(), stored.len()), (1, 1));
     assert_eq!(
-        (
-            again.manifest.as_str(),
-            again.receipt.as_str(),
-            again.commit_seq
-        ),
-        (
-            manifest.hash.as_str(),
-            loaded.receipt.as_str(),
-            loaded.commit_seq
-        ),
-        "the same manifest keeps its first receipt"
+        manifest.manifest.pins, landed[0].pins,
+        "the manifest commits the pins the landing ran by"
+    );
+    assert_eq!(stored[0].land.attempt, landed[0].attempt);
+}
+
+/// MANIFEST-01: definitions installed while a landing is in flight refuse
+/// its commit as stale: the pins the rows were typed by are carried from
+/// the landing's first step, never read again at commit.
+#[test]
+fn definitions_installed_between_landing_and_commit_refuse_the_commit() {
+    use norn_api::analytics_routes::load_dataset;
+    let host = std::sync::Arc::new(items_host(false));
+    let installer = std::sync::Arc::clone(&host);
+    let engine = ThreeAndOne {
+        between: Some(Box::new(move || {
+            let table = norn_api::uploads::parse_csv("code\nx\n").expect("csv");
+            let request: norn_api::uploads::LoadRequest =
+                serde_json::from_value(json!({"typeName": "Other"})).expect("request");
+            let generated = norn_api::uploads::generate(
+                &table,
+                &request,
+                "s3://uploads/demo/other.csv",
+                &"aa".repeat(32),
+                RECORDED_AT,
+            )
+            .expect("generated");
+            norn_api::uploads::install(&installer, &generated, EXTRACTED_AT_MS + 1)
+                .expect("installed in flight");
+        })),
+        ..ThreeAndOne::default()
+    };
+    let refused = load_dataset(
+        &host,
+        &scope(),
+        Some("loader"),
+        &items("u1", None),
+        &OneUpload,
+        &engine,
+        EXTRACTED_AT_MS,
+    )
+    .expect_err("stale");
+    assert_eq!(
+        (refused.status, refused.code.as_str()),
+        (409, "dataset.stale_pins")
+    );
+    assert!(
+        norn_api::analytics_routes::current_manifest(&host, "upload.Items")
+            .expect("read")
+            .is_none(),
+        "nothing was admitted"
     );
 }
 
-/// BULK-LOAD-1 + SYNC-REPORT-1: a dataset load is decided like any upload
-/// load, reaches the engine with a presigned URL, and is reported as a run of
-/// the type's `upload` connection.
+/// MANIFEST-01: an answer resumes a landing only if it names that landing's
+/// whole identity; an answer of another landing of the same file (another
+/// typing) is never continued.
 #[test]
-fn a_dataset_load_is_decided_as_an_upload_and_reported_as_its_run() {
-    use norn_api::analytics_routes::load_dataset;
-    let host = host().with_authorizer(UploadsOnly);
-    let scope = norn_api::scope::ScopeQuery {
-        org_id: Some("org_demo".into()),
-        environment_id: Some("dev".into()),
-    };
-    let body = json!({"uploadId": "u1", "objectType": "canon.Item"}).to_string();
-    let engine = ThreeAndOne::default();
-    for actor in [None, Some("viewer")] {
-        let refused = load_dataset(&host, &scope, actor, &body, &OneUpload, &engine, 0)
-            .expect_err("only an upload loader loads");
-        assert_eq!(refused.status, 403, "{actor:?}");
+fn an_answer_of_another_landing_is_not_continued() {
+    use norn_api::analytics_routes::{EngineAnswer, EngineCall, Transport, load_dataset};
+    struct Forged(ThreeAndOne, std::sync::Mutex<Option<EngineAnswer>>);
+    impl Transport for Forged {
+        fn resumed(&self) -> Option<EngineAnswer> {
+            self.1.lock().expect("slot").take()
+        }
+        fn call(&self, call: &EngineCall) -> Option<EngineAnswer> {
+            self.0.call(call)
+        }
     }
-    assert!(engine.0.lock().expect("calls").is_empty());
+    let host = items_host(false);
+    let forged = norn_cell::analytics::LandResponse {
+        landing: "another landing".into(),
+        attempt: "a0".into(),
+        load: norn_cell::analytics::LoadResponse {
+            load: "l-other".into(),
+            rows: 99,
+            rejected: 0,
+            reasons: BTreeMap::new(),
+            bytes: 1,
+            millis: 1,
+        },
+        data: norn_cell::analytics::LandedFile {
+            sha256: "00".repeat(32),
+            rows: 99,
+            bytes: 1,
+        },
+        held: norn_cell::analytics::LandedFile {
+            sha256: "11".repeat(32),
+            rows: 0,
+            bytes: 1,
+        },
+        valid_time: Vec::new(),
+        stored: Some("l-other".into()),
+    };
+    let engine = Forged(
+        ThreeAndOne::default(),
+        std::sync::Mutex::new(Some(EngineAnswer {
+            op: "store".into(),
+            digest: "not this landing".into(),
+            status: 200,
+            body: serde_json::to_string(&forged).expect("body"),
+        })),
+    );
     let loaded = load_dataset(
         &host,
-        &scope,
+        &scope(),
         Some("loader"),
-        &body,
+        &items("u1", None),
+        &OneUpload,
+        &engine,
+        EXTRACTED_AT_MS,
+    )
+    .expect("loaded");
+    assert_eq!((loaded.rows, loaded.data.sha256), (3, "cd".repeat(32)));
+    assert_eq!(engine.0.landed.lock().expect("calls").len(), 1);
+}
+
+/// MANIFEST-04: a request key binds one request: a retry answers with the
+/// first receipt and lands nothing; the same key with another request is
+/// refused; a load without a key always commits, so loading an earlier file
+/// again makes it current again.
+#[test]
+fn a_request_key_binds_one_request_and_its_first_receipt() {
+    use norn_api::analytics_routes::load_dataset;
+    let host = items_host(false);
+    let engine = ThreeAndOne::default();
+    let load = |upload: &str, key: Option<&str>| {
+        load_dataset(
+            &host,
+            &scope(),
+            Some("loader"),
+            &items(upload, key),
+            &OneUpload,
+            &engine,
+            EXTRACTED_AT_MS,
+        )
+    };
+    let first = load("u1", Some("load-1")).expect("loaded");
+    let again = load("u1", Some("load-1")).expect("replayed");
+    assert_eq!(
+        (again.manifest.as_str(), again.receipt.as_str(), again.commit_seq),
+        (first.manifest.as_str(), first.receipt.as_str(), first.commit_seq),
+        "the same request keeps its first receipt"
+    );
+    assert_eq!(engine.landed.lock().expect("calls").len(), 1, "a replay lands nothing");
+    let other = load("u2", Some("load-1")).expect_err("another request");
+    assert_eq!(
+        (other.status, other.code.as_str()),
+        (409, "dataset.request_conflict")
+    );
+    let unkeyed = load("u1", None).expect("loaded");
+    let unkeyed_again = load("u1", None).expect("loaded");
+    assert!(unkeyed_again.commit_seq > unkeyed.commit_seq, "no key: every load commits");
+    assert_eq!(
+        norn_api::analytics_routes::current_manifest(&host, "upload.Items")
+            .expect("read")
+            .expect("current")
+            .commit_seq,
+        unkeyed_again.commit_seq
+    );
+}
+
+/// MANIFEST-03 + SYNC-REPORT-1: a dataset load is decided as an observation
+/// load of the same rows: the uploads grant and the destination
+/// connection's own, an admitted mapping onto the type, and no write-side
+/// marking it cannot attach. It reaches the engine with a presigned URL and
+/// is reported as a run of the type's `upload` connection.
+#[test]
+fn a_dataset_load_is_decided_as_an_observation_load_and_reported_as_its_run() {
+    use norn_api::analytics_routes::load_dataset;
+    let host = items_host(false);
+    let engine = ThreeAndOne::default();
+    for actor in [None, Some("viewer"), Some("uploader")] {
+        let refused = load_dataset(&host, &scope(), actor, &items("u1", None), &OneUpload, &engine, 0)
+            .expect_err("only the destination's loader loads");
+        assert_eq!(refused.status, 403, "{actor:?}");
+    }
+    // canon.Item is mapped by two REST mappings: a load names one, and one
+    // that computes its properties is not one bulk ingest can enforce.
+    let canon = |mapping: Option<&str>| {
+        let mut body = json!({"uploadId": "u1", "objectType": "canon.Item"});
+        if let Some(mapping) = mapping {
+            body["mapping"] = json!(mapping);
+        }
+        load_dataset(&host, &scope(), Some("loader"), &body.to_string(), &OneUpload, &engine, 0)
+            .expect_err("refused")
+    };
+    assert_eq!(canon(None).status, 400);
+    assert_eq!(
+        canon(Some("erpnext.rest.mapping")).code,
+        "bulk.unsupported_mapping"
+    );
+    assert_eq!(canon(Some("no.such.mapping")).code, "bulk.unmapped");
+    let marked = items_host(true);
+    let refused = load_dataset(
+        &marked,
+        &scope(),
+        Some("loader"),
+        &items("u1", None),
+        &OneUpload,
+        &engine,
+        0,
+    )
+    .expect_err("a marked source field");
+    assert_eq!(
+        (refused.status, refused.code.as_str()),
+        (422, "bulk.unsupported_marking")
+    );
+    assert!(engine.landed.lock().expect("calls").is_empty());
+    let loaded = load_dataset(
+        &host,
+        &scope(),
+        Some("loader"),
+        &items("u1", None),
         &OneUpload,
         &engine,
         EXTRACTED_AT_MS,
@@ -977,15 +1238,12 @@ fn a_dataset_load_is_decided_as_an_upload_and_reported_as_its_run() {
     .expect("loaded");
     assert_eq!(
         (loaded.connection_id.as_str(), loaded.rows, loaded.rejected),
-        ("upload.canon.item", 3, 1)
+        ("upload.items", 3, 1)
     );
-    let calls = engine.0.lock().expect("calls");
+    let calls = engine.landed.lock().expect("calls");
     assert_eq!(calls.len(), 1);
-    assert_eq!(
-        calls[0].file.url,
-        "https://objects.example/uploads/demo/items.csv"
-    );
-    assert_eq!(calls[0].table.name, "canon.Item");
+    assert_eq!(calls[0].load.table.name, "upload.Items");
+    assert!(calls[0].load.file.url.is_empty(), "the URL is not part of the landing");
     let text = |object: &norn_ir::RuntimeObject, field: &str| {
         object
             .get(field)
@@ -993,27 +1251,23 @@ fn a_dataset_load_is_decided_as_an_upload_and_reported_as_its_run() {
             .map(str::to_owned)
     };
     let connection = host
-        .host_object("source.Connection", "upload.canon.item")
+        .host_object("source.Connection", "upload.items")
         .expect("read")
         .expect("the upload connection");
     for (field, value) in [
         ("system", "upload"),
         ("label", "items.csv"),
-        ("target", "s3://uploads/demo/items.csv"),
+        ("target", "s3://uploads/demo/u1.csv"),
         ("auth", "presigned_upload"),
         ("status", "partial"),
         ("last_trigger", "upload"),
         ("quarantine_reasons", "bulk.type=1"),
-        ("mapping_id", ""),
-        ("source_schema_id", ""),
+        ("mapping_id", "upload.items.mapping"),
     ] {
         assert_eq!(text(&connection, field).as_deref(), Some(value), "{field}");
     }
     let run = host
-        .host_object(
-            "source.SyncRun",
-            &format!("upload.canon.item/{EXTRACTED_AT_MS}"),
-        )
+        .host_object("source.SyncRun", &format!("upload.items/{EXTRACTED_AT_MS}"))
         .expect("read")
         .expect("the load's run");
     assert_eq!(text(&run, "run_by").as_deref(), Some("loader"));
