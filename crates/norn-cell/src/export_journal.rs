@@ -168,7 +168,10 @@ fn preimage(input: &ConsumedInput) -> Result<Option<Value>, CellError> {
 /// ([`read_record`] and the export/restore paths) still verifies every record
 /// it reads. Debug builds also read the span back and prove it, as the
 /// journal did before, and refuse the commit if the two ever differ.
-#[allow(clippy::too_many_arguments, reason = "the commit's own parts, passed through")]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the commit's own parts, passed through"
+)]
 pub(crate) fn record<E: SqlEngine>(
     engine: &E,
     model: &Model,
@@ -203,7 +206,9 @@ pub(crate) fn record<E: SqlEngine>(
 
     if u64::try_from(entries.len()).map_err(|_overflow| CellError::OutOfRange("event count"))?
         != receipt.body.event_count
-        || entries.first().is_some_and(|entry| entry.seq != receipt.body.first_event_seq)
+        || entries
+            .first()
+            .is_some_and(|entry| entry.seq != receipt.body.first_event_seq)
         || entries.iter().any(|entry| entry.commit_seq != commit_seq)
     {
         return Err(CellError::LedgerCorrupt {

@@ -77,7 +77,12 @@ fn round(lines: usize, file: bool) -> (f64, usize, usize, usize) {
         .count();
     drop(host);
     let _ = std::fs::remove_dir_all(&dir);
-    (rows.len() as f64 / elapsed, landed, report.pages, report.commits)
+    (
+        rows.len() as f64 / elapsed,
+        landed,
+        report.pages,
+        report.commits,
+    )
 }
 
 fn median(mut values: Vec<f64>) -> f64 {
@@ -113,7 +118,10 @@ fn ingest_rate() {
     }
     for (name, rates) in [("file", on_file), ("memory", in_memory)] {
         if !rates.is_empty() {
-            println!("INGEST {lines} lines, {name}: median {:.1} rows/s", median(rates));
+            println!(
+                "INGEST {lines} lines, {name}: median {:.1} rows/s",
+                median(rates)
+            );
         }
     }
 }
