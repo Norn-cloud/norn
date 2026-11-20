@@ -826,18 +826,18 @@ fn unsupported(code: &str, detail: impl Into<String>) -> Refusal {
 /// field as itself: `input.<f>`, or `timestamp(input.<f>)` (with its null
 /// guard), the conversion the engine's typing of a timestamp column is.
 fn plain_read(value: &str) -> Option<&str> {
-    let field = |text: &str| {
+    fn field(text: &str) -> Option<&str> {
         text.strip_prefix("input.")
             .filter(|f| !f.is_empty() && f.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
-    };
-    if let Some(read) = field(value) {
-        return Some(read);
     }
-    let converted = |text: &str| {
+    fn converted(text: &str) -> Option<&str> {
         text.strip_prefix("timestamp(")
             .and_then(|rest| rest.strip_suffix(')'))
             .and_then(field)
-    };
+    }
+    if let Some(read) = field(value) {
+        return Some(read);
+    }
     if let Some(read) = converted(value) {
         return Some(read);
     }
@@ -1354,7 +1354,7 @@ fn land_upload<E: SqlEngine>(
                     .ok_or_else(unconfigured)?,
             );
         }
-        let [(data_url, data_uri), (held_url, held_uri)] =
+        let [(data_put, data_uri), (held_put, held_uri)] =
             <[(String, String); 2]>::try_from(objects).map_err(|_two| unconfigured())?;
         let uris = [data_uri.clone(), held_uri.clone()];
         if land.stored.is_some() {
@@ -1370,11 +1370,11 @@ fn land_upload<E: SqlEngine>(
             landed: land,
             data: StoredObject {
                 uri: data_uri,
-                url: data_url,
+                url: data_put,
             },
             held: StoredObject {
                 uri: held_uri,
-                url: held_url,
+                url: held_put,
             },
         };
         call = EngineCall {
