@@ -1478,7 +1478,7 @@ fn retain_as_before_decimal_text(
     .expect("legacy row");
 }
 
-/// The cell, holding row and inbox id of one ERPNext holding whose quantity
+/// The cell, holding row and inbox id of one `ERPNext` holding whose quantity
 /// is exact decimal text, retained but not processed. The main-era fixture
 /// (`fixtures/mapping-bundle-main-decimal-text.json`) was captured by this
 /// exact sequence on the merged main parent's code.

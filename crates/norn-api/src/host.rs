@@ -463,12 +463,8 @@ impl<E: SqlEngine> DevHost<E> {
                 // pending; when it cannot fit, the continuation resumes this
                 // pending page from its first member.
                 if finishes && spent(report.work_ms, commit_ms) {
-                    stop = Some(
-                        members
-                            .first()
-                            .and_then(|id| position(id))
-                            .unwrap_or(settled),
-                    );
+                    let resume = members.first().and_then(|id| position(id));
+                    stop = Some(resume.unwrap_or(settled));
                     break;
                 }
                 if self.observing(|cell| cell.finish_mapping_page(page_id))? {
@@ -476,27 +472,8 @@ impl<E: SqlEngine> DevHost<E> {
                 }
             }
             let reported = stop.unwrap_or(page.len()).min(page.len());
-            // Each member this page consumed has its outcome; any other record
-            // (refused by the mapping, a conflict or identity finding, or a row
-            // consumed before) answers as it does one by one.
-            for ((at, _), id) in page.iter().zip(records).take(reported) {
-                let outcome = if let Some(outcome) = outcomes.remove(&id) {
-                    outcome
-                } else {
-                    let outcome = self.observing(|cell| cell.process_mapping_outcome(&id))?;
-                    if outcome == norn_cell::MappingOutcome::Landed {
-                        report.charge(commit_ms);
-                    }
-                    outcome
-                };
-                out.push((
-                    *at,
-                    Ingested {
-                        observation_id: id,
-                        outcome,
-                    },
-                ));
-            }
+            let rows = page.iter().map(|(at, _)| *at).zip(records).take(reported);
+            out.extend(self.answer_page(rows, outcomes, &mut report, commit_ms)?);
             if stop.is_some() {
                 report.next = Some(page.get(reported).map_or(first, |(at, _)| *at));
                 break;
@@ -506,6 +483,39 @@ impl<E: SqlEngine> DevHost<E> {
         out.sort_by_key(|(at, _)| *at);
         report.outcomes = out.into_iter().map(|(_, ingested)| ingested).collect();
         Ok(report)
+    }
+
+    /// The answers of a page's reported rows, at their batch positions: each
+    /// member this load consumed has its outcome; any other record (refused
+    /// by the mapping, a conflict or identity finding, or a row consumed
+    /// before) answers as it does one by one.
+    fn answer_page(
+        &self,
+        rows: impl Iterator<Item = (usize, String)>,
+        mut outcomes: std::collections::BTreeMap<String, norn_cell::MappingOutcome>,
+        report: &mut IngestReport,
+        commit_ms: u64,
+    ) -> Result<Vec<(usize, Ingested)>, Refusal> {
+        let mut answers = Vec::new();
+        for (at, id) in rows {
+            let outcome = if let Some(outcome) = outcomes.remove(&id) {
+                outcome
+            } else {
+                let outcome = self.observing(|cell| cell.process_mapping_outcome(&id))?;
+                if outcome == norn_cell::MappingOutcome::Landed {
+                    report.charge(commit_ms);
+                }
+                outcome
+            };
+            answers.push((
+                at,
+                Ingested {
+                    observation_id: id,
+                    outcome,
+                },
+            ));
+        }
+        Ok(answers)
     }
 
     /// Capture one page, halving a page over the cell's byte bound; the parts
