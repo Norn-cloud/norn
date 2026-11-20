@@ -331,7 +331,8 @@ fn retained(name: &str, response: &Response) {
 /// the refusal's law and values) and a member (who gets the redacted
 /// refusal), the actions each may call on it, what each declared role may
 /// read and call on scanned documents, each role's refusal of the
-/// inconsistent correction, and the cell's definitions.
+/// inconsistent correction, the admin's admitted correction that follows,
+/// and the cell's definitions.
 #[test]
 fn retained_refusal_documents_are_the_cells_own() {
     let directory = tempfile::tempdir().unwrap();
@@ -397,4 +398,17 @@ fn retained_refusal_documents_are_the_cells_own() {
             ),
         );
     }
+    // The admin's next send, with the total the lines sum to: the cell admits it.
+    let body = json!({ "idempotencyKey": "inv-0041-admin-30.50",
+        "input": { "id": "SCAN-INV-1041", "currency": "USD", "total": "30.50",
+                   "correction_reason": "typo",
+                   "correction_evidence": "SCAN-INV-1041~total" } });
+    retained(
+        "receipt.admin.json",
+        &cell.call(
+            &format!("/v1/actions/{CORRECT}"),
+            &user("admin"),
+            &body.to_string(),
+        ),
+    );
 }

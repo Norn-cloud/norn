@@ -45,9 +45,10 @@ export async function refusalCell(page: Page, reader: Reader): Promise<RefusalCe
   await page.route("**/api/host/v1/actions**", (route) => {
     const url = new URL(route.request().url())
     if (route.request().method() === "POST" && url.pathname.endsWith(`/v1/actions/${CORRECT}`)) {
-      const body = JSON.parse(route.request().postData() ?? "null") as { input?: unknown } | null
+      const body = JSON.parse(route.request().postData() ?? "null") as { input?: { total?: unknown } } | null
       calls.push(body?.input)
-      return route.fulfill(serve(`refusal.${reader}.json`))
+      // The total the lines sum to is admitted (recorded for the admin); any other is the recorded refusal.
+      return route.fulfill(serve(reader === "admin" && body?.input?.total === "30.50" ? "receipt.admin.json" : `refusal.${reader}.json`))
     }
     if (route.request().method() === "GET" && url.pathname.endsWith("/v1/actions")) return route.fulfill(serve(`actions.${reader}.json`))
     return route.fulfill({ status: 404, json: { code: "route.not_found", message: "not found" } })

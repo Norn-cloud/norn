@@ -63,13 +63,20 @@ test("disclosed: the request, each value the law compared with where it came fro
   await shoot(page, "disclosed")
 })
 
-test("disclosed: Use puts the value the record holds into the form, and the refusal clears until the next send", async ({ page }) => {
-  const { form } = await refuse(page, "admin")
+test("disclosed: Use puts the value the record holds into the form; the refusal stays, still naming what was sent, until the next send", async ({ page }) => {
+  const { cell, form } = await refuse(page, "admin")
   const use = form.getByRole("button", { name: /^Use / })
   await expect(use).toBeVisible()
   const value = (await use.textContent())!.replace(/^Use /, "")
   await use.click()
   await expect(form.getByLabel("Corrected total")).toHaveValue(value)
+  const panel = form.locator('[data-refusal="disclosed"]')
+  await expect(panel.getByRole("region", { name: "The request" })).toContainText("30.00")
+  await expect(panel.getByRole("region", { name: "The request" })).not.toContainText(value)
+  // The next send is a new call with the fixed value; the cell decides it again.
+  await form.locator('button[type="submit"]').click()
+  await expect.poll(() => cell.calls.length).toBe(2)
+  expect(cell.calls[1]).toEqual(expect.objectContaining({ total: value }))
   await expect(form.locator("[data-refusal]")).toHaveCount(0)
 })
 

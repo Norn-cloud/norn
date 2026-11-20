@@ -113,18 +113,23 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
   }
 
   const top = unplaced(diagnostics, fields)
-  // What a refusal's request step shows: the action, its record, and every value this form sent.
-  const targetId = (draft as { readonly [name: string]: Draft })[action.objectIdField]
-  const request: RefusalRequest = {
-    action: action.title,
-    objectType: action.objectKind,
-    objectId: typeof targetId === "string" && targetId !== "" ? targetId : undefined,
-    values: fields.flatMap((field) => {
-      if (field.name === action.objectIdField) return []
-      const value = (draft as { readonly [name: string]: Draft })[field.name]
-      return typeof value === "string" && value !== "" ? [{ label: field.label, value }] : []
-    }),
-  }
+  // What a refusal's request step shows: the action, its record, and every value this form sent. It is
+  // read when the refusal arrives (the form is locked while a call is out), so fixing a field after it
+  // does not rewrite what was asked.
+  const request = useMemo((): RefusalRequest => {
+    const values = draft as { readonly [name: string]: Draft }
+    const targetId = values[action.objectIdField]
+    return {
+      action: action.title,
+      objectType: action.objectKind,
+      objectId: typeof targetId === "string" && targetId !== "" ? targetId : undefined,
+      values: fields.flatMap((field) => {
+        if (field.name === action.objectIdField) return []
+        const value = values[field.name]
+        return typeof value === "string" && value !== "" ? [{ label: field.label, value }] : []
+      }),
+    }
+  }, [phase])
   const links = new Map((action.inputLinks ?? []).map(({ field, objectKind }) => [`/${field}`, objectKind] as const))
   const counts = problemsBySection(sections, diagnostics)
   const go = (to: number) => { moved.current = true; setStep(to); setReached((r) => Math.max(r, to)); dispatch({ kind: "back" }) }
