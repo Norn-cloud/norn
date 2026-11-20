@@ -76,6 +76,8 @@ const WORDS = {
     withdrawn: "Withdrawn at {0}", withdrawnBody: "The run no longer needs this decision.", expiredAt: "Expired at {0}", expiredBody: "The deadline passed before anyone decided.",
     expired: "Expired", gone: "No longer here", awaiting: "Waiting for approval", awaitingBody: "Your choice waits for an approval before it takes effect.",
     leaveBody: "Nothing has been sent. Your choice and note will be cleared; the decision stays in your inbox.", left: "{0} left", lapsed: "Expired",
+    "call.committed": "The approved call committed.", "call.refused": "The approved call was refused ({0}); this approval never runs it again.",
+    "call.not_executed": "Approved, not yet executed: it runs when the requester retries it.",
   },
   ar: {
     "risk.low": "مخاطرة منخفضة", "risk.medium": "مخاطرة متوسطة", "risk.high": "مخاطرة عالية", suggested: "مقترح", suggestedTitle: "توصية الوكيل؛ والقرار لك.",
@@ -91,6 +93,8 @@ const WORDS = {
     withdrawn: "سُحب عند {0}", withdrawnBody: "لم يعد التشغيل بحاجة إلى هذا القرار.", expiredAt: "انتهت المهلة عند {0}", expiredBody: "انقضت المهلة قبل أن يقرّر أحد.",
     expired: "انتهت المهلة", gone: "لم يعد هنا", awaiting: "بانتظار الموافقة", awaitingBody: "اختيارك بانتظار موافقة قبل أن يسري.",
     leaveBody: "لم يُرسل شيء. سيُمسح اختيارك وملاحظتك؛ ويبقى القرار في صندوقك.", left: "متبقٍ {0}", lapsed: "انتهت المهلة",
+    "call.committed": "نُفّذ الإجراء الموافق عليه.", "call.refused": "رُفض الإجراء الموافق عليه ({0})؛ ولن تنفّذه هذه الموافقة مرة أخرى.",
+    "call.not_executed": "تمت الموافقة ولم يُنفّذ بعد: يُنفّذ عندما يعيد مقدّم الطلب المحاولة.",
   },
 } as const satisfies Record<Locale, Record<string, string>>
 
@@ -220,6 +224,7 @@ export function sheetMarkup(document: SheetDocument, decision: SheetDecision, lo
       <section class="norn-outcome-card" data-region="decision-outcome" hidden>
         <p class="norn-outcome" role="status" aria-live="polite" data-region="outcome-title"></p>
         <p class="norn-meta" data-region="outcome-body"></p>
+        <p class="norn-meta" data-region="outcome-call" hidden></p>
         <a class="norn-link" data-region="outcome-run" data-link hidden>${escape(w.seeRun)}</a>
         <details class="norn-details" data-region="outcome-details" hidden>
           <summary class="norn-meta">${escape(w.details)}</summary>
@@ -300,8 +305,18 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Dr
     const body = q('[data-region="outcome-body"]')
     const run = q<HTMLAnchorElement>('[data-region="outcome-run"]')
     const details = q('[data-region="outcome-details"]')
-    if (!card || !title || !body || !run || !details) return
+    const callLine = q('[data-region="outcome-call"]')
+    if (!card || !title || !body || !run || !details || !callLine) return
     const doc = record(lastBody)
+    // APPROVAL-RECOVERY-1: where an approved call stands, exactly as the cell answered it.
+    const call = record(state === "resolved" ? record(doc.resolution).call : state === "decided" ? doc.call : undefined)
+    const callState = text(call.state)
+    callLine.textContent = callState === "committed" ? w["call.committed"]
+      : callState === "refused" ? say("call.refused", text(call.code) ?? "")
+      : callState === "not_executed" ? w["call.not_executed"] : ""
+    callLine.hidden = callLine.textContent === ""
+    if (callState === null) callLine.removeAttribute("data-call-state")
+    else callLine.setAttribute("data-call-state", callState)
     run.hidden = true
     details.hidden = true
     let heading = ""

@@ -2,8 +2,10 @@
 //! gates an action, a call that would commit parks as one open decision
 //! (202), a call that would be refused is refused as it would be ungated and
 //! parks nothing, the requester never decides their own call, and an
-//! approved call commits as its requester. A flow step's call parks exactly
-//! like a direct one, and so does an MCP tool call (APPROVAL-MCP-PARKS).
+//! approved call commits on the requester's own retry, under the
+//! requester's current authority: the decider's request never runs it
+//! (APPROVAL-RECOVERY-1). A flow step's call parks exactly like a direct
+//! one, and so does an MCP tool call (APPROVAL-MCP-PARKS).
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -93,6 +95,25 @@ fn decide(cell: &Cell, auth: Option<&str>, id: &str, choice: &str) -> (u16, Valu
     )
 }
 
+/// The answer's `call` while the approved call waits for its requester.
+fn not_executed() -> Value {
+    json!({ "committed": false, "state": "not_executed" })
+}
+
+/// The run's starter retries its start: the exact retry drives the run, and
+/// runs a step's approved call under the starter's own authority.
+fn restart(cell: &Cell, run: &str) -> Value {
+    let (status, run) = call(
+        cell,
+        "POST",
+        "/v1/runs",
+        OPERATOR,
+        &json!({ "flow": FLOW_ID, "runId": run }).to_string(),
+    );
+    assert_eq!(status, 200, "{run}");
+    run
+}
+
 fn melt_status(cell: &Cell) -> u16 {
     call(
         cell,
@@ -120,10 +141,11 @@ fn a_caller_without_the_right_parks_nothing() {
 }
 
 /// APPROVAL-COMMITS-AS-REQUESTER: a gated call parks (202, nothing committed); only a holder of a decider
-/// role who is not the requester sees and decides it; approving commits the
-/// call as the requester, whose retry then replays it.
+/// role who is not the requester sees and decides it; approving runs
+/// nothing (the decider's request never carries the requester's current
+/// authority), and the requester's retry commits it once.
 #[test]
-fn an_approved_call_commits_for_its_requester() {
+fn an_approved_call_commits_on_its_requesters_retry() {
     let cell = cell();
     gate(&cell, None);
     let body = melt7("operator-1");
@@ -159,14 +181,18 @@ fn an_approved_call_commits_for_its_requester() {
 
     let (status, decided) = decide(&cell, APPROVER, &id, "approve");
     assert_eq!(status, 200, "{decided}");
+    assert_eq!(decided["call"], not_executed(), "{decided}");
     assert_eq!(
-        decided["call"],
-        json!({ "committed": true, "state": "committed" }),
-        "{decided}"
+        melt_status(&cell),
+        404,
+        "the decider's request runs nothing"
     );
-    assert_eq!(melt_status(&cell), 200);
     assert_eq!(pending(&cell, APPROVER)["total"], json!(0));
 
+    let (status, committed) = convert(&cell, OPERATOR, &body);
+    assert_eq!(status, 200, "{committed}");
+    assert_eq!(committed["outcome"], json!("committed"), "{committed}");
+    assert_eq!(melt_status(&cell), 200);
     let (status, replayed) = convert(&cell, OPERATOR, &body);
     assert_eq!(status, 200, "{replayed}");
     assert_eq!(replayed["outcome"], json!("replayed"));
@@ -188,9 +214,10 @@ fn convert_pinned(cell: &Cell, version: u64, body: &str) -> (u16, Value) {
     call_with(cell, "POST", &path, &query, OPERATOR, body)
 }
 
-/// APPROVAL-PIN-1: a call pinned to a definitions version commits on approval
-/// only while that version is active: a catalog that changed between parking
-/// and approval refuses the commit (`defs.stale`) and commits nothing, and
+/// APPROVAL-PIN-1: a call pinned to a definitions version commits under its
+/// approval only while that version is active: a catalog that changed
+/// between parking and the requester's retry refuses it (`defs.stale`) and
+/// commits nothing, and
 /// the requester's retry under the current catalog parks for a fresh
 /// decision instead of reusing that approval.
 #[test]
@@ -205,11 +232,10 @@ fn an_approval_keeps_the_callers_definitions_pin() {
     assert_ne!(definitions_version(&cell), pinned, "the catalog changed");
     let (status, decided) = decide(&cell, APPROVER, &id, "approve");
     assert_eq!(status, 200, "{decided}");
-    assert_eq!(
-        decided["call"],
-        json!({ "committed": false, "code": "defs.stale", "state": "refused" }),
-        "{decided}"
-    );
+    assert_eq!(decided["call"], not_executed(), "{decided}");
+    let (status, stale) = convert_pinned(&cell, pinned, &melt7("operator-pin"));
+    assert_eq!(status, 409, "{stale}");
+    assert_eq!(stale["code"], json!("defs.stale"), "{stale}");
     assert_eq!(melt_status(&cell), 404, "nothing committed");
 
     // The requester's retry under the current catalog is another call: it
@@ -235,11 +261,9 @@ fn an_approval_keeps_the_callers_definitions_pin() {
     // The fresh decision approved, the retry commits.
     let (status, decided) = decide(&cell, APPROVER, &fresh, "approve");
     assert_eq!(status, 200, "{decided}");
-    assert_eq!(
-        decided["call"],
-        json!({ "committed": true, "state": "committed" }),
-        "{decided}"
-    );
+    assert_eq!(decided["call"], not_executed(), "{decided}");
+    let (status, committed) = convert_pinned(&cell, current, &melt7("operator-pin"));
+    assert_eq!(status, 200, "{committed}");
     assert_eq!(melt_status(&cell), 200);
 
     // Unchanged between parking and approval, the pinned call commits.
@@ -251,11 +275,9 @@ fn an_approval_keeps_the_callers_definitions_pin() {
     let id = parked["decision"]["id"].as_str().unwrap().to_owned();
     let (status, decided) = decide(&cell, APPROVER, &id, "approve");
     assert_eq!(status, 200, "{decided}");
-    assert_eq!(
-        decided["call"],
-        json!({ "committed": true, "state": "committed" }),
-        "{decided}"
-    );
+    assert_eq!(decided["call"], not_executed(), "{decided}");
+    let (status, committed) = convert_pinned(&cell, pinned, &melt7("operator-pin"));
+    assert_eq!(status, 200, "{committed}");
     assert_eq!(melt_status(&cell), 200);
 }
 
@@ -334,8 +356,9 @@ fn start_gated_run(cell: &Cell, run: &str) -> String {
     approval["id"].as_str().unwrap().to_owned()
 }
 
-/// APPROVAL-STEP-PARKS: a flow step's call parks exactly like a direct call; approving it
-/// commits as the run's starter and the run completes.
+/// APPROVAL-STEP-PARKS: a flow step's call parks exactly like a direct call;
+/// once it is approved, the starter's own retry of the run commits it under
+/// the starter's current authority and the run completes.
 #[test]
 fn a_flow_step_parks_like_a_direct_call() {
     let cell = cell();
@@ -344,7 +367,10 @@ fn a_flow_step_parks_like_a_direct_call() {
     let (status, decided) = decide(&cell, APPROVER, &approval, "approve");
     assert_eq!(status, 200, "{decided}");
     assert_eq!(decided["run"]["id"], json!("melt-run-a"));
-    assert_eq!(decided["run"]["state"], json!("completed"), "{decided}");
+    assert_eq!(decided["run"]["state"], json!("awaiting_perform_convert"));
+    assert_eq!(decided["call"], not_executed(), "{decided}");
+    assert_eq!(melt_status(&cell), 404);
+    assert_eq!(restart(&cell, "melt-run-a")["state"], json!("completed"));
     assert_eq!(melt_status(&cell), 200);
 }
 
@@ -430,9 +456,9 @@ fn revise_at(cell: &Cell, set: &str, at: u64) {
 }
 
 /// APPROVAL-REVISION-1: an approval given for a call parked under revision N
-/// never executes it under N+1 when N+1 changed the action: approving it is
-/// refused `approval.definition_changed` and commits nothing, and the
-/// requester's call under the new action parks anew for a fresh approval.
+/// never executes it under N+1 when N+1 changed the action: the
+/// requester's call under the new action is another call, and parks anew
+/// for a fresh approval.
 #[test]
 fn an_approval_never_executes_a_changed_action() {
     let cell = cell();
@@ -446,11 +472,7 @@ fn an_approval_never_executes_a_changed_action() {
     revise(&cell, step_cell::action_cell::OMITS_LOSS);
     let (status, decided) = decide(&cell, APPROVER, &id, "approve");
     assert_eq!(status, 200, "{decided}");
-    assert_eq!(
-        decided["call"],
-        json!({ "committed": false, "code": "approval.definition_changed", "state": "refused" }),
-        "{decided}"
-    );
+    assert_eq!(decided["call"], not_executed(), "{decided}");
     assert_eq!(melt_status(&cell), 404, "nothing ran under the new action");
 
     // The same call under the new action asks for a new approval.
@@ -472,11 +494,9 @@ fn an_approval_survives_a_revision_that_keeps_the_action() {
     revise(&cell, step_cell::DERIVES_LOSS);
     let (status, decided) = decide(&cell, APPROVER, &id, "approve");
     assert_eq!(status, 200, "{decided}");
-    assert_eq!(
-        decided["call"],
-        json!({ "committed": true, "state": "committed" }),
-        "{decided}"
-    );
+    assert_eq!(decided["call"], not_executed(), "{decided}");
+    let (status, committed) = convert(&cell, OPERATOR, &melt7("operator-same"));
+    assert_eq!(status, 200, "{committed}");
     assert_eq!(melt_status(&cell), 200);
 }
 
@@ -517,11 +537,10 @@ fn an_approval_never_executes_under_a_changed_default() {
 
     let (status, decided) = decide(&cell, APPROVER, &id, "approve");
     assert_eq!(status, 200, "{decided}");
-    assert_eq!(
-        decided["call"],
-        json!({ "committed": false, "code": "approval.definition_changed", "state": "refused" }),
-        "{decided}"
-    );
+    assert_eq!(decided["call"], not_executed(), "{decided}");
+    let (status, again) = convert(&cell, OPERATOR, &melt7("operator-default"));
+    assert_eq!(status, 202, "{again}");
+    assert_ne!(again["decision"]["id"], json!(id), "{again}");
     assert_eq!(melt_status(&cell), 404);
 }
 
@@ -561,21 +580,18 @@ fn an_approval_never_executes_under_a_changed_gate() {
 
     let (status, decided) = decide(&cell, APPROVER, &id, "approve");
     assert_eq!(status, 200, "{decided}");
-    assert_eq!(
-        decided["call"],
-        json!({ "committed": false, "code": "approval.definition_changed", "state": "refused" }),
-        "{decided}"
-    );
+    assert_eq!(decided["call"], not_executed(), "{decided}");
     assert_eq!(melt_status(&cell), 404);
     let (status, again) = convert(&cell, OPERATOR, &body);
     assert_eq!(status, 202, "{again}");
     assert_ne!(again["decision"]["id"], json!(id), "{again}");
 }
 
-/// APPROVAL-REVISION-1 on the hosted path: an approved step call refused
-/// `approval.definition_changed` drives nothing. The run's waiting step is
-/// not called again under the changed action (no new approval parks), and
-/// the run stays where it was.
+/// APPROVAL-REVISION-1 on the hosted path: an approved step call whose
+/// action changed drives nothing on the decider's request. The run's waiting
+/// step is not called again under the changed action (no new approval
+/// parks), and the run stays where it was; the starter's retry calls it as
+/// another call, which asks for a new approval.
 #[test]
 fn a_stale_approval_never_drives_its_flow_step() {
     let cell = cell();
@@ -593,11 +609,7 @@ fn a_stale_approval_never_drives_its_flow_step() {
         .expect("the action's next revision installs");
     let (status, decided) = decide(&cell, APPROVER, &approval, "approve");
     assert_eq!(status, 200, "{decided}");
-    assert_eq!(
-        decided["call"]["code"],
-        json!("approval.definition_changed"),
-        "{decided}"
-    );
+    assert_eq!(decided["call"], not_executed(), "{decided}");
     assert_eq!(
         decided["run"]["state"],
         json!("awaiting_perform_convert"),
@@ -609,13 +621,20 @@ fn a_stale_approval_never_drives_its_flow_step() {
         "nothing parked anew"
     );
     assert_eq!(melt_status(&cell), 404);
+    let run = restart(&cell, "melt-run-stale");
+    assert_eq!(run["state"], json!("awaiting_perform_convert"), "{run}");
+    assert_eq!(
+        pending(&cell, APPROVER)["total"],
+        json!(1),
+        "a new approval"
+    );
+    assert_eq!(melt_status(&cell), 404);
 }
 
 /// APPROVAL-REVISION-1 (round 2 S6): a replayed approval is fenced like the
-/// first dispatch. The gate is retired after the step's call parked; the
-/// approval's first dispatch is refused stale, and its identical replay is
-/// refused the same way: the waiting step is never driven, so the action
-/// never executes ungated.
+/// first dispatch. The gate is retired after the step's call parked; neither
+/// the decide nor its identical replay runs the call or drives the waiting
+/// step, so the action never executes under that approval.
 #[test]
 fn a_replayed_approval_never_drives_a_step_past_a_retired_gate() {
     let cell = cell();
@@ -629,8 +648,7 @@ fn a_replayed_approval_never_drives_a_step_past_a_retired_gate() {
         &json!({ "expectedVersion": 1 }).to_string(),
     );
     assert_eq!(status, 200, "{retired}");
-    let stale =
-        json!({ "committed": false, "code": "approval.definition_changed", "state": "refused" });
+    let stale = not_executed();
     let (status, decided) = decide(&cell, APPROVER, &approval, "approve");
     assert_eq!(status, 200, "{decided}");
     assert_eq!(decided["call"], stale, "{decided}");
@@ -656,11 +674,19 @@ fn a_replayed_approval_of_a_committed_step_replays() {
     let approval = start_gated_run(&cell, "melt-run-replay");
     let (status, decided) = decide(&cell, APPROVER, &approval, "approve");
     assert_eq!(status, 200, "{decided}");
-    assert_eq!(decided["run"]["state"], json!("completed"), "{decided}");
+    assert_eq!(
+        restart(&cell, "melt-run-replay")["state"],
+        json!("completed")
+    );
     let (status, replayed) = decide(&cell, APPROVER, &approval, "approve");
     assert_eq!(status, 200, "{replayed}");
     assert_eq!(replayed["outcome"], json!("replayed"), "{replayed}");
     assert_eq!(replayed["run"]["state"], json!("completed"), "{replayed}");
+    assert_eq!(
+        replayed["call"],
+        json!({ "committed": true, "state": "committed" }),
+        "{replayed}"
+    );
     assert_eq!(melt_status(&cell), 200);
 }
 
@@ -750,4 +776,99 @@ fn a_revision_racing_the_approved_dispatch_is_fenced() {
         json!(0),
         "nothing parked anew"
     );
+}
+
+/// APPROVAL-RECOVERY-1 (S6), the interleaving: a dispatch of an approved
+/// call reads it not executed and releases the cell; the requester's retry
+/// commits exactly that call; a revision lands; the dispatch then reaches
+/// its fence and is refused. Under its own hold it reads the call again
+/// before recording anything, so the refusal is never recorded over the
+/// commit: the call stands committed, for the approver and the requester.
+#[test]
+fn a_refusal_racing_an_exact_commit_never_masks_it() {
+    use norn_cell_do::policy::Caller;
+    let cell = cell();
+    gate(&cell, None);
+    let body = melt7("operator-mask");
+    let (status, parked) = convert(&cell, OPERATOR, &body);
+    assert_eq!(status, 202, "{parked}");
+    let id = parked["decision"]["id"].as_str().unwrap().to_owned();
+
+    let as_caller = |subject: &str, roles: &[String], table: &str| Caller {
+        subject_id: subject.to_owned(),
+        roles: roles.to_vec(),
+        actor_kind: "user",
+        role_table: Box::leak(table.to_owned().into_boxed_str()),
+    };
+    cell.caller.record(Some(as_caller(
+        "approver@steps",
+        &["admin".to_owned()],
+        norn_cell_do::principal::FIXTURE_ROLES,
+    )));
+    let scope = norn_api::scope::ScopeQuery {
+        org_id: Some("org_demo".into()),
+        environment_id: Some("dev".into()),
+    };
+    let request = norn_api::decisions::DecideRequest {
+        choice: "approve".into(),
+        note: None,
+        idempotency_key: "mask-1".into(),
+    };
+    let reads = |capability: norn_api::authz::ReadCapability, object_type: &str| {
+        norn_cell_do::policy::collection_access(
+            cell.host.scope(),
+            "approver@steps",
+            capability,
+            object_type,
+        )
+    };
+    let raced = std::cell::Cell::new(None);
+    let as_requester = |requester: &norn_cell::flow_run::RunStarter,
+                        dispatch: &mut dyn FnMut() -> Result<
+        norn_api::actions::ActionAnswer,
+        norn_api::refusal::Refusal,
+    >| {
+        // Between the dispatch's read and its own hold: the requester's
+        // retry commits the exact call, and a revision changes the action.
+        let (status, committed) = convert(&cell, OPERATOR, &body);
+        assert_eq!(status, 200, "{committed}");
+        revise_at(&cell, step_cell::action_cell::OMITS_LOSS, NOW * 1000 + 10);
+        raced.set(Some(cell.host.verified_head().unwrap().commits));
+        cell.caller.record(Some(as_caller(
+            &requester.subject,
+            &requester.roles,
+            &requester.role_table,
+        )));
+        Some(dispatch())
+    };
+    let decided = norn_api::decisions::decide(
+        &cell.host,
+        &norn_api::decisions::DecideCall {
+            scope: &scope,
+            actor: Some("approver@steps"),
+            id: &id,
+            body: &request,
+            now: norn_kernel::LogicalTime::from_millis(NOW * 1000 + 2),
+        },
+        &reads,
+        &cell.handles,
+        &as_requester,
+    )
+    .unwrap();
+    cell.caller.record(None);
+    let before = raced.get().expect("the race ran");
+    assert_eq!(
+        cell.host.verified_head().unwrap().commits,
+        before,
+        "no refusal was recorded over the commit"
+    );
+    let call = decided.call.expect("the approved call's state");
+    assert_eq!(
+        (call.committed, call.state),
+        (true, norn_api::decisions::DecidedCallState::Committed)
+    );
+    assert_eq!(melt_status(&cell), 200);
+    let (status, replayed) = convert(&cell, OPERATOR, &body);
+    assert_eq!(status, 200, "{replayed}");
+    assert_eq!(replayed["outcome"], json!("replayed"), "{replayed}");
 }

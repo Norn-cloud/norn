@@ -475,6 +475,15 @@ fn through_gate<E: SqlEngine>(
     {
         return Err(refused);
     }
+    if let Some(decision) = &approval
+        && !crate::approvals::attempt_live(cell, decision)?
+    {
+        return Err(crate::approvals::refuse(
+            cell,
+            decision,
+            crate::approvals::attempt_ended(),
+        )?);
+    }
     let Some(gate) = gate else {
         return Ok(Gated::Commit(None));
     };

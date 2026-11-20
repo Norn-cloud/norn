@@ -341,9 +341,10 @@ pub enum DecidedCallState {
     /// It was refused when it ran (`code`), for good: its approval never
     /// runs it again.
     Refused,
-    /// Approved, not yet executed: the host stopped before it committed, or
-    /// its try could not commit it (`code` says why). The requester's retry
-    /// of the call, or the approver's replay of the decide, runs it once.
+    /// Approved, not yet executed: no request of the requester's has run
+    /// it yet, the host stopped before it committed, or its try could not
+    /// commit it (`code` says why). Only the requester's own retry runs it,
+    /// once, under the requester's current authority.
     NotExecuted,
 }
 
@@ -928,9 +929,12 @@ fn by(row: &DecisionRow, actor: &str) -> Option<String> {
 ///
 /// For the approval of a parked action call (APPROVAL-1) the decider is
 /// never the call's requester (#618), and no flow turn runs: the answer is
-/// recorded, and an approved call then commits through the shared action
-/// dispatch as its requester ([`AsStarter`] makes the requester the host's
-/// verified caller for that one call), its authority decided again there.
+/// recorded, and an approved call then runs through the shared action
+/// dispatch only under the requester's current authority ([`AsStarter`]:
+/// the host runs it only when it can establish that authority, which a
+/// decider's request never does). Otherwise the answer's `call` is
+/// `not_executed` and the requester's own authenticated retry runs it
+/// (APPROVAL-RECOVERY-1).
 ///
 /// # Errors
 /// In this order: 404 `decision.not_found` (also for a caller who may not
@@ -1022,12 +1026,13 @@ fn decide_held<E: SqlEngine>(
 
 /// APPROVAL-RECOVERY-1: the approved call of `decision_id` as it stands, and
 /// while it is approved and not yet executed, run once now through the
-/// shared action dispatch as its requester: the requester's authority is
-/// decided again, and the dispatch lets only exactly the approved call past
+/// shared action dispatch under the requester's current authority when the
+/// host can establish it (`as_requester`; else nothing runs), and the
+/// dispatch lets only exactly the approved call past
 /// its gate (APPROVAL-REVISION-1, APPROVAL-PIN-1), recording a refusal that
 /// decides it. A committed or refused call is answered as recorded and
-/// nothing runs. `None` for an approval recorded before approved calls were
-/// (it has no record to answer from).
+/// nothing runs. `None` when the decision approved no call (an approval
+/// recorded before approved calls were is backfilled when the cell opens).
 ///
 /// # Errors
 /// A host failure reading the call.
@@ -1084,9 +1089,10 @@ fn run_approved<E: SqlEngine>(
     let tried = match as_requester(&held.call.requester, &mut commit) {
         Some(Ok(_answer)) => None,
         Some(Err(refusal)) => Some(refusal.code),
-        // The host cannot act as the requester: the call is denied for this
-        // try and stays approved, not executed.
-        None => Some(crate::actions::action_denied().code),
+        // The requester's current authority cannot be established on this
+        // request (it is not the requester's own): nothing runs, and the call
+        // stays approved and not executed for the requester's retry.
+        None => None,
     };
     let _epoch = host.definition_read()?;
     let cell = host.cell()?;

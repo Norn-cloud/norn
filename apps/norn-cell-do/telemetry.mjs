@@ -37,7 +37,7 @@ const REFUSAL_CODES = new Set(Object.entries({
   analytics:
     "engine frontier_behind frontier_moved invalid too_large unauthorized unavailable unconfigured " +
     "unknown unsettled",
-  approval: "definition_changed expired rejected would_commit",
+  approval: "attempt_ended definition_changed expired refusal_invalid refused rejected would_commit",
   artifact_set: "action.effect_kind_mismatch",
   authn: "required",
   authz:

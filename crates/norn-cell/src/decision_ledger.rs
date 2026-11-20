@@ -81,10 +81,19 @@ pub(crate) const DDL: [&str; 4] = [
   "resolved_at_ms" INTEGER NOT NULL,
   "refused_status" INTEGER,
   "refused_code" TEXT,
+  "refused_category" TEXT,
   PRIMARY KEY ("world", "decision_id")
 )"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_approved_call/run" ON "_norn_approved_call" ("world", "run_id", "decision_id")"#,
 ];
+
+/// APPROVAL-RECOVERY-1, in-place upgrade: a file whose approvals were
+/// recorded before `_norn_approved_call` existed gains their rows from its
+/// own decision rows, exactly what replaying its ledger records (the
+/// approving decision, its parked command, its run and the commit's logical
+/// time). Idempotent: an approval already recorded is left as it is, so its
+/// refusal stays.
+pub(crate) const BACKFILL_APPROVED_CALLS: &str = r#"INSERT OR IGNORE INTO "_norn_approved_call" ("world","decision_id","command_id","run_id","resolved_at_ms") SELECT "world","decision_id","command_id","run_id","resolved_at_ms" FROM "_norn_decision" WHERE "resolution"='decided' AND "choice"='approve' AND substr("command_id",1,14)='norn.approval/'"#;
 
 /// How a decision was resolved (DECISION-TERMINAL-1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -255,7 +264,7 @@ fn refusals(batch: &CommitBatch) -> Result<Vec<ApprovalRefused>, CellError> {
             .get("refused")
             .and_then(|refused| norn_ir::runtime::decode(refused).ok())
             .ok_or_else(|| refused("approval.refusal_invalid"))?;
-        if refusal.code.is_empty() {
+        if refusal.code.is_empty() || refusal.category.is_empty() {
             return Err(refused("approval.refusal_invalid"));
         }
         found.push(refusal);
@@ -310,6 +319,9 @@ pub struct ApprovalRefused {
     pub status: u16,
     /// The refusal's code.
     pub code: String,
+    /// The refusal's category (`norn/refusal@2`), as it was served: a
+    /// replay serves it again, never one rebuilt from the status.
+    pub category: String,
 }
 
 impl ApprovalRefused {
@@ -353,8 +365,19 @@ pub struct ApprovedCall {
     pub run_id: String,
     /// When the approval committed (logical milliseconds).
     pub resolved_at_ms: u64,
-    /// The refusal recorded for it (status, code), if one was.
-    pub refused: Option<(u16, String)>,
+    /// The refusal recorded for it, if one was.
+    pub refused: Option<RecordedRefusal>,
+}
+
+/// The refusal recorded for an approved call ([`ApprovalRefused`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordedRefusal {
+    /// Its HTTP status.
+    pub status: u16,
+    /// Its code.
+    pub code: String,
+    /// Its category as served.
+    pub category: String,
 }
 
 /// Whether `resolved` approves a parked action call.
@@ -415,13 +438,14 @@ pub(crate) fn apply<E: SqlEngine>(
     for refusal in refusals(batch)? {
         reader.conn.execute(
             &format!(
-                r#"UPDATE "{APPROVED_CALL}" SET "refused_status"=?3,"refused_code"=?4 WHERE "world"=?1 AND "decision_id"=?2 AND "refused_code" IS NULL"#
+                r#"UPDATE "{APPROVED_CALL}" SET "refused_status"=?3,"refused_code"=?4,"refused_category"=?5 WHERE "world"=?1 AND "decision_id"=?2 AND "refused_code" IS NULL"#
             ),
             params![
                 batch.world,
                 refusal.decision_id,
                 i64::from(refusal.status),
-                refusal.code
+                refusal.code,
+                refusal.category
             ],
         )?;
     }
@@ -431,24 +455,26 @@ pub(crate) fn apply<E: SqlEngine>(
 fn decode_approved(row: &SqlRow) -> Result<ApprovedCall, CellError> {
     let status: Option<i64> = row.get(4)?;
     let code: Option<String> = row.get(5)?;
+    let category: Option<String> = row.get(6)?;
     Ok(ApprovedCall {
         decision_id: row.get(0)?,
         command_id: row.get(1)?,
         run_id: row.get(2)?,
         resolved_at_ms: u64::try_from(row.get::<i64>(3)?)
             .map_err(|_negative| CellError::OutOfRange("approval time"))?,
-        refused: match (status, code) {
-            (Some(status), Some(code)) => Some((
-                u16::try_from(status).map_err(|_bad| CellError::OutOfRange("refusal status"))?,
+        refused: match (status, code, category) {
+            (Some(status), Some(code), Some(category)) => Some(RecordedRefusal {
+                status: u16::try_from(status)
+                    .map_err(|_bad| CellError::OutOfRange("refusal status"))?,
                 code,
-            )),
+                category,
+            }),
             _unrefused => None,
         },
     })
 }
 
-const APPROVED_COLUMNS: &str =
-    r#""decision_id","command_id","run_id","resolved_at_ms","refused_status","refused_code""#;
+const APPROVED_COLUMNS: &str = r#""decision_id","command_id","run_id","resolved_at_ms","refused_status","refused_code","refused_category""#;
 
 fn decode(row: &SqlRow) -> Result<DecisionRow, CellError> {
     let unsigned = |index: usize, what: &'static str| {

@@ -35,9 +35,9 @@
 //! APPROVAL-RECOVERY-1: the approval of a parked call is recorded first and
 //! the call commits after it, so a host can stop in between. Nothing ever
 //! runs the call without a request: an approved call that did not commit
-//! stays visibly approved and not executed (`not_executed`), and
-//! the requester's retry, or the approver's replay of the decide, runs it
-//! once under the caller's authority decided then, only as exactly the
+//! stays visibly approved and not executed (`not_executed`), and only the
+//! requester's own retry runs it, once, under the requester's current
+//! authority (no other request can establish it), only as exactly the
 //! approved call (its command id: requester, input, idempotency key, action
 //! digest, gate definition and revision, definitions pin). Whether it
 //! committed is its idempotency record, matched to that exact call; a
@@ -92,6 +92,9 @@ pub mod approval_codes {
     /// APPROVAL-REVISION-1: the action changed after the call parked, so
     /// its approval does not cover it; call again to request a new one.
     pub const DEFINITION_CHANGED: &str = "approval.definition_changed";
+    /// APPROVAL-RECOVERY-1: the flow step attempt this call was approved for
+    /// no longer waits on it, so its approval never runs it.
+    pub const ATTEMPT_ENDED: &str = "approval.attempt_ended";
 }
 
 /// The active approval gating one action.
@@ -328,6 +331,53 @@ pub(crate) fn definition_changed() -> Refusal {
     )
 }
 
+/// `approval.attempt_ended`: the step attempt the approved call was for no
+/// longer waits on it.
+pub(crate) fn attempt_ended() -> Refusal {
+    Refusal::new(
+        StatusCode::CONFLICT,
+        approval_codes::ATTEMPT_ENDED,
+        "the run step this call was approved for no longer waits on it",
+        "an approval runs a step's call only while that exact step attempt is pending",
+    )
+}
+
+/// S6b: whether the approved call of `decision_id` may still run: a direct
+/// call always may; a flow step's call only while that exact step attempt
+/// (its run, its attempt's idempotency key) is pending, or once it
+/// committed (its replay).
+///
+/// # Errors
+/// A host failure.
+pub(crate) fn attempt_live<E: SqlEngine>(
+    cell: &ActionCell<E>,
+    decision_id: &str,
+) -> Result<bool, Refusal> {
+    let reader = cell.store().read();
+    let Some(row) = reader
+        .approved_call(MAIN_WORLD, decision_id)
+        .map_err(Refusal::host)?
+    else {
+        return Ok(true);
+    };
+    if reader
+        .flow_run(MAIN_WORLD, &row.run_id)
+        .map_err(Refusal::host)?
+        .is_none()
+    {
+        return Ok(true);
+    }
+    let (held, state) = approved_state(cell, &row)?;
+    // A committed call replays, live or not.
+    if matches!(state, CallState::Committed(_)) {
+        return Ok(true);
+    }
+    Ok(
+        crate::flow_driver::run_waiting_on(cell.store(), &held.call.idempotency_key)?.as_deref()
+            == Some(row.run_id.as_str()),
+    )
+}
+
 fn rejected() -> Refusal {
     Refusal::new(
         StatusCode::CONFLICT,
@@ -540,16 +590,17 @@ pub(crate) fn approved_state<E: SqlEngine>(
                 .and_then(held_call)
         })
         .ok_or_else(|| Refusal::host("an approved call's parked command is missing"))?;
-    if let Some((_status, code)) = &row.refused {
-        return Ok((held, CallState::Refused(code.clone())));
-    }
     let key = FactKey::new(
         ACTION_CALL_TYPE,
         format!("{}/{}", held.call.action, held.call.idempotency_key),
     );
     let recorded = CellHost::load(cell, &key).map_err(Refusal::host)?;
     let state = match recorded.values.as_ref() {
-        None => CallState::NotExecuted,
+        // A recorded refusal is final, and no exact commit can follow it.
+        None => match &row.refused {
+            Some(refused) => CallState::Refused(refused.code.clone()),
+            None => CallState::NotExecuted,
+        },
         Some(values) => match ActionCallRecord::from_values(values) {
             // Exactly the approved call: its action, its requester, its
             // input. Another call under the same key is a conflict, never
@@ -561,7 +612,10 @@ pub(crate) fn approved_state<E: SqlEngine>(
             {
                 CallState::Committed(Box::new(record))
             }
-            _conflict => CallState::Refused("action.idempotency_conflict".to_owned()),
+            _conflict => CallState::Refused(row.refused.as_ref().map_or_else(
+                || "action.idempotency_conflict".to_owned(),
+                |refused| refused.code.clone(),
+            )),
         },
     };
     Ok((held, state))
@@ -604,12 +658,19 @@ pub(crate) fn recorded_refusal<E: SqlEngine>(
         .approved_call(MAIN_WORLD, decision_id)
         .map_err(Refusal::host)?
         .and_then(|row| row.refused)
-        .map(|(status, code)| {
+        .map(|refused| {
+            let status = StatusCode::from_u16(refused.status).unwrap_or(StatusCode::CONFLICT);
             Refusal::new(
-                StatusCode::from_u16(status).unwrap_or(StatusCode::CONFLICT),
-                &code,
+                status,
+                &refused.code,
                 "this approved call was refused when it ran",
                 "its approval never runs it again; call with a new idempotency key to ask for a new approval",
+            )
+            // S11: the category it was served with, never one rebuilt from
+            // the status.
+            .with_category(
+                crate::refusal::RefusalCategory::from_name(&refused.category)
+                    .unwrap_or_else(|| crate::refusal::RefusalCategory::of_status(status)),
             )
         }))
 }
@@ -648,14 +709,21 @@ pub(crate) fn refuse<E: SqlEngine>(
     ) {
         return Ok(refusal);
     }
-    // A refusal recorded first stands: it is the call's answer.
+    // Under the hold the refused try holds, the call's state is read again
+    // before anything is recorded: a refusal recorded first stands, and an
+    // exact commit is never masked by a later refusal (it is the call's
+    // answer, and the try's refusal is not recorded).
     if let Some(recorded) = recorded_refusal(cell, decision_id)? {
         return Ok(recorded);
+    }
+    if let Some((_held, CallState::Committed(_))) = approved_call(cell, decision_id)? {
+        return Ok(refusal);
     }
     let refused = ApprovalRefused {
         decision_id: decision_id.to_owned(),
         status: refusal.status,
         code: refusal.code.clone(),
+        category: refusal.category.name().to_owned(),
     };
     match cell.commit_approval_refusal(&refused) {
         Ok(_receipt) => Ok(refusal),

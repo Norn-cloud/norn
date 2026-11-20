@@ -56,6 +56,13 @@ pub(crate) const NAMES: &[(&str, &[&str])] = &[
     ("approver@steps", &["admin"]),
     ("member@steps", &["member"]),
 ];
+/// [`NAMES`] after the operator's roles were revoked: the same subject,
+/// verified now with no role (APPROVAL-RECOVERY-1, S2).
+pub(crate) const REVOKED: &[(&str, &[&str])] = &[
+    ("operator@steps", &[]),
+    ("approver@steps", &["admin"]),
+    ("member@steps", &["member"]),
+];
 /// The subjects the melt action grant names.
 pub(crate) const CONVERTERS: [&str; 2] = ["operator@steps", "approver@steps"];
 /// `lowerFlow`'s output for `tools/norn-ts/fixtures/flows/melt.builder.ts`.
@@ -170,6 +177,15 @@ impl StepPolicy {
         target: &FactKey,
         denial: ActionDenial,
     ) -> Result<(), ActionDenial> {
+        // A caller verified with no role holds no grant: its roles were
+        // revoked.
+        if self
+            .caller
+            .current()
+            .is_none_or(|caller| caller.roles.is_empty())
+        {
+            return Err(denial);
+        }
         match self
             .request(action, target)
             .map(|request| self.pdp.decide(&request))

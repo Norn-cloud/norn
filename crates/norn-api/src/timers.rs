@@ -28,7 +28,7 @@
 //! delivers that outcome to the run, and it stays due until the run
 //! consumes it. An approved call
 //! that did not commit is not due work: it stays visibly approved and not
-//! executed until the requester's retry or the approver's replay runs it.
+//! executed until the requester's own retry runs it.
 
 use norn_cell::MAIN_WORLD;
 use norn_cell::due_retry::{approval_item, decision_item, timer_item};

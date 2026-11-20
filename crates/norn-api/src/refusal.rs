@@ -48,6 +48,36 @@ pub enum RefusalCategory {
 }
 
 impl RefusalCategory {
+    /// Its wire name (`snake_case`), as served.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Visibility => "visibility",
+            Self::Permission => "permission",
+            Self::Precondition => "precondition",
+            Self::Conflict => "conflict",
+            Self::Invalid => "invalid",
+            Self::Limit => "limit",
+            Self::Internal => "internal",
+        }
+    }
+
+    /// The category named `name` ([`Self::name`]).
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        [
+            Self::Visibility,
+            Self::Permission,
+            Self::Precondition,
+            Self::Conflict,
+            Self::Invalid,
+            Self::Limit,
+            Self::Internal,
+        ]
+        .into_iter()
+        .find(|category| category.name() == name)
+    }
+
     /// The category of a host check refused with `status`. The host's own
     /// `422`s are malformed content, so they are `invalid`; a precondition
     /// comes only from a kernel refusal, which carries its own category
