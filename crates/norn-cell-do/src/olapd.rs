@@ -2,27 +2,47 @@
 //! to the cell host. It serves the typed operations of
 //! [`norn_cell::analytics`] over a bounded HTTP/1.1 transport to one caller,
 //! the cell. OLAP-CRED-1 (#1493): every call carries the calling cell's own
-//! credential ([`norn_api::olap_credential`]), and the daemon serves it only
-//! for the one tenant that credential names; there is no shared token. The
-//! daemon holds public keys only, read from its keyring file on every call,
-//! so a key is added or rotated out without a restart. Every refused
-//! credential (missing, malformed, unknown or rotated-out key, bad
-//! signature, expired, or another tenant's) gets the same answer, before any
-//! tenant database is opened, so a caller learns nothing about whether
-//! another tenant exists. The cell still authorizes every request before it
-//! sends it and checks every answer. The daemon holds no storage
-//! credentials; a load reads a presigned URL the cell minted for that one
-//! object.
+//! credential ([`norn_api::olap_credential`]), bound to that call's operation
+//! and body, and the daemon serves it only for the one tenant that
+//! credential names; there is no shared token. The daemon holds public keys
+//! only, read from its keyring file on every call, so a key is added or
+//! rotated out without a restart.
+//!
+//! OLAP-04: authorization comes first and is complete before the daemon
+//! routes or parses anything. The credential is verified against the
+//! operation the path names and the digest of the body received, then the
+//! body's `tenant` must be the credential's, and only then is the path
+//! routed and the body parsed into its typed request. Every refusal before
+//! that point (no, malformed, unknown or rotated-out key, bad signature,
+//! expired, minted for another operation or body, another tenant, a body
+//! naming no tenant, any method but `POST`, an unknown path) gets the same
+//! `401`, and no tenant database is opened, so a caller learns nothing about
+//! whether another tenant exists; a `400` or `404` is reachable only with a
+//! credential the cell minted for that exact request. Residual timing: every
+//! request pays the body digest and the keyring read, but only a
+//! well-formed credential naming a key id the keyring holds pays the
+//! signature check (and, when it verifies, the scope check), so response
+//! time can tell such a credential from garbage. Key ids are not secret, and
+//! nothing about any tenant (whether it exists, what it holds) changes the
+//! time of a refusal.
+//!
+//! The cell still authorizes every request before it sends it and checks
+//! every answer. The daemon holds no storage credentials; a load reads a
+//! presigned URL the cell minted for that one object. OLAP-02: each tenant
+//! has its own scratch directory (downloads, exports and `DuckDB` spill), and
+//! each load attempt writes a file the daemon names and creates exclusively;
+//! nothing in a request names a path.
 
+use std::ffi::OsString;
 use std::io::{BufRead as _, BufReader, Read as _, Write as _};
 use std::net::{TcpListener, TcpStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use norn_api::clock::Clock;
-use norn_api::olap_credential::{Denied, Keyring};
+use norn_api::olap_credential::{Denied, Keyring, body_digest};
 use norn_cell::analytics::engine::{Engine, Outcome, Settings};
 use norn_cell::analytics::{
     EngineRefusal, EvaluateRequest, ExportRequest, FrontierRequest, LoadRequest, MembersRequest,
@@ -62,30 +82,36 @@ impl Config {
     /// # Errors
     /// As [`Config::from_vars`].
     pub fn from_env() -> Result<Self, String> {
-        Self::from_vars(|name| std::env::var(name).ok())
+        Self::from_vars(std::env::var_os::<&str>)
     }
 
     /// Read the configuration from `var`. The keyring must be readable now;
     /// the retired shared token must be absent, so no deployment believes
-    /// it is still protected by it.
+    /// it is still protected by it. OLAP-05: the retired token's presence
+    /// alone refuses, whatever its value, empty or not UTF-8 included.
     ///
     /// # Errors
     /// The retired shared token is set, the keyring file is missing or
-    /// unreadable, or the thread count is unreadable.
-    pub fn from_vars(var: impl Fn(&str) -> Option<String>) -> Result<Self, String> {
-        let var = |name: &str| var(name).filter(|v| !v.is_empty());
+    /// unreadable, a setting is not UTF-8, or the thread count is unreadable.
+    pub fn from_vars(var: impl Fn(&str) -> Option<OsString>) -> Result<Self, String> {
         if var(RETIRED_TOKEN).is_some() {
             return Err(format!(
                 "{RETIRED_TOKEN} is retired (#1493): cells present their own credentials; \
-                 remove it and set NORN_OLAP_KEYS_FILE"
+                 unset it (even empty) and set NORN_OLAP_KEYS_FILE"
             ));
         }
+        let set = |name: &str| var(name).filter(|v| !v.is_empty());
+        let text = |name: &str| {
+            set(name)
+                .map(|v| v.into_string().map_err(|_v| format!("{name} is not UTF-8")))
+                .transpose()
+        };
         let keys_file = PathBuf::from(
-            var("NORN_OLAP_KEYS_FILE")
+            set("NORN_OLAP_KEYS_FILE")
                 .ok_or("NORN_OLAP_KEYS_FILE must name the keyring of the cells' public keys")?,
         );
         read_keyring(&keys_file)?;
-        let threads = var("NORN_OLAP_THREADS")
+        let threads = text("NORN_OLAP_THREADS")?
             .map(|t| {
                 t.parse::<u32>()
                     .map_err(|e| format!("NORN_OLAP_THREADS: {e}"))
@@ -93,11 +119,11 @@ impl Config {
             .transpose()?
             .unwrap_or(1);
         Ok(Self {
-            addr: var("NORN_OLAP_ADDR").unwrap_or_else(|| "0.0.0.0:8790".to_owned()),
+            addr: text("NORN_OLAP_ADDR")?.unwrap_or_else(|| "0.0.0.0:8790".to_owned()),
             keys_file,
             settings: Settings {
-                root: PathBuf::from(var("NORN_OLAP_DATA").unwrap_or_else(|| "/data".to_owned())),
-                memory_limit: var("NORN_OLAP_MEMORY_LIMIT").unwrap_or_else(|| "512MB".to_owned()),
+                root: set("NORN_OLAP_DATA").map_or_else(|| PathBuf::from("/data"), PathBuf::from),
+                memory_limit: text("NORN_OLAP_MEMORY_LIMIT")?.unwrap_or_else(|| "512MB".to_owned()),
                 threads,
             },
         })
@@ -105,7 +131,7 @@ impl Config {
 }
 
 /// Read and parse the keyring file, bounded.
-fn read_keyring(path: &std::path::Path) -> Result<Keyring, String> {
+fn read_keyring(path: &Path) -> Result<Keyring, String> {
     let mut text = String::new();
     std::fs::File::open(path)
         .and_then(|file| {
@@ -225,17 +251,40 @@ struct Gate {
     clock: Arc<dyn Clock>,
 }
 
+/// The one field the scope check reads before the request is routed or
+/// parsed into its type; every other field is left for the typed parse.
+#[derive(serde::Deserialize)]
+struct Named {
+    tenant: TenantId,
+}
+
 impl Gate {
-    /// The tenant the request's credential was minted for.
-    fn tenant(&self, authorization: Option<&str>) -> Result<TenantId, Denied> {
-        let credential = authorization
+    /// OLAP-04: the tenant `request` may touch, decided before it is routed
+    /// or parsed. Every request pays the body digest and the keyring read;
+    /// the credential must verify for the operation the path names and this
+    /// exact body (OLAP-03), and the body must name the credential's tenant.
+    fn admit(&self, request: &Request) -> Result<TenantId, Denied> {
+        let digest = body_digest(&request.body);
+        let keyring = read_keyring(&self.keys_file);
+        let op = request.path.strip_prefix("/v1/").unwrap_or_default();
+        let credential = request
+            .authorization
+            .as_deref()
             .and_then(|h| h.strip_prefix("Bearer "))
             .ok_or(Denied::Malformed)?;
-        let keyring = read_keyring(&self.keys_file).map_err(|error| {
+        let keyring = keyring.map_err(|error| {
             let _logged = writeln!(std::io::stderr(), "norn-olapd: {error}");
             Denied::UnknownKey
         })?;
-        keyring.verify(credential, self.clock.now().as_millis())
+        let tenant = keyring.verify(credential, op, &digest, self.clock.now().as_millis())?;
+        if request.method != "POST" {
+            return Err(Denied::Malformed);
+        }
+        let named: Named = serde_json::from_slice(&request.body).map_err(|_e| Denied::Unscoped)?;
+        if named.tenant != tenant {
+            return Err(Denied::OtherTenant);
+        }
+        Ok(tenant)
     }
 }
 
@@ -306,17 +355,10 @@ fn connection(stream: &TcpStream, engine: &Engine, gate: &Gate) -> std::io::Resu
     if request.method == "GET" && request.path == "/healthz" {
         return respond(stream, 200, "application/json", b"{\"ok\":true}");
     }
-    let tenant = match gate.tenant(request.authorization.as_deref()) {
+    let tenant = match gate.admit(&request) {
         Ok(tenant) => tenant,
         Err(denied) => return unauthorized(stream, denied),
     };
-    if request.method != "POST" {
-        return refuse(
-            stream,
-            404,
-            &refusal("analytics.unknown", "no such operation"),
-        );
-    }
     let call = Call {
         stream,
         request: &request,
@@ -444,14 +486,13 @@ fn load(engine: &Engine, request: &LoadRequest) -> Outcome<norn_cell::analytics:
             response.status()
         )));
     }
-    let path = engine.scratch().join(format!(
-        "load-{}",
-        request
-            .load
-            .replace(|c: char| !c.is_ascii_alphanumeric(), "_")
-    ));
+    // OLAP-02: the file is the daemon's own: in this tenant's scratch, named
+    // by the daemon, created exclusively, and the only file this attempt removes.
+    let (path, mut file) = engine
+        .scratch(&request.tenant)
+        .and_then(|scratch| exclusive_file(&scratch, "load"))
+        .map_err(|e| refusal("analytics.engine", &format!("no scratch file: {e}")))?;
     let copied = (|| -> std::io::Result<()> {
-        let mut file = std::fs::File::create(&path)?;
         let mut reader = response
             .body_mut()
             .with_config()
@@ -465,6 +506,25 @@ fn load(engine: &Engine, request: &LoadRequest) -> Outcome<norn_cell::analytics:
         .and_then(|()| engine.load(request, &path));
     let _removed = std::fs::remove_file(&path);
     loaded
+}
+
+/// A new file in `directory`, `<prefix>-<128 random bits, hex>`, created
+/// exclusively (`create_new`): an existing file is never opened, truncated or
+/// replaced, whoever made it.
+fn exclusive_file(directory: &Path, prefix: &str) -> std::io::Result<(PathBuf, std::fs::File)> {
+    use std::fmt::Write as _;
+    let mut nonce = [0_u8; 16];
+    getrandom::fill(&mut nonce).map_err(std::io::Error::other)?;
+    let name = nonce.iter().fold(format!("{prefix}-"), |mut out, byte| {
+        let _infallible = write!(out, "{byte:02x}");
+        out
+    });
+    let path = directory.join(name);
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)?;
+    Ok((path, file))
 }
 
 /// Export into a scratch file, stream it as the body, then delete it.

@@ -5,6 +5,7 @@ import { initSync, NornCell } from "./pkg/norn_cell_do.js";
 import module from "./pkg/norn_cell_do_bg.wasm";
 import * as live from "./subscribe.mjs";
 import { Wake } from "./wake.mjs";
+import { connectVars, OLAP_SIGNING_KEY } from "./connect_vars.mjs";
 import { instrument, noteRefusal, syncFinished } from "./telemetry.mjs";
 initSync({ module });
 
@@ -110,9 +111,11 @@ export class Cell {
       }
       // D102: questions are answered on the tenant analytics engine when the Worker has one.
       // OLAP-CRED-1 (#1493): the cell signs each engine call for its own tenant; no shared token.
+      // OLAP-01: the signing key goes to the analytics path only; its name is outside the
+      // connection secret namespace, so connectVars never hands it to a connector.
       if (this.env.NORN_OLAP_URL !== undefined) {
         try {
-          this.cell.enableAnalytics(this.env.NORN_SECRET_OLAP_SIGNING_KEY);
+          this.cell.enableAnalytics(this.env[OLAP_SIGNING_KEY]);
         } catch (error) {
           console.error(`analytics not enabled: ${error}`);
         }
@@ -424,11 +427,6 @@ const MAX_STEP_ROWS = 500;
 const MAX_SOURCE_BODY = 20 * 1024 * 1024;
 // One outbound source or storage request may take this long.
 const SOURCE_FETCH_TIMEOUT_MS = 30_000;
-
-/** The server variables the cell's connections and uploads read, by name: secrets, storage settings and the operator's source host allowlist (SYNC-URL-1) only. Never logged. */
-function connectVars(env) {
-  return JSON.stringify(Object.fromEntries(Object.entries(env).filter(([name, value]) => typeof value === "string" && (name.startsWith("NORN_SECRET_") || name.startsWith("NORN_S3_") || name === "NORN_SOURCE_ALLOWED_HOSTS"))));
-}
 
 /** Perform exactly the request the cell planned; the status and bytes go back to the cell, unread here. */
 async function perform(request) {

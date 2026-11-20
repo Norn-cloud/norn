@@ -180,7 +180,7 @@ impl NornCell {
 
     /// D102: answer questions on the tenant analytics engine the Worker
     /// reaches (`NORN_OLAP_URL`); without it this cell has no analytics.
-    /// OLAP-CRED-1: `signing_key` (`NORN_SECRET_OLAP_SIGNING_KEY`,
+    /// OLAP-CRED-1: `signing_key` (`NORN_OLAP_SIGNING_KEY`,
     /// `<kid>:<base64url Ed25519 seed>`) mints this cell's credential for
     /// each engine call; without a valid one the cell has no analytics.
     ///
@@ -195,9 +195,9 @@ impl NornCell {
         let issuer = norn_api::olap_credential::Issuer::parse(
             signing_key
                 .as_deref()
-                .ok_or_else(|| JsValue::from_str("NORN_SECRET_OLAP_SIGNING_KEY is required"))?,
+                .ok_or_else(|| JsValue::from_str("NORN_OLAP_SIGNING_KEY is required"))?,
         )
-        .map_err(|e| JsValue::from_str(&format!("NORN_SECRET_OLAP_SIGNING_KEY: {e}")))?;
+        .map_err(|e| JsValue::from_str(&format!("NORN_OLAP_SIGNING_KEY: {e}")))?;
         self.tenant.enable_analytics(issuer);
         Ok(())
     }

@@ -5,7 +5,7 @@
 use std::sync::{Mutex, PoisonError};
 
 use norn_api::analytics_routes::{EngineAnswer, EngineCall, Transport};
-use norn_api::olap_credential::Issuer;
+use norn_api::olap_credential::{Issuer, body_digest};
 #[cfg(all(feature = "duckdb", not(target_arch = "wasm32")))]
 use norn_cell::analytics::EngineRefusal;
 use norn_cell::analytics::TenantId;
@@ -42,7 +42,10 @@ impl Exchange {
     }
 
     /// The call this request ended with, if any, with this cell's credential
-    /// minted at `now_ms` (Unix milliseconds); taken once.
+    /// minted at `now_ms` (Unix milliseconds); taken once. OLAP-03: the
+    /// credential is bound to the call's operation and to the digest of the
+    /// exact body the host sends, computed here from that body (never taken
+    /// from the call's own `digest`, which names a load without its URL).
     pub fn take_pending(&self, now_ms: u64) -> Option<EngineCall> {
         *self.answer.lock().unwrap_or_else(PoisonError::into_inner) = None;
         let mut call = self
@@ -50,7 +53,12 @@ impl Exchange {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .take()?;
-        call.credential = Some(self.issuer.mint(&self.tenant, now_ms));
+        call.credential = Some(self.issuer.mint(
+            &self.tenant,
+            &call.op,
+            &body_digest(call.body.as_bytes()),
+            now_ms,
+        ));
         Some(call)
     }
 }

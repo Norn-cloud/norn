@@ -4,7 +4,11 @@
 //! answer is byte-identical to the answer for a vacant scope (and for no
 //! credential at all), so it reveals nothing about whether the other cell
 //! exists. Expired and rotated-out credentials are refused, and rotation
-//! needs no restart.
+//! needs no restart. A credential is good for the one operation and body it
+//! was minted for (OLAP-03); the scope is checked before the request is
+//! routed or parsed (OLAP-04); concurrent loads never share a scratch file
+//! (OLAP-02); and the retired token refuses startup whatever its value
+//! (OLAP-05).
 #![cfg(all(feature = "duckdb", not(target_arch = "wasm32")))]
 #![allow(
     clippy::unwrap_used,
@@ -15,20 +19,24 @@
     reason = "credential fixtures must build before the daemon's answers are compared"
 )]
 
-use std::io::{Read as _, Write as _};
+use std::ffi::OsString;
+use std::io::{BufRead as _, BufReader, Read as _, Write as _};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Barrier};
+use std::time::Duration;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use norn_api::analytics_routes::{EngineCall, Transport as _};
 use norn_api::clock::ManualClock;
 use norn_api::olap_credential::{
-    CREDENTIAL_LIFETIME_MS, Issuer, Keyring, MAX_CREDENTIAL_LIFETIME_MS,
+    CREDENTIAL_LIFETIME_MS, Issuer, Keyring, MAX_CREDENTIAL_LIFETIME_MS, body_digest,
 };
-use norn_cell::analytics::TenantId;
 use norn_cell::analytics::engine::Settings;
+use norn_cell::analytics::{
+    Column, ColumnKind, FileFormat, FileSource, LoadRequest, LoadResponse, TableSchema, TenantId,
+};
 use norn_cell_do::olap::Exchange;
 use norn_cell_do::olapd::{Config, serve};
 use serde_json::json;
@@ -42,6 +50,11 @@ fn issuer(kid: &str, seed: u8) -> Issuer {
 
 fn tenant(scope: &str) -> TenantId {
     TenantId::of_scope(scope)
+}
+
+/// What the cell mints for the one call `op` with `body`, for `of`, at `NOW`.
+fn mint(issuer: &Issuer, of: &TenantId, op: &str, body: &str) -> String {
+    issuer.mint(of, op, &body_digest(body.as_bytes()), NOW)
 }
 
 /// Replace the keyring as an operator does: write a copy, rename it over.
@@ -95,15 +108,15 @@ fn daemon(issuers: &[&Issuer]) -> Daemon {
 }
 
 impl Daemon {
-    /// The raw response, status line, headers and body, to `POST /v1/<op>`.
-    fn post(&self, op: &str, authorization: Option<&str>, body: &str) -> Vec<u8> {
+    /// The raw response, status line, headers and body, to `<method> /v1/<op>`.
+    fn send(&self, method: &str, op: &str, authorization: Option<&str>, body: &str) -> Vec<u8> {
         let mut stream = TcpStream::connect(self.addr).unwrap();
         let authorization = authorization
             .map(|value| format!("authorization: {value}\r\n"))
             .unwrap_or_default();
         write!(
             stream,
-            "POST /v1/{op} HTTP/1.1\r\nhost: olapd\r\n{authorization}content-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+            "{method} /v1/{op} HTTP/1.1\r\nhost: olapd\r\n{authorization}content-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
             body.len()
         )
         .unwrap();
@@ -112,8 +125,17 @@ impl Daemon {
         response
     }
 
+    fn post(&self, op: &str, authorization: Option<&str>, body: &str) -> Vec<u8> {
+        self.send("POST", op, authorization, body)
+    }
+
     fn call(&self, op: &str, credential: &str, body: &str) -> Vec<u8> {
         self.post(op, Some(&format!("Bearer {credential}")), body)
+    }
+
+    /// `POST /v1/<op>` with the credential `issuer`'s cell for `of` mints for it.
+    fn by(&self, issuer: &Issuer, of: &TenantId, op: &str, body: &str) -> Vec<u8> {
+        self.call(op, &mint(issuer, of, op, body), body)
     }
 
     fn database_exists(&self, tenant: &TenantId) -> bool {
@@ -167,24 +189,16 @@ fn a_cells_credential_reaches_nothing_of_another_cell_and_cannot_tell_it_exists(
         tenant("org_b/prod"),
         tenant("org_v/prod"),
     );
-    let (as_a, as_b) = (host.mint(&a, NOW), host.mint(&b, NOW));
+    let as_a = |op: &str, body: &str| daemon.by(&host, &a, op, body);
+    let as_b = |op: &str, body: &str| daemon.by(&host, &b, op, body);
 
     // B exists and holds a mirror at commit 3, written with B's own credential.
-    assert_eq!(
-        status(&daemon.call("frontier", &as_b, &frontier(&b))),
-        "200"
-    );
-    let synced = daemon.call("sync", &as_b, &sync(&b, 0, 3));
+    assert_eq!(status(&as_b("frontier", &frontier(&b))), "200");
+    let synced = as_b("sync", &sync(&b, 0, 3));
     assert_eq!(status(&synced), "200", "{}", body(&synced));
-    assert_eq!(
-        body(&daemon.call("frontier", &as_b, &frontier(&b))),
-        r#"{"frontier":3}"#
-    );
+    assert_eq!(body(&as_b("frontier", &frontier(&b))), r#"{"frontier":3}"#);
     // A's credential is good for A.
-    assert_eq!(
-        body(&daemon.call("frontier", &as_a, &frontier(&a))),
-        r#"{"frontier":0}"#
-    );
+    assert_eq!(body(&as_a("frontier", &frontier(&a))), r#"{"frontier":0}"#);
 
     let uniform = refused(&daemon);
     assert_eq!(status(&uniform), "401");
@@ -200,8 +214,8 @@ fn a_cells_credential_reaches_nothing_of_another_cell_and_cannot_tell_it_exists(
         ("sync", sync(&b, 3, 9), sync(&vacant, 3, 9)),
         ("export", export(&b), export(&vacant)),
     ] {
-        let towards_other = daemon.call(op, &as_a, &into_other);
-        let towards_vacant = daemon.call(op, &as_a, &into_vacant);
+        let towards_other = as_a(op, &into_other);
+        let towards_vacant = as_a(op, &into_vacant);
         assert_eq!(towards_other, towards_vacant, "{op}: B's existence shows");
         assert_eq!(
             towards_other, uniform,
@@ -214,10 +228,7 @@ fn a_cells_credential_reaches_nothing_of_another_cell_and_cannot_tell_it_exists(
         );
     }
     // Nothing was written or opened: B is still at 3, the vacant scope has no database.
-    assert_eq!(
-        body(&daemon.call("frontier", &as_b, &frontier(&b))),
-        r#"{"frontier":3}"#
-    );
+    assert_eq!(body(&as_b("frontier", &frontier(&b))), r#"{"frontier":3}"#);
     assert!(daemon.database_exists(&b) && !daemon.database_exists(&vacant));
 }
 
@@ -227,7 +238,7 @@ fn an_expired_or_overlong_credential_is_refused() {
     let daemon = daemon(&[&host]);
     let a = tenant("org_a/prod");
     let uniform = refused(&daemon);
-    let credential = host.mint(&a, NOW);
+    let credential = mint(&host, &a, "frontier", &frontier(&a));
     assert_eq!(
         status(&daemon.call("frontier", &credential, &frontier(&a))),
         "200"
@@ -235,7 +246,12 @@ fn an_expired_or_overlong_credential_is_refused() {
     daemon.clock.set(NOW + CREDENTIAL_LIFETIME_MS);
     assert_eq!(daemon.call("frontier", &credential, &frontier(&a)), uniform);
     daemon.clock.set(NOW);
-    let overlong = host.mint_until(&a, NOW + MAX_CREDENTIAL_LIFETIME_MS + 1);
+    let overlong = host.mint_until(
+        &a,
+        "frontier",
+        &body_digest(frontier(&a).as_bytes()),
+        NOW + MAX_CREDENTIAL_LIFETIME_MS + 1,
+    );
     assert_eq!(daemon.call("frontier", &overlong, &frontier(&a)), uniform);
 }
 
@@ -245,7 +261,10 @@ fn a_rotated_out_key_is_refused_and_rotation_needs_no_restart() {
     let daemon = daemon(&[&old]);
     let a = tenant("org_a/prod");
     let uniform = refused(&daemon);
-    let (by_old, by_new) = (old.mint(&a, NOW), new.mint(&a, NOW));
+    let (by_old, by_new) = (
+        mint(&old, &a, "frontier", &frontier(&a)),
+        mint(&new, &a, "frontier", &frontier(&a)),
+    );
     let ask = |credential: &str| daemon.call("frontier", credential, &frontier(&a));
     assert_eq!(status(&ask(&by_old)), "200");
     assert_eq!(ask(&by_new), uniform, "not yet added");
@@ -270,7 +289,7 @@ fn the_shared_token_is_retired_and_a_keyring_is_required() {
     let keys = directory.path().join("keyring");
     write_keyring(&keys, &[&issuer("k1", 7)]);
     let keys = keys.to_string_lossy().into_owned();
-    let with = |pairs: Vec<(&'static str, String)>| {
+    let with = |pairs: Vec<(&'static str, OsString)>| {
         Config::from_vars(move |name| {
             pairs
                 .iter()
@@ -278,14 +297,27 @@ fn the_shared_token_is_retired_and_a_keyring_is_required() {
                 .map(|(_, value)| value.clone())
         })
     };
-    assert!(with(vec![("NORN_OLAP_KEYS_FILE", keys.clone())]).is_ok());
-    let retired = with(vec![
-        ("NORN_OLAP_KEYS_FILE", keys.clone()),
-        ("NORN_SECRET_DUCKDB_TOKEN", "x".repeat(40)),
-    ]);
-    assert!(retired.is_err_and(|e| e.contains("retired")));
+    assert!(with(vec![("NORN_OLAP_KEYS_FILE", keys.clone().into())]).is_ok());
+    // OLAP-05: present is present: an empty or non-UTF-8 value refuses too.
+    let not_utf8 = {
+        use std::os::unix::ffi::OsStringExt as _;
+        OsString::from_vec(vec![b'x', 0xff, 0xfe])
+    };
+    for value in ["x".repeat(40).into(), OsString::new(), not_utf8] {
+        let retired = with(vec![
+            ("NORN_OLAP_KEYS_FILE", keys.clone().into()),
+            ("NORN_SECRET_DUCKDB_TOKEN", value.clone()),
+        ]);
+        assert!(retired.is_err_and(|e| e.contains("retired")), "{value:?}");
+    }
     assert!(with(vec![]).is_err());
-    assert!(with(vec![("NORN_OLAP_KEYS_FILE", format!("{keys}.missing"))]).is_err());
+    assert!(
+        with(vec![(
+            "NORN_OLAP_KEYS_FILE",
+            format!("{keys}.missing").into()
+        )])
+        .is_err()
+    );
 }
 
 /// The cell's transport hands the host each call with a fresh credential for
@@ -306,7 +338,12 @@ fn the_exchange_mints_each_call_for_its_own_tenant() {
     assert!(exchange.call(&call).is_none(), "the host performs it");
     let pending = exchange.take_pending(NOW).unwrap();
     let credential = pending.credential.unwrap();
-    assert_eq!(keyring.verify(&credential, NOW), Ok(a));
+    // OLAP-03: bound to the call's operation and the body the host sends,
+    // not to the call's own `digest` field.
+    let sent = body_digest(pending.body.as_bytes());
+    assert_eq!(keyring.verify(&credential, "frontier", &sent, NOW), Ok(a));
+    assert!(keyring.verify(&credential, "sync", &sent, NOW).is_err());
+    assert!(keyring.verify(&credential, "frontier", "d", NOW).is_err());
     assert!(exchange.take_pending(NOW).is_none(), "taken once");
     let wire = serde_json::to_value(EngineCall {
         credential: Some(credential),
@@ -319,4 +356,211 @@ fn the_exchange_mints_each_call_for_its_own_tenant() {
             .unwrap()
             .starts_with("nolap1.k1.")
     );
+}
+
+/// OLAP-03: a credential is good for the one operation and body it was minted
+/// for; a captured read's credential never authorizes a write, and it writes
+/// nothing. Replaying the same request byte for byte within its life is the
+/// documented residual window.
+#[test]
+fn a_credential_is_good_for_its_own_operation_and_body_only() {
+    let host = issuer("k1", 7);
+    let daemon = daemon(&[&host]);
+    let a = tenant("org_a/prod");
+    let uniform = refused(&daemon);
+    let read = mint(&host, &a, "frontier", &frontier(&a));
+    // Another operation (a write), and another body for the same operation.
+    assert_eq!(daemon.call("sync", &read, &sync(&a, 0, 3)), uniform);
+    let staging = json!({ "tenant": &a, "world": "staging", "tables": [] }).to_string();
+    assert_eq!(daemon.call("frontier", &read, &staging), uniform);
+    assert_eq!(daemon.call("export", &read, &export(&a)), uniform);
+    // Nothing was written; the request it was minted for still answers.
+    assert_eq!(
+        body(&daemon.call("frontier", &read, &frontier(&a))),
+        r#"{"frontier":0}"#
+    );
+}
+
+/// OLAP-04: the scope is decided before the request is routed or parsed. A
+/// malformed body, a body naming no tenant, an unknown operation and any
+/// method but POST are refused exactly as garbage is, unless the cell minted
+/// a credential for that very request and tenant.
+#[test]
+fn malformed_bodies_and_unknown_routes_are_refused_before_routing() {
+    let host = issuer("k1", 7);
+    let daemon = daemon(&[&host]);
+    let (a, b) = (tenant("org_a/prod"), tenant("org_b/prod"));
+    let uniform = refused(&daemon);
+    let other_request = mint(&host, &a, "frontier", &frontier(&a));
+    for (op, body) in [
+        ("frontier", "not json".to_owned()),
+        ("frontier", "{}".to_owned()),
+        ("frontier", json!({ "world": WORLD }).to_string()),
+        ("frontier", json!({ "tenant": &a }).to_string()),
+        ("nosuch", frontier(&a)),
+        ("", frontier(&a)),
+    ] {
+        // Garbage, and a real credential minted for another request: alike.
+        assert_eq!(
+            daemon.post(op, Some("Bearer nonsense"), &body),
+            uniform,
+            "{op} {body}"
+        );
+        assert_eq!(daemon.post(op, None, &body), uniform, "{op} {body}");
+        assert_eq!(
+            daemon.call(op, &other_request, &body),
+            uniform,
+            "{op} {body}"
+        );
+    }
+    // Minted for exactly the request, but the scope fails: still the 401,
+    // never the 400 or 404 the parse or the router would give.
+    for (op, body) in [
+        ("frontier", "not json".to_owned()),
+        ("frontier", json!({ "world": WORLD }).to_string()),
+        ("nosuch", frontier(&b)),
+        ("frontier", r#"{"tenant":"nope"}"#.to_owned()),
+    ] {
+        assert_eq!(daemon.by(&host, &a, op, &body), uniform, "{op} {body}");
+    }
+    // Any method but POST, whatever the credential.
+    let get = |authorization: Option<&str>| daemon.send("GET", "frontier", authorization, "");
+    assert_eq!(get(None), uniform);
+    assert_eq!(
+        get(Some(&format!("Bearer {}", mint(&host, &a, "frontier", "")))),
+        uniform
+    );
+    // Only the cell's own credential for that exact request and tenant gets
+    // past the scope to the router and the typed parse.
+    let unknown = daemon.by(&host, &a, "nosuch", &frontier(&a));
+    assert_eq!(status(&unknown), "404");
+    let untyped = json!({ "tenant": &a, "world": WORLD }).to_string();
+    assert_eq!(status(&daemon.by(&host, &a, "frontier", &untyped)), "400");
+    assert!(!daemon.database_exists(&b));
+}
+
+/// An object store serving `objects` by path, each response held half-sent
+/// until every one is, so the daemon's downloads overlap.
+fn overlapping_store(objects: Vec<(String, Vec<u8>)>) -> SocketAddr {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let barrier = Arc::new(Barrier::new(objects.len()));
+    let objects = Arc::new(objects);
+    std::thread::spawn(move || {
+        for stream in listener.incoming().take(objects.len()) {
+            let (barrier, objects) = (Arc::clone(&barrier), Arc::clone(&objects));
+            std::thread::spawn(move || {
+                let mut stream = stream.unwrap();
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                let path = line.split_whitespace().nth(1).unwrap().to_owned();
+                loop {
+                    let mut header = String::new();
+                    reader.read_line(&mut header).unwrap();
+                    if header.trim().is_empty() {
+                        break;
+                    }
+                }
+                let bytes = &objects.iter().find(|(p, _)| *p == path).unwrap().1;
+                let half = bytes.len() / 2;
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                    bytes.len()
+                )
+                .unwrap();
+                stream.write_all(&bytes[..half]).unwrap();
+                stream.flush().unwrap();
+                barrier.wait();
+                // Let the daemon write every first half before any second half.
+                std::thread::sleep(Duration::from_millis(300));
+                stream.write_all(&bytes[half..]).unwrap();
+            });
+        }
+    });
+    addr
+}
+
+/// OLAP-02: two tenants load at once under the same load id. Each load reads
+/// exactly its own bytes from its own scratch file, the daemon removes only
+/// what it created, and a file already where the load id would once have
+/// put it is neither read, truncated nor removed.
+#[test]
+fn concurrent_loads_with_the_same_load_id_never_share_bytes() {
+    let host = issuer("k1", 7);
+    let daemon = daemon(&[&host]);
+    let (a, b) = (tenant("org_a/prod"), tenant("org_b/prod"));
+    let csv = |prefix: &str, rows: usize| {
+        let mut text = String::from("n\n");
+        for i in 0..rows {
+            text.push_str(&format!("{prefix}{i:06}\n"));
+        }
+        text.into_bytes()
+    };
+    let (bytes_a, bytes_b) = (csv("a", 4000), csv("b", 6000));
+    let store = overlapping_store(vec![
+        ("/a.csv".to_owned(), bytes_a.clone()),
+        ("/b.csv".to_owned(), bytes_b.clone()),
+    ]);
+    let planted = daemon.root.join("tmp").join("load-same");
+    std::fs::create_dir_all(daemon.root.join("tmp")).unwrap();
+    std::fs::write(&planted, b"planted").unwrap();
+    let request = |of: &TenantId, name: &str, bytes: &[u8]| LoadRequest {
+        tenant: of.clone(),
+        table: TableSchema {
+            name: "shop.Sale".to_owned(),
+            columns: vec![Column {
+                id: "n".to_owned(),
+                kind: ColumnKind::Text,
+                nullable: false,
+                laws: Vec::new(),
+            }],
+            pin: "p1".to_owned(),
+        },
+        load: "same".to_owned(),
+        file: FileSource {
+            url: format!("http://{store}/{name}.csv"),
+            uri: format!("s3://uploads/{name}.csv"),
+            sha256: body_digest(bytes),
+            format: FileFormat::Csv,
+        },
+        headers: std::collections::BTreeMap::new(),
+    };
+    let loads = [
+        (
+            a.clone(),
+            serde_json::to_string(&request(&a, "a", &bytes_a)).unwrap(),
+        ),
+        (
+            b.clone(),
+            serde_json::to_string(&request(&b, "b", &bytes_b)).unwrap(),
+        ),
+    ];
+    let (on, minting) = (&daemon, &host);
+    let answers: Vec<Vec<u8>> = std::thread::scope(|scope| {
+        let running: Vec<_> = loads
+            .iter()
+            .map(|(of, body)| scope.spawn(move || on.by(minting, of, "load", body)))
+            .collect();
+        running
+            .into_iter()
+            .map(|load| load.join().unwrap())
+            .collect()
+    });
+    for (answer, rows) in answers.iter().zip([4000, 6000]) {
+        assert_eq!(status(answer), "200", "{}", body(answer));
+        let loaded: LoadResponse = serde_json::from_str(&body(answer)).unwrap();
+        assert_eq!((loaded.rows, loaded.rejected), (rows, 0));
+    }
+    assert_eq!(std::fs::read(&planted).unwrap(), b"planted");
+    for of in [&a, &b] {
+        let scratch = daemon.root.join("tmp").join(of.as_str());
+        let left: Vec<_> = std::fs::read_dir(&scratch)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .filter(|name| name.to_string_lossy().starts_with("load-"))
+            .collect();
+        assert!(left.is_empty(), "{left:?}");
+    }
 }

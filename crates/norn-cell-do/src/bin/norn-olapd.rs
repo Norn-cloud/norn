@@ -2,7 +2,7 @@
 //! See [`norn_cell_do::olapd`]. `norn-olapd --health` asks the running
 //! daemon's `/healthz` and exits 0 when it answers. `norn-olapd --new-key
 //! <kid>` prints a fresh signing key for the cell host
-//! (`NORN_SECRET_OLAP_SIGNING_KEY`) and the keyring line that verifies it.
+//! (`NORN_OLAP_SIGNING_KEY`) and the keyring line that verifies it.
 
 use std::io::Write as _;
 
@@ -20,7 +20,7 @@ fn main() -> std::process::ExitCode {
             return match norn_cell_do::olapd::new_key(&args.next().unwrap_or_default()) {
                 Ok((secret, public)) => {
                     let mut out = std::io::stdout();
-                    let _unwritable = writeln!(out, "NORN_SECRET_OLAP_SIGNING_KEY={secret}");
+                    let _unwritable = writeln!(out, "NORN_OLAP_SIGNING_KEY={secret}");
                     let _unwritable = writeln!(out, "keyring line: {public}");
                     std::process::ExitCode::SUCCESS
                 }

@@ -241,6 +241,46 @@ fn route_of(path: &str) -> Option<Route<'_>> {
     }
 }
 
+/// OLAP-01: names in the connection secret namespace that deployment-wide
+/// secrets used to have, or might be given: the object store's keys (now
+/// `NORN_S3_*`), the analytics signing key (now `NORN_OLAP_SIGNING_KEY`) and
+/// the retired analytics token. A connector names its secret freely and the
+/// pull host sends it to a source endpoint, so a deployment secret in this
+/// namespace would be a tenant's to read.
+const RESERVED_SECRETS: &[&str] = &[
+    "NORN_SECRET_S3_",
+    "NORN_SECRET_OLAP_",
+    "NORN_SECRET_DUCKDB_",
+];
+
+/// OLAP-01: the secrets a connector's auth may resolve (`secretRef`, through
+/// [`norn_api::sources::secret_env`]): the `NORN_SECRET_*` variables, which
+/// hold connection secrets only. Storage keys and the analytics signing key
+/// live outside that namespace and are never in this map, whatever name a
+/// connector asks for.
+///
+/// # Errors
+/// A variable under a reserved deployment-secret name: the deployment still
+/// uses an old name, and the cell refuses rather than expose it.
+fn connection_secrets(vars: &BTreeMap<String, String>) -> Result<BTreeMap<String, String>, String> {
+    if let Some(name) = vars.keys().find(|name| {
+        RESERVED_SECRETS
+            .iter()
+            .any(|prefix| name.starts_with(prefix))
+    }) {
+        return Err(format!(
+            "{name} is a deployment secret in the connection secret namespace, where a \
+             connector could read it; use NORN_S3_* for storage keys and \
+             NORN_OLAP_SIGNING_KEY for the analytics signing key"
+        ));
+    }
+    Ok(vars
+        .iter()
+        .filter(|(name, _)| name.starts_with("NORN_SECRET_"))
+        .map(|(name, value)| (name.clone(), value.clone()))
+        .collect())
+}
+
 fn scope_of(query: &str) -> ScopeQuery {
     let mut scope = ScopeQuery {
         org_id: None,
@@ -272,15 +312,12 @@ impl Connect {
     /// and the operator's `NORN_SOURCE_ALLOWED_HOSTS`, SYNC-URL-1).
     ///
     /// # Errors
-    /// Malformed configuration.
+    /// Malformed configuration, or a deployment secret under a connection
+    /// secret's name ([`connection_secrets`]).
     pub fn new(config: &str, vars: &str) -> Result<Self, String> {
         let vars: BTreeMap<String, String> =
             serde_json::from_str(vars).map_err(|e| format!("server variables: {e}"))?;
-        let secrets = vars
-            .iter()
-            .filter(|(name, _)| name.starts_with("NORN_SECRET_"))
-            .map(|(name, value)| (name.clone(), value.clone()))
-            .collect();
+        let secrets = connection_secrets(&vars)?;
         Ok(Self {
             sources: Sources::with_allowed_hosts(
                 config,
@@ -1044,12 +1081,79 @@ mod tests {
             "NORN_S3_ENDPOINT": "https://storage.example.test",
             "NORN_S3_BUCKET": "uploads-bucket",
             "NORN_S3_DOCUMENTS_BUCKET": "documents-bucket",
-            "NORN_SECRET_S3_ACCESS_KEY_ID": "key-id",
-            "NORN_SECRET_S3_SECRET_ACCESS_KEY": secret,
-            "NORN_SECRET_S3_DOCUMENTS_ACCESS_KEY_ID": "documents-key-id",
-            "NORN_SECRET_S3_DOCUMENTS_SECRET_ACCESS_KEY": secret,
+            "NORN_S3_ACCESS_KEY_ID": "key-id",
+            "NORN_S3_SECRET_ACCESS_KEY": secret,
+            "NORN_S3_DOCUMENTS_ACCESS_KEY_ID": "documents-key-id",
+            "NORN_S3_DOCUMENTS_SECRET_ACCESS_KEY": secret,
         });
         Connect::new("[]", &vars.to_string()).expect("configuration")
+    }
+
+    /// OLAP-01: no secretRef a connector can write reaches a deployment
+    /// secret: storage keys and the analytics signing key are outside the
+    /// map connector auth resolves from, under any name, and a deployment
+    /// that still keeps one under a connection secret's name is refused.
+    #[test]
+    fn deployment_secrets_never_reach_connector_auth() {
+        const DEPLOYMENT: [&str; 5] = [
+            "s3-uploads-secret",
+            "s3-documents-secret",
+            "s3-uploads-id",
+            "s3-documents-id",
+            "k1:olap-signing-seed",
+        ];
+        let vars: BTreeMap<String, String> = [
+            ("NORN_S3_ENDPOINT", "https://storage.example.test"),
+            ("NORN_S3_BUCKET", "uploads-bucket"),
+            ("NORN_S3_SECRET_ACCESS_KEY", DEPLOYMENT[0]),
+            ("NORN_S3_DOCUMENTS_SECRET_ACCESS_KEY", DEPLOYMENT[1]),
+            ("NORN_S3_ACCESS_KEY_ID", DEPLOYMENT[2]),
+            ("NORN_S3_DOCUMENTS_ACCESS_KEY_ID", DEPLOYMENT[3]),
+            ("NORN_OLAP_SIGNING_KEY", DEPLOYMENT[4]),
+            ("NORN_SECRET_ERPNEXT_REST_TOKEN", "connection-token"),
+        ]
+        .into_iter()
+        .map(|(name, value)| (name.to_owned(), value.to_owned()))
+        .collect();
+        let secrets = connection_secrets(&vars).expect("configured");
+        assert_eq!(
+            secrets.values().collect::<Vec<_>>(),
+            ["connection-token"],
+            "only the connection's own secret"
+        );
+        // Every name a secretRef resolves to, whatever the connector writes,
+        // misses every deployment secret.
+        for reference in [
+            "s3_secret_access_key",
+            "S3_SECRET_ACCESS_KEY",
+            "../NORN_S3_SECRET_ACCESS_KEY",
+            "olap_signing_key",
+            "OLAP-SIGNING-KEY",
+            "",
+        ] {
+            let resolved = secrets.get(&norn_api::sources::secret_env(reference));
+            assert!(
+                resolved.is_none_or(|value| !DEPLOYMENT.contains(&value.as_str())),
+                "{reference}"
+            );
+        }
+        // The storage still gets its keys from their own names.
+        assert!(S3Config::from_vars(&vars, Store::Uploads).is_some());
+        // A deployment that kept an old name is refused, never served.
+        for old in [
+            "NORN_SECRET_S3_SECRET_ACCESS_KEY",
+            "NORN_SECRET_S3_DOCUMENTS_ACCESS_KEY_ID",
+            "NORN_SECRET_OLAP_SIGNING_KEY",
+            "NORN_SECRET_DUCKDB_TOKEN",
+        ] {
+            let mut stale = vars.clone();
+            stale.insert(old.to_owned(), "x".to_owned());
+            assert!(
+                connection_secrets(&stale).is_err_and(|e| e.contains(old)),
+                "{old}"
+            );
+            assert!(Connect::new("[]", &serde_json::to_string(&stale).expect("json")).is_err());
+        }
     }
 
     /// UPLOAD-ID-1: a cell that never saw an upload (a restart) resolves its

@@ -8,11 +8,20 @@
 //! nolap1.<kid>.<tenant>.<expires_ms>.<signature, base64url>
 //! ```
 //!
+//! The signature also covers the one operation the call performs and the
+//! SHA-256 of its exact body ([`body_digest`]), which the engine recomputes
+//! from the request it receives; neither travels in the credential. So a
+//! credential captured from one call cannot be presented for another
+//! operation (a read's credential never authorizes a write) or with another
+//! body. What remains is replaying the same request, byte for byte, within
+//! its life; the transport to the engine must therefore be protected (TLS
+//! or a private network), as the deploy docs require.
+//!
 //! The cell mints one for every engine call, for its own tenant only, with
 //! [`CREDENTIAL_LIFETIME_MS`] to live. The engine holds only public keys
 //! (a [`Keyring`]), so it cannot mint, and it serves a call only when the
-//! credential verifies, has not expired, and names the tenant the request
-//! reads or writes. Key rotation is an overlap: add the new public key to
+//! credential verifies for that operation and body, has not expired, and
+//! names the tenant the request reads or writes. Key rotation is an overlap: add the new public key to
 //! the engine's keyring, move the host to the new signing key, and remove
 //! the old public key once [`MAX_CREDENTIAL_LIFETIME_MS`] has passed.
 //! There is no shared token and no fallback to one.
@@ -22,6 +31,7 @@ use std::collections::BTreeMap;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use ed25519_dalek::{Signature, Signer as _, SigningKey, VerifyingKey};
 use norn_cell::analytics::TenantId;
+use sha2::{Digest as _, Sha256};
 
 /// The credential format's prefix.
 const PREFIX: &str = "nolap1";
@@ -55,6 +65,8 @@ pub enum Denied {
     TooLong,
     /// Valid, but for another tenant than the request names.
     OtherTenant,
+    /// Valid, but the request's body names no tenant.
+    Unscoped,
 }
 
 impl Denied {
@@ -68,6 +80,7 @@ impl Denied {
             Self::Expired => "expired",
             Self::TooLong => "too_long",
             Self::OtherTenant => "other_tenant",
+            Self::Unscoped => "unscoped",
         }
     }
 }
@@ -98,10 +111,26 @@ fn key_spec(spec: &str) -> Result<(String, [u8; 32]), String> {
     Ok((kid.to_owned(), bytes))
 }
 
-fn signed_bytes(kid: &str, tenant: &str, expires_ms: u64) -> Vec<u8> {
+/// The digest a credential binds a call's body by: lowercase hex SHA-256
+/// of the exact bytes sent.
+#[must_use]
+pub fn body_digest(body: &[u8]) -> String {
+    Sha256::digest(body)
+        .iter()
+        .fold(String::new(), |mut out, byte| {
+            use std::fmt::Write as _;
+            let _infallible = write!(out, "{byte:02x}");
+            out
+        })
+}
+
+/// What a credential's signature covers. Every part is length-prefixed, so
+/// no choice of operation or body digest can shift the boundaries.
+fn signed_bytes(kid: &str, tenant: &str, expires_ms: u64, op: &str, digest: &str) -> Vec<u8> {
     let mut bytes = DOMAIN.to_vec();
-    for part in [kid, tenant, &expires_ms.to_string()] {
-        bytes.push(0);
+    for part in [kid, tenant, &expires_ms.to_string(), op, digest] {
+        let length = u64::try_from(part.len()).unwrap_or(u64::MAX);
+        bytes.extend_from_slice(&length.to_be_bytes());
         bytes.extend_from_slice(part.as_bytes());
     }
     bytes
@@ -123,7 +152,7 @@ impl std::fmt::Debug for Issuer {
 
 impl Issuer {
     /// Read `<kid>:<base64url of the 32-byte Ed25519 seed>`
-    /// (`NORN_SECRET_OLAP_SIGNING_KEY`).
+    /// (`NORN_OLAP_SIGNING_KEY`).
     ///
     /// # Errors
     /// A malformed key id or key.
@@ -146,18 +175,30 @@ impl Issuer {
         )
     }
 
-    /// A credential for `tenant` alone, living [`CREDENTIAL_LIFETIME_MS`] from `now_ms`.
+    /// A credential for `tenant` alone, for the one call `op` with the body
+    /// whose [`body_digest`] is `digest`, living [`CREDENTIAL_LIFETIME_MS`]
+    /// from `now_ms`.
     #[must_use]
-    pub fn mint(&self, tenant: &TenantId, now_ms: u64) -> String {
-        self.mint_until(tenant, now_ms.saturating_add(CREDENTIAL_LIFETIME_MS))
+    pub fn mint(&self, tenant: &TenantId, op: &str, digest: &str, now_ms: u64) -> String {
+        self.mint_until(
+            tenant,
+            op,
+            digest,
+            now_ms.saturating_add(CREDENTIAL_LIFETIME_MS),
+        )
     }
 
-    /// A credential for `tenant` alone that expires at `expires_ms`.
+    /// A credential for `tenant` alone, for the call `op` with the body
+    /// digest `digest`, that expires at `expires_ms`.
     #[must_use]
-    pub fn mint_until(&self, tenant: &TenantId, expires_ms: u64) -> String {
-        let signature = self
-            .key
-            .sign(&signed_bytes(&self.kid, tenant.as_str(), expires_ms));
+    pub fn mint_until(&self, tenant: &TenantId, op: &str, digest: &str, expires_ms: u64) -> String {
+        let signature = self.key.sign(&signed_bytes(
+            &self.kid,
+            tenant.as_str(),
+            expires_ms,
+            op,
+            digest,
+        ));
         format!(
             "{PREFIX}.{}.{}.{expires_ms}.{}",
             self.kid,
@@ -204,11 +245,19 @@ impl Keyring {
     }
 
     /// The tenant `credential` was minted for, when it verifies under a key
-    /// of this keyring and is live at `now_ms`.
+    /// of this keyring for the call `op` whose body has the [`body_digest`]
+    /// `digest`, and is live at `now_ms`. A credential minted for another
+    /// operation or another body does not verify ([`Denied::BadSignature`]).
     ///
     /// # Errors
     /// Why the credential is refused.
-    pub fn verify(&self, credential: &str, now_ms: u64) -> Result<TenantId, Denied> {
+    pub fn verify(
+        &self,
+        credential: &str,
+        op: &str,
+        digest: &str,
+        now_ms: u64,
+    ) -> Result<TenantId, Denied> {
         let mut parts = credential.split('.');
         let (Some(PREFIX), Some(kid), Some(tenant), Some(expires), Some(signature), None) = (
             parts.next(),
@@ -232,7 +281,7 @@ impl Keyring {
             .ok_or(Denied::Malformed)?;
         let key = self.keys.get(kid).ok_or(Denied::UnknownKey)?;
         key.verify_strict(
-            &signed_bytes(kid, tenant.as_str(), expires_ms),
+            &signed_bytes(kid, tenant.as_str(), expires_ms, op, digest),
             &Signature::from_bytes(&signature),
         )
         .map_err(|_e| Denied::BadSignature)?;
@@ -256,6 +305,11 @@ mod tests {
     use super::*;
 
     const NOW: u64 = 1_800_000_000_000;
+    const OP: &str = "frontier";
+
+    fn digest() -> String {
+        body_digest(br#"{"tenant":"a"}"#)
+    }
 
     fn issuer(kid: &str, seed: u8) -> Issuer {
         Issuer::parse(&format!("{kid}:{}", URL_SAFE_NO_PAD.encode([seed; 32]))).unwrap()
@@ -269,15 +323,53 @@ mod tests {
     fn a_minted_credential_names_its_tenant_until_it_expires() {
         let issuer = issuer("k1", 7);
         let keyring = Keyring::parse(&issuer.public_spec()).unwrap();
-        let credential = issuer.mint(&tenant("a"), NOW);
-        assert_eq!(keyring.verify(&credential, NOW), Ok(tenant("a")));
+        let credential = issuer.mint(&tenant("a"), OP, &digest(), NOW);
         assert_eq!(
-            keyring.verify(&credential, NOW + CREDENTIAL_LIFETIME_MS - 1),
+            keyring.verify(&credential, OP, &digest(), NOW),
             Ok(tenant("a"))
         );
         assert_eq!(
-            keyring.verify(&credential, NOW + CREDENTIAL_LIFETIME_MS),
+            keyring.verify(&credential, OP, &digest(), NOW + CREDENTIAL_LIFETIME_MS - 1),
+            Ok(tenant("a"))
+        );
+        assert_eq!(
+            keyring.verify(&credential, OP, &digest(), NOW + CREDENTIAL_LIFETIME_MS),
             Err(Denied::Expired)
+        );
+    }
+
+    /// OLAP-03: a credential minted for one call verifies for that operation
+    /// and exact body only; a read's credential never authorizes a write.
+    #[test]
+    fn a_credential_is_bound_to_its_operation_and_body() {
+        let issuer = issuer("k1", 7);
+        let keyring = Keyring::parse(&issuer.public_spec()).unwrap();
+        let credential = issuer.mint(&tenant("a"), OP, &digest(), NOW);
+        assert_eq!(
+            keyring.verify(&credential, OP, &digest(), NOW),
+            Ok(tenant("a"))
+        );
+        for op in ["sync", "load", "export", "frontierx", ""] {
+            assert_eq!(
+                keyring.verify(&credential, op, &digest(), NOW),
+                Err(Denied::BadSignature),
+                "{op}"
+            );
+        }
+        let other = body_digest(br#"{"tenant":"a","x":1}"#);
+        assert_eq!(
+            keyring.verify(&credential, OP, &other, NOW),
+            Err(Denied::BadSignature)
+        );
+        // Moving bytes between the operation and the digest never verifies.
+        let split = issuer.mint(&tenant("a"), "ab", "c", NOW);
+        assert_eq!(
+            keyring.verify(&split, "a", "bc", NOW),
+            Err(Denied::BadSignature)
+        );
+        assert_eq!(
+            body_digest(b""),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         );
     }
 
@@ -285,31 +377,57 @@ mod tests {
     fn a_credential_claiming_a_long_life_is_refused() {
         let issuer = issuer("k1", 7);
         let keyring = Keyring::parse(&issuer.public_spec()).unwrap();
-        let far = issuer.mint_until(&tenant("a"), NOW + MAX_CREDENTIAL_LIFETIME_MS + 1);
-        assert_eq!(keyring.verify(&far, NOW), Err(Denied::TooLong));
-        let edge = issuer.mint_until(&tenant("a"), NOW + MAX_CREDENTIAL_LIFETIME_MS);
-        assert_eq!(keyring.verify(&edge, NOW), Ok(tenant("a")));
+        let far = issuer.mint_until(
+            &tenant("a"),
+            OP,
+            &digest(),
+            NOW + MAX_CREDENTIAL_LIFETIME_MS + 1,
+        );
+        assert_eq!(
+            keyring.verify(&far, OP, &digest(), NOW),
+            Err(Denied::TooLong)
+        );
+        let edge = issuer.mint_until(
+            &tenant("a"),
+            OP,
+            &digest(),
+            NOW + MAX_CREDENTIAL_LIFETIME_MS,
+        );
+        assert_eq!(keyring.verify(&edge, OP, &digest(), NOW), Ok(tenant("a")));
     }
 
     #[test]
     fn a_tampered_credential_is_refused() {
         let issuer = issuer("k1", 7);
         let keyring = Keyring::parse(&issuer.public_spec()).unwrap();
-        let credential = issuer.mint(&tenant("a"), NOW);
+        let credential = issuer.mint(&tenant("a"), OP, &digest(), NOW);
         let other = credential.replace(tenant("a").as_str(), tenant("b").as_str());
-        assert_eq!(keyring.verify(&other, NOW), Err(Denied::BadSignature));
+        assert_eq!(
+            keyring.verify(&other, OP, &digest(), NOW),
+            Err(Denied::BadSignature)
+        );
         let later = credential.replace(
             &(NOW + CREDENTIAL_LIFETIME_MS).to_string(),
             &(NOW + CREDENTIAL_LIFETIME_MS + 1).to_string(),
         );
-        assert_eq!(keyring.verify(&later, NOW), Err(Denied::BadSignature));
+        assert_eq!(
+            keyring.verify(&later, OP, &digest(), NOW),
+            Err(Denied::BadSignature)
+        );
         let padded = credential.replace(
             &format!(".{}.", NOW + CREDENTIAL_LIFETIME_MS),
             &format!(".0{}.", NOW + CREDENTIAL_LIFETIME_MS),
         );
-        assert_eq!(keyring.verify(&padded, NOW), Err(Denied::Malformed));
+        assert_eq!(
+            keyring.verify(&padded, OP, &digest(), NOW),
+            Err(Denied::Malformed)
+        );
         for junk in ["", "nolap1", "Bearer x", &format!("{credential}.x")] {
-            assert_eq!(keyring.verify(junk, NOW), Err(Denied::Malformed), "{junk}");
+            assert_eq!(
+                keyring.verify(junk, OP, &digest(), NOW),
+                Err(Denied::Malformed),
+                "{junk}"
+            );
         }
     }
 
@@ -323,14 +441,26 @@ mod tests {
         ))
         .unwrap();
         let only_new = Keyring::parse(&new.public_spec()).unwrap();
-        let (by_old, by_new) = (old.mint(&tenant("a"), NOW), new.mint(&tenant("a"), NOW));
-        assert_eq!(both.verify(&by_old, NOW), Ok(tenant("a")));
-        assert_eq!(both.verify(&by_new, NOW), Ok(tenant("a")));
-        assert_eq!(only_new.verify(&by_old, NOW), Err(Denied::UnknownKey));
-        assert_eq!(only_new.verify(&by_new, NOW), Ok(tenant("a")));
+        let (by_old, by_new) = (
+            old.mint(&tenant("a"), OP, &digest(), NOW),
+            new.mint(&tenant("a"), OP, &digest(), NOW),
+        );
+        assert_eq!(both.verify(&by_old, OP, &digest(), NOW), Ok(tenant("a")));
+        assert_eq!(both.verify(&by_new, OP, &digest(), NOW), Ok(tenant("a")));
+        assert_eq!(
+            only_new.verify(&by_old, OP, &digest(), NOW),
+            Err(Denied::UnknownKey)
+        );
+        assert_eq!(
+            only_new.verify(&by_new, OP, &digest(), NOW),
+            Ok(tenant("a"))
+        );
         // The same key id with another key does not verify the old credentials.
         let impostor = Keyring::parse(&issuer("old", 3).public_spec()).unwrap();
-        assert_eq!(impostor.verify(&by_old, NOW), Err(Denied::BadSignature));
+        assert_eq!(
+            impostor.verify(&by_old, OP, &digest(), NOW),
+            Err(Denied::BadSignature)
+        );
     }
 
     #[test]
