@@ -508,13 +508,20 @@ pub struct NativeEngine {
 impl NativeEngine {
     /// Open a file with the existing native journal and cache options.
     ///
+    /// ENGINE-UPGRADE-1 (#1494): the journal mode is stored in the file, so
+    /// it is set only after the cell's storage version is admitted: a cell
+    /// this engine refuses is left exactly as it was found.
+    ///
     /// # Errors
-    /// SQLite open or configuration errors.
+    /// SQLite open or configuration errors, or the storage-version refusals
+    /// of [`crate::engine_release::admission`].
     pub fn open(
         path: &std::path::Path,
         options: crate::store::StoreOptions,
     ) -> Result<Self, CellError> {
-        let conn = rusqlite::Connection::open(path)?;
+        let engine = Self::configured(rusqlite::Connection::open(path)?)?;
+        crate::engine_release::admission(&engine)?;
+        let conn = &engine.conn;
         let mode = match options.journal_mode {
             crate::store::JournalMode::Delete => "DELETE",
             crate::store::JournalMode::Wal => "WAL",
@@ -528,7 +535,7 @@ impl NativeEngine {
             conn.execute_batch(&format!("PRAGMA cache_size = {pages}"))?;
         }
         conn.execute_batch("PRAGMA foreign_keys = ON")?;
-        Self::configured(conn)
+        Ok(engine)
     }
 
     /// Open an existing file read-only, for an operator's diagnosis (#1423):

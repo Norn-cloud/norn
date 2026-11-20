@@ -261,9 +261,11 @@ pub fn load(image: &Value, path: &Path) {
     engine.close().expect("close");
 }
 
-/// The image of the SQLite file at `path`, read through a fresh connection.
+/// The image of the SQLite file at `path`, read through a fresh read-only
+/// connection, so imaging a cell this engine refuses neither fails nor
+/// writes.
 pub fn image_of(path: &Path) -> Value {
-    let engine = NativeEngine::open(path, StoreOptions::default()).expect("engine");
+    let engine = NativeEngine::open_read_only(path).expect("engine");
     let image = image(&engine);
     engine.close().expect("close");
     image

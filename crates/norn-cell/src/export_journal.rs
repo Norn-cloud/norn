@@ -168,6 +168,7 @@ pub(crate) fn record<E: SqlEngine>(
     receipt: &Receipt,
     consumed_input: Option<Value>,
     definition_install: Option<DefinitionInstallRecord>,
+    storage_version: Option<u32>,
 ) -> Result<(), CellError> {
     let commit_seq = receipt.body.commit_seq;
     let prior: Option<(i64, String)> = engine
@@ -242,6 +243,7 @@ pub(crate) fn record<E: SqlEngine>(
         initial_model: (commit_seq == 1 && definition_install.is_none())
             .then(|| model.definitions_snapshot()),
         definition_install,
+        storage_version,
     };
     for entry in &export.entries {
         reader.verify_durable_event(&entry.world, entry.commit_seq, &entry.event)?;

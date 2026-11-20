@@ -31,7 +31,20 @@ The version metadata the engine checks is compiled in: `CHANNEL` lists each stor
 | newer storage version | refuses `core.engine.downgrade`, naming the cell's version and writer |
 | stamp this engine cannot read (future `format`, a non-integer, 0, or a version too large to count) | refuses `core.engine.unknown_version` |
 
-A refused open changes nothing in the file. The migrations run inside the open transaction and before this engine's schema statements, so each step sees the layout it was written for. If the open then fails anyway (a model mismatch, a ledger that does not verify), the upgrade rolls back with it. After the steps, the open verifies the whole ledger and every receipt as it always does. Hosts already turn an open refusal into `cell.unopenable`, and the reason reaches only a definition writer.
+A refused or failed open leaves the file byte-identical. Nothing is committed until every check that can refuse the file has passed:
+
+- The native engine (`NativeEngine::open`) admits the storage version before it sets the journal mode, which SQLite stores in the file.
+- An open runs the schema step, the migrations, and the verification of the whole ledger, every receipt, the definition history, the fork pin and an expected cell identity in one transaction. The migrations run before this engine's schema statements, so each step sees the layout it was written for. If any later check fails (a model mismatch, a ledger that does not verify), the upgrade rolls back with it.
+- Provisioning an existing cell admits it again and runs the migrations at the start of its write transaction, before any other statement, so a second opener that changed the version after the first check is caught.
+- A fork admits the copied snapshot and refuses unless it is at this engine's storage version, before it reads the copy's head or writes its pin. A copy is never migrated.
+
+Hosts already turn an open refusal into `cell.unopenable`, and the reason reaches only a definition writer.
+
+## Exports and restore
+
+Each export record carries `storageVersion`, the storage version of the engine that committed it. It is part of the record's content address, so it is covered by the same verification as the rest of the export. A replayed record keeps the version that first wrote it, so a restore reproduces the original export journal exactly.
+
+A record with no `storageVersion` was written before the field existed and counts as storage version 1. A restore admits every record of the export against its engine's storage window before it stages anything: a record newer than the engine refuses `core.engine.downgrade`, one older than `UPGRADES_FROM` refuses `core.engine.upgrade_unsupported`, and `0` refuses `core.engine.unknown_version`. An admitted older export is rebuilt through this engine's commit path, so the restored file is written, and stamped, at this engine's storage version.
 
 The refusal codes are registered in `crates/norn-checker/conformance/diagnostic-codes/` at tier T6.
 
@@ -53,6 +66,6 @@ Releases are the `drop-N` tags. Packaging (installers, `cargo-dist`, `NORN_RELEA
 - A host pins one drop. Each drop has a storage window: the version it writes and the oldest it upgrades.
 - To upgrade, the host moves its pin forward. The first open on the new drop runs the migrations. The host can skip drops as long as the target drop's floor is at or below the cell's storage version. If not, the refusal says to open the cell first on a bridge drop.
 - Before moving the pin across a storage version bump, the host keeps a snapshot it can return to: a copy of the file for the native host, a point-in-time bookmark for the Durable Object host, the actor's SQLite snapshot for Rivet.
-- Rolling back between drops with the same storage version is allowed, because they are interchangeable for a cell. Rolling back across a bump refuses `core.engine.downgrade`. The way back is the snapshot, or a restore from the cell's export into the older drop.
+- Rolling back between drops with the same storage version is allowed, because they are interchangeable for a cell. Rolling back across a bump refuses `core.engine.downgrade`. The way back is the snapshot. Once the newer drop has committed, the cell's export holds records at the newer storage version, and restoring it into the older drop refuses as well.
 
 Limit: storage version 1 engines (every drop before the first one with the stamp) don't read the stamp, so they cannot refuse a newer cell. Storage version 2 lays out data exactly as version 1 does, so such an engine reads a version 2 cell correctly. Once version 3 exists, a host must not pin back past the first stamped drop. From the first stamped drop on, every engine refuses a cell newer than itself.

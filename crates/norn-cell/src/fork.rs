@@ -168,7 +168,8 @@ impl<E: ForkEngine> CellStore<E> {
     ///
     /// `core.world.fork_invalid_world` for `main`, an empty id or this store's
     /// own world; `core.world.fork_stale_base` when `base` is not the verified
-    /// head; ledger verification or engine errors otherwise.
+    /// head; a storage-version refusal when the copy is not at this engine's
+    /// storage version; ledger verification or engine errors otherwise.
     pub fn fork(&self, world: &str, base: &LedgerHead) -> Result<Self, CellError> {
         let parent = self
             .fork_pin()
@@ -186,6 +187,10 @@ impl<E: ForkEngine> CellStore<E> {
             });
         }
         let engine = self.conn.fork_engine()?;
+        // ENGINE-UPGRADE-1: another opener may have changed the cell's storage
+        // version since this store opened it; the copy is admitted before its
+        // head is read or its pin written.
+        crate::engine_release::require_current(&engine)?;
         // Another handle may commit between the head check and the copy: the
         // copy itself must hold exactly `base`, or the fork refuses.
         let copied = copied_head(&engine, self.model())?;

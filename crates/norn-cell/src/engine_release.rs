@@ -173,6 +173,27 @@ pub fn admit(stored: &StoredVersion, engine: EngineVersion) -> Result<Admission,
             (stamp.storage, stamp.writer)
         }
     };
+    order(cell, writer, engine)
+}
+
+/// Decide what `engine` does with an export whose newest record says it was
+/// written at storage version `storage`. A record without one predates the
+/// field and counts as storage version 1
+/// (`docs/platform/engine-upgrades.md`). [`Admission::Upgrade`] means the
+/// restore rebuilds an older export under this engine; the rebuilt file is
+/// written at this engine's version.
+///
+/// # Errors
+/// As [`admit`]: version 0 is unknown, a newer one a downgrade.
+pub fn admit_export(storage: Option<u32>, engine: EngineVersion) -> Result<Admission, CellError> {
+    match storage {
+        None => order(1, "a release before export storage versions".to_owned(), engine),
+        Some(0) => Err(unknown("export storageVersion 0")),
+        Some(version) => order(version, "the exporting engine".to_owned(), engine),
+    }
+}
+
+fn order(cell: u32, writer: String, engine: EngineVersion) -> Result<Admission, CellError> {
     if cell > engine.storage {
         return Err(CellError::EngineDowngrade {
             cell,
@@ -235,6 +256,25 @@ pub fn stored_version<E: SqlEngine>(engine: &E) -> Result<StoredVersion, CellErr
 /// As [`stored_version`] and [`admit`].
 pub fn admission<E: SqlEngine>(engine: &E) -> Result<Admission, CellError> {
     admit(&stored_version(engine)?, THIS_ENGINE)
+}
+
+/// Refuse unless `engine`'s cell is at this engine's storage version, without
+/// writing: a copy of a cell (a fork) is never migrated, so it must already
+/// be one this engine serves as it is.
+///
+/// # Errors
+/// As [`admission`]; [`CellError::EngineUpgradeUnsupported`] for an older
+/// cell, [`CellError::Engine`] for a file with no store.
+pub(crate) fn require_current<E: SqlEngine>(engine: &E) -> Result<(), CellError> {
+    match admission(engine)? {
+        Admission::Current => Ok(()),
+        Admission::Upgrade { from } => Err(CellError::EngineUpgradeUnsupported {
+            cell: from,
+            engine: STORAGE_VERSION,
+            reason: "a copy is never migrated; open the cell to upgrade it first".to_owned(),
+        }),
+        Admission::Fresh => Err(CellError::Engine("the copy holds no cell store".to_owned())),
+    }
 }
 
 /// Run `step(to)` for every storage version after `from` up to `to`, in
@@ -403,6 +443,27 @@ mod tests {
             admit(&StoredVersion::Unstamped, THIS_ENGINE).ok(),
             Some(Admission::Upgrade { from: 1 })
         );
+    }
+
+    #[test]
+    fn an_export_without_a_storage_version_is_version_1() {
+        assert_eq!(
+            admit_export(None, THIS_ENGINE).ok(),
+            Some(Admission::Upgrade { from: 1 })
+        );
+        assert!(matches!(
+            admit_export(None, ENGINE),
+            Err(CellError::EngineUpgradeUnsupported { cell: 1, .. })
+        ));
+        assert_eq!(admit_export(Some(4), ENGINE).ok(), Some(Admission::Current));
+        assert!(matches!(
+            admit_export(Some(5), ENGINE),
+            Err(CellError::EngineDowngrade { cell: 5, engine: 4, .. })
+        ));
+        assert!(matches!(
+            admit_export(Some(0), ENGINE),
+            Err(CellError::EngineUnknownVersion { .. })
+        ));
     }
 
     #[test]
