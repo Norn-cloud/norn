@@ -101,7 +101,7 @@ test("markings: a reveal answered after the cell withdrew the reveal is never sh
   await page.getByRole("button", { name: "Read again" }).click()
   await expect(name.locator("[data-hidden-tag]")).toHaveText("Hidden from your role")
   // The late answer lands; the page waits past it and still shows only the projection.
-  const answered = page.waitForResponse((response) => response.url().endsWith("/reveal"))
+  const answered = page.waitForResponse((response) => new URL(response.url()).pathname.endsWith("/reveal"))
   release()
   await answered
   await page.waitForTimeout(300)
