@@ -1050,6 +1050,7 @@ fn analytics_b() -> Host {
             held_by_rules: 0,
         },
         valid_time: Vec::new(),
+        markings: BTreeMap::new(),
     };
     store
         .commit_dataset_manifest(MAIN_WORLD, "synthetic", 1, &manifest, None)
