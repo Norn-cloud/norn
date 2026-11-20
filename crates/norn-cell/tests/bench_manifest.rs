@@ -253,9 +253,16 @@ fn per_row_rate(cell: &mut Cell, path: &str, limit: u64) -> serde_json::Value {
         let mut payload = serde_json::Map::new();
         for name in &header {
             let value = record.next().unwrap_or_default();
-            if !value.is_empty() {
-                payload.insert(name.clone(), json!(value));
+            if value.is_empty() {
+                continue;
             }
+            // A decimal field is a JSON number in the source, as an extract carries it.
+            let value = if name == "net_worth" {
+                serde_json::from_str(&value).unwrap_or_else(|_| json!(value))
+            } else {
+                json!(value)
+            };
+            payload.insert(name.clone(), value);
         }
         rows += 1;
         let id = payload
