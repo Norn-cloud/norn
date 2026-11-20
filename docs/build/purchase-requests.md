@@ -81,6 +81,10 @@ restatement, then install signed. The approval commits with the set in one
 step, so the submit action is never live without its gate, and an approval the
 cell refuses publishes nothing. The `definition` event prints that
 restatement.
+It reads `A call of purchasing.request.submit that writes a record with
+amount > "1000" waits for a person to approve it, …`. A text operand is
+quoted and a number is bare, so the words signed pin the operand exactly as
+installed: a sign-off of one never installs the other.
 
 ## The ERPNext export
 

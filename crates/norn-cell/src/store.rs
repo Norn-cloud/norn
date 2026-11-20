@@ -1861,6 +1861,9 @@ struct DefinitionInstallContext<'a> {
     expected_version: Option<u64>,
     retained: Option<&'a crate::retained::RetainedDefinitionChange>,
     riding: &'a [crate::retained::RetainedDefinitionChange],
+    /// #1469 S1: the version row the transaction wrote, as written, so the
+    /// install answers what it committed without a separate readback.
+    committed: Option<&'a RefCell<Option<InstalledDefinitionSet>>>,
 }
 
 struct DefinitionPreflight {
@@ -2291,6 +2294,7 @@ impl<E: SqlEngine> CellStore<E> {
             expected_version: Some(0),
             retained: None,
             riding,
+            committed: None,
         };
         let fresh_identity = RefCell::new(|| source(&store.conn));
         store
@@ -3029,12 +3033,14 @@ impl<E: SqlEngine> CellStore<E> {
             logical_time: input.installed_at,
             ..CommitBatch::default()
         };
+        let committed = RefCell::new(None);
         let install = DefinitionInstallContext {
             candidate_model: &candidate_model,
             input,
             expected_version,
             retained,
             riding,
+            committed: Some(&committed),
         };
         let result = self.commit_guarded_inner(
             &batch,
@@ -3047,8 +3053,11 @@ impl<E: SqlEngine> CellStore<E> {
         match result {
             Ok(((), CommitOutcome::Committed(receipt))) => {
                 self.model = candidate_model;
-                self.read()
-                    .installed_definitions(Some(receipt.body.definitions_version))?
+                // #1469 S1: the revision the transaction wrote, never a
+                // readback that could fail after the commit and report a
+                // committed install as refused.
+                committed
+                    .into_inner()
                     .ok_or_else(|| CellError::LedgerCorrupt {
                         seq: receipt.body.definitions_version,
                         reason: "committed definitions version has no retained set".to_owned(),
@@ -3079,6 +3088,7 @@ impl<E: SqlEngine> CellStore<E> {
             expected_version,
             retained: None,
             riding: &[],
+            committed: None,
         };
         let actual_version = active_definition_version(&self.conn)?;
         let preflight =
@@ -3363,6 +3373,9 @@ impl<E: SqlEngine> CellStore<E> {
                     &format!("UPDATE \"{META}\" SET \"value\" = ?1 WHERE \"key\" = 'ddl_hash'"),
                     params![install.candidate_model.ddl_hash()],
                 )?;
+                if let Some(committed) = install.committed {
+                    committed.replace(Some(record.installed.clone()));
+                }
                 Some(record)
             } else {
                 None

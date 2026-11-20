@@ -471,31 +471,40 @@ fn riding<E: SqlEngine>(
     let actions = set_actions(&candidate.admitted.canonical_set)?;
     let mut ids = std::collections::BTreeSet::new();
     let mut gated = std::collections::BTreeSet::new();
-    let mut admitted = Vec::new();
     for (index, request) in approvals.iter().enumerate() {
-        let pointer = format!("/approvals/{index}");
         let action = serde_json::from_str::<serde_json::Value>(request.payload.get())
             .ok()
             .and_then(|payload| payload.get("action")?.as_str().map(str::to_owned));
-        if !ids.insert(request.id.as_str()) || action.is_some_and(|action| !gated.insert(action)) {
+        if !ids.insert(request.id.clone()) || action.is_some_and(|action| !gated.insert(action)) {
             return Err(refused(vec![RefusalDiagnostic::error(
                 crate::approval_definitions::codes::DUPLICATE,
                 "an approval id or its action appears more than once in the change",
-                pointer,
+                format!("/approvals/{index}"),
             )]));
         }
-        admitted.push(crate::definition_routes::riding_approval(
-            host,
-            actor,
-            kinds,
-            request,
-            &actions,
-            signed_at,
-            &pointer,
-            &std::collections::BTreeSet::new(),
-        )?);
     }
-    Ok(admitted)
+    // #1469 S2: one gate per action in the FINAL set. The change's own
+    // approvals were checked against each other above; an active approval
+    // the change revises gates whatever its new payload says, so it is not
+    // counted at its old action (a gate moved off an action frees it for a
+    // replacement in the same change). Each revision is still compare-and-set
+    // at commit.
+    approvals
+        .iter()
+        .enumerate()
+        .map(|(index, request)| {
+            crate::definition_routes::riding_approval(
+                host,
+                actor,
+                kinds,
+                request,
+                &actions,
+                signed_at,
+                &format!("/approvals/{index}"),
+                &ids,
+            )
+        })
+        .collect()
 }
 
 fn planned_approvals(
@@ -685,6 +694,15 @@ pub fn source_approvals<E: SqlEngine>(
         .filter(|record| declared.iter().all(|(id, _)| *id != record.id))
         .map(|record| record.id.clone())
         .collect();
+    // #1469 S2: uniqueness is of the FINAL set. Every declared approval is
+    // checked against the other declared ones below, so no active approval
+    // this reload revises or retires counts at its old action: a gate moved
+    // to another action frees its old one for a replacement in this reload.
+    let superseded: std::collections::BTreeSet<String> = retiring
+        .iter()
+        .cloned()
+        .chain(declared.iter().map(|(id, _)| id.clone()))
+        .collect();
     let mut out = Vec::new();
     let mut gated = std::collections::BTreeSet::new();
     for (id, payload) in declared {
@@ -708,7 +726,14 @@ pub fn source_approvals<E: SqlEngine>(
         };
         let admit = |request: &InstallDefinitionRequest, signed_at| {
             crate::definition_routes::riding_approval(
-                host, actor, kinds, request, &actions, signed_at, "", &retiring,
+                host,
+                actor,
+                kinds,
+                request,
+                &actions,
+                signed_at,
+                "",
+                &superseded,
             )
         };
         let planned = admit(&request, None).map_err(at)?;

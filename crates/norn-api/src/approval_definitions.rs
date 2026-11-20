@@ -201,7 +201,7 @@ fn check_when(when: &Value, findings: &mut Vec<RefusalDiagnostic>) {
     }
 }
 
-/// `when` in words: `amount > 1000`.
+/// `when` in words: `amount > "1000"` (text) or `amount > 1000` (a number).
 fn when_words(when: &Value) -> Option<String> {
     let property = when.get("property")?.as_str()?;
     let op = match when.get("op")?.as_str()? {
@@ -213,10 +213,10 @@ fn when_words(when: &Value) -> Option<String> {
         "ge" => "≥",
         _ => return None,
     };
-    let value = when.get("value")?;
-    let value = value
-        .as_str()
-        .map_or_else(|| value.to_string(), str::to_owned);
+    // #1469 S9: the operand is restated as JSON, so text is quoted and
+    // escaped (`"1"`) and a number or boolean is bare (`1`). Against a text
+    // property the two compare differently, so the signed words must differ.
+    let value = when.get("value")?.to_string();
     Some(format!("{property} {op} {value}"))
 }
 
@@ -283,7 +283,7 @@ mod tests {
 
     #[test]
     fn a_threshold_admits_and_is_restated_in_words() {
-        let payload = approval(&json!({ "property": "amount", "op": "gt", "value": "1000" }));
+        let payload = approval(&json!({ "property": "amount", "op": "gt", "value": 1000 }));
         assert!(findings(&payload).is_empty());
         let words = restate(&payload.to_string()).unwrap_or_default();
         assert!(
@@ -302,13 +302,39 @@ mod tests {
         let payload = approval(&json!({ "property": "amount", "op": "gt", "value": "1000.10" }));
         assert!(findings(&payload).is_empty());
         let words = restate(&payload.to_string()).unwrap_or_default();
-        assert!(words.contains("with amount > 1000.10 waits"), "{words}");
+        assert!(
+            words.contains(r#"with amount > "1000.10" waits"#),
+            "{words}"
+        );
         let integer = approval(&json!({ "property": "amount", "op": "gt", "value": 1000 }));
         assert!(findings(&integer).is_empty());
         let fractional = approval(&json!({ "property": "amount", "op": "gt", "value": 1000.1 }));
         let found = findings(&fractional);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].code, codes::INVALID);
+    }
+
+    /// #1469 S9: text and a number of the same digits compare differently,
+    /// so they restate differently: text is quoted and escaped.
+    #[test]
+    fn a_text_operand_restates_apart_from_a_number() {
+        let words = |value: Value| {
+            restate(
+                &approval(&json!({ "property": "code", "op": "eq", "value": value })).to_string(),
+            )
+            .unwrap_or_default()
+        };
+        let text = words(json!("1"));
+        let number = words(json!(1));
+        assert!(text.contains(r#"with code = "1" waits"#), "{text}");
+        assert!(number.contains("with code = 1 waits"), "{number}");
+        assert_ne!(text, number);
+        let quoted = words(json!("1\" waits"));
+        assert!(
+            quoted.contains(r#"with code = "1\" waits" waits"#),
+            "{quoted}"
+        );
+        assert_ne!(words(json!("true")), words(json!(true)));
     }
 
     #[test]

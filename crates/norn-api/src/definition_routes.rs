@@ -1671,8 +1671,10 @@ pub(crate) struct RidingApproval {
 /// `signed_at`, it is an apply: the request's sign-off must match the
 /// restatement and its `expectedVersion` the id's current revision, and the
 /// revision to append is signed by `actor` at that time. `pointer` places the
-/// findings in the change request. An approval in `retiring` retires in the
-/// same commit, so the action it gates is free for this one (a rename).
+/// findings in the change request. An approval in `superseded` is revised or
+/// retired by the same commit, so its current action does not count against
+/// this one (a rename, or a gate moved to another action); the caller checks
+/// the change's own approvals against each other.
 ///
 /// # Errors
 /// A non-approval kind, a refused approval, a missing or mismatched sign-off,
@@ -1689,7 +1691,7 @@ pub(crate) fn riding_approval<E: SqlEngine>(
     actions: &BTreeSet<String>,
     signed_at: Option<u64>,
     pointer: &str,
-    retiring: &BTreeSet<String>,
+    superseded: &BTreeSet<String>,
 ) -> Result<RidingApproval, Refusal> {
     let place = |mut findings: Vec<RefusalDiagnostic>| {
         for finding in &mut findings {
@@ -1715,7 +1717,7 @@ pub(crate) fn riding_approval<E: SqlEngine>(
     let value: Value = serde_json::from_str(&canonical).map_err(Refusal::host)?;
     let roles: Vec<&str> = kinds.roles.iter().map(String::as_str).collect();
     let gated = gated_except(host, &|other| {
-        other == request.id || retiring.contains(other)
+        other == request.id || superseded.contains(other)
     })?;
     let findings = crate::approval_definitions::check(&value, actions, &roles, &gated);
     if !admitted(&findings) {

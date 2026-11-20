@@ -525,3 +525,75 @@ async fn riding_revisions_publish_with_their_set_or_not_at_all() {
         2
     );
 }
+
+/// An engine whose first read after an armed transaction commits fails,
+/// as a lost connection between the commit and any readback would.
+struct ReadbackFault {
+    inner: norn_cell::engine::NativeEngine,
+    armed: std::rc::Rc<std::cell::Cell<bool>>,
+    tripped: std::rc::Rc<std::cell::Cell<bool>>,
+}
+
+impl norn_cell::engine::SqlEngine for ReadbackFault {
+    fn read_isolation(&self) -> norn_cell::engine::ReadIsolation {
+        self.inner.read_isolation()
+    }
+    fn execute(&self, sql: &str, params: &[norn_cell::engine::SqlValue]) -> Result<(), CellError> {
+        self.inner.execute(sql, params)
+    }
+    fn query(
+        &self,
+        sql: &str,
+        params: &[norn_cell::engine::SqlValue],
+    ) -> Result<Vec<Vec<norn_cell::engine::SqlValue>>, CellError> {
+        if self.tripped.replace(false) {
+            return Err(CellError::Engine("readback fault".to_owned()));
+        }
+        self.inner.query(sql, params)
+    }
+    fn execute_batch(&self, sql: &str) -> Result<(), CellError> {
+        self.inner.execute_batch(sql)
+    }
+    fn transaction<T, X: From<CellError>>(&self, f: impl FnOnce() -> Result<T, X>) -> Result<T, X> {
+        let value = self.inner.transaction(f)?;
+        if self.armed.replace(false) {
+            self.tripped.set(true);
+        }
+        Ok(value)
+    }
+}
+
+/// #1469 S1: an install answers the revision its own transaction committed,
+/// never a separate readback. A read that fails after the commit cannot turn
+/// a committed install into a refusal, so a host never keeps serving the
+/// old revision's policy over the new set.
+#[test]
+fn an_install_answers_the_revision_its_transaction_committed() {
+    let (model, canonical) = definitions();
+    let armed = std::rc::Rc::new(std::cell::Cell::new(false));
+    let tripped = std::rc::Rc::new(std::cell::Cell::new(false));
+    let engine = ReadbackFault {
+        inner: norn_cell::engine::NativeEngine::open_in_memory().expect("engine"),
+        armed: std::rc::Rc::clone(&armed),
+        tripped: std::rc::Rc::clone(&tripped),
+    };
+    let mut store = CellStore::from_engine(engine, model.clone()).expect("store");
+    store.bind("scope", SCOPE).expect("bind");
+    store
+        .install_definitions(model.clone(), input(&canonical, 10), Some(0), SCOPE)
+        .expect("kernel definitions");
+    let next = canonical.replace("\"0.1.0\"", "\"0.2.0\"");
+    let gate = change("lab.gate", 1, RetainedLifecycle::Active, "G", None);
+    armed.set(true);
+    let installed = store
+        .install_definitions_riding(model, &input(&next, 20), Some(1), SCOPE, &[gate])
+        .expect("the committed install is answered");
+    assert_eq!((installed.version, &installed.canonical_set), (2, &next));
+    tripped.set(false);
+    let active = store
+        .read()
+        .installed_definitions(None)
+        .expect("read")
+        .expect("active");
+    assert_eq!(active, installed, "the answer is the committed revision");
+}

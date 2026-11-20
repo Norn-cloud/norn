@@ -93,7 +93,7 @@ test("purchase_requests_builder_loop: load, workflow, approval and separation of
     // DEV-DEFINITIONS-1: the approval was installed by signing its restatement.
     const installed = await dev.next((event) => event.event === "definition" && event.id === "purchasing.large_requests", 0)
     expect(installed).toMatchObject({ kind: "approval", version: 1, lifecycle: "active" })
-    expect(installed.restatement).toContain("amount > 1000 waits for a person to approve it")
+    expect(installed.restatement).toContain(`amount > "1000" waits for a person to approve it`)
     const approval = await http(developer, "GET", "/v1/definitions/purchasing.large_requests")
     expect(approval.status).toBe(200)
     expect(approval.body.signoff).toMatchObject({ signer: "local:developer" })

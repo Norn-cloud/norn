@@ -71,7 +71,14 @@ fn compile_actions<E: norn_cell::engine::SqlEngine>(
     else {
         return Ok((None, Vec::new()));
     };
-    let artifacts = norn_api::kernel_set::retained_artifacts(&active.canonical_set)?;
+    compile_set(&active.canonical_set, host.scope())
+}
+
+fn compile_set(
+    canonical_set: &str,
+    scope: &norn_api::scope::CellScope,
+) -> Result<Compiled, String> {
+    let artifacts = norn_api::kernel_set::retained_artifacts(canonical_set)?;
     let model =
         norn_api::kernel_set::kernel_model(&artifacts).map_err(|error| format!("{error:?}"))?;
     let ungoverned = artifacts
@@ -85,8 +92,7 @@ fn compile_actions<E: norn_cell::engine::SqlEngine>(
             action.access.is_none().then_some(action.action_id)
         })
         .collect();
-    let policy =
-        ActionPolicy::compile(&model, &artifacts, host.scope()).map_err(|error| error.0)?;
+    let policy = ActionPolicy::compile(&model, &artifacts, scope).map_err(|error| error.0)?;
     Ok((policy, ungoverned))
 }
 
@@ -98,12 +104,30 @@ pub(crate) fn refresh_actions<E: norn_cell::engine::SqlEngine>(
     slot: &DevActions,
     host: &norn_api::host::DevHost<E>,
 ) -> Result<Vec<String>, String> {
-    let (stored, answer) = match compile_actions(host) {
+    store(slot, compile_actions(host))
+}
+
+/// #1469 S1: compile the policy of the revision an install just committed
+/// (`canonical_set`, as its transaction wrote it) into `slot`, before the
+/// definitions lock is released: no readback stands between the commit and
+/// the policy that governs it.
+pub(crate) fn install_actions(
+    slot: &DevActions,
+    canonical_set: &str,
+    scope: &norn_api::scope::CellScope,
+) -> Result<Vec<String>, String> {
+    store(slot, compile_set(canonical_set, scope))
+}
+
+fn store(slot: &DevActions, compiled: Result<Compiled, String>) -> Result<Vec<String>, String> {
+    let (stored, answer) = match compiled {
         Ok((policy, ungoverned)) => (Ok(policy.map(Arc::new)), Ok(ungoverned)),
         Err(reason) => (Err(reason.clone()), Err(reason)),
     };
-    if let Ok(mut guard) = slot.write() {
-        *guard = stored;
+    match slot.write() {
+        Ok(mut guard) => *guard = stored,
+        // A poisoned slot still takes the new policy: never the old one.
+        Err(poisoned) => *poisoned.into_inner() = stored,
     }
     answer
 }

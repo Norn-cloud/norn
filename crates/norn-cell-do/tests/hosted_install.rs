@@ -677,3 +677,101 @@ fn a_plan_reports_each_gate_change() {
     );
     assert_eq!(revised["nextVersion"], installed + 1, "{revised}");
 }
+
+/// #1469 S9: a gate on text `"1"` and one on the number `1` compare
+/// differently, so their restatements differ: a sign-off of one's words is
+/// refused for the other, over HTTP and over MCP, and nothing is published.
+#[test]
+fn a_signoff_pins_the_operand_type() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut cell = provisioned(&directory.path().join("cell.sqlite"));
+    let base = cell.version();
+    let gate = |value: Value| {
+        let mut gate = record_gate(&["admin"]);
+        gate["payload"]["when"] = json!({ "property": "unit", "op": "eq", "value": value });
+        gate
+    };
+    let sha_of = |cell: &mut Cell, value: Value| {
+        let plan = json_of(&cell.change_with(PLAN_PATH, &[gate(value)], None));
+        plan["approvals"][0]["restatementSha256"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{plan}"))
+            .to_owned()
+    };
+    let text = sha_of(&mut cell, json!("1"));
+    let number = sha_of(&mut cell, json!(1));
+    assert_ne!(text, number, "text and a number restate apart");
+    let mut crossed = gate(json!(1));
+    crossed["signoff"] = json!({ "restatementSha256": text });
+
+    let http = cell.change_with(APPLY_PATH, &[crossed.clone()], Some(base));
+    assert_eq!(
+        json_of(&http)["code"],
+        "definition.signoff_mismatch",
+        "{}",
+        http.body
+    );
+    assert_eq!(cell.version(), base, "nothing was published");
+    let mcp = cell.mcp(
+        "owner",
+        "norn_apply_definitions",
+        &json!({"artifacts": batches_pack(), "expectedVersion": base, "approvals": [crossed]}),
+    );
+    assert_eq!(mcp["isError"], true, "{mcp}");
+    assert!(
+        mcp.to_string().contains("definition.signoff_mismatch"),
+        "{mcp}"
+    );
+    assert_eq!(cell.version(), base, "nothing was published");
+}
+
+/// #1469 S2 over HTTP: one gate per action is of the change's final set. A
+/// change that moves gate G off the pack's action while a new G' gates it
+/// plans and applies in one version; both revisions are compare-and-set.
+#[test]
+fn a_change_moves_a_gate_and_replaces_it() {
+    const OTHER: &str = "canon.valuation_policy.set";
+    let directory = tempfile::tempdir().unwrap();
+    let mut cell = provisioned(&directory.path().join("cell.sqlite"));
+    let base = cell.version();
+    let gate = |id: &str, action: &str| {
+        json!({ "kind": "approval", "id": id, "payload": {
+            "action": action, "decider": { "roles": ["admin"] },
+            "question": "Record this batch?", "risk": "high" } })
+    };
+    let sign = |cell: &mut Cell, gates: Vec<Value>, expected: u64| {
+        let plan = json_of(&cell.change_with(PLAN_PATH, &gates, None));
+        let approvals = plan["approvals"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{plan}"));
+        let signed: Vec<Value> = gates
+            .into_iter()
+            .zip(approvals)
+            .map(|(mut gate, planned)| {
+                gate["signoff"] = json!({ "restatementSha256": planned["restatementSha256"] });
+                gate["expectedVersion"] = planned["fromRevision"].clone();
+                gate
+            })
+            .collect();
+        cell.change_with(APPLY_PATH, &signed, Some(expected))
+    };
+    let first = sign(&mut cell, vec![gate("lab.g", RECORD)], base);
+    assert_eq!(first.status, 200, "{}", first.body);
+    let moved = sign(
+        &mut cell,
+        vec![gate("lab.g", OTHER), gate("lab.g2", RECORD)],
+        base + 1,
+    );
+    assert_eq!(moved.status, 200, "{}", moved.body);
+    assert_eq!(
+        cell.version(),
+        base + 2,
+        "the move and its replacement: one version"
+    );
+    let twice = cell.change_with(
+        PLAN_PATH,
+        &[gate("lab.g", RECORD), gate("lab.g2", RECORD)],
+        None,
+    );
+    assert_eq!(twice.status, 422, "two gates on one action: {}", twice.body);
+}

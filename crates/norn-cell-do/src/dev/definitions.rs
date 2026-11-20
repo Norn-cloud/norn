@@ -206,9 +206,10 @@ pub(crate) fn commit<E: SqlEngine>(
             phase: "install",
             diagnostics: vec![serde_json::to_value(&refusal).unwrap_or(Value::Null)],
         })?;
-    // The report is read later; the policy is in the slot before the lock
-    // is released.
-    let _ungoverned = policy::refresh_actions(actions, host);
+    // The report is read later; the policy of the committed revision (as
+    // its transaction wrote it, no readback) is in the slot before the lock
+    // is released (#1469 S1).
+    let _ungoverned = policy::install_actions(actions, &installed.canonical_set, host.scope());
     Ok(Committed::Installed(Box::new(installed), prepared.events))
 }
 
@@ -433,6 +434,63 @@ mod tests {
         let old = record(&host, "ops.old").unwrap();
         assert_eq!(old.definition.lifecycle, RetainedLifecycle::Active);
         assert!(record(&host, "ops.new").is_none());
+    }
+
+    /// #1469 S2: uniqueness is of the final declared set. Moving gate G
+    /// from action A to B while a new G' gates A admits, and both revisions
+    /// commit with the set; two declared gates on one action still refuse.
+    #[test]
+    fn a_gate_moves_while_its_old_action_gets_a_replacement() {
+        let host = cell();
+        let Committed::Installed(first, _) = commit_of(
+            &host,
+            true,
+            &[approval("ops.g", MELT_ACTION, "admin")],
+            5_000,
+        )
+        .expect("gated") else {
+            panic!("the gate installs");
+        };
+        let moved = commit_of(
+            &host,
+            true,
+            &[
+                approval("ops.g", RECONVERT, "admin"),
+                approval("ops.g2", MELT_ACTION, "admin"),
+            ],
+            6_000,
+        )
+        .expect("a move and a replacement admit together");
+        let Committed::Installed(moved, _) = moved else {
+            panic!("the move installs");
+        };
+        assert_eq!(moved.version, first.version + 1, "one commit");
+        let g = record(&host, "ops.g").unwrap();
+        let g2 = record(&host, "ops.g2").unwrap();
+        assert!(
+            g.definition.payload.contains(RECONVERT),
+            "{}",
+            g.definition.payload
+        );
+        assert!(
+            g2.definition.payload.contains(MELT_ACTION),
+            "{}",
+            g2.definition.payload
+        );
+        assert_eq!(g.definition.revision, 2);
+        assert_eq!(g.commit_seq, g2.commit_seq);
+
+        let both = commit_of(
+            &host,
+            true,
+            &[
+                approval("ops.g", MELT_ACTION, "admin"),
+                approval("ops.g2", MELT_ACTION, "admin"),
+            ],
+            7_000,
+        )
+        .expect_err("two gates on one action");
+        assert_eq!(both.phase, "definitions");
     }
 
     /// The same set with the same approvals writes nothing.
