@@ -30,12 +30,12 @@ pub(crate) fn normalize(v: Value) -> Value {
             Value::Object(map.into_iter().map(|(k, v)| (k, normalize(v))).collect())
         }
         Value::Array(xs) => Value::Array(xs.into_iter().map(normalize).collect()),
-        other => other,
+        other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_)) => other,
     }
 }
 
 /// The trace files of `model` (a model file stem), from the committed set
-/// unless NORN_QUINT_TRACE_DIR names another.
+/// unless `NORN_QUINT_TRACE_DIR` names another.
 pub(crate) fn traces(model: &str) -> Vec<(PathBuf, Vec<Value>)> {
     let root = std::env::var_os("NORN_QUINT_TRACE_DIR").map_or_else(
         || {
@@ -56,11 +56,16 @@ pub(crate) fn traces(model: &str) -> Vec<(PathBuf, Vec<Value>)> {
         })
         .collect();
     paths.sort();
-    assert!(paths.len() >= 8, "too few {model} traces in {}", root.display());
+    assert!(
+        paths.len() >= 8,
+        "too few {model} traces in {}",
+        root.display()
+    );
     paths
         .into_iter()
         .map(|path| {
-            let raw: Value = serde_json::from_slice(&std::fs::read(&path).expect("bytes")).expect("ITF");
+            let raw: Value =
+                serde_json::from_slice(&std::fs::read(&path).expect("bytes")).expect("ITF");
             let states = normalize(raw)["states"].as_array().expect("states").clone();
             assert!(states.len() > 1, "empty trace {}", path.display());
             (path, states)

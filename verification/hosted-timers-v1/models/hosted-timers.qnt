@@ -65,7 +65,9 @@ module hosted_timers {
   // drives each slot as 32 real rows). The rank helpers below range over
   // these slots; change them together.
   pure val ITEMS = Set(1, 2, 3)
-  pure val REQS = Set(1, 2)
+  // One request in flight against the alarm: the writing count of wake.mjs
+  // is then 0 or 1 (more requests only repeat its guard and rearm).
+  pure val REQS = Set(1)
   pure val KINDS = Set("reservation", "timer", "decision")
   pure val RULES = Set(1, 2)
   pure val BUDGET = 2
@@ -212,7 +214,8 @@ module hosted_timers {
 
   // ---- Init -----------------------------------------------------------------
 
-  action initWith(d0: int -> int, kd: int -> str, hl: int -> bool, op: bool, m: Mut): bool = all {
+  action initWith(d0: int -> int, kd: int -> str, hl: int -> bool, op: bool,
+                  pn: int -> int, rw: int -> int, ar: int, m: Mut): bool = all {
     now' = 0,
     opened' = op,
     live' = ITEMS.mapBy(i => d0.get(i) != NONE),
@@ -221,8 +224,8 @@ module hosted_timers {
     healthy' = hl,
     attempts' = ITEMS.mapBy(_ => 0),
     retryAt' = ITEMS.mapBy(_ => 0),
-    pinned' = ITEMS.mapBy(_ => 1),
-    ruleAtWrite' = ITEMS.mapBy(_ => 1),
+    pinned' = pn,
+    ruleAtWrite' = rw,
     firedRule' = ITEMS.mapBy(_ => 0),
     activeAtFire' = ITEMS.mapBy(_ => 0),
     dec' = ITEMS.mapBy(i => if (d0.get(i) != NONE and kd.get(i) == "decision") "open" else "none"),
@@ -235,8 +238,8 @@ module hosted_timers {
     wake' = if (op and not(m.noOpenArm))
         ITEMS.fold(NONE, (acc, i) => minWake(acc, d0.get(i)))
       else NONE,
-    activeRule' = 1,
-    seenRules' = Set(1),
+    activeRule' = ar,
+    seenRules' = if (pn == ITEMS.mapBy(_ => 1) and rw == pn and ar == 1) Set(1) else RULES,
     phase' = "idle",
     req' = REQS.mapBy(_ => "none"),
     faults' = 0,
@@ -249,7 +252,12 @@ module hosted_timers {
     nondet d0 = ITEMS.setOfMaps(LEGACY_DEADLINES.union(Set(NONE))).oneOf()
     nondet kd = ITEMS.setOfMaps(KINDS).oneOf()
     nondet hl = ITEMS.setOfMaps(Set(true, false)).oneOf()
-    initWith(d0, kd, hl, op, m)
+    // A legacy cell may already hold timers of runs that started under an
+    // earlier rule, scheduled before or after a definitions change.
+    nondet pn = ITEMS.setOfMaps(RULES).oneOf()
+    nondet rw = ITEMS.setOfMaps(RULES).oneOf()
+    nondet ar = RULES.oneOf()
+    initWith(d0, kd, hl, op, pn, rw, ar, m)
   }
   // Safety: a cell from before the deploy, not yet opened.
   action init = initAs(false, NOMUT)
@@ -261,7 +269,7 @@ module hosted_timers {
     nondet d0 = ITEMS.setOfMaps(LEGACY_DEADLINES.union(Set(NONE))).oneOf()
     nondet hl = ITEMS.setOfMaps(Set(true, false)).oneOf()
     initWith(d0, ITEMS.mapBy(i => if (hl.get(i)) "timer" else (if (i == 2) "reservation" else "timer")),
-      hl, true, NOMUT)
+      hl, true, ITEMS.mapBy(_ => 1), ITEMS.mapBy(_ => 1), 1, NOMUT)
   }
 
   // ---- The isolate's steps ----------------------------------------------------
@@ -296,10 +304,12 @@ module hosted_timers {
   // The request commits a new item with a deadline (a reservation with an
   // expiry, a flow timer of a run started under `pin`, a decision). A new
   // incarnation starts with no retry record.
-  action commit(r: int, i: int, d: int, k: str, h: bool, pin: int): bool = all {
+  action commit(r: int, i: int, off: int, k: str, h: bool, pin: int): bool = all {
+    val d = now + off
+    all {
     req.get(r) == "guarded",
     not(live.get(i)),
-    d > now, d <= MAX_TIME,
+    d <= MAX_TIME,
     seenRules.contains(pin),
     req' = req.set(r, "committed"),
     live' = live.set(i, true),
@@ -323,6 +333,7 @@ module hosted_timers {
     firstFail' = firstFail.set(i, NONE),
     now' = now, opened' = opened, wake' = wake, activeRule' = activeRule, seenRules' = seenRules,
     phase' = phase, faults' = faults,
+    }
   }
 
   // afterWrite (W2), whatever the reply; the scheduling call can fail.
@@ -440,16 +451,20 @@ module hosted_timers {
     nondet r = REQS.oneOf()
     nondet i = ITEMS.oneOf()
     nondet d = 1.to(MAX_TIME).oneOf()
+    // A new deadline 1..3 units ahead: only its order against the alarm and
+    // the other deadlines matters.
+    nondet off = 1.to(3).oneOf()
     nondet k = KINDS.oneOf()
     nondet h = Set(true, false).oneOf()
     nondet b = Set(true, false).oneOf()
     nondet rule = RULES.oneOf()
     nondet cut = 0.to(BUDGET).oneOf()
-    nondet cf = ITEMS.powerset().oneOf()
+    // At most one failed resolving commit per pass (FAULTS = 1).
+    nondet cf = ITEMS.map(i => Set(i)).union(Set(Set())).oneOf()
     any {
       open(m),
       guard(r, m),
-      commit(r, i, d, k, h, rule),
+      commit(r, i, off, k, h, rule),
       rearm(r, b, m),
       decide(i, m),
       tick(d),
@@ -550,7 +565,8 @@ module hosted_timers {
     nondet t = 0.to(MAX_TIME).oneOf()
     nondet cut = 0.to(BUDGET).oneOf()
     nondet lost = Set(true, false).oneOf()
-    nondet cf = ITEMS.powerset().oneOf()
+    // At most one failed resolving commit per pass (FAULTS = 1).
+    nondet cf = ITEMS.map(i => Set(i)).union(Set(Set())).oneOf()
     any { idle(t), round(t, cut, lost, cf, m) }
   }
 
@@ -597,9 +613,10 @@ module hosted_timers {
 
   // W1-W4: once the cell is opened, every pending item has a durable alarm
   // no later than RECOVERY past its eligibility (or past now, if it is
-  // already due). Exactly at its eligibility when nothing was in flight; the
-  // RECOVERY allowance is the guard or recovery wake that covers a commit
-  // whose rearm never ran.
+  // already due). The allowance is the guard or recovery wake that covers a
+  // commit whose rearm never ran, or due work whose handler was lost. One
+  // time unit is RECOVERY_MS, so the model cannot place a deadline inside a
+  // guard's minute; the code's guard bound is the same RECOVERY_MS.
   def wakeCovers: bool = opened implies ITEMS.forall(i => live.get(i) implies and {
     wake != NONE,
     wake <= max(eligible(i), now) + RECOVERY,
@@ -621,8 +638,12 @@ module hosted_timers {
 
   // ---- Bounded progress (fairness FAIR, FAULTS) ---------------------------------
 
-  // R1/R2: an item due at a completed pass is tried within three of them.
-  def dueProgress: bool = ITEMS.forall(i => skipped.get(i) <= 2)
+  // R1/R2: an item due at a completed pass is tried within three of them,
+  // plus one per fault. Two skips come from the order alone (older failing
+  // items fill the budget, and are eligible again when the next alarm lags
+  // past their first backoff); a lost pass lets their second backoff pass
+  // too. The doubling backoff then lets the item through.
+  def dueProgress: bool = ITEMS.forall(i => skipped.get(i) <= 2 + faults)
 
   // R1/R2: a healthy item is handled within LATENESS of its deadline, plus a
   // recovery interval and a fairness lag per fault, however many failing
@@ -650,10 +671,11 @@ module hosted_timers {
     firedRule.get(i) != 0 and firedRule.get(i) == pinned.get(i) and ruleAtWrite.get(i) != pinned.get(i)))
   // An item failed twice at one incarnation: it was retried after its backoff.
   def witnessRetried: bool = not(ITEMS.exists(i => attempts.get(i) >= 2))
-  // A pending item covered only by a guard or recovery wake (its exact
-  // rearm never ran).
+  // wakeCovers' RECOVERY allowance is used: a pending item is covered only
+  // by a recovery wake later than its eligibility. (At this granularity a
+  // guard covers a new deadline exactly: both are at least one unit ahead.)
   def witnessLateCovered: bool = not(opened and wake != NONE and ITEMS.exists(i =>
-    live.get(i) and wake > eligible(i) and eligible(i) > now))
+    live.get(i) and wake > eligible(i)))
   // An isolate was lost with due work pending.
   def witnessLostWithDueWork: bool =
     not(faults > 0 and phase == "idle" and ITEMS.exists(i => live.get(i) and eligible(i) <= now))

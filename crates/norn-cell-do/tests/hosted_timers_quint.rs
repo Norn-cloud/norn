@@ -15,10 +15,12 @@
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::indexing_slicing,
+    clippy::panic,
     reason = "trace correspondence: a divergence must fail loudly"
 )]
 
 #[path = "support/quint_itf.rs"]
+#[allow(dead_code, reason = "the ITF helpers serve both trace tests")]
 mod quint_itf;
 
 use std::collections::BTreeMap;
@@ -40,7 +42,11 @@ const BASE: u64 = 10_000_000;
 const NONE: i64 = -1;
 
 fn ms(t: i64) -> u64 {
-    BASE + u64::try_from(t).expect("model time") * STUCK_RETRY_MS
+    BASE.saturating_add(
+        u64::try_from(t)
+            .expect("model time")
+            .saturating_mul(STUCK_RETRY_MS),
+    )
 }
 
 /// Everything about a slot the adapter compares.
@@ -170,7 +176,11 @@ fn hosted_timers_quint_traces() {
             let now = int(before, "now");
             // The alarm the cell asks for, as wake.mjs sets it (never before now).
             let asked = next_due(&cell).unwrap().map(|at| at.max(ms(now)));
-            assert_eq!(asked, wake_ms(before), "{name} step {step}: the cell's next deadline");
+            assert_eq!(
+                asked,
+                wake_ms(before),
+                "{name} step {step}: the cell's next deadline"
+            );
             let (old, new) = (slots(before), slots(after));
             if old == new {
                 // Time passes with nothing due.
@@ -190,7 +200,11 @@ fn hosted_timers_quint_traces() {
                 handled * ROWS,
                 "{name} step {step}: handled rows {work:?}"
             );
-            assert_eq!(work.failed.len(), failed * ROWS, "{name} step {step}: failed rows {work:?}");
+            assert_eq!(
+                work.failed.len(),
+                failed * ROWS,
+                "{name} step {step}: failed rows {work:?}"
+            );
             assert_eq!(
                 work.next.map(|next| next.max(ms(at))),
                 wake_ms(after),
@@ -208,8 +222,16 @@ fn hosted_timers_quint_traces() {
                     match retries.get(&key) {
                         Some(retry) => {
                             assert!(s.live && s.attempts > 0, "{name} step {step}: stray {key}");
-                            assert_eq!(i64::from(retry.attempts), s.attempts, "{name} {key} attempts");
-                            assert_eq!(retry.eligible_at, ms(s.retry_at), "{name} {key} eligibility");
+                            assert_eq!(
+                                i64::from(retry.attempts),
+                                s.attempts,
+                                "{name} {key} attempts"
+                            );
+                            assert_eq!(
+                                retry.eligible_at,
+                                ms(s.retry_at),
+                                "{name} {key} eligibility"
+                            );
                         }
                         None => assert!(
                             !s.live || s.attempts == 0,
