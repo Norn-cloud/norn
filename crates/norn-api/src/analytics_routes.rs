@@ -1220,14 +1220,7 @@ pub fn page_objects<E: SqlEngine>(
         (Vec::new(), Vec::new())
     };
     let marks = dataset_marks(host, store, object_type)?;
-    if let Some(column) = filters
-        .iter()
-        .map(|clause| clause.column.as_str())
-        .chain(sort.iter().map(|key| key.column.as_str()))
-        .find(|column| marks.is_marked(column))
-    {
-        return Err(marked_column(column));
-    }
+    marks.refuse_ordering(&filters, &sort)?;
     let page = if !values && !query.filter.is_empty() {
         PageResponse {
             total: 0,
@@ -1348,8 +1341,22 @@ pub(crate) struct DatasetMarks {
 }
 
 impl DatasetMarks {
-    fn is_marked(&self, column: &str) -> bool {
-        self.columns.contains_key(column)
+    /// A filter or sort over a marked column would order or select rows by
+    /// its stored values, outside any projection: it refuses.
+    fn refuse_ordering(
+        &self,
+        filters: &[norn_cell::analytics::PageClause],
+        sort: &[norn_cell::analytics::PageKey],
+    ) -> Result<(), Refusal> {
+        match filters
+            .iter()
+            .map(|clause| clause.column.as_str())
+            .chain(sort.iter().map(|key| key.column.as_str()))
+            .find(|column| self.columns.contains_key(*column))
+        {
+            Some(column) => Err(marked_column(column)),
+            None => Ok(()),
+        }
     }
 }
 
@@ -1380,7 +1387,7 @@ fn marked_column(column: &str) -> Refusal {
         http::StatusCode::FORBIDDEN,
         "privacy.marked_column",
         "the column is marked",
-        &format!("{column} is marked; read it through the records grid, where it is masked"),
+        format!("{column} is marked; read it through the records grid, where it is masked"),
     )
 }
 
