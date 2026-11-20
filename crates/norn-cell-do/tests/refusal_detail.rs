@@ -357,7 +357,10 @@ fn retained_refusal_documents_are_the_cells_own() {
         // The printed lines the law sums, each with where its amount was read from.
         for line in ["SCAN-INV-1041~line-1", "SCAN-INV-1041~line-2"] {
             let path = format!("/v1/objects/docs.DocumentLine/{line}");
-            retained(&format!("{line}.object.{role}.json"), &cell.read(role, &path, ""));
+            retained(
+                &format!("{line}.object.{role}.json"),
+                &cell.read(role, &path, ""),
+            );
             for leaf in ["links", "lineage"] {
                 retained(
                     &format!("{line}.{leaf}.{role}.json"),
