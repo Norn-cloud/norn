@@ -358,6 +358,40 @@ fn parquet_rows(path: &std::path::Path, column: &str) -> Vec<(u64, Option<String
     rows.map(|row| row.expect("row")).collect()
 }
 
+/// The Parquet file of `lines`, every field text: an absent customer is a
+/// null, a present one its text, empty or blank as it is.
+fn parquet(lines: &[Line]) -> Vec<u8> {
+    let quote = |text: &str| format!("'{}'", text.replace('\'', "''"));
+    let rows: Vec<String> = lines
+        .iter()
+        .enumerate()
+        .map(|(index, line)| {
+            format!(
+                "({}, {}, 'c', {}, {}, {}, {}, {})",
+                quote(&format!("line-{}", index + 1)),
+                quote(line.invoice),
+                quote(&line.quantity.to_string()),
+                quote(&line.price),
+                line.customer.map_or_else(|| "CAST(NULL AS VARCHAR)".to_owned(), &quote),
+                quote(line.country),
+                quote(line.occurred_at),
+            )
+        })
+        .collect();
+    let scratch = tempfile::tempdir().expect("scratch");
+    let path = scratch.path().join("lines.parquet");
+    duckdb::Connection::open_in_memory()
+        .expect("writer")
+        .execute_batch(&format!(
+            "COPY (SELECT * FROM (VALUES {}) AS t({})) TO '{}' (FORMAT parquet)",
+            rows.join(", "),
+            FIELDS.join(", "),
+            path.display()
+        ))
+        .expect("parquet written");
+    std::fs::read(&path).expect("parquet")
+}
+
 /// What the set-based path decided.
 struct SetBased {
     findings: BTreeSet<Finding>,
@@ -371,8 +405,13 @@ struct SetBased {
 /// checked in one pass, the residue settled by the per-row evaluator; read
 /// back from the two Parquet files the landing wrote.
 fn set_based(cell: &Cell, lines: &[Line]) -> SetBased {
+    set_based_file(cell, csv(lines).as_bytes(), FileFormat::Csv)
+}
+
+/// [`set_based`], of a file of the lines in `format`.
+fn set_based_file(cell: &Cell, bytes: &[u8], format: FileFormat) -> SetBased {
     let (_dir, engine) = engine();
-    let request = begin(&engine, cell, csv(lines).as_bytes(), FileFormat::Csv, "a1");
+    let request = begin(&engine, cell, bytes, format, "a1");
     let landed = engine.land(&request).expect("landed");
     let (landed, residue, rows) = settle_all(&engine, cell, &request, landed);
     let (data, held_path) = engine.landed_files(&tenant(), "a1").expect("files");
@@ -543,6 +582,49 @@ proptest::proptest! {
     }
 }
 
+/// LAW-02 / LAW-05: present Parquet text is the value the per-row path
+/// reads: an empty or blank customer is that text, never a null, so a law
+/// that defaults a null holds back exactly the rows the per-row path holds
+/// back.
+#[test]
+fn present_parquet_text_is_decided_as_the_per_row_path_decides_it() {
+    const BLANK: [(&str, &str, &str); 2] = [
+        (
+            "customer_not_empty",
+            "error",
+            "(self.customer ?? 'guest') != ''",
+        ),
+        (
+            "customer_not_blank",
+            "warning",
+            "(self.customer ?? 'guest') != ' '",
+        ),
+    ];
+    let (_dir, mut cell) = cell(&laws(&BLANK));
+    let lines: Vec<Line> = [Some(""), Some(" "), Some("  "), None, Some("ann")]
+        .into_iter()
+        .map(|customer| Line {
+            invoice: "A1",
+            quantity: 1,
+            price: "1.5".into(),
+            customer,
+            country: "GB",
+            occurred_at: "2026-10-01T09:30:00Z",
+        })
+        .collect();
+    let set = set_based_file(&cell, &parquet(&lines), FileFormat::Parquet);
+    let (row_findings, row_held, row_trusted) = per_row(&mut cell, &lines);
+    assert_eq!(set.findings, row_findings);
+    assert_eq!(set.held, row_held);
+    assert_eq!(set.data, row_trusted);
+    assert!(set.held.contains(&1), "an empty customer is held back");
+    assert!(
+        set.findings.iter().any(|(row, _, _)| *row == 2),
+        "a blank customer is found"
+    );
+    assert!(set.data.contains(&4), "an absent customer is a guest");
+}
+
 /// LAW-01: a landing is staged by its attempt and seen by no reader until
 /// its files are stored and read at their cache identity. A reader of the
 /// current dataset while another landing's residue is settled, and after a
@@ -693,6 +775,12 @@ fn parquet_instants_import_with_every_nanosecond_and_their_instant() {
             "a2",
             "TIMESTAMPTZ '2026-10-01 11:30:00.5+02:00', TIMESTAMPTZ '2026-10-01 04:30:00-05:00'",
         ),
+        // The earliest second TIMESTAMP_NS holds: its start is below BIGINT's
+        // nanoseconds, and the instant is still imported exactly.
+        (
+            "a3",
+            "TIMESTAMP_NS '1677-09-21 00:12:43.9', TIMESTAMP_NS '1677-09-21 00:12:43.5'",
+        ),
     ] {
         let path = scratch.path().join(format!("{attempt}.parquet"));
         conn.execute_batch(&format!(
@@ -720,6 +808,8 @@ fn parquet_instants_import_with_every_nanosecond_and_their_instant() {
             "1969-12-31T23:59:59.999999999Z",
             "2026-10-01T09:30:00.500000Z",
             "2026-10-01T09:30:00.000000Z",
+            "1677-09-21T00:12:43.900000000Z",
+            "1677-09-21T00:12:43.500000000Z",
         ]
     );
 }

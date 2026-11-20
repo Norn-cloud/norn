@@ -2339,8 +2339,11 @@ fn dataset_ddl(table: &TableSchema) -> String {
 
 /// Read the file once into `":file"` (insertion order is the file's), then
 /// in one pass into `":checked"`: per table column `c{i}` its text (found by
-/// header or Parquet field name; an empty or blank field is null), its
-/// parsed value, and `":reason"`, the first refusal in column order.
+/// header or Parquet field name), its parsed value, and `":reason"`, the
+/// first refusal in column order. A CSV field has no null, so an empty or
+/// blank one is null; a Parquet value is null only when the file says so,
+/// and present text, empty or blank, is kept as it is (LAW-02/05: as the
+/// per-row path reads it).
 fn check_file(conn: &Connection, request: &LoadRequest, file: &Path) -> Outcome<()> {
     let path = file.to_string_lossy().replace('\'', "''");
     let source = match request.file.format {
@@ -2388,10 +2391,13 @@ fn check_file(conn: &Connection, request: &LoadRequest, file: &Path) -> Outcome<
         };
         let text = match (column.kind, data_type.as_str()) {
             (ColumnKind::Timestamp, "TIMESTAMP_NS") => {
+                // The second is taken in HUGEINT: near the lower bound of
+                // TIMESTAMP_NS, the nanoseconds less their fraction are
+                // below BIGINT's range though the microseconds are not.
                 let fraction =
                     format!("(((epoch_ns({f}) % 1000000000) + 1000000000) % 1000000000)");
                 format!(
-                    "strftime(make_timestamp((epoch_ns({f}) - {fraction}) // 1000), '%Y-%m-%dT%H:%M:%S') \
+                    "strftime(make_timestamp(CAST((CAST(epoch_ns({f}) AS HUGEINT) - {fraction}) // 1000 AS BIGINT)), '%Y-%m-%dT%H:%M:%S') \
                      || '.' || lpad(CAST({fraction} AS VARCHAR), 9, '0') || 'Z'"
                 )
             }
@@ -2406,9 +2412,12 @@ fn check_file(conn: &Connection, request: &LoadRequest, file: &Path) -> Outcome<
             (ColumnKind::Date, "DATE") => format!("strftime({f}, '%Y-%m-%d')"),
             _ => format!("CAST({f} AS VARCHAR)"),
         };
-        texts.push(format!(
-            "CASE WHEN trim({text}) = '' THEN NULL ELSE {text} END AS c{i}"
-        ));
+        texts.push(match request.file.format {
+            FileFormat::Csv => {
+                format!("CASE WHEN trim({text}) = '' THEN NULL ELSE {text} END AS c{i}")
+            }
+            FileFormat::Parquet => format!("{text} AS c{i}"),
+        });
         let Parsed { columns, reason } = parse_sql(column.kind, i);
         parsed.extend(columns);
         let missing = if column.nullable {

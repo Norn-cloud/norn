@@ -20,8 +20,8 @@ use std::collections::BTreeMap;
 
 use norn_cell::analytics::{
     EngineRefusal, EvaluateRequest, EvaluateResponse, ExportFormat, ExportRequest, FileFormat,
-    FileSource, FrontierResponse, LandRequest, LandResponse, LoadRequest, SettleRequest, Source,
-    RuleCheck, StoreRequest, StoredObject, TableSchema, TenantId, dataset_cache_id, hex_digest,
+    FileSource, FrontierResponse, LandRequest, LandResponse, LoadRequest, RuleCheck, SettleRequest,
+    Source, StoreRequest, StoredObject, TableSchema, TenantId, dataset_cache_id, hex_digest,
 };
 use norn_cell::compute::{ALL_MEMBERS, QueryContext, QueryResult};
 use norn_cell::dataset_manifest::{
@@ -822,7 +822,8 @@ struct BulkContract {
     /// The type's table.
     table: TableSchema,
     /// The pins, the resolved mapping's (`<artifact id>@<sha256>`) among them.
-    pins: ManifestPins,    /// MANIFEST-LAWS-1: the type's laws and invariants, as the landing checks them.
+    pins: ManifestPins,
+    /// MANIFEST-LAWS-1: the type's laws and invariants, as the landing checks them.
     checks: Vec<RuleCheck>,
 }
 
