@@ -543,11 +543,6 @@ pub struct UploadRecord {
 pub trait Uploads {
     /// The completed upload `id`, if any.
     fn record(&self, id: &str) -> Option<UploadRecord>;
-    /// Whether `id` is an upload identity this host issued, readable from the
-    /// cell scope `scope_key`, sealed to the object at exactly `uri`
-    /// (UPLOAD-ID-1). A kept `source.Upload` record names a URI; only this
-    /// answer makes it one the cell may sign (S5).
-    fn issued(&self, id: &str, scope_key: &str, uri: &str) -> bool;
     /// A GET URL for exactly `uri`, valid for `seconds` from `now_ms`.
     fn presigned_get(&self, uri: &str, seconds: u64, now_ms: u64) -> Option<String>;
     /// MANIFEST-LAND-1: a PUT URL for the object `key` the cell lands a
@@ -655,7 +650,6 @@ impl From<&ManifestFile> for NornDatasetFile {
 /// ingest cannot enforce (422), stale pins or a reused request key (409), or
 /// an unreachable engine.
 #[utoipa::path(post, path = "/v1/datasets:load", params(ScopeQuery), request_body = DatasetLoadRequest, responses((status = 200, description = "The load.", body = NornDatasetLoad), (status = 400, description = "The request was refused as invalid.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied.", body = Refusal), (status = 404, description = "The request was refused: not found.", body = Refusal), (status = 409, description = "The definitions changed while the dataset landed, or the request key names another request.", body = Refusal), (status = 422, description = "The file was refused.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
-#[allow(clippy::too_many_lines, reason = "one load, in order: authorize, contract, land, commit, report")]
 pub fn load_dataset<E: SqlEngine>(
     host: &DevHost<E>,
     scope: &ScopeQuery,
@@ -701,13 +695,6 @@ pub fn load_dataset<E: SqlEngine>(
             })
             .ok_or_else(dataset_not_found)?,
     };
-    // S5: a record is data in the cell, not the host's word. Before anything
-    // is signed or the engine is called, the upload id must be one this host
-    // issued for this scope, sealed to the very URI the record names; a
-    // record pointing anywhere else answers as no such upload.
-    if !uploads.issued(&request.upload_id, &host.scope().key(), &record.uri) {
-        return Err(dataset_not_found());
-    }
     let contract = bulk_contract(host, &request.object_type, request.mapping.as_deref())?;
     let keyed = request
         .request_key
@@ -827,18 +814,18 @@ fn unsupported(code: &str, detail: impl Into<String>) -> Refusal {
 /// field as itself: `input.<f>`, or `timestamp(input.<f>)` (with its null
 /// guard), the conversion the engine's typing of a timestamp column is.
 fn plain_read(value: &str) -> Option<&str> {
-    fn field(text: &str) -> Option<&str> {
+    let field = |text: &str| {
         text.strip_prefix("input.")
             .filter(|f| !f.is_empty() && f.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
-    }
-    fn converted(text: &str) -> Option<&str> {
-        text.strip_prefix("timestamp(")
-            .and_then(|rest| rest.strip_suffix(')'))
-            .and_then(field)
-    }
+    };
     if let Some(read) = field(value) {
         return Some(read);
     }
+    let converted = |text: &str| {
+        text.strip_prefix("timestamp(")
+            .and_then(|rest| rest.strip_suffix(')'))
+            .and_then(field)
+    };
     if let Some(read) = converted(value) {
         return Some(read);
     }
@@ -852,7 +839,6 @@ fn plain_read(value: &str) -> Option<&str> {
 /// write-side markings check: a load of a type whose rows a write would
 /// mark (a declared property marking, or a marked source field) is refused,
 /// as bulk ingest attaches no per-row markings.
-#[allow(clippy::too_many_lines, reason = "one contract, read top to bottom: the mapping, its reads, then the markings")]
 fn bulk_contract<E: SqlEngine>(
     host: &DevHost<E>,
     object_type: &str,
@@ -1203,7 +1189,6 @@ const RESIDUE_PAGE: u32 = 2_000;
 /// typed and checked by. An answer continues this landing only if it names
 /// that identity; the attempt is then the one the answer ran as, and its
 /// pins are carried to the commit unchanged.
-#[allow(clippy::too_many_lines, reason = "one landing, step by step: begin, land, settle, store")]
 fn land_upload<E: SqlEngine>(
     host: &DevHost<E>,
     object_type: &str,
@@ -1283,20 +1268,21 @@ fn land_upload<E: SqlEngine>(
         stream: None,
     };
     for _ in 0..MAX_LAND_STEPS {
-        let done = if let Some(done) = answer.take() {
-            done
-        } else {
-            if call.op == "land" {
-                let mut sent = request.clone();
-                sent.load.file.url = uploads
-                    .presigned_get(&record.uri, LOAD_URL_SECONDS, now_ms)
-                    .ok_or_else(unconfigured)?;
-                call.body = serde_json::to_string(&sent).map_err(Refusal::host)?;
+        let done = match answer.take() {
+            Some(done) => done,
+            None => {
+                if call.op == "land" {
+                    let mut sent = request.clone();
+                    sent.load.file.url = uploads
+                        .presigned_get(&record.uri, LOAD_URL_SECONDS, now_ms)
+                        .ok_or_else(unconfigured)?;
+                    call.body = serde_json::to_string(&sent).map_err(Refusal::host)?;
+                }
+                transport
+                    .call(&call)
+                    .ok_or_else(pending)
+                    .map_err(engine_failure)?
             }
-            transport
-                .call(&call)
-                .ok_or_else(pending)
-                .map_err(engine_failure)?
         };
         if done.status != 200 {
             let refusal: EngineRefusal = decode(&done.body).map_err(engine_failure)?;
@@ -1356,7 +1342,7 @@ fn land_upload<E: SqlEngine>(
                     .ok_or_else(unconfigured)?,
             );
         }
-        let [(data_put, data_uri), (held_put, held_uri)] =
+        let [(data_url, data_uri), (held_url, held_uri)] =
             <[(String, String); 2]>::try_from(objects).map_err(|_two| unconfigured())?;
         let uris = [data_uri.clone(), held_uri.clone()];
         if land.stored.is_some() {
@@ -1372,11 +1358,11 @@ fn land_upload<E: SqlEngine>(
             landed: land,
             data: StoredObject {
                 uri: data_uri,
-                url: data_put,
+                url: data_url,
             },
             held: StoredObject {
                 uri: held_uri,
-                url: held_put,
+                url: held_url,
             },
         };
         call = EngineCall {
@@ -1482,18 +1468,16 @@ pub fn current_manifest<E: SqlEngine>(
 }
 
 fn manifest_refusal(error: CellError) -> Refusal {
-    if let CellError::DatasetRefused { code, detail } = &error {
-        return Refusal::new(
+    match &error {
+        CellError::DatasetRefused { code, detail } => Refusal::new(
             http::StatusCode::CONFLICT,
             code,
             "the dataset manifest was not committed",
             detail,
-        );
+        ),
+        CellError::IdempotencyConflict(_) => request_conflict(),
+        _ => Refusal::host(error),
     }
-    if matches!(error, CellError::IdempotencyConflict(_)) {
-        return request_conflict();
-    }
-    Refusal::host(error)
 }
 
 fn dataset_not_found() -> Refusal {

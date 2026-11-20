@@ -289,11 +289,7 @@ impl<E: SqlEngine> CellStore<E> {
                     .saturating_add(manifest.counts.held_by_rules)
                     .saturating_add(manifest.counts.held.values().sum::<u64>())
             || manifest.load
-                != dataset_cache_id(
-                    &manifest.table,
-                    &manifest.data.sha256,
-                    &manifest.held.sha256,
-                )
+                != dataset_cache_id(&manifest.table, &manifest.data.sha256, &manifest.held.sha256)
             || binding_pin(&manifest.binding)? != manifest.pins.binding
         {
             return Err(refused(
@@ -336,7 +332,7 @@ impl<E: SqlEngine> CellStore<E> {
         let pinned = manifest.pins.definitions_version;
         // The definitions version is re-read inside the commit transaction:
         // an install between the landing's first step and this commit refuses.
-        let guarded = self.commit_guarded_unchecked(
+        let guarded = self.commit_guarded(
             &batch,
             |reader| {
                 if reader.active_definitions_version()?.unwrap_or(0) == pinned {
