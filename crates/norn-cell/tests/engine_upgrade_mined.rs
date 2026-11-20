@@ -9,14 +9,16 @@
 //! - M1 admission orders any cell version against any engine window.
 //! - M2 a stamp this engine cannot read is an unknown version, shown bounded.
 //! - M3 a refused open, on any open path and in any journal mode, leaves the
-//!   file byte-identical, its journal mode unchanged and no WAL created.
+//!   file byte-identical, its journal mode unchanged and no WAL frame written.
 //! - M4 a storage version 1 cell whose ledger or fork pin does not verify
-//!   refuses and stays byte-identical and unstamped, in any journal mode.
+//!   refuses for that reason and stays byte-identical and unstamped, in any
+//!   journal mode.
 //! - M5 an upgrade keeps the ledger and receipts, stamps this engine, and any
 //!   sequence of later opens writes nothing to them.
 //! - M6 provisioning against a second opener that restamps the cell before
 //!   its transaction refuses and writes nothing.
-//! - M7 a fork refuses a copy that is not at this engine's storage version.
+//! - M7 a fork refuses a copy that is not at this engine's storage version;
+//!   an unstamped copy as storage version 1.
 //! - M8 every export record this engine commits names its storage version;
 //!   records an older engine wrote name none.
 #![cfg(feature = "native")]
@@ -78,6 +80,38 @@ fn wal_path(path: &Path) -> PathBuf {
     let mut name = path.as_os_str().to_owned();
     name.push("-wal");
     PathBuf::from(name)
+}
+
+/// The WAL's bytes, or `None` when there is no WAL file.
+fn wal_bytes(path: &Path) -> Option<Vec<u8>> {
+    std::fs::read(wal_path(path)).ok()
+}
+
+/// The frames a WAL holds: a 32-byte header, then frames of a 24-byte header
+/// and one page (the page size is the header's big-endian `u32` at 8).
+fn wal_frames(wal: &[u8]) -> usize {
+    let Some(page) = wal.get(8..12) else {
+        return 0;
+    };
+    let page = u32::from_be_bytes(page.try_into().expect("four bytes"));
+    wal.len().saturating_sub(32) / (24 + usize::try_from(page).expect("page size"))
+}
+
+/// The admission or refusal variant of `outcome` and the storage versions it
+/// reports (cell, engine), so two outcomes compare by more than success.
+fn verdict(outcome: &Result<Admission, CellError>) -> (String, Option<u32>, Option<u32>) {
+    match outcome {
+        Ok(Admission::Upgrade { from }) => ("upgrade".into(), Some(*from), None),
+        Ok(admission) => (format!("{admission:?}"), None, None),
+        Err(CellError::EngineUpgradeUnsupported { cell, engine, .. }) => {
+            ("unsupported".into(), Some(*cell), Some(*engine))
+        }
+        Err(CellError::EngineDowngrade { cell, engine, .. }) => {
+            ("downgrade".into(), Some(*cell), Some(*engine))
+        }
+        Err(CellError::EngineUnknownVersion { .. }) => ("unknown".into(), None, None),
+        Err(other) => (format!("other: {other}"), None, None),
+    }
 }
 
 fn journal_mode(path: &Path) -> String {
@@ -244,10 +278,8 @@ fn try_open(path: &Path, how: OpenPath) -> Option<CellError> {
         }
         OpenPath::FromEngine => CellStore::from_engine(raw(path), engine_fixture::model()).err(),
         OpenPath::DiagnoseHistory => CellStore::diagnose_history(path).err(),
-        OpenPath::Provision => match NativeEngine::open(path, StoreOptions::default()) {
-            Ok(engine) => provision(engine).err(),
-            Err(error) => Some(error),
-        },
+        // Straight to provisioning's own admission check, past any open.
+        OpenPath::Provision => provision(raw(path)).err(),
     }
 }
 
@@ -429,15 +461,14 @@ proptest! {
             }
             other => prop_assert!(false, "unexpected admission {:?}", other),
         }
-        // An unstamped cell is storage version 1 in every window.
+        // An unstamped cell is storage version 1 in every window: the same
+        // admission or refusal, reporting the same versions.
         let unstamped = engine_release::admit(&StoredVersion::Unstamped, engine);
-        prop_assert_eq!(
-            unstamped.ok(),
-            engine_release::admit(
-                &StoredVersion::Stamped(stamp_text(STAMP_FORMAT, "1", "x")),
-                engine
-            ).ok()
+        let stamped_v1 = engine_release::admit(
+            &StoredVersion::Stamped(stamp_text(STAMP_FORMAT, "1", "x")),
+            engine,
         );
+        prop_assert_eq!(verdict(&unstamped), verdict(&stamped_v1));
     }
 
     /// M2: any text that is not a version this engine can order refuses as
@@ -476,16 +507,23 @@ proptest! {
         }
         set_journal_mode(&path, file_mode);
         set_stamp(&path, Some(&stamp.text()));
-        let before = bytes(&path);
         let mode_before = journal_mode(&path);
-        let wal_before = wal_path(&path).exists();
+        // The file and its WAL, read immediately around the open: no SQLite
+        // probe between the two reads.
+        let (before, wal_before) = (bytes(&path), wal_bytes(&path));
         let refusal = try_open(&path, how);
+        let (after, wal_after) = (bytes(&path), wal_bytes(&path));
         prop_assert!(refusal.is_some(), "{:?} opened a cell stamped {:?}", how, stamp);
         let refusal = refusal.expect("refused");
         prop_assert!(stamp.matches(&refusal), "{:?}: unexpected refusal {}", how, refusal);
-        prop_assert!(bytes(&path) == before, "{:?} changed the bytes of a refused cell", how);
+        prop_assert!(after == before, "{:?} changed the bytes of a refused cell", how);
+        // SQLite may create (or remove) an empty WAL for a reader; any frame
+        // after the open is one that was there before it.
+        prop_assert!(
+            wal_after.as_deref().map_or(0, wal_frames) == 0 || wal_after == wal_before,
+            "{:?} wrote WAL frames", how
+        );
         prop_assert_eq!(journal_mode(&path), mode_before, "{:?} changed the journal mode", how);
-        prop_assert_eq!(wal_path(&path).exists(), wal_before, "{:?} created a WAL", how);
     }
 
     /// M4: a v1 cell that fails verification refuses, unstamped and
@@ -499,7 +537,19 @@ proptest! {
         let path = load(dir.path(), &corrupt(image_v1(), &corruption));
         let before = bytes(&path);
         let opened = CellStore::open(&path, engine_fixture::model(), options(mode_of(wal)));
-        prop_assert!(opened.is_err(), "a corrupt v1 cell opened: {:?}", corruption);
+        let Err(refusal) = opened else {
+            return Err(TestCaseError::fail(format!("a corrupt v1 cell opened: {corruption:?}")));
+        };
+        let expected = match corruption {
+            Corruption::EventText(..) | Corruption::EventHash(..) => {
+                matches!(refusal, CellError::LedgerCorrupt { .. })
+            }
+            Corruption::PinPastHead(_) => matches!(
+                &refusal,
+                CellError::Encoding(reason) if reason.contains("past the store's head")
+            ),
+        };
+        prop_assert!(expected, "{:?}: unexpected refusal {}", corruption, refusal);
         prop_assert!(bytes(&path) == before, "a refused upgrade changed the file: {:?}", corruption);
         prop_assert_eq!(
             engine_release::stored_version(&raw(&path)).expect("version"),
@@ -589,8 +639,20 @@ proptest! {
         let before = bytes(&path);
         let fork = store.fork("what-if", &head);
         prop_assert!(fork.is_err(), "forked a copy stamped {:?}", stamp);
-        if let (Some(stamp), Err(refusal)) = (&stamp, &fork) {
-            prop_assert!(stamp.matches(refusal), "unexpected refusal {}", refusal);
+        match (&stamp, &fork) {
+            (Some(stamp), Err(refusal)) => {
+                prop_assert!(stamp.matches(refusal), "unexpected refusal {}", refusal);
+            }
+            // An unstamped copy is storage version 1, never migrated.
+            (None, Err(refusal)) => prop_assert!(
+                matches!(
+                    refusal,
+                    CellError::EngineUpgradeUnsupported { cell: 1, engine, .. }
+                        if *engine == STORAGE_VERSION
+                ),
+                "unexpected refusal {}", refusal
+            ),
+            (_, Ok(_)) => {}
         }
         prop_assert!(bytes(&path) == before, "the fork changed its source");
     }
