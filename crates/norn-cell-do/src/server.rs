@@ -594,13 +594,9 @@ pub fn handle_all<E: SqlEngine>(
     // The verified principal lives exactly as long as this request.
     let _request = RequestScope::new(principals);
     let actor = principals.resolve(request.authorization, request.now);
-    if let Some(response) = crate::runs::dispatch(
-        host,
-        questions,
-        principals.caller(),
-        actor.as_deref(),
-        request,
-    ) {
+    if let Some(response) =
+        crate::runs::dispatch(host, questions, principals, actor.as_deref(), request)
+    {
         return response;
     }
     // APPROVAL-1: a call an approval holds answers 202, so an action call

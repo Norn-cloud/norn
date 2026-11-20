@@ -290,7 +290,8 @@ mod tests {
     //! DEV-REVIEWER-1 through the dev host's own dispatch: the hosted
     //! definition kinds admit an approval over hosted roles, a gated call
     //! waits as one open decision, its requester never decides it, and the
-    //! local reviewer's approval commits it as the requester.
+    //! local reviewer's approval commits it as the requester, under the
+    //! requester's current authority from the local principal table.
     use super::*;
     use crate::dev::policy::{LocalDeveloper, reviewer};
     use norn_api::scope::CellScope;
@@ -481,18 +482,18 @@ mod tests {
             &choice,
         );
         assert_eq!(status, 200, "{decided}");
-        // The reviewer's request never runs the developer's call
-        // (APPROVAL-RECOVERY-1): it waits for the developer's own retry.
+        // The reviewer's approval runs the developer's call at once, under
+        // the developer's current authority from the local principal table
+        // (APPROVAL-LIVE-1).
         assert_eq!(
             decided["call"],
-            json!({ "committed": false, "state": "not_executed" }),
+            json!({ "committed": true, "state": "committed" }),
             "{decided}"
         );
-        assert_eq!(melt(&dev), 404);
-        let (status, committed) =
-            call(&dev, Some(DEVELOPER_TOKEN), ("POST", &action, SCOPE), &body);
-        assert_eq!(status, 200, "{committed}");
         assert_eq!(melt(&dev), 200);
+        let (status, replayed) = call(&dev, Some(DEVELOPER_TOKEN), ("POST", &action, SCOPE), &body);
+        assert_eq!(status, 200, "{replayed}");
+        assert_eq!(replayed["outcome"], json!("replayed"), "{replayed}");
 
         // The approved call committed as its requester, never as the
         // reviewer who approved it: the version's writer names the developer.

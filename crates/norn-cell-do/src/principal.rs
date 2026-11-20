@@ -12,6 +12,16 @@
 //! A resolver records the verified principal into the policy's
 //! [`CallerSlot`], where the declared grant table turns its roles into
 //! grants. [`FixturePrincipals`] is for tests and local smoke builds only.
+//!
+//! APPROVAL-LIVE-1: a resolver also answers a parked call's requester's
+//! authority now ([`PrincipalResolver::authority`]), so an approval runs
+//! the call under the requester's current membership and roles, never the
+//! ones recorded when it parked. [`TokenPrincipals`] asks its host to look
+//! the requester up at the organization's authority (Studio), which answers
+//! with a membership attestation the same issuer signs for the audience
+//! [`AUTHORITY_AUDIENCE`]; the cell verifies it as it verifies a host
+//! token. Without a configured lookup the authority is
+//! [`Authority::Unknown`] and nothing runs.
 
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
@@ -21,10 +31,39 @@ use norn_api::principal::{STUDIO_ROLES, TokenVerifier};
 use norn_api::refusal::Refusal;
 use norn_api::scope::CellScope;
 
+use norn_cell::flow_run::RunStarter;
+
 use crate::policy::{Caller, CallerSlot};
 
 /// The audience every host token must name.
 pub const HOST_AUDIENCE: &str = "norn-host";
+
+/// The audience of a membership attestation (APPROVAL-LIVE-1): the issuer's
+/// answer that a subject is a member of the cell's organization now, with
+/// its role. It never authenticates a request.
+pub const AUTHORITY_AUDIENCE: &str = "norn-authority";
+
+/// APPROVAL-LIVE-1: a parked call's requester's authority, as the
+/// organization's authority answers it now.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Authority {
+    /// A member now: the requester verified with its current roles.
+    Current(Caller),
+    /// No longer a member of this cell's organization: the approved call is
+    /// refused for good.
+    Revoked,
+    /// The lookup failed or did not answer: nothing runs, and the call
+    /// stays approved for a retry.
+    Unavailable,
+    /// The host looks requesters up and has no answer for this request
+    /// yet: a request that records nothing first asks for one
+    /// ([`PrincipalResolver::ask_authority`]), and the host serves it again
+    /// with the answer ([`TokenPrincipals::provide_authority`]).
+    Pending,
+    /// This host has no authority lookup: nothing runs, and the call waits
+    /// for the requester's own request.
+    Unknown,
+}
 
 /// How long fetched issuer keys are used before the host should refetch them
 /// (seconds), whether or not any token names an unknown key id.
@@ -58,6 +97,20 @@ pub trait PrincipalResolver {
     fn caller(&self) -> Option<&CallerSlot> {
         None
     }
+
+    /// APPROVAL-LIVE-1: `requester`'s authority now (`now` in Unix
+    /// seconds), from the organization's authority, never from the roles it
+    /// carries. [`Authority::Unknown`] for a resolver without a lookup.
+    fn authority(&self, _requester: &RunStarter, _now: u64) -> Authority {
+        Authority::Unknown
+    }
+
+    /// APPROVAL-LIVE-1: ask the host to look `requester` up and serve the
+    /// request again with the answer. Called only before anything is
+    /// recorded (a decide that would run the requester's approved call), so
+    /// serving the request again is the same request; a resolver without a
+    /// host lookup ignores it.
+    fn ask_authority(&self, _requester: &RunStarter) {}
 }
 
 /// The lifetime of one request's verified principal: it ends when this
@@ -102,11 +155,48 @@ pub struct TokenPrincipals {
     cell: CellScope,
     slot: Arc<CallerSlot>,
     keys: Mutex<Keys>,
+    lookup: Mutex<Lookup>,
+}
+
+/// APPROVAL-LIVE-1: the host's membership lookups for one request.
+#[derive(Default)]
+struct Lookup {
+    /// The host looks requesters up ([`TokenPrincipals::enable_lookup`]).
+    enabled: bool,
+    /// The answers the host provided for the request being served, by
+    /// subject; forgotten when it ends.
+    answers: Vec<AuthorityAnswer>,
+    /// The requester a request asked for and had no answer for: the host
+    /// looks it up and serves the request again.
+    wanted: Option<Wanted>,
+}
+
+/// The requester whose authority the host is asked to look up.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct Wanted {
+    /// Its subject (`user:<id>` or `service:<key id>`).
+    pub subject: String,
+    /// `user` or `service`.
+    pub kind: String,
+}
+
+/// The host's answer for one requester: a membership attestation, or the
+/// organization's statement that the subject is no member; anything else
+/// is a lookup that did not answer.
+#[derive(Debug, Clone, serde::Deserialize)]
+struct AuthorityAnswer {
+    subject: String,
+    #[serde(default)]
+    token: Option<String>,
+    #[serde(default)]
+    member: Option<bool>,
 }
 
 /// The issuer keys in force and when they were fetched.
 struct Keys {
     verifier: TokenVerifier,
+    /// Membership attestations: the same keys, [`AUTHORITY_AUDIENCE`].
+    attestations: TokenVerifier,
     kids: BTreeSet<String>,
     /// Unix seconds of the last successful install.
     fetched: u64,
@@ -186,12 +276,16 @@ impl TokenPrincipals {
         now: u64,
     ) -> Result<Self, Refusal> {
         let verifier = TokenVerifier::from_jwks(issuer, HOST_AUDIENCE, jwks, &STUDIO_ROLES)?;
+        let attestations =
+            TokenVerifier::from_jwks(issuer, AUTHORITY_AUDIENCE, jwks, &STUDIO_ROLES)?;
         Ok(Self {
             issuer: issuer.to_owned(),
             cell,
             slot,
+            lookup: Mutex::new(Lookup::default()),
             keys: Mutex::new(Keys {
                 verifier,
+                attestations,
                 kids: kids(jwks),
                 fetched: now,
                 attempted: None,
@@ -211,8 +305,11 @@ impl TokenPrincipals {
     /// age on (or stay refused after a clock regression).
     pub fn replace_jwks(&self, jwks: &str, now: u64) -> Result<(), Refusal> {
         let verifier = TokenVerifier::from_jwks(&self.issuer, HOST_AUDIENCE, jwks, &STUDIO_ROLES)?;
+        let attestations =
+            TokenVerifier::from_jwks(&self.issuer, AUTHORITY_AUDIENCE, jwks, &STUDIO_ROLES)?;
         let mut keys = self.keys.lock().map_err(Refusal::host)?;
         keys.verifier = verifier;
+        keys.attestations = attestations;
         keys.kids = kids(jwks);
         keys.fetched = now;
         keys.high_water = now;
@@ -254,6 +351,49 @@ impl TokenPrincipals {
         allowed
     }
 
+    /// APPROVAL-LIVE-1: the host looks requesters up at the organization's
+    /// authority (it is configured with the lookup's location and
+    /// credential). Until then every requester's authority is
+    /// [`Authority::Unknown`].
+    pub fn enable_lookup(&self) {
+        if let Ok(mut lookup) = self.lookup.lock() {
+            lookup.enabled = true;
+        }
+    }
+
+    /// APPROVAL-LIVE-1: the host's answer for the requester it was asked to
+    /// look up, as JSON `{subject, token}` (a membership attestation),
+    /// `{subject, member: false}` (no member), or `{subject}` (the lookup
+    /// did not answer). It holds for the next request served, which is the
+    /// one that asked for it, served again; a malformed answer is ignored,
+    /// so that request finds the lookup unavailable.
+    pub fn provide_authority(&self, answer: &str) {
+        let Ok(mut lookup) = self.lookup.lock() else {
+            return;
+        };
+        let parsed = serde_json::from_str::<AuthorityAnswer>(answer).ok();
+        let subject = parsed.as_ref().map_or_else(
+            || lookup.wanted.as_ref().map(|wanted| wanted.subject.clone()),
+            |answer| Some(answer.subject.clone()),
+        );
+        let Some(subject) = subject else {
+            return;
+        };
+        lookup.answers.retain(|known| known.subject != subject);
+        lookup.answers.push(parsed.unwrap_or(AuthorityAnswer {
+            subject,
+            token: None,
+            member: None,
+        }));
+    }
+
+    /// APPROVAL-LIVE-1: the requester the last request asked to be looked
+    /// up, once: the host looks it up and serves that request again with
+    /// [`Self::provide_authority`].
+    pub fn take_authority_wanted(&self) -> Option<Wanted> {
+        self.lookup.lock().ok()?.wanted.take()
+    }
+
     fn verify(&self, token: &str, now: u64) -> Option<Caller> {
         let mut keys = self.keys.lock().ok()?;
         keys.observe(now);
@@ -288,10 +428,78 @@ impl PrincipalResolver for TokenPrincipals {
     }
     fn end_request(&self) {
         self.slot.record(None);
+        // An answer holds for the one request it was provided for.
+        if let Ok(mut lookup) = self.lookup.lock() {
+            lookup.answers.clear();
+        }
     }
 
     fn caller(&self) -> Option<&CallerSlot> {
         Some(&self.slot)
+    }
+
+    fn authority(&self, requester: &RunStarter, now: u64) -> Authority {
+        let Ok(lookup) = self.lookup.lock() else {
+            return Authority::Unavailable;
+        };
+        if !lookup.enabled {
+            return Authority::Unknown;
+        }
+        let Some(answer) = lookup
+            .answers
+            .iter()
+            .find(|answer| answer.subject == requester.subject)
+            .cloned()
+        else {
+            return Authority::Pending;
+        };
+        drop(lookup);
+        match (answer.token, answer.member) {
+            (Some(token), _) => self
+                .attested(&token, now)
+                .filter(|caller| {
+                    caller.subject_id == requester.subject
+                        && caller.actor_kind == requester.actor_kind
+                })
+                .map_or(Authority::Unavailable, Authority::Current),
+            (None, Some(false)) => Authority::Revoked,
+            (None, _) => Authority::Unavailable,
+        }
+    }
+
+    fn ask_authority(&self, requester: &RunStarter) {
+        self.ask(requester);
+    }
+}
+
+impl TokenPrincipals {
+    /// [`PrincipalResolver::ask_authority`], once the lookup is enabled.
+    fn ask(&self, requester: &RunStarter) {
+        if let Ok(mut lookup) = self.lookup.lock()
+            && lookup.enabled
+        {
+            lookup.wanted = Some(Wanted {
+                subject: requester.subject.clone(),
+                kind: requester.actor_kind.clone(),
+            });
+        }
+    }
+
+    /// The member a membership attestation names, verified at `now` with
+    /// the keys in force; `None` for anything that does not verify.
+    fn attested(&self, token: &str, now: u64) -> Option<Caller> {
+        let mut keys = self.keys.lock().ok()?;
+        keys.observe(now);
+        if !keys.usable(now) {
+            return None;
+        }
+        let principal = keys.attestations.membership(token, &self.cell, now).ok()?;
+        Some(Caller {
+            subject_id: principal.subject_id,
+            roles: principal.roles,
+            actor_kind: principal.actor_kind.as_str(),
+            role_table: principal.role_table,
+        })
     }
 }
 
@@ -302,6 +510,21 @@ pub struct FixturePrincipals {
     slot: Arc<CallerSlot>,
     /// Whether the fixtures belong to this cell's organization.
     member: bool,
+    /// How a requester's authority is answered (APPROVAL-LIVE-1).
+    lookup: FixtureLookup,
+}
+
+/// How [`FixturePrincipals`] answer a requester's authority now
+/// (APPROVAL-LIVE-1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FixtureLookup {
+    /// No lookup: [`Authority::Unknown`].
+    None,
+    /// From the fixture table: a named subject is a member with its roles,
+    /// any other is no member.
+    Table,
+    /// The lookup does not answer: [`Authority::Unavailable`].
+    Unavailable,
 }
 
 /// The role table fixture principals report.
@@ -325,7 +548,15 @@ impl FixturePrincipals {
             names,
             slot,
             member: true,
+            lookup: FixtureLookup::None,
         }
+    }
+
+    /// The fixtures answering a requester's authority by `lookup`.
+    #[must_use]
+    pub const fn with_lookup(mut self, lookup: FixtureLookup) -> Self {
+        self.lookup = lookup;
+        self
     }
 
     /// The fixtures as members of `org` only, as a verified host token is:
@@ -343,12 +574,7 @@ impl PrincipalResolver for FixturePrincipals {
             .filter(|_| self.member)
             .and_then(|value| value.strip_prefix("Bearer fixture:"))
             .and_then(|name| self.names.iter().find(|(known, _)| *known == name))
-            .map(|(name, roles)| Caller {
-                subject_id: (*name).to_owned(),
-                roles: roles.iter().map(|role| (*role).to_owned()).collect(),
-                actor_kind: "user",
-                role_table: FIXTURE_ROLES,
-            });
+            .map(|(name, roles)| fixture_caller(name, roles));
         let subject = caller.as_ref().map(|caller| caller.subject_id.clone());
         self.slot.record(caller);
         subject
@@ -359,5 +585,29 @@ impl PrincipalResolver for FixturePrincipals {
 
     fn caller(&self) -> Option<&CallerSlot> {
         Some(&self.slot)
+    }
+
+    fn authority(&self, requester: &RunStarter, _now: u64) -> Authority {
+        match self.lookup {
+            FixtureLookup::None => Authority::Unknown,
+            FixtureLookup::Unavailable => Authority::Unavailable,
+            FixtureLookup::Table => self
+                .names
+                .iter()
+                .filter(|_| self.member && requester.actor_kind == "user")
+                .find(|(name, _)| *name == requester.subject)
+                .map_or(Authority::Revoked, |(name, roles)| {
+                    Authority::Current(fixture_caller(name, roles))
+                }),
+        }
+    }
+}
+
+fn fixture_caller(name: &str, roles: &[&str]) -> Caller {
+    Caller {
+        subject_id: name.to_owned(),
+        roles: roles.iter().map(|role| (*role).to_owned()).collect(),
+        actor_kind: "user",
+        role_table: FIXTURE_ROLES,
     }
 }

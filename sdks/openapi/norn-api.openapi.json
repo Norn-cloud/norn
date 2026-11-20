@@ -871,7 +871,7 @@
           "crate::decisions"
         ],
         "summary": "`POST /v1/decisions/{id}:decide`.",
-        "description": "For the approval of a parked action call (APPROVAL-1) the decider is\nnever the call's requester (#618), and no flow turn runs: the answer is\nrecorded, and an approved call then runs through the shared action\ndispatch only under the requester's current authority ([`AsStarter`]:\nthe host runs it only when it can establish that authority, which a\ndecider's request never does). Otherwise the answer's `call` is\n`not_executed` and the requester's own authenticated retry runs it\n(APPROVAL-RECOVERY-1).\n\n# Errors\nIn this order: 404 `decision.not_found` (also for a caller who may not\ndecide it), 409 `decision.resolved`, 410 `decision.expired`, 403\n`decision.law_not_satisfied`, 422 `decision.unknown_choice` (`/choice`),\n`decision.note_too_long` (`/note`) or `request.invalid`, 409\n`decision.idempotency_conflict`; the flow's or the kernel's refusal of the\nrun's result turn; a host failure.",
+        "description": "For the approval of a parked action call (APPROVAL-1) the decider is\nnever the call's requester (#618), and no flow turn runs: the answer is\nrecorded, and an approved call then runs through the shared action\ndispatch only under the requester's current authority ([`AsStarter`]):\nthe host looks it up from the organization's authority for the\ndecider's request (APPROVAL-LIVE-1, [`approval_requester`]), never from\nthe roles recorded when the call parked. A requester who no longer holds\nthat authority gets the call refused for good\n(`approval.requester_unauthorized`, recorded); when the authority cannot\nbe looked up, the answer's `call` is `not_executed` and a retry runs it\n(APPROVAL-RECOVERY-1).\n\n# Errors\nIn this order: 404 `decision.not_found` (also for a caller who may not\ndecide it), 409 `decision.resolved`, 410 `decision.expired`, 403\n`decision.law_not_satisfied`, 422 `decision.unknown_choice` (`/choice`),\n`decision.note_too_long` (`/note`) or `request.invalid`, 409\n`decision.idempotency_conflict`; the flow's or the kernel's refusal of the\nrun's result turn; a host failure. A host whose requester lookup did not\nanswer before anything was recorded refuses 503\n`approval.authority_unavailable` (APPROVAL-LIVE-1).",
         "operationId": "decide",
         "parameters": [
           {
@@ -985,6 +985,16 @@
           },
           "500": {
             "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The requester's current authority could not be looked up before the approval was recorded (`approval.authority_unavailable`, retryable); nothing was recorded.",
             "content": {
               "application/json": {
                 "schema": {

@@ -49,6 +49,14 @@ const ENGINE_STEPS = 64;
 const ENGINE_TIMEOUT_MS = 120_000;
 // TIMER-ALARM-1: the scope this object serves, kept so an alarm (which carries no request) can open its cell.
 const SCOPE_KEY = "norn.cell.scope";
+// APPROVAL-LIVE-1: a hung membership lookup must not hold the object; the approved call stays not executed.
+const AUTHORITY_TIMEOUT_MS = 5000;
+// APPROVAL-LIVE-1: lookups one request may ask for before its reply stands as it is (a retryable refusal).
+const AUTHORITY_LOOKUPS = 2;
+// APPROVAL-LIVE-1: the shortest lookup credential the host uses; a shorter one leaves lookups off.
+const MIN_AUTHORITY_TOKEN = 32;
+/** APPROVAL-LIVE-1: whether this Worker looks requesters up at the organization's authority (NORN_AUTHORITY_URL, https, and NORN_AUTHORITY_TOKEN). */
+const authorityConfigured = (env) => typeof env.NORN_AUTHORITY_URL === "string" && env.NORN_AUTHORITY_URL.startsWith("https://") && typeof env.NORN_AUTHORITY_TOKEN === "string" && env.NORN_AUTHORITY_TOKEN.length >= MIN_AUTHORITY_TOKEN;
 
 export class Cell {
   constructor(ctx, env) {
@@ -108,6 +116,8 @@ export class Cell {
       } catch (error) {
         console.error(`source connections not configured: ${error}`);
       }
+      // APPROVAL-LIVE-1: an approval runs its call under the requester's current membership, looked up here.
+      if (authorityConfigured(this.env)) this.cell.enableAuthorityLookup();
       // D102: questions are answered on the tenant analytics engine when the Worker has one.
       if (this.env.NORN_OLAP_URL !== undefined) this.cell.enableAnalytics();
       // TIMER-ALARM-1: a serving cell keeps its scope for alarms, and arms for whatever was
@@ -195,6 +205,30 @@ export class Cell {
     }
     return reply;
   }
+  /**
+   * APPROVAL-LIVE-1: look one requester up at the organization's authority (Studio's
+   * /api/internal/authority), service to service. The answer goes to the cell unread: an
+   * attestation the cell verifies against the pinned JWKS, "no member", or no answer, which
+   * runs nothing. The subject is the one the cell named, never one from the response.
+   */
+  async lookUpAuthority(wanted, org) {
+    try {
+      const response = await fetch(this.env.NORN_AUTHORITY_URL, {
+        method: "POST",
+        headers: { authorization: `Bearer ${this.env.NORN_AUTHORITY_TOKEN}`, "content-type": "application/json" },
+        body: JSON.stringify({ orgId: org, subject: wanted.subject, kind: wanted.kind }),
+        redirect: "manual",
+        signal: AbortSignal.timeout(AUTHORITY_TIMEOUT_MS),
+      });
+      const answer = await response.json().catch(() => null);
+      if (response.status === 200 && typeof answer?.token === "string") return { subject: wanted.subject, token: answer.token };
+      if (response.status === 404 && answer?.code === "authority.not_member") return { subject: wanted.subject, member: false };
+      console.error(`authority lookup answered ${response.status}`);
+    } catch (error) {
+      console.error(`authority lookup failed: ${error}`);
+    }
+    return { subject: wanted.subject };
+  }
   /** Refetch the pinned JWKS and install it. On failure the cached keys keep aging; the cell refuses them past its stale bound. */
   async refreshJwks() {
     try {
@@ -278,6 +312,12 @@ export class Cell {
     let reply = this.serve(request, body);
     // An unknown key id, at most once per retry interval: refetch the pinned JWKS and retry once.
     if (reply.refreshJwks && (await this.refreshJwks())) reply = this.serve(request, body);
+    // APPROVAL-LIVE-1: the request needs a requester's current authority: look it up and serve it again with the answer.
+    for (let lookups = 0; reply.authority && lookups < AUTHORITY_LOOKUPS; lookups++) {
+      const url = new URL(request.url);
+      const answer = await this.lookUpAuthority(JSON.parse(reply.authority), Cell.scopeOf(request)[0]);
+      reply = this.cell.resumeAuthority(request.method, url.pathname, url.search.slice(1), request.headers.get("authorization") ?? undefined, Date.now(), body, JSON.stringify(answer));
+    }
     // A continuation (an upload's object read): fetch exactly what the cell planned, hand it back.
     while (reply.thenToken) {
       const { status, bytes } = await perform(JSON.parse(reply.thenRequest));

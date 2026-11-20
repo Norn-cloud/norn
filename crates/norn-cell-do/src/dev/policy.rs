@@ -11,7 +11,7 @@
 //! approval's declared decider roles are the hosted ones. This is server
 //! policy, stated on every `ready` event, never client logic.
 use crate::policy::{Caller, CallerSlot, DEMO_GRANTS};
-use crate::principal::PrincipalResolver;
+use crate::principal::{Authority, PrincipalResolver};
 use norn_api::authz::{AccessRequest, Authorizer, DenyAll, ReadRequest, RefusalDetailRequest};
 use norn_api::definition_routes::DefinitionKinds;
 use norn_api::refusal::Refusal;
@@ -153,18 +153,7 @@ impl PrincipalResolver for DevPrincipals {
             }
         }
         // Every request records first, possibly nobody.
-        self.slot.record(found.as_ref().map(|actor| {
-            Caller {
-                subject_id: actor.clone(),
-                roles: DEMO_GRANTS
-                    .entries
-                    .iter()
-                    .map(|(role, _)| (*role).to_owned())
-                    .collect(),
-                actor_kind: "user",
-                role_table: DEMO_GRANTS.version,
-            }
-        }));
+        self.slot.record(found.as_deref().map(local_caller));
         found
     }
     fn end_request(&self) {
@@ -172,6 +161,36 @@ impl PrincipalResolver for DevPrincipals {
     }
     fn caller(&self) -> Option<&CallerSlot> {
         Some(&self.slot)
+    }
+    /// APPROVAL-LIVE-1: the local principal table is the authority: a
+    /// requester with a session now is a member with every role, any other
+    /// is no member.
+    fn authority(&self, requester: &RunStarter, _now: u64) -> Authority {
+        if requester.actor_kind == "user"
+            && self
+                .sessions
+                .iter()
+                .any(|(_bearer, actor)| *actor == requester.subject)
+        {
+            Authority::Current(local_caller(&requester.subject))
+        } else {
+            Authority::Revoked
+        }
+    }
+}
+
+/// A local actor as the cell's verified caller: every role of the hosted
+/// table.
+fn local_caller(actor: &str) -> Caller {
+    Caller {
+        subject_id: actor.to_owned(),
+        roles: DEMO_GRANTS
+            .entries
+            .iter()
+            .map(|(role, _)| (*role).to_owned())
+            .collect(),
+        actor_kind: "user",
+        role_table: DEMO_GRANTS.version,
     }
 }
 

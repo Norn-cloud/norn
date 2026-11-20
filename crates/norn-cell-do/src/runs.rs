@@ -15,12 +15,20 @@
 //! resolver without a caller slot records no starter, and its runs' action
 //! steps are denied.
 //!
-//! APPROVAL-1, APPROVAL-RECOVERY-1: an approved call (a fresh decide, its
-//! replay, or the drive of a step waiting on it) runs only under the
-//! requester's current authority, which is established only by the
-//! requester's own verified credential on the request: never by the roles
-//! recorded when the call parked. On another principal's request the call
-//! stays approved and not executed for the requester's authenticated retry.
+//! APPROVAL-1, APPROVAL-RECOVERY-1, APPROVAL-LIVE-1: an approved call (a
+//! fresh decide, its replay, or the drive of a step waiting on it) runs only
+//! under the requester's current authority, never the roles recorded when
+//! the call parked: the requester's own verified credential when the
+//! request is theirs, else the resolver's lookup of the requester at the
+//! organization's authority ([`PrincipalResolver::authority`]). Before a
+//! decide that would run such a call, a resolver whose host looks requesters
+//! up is asked for the answer, and the host serves the decide again with it,
+//! so nothing is recorded until it has one. A requester who is no longer a
+//! member, or whose current roles do not grant the call, gets it refused for
+//! good (`approval.requester_unauthorized`); a lookup that does not answer
+//! runs nothing (`approval.authority_unavailable`), and a host without a
+//! lookup leaves the call approved and not executed for the requester's own
+//! retry.
 
 use std::collections::BTreeMap;
 
@@ -30,30 +38,34 @@ use norn_api::authz::ReadCapability;
 use norn_api::decisions::{DecideCall, DecideRequest, DecisionsQuery, decide, list_decisions};
 use norn_api::host::DevHost;
 use norn_api::question_routes::AdHocQuestions;
-use norn_api::refusal::Refusal;
+use norn_api::refusal::{Refusal, RefusalCategory};
 use norn_api::run_routes::{StartRunRequest, get_run, start_run};
 use norn_api::scope::ScopeQuery;
 use norn_cell::engine::SqlEngine;
 use norn_cell::flow_run::RunStarter;
 
 use crate::policy::{Caller, CallerSlot, collection_access};
+use crate::principal::{Authority, PrincipalResolver};
 use crate::server::{Request, Response, document_json, parse};
 
 /// Serve `request` when its path is a run or decision route; `None` for
 /// every other path. `questions` is the cell's receipt-disclosure authority
-/// (D53): a cell without one decides nothing. `caller` is the slot the
-/// cell's policy reads the verified caller from, when the host has one.
+/// (D53): a cell without one decides nothing. `principals` verified the
+/// request's caller into the slot the cell's policy reads, when it has one,
+/// and answers an approved call's requester's current authority.
 pub(crate) fn dispatch<E: SqlEngine>(
     host: &DevHost<E>,
     questions: Option<&dyn AdHocQuestions<E>>,
-    caller: Option<&CallerSlot>,
+    principals: &dyn PrincipalResolver,
     actor: Option<&str>,
     request: &Request<'_>,
 ) -> Option<Response> {
     let steps = Steps {
         host,
         questions,
-        caller,
+        caller: principals.caller(),
+        principals,
+        now: request.now,
     };
     let result = if let Some(route) = runs_route(request.path) {
         runs(&steps, actor, route, request)
@@ -221,6 +233,16 @@ fn decisions<E: SqlEngine>(
             let body: DecideRequest = serde_json::from_str(request.body).map_err(|error| {
                 Refusal::invalid(format!("the request body is not a decision: {error}"))
             })?;
+            // APPROVAL-LIVE-1: the requester of a call this decide would
+            // run is looked up first; the host serves the decide again with
+            // the answer, and nothing is recorded before it has one.
+            if let Some(requester) = norn_api::decisions::approval_requester(host, &id, subject)?
+                && !steps.is_requester(&requester)
+                && steps.principals.authority(&requester, steps.now) == Authority::Pending
+            {
+                steps.principals.ask_authority(&requester);
+                return Err(norn_api::approvals::authority_unavailable());
+            }
             let reads = {
                 let subject = subject.to_owned();
                 let scope = host.scope().clone();
@@ -289,6 +311,10 @@ struct Steps<'a, E: SqlEngine> {
     host: &'a DevHost<E>,
     questions: Option<&'a dyn AdHocQuestions<E>>,
     caller: Option<&'a CallerSlot>,
+    /// Answers a requester's current authority (APPROVAL-LIVE-1).
+    principals: &'a dyn PrincipalResolver,
+    /// The request's clock (Unix seconds).
+    now: u64,
 }
 
 impl<E: SqlEngine> Steps<'_, E> {
@@ -322,22 +348,69 @@ impl<E: SqlEngine> Steps<'_, E> {
         Some(call())
     }
 
-    /// Run one approved call as its requester (APPROVAL-RECOVERY-1): only
-    /// when the request's own verified caller is that requester (the same
-    /// subject, actor kind and role table), as that caller is verified now,
-    /// so a role revoked since the call parked is revoked for it. `None`
-    /// otherwise: the requester's current authority cannot be established,
-    /// and the call is not run.
+    /// Whether the request's own verified caller is `requester` (the same
+    /// subject, actor kind and role table), as that caller is verified now.
+    fn is_requester(&self, requester: &RunStarter) -> bool {
+        self.caller
+            .and_then(CallerSlot::current)
+            .is_some_and(|current| {
+                current.subject_id == requester.subject
+                    && current.actor_kind == requester.actor_kind
+                    && current.role_table == requester.role_table
+            })
+    }
+
+    /// Run one approved call as its requester, under the requester's
+    /// current authority only (APPROVAL-RECOVERY-1, APPROVAL-LIVE-1):
+    /// - the request's own verified caller is the requester: as it is
+    ///   verified now, so a role revoked since the call parked is revoked;
+    /// - otherwise the resolver's lookup: a member now runs it as the slot's
+    ///   caller with its current roles, restored on every path, and a denial
+    ///   of that authority is `approval.requester_unauthorized`; no member
+    ///   is `approval.requester_unauthorized` and runs nothing; a lookup
+    ///   that does not answer is `approval.authority_unavailable` and runs
+    ///   nothing.
+    ///
+    /// `None` when this host has no lookup (or no slot): the call is not run
+    /// and waits for the requester's own request.
     fn as_present(
         &self,
         requester: &RunStarter,
         call: &mut dyn FnMut() -> Result<ActionAnswer, Refusal>,
     ) -> Option<Result<ActionAnswer, Refusal>> {
-        let current = self.caller?.current()?;
-        (current.subject_id == requester.subject
-            && current.actor_kind == requester.actor_kind
-            && current.role_table == requester.role_table)
-            .then(call)
+        let slot = self.caller?;
+        if self.is_requester(requester) {
+            return Some(call());
+        }
+        match self.principals.authority(requester, self.now) {
+            Authority::Current(member)
+                if member.subject_id == requester.subject
+                    && member.actor_kind == requester.actor_kind =>
+            {
+                let _restore = Restore {
+                    slot,
+                    previous: slot.current(),
+                };
+                slot.record(Some(member));
+                Some(call().map_err(|refusal| {
+                    if matches!(
+                        refusal.category,
+                        RefusalCategory::Permission | RefusalCategory::Visibility
+                    ) {
+                        norn_api::approvals::requester_unauthorized()
+                    } else {
+                        refusal
+                    }
+                }))
+            }
+            Authority::Current(_) | Authority::Revoked => {
+                Some(Err(norn_api::approvals::requester_unauthorized()))
+            }
+            Authority::Unavailable | Authority::Pending => {
+                Some(Err(norn_api::approvals::authority_unavailable()))
+            }
+            Authority::Unknown => None,
+        }
     }
 
     /// Run `run_id`'s pending action steps under its recorded starter;

@@ -78,6 +78,8 @@ const WORDS = {
     leaveBody: "Nothing has been sent. Your choice and note will be cleared; the decision stays in your inbox.", left: "{0} left", lapsed: "Expired",
     "call.committed": "The approved call committed.", "call.refused": "The approved call was refused ({0}); this approval never runs it again.",
     "call.not_executed": "Approved, not yet executed: it runs when the requester retries it.",
+    "call.requester_unauthorized": "The requester no longer holds the authority for this call, so it was refused; the approval stays recorded and never runs it.",
+    "call.authority_unavailable": "Approved, not yet executed: the requester's current access could not be checked. Approve again, or the requester retries it.",
   },
   ar: {
     "risk.low": "مخاطرة منخفضة", "risk.medium": "مخاطرة متوسطة", "risk.high": "مخاطرة عالية", suggested: "مقترح", suggestedTitle: "توصية الوكيل؛ والقرار لك.",
@@ -95,6 +97,8 @@ const WORDS = {
     leaveBody: "لم يُرسل شيء. سيُمسح اختيارك وملاحظتك؛ ويبقى القرار في صندوقك.", left: "متبقٍ {0}", lapsed: "انتهت المهلة",
     "call.committed": "نُفّذ الإجراء الموافق عليه.", "call.refused": "رُفض الإجراء الموافق عليه ({0})؛ ولن تنفّذه هذه الموافقة مرة أخرى.",
     "call.not_executed": "تمت الموافقة ولم يُنفّذ بعد: يُنفّذ عندما يعيد مقدّم الطلب المحاولة.",
+    "call.requester_unauthorized": "لم يعد مقدّم الطلب يملك الصلاحية لهذا الإجراء، فرُفض؛ وتبقى الموافقة مسجّلة ولن تنفّذه أبدًا.",
+    "call.authority_unavailable": "تمت الموافقة ولم يُنفّذ بعد: تعذّر التحقق من صلاحية مقدّم الطلب الحالية. وافق مرة أخرى، أو يعيد مقدّم الطلب المحاولة.",
   },
 } as const satisfies Record<Locale, Record<string, string>>
 
@@ -311,8 +315,12 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Dr
     // APPROVAL-RECOVERY-1: where an approved call stands, exactly as the cell answered it.
     const call = record(state === "resolved" ? record(doc.resolution).call : state === "decided" ? doc.call : undefined)
     const callState = text(call.state)
+    // APPROVAL-LIVE-1: the two codes of the requester's current authority read in words.
+    const callCode = text(call.code)
     callLine.textContent = callState === "committed" ? w["call.committed"]
-      : callState === "refused" ? say("call.refused", text(call.code) ?? "")
+      : callState === "refused" && callCode === "approval.requester_unauthorized" ? w["call.requester_unauthorized"]
+      : callState === "refused" ? say("call.refused", callCode ?? "")
+      : callState === "not_executed" && callCode === "approval.authority_unavailable" ? w["call.authority_unavailable"]
       : callState === "not_executed" ? w["call.not_executed"] : ""
     callLine.hidden = callLine.textContent === ""
     if (callState === null) callLine.removeAttribute("data-call-state")

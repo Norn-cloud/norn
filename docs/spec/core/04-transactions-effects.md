@@ -224,11 +224,12 @@ never to its requester, who cannot decide it either (#618). Deciding records the
 resolution in DECISION-LEDGER-1 and runs no flow turn. The resolution is the
 record the dispatch consults: an approved call commits through the same dispatch
 under the requester's current authority, with everything (including the laws
-the cell checks at commit) decided again there. That authority is established
-only by the requester's own verified credential on the request, never by the
-roles recorded when the call parked, so the approver's decide runs nothing and
-reports `call: {committed: false, state: "not_executed"}`; the requester's
-retry commits it once (APPROVAL-RECOVERY-1). A rejected call's retry refuses
+the cell checks at commit) decided again there. That authority is never the
+roles recorded when the call parked: the approver's decide runs the call at
+once under the requester's membership and roles as the organization's
+authority answers them now (APPROVAL-LIVE-1), and a host that cannot ask
+reports `call: {committed: false, state: "not_executed"}` until the
+requester's own retry commits it once (APPROVAL-RECOVERY-1). A rejected call's retry refuses
 `approval.rejected` (409), an expired one's `approval.expired` (410); neither
 ever commits. A flow step's call parks the same way; the step waits, and once
 the call is approved the starter's own retry of the run (the exact start
@@ -305,6 +306,64 @@ backfills approved calls as a restore does), **APPROVAL-RECOVERY-STEP-BEFORE**
 (a step's call runs once on the starter's retry) and
 **APPROVAL-RECOVERY-STEP-AFTER** (a committed step call's outcome reaches its
 run on the wake or the drive, with no second call).
+
+### APPROVAL-LIVE-1 — an approval runs the call under the requester's current authority
+
+Approving a parked call runs it at once, on the approver's decide (fresh or
+replayed) and on the drive of a flow step waiting on it, under the
+requester's authority as the organization's authority answers it at that
+moment. The approver's request carries no credential of the requester's, so
+the host asks:
+
+- **Hosted cell.** Studio's auth (Better Auth organizations and API keys) is
+  the authority. The cell Worker posts `{orgId, subject, kind}` to Studio's
+  `/api/internal/authority` with a service credential
+  (`NORN_AUTHORITY_TOKEN`, held by both, never a `NORN_SECRET_*` variable a
+  connection may name). A member now (an enabled, unexpired API key of the
+  organization with a service role, for a service) is answered with a
+  membership attestation that Studio signs with its host-token keys for the
+  audience `norn-authority` and the method `membership`, living one minute;
+  anything else is `404 authority.not_member`. The cell verifies the
+  attestation exactly as it verifies a host token (pinned issuer and JWKS,
+  audience, lifetime, its own organization, declared role table) and takes
+  the role it attests; an attestation never authenticates a request, and a
+  host token is never an attestation.
+- **`norn dev`.** The local principal table is the authority: a local actor
+  with a session is a member with every hosted role; anyone else is not.
+
+The lookup happens before anything is recorded: a decide whose approval would
+run a call by another principal, by a caller who may decide it (or the
+approver's own replay of an approval whose call is not executed), first asks
+the host for the requester's answer; the hosted Worker looks the requester up
+and serves the same decide again with it, once per lookup. The answer holds
+for that request only.
+
+- **A member now.** The call runs once, as the requester with its current
+  roles, through the shared dispatch under the exact-intent fence of
+  APPROVAL-RECOVERY-1.
+- **No longer a member, or current roles the policy denies.** The approval
+  stays recorded and the call is refused for good,
+  `approval.requester_unauthorized` (403, `permission`), recorded as a
+  `norn.approval.refused` event like any final refusal; a flow step waiting
+  on it takes that refusal as its outcome. Nothing runs with the roles
+  recorded when the call parked.
+- **The lookup does not answer** (unreachable, a timeout, an attestation that
+  does not verify). Nothing runs: the call stays `not_executed` with
+  `code: approval.authority_unavailable`, retryable by the approver's replay
+  or the requester's retry; a decide that never got an answer before
+  recording is refused `503 approval.authority_unavailable` and records
+  nothing.
+- **A host without a lookup** leaves the call `not_executed` for the
+  requester's own retry, as APPROVAL-RECOVERY-1 states.
+
+The requester's own retry still runs the call under its own verified
+credential, and a denial there is decided anew on every try. Named scenarios
+(`crates/norn-cell-do/tests/approvals.rs`): **APPROVAL-LIVE-CURRENT**,
+**APPROVAL-LIVE-REVOKED**, **APPROVAL-LIVE-UNAVAILABLE**,
+**APPROVAL-LIVE-STEP**, **APPROVAL-LIVE-STEP-REVOKED** and
+**APPROVAL-LIVE-CONTINUATION**; the attestation's verification is in
+`crates/norn-cell-do/tests/tokens.rs` and Studio's answers in
+`apps/studio/worker/test/authority.test.ts`.
 
 ### DECISION-LEDGER-1 — resolved decisions
 

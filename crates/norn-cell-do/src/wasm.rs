@@ -87,6 +87,12 @@ pub struct Reply {
     /// no action policy: for the operator's log only, never part of the reply.
     #[wasm_bindgen(js_name = policyError)]
     pub policy_error: Option<String>,
+    /// APPROVAL-LIVE-1: the requester whose current authority the request
+    /// needs, as JSON `{subject, kind}`: the host looks it up at the
+    /// organization's authority and calls `resumeAuthority` with the
+    /// answer; that reply replaces this one, whose `status` and `body` are
+    /// then not the answer.
+    pub authority: Option<String>,
 }
 
 #[wasm_bindgen]
@@ -236,6 +242,49 @@ impl NornCell {
         self.fetch(method, path, query, authorization, now_ms, body)
     }
 
+    /// APPROVAL-LIVE-1: this host looks requesters up at the organization's
+    /// authority (`NORN_AUTHORITY_URL`), so an approval runs its call under
+    /// the requester's current membership. Without it an approved call waits
+    /// for the requester's own retry.
+    #[wasm_bindgen(js_name = enableAuthorityLookup)]
+    pub fn enable_authority_lookup(&self) {
+        match &self.principals {
+            Principals::Tokens(tokens) => tokens.enable_lookup(),
+            #[cfg(feature = "fixtures")]
+            Principals::Fixtures(_) => {}
+        }
+    }
+
+    /// APPROVAL-LIVE-1: serve a request again with the authority's answer
+    /// for the requester its reply named (`authority`): `{subject, token}`
+    /// with the membership attestation the authority signed, `{subject,
+    /// member: false}` when the subject is no member, or `{subject}` when
+    /// the lookup did not answer. The answer holds for this request only.
+    #[must_use]
+    #[allow(
+        clippy::needless_pass_by_value,
+        clippy::too_many_arguments,
+        reason = "wasm-bindgen passes strings by value; a re-entry carries the request and the answer"
+    )]
+    #[wasm_bindgen(js_name = resumeAuthority)]
+    pub fn resume_authority(
+        &mut self,
+        method: &str,
+        path: &str,
+        query: &str,
+        authorization: Option<String>,
+        now_ms: f64,
+        body: Option<String>,
+        answer: &str,
+    ) -> Reply {
+        match &self.principals {
+            Principals::Tokens(tokens) => tokens.provide_authority(answer),
+            #[cfg(feature = "fixtures")]
+            Principals::Fixtures(_) => {}
+        }
+        self.fetch(method, path, query, authorization, now_ms, body)
+    }
+
     /// Install a refetched JWKS from the pinned location, fetched at `now_ms`.
     ///
     /// # Errors
@@ -312,6 +361,7 @@ impl NornCell {
                 then_request,
                 engine: None,
                 policy_error: None,
+                authority: None,
             };
         }
         // D102: loads read the cell's own uploads.
@@ -337,6 +387,13 @@ impl NornCell {
             .tenant
             .take_engine_call()
             .and_then(|call| serde_json::to_string(&call).ok());
+        let authority = match &self.principals {
+            Principals::Tokens(tokens) => tokens
+                .take_authority_wanted()
+                .and_then(|wanted| serde_json::to_string(&wanted).ok()),
+            #[cfg(feature = "fixtures")]
+            Principals::Fixtures(_) => None,
+        };
         Reply {
             status: response.status,
             body: response.body,
@@ -346,6 +403,7 @@ impl NornCell {
             then_request: None,
             engine,
             policy_error,
+            authority,
         }
     }
 
@@ -487,6 +545,7 @@ impl NornCell {
             then_request: None,
             engine: None,
             policy_error: None,
+            authority: None,
         }
     }
 }

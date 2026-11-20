@@ -63,6 +63,12 @@ pub(crate) const REVOKED: &[(&str, &[&str])] = &[
     ("approver@steps", &["admin"]),
     ("member@steps", &["member"]),
 ];
+/// [`NAMES`] after the operator left the organization: no longer a member
+/// (APPROVAL-LIVE-1).
+pub(crate) const REMOVED: &[(&str, &[&str])] = &[
+    ("approver@steps", &["admin"]),
+    ("member@steps", &["member"]),
+];
 /// The subjects the melt action grant names.
 pub(crate) const CONVERTERS: [&str; 2] = ["operator@steps", "approver@steps"];
 /// `lowerFlow`'s output for `tools/norn-ts/fixtures/flows/melt.builder.ts`.

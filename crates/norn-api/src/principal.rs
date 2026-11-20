@@ -27,6 +27,9 @@ use crate::{
 pub const LEEWAY_SECONDS: u64 = 30;
 /// Longest token lifetime the host admits, whatever the issuer says.
 pub const MAX_LIFETIME_SECONDS: u64 = 300;
+/// The method a membership attestation names (APPROVAL-LIVE-1); no host
+/// token names it.
+pub const MEMBERSHIP_METHOD: &str = "membership";
 
 /// Declared mapping from an organization membership role to Norn roles.
 pub struct RoleTable {
@@ -165,10 +168,35 @@ impl TokenVerifier {
     /// Any malformed, forged, expired, foreign-scope or undeclared-role token
     /// returns the same `authz.denied` refusal.
     pub fn principal(&self, token: &str, cell: &CellScope, now: u64) -> Result<Principal, Refusal> {
-        self.verify(token, cell, now).ok_or_else(denied)
+        self.verify(token, cell, now, false).ok_or_else(denied)
     }
 
-    fn verify(&self, token: &str, cell: &CellScope, now: u64) -> Option<Principal> {
+    /// APPROVAL-LIVE-1: verify one membership attestation for this cell at
+    /// `now`: the issuer's statement that its subject is a member of the
+    /// cell's organization now, with the role it names. It is checked like
+    /// a host token (signature, issuer, this verifier's audience, lifetime,
+    /// organization, declared role) and names the method `membership`,
+    /// which no host token does, so neither ever passes for the other.
+    ///
+    /// # Errors
+    /// Any token that does not verify as such an attestation returns the
+    /// same `authz.denied` refusal.
+    pub fn membership(
+        &self,
+        token: &str,
+        cell: &CellScope,
+        now: u64,
+    ) -> Result<Principal, Refusal> {
+        self.verify(token, cell, now, true).ok_or_else(denied)
+    }
+
+    fn verify(
+        &self,
+        token: &str,
+        cell: &CellScope,
+        now: u64,
+        membership: bool,
+    ) -> Option<Principal> {
         let (signed, signature) = token.rsplit_once('.')?;
         let (header, payload) = signed.split_once('.')?;
         if payload.contains('.') {
@@ -205,7 +233,9 @@ impl TokenVerifier {
         };
         // `oauth`: a person's own grant to an assistant they connected (MCP
         // authorization); the token still names that person and their role.
-        let methods: &[&str] = if actor_kind == ActorKind::Service {
+        let methods: &[&str] = if membership {
+            &[MEMBERSHIP_METHOD]
+        } else if actor_kind == ActorKind::Service {
             &["api_key"]
         } else {
             &["password", "magic_link", "oauth"]

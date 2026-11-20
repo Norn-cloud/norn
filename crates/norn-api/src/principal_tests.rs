@@ -186,3 +186,62 @@ fn a_jwks_without_ed25519_keys_is_refused() {
     assert!(TokenVerifier::from_jwks(ISSUER, "norn-host", &rsa, &STUDIO_ROLES).is_err());
     assert!(TokenVerifier::from_jwks(ISSUER, "norn-host", "{}", &STUDIO_ROLES).is_err());
 }
+
+/// APPROVAL-LIVE-1: a membership attestation verifies only as one, under its
+/// own audience, and never passes as a host token; a host token never
+/// passes as an attestation.
+#[test]
+fn a_membership_attestation_is_never_a_host_token() {
+    let attests =
+        TokenVerifier::from_jwks(ISSUER, "norn-authority", &jwks(), &STUDIO_ROLES).unwrap();
+    let mut attestation = claims("user", "admin", MEMBERSHIP_METHOD);
+    attestation["aud"] = json!("norn-authority");
+    let member = attests
+        .membership(&token(&attestation), &cell(), NOW)
+        .unwrap();
+    assert_eq!(
+        (member.subject_id.as_str(), member.roles.as_slice()),
+        ("user:u1", ["admin".to_owned()].as_slice())
+    );
+    let mut service = claims("service", "member", MEMBERSHIP_METHOD);
+    service["aud"] = json!("norn-authority");
+    assert_eq!(
+        attests
+            .membership(&token(&service), &cell(), NOW)
+            .unwrap()
+            .subject_id,
+        "service:u1"
+    );
+    // An attestation is no host token, under either audience.
+    assert!(
+        attests
+            .principal(&token(&attestation), &cell(), NOW)
+            .is_err()
+    );
+    let mut host_audience = attestation.clone();
+    host_audience["aud"] = json!("norn-host");
+    assert!(resolve(&token(&host_audience)).is_err());
+    // A host token is no attestation.
+    let session = claims("user", "admin", "password");
+    assert!(attests.membership(&token(&session), &cell(), NOW).is_err());
+    assert!(
+        verifier()
+            .membership(&token(&session), &cell(), NOW)
+            .is_err()
+    );
+    // Another organization's, an expired or a forged attestation denies.
+    let mut foreign = attestation.clone();
+    foreign["norn"]["org"] = json!("org_b");
+    assert!(attests.membership(&token(&foreign), &cell(), NOW).is_err());
+    assert!(
+        attests
+            .membership(&token(&attestation), &cell(), NOW + 400)
+            .is_err()
+    );
+    let forged = sign(
+        &key(2),
+        &json!({ "alg": "EdDSA", "kid": "k1" }),
+        &attestation,
+    );
+    assert!(attests.membership(&forged, &cell(), NOW).is_err());
+}

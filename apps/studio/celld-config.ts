@@ -40,6 +40,8 @@ export interface CelldStudio {
   readonly otel?: OtelSettings
   /** Hosted billing through Polar (POLAR_*, all four or none); without it nothing is billed or limited. */
   readonly billing?: PolarConfig
+  /** APPROVAL-LIVE-1: the credential the cell host looks requesters up with (worker/authority.ts); absent leaves the lookup unserved. */
+  readonly authorityToken?: string
 }
 
 const NAME = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/
@@ -78,11 +80,14 @@ export function celldStudio(env: Readonly<Record<string, string | undefined>>): 
   // defaulted cf-connecting-ip would be a header the client writes, and its guesses unlimited.
   if (env.STUDIO_CLIENT_IP_HEADER === undefined) throw new Error("STUDIO_CLIENT_IP_HEADER is required on celld: the header this stage's edge sets to the client's address (x-real-ip behind Traefik, cf-connecting-ip behind Cloudflare)")
   const ipHeader = clientIpHeader(env.STUDIO_CLIENT_IP_HEADER)
+  const authorityToken = env.NORN_AUTHORITY_TOKEN
+  if (authorityToken !== undefined && authorityToken.length < 32) throw new Error("NORN_AUTHORITY_TOKEN must be at least 32 characters")
   const otel = otelSettings(env)
   const billing = polarConfig(env)
   return {
     ...otel === undefined ? {} : { otel },
     ...billing === undefined ? {} : { billing },
+    ...authorityToken === undefined ? {} : { authorityToken },
     ...env.STUDIO_MCP === "on" ? { mcp: true as const } : {},
     stage, build, authUrl, authSecret,
     clientIpHeader: ipHeader,
@@ -103,6 +108,7 @@ export function celldConfig(studio: CelldStudio): Record<string, unknown> {
   if (studio.agent !== undefined) Object.assign(vars, { AI_GATEWAY_URL: studio.agent.gatewayUrl, AI_GATEWAY_TOKEN: studio.agent.gatewayToken })
   if (studio.toolGateway !== undefined) Object.assign(vars, { TOOL_GATEWAY_URL: studio.toolGateway.url, TOOL_GATEWAY_CLIENT_ID: studio.toolGateway.clientId, TOOL_GATEWAY_CLIENT_SECRET: studio.toolGateway.clientSecret })
   if (studio.mcp === true) vars.STUDIO_MCP = "on"
+  if (studio.authorityToken !== undefined) vars.NORN_AUTHORITY_TOKEN = studio.authorityToken
   if (studio.signUpEmails !== undefined) vars.STUDIO_SIGNUP_EMAILS = studio.signUpEmails
   if (studio.defaultEnvironmentId !== undefined) vars.STUDIO_DEFAULT_ENVIRONMENT_ID = studio.defaultEnvironmentId
   if (studio.otel !== undefined) {

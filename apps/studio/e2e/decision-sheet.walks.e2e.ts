@@ -141,9 +141,12 @@ const CALLS = [
   ["committed", { committed: true, state: "committed" }, "The approved call committed."],
   ["refused", { committed: false, code: "action.precondition_failed", state: "refused" }, "The approved call was refused (action.precondition_failed); this approval never runs it again."],
   ["not_executed", { committed: false, state: "not_executed" }, "Approved, not yet executed: it runs when the requester retries it."],
+  // APPROVAL-LIVE-1: the requester's current authority, looked up when the approval runs the call.
+  ["refused", { committed: false, code: "approval.requester_unauthorized", state: "refused" }, "The requester no longer holds the authority for this call, so it was refused; the approval stays recorded and never runs it."],
+  ["not_executed", { committed: false, code: "approval.authority_unavailable", state: "not_executed" }, "Approved, not yet executed: the requester's current access could not be checked. Approve again, or the requester retries it."],
 ] as const
 for (const [state, call, line] of CALLS) {
-  test(`decided: the approved call reads ${state}`, async ({ page }) => {
+  test(`decided: the approved call reads ${state}${"code" in call ? ` (${call.code})` : ""}`, async ({ page }) => {
     const accepted = all.find((walk) => walk.transitionId === "sending--accepted")!
     const sheet = await replay(page, accepted, (next) => next && next.status === 200 ? { ...next, body: { ...(next.body as object), call } } : next)
     const drawn = sheet.locator('[data-region="outcome-call"]')

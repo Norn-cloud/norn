@@ -28,6 +28,7 @@ use norn_cell::decision_ledger::{
     OptionEffect, Resolution,
 };
 use norn_cell::engine::SqlEngine;
+use norn_cell::flow_run::RunStarter;
 use norn_cell::read::PendingCommand;
 use norn_cell::{CellStore, MAIN_WORLD};
 use norn_ir::{RuntimeObject, RuntimeValue};
@@ -341,10 +342,11 @@ pub enum DecidedCallState {
     /// It was refused when it ran (`code`), for good: its approval never
     /// runs it again.
     Refused,
-    /// Approved, not yet executed: no request of the requester's has run
-    /// it yet, the host stopped before it committed, or its try could not
-    /// commit it (`code` says why). Only the requester's own retry runs it,
-    /// once, under the requester's current authority.
+    /// Approved, not yet executed: the requester's current authority could
+    /// not be established yet, the host stopped before it committed, or its
+    /// try could not commit it (`code` says why). The requester's retry, or
+    /// the approver's replay, runs it once, under the requester's current
+    /// authority.
     NotExecuted,
 }
 
@@ -930,10 +932,13 @@ fn by(row: &DecisionRow, actor: &str) -> Option<String> {
 /// For the approval of a parked action call (APPROVAL-1) the decider is
 /// never the call's requester (#618), and no flow turn runs: the answer is
 /// recorded, and an approved call then runs through the shared action
-/// dispatch only under the requester's current authority ([`AsStarter`]:
-/// the host runs it only when it can establish that authority, which a
-/// decider's request never does). Otherwise the answer's `call` is
-/// `not_executed` and the requester's own authenticated retry runs it
+/// dispatch only under the requester's current authority ([`AsStarter`]):
+/// the host looks it up from the organization's authority for the
+/// decider's request (APPROVAL-LIVE-1, [`approval_requester`]), never from
+/// the roles recorded when the call parked. A requester who no longer holds
+/// that authority gets the call refused for good
+/// (`approval.requester_unauthorized`, recorded); when the authority cannot
+/// be looked up, the answer's `call` is `not_executed` and a retry runs it
 /// (APPROVAL-RECOVERY-1).
 ///
 /// # Errors
@@ -942,8 +947,10 @@ fn by(row: &DecisionRow, actor: &str) -> Option<String> {
 /// `decision.law_not_satisfied`, 422 `decision.unknown_choice` (`/choice`),
 /// `decision.note_too_long` (`/note`) or `request.invalid`, 409
 /// `decision.idempotency_conflict`; the flow's or the kernel's refusal of the
-/// run's result turn; a host failure.
-#[utoipa::path(post, path = "/v1/decisions/{id}:decide", params(ScopeQuery, ("id" = String, Path, description = "The decision id.")), request_body = DecideRequest, responses((status = 200, description = "Decided, or replayed an identical earlier call.", body = Decided), (status = 400, description = "The request was refused as invalid.", body = Refusal), (status = 403, description = "The request was refused: scope denied, or the decider law is not satisfied.", body = Refusal), (status = 404, description = "No such open decision waits on the caller.", body = Refusal), (status = 409, description = "Someone resolved it first, or the key was used for another answer.", body = DecideRefusal), (status = 410, description = "The decision expired.", body = Refusal), (status = 422, description = "The choice or note was refused.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
+/// run's result turn; a host failure. A host whose requester lookup did not
+/// answer before anything was recorded refuses 503
+/// `approval.authority_unavailable` (APPROVAL-LIVE-1).
+#[utoipa::path(post, path = "/v1/decisions/{id}:decide", params(ScopeQuery, ("id" = String, Path, description = "The decision id.")), request_body = DecideRequest, responses((status = 200, description = "Decided, or replayed an identical earlier call.", body = Decided), (status = 400, description = "The request was refused as invalid.", body = Refusal), (status = 403, description = "The request was refused: scope denied, or the decider law is not satisfied.", body = Refusal), (status = 404, description = "No such open decision waits on the caller.", body = Refusal), (status = 409, description = "Someone resolved it first, or the key was used for another answer.", body = DecideRefusal), (status = 410, description = "The decision expired.", body = Refusal), (status = 422, description = "The choice or note was refused.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal), (status = 503, description = "The requester's current authority could not be looked up before the approval was recorded (`approval.authority_unavailable`, retryable); nothing was recorded.", body = Refusal)))]
 pub fn decide<E: SqlEngine>(
     host: &DevHost<E>,
     request: &DecideCall<'_>,
@@ -1088,10 +1095,19 @@ fn run_approved<E: SqlEngine>(
     };
     let tried = match as_requester(&held.call.requester, &mut commit) {
         Some(Ok(_answer)) => None,
+        // APPROVAL-LIVE-1: the requester's current authority does not cover
+        // the call: its refusal is recorded, final, and nothing ran.
+        Some(Err(refusal))
+            if refusal.code == crate::approvals::approval_codes::REQUESTER_UNAUTHORIZED =>
+        {
+            crate::approvals::refuse_unauthorized(host, decision_id)
+                .err()
+                .map(|host_failure| host_failure.code)
+        }
         Some(Err(refusal)) => Some(refusal.code),
-        // The requester's current authority cannot be established on this
-        // request (it is not the requester's own): nothing runs, and the call
-        // stays approved and not executed for the requester's retry.
+        // The host has no way to establish the requester's current
+        // authority on this request: nothing runs, and the call stays
+        // approved and not executed for a retry.
         None => None,
     };
     let _epoch = host.definition_read()?;
@@ -1099,6 +1115,47 @@ fn run_approved<E: SqlEngine>(
     let (_held, state) =
         crate::approvals::approved_call(&cell, decision_id)?.ok_or_else(missing)?;
     Ok(Some(DecidedCall::of(&state, tried)))
+}
+
+/// APPROVAL-LIVE-1: the requester of the approved call that deciding `id`
+/// as `actor` would run now, if it would run one: the open approval of a
+/// parked call that `actor` may decide, or `actor`'s own approval whose call
+/// is approved and not yet executed (its replay). The host looks up that
+/// requester's current authority before it serves the decide, so the call
+/// runs under it, never under the roles recorded when it parked. `None` for
+/// anything else, including a decision `actor` may not decide.
+///
+/// # Errors
+/// A host failure.
+pub fn approval_requester<E: SqlEngine>(
+    host: &DevHost<E>,
+    id: &str,
+    actor: &str,
+) -> Result<Option<RunStarter>, Refusal> {
+    let _epoch = host.definition_read()?;
+    let cell = host.cell()?;
+    if let Some(decision) = open_decisions(cell.store())?
+        .into_iter()
+        .find(|decision| decision.id == id)
+    {
+        let requester = decision
+            .call
+            .as_ref()
+            .map(|held| held.call.requester.clone());
+        return Ok(requester.filter(|_| may_decide(host, actor, &decision)));
+    }
+    let own = cell
+        .store()
+        .read()
+        .decision_resolution(MAIN_WORLD, id)
+        .map_err(Refusal::host)?
+        .is_some_and(|row| row.resolved.decided_by.as_deref() == Some(actor));
+    if !own {
+        return Ok(None);
+    }
+    Ok(crate::approvals::approved_call(&cell, id)?
+        .filter(|(_held, state)| matches!(state, CallState::NotExecuted))
+        .map(|(held, _state)| held.call.requester))
 }
 
 /// One decide call: scope, the verified caller, the decision and the answer.

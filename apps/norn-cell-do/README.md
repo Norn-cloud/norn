@@ -119,6 +119,26 @@ from a token:
 - `NORN_HOST_ISSUER`: the token issuer (Studio's base URL);
 - `NORN_HOST_JWKS_URL`: its JWKS document (Studio's `/api/auth/jwks`).
 
+APPROVAL-LIVE-1: approving a parked action call runs it at once, under its
+requester's current membership and role, never the role recorded when it
+parked. The approver's request carries no token for the requester, so the
+Worker looks the requester up, service to service, when these two settings
+are present:
+
+- `NORN_AUTHORITY_URL`: Studio's `/api/internal/authority` (https);
+- `NORN_AUTHORITY_TOKEN`: the credential Studio holds as its own
+  `NORN_AUTHORITY_TOKEN`, at least 32 characters. It is deliberately not a
+  `NORN_SECRET_*` variable, which the cell's connections may name.
+
+Studio answers with a membership attestation signed by the same keys (audience
+`norn-authority`, method `membership`, one minute), which the cell verifies
+like a host token, or `authority.not_member`. A member runs the call; a
+non-member, or a member whose current roles the policy denies, gets it refused
+for good (`approval.requester_unauthorized`); a lookup that does not answer
+runs nothing (`approval.authority_unavailable`) and the call stays approved
+and not executed. Without the settings, an approved call waits for its
+requester's own retry.
+
 The cell takes the JWKS when it opens (a document this isolate fetched within
 the last minute is reused, with its real fetch time) and refetches it every five minutes
 whatever tokens arrive, so a key the issuer removes stops verifying within that

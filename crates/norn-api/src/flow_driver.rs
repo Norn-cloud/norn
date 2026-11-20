@@ -315,8 +315,8 @@ pub(crate) fn recorded_steps<E: SqlEngine>(
 enum StepApproval {
     /// The approved call has its outcome: the step's result.
     Outcome(StepOutcome),
-    /// Approved, not yet executed: only the requester's own authenticated
-    /// request runs it (APPROVAL-RECOVERY-1).
+    /// Approved, not yet executed: it runs only under the requester's
+    /// current authority (APPROVAL-RECOVERY-1, APPROVAL-LIVE-1).
     Waiting,
     /// Its action or gate changed since it parked: the step asks anew.
     Superseded,
@@ -446,10 +446,14 @@ fn failure(tag: &str, code: Option<&str>) -> StepOutcome {
 /// APPROVAL-RECOVERY-1: a step result recorded but not yet consumed, or an
 /// approved call's outcome, is delivered first, the same way the wake
 /// delivers it (`deliver_recorded`). An approved call not yet executed
-/// runs only under `as_requester`: the requester's own authenticated
-/// request, with its current authority. When there is none, or its try is
-/// a denial of authority (decided anew on every try), the step stays
-/// pending and its approval stays executable.
+/// runs only under `as_requester`: the requester's current authority, from
+/// its own authenticated request or looked up from the organization's
+/// authority now (APPROVAL-LIVE-1). When it cannot be established, or its
+/// try is a denial of authority on the requester's own request (decided
+/// anew on every try), the step stays pending and its approval stays
+/// executable. When the looked-up authority does not cover the call
+/// (`approval.requester_unauthorized`), that refusal is recorded on the
+/// approval and is the step's outcome.
 ///
 /// # Errors
 /// A host failure; the step stays pending and the next drive retries it, and
@@ -476,10 +480,10 @@ pub fn drive_run<E: SqlEngine>(
             let Some(step) = pending_step(&cell, run_id)? else {
                 return Ok(());
             };
-            let waiting = matches!(
-                step_approval(&cell, &step)?,
-                Some((.., StepApproval::Waiting))
-            );
+            let waiting = match step_approval(&cell, &step)? {
+                Some((decision_id, _at, StepApproval::Waiting)) => Some(decision_id),
+                _other => None,
+            };
             (step, waiting)
         };
         let parsed = norn_cell::flow_run::parse_action_step(&step.input);
@@ -507,10 +511,31 @@ pub fn drive_run<E: SqlEngine>(
                         now,
                     )
                 };
-                let acting = if waiting { as_requester } else { as_starter };
+                let acting = if waiting.is_some() {
+                    as_requester
+                } else {
+                    as_starter
+                };
                 match acting(starter, &mut call) {
-                    // The requester is not here to run its approved call.
-                    None if waiting => return Ok(()),
+                    // The requester's current authority cannot be
+                    // established: the approved call waits.
+                    None if waiting.is_some() => return Ok(()),
+                    // APPROVAL-LIVE-1: the requester's current authority
+                    // does not cover its approved call: the refusal is
+                    // recorded on the approval, final, and the next turn of
+                    // this loop delivers it to the step as its outcome.
+                    Some(Err(refused))
+                        if refused.code
+                            == crate::approvals::approval_codes::REQUESTER_UNAUTHORIZED =>
+                    {
+                        let Some(decision_id) = waiting.as_deref() else {
+                            return Err(Refusal::host(
+                                "an unapproved step call was refused as an approved one",
+                            ));
+                        };
+                        crate::approvals::refuse_unauthorized(host, decision_id)?;
+                        continue;
+                    }
                     None => failure("Denied", None),
                     // An approval gates the action: the step waits on its
                     // decision, and the run moves once someone decides.
@@ -524,7 +549,7 @@ pub fn drive_run<E: SqlEngine>(
                         // the approved call stays executable, its step pending.
                         crate::refusal::RefusalCategory::Permission
                         | crate::refusal::RefusalCategory::Visibility
-                            if waiting =>
+                            if waiting.is_some() =>
                         {
                             return Ok(());
                         }

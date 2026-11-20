@@ -5,6 +5,8 @@
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::arithmetic_side_effects,
+    clippy::panic,
+    clippy::indexing_slicing,
     reason = "token correspondence"
 )]
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -514,4 +516,105 @@ fn provisioning_a_served_cell_tells_only_its_owner_that_it_exists() {
     let service = sign(1, "k1", &claims("service", "org_demo", "member", "api_key"));
     assert_eq!(call("POST", Some(&service), ""), denied);
     assert_eq!(call("GET", Some(&owner), "").status, 405);
+}
+
+/// APPROVAL-LIVE-1: a membership attestation for `subject`, as Studio's
+/// authority signs it (no `Bearer ` prefix).
+fn attestation(seed: u8, sub: &str, org: &str, role: &str) -> String {
+    let mut body = claims("user", org, role, "membership");
+    body["aud"] = json!("norn-authority");
+    body["sub"] = json!(sub);
+    body["iat"] = json!(NOW - 5);
+    body["exp"] = json!(NOW + 55);
+    sign(seed, "k1", &body)
+        .strip_prefix("Bearer ")
+        .unwrap()
+        .to_owned()
+}
+
+fn requester(subject: &str, roles: &[&str]) -> norn_cell::flow_run::RunStarter {
+    norn_cell::flow_run::RunStarter {
+        subject: subject.to_owned(),
+        actor_kind: "user".to_owned(),
+        roles: roles.iter().map(|role| (*role).to_owned()).collect(),
+        role_table: "studio-roles/1".to_owned(),
+    }
+}
+
+/// APPROVAL-LIVE-1: the hosted resolver answers a requester's authority only
+/// from what Studio's authority attested for this request: it asks the host
+/// first, verifies the attestation like a host token (keys, issuer, its own
+/// audience, organization, lifetime), takes the role it attests now (never
+/// the parked one), reads "no member" as revoked and anything else as
+/// unavailable, and forgets the answer when the request ends.
+#[test]
+fn a_requesters_authority_comes_only_from_a_verified_attestation() {
+    use norn_cell_do::principal::{Authority, PrincipalResolver, Wanted};
+    let demo = demo();
+    let ada = requester("user:ada", &["admin"]);
+    // No lookup configured: unknown, and nothing is asked.
+    assert_eq!(demo.tokens.authority(&ada, NOW), Authority::Unknown);
+    assert_eq!(demo.tokens.take_authority_wanted(), None);
+    demo.tokens.ask_authority(&ada);
+    assert_eq!(demo.tokens.take_authority_wanted(), None, "nothing to ask");
+    demo.tokens.enable_lookup();
+    assert_eq!(demo.tokens.authority(&ada, NOW), Authority::Pending);
+    // Only an explicit ask reaches the host.
+    assert_eq!(demo.tokens.take_authority_wanted(), None);
+    demo.tokens.ask_authority(&ada);
+    assert_eq!(
+        demo.tokens.take_authority_wanted(),
+        Some(Wanted {
+            subject: "user:ada".into(),
+            kind: "user".into()
+        })
+    );
+    assert_eq!(demo.tokens.take_authority_wanted(), None, "asked once");
+
+    let answer = |token: &str| json!({ "subject": "user:ada", "token": token }).to_string();
+    // A current member: the role attested now, not the parked one.
+    demo.tokens
+        .provide_authority(&answer(&attestation(1, "ada", "org_demo", "viewer")));
+    let Authority::Current(caller) = demo.tokens.authority(&ada, NOW) else {
+        panic!("not current");
+    };
+    assert_eq!(
+        (caller.subject_id.as_str(), caller.roles.as_slice()),
+        ("user:ada", ["viewer".to_owned()].as_slice())
+    );
+    // The answer holds for one request.
+    demo.tokens.end_request();
+    assert_eq!(demo.tokens.authority(&ada, NOW), Authority::Pending);
+
+    // No member.
+    demo.tokens
+        .provide_authority(&json!({ "subject": "user:ada", "member": false }).to_string());
+    assert_eq!(demo.tokens.authority(&ada, NOW), Authority::Revoked);
+    demo.tokens.end_request();
+    // Every answer that does not verify is no answer.
+    let host_token = sign(1, "k1", &claims("user", "org_demo", "admin", "password"));
+    for token in [
+        attestation(2, "ada", "org_demo", "admin"),
+        attestation(1, "ada", "org_other", "admin"),
+        attestation(1, "bo", "org_demo", "admin"),
+        host_token.strip_prefix("Bearer ").unwrap().to_owned(),
+    ] {
+        demo.tokens.provide_authority(&answer(&token));
+        assert_eq!(demo.tokens.authority(&ada, NOW), Authority::Unavailable);
+        demo.tokens.end_request();
+    }
+    demo.tokens
+        .provide_authority(&json!({ "subject": "user:ada" }).to_string());
+    assert_eq!(demo.tokens.authority(&ada, NOW), Authority::Unavailable);
+    demo.tokens.end_request();
+    // An expired attestation is no answer either.
+    demo.tokens
+        .provide_authority(&answer(&attestation(1, "ada", "org_demo", "admin")));
+    assert_eq!(
+        demo.tokens.authority(&ada, NOW + 300),
+        Authority::Unavailable
+    );
+    // An attestation never authenticates a request.
+    let as_bearer = format!("Bearer {}", attestation(1, "ada", "org_demo", "admin"));
+    assert_eq!(defs(&demo, Some(&as_bearer)).status, 403);
 }
