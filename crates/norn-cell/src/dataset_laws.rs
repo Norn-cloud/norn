@@ -221,7 +221,9 @@ impl<E: SqlEngine> CellStore<E> {
 
     /// MANIFEST-LAWS-1: the findings of residue rows, by the per-row
     /// observation path's own evaluation of each row's values
-    /// (`snapshot_observe::observation_rule_findings`).
+    /// (`snapshot_observe::observation_rule_findings`). LAW-04: only the
+    /// rules the engine left to a row are taken from it; the engine's own
+    /// decisions of the row's other rules stand.
     ///
     /// # Errors
     /// A row the per-row path cannot evaluate, which refuses the dataset.
@@ -247,6 +249,9 @@ impl<E: SqlEngine> CellStore<E> {
                     .map_err(|error| refused(error.to_string()))?
             {
                 let rule = rule_key(&found.rule_ref)?;
+                if !row.rules.contains(&rule) {
+                    continue;
+                }
                 findings.push(RowFinding {
                     row: row.row,
                     label: labels.get(&rule).cloned().unwrap_or_else(|| rule.clone()),
