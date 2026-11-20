@@ -7,7 +7,8 @@
 //! whole dataset in one pass. The engine decides a row only where its SQL
 //! and the per-row evaluator provably agree. That is the case when every
 //! value the rule reads is present, every number stays within the range the
-//! per-row decimal holds exactly, and the predicate is in the typed subset
+//! per-row decimal holds exactly, every text is in NFC (the form the per-row
+//! evaluator compares by), and the predicate is in the typed subset
 //! ([`RowPredicate::kind`]). Every other row is residue. A rule outside the
 //! subset makes every row residue. The cell decides residue rows with the
 //! per-row path's own evaluator ([`CellStore::residue_findings`]), so the held-back set
