@@ -304,7 +304,7 @@ impl<E: SqlEngine> DevHost<E> {
                 E,
             > = cell.into_profile();
             let rows: Vec<Observed<RuntimeValue>> =
-                page.iter().map(|(_, raw)| raw.clone()).collect();
+                page.iter().map(|(_, raw)| (*raw).clone()).collect();
             let mut outcomes = Vec::with_capacity(rows.len());
             let result = ingest_page(&mut observing, &rows, input, &mut outcomes);
             *slot = Some(observing.into_profile());
