@@ -1313,9 +1313,11 @@ fn a_dataset_load_is_decided_as_an_observation_load_and_reported_as_its_run() {
     let calls = engine.landed.lock().expect("calls");
     assert_eq!(calls.len(), 1);
     assert_eq!(calls[0].load.table.name, "upload.Items");
-    assert!(
-        calls[0].load.file.url.is_empty(),
-        "the URL is not part of the landing"
+    // The GET URL is signed into each land call; the landing's identity is
+    // the request without it (MANIFEST-01).
+    assert_eq!(
+        calls[0].load.file.url,
+        "https://objects.example/uploads/demo/u1.csv"
     );
     let text = |object: &norn_ir::RuntimeObject, field: &str| {
         object
