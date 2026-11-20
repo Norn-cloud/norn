@@ -222,7 +222,14 @@ fn connect() -> Connect {
 
 fn host(tenant: Tenant<Counting>, calls: Rc<Cell<u64>>) -> Host {
     let mut tenant = tenant.with_receipt_handles(Some(&LINEAGE_KEY)).unwrap();
-    tenant.enable_analytics();
+    // OLAP-CRED-1: the engine calls carry this cell's own credential.
+    tenant.enable_analytics(
+        norn_api::olap_credential::Issuer::parse(&format!(
+            "k1:{}",
+            URL_SAFE_NO_PAD.encode([7_u8; 32])
+        ))
+        .unwrap(),
+    );
     let tokens = Counted {
         inner: TokenPrincipals::new(
             ISSUER,
@@ -299,7 +306,7 @@ fn send(
     body: &str,
 ) -> Answer {
     // Nothing left over from setting the cell up, or an earlier request.
-    drop(host.tenant.take_engine_call());
+    drop(host.tenant.take_engine_call(NOW * 1000));
     let due = host.tenant.next_due().unwrap();
     host.calls.set(0);
     host.tokens.resolves.set(0);
@@ -331,7 +338,7 @@ fn send(
     Answer {
         response,
         calls,
-        engine: host.tenant.take_engine_call().is_some(),
+        engine: host.tenant.take_engine_call(NOW * 1000).is_some(),
         resolves,
         continued,
         scheduled: host.tenant.next_due().unwrap() != due,
