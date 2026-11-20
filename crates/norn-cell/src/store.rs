@@ -3449,7 +3449,7 @@ impl<E: SqlEngine> CellStore<E> {
             if !matches!(origin, CommitOrigin::Retained(_)) {
                 crate::identity::validate(&writer.reader())?;
             }
-            let (first_event_seq, ledger_head) = writer.append_events()?;
+            let (first_event_seq, ledger_head, entries) = writer.append_events()?;
             if let Some(boundary) = new_boundary {
                 crate::quantity::establish_boundary(&self.conn, boundary)?;
             }
@@ -3514,6 +3514,7 @@ impl<E: SqlEngine> CellStore<E> {
                 &receipt,
                 consumed_input,
                 install_record,
+                entries,
             )?;
             probe(CommitPoint::ReceiptWritten)?;
             Ok((admitted, CommitOutcome::Committed(receipt)))

@@ -16,7 +16,8 @@ use crate::engine::{SqlEngine, SqlRow, SqlValue, params};
 use crate::error::CellError;
 use crate::model::{ColumnRef, Model};
 use crate::read::{
-    ObjectRecord, StoreReader, column_list, entry_hash, next, placeholders, to_i64, to_u64,
+    LedgerEntry, ObjectRecord, StoreReader, column_list, entry_hash, next, placeholders, to_i64,
+    to_u64,
 };
 use crate::store::{
     CommitBatch, Consumption, EffectRow, FactWriteRow, LinkChange, LinkedRow, OutboxCommand,
@@ -3224,7 +3225,10 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
 
     /// Append the batch's events to the hash chain. Returns the first event's
     /// sequence number and the head hash after the append.
-    pub(crate) fn append_events(&mut self) -> Result<(u64, String), CellError> {
+    /// Append the batch's events to the ledger. Returns the first sequence,
+    /// the new ledger head and the entries exactly as written, so the export
+    /// journal records them without reading them back (INGEST-JOURNAL-MEMORY-1).
+    pub(crate) fn append_events(&mut self) -> Result<(u64, String, Vec<LedgerEntry>), CellError> {
         for event in &self.batch.events {
             self.reader()
                 .verify_durable_event(self.world, self.commit_seq, event)?;
@@ -3237,6 +3241,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
         let (mut seq, mut prev) = self.reader().ledger_tail()?;
         let first = next(seq, "seq")?;
         let commit_seq = self.commit_seq_sql()?;
+        let mut entries = Vec::with_capacity(self.batch.events.len());
         for event in &self.batch.events {
             seq = next(seq, "seq")?;
             let hash = entry_hash(seq, self.commit_seq, self.world, event, &prev)?;
@@ -3253,9 +3258,16 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                     hash
                 ],
             )?;
-            prev = hash;
+            entries.push(LedgerEntry {
+                seq,
+                commit_seq: self.commit_seq,
+                world: self.world.to_owned(),
+                event: event.clone(),
+                prev_hash: std::mem::replace(&mut prev, hash.clone()),
+                hash,
+            });
         }
-        Ok((first, prev))
+        Ok((first, prev, entries))
     }
 
     /// Apply the outbox and timer effects, in order.

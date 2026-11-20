@@ -13,7 +13,7 @@ use crate::engine::{SqlEngine, SqlRow, params};
 use crate::error::CellError;
 use crate::export::{EXPORT_FORMAT, ExportRecord};
 use crate::model::Model;
-use crate::read::{StoreReader, to_i64, to_u64};
+use crate::read::{LedgerEntry, StoreReader, to_i64, to_u64};
 use crate::store::{CellStore, CommitBatch, Consumption, DefinitionInstallRecord, Receipt};
 use crate::system::{GENESIS_HASH, META};
 
@@ -160,6 +160,15 @@ fn preimage(input: &ConsumedInput) -> Result<Option<Value>, CellError> {
 }
 
 /// Persist a commit's replayable export record in the same engine transaction.
+///
+/// INGEST-JOURNAL-MEMORY-1: `entries` are the ledger entries this commit's
+/// writer just appended, exactly as written (`append_events`), so the record
+/// is built from memory instead of reading the ledger back and re-proving
+/// every event the writer proved before appending it. The exporter
+/// ([`read_record`] and the export/restore paths) still verifies every record
+/// it reads. Debug builds also read the span back and prove it, as the
+/// journal did before, and refuse the commit if the two ever differ.
+#[allow(clippy::too_many_arguments, reason = "the commit's own parts, passed through")]
 pub(crate) fn record<E: SqlEngine>(
     engine: &E,
     model: &Model,
@@ -168,6 +177,7 @@ pub(crate) fn record<E: SqlEngine>(
     receipt: &Receipt,
     consumed_input: Option<Value>,
     definition_install: Option<DefinitionInstallRecord>,
+    entries: Vec<LedgerEntry>,
 ) -> Result<(), CellError> {
     let commit_seq = receipt.body.commit_seq;
     let prior: Option<(i64, String)> = engine
@@ -191,21 +201,26 @@ pub(crate) fn record<E: SqlEngine>(
         None => String::new(),
     };
 
-    // Every event of this commit proves its facts against this commit's
-    // receipt: one read-only pass, so the receipt is verified once.
-    let receipts = std::cell::RefCell::default();
-    let reader = StoreReader::new(engine, model).with_transaction_verified_receipts(&receipts);
-    let entries: Vec<_> = reader
-        .ledger(receipt.body.first_event_seq)?
-        .into_iter()
-        .filter(|entry| entry.commit_seq == commit_seq)
-        .collect();
     if u64::try_from(entries.len()).map_err(|_overflow| CellError::OutOfRange("event count"))?
         != receipt.body.event_count
+        || entries.first().is_some_and(|entry| entry.seq != receipt.body.first_event_seq)
+        || entries.iter().any(|entry| entry.commit_seq != commit_seq)
     {
         return Err(CellError::LedgerCorrupt {
             seq: commit_seq,
             reason: "export journal event span disagrees with the receipt".to_owned(),
+        });
+    }
+    // Compared as canonical text, the only form the record is hashed and
+    // stored in: the ledger keeps events canonical (NFC), so a read back may
+    // differ from a submitted spelling only where the bytes cannot.
+    #[cfg(debug_assertions)]
+    if crate::codec::canonical_json(&ledger_span(engine, model, receipt)?)?
+        != crate::codec::canonical_json(&entries)?
+    {
+        return Err(CellError::LedgerCorrupt {
+            seq: commit_seq,
+            reason: "the written event span differs from the ledger read back".to_owned(),
         });
     }
 
@@ -243,9 +258,6 @@ pub(crate) fn record<E: SqlEngine>(
             .then(|| model.definitions_snapshot()),
         definition_install,
     };
-    for entry in &export.entries {
-        reader.verify_durable_event(&entry.world, entry.commit_seq, &entry.event)?;
-    }
     // The record's hash and its packed encoding both start from its canonical
     // text; canonicalize it once.
     let canonical = crate::codec::canonical_json(&export)?;
@@ -256,6 +268,28 @@ pub(crate) fn record<E: SqlEngine>(
         params![to_i64(commit_seq, "commit_seq")?, hash, serialized],
     )?;
     Ok(())
+}
+
+/// The journal's former source of a commit's entries: its ledger span read
+/// back, every event proven against the commit's receipt in one read-only
+/// pass. Debug builds compare it with the entries the writer appended.
+#[cfg(debug_assertions)]
+fn ledger_span<E: SqlEngine>(
+    engine: &E,
+    model: &Model,
+    receipt: &Receipt,
+) -> Result<Vec<LedgerEntry>, CellError> {
+    let receipts = std::cell::RefCell::default();
+    let reader = StoreReader::new(engine, model).with_transaction_verified_receipts(&receipts);
+    let entries: Vec<_> = reader
+        .ledger(receipt.body.first_event_seq)?
+        .into_iter()
+        .filter(|entry| entry.commit_seq == receipt.body.commit_seq)
+        .collect();
+    for entry in &entries {
+        reader.verify_durable_event(&entry.world, entry.commit_seq, &entry.event)?;
+    }
+    Ok(entries)
 }
 
 impl<E: SqlEngine> CellStore<E> {
