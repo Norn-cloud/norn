@@ -236,6 +236,15 @@ pub trait CommitView {
     /// The host's read failure.
     fn concrete(&self, key: &FactKey) -> Result<Option<ObjectTypeName>, Self::Error>;
 
+    /// Whether this host owns every key it resolves locally: it keeps the
+    /// default [`Self::atomic_ownership`] and [`Self::consumed_ownership`]
+    /// (always local), so the check's read footprint cannot refuse a commit.
+    /// Only then may the check skip a read whose result it does not use
+    /// (INGEST-LINKS-1). The default `false` keeps every read.
+    fn ownership_is_local(&self) -> bool {
+        false
+    }
+
     /// Whether this host can distinguish absent ownership from unreadable
     /// evidence. Hosts without values must refuse mutation of existing markers.
     fn can_read_observed_source_owners(&self) -> bool {
@@ -2457,12 +2466,55 @@ impl<V: CommitView + ?Sized> CurrentVersion<&LinkKey, V::Error> for LinkVersions
 }
 
 /// The canonical live links of every object the commit's links and deletes
-/// touch, once the commit's link writes apply.
+/// touch, once the commit's link writes apply. On a host whose ownership is
+/// all local, only the objects whose adjacency a check reads
+/// ([`adjacency_read`]) are read (INGEST-LINKS-1): an import's order lines all
+/// link to one customer, and reading that customer's every link in each
+/// commit made a load quadratic. Debug builds read every object too and
+/// require both maps to give the same endpoint and cardinality outcomes.
 fn live_links_after<E, C, T, V: CommitView + ?Sized>(
     commit: &CellCommit<E, C, T>,
     model: CommitModel<'_, '_>,
     view: &V,
 ) -> Result<BTreeMap<FactKey, BTreeSet<LinkKey>>, CommitError<V::Error>> {
+    let objects = adjacency_objects(commit, model);
+    if !view.ownership_is_local() {
+        return adjacency(commit, model, view, objects);
+    }
+    let read = adjacency_read(commit, model, view, &objects)?;
+    #[cfg(debug_assertions)]
+    let all = (read.len() < objects.len()).then(|| objects.clone());
+    let after = adjacency(commit, model, view, read)?;
+    #[cfg(debug_assertions)]
+    if let Some(all) = all {
+        let full = adjacency(commit, model, view, all)?;
+        debug_assert!(
+            after
+                .iter()
+                .all(|(object, live)| full.get(object) == Some(live)),
+            "INGEST-LINKS-1: a read adjacency differs from the full read"
+        );
+        debug_assert!(
+            same_outcome(
+                &check_endpoints(commit, model, view, &full),
+                &check_endpoints(commit, model, view, &after),
+            ) && same_outcome(
+                &check_cardinality(commit, model, view, &full),
+                &check_cardinality(commit, model, view, &after),
+            ),
+            "INGEST-LINKS-1: the read adjacency changes an endpoint or cardinality outcome"
+        );
+    }
+    Ok(after)
+}
+
+/// Every object whose adjacency the endpoint and cardinality checks may need:
+/// both ends of each link write, each deleted object, and each written object
+/// whose type has a required owned collection.
+fn adjacency_objects<E, C, T>(
+    commit: &CellCommit<E, C, T>,
+    model: CommitModel<'_, '_>,
+) -> BTreeSet<FactKey> {
     let mut objects = BTreeSet::new();
     for write in &commit.links {
         let key = model.canonical_link(&write.key);
@@ -2485,6 +2537,77 @@ fn live_links_after<E, C, T, V: CommitView + ?Sized>(
             objects.insert(model.canonical(&write.key));
         }
     }
+    objects
+}
+
+/// INGEST-LINKS-1: the `objects` whose adjacency [`check_endpoints`] or
+/// [`check_cardinality`] reads, each by the same test that check applies:
+/// an object the commit deletes (no live link may remain); an end of an
+/// added link whose declaration allows one link at that end (the links there
+/// are counted); and an object whose concrete type once the commit applies
+/// has a required owned collection (one link of it must remain). Any other
+/// object's adjacency is never looked at: a many-to-one target such as an
+/// order line's customer is only ever an end of links whose count is free.
+fn adjacency_read<E, C, T, V: CommitView + ?Sized>(
+    commit: &CellCommit<E, C, T>,
+    model: CommitModel<'_, '_>,
+    view: &V,
+    objects: &BTreeSet<FactKey>,
+) -> Result<BTreeSet<FactKey>, CommitError<V::Error>> {
+    let mut read = BTreeSet::new();
+    for write in &commit.writes {
+        if matches!(write.mutation, FactMutation::Delete) {
+            read.insert(model.canonical(&write.key));
+        }
+    }
+    for write in &commit.links {
+        if !matches!(write.mutation, LinkMutation::Add { .. }) {
+            continue;
+        }
+        let key = model.canonical_link(&write.key);
+        let Some(declared) = concrete_after(commit, model, view, &key.source)?
+            .and_then(|source| model.link(&source, &write.key.link))
+        else {
+            continue;
+        };
+        if declared.cardinality.to == Multiplicity::One {
+            read.insert(key.source.clone());
+        }
+        if declared.cardinality.from == Multiplicity::One {
+            read.insert(key.target);
+        }
+    }
+    for object in objects {
+        if read.contains(object) {
+            continue;
+        }
+        let Some(concrete) = concrete_after(commit, model, view, object)? else {
+            continue;
+        };
+        let required = model
+            .catalog
+            .owned_collections(&concrete)
+            .iter()
+            .any(|collection| {
+                model
+                    .link(&concrete, collection.id.as_str())
+                    .is_some_and(|link| link.cardinality.required)
+            });
+        if required {
+            read.insert(object.clone());
+        }
+    }
+    read.retain(|object| objects.contains(object));
+    Ok(read)
+}
+
+/// The live links of each of `objects` once the commit's link writes apply.
+fn adjacency<E, C, T, V: CommitView + ?Sized>(
+    commit: &CellCommit<E, C, T>,
+    model: CommitModel<'_, '_>,
+    view: &V,
+    objects: BTreeSet<FactKey>,
+) -> Result<BTreeMap<FactKey, BTreeSet<LinkKey>>, CommitError<V::Error>> {
     let mut after = BTreeMap::new();
     for object in objects {
         let live: BTreeSet<LinkKey> = view
@@ -2512,6 +2635,38 @@ fn live_links_after<E, C, T, V: CommitView + ?Sized>(
         }
     }
     Ok(after)
+}
+
+/// Whether two endpoint or cardinality outcomes are the same: both pass, or
+/// both refuse with the same code and, for a link refusal, the same keys.
+#[cfg(debug_assertions)]
+fn same_outcome<X>(left: &Result<(), CommitError<X>>, right: &Result<(), CommitError<X>>) -> bool {
+    match (left, right) {
+        (Ok(()), Ok(())) => true,
+        (
+            Err(CommitError::DanglingLink { key, missing }),
+            Err(CommitError::DanglingLink {
+                key: other,
+                missing: other_missing,
+            }),
+        ) => key == other && missing == other_missing,
+        (
+            Err(CommitError::LinkCardinality { key, endpoint }),
+            Err(CommitError::LinkCardinality {
+                key: other,
+                endpoint: other_endpoint,
+            }),
+        ) => key == other && endpoint == other_endpoint,
+        (
+            Err(CommitError::LinkRequired { parent, link }),
+            Err(CommitError::LinkRequired {
+                parent: other,
+                link: other_link,
+            }),
+        ) => parent == other && link == other_link,
+        (Err(left), Err(right)) => left.code() == right.code(),
+        _ => false,
+    }
 }
 
 /// The concrete type of canonical object `canonical` once `commit`

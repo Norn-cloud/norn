@@ -821,6 +821,11 @@ impl<S: SqlEngine> CommitView for GuardView<'_, '_, S> {
         true
     }
 
+    // One bound cell: the default (always local) ownership is kept above.
+    fn ownership_is_local(&self) -> bool {
+        true
+    }
+
     fn observed_source_owner(
         &self,
         marker: &FactKey,
