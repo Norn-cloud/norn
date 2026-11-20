@@ -23,7 +23,7 @@ use crate::read::LedgerHead;
 use crate::system::LEDGER;
 
 /// MANIFEST-MARK-1: a question over a dataset's marked column refuses.
-pub const MARKED_COLUMN: &str = "privacy.marked_column";
+const MARKED_COLUMN: &str = "privacy.marked_column";
 use crate::{CellError, CellStore};
 
 /// The bucket value a group key stands for, as the shared projection gives it.
