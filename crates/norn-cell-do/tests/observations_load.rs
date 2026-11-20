@@ -554,3 +554,40 @@ fn a_read_during_a_load_answers_before_the_load_ends() {
         "a read waited {slowest} ms of a {load_ms} ms load: {reads:?}"
     );
 }
+
+/// S4 (INGEST-YIELD-1): a read pins one snapshot for its whole request. A load
+/// started while a read is in flight commits nothing until the read ends,
+/// however long that is (before, a load yielded to a read for at most 250 ms
+/// and then committed under it, moving its snapshot).
+#[test]
+fn a_load_commits_nothing_while_a_read_is_pinned() {
+    let (host, principals) = host();
+    let recorded = norn_cell_do::recorded::Recorded::parse(
+        &json!({ "profile": export()["profile"], "snapshot": same_item(3) }),
+    )
+    .unwrap();
+    let rows = recorded.observations().unwrap();
+    let reading = host.reading();
+    let (done, finished) = std::sync::mpsc::channel();
+    std::thread::scope(|threads| {
+        threads.spawn(|| {
+            let ingested = host.ingest(&rows).unwrap();
+            done.send(ingested.len()).unwrap();
+        });
+        // Several times the 250 ms yield bound.
+        assert!(
+            finished
+                .recv_timeout(std::time::Duration::from_millis(1_500))
+                .is_err(),
+            "the load committed while a read was pinned"
+        );
+        drop(reading);
+        assert_eq!(
+            finished
+                .recv_timeout(std::time::Duration::from_secs(120))
+                .unwrap(),
+            3
+        );
+    });
+    assert_eq!(item_label(&host, &principals), json!("L2"));
+}
