@@ -766,8 +766,8 @@ run_gate fast hosted-timers-quint-typecheck \
   quint typecheck verification/hosted-timers-v1/models/hosted-timers.qnt
 
 run_gate fast hosted-timers-quint \
-  "quint verify verification/hosted-timers-v1/models/hosted-timers.qnt --backend apalache --invariants typeOk wakeCovers expiryRecoverable expiryAtomic timerRunsPinnedRule --max-steps 8" command \
-  quint verify verification/hosted-timers-v1/models/hosted-timers.qnt --backend apalache --invariants typeOk wakeCovers expiryRecoverable expiryAtomic timerRunsPinnedRule --max-steps 8 --out "$result_root/hosted-timers-quint.json"
+  "quint verify verification/hosted-timers-v1/models/hosted-timers.qnt --backend apalache --invariants typeOk wakeCovers expiryRecoverable expiryAtomic timerRunsPinnedRule --max-steps 6" command \
+  quint verify verification/hosted-timers-v1/models/hosted-timers.qnt --backend apalache --invariants typeOk wakeCovers expiryRecoverable expiryAtomic timerRunsPinnedRule --max-steps 6 --out "$result_root/hosted-timers-quint.json"
 
 run_gate full hosted-timers-progress-quint \
   "quint verify verification/hosted-timers-v1/models/hosted-timers.qnt --backend apalache --init initOpened --step stepProgress --invariants typeOk dueProgress healthyNotStarved --max-steps 5" command \

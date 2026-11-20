@@ -123,7 +123,8 @@ module hosted_timers {
   def eligible(i: int): int = max(dl.get(i), retryAt.get(i))
   def writing: bool = REQS.exists(r => req.get(r) != "none")
   // cell.nextDue(now): the earliest eligibility of any pending item (it may have passed).
-  def nextDue: int = ITEMS.fold(NONE, (acc, i) => if (live.get(i)) minWake(acc, eligible(i)) else acc)
+  def dueOf(i: int): int = if (live.get(i)) eligible(i) else NONE
+  def nextDue: int = minWake(minWake(dueOf(1), dueOf(2)), dueOf(3))
   // Wake.earliest: move the alarm to `at` (no earlier than now) when none is set or the set one is later.
   def earliest(at: int): int = if (at == NONE) wake else minWake(wake, max(at, now))
   def exactly(at: int): int = if (at == NONE) wake else max(at, now)
@@ -135,20 +136,25 @@ module hosted_timers {
     dl.get(j) < dl.get(i)
       or (dl.get(j) == dl.get(i) and (kindRank(kind.get(j)) < kindRank(kind.get(i))
         or (kindRank(kind.get(j)) == kindRank(kind.get(i)) and j < i)))
-  def rank(i: int): int = cand.filter(j => before(j, i)).size()
+  // Counted by hand over the three slots: Apalache encodes Cardinality and
+  // fold far more slowly than this arithmetic.
+  pure def b2i(b: bool): int = if (b) 1 else 0
+  def inCand(i: int): bool = live.get(i) and eligible(i) <= now
+  def rank(i: int): int =
+    b2i(inCand(1) and before(1, i)) + b2i(inCand(2) and before(2, i)) + b2i(inCand(3) and before(3, i))
   def chosen: Set[int] = cand.filter(i => rank(i) < BUDGET)
-  // Whether trying `i` succeeds; `cf` are the items whose resolving commit fails.
-  def ok(i: int, cf: Set[int]): bool = healthy.get(i) and not(cf.contains(i))
+  // Whether trying `i` succeeds; `cf` is the item whose resolving commit fails (NONE: none).
+  def ok(i: int, cf: int): bool = healthy.get(i) and cf != i
   // The items tried: the chosen ones, up to `cut` when the isolate is lost;
   // with failureStopsPass, up to the first failure.
-  def tried(cut: int, lost: bool, cf: Set[int], m: Mut): Set[int] =
+  def tried(cut: int, lost: bool, cf: int, m: Mut): Set[int] =
     val upto = chosen.filter(i => not(lost) or rank(i) < cut)
     if (m.failureStopsPass)
       upto.filter(i => upto.forall(j => rank(j) < rank(i) implies ok(j, cf)))
     else upto
 
   // The state a pass leaves, as one simultaneous update of the item maps.
-  action runDue(cut: int, lost: bool, cf: Set[int], m: Mut): bool = {
+  action runDue(cut: int, lost: bool, cf: int, m: Mut): bool = {
     val t = tried(cut, lost, cf, m)
     val c = cand
     val handled = t.filter(i => ok(i, cf))
@@ -236,7 +242,7 @@ module hosted_timers {
     // A cell from before alarms holds deadlines and no alarm; an opened one
     // was armed by its open (W4).
     wake' = if (op and not(m.noOpenArm))
-        ITEMS.fold(NONE, (acc, i) => minWake(acc, d0.get(i)))
+        minWake(minWake(d0.get(1), d0.get(2)), d0.get(3))
       else NONE,
     activeRule' = ar,
     seenRules' = if (pn == ITEMS.mapBy(_ => 1) and rw == pn and ar == 1) Set(1) else RULES,
@@ -389,17 +395,17 @@ module hosted_timers {
   // `cut` tries (and with it every request in flight); `cf` are the
   // decisions whose resolving commit fails. Losses and failed commits are
   // faults.
-  action fire(cut: int, lost: bool, cf: Set[int], m: Mut): bool = all {
+  action fire(cut: int, lost: bool, cf: int, m: Mut): bool = all {
     phase == "idle",
     wake != NONE,
     now >= wake,
-    faults + (if (lost) 1 else 0) + cf.size() <= FAULTS,
-    cf.forall(i => live.get(i) and kind.get(i) == "decision" and healthy.get(i)),
+    faults + b2i(lost) + b2i(cf != NONE) <= FAULTS,
+    cf == NONE or (live.get(cf) and kind.get(cf) == "decision" and healthy.get(cf)),
     runDue(cut, lost, cf, m),
     wake' = if (m.noRecoveryWake) NONE else now + RECOVERY,
     phase' = if (lost) "idle" else "ran",
     req' = if (lost) REQS.mapBy(_ => "none") else req,
-    faults' = faults + (if (lost) 1 else 0) + cf.size(),
+    faults' = faults + b2i(lost) + b2i(cf != NONE),
     now' = now, opened' = true, dl' = dl, kind' = kind, healthy' = healthy, pinned' = pinned,
     ruleAtWrite' = ruleAtWrite, activeRule' = activeRule, seenRules' = seenRules,
   }
@@ -460,7 +466,7 @@ module hosted_timers {
     nondet rule = RULES.oneOf()
     nondet cut = 0.to(BUDGET).oneOf()
     // At most one failed resolving commit per pass (FAULTS = 1).
-    nondet cf = ITEMS.map(i => Set(i)).union(Set(Set())).oneOf()
+    nondet cf = ITEMS.union(Set(NONE)).oneOf()
     any {
       open(m),
       guard(r, m),
@@ -480,21 +486,24 @@ module hosted_timers {
   // its whole pass, completed or lost after `cut` tries; no requests (the
   // deploy-time cell's items only). Fusing tick and pass keeps one alarm
   // delivery per step.
-  action round(t: int, cut: int, lost: bool, cf: Set[int], m: Mut): bool = all {
+  action round(t: int, cut: int, lost: bool, cf: int, m: Mut): bool = all {
     phase == "idle",
     wake != NONE,
     t >= now, t >= wake, t <= wake + FAIR, t <= MAX_TIME,
     // The pass runs at `t`: evaluate it at the new time.
     now' = t,
-    faults + (if (lost) 1 else 0) + cf.size() <= FAULTS,
-    cf.forall(i => live.get(i) and kind.get(i) == "decision" and healthy.get(i)),
+    faults + b2i(lost) + b2i(cf != NONE) <= FAULTS,
+    cf == NONE or (live.get(cf) and kind.get(cf) == "decision" and healthy.get(cf)),
     roundAt(t, cut, lost, cf, m),
   }
   // A pass at time t, written against a state whose clock reads t.
-  action roundAt(t: int, cut: int, lost: bool, cf: Set[int], m: Mut): bool = {
+  action roundAt(t: int, cut: int, lost: bool, cf: int, m: Mut): bool = {
     // The candidates and order at time t (cand reads `now`; restate at t).
     val ct = ITEMS.filter(i => live.get(i) and eligible(i) <= t)
-    val rk = ITEMS.mapBy(i => ct.filter(j => before(j, i)).size())
+    def inCt(j: int): bool = live.get(j) and eligible(j) <= t
+    val rk = ITEMS.mapBy(i =>
+      b2i(inCt(1) and before(1, i)) + b2i(inCt(2) and before(2, i)) + b2i(inCt(3) and before(3, i)))
+    val ctCount = b2i(inCt(1)) + b2i(inCt(2)) + b2i(inCt(3))
     val ch = ct.filter(i => rk.get(i) < BUDGET)
     val upto = ch.filter(i => not(lost) or rk.get(i) < cut)
     val tr = if (m.failureStopsPass)
@@ -513,9 +522,9 @@ module hosted_timers {
       else if (failed.contains(i) and persist) t + backoff(attempts.get(i) + 1)
       else retryAt.get(i))
     val stopped = m.failureStopsPass and ch.exists(i => not(tr.contains(i)))
-    val nx = if (ct.size() > BUDGET or stopped) t
-      else ITEMS.fold(NONE, (acc, i) =>
-        if (live2.get(i)) minWake(acc, max(dl.get(i), ra2.get(i))) else acc)
+    def due2(i: int): int = if (live2.get(i)) max(dl.get(i), ra2.get(i)) else NONE
+    val nx = if (ctCount > BUDGET or stopped) t
+      else minWake(minWake(due2(1), due2(2)), due2(3))
     all {
       live' = live2,
       retryAt' = ra2,
@@ -552,7 +561,7 @@ module hosted_timers {
       everSkipped' = ITEMS.mapBy(i =>
         everSkipped.get(i) or (not(lost) and ct.contains(i) and not(tr.contains(i)))),
       wake' = if (lost) t + RECOVERY else finalWake(t, nx, false, m),
-      faults' = faults + (if (lost) 1 else 0) + cf.size(),
+      faults' = faults + b2i(lost) + b2i(cf != NONE),
       opened' = opened, dl' = dl, kind' = kind, healthy' = healthy, pinned' = pinned,
       ruleAtWrite' = ruleAtWrite, activeRule' = activeRule, seenRules' = seenRules,
       phase' = phase, req' = req,
@@ -566,14 +575,14 @@ module hosted_timers {
     nondet cut = 0.to(BUDGET).oneOf()
     nondet lost = Set(true, false).oneOf()
     // At most one failed resolving commit per pass (FAULTS = 1).
-    nondet cf = ITEMS.map(i => Set(i)).union(Set(Set())).oneOf()
+    nondet cf = ITEMS.union(Set(NONE)).oneOf()
     any { idle(t), round(t, cut, lost, cf, m) }
   }
 
   // Conformance traces: completed passes and idle time, no faults.
   action stepConform = {
     nondet t = 0.to(MAX_TIME).oneOf()
-    any { idle(t), round(t, BUDGET, false, Set(), NOMUT) }
+    any { idle(t), round(t, BUDGET, false, NONE, NOMUT) }
   }
 
   action step = stepWith(NOMUT)

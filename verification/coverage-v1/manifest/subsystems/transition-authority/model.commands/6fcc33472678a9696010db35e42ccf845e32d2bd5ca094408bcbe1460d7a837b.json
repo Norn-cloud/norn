@@ -1,4 +1,0 @@
-{
-  "order": 7,
-  "value": "quint verify verification/hosted-timers-v1/models/hosted-timers.qnt --backend apalache --invariants typeOk wakeCovers expiryRecoverable expiryAtomic timerRunsPinnedRule --max-steps 8"
-}

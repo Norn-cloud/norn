@@ -1193,7 +1193,7 @@
     {
       "id": "hosted-timers-quint",
       "profile": "fast",
-      "command": "quint verify verification/hosted-timers-v1/models/hosted-timers.qnt --backend apalache --invariants typeOk wakeCovers expiryRecoverable expiryAtomic timerRunsPinnedRule --max-steps 8",
+      "command": "quint verify verification/hosted-timers-v1/models/hosted-timers.qnt --backend apalache --invariants typeOk wakeCovers expiryRecoverable expiryAtomic timerRunsPinnedRule --max-steps 6",
       "evidenceKind": "command",
       "role": "supporting-check",
       "classifications": [

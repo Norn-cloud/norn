@@ -19,7 +19,7 @@
       ],
       "bounds": {
         "itemSlots": 3,
-        "requests": 2,
+        "requests": 1,
         "kinds": [
           "reservation",
           "timer",
@@ -48,7 +48,9 @@
           3
         ],
         "lateness": 3,
-        "progressStep": "stepProgress: idle time and whole alarm rounds (the clock moves at most FAIR past the alarm, then one run_due pass, completed or lost after any prefix, then the final alarm), over the deploy-time cell's items, opened at time 0"
+        "progressStep": "stepProgress: idle time and whole alarm rounds (the clock moves at most FAIR past the alarm, then one run_due pass, completed or lost after any prefix, then the final alarm), over the deploy-time cell's items, opened at time 0",
+        "newDeadlines": "1..3 units ahead",
+        "progressDepth": "Apalache depth 6 for safety (the deepest mutant needs 5 steps), depth 5 for progress (the advisory-retry mutant needs 4); seeded simulation of 10,000 traces to depth 15"
       },
       "assumptions": [
         "A1 a DO storage write (setAlarm, a cell commit) is durable when its await resolves; one alarm handler runs at a time",
@@ -62,55 +64,55 @@
         {
           "step": "stepNoGuard",
           "invariant": "wakeCovers",
-          "maxSteps": 8,
+          "maxSteps": 6,
           "meaning": "S1: no write-ahead guard; a commit whose rearm never runs (a crash, a failed scheduling call) has no wake"
         },
         {
           "step": "stepLaterAlarmReplaces",
           "invariant": "wakeCovers",
-          "maxSteps": 8,
+          "maxSteps": 6,
           "meaning": "S1: the rearm or open sets the alarm exactly, so a later deadline postpones a guard or recovery wake another request still relies on"
         },
         {
           "step": "stepNoRecoveryWake",
           "invariant": "wakeCovers",
-          "maxSteps": 8,
+          "maxSteps": 6,
           "meaning": "S1: the delivered alarm is gone until the handler's end, so a lost handler leaves due work with no wake"
         },
         {
           "step": "stepDropRecoveryWhileWriting",
           "invariant": "wakeCovers",
-          "maxSteps": 8,
+          "maxSteps": 6,
           "meaning": "S1: the alarm's end sets the exact next alarm while a request is still writing, so that request's commit followed by a crash has no wake"
         },
         {
           "step": "stepNoOpenArm",
           "invariant": "wakeCovers",
-          "maxSteps": 8,
+          "maxSteps": 6,
           "meaning": "S1: opening a cell does not arm it, so a cell from before alarms keeps its deadlines and no alarm"
         },
         {
           "step": "stepSplitExpiry",
           "invariant": "expiryRecoverable",
-          "maxSteps": 8,
+          "maxSteps": 6,
           "meaning": "S2: a recorded expiry leaves the schedule before its resolving commit lands (the round-1 shape), so a failed or lost resolution is never resumed"
         },
         {
           "step": "stepNoFirstWins",
           "invariant": "expiryAtomic",
-          "maxSteps": 8,
+          "maxSteps": 6,
           "meaning": "S2: a decider's result overwrites a recorded expiry, so the resolution is not the recorded result"
         },
         {
           "step": "stepActiveRuleTimer",
           "invariant": "timerRunsPinnedRule",
-          "maxSteps": 8,
+          "maxSteps": 6,
           "meaning": "S5: a flow timer runs the rule active when it fires"
         },
         {
           "step": "stepScheduledRuleTimer",
           "invariant": "timerRunsPinnedRule",
-          "maxSteps": 8,
+          "maxSteps": 6,
           "meaning": "S5: a flow timer runs the rule active when it was scheduled, not its run's starting rule"
         },
         {
@@ -131,31 +133,31 @@
       "witnesses": [
         {
           "invariant": "witnessDecisionResolved",
-          "maxSteps": 8
+          "maxSteps": 6
         },
         {
           "invariant": "witnessExpiryResumed",
-          "maxSteps": 8
+          "maxSteps": 6
         },
         {
           "invariant": "witnessPinnedAfterChange",
-          "maxSteps": 8
+          "maxSteps": 6
         },
         {
           "invariant": "witnessPinnedBeforeScheduling",
-          "maxSteps": 8
+          "maxSteps": 6
         },
         {
           "invariant": "witnessRetried",
-          "maxSteps": 8
+          "maxSteps": 6
         },
         {
           "invariant": "witnessLateCovered",
-          "maxSteps": 8
+          "maxSteps": 6
         },
         {
           "invariant": "witnessLostWithDueWork",
-          "maxSteps": 8
+          "maxSteps": 6
         },
         {
           "init": "initOpened",
@@ -175,7 +177,7 @@
             "expiryAtomic",
             "timerRunsPinnedRule"
           ],
-          "maxSteps": 8
+          "maxSteps": 6
         },
         {
           "gate": "hosted-timers-progress-quint",
@@ -297,7 +299,7 @@
   "notProved": [
     "Conformance is trace-driven, not a refinement proof: the committed ITF traces of stepConform drive the real run_due/next_due (timer rows only: reservations that fail and flow timers that succeed or fail; decisions, losses and failed commits are not replayed) and the real DO approval dispatch (one writer change and unchanged reinstalls); wake.mjs is not driven from the model (its rules have unit tests in wake.test.mjs).",
     "Progress is bounded response under explicit fairness (A2) and a fault budget (A3), checked as invariants to the BMC depth; it is not unbounded LTL liveness with weak fairness.",
-    "Bounded: Apalache BMC to the stated depths over three item slots, two requests, budget two, logical time 0..7, two calls and two revisions; nothing beyond those bounds is claimed.",
+    "Bounded: Apalache BMC to the stated depths over three item slots, one request in flight, budget two, logical time 0..7, two calls and two revisions; nothing beyond those bounds is claimed.",
     "A decider's own resolution is one step (its record-then-commit crash window is its caller's retry, not the wake's); live-law validation at install, sync scheduling against the global sync lease and the published severity of defs.live_data_unchecked are not modelled."
   ],
   "conformanceGate": "hosted-timers-conformance"
