@@ -31,7 +31,7 @@ TYPES = ["canon.Party", "canon.PartyRole", "canon.Item", "canon.Holding", "canon
 
 
 def props(o: dict) -> dict:
-    return o.get("properties") or o.get("props") or o
+    return o.get("values") or o.get("properties") or o.get("props") or o
 
 
 def oid(o: dict) -> str:
@@ -49,23 +49,19 @@ def section(fn):
 
 @section
 def counts(n: Norn) -> dict:
-    out = {}
-    for t in TYPES:
-        objs, code = n.objects(t)
-        qcode, q, _ = n.call("GET", f"/v1/objects/{t}:quarantined", query={"limit": 500})
-        held = (q.get("objects") or q.get("items") or []) if isinstance(q, dict) else []
-        out[t] = {"objects": len(objs), "status": code, "quarantined": len(held), "quarantinedStatus": qcode}
-    return out
+    return {t: n.total(t) for t in TYPES}
 
 
 @section
 def inbox(n: Norn) -> dict:
-    code, body, dt = n.call("GET", "/v1/inbox", query={"limit": 1000})
-    rules = Counter()
-    items = (body.get("items") or body.get("rules") or body.get("entries") or []) if isinstance(body, dict) else []
+    code, body, dt = n.call("GET", "/v1/inbox")
+    rules, words = Counter(), Counter()
+    items = (body.get("items") or []) if isinstance(body, dict) else []
     for it in items:
-        rules[it.get("rule") or it.get("law") or it.get("code") or it.get("reason") or json.dumps(it)[:80]] += int(it.get("count") or 1)
-    return {"status": code, "ms": round(dt * 1000, 1), "byRule": dict(rules.most_common(40)), "sample": json.dumps(body)[:1500]}
+        rules[f"{(it.get('ruleRef') or {}).get('id')} on {it.get('objectType')}"] += int(it.get("count") or 1)
+        for r in it.get("records") or []:
+            words[f"{(it.get('ruleRef') or {}).get('id')}: {(r.get('finding') or {}).get('words')}"] += 1
+    return {"status": code, "ms": round(dt * 1000, 1), "byRule": dict(rules.most_common(40)), "findingWords": dict(words.most_common(20)), "sample": json.dumps(items[:2], ensure_ascii=False)[:1500]}
 
 
 @section

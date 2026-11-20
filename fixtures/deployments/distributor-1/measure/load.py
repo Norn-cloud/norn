@@ -9,6 +9,7 @@ Usage: load.py PROJECT_DIR OUT_JSON EXPORT.json [EXPORT.json ...] [--page 100] [
 from __future__ import annotations
 
 import json
+import re
 import sys
 import time
 from collections import Counter
@@ -30,13 +31,28 @@ def pages(doc: dict, size: int):
 def load(n: Norn, doc: dict, size: int, budget: float | None) -> dict:
     res = {"rows": 0, "landed": 0, "alreadyLanded": 0, "quarantined": 0, "reasons": Counter(), "refusals": Counter(), "calls": 0, "seconds": 0.0, "latency": []}
     t0 = time.time()
-    for page in pages(doc, size):
+    queue = list(pages(doc, size))
+    while queue:
+        page = queue.pop(0)
         if budget and time.time() - t0 > budget:
             res["stoppedByBudget"] = True
             break
         code, body, dt = n.call("POST", "/v1/observations:load", page)
         res["calls"] += 1
         res["latency"].append(dt)
+        # The route caps a load at 100 rows AND 8 page commits; one row can fan out into several commits
+        # (one per map it feeds). Split a refused page by the commits-per-row it reports and resend.
+        if code == 413 and isinstance(body, dict):
+            m = re.search(r"this one: (\d+) rows, (\d+) commits", body.get("message", ""))
+            rows_in = len(page.get("snapshot") or page.get("incremental") or [])
+            if m and rows_in > 1:
+                per = max(1, int(int(m.group(1)) * 8 / max(int(m.group(2)), 1)))
+                res["splits"] = res.get("splits", 0) + 1
+                res["rowsPerCallAdmitted"] = per
+                key = "snapshot" if page.get("snapshot") else "incremental"
+                items = page[key]
+                queue[:0] = [{**page, key: items[i:i + per]} for i in range(0, len(items), per)]
+                continue
         if code != 200:
             res["refusals"][f"{code}:{(body or {}).get('code') or (body or {}).get('error', {}).get('code') if isinstance(body, dict) else code}"] += 1
             if len(res.setdefault("refusalSamples", [])) < 3:

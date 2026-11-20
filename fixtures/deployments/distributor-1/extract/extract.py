@@ -89,8 +89,17 @@ def export(source: str, mapping: str, snapshot: list, incremental: list | None =
             "snapshot": [{"dataset": ds, "record": r} for ds, r in snapshot], **({"incremental": incremental} if incremental else {})}
 
 
+class Lenient(dict):
+    """A naive extractor's row: a field the wire dropped reads as null instead of crashing the pull,
+    so the damage reaches Norn and the report shows what Norn does with it."""
+    def __missing__(self, key):
+        anomaly("wire", "missing_field_read")
+        return None
+
+
 def dedupe(system: str, rows: list[dict], key: str, careful: bool) -> list[dict]:
     seen, out = set(), []
+    rows = rows if careful else [Lenient(r) for r in rows]
     for r in rows:
         k = r.get(key)
         if k in seen:
@@ -114,8 +123,8 @@ def erp_list(c: Client, doctype: str, fields: list[str], parent: str | None = No
             break
         start += page
     rows = dedupe("erpnext", rows, "name", careful)
-    count = c.get(f"/api/method/frappe.client.get_count?doctype={doctype.replace(' ', '%20')}" + (f"&parent={parent.replace(' ', '%20')}" if parent else "")
-                  + (f"&filters={json.dumps(filters)}" if filters else ""))["message"]
+    # get_count takes no `parent` (child doctypes count as is)
+    count = c.get(f"/api/method/frappe.client.get_count?doctype={doctype.replace(' ', '%20')}" + (f"&filters={json.dumps(filters)}" if filters else ""))["message"]
     if len(rows) != count:
         anomaly("erpnext", "count_mismatch_rows", abs(count - len(rows)))
         if careful:  # refetch in one page; skips/repeats are per request
@@ -366,9 +375,12 @@ def pull_saleor(base: str, xw: Crosswalk, careful: bool, webhooks: Path | None) 
 
 
 # ------------------------------------------------------------------- legacy
+PG_PORT = {"port": "15433"}
+
+
 def psql(query: str) -> list[dict]:
-    """Through toxiproxy (127.0.0.1:15433) with the postgres image's psql."""
-    cmd = ["docker", "run", "--rm", "--network", "host", "-e", "PGPASSWORD=wms", "postgres:16-alpine", "psql", "-h", "127.0.0.1", "-p", "15433", "-U", "wms", "-d", "wms",
+    """Through toxiproxy (127.0.0.1:15433) when naive, direct (5433) when careful, with the postgres image's psql."""
+    cmd = ["docker", "run", "--rm", "--network", "host", "-e", "PGPASSWORD=wms", "postgres:16-alpine", "psql", "-h", "127.0.0.1", "-p", PG_PORT["port"], "-U", "wms", "-d", "wms",
            "-c", f"COPY ({query}) TO STDOUT WITH CSV HEADER"]
     for attempt in range(5):
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
@@ -406,12 +418,16 @@ def main() -> None:
     files_dir, out, mode = Path(sys.argv[2]), Path(sys.argv[3]), sys.argv[4]
     careful = mode == "careful"
     CAREFUL["on"] = careful
+    PG_PORT["port"] = "5433" if careful else "15433"
     which = set(sys.argv[5:]) or {"erpnext", "odoo", "saleor", "legacy", "files"}
     out.mkdir(parents=True, exist_ok=True)
     xw = Crosswalk(world)
-    report = {"mode": mode, "systems": {}}
-    pulls = {"erpnext": lambda: pull_erpnext("http://127.0.0.1:18000", xw, careful), "odoo": lambda: pull_odoo("http://127.0.0.1:18069", xw, careful),
-             "saleor": lambda: pull_saleor("http://127.0.0.1:18001", xw, careful, out.parent / "webhooks.jsonl"), "legacy": lambda: pull_legacy(xw, world, careful),
+    prior = out / "extract-report.json"
+    report = json.loads(prior.read_text()) if prior.exists() else {"mode": mode, "systems": {}}  # passes per system merge
+    # careful is the clean-network baseline (direct ports); naive goes through the hostile proxy
+    port = (lambda direct, hostile: direct if careful else hostile)
+    pulls = {"erpnext": lambda: pull_erpnext(f"http://127.0.0.1:{port(8000, 18000)}", xw, careful), "odoo": lambda: pull_odoo(f"http://127.0.0.1:{port(8069, 18069)}", xw, careful),
+             "saleor": lambda: pull_saleor(f"http://127.0.0.1:{port(8001, 18001)}", xw, careful, out.parent / "webhooks.jsonl"), "legacy": lambda: pull_legacy(xw, world, careful),
              "files": lambda: pull_files(files_dir, xw, world, careful)}
     for system in [s for s in pulls if s in which]:
         t = time.time()
@@ -425,7 +441,9 @@ def main() -> None:
             report["systems"][system]["seconds"] = round(time.time() - t, 1)
         except Exception as e:
             report["systems"][system] = {"error": str(e)[:800], "seconds": round(time.time() - t, 1)}
-    report["anomalies"], report["http"], report["files_parsed"] = ANOM, STATS, filesrc.PARSED
+    for k, v in (("anomalies", ANOM), ("http", STATS)):
+        report[k] = {**report.get(k, {}), **v}
+    report["files_parsed"] = filesrc.PARSED or report.get("files_parsed", {})
     (out / "extract-report.json").write_text(json.dumps(report, indent=1, ensure_ascii=False))
     print(json.dumps(report["systems"]))
 

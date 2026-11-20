@@ -37,18 +37,25 @@ class Norn:
                 return e.code, {"raw": raw[:500].decode(errors="replace")}, time.perf_counter() - t
 
     def objects(self, type_: str, limit: int = 500, max_pages: int = 400) -> tuple[list, int]:
-        """Every readable object of a type, following whatever cursor the page names."""
-        out, cursor, code = [], None, 0
+        """Every readable object of a type: {records, next, total, quarantineCount}; `next` is followed as given."""
+        out, nxt, code = [], None, 0
         for _ in range(max_pages):
-            code, body, _ = self.call("GET", f"/v1/objects/{type_}", query={"limit": limit, **({"cursor": cursor} if cursor else {})})
+            path = nxt if (nxt and nxt.startswith("/v1/")) else f"/v1/objects/{type_}"
+            code, body, _ = self.call("GET", path, query={"cursor": nxt} if nxt and not nxt.startswith("/v1/") else None)
             if code != 200 or not isinstance(body, dict):
                 return out, code
-            items = body.get("objects") or body.get("items") or body.get("data") or []
+            items = body.get("records") or []
             out += items
-            cursor = body.get("nextCursor") or body.get("next_cursor") or body.get("cursor")
-            if not cursor or not items:
+            nxt = body.get("next")
+            if not nxt or not items or len(out) >= limit * max_pages:
                 break
         return out, code
+
+    def total(self, type_: str) -> dict:
+        code, body, dt = self.call("GET", f"/v1/objects/{type_}")
+        if code != 200 or not isinstance(body, dict):
+            return {"status": code}
+        return {"objects": (body.get("total") or {}).get("count"), "approximate": (body.get("total") or {}).get("approximate"), "quarantined": body.get("quarantineCount"), "ms": round(dt * 1000, 1)}
 
 
 def rss_kb(pattern: str = "norn-dev-host") -> int:

@@ -13,6 +13,7 @@ import json
 import sys
 import time
 import traceback
+from decimal import Decimal
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "extract"))
@@ -144,6 +145,35 @@ def erp_sales(c: Client, w: dict, crosswalk: dict):
             return so
         if tolerant("erpnext.order_chain", one):
             yield o["id"]
+
+
+@step("erpnext.payments")
+def erp_payments(c: Client, w: dict, xw: dict):
+    """Pay the seeded invoices as the world pays them, recovering the invoice crosswalk from ERPNext itself
+    (customer, date, total) when an earlier pass was cut before it wrote native-ids.json."""
+    cust = {cu["name_en"]: cu["id"] for cu in w["customers"]}
+    by_key = {(i["customer"], i["at"], str(Decimal(i["stated_total"]).quantize(Decimal("0.01")))): i for i in w["invoices"] if i["system"] == "erpnext"}
+    paid = {p["invoice"]: p for p in w["payments"] if p["invoice"]}
+    sis = c.get('/api/resource/Sales Invoice?fields=["name","customer","posting_date","grand_total","outstanding_amount"]&filters=[["docstatus","=",1]]&limit_page_length=1000')["data"]
+    for si in sis:
+        inv = by_key.get((cust.get(si["customer"]), si["posting_date"], f"{Decimal(str(si['grand_total'])):.2f}"))
+        if not inv:
+            continue
+        xw["erpnext_si"][inv["id"]] = si["name"]
+        p = paid.get(inv["id"])
+        if not p or float(si["outstanding_amount"] or 0) <= 0:
+            continue
+        def one(si=si, p=p):
+            pe = erp_method(c, "erpnext.accounts.doctype.payment_entry.payment_entry.get_payment_entry", {"dt": "Sales Invoice", "dn": si["name"]})
+            amount = min(float(p["amount"]), float(si["outstanding_amount"]))
+            pe.update({"posting_date": p["at"], "reference_no": p["id"], "reference_date": p["at"], "paid_amount": amount, "received_amount": amount})
+            for ref in pe.get("references", []):
+                ref["allocated_amount"] = amount  # floats: decimal text here was the first pass's refusal
+            pe = c.post("/api/method/frappe.client.submit", {"doc": c.post("/api/method/frappe.client.insert", {"doc": pe})["message"]})["message"]
+            xw["erpnext_pe"][p["id"]] = pe["name"]
+            return pe
+        if tolerant("erpnext.payment", one):
+            yield p["id"]
 
 
 # --------------------------------------------------------------------- Odoo
@@ -348,6 +378,12 @@ def saleor_lookup(s: "Saleor", w: dict, xw: dict) -> None:
         if not r["pageInfo"]["hasNextPage"]:
             break
         after = r["pageInfo"]["endCursor"]
+    # Saleor sells only from warehouses in a shipping zone that covers the buyer's country, even for non-shipping goods
+    tolerant("saleor.shipping_zone", s.q, "mutation($w:[ID!],$c:[ID!]){shippingZoneCreate(input:{name:\"Egypt\",countries:[\"EG\"],addWarehouses:$w,addChannels:$c}){shippingZone{id} errors{message}}}",
+             {"w": list(xw["saleor_wh"].values()), "c": [xw["saleor_channel"]]})
+    for v in xw["saleor_variant"].values():  # generous stock while the orders are placed; saleor_sales sets closing after
+        tolerant("saleor.stock_raise", s.q, "mutation($v:ID!,$st:[StockInput!]!){productVariantStocksUpdate(variantId:$v,stocks:$st){errors{message}}}",
+                 {"v": v, "st": [{"warehouse": wid, "quantity": 100000} for wid in xw["saleor_wh"].values()]})
     email = {c["email"]: c["id"] for c in w["customers"]}
     r = s.q("{customers(first:100){edges{node{id email}}}}")["customers"]["edges"]
     for e in r:
@@ -366,6 +402,10 @@ def main() -> None:
             if v and not xw.get(k):
                 xw[k] = v
     t0 = time.time()
+    if "erpnext-payments" in which:
+        c = Client("http://127.0.0.1:8000", "erpnext-seed", {"Host": "d1.localhost"})
+        c.post("/api/method/login", {"usr": "Administrator", "pwd": "d1-admin"})
+        erp_payments(c, world, xw)
     if "erpnext" in which:
         c = Client("http://127.0.0.1:8000", "erpnext-seed", {"Host": "d1.localhost"})
         c.post("/api/method/login", {"usr": "Administrator", "pwd": "d1-admin"})
