@@ -7859,6 +7859,8 @@
           "rows",
           "rejected",
           "reasons",
+          "findings",
+          "heldByRules",
           "bytes",
           "millis"
         ],
@@ -7883,9 +7885,25 @@
             "$ref": "#/components/schemas/NornDatasetFile",
             "description": "The landed data file: every admitted row, columnar."
           },
+          "findings": {
+            "type": "object",
+            "description": "MANIFEST-LAWS-1: findings of each law and invariant, by rule.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/NornRuleFindings"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
           "held": {
             "$ref": "#/components/schemas/NornDatasetFile",
             "description": "The landed held-set file: every held-back row and its reason."
+          },
+          "heldByRules": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Admitted rows a law or invariant holds back; every other admitted row\nis trusted.",
+            "minimum": 0
           },
           "load": {
             "type": "string",
@@ -34160,6 +34178,31 @@
           },
           "value": {
             "description": "The stored value, of the property's type; decimals are exact JSON number tokens."
+          }
+        }
+      },
+      "NornRuleFindings": {
+        "type": "object",
+        "description": "MANIFEST-LAWS-1: one law or invariant's findings over a dataset.",
+        "required": [
+          "label",
+          "rows",
+          "holds"
+        ],
+        "properties": {
+          "holds": {
+            "type": "boolean",
+            "description": "Whether a failing row is held back."
+          },
+          "label": {
+            "type": "string",
+            "description": "The law (`law:<id>`) or invariant (`invariant:<id>`)."
+          },
+          "rows": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Rows that fail it.",
+            "minimum": 0
           }
         }
       },
