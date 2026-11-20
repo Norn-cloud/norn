@@ -182,14 +182,14 @@ pub fn healthy() -> bool {
 /// The engine directory or the listener cannot be opened.
 pub fn run(config: Config) -> std::io::Result<()> {
     let listener = TcpListener::bind(&config.addr)?;
-    serve(listener, config, Arc::new(SystemClock))
+    serve(&listener, config, Arc::new(SystemClock))
 }
 
 /// Serve `listener` until it fails, checking credential expiry against `clock`.
 ///
 /// # Errors
 /// The engine directory cannot be opened.
-pub fn serve(listener: TcpListener, config: Config, clock: Arc<dyn Clock>) -> std::io::Result<()> {
+pub fn serve(listener: &TcpListener, config: Config, clock: Arc<dyn Clock>) -> std::io::Result<()> {
     let engine = Arc::new(Engine::new(config.settings)?);
     let gate = Arc::new(Gate {
         keys_file: config.keys_file,

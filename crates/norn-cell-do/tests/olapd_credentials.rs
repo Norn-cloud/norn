@@ -84,7 +84,7 @@ fn daemon(issuers: &[&Issuer]) -> Daemon {
         },
     };
     let serving = Arc::clone(&clock);
-    std::thread::spawn(move || serve(listener, config, serving));
+    std::thread::spawn(move || serve(&listener, config, serving));
     Daemon {
         addr,
         root,
