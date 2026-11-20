@@ -1,14 +1,11 @@
 {
   "sha256": "f2528821405e7a3032dd59afbf582bfc5cd2848f270d948caf8226c4cc4105e4",
-  "origin": "derived",
-  "category": "synthetic-golden",
+  "origin": "authored",
+  "category": "synthetic-fixture",
   "license": "Apache-2.0",
   "sources": [],
   "analyzed_sources": [],
-  "parents": [
-    "crates/norn-cell/tests/engine_fixture_record.rs",
-    "crates/norn-cell/tests/support/engine_fixture.rs"
-  ],
+  "parents": [],
   "rights_evidence": [
     {
       "path": "NOTICE",
