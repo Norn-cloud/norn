@@ -20,7 +20,9 @@
 //! records the call in `_norn_approved_call`, and a refusal the call gets is
 //! recorded by its own commit carrying one [`APPROVAL_REFUSED`] event. Both
 //! are ledger-derived, so a restored cell holds the same approved calls and
-//! the same refusals; whether a call committed is its idempotency record.
+//! the same refusals. The commit that runs an approved call carries one
+//! [`APPROVAL_CONSUMED`] event naming the approval it consumed, so each
+//! commit is attributed to exactly one approval (S6c).
 
 /// The `norn.decision@1` request a parked decision carries, and its bounds.
 /// Hosts reach built-ins through the cell (`norn_cell::builtin_registered`).
@@ -70,9 +72,10 @@ pub(crate) const DDL: [&str; 4] = [
   PRIMARY KEY ("world", "decision_id")
 )"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_decision/run" ON "_norn_decision" ("world", "run_id", "decision_id")"#,
-    // APPROVAL-RECOVERY-1: every approved action call, and its refusal once
-    // one is recorded ([`APPROVAL_REFUSED`]). Whether it committed is its
-    // idempotency record, never this row.
+    // APPROVAL-RECOVERY-1: every approved action call, its refusal once one
+    // is recorded ([`APPROVAL_REFUSED`]), and the commit that consumed it
+    // ([`APPROVAL_CONSUMED`]). `legacy` marks a row backfilled from a file
+    // whose commits carried no consumption.
     r#"CREATE TABLE IF NOT EXISTS "_norn_approved_call" (
   "world" TEXT NOT NULL,
   "decision_id" TEXT NOT NULL,
@@ -82,6 +85,8 @@ pub(crate) const DDL: [&str; 4] = [
   "refused_status" INTEGER,
   "refused_code" TEXT,
   "refused_category" TEXT,
+  "consumed_seq" INTEGER,
+  "legacy" INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY ("world", "decision_id")
 )"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_approved_call/run" ON "_norn_approved_call" ("world", "run_id", "decision_id")"#,
@@ -91,9 +96,10 @@ pub(crate) const DDL: [&str; 4] = [
 /// recorded before `_norn_approved_call` existed gains their rows from its
 /// own decision rows, exactly what replaying its ledger records (the
 /// approving decision, its parked command, its run and the commit's logical
-/// time). Idempotent: an approval already recorded is left as it is, so its
-/// refusal stays.
-pub(crate) const BACKFILL_APPROVED_CALLS: &str = r#"INSERT OR IGNORE INTO "_norn_approved_call" ("world","decision_id","command_id","run_id","resolved_at_ms") SELECT "world","decision_id","command_id","run_id","resolved_at_ms" FROM "_norn_decision" WHERE "resolution"='decided' AND "choice"='approve' AND substr("command_id",1,14)='norn.approval/'"#;
+/// time), marked `legacy`: its commits name no approval they consumed.
+/// Idempotent: an approval already recorded is left as it is, so its refusal
+/// stays.
+pub(crate) const BACKFILL_APPROVED_CALLS: &str = r#"INSERT OR IGNORE INTO "_norn_approved_call" ("world","decision_id","command_id","run_id","resolved_at_ms","legacy") SELECT "world","decision_id","command_id","run_id","resolved_at_ms",1 FROM "_norn_decision" WHERE "resolution"='decided' AND "choice"='approve' AND substr("command_id",1,14)='norn.approval/'"#;
 
 /// How a decision was resolved (DECISION-TERMINAL-1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -275,6 +281,31 @@ fn refusals(batch: &CommitBatch) -> Result<Vec<ApprovalRefused>, CellError> {
     Ok(found)
 }
 
+fn consumptions(batch: &CommitBatch) -> Result<Vec<ApprovalConsumed>, CellError> {
+    let mut found = Vec::new();
+    for event in batch
+        .events
+        .iter()
+        .filter(|event| is_approval_consumed(event))
+    {
+        let object = event
+            .as_object()
+            .ok_or_else(|| refused("approval.consumption_invalid"))?;
+        if object.len() != 2 {
+            return Err(refused("approval.consumption_invalid"));
+        }
+        let consumed: ApprovalConsumed = object
+            .get("consumed")
+            .and_then(|consumed| norn_ir::runtime::decode(consumed).ok())
+            .ok_or_else(|| refused("approval.consumption_invalid"))?;
+        found.push(consumed);
+    }
+    if found.len() > 1 {
+        return Err(refused("approval.consumption_invalid"));
+    }
+    Ok(found)
+}
+
 /// Before `batch`'s writes apply: a decision it resolves must be open.
 ///
 /// # Errors
@@ -294,9 +325,18 @@ pub(crate) fn check<E: SqlEngine>(
     // APPROVAL-RECOVERY-1: a refusal is recorded once, for an approved call.
     for refusal in refusals(batch)? {
         match reader.approved_call(&batch.world, &refusal.decision_id)? {
-            Some(call) if call.refused.is_none() => {}
+            Some(call) if call.refused.is_none() && call.consumed_seq.is_none() => {}
             Some(_) => return Err(refused("approval.refused")),
             None => return Err(refused("approval.refusal_invalid")),
+        }
+    }
+    // S6c: an approval is consumed once, by a commit, only while no refusal
+    // is recorded for it.
+    for consumed in consumptions(batch)? {
+        match reader.approved_call(&batch.world, &consumed.decision_id)? {
+            Some(call) if call.refused.is_none() && call.consumed_seq.is_none() => {}
+            Some(_) => return Err(refused("approval.refused")),
+            None => return Err(refused("approval.consumption_invalid")),
         }
     }
     Ok(())
@@ -353,6 +393,47 @@ pub fn is_approval_refused(event: &Value) -> bool {
     event.get("type").and_then(Value::as_str) == Some(APPROVAL_REFUSED)
 }
 
+/// S6c: the `type` of the ledger event the commit that runs an approved
+/// action call carries, naming the approval it consumed.
+pub const APPROVAL_CONSUMED: &str = "norn.approval.consumed";
+
+/// What an [`APPROVAL_CONSUMED`] event records.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ApprovalConsumed {
+    /// The approving decision the commit ran under.
+    pub decision_id: String,
+}
+
+impl ApprovalConsumed {
+    /// The ledger event the consuming commit carries.
+    ///
+    /// # Errors
+    /// A value outside the runtime value domain.
+    pub fn event(&self) -> Result<Value, CellError> {
+        Ok(Value::Object(
+            [
+                (
+                    "type".to_owned(),
+                    Value::String(APPROVAL_CONSUMED.to_owned()),
+                ),
+                (
+                    "consumed".to_owned(),
+                    norn_ir::runtime::encode(self).map_err(CellError::Encoding)?,
+                ),
+            ]
+            .into(),
+        ))
+    }
+}
+
+/// Whether a ledger event records an approval's consumption (host
+/// bookkeeping, not a domain event a typed commit reader decodes).
+#[must_use]
+pub fn is_approval_consumed(event: &Value) -> bool {
+    event.get("type").and_then(Value::as_str) == Some(APPROVAL_CONSUMED)
+}
+
 /// APPROVAL-RECOVERY-1: one approved action call.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApprovedCall {
@@ -365,8 +446,14 @@ pub struct ApprovedCall {
     pub run_id: String,
     /// When the approval committed (logical milliseconds).
     pub resolved_at_ms: u64,
+    /// S5c: the approving commit's ledger position.
+    pub commit_seq: u64,
     /// The refusal recorded for it, if one was.
     pub refused: Option<RecordedRefusal>,
+    /// S6c: the commit that ran the call under this approval, once one did.
+    pub consumed_seq: Option<u64>,
+    /// Backfilled from a file whose commits name no approval they consumed.
+    pub legacy: bool,
 }
 
 /// The refusal recorded for an approved call ([`ApprovalRefused`]).
@@ -435,6 +522,18 @@ pub(crate) fn apply<E: SqlEngine>(
             )?;
         }
     }
+    for consumed in consumptions(batch)? {
+        reader.conn.execute(
+            &format!(
+                r#"UPDATE "{APPROVED_CALL}" SET "consumed_seq"=?3 WHERE "world"=?1 AND "decision_id"=?2 AND "consumed_seq" IS NULL"#
+            ),
+            params![
+                batch.world,
+                consumed.decision_id,
+                to_i64(commit_seq, "commit sequence")?
+            ],
+        )?;
+    }
     for refusal in refusals(batch)? {
         reader.conn.execute(
             &format!(
@@ -456,12 +555,21 @@ fn decode_approved(row: &SqlRow) -> Result<ApprovedCall, CellError> {
     let status: Option<i64> = row.get(4)?;
     let code: Option<String> = row.get(5)?;
     let category: Option<String> = row.get(6)?;
+    let consumed: Option<i64> = row.get(7)?;
     Ok(ApprovedCall {
         decision_id: row.get(0)?,
         command_id: row.get(1)?,
         run_id: row.get(2)?,
         resolved_at_ms: u64::try_from(row.get::<i64>(3)?)
             .map_err(|_negative| CellError::OutOfRange("approval time"))?,
+        commit_seq: u64::try_from(row.get::<i64>(9)?)
+            .map_err(|_negative| CellError::OutOfRange("approval commit"))?,
+        consumed_seq: consumed
+            .map(|seq| {
+                u64::try_from(seq).map_err(|_negative| CellError::OutOfRange("consuming commit"))
+            })
+            .transpose()?,
+        legacy: row.get::<i64>(8)? != 0,
         refused: match (status, code, category) {
             (Some(status), Some(code), Some(category)) => Some(RecordedRefusal {
                 status: u16::try_from(status)
@@ -474,7 +582,9 @@ fn decode_approved(row: &SqlRow) -> Result<ApprovedCall, CellError> {
     })
 }
 
-const APPROVED_COLUMNS: &str = r#""decision_id","command_id","run_id","resolved_at_ms","refused_status","refused_code","refused_category""#;
+/// The approved call's columns and its approving commit, over `a` (the
+/// approved call) joined to `d` (its decision).
+const APPROVED_COLUMNS: &str = r#"a."decision_id",a."command_id",a."run_id",a."resolved_at_ms",a."refused_status",a."refused_code",a."refused_category",a."consumed_seq",a."legacy",d."commit_seq""#;
 
 fn decode(row: &SqlRow) -> Result<DecisionRow, CellError> {
     let unsigned = |index: usize, what: &'static str| {
@@ -512,15 +622,15 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     ) -> Result<Option<ApprovedCall>, CellError> {
         self.conn.query_optional(
             &format!(
-                r#"SELECT {APPROVED_COLUMNS} FROM "{APPROVED_CALL}" WHERE "world"=?1 AND "decision_id"=?2"#
+                r#"SELECT {APPROVED_COLUMNS} FROM "{APPROVED_CALL}" a JOIN "{DECISION}" d ON d."world"=a."world" AND d."decision_id"=a."decision_id" WHERE a."world"=?1 AND a."decision_id"=?2"#
             ),
             params![world, decision_id],
             decode_approved,
         )
     }
 
-    /// APPROVAL-RECOVERY-1: the approved calls of `run_id`'s steps, oldest
-    /// decision id first.
+    /// APPROVAL-RECOVERY-1: the approved calls of `run_id`'s steps, in the
+    /// ledger order of their approving commits (S5c).
     ///
     /// # Errors
     /// SQL engine or decode errors.
@@ -531,7 +641,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     ) -> Result<Vec<ApprovedCall>, CellError> {
         let rows = self.conn.query(
             &format!(
-                r#"SELECT {APPROVED_COLUMNS} FROM "{APPROVED_CALL}" WHERE "world"=?1 AND "run_id"=?2 ORDER BY "decision_id""#
+                r#"SELECT {APPROVED_COLUMNS} FROM "{APPROVED_CALL}" a JOIN "{DECISION}" d ON d."world"=a."world" AND d."decision_id"=a."decision_id" WHERE a."world"=?1 AND a."run_id"=?2 ORDER BY d."commit_seq""#
             ),
             params![world, run_id],
         )?;

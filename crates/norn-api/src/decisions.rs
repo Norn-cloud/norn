@@ -685,15 +685,21 @@ fn options(request: &DecisionRequest) -> Vec<DecisionOptionDocument> {
         .collect()
 }
 
-/// The run a parked call's step belongs to, when a flow step made the call;
-/// else the parked call's own id, which is not a run.
+/// The run a parked call's step belongs to, when a flow step made the call:
+/// the step attempt recorded when it parked (S6b), so an attempt that ended
+/// before the decision still names its run; else the parked call's own id,
+/// which is not a run.
 fn call_run<E: SqlEngine>(
     store: &CellStore<E>,
     decision: &OpenDecision,
     call: &HeldCall,
 ) -> Result<DecisionRun, Refusal> {
-    let Some(run_id) = crate::flow_driver::run_waiting_on(store, &call.call.idempotency_key)?
-    else {
+    let run_id = match &call.call.attempt {
+        Some(attempt) => Some(attempt.run_id.clone()),
+        // Parked before attempts were recorded.
+        None => crate::flow_driver::run_waiting_on(store, &call.call.idempotency_key)?,
+    };
+    let Some(run_id) = run_id else {
         return Ok(DecisionRun {
             id: decision.run_id.clone(),
             generation: decision.generation.0,
@@ -1073,11 +1079,18 @@ fn run_approved<E: SqlEngine>(
         version: held.call.definitions_version,
     };
     let mut commit = || {
+        // S2: the request's own authenticated principal, as the host's
+        // trusted seam verified it for this try; the dispatch compares it
+        // with the parked requester under its own hold.
+        let principal = host
+            .authorizer
+            .verified_principal(&held.call.requester.subject);
         crate::actions::call_action_bound(
             host,
             &crate::actions::ActionCall {
                 query: &query,
                 actor: Some(&held.call.requester.subject),
+                principal: principal.as_ref(),
                 action_id: &held.call.action,
                 request: &request,
                 now,

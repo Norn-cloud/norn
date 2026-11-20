@@ -30,7 +30,7 @@ use norn_cell_do::principal::FixturePrincipals;
 use norn_kernel::LogicalTime;
 use serde_json::{Value, json};
 use step_cell::{
-    APPROVER, Cell, DERIVES_LOSS, FLOW_ID, MELT_ACTION, NOW, OPERATOR, REVOKED, SCOPE, call,
+    APPROVER, Cell, DERIVES_LOSS, FLOW_ID, MELT_ACTION, NAMES, NOW, OPERATOR, REVOKED, SCOPE, call,
     call_with, cell_on, melt_body, melt_store_on,
 };
 
@@ -440,9 +440,19 @@ fn a_recorded_refusal_keeps_its_category_and_stays_final_after_a_restore() {
 
 /// The gate's next revision: the same approval, asking another question.
 fn revise_gate<E: SqlEngine>(cell: &Cell<E>) {
+    revise_gate_from(cell, 1);
+}
+
+/// The gate's revision after `revision`, asking a question of its own.
+fn revise_gate_from<E: SqlEngine>(cell: &Cell<E>, revision: u64) {
+    let question = if revision == 1 {
+        "Convert this melt now?".to_owned()
+    } else {
+        format!("Convert this melt now ({revision})?")
+    };
     let mut body = json!({ "kind": "approval", "id": APPROVAL_ID, "payload": {
         "action": MELT_ACTION, "decider": { "roles": ["admin"] },
-        "question": "Convert this melt now?", "risk": "high" } });
+        "question": question, "risk": "high" } });
     let (status, admitted) = call(
         cell,
         "POST",
@@ -452,7 +462,7 @@ fn revise_gate<E: SqlEngine>(cell: &Cell<E>) {
     );
     assert_eq!(status, 200, "{admitted}");
     body["signoff"] = json!({ "restatementSha256": admitted["restatementSha256"] });
-    body["expectedVersion"] = json!(1);
+    body["expectedVersion"] = json!(revision);
     let (status, installed) = call(
         cell,
         "POST",
@@ -760,4 +770,223 @@ fn an_approved_step_call_never_runs_after_its_attempt_ended() {
     assert_eq!(melt(&cell).0, 404);
     let ended = json!({ "committed": false, "code": "approval.attempt_ended", "state": "refused" });
     assert_eq!(standing(&cell, &id), ended);
+}
+
+/// End the step attempt the parked call on `path` was made for: an earlier
+/// host recorded its result.
+fn end_attempt(path: &Path, (command, generation): &(String, u64)) {
+    let ended = norn_ir::RuntimeValue::from_json(json!({ "_tag": "Denied" })).unwrap();
+    assert!(
+        store(path)
+            .record_parked(command, *generation, &ended)
+            .unwrap()
+    );
+}
+
+fn attempt_ended() -> Value {
+    json!({ "committed": false, "code": "approval.attempt_ended", "state": "refused" })
+}
+
+/// S2: an approval is consumed only by its requester's own authenticated
+/// principal, compared under the dispatch's hold: the same subject verified
+/// from another role table is another principal, denied without anything
+/// recorded, and the call stays approved for the requester.
+#[test]
+fn a_requester_verified_from_another_role_table_never_consumes_the_approval() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("cell.sqlite");
+    let id = approved(&path);
+    let mut cell = cell_on(file(&path), false);
+    cell.principals = FixturePrincipals::new(NAMES, std::sync::Arc::clone(&cell.caller))
+        .with_role_table("fixtures/2");
+    let (status, denied) = retry(&cell);
+    assert_eq!(status, 403, "{denied}");
+    assert_eq!(melt(&cell).0, 404, "nothing ran");
+    assert_eq!(standing(&cell, &id), not_executed());
+    drop(cell);
+
+    let cell = cell_on(file(&path), false);
+    let (status, receipt) = retry(&cell);
+    assert_eq!(status, 200, "{receipt}");
+    assert_eq!(standing(&cell, &id), committed());
+}
+
+/// S2, the flow's dispatch: the drive reads the step unapproved and tries
+/// its call under the starter's recorded authority; an approval recorded in
+/// between is judged under the dispatch's own hold, where that try carries
+/// no authenticated principal. It never consumes the approval: nothing
+/// runs, and the step stays pending for its requester.
+#[test]
+fn an_approval_recorded_while_a_step_dispatches_on_recorded_authority_is_never_consumed() {
+    use norn_api::actions::ActionAnswer;
+    use norn_api::refusal::Refusal;
+    use norn_cell::flow_run::RunStarter;
+    use norn_cell_do::policy::Caller;
+    type Dispatch<'a> = &'a mut dyn FnMut() -> Result<ActionAnswer, Refusal>;
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("cell.sqlite");
+    let id = parked_step(&path);
+    let cell = cell_on(file(&path), false);
+    let raced = std::cell::Cell::new(false);
+    let as_starter = |starter: &RunStarter, dispatch: Dispatch<'_>| {
+        // After the drive read the step, before its dispatch holds the cell.
+        let (status, decided) = approve(&cell, &id);
+        assert_eq!(status, 200, "{decided}");
+        raced.set(true);
+        cell.caller.record(Some(Caller {
+            subject_id: starter.subject.clone(),
+            roles: starter.roles.clone(),
+            actor_kind: "user",
+            role_table: norn_cell_do::principal::FIXTURE_ROLES,
+        }));
+        let answer = dispatch();
+        cell.caller.record(None);
+        Some(answer)
+    };
+    let as_requester = |_requester: &RunStarter, _dispatch: Dispatch<'_>| None;
+    norn_api::flow_driver::drive_run(
+        &cell.host,
+        "melt-run",
+        &as_starter,
+        &as_requester,
+        &cell.handles,
+        LogicalTime::from_millis(NOW * 1000 + 5),
+    )
+    .unwrap();
+    assert!(raced.get());
+    assert_eq!(melt(&cell).0, 404, "never on the starter's recorded roles");
+    assert_eq!(run_state(&cell), json!("awaiting_perform_convert"));
+    assert_eq!(standing(&cell, &id), not_executed());
+}
+
+/// S6b: a step's call carries its exact attempt from the moment it parks.
+/// An attempt that ended before anyone decided still bounds the approval:
+/// the requester's call under the attempt's key is refused
+/// `approval.attempt_ended`, for good, and never runs.
+#[test]
+fn an_attempt_that_ended_before_the_decision_never_gets_its_call_run() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("cell.sqlite");
+    let id = parked_step(&path);
+    let (step, key) = step_and_key(&path);
+    end_attempt(&path, &step);
+    let cell = cell_on(file(&path), false);
+    let (status, decided) = approve(&cell, &id);
+    assert_eq!(status, 200, "{decided}");
+    let (status, refused) = melt_call(&cell, "12", &key);
+    assert_eq!(status, 409, "{refused}");
+    assert_eq!(
+        refused["code"],
+        json!("approval.attempt_ended"),
+        "{refused}"
+    );
+    assert_eq!(melt(&cell).0, 404);
+    assert_eq!(standing(&cell, &id), attempt_ended());
+}
+
+/// S5a: a call pinned to a definitions version is not the call an unpinned
+/// step makes, even under the step's key, input and requester: its approved
+/// commit is never delivered to the step.
+#[test]
+fn a_pinned_call_under_a_steps_key_never_supplies_the_steps_outcome() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("cell.sqlite");
+    let id = parked_step(&path);
+    let (_step, key) = step_and_key(&path);
+    let cell = cell_on(file(&path), false);
+    let version = cell.host.active_definitions_version().unwrap().unwrap();
+    let query = format!("{SCOPE}&version={version}");
+    let pinned = || {
+        call_with(
+            &cell,
+            "POST",
+            &format!("/v1/actions/{MELT_ACTION}"),
+            &query,
+            OPERATOR,
+            &melt_body("melt-7", "12", "10", &key),
+        )
+    };
+    let (status, parked) = pinned();
+    assert_eq!(status, 202, "{parked}");
+    let pinned_id = parked["decision"]["id"].as_str().unwrap().to_owned();
+    assert_ne!(pinned_id, id);
+    let (status, decided) = decide_with(&cell, &pinned_id, "approve-pinned");
+    assert_eq!(status, 200, "{decided}");
+    let (status, receipt) = pinned();
+    assert_eq!(status, 200, "{receipt}");
+
+    let woke = wake(&cell, NOW * 1000 + 1);
+    assert_eq!(woke.steps, 0, "{woke:?}");
+    assert_eq!(run_state(&cell), json!("awaiting_perform_convert"));
+}
+
+/// S5c: of two approvals of a step's exact call (the gate revised between
+/// them), the one the ledger committed last binds the step, whatever their
+/// decision ids: here the later approval's id sorts first, and its commit
+/// is the step's outcome.
+#[test]
+fn of_two_approvals_of_a_steps_call_the_later_commit_binds() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("cell.sqlite");
+    let first = parked_step(&path);
+    let (_step, key) = step_and_key(&path);
+    let cell = cell_on(file(&path), false);
+    let (status, decided) = approve(&cell, &first);
+    assert_eq!(status, 200, "{decided}");
+    // Revise until the call's next parking has an id sorting before the
+    // first approval's.
+    let mut later = None;
+    for revision in 1..=16 {
+        revise_gate_from(&cell, revision);
+        let (status, parked) = melt_call(&cell, "12", &key);
+        assert_eq!(status, 202, "{parked}");
+        let id = parked["decision"]["id"].as_str().unwrap().to_owned();
+        if id < first {
+            later = Some(id);
+            break;
+        }
+    }
+    let later = later.expect("a revision whose call id sorts first");
+    let (status, decided) = decide_with(&cell, &later, "approve-later");
+    assert_eq!(status, 200, "{decided}");
+    let (status, receipt) = melt_call(&cell, "12", &key);
+    assert_eq!(status, 200, "{receipt}");
+
+    let woke = wake(&cell, NOW * 1000 + 1);
+    assert_eq!(woke.steps, 1, "{woke:?}");
+    assert_eq!(run_state(&cell), json!("completed"));
+    assert_eq!(standing(&cell, &later), committed());
+}
+
+/// S6c: each commit is attributed to the approval it consumed. A refusal
+/// recorded for one approval stays final when the same call later commits
+/// under another gate revision's approval.
+#[test]
+fn a_recorded_refusal_stays_final_when_the_call_commits_under_another_approval() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("cell.sqlite");
+    let id = parked_step(&path);
+    let (step, key) = step_and_key(&path);
+    {
+        let cell = cell_on(file(&path), false);
+        let (status, decided) = approve(&cell, &id);
+        assert_eq!(status, 200, "{decided}");
+    }
+    end_attempt(&path, &step);
+    let cell = cell_on(file(&path), false);
+    let (status, refused) = melt_call(&cell, "12", &key);
+    assert_eq!(status, 409, "{refused}");
+    assert_eq!(standing(&cell, &id), attempt_ended());
+
+    revise_gate(&cell);
+    let (status, parked) = melt_call(&cell, "12", &key);
+    assert_eq!(status, 202, "{parked}");
+    let other = parked["decision"]["id"].as_str().unwrap().to_owned();
+    assert_ne!(other, id);
+    let (status, decided) = decide_with(&cell, &other, "approve-other");
+    assert_eq!(status, 200, "{decided}");
+    let (status, receipt) = melt_call(&cell, "12", &key);
+    assert_eq!(status, 200, "{receipt}");
+    assert_eq!(standing(&cell, &other), committed());
+    assert_eq!(standing(&cell, &id), attempt_ended(), "final");
 }
