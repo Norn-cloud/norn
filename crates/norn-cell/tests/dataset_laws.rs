@@ -49,7 +49,11 @@ const FIELDS: [&str; 8] = [
 /// connectives, text equality and a nullable read.
 const LOWERED: [(&str, &str, &str); 4] = [
     ("price_nonnegative", "error", "self.price >= 0"),
-    ("customer_named", "warning", "(self.customer ?? 'nobody') != 'void'"),
+    (
+        "customer_named",
+        "warning",
+        "(self.customer ?? 'nobody') != 'void'",
+    ),
     (
         "line_total_bounded",
         "error",

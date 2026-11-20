@@ -1763,6 +1763,35 @@ pub fn analytics<E: SqlEngine>(
         });
         return Some(respond(answer));
     }
+    // MANIFEST-LINEAGE-1: one dataset row traced to its manifest and files.
+    let lineage = request
+        .path
+        .strip_prefix("/v1/datasets/")
+        .and_then(|rest| rest.strip_suffix(":lineage"))
+        .and_then(|rest| rest.split_once("/rows/"))
+        .filter(|(kind, row)| {
+            request.method == "GET"
+                && !kind.is_empty()
+                && !kind.contains('/')
+                && !row.is_empty()
+                && !row.contains('/')
+        });
+    if let Some((kind, row)) = lineage {
+        let _request = RequestScope::new(principals);
+        let actor = principals.resolve(request.authorization, request.now);
+        let answer = scope_of(request.query).and_then(|scope| {
+            let (kind, row) = (decoded(kind)?, decoded(row)?);
+            document_json(&norn_api::analytics_routes::dataset_lineage(
+                host,
+                &scope,
+                actor.as_deref(),
+                (&kind, &row),
+                &CellObjectAccess,
+                transport,
+            )?)
+        });
+        return Some(respond(answer));
+    }
     if export.is_none() && profile.is_none() && request.path != "/v1/datasets:load" {
         return None;
     }

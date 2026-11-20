@@ -962,11 +962,146 @@ fn commit_manifest<E: SqlEngine>(
             held_by_rules: land.held_by_rules,
         },
         valid_time: land.valid_time.clone(),
+        markings: guard
+            .store()
+            .dataset_markings(object_type, &landing.table)
+            .map_err(Refusal::host)?,
     };
     let (hash, receipt) = guard
         .commit_dataset_manifest(&manifest)
         .map_err(manifest_refusal)?;
     Ok((manifest, hash, receipt))
+}
+
+/// One file a dataset row is traced through, and the row's offset in it.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NornLineageFile {
+    /// The object's durable URI.
+    pub uri: String,
+    /// Its SHA-256.
+    pub sha256: String,
+    /// The row's source offset (1-based, in source file order); the data
+    /// file carries it as its `:row` column.
+    pub row: u64,
+}
+
+/// One law or invariant a dataset row fails.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NornRowFinding {
+    /// The rule identity (canonical JSON of its reference).
+    pub rule: String,
+    /// The law (`law:<id>`) or invariant (`invariant:<id>`).
+    pub label: String,
+    /// Whether it holds the row back.
+    pub holds: bool,
+}
+
+/// The outcome of `GET /v1/datasets/{type}/rows/{row}:lineage`.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NornDatasetLineage {
+    /// The dataset's object type.
+    pub object_type: String,
+    /// The source row offset; dataset answers name rows by it.
+    pub row: u64,
+    /// The manifest that admitted the dataset.
+    pub manifest: String,
+    /// The commit that admitted it.
+    pub commit_seq: u64,
+    /// The source upload, at the row.
+    pub source: NornLineageFile,
+    /// The data file, at the row; absent when the row was not typed.
+    pub data: Option<NornLineageFile>,
+    /// Why the row was not typed (`bulk.*`), if it was not.
+    pub refused: Option<String>,
+    /// Every rule the row fails.
+    pub findings: Vec<NornRowFinding>,
+    /// Whether the row is held back (not typed, or failing a rule that holds).
+    pub held: bool,
+}
+
+/// MANIFEST-LINEAGE-1: trace one dataset row, as a question answer or the
+/// records grid names it, to the manifest that admitted it, the source
+/// upload and the data file, each by content hash and row offset, with what
+/// held it back. Held-back rows are traced too. Read like the type's
+/// records; no value is disclosed.
+///
+/// # Errors
+/// A denied gate (one opaque 403), no dataset or no such row (404), or an
+/// unreachable engine.
+#[utoipa::path(get, path = "/v1/datasets/{type}/rows/{row}:lineage", params(("type" = String, Path, description = "The dataset's object type."), ("row" = u64, Path, description = "The source row offset."), ScopeQuery), responses((status = 200, description = "The row's lineage.", body = NornDatasetLineage), (status = 403, description = "The request was refused: scope or authority denied.", body = Refusal), (status = 404, description = "The request was refused: not found.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
+pub fn dataset_lineage<E: SqlEngine>(
+    host: &DevHost<E>,
+    scope: &ScopeQuery,
+    actor: Option<&str>,
+    (object_type, row): (&str, &str),
+    access: &dyn ObjectAccess,
+    transport: &dyn Transport,
+) -> Result<NornDatasetLineage, Refusal> {
+    use norn_cell::analytics::{LineageRequest, LineageResponse};
+    uniform_gate(host, scope, actor, object_type, access)?;
+    let row: u64 = row
+        .parse()
+        .ok()
+        .filter(|row| *row > 0)
+        .ok_or_else(crate::object_routes::not_found)?;
+    let guard = host.cell()?;
+    let store = guard.store();
+    let current = store
+        .dataset_manifest(norn_cell::MAIN_WORLD, object_type)
+        .map_err(Refusal::host)?
+        .ok_or_else(crate::object_routes::not_found)?;
+    let manifest = &current.manifest;
+    if row > manifest.counts.source {
+        return Err(crate::object_routes::not_found());
+    }
+    let tenant = TenantId::of_scope(&host.scope().key());
+    let call = EngineCall::new(
+        "lineage",
+        &LineageRequest {
+            tenant: tenant.clone(),
+            table: object_type.to_owned(),
+            load: manifest.load.clone(),
+            row,
+        },
+    )
+    .map_err(engine_failure)?;
+    let answer = exchange(store, transport, &tenant, None, &call).map_err(engine_failure)?;
+    if answer.status != 200 {
+        return Err(engine_failure(refused(&answer.body)));
+    }
+    let found: LineageResponse = decode(&answer.body).map_err(engine_failure)?;
+    let file = |file: &ManifestFile| NornLineageFile {
+        uri: file.uri.clone(),
+        sha256: file.sha256.clone(),
+        row,
+    };
+    let held = !found.admitted || found.findings.iter().any(|finding| finding.holds);
+    Ok(NornDatasetLineage {
+        object_type: object_type.to_owned(),
+        row,
+        manifest: current.hash.clone(),
+        commit_seq: current.commit_seq,
+        source: NornLineageFile {
+            uri: manifest.source.uri.clone(),
+            sha256: manifest.source.sha256.clone(),
+            row,
+        },
+        data: found.admitted.then(|| file(&manifest.data)),
+        refused: found.refused,
+        findings: found
+            .findings
+            .into_iter()
+            .map(|finding| NornRowFinding {
+                rule: finding.rule,
+                label: finding.label,
+                holds: finding.holds,
+            })
+            .collect(),
+        held,
+    })
 }
 
 /// MANIFEST-CURRENT-1: the current dataset manifest of `object_type`, if it is one.
@@ -1012,11 +1147,8 @@ fn dataset_not_found() -> Refusal {
 pub fn serves_records<E: SqlEngine>(host: &DevHost<E>, object_type: &str) -> Result<bool, Refusal> {
     let guard = host.cell()?;
     let has_type = guard.store().model().has_type(object_type);
-    // PRIVACY-1: the engine mirror holds stored values, so a cell that
-    // declares markings reads its records natively, where they are projected.
-    if has_type && !host.marking_catalog(&guard.store().read())?.is_empty() {
-        return Ok(false);
-    }
+    // MANIFEST-MARK-1: a dataset's rows live only in the engine; its marked
+    // columns are projected on every read (`dataset_marks`).
     Ok(has_type
         && guard
             .store()
@@ -1087,6 +1219,15 @@ pub fn page_objects<E: SqlEngine>(
     } else {
         (Vec::new(), Vec::new())
     };
+    let marks = dataset_marks(host, store, object_type)?;
+    if let Some(column) = filters
+        .iter()
+        .map(|clause| clause.column.as_str())
+        .chain(sort.iter().map(|key| key.column.as_str()))
+        .find(|column| marks.is_marked(column))
+    {
+        return Err(marked_column(column));
+    }
     let page = if !values && !query.filter.is_empty() {
         PageResponse {
             total: 0,
@@ -1123,7 +1264,7 @@ pub fn page_objects<E: SqlEngine>(
     let records = page
         .rows
         .into_iter()
-        .map(|row| queried(object_type, &scope_key, row, values))
+        .map(|row| queried(object_type, &scope_key, row, values, &marks))
         .collect::<Result<Vec<_>, Refusal>>()?;
     Ok(NornObjectQueryPage {
         object_type: object_type.to_owned(),
@@ -1199,20 +1340,87 @@ fn engine_page<E: SqlEngine>(
 
 /// One dataset row as the grid shows it: withheld (no values, no version)
 /// for a caller without Values.
+/// MANIFEST-MARK-1: how a dataset's marked columns are projected for a reader.
+pub(crate) struct DatasetMarks {
+    catalog: crate::privacy::MarkingCatalog,
+    columns: BTreeMap<String, Vec<String>>,
+    key: Option<crate::privacy::PseudonymKey>,
+}
+
+impl DatasetMarks {
+    fn is_marked(&self, column: &str) -> bool {
+        self.columns.contains_key(column)
+    }
+}
+
+/// The marks of the current dataset of `object_type`: its manifest's marked
+/// columns, under the cell's marking catalog.
+fn dataset_marks<E: SqlEngine>(
+    host: &DevHost<E>,
+    store: &CellStore<E>,
+    object_type: &str,
+) -> Result<DatasetMarks, Refusal> {
+    let columns = store
+        .dataset_manifest(norn_cell::MAIN_WORLD, object_type)
+        .map_err(Refusal::host)?
+        .map(|current| current.manifest.markings)
+        .unwrap_or_default();
+    Ok(DatasetMarks {
+        catalog: host.marking_catalog(&store.read())?,
+        columns,
+        key: host.pseudonym_key().cloned(),
+    })
+}
+
+/// MANIFEST-MARK-1: a marked column on a path that would read its stored
+/// values outside a projection (a filter, a sort, a profile, an export or a
+/// question) refuses.
+fn marked_column(column: &str) -> Refusal {
+    Refusal::new(
+        http::StatusCode::FORBIDDEN,
+        "privacy.marked_column",
+        "the column is marked",
+        &format!("{column} is marked; read it through the records grid, where it is masked"),
+    )
+}
+
 fn queried(
     object_type: &str,
     scope_key: &str,
     row: norn_cell::analytics::PageRow,
     values: bool,
+    marks: &DatasetMarks,
 ) -> Result<crate::objects::NornQueriedRecord, Refusal> {
+    let mut masked = BTreeMap::new();
+    let mut withheld_properties = Vec::new();
     let read = if values {
-        Some(
-            row.values
-                .iter()
-                .map(|(id, value)| Ok((id.clone(), norn_cell::analytics::runtime_value(value)?)))
-                .collect::<Result<BTreeMap<_, _>, norn_ir::RuntimeValueError>>()
-                .map_err(Refusal::host)?,
-        )
+        let mut read = row
+            .values
+            .iter()
+            .map(|(id, value)| Ok((id.clone(), norn_cell::analytics::runtime_value(value)?)))
+            .collect::<Result<BTreeMap<_, _>, norn_ir::RuntimeValueError>>()
+            .map_err(Refusal::host)?;
+        for (column, ids) in &marks.columns {
+            let mask = crate::privacy::strongest(&marks.catalog, ids)
+                .unwrap_or(norn_ir::MaskPolicy::Refuse {});
+            let Some(value) = read.get_mut(column) else {
+                continue;
+            };
+            let mode = crate::privacy::apply(&mask, marks.key.as_ref(), value);
+            if mode == crate::privacy::NornMaskMode::Refuse {
+                read.remove(column);
+                withheld_properties.push(column.clone());
+            }
+            masked.insert(
+                column.clone(),
+                crate::privacy::NornMaskedProperty {
+                    mode,
+                    markings: ids.clone(),
+                    revealable: false,
+                },
+            );
+        }
+        Some(read)
     } else {
         None
     };
@@ -1223,8 +1431,8 @@ fn queried(
         version: read.as_ref().map(|_| row.version),
         withheld: read.is_none(),
         values: read,
-        withheld_properties: Vec::new(),
-        masked: BTreeMap::new(),
+        withheld_properties,
+        masked,
     })
 }
 
@@ -1274,7 +1482,8 @@ pub fn record_object<E: SqlEngine>(
         .into_iter()
         .next()
         .ok_or_else(crate::object_routes::not_found)?;
-    queried(object_type, &host.scope().key(), row, values)
+    let marks = dataset_marks(host, store, object_type)?;
+    queried(object_type, &host.scope().key(), row, values, &marks)
 }
 
 /// One parsed grid clause as the engine evaluates it: the same operator,
@@ -1537,4 +1746,84 @@ fn outliers_of(
             })
             .collect::<Result<_, Refusal>>()?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+    use std::sync::Arc;
+
+    use norn_cell::analytics::{PageRow, Value};
+    use norn_ir::{MarkingId, MarkingIr, MarkingSeverity, MaskPolicy, RuntimeValue};
+
+    use super::{DatasetMarks, queried};
+    use crate::privacy::{NornMaskMode, PseudonymKey};
+    use crate::scope::CellScope;
+
+    fn marks(mask: MaskPolicy, key: Option<PseudonymKey>) -> DatasetMarks {
+        let marking = MarkingIr {
+            id: MarkingId("pii.name".into()),
+            label: "Name".into(),
+            severity: MarkingSeverity::High,
+            category: "pii".into(),
+            mask,
+        };
+        DatasetMarks {
+            catalog: Arc::new(BTreeMap::from([("pii.name".to_owned(), marking)])),
+            columns: BTreeMap::from([("customer".to_owned(), vec!["pii.name".to_owned()])]),
+            key,
+        }
+    }
+
+    fn row() -> PageRow {
+        PageRow {
+            id: "1".into(),
+            version: 1,
+            values: BTreeMap::from([
+                ("customer".to_owned(), Value::Text("Ann Lee".into())),
+                ("amount".to_owned(), Value::Number("12.5".into())),
+            ]),
+        }
+    }
+
+    /// MANIFEST-MARK-1: a marked dataset column reads as its mask says (an
+    /// analyst sees a pseudonym); an unmarked one reads as stored.
+    #[test]
+    fn a_marked_dataset_column_reads_as_its_mask() {
+        let scope = CellScope {
+            org_id: "org_demo".into(),
+            environment_id: "dev".into(),
+        };
+        let key = PseudonymKey::derive(&[7_u8; 32], &scope).expect("key");
+        let pseudonym = key.pseudonym("customer", &RuntimeValue::String("Ann Lee".into()));
+        let read = queried(
+            "bench.Line",
+            "org_demo/dev",
+            row(),
+            true,
+            &marks(
+                MaskPolicy::Pseudonym {
+                    subject: "customer".into(),
+                },
+                Some(key),
+            ),
+        )
+        .expect("read");
+        let values = read.values.expect("values");
+        assert_eq!(values["customer"], RuntimeValue::String(pseudonym));
+        assert_eq!(values["amount"].canonical_json().expect("json"), b"12.5");
+        assert_eq!(read.masked["customer"].mode, NornMaskMode::Pseudonym);
+        assert!(!read.masked.contains_key("amount"));
+        // A refused mask withholds the column.
+        let refused = queried(
+            "bench.Line",
+            "org_demo/dev",
+            row(),
+            true,
+            &marks(MaskPolicy::Refuse {}, None),
+        )
+        .expect("read");
+        assert!(!refused.values.expect("values").contains_key("customer"));
+        assert_eq!(refused.withheld_properties, vec!["customer".to_owned()]);
+    }
 }
