@@ -991,8 +991,8 @@ fn record_settlement<E: SqlEngine>(
         ),
     };
     let _epoch = host.definition_read()?;
-    let cell = host.cell()?;
-    cell.store()
+    host.cell()?
+        .store()
         .settle_approved_call(MAIN_WORLD, decision_id, refused)
         .map_err(Refusal::host)
 }

@@ -431,7 +431,8 @@ fn expire_decision<E: SqlEngine>(
 }
 
 /// When the cell next has work to try: the earliest timer or decision
-/// deadline, each no earlier than its retry eligibility (TIMER-RETRY-1).
+/// deadline, or approved call still due, each no earlier than its retry
+/// eligibility (TIMER-RETRY-1).
 fn next_wake<E: SqlEngine>(cell: &ActionCell<E>) -> Result<Option<u64>, Refusal> {
     let reader = cell.store().read();
     let timer = reader.next_eligible_timer().map_err(Refusal::host)?;
@@ -448,10 +449,10 @@ fn next_wake<E: SqlEngine>(cell: &ActionCell<E>) -> Result<Option<u64>, Refusal>
             decision.expires_at_ms.max(eligible)
         })
         .min();
-    let call = reader
+    let approved = reader
         .next_approved_call(MAIN_WORLD)
         .map_err(Refusal::host)?;
-    Ok(min(min(timer, decision), call))
+    Ok(min(min(timer, decision), approved))
 }
 
 /// What an item's refusal says for the operator: its host cause, else its code.
