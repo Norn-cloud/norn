@@ -1270,8 +1270,7 @@ fn a_fresh_binding_cannot_seed_the_legacy_digest_fallback() {
         "{refused}"
     );
     // Under its own exact digest it is an ordinary revision.
-    let (status, revised) =
-        install_raw(&cell, ID, Some(1), &payload(attack_schema, &attack_exact));
+    let (status, revised) = install_raw(&cell, ID, Some(1), &payload(attack_schema, &attack_exact));
     assert_eq!(status, 200, "{revised}");
     assert_eq!(revised["version"], json!(2), "{revised}");
 }

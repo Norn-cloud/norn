@@ -235,11 +235,7 @@ fn text<'v>(object: &'v Map<String, Value>, key: &str) -> Option<&'v str> {
 /// binding retained then stays revisable. A new id, a changed manifest or a
 /// changed digest uses the exact reader only.
 #[must_use]
-pub fn check(
-    raw: &str,
-    roles: &[&str],
-    anchor: Option<&RetainedAnchor>,
-) -> Vec<RefusalDiagnostic> {
+pub fn check(raw: &str, roles: &[&str], anchor: Option<&RetainedAnchor>) -> Vec<RefusalDiagnostic> {
     let mut findings = Vec::new();
     let Ok(Value::Object(payload)) = jcs::read(raw) else {
         findings.push(error(codes::INVALID_PAYLOAD, "a binding is an object", ""));
