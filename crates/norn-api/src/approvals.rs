@@ -47,9 +47,11 @@
 //! a refusal decided while it ran is recorded on the ledger and is final,
 //! whatever commits under the same key later. A call a flow step parked
 //! carries that exact step attempt (its run, its parked command and
-//! generation) from the moment it parks, and runs only while that attempt
-//! waits on it (S6b). A denial of authority is not recorded: authority is
-//! decided anew on every try.
+//! generation) from the moment it parks, named by the flow's own dispatch
+//! and never derived from the idempotency key, and runs only while that
+//! attempt waits on it (S6b), and only by that dispatch (S5a): a direct call
+//! never takes a step's call key. A denial of authority is not recorded:
+//! authority is decided anew on every try.
 //!
 //! APPROVAL-LIVE-1: the requester's current authority is established by
 //! the requester's own verified credential on its retry, or, for the
@@ -499,7 +501,18 @@ pub(crate) fn refuse_unauthorized<E: SqlEngine>(
 ) -> Result<(), Refusal> {
     let _epoch = host.definition_read()?;
     let mut cell = host.cell()?;
-    record_final(&mut cell, decision_id, requester_unauthorized()).map(|_refusal| ())
+    refuse_unauthorized_in(&mut cell, decision_id)
+}
+
+/// [`refuse_unauthorized`] under a hold the caller already has.
+///
+/// # Errors
+/// A host failure; nothing is recorded.
+pub(crate) fn refuse_unauthorized_in<E: SqlEngine>(
+    cell: &mut ActionCell<E>,
+    decision_id: &str,
+) -> Result<(), Refusal> {
+    record_final(cell, decision_id, requester_unauthorized()).map(|_refusal| ())
 }
 
 /// S6b: whether the approved call of `decision_id` may still run: a direct
@@ -555,9 +568,14 @@ pub(crate) fn is_requester(principal: Option<&RunStarter>, requester: &RunStarte
 
 /// S2: the approval `decision_id` is consumed only by its parked
 /// requester's own authenticated request; any other principal is denied,
-/// and nothing is recorded. APPROVAL-LIVE-1: while the call is still to
-/// run, that principal must also hold the requester's current authority
-/// for it ([`Authorizer::live_authority`](crate::authz::Authorizer::live_authority)).
+/// and nothing is recorded. S5a: and only by the invocation it was parked
+/// for: a flow step's call by the flow's own dispatch of that exact step
+/// attempt (`attempt`, carried by the trusted invocation, never derived from
+/// the idempotency key), a direct call by a direct call. Any other
+/// invocation is denied the same way. APPROVAL-LIVE-1: while the call is
+/// still to run, that principal must also hold the requester's current
+/// authority for it
+/// ([`Authorizer::live_authority`](crate::authz::Authorizer::live_authority)).
 ///
 /// # Errors
 /// The opaque action denial; a host failure.
@@ -566,11 +584,13 @@ pub(crate) fn require_requester<E: SqlEngine>(
     cell: &ActionCell<E>,
     decision_id: &str,
     principal: Option<&RunStarter>,
+    attempt: Option<&StepAttempt>,
 ) -> Result<(), Refusal> {
     let (held, state) = approved_call(cell, decision_id)?
         .ok_or_else(|| Refusal::host("an approved call lost its record"))?;
-    let Some(principal) = principal.filter(|_| is_requester(principal, &held.call.requester))
-    else {
+    let Some(principal) = principal.filter(|_| {
+        is_requester(principal, &held.call.requester) && held.call.attempt.as_ref() == attempt
+    }) else {
         return Err(crate::actions::action_denied());
     };
     // APPROVAL-LIVE-1: a call still to run runs only under the requester's
@@ -815,6 +835,7 @@ pub(crate) fn approved_state<E: SqlEngine>(
                 && record.input == held.call.input
         })
     });
+    let conflict = || CallState::Refused("action.idempotency_conflict".to_owned());
     let state = match (row.consumed_seq, exact) {
         // S6c: the commit that consumed this approval wrote the record.
         (Some(_seq), Some(Some(record))) => CallState::Committed(Box::new(record)),
@@ -823,14 +844,37 @@ pub(crate) fn approved_state<E: SqlEngine>(
                 "an approved call's consuming commit lost its record",
             ));
         }
-        (None, None) => CallState::NotExecuted,
-        // Backfilled: its commits name no approval, so the exact record is
-        // its commit.
-        (None, Some(Some(record))) if row.legacy => CallState::Committed(Box::new(record)),
-        // Another commit used the key (another call, or the same call under
-        // another approval): never this approval's commit, and it can never
-        // run.
-        (None, Some(_other)) => CallState::Refused("action.idempotency_conflict".to_owned()),
+        // S6b: a step's call whose attempt no longer waits on it never runs.
+        (None, None) => match &held.call.attempt {
+            Some(attempt) if !attempt.waiting(cell.store())? => {
+                CallState::Refused(approval_codes::ATTEMPT_ENDED.to_owned())
+            }
+            _waiting_or_direct => CallState::NotExecuted,
+        },
+        // S6c: exactly this call, committed by a commit that consumed no
+        // approval (one made before consumption was recorded, or an ungated
+        // one): its commit. Read from the ledger-derived rows alone, so an
+        // opened file and its restored export answer alike; a commit that
+        // consumed another approval is never this one's.
+        (None, Some(Some(record))) => {
+            let seq = crate::actions::record_commit_seq(
+                cell.store(),
+                &held.call.action,
+                &held.call.idempotency_key,
+            )?;
+            let consumed = cell
+                .store()
+                .read()
+                .approval_consumed_at(MAIN_WORLD, seq)
+                .map_err(Refusal::host)?;
+            match consumed {
+                None => CallState::Committed(Box::new(record)),
+                Some(_other) => conflict(),
+            }
+        }
+        // Another call used the key: never this approval's commit, and it
+        // can never run.
+        (None, Some(None)) => conflict(),
     };
     Ok((held, state))
 }

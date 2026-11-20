@@ -204,6 +204,16 @@ pub fn call_action<E: SqlEngine>(
     disclosure: &dyn QuestionRuntime<E>,
     now: LogicalTime,
 ) -> Result<ActionAnswer, Refusal> {
+    // S5a: a flow step's call key is the host's own identity for that step
+    // attempt's call. A direct call never takes it, so it can neither park,
+    // consume an approval nor commit a record a step would take as its
+    // outcome.
+    if crate::flow_driver::is_step_call_key(&request.idempotency_key) {
+        return Err(invalid_at(
+            "/idempotencyKey",
+            "idempotencyKey is reserved for a flow step's own call",
+        ));
+    }
     // The transport's own verified principal for this request: the only one
     // that may consume an approval of its call (S2).
     let principal = actor.and_then(|actor| host.authorizer.verified_principal(actor));
@@ -213,6 +223,7 @@ pub fn call_action<E: SqlEngine>(
             query,
             actor,
             principal: principal.as_ref(),
+            attempt: None,
             action_id,
             request,
             now,
@@ -232,6 +243,11 @@ pub(crate) struct ActionCall<'a> {
     /// is the parked requester. `None` for a call run under recorded
     /// authority (a run's starter), which never consumes an approval.
     pub(crate) principal: Option<&'a norn_cell::flow_run::RunStarter>,
+    /// S5a: the flow step attempt making the call, carried only by the
+    /// trusted invocations that run a step's call (the flow's dispatch, and
+    /// an approval's dispatch of the call it holds), never derived from the
+    /// idempotency key. `None` for a direct call.
+    pub(crate) attempt: Option<&'a crate::approvals::StepAttempt>,
     pub(crate) action_id: &'a str,
     pub(crate) request: &'a ActionRequest,
     pub(crate) now: LogicalTime,
@@ -254,6 +270,7 @@ pub(crate) fn call_action_bound<E: SqlEngine>(
         query,
         actor,
         principal,
+        attempt,
         action_id,
         request,
         now,
@@ -299,6 +316,7 @@ pub(crate) fn call_action_bound<E: SqlEngine>(
             &mut cell,
             approved,
             principal,
+            attempt,
         )?);
     }
     let model = cell.store().model().clone();
@@ -340,6 +358,7 @@ pub(crate) fn call_action_bound<E: SqlEngine>(
             action_digest,
             approved,
             principal,
+            attempt,
             definitions_version: query.version,
         },
     )? {
@@ -399,6 +418,7 @@ fn stale_pin<E: SqlEngine>(
     cell: &mut crate::host::ActionCell<E>,
     approved: Option<&str>,
     principal: Option<&norn_cell::flow_run::RunStarter>,
+    attempt: Option<&crate::approvals::StepAttempt>,
 ) -> Result<Refusal, Refusal> {
     let stale = Refusal::new(
         StatusCode::CONFLICT,
@@ -411,7 +431,7 @@ fn stale_pin<E: SqlEngine>(
         .transpose()?;
     // S2: only the requester's own request decides its approved call.
     if let Some(decision) = &approval {
-        crate::approvals::require_requester(authorizer, cell, decision, principal)?;
+        crate::approvals::require_requester(authorizer, cell, decision, principal, attempt)?;
     }
     Ok(crate::approvals::refused_under(
         cell,
@@ -458,11 +478,13 @@ fn kernel_refusal<E: SqlEngine>(
 
 /// What the gate weighs besides the kernel call: the action's digest, the
 /// approved command an approver's dispatch runs, the request's
-/// authenticated principal and the call's definitions pin.
+/// authenticated principal, the trusted step attempt making the call (S5a)
+/// and the call's definitions pin.
 struct Admitted<'a> {
     action_digest: String,
     approved: Option<&'a str>,
     principal: Option<&'a norn_cell::flow_run::RunStarter>,
+    attempt: Option<&'a crate::approvals::StepAttempt>,
     definitions_version: Option<u64>,
 }
 
@@ -497,6 +519,7 @@ fn through_gate<E: SqlEngine>(
         ref action_digest,
         approved,
         principal,
+        attempt,
         definitions_version,
     } = *admitted;
     let action_id = kernel_call.action.action_id.as_str();
@@ -525,6 +548,7 @@ fn through_gate<E: SqlEngine>(
         approved,
         command.as_deref(),
         principal,
+        attempt,
     )?;
     if let Some(decision) = &approval
         && let Some(refused) = crate::approvals::recorded_refusal(cell, decision)?
@@ -559,6 +583,18 @@ fn through_gate<E: SqlEngine>(
                 .authorizer
                 .verified_principal(&kernel_call.actor)
                 .ok_or_else(action_denied)?;
+            // S5a: the step attempt the trusted invocation names must still
+            // wait on exactly this call, judged under this hold; a call
+            // parks for an attempt only then.
+            if let Some(attempt) = attempt
+                && !crate::flow_driver::attempt_makes(
+                    cell.store(),
+                    attempt,
+                    &kernel_call.idempotency_key,
+                )?
+            {
+                return Err(crate::approvals::attempt_ended());
+            }
             let parked = crate::approvals::ParkedCall {
                 action: action_id.to_owned(),
                 input: kernel_call.input.clone(),
@@ -566,11 +602,8 @@ fn through_gate<E: SqlEngine>(
                 requester,
                 action_digest: action_digest.clone(),
                 definitions_version,
-                // S6b: the step attempt waiting on this call, recorded now.
-                attempt: crate::flow_driver::waiting_attempt(
-                    cell.store(),
-                    &kernel_call.idempotency_key,
-                )?,
+                // S6b: the step attempt making this call, recorded now.
+                attempt: attempt.cloned(),
             };
             Ok(
                 match crate::approvals::hold(cell, &gate, &parked, kernel_call.turn.now)? {
@@ -592,7 +625,9 @@ fn through_gate<E: SqlEngine>(
 
 /// The approval a call runs under, if one does: the approver's dispatch's
 /// own (`approved`), or the approval of exactly this call's parked command.
-/// S2: consumed only by its parked requester's authenticated principal.
+/// S2: consumed only by its parked requester's authenticated principal;
+/// S5a: and only by the invocation it was parked for (its step attempt, or
+/// none for a direct call).
 /// APPROVAL-REVISION-1: an approver's try is fenced here, under the epoch
 /// and the cell the dispatch holds, before anything parks or writes.
 fn approval_of<E: SqlEngine>(
@@ -601,6 +636,7 @@ fn approval_of<E: SqlEngine>(
     approved: Option<&str>,
     command: Option<&str>,
     principal: Option<&norn_cell::flow_run::RunStarter>,
+    attempt: Option<&crate::approvals::StepAttempt>,
 ) -> Result<Option<String>, Refusal> {
     let approval = match (approved, command) {
         (Some(approved), _command) => Some(crate::decisions::decision_id(approved, 1)?),
@@ -608,7 +644,7 @@ fn approval_of<E: SqlEngine>(
         (None, None) => None,
     };
     if let Some(decision) = &approval {
-        crate::approvals::require_requester(authorizer, cell, decision, principal)?;
+        crate::approvals::require_requester(authorizer, cell, decision, principal, attempt)?;
     }
     if let (Some(approved), Some(decision)) = (approved, &approval)
         && command != Some(approved)
@@ -751,6 +787,21 @@ fn caller_receipt<E: SqlEngine>(
             recorded_at_ms: receipt.body.logical_time,
         },
     })
+}
+
+/// S6c: the commit that wrote the idempotency record of `action_id`'s call
+/// keyed `idempotency_key`.
+///
+/// # Errors
+/// A host failure: the record or its receipt is missing.
+pub(crate) fn record_commit_seq<E: SqlEngine>(
+    store: &norn_cell::CellStore<E>,
+    action_id: &str,
+    idempotency_key: &str,
+) -> Result<u64, Refusal> {
+    Ok(original_receipt(store, action_id, idempotency_key)?
+        .body
+        .commit_seq)
 }
 
 /// The target `record`'s call wrote and its version as that commit wrote

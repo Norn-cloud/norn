@@ -281,8 +281,12 @@ digest, gate definition and revision, definitions pin) must be the approved
 one, compared inside the dispatch's epoch and cell hold (APPROVAL-REVISION-1,
 APPROVAL-PIN-1); a flow step's call carries the exact step attempt it was made
 for (its run, its parked command and generation) from the moment it parks,
-and runs only while that attempt waits on it (`approval.attempt_ended`
-otherwise, also when the attempt ended before anyone decided). A refusal that decides the
+named by the flow's own dispatch and never derived from the idempotency key,
+and runs only by that dispatch and only while that attempt waits on it
+(`approval.attempt_ended` otherwise, also when the attempt ended before anyone
+decided). A step attempt's call key (`step-` and 48 hex digits) is the host's
+own: a direct call under it is refused `request.invalid` before anything parks
+or commits, so a direct call never supplies a step's outcome. A refusal that decides the
 call there (anything but a host failure or a denial of authority, which is
 decided again on every try) is recorded in its own commit, under the same
 cell hold, as one `norn.approval.refused` ledger event carrying its status,
@@ -293,7 +297,13 @@ again. Before recording, the dispatch reads the call again under that hold:
 an exact commit is never masked by a later refusal. A replay of a committed or
 refused call answers its recorded outcome and runs nothing. A cell whose
 approvals were recorded before approved calls were gains their records from
-its decision rows when it opens, exactly as export replay rebuilds them.
+its decision rows when it opens, exactly as export replay rebuilds them. The
+commit that runs an approved call names the approval it consumed, and whether
+a commit consumed an approval is read from those ledger-derived records alone,
+so an opened file and its restored export answer alike: the exact call's commit
+that consumed no approval (one made before consumption was recorded, or an
+ungated one) is the approved call's commit; one that consumed another approval
+never is. One commit never both refuses and consumes the same approval.
 
 A flow step's approved call is the same call. An approval binds a step only
 when its parked call is exactly the call the step attempt makes (parked for
@@ -308,7 +318,10 @@ already has an outcome (committed, or refused other than
 called again: the run's drive and the host's wake (TIMER-ALARM-1) deliver it
 the same way, as due work until the run consumes it, including a result
 recorded but not consumed. A denial of authority on the starter's try leaves
-the step pending and its approval executable.
+the step pending and its approval executable. What a try of a step's call ends
+with is reconciled with the step's approval and recorded under one cell hold:
+an approved call that has its outcome by then (another request committed it)
+gives the step that outcome, never the try's denial.
 A step whose approval no longer covers the call (`approval.definition_changed`)
 parks anew for a fresh approval on its next drive. Named scenarios
 (`crates/norn-cell-do/tests/approval_recovery.rs`): **APPROVAL-RECOVERY-BEFORE**

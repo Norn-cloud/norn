@@ -690,28 +690,50 @@ fn step_and_key(path: &Path) -> ((String, u64), String) {
     (step.unwrap(), key.unwrap())
 }
 
-/// S5: another call made under the step attempt's idempotency key (its own
-/// input, approved on its own) commits. Its result is never delivered to the
-/// waiting step: the approval binds the step's exact call, and the wake and
-/// the drive leave the step waiting.
+/// S5a: a flow step's call key is the host's own identity for that step
+/// attempt's call. A direct call under it (the starter's, with the step's
+/// exact input, unpinned or pinned, or with another input) is refused before
+/// anything parks, consumes an approval or commits, before and after the
+/// step's call is approved: it never supplies the step's outcome. The step's
+/// own call, run by its requester's retry of the run, does.
 #[test]
-fn another_calls_result_is_never_delivered_to_a_waiting_step() {
+fn a_direct_call_with_a_steps_key_never_supplies_the_steps_outcome() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("cell.sqlite");
-    let _id = parked_step(&path);
+    let id = parked_step(&path);
     let (_step, key) = step_and_key(&path);
     let cell = cell_on(file(&path), false);
-    let (status, other) = melt_call(&cell, "11", &key);
-    assert_eq!(status, 202, "{other}");
-    let other_id = other["decision"]["id"].as_str().unwrap().to_owned();
-    let (status, _decided) = decide_with(&cell, &other_id, "approve-other");
-    assert_eq!(status, 200);
-    let (status, receipt) = melt_call(&cell, "11", &key);
-    assert_eq!(status, 200, "{receipt}");
-
-    let woke = wake(&cell, NOW * 1000 + 1);
-    assert_eq!(woke.steps, 0, "{woke:?}");
+    let version = cell.host.active_definitions_version().unwrap().unwrap();
+    let pinned = format!("{SCOPE}&version={version}");
+    let refused_every_way = || {
+        for (query, input) in [(SCOPE, "12"), (pinned.as_str(), "12"), (SCOPE, "11")] {
+            let (status, refused) = call_with(
+                &cell,
+                "POST",
+                &format!("/v1/actions/{MELT_ACTION}"),
+                query,
+                OPERATOR,
+                &melt_body("melt-7", input, "10", &key),
+            );
+            assert_eq!(status, 400, "{refused}");
+            assert_eq!(refused["code"], json!("request.invalid"), "{refused}");
+        }
+    };
+    refused_every_way();
+    assert_eq!(pending_ids(&cell), vec![id.clone()], "nothing parked");
+    let (status, decided) = approve(&cell, &id);
+    assert_eq!(status, 200, "{decided}");
+    assert_eq!(decided["call"], not_executed(), "{decided}");
+    refused_every_way();
+    assert_eq!(melt(&cell).0, 404, "nothing committed");
+    assert_eq!(standing(&cell, &id), not_executed());
+    assert_eq!(wake(&cell, NOW * 1000 + 1), DueWork::default());
     assert_eq!(run_state(&cell), json!("awaiting_perform_convert"));
+
+    let (status, run) = start(&cell);
+    assert_eq!(status, 200, "{run}");
+    assert_eq!(run["state"], json!("completed"), "{run}");
+    assert_eq!(standing(&cell, &id), committed());
 }
 
 /// S6b: a denial of authority is decided anew on every try, so it is never
@@ -739,37 +761,30 @@ fn a_denied_try_of_an_approved_step_call_leaves_the_step_pending() {
 
 /// S6b: an approval runs a step's call only while that exact step attempt
 /// waits on it. Once the attempt has its result (here recorded by an
-/// earlier host), the requester's direct call under the attempt's key is
-/// refused `approval.attempt_ended`, for good, and never runs.
+/// earlier host), the approved call reads `approval.attempt_ended`, for
+/// good, and nothing runs it: not the starter's retry of the run, not the
+/// approver's replay.
 #[test]
 fn an_approved_step_call_never_runs_after_its_attempt_ended() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("cell.sqlite");
     let id = parked_step(&path);
-    let ((command, generation), key) = step_and_key(&path);
+    let (step, _key) = step_and_key(&path);
     {
         let cell = cell_on(file(&path), false);
         let (status, decided) = approve(&cell, &id);
         assert_eq!(status, 200, "{decided}");
         assert_eq!(decided["call"], not_executed(), "{decided}");
     }
-    let ended = norn_ir::RuntimeValue::from_json(json!({ "_tag": "Denied" })).unwrap();
-    assert!(
-        store(&path)
-            .record_parked(&command, generation, &ended)
-            .unwrap()
-    );
+    end_attempt(&path, &step);
     let cell = cell_on(file(&path), false);
-    let (status, refused) = melt_call(&cell, "12", &key);
-    assert_eq!(status, 409, "{refused}");
-    assert_eq!(
-        refused["code"],
-        json!("approval.attempt_ended"),
-        "{refused}"
-    );
+    assert_eq!(standing(&cell, &id), attempt_ended());
+    let _run = start(&cell);
+    let (status, replayed) = approve(&cell, &id);
+    assert_eq!(status, 200, "{replayed}");
+    assert_eq!(replayed["call"], attempt_ended(), "{replayed}");
     assert_eq!(melt(&cell).0, 404);
-    let ended = json!({ "committed": false, "code": "approval.attempt_ended", "state": "refused" });
-    assert_eq!(standing(&cell, &id), ended);
+    assert_eq!(standing(&cell, &id), attempt_ended());
 }
 
 /// End the step attempt the parked call on `path` was made for: an earlier
@@ -861,69 +876,28 @@ fn an_approval_recorded_while_a_step_dispatches_on_recorded_authority_is_never_c
 
 /// S6b: a step's call carries its exact attempt from the moment it parks.
 /// An attempt that ended before anyone decided still bounds the approval:
-/// the requester's call under the attempt's key is refused
-/// `approval.attempt_ended`, for good, and never runs.
+/// the approved call reads `approval.attempt_ended`, for good, and never
+/// runs.
 #[test]
 fn an_attempt_that_ended_before_the_decision_never_gets_its_call_run() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("cell.sqlite");
     let id = parked_step(&path);
-    let (step, key) = step_and_key(&path);
+    let (step, _key) = step_and_key(&path);
     end_attempt(&path, &step);
     let cell = cell_on(file(&path), false);
     let (status, decided) = approve(&cell, &id);
     assert_eq!(status, 200, "{decided}");
-    let (status, refused) = melt_call(&cell, "12", &key);
-    assert_eq!(status, 409, "{refused}");
-    assert_eq!(
-        refused["code"],
-        json!("approval.attempt_ended"),
-        "{refused}"
-    );
+    assert_eq!(decided["call"], attempt_ended(), "{decided}");
+    let _run = start(&cell);
     assert_eq!(melt(&cell).0, 404);
     assert_eq!(standing(&cell, &id), attempt_ended());
 }
 
-/// S5a: a call pinned to a definitions version is not the call an unpinned
-/// step makes, even under the step's key, input and requester: its approved
-/// commit is never delivered to the step.
-#[test]
-fn a_pinned_call_under_a_steps_key_never_supplies_the_steps_outcome() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("cell.sqlite");
-    let id = parked_step(&path);
-    let (_step, key) = step_and_key(&path);
-    let cell = cell_on(file(&path), false);
-    let version = cell.host.active_definitions_version().unwrap().unwrap();
-    let query = format!("{SCOPE}&version={version}");
-    let pinned = || {
-        call_with(
-            &cell,
-            "POST",
-            &format!("/v1/actions/{MELT_ACTION}"),
-            &query,
-            OPERATOR,
-            &melt_body("melt-7", "12", "10", &key),
-        )
-    };
-    let (status, parked) = pinned();
-    assert_eq!(status, 202, "{parked}");
-    let pinned_id = parked["decision"]["id"].as_str().unwrap().to_owned();
-    assert_ne!(pinned_id, id);
-    let (status, decided) = decide_with(&cell, &pinned_id, "approve-pinned");
-    assert_eq!(status, 200, "{decided}");
-    let (status, receipt) = pinned();
-    assert_eq!(status, 200, "{receipt}");
-
-    let woke = wake(&cell, NOW * 1000 + 1);
-    assert_eq!(woke.steps, 0, "{woke:?}");
-    assert_eq!(run_state(&cell), json!("awaiting_perform_convert"));
-}
-
-/// The approver approves `id` through the decide service, and the gate is
-/// revised after the approval is recorded and before its call dispatches as
-/// its requester: the approval is refused `approval.definition_changed`.
-fn approve_racing_a_revision<E: SqlEngine>(cell: &Cell<E>, id: &str) {
+/// The approver approves `id` through the decide service, and `before` runs
+/// after the approval is recorded and before its call dispatches as its
+/// requester: what the decide answers for the call.
+fn approve_dispatching<E: SqlEngine>(cell: &Cell<E>, id: &str, before: &dyn Fn()) -> Value {
     use norn_api::actions::ActionAnswer;
     use norn_api::refusal::Refusal;
     use norn_cell::flow_run::RunStarter;
@@ -957,7 +931,7 @@ fn approve_racing_a_revision<E: SqlEngine>(cell: &Cell<E>, id: &str) {
         |requester: &RunStarter,
          _binding: &str,
          dispatch: &mut dyn FnMut() -> Result<ActionAnswer, Refusal>| {
-            revise_gate(cell);
+            before();
             cell.caller
                 .record(Some(as_caller(&requester.subject, &requester.roles)));
             Some(dispatch())
@@ -978,79 +952,233 @@ fn approve_racing_a_revision<E: SqlEngine>(cell: &Cell<E>, id: &str) {
     )
     .unwrap();
     cell.caller.record(None);
-    let dispatched = decided.call.expect("the approved call was dispatched");
+    serde_json::to_value(decided.call.expect("the approved call was dispatched")).unwrap()
+}
+
+/// The approver approves `id` through the decide service, and the gate is
+/// revised after the approval is recorded and before its call dispatches as
+/// its requester: the approval is refused `approval.definition_changed`.
+fn approve_racing_a_revision<E: SqlEngine>(cell: &Cell<E>, id: &str) {
+    let dispatched = approve_dispatching(cell, id, &|| revise_gate(cell));
     assert_eq!(
-        dispatched.code.as_deref(),
-        Some("approval.definition_changed")
+        dispatched["code"],
+        json!("approval.definition_changed"),
+        "{dispatched}"
     );
 }
 
 /// S5c: of two approvals of a step's exact call, the one the ledger
 /// committed last binds the step, whatever their decision ids. The first
 /// approval was superseded (the gate changed under its dispatch); the
-/// second, approved later at the same logical time, has an id that sorts
-/// first, and its commit is the step's outcome.
+/// starter's retry of the run parks the step's call anew, and the second
+/// approval, recorded later at the same logical time, has an id that sorts
+/// first: its commit, run by the starter's next retry, is the step's outcome.
 #[test]
 fn of_two_approvals_of_a_steps_call_the_later_commit_binds() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("cell.sqlite");
     let first = parked_step(&path);
-    let (_step, key) = step_and_key(&path);
     let cell = cell_on(file(&path), false);
     approve_racing_a_revision(&cell, &first);
-    // Park the call anew until its id sorts before the first approval's.
+    // Park the step's call anew until its id sorts before the first one's.
+    let mut seen = vec![first.clone()];
     let mut later = None;
     for revision in 2..=17 {
-        let (status, parked) = melt_call(&cell, "12", &key);
-        assert_eq!(status, 202, "{parked}");
-        let id = parked["decision"]["id"].as_str().unwrap().to_owned();
+        let (status, run) = start(&cell);
+        assert_eq!(status, 200, "{run}");
+        let parked: Vec<String> = pending_ids(&cell)
+            .into_iter()
+            .filter(|id| !seen.contains(id))
+            .collect();
+        assert_eq!(parked.len(), 1, "{parked:?}");
+        let id = parked[0].clone();
         if id < first {
             later = Some(id);
             break;
         }
+        seen.push(id);
         revise_gate_from(&cell, revision);
     }
     let later = later.expect("a revision whose call id sorts first");
     let (status, decided) = decide_with(&cell, &later, "approve-later");
     assert_eq!(status, 200, "{decided}");
-    let (status, receipt) = melt_call(&cell, "12", &key);
-    assert_eq!(status, 200, "{receipt}");
-
-    let woke = wake(&cell, NOW * 1000 + 1);
-    assert_eq!(woke.steps, 1, "{woke:?}");
-    assert_eq!(run_state(&cell), json!("completed"));
+    assert_eq!(decided["call"], not_executed(), "{decided}");
+    let (status, run) = start(&cell);
+    assert_eq!(status, 200, "{run}");
+    assert_eq!(run["state"], json!("completed"), "{run}");
     assert_eq!(standing(&cell, &later), committed());
 }
 
 /// S6c: each commit is attributed to the approval it consumed. A refusal
-/// recorded for one approval stays final when the same call later commits
-/// under another gate revision's approval.
+/// recorded for one approval (the gate changed under its dispatch) stays
+/// final when the same call later commits under the revised gate's own
+/// approval.
 #[test]
 fn a_recorded_refusal_stays_final_when_the_call_commits_under_another_approval() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("cell.sqlite");
-    let id = parked_step(&path);
-    let (step, key) = step_and_key(&path);
-    {
-        let cell = cell_on(file(&path), false);
-        let (status, decided) = approve(&cell, &id);
-        assert_eq!(status, 200, "{decided}");
-    }
-    end_attempt(&path, &step);
+    let id = parked(&path);
     let cell = cell_on(file(&path), false);
-    let (status, refused) = melt_call(&cell, "12", &key);
-    assert_eq!(status, 409, "{refused}");
-    assert_eq!(standing(&cell, &id), attempt_ended());
+    approve_racing_a_revision(&cell, &id);
+    let changed = json!({ "committed": false, "code": "approval.definition_changed",
+        "state": "refused" });
+    assert_eq!(standing(&cell, &id), changed);
 
-    revise_gate(&cell);
-    let (status, parked) = melt_call(&cell, "12", &key);
+    let (status, parked) = retry(&cell);
     assert_eq!(status, 202, "{parked}");
     let other = parked["decision"]["id"].as_str().unwrap().to_owned();
     assert_ne!(other, id);
     let (status, decided) = decide_with(&cell, &other, "approve-other");
     assert_eq!(status, 200, "{decided}");
-    let (status, receipt) = melt_call(&cell, "12", &key);
+    let (status, receipt) = retry(&cell);
     assert_eq!(status, 200, "{receipt}");
     assert_eq!(standing(&cell, &other), committed());
-    assert_eq!(standing(&cell, &id), attempt_ended(), "final");
+    assert_eq!(standing(&cell, &id), changed, "final");
+}
+
+/// Retire the gate (its first revision): the melt action is ungated.
+fn retire_gate<E: SqlEngine>(cell: &Cell<E>) {
+    let (status, retired) = call(
+        cell,
+        "POST",
+        &format!("/v1/definitions/{APPROVAL_ID}:retire"),
+        OPERATOR,
+        &json!({ "expectedVersion": 1 }).to_string(),
+    );
+    assert_eq!(status, 200, "{retired}");
+}
+
+/// S6c: whether an approved call committed is read from the ledger alone,
+/// the same on every path. The gate is retired and the requester's exact
+/// call commits ungated, so its commit consumes no approval, as a commit
+/// made before consumption was recorded does; the file is then opened as a
+/// host before APPROVAL-RECOVERY-1 left it (no `_norn_approved_call`). The
+/// opened file and a restore of its export answer alike: committed, and the
+/// approver's replay runs nothing on either.
+#[test]
+fn an_opened_file_and_its_restored_export_attribute_a_commit_alike() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("cell.sqlite");
+    let id = approved(&path);
+    {
+        let cell = cell_on(file(&path), false);
+        retire_gate(&cell);
+        let (status, receipt) = retry(&cell);
+        assert_eq!(status, 200, "{receipt}");
+    }
+    file(&path)
+        .execute_batch(r#"DROP TABLE "_norn_approved_call""#)
+        .unwrap();
+    let opened = cell_on(file(&path), false);
+    let target = directory.path().join("restored.sqlite");
+    restore(&path, &target, directory.path());
+    let restored = cell_on(file(&target), false);
+    assert_eq!(standing(&opened, &id), committed());
+    assert_eq!(standing(&restored, &id), standing(&opened, &id));
+    for (cell, at) in [(&opened, &path), (&restored, &target)] {
+        let before = commit_count(at);
+        let (status, replayed) = approve(cell, &id);
+        assert_eq!(status, 200, "{replayed}");
+        assert_eq!(replayed["call"], committed(), "{replayed}");
+        assert_eq!(commit_count(at), before, "nothing ran");
+    }
+}
+
+/// S8: one commit never both refuses and consumes the same approval. Each
+/// would pass its check against the state before the commit, so the store
+/// refuses the pair together, and nothing is recorded.
+#[test]
+fn a_commit_never_both_refuses_and_consumes_an_approval() {
+    use norn_cell::decision_ledger::{ApprovalConsumed, ApprovalRefused};
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("cell.sqlite");
+    let id = approved(&path);
+    let refused = ApprovalRefused {
+        decision_id: id.clone(),
+        status: 409,
+        code: "action.conflict".to_owned(),
+        category: "conflict".to_owned(),
+    }
+    .event()
+    .unwrap();
+    let consumed = ApprovalConsumed {
+        decision_id: id.clone(),
+    }
+    .event()
+    .unwrap();
+    let before = commit_count(&path);
+    let refusal = store(&path)
+        .commit(&norn_cell::CommitBatch {
+            world: MAIN_WORLD.to_owned(),
+            scope: "org_demo/dev".to_owned(),
+            logical_time: NOW * 1000 + 60_000,
+            events: vec![refused, consumed],
+            ..norn_cell::CommitBatch::default()
+        })
+        .unwrap_err();
+    assert!(
+        matches!(
+            refusal,
+            norn_cell::CellError::DecisionRefused("approval.consumption_invalid")
+        ),
+        "{refusal:?}"
+    );
+    assert_eq!(commit_count(&path), before);
+    let cell = cell_on(file(&path), false);
+    assert_eq!(standing(&cell, &id), not_executed());
+}
+
+/// S7: a stale drive of a step (it read the step before its call was
+/// approved) tries the call on the starter's recorded authority. Meanwhile
+/// the call is approved and its requester's own request commits it, and
+/// nothing has delivered that outcome yet. The stale try is denied and goes
+/// last: under the one cell hold it records under, the step takes the
+/// committed outcome, never the denial.
+#[test]
+fn a_stale_drive_denied_after_the_requesters_commit_delivers_the_commit() {
+    use norn_api::actions::ActionAnswer;
+    use norn_api::refusal::Refusal;
+    use norn_cell::flow_run::RunStarter;
+    use norn_cell_do::policy::Caller;
+    type Dispatch<'a> = &'a mut dyn FnMut() -> Result<ActionAnswer, Refusal>;
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("cell.sqlite");
+    let id = parked_step(&path);
+    let cell = cell_on(file(&path), false);
+    let raced = std::cell::Cell::new(false);
+    let as_starter = |starter: &RunStarter, _binding: &str, dispatch: Dispatch<'_>| {
+        // After the drive read the step, before its dispatch holds the cell:
+        // approved, and committed by the requester's own request.
+        let decided = approve_dispatching(&cell, &id, &|| {});
+        assert_eq!(decided, committed(), "{decided}");
+        assert_eq!(run_state(&cell), json!("awaiting_perform_convert"));
+        raced.set(true);
+        cell.caller.record(Some(Caller {
+            subject_id: starter.subject.clone(),
+            roles: starter.roles.clone(),
+            actor_kind: "user",
+            role_table: norn_cell_do::principal::FIXTURE_ROLES,
+        }));
+        let answer = dispatch();
+        cell.caller.record(None);
+        assert!(
+            matches!(&answer, Err(refused) if refused.status == 403),
+            "the stale try is denied: {answer:?}"
+        );
+        Some(answer)
+    };
+    let as_requester = |_requester: &RunStarter, _binding: &str, _dispatch: Dispatch<'_>| None;
+    norn_api::flow_driver::drive_run(
+        &cell.host,
+        "melt-run",
+        &as_starter,
+        &as_requester,
+        &cell.handles,
+        LogicalTime::from_millis(NOW * 1000 + 5),
+    )
+    .unwrap();
+    assert!(raced.get());
+    assert_eq!(run_state(&cell), json!("completed"));
+    assert_eq!(melt(&cell).0, 200);
+    assert_eq!(standing(&cell, &id), committed());
 }
