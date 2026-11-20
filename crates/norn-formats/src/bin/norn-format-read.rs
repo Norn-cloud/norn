@@ -1,4 +1,13 @@
 //! `norn-format-read <manifest.json> --originals <dir> [--emit <file>]`
+//! `norn-format-read <owl manifest.json> --originals <dir> --emit-dir <dir>`
+//!
+//! An `owl` manifest (`registry/standards/imports/*.read.json`) names a
+//! normalised graph: `--originals` is the directory `owl_sources.py fetch`
+//! wrote (`raw/` and `graph.nt`). The bin checks every pinned original under
+//! `raw/`, reads `graph.nt` with the OWL reader, refuses any error diagnostic,
+//! and writes the layers (`artifacts.json`), the source schema
+//! (`source_schema.json`), the loss report (`loss.jsonl`) and its counts
+//! (`summary.json`) to `--emit-dir`, never into the repository.
 //!
 //! Reads a pack's hash-pinned source originals with the format reader the
 //! manifest names, refuses any error diagnostic, and checks that the pack's
@@ -14,7 +23,8 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use norn_formats::SchemaImporter;
+use norn_formats::owl::{OwlConfig, OwlGraph, OwlNamespace, OwlNormaliser, OwlReader};
+use norn_formats::{Disposition, SchemaImporter};
 use norn_formats::pack::{ProjectionSpec, check_contract, project, render_review_module};
 use norn_formats::xsd::{
     MAX_BUNDLE_BYTES, MAX_FILE_BYTES, XsdConfig, XsdFile, XsdReader, repeating_fields,
@@ -39,17 +49,54 @@ struct Manifest {
     projection: ProjectionSpec,
 }
 
+/// An OWL import manifest: pins of the originals and of their normalised graph.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct OwlManifest {
+    /// `owl`.
+    format: String,
+    /// The standards-atlas entry the import serves.
+    #[serde(rename = "atlasId")]
+    _atlas_id: String,
+    /// The caller-supplied observation time (no clock is read).
+    observed_at: String,
+    /// How `owl_sources.py pin` found the closure; not read here.
+    #[serde(rename = "selection")]
+    _selection: serde_json::Value,
+    /// Licence, release and per-file SHA-256 pins of the originals.
+    admission: OntologySource,
+    /// The normaliser that wrote `graph.nt`.
+    normaliser: OwlNormaliser,
+    /// The owned namespaces and their prefixes.
+    namespaces: Vec<OwlNamespace>,
+    /// The normalised graph's pin.
+    graph: GraphPin,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct GraphPin {
+    sha256: String,
+    #[serde(rename = "triples")]
+    _triples: u64,
+}
+
 /// Read at most `MAX_FILE_BYTES` (plus one, to detect excess) from `path`.
 fn read_bounded(path: &Path) -> Result<Vec<u8>, String> {
+    read_limited(path, MAX_FILE_BYTES)
+}
+
+/// Read at most `max` bytes (plus one, to detect excess) from `path`.
+fn read_limited(path: &Path, max: usize) -> Result<Vec<u8>, String> {
     use std::io::Read as _;
     let file = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let limit = u64::try_from(MAX_FILE_BYTES).map_err(|e| e.to_string())?;
+    let limit = u64::try_from(max).map_err(|e| e.to_string())?;
     let mut bytes = Vec::new();
     file.take(limit.saturating_add(1))
         .read_to_end(&mut bytes)
         .map_err(|e| format!("{}: {e}", path.display()))?;
-    if bytes.len() > MAX_FILE_BYTES {
-        return Err(format!("{}: exceeds 16 MiB", path.display()));
+    if bytes.len() > max {
+        return Err(format!("{}: exceeds {max} bytes", path.display()));
     }
     Ok(bytes)
 }
@@ -131,9 +178,138 @@ fn repository_of(path: &Path) -> Option<PathBuf> {
         .map(Path::to_path_buf)
 }
 
+/// Refuse an output location inside a repository (or a symbolic link).
+fn outside_repository(target: &Path, manifest_path: &Path) -> Result<(), String> {
+    if std::fs::symlink_metadata(target).is_ok_and(|m| m.file_type().is_symlink()) {
+        return Err(format!("{}: refuses a symbolic link", target.display()));
+    }
+    let parent = target.parent().filter(|p| !p.as_os_str().is_empty());
+    let parent = parent.unwrap_or_else(|| Path::new("."));
+    let resolved = std::fs::canonicalize(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+    if repository_of(&resolved).is_some()
+        || repository_of(manifest_path).is_some_and(|repo| resolved.starts_with(&repo))
+    {
+        return Err(format!(
+            "{}: never writes upstream-derived definitions into the repository",
+            target.display()
+        ));
+    }
+    Ok(())
+}
+
+/// Read an OWL manifest's graph and write its import to `emit_dir`.
+fn run_owl(manifest_path: &Path, text: &str, originals: &Path, emit_dir: &Path) -> Result<(), String> {
+    let manifest: OwlManifest =
+        serde_json::from_str(text).map_err(|e| format!("{}: {e}", manifest_path.display()))?;
+    if manifest.format != "owl" {
+        return Err("not an owl manifest".into());
+    }
+    for pin in manifest.admission.files.iter().flatten() {
+        let relative = pin
+            .path
+            .strip_prefix("https://")
+            .filter(|rest| !rest.split('/').any(|step| step.is_empty() || step == ".."))
+            .ok_or_else(|| format!("{} is not a plain HTTPS file URL", pin.path))?;
+        let bytes = read_bounded(&originals.join("raw").join(relative))?;
+        if norn_formats::contract::sha256_hex(&bytes) != pin.sha256 {
+            return Err(format!("{}: digest mismatch", pin.path));
+        }
+    }
+    let graph = read_limited(&originals.join("graph.nt"), norn_formats::owl::MAX_GRAPH_BYTES)?;
+    let config = OwlConfig {
+        admission: manifest.admission,
+        observed_at: manifest.observed_at,
+        graph_sha256: manifest.graph.sha256,
+        normaliser: manifest.normaliser,
+        namespaces: manifest.namespaces,
+    };
+    let import = OwlReader.import(
+        OwlGraph {
+            path: "graph.nt",
+            bytes: &graph,
+        },
+        &config,
+    );
+    if let Some(error) = import
+        .diagnostics
+        .iter()
+        .find(|d| d.severity == DiagnosticSeverity::Error)
+    {
+        return Err(format!("{}: {}", error.code, error.message));
+    }
+    outside_repository(&emit_dir.join("summary.json"), manifest_path)?;
+    std::fs::create_dir_all(emit_dir).map_err(|e| format!("{}: {e}", emit_dir.display()))?;
+    let write = |name: &str, text: String| {
+        std::fs::write(emit_dir.join(name), text).map_err(|e| format!("{name}: {e}"))
+    };
+    let artifacts: Vec<_> = import.layers.iter().flat_map(|layer| &layer.artifacts).collect();
+    write("artifacts.json", serde_json::to_string(&artifacts).map_err(|e| e.to_string())?)?;
+    let schema = import
+        .source_schema_envelope(&config.admission.source_id.replace("source.", "owl."))?
+        .ok_or("the reader produced no source schema")?;
+    write("source_schema.json", serde_json::to_string(&schema).map_err(|e| e.to_string())?)?;
+    let mut loss = String::new();
+    let mut deferred = std::collections::BTreeMap::<&str, u64>::new();
+    let mut degraded = std::collections::BTreeMap::<&str, u64>::new();
+    for entry in &import.loss_report.entries {
+        let value = norn_formats::contract::sorted_keys(serde_json::to_value(entry).map_err(|e| e.to_string())?);
+        loss.push_str(&serde_json::to_string(&value).map_err(|e| e.to_string())?);
+        loss.push('\n');
+        match &entry.disposition {
+            Disposition::Deferred { code, .. } => {
+                let count = deferred.entry(code).or_default();
+                *count = count.saturating_add(1);
+            }
+            Disposition::Mapped { degraded: Some(degradation), .. } => {
+                let count = degraded.entry(&degradation.code).or_default();
+                *count = count.saturating_add(1);
+            }
+            Disposition::Mapped { .. }
+            | Disposition::Extension { .. }
+            | Disposition::Rejected { .. }
+            | Disposition::Dropped { .. }
+            | Disposition::Unexplained => {}
+        }
+    }
+    write("loss.jsonl", loss)?;
+    let summary = import.loss_report.summary();
+    let members = |name: &str| -> usize {
+        artifacts
+            .iter()
+            .filter_map(|artifact| serde_json::to_value(artifact).ok())
+            .map(|value| value["payload"]["interface"][name].as_array().map_or(0, Vec::len))
+            .sum()
+    };
+    let report = serde_json::json!({
+        "graphSha256": config.graph_sha256,
+        "interfaces": artifacts.len(),
+        "links": members("links"),
+        "properties": members("properties"),
+        "extends": members("extends"),
+        "entries": summary.total,
+        "mapped": summary.mapped,
+        "degraded": summary.degraded,
+        "deferred": summary.deferred,
+        "dropped": summary.dropped,
+        "unexplained": summary.unexplained,
+        "deferredByCode": deferred,
+        "degradedByCode": degraded,
+    });
+    let text = serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?;
+    writeln!(std::io::stdout().lock(), "{text}").map_err(|e| e.to_string())?;
+    write("summary.json", text)
+}
+
 fn run(manifest_path: &Path, originals: &Path, emit: Option<&Path>) -> Result<(), String> {
     let text = std::fs::read_to_string(manifest_path)
         .map_err(|e| format!("{}: {e}", manifest_path.display()))?;
+    let format = serde_json::from_str::<serde_json::Value>(&text)
+        .ok()
+        .and_then(|value| value.get("format").and_then(|f| f.as_str()).map(str::to_owned));
+    if format.as_deref() == Some("owl") {
+        let emit_dir = emit.ok_or("an owl manifest needs --emit-dir <dir>")?;
+        return run_owl(manifest_path, &text, originals, emit_dir);
+    }
     let manifest: Manifest =
         serde_json::from_str(&text).map_err(|e| format!("{}: {e}", manifest_path.display()))?;
     let schema = read(&manifest, originals)?;
@@ -199,7 +375,7 @@ fn main() -> ExitCode {
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--originals" => originals = args.next().map(PathBuf::from),
-            "--emit" => emit = args.next().map(PathBuf::from),
+            "--emit" | "--emit-dir" => emit = args.next().map(PathBuf::from),
             "--check" => {}
             _ if manifest.is_none() => manifest = Some(PathBuf::from(arg)),
             _ => return report(&format!("unexpected argument {arg}"), 2),
@@ -207,7 +383,7 @@ fn main() -> ExitCode {
     }
     let (Some(manifest), Some(originals)) = (manifest, originals) else {
         return report(
-            "usage: norn-format-read <manifest.json> --originals <dir> [--emit <file>]",
+            "usage: norn-format-read <manifest.json> --originals <dir> [--emit <file> | --emit-dir <dir>]",
             2,
         );
     };

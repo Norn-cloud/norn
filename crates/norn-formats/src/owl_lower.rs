@@ -1,0 +1,1029 @@
+//! Lowering an OWL [`Model`] to Norn interfaces: one interface per owned
+//! class, `extends` for named superclasses, a link per object property and a
+//! property per datatype property where a closed-world type can carry it, and
+//! one loss disposition per accounted [`Item`].
+//!
+//! # The closed-world reading
+//!
+//! - `SubClassOf(C D)`, both owned classes: `C extends D`. An edge that
+//!   closes a cycle is an implied equivalence and is not lowered.
+//! - `PropertyDomain(p D)`: an optional member `p` on `D` whose target is
+//!   `p`'s named range.
+//! - A restriction `SubClassOf(C R)` on `p`: a member `p` on `C`.
+//!   `some`/`min 1` → required, many; `exactly 1` → required, one; `max 1` →
+//!   optional, one; `min 0`/`only` → optional, many. A bound above one is kept
+//!   as many with a degradation (Norn link cardinality is one or many).
+//! - `FunctionalProperty(p)` → every member `p` links to one;
+//!   `InverseFunctionalProperty(p)` → the inverse multiplicity is one.
+//! - Datatype members take the type the datatype table chooses.
+//!
+//! Interfaces only narrow what they inherit, so the members `C` declares are
+//! the meet of its own axioms and its parents' effective members. When two
+//! parents require one member with unrelated targets (or types), the edge to
+//! the later parent is not lowered; when `C`'s own axiom cannot narrow what it
+//! inherits, that axiom is not lowered. Both are recorded with the reason, and
+//! the resolution repeats until it is stable, so the output always admits.
+
+use std::collections::{BTreeMap, BTreeSet};
+
+use serde_json::{Value, json};
+
+use crate::codes;
+use crate::contract::{Degradation, Disposition, NornHome, Target, TypeDecision};
+use crate::owl_model::{Axiom, Expr, Item, Model, OWL_THING, PropertyKind, Restriction};
+use crate::type_tables::{TableInput, TypeTable};
+
+/// One member requirement a class declares or inherits.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Shape {
+    Link {
+        target: String,
+        to_one: bool,
+        required: bool,
+        from_one: bool,
+    },
+    Value {
+        kind: ValueType,
+        required: bool,
+    },
+}
+
+/// A datatype member's Norn type and the table row that chose it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ValueType {
+    pub json: Value,
+    pub decision: TypeDecision,
+    pub degraded: Option<String>,
+}
+
+/// The Norn type the datatype table chooses for `datatype` (`""` when the
+/// range is unknown or not one named datatype).
+fn value_type(table: &mut TypeTable, datatype: &str) -> Result<ValueType, String> {
+    let row = table.lookup(&[("datatype", TableInput::Text(datatype.to_owned()))])?;
+    let mut json = json!({ "kind": row.text("kind") });
+    if !row.text("format").is_empty() {
+        json["format"] = json!(row.text("format"));
+    }
+    if !row.text("timezone").is_empty() {
+        json["timezone"] = json!(row.text("timezone"));
+    }
+    Ok(ValueType {
+        json,
+        decision: TypeDecision {
+            table: row.table.clone(),
+            row: row.row.clone(),
+        },
+        degraded: (!row.text("code").is_empty()).then(|| row.text("detail").to_owned()),
+    })
+}
+
+/// What one axiom asks of one class's member.
+#[derive(Debug, Clone)]
+struct Own {
+    item: usize,
+    property: String,
+    shape: Shape,
+    degraded: Option<Degradation>,
+}
+
+/// The lowered interfaces and the disposition of every item.
+pub(crate) struct Lowered {
+    /// Owned class IRI → interface name.
+    pub names: BTreeMap<String, String>,
+    /// Property IRI → member id.
+    pub members: BTreeMap<String, String>,
+    /// Interface payloads, by class IRI.
+    pub interfaces: BTreeMap<String, Value>,
+    /// Item index → disposition.
+    pub dispositions: BTreeMap<usize, Disposition>,
+}
+
+fn deferred(code: &crate::codes::Code, home: NornHome, detail: String) -> Disposition {
+    Disposition::Deferred {
+        home,
+        code: code.code.to_owned(),
+        detail,
+    }
+}
+
+/// The interface artifact id of an interface name.
+pub(crate) fn artifact_id(name: &str) -> String {
+    format!("{name}.interface")
+}
+
+/// `PascalCase` for a class local name; `None` when nothing usable remains.
+fn pascal(local: &str) -> Option<String> {
+    let mut out: String = local.chars().filter(char::is_ascii_alphanumeric).collect();
+    let first = out.chars().next()?;
+    if first.is_ascii_digit() {
+        out.insert(0, 'C');
+    } else if first.is_ascii_lowercase() {
+        out.replace_range(..1, &first.to_ascii_uppercase().to_string());
+    }
+    Some(out)
+}
+
+/// `snake_case` for a property local name or a prefix.
+pub(crate) fn snake(local: &str) -> String {
+    let chars: Vec<char> = local.chars().collect();
+    let mut out = String::new();
+    for (index, c) in chars.iter().copied().enumerate() {
+        let previous = index.checked_sub(1).and_then(|i| chars.get(i)).copied();
+        let next = chars.get(index.saturating_add(1)).copied();
+        if c.is_ascii_uppercase() {
+            let boundary = previous.is_some_and(|p| p.is_ascii_lowercase() || p.is_ascii_digit())
+                || (previous.is_some_and(|p| p.is_ascii_uppercase())
+                    && next.is_some_and(|n| n.is_ascii_lowercase()));
+            if boundary {
+                out.push('_');
+            }
+            out.push(c.to_ascii_lowercase());
+        } else if c.is_ascii_alphanumeric() {
+            out.push(c);
+        } else {
+            out.push('_');
+        }
+    }
+    let mut collapsed = String::new();
+    for c in out.chars() {
+        if !(c == '_' && collapsed.ends_with('_')) {
+            collapsed.push(c);
+        }
+    }
+    let trimmed = collapsed.trim_matches('_');
+    match trimmed.chars().next() {
+        None => "p".to_owned(),
+        Some(c) if c.is_ascii_digit() => format!("p_{trimmed}"),
+        Some(_) => trimmed.to_owned(),
+    }
+}
+
+/// The Norn namespace of a prefix: `fibo-be-le-lp` → `fibo.be.le.lp`.
+pub(crate) fn namespace_of(prefix: &str) -> String {
+    prefix
+        .split(['-', '.', '_'])
+        .filter(|segment| !segment.is_empty())
+        .map(|segment| {
+            let segment = snake(segment);
+            if segment.starts_with("p_") && segment.chars().nth(2).is_some_and(|c| c.is_ascii_digit()) {
+                segment.replacen("p_", "n", 1)
+            } else {
+                segment
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
+/// Name every owned class and member; refuse a collision.
+fn name(model: &Model) -> Result<(BTreeMap<String, String>, BTreeMap<String, String>), String> {
+    let mut names = BTreeMap::new();
+    let mut taken = BTreeMap::new();
+    for iri in &model.classes {
+        let Some((namespace, local)) = model.split(iri) else {
+            continue;
+        };
+        let local = pascal(local).ok_or_else(|| format!("class <{iri}> has no usable name"))?;
+        let name = format!("{}.{local}", namespace_of(&namespace.prefix));
+        if let Some(other) = taken.insert(name.clone(), iri.clone()) {
+            return Err(format!("classes <{other}> and <{iri}> both name {name}"));
+        }
+        names.insert(iri.clone(), name);
+    }
+    let mut by_id: BTreeMap<String, Vec<&String>> = BTreeMap::new();
+    for (iri, kind) in &model.properties {
+        if *kind == PropertyKind::Annotation {
+            continue;
+        }
+        if let Some((_, local)) = model.split(iri) {
+            by_id.entry(snake(local)).or_default().push(iri);
+        }
+    }
+    let mut members = BTreeMap::new();
+    let mut used = BTreeSet::new();
+    for (id, iris) in by_id {
+        for iri in iris.iter().copied() {
+            let id = if iris.len() == 1 {
+                id.clone()
+            } else {
+                let (namespace, _) = model.split(iri).ok_or("unowned property")?;
+                format!("{}_{id}", snake(&namespace.prefix))
+            };
+            if !used.insert(id.clone()) {
+                return Err(format!("two properties name member {id}"));
+            }
+            members.insert(iri.clone(), id);
+        }
+    }
+    Ok((names, members))
+}
+
+/// Lower `model` with `table` choosing datatype member types.
+pub(crate) fn lower(model: &Model, table: &mut TypeTable) -> Result<Lowered, String> {
+    let (names, members) = name(model)?;
+    let mut lowered = Lowered {
+        names,
+        members,
+        interfaces: BTreeMap::new(),
+        dispositions: BTreeMap::new(),
+    };
+    let owned = |iri: &str| lowered.names.contains_key(iri);
+    let placeable = |iri: &str| lowered.members.contains_key(iri);
+
+    // Characteristics and global targets.
+    let mut functional = BTreeSet::new();
+    let mut inverse_functional = BTreeSet::new();
+    let mut ranges: BTreeMap<&str, Vec<(usize, &Expr)>> = BTreeMap::new();
+    for (index, item) in model.items.iter().enumerate() {
+        match item {
+            Item::Axiom(Axiom::Characteristic {
+                property,
+                characteristic,
+            }) => match characteristic.as_str() {
+                "FunctionalProperty" => {
+                    functional.insert(property.as_str());
+                }
+                "InverseFunctionalProperty" => {
+                    inverse_functional.insert(property.as_str());
+                }
+                _ => {}
+            },
+            Item::Axiom(Axiom::Range { property, range }) => {
+                ranges.entry(property.as_str()).or_default().push((index, range));
+            }
+            _ => {}
+        }
+    }
+    // The single named range of each placeable property, when it has one.
+    let mut range_of: BTreeMap<&str, &str> = BTreeMap::new();
+    for (property, list) in &ranges {
+        let named: BTreeSet<&str> = list
+            .iter()
+            .filter_map(|(_, expr)| match expr {
+                Expr::Named(iri) => Some(iri.as_str()),
+                _ => None,
+            })
+            .collect();
+        if let (true, [only]) = (placeable(property), named.iter().copied().collect::<Vec<_>>().as_slice()) {
+            range_of.insert(property, only);
+        }
+    }
+
+    // Every axiom that asks a class for a member.
+    let mut own: Vec<(String, Own)> = Vec::new();
+    for (index, item) in model.items.iter().enumerate() {
+        let Item::Axiom(axiom) = item else { continue };
+        let ask = match axiom {
+            Axiom::SubClassOf {
+                sub,
+                sup: Expr::Restriction {
+                    property,
+                    kind,
+                    filler,
+                },
+            } if owned(sub) => {
+                restriction_shape(model, &lowered, &range_of, table, property, kind, filler.as_deref())
+                    .map(|shape| shape.map(|(shape, degraded)| (sub.clone(), property.clone(), shape, degraded)))
+            }
+            Axiom::Domain {
+                property,
+                domain: Expr::Named(domain),
+            } if owned(domain) && placeable(property) => {
+                match model.properties.get(property) {
+                    Some(PropertyKind::Object) => match range_of.get(property.as_str()) {
+                        Some(range) if owned(range) => Ok(Ok((
+                            domain.clone(),
+                            property.clone(),
+                            Shape::Link {
+                                target: (*range).to_owned(),
+                                to_one: false,
+                                required: false,
+                                from_one: false,
+                            },
+                            None,
+                        ))),
+                        _ => Ok(Err(deferred(
+                            &codes::OWL_UNPLACED_PROPERTY,
+                            NornHome::EntityIr,
+                            "the property has no single named range in the import set, so a domain member has no link target".into(),
+                        ))),
+                    },
+                    Some(PropertyKind::Datatype) => {
+                        let datatype = range_of.get(property.as_str()).copied().unwrap_or("");
+                        value_type(table, datatype).map(|kind| {
+                            Ok((
+                                domain.clone(),
+                                property.clone(),
+                                Shape::Value {
+                                    kind,
+                                    required: false,
+                                },
+                                None,
+                            ))
+                        })
+                    }
+                    Some(PropertyKind::Annotation) | None => Ok(Err(deferred(
+                        &codes::OWL_UNPLACED_PROPERTY,
+                        NornHome::EntityIr,
+                        "an annotation property carries no member".into(),
+                    ))),
+                }
+            }
+            _ => continue,
+        };
+        match ask? {
+            Ok((class, property, shape, degraded)) => {
+                own.push((
+                    class,
+                    Own {
+                        item: index,
+                        property,
+                        shape,
+                        degraded,
+                    },
+                ));
+            }
+            Err(disposition) => {
+                lowered.dispositions.insert(index, disposition);
+            }
+        }
+    }
+    for (_, ask) in &mut own {
+        if let Shape::Link {
+            to_one, from_one, ..
+        } = &mut ask.shape
+        {
+            *to_one |= functional.contains(ask.property.as_str());
+            *from_one |= inverse_functional.contains(ask.property.as_str());
+        }
+        if let Shape::Value { kind, .. } = &ask.shape
+            && let Some(detail) = &kind.degraded
+            && ask.degraded.is_none()
+        {
+            ask.degraded = Some(Degradation {
+                code: codes::OWL_DEGRADED.code.to_owned(),
+                detail: detail.clone(),
+            });
+        }
+    }
+
+    // Superclass edges between owned classes; an edge closing a cycle is an
+    // implied equivalence.
+    let mut edges: BTreeMap<String, BTreeMap<String, usize>> = BTreeMap::new();
+    for (index, item) in model.items.iter().enumerate() {
+        if let Item::Axiom(Axiom::SubClassOf {
+            sub,
+            sup: Expr::Named(sup),
+        }) = item
+            && owned(sub)
+            && owned(sup)
+            && sub != sup
+        {
+            edges.entry(sub.clone()).or_default().insert(sup.clone(), index);
+        }
+    }
+    let mut dropped_edges: BTreeMap<usize, Disposition> = BTreeMap::new();
+    let pairs: Vec<(String, String, usize)> = edges
+        .iter()
+        .flat_map(|(sub, sups)| sups.iter().map(move |(sup, index)| (sub.clone(), sup.clone(), *index)))
+        .collect();
+    for (sub, sup, index) in pairs {
+        if reaches(&edges, &sup, &sub) {
+            if let Some(sups) = edges.get_mut(&sub) {
+                sups.remove(&sup);
+            }
+            dropped_edges.insert(
+                index,
+                deferred(
+                    &codes::OWL_EQUIVALENCE,
+                    NornHome::EntityIr,
+                    format!(
+                        "{} and {} are subclasses of each other: an equivalence, and interface inheritance is acyclic",
+                        model.compact(&sub),
+                        model.compact(&sup)
+                    ),
+                ),
+            );
+        }
+    }
+
+    // Resolve inherited requirements until stable.
+    let (declared, rejected) = loop {
+        match resolve(model, &lowered.names, &edges, &own) {
+            Resolution::Stable { declared, rejected } => break (declared, rejected),
+            Resolution::DropEdge { sub, sup, detail } => {
+                if let Some(index) = edges.get_mut(&sub).and_then(|sups| sups.remove(&sup)) {
+                    dropped_edges.insert(
+                        index,
+                        deferred(&codes::OWL_INHERITANCE_CONFLICT, NornHome::EntityIr, detail),
+                    );
+                } else {
+                    return Err(format!("inheritance resolution did not converge at {sub}"));
+                }
+            }
+        }
+    };
+
+    // Interfaces.
+    for (iri, name) in &lowered.names {
+        let parents: Vec<&String> = edges
+            .get(iri)
+            .into_iter()
+            .flat_map(BTreeMap::keys)
+            .filter_map(|parent| lowered.names.get(parent))
+            .collect();
+        let mut properties = Vec::new();
+        let mut links = Vec::new();
+        for (property, shape) in declared.get(iri).into_iter().flatten() {
+            let Some(id) = lowered.members.get(property) else {
+                continue;
+            };
+            let description = model
+                .definitions
+                .get(property)
+                .or_else(|| model.labels.get(property))
+                .map_or_else(
+                    || format!("<{property}>"),
+                    |text| format!("{} <{property}>", text.trim()),
+                );
+            match shape {
+                Shape::Link {
+                    target,
+                    to_one,
+                    required,
+                    from_one,
+                } => {
+                    let Some(target) = lowered.names.get(target) else {
+                        continue;
+                    };
+                    let mut cardinality = json!({
+                        "to": if *to_one { "one" } else { "many" },
+                        "from": if *from_one { "one" } else { "many" },
+                    });
+                    if *required {
+                        cardinality["required"] = json!(true);
+                    }
+                    links.push(json!({
+                        "id": id, "description": description,
+                        "target": target, "cardinality": cardinality,
+                    }));
+                }
+                Shape::Value { kind, required } => {
+                    let mut property = json!({
+                        "id": id, "description": description, "type": kind.json,
+                    });
+                    if !required {
+                        property["constraints"] = json!({ "nullable": true });
+                    }
+                    properties.push(property);
+                }
+            }
+        }
+        let text = model
+            .definitions
+            .get(iri)
+            .or_else(|| model.labels.get(iri))
+            .map_or_else(String::new, |text| format!("{} ", text.trim()));
+        let mut interface = json!({
+            "name": name,
+            "description": format!("{text}<{iri}>"),
+        });
+        if !parents.is_empty() {
+            interface["extends"] = json!(parents);
+        }
+        if !properties.is_empty() {
+            interface["properties"] = Value::Array(properties);
+        }
+        if !links.is_empty() {
+            interface["links"] = Value::Array(links);
+        }
+        lowered.interfaces.insert(iri.clone(), interface);
+    }
+
+    dispose(model, &mut lowered, &own, &rejected, dropped_edges, &edges, &range_of);
+    Ok(lowered)
+}
+
+/// The member shape of a restriction, or why it has none.
+fn restriction_shape(
+    model: &Model,
+    lowered: &Lowered,
+    range_of: &BTreeMap<&str, &str>,
+    table: &mut TypeTable,
+    property: &str,
+    kind: &Restriction,
+    filler: Option<&Expr>,
+) -> Result<Result<(Shape, Option<Degradation>), Disposition>, String> {
+    let class_expression = |detail: &str| {
+        Ok(Err(deferred(
+            &codes::OWL_CLASS_EXPRESSION,
+            NornHome::EntityIr,
+            detail.to_owned(),
+        )))
+    };
+    let Some(property_kind) = model.properties.get(property).copied() else {
+        return Ok(Err(deferred(
+            &codes::OWL_EXTERNAL_REFERENCE,
+            NornHome::MappingIr,
+            format!("{} is not declared in the import set", model.compact(property)),
+        )));
+    };
+    if !lowered.members.contains_key(property) || property_kind == PropertyKind::Annotation {
+        return Ok(Err(deferred(
+            &codes::OWL_EXTERNAL_REFERENCE,
+            NornHome::MappingIr,
+            format!("{} is not an owned object or datatype property", model.compact(property)),
+        )));
+    }
+    let (required, to_one, degraded) = match kind {
+        Restriction::Some => (true, false, None),
+        Restriction::All => (false, false, None),
+        Restriction::Min(0) => (false, false, None),
+        Restriction::Min(1) => (true, false, None),
+        Restriction::Exact(1) => (true, true, None),
+        Restriction::Max(1) => (false, true, None),
+        Restriction::Min(n) | Restriction::Exact(n) if *n > 1 => (
+            true,
+            false,
+            Some(format!("at least {n} values: kept as a required many-member; the count bound needs a counting law")),
+        ),
+        Restriction::Max(n) if *n > 1 => (
+            false,
+            false,
+            Some(format!("at most {n} values: kept as an optional many-member; the count bound needs a counting law")),
+        ),
+        Restriction::Max(0) | Restriction::Exact(0) => {
+            return Ok(Err(deferred(
+                &codes::OWL_CARDINALITY_BOUND,
+                NornHome::RuleIr,
+                "a prohibition (no values) needs a law, not a member".into(),
+            )));
+        }
+        Restriction::HasValue(_) | Restriction::HasSelf => {
+            return Ok(Err(deferred(
+                &codes::OWL_VALUE_RESTRICTION,
+                NornHome::RuleIr,
+                "a fixed value needs an invariant over the member; individuals are not imported".into(),
+            )));
+        }
+        Restriction::Min(_) | Restriction::Max(_) | Restriction::Exact(_) => {
+            return class_expression("unreachable cardinality");
+        }
+    };
+    let degraded = degraded.map(|detail| Degradation {
+        code: codes::OWL_CARDINALITY_BOUND.code.to_owned(),
+        detail,
+    });
+    match property_kind {
+        PropertyKind::Object => {
+            let target = match filler {
+                Some(Expr::Named(iri)) if iri == OWL_THING => range_of.get(property).copied(),
+                Some(Expr::Named(iri)) => Some(iri.as_str()),
+                None => range_of.get(property).copied(),
+                Some(_) => {
+                    return class_expression(
+                        "the filler is a class expression; a link target is one named type",
+                    );
+                }
+            };
+            match target {
+                Some(target) if lowered.names.contains_key(target) => Ok(Ok((
+                    Shape::Link {
+                        target: target.to_owned(),
+                        to_one,
+                        required,
+                        from_one: false,
+                    },
+                    degraded,
+                ))),
+                Some(target) => Ok(Err(deferred(
+                    &codes::OWL_EXTERNAL_REFERENCE,
+                    NornHome::MappingIr,
+                    format!("the target {} is not an owned class", model.compact(target)),
+                ))),
+                None => Ok(Err(deferred(
+                    &codes::OWL_UNPLACED_PROPERTY,
+                    NornHome::EntityIr,
+                    "no named filler and no single named range: the link has no target".into(),
+                ))),
+            }
+        }
+        PropertyKind::Datatype => {
+            let datatype = match filler {
+                Some(Expr::Named(iri)) => iri.clone(),
+                None => range_of.get(property).map(|range| (*range).to_owned()).unwrap_or_default(),
+                Some(_) => String::new(),
+            };
+            Ok(Ok((
+                Shape::Value {
+                    kind: value_type(table, &datatype)?,
+                    required,
+                },
+                degraded,
+            )))
+        }
+        PropertyKind::Annotation => class_expression("annotation property"),
+    }
+}
+
+fn reaches(edges: &BTreeMap<String, BTreeMap<String, usize>>, from: &str, to: &str) -> bool {
+    let mut stack = vec![from.to_owned()];
+    let mut seen = BTreeSet::new();
+    while let Some(node) = stack.pop() {
+        if node == to {
+            return true;
+        }
+        if seen.insert(node.clone()) {
+            stack.extend(edges.get(&node).into_iter().flat_map(BTreeMap::keys).cloned());
+        }
+    }
+    false
+}
+
+enum Resolution {
+    Stable {
+        /// Class → property → the member it declares.
+        declared: BTreeMap<String, BTreeMap<String, Shape>>,
+        /// Own axioms not lowered: item → detail.
+        rejected: BTreeMap<usize, String>,
+    },
+    DropEdge {
+        sub: String,
+        sup: String,
+        detail: String,
+    },
+}
+
+/// The narrower of two shapes, or `None` when neither narrows the other.
+fn meet(
+    a: &Shape,
+    b: &Shape,
+    ancestors: &BTreeMap<String, BTreeSet<String>>,
+) -> Option<Shape> {
+    let under = |x: &str, y: &str| x == y || ancestors.get(x).is_some_and(|set| set.contains(y));
+    match (a, b) {
+        (
+            Shape::Link {
+                target: ta,
+                to_one: oa,
+                required: ra,
+                from_one: fa,
+            },
+            Shape::Link {
+                target: tb,
+                to_one: ob,
+                required: rb,
+                from_one: fb,
+            },
+        ) => {
+            let target = if under(ta, tb) {
+                ta
+            } else if under(tb, ta) {
+                tb
+            } else {
+                return None;
+            };
+            Some(Shape::Link {
+                target: target.clone(),
+                to_one: *oa || *ob,
+                required: *ra || *rb,
+                from_one: *fa || *fb,
+            })
+        }
+        (
+            Shape::Value {
+                kind: ka,
+                required: ra,
+            },
+            Shape::Value {
+                kind: kb,
+                required: rb,
+            },
+        ) if ka.json == kb.json => Some(Shape::Value {
+            kind: ka.clone(),
+            required: *ra || *rb,
+        }),
+        (Shape::Link { .. } | Shape::Value { .. }, _) => None,
+    }
+}
+
+fn describe(model: &Model, shape: &Shape) -> String {
+    match shape {
+        Shape::Link { target, .. } => model.compact(target),
+        Shape::Value { kind, .. } => kind.json.to_string(),
+    }
+}
+
+fn resolve(
+    model: &Model,
+    names: &BTreeMap<String, String>,
+    edges: &BTreeMap<String, BTreeMap<String, usize>>,
+    own: &[(String, Own)],
+) -> Resolution {
+    // Ancestors over the current edges.
+    let mut ancestors: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for class in names.keys() {
+        let mut seen = BTreeSet::new();
+        let mut stack: Vec<String> = edges.get(class).into_iter().flat_map(BTreeMap::keys).cloned().collect();
+        while let Some(node) = stack.pop() {
+            if seen.insert(node.clone()) {
+                stack.extend(edges.get(&node).into_iter().flat_map(BTreeMap::keys).cloned());
+            }
+        }
+        ancestors.insert(class.clone(), seen);
+    }
+    // Parents before children.
+    let mut order: Vec<&String> = names.keys().collect();
+    order.sort_by_key(|class| (ancestors.get(*class).map_or(0, BTreeSet::len), *class));
+    let mut by_class: BTreeMap<&str, Vec<&Own>> = BTreeMap::new();
+    for (class, ask) in own {
+        by_class.entry(class.as_str()).or_default().push(ask);
+    }
+    let mut effective: BTreeMap<String, BTreeMap<String, Shape>> = BTreeMap::new();
+    let mut declared: BTreeMap<String, BTreeMap<String, Shape>> = BTreeMap::new();
+    let mut rejected = BTreeMap::new();
+    for class in order {
+        let mut members: BTreeMap<String, (Shape, String)> = BTreeMap::new();
+        for parent in edges.get(class).into_iter().flat_map(BTreeMap::keys) {
+            for (property, shape) in effective.get(parent).into_iter().flatten() {
+                match members.get(property) {
+                    None => {
+                        members.insert(property.clone(), (shape.clone(), parent.clone()));
+                    }
+                    Some((current, from)) => match meet(current, shape, &ancestors) {
+                        Some(narrower) => {
+                            members.insert(property.clone(), (narrower, from.clone()));
+                        }
+                        None => {
+                            return Resolution::DropEdge {
+                                sub: class.clone(),
+                                sup: parent.clone(),
+                                detail: format!(
+                                    "{} and {} both pass member {} on, as {} and {}: no member narrows both, so this edge is not lowered",
+                                    model.compact(from),
+                                    model.compact(parent),
+                                    model.compact(property),
+                                    describe(model, current),
+                                    describe(model, shape),
+                                ),
+                            };
+                        }
+                    },
+                }
+            }
+        }
+        let mut mine: BTreeMap<String, Shape> = BTreeMap::new();
+        for ask in by_class.get(class.as_str()).into_iter().flatten() {
+            let base = mine
+                .get(&ask.property)
+                .or_else(|| members.get(&ask.property).map(|(shape, _)| shape));
+            let combined = match base {
+                None => Some(ask.shape.clone()),
+                Some(base) => meet(base, &ask.shape, &ancestors),
+            };
+            match combined {
+                Some(shape) => {
+                    mine.insert(ask.property.clone(), shape);
+                }
+                None => {
+                    rejected.insert(
+                        ask.item,
+                        format!(
+                            "the member is already {} here, which {} does not narrow",
+                            base.map(|shape| describe(model, shape)).unwrap_or_default(),
+                            describe(model, &ask.shape)
+                        ),
+                    );
+                }
+            }
+        }
+        let mut all: BTreeMap<String, Shape> =
+            members.into_iter().map(|(property, (shape, _))| (property, shape)).collect();
+        all.extend(mine.clone());
+        effective.insert(class.clone(), all);
+        declared.insert(class.clone(), mine);
+    }
+    Resolution::Stable { declared, rejected }
+}
+
+/// The disposition of every item.
+#[allow(clippy::too_many_lines, reason = "one arm per item kind keeps the accounting in one place")]
+fn dispose(
+    model: &Model,
+    lowered: &mut Lowered,
+    own: &[(String, Own)],
+    rejected: &BTreeMap<usize, String>,
+    dropped_edges: BTreeMap<usize, Disposition>,
+    edges: &BTreeMap<String, BTreeMap<String, usize>>,
+    range_of: &BTreeMap<&str, &str>,
+) {
+    let target_of = |class: &str, member: Option<&str>| {
+        let artifact = artifact_id(lowered.names.get(class).map_or("", String::as_str));
+        member.map_or_else(|| Target::artifact(&artifact), |member| Target::member(&artifact, member))
+    };
+    // Where each property landed first (by class IRI), for the property's
+    // own declaration, range, characteristics and annotations.
+    let mut placed: BTreeMap<&str, &str> = BTreeMap::new();
+    let mut dispositions = dropped_edges;
+    for (class, ask) in own {
+        if let Some(detail) = rejected.get(&ask.item) {
+            dispositions.insert(
+                ask.item,
+                deferred(&codes::OWL_INHERITANCE_CONFLICT, NornHome::EntityIr, detail.clone()),
+            );
+            continue;
+        }
+        placed.entry(ask.property.as_str()).or_insert(class.as_str());
+        let member = lowered.members.get(&ask.property).map(String::as_str);
+        let decision = match &ask.shape {
+            Shape::Value { kind, .. } => Some(kind.decision.clone()),
+            Shape::Link { .. } => None,
+        };
+        dispositions.insert(
+            ask.item,
+            Disposition::Mapped {
+                target: target_of(class, member),
+                degraded: ask.degraded.clone(),
+                decision,
+            },
+        );
+    }
+    let mapped_property = |property: &str| {
+        placed.get(property).map(|class| Disposition::Mapped {
+            target: target_of(class, lowered.members.get(property).map(String::as_str)),
+            degraded: None,
+            decision: None,
+        })
+    };
+    let unplaced = || {
+        deferred(
+            &codes::OWL_UNPLACED_PROPERTY,
+            NornHome::EntityIr,
+            "no domain or restriction gives the property an owner type, so no member carries it".into(),
+        )
+    };
+    for (index, item) in model.items.iter().enumerate() {
+        if dispositions.contains_key(&index) || lowered.dispositions.contains_key(&index) {
+            continue;
+        }
+        let disposition = match item {
+            Item::Class(iri) if lowered.names.contains_key(iri) => Disposition::Mapped {
+                target: target_of(iri, None),
+                degraded: None,
+                decision: None,
+            },
+            Item::Class(iri) | Item::ExternalClass(iri) => deferred(
+                &codes::OWL_EXTERNAL_REFERENCE,
+                NornHome::MappingIr,
+                format!("{} is outside every owned namespace", model.compact(iri)),
+            ),
+            Item::Ontology(_) => deferred(
+                &codes::OWL_ANNOTATION,
+                NornHome::MappingIr,
+                "the ontology header: its release, licence and imports are the pack's pinned source admission".into(),
+            ),
+            Item::Property(iri, PropertyKind::Annotation) => deferred(
+                &codes::OWL_ANNOTATION,
+                NornHome::WidgetIr,
+                format!("annotation property {}: documentation, not structure", model.compact(iri)),
+            ),
+            Item::Property(iri, _) => mapped_property(iri).unwrap_or_else(unplaced),
+            Item::Datatype(iri) => deferred(
+                &codes::OWL_CLASS_EXPRESSION,
+                NornHome::EntityIr,
+                format!("datatype {} is a data range; members over it are typed by the datatype table", model.compact(iri)),
+            ),
+            Item::Individual(iri, count) => deferred(
+                &codes::OWL_INDIVIDUAL,
+                NornHome::MappingIr,
+                format!("{} with {count} statements is reference data: rows through a mapping, not a type", model.compact(iri)),
+            ),
+            Item::Annotation { subject, predicate } => {
+                let documented = predicate == crate::owl_model::RDFS_LABEL
+                    || predicate == crate::owl_model::SKOS_DEFINITION;
+                if documented && lowered.names.contains_key(subject) {
+                    Disposition::Mapped {
+                        target: target_of(subject, None),
+                        degraded: None,
+                        decision: None,
+                    }
+                } else if documented && let Some(mapped) = mapped_property(subject) {
+                    mapped
+                } else {
+                    deferred(
+                        &codes::OWL_ANNOTATION,
+                        NornHome::WidgetIr,
+                        format!("{} is documentation, kept in the source graph", model.compact(predicate)),
+                    )
+                }
+            }
+            Item::AxiomAnnotation(_) => deferred(
+                &codes::OWL_ANNOTATION,
+                NornHome::WidgetIr,
+                "an annotation on an axiom or an all-different assertion over individuals".into(),
+            ),
+            Item::Statement(_) => deferred(
+                &codes::OWL_DEFERRED,
+                NornHome::EntityIr,
+                "a statement outside the OWL 2 constructs this reader lowers".into(),
+            ),
+            Item::Axiom(axiom) => axiom_disposition(model, lowered, axiom, edges, range_of, &mapped_property, &unplaced, &target_of),
+        };
+        dispositions.insert(index, disposition);
+    }
+    lowered.dispositions.extend(dispositions);
+}
+
+#[allow(clippy::too_many_arguments, reason = "the shared lowering context of one axiom")]
+fn axiom_disposition(
+    model: &Model,
+    lowered: &Lowered,
+    axiom: &Axiom,
+    edges: &BTreeMap<String, BTreeMap<String, usize>>,
+    range_of: &BTreeMap<&str, &str>,
+    mapped_property: &dyn Fn(&str) -> Option<Disposition>,
+    unplaced: &dyn Fn() -> Disposition,
+    target_of: &dyn Fn(&str, Option<&str>) -> Target,
+) -> Disposition {
+    let owned = |iri: &str| lowered.names.contains_key(iri);
+    match axiom {
+        Axiom::SubClassOf { sub, sup: Expr::Named(sup) } if owned(sub) && sup == OWL_THING => {
+            Disposition::Mapped {
+                target: target_of(sub, None),
+                degraded: None,
+                decision: None,
+            }
+        }
+        Axiom::SubClassOf { sub, sup: Expr::Named(sup) }
+            if owned(sub) && edges.get(sub).is_some_and(|sups| sups.contains_key(sup)) =>
+        {
+            Disposition::Mapped {
+                target: target_of(sub, None),
+                degraded: None,
+                decision: None,
+            }
+        }
+        Axiom::SubClassOf { sup: Expr::Named(sup), .. } => deferred(
+            &codes::OWL_EXTERNAL_REFERENCE,
+            NornHome::MappingIr,
+            format!("the superclass {} is not an owned class", model.compact(sup)),
+        ),
+        Axiom::SubClassOf { sup: Expr::Union(_) | Expr::Complement(_) | Expr::OneOf(_) | Expr::Other(_), .. } => deferred(
+            &codes::OWL_CLASS_EXPRESSION,
+            NornHome::EntityIr,
+            "a union, complement or enumeration as a superclass: a type extends named interfaces only".into(),
+        ),
+        Axiom::SubClassOf { sup: Expr::Intersection(_), .. } => deferred(
+            &codes::OWL_CLASS_EXPRESSION,
+            NornHome::EntityIr,
+            "an intersection as a superclass: its named members would each be an edge; not lowered yet".into(),
+        ),
+        Axiom::SubClassOf { sup: Expr::Restriction { .. }, .. } => deferred(
+            &codes::OWL_EXTERNAL_REFERENCE,
+            NornHome::MappingIr,
+            "a restriction on a class outside every owned namespace".into(),
+        ),
+        Axiom::EquivalentClasses { .. } => deferred(
+            &codes::OWL_EQUIVALENCE,
+            NornHome::EntityIr,
+            "an equivalence is a sufficient condition: Norn types are asserted, never classified, so membership by definition needs defined concepts".into(),
+        ),
+        Axiom::DisjointClasses(_) | Axiom::DisjointUnion { .. } => deferred(
+            &codes::OWL_DISJOINTNESS,
+            NornHome::RuleIr,
+            "disjointness of interfaces (no type implements both) has no construct; it needs a law".into(),
+        ),
+        Axiom::Domain { property, .. } => mapped_property(property).unwrap_or_else(unplaced),
+        Axiom::Range { property, range } => match range {
+            Expr::Named(_) if range_of.contains_key(property.as_str()) => {
+                mapped_property(property).unwrap_or_else(unplaced)
+            }
+            Expr::Named(_) => deferred(
+                &codes::OWL_CLASS_EXPRESSION,
+                NornHome::EntityIr,
+                "one of several named ranges (their intersection): a link has one target".into(),
+            ),
+            _ => deferred(
+                &codes::OWL_CLASS_EXPRESSION,
+                NornHome::EntityIr,
+                "a class-expression range: a link target is one named type".into(),
+            ),
+        },
+        Axiom::Characteristic { property, characteristic }
+            if matches!(characteristic.as_str(), "FunctionalProperty" | "InverseFunctionalProperty") =>
+        {
+            mapped_property(property).unwrap_or_else(unplaced)
+        }
+        Axiom::Characteristic { .. } | Axiom::PropertyRelation { .. } => deferred(
+            &codes::OWL_PROPERTY_AXIOM,
+            NornHome::RuleIr,
+            "sub-, inverse, equivalent and chained properties and transitive, symmetric or reflexive characteristics are inference rules; a derived link is a question".into(),
+        ),
+        Axiom::ClassAssertion { .. } => deferred(
+            &codes::OWL_INDIVIDUAL,
+            NornHome::MappingIr,
+            "a class assertion on a declared term (punning) is data about it".into(),
+        ),
+    }
+}
+
