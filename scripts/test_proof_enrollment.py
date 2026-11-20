@@ -142,19 +142,22 @@ class EnrollmentTests(unittest.TestCase):
         for mutation in ("ref", "depth", "credentials", "extra-step", "base", "head", "command", "verdict"):
             with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as directory:
                 candidate = copy.deepcopy(workflow)
-                steps = candidate["jobs"]["plan"]["steps"]
+                # The gate plan is core's step before cheap, after core's candidate checkout.
+                steps = candidate["jobs"]["core"]["steps"]
+                checkout = next(step for step in steps if step.get("uses", "").startswith("actions/checkout@"))
+                planner = next(step for step in steps if step.get("id") == "plan")
                 if mutation == "ref":
-                    steps[0]["with"]["ref"] = "main"
+                    checkout["with"]["ref"] = "main"
                 elif mutation == "depth":
-                    steps[0]["with"]["fetch-depth"] = 1
+                    checkout["with"]["fetch-depth"] = 1
                 elif mutation == "credentials":
-                    steps[0]["with"]["persist-credentials"] = True
+                    checkout["with"]["persist-credentials"] = True
                 elif mutation == "extra-step":
-                    steps.insert(0, {"run": "echo unexpected"})
+                    steps.insert(steps.index(planner), {"run": "echo unexpected"})
                 elif mutation in {"base", "head"}:
-                    steps[-1]["env"]["BASE" if mutation == "base" else "HEAD_SHA"] = "HEAD~1"
+                    planner["env"]["BASE" if mutation == "base" else "HEAD_SHA"] = "HEAD~1"
                 elif mutation == "command":
-                    steps[-1]["run"] = steps[-1]["run"].replace(' "$HEAD_SHA"', "")
+                    planner["run"] = planner["run"].replace(' "$HEAD_SHA"', "")
                 else:
                     candidate["jobs"]["full"]["steps"][0]["run"] += "exit 0\n"
                 path = Path(directory) / "workflow.yml"
@@ -303,8 +306,8 @@ class AffectedPlanTests(unittest.TestCase):
         expected = ["test/" + value for value in self.full["shard"]]
         expected += ["phase/" + value for value in self.full["phase"]]
         self.assertEqual(sorted(task for bundle in self.full["bundle"] for task in bundle["tasks"]), sorted(expected))
-        self.assertGreaterEqual(len(self.full["bundle"]), 4)
-        self.assertLessEqual(len(self.full["bundle"]), 6)
+        # Each bundle is one Boat start: the full plan fills the three-bundle budget exactly.
+        self.assertEqual(len(self.full["bundle"]), 3)
         self.assertTrue(all(len(bundle["tasks"]) >= 2 for bundle in self.full["bundle"]))
         reordered = copy.deepcopy(self.full)
         reordered["shard"].reverse()

@@ -65,7 +65,7 @@ Every `quint verify --backend apalache` gate runs through `scripts/quint_apalach
 What CI does run, on every plan:
 
 - In `cheap`: `scripts/proof_enrollment.py` and its tests (registry checks over the proof sources), and `coverage-v1/negative_canaries.py --workflow-contract`. These check the registries, not the proofs.
-- In the test shards: `crates/norn-testkit/tests/kernel_quint.rs` replays the Quint ITF traces committed in `kernel-v2/traces/` against the Rust kernel. It reads the traces; it does not run Quint.
+- In the test shards: `crates/norn-cell/tests/kernel_quint.rs` replays the Quint ITF traces committed in `kernel-v2/traces/` against the Rust kernel. It reads the traces; it does not run Quint.
 
 ## Last recorded results
 

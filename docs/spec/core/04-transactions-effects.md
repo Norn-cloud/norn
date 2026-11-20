@@ -235,6 +235,24 @@ decision moves its run. Named scenarios (`crates/norn-cell-do/tests/approvals.rs
 **APPROVAL-STEP-PARKS**, **APPROVAL-STEP-REJECTED**, and on hosts serving MCP
 **APPROVAL-MCP-PARKS** (a tool call answers the same pending decision).
 
+**APPROVAL-RIDES-SET-1** (#1469): a pack's approvals ride its definitions
+apply (`POST /v1/cell/definitions:apply`, and MCP's `norn_apply_definitions`,
+which forwards the same `approvals`): each is admitted against the candidate
+set's actions, signed against the restatement the plan returned, and committed
+in the set's one store transaction and definitions version, so a new action is
+never live without its gate and a refused approval publishes nothing. A plan
+reports each approval changed or unchanged by its own payload; a gate-only
+change plans the next version. `norn dev` commits its sources' approvals the
+same way, with the retirement of every approval the sources dropped in the
+same commit and the action policy recompiled before any call is served again
+(DEV-DEFINITIONS-ATOMIC-1), so a renamed approval never leaves its action
+ungated. The install's export-journal record carries the revisions in
+`riding`, and the retained-definition index admits one revision per id per
+definitions version. **Forward-only (pre-beta):** a cell file written with
+`riding` revisions, or migrated to the new index, is not supported by a build
+from before this change; cells roll forward only, and no downgrade reader is
+provided.
+
 ### DECISION-LEDGER-1 — resolved decisions
 
 The commit that consumes a parked decision's result carries one
