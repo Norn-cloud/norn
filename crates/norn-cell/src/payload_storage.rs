@@ -94,6 +94,18 @@ fn store(
     let world = normalized(world)?;
     check_scope(engine, &scope)?;
     let hash = digest(&scope, &world, body)?;
+    store_at(engine, scope, world, body, hash)
+}
+
+/// [`store`] for an already normalized and checked `scope` and `world`, and
+/// the `body`'s own [`digest`] under them.
+fn store_at(
+    engine: &impl SqlEngine,
+    scope: String,
+    world: String,
+    body: &str,
+    hash: String,
+) -> Result<Reference, CellError> {
     let prior: Option<(String, String, String)> = engine.query_optional(
         r#"SELECT "scope","world","body" FROM "_norn_payload" WHERE "hash"=?1"#,
         params![hash],
@@ -389,8 +401,11 @@ fn pack(
     field: &str,
     path: &mut Vec<PathPart>,
     references: &mut Vec<AtPath>,
+    scope_checked: &mut bool,
 ) -> Result<Value, CellError> {
     if body.text.len() >= MIN_BYTES || field == "ddlSql" {
+        // `scope` and `world` are normalized (`encode_export`), so this is
+        // the address `store` would compute again.
         let hash = digest(scope, world, &body.text)?;
         let exists = engine
             .query_optional(
@@ -400,9 +415,19 @@ fn pack(
             )?
             .is_some();
         if exists || matches!(field, "ddlSql" | "result" | "outcome") {
+            if !*scope_checked {
+                check_scope(engine, scope)?;
+                *scope_checked = true;
+            }
             references.push(AtPath {
                 path: path.clone(),
-                reference: store(engine, scope, world, &body.text)?,
+                reference: store_at(
+                    engine,
+                    scope.to_owned(),
+                    world.to_owned(),
+                    &body.text,
+                    hash,
+                )?,
             });
             return Ok(Value::Null);
         }
@@ -414,7 +439,17 @@ fn pack(
                 path.push(PathPart::Key(key.clone()));
                 packed.insert(
                     key.clone(),
-                    pack(engine, scope, world, value, body, key, path, references)?,
+                    pack(
+                        engine,
+                        scope,
+                        world,
+                        value,
+                        body,
+                        key,
+                        path,
+                        references,
+                        scope_checked,
+                    )?,
                 );
                 path.pop();
             }
@@ -425,7 +460,15 @@ fn pack(
             for (index, (value, body)) in values.iter().zip(&body.children).enumerate() {
                 path.push(PathPart::Index(index));
                 packed.push(pack(
-                    engine, scope, world, value, body, "", path, references,
+                    engine,
+                    scope,
+                    world,
+                    value,
+                    body,
+                    "",
+                    path,
+                    references,
+                    scope_checked,
                 )?);
                 path.pop();
             }
@@ -471,6 +514,8 @@ pub(crate) fn encode_export(
         "",
         &mut Vec::new(),
         &mut references,
+        // A stored body checks the bound scope first, once per record.
+        &mut false,
     )?;
     let packed = Packed {
         scope,
