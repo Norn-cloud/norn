@@ -1,12 +1,12 @@
 {
   "drop-01": {
-    "norn-cell::exact_values": [
-      "a_decimal_beyond_the_engine_range_is_refused_never_rounded",
-      "a_store_of_the_previous_format_is_refused_with_a_clear_error",
-      "decimals_and_payloads_round_trip_exactly",
-      "old_pending_link_layout_is_refused_before_open_or_definition_reads",
-      "val_round_store_defaults_sets_and_record_members_use_the_declared_site",
-      "val_roundtrip_transport_codec_commit_and_reopen"
+    "norn-cell": [
+      "suites::exact_values::a_decimal_beyond_the_engine_range_is_refused_never_rounded",
+      "suites::exact_values::a_store_of_the_previous_format_is_refused_with_a_clear_error",
+      "suites::exact_values::decimals_and_payloads_round_trip_exactly",
+      "suites::exact_values::old_pending_link_layout_is_refused_before_open_or_definition_reads",
+      "suites::exact_values::val_round_store_defaults_sets_and_record_members_use_the_declared_site",
+      "suites::exact_values::val_roundtrip_transport_codec_commit_and_reopen"
     ],
     "norn-checker": [
       "property_codec::tests::core_values_inexact_preserves_the_numeric_refusal",
@@ -77,19 +77,19 @@
     ]
   },
   "drop-05": {
-    "norn-cell::definitions_install": [
-      "data_quarantine_redelivery_persists_one_finding_and_correction_recovers",
-      "law_interface_inherited_scope_governs_and_effective_scopes_refuse_until_b2",
-      "legacy_law_snapshot_refuses_without_effects",
-      "legacy_version_zero_finding_refuses_without_effects",
-      "obs_bad_scrap_yield_purity_120_is_captured_but_native_write_refuses",
-      "obs_evidence_historical_governing_laws_do_not_follow_current_definitions",
-      "obs_evidence_idempotent_capture_reuses_the_original_finding_cutoff",
-      "obs_evidence_install_refuses_missing_or_substituted_governing_laws",
-      "obs_evidence_legacy_candidates_do_not_block_a_verified_producer",
-      "obs_evidence_redelivery_persists_one_law_finding_after_restart",
-      "obs_evidence_snapshot_roundtrip_preserves_generated_governing_identity",
-      "obs_recovery_upgrade_uses_each_findings_retained_model"
+    "norn-cell": [
+      "suites::definitions_install::data_quarantine_redelivery_persists_one_finding_and_correction_recovers",
+      "suites::definitions_install::law_interface_inherited_scope_governs_and_effective_scopes_refuse_until_b2",
+      "suites::definitions_install::legacy_law_snapshot_refuses_without_effects",
+      "suites::definitions_install::legacy_version_zero_finding_refuses_without_effects",
+      "suites::definitions_install::obs_bad_scrap_yield_purity_120_is_captured_but_native_write_refuses",
+      "suites::definitions_install::obs_evidence_historical_governing_laws_do_not_follow_current_definitions",
+      "suites::definitions_install::obs_evidence_idempotent_capture_reuses_the_original_finding_cutoff",
+      "suites::definitions_install::obs_evidence_install_refuses_missing_or_substituted_governing_laws",
+      "suites::definitions_install::obs_evidence_legacy_candidates_do_not_block_a_verified_producer",
+      "suites::definitions_install::obs_evidence_redelivery_persists_one_law_finding_after_restart",
+      "suites::definitions_install::obs_evidence_snapshot_roundtrip_preserves_generated_governing_identity",
+      "suites::definitions_install::obs_recovery_upgrade_uses_each_findings_retained_model"
     ]
   },
   "drop-06": {
@@ -99,24 +99,24 @@
     ]
   },
   "drop-07": {
-    "norn-cell::incremental_question": [
-      "data_delta_incremental_equals_recompute_with_redelivery_and_restart",
-      "empty_generation_refuses_a_new_foreign_scope_binding",
-      "skipped_receipt_or_changed_population_refuses_without_partial_publication"
+    "norn-cell": [
+      "suites::incremental_question::data_delta_incremental_equals_recompute_with_redelivery_and_restart",
+      "suites::incremental_question::empty_generation_refuses_a_new_foreign_scope_binding",
+      "suites::incremental_question::skipped_receipt_or_changed_population_refuses_without_partial_publication"
     ]
   },
   "drop-08": {
-    "norn-cell::restatement_activation": [
-      "activated_deltas_equal_full_recompute_through_redelivery_and_restart",
-      "approved_candidate_refuses_an_alternate_kernel_writer_before_activation",
-      "candidate_budget_includes_the_complete_staged_slot",
-      "clock_ahead_cutoff_survives_lower_receipts_and_failed_preparation_restart",
-      "declared_restatement_law_and_reviewer_actions_are_admitted_together",
-      "generated_clock_leads_preserve_pinned_restatement_and_recovery",
-      "governed_activation_switches_all_slices_and_preserves_old_answers",
-      "missing_incomplete_and_stale_candidates_never_replace_the_complete_output",
-      "prepared_candidates_stay_bound_to_their_native_host",
-      "resumed_slice_declarations_keep_the_same_admission_bound"
+    "norn-cell": [
+      "suites::restatement_activation::activated_deltas_equal_full_recompute_through_redelivery_and_restart",
+      "suites::restatement_activation::approved_candidate_refuses_an_alternate_kernel_writer_before_activation",
+      "suites::restatement_activation::candidate_budget_includes_the_complete_staged_slot",
+      "suites::restatement_activation::clock_ahead_cutoff_survives_lower_receipts_and_failed_preparation_restart",
+      "suites::restatement_activation::declared_restatement_law_and_reviewer_actions_are_admitted_together",
+      "suites::restatement_activation::generated_clock_leads_preserve_pinned_restatement_and_recovery",
+      "suites::restatement_activation::governed_activation_switches_all_slices_and_preserves_old_answers",
+      "suites::restatement_activation::missing_incomplete_and_stale_candidates_never_replace_the_complete_output",
+      "suites::restatement_activation::prepared_candidates_stay_bound_to_their_native_host",
+      "suites::restatement_activation::resumed_slice_declarations_keep_the_same_admission_bound"
     ]
   },
   "drop-09": {

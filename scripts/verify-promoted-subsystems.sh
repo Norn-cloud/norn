@@ -548,9 +548,9 @@ run_gate full generic-posting-runtime \
   cargo test --locked -p norn-kernel --test accounting_commit
 
 run_gate full quantity-authority-runtime-unit \
-  "cargo test --locked -p norn-cell --test quantity_reservations" \
+  "cargo test --locked -p norn-cell --lib suites::quantity_reservations::" \
   rust-tests \
-  cargo test --locked -p norn-cell --test quantity_reservations
+  cargo test --locked -p norn-cell --lib suites::quantity_reservations::
 run_gate fast quantity-quint-typecheck \
   "quint typecheck verification/stripmine-2026-08-22/models/quantity-ledger.qnt" \
   command \
@@ -757,8 +757,8 @@ run_gate full kernel-v2-projection-trust \
   quint verify verification/kernel-v2/models/projection-trust.qnt --backend apalache --invariants invariant --max-steps 8 --out "$result_root/kernel-v2-projection-trust.json"
 
 run_gate full kernel-v2-commit-conformance \
-  "cargo test --locked -p norn-testkit --test kernel_quint" rust-tests \
-  cargo test --locked -p norn-testkit --test kernel_quint
+  "cargo test --locked -p norn-cell --lib suites::kernel_quint::" rust-tests \
+  cargo test --locked -p norn-cell --lib suites::kernel_quint::
 
 # Hosted timers and approval fencing (#1464): the models, every mutant refuted, then the real code driven by their traces.
 run_gate fast hosted-timers-quint-typecheck \

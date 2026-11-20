@@ -825,6 +825,9 @@ impl norn_api::analytics_routes::Uploads for OneUpload {
             file_name: "items.csv".into(),
         })
     }
+    fn issued(&self, id: &str, _scope_key: &str, uri: &str) -> bool {
+        id == "u1" && uri == "s3://uploads/demo/items.csv"
+    }
     fn presigned_get(&self, uri: &str, _seconds: u64, _now_ms: u64) -> Option<String> {
         Some(format!("https://objects.example/{}", &uri["s3://".len()..]))
     }
@@ -944,6 +947,73 @@ fn a_dataset_load_is_decided_as_an_upload_and_reported_as_its_run() {
         ),
         (Some(4), Some(3), Some(1))
     );
+}
+
+/// The host issued nothing; every signing is counted.
+#[derive(Default)]
+struct IssuedNothing(std::sync::Mutex<usize>);
+
+impl norn_api::analytics_routes::Uploads for IssuedNothing {
+    fn record(&self, _id: &str) -> Option<norn_api::analytics_routes::UploadRecord> {
+        None
+    }
+    fn issued(&self, _id: &str, _scope_key: &str, _uri: &str) -> bool {
+        false
+    }
+    fn presigned_get(&self, uri: &str, _seconds: u64, _now_ms: u64) -> Option<String> {
+        *self.0.lock().expect("signed") += 1;
+        Some(format!("https://objects.example/{}", &uri["s3://".len()..]))
+    }
+}
+
+/// S5: a `source.Upload` record in the cell that the host did not issue for
+/// this scope (here one naming another scope's object, as a forged
+/// observation would have landed it) is refused as no such upload before
+/// anything is signed or the engine is called.
+#[test]
+fn a_forged_upload_record_is_refused_before_any_signing_or_engine_call() {
+    use norn_api::analytics_routes::load_dataset;
+    use norn_api::sources::{KeptUpload, keep_upload};
+    use norn_api::uploads::{Store, sha256_hex};
+    let host = host();
+    let forged = KeptUpload {
+        upload_id: "u-forged".into(),
+        store: Store::Uploads,
+        uri: "s3://uploads/uploads/org_b/prod/secret.csv".into(),
+        sha256: sha256_hex(b"secret"),
+        size: 6,
+        content_type: "text/csv".into(),
+        file_name: "secret.csv".into(),
+        csv: true,
+        columns: Vec::new(),
+        owner: "user:owner".into(),
+        completed_at: "2026-11-12T12:00:05Z".into(),
+    };
+    keep_upload(&host, &forged, EXTRACTED_AT_MS).expect("the forged record lands");
+    let host = host.with_authorizer(UploadsOnly);
+    let scope = norn_api::scope::ScopeQuery {
+        org_id: Some("org_demo".into()),
+        environment_id: Some("dev".into()),
+    };
+    let body = json!({"uploadId": "u-forged", "objectType": "canon.Item"}).to_string();
+    let uploads = IssuedNothing::default();
+    let engine = ThreeAndOne::default();
+    let refused = load_dataset(
+        &host,
+        &scope,
+        Some("loader"),
+        &body,
+        &uploads,
+        &engine,
+        EXTRACTED_AT_MS,
+    )
+    .expect_err("a record the host did not issue never loads");
+    assert_eq!(
+        (refused.status, refused.code.as_str()),
+        (404, "dataset.not_found")
+    );
+    assert_eq!(*uploads.0.lock().expect("signed"), 0, "nothing was signed");
+    assert!(engine.0.lock().expect("calls").is_empty(), "no engine call");
 }
 
 /// UPLOAD-RECORD-1: a completed upload is kept in the cell through its own

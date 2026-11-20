@@ -11,6 +11,7 @@ mod common;
 
 use norn_cell::reactive::{DecodeBudget, ReactiveLimits};
 use norn_cell::read::LinkDirection;
+use norn_cell::test_door::TestCommit as _;
 use norn_cell::{CellStore, CommitBatch, LinkChange, MAIN_WORLD};
 use norn_ir::FactChange;
 use serde_json::json;
