@@ -312,7 +312,11 @@ impl<E: SqlEngine> CellStore<E> {
                     .saturating_add(manifest.counts.held_by_rules)
                     .saturating_add(manifest.counts.held.values().sum::<u64>())
             || manifest.load
-                != dataset_cache_id(&manifest.table, &manifest.data.sha256, &manifest.held.sha256)
+                != dataset_cache_id(
+                    &manifest.table,
+                    &manifest.data.sha256,
+                    &manifest.held.sha256,
+                )
             || binding_pin(&manifest.binding)? != manifest.pins.binding
         {
             return Err(refused(
