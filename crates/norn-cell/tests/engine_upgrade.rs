@@ -202,7 +202,29 @@ fn a_storage_v1_cell_opens_on_this_engine_with_identical_receipts() {
         + 1;
     meta.push(serde_json::json!([next_rowid, STAMP_KEY, stamp]));
     expected["storage"] = STORAGE_VERSION.into();
-    assert_eq!(after, expected, "the upgrade writes the stamp alone");
+    // #1469 replaces the retained definitions' one-revision-per-version index
+    // with one revision per id per version, on every open (`retained.rs`).
+    let schema = expected["schema"].as_array_mut().expect("schema");
+    schema.retain(|entry| entry["name"] != "_norn_retained_definition/version");
+    schema.push(serde_json::json!({
+        "type": "index",
+        "name": "_norn_retained_definition/version_id",
+        "table": "_norn_retained_definition",
+        "sql": "CREATE UNIQUE INDEX \"_norn_retained_definition/version_id\" ON \"_norn_retained_definition\" (\"definitions_version\", \"id\")"
+    }));
+    // The catalog is compared by name: a recreated index takes a new place.
+    let by_name = |image: &mut Value| {
+        if let Some(schema) = image["schema"].as_array_mut() {
+            schema.sort_by_key(|entry| entry["name"].to_string());
+        }
+    };
+    let mut catalog = after;
+    by_name(&mut catalog);
+    by_name(&mut expected);
+    assert_eq!(
+        catalog, expected,
+        "the upgrade writes the stamp and the listed index change alone"
+    );
     assert_eq!(
         engine_release::admission(&raw(&path)).expect("admission"),
         Admission::Current
@@ -213,11 +235,9 @@ fn a_storage_v1_cell_opens_on_this_engine_with_identical_receipts() {
     let store = open(&path).expect("reopen");
     assert_eq!(store.read().verify_ledger().expect("ledger"), head);
     drop(store);
-    assert_eq!(
-        engine_fixture::image_of(&path),
-        after,
-        "a current open writes nothing"
-    );
+    let mut reopened = engine_fixture::image_of(&path);
+    by_name(&mut reopened);
+    assert_eq!(reopened, catalog, "a current open writes nothing");
     let mut store = open(&path).expect("reopen");
     let mut next = engine_fixture::batches()[1].clone();
     next.idempotency_key = Some("after-upgrade".to_owned());
