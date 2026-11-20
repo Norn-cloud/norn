@@ -20,6 +20,10 @@ use norn_api::objects::{NornLinkCount, NornLinkDirection, NornObjectLinkPage};
 use norn_api::refusal::Refusal;
 use norn_api::scope::{CellScope, ScopeQuery};
 use norn_cell::engine::NativeEngine;
+// #1485 S6: fixtures write through the kernel path, never the raw door.
+#[path = "../../norn-cell/tests/support/governed.rs"]
+mod governed;
+use governed::GovernedCommit as _;
 use norn_cell::{CellStore, CommitBatch, LinkChange, MAIN_WORLD, Model, ObjectRecord};
 use norn_ir::FactChange;
 use norn_kernel::authz::{
@@ -134,7 +138,7 @@ fn link(source: &str, target: &str) -> LinkChange {
         source: source.to_owned(),
         target: target.to_owned(),
         values: BTreeMap::default(),
-        target_type: None,
+        target_type: Some(TYPE.to_owned()),
     }
 }
 

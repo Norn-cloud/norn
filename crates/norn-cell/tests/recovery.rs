@@ -15,6 +15,7 @@
 
 mod common;
 
+use norn_cell::test_door::TestCommit as _;
 use std::collections::BTreeMap;
 use std::path::Path;
 

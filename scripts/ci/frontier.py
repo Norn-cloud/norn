@@ -115,13 +115,23 @@ def row(spec):
                         "reclaim_s": sum(step["s"] for step in steps
                                          if step["name"] == "Reclaim runner disk space"),
                         "steps": steps})
-    # The gate plan is the first gate step of core; runs before that change had a plan job.
-    plan_starts = [j["started_at"] for j in entries if j["name"] in ("plan", "core") and j["started_at"]]
     return {"run_id": run["id"], "attempt": attempt, "event": run["event"],
             "head_sha": run["head_sha"], "created_at": created,
             "completed_at": run["updated_at"], "conclusion": run["conclusion"],
             "ready_at": ready,
-            "admitted_at": min(plan_starts) if plan_starts else None, "jobs": entries}
+            "admitted_at": admitted_at(entries), "jobs": entries}
+
+
+def admitted_at(entries):
+    """Legacy runs had a plan job, and admission is its start. On the consolidated workflow the
+    plan is the first step of core, so core's start is admission, but only for a run whose
+    bundles were not skipped: a draft head runs core alone and is not admitted."""
+    legacy = [j["started_at"] for j in entries if j["name"] == "plan" and j["started_at"]]
+    if legacy:
+        return min(legacy)
+    bundled = any(j["name"].split(" ", 1)[0] == "bundle" and j["conclusion"] != "skipped" for j in entries)
+    core = [j["started_at"] for j in entries if j["name"] == "core" and j["started_at"]]
+    return min(core) if bundled and core else None
 
 
 def attempt_document(rows, merges):
@@ -213,6 +223,14 @@ def self_test():
     first = {"run_id": 1, "attempt": 1, "event": "pull_request", "head_sha": "head",
              "created_at": stamp, "completed_at": finish, "conclusion": "cancelled",
              "ready_at": stamp, "admitted_at": finish, "jobs": [job]}
+    early, late = "2026-11-02T00:00:00Z", "2026-11-02T00:05:00Z"
+    plan_job = {"name": "plan", "conclusion": "success", "started_at": late}
+    core_job = {"name": "core", "conclusion": "success", "started_at": early}
+    bundle = {"name": "bundle (1)", "conclusion": "success", "started_at": late}
+    assert admitted_at([core_job, plan_job]) == late
+    assert admitted_at([core_job, bundle]) == early
+    assert admitted_at([core_job, dict(bundle, conclusion="skipped")]) is None
+    assert admitted_at([core_job]) is None
     import copy
     second = copy.deepcopy(first)
     second.update(attempt=2, conclusion="success")
