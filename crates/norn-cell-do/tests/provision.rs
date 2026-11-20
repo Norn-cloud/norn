@@ -1684,7 +1684,7 @@ fn a_caller_cannot_load_the_cells_own_upload_records() {
                 routed.response.status,
                 json_of(&routed.response)["code"].as_str()
             ),
-            (403, Some("observations.host_owned")),
+            (403, Some("authz.denied")),
             "{source} {mapping} {instance}: {}",
             routed.response.body
         );

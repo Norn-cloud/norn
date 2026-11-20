@@ -1,13 +1,16 @@
 // TENANT-ISOLATION-1 (S8): the Worker boundary over the real Wasm gate. worker.test.mjs pins the
 // Worker's own routing and storage discipline with a stand-in gate; here the shipped wasm-bindgen
 // package (NORN_CELL_DO_PKG: a directory holding norn_cell_do.js and norn_cell_do_bg.wasm, built
-// as apps/norn-cell-do/README.md says) answers. A member of org A, with a real host token, asks
-// org B's cell and a scope nobody provisioned: the raw responses (status, every header, body)
-// are byte for byte the same, and the object's storage is never touched.
+// as apps/norn-cell-do/README.md says) answers, over a SQLite-backed Durable Object storage.
+// B's owner provisions B's cell through the Worker, and B's member reads it there; then a member
+// of org A, with a real host token, asks B's provisioned cell and a scope nobody provisioned: the
+// raw responses (status, every header, body) are byte for byte the same, and neither object's
+// storage is touched.
 // Run: NORN_CELL_DO_PKG=<pkg> bun test ./worker.wasm.test.mjs (from apps/norn-cell-do).
 import { plugin } from "bun";
+import { Database } from "bun:sqlite";
 import { afterAll, describe, expect, test } from "bun:test";
-import { copyFileSync, cpSync, existsSync, mkdtempSync, rmSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -94,20 +97,53 @@ globalThis.WebSocketPair = class {
 };
 
 const { default: router, Cell } = await import(join(dir, "worker.mjs"));
-const { NornGate } = await import(join(dir, "pkg", "norn_cell_do.js"));
 
-/** A Durable Object whose storage records every touch (the gate must make none). */
+/**
+ * A Durable Object over a real SQLite database (bun:sqlite) with the DO storage surface the cell and
+ * the Worker use (sql.exec(...).raw(), transactionSync, get/put/delete, alarms). Every access is
+ * recorded in `touched`, so a test sees whether an outsider's request reached it at all.
+ */
 function object() {
   const touched = [];
-  const touch = (name) => (...args) => {
-    touched.push(name);
-    throw new Error(`storage ${name} touched for an outsider`);
+  const db = new Database(":memory:");
+  const kv = new Map();
+  let alarm = null;
+  const cursor = (rows) => ({ raw: () => rows[Symbol.iterator](), toArray: () => rows, one: () => rows[0] });
+  const surface = {
+    sql: {
+      exec(statement, ...params) {
+        // A parameterless multi-statement script (a migration) runs whole; anything else is one statement.
+        const body = statement.trim().replace(/;\s*$/, "");
+        if (params.length === 0 && body.includes(";")) {
+          db.run(statement);
+          return cursor([]);
+        }
+        // bun:sqlite answers null for a statement that returns no rows; the DO cursor is empty.
+        return cursor(db.prepare(statement).values(...params) ?? []);
+      },
+    },
+    transactionSync: (callback) => db.transaction(callback)(),
+    get: async (key) => structuredClone(kv.get(key)),
+    put: async (key, value) => void kv.set(key, structuredClone(value)),
+    delete: async (key) => kv.delete(key),
+    list: async () => new Map(kv),
+    getAlarm: async () => alarm,
+    setAlarm: async (at) => void (alarm = at),
+    deleteAlarm: async () => void (alarm = null),
   };
-  const storage = new Proxy({}, { get: (_, name) => (name === "sql" ? new Proxy({}, { get: (_, op) => touch(`sql.${String(op)}`) }) : touch(String(name))) });
+  const storage = new Proxy(surface, {
+    get: (target, name) => {
+      touched.push(String(name));
+      return target[name];
+    },
+  });
   const sockets = [];
   const ctx = {
     storage,
-    waitUntil: touch("waitUntil"),
+    waitUntil: (promise) => {
+      touched.push("waitUntil");
+      return promise;
+    },
     getWebSockets: (tag) => sockets.filter((s) => tag === undefined || s.tags.includes(tag)).map((s) => s.ws),
     acceptWebSocket: (ws, tags = []) => sockets.push({ ws, tags }),
   };
@@ -122,7 +158,7 @@ const ENV = {
   NORN_TENANT_ENVIRONMENTS: "dev,prod",
 };
 
-/** A deployment of two objects, B's and a vacant scope's, each a cold Cell per request. */
+/** A deployment of cell objects (created on first use), each a cold Cell per request. */
 function deploy() {
   const objects = new Map();
   const env = { ...ENV };
@@ -148,6 +184,33 @@ async function raw(response) {
 
 const B = ["org_b", "prod"];
 const NOWHERE = ["org_c", "prod"];
+const keyOf = ([org, environment]) => `${org}/${environment}`;
+
+/** A tenant's artifacts from the recorded three-systems set (everything outside the reserved base namespaces). */
+const TENANT_ARTIFACTS = JSON.parse(readFileSync(join(import.meta.dir, "../../fixtures/demo/explorer/three-systems.definitions.json"), "utf8")).filter(
+  (artifact) => !artifact.artifactId.startsWith("core.") && !artifact.artifactId.startsWith("std."),
+);
+
+/**
+ * A deployment where B's owner has provisioned B's cell through the Worker (the cell's real
+ * storage now holds B's definitions) and the vacant scope's object exists but nobody provisioned
+ * it. Every storage touch so far is forgotten.
+ */
+async function provisioned() {
+  const deployment = deploy();
+  const owner = await token("org_b", "olga", "owner");
+  // The host states its trusted base when a submission names another one.
+  const probe = await router.fetch(request(B, owner, { method: "POST", path: "/v1/cell:provision", body: JSON.stringify({ baseSha256: "0".repeat(64), artifacts: [] }) }), deployment.env);
+  const probed = JSON.parse(await probe.text());
+  expect(probed.code).toBe("cell.base_mismatch");
+  const baseSha256 = /sha256 ([0-9a-f]{64})/.exec(probed.explanation)[1];
+  const done = await router.fetch(request(B, owner, { method: "POST", path: "/v1/cell:provision", body: JSON.stringify({ baseSha256, artifacts: TENANT_ARTIFACTS }) }), deployment.env);
+  expect(done.status, await done.clone().text()).toBe(200);
+  // The vacant scope's object is created, never provisioned.
+  await router.fetch(request(NOWHERE, await token("org_c"), { path: "/v1/definitions" }), deployment.env);
+  for (const o of deployment.objects.values()) o.touched.length = 0;
+  return deployment;
+}
 
 describe("the real Wasm gate at the Worker boundary", () => {
   for (const [method, path, body] of [
@@ -157,9 +220,10 @@ describe("the real Wasm gate at the Worker boundary", () => {
     ["POST", "/v1/uploads:begin", JSON.stringify({ fileName: "rows.csv", contentType: "text/csv", size: 3 })],
     ["POST", "/v1/cell:provision", JSON.stringify({ artifacts: [] })],
   ]) {
-    test(`${method} ${path}: an outsider at B gets a vacant scope's exact refusal and headers, and no storage is touched`, async () => {
+    test(`${method} ${path}: an outsider at B's provisioned cell gets a vacant scope's exact refusal and headers, and no storage is touched`, async () => {
       const outsider = await token("org_a");
-      const { env, objects } = deploy();
+      const { env, objects } = await provisioned();
+      expect([...objects.keys()].sort()).toEqual([keyOf(B), keyOf(NOWHERE)]);
       const atB = await raw(await router.fetch(request(B, outsider, { method, path, body }), env));
       const atNowhere = await raw(await router.fetch(request(NOWHERE, outsider, { method, path, body }), env));
       expect(atB).toEqual(atNowhere);
@@ -169,9 +233,9 @@ describe("the real Wasm gate at the Worker boundary", () => {
     });
   }
 
-  test("a live upgrade: an outsider's socket at B is accepted as at a vacant scope, with no storage touched", async () => {
+  test("a live upgrade: an outsider's socket at B's provisioned cell is accepted as at a vacant scope, with no storage touched", async () => {
     const outsider = await token("org_a");
-    const { env, objects } = deploy();
+    const { env, objects } = await provisioned();
     const upgrade = (scope) => request(scope, outsider, { path: "/v1/subscribe", headers: { upgrade: "websocket", "sec-websocket-protocol": "norn.live.v1" } });
     const atB = await raw(await router.fetch(upgrade(B), env));
     const atNowhere = await raw(await router.fetch(upgrade(NOWHERE), env));
@@ -180,13 +244,25 @@ describe("the real Wasm gate at the Worker boundary", () => {
     for (const o of objects.values()) expect(o.touched).toEqual([]);
   });
 
-  test("positive control: the same gate admits B's own member, and refuses a forged token as an outsider", async () => {
-    const gate = new NornGate("org_b", "prod", ISSUER, JWKS, ENV.NORN_LINEAGE_KEY, "[]", "{}", Date.now());
-    const query = "orgId=org_b&environmentId=prod";
-    expect(gate.check("GET", "/v1/objects/canon.Item", query, await token("org_b"), Date.now(), undefined)).toBeUndefined();
-    const outsider = gate.check("GET", "/v1/objects/canon.Item", query, await token("org_a"), Date.now(), undefined);
-    expect(outsider?.status).toBeGreaterThanOrEqual(400);
+  test("positive control: B's member reads B's provisioned definitions through the Worker, from B's storage", async () => {
+    const { env, objects } = await provisioned();
+    const read = await router.fetch(request(B, await token("org_b", "ana", "member"), { path: "/v1/definitions" }), env);
+    const body = await read.text();
+    expect(read.status, body).toBe(200);
+    // The tenant's own artifacts are what B serves; the cell read them from B's storage.
+    for (const artifact of TENANT_ARTIFACTS.slice(0, 3)) expect(body).toContain(artifact.artifactId);
+    expect(objects.get(keyOf(B)).touched).toContain("sql");
+    // The vacant scope's own member sees no such definitions there.
+    const vacant = await router.fetch(request(NOWHERE, await token("org_c", "ana", "member"), { path: "/v1/definitions" }), env);
+    expect(await vacant.text()).not.toContain(TENANT_ARTIFACTS[0].artifactId);
+  });
+
+  test("positive control: a forged member token at B is answered exactly as an outsider", async () => {
+    const { env, objects } = await provisioned();
     const forged = (await token("org_b")).slice(0, -4) + "AAAA";
-    expect(gate.check("GET", "/v1/objects/canon.Item", query, forged, Date.now(), undefined)?.body).toBe(outsider.body);
+    const atB = await raw(await router.fetch(request(B, forged), env));
+    const outsider = await raw(await router.fetch(request(B, await token("org_a")), env));
+    expect(atB).toEqual(outsider);
+    for (const o of objects.values()) expect(o.touched).toEqual([]);
   });
 });

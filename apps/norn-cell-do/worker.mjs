@@ -309,17 +309,27 @@ export class Cell {
     const query = `orgId=${encodeURIComponent(org)}&environmentId=${encodeURIComponent(env)}`;
     return gate.check("GET", "/v1/subscribe", query, authorization ?? undefined, Date.now(), undefined) == null;
   }
-  /** After a commit, every live subscription on this object is answered again; resolves to the changed snapshots sent. */
-  publish() {
-    // S3: only a socket classified a member is re-asked. An outsider's answer is the gate's, which
-    // no commit changes; an unclassified socket is closed, never answered by the cell.
-    live.closeUnclassified(this.ctx);
-    const members = live.members(this.ctx);
-    if (members.length === 0) return Promise.resolve(0);
-    return live.publish({ getWebSockets: () => members }, (path, query, authorization) => this.ask(path, query, authorization)).catch((error) => {
+  /**
+   * After a commit, every live subscription on this object is answered again; resolves to the
+   * changed snapshots sent. S3: a commit is observable only on the sockets of callers who are
+   * members now. A socket accepted as a member is re-checked at the gate first, so a former
+   * member (an expired token, a lost membership) is sent nothing; an outsider's answer is the
+   * gate's, which no commit changes; an unclassified socket is not touched. No socket is closed
+   * here: each ends on its own message (`webSocketMessage`), whether or not anyone commits.
+   */
+  async publish() {
+    try {
+      const members = [];
+      for (const ws of live.members(this.ctx)) {
+        const { scope, authorization } = ws.deserializeAttachment();
+        if (await this.member(scope, authorization)) members.push(ws);
+      }
+      if (members.length === 0) return 0;
+      return await live.publish({ getWebSockets: () => members }, (path, query, authorization) => this.ask(path, query, authorization));
+    } catch (error) {
       console.error(`live publish failed: ${error}`);
       return 0;
-    });
+    }
   }
   async fetch(request) {
     const url = new URL(request.url);

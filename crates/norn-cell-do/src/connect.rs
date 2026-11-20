@@ -986,7 +986,7 @@ fn load_observations<E: SqlEngine>(host: &DevHost<E>, body: &str) -> Response {
     {
         return refused(
             403,
-            "observations.host_owned",
+            norn_api::refusal::codes::AUTHZ_DENIED,
             "the cell's own records are written by the cell, never loaded",
         );
     }
@@ -1283,6 +1283,38 @@ mod tests {
                 upload.uri,
                 "s3://documents-bucket/fixtures/scans/receipt-01.pdf"
             );
+        }
+    }
+
+    /// S9: the scan fixtures the repository ships name their documents in
+    /// the operator-only `fixtures/scans/` namespace, which every scope
+    /// resolves, and never a legacy bare `synthetic/` key, which none does.
+    #[test]
+    fn shipped_scan_fixtures_name_operator_fixture_keys() {
+        let cell = connect("secret-one");
+        let s3 = cell
+            .store(Store::Documents)
+            .expect("documents store")
+            .clone();
+        let mut keys = std::collections::BTreeSet::new();
+        for text in [
+            include_str!("../../../fixtures/documents/scans.snapshot.json"),
+            include_str!("../../../fixtures/connectors/scans/extractions.page.json"),
+        ] {
+            for uri in text.split('"').filter(|part| part.starts_with("s3://")) {
+                let key = uri
+                    .strip_prefix("s3://documents-bucket/")
+                    .unwrap_or_else(|| panic!("{uri} is in the documents store"));
+                keys.insert(key.to_owned());
+            }
+        }
+        assert!(keys.len() >= 10, "{keys:?}");
+        for key in &keys {
+            assert!(key.starts_with("fixtures/scans/") && fixture(key), "{key}");
+            let id = upload_id(Store::Documents, key, &s3);
+            for scope in ["org_a/prod", "org_z/dev"] {
+                assert!(cell.resolve(&id, scope).is_some(), "{scope}: {key}");
+            }
         }
     }
 

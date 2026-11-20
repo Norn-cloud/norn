@@ -13,6 +13,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const OUTSIDER = "Bearer member-of-org_a";
+/** A former member of B: its token no longer verifies (the cell answers 401, the gate refuses it). */
+const LAPSED = "Bearer expired-member-of-org_b";
 const OUTSIDE_BODY = JSON.stringify({ format: "norn/refusal@2", code: "authz.denied", category: "permission" });
 
 /** What the fake Wasm saw, per test. */
@@ -48,9 +50,10 @@ class FakeCell {
     this.storage.sql.exec("SELECT due sync");
     return undefined;
   }
-  fetch() {
+  fetch(_method, _path, _query, authorization) {
     world.served += 1;
     this.storage.sql.exec("SELECT answer");
+    if (authorization === LAPSED) return { status: 401, body: JSON.stringify({ code: "authn.required" }) };
     return { status: 200, body: JSON.stringify({ cell: this.scope }) };
   }
 }
@@ -327,7 +330,7 @@ describe("an unclassified or lapsed socket (S3)", () => {
     expect(objs.get(keyOf(B)).ops).toEqual([]);
   });
 
-  test("an unclassified socket is never counted, published to or answered as a member", async () => {
+  test("an unclassified socket is never counted, published to or answered as a member, and no one else's activity closes it", async () => {
     const objs = new Map([[keyOf(B), object({ provisioned: true, scope: B, alarm: Date.now() + 60_000 })]]);
     const { ctx, sockets } = objs.get(keyOf(B));
     // 256 unclassified sockets would fill the member quota if they counted as members.
@@ -340,19 +343,78 @@ describe("an unclassified or lapsed socket (S3)", () => {
     const env = deploy(objs, { warm: true });
     const member = await router.fetch(request(B, { path: "/v1/subscribe", authorization: "Bearer member-of-org_b", headers: { upgrade: "websocket" } }), env);
     expect(member.status).toBe(101);
-    for (const ws of old) expect(ws.closed).toEqual([1012, "reconnect"]);
     // A commit's publish asks the cell only for classified members.
     quiet(objs);
-    for (const ws of old) ws.closed = undefined;
     const cell = new Cell(ctx, env);
     await cell.ready(B);
     world.served = 0;
     await cell.publish();
     for (const ws of old) {
-      expect(ws.closed).toEqual([1012, "reconnect"]);
+      expect(ws.closed).toBeUndefined();
       expect(ws.sent).toEqual([]);
     }
     expect(world.served).toBe(0);
+  });
+
+  /**
+   * One run at B: a legacy (unclassified) socket, a lapsed member's socket, a former member's
+   * socket (saved role member, its token now an outsider's) and an outsider's socket sit idle;
+   * a member commits (or does not), then each idle socket sends its own message.
+   */
+  async function run({ commit }) {
+    const objs = new Map([[keyOf(B), object({ provisioned: true, scope: B, alarm: Date.now() + 60_000 })]]);
+    const { ctx, sockets } = objs.get(keyOf(B));
+    const sub = { a: { pathname: "/v1/objects/canon.Item", query: "orgId=org_b&environmentId=prod", digest: "" } };
+    const idle = {
+      legacy: new FakeSocket({ scope: B, authorization: OUTSIDER, subs: sub }),
+      lapsed: new FakeSocket({ scope: B, authorization: LAPSED, subs: sub, role: "member" }),
+      former: new FakeSocket({ scope: B, authorization: OUTSIDER, subs: sub, role: "member" }),
+      outsider: new FakeSocket({ scope: B, authorization: OUTSIDER, subs: sub, role: "outside" }),
+    };
+    const watching = new FakeSocket({ scope: B, authorization: "Bearer member-of-org_b", subs: sub, role: "member" });
+    sockets.push({ ws: idle.legacy, tags: [] }, { ws: idle.lapsed, tags: ["member"] }, { ws: idle.former, tags: ["member"] }, { ws: idle.outsider, tags: ["outside"] }, { ws: watching, tags: ["member"] });
+    const env = deploy(objs, { warm: true });
+    if (commit) {
+      const committed = await router.fetch(request(B, { method: "POST", path: "/v1/runs", authorization: "Bearer member-of-org_b", body: JSON.stringify({ flow: "ops.approve_refund" }) }), env);
+      expect(committed.status).toBe(200);
+      // The publish is not awaited by the response; let it finish.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    const afterCommit = Object.fromEntries(Object.entries(idle).map(([name, ws]) => [name, { closed: ws.closed, sent: structuredClone(ws.sent) }]));
+    const cell = new Cell(ctx, env);
+    for (const ws of Object.values(idle)) await cell.webSocketMessage(ws, JSON.stringify({ type: "subscribe", id: "b", path: "/v1/objects/canon.Item?orgId=org_b&environmentId=prod" }));
+    const afterMessage = Object.fromEntries(Object.entries(idle).map(([name, ws]) => [name, { closed: ws.closed, sent: ws.sent.map(({ digest: _, ...rest }) => rest) }]));
+    return { afterCommit, afterMessage, watching: watching.sent.length };
+  }
+
+  test("an outsider, a legacy socket and a lapsed or former member see no difference whether or not a commit happens", async () => {
+    const without = await run({ commit: false });
+    const withCommit = await run({ commit: true });
+    // Positive control: the commit did publish to the member who is one now.
+    expect(without.watching).toBe(0);
+    expect(withCommit.watching).toBe(1);
+    // During the publish nothing reached or closed any of the others.
+    expect(withCommit.afterCommit).toEqual(without.afterCommit);
+    for (const seen of Object.values(withCommit.afterCommit)) expect(seen).toEqual({ closed: undefined, sent: [] });
+    // Each is ended or answered by its own message, identically with or without the commit.
+    expect(withCommit.afterMessage).toEqual(without.afterMessage);
+    expect(withCommit.afterMessage.legacy.closed).toEqual([1012, "reconnect"]);
+    expect(withCommit.afterMessage.lapsed.closed).toEqual([4401, "not a member"]);
+    expect(withCommit.afterMessage.former.closed).toEqual([4401, "not a member"]);
+    expect(withCommit.afterMessage.outsider.sent.map((m) => m.status)).toEqual([403]);
+  });
+
+  test("a publish never closes a socket whose token the cell refuses (a lapse after the gate check)", async () => {
+    const objs = new Map([[keyOf(B), object({ provisioned: true, scope: B })]]);
+    const env = deploy(objs, { warm: true });
+    const cell = new Cell(objs.get(keyOf(B)).ctx, env);
+    await cell.ready(B);
+    // A socket the gate still admits but whose token the cell refuses at publish time (a lapse in between).
+    const ws = new FakeSocket({ scope: B, authorization: LAPSED, subs: { a: { pathname: "/v1/objects/canon.Item", query: "", digest: "" } }, role: "member" });
+    const live = await import(join(dir, "subscribe.mjs"));
+    expect(await live.publish({ getWebSockets: () => [ws] }, (path, query, authorization) => cell.ask(path, query, authorization))).toBe(0);
+    expect(ws.closed).toBeUndefined();
+    expect(ws.sent).toEqual([]);
   });
 
   test("a member socket whose token is no longer a member is closed before storage is reopened", async () => {

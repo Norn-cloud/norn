@@ -756,9 +756,9 @@ fn loaded_timestamp_grammar_is_the_cells_at_its_edges() {
 /// The bulk path's numbers, on the machine that runs it: a 1M-row CSV load,
 /// the same rows as Parquet, the weekly yield question over them, a profile,
 /// and a mirror sync of 100k governed versions. Run on Boat in release:
-/// `cargo test --release --config 'profile.release.debug-assertions=true' -p norn-cell --features duckdb --test analytics_engine -- --ignored --nocapture`
-/// (the fixtures commit through `norn_cell::test_door`, which exists only
-/// with debug assertions).
+/// `cargo test --release -p norn-cell --features duckdb --lib suites::analytics_engine:: -- --ignored --nocapture`
+/// (the suite is compiled into norn-cell's own test build, where its
+/// fixtures commit through the crate's test door).
 #[test]
 #[ignore = "a 1M-row measurement, run on Boat in release"]
 #[allow(

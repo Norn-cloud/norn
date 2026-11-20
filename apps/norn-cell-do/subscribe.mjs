@@ -26,7 +26,8 @@ export const MAX_OUTSIDE_SOCKETS = 32;
 /**
  * S3: every socket's attachment carries the membership decision made when it was accepted
  * (`role`): MEMBER or OUTSIDE. A socket without one (accepted before the gate) is neither: it is
- * never counted, answered or published to as a member, only closed (`reclassify`).
+ * never counted, answered or published to as a member, and it is closed (`reclassify`) only on its
+ * own message, never on another caller's activity (an upgrade or a commit), which it could observe.
  */
 export const OUTSIDE = "outside";
 export const MEMBER = "member";
@@ -62,7 +63,6 @@ const send = (ws, message) => {
  * data; every answer comes later from `evaluate`.
  */
 export function accept(ctx, scope, authorization, requested = "", { outside = false } = {}) {
-  closeUnclassified(ctx);
   // An outsider is counted only among outsiders; a member among members.
   const open = outside ? ctx.getWebSockets(OUTSIDE).length : members(ctx).length;
   const limit = outside ? MAX_OUTSIDE_SOCKETS : MAX_SOCKETS;
@@ -98,17 +98,13 @@ export function reclassify(ws) {
   }
 }
 
-/** Close every unclassified socket on `ctx` (S3). */
-export function closeUnclassified(ctx) {
-  for (const ws of ctx.getWebSockets()) if (roleOf(ws.deserializeAttachment()) === null) reclassify(ws);
-}
-
 /**
  * Answer every subscription of `ws` again and send the ones that changed (`tally.sent` counts the sends the socket took). `ask(path, query,
- * authorization)` is the cell's own GET. Returns false when the socket was closed for an expired
- * or refused token.
+ * authorization)` is the cell's own GET. Returns false when the token no longer verifies: the
+ * socket is closed, or, when `quiet` (a publish, S3), left untouched so another caller's commit is
+ * never what ends it; its own next message does.
  */
-export async function evaluate(ws, ask, only, tally) {
+export async function evaluate(ws, ask, only, tally, { quiet = false } = {}) {
   const attachment = ws.deserializeAttachment();
   if (!attachment) return false;
   let changed = false;
@@ -116,7 +112,7 @@ export async function evaluate(ws, ask, only, tally) {
     if (only !== undefined && id !== only) continue;
     const reply = ask(sub.pathname, sub.query, attachment.authorization);
     if (reply.status === 401) {
-      ws.close(4401, "token expired");
+      if (!quiet) ws.close(4401, "token expired");
       return false;
     }
     const value = await digest(`${reply.status}\n${reply.body}`);
@@ -167,9 +163,13 @@ export async function message(ws, raw, ask) {
   await evaluate(ws, ask, id);
 }
 
-/** After a commit: answer every live subscription on this object again. Resolves to the number of changed snapshots the sockets took. */
+/**
+ * After a commit: answer every live subscription on `ctx`'s sockets again. Resolves to the number
+ * of changed snapshots the sockets took. A publish never closes a socket (S3): a token that lapsed
+ * is left for the socket's own next message to end.
+ */
 export async function publish(ctx, ask) {
   const tally = { sent: 0 };
-  for (const ws of ctx.getWebSockets()) await evaluate(ws, ask, undefined, tally);
+  for (const ws of ctx.getWebSockets()) await evaluate(ws, ask, undefined, tally, { quiet: true });
   return tally.sent;
 }
