@@ -1425,6 +1425,12 @@ fn commit_manifest<E: SqlEngine>(
         return Err(stale_landing());
     }
     let [data_uri, held_uri] = landing.uris.clone();
+    // MANIFEST-MARK-1: the commit checks these again against the model.
+    let markings = host
+        .cell()?
+        .store()
+        .dataset_markings(object_type, table)
+        .map_err(Refusal::host)?;
     let manifest = DatasetManifest {
         version: MANIFEST_VERSION.to_owned(),
         object_type: object_type.to_owned(),
@@ -1459,10 +1465,7 @@ fn commit_manifest<E: SqlEngine>(
             held_by_rules: land.held_by_rules,
         },
         valid_time: land.valid_time.clone(),
-        markings: guard
-            .store()
-            .dataset_markings(object_type, &landing.table)
-            .map_err(Refusal::host)?,
+        markings,
     };
     let (hash, receipt) = host
         .cell()?
