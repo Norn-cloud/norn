@@ -2000,10 +2000,34 @@ pub struct AccessDocument {
 pub struct RoleAccess {
     /// The declared role.
     pub role: &'static str,
+    /// What every decision here is over: always [`COLLECTION_SCOPE`], the
+    /// collection asked about, never one record of it.
+    pub scope: &'static str,
+    /// Whether the role sees the collection's records, as Studio shows it.
+    pub see: SeeDecision,
     /// One decision per read capability.
     pub read: BTreeMap<&'static str, AccessDecision>,
     /// Each callable action on the collection, by identity.
     pub actions: Vec<crate::actions::RoleAction>,
+}
+
+/// The scope of every per-role answer of `GET /v1/access?objectType=`: the
+/// whole collection. A role permitted its values still reads a marked fact
+/// as the cell projects it for that reader (masked or withheld by its
+/// markings), decided at each read of each record.
+pub const COLLECTION_SCOPE: &str = "collection";
+
+/// Whether one role alone sees a collection's records: the read PDP's
+/// Population and Values decisions for it, read together by the cell.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SeeDecision {
+    /// `permit`: the role reads the collection's values; `partial`: only
+    /// which records exist (Population without Values); `deny`: neither.
+    pub decision: &'static str,
+    /// Always [`COLLECTION_SCOPE`]: a `permit` is the collection's, and a
+    /// marked fact is still masked or withheld per record by its markings.
+    pub scope: &'static str,
 }
 
 /// What `GET /v1/access?objectType=` asks: the read PDP and the action policy
@@ -2129,25 +2153,43 @@ fn role_access(explainer: &RoleExplainer<'_>, object_type: &str) -> Vec<RoleAcce
         .reads
         .roles()
         .into_iter()
-        .map(|role| RoleAccess {
-            role,
-            read: CAPABILITIES
-                .iter()
-                .map(|(capability, name)| {
-                    let permitted = explainer.reads.permits(role, *capability, object_type);
-                    (
-                        *name,
-                        AccessDecision {
-                            decision: if permitted { "permit" } else { "deny" },
-                            rule: permitted.then(|| format!("{}:{role}", explainer.reads.table())),
-                        },
-                    )
-                })
-                .collect(),
-            actions: explainer
-                .actions
-                .map(|policy| policy.role_decisions(role, object_type))
-                .unwrap_or_default(),
+        .map(|role| {
+            let permits =
+                |capability: ReadCapability| explainer.reads.permits(role, capability, object_type);
+            let see = match (
+                permits(ReadCapability::Population),
+                permits(ReadCapability::Values),
+            ) {
+                (true, true) => "permit",
+                (true, false) => "partial",
+                (false, _) => "deny",
+            };
+            RoleAccess {
+                role,
+                scope: COLLECTION_SCOPE,
+                see: SeeDecision {
+                    decision: see,
+                    scope: COLLECTION_SCOPE,
+                },
+                read: CAPABILITIES
+                    .iter()
+                    .map(|(capability, name)| {
+                        let permitted = permits(*capability);
+                        (
+                            *name,
+                            AccessDecision {
+                                decision: if permitted { "permit" } else { "deny" },
+                                rule: permitted
+                                    .then(|| format!("{}:{role}", explainer.reads.table())),
+                            },
+                        )
+                    })
+                    .collect(),
+                actions: explainer
+                    .actions
+                    .map(|policy| policy.role_decisions(role, object_type))
+                    .unwrap_or_default(),
+            }
         })
         .collect()
 }

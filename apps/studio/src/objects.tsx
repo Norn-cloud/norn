@@ -235,8 +235,8 @@ function FactValue({ field, reads, onLineage }: { readonly field: Concept["field
   const value = reads.object.document.values[field.id]
   // A marked fact arrives projected for this reader: shown as the server projected it, never as the value.
   const masked = maskedOf(reads.object.document, field.id)
-  // Keyed by version: a reveal belongs to the version it revealed, so a newer one starts masked again.
-  if (masked !== null) return <MaskedValue key={`${objectType}/${id}@${version}/${field.id}`} objectType={objectType} id={id} property={field.id} masked={masked} projected={value} />
+  // A reveal belongs to the version and projection it was revealed under; a newer one starts masked again.
+  if (masked !== null) return <MaskedValue key={`${objectType}/${id}/${field.id}`} objectType={objectType} id={id} version={version} property={field.id} masked={masked} projected={value} />
   if (value === null || value === undefined) return <span className="text-muted-foreground">{text}</span>
   const label = field.label ?? field.id.replaceAll("_", " ")
   return (
@@ -253,7 +253,10 @@ function FactValue({ field, reads, onLineage }: { readonly field: Concept["field
  * returned. Records that link here open in full, fact by fact.
  */
 function LinksRail({ concept, id, links, concepts, live }: { readonly concept: Concept; readonly id: string; readonly links: CountedLinkPage; readonly concepts: readonly Concept[]; readonly live: boolean }) {
-  const groups = linkGroups(concept, incomingOf(concept, concepts), id, links)
+  const declared = linkGroups(concept, incomingOf(concept, concepts), id, links)
+  // A link type with nothing stored folds into one line under the ones that hold records.
+  const groups = declared.filter((group) => group.ids.length > 0 || (group.count ?? 0) > 0)
+  const empty = declared.length - groups.length
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set())
   const [table, setTable] = useState<LinkGroup | null>(null)
   const from = table ? concepts.find(({ name }) => name === table.otherType) : undefined
@@ -261,8 +264,8 @@ function LinksRail({ concept, id, links, concepts, live }: { readonly concept: C
   return (
     <Panel icon={Link2} label="Links" action={links.counts ? (links.counts.complete ? "Counted by the cell" : `Counted to ${links.counts.bound.toLocaleString("en")}`) : undefined}>
       <Well className="p-1.5">
-        {groups.length === 0
-          ? <p className="p-2 text-sm text-muted-foreground">{links.counts ? "No link touches this record." : "This concept declares no relationships."}</p>
+        {declared.length === 0 || (groups.length === 0 && links.counts?.complete === true && !links.hasMore)
+          ? <p className="p-2 text-sm text-muted-foreground">{declared.length > 0 || links.counts ? "No link touches this record." : "This concept declares no relationships."}</p>
           : <ul className="divide-y divide-border/70">
             {groups.map((group) => {
               const all = expanded.has(group.key)
@@ -285,6 +288,7 @@ function LinksRail({ concept, id, links, concepts, live }: { readonly concept: C
                 </li>
               )
             })}
+            {empty > 0 && <li data-links-empty={empty} className="px-2 py-2 text-meta text-muted-foreground">{groups.length === 0 ? `${empty} link ${empty === 1 ? "type" : "types"}` : `${empty} more`}, {none.charAt(0).toLowerCase()}{none.slice(1)}</li>}
           </ul>}
       </Well>
       <Sheet open={table !== null} onOpenChange={(next) => { if (!next) setTable(null) }}>

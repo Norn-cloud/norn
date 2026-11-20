@@ -66,6 +66,49 @@ test("markings: a role that may reveal reveals with a purpose, and the value com
   expect(cell.reveals).toEqual([expect.objectContaining({ property: "display_name", purpose: "KYC review for refund #4471" })])
 })
 
+/** Reveal the display name with a purpose, as an admin may. */
+async function askReveal(page: Page) {
+  const name = fact(page, "display_name")
+  await name.locator("[data-reveal]").click()
+  await page.getByLabel("Purpose").fill("KYC review for refund #4471")
+  await page.locator("[data-confirm-reveal]").click()
+  return name
+}
+
+test("markings: a revealed value is dropped when the cell's next read of the same version no longer allows a reveal", async ({ page }) => {
+  const cell = await recordCell(page, "admin")
+  await page.goto(PARTY)
+  const name = await askReveal(page)
+  await expect(name.locator("[data-revealed]")).toContainText("Amira Haddad")
+  // The grant is revoked: the same version, now projected without a reveal.
+  cell.become("member")
+  await page.getByRole("button", { name: "Read again" }).click()
+  await expect(name.locator("[data-hidden-tag]")).toHaveText("Hidden from your role")
+  await expect(name.locator("[data-revealed]")).toHaveCount(0)
+  await expect(name.locator('[data-masked="pseudonym"]')).toBeVisible()
+  await expect(page.getByText("Amira Haddad")).toHaveCount(0)
+})
+
+test("markings: a reveal answered after the cell withdrew the reveal is never shown", async ({ page }) => {
+  const cell = await recordCell(page, "admin")
+  await page.goto(PARTY)
+  const release = cell.holdReveal()
+  const name = await askReveal(page)
+  await expect.poll(() => cell.reveals.length).toBe(1)
+  // While the answer is out, the cell's next read withdraws the reveal.
+  cell.become("member")
+  await page.keyboard.press("Escape")
+  await page.getByRole("button", { name: "Read again" }).click()
+  await expect(name.locator("[data-hidden-tag]")).toHaveText("Hidden from your role")
+  // The late answer lands; the page waits past it and still shows only the projection.
+  const answered = page.waitForResponse((response) => response.url().endsWith("/reveal"))
+  release()
+  await answered
+  await page.waitForTimeout(300)
+  await expect(name.locator("[data-revealed]")).toHaveCount(0)
+  await expect(page.getByText("Amira Haddad")).toHaveCount(0)
+})
+
 test("who can: each role's reads and actions are the cell's decisions, and your role is marked", async ({ page }) => {
   const cell = await recordCell(page, "member")
   await page.goto(PARTY)
@@ -77,6 +120,9 @@ test("who can: each role's reads and actions are the cell's decisions, and your 
   expect(await decided("member", "see")).toBe("permit")
   expect(await decided("member", "sources")).toBe("deny")
   expect(await decided("admin", "sources")).toBe("permit")
+  // Every answer is the collection's, and says so: a marked fact is still projected per record.
+  await expect(verb(page, "member", "see")).toHaveAttribute("title", "See: allowed for the collection")
+  await expect(page.locator('[data-access-scope="collection"]')).toContainText("a marked fact can still be masked or withheld")
   const act = `act:${VERIFY.actionId}`
   await expect(verb(page, "admin", act)).toHaveText(VERIFY.title)
   expect([await decided("viewer", act), await decided("member", act), await decided("admin", act), await decided("owner", act)]).toEqual(["deny", "conditional", "permit", "permit"])

@@ -429,6 +429,25 @@ impl crate::object_routes::ObjectAccess for Access {
     }
 }
 
+/// [`Access`], except that action-call records are never mapped: a caller
+/// whose read grants do not cover who called which action, with which input.
+struct NoCallRecords;
+impl crate::object_routes::ObjectAccess for NoCallRecords {
+    fn access(
+        &self,
+        scope: &CellScope,
+        actor: &str,
+        capability: ReadCapability,
+        object_type: &str,
+        row: Option<&ObjectRecord>,
+    ) -> Result<norn_kernel::authz::AccessRequest, Refusal> {
+        if object_type == norn_kernel::ACTION_CALL_TYPE {
+            return Err(read_denied());
+        }
+        Access.access(scope, actor, capability, object_type, row)
+    }
+}
+
 fn scope_query() -> crate::scope::ScopeQuery {
     crate::scope::ScopeQuery {
         org_id: Some("org_demo".into()),
@@ -805,6 +824,24 @@ fn corrected_with_history(host: &DevHost<NativeEngine>, slipped: u64) {
         }
         other @ (Mapping { .. } | Other) => panic!("the correction is the action's: {other:?}"),
     }
+    // The writer is the call record's to disclose: a caller who may read the
+    // document but not its call records is told no writer: no actor, and none
+    // of the call's input (its free-text reason among it). The row's own
+    // values stay governed by the row's read.
+    let undisclosed = crate::object_review::get_object_history(
+        host,
+        &scope_query(),
+        Some(STEWARD),
+        DOCUMENT,
+        "SCAN-RPT-1117",
+        &NoCallRecords,
+    )
+    .expect("history");
+    assert_eq!(
+        serde_json::to_value(&undisclosed.versions[0].writer).expect("writer"),
+        serde_json::json!({ "kind": "other" }),
+        "{undisclosed:#?}"
+    );
     match &oldest.writer {
         Mapping { lineage } => assert_eq!(lineage.mapping_pin.artifact_id, "docs.scans.mapping"),
         other @ (Action { .. } | Other) => panic!("the import is the mapping's: {other:?}"),

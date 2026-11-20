@@ -6,7 +6,7 @@ import { join } from "node:path"
 import type { ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { readDocument } from "../src/lib/exact.ts"
-import { amountTexts, hostRead, isTrace, liveAccess, liveAnswer, liveTrace, type Trace } from "../src/lib/live.ts"
+import { amountTexts, hostRead, isTrace, liveAccess, liveAnswer, liveTrace, liveTypeAccess, type Trace } from "../src/lib/live.ts"
 import * as answerLib from "../src/lib/answer.ts"
 
 // The recorded transport reads fixtures through Vite's import.meta.glob, which bun test lacks.
@@ -190,6 +190,19 @@ test("a 200 that is JSON but not an access document is no live read either", asy
   expect((await liveAccess(respond(200, JSON.stringify(access)))).kind).toBe("read")
   for (const text of ["null", '{"error":"unavailable"}', JSON.stringify({ ...access, capabilities: { population: access.capabilities.population } }), JSON.stringify({ ...access, principal: { subjectId: "u1" } })]) {
     expect(await liveAccess(respond(200, text))).toEqual({ kind: "unavailable", status: 200 })
+  }
+})
+
+test("a type's access document is read only with each role's See answered by the cell, over the collection", async () => {
+  const decision = { decision: "permit", rule: null }
+  const read = Object.fromEntries(["population", "values", "sources"].map((name) => [name, decision]))
+  const role = { role: "member", scope: "collection", see: { decision: "permit", scope: "collection" }, read, actions: [] }
+  const access = { principal: { subjectId: "u1", actorKind: "user", roles: ["member"], roleTable: "roles" }, policy: "p", grantTable: "g", capabilities: read, objectType: "canon.Party", roles: [role] }
+  expect((await liveTypeAccess("canon.Party", respond(200, JSON.stringify(access)))).kind).toBe("read")
+  // Studio never works "See" out of the grants: a document without the cell's answer, or not scoped to the collection, is no live read.
+  const { see: _, ...unanswered } = role
+  for (const changed of [unanswered, { ...role, scope: "record" }, { ...role, see: { decision: "permit" } }]) {
+    expect(await liveTypeAccess("canon.Party", respond(200, JSON.stringify({ ...access, roles: [changed] })))).toEqual({ kind: "unavailable", status: 200 })
   }
 })
 
