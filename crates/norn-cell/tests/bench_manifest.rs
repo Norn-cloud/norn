@@ -180,7 +180,7 @@ fn bpi_2019_through_one_manifest() {
     let response = engine
         .store(&StoreRequest {
             land: request.clone(),
-            landed: landed,
+            landed,
             data: object(&data.sha256),
             held: object(&held.sha256),
         })
@@ -197,7 +197,7 @@ fn bpi_2019_through_one_manifest() {
             format: FileFormat::Csv,
             bytes: source_bytes,
         },
-        binding: binding,
+        binding,
         table,
         pins: request.pins,
         data: ManifestFile {
