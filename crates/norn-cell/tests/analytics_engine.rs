@@ -2287,10 +2287,10 @@ fn a_landing_is_staged_by_attempt_and_read_only_at_its_stored_cache_identity() {
         .join("objects")
         .join(format!("{}.parquet", response.data.sha256));
     let original = std::fs::read(&kept).expect("kept");
-    let mut writable = std::fs::metadata(&kept).expect("meta").permissions();
-    #[allow(clippy::permissions_set_readonly_false, reason = "the test tampers")]
-    writable.set_readonly(false);
-    std::fs::set_permissions(&kept, writable).expect("writable");
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&kept, std::fs::Permissions::from_mode(0o600)).expect("writable");
+    }
     std::fs::write(&kept, b"PAR1 tampered").expect("tampered");
     assert_eq!(
         ask(&engine, &cache).expect_err("a changed file").code,
