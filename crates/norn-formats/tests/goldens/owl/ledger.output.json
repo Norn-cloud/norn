@@ -67,7 +67,6 @@
                 {
                   "cardinality": {
                     "from": "many",
-                    "required": true,
                     "to": "many"
                   },
                   "description": "<https://example.org/onto/Agreements/hasParty>",
@@ -217,7 +216,6 @@
                 {
                   "cardinality": {
                     "from": "many",
-                    "required": true,
                     "to": "one"
                   },
                   "description": "<https://example.org/onto/Loans/hasBorrower>",
@@ -225,16 +223,7 @@
                   "target": "ex.pty.Party"
                 }
               ],
-              "name": "ex.ln.Loan",
-              "properties": [
-                {
-                  "description": "<https://example.org/onto/Loans/hasPrincipal>",
-                  "id": "has_principal",
-                  "type": {
-                    "kind": "text"
-                  }
-                }
-              ]
+              "name": "ex.ln.Loan"
             }
           },
           "provenance": {
@@ -256,18 +245,6 @@
             "entityVersion": "2.0",
             "interface": {
               "description": "<https://example.org/onto/Loans/Pledge>",
-              "links": [
-                {
-                  "cardinality": {
-                    "from": "many",
-                    "required": true,
-                    "to": "many"
-                  },
-                  "description": "<https://example.org/onto/Loans/secures>",
-                  "id": "secures",
-                  "target": "ex.ln.Collateral"
-                }
-              ],
               "name": "ex.ln.Pledge"
             }
           },
@@ -291,7 +268,8 @@
             "interface": {
               "description": "<https://example.org/onto/Loans/PledgedSurety>",
               "extends": [
-                "ex.ln.Pledge"
+                "ex.ln.Pledge",
+                "ex.ln.Surety"
               ],
               "name": "ex.ln.PledgedSurety"
             }
@@ -340,18 +318,6 @@
             "entityVersion": "2.0",
             "interface": {
               "description": "<https://example.org/onto/Loans/Surety>",
-              "links": [
-                {
-                  "cardinality": {
-                    "from": "many",
-                    "required": true,
-                    "to": "many"
-                  },
-                  "description": "<https://example.org/onto/Loans/secures>",
-                  "id": "secures",
-                  "target": "ex.ln.Guarantee"
-                }
-              ],
               "name": "ex.ln.Surety"
             }
           },
@@ -430,6 +396,9 @@
               "name": "ex.pty.LegalEntity",
               "properties": [
                 {
+                  "constraints": {
+                    "nullable": true
+                  },
                   "description": "<https://example.org/onto/Parties/hasLegalForm>",
                   "id": "has_legal_form",
                   "type": {

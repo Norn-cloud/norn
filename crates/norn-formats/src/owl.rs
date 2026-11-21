@@ -20,7 +20,7 @@
 //!   is in one of the configured namespaces), named
 //!   `<prefix as dotted segments>.<LocalName>` (`fibo-be-le-lp:LegalEntity` →
 //!   `fibo.be.le.lp.LegalEntity`), with the closed-world reading of
-//!   `owl_lower`, under the configured [`WitnessPolicy`].
+//!   `owl_lower`, under the configured [`WitnessPolicy`](crate::owl::WitnessPolicy).
 //! - `SourceSchemaIR`: one dataset per owned class, carrying its IRI.
 //! - The loss report: one entry per declaration, axiom, annotation predicate,
 //!   individual and leftover statement (`owl_model::Item`). The
