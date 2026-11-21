@@ -459,6 +459,15 @@ impl Connect {
             })
     }
 
+    /// MANIFEST-LAND-1: a signed `PUT` of the uploads-bucket object `key` the
+    /// cell lands a dataset file at, valid for `seconds`, and its URI.
+    #[must_use]
+    pub fn signed_put(&self, key: &str, seconds: u32, now_ms: u64) -> Option<(String, String)> {
+        let s3 = self.store(Store::Uploads)?;
+        (!key.is_empty() && !key.contains(".."))
+            .then(|| (s3.presign("PUT", key, now_ms, seconds), s3.uri(key)))
+    }
+
     /// SYNC-ONE-1: the next connection due on its schedule, claimed.
     pub fn due(&mut self, now_ms: u64) -> Option<String> {
         self.sources.due(now_ms)
