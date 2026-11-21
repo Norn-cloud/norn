@@ -34,16 +34,6 @@
       ]
     },
     {
-      "class": "https://spec.edmcouncil.org/fibo/ontology/FBC/DebtAndEquities/Debt/CreditAgreement",
-      "interface": "core.Claim",
-      "term": "norn.core.claim",
-      "justification": "a credit agreement evidences monies owed to the creditor: from the holder's side a right to receive repayments, settled by payment events.",
-      "supersedes": [
-        "https://spec.edmcouncil.org/fibo/ontology/FND/Agreements/Contracts/Contract",
-        "https://spec.edmcouncil.org/fibo/ontology/FBC/FinancialInstruments/FinancialInstruments/FinancialInstrument"
-      ]
-    },
-    {
       "class": "https://spec.edmcouncil.org/fibo/ontology/FBC/FinancialInstruments/FinancialInstruments/FinancialInstrument",
       "interface": "core.Resource",
       "term": "norn.core.resource.type",
@@ -75,6 +65,12 @@
       "interface": "core.EconomicEvent",
       "term": "norn.core.event",
       "justification": "an exchange of financial products between parties is a transfer of resources: an REA economic event."
+    }
+  ],
+  "held": [
+    {
+      "class": "https://spec.edmcouncil.org/fibo/ontology/FBC/DebtAndEquities/Debt/CreditAgreement",
+      "note": "a credit agreement binds both lender and borrower; only the creditor's right to repayment is an REA claim, and the debtor's side is an obligation. The lineage stays a reported residual until that right is modelled as its own class."
     }
   ]
 }

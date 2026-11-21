@@ -9,10 +9,25 @@
 //!   closes a cycle is an implied equivalence and is not lowered.
 //! - `PropertyDomain(p D)`: an optional member `p` on `D` whose target is
 //!   `p`'s named range.
-//! - A restriction `SubClassOf(C R)` on `p`: a member `p` on `C`.
-//!   `some`/`min 1` → required, many; `exactly 1` → required, one; `max 1` →
-//!   optional, one; `min 0`/`only` → optional, many. A bound above one is kept
-//!   as many with a degradation (Norn link cardinality is one or many).
+//! - A restriction `SubClassOf(C R)` on `p` constrains the whole member `p`
+//!   on `C` only when it speaks of every `p`-value: `only F` (every value is
+//!   an `F`), or a count (`some`, `min n`, `max n`, `exactly n`) that is
+//!   unqualified or whose filler covers `p`'s established named range. Such a
+//!   member targets the range (or the `only` filler); `exactly 1`/`max 1` →
+//!   to one. A bound above one is kept as many with a degradation (Norn link
+//!   cardinality is one or many).
+//! - A qualified count whose filler does not cover the range counts only the
+//!   values that are `F`: OWL lets separate values satisfy two such
+//!   restrictions (`hasArgument some Principal` and `hasArgument some
+//!   AppraisedValue`), and `max 1 F` leaves other values free. Narrowing the
+//!   link's target or capping it would be wrong, so it is deferred
+//!   (`format.owl.filler_scoped`).
+//! - `min 0` constrains nothing: mapped to its class, adding no member.
+//! - Existence (`some`, `min n ≥ 1`, `exactly n ≥ 1`) is open-world: the
+//!   member stays optional with a `format.owl.open_world` degradation,
+//!   unless the import's witness policy is `closed`, which requires it. Under
+//!   `closed`, a filler-scoped existence claim lowers only its existence (a
+//!   required member targeting the range), degraded.
 //! - `FunctionalProperty(p)` → every member `p` links to one;
 //!   `InverseFunctionalProperty(p)` → the inverse multiplicity is one.
 //! - Datatype members take the type the datatype table chooses.
@@ -30,6 +45,7 @@ use serde_json::{Value, json};
 
 use crate::codes;
 use crate::contract::{Degradation, Disposition, NornHome, Target, TypeDecision};
+use crate::owl::WitnessPolicy;
 use crate::owl_model::{Axiom, Expr, Item, Model, OWL_THING, PropertyKind, Restriction};
 use crate::type_tables::{TableInput, TypeTable};
 
@@ -85,7 +101,24 @@ struct Own {
     property: String,
     shape: Shape,
     degraded: Option<Degradation>,
+    /// Whether the shape's target or type is the property's named range.
+    uses_range: bool,
 }
+
+/// What one axiom asks of a class: a member, nothing at all (`min 0`), or a
+/// deferral.
+enum Ask {
+    Member {
+        shape: Shape,
+        degraded: Option<Degradation>,
+        uses_range: bool,
+    },
+    Vacuous,
+    Deferred(Disposition),
+}
+
+/// `rdfs:Literal`: the unqualified filler of a datatype restriction.
+const RDFS_LITERAL: &str = "http://www.w3.org/2000/01/rdf-schema#Literal";
 
 /// The lowered interfaces and the disposition of every item.
 pub(crate) struct Lowered {
@@ -230,7 +263,11 @@ fn name(model: &Model) -> Result<Names, String> {
     clippy::result_large_err,
     reason = "one pass over the axioms; a deferral carries its disposition"
 )]
-pub(crate) fn lower(model: &Model, table: &mut TypeTable) -> Result<Lowered, String> {
+pub(crate) fn lower(
+    model: &Model,
+    table: &mut TypeTable,
+    witnesses: WitnessPolicy,
+) -> Result<Lowered, String> {
     let (names, members) = name(model)?;
     let mut lowered = Lowered {
         names,
@@ -288,6 +325,26 @@ pub(crate) fn lower(model: &Model, table: &mut TypeTable) -> Result<Lowered, Str
         }
     }
 
+    // Every asserted named superclass, for whether a filler covers a range.
+    let mut named_sups: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for item in &model.items {
+        if let Item::Axiom(Axiom::SubClassOf {
+            sub,
+            sup: Expr::Named(sup),
+        }) = item
+        {
+            named_sups.entry(sub.as_str()).or_default().push(sup.as_str());
+        }
+    }
+    let context = Context {
+        model,
+        names: &lowered.names,
+        members: &lowered.members,
+        range_of: &range_of,
+        named_sups: &named_sups,
+        witnesses,
+    };
+
     // Every axiom that asks a class for a member.
     let mut own: Vec<(String, Own)> = Vec::new();
     for (index, item) in model.items.iter().enumerate() {
@@ -300,52 +357,64 @@ pub(crate) fn lower(model: &Model, table: &mut TypeTable) -> Result<Lowered, Str
                     kind,
                     filler,
                 },
-            } if owned(sub) => {
-                restriction_shape(model, &lowered, &range_of, table, property, kind, filler.as_deref())
-                    .map(|shape| shape.map(|(shape, degraded)| (sub.clone(), property.clone(), shape, degraded)))
-            }
+            } if owned(sub) => restriction_shape(&context, table, property, kind, filler.as_deref())
+                .map(|ask| (sub.clone(), property.clone(), ask)),
             Axiom::Domain {
                 property,
                 domain: Expr::Named(domain),
             } if owned(domain) && placeable(property) => {
                 match model.properties.get(property) {
                     Some(PropertyKind::Object) => match range_of.get(property.as_str()) {
-                        Some(range) if owned(range) => Ok(Ok((
+                        Some(range) if owned(range) => Ok((
                             domain.clone(),
                             property.clone(),
-                            Shape::Link {
-                                target: (*range).to_owned(),
-                                to_one: false,
-                                required: false,
-                                from_one: false,
+                            Ask::Member {
+                                shape: Shape::Link {
+                                    target: (*range).to_owned(),
+                                    to_one: false,
+                                    required: false,
+                                    from_one: false,
+                                },
+                                degraded: None,
+                                uses_range: true,
                             },
-                            None,
-                        ))),
-                        _ => Ok(Err(deferred(
-                            &codes::OWL_UNPLACED_PROPERTY,
-                            NornHome::EntityIr,
-                            "the property has no single named range in the import set, so a domain member has no link target".into(),
-                        ))),
+                        )),
+                        _ => Ok((
+                            domain.clone(),
+                            property.clone(),
+                            Ask::Deferred(deferred(
+                                &codes::OWL_UNPLACED_PROPERTY,
+                                NornHome::EntityIr,
+                                "the property has no single named range in the import set, so a domain member has no link target".into(),
+                            )),
+                        )),
                     },
                     Some(PropertyKind::Datatype) => {
                         let datatype = range_of.get(property.as_str()).copied().unwrap_or("");
                         value_type(table, datatype).map(|kind| {
-                            Ok((
+                            (
                                 domain.clone(),
                                 property.clone(),
-                                Shape::Value {
-                                    kind,
-                                    required: false,
+                                Ask::Member {
+                                    shape: Shape::Value {
+                                        kind,
+                                        required: false,
+                                    },
+                                    degraded: None,
+                                    uses_range: !datatype.is_empty(),
                                 },
-                                None,
-                            ))
+                            )
                         })
                     }
-                    Some(PropertyKind::Annotation) | None => Ok(Err(deferred(
-                        &codes::OWL_UNPLACED_PROPERTY,
-                        NornHome::EntityIr,
-                        "an annotation property carries no member".into(),
-                    ))),
+                    Some(PropertyKind::Annotation) | None => Ok((
+                        domain.clone(),
+                        property.clone(),
+                        Ask::Deferred(deferred(
+                            &codes::OWL_UNPLACED_PROPERTY,
+                            NornHome::EntityIr,
+                            "an annotation property carries no member".into(),
+                        )),
+                    )),
                 }
             }
             Axiom::SubClassOf { .. }
@@ -358,8 +427,13 @@ pub(crate) fn lower(model: &Model, table: &mut TypeTable) -> Result<Lowered, Str
             | Axiom::PropertyRelation { .. }
             | Axiom::ClassAssertion { .. } => continue,
         };
-        match ask? {
-            Ok((class, property, shape, degraded)) => {
+        let (class, property, ask) = ask?;
+        match ask {
+            Ask::Member {
+                shape,
+                degraded,
+                uses_range,
+            } => {
                 own.push((
                     class,
                     Own {
@@ -367,10 +441,22 @@ pub(crate) fn lower(model: &Model, table: &mut TypeTable) -> Result<Lowered, Str
                         property,
                         shape,
                         degraded,
+                        uses_range,
                     },
                 ));
             }
-            Err(disposition) => {
+            Ask::Vacuous => {
+                let artifact = artifact_id(lowered.names.get(&class).map_or("", String::as_str));
+                lowered.dispositions.insert(
+                    index,
+                    Disposition::Mapped {
+                        target: Target::artifact(&artifact),
+                        degraded: None,
+                        decision: None,
+                    },
+                );
+            }
+            Ask::Deferred(disposition) => {
                 lowered.dispositions.insert(index, disposition);
             }
         }
@@ -546,142 +632,308 @@ pub(crate) fn lower(model: &Model, table: &mut TypeTable) -> Result<Lowered, Str
     Ok(lowered)
 }
 
-/// The member shape of a restriction, or why it has none.
+/// What the restriction lowering reads besides the restriction itself.
+struct Context<'a> {
+    model: &'a Model,
+    names: &'a BTreeMap<String, String>,
+    members: &'a BTreeMap<String, String>,
+    range_of: &'a BTreeMap<&'a str, &'a str>,
+    /// Class → its asserted named superclasses.
+    named_sups: &'a BTreeMap<&'a str, Vec<&'a str>>,
+    witnesses: WitnessPolicy,
+}
+
+impl Context<'_> {
+    /// Whether `class` is `ancestor` or reaches it through asserted named
+    /// superclasses.
+    fn subsumed(&self, class: &str, ancestor: &str) -> bool {
+        let mut stack = vec![class];
+        let mut seen = BTreeSet::new();
+        while let Some(node) = stack.pop() {
+            if node == ancestor {
+                return true;
+            }
+            if seen.insert(node) {
+                stack.extend(self.named_sups.get(node).into_iter().flatten().copied());
+            }
+        }
+        false
+    }
+}
+
+/// A restriction's filler, as the lowering reads it.
+enum Filler<'a> {
+    /// No filler, `owl:Thing` or `rdfs:Literal`: the restriction speaks of
+    /// every value.
+    Unqualified,
+    /// One named class or datatype.
+    Named(&'a str),
+    /// A class expression or data range.
+    Expression,
+}
+
+/// What a restriction asks of its class's member, or why it asks nothing the
+/// member can carry.
 #[allow(
     clippy::too_many_lines,
     reason = "one arm per restriction kind and filler"
 )]
 fn restriction_shape(
-    model: &Model,
-    lowered: &Lowered,
-    range_of: &BTreeMap<&str, &str>,
+    context: &Context<'_>,
     table: &mut TypeTable,
     property: &str,
     kind: &Restriction,
     filler: Option<&Expr>,
-) -> Result<Result<(Shape, Option<Degradation>), Disposition>, String> {
-    let class_expression = |detail: &str| {
-        Ok(Err(deferred(
-            &codes::OWL_CLASS_EXPRESSION,
-            NornHome::EntityIr,
-            detail.to_owned(),
-        )))
+) -> Result<Ask, String> {
+    let model = context.model;
+    let defer = |code: &codes::Code, home: NornHome, detail: String| {
+        Ok(Ask::Deferred(deferred(code, home, detail)))
     };
     let Some(property_kind) = model.properties.get(property).copied() else {
-        return Ok(Err(deferred(
+        return defer(
             &codes::OWL_EXTERNAL_REFERENCE,
             NornHome::MappingIr,
-            format!(
-                "{} is not declared in the import set",
-                model.compact(property)
-            ),
-        )));
+            format!("{} is not declared in the import set", model.compact(property)),
+        );
     };
-    if !lowered.members.contains_key(property) || property_kind == PropertyKind::Annotation {
-        return Ok(Err(deferred(
+    if !context.members.contains_key(property) || property_kind == PropertyKind::Annotation {
+        return defer(
             &codes::OWL_EXTERNAL_REFERENCE,
             NornHome::MappingIr,
             format!(
                 "{} is not an owned object or datatype property",
                 model.compact(property)
             ),
-        )));
+        );
     }
-    let (required, to_one, degraded) = match kind {
-        Restriction::Some | Restriction::Min(1) => (true, false, None),
-        Restriction::All | Restriction::Min(0) => (false, false, None),
-        Restriction::Exact(1) => (true, true, None),
-        Restriction::Max(1) => (false, true, None),
-        Restriction::Min(n) | Restriction::Exact(n) if *n > 1 => (
-            true,
-            false,
-            Some(format!(
-                "at least {n} values: kept as a required many-member; the count bound needs a counting law"
-            )),
-        ),
-        Restriction::Max(n) if *n > 1 => (
-            false,
-            false,
-            Some(format!(
-                "at most {n} values: kept as an optional many-member; the count bound needs a counting law"
-            )),
-        ),
+    let filler = match filler {
+        None => Filler::Unqualified,
+        Some(Expr::Named(iri)) if iri == OWL_THING || iri == RDFS_LITERAL => Filler::Unqualified,
+        Some(Expr::Named(iri)) => Filler::Named(iri.as_str()),
+        Some(_) => Filler::Expression,
+    };
+    let range = context.range_of.get(property).copied();
+    // (at least, at most) values the restriction counts.
+    let (least, most) = match kind {
+        Restriction::All => {
+            // Every value is a filler: the whole link targets it.
+            return match property_kind {
+                PropertyKind::Object => {
+                    let (target, uses_range) = match filler {
+                        Filler::Unqualified => (range, true),
+                        Filler::Named(iri) => (Some(iri), false),
+                        Filler::Expression => {
+                            return defer(
+                                &codes::OWL_CLASS_EXPRESSION,
+                                NornHome::EntityIr,
+                                "the filler is a class expression; a link target is one named type"
+                                    .into(),
+                            );
+                        }
+                    };
+                    link(context, target, false, false, None, uses_range)
+                }
+                PropertyKind::Datatype => {
+                    let (datatype, uses_range) = match filler {
+                        Filler::Unqualified => (range.unwrap_or(""), range.is_some()),
+                        Filler::Named(iri) => (iri, false),
+                        Filler::Expression => ("", false),
+                    };
+                    Ok(Ask::Member {
+                        shape: Shape::Value {
+                            kind: value_type(table, datatype)?,
+                            required: false,
+                        },
+                        degraded: None,
+                        uses_range,
+                    })
+                }
+                PropertyKind::Annotation => {
+                    defer(&codes::OWL_CLASS_EXPRESSION, NornHome::EntityIr, "annotation property".into())
+                }
+            };
+        }
+        Restriction::Min(0) => return Ok(Ask::Vacuous),
         Restriction::Max(0) | Restriction::Exact(0) => {
-            return Ok(Err(deferred(
+            return defer(
                 &codes::OWL_CARDINALITY_BOUND,
                 NornHome::RuleIr,
                 "a prohibition (no values) needs a law, not a member".into(),
-            )));
+            );
         }
         Restriction::HasValue(_) | Restriction::HasSelf => {
-            return Ok(Err(deferred(
+            return defer(
                 &codes::OWL_VALUE_RESTRICTION,
                 NornHome::RuleIr,
                 "a fixed value needs an invariant over the member; individuals are not imported"
                     .into(),
-            )));
+            );
         }
-        Restriction::Min(_) | Restriction::Max(_) | Restriction::Exact(_) => {
-            return class_expression("unreachable cardinality");
-        }
+        Restriction::Some => (1, None),
+        Restriction::Min(n) => (*n, None),
+        Restriction::Exact(n) => (*n, Some(*n)),
+        Restriction::Max(n) => (0, Some(*n)),
     };
-    let degraded = degraded.map(|detail| Degradation {
-        code: codes::OWL_CARDINALITY_BOUND.code.to_owned(),
-        detail,
-    });
-    match property_kind {
-        PropertyKind::Object => {
-            let target = match filler {
-                Some(Expr::Named(iri)) if iri == OWL_THING => range_of.get(property).copied(),
-                Some(Expr::Named(iri)) => Some(iri.as_str()),
-                None => range_of.get(property).copied(),
-                Some(_) => {
-                    return class_expression(
-                        "the filler is a class expression; a link target is one named type",
-                    );
-                }
-            };
-            match target {
-                Some(target) if lowered.names.contains_key(target) => Ok(Ok((
-                    Shape::Link {
-                        target: target.to_owned(),
-                        to_one,
-                        required,
-                        from_one: false,
+    let closed = context.witnesses == WitnessPolicy::Closed;
+    // Does the restriction speak of every value? Only when its filler
+    // covers the property's established range.
+    let covered = match (&filler, property_kind) {
+        (Filler::Unqualified, _) => true,
+        (Filler::Named(iri), PropertyKind::Object) => {
+            range.is_some_and(|range| context.subsumed(range, iri))
+        }
+        (Filler::Named(iri), PropertyKind::Datatype) => range == Some(*iri),
+        (Filler::Expression, _) | (Filler::Named(_), PropertyKind::Annotation) => false,
+    };
+    if !covered {
+        let filler_text = match filler {
+            Filler::Named(iri) => model.compact(iri),
+            Filler::Unqualified | Filler::Expression => "the filler expression".to_owned(),
+        };
+        let scope = format!(
+            "{} counts only the {} values that are {filler_text}: other values are unconstrained and separate values may satisfy other restrictions on it, so neither its target nor its bound holds for the whole link{}",
+            describe_restriction(kind),
+            model.compact(property),
+            range.map_or_else(
+                || " (the property has no single named range)".to_owned(),
+                |range| format!(" ({filler_text} does not cover the range {})", model.compact(range)),
+            ),
+        );
+        // Under the closed-world policy, the existence of some value still
+        // holds for the whole link.
+        if closed && least >= 1 && range.is_some() {
+            let degraded = Some(Degradation {
+                code: codes::OWL_FILLER_SCOPED.code.to_owned(),
+                detail: format!(
+                    "only the existence of a value is lowered (witnesses: closed); {scope}"
+                ),
+            });
+            return match property_kind {
+                PropertyKind::Object => link(context, range, false, true, degraded, true),
+                PropertyKind::Datatype => Ok(Ask::Member {
+                    shape: Shape::Value {
+                        kind: value_type(table, range.unwrap_or(""))?,
+                        required: true,
                     },
                     degraded,
-                ))),
-                Some(target) => Ok(Err(deferred(
-                    &codes::OWL_EXTERNAL_REFERENCE,
-                    NornHome::MappingIr,
-                    format!("the target {} is not an owned class", model.compact(target)),
-                ))),
-                None => Ok(Err(deferred(
-                    &codes::OWL_UNPLACED_PROPERTY,
-                    NornHome::EntityIr,
-                    "no named filler and no single named range: the link has no target".into(),
-                ))),
-            }
-        }
-        PropertyKind::Datatype => {
-            let datatype = match filler {
-                Some(Expr::Named(iri)) => iri.clone(),
-                None => range_of
-                    .get(property)
-                    .map(|range| (*range).to_owned())
-                    .unwrap_or_default(),
-                Some(_) => String::new(),
+                    uses_range: true,
+                }),
+                PropertyKind::Annotation => {
+                    defer(&codes::OWL_CLASS_EXPRESSION, NornHome::EntityIr, "annotation property".into())
+                }
             };
-            Ok(Ok((
-                Shape::Value {
-                    kind: value_type(table, &datatype)?,
-                    required,
-                },
-                degraded,
-            )))
         }
-        PropertyKind::Annotation => class_expression("annotation property"),
+        let open = if least >= 1 && !closed {
+            "; the value it asserts exists is an open-world claim (witnesses: open)"
+        } else {
+            ""
+        };
+        return defer(
+            &codes::OWL_FILLER_SCOPED,
+            NornHome::EntityIr,
+            format!("{scope}{open}"),
+        );
     }
+    let mut notes: Vec<(&codes::Code, String)> = Vec::new();
+    if least >= 1 && !closed {
+        notes.push((
+            &codes::OWL_OPEN_WORLD,
+            format!(
+                "at least {least} value{} asserted to exist: an open-world claim, kept optional (witnesses: open)",
+                if least == 1 { "" } else { "s" }
+            ),
+        ));
+    } else if least > 1 {
+        notes.push((
+            &codes::OWL_CARDINALITY_BOUND,
+            format!(
+                "at least {least} values: kept as a required many-member; the count bound needs a counting law"
+            ),
+        ));
+    }
+    if let Some(most) = most
+        && most > 1
+    {
+        notes.push((
+            &codes::OWL_CARDINALITY_BOUND,
+            format!(
+                "at most {most} values: kept as a many-member; the count bound needs a counting law"
+            ),
+        ));
+    }
+    let degraded = notes.first().map(|(code, _)| Degradation {
+        code: code.code.to_owned(),
+        detail: notes
+            .iter()
+            .map(|(_, detail)| detail.as_str())
+            .collect::<Vec<_>>()
+            .join("; "),
+    });
+    let required = least >= 1 && closed;
+    let to_one = most == Some(1);
+    match property_kind {
+        PropertyKind::Object => link(context, range, to_one, required, degraded, true),
+        PropertyKind::Datatype => Ok(Ask::Member {
+            shape: Shape::Value {
+                kind: value_type(table, range.unwrap_or(""))?,
+                required,
+            },
+            degraded,
+            uses_range: range.is_some(),
+        }),
+        PropertyKind::Annotation => {
+            defer(&codes::OWL_CLASS_EXPRESSION, NornHome::EntityIr, "annotation property".into())
+        }
+    }
+}
+
+/// The functional-syntax keyword of a counting restriction.
+fn describe_restriction(kind: &Restriction) -> String {
+    match kind {
+        Restriction::Some => "a someValuesFrom restriction".to_owned(),
+        Restriction::Min(n) => format!("a qualified min {n}"),
+        Restriction::Max(n) => format!("a qualified max {n}"),
+        Restriction::Exact(n) => format!("a qualified exactly {n}"),
+        Restriction::All | Restriction::HasValue(_) | Restriction::HasSelf => {
+            "the restriction".to_owned()
+        }
+    }
+}
+
+/// A link member to `target`, or why there is none.
+fn link(
+    context: &Context<'_>,
+    target: Option<&str>,
+    to_one: bool,
+    required: bool,
+    degraded: Option<Degradation>,
+    uses_range: bool,
+) -> Result<Ask, String> {
+    Ok(match target {
+        Some(target) if context.names.contains_key(target) => Ask::Member {
+            shape: Shape::Link {
+                target: target.to_owned(),
+                to_one,
+                required,
+                from_one: false,
+            },
+            degraded,
+            uses_range,
+        },
+        Some(target) => Ask::Deferred(deferred(
+            &codes::OWL_EXTERNAL_REFERENCE,
+            NornHome::MappingIr,
+            format!(
+                "the target {} is not an owned class",
+                context.model.compact(target)
+            ),
+        )),
+        None => Ask::Deferred(deferred(
+            &codes::OWL_UNPLACED_PROPERTY,
+            NornHome::EntityIr,
+            "no named filler and no single named range: the link has no target".into(),
+        )),
+    })
 }
 
 fn reaches(edges: &BTreeMap<String, BTreeMap<String, usize>>, from: &str, to: &str) -> bool {
@@ -903,6 +1155,8 @@ fn dispose(
     // Where each property landed first (by class IRI), for the property's
     // own declaration, range, characteristics and annotations.
     let mut placed: BTreeMap<&str, &str> = BTreeMap::new();
+    // Where each property's named range typed a lowered member first.
+    let mut ranged: BTreeMap<&str, &str> = BTreeMap::new();
     let mut dispositions = dropped_edges;
     for (class, ask) in own {
         if let Some(detail) = rejected.get(&ask.item) {
@@ -919,6 +1173,11 @@ fn dispose(
         placed
             .entry(ask.property.as_str())
             .or_insert(class.as_str());
+        if ask.uses_range {
+            ranged
+                .entry(ask.property.as_str())
+                .or_insert(class.as_str());
+        }
         let member = lowered.members.get(&ask.property).map(String::as_str);
         let decision = match &ask.shape {
             Shape::Value { kind, .. } => Some(kind.decision.clone()),
@@ -935,6 +1194,14 @@ fn dispose(
     }
     let mapped_property = |property: &str| {
         placed.get(property).map(|class| Disposition::Mapped {
+            target: target_of(class, lowered.members.get(property).map(String::as_str)),
+            degraded: None,
+            decision: None,
+        })
+    };
+    // A range axiom is mapped only where it typed a lowered member.
+    let mapped_range = |property: &str| {
+        ranged.get(property).map(|class| Disposition::Mapped {
             target: target_of(class, lowered.members.get(property).map(String::as_str)),
             degraded: None,
             decision: None,
@@ -1013,27 +1280,42 @@ fn dispose(
                 NornHome::EntityIr,
                 "a statement outside the OWL 2 constructs this reader lowers".into(),
             ),
-            Item::Axiom(axiom) => axiom_disposition(model, lowered, axiom, edges, range_of, &mapped_property, &unplaced, &target_of),
+            Item::Axiom(axiom) => axiom_disposition(model, lowered, axiom, edges, range_of, &Placement {
+                property: &mapped_property,
+                range: &mapped_range,
+                unplaced: &unplaced,
+                target_of: &target_of,
+            }),
         };
         dispositions.insert(index, disposition);
     }
     lowered.dispositions.extend(dispositions);
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "the shared lowering context of one axiom"
-)]
+/// Where an axiom's property landed, for the axioms that only qualify it.
+struct Placement<'a> {
+    /// The first member the property became.
+    property: &'a dyn Fn(&str) -> Option<Disposition>,
+    /// The first member the property's named range typed.
+    range: &'a dyn Fn(&str) -> Option<Disposition>,
+    unplaced: &'a dyn Fn() -> Disposition,
+    target_of: &'a dyn Fn(&str, Option<&str>) -> Target,
+}
+
 fn axiom_disposition(
     model: &Model,
     lowered: &Lowered,
     axiom: &Axiom,
     edges: &BTreeMap<String, BTreeMap<String, usize>>,
     range_of: &BTreeMap<&str, &str>,
-    mapped_property: &dyn Fn(&str) -> Option<Disposition>,
-    unplaced: &dyn Fn() -> Disposition,
-    target_of: &dyn Fn(&str, Option<&str>) -> Target,
+    placement: &Placement<'_>,
 ) -> Disposition {
+    let Placement {
+        property: mapped_property,
+        range: mapped_range,
+        unplaced,
+        target_of,
+    } = *placement;
     let owned = |iri: &str| lowered.names.contains_key(iri);
     match axiom {
         Axiom::SubClassOf { sub, sup: Expr::Named(sup) } if owned(sub) && sup == OWL_THING => {
@@ -1082,10 +1364,37 @@ fn axiom_disposition(
             NornHome::RuleIr,
             "disjointness of interfaces (no type implements both) has no construct; it needs a law".into(),
         ),
-        Axiom::Domain { property, .. } => mapped_property(property).unwrap_or_else(unplaced),
+        // A domain on an owned class with a placeable property became a
+        // member (or was deferred) when the members were asked for; here
+        // the domain itself contributes nothing.
+        Axiom::Domain { domain: Expr::Named(domain), .. } if !owned(domain) => deferred(
+            &codes::OWL_EXTERNAL_REFERENCE,
+            NornHome::MappingIr,
+            format!("the domain {} is not an owned class", model.compact(domain)),
+        ),
+        Axiom::Domain { domain: Expr::Named(_), property } => deferred(
+            &codes::OWL_EXTERNAL_REFERENCE,
+            NornHome::MappingIr,
+            format!("{} is not an owned object or datatype property", model.compact(property)),
+        ),
+        Axiom::Domain { .. } => deferred(
+            &codes::OWL_CLASS_EXPRESSION,
+            NornHome::EntityIr,
+            "a class-expression domain (a union, intersection or restriction): a member lives on one named type".into(),
+        ),
         Axiom::Range { property, range } => match range {
             Expr::Named(_) if range_of.contains_key(property.as_str()) => {
-                mapped_property(property).unwrap_or_else(unplaced)
+                mapped_range(property).unwrap_or_else(|| {
+                    if mapped_property(property).is_some() {
+                        deferred(
+                            &codes::OWL_UNPLACED_PROPERTY,
+                            NornHome::EntityIr,
+                            "the range types no lowered member: every member of the property takes its target or type from a restriction's filler".into(),
+                        )
+                    } else {
+                        unplaced()
+                    }
+                })
             }
             Expr::Named(_) => deferred(
                 &codes::OWL_CLASS_EXPRESSION,

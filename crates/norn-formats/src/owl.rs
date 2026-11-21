@@ -20,7 +20,7 @@
 //!   is in one of the configured namespaces), named
 //!   `<prefix as dotted segments>.<LocalName>` (`fibo-be-le-lp:LegalEntity` →
 //!   `fibo.be.le.lp.LegalEntity`), with the closed-world reading of
-//!   `owl_lower`.
+//!   `owl_lower`, under the configured [`WitnessPolicy`].
 //! - `SourceSchemaIR`: one dataset per owned class, carrying its IRI.
 //! - The loss report: one entry per declaration, axiom, annotation predicate,
 //!   individual and leftover statement (`owl_model::Item`). The
@@ -75,6 +75,25 @@ pub struct OwlNormaliser {
     pub version: String,
 }
 
+/// Whether an OWL existence claim (`some`, `min n`, `exactly n`) makes a
+/// member required.
+///
+/// OWL is open-world: `SubClassOf(C ObjectSomeValuesFrom(p D))` says every
+/// `C` has a `p`-value somewhere, not that the record carries it. `Open` (the
+/// default) keeps such members optional and records the claim as an
+/// `format.owl.open_world` degradation; `Closed` is an explicit, recorded
+/// choice (the import manifest's `witnesses`) to require the witness as a
+/// link or value, so every record must carry one.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WitnessPolicy {
+    /// Existence claims stay optional members.
+    #[default]
+    Open,
+    /// Existence claims become required members.
+    Closed,
+}
+
 /// The reader's typed configuration.
 #[derive(Debug, Clone, PartialEq)]
 pub struct OwlConfig {
@@ -88,6 +107,8 @@ pub struct OwlConfig {
     pub normaliser: OwlNormaliser,
     /// The owned namespaces: only their classes and properties are lowered.
     pub namespaces: Vec<OwlNamespace>,
+    /// Whether existence claims become required members.
+    pub witnesses: WitnessPolicy,
 }
 
 /// The normalised graph: its name (for provenance) and bytes.
@@ -310,7 +331,7 @@ fn lower(
     let mut table = TypeTable::load(DATATYPES)?;
     output.provenance.tables = vec![table.pin().clone()];
     output.provenance.evaluator = Some(crate::type_tables::evaluator_pin());
-    let lowered = crate::owl_lower::lower(model, &mut table)?;
+    let lowered = crate::owl_lower::lower(model, &mut table, config.witnesses)?;
 
     let mut artifacts = Vec::new();
     let mut datasets = Vec::new();

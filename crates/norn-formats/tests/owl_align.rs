@@ -20,8 +20,12 @@ use norn_checker::{
 };
 use norn_formats::SchemaImporter;
 use norn_formats::contract::sha256_hex;
-use norn_formats::owl::{OwlConfig, OwlGraph, OwlNamespace, OwlNormaliser, OwlReader};
-use norn_formats::owl_align::{AlignmentFinding, OwlAlignment, OwlAnchor, align, term_of};
+use norn_formats::owl::{
+    OwlConfig, OwlGraph, OwlNamespace, OwlNormaliser, OwlReader, WitnessPolicy,
+};
+use norn_formats::owl_align::{
+    AlignmentFinding, OwlAlignment, OwlAnchor, OwlHeld, align, term_of,
+};
 use norn_ir::{ArtifactEnvelope, DiagnosticSeverity, OntologySource, OntologySourceFile};
 
 const GRAPH: &[u8] = include_bytes!("fixtures/synthetic/ledger.nt");
@@ -61,6 +65,7 @@ fn config() -> OwlConfig {
             namespace(AGR, "ex-agr"),
             namespace(LN, "ex-ln"),
         ],
+        witnesses: WitnessPolicy::Open,
     }
 }
 
@@ -118,6 +123,7 @@ fn table(precedence: bool) -> OwlAlignment {
                 &[],
             ),
         ],
+        held: Vec::new(),
     }
 }
 
@@ -133,7 +139,8 @@ fn finding<'a>(findings: &'a [AlignmentFinding], name: &str) -> &'a AlignmentFin
         .find(|finding| match finding {
             AlignmentFinding::Aligned { interface, .. }
             | AlignmentFinding::Gap { interface }
-            | AlignmentFinding::Conflict { interface, .. } => interface == name,
+            | AlignmentFinding::Conflict { interface, .. }
+            | AlignmentFinding::Held { interface, .. } => interface == name,
         })
         .unwrap_or_else(|| panic!("no finding for {name}"))
 }
@@ -251,4 +258,77 @@ fn owl_alignment_refuses_an_anchor_that_was_not_imported() {
     alignment.anchors[0].supersedes = vec![format!("{LN}Facility")];
     let error = align(&interfaces, &admission, &alignment).unwrap_err();
     assert!(error.contains("which is not an anchor"), "{error}");
+}
+
+/// A held lineage is reported, never aligned, whatever anchors it reaches.
+#[test]
+fn owl_alignment_held_lineage_is_a_reported_residual() {
+    let (interfaces, admission) = vocabulary();
+    let mut alignment = table(true);
+    alignment.held.push(OwlHeld {
+        class: format!("{LN}Loan"),
+        note: "only the creditor's right is a claim.".into(),
+    });
+    // A held class may not also be an anchor.
+    let error = align(&interfaces, &admission, &alignment).unwrap_err();
+    assert!(error.contains("also an anchor"), "{error}");
+    alignment.anchors.retain(|row| row.class != format!("{LN}Loan"));
+    let aligned = align(&interfaces, &admission, &alignment).unwrap();
+    for loan in ["ex.ln.Loan", "ex.ln.SecuredLoan", "ex.ln.UnsecuredLoan"] {
+        assert!(
+            matches!(
+                finding(&aligned.findings, loan),
+                AlignmentFinding::Held { via, .. } if via == &format!("{LN}Loan")
+            ),
+            "{loan}"
+        );
+    }
+    let summary = aligned.summary();
+    assert_eq!(summary["held"], 3);
+    let mut set = aligned.packs.clone();
+    set.push(canon());
+    let coverage = validate_link_registry(&set)
+        .unwrap()
+        .into_iter()
+        .find(|coverage| coverage.link_id == "norn.link.test-ledger.canon")
+        .unwrap();
+    let loan = term_of("ex.ln.Loan");
+    assert!(coverage.non_conforming.contains(&loan));
+    assert!(!coverage.mapped.contains_key(&loan));
+    assert_eq!(
+        coverage.mapped.len()
+            + coverage.residual.len()
+            + coverage.canon_gaps.len()
+            + coverage.non_conforming.len(),
+        coverage.active_terms,
+        "the link is total"
+    );
+}
+
+const CREDIT_AGREEMENT: &str =
+    "https://spec.edmcouncil.org/fibo/ontology/FBC/DebtAndEquities/Debt/CreditAgreement";
+
+/// The FIBO table claims no whole credit agreement for `core.Claim` (#1537
+/// S3): only the creditor's side is a claim, so the lineage is held.
+#[test]
+fn owl_fibo_credit_agreement_is_held_not_a_claim() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../registry/standards/imports/edmc-fibo-2026q3.align.json");
+    let table: OwlAlignment =
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    assert!(
+        !table.anchors.iter().any(|row| row.class == CREDIT_AGREEMENT),
+        "no anchor aligns the whole credit agreement"
+    );
+    assert!(
+        table
+            .anchors
+            .iter()
+            .all(|row| !row.supersedes.iter().any(|class| class == CREDIT_AGREEMENT)),
+        "no row names it in precedence"
+    );
+    assert!(
+        table.held.iter().any(|row| row.class == CREDIT_AGREEMENT),
+        "the lineage is held as a reported residual"
+    );
 }

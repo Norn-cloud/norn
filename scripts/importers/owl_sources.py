@@ -16,9 +16,12 @@ writes, outside the repository:
 and refuses a graph whose SHA-256 is not the manifest's `graph.sha256`. `norn-format-read`
 then reads `graph.nt` with the OWL reader (`crates/norn-formats/src/owl.rs`).
 
-`pin` is the maintainer's half: it recomputes the closure of `selection.roots` from the
-network with `selection.resolve`, checks every licence, normalises, and rewrites the manifest's
-`admission.files`, `namespaces` and `graph`. Review its diff like a dependency bump.
+A pinned fetch follows no HTTP redirect: the bytes come from the pinned URL itself, or the
+fetch is refused before any digest is computed. `pin` is the maintainer's half: it recomputes
+the closure of `selection.roots` from the network with `selection.resolve`, checks every
+licence, normalises, and rewrites the manifest's `admission.files`, `namespaces` and `graph`;
+where a URL redirects, it pins the destination, so the later fetch needs no redirect. Review
+its diff like a dependency bump.
 
 Run with the ontology tools interpreter (`scripts/bootstrap-ontology-tools.sh`):
 
@@ -69,25 +72,59 @@ def outside_tree(path: Path) -> Path:
     return path
 
 
-def fetch_bytes(url: str, attempts: int = 5) -> bytes:
+# Extra urllib handlers (tests replace the HTTPS transport); empty in use.
+TRANSPORT: tuple = ()
+
+
+class RedirectRefused(SystemExit):
+    """A pinned fetch was redirected: the bytes would not come from the pinned URL."""
+
+
+class _RefuseRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise RedirectRefused(
+            f"{req.full_url}: redirected ({code}) to {newurl}; a pinned fetch follows no redirect "
+            "(pin the destination with `pin`)")
+
+
+class _HttpsOnlyRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not newurl.startswith("https://"):
+            raise SystemExit(f"{req.full_url}: redirected to {newurl}, which is not HTTPS")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def fetch_url(url: str, attempts: int = 5, *, follow: bool = False) -> tuple[bytes, str]:
+    """The bytes at `url` and the URL that served them. A pinned fetch (`follow=False`)
+    refuses any redirect; `pin` follows HTTPS redirects and pins where they end."""
     if not url.startswith("https://"):
         raise SystemExit(f"{url}: only HTTPS originals are pinned")
+    opener = urllib.request.build_opener(
+        _HttpsOnlyRedirects() if follow else _RefuseRedirects(), *TRANSPORT)
     request = urllib.request.Request(url, headers={
         "User-Agent": "Norn-ontology-import/1.0",
         "Accept": "application/rdf+xml, text/plain;q=0.5",
     })
     for attempt in range(attempts):
         try:
-            with urllib.request.urlopen(request, timeout=60) as response:
+            with opener.open(request, timeout=60) as response:
                 raw = response.read(SIZE_BUDGET + 1)
+                served = response.geturl()
             if len(raw) > SIZE_BUDGET:
                 raise SystemExit(f"{url}: exceeds the {SIZE_BUDGET}-byte budget")
-            return raw
+            if not follow and served != url:
+                raise RedirectRefused(f"{url}: served from {served}; a pinned fetch follows no redirect")
+            return raw, served
         except (OSError, http.client.HTTPException):
             if attempt == attempts - 1:
                 raise
             time.sleep(2 ** (attempt + 1))
     raise AssertionError("unreachable")
+
+
+def fetch_bytes(url: str, attempts: int = 5) -> bytes:
+    """The bytes at exactly `url`: a redirect is refused."""
+    return fetch_url(url, attempts)[0]
 
 
 def sha256(raw: bytes) -> str:
@@ -179,7 +216,8 @@ def pin(args: argparse.Namespace) -> None:
     licence = manifest["admission"]["license"]
     files, originals, seen, queue = [], [], set(), list(selection["roots"])
     for url in selection.get("evidence", []):
-        files.append({"path": url, "sha256": sha256(fetch_bytes(url))})
+        raw, served = fetch_url(url, follow=True)
+        files.append({"path": served, "sha256": sha256(raw)})
     while queue:
         iri = queue.pop(0)
         if iri in seen:
@@ -189,7 +227,7 @@ def pin(args: argparse.Namespace) -> None:
         if rule is None:
             raise SystemExit(f"{iri}: imported, but no resolve rule covers it; the closure is refused")
         url = rule["url"].replace("{path}", iri[len(rule["namespace"]):].rstrip("/"))
-        raw = fetch_bytes(url)
+        raw, url = fetch_url(url, follow=True)
         declared = header(raw)
         if declared["iri"] != iri:
             raise SystemExit(f"{url}: does not declare ontology {iri}")
@@ -199,7 +237,8 @@ def pin(args: argparse.Namespace) -> None:
             # Pin the dated release URL when it serves the same bytes as the current one.
             dated = declared["version"].rstrip("/") + ".rdf"
             try:
-                if fetch_bytes(dated, attempts=1) == raw:
+                dated_raw, dated = fetch_url(dated, attempts=1, follow=True)
+                if dated_raw == raw:
                     url = dated
             except (OSError, http.client.HTTPException):
                 pass

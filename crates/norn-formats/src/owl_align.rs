@@ -20,6 +20,12 @@
 //! holder's view of it is a claim). When a lineage meets both, the
 //! superseded anchor is set aside and the finding names it.
 //!
+//! A `held` row keeps a lineage out of the canon on purpose: a class that is
+//! only partly one REA concept (a credit agreement binds both sides, and only
+//! the creditor's right is a claim) is reported `non_conforming` with the
+//! row's note, whatever anchors its lineage also reaches, until the part that
+//! conforms is modelled as its own class.
+//!
 //! The checker proves the link total (`norn_checker::validate_link_registry`):
 //! every active term of the imported pack is mapped or residual, with its
 //! reason. Alignment reads only the lowered interfaces' names and `extends`;
@@ -52,6 +58,16 @@ pub struct OwlAnchor {
     pub supersedes: Vec<String>,
 }
 
+/// A class whose lineage is held out of the canon, and why.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OwlHeld {
+    /// The held class IRI (an imported class).
+    pub class: String,
+    /// Why no REA concept covers the whole lineage, recorded on its residual.
+    pub note: String,
+}
+
 /// An alignment table and the packs it is written to.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -70,6 +86,9 @@ pub struct OwlAlignment {
     pub reviewed_at: String,
     /// The anchors.
     pub anchors: Vec<OwlAnchor>,
+    /// Lineages reported as residuals whatever anchors they reach.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub held: Vec<OwlHeld>,
 }
 
 /// What became of one imported class.
@@ -104,6 +123,13 @@ pub enum AlignmentFinding {
         /// The core interfaces it would be at once.
         anchors: Vec<String>,
     },
+    /// Its lineage reaches a held class: reported, never aligned.
+    Held {
+        /// The interface name.
+        interface: String,
+        /// The held class it reaches.
+        via: String,
+    },
 }
 
 /// The two packs and one finding per class.
@@ -120,7 +146,7 @@ impl Aligned {
     #[must_use]
     pub fn summary(&self) -> Value {
         let mut by_anchor = BTreeMap::<&str, u64>::new();
-        let (mut aligned, mut gaps, mut conflicts) = (0_u64, 0_u64, 0_u64);
+        let (mut aligned, mut gaps, mut conflicts, mut held) = (0_u64, 0_u64, 0_u64, 0_u64);
         for finding in &self.findings {
             match finding {
                 AlignmentFinding::Aligned { anchor, .. } => {
@@ -130,9 +156,13 @@ impl Aligned {
                 }
                 AlignmentFinding::Gap { .. } => gaps = gaps.saturating_add(1),
                 AlignmentFinding::Conflict { .. } => conflicts = conflicts.saturating_add(1),
+                AlignmentFinding::Held { .. } => held = held.saturating_add(1),
             }
         }
-        let total = aligned.saturating_add(gaps).saturating_add(conflicts);
+        let total = aligned
+            .saturating_add(gaps)
+            .saturating_add(conflicts)
+            .saturating_add(held);
         let basis_points = aligned
             .saturating_mul(10_000)
             .checked_div(total)
@@ -142,7 +172,8 @@ impl Aligned {
             "aligned": aligned,
             "alignedBasisPoints": basis_points,
             "canonGaps": gaps,
-            "nonConforming": conflicts,
+            "nonConforming": conflicts.saturating_add(held),
+            "held": held,
             "alignedByAnchor": by_anchor,
         })
     }
@@ -343,9 +374,9 @@ fn classes(interfaces: &[ArtifactEnvelope]) -> Result<BTreeMap<String, Class>, S
 }
 
 /// The anchor classes (by interface name) each class's lineage reaches.
-fn lineages<'a>(
+fn lineages<'a, T>(
     by_name: &'a BTreeMap<String, Class>,
-    anchored: &BTreeMap<&'a str, &'a OwlAnchor>,
+    anchored: &BTreeMap<&'a str, T>,
 ) -> BTreeMap<&'a str, BTreeSet<&'a str>> {
     let mut reached = BTreeMap::new();
     for name in by_name.keys() {
@@ -408,12 +439,35 @@ pub fn align(
             }
         }
     }
+    let mut held: BTreeMap<&str, &OwlHeld> = BTreeMap::new();
+    for row in &alignment.held {
+        let name = by_iri
+            .get(row.class.as_str())
+            .ok_or_else(|| format!("held <{}> is not an imported class", row.class))?;
+        if anchored.contains_key(name) || held.insert(name, row).is_some() {
+            return Err(format!(
+                "held <{}> is also an anchor or is listed twice",
+                row.class
+            ));
+        }
+    }
     let reached = lineages(&by_name, &anchored);
+    let held_by = lineages(&by_name, &held);
 
     // Precedence, then one finding per class.
     let mut findings = Vec::new();
     let mut outcome: BTreeMap<&str, (Vec<&OwlAnchor>, Vec<String>)> = BTreeMap::new();
+    let mut held_out: BTreeMap<&str, &OwlHeld> = BTreeMap::new();
     for (name, found) in &reached {
+        if let Some(via) = held_by.get(name).and_then(|set| set.first()) {
+            let row = held[via];
+            held_out.insert(name, row);
+            findings.push(AlignmentFinding::Held {
+                interface: (*name).to_owned(),
+                via: row.class.clone(),
+            });
+            continue;
+        }
         let rows: Vec<&OwlAnchor> = found
             .iter()
             .filter_map(|n| anchored.get(n).copied())
@@ -510,6 +564,17 @@ pub fn align(
     // The link: every term mapped or residual, with its reason.
     let mut correspondences = Vec::new();
     let mut residuals = Vec::new();
+    for (name, row) in &held_out {
+        let via = by_iri.get(row.class.as_str()).copied().unwrap_or_default();
+        residuals.push(json!({
+            "termId": term_of(name), "reason": "non_conforming",
+            "note": if via == *name {
+                format!("Held out of the canon: {}", row.note)
+            } else {
+                format!("It specialises {via}, held out of the canon: {}", row.note)
+            },
+        }));
+    }
     for (name, (rows, superseded)) in &outcome {
         let term = term_of(name);
         match rows.as_slice() {
@@ -546,6 +611,7 @@ pub fn align(
             })),
         }
     }
+    residuals.sort_by(|a, b| a["termId"].as_str().cmp(&b["termId"].as_str()));
     let mut link_payload = json!({
         "packId": alignment.link_id, "packVersion": "0.1", "packKind": "link",
         "fromPack": { "packId": alignment.pack_id, "version": "0.1.0" },

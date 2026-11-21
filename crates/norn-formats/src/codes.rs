@@ -75,6 +75,15 @@ pub const OWL_UNPLACED_PROPERTY: Code =
 /// A refinement not lowered because inherited requirements would conflict.
 pub const OWL_INHERITANCE_CONFLICT: Code =
     code("format.owl.inheritance_conflict", Warning, FixDefinition);
+/// A qualified restriction (`some F`, `min n F`, `max n F`, `exactly n F`)
+/// whose filler no established range covers: it counts only the values that
+/// are `F`, and separate values may satisfy other restrictions on the same
+/// property, so neither its target nor its bound holds for the whole link.
+pub const OWL_FILLER_SCOPED: Code = code("format.owl.filler_scoped", Warning, FixDefinition);
+/// A value OWL asserts to exist (`some`, `min n`, `exactly n`): an
+/// open-world claim, lowered as a required member only under the import's
+/// closed-world witness policy.
+pub const OWL_OPEN_WORLD: Code = code("format.owl.open_world", Warning, FixDefinition);
 /// A named individual: reference data for rows, not a type.
 pub const OWL_INDIVIDUAL: Code = code("format.owl.individual", Warning, FixDefinition);
 /// Documentation (annotations other than label and definition, the ontology
@@ -97,6 +106,8 @@ pub const ALL: &[Code] = &[
     OWL_EXTERNAL_REFERENCE,
     OWL_UNPLACED_PROPERTY,
     OWL_INHERITANCE_CONFLICT,
+    OWL_FILLER_SCOPED,
+    OWL_OPEN_WORLD,
     OWL_INDIVIDUAL,
     OWL_ANNOTATION,
 ];

@@ -23,7 +23,9 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use norn_formats::owl::{OwlConfig, OwlGraph, OwlNamespace, OwlNormaliser, OwlReader};
+use norn_formats::owl::{
+    OwlConfig, OwlGraph, OwlNamespace, OwlNormaliser, OwlReader, WitnessPolicy,
+};
 use norn_formats::owl_align::{OwlAlignment, align as align_vocabulary};
 use norn_formats::pack::{ProjectionSpec, check_contract, project, render_review_module};
 use norn_formats::xsd::{
@@ -70,6 +72,9 @@ struct OwlManifest {
     normaliser: OwlNormaliser,
     /// The owned namespaces and their prefixes.
     namespaces: Vec<OwlNamespace>,
+    /// Whether OWL existence claims become required members (`open`: they
+    /// stay optional; `closed`: every record must carry a witness).
+    witnesses: WitnessPolicy,
     /// The normalised graph's pin.
     graph: GraphPin,
 }
@@ -237,6 +242,7 @@ fn run_owl(
         graph_sha256: manifest.graph.sha256,
         normaliser: manifest.normaliser,
         namespaces: manifest.namespaces,
+        witnesses: manifest.witnesses,
     };
     let import = OwlReader.import(
         OwlGraph {
@@ -317,6 +323,7 @@ fn run_owl(
     };
     let mut report = serde_json::json!({
         "graphSha256": config.graph_sha256,
+        "witnesses": config.witnesses,
         "interfaces": artifacts.len(),
         "links": members("links"),
         "properties": members("properties"),

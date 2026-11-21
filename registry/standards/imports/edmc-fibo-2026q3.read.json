@@ -919,6 +919,7 @@
       "prefix": "lcc-lr"
     }
   ],
+  "witnesses": "open",
   "graph": {
     "sha256": "f37f25a2e87c47eb2349b5a6efb6ba81e4552f351846badecbd83f9ac130af99",
     "triples": 36237
