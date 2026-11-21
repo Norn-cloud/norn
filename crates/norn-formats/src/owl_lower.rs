@@ -731,7 +731,7 @@ fn restriction_shape(
                             );
                         }
                     };
-                    link(context, target, false, false, None, uses_range)
+                    Ok(link(context, target, false, false, None, uses_range))
                 }
                 PropertyKind::Datatype => {
                     let (datatype, uses_range) = match filler {
@@ -809,7 +809,7 @@ fn restriction_shape(
                 ),
             });
             return match property_kind {
-                PropertyKind::Object => link(context, range, false, true, degraded, true),
+                PropertyKind::Object => Ok(link(context, range, false, true, degraded, true)),
                 PropertyKind::Datatype => Ok(Ask::Member {
                     shape: Shape::Value {
                         kind: value_type(table, range.unwrap_or(""))?,
@@ -872,7 +872,7 @@ fn restriction_shape(
     let required = least >= 1 && closed;
     let to_one = most == Some(1);
     match property_kind {
-        PropertyKind::Object => link(context, range, to_one, required, degraded, true),
+        PropertyKind::Object => Ok(link(context, range, to_one, required, degraded, true)),
         PropertyKind::Datatype => Ok(Ask::Member {
             shape: Shape::Value {
                 kind: value_type(table, range.unwrap_or(""))?,
@@ -908,8 +908,8 @@ fn link(
     required: bool,
     degraded: Option<Degradation>,
     uses_range: bool,
-) -> Result<Ask, String> {
-    Ok(match target {
+) -> Ask {
+    match target {
         Some(target) if context.names.contains_key(target) => Ask::Member {
             shape: Shape::Link {
                 target: target.to_owned(),
@@ -933,7 +933,7 @@ fn link(
             NornHome::EntityIr,
             "no named filler and no single named range: the link has no target".into(),
         )),
-    })
+    }
 }
 
 fn reaches(edges: &BTreeMap<String, BTreeMap<String, usize>>, from: &str, to: &str) -> bool {
@@ -1302,6 +1302,10 @@ struct Placement<'a> {
     target_of: &'a dyn Fn(&str, Option<&str>) -> Target,
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "one arm per axiom kind keeps the accounting in one place"
+)]
 fn axiom_disposition(
     model: &Model,
     lowered: &Lowered,

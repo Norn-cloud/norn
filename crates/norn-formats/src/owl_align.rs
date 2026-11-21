@@ -459,8 +459,11 @@ pub fn align(
     let mut outcome: BTreeMap<&str, (Vec<&OwlAnchor>, Vec<String>)> = BTreeMap::new();
     let mut held_out: BTreeMap<&str, &OwlHeld> = BTreeMap::new();
     for (name, found) in &reached {
-        if let Some(via) = held_by.get(name).and_then(|set| set.first()) {
-            let row = held[via];
+        if let Some(row) = held_by
+            .get(name)
+            .and_then(|set| set.first())
+            .and_then(|via| held.get(via).copied())
+        {
             held_out.insert(name, row);
             findings.push(AlignmentFinding::Held {
                 interface: (*name).to_owned(),
