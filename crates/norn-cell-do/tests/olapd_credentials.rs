@@ -791,7 +791,8 @@ impl Seam for AfterStore {
 fn a_store_never_removes_a_landing_made_while_it_finishes() {
     let host = issuer("k1", 7);
     let seam = Arc::new(AfterStore::default());
-    let daemon = daemon_with(&[&host], Arc::clone(&seam) as Arc<dyn Seam>);
+    let shared: Arc<dyn Seam> = Arc::<AfterStore>::clone(&seam);
+    let daemon = daemon_with(&[&host], shared);
     let of = tenant("org_a/prod");
     let (bytes_a, bytes_b) = (rows_csv("a", 300), rows_csv("b", 500));
     let store = object_store(
@@ -879,7 +880,7 @@ fn a_store_during_a_download_leaves_the_download_intact() {
     let land = land_request(&of, format!("http://{}/slow.csv", store.addr), &bytes);
     let land_body = serde_json::to_string(&land).unwrap();
     let addr = daemon.addr;
-    let (landing_of, landing_body) = (of.clone(), land_body.clone());
+    let (landing_of, landing_body) = (of.clone(), land_body);
     let landing = std::thread::spawn(move || {
         by_at(addr, &issuer("k1", 7), &landing_of, "land", &landing_body)
     });
