@@ -3,6 +3,7 @@ import { ChevronRight, History as HistoryIcon, PencilLine, Workflow, Wrench, typ
 import { useState } from "react"
 import { EmptyState, Panel, Well } from "@/components/panel"
 import { CopyId } from "@/components/copy-id"
+import { HiddenWriter } from "@/components/hidden-writer"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { cn } from "@/lib/utils"
 import { systemName } from "../lib/catalog.ts"
@@ -21,7 +22,7 @@ function Writer({ version }: { readonly version: ObjectVersion }) {
     return <span>Imported from {systemName(writer.lineage.sourceRecordRef.system)} record <code className="text-xs">{writer.lineage.sourceRecordRef.record}</code> by <code className="text-xs">{writer.lineage.mappingPin.artifactId}</code></span>
   }
   if (writer.kind === "action") return <span><span className="font-medium">{writer.actor}</span> ran <code className="text-xs">{writer.actionId}</code></span>
-  return <span>Written by a rule, an import, or a call not shown to you</span>
+  return <HiddenWriter />
 }
 
 const KIND: Readonly<Record<WriterKind, { readonly label: string; readonly icon: LucideIcon }>> = {
@@ -120,7 +121,7 @@ function Entry({ entry, time, history, index, truncated, scales, open, onToggle 
         </span>
         <span className="shrink-0 text-end text-meta text-muted-foreground">
           <span className={cn("block font-mono text-xs tabular-nums", time === "valid" && entry.valid === null && "italic")}>{when}</span>
-          <span className="block tabular-nums">v{entry.version} · commit {entry.commit}</span>
+          <span className="block tabular-nums">commit {entry.commit}</span>
         </span>
       </button>
       {open && (

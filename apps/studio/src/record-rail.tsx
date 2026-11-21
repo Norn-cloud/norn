@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router"
 import { Eye, Fingerprint, History as HistoryIcon, Scale, ShieldCheck, Waypoints, Zap, type LucideIcon } from "lucide-react"
 import type { ReactNode } from "react"
 import { Chip } from "@/components/chip"
+import { HiddenWriter } from "@/components/hidden-writer"
 import { Panel, Well } from "@/components/panel"
 import { cn } from "@/lib/utils"
 import { systemName } from "./lib/catalog.ts"
@@ -147,7 +148,7 @@ export function RecentChanges({ objectType, id, actionTitles, onAll }: {
                 const { writer } = version
                 const what = writer.kind === "action" ? actionTitles.get(writer.actionId) ?? humanize(writer.actionId)
                   : writer.kind === "mapping" ? `Imported from ${systemName(writer.lineage.sourceRecordRef.system)}`
-                  : "Written by a rule, an import, or a call not shown to you"
+                  : <HiddenWriter />
                 const when = readableTime(new Date(version.logicalTime).toISOString())
                 return (
                   <li key={version.version} data-version={version.version} className="text-sm leading-snug">

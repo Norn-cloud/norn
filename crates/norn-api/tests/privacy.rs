@@ -25,6 +25,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use norn_api::authz::{AccessRequest, Authorizer, ReadCapability, ReadRequest};
 use norn_api::host::DevHost;
 use norn_api::object_query::ObjectQueryParams;
+use norn_api::object_review::get_object_history;
 use norn_api::object_routes::{ObjectAccess, get_object_query, get_queried_object};
 use norn_api::privacy::{NornMaskMode, NornRevealRequest, reveal};
 use norn_api::refusal::Refusal;
@@ -128,6 +129,16 @@ fn host(
     mask: &Json,
     secret: Option<&[u8]>,
 ) -> (DevHost<NativeEngine>, tempfile::TempDir) {
+    host_with(org, mask, secret, &[])
+}
+
+/// [`host`], then each of `later` committed in turn, one commit each.
+fn host_with(
+    org: &str,
+    mask: &Json,
+    secret: Option<&[u8]>,
+    later: &[Vec<FactWriteRow>],
+) -> (DevHost<NativeEngine>, tempfile::TempDir) {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("cell.sqlite");
     let object: norn_ir::ObjectTypeDef = serde_json::from_value(json!({
@@ -177,6 +188,17 @@ fn host(
                 ..CommitBatch::default()
             })
             .unwrap();
+        for (time, writes) in (3..).zip(later) {
+            store
+                .commit(&CommitBatch {
+                    world: MAIN_WORLD.into(),
+                    scope: physical(org).key(),
+                    logical_time: time,
+                    writes: writes.clone(),
+                    ..CommitBatch::default()
+                })
+                .unwrap();
+        }
     }
     let store = CellStore::open(&path, model, norn_cell::StoreOptions::default()).unwrap();
     let host = DevHost::from_store(store, physical(org), |command| command.payload.clone())
@@ -382,6 +404,37 @@ fn every_mode_is_applied_on_the_server_and_an_unkeyed_pseudonym_redacts() {
     assert_eq!(document["masked"]["email"]["mode"], "redacted");
 }
 
+/// #1519 S6: a write that changed only a withheld field is not in the
+/// history: its version, commit and time would tell that a hidden value
+/// changed then. A later write that changes a visible value is listed, and
+/// its change is read against the last version listed.
+#[test]
+fn a_history_omits_a_write_that_changed_only_a_withheld_field() {
+    let (host, _directory) = host_with(
+        "org_a",
+        &json!({"kind": "refuse"}),
+        Some(&SECRET),
+        &[
+            vec![customer("c1", "Ada", "ada@new.example.com")],
+            vec![customer("c1", "Ada Lovelace", "ada@new.example.com")],
+        ],
+    );
+    let history =
+        get_object_history(&host, &scope("org_a"), Some("viewer"), TYPE, "c1", &Mapping).unwrap();
+    let listed: Vec<u64> = history.versions.iter().map(|version| version.version).collect();
+    assert_eq!(listed, [3, 1], "{history:#?}");
+    let names: Vec<Option<&V>> = history
+        .versions
+        .iter()
+        .map(|version| version.values.as_ref().and_then(|values| values.get("name")))
+        .collect();
+    assert_eq!(names, [Some(&V::from("Ada Lovelace")), Some(&V::from("Ada"))]);
+    let document = serde_json::to_string(&history).unwrap();
+    for withheld in ["example.com", "\"logicalTime\":3,"] {
+        assert!(!document.contains(withheld), "{withheld} leaked: {document}");
+    }
+}
+
 /// The documents Studio's privacy walk replays (`fixtures/privacy`), as
 /// this server writes them for a Party-shaped cell: a viewer's grid page, an
 /// auditor's, and an auditor's reveal with its receipt. `NORN_BLESS=1`
@@ -456,6 +509,17 @@ fn party_cell() -> (DevHost<NativeEngine>, tempfile::TempDir) {
                 ..CommitBatch::default()
             })
             .unwrap();
+        for (time, writes) in (3..).zip(later) {
+            store
+                .commit(&CommitBatch {
+                    world: MAIN_WORLD.into(),
+                    scope: physical(org).key(),
+                    logical_time: time,
+                    writes: writes.clone(),
+                    ..CommitBatch::default()
+                })
+                .unwrap();
+        }
     }
     let store = CellStore::open(&path, model, norn_cell::StoreOptions::default()).unwrap();
     let cell = DevHost::from_store(store, physical, |command| command.payload.clone())
@@ -822,6 +886,17 @@ fn a_provisioned_privacy_set_pseudonymizes_a_party_name() {
                 ..CommitBatch::default()
             })
             .unwrap();
+        for (time, writes) in (3..).zip(later) {
+            store
+                .commit(&CommitBatch {
+                    world: MAIN_WORLD.into(),
+                    scope: physical(org).key(),
+                    logical_time: time,
+                    writes: writes.clone(),
+                    ..CommitBatch::default()
+                })
+                .unwrap();
+        }
     }
     let store = CellStore::open(&path, model, norn_cell::StoreOptions::default()).unwrap();
     let cell = DevHost::from_store(store, physical, |command| command.payload.clone())
@@ -1026,6 +1101,17 @@ fn an_applied_pack_keeps_the_privacy_markings() {
                 ..CommitBatch::default()
             })
             .unwrap();
+        for (time, writes) in (3..).zip(later) {
+            store
+                .commit(&CommitBatch {
+                    world: MAIN_WORLD.into(),
+                    scope: physical(org).key(),
+                    logical_time: time,
+                    writes: writes.clone(),
+                    ..CommitBatch::default()
+                })
+                .unwrap();
+        }
     }
     let store = CellStore::open(&path, model, norn_cell::StoreOptions::default()).unwrap();
     let cell = DevHost::from_store(store, physical, |command| command.payload.clone())
