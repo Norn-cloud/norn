@@ -305,6 +305,9 @@ struct Tally {
     expected_refusals: u64,
     /// Stock moves re-read and retried after a concurrent move changed the bin.
     stale_retries: u64,
+    /// Reads repeated after a retryable refusal (`object.snapshot_moved`:
+    /// a commit landed while the read was assembled).
+    read_retries: u64,
     parked: u64,
     unexpected: Vec<String>,
     /// ERP-EQUIV-1: every command's outcome in call order (action, key,
@@ -321,6 +324,7 @@ impl Tally {
         self.reads += other.reads;
         self.expected_refusals += other.expected_refusals;
         self.stale_retries += other.stale_retries;
+        self.read_retries += other.read_retries;
         self.parked += other.parked;
         self.unexpected.extend(other.unexpected);
         self.outcomes.extend(other.outcomes);
@@ -445,9 +449,16 @@ impl Client<'_> {
     fn read(&mut self, kind: &str, id: &str) -> Option<Value> {
         self.tally.reads += 1;
         let token = self.host.developer.clone();
-        let (status, body) =
-            self.conn
-                .call("GET", &format!("/v1/objects/erp.{kind}/{id}"), &token, None);
+        let path = format!("/v1/objects/erp.{kind}/{id}");
+        let (mut status, mut body) = self.conn.call("GET", &path, &token, None);
+        // A retryable refusal says to repeat the read, as a client does.
+        for _ in 0..20 {
+            if status == 200 || body["retryable"] != Value::Bool(true) {
+                break;
+            }
+            self.tally.read_retries += 1;
+            (status, body) = self.conn.call("GET", &path, &token, None);
+        }
         self.tally
             .outcomes
             .push(if status == 200 {
@@ -813,7 +824,7 @@ fn cpu(tally: &Tally, elapsed: f64, cpu: f64) {
 fn report(label: &str, tally: &Tally, elapsed: f64, reconnects: u64, host: &Host) {
     let all = tally.all();
     println!(
-        "ERP {label}: {} commands in {elapsed:.1}s = {:.1} cmd/s ({:.1} reads/s) | commit p50 {:.2} ms p95 {:.2} ms p99 {:.2} ms max {:.2} ms | stale retries {} parked {} refused-as-expected {} unexpected {} reconnects {} | cell {:.1} MB",
+        "ERP {label}: {} commands in {elapsed:.1}s = {:.1} cmd/s ({:.1} reads/s) | commit p50 {:.2} ms p95 {:.2} ms p99 {:.2} ms max {:.2} ms | stale retries {} read retries {} parked {} refused-as-expected {} unexpected {} reconnects {} | cell {:.1} MB",
         tally.committed,
         tally.committed as f64 / elapsed,
         tally.reads as f64 / elapsed,
@@ -822,6 +833,7 @@ fn report(label: &str, tally: &Tally, elapsed: f64, reconnects: u64, host: &Host
         percentile(&all, 99.0),
         percentile(&all, 100.0),
         tally.stale_retries,
+        tally.read_retries,
         tally.parked,
         tally.expected_refusals,
         tally.unexpected.len(),
