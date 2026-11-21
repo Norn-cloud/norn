@@ -467,11 +467,17 @@ pub enum JournalMode {
 pub struct StoreOptions {
     /// The journal mode.
     pub journal_mode: JournalMode,
-    /// The native page cache size in pages. A small cache makes
-    /// SQLite spill uncommitted pages to the file mid-transaction, which the
-    /// crash simulations use to exercise hot-journal and WAL recovery.
+    /// The native page cache size in pages; `None` is
+    /// [`DEFAULT_CACHE_KIB`]. A small cache makes SQLite spill uncommitted
+    /// pages to the file mid-transaction, which the crash simulations use to
+    /// exercise hot-journal and WAL recovery.
     pub cache_pages: Option<u32>,
 }
+
+/// The native page cache a file-backed store keeps when
+/// [`StoreOptions::cache_pages`] is `None`: 16 MiB, so one import page's
+/// transaction fits without spilling (INGEST-CACHE-1).
+pub const DEFAULT_CACHE_KIB: u32 = 16 * 1024;
 
 /// One retained, checker-admitted definition set installed in the cell.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1842,7 +1848,7 @@ pub struct CellStore<E: SqlEngine = DefaultEngine> {
     /// then [`Self::verified_head`] extends it over later commits only.
     verified: RefCell<LedgerHead>,
     source_disputes: RefCell<crate::mapping_conflict::SourceDisputeIndex>,
-    mapping_plans: RefCell<crate::mapping_bundle::MappingPlanCache>,
+    pub(crate) mapping_plans: RefCell<crate::mapping_bundle::MappingPlanCache>,
     verified_receipts: RefCell<crate::history::VerifiedReceipts>,
     /// Immutable quantity boundary found at open or established by a committed
     /// upgrade. Mutable metadata is checked against it, never used as authority.
@@ -3708,7 +3714,12 @@ impl<E: SqlEngine> CellStore<E> {
             if effective_batch.logical_time < reader.clock_floor()? {
                 return Err(CellError::Quantity(norn_kernel::quantity::QuantityError::ClockRegression).into());
             }
-            let admitted = guard(&reader).map_err(GuardedError::Guard)?;
+            let admitted = {
+                // The guard only reads: a plan it proves holds for every
+                // bundle it checks (INGEST-DERIVE-ONCE-1).
+                let _pinned = crate::mapping_bundle::PinnedPlans::open(&self.mapping_plans);
+                guard(&reader).map_err(GuardedError::Guard)?
+            };
             let consumed_input = export_journal::consumed_input(&reader, effective_batch.consumes.as_ref())?;
             let commit_seq = reader.next_commit_seq()?;
             let commit_model = installation
@@ -3829,7 +3840,7 @@ impl<E: SqlEngine> CellStore<E> {
             if !matches!(origin, CommitOrigin::Retained(_)) {
                 crate::identity::validate(&writer.reader())?;
             }
-            let (first_event_seq, ledger_head) = writer.append_events()?;
+            let (first_event_seq, ledger_head, entries) = writer.append_events()?;
             if let Some(boundary) = new_boundary {
                 crate::quantity::establish_boundary(&self.conn, boundary)?;
             }
@@ -3901,6 +3912,7 @@ impl<E: SqlEngine> CellStore<E> {
                         Some(crate::engine_release::STORAGE_VERSION)
                     }
                 },
+                entries,
             )?;
             probe(CommitPoint::ReceiptWritten)?;
             Ok((admitted, CommitOutcome::Committed(receipt)))
@@ -4484,5 +4496,171 @@ mod identity_history_tests {
                 ));
             }
         }
+    }
+}
+
+#[cfg(all(test, feature = "native"))]
+#[allow(
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    reason = "journal proof fixture"
+)]
+mod journal_proof_tests {
+    use super::{
+        CellError, CellStore, CommitBatch, CommitOrigin, CommitPoint, FactWriteRow, MAIN_WORLD,
+        Model, Value,
+    };
+    use crate::engine::{SqlEngine as _, SqlRow, params};
+    use crate::history::FactSnapshot;
+    use std::collections::BTreeMap;
+
+    fn store() -> CellStore {
+        let item = serde_json::from_value(serde_json::json!({
+            "name": "proof.Item",
+            "properties": [{"id": "value", "type": {"kind": "text"}}]
+        }))
+        .expect("definition");
+        CellStore::open_in_memory(Model::from_definitions(&[item], &[]).expect("model"))
+            .expect("store")
+    }
+
+    fn created() -> CommitBatch {
+        CommitBatch {
+            world: MAIN_WORLD.to_owned(),
+            scope: "org/dev".to_owned(),
+            writes: vec![FactWriteRow::Put {
+                object_type: "proof.Item".to_owned(),
+                key: "item".to_owned(),
+                values: BTreeMap::from([("value".to_owned(), Value::from("one"))]),
+            }],
+            events: vec![
+                Value::from_json(serde_json::json!({
+                    "op": "created",
+                    "key": {"objectType": "proof.Item", "key": "item"},
+                    "values": {"value": "one"}
+                }))
+                .expect("event"),
+            ],
+            ..CommitBatch::default()
+        }
+    }
+
+    /// #1527 S1: a stored `created` event is bound to the receipt its commit
+    /// persists, in every build. Here the event's snapshot changes after the
+    /// writer proved the event (against its pending digests) and before the
+    /// receipt is written: same values, rehashed, so the snapshot is
+    /// self-consistent but not the one the receipt commits to. The commit
+    /// must refuse and write nothing; the exporter's own check would only
+    /// find it once the commit can no longer roll back.
+    #[test]
+    fn a_created_event_is_proven_against_the_persisted_receipt() {
+        let store = store();
+        let conn = &store.conn;
+        let mut rebind = |point: CommitPoint| -> Result<(), CellError> {
+            if point == CommitPoint::EffectsEnqueued {
+                let rows = conn.query(
+                    "SELECT \"snapshot\" FROM \"_norn_fact_values\" WHERE \"id\" = 'item' AND \"version\" = 1",
+                    &[],
+                )?;
+                let text: String = SqlRow(rows[0].clone()).get(0)?;
+                let mut snapshot: FactSnapshot = serde_json::from_str(&text)?;
+                snapshot.scope = "org/other".to_owned();
+                conn.execute(
+                    "UPDATE \"_norn_fact_values\" SET \"snapshot\" = ?1, \"hash\" = ?2 WHERE \"id\" = 'item' AND \"version\" = 1",
+                    params![
+                        crate::codec::canonical_json(&snapshot)?,
+                        crate::codec::hash_json(&snapshot)?
+                    ],
+                )?;
+            }
+            Ok(())
+        };
+        let outcome = store.commit_guarded_inner(
+            &created(),
+            None,
+            None,
+            CommitOrigin::Current,
+            |_reader| Ok::<(), CellError>(()),
+            &mut rebind,
+        );
+        assert!(
+            matches!(
+                outcome,
+                Err(super::GuardedError::Store(
+                    CellError::HistoricalValueUnproven(_)
+                ))
+            ),
+            "{outcome:?}"
+        );
+        assert_eq!(store.export_commit_count().expect("journal head"), 0);
+        assert!(store.read().ledger(0).expect("ledger").is_empty());
+
+        // Untouched, the same commit lands and its record exports.
+        let store = self::store();
+        store
+            .commit_guarded_inner(
+                &created(),
+                None,
+                None,
+                CommitOrigin::Current,
+                |_reader| Ok::<(), CellError>(()),
+                &mut |_point| Ok(()),
+            )
+            .expect("authentic commit");
+        let record = store
+            .export_record(1)
+            .expect("record reads")
+            .expect("record");
+        assert_eq!(record.entries.len(), 1);
+    }
+    /// #1527 S1: an event both classifiers claim, an `observed_fact` whose
+    /// nested event is a proven `created` and whose outer `type` is
+    /// `command.result` with a result of at least 1 KiB, is stored with its
+    /// result apart. The journal must record the full event a ledger reader
+    /// decodes, not the placeholder the ledger row holds, in every build.
+    #[test]
+    fn an_observed_created_command_result_journals_its_full_result() {
+        let store = store();
+        let mut batch = created();
+        let event = Value::from_json(serde_json::json!({
+            "op": "observed_fact",
+            "type": "command.result",
+            "result": {"blob": "x".repeat(2048)},
+            "event": {
+                "op": "created",
+                "key": {"objectType": "proof.Item", "key": "item"},
+                "values": {"value": "one"}
+            }
+        }))
+        .expect("event");
+        batch.events = vec![event.clone()];
+        store
+            .commit_guarded_inner(
+                &batch,
+                None,
+                None,
+                CommitOrigin::Current,
+                |_reader| Ok::<(), CellError>(()),
+                &mut |_point| Ok(()),
+            )
+            .expect("the overlapping event commits");
+        let stored: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM \"_norn_ledger_payload\"",
+                &[],
+                |row| row.get(0),
+            )
+            .expect("payload rows");
+        assert_eq!(stored, 1, "the result is stored apart");
+        let ledger = store.read().ledger(0).expect("ledger");
+        assert_eq!(ledger.len(), 1);
+        assert_eq!(ledger[0].event, event);
+        let record = store
+            .export_record(1)
+            .expect("record reads")
+            .expect("record");
+        assert_eq!(record.entries.len(), 1);
+        assert_eq!(record.entries[0].event, event);
     }
 }

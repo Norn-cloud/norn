@@ -3,17 +3,17 @@ import { ChevronRight, History as HistoryIcon, PencilLine, Workflow, Wrench, typ
 import { useState } from "react"
 import { EmptyState, Panel, Well } from "@/components/panel"
 import { CopyId } from "@/components/copy-id"
+import { HiddenWriter } from "@/components/hidden-writer"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { cn } from "@/lib/utils"
 import { systemName } from "../lib/catalog.ts"
-import { CellRefusal, NotServed } from "../lib/live-transport.ts"
 import { readMetrics } from "../lib/metrics.ts"
 import { atScale } from "../lib/objects.ts"
 import { readableTime } from "../lib/format.ts"
 import { useView } from "../lib/view.tsx"
 import { byValidTime, timePropertyOf, timeline, writerCounts, type TimelineEntry, type WriterKind } from "../lib/record-page.ts"
 import { useCatalog } from "../sources.tsx"
-import { changedProperties, readHistory, versionValue, type ObjectVersion } from "./review.ts"
+import { changedProperties, historyUnavailable, readHistory, versionValue, type ObjectVersion } from "./review.ts"
 
 /** Who or what wrote one version, in a line. */
 function Writer({ version }: { readonly version: ObjectVersion }) {
@@ -22,7 +22,7 @@ function Writer({ version }: { readonly version: ObjectVersion }) {
     return <span>Imported from {systemName(writer.lineage.sourceRecordRef.system)} record <code className="text-xs">{writer.lineage.sourceRecordRef.record}</code> by <code className="text-xs">{writer.lineage.mappingPin.artifactId}</code></span>
   }
   if (writer.kind === "action") return <span><span className="font-medium">{writer.actor}</span> ran <code className="text-xs">{writer.actionId}</code></span>
-  return <span>Written by a rule, an import or a migration</span>
+  return <HiddenWriter />
 }
 
 const KIND: Readonly<Record<WriterKind, { readonly label: string; readonly icon: LucideIcon }>> = {
@@ -36,7 +36,7 @@ type Time = "known" | "valid"
 /**
  * Every version of one record, newest first, one line each: what wrote it (an import with its source
  * record, or a governed action with its verified actor), what it changed, and its commit. A version
- * opens to its full change, reason and evidence. The timeline reads by knowledge time (when Norn
+ * opens to its full change. The timeline reads by knowledge time (when Norn
  * committed it, the server's order) or by valid time (the version's value of the time property the
  * cell places this type in time by); filters keep one kind of writer.
  */
@@ -50,10 +50,7 @@ export function History({ objectType, id }: { readonly objectType: string; reado
   const { catalog } = useCatalog()
   const scales = new Map((catalog?.byName.get(objectType)?.fields ?? []).flatMap(({ id: field, decimal }) => decimal?.scale === undefined ? [] : [[field, decimal.scale] as const]))
   if (read.isPending) return <Panel icon={HistoryIcon} label="History"><Well className="p-3 text-meta text-muted-foreground">Reading the history…</Well></Panel>
-  if (read.isError) {
-    const message = read.error instanceof NotServed ? "This cell does not serve record history yet." : read.error instanceof CellRefusal ? read.error.message : "The history could not be read."
-    return <Panel icon={HistoryIcon} label="History"><Well className="p-3 text-meta text-muted-foreground">{message}</Well></Panel>
-  }
+  if (read.isError) return <Panel icon={HistoryIcon} label="History"><Well className="p-3 text-meta text-muted-foreground"><span data-history-unavailable="">{historyUnavailable(read.error)}</span></Well></Panel>
   const history = read.data
   const { versions, truncated } = history.document
   const timeProperty = timePropertyOf(metrics.data?.document.metrics ?? [], objectType)
@@ -124,7 +121,7 @@ function Entry({ entry, time, history, index, truncated, scales, open, onToggle 
         </span>
         <span className="shrink-0 text-end text-meta text-muted-foreground">
           <span className={cn("block font-mono text-xs tabular-nums", time === "valid" && entry.valid === null && "italic")}>{when}</span>
-          <span className="block tabular-nums">v{entry.version} · commit {entry.commit}</span>
+          <span className="block tabular-nums">commit {entry.commit}</span>
         </span>
       </button>
       {open && (
@@ -142,7 +139,6 @@ function Entry({ entry, time, history, index, truncated, scales, open, onToggle 
               </tbody>
             </table>
           )}
-          {writer.kind === "action" && <ActionReason input={writer.input} />}
           <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 text-meta text-muted-foreground">
             <dt>Known</dt><dd className="font-mono text-xs">{entry.known}</dd>
             <dt>Valid</dt><dd className="font-mono text-xs">{entry.valid ?? "—"}</dd>
@@ -151,18 +147,5 @@ function Entry({ entry, time, history, index, truncated, scales, open, onToggle 
         </div>
       )}
     </li>
-  )
-}
-
-/** The reason and evidence an action's input carries, when it does. */
-function ActionReason({ input }: { readonly input: Readonly<Record<string, unknown>> }) {
-  const reason = input.correction_reason ?? input.reason
-  const evidence = input.correction_evidence ?? input.evidence
-  if (typeof reason !== "string" && typeof evidence !== "string") return null
-  return (
-    <div className="space-y-0.5 text-meta text-muted-foreground">
-      {typeof reason === "string" && <div>Reason: <span className="text-foreground">{reason}</span></div>}
-      {typeof evidence === "string" && <div>Evidence: <code>{evidence}</code></div>}
-    </div>
   )
 }
