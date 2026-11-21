@@ -483,7 +483,10 @@ impl crate::object_routes::ObjectAccess for CorrectedOnly {
     ) -> Result<norn_kernel::authz::AccessRequest, Refusal> {
         if let Some(row) = row
             && row.object_type == DOCUMENT
-            && !matches!(row.values.get("corrected_by"), Some(RuntimeValue::String(_)))
+            && !matches!(
+                row.values.get("corrected_by"),
+                Some(RuntimeValue::String(_))
+            )
         {
             return Err(read_denied());
         }
