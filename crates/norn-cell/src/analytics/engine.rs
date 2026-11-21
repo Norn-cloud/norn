@@ -54,7 +54,8 @@ const MAX_VALUE: &str = "9000000000000000000";
 /// Engine settings: where tenant files live and what `DuckDB` may use.
 #[derive(Debug, Clone)]
 pub struct Settings {
-    /// The directory holding one `<tenant>.duckdb` per tenant and `tmp/`.
+    /// The directory holding one `<tenant>.duckdb` per tenant and, under
+    /// `tmp/`, one scratch directory per tenant.
     pub root: PathBuf,
     /// The `DuckDB` `memory_limit`, for example `512MB`.
     pub memory_limit: String,
@@ -153,10 +154,18 @@ impl Engine {
         })
     }
 
-    /// The scratch directory loads and exports use.
-    #[must_use]
-    pub fn scratch(&self) -> PathBuf {
-        self.settings.root.join("tmp")
+    /// The scratch directory of `tenant` alone (`tmp/<tenant>/`), created
+    /// if absent: its loads' downloads, its exports, and its database's
+    /// `DuckDB` spill (`temp_directory`). It is also the only directory that
+    /// tenant's database may read or write (`allowed_directories`), so no
+    /// tenant's file is ever within reach of another tenant's database.
+    ///
+    /// # Errors
+    /// The directory cannot be created.
+    pub fn scratch(&self, tenant: &TenantId) -> std::io::Result<PathBuf> {
+        let path = self.settings.root.join("tmp").join(tenant.as_str());
+        std::fs::create_dir_all(&path)?;
+        Ok(path)
     }
 
     fn tenant(&self, tenant: &TenantId) -> Outcome<Arc<Mutex<Connection>>> {
@@ -168,8 +177,10 @@ impl Engine {
             .settings
             .root
             .join(format!("{}.duckdb", tenant.as_str()));
+        let scratch = self
+            .scratch(tenant)
+            .map_err(|error| refusal("analytics.engine", error.to_string()))?;
         let conn = db(Connection::open(&path))?;
-        let scratch = self.scratch();
         let scratch = scratch.to_string_lossy().replace('\'', "''");
         // MANIFEST-02: the tenant's private directory is its own; no other
         // tenant's connection names it.
@@ -178,7 +189,7 @@ impl Engine {
         db(conn.execute_batch(&format!(
             "SET autoinstall_known_extensions=false; SET autoload_known_extensions=false; \
              SET memory_limit='{}'; SET threads={}; SET temp_directory='{private}/spill'; \
-             SET preserve_insertion_order=true; SET allowed_directories=['{scratch}', '{private}']; \
+             SET preserve_insertion_order=true; SET allowed_directories=['{scratch}/', '{private}/']; \
              SET enable_external_access=false; \
              CREATE TABLE IF NOT EXISTS \":meta\" (key VARCHAR PRIMARY KEY, value VARCHAR NOT NULL);",
             self.settings.memory_limit.replace('\'', ""),
@@ -727,7 +738,10 @@ impl Engine {
                 ExportFormat::Jsonl => "jsonl",
             }
         );
-        let path = self.scratch().join(name);
+        let path = self
+            .scratch(&request.tenant)
+            .map_err(|error| refusal("analytics.engine", error.to_string()))?
+            .join(name);
         self.with(&request.tenant, |conn| {
             let scope = Scope::new(conn, &request.source)?;
             let mut select = vec![

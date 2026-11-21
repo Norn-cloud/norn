@@ -5,33 +5,61 @@
 use std::sync::{Mutex, PoisonError};
 
 use norn_api::analytics_routes::{EngineAnswer, EngineCall, Transport};
+use norn_api::olap_credential::{Issuer, body_digest};
 #[cfg(all(feature = "duckdb", not(target_arch = "wasm32")))]
 use norn_cell::analytics::EngineRefusal;
+use norn_cell::analytics::TenantId;
 #[cfg(all(feature = "duckdb", not(target_arch = "wasm32")))]
 use serde::Serialize;
 
 /// The Durable Object transport: a call ends the request; the Worker performs
-/// it and re-enters with the answer.
-#[derive(Default)]
+/// it and re-enters with the answer. OLAP-CRED-1: each call it hands the
+/// Worker carries a fresh credential for this cell's own tenant, the only
+/// bearer the engine accepts.
 pub struct Exchange {
+    issuer: Issuer,
+    tenant: TenantId,
     answer: Mutex<Option<EngineAnswer>>,
     pending: Mutex<Option<EngineCall>>,
 }
 
 impl Exchange {
+    /// The link of the cell whose engine database is `tenant`, minting with `issuer`.
+    #[must_use]
+    pub const fn new(issuer: Issuer, tenant: TenantId) -> Self {
+        Self {
+            issuer,
+            tenant,
+            answer: Mutex::new(None),
+            pending: Mutex::new(None),
+        }
+    }
+
     /// Re-enter with the answer to the previous call.
     pub fn resume(&self, answer: EngineAnswer) {
         *self.answer.lock().unwrap_or_else(PoisonError::into_inner) = Some(answer);
         *self.pending.lock().unwrap_or_else(PoisonError::into_inner) = None;
     }
 
-    /// The call this request ended with, if any; taken once.
-    pub fn take_pending(&self) -> Option<EngineCall> {
+    /// The call this request ended with, if any, with this cell's credential
+    /// minted at `now_ms` (Unix milliseconds); taken once. OLAP-03: the
+    /// credential is bound to the call's operation and to the digest of the
+    /// exact body the host sends, computed here from that body (never taken
+    /// from the call's own `digest`, which names a load without its URL).
+    pub fn take_pending(&self, now_ms: u64) -> Option<EngineCall> {
         *self.answer.lock().unwrap_or_else(PoisonError::into_inner) = None;
-        self.pending
+        let mut call = self
+            .pending
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .take()
+            .take()?;
+        call.credential = Some(self.issuer.mint(
+            &self.tenant,
+            &call.op,
+            &body_digest(call.body.as_bytes()),
+            now_ms,
+        ));
+        Some(call)
     }
 }
 
