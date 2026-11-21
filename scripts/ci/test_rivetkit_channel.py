@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """rivetkit_channel end to end over a scratch repository: each way round a RivetKit bump
-without a storage version bump that Sol named on #1513 (round 4, S2), and the legitimate
-changes beside them."""
+without a storage version bump that Sol named on #1513 (round 4, S2; round 5, S5-S8), and
+the legitimate changes beside them."""
 
 import subprocess
 import sys
@@ -196,6 +196,46 @@ class Scenarios(unittest.TestCase):
         # An entry appended without a RivetKit change.
         self.tree(lock("3.2.0"), "3.2.0", [("3.1.1", 4), ("3.1.5", 5), ("3.2.0", 6)], 6)
         self.assert_refused("appends")
+
+    def test_a_downgrade_with_a_storage_bump_is_refused(self):
+        # Sol round 5, S5: 3.1.1 re-pinned to 3.1.0 with storage 4 -> 5 read as a new release.
+        self.base(lock("3.1.1"), "3.1.1", [("3.1.1", 4)], 4)
+        self.tree(lock("3.1.0"), "3.1.0", [("3.1.1", 4), ("3.1.0", 5)], 5)
+        self.assert_refused("is downgraded from 3.1.1 to 3.1.0")
+        # The same downgrade with the older release dropped: the head alone is consistent.
+        self.tree(lock("3.1.0"), "3.1.0", [("3.1.0", 5)], 5)
+        self.assert_tree_alone_passes()
+        self.assert_refused("is downgraded from 3.1.1 to 3.1.0")
+        # A pre-release of the pinned version ranks below it.
+        self.tree(lock("3.1.1-rc.1"), "3.1.1-rc.1", [("3.1.1-rc.1", 5)], 5)
+        self.assert_refused("is downgraded from 3.1.1 to 3.1.1-rc.1")
+
+    def test_an_equal_version_re_entry_is_refused(self):
+        # The same version under a new checksum, entered again at a new storage version.
+        self.base(lock("3.1.1"), "3.1.1", [("3.1.1", 4)], 4)
+        self.tree(lock("3.1.1", checksum="b" * 64), "3.1.1", [("3.1.1", 4), ("3.1.1", 5)], 5)
+        self.assert_refused("does not start above")
+        # And with the base's entry dropped, so the head alone is consistent.
+        self.tree(lock("3.1.1", checksum="b" * 64), "3.1.1", [("3.1.1", 5)], 5)
+        self.assert_tree_alone_passes()
+        self.assert_refused("not above the base's last entry 3.1.1")
+
+    def test_an_unreadable_base_lockfile_is_refused_not_a_first_introduction(self):
+        # Sol round 5, S7: the base lists the lockfile but its blob is missing (a blobless clone).
+        self.base(lock("3.1.1"), "3.1.1", [("3.1.1", 4)], 4)
+        self.tree(lock("3.2.0"), "3.2.0", [("3.2.0", 4)], 4)
+        blob = self.git("rev-parse", f"main:{rc.LOCK}")
+        (self.root / ".git" / "objects" / blob[:2] / blob[2:]).unlink()
+        self.assert_refused(f"cannot read {rc.LOCK}")
+
+    def test_a_missing_head_lockfile_fails_under_require_lock(self):
+        # Sol round 5, S8.
+        self.git("switch", "-q", "-c", "head")
+        code, out = self.check("--base", "main")
+        self.assertEqual(code, 0, out)
+        code, out = self.check("--base", "main", "--require-lock")
+        self.assertEqual(code, 1, out)
+        self.assertIn("--require-lock needs it", out)
 
     def test_an_unreadable_channel_is_refused(self):
         self.base(lock("3.1.1"), "3.1.1", [("3.1.1", 4)], 4)

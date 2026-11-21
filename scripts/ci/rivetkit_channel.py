@@ -15,13 +15,17 @@ alone cannot do:
   dropped (which raises the Rivet admission floor) and new ones appended;
 - when either crate's locked identity (version, source, checksum) differs from the base's, a
   new entry is appended for it, at the head's `STORAGE_VERSION`, which is above the base's;
-  when neither changed, nothing is appended.
+  when neither changed, nothing is appended;
+- neither crate's locked SemVer falls below the base's, and each channel entry's version is
+  strictly above the one before it, counting the base's last entry before the appended ones
+  even when it is dropped (no downgrade or re-entry of a release as a new one).
 
-A base that cannot be resolved fails the check (closed). A base without the Rivet crate's
-lockfile is its first introduction: only the head's own rules apply.
+A base that cannot be resolved, or whose files cannot be read, fails the check (closed). A
+base whose tree lists no Rivet crate lockfile is its first introduction: only the head's own
+rules apply. Without `--require-lock`, a head without the lockfile has nothing to check.
 
 Usage:
-  rivetkit_channel.py [--base REV]   # REV defaults to $NORN_CI_BASE, else origin/main
+  rivetkit_channel.py [--base REV] [--require-lock]   # REV defaults to $NORN_CI_BASE, else origin/main
 """
 
 from __future__ import annotations
@@ -43,11 +47,24 @@ CHECKSUM = re.compile(r"[0-9a-f]{64}")
 VERSION = re.compile(r'^pub const RIVETKIT_VERSION: &str = "([^"]+)";$', re.M)
 STORAGE = re.compile(r"^pub const STORAGE_VERSION: u32 = (\d+);$", re.M)
 CHANNEL = re.compile(r"^pub const RIVETKIT_CHANNEL: &\[RivetkitRelease\] = &\[(.*?)\];$", re.M | re.S)
+SEMVER = re.compile(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?")
 ENTRY = re.compile(r'RivetkitRelease\s*\{\s*rivetkit:\s*"([^"]+)",\s*from_storage:\s*(\d+),?\s*\}')
 
 
 class Refused(Exception):
     """A rule the tree breaks."""
+
+
+def semver(version: str, where: str) -> tuple:
+    """A SemVer 2.0 precedence key for `version` (build metadata ignored), refusing anything else."""
+    match = SEMVER.fullmatch(version)
+    if not match:
+        raise Refused(f"{where}: {version!r} is not a SemVer version")
+    major, minor, patch, pre = match.groups()
+    # A release ranks above its pre-releases; numeric identifiers rank below alphanumeric ones.
+    pre_key = (1,) if pre is None else (0, *((0, int(part), "") if part.isdigit() else (1, 0, part)
+                                             for part in pre.split(".")))
+    return int(major), int(minor), int(patch), pre_key
 
 
 def identities(lock_text: str, where: str) -> dict[str, tuple[str, str, str]]:
@@ -102,7 +119,7 @@ def check_tree(lock: dict, version: str, entries: list, storage: int, where: str
     if entries[-1][1] > storage:
         raise Refused(f"{where}: RIVETKIT_CHANNEL names storage version {entries[-1][1]}, above STORAGE_VERSION {storage}")
     for (old, old_from), (new, new_from) in zip(entries, entries[1:]):
-        if new_from <= old_from or new == old:
+        if new_from <= old_from or semver(new, where) <= semver(old, where):
             raise Refused(f"{where}: RivetKit {new} at storage version {new_from} does not start above {old} at {old_from}")
 
 
@@ -117,6 +134,12 @@ def compare(base: dict | None, head: dict) -> None:
     # up as an append, which the rules below refuse unless it is exactly the one new release.
     dropped = next(drop for drop in range(len(old) + 1) if new[:len(old) - drop] == old[drop:])
     appended = new[len(old) - dropped:]
+    for name in CRATES:
+        if semver(head["lock"][name][0], "head") < semver(base["lock"][name][0], "base"):
+            raise Refused(f"`{name}` is downgraded from {base['lock'][name][0]} to {head['lock'][name][0]}; "
+                          "a RivetKit pin only moves up")
+    if appended and semver(appended[0][0], "head") <= semver(old[-1][0], "base"):
+        raise Refused(f"RIVETKIT_CHANNEL appends RivetKit {appended[0][0]}, not above the base's last entry {old[-1][0]}")
     changed = [name for name in CRATES if base["lock"][name] != head["lock"][name]]
     if not changed:
         if appended:
@@ -138,9 +161,17 @@ def git(*args: str) -> str:
 
 
 def at(rev: str, path: str) -> str | None:
-    """`path` at `rev`, or None when the revision does not have it."""
+    """`path` at `rev`; None only when the revision's tree lists no such path. A failed listing
+    or blob read (a blobless clone, a missing object) is refused, never taken for absence."""
+    listed = subprocess.run(["git", "ls-tree", "--full-tree", rev, "--", path], capture_output=True, text=True)
+    if listed.returncode != 0:
+        raise Refused(f"cannot list {path} at {rev[:12]}: {listed.stderr.strip()}")
+    if not listed.stdout.strip():
+        return None
     result = subprocess.run(["git", "cat-file", "blob", f"{rev}:{path}"], capture_output=True, text=True)
-    return result.stdout if result.returncode == 0 else None
+    if result.returncode != 0:
+        raise Refused(f"cannot read {path} at {rev[:12]}: {result.stderr.strip()}")
+    return result.stdout
 
 
 def tree(read, where: str) -> dict | None:
@@ -158,6 +189,7 @@ def tree(read, where: str) -> dict | None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--base", default=os.environ.get("NORN_CI_BASE") or "origin/main")
+    parser.add_argument("--require-lock", action="store_true", help=f"fail when the head has no {LOCK}")
     args = parser.parse_args()
     try:
         merge_base = git("merge-base", args.base, "HEAD").strip()
@@ -173,6 +205,9 @@ def main() -> int:
     try:
         head = tree(disk, "head")
         if head is None:
+            if args.require_lock:
+                print(f"rivetkit channel: {LOCK} is absent, and --require-lock needs it")
+                return 1
             print(f"rivetkit channel: {LOCK} is absent; nothing to check")
             return 0
         base = tree(lambda path: at(merge_base, path), f"base {merge_base[:12]}")
