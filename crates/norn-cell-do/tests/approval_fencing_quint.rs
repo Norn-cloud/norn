@@ -23,9 +23,9 @@ mod step_cell;
 
 use std::collections::BTreeMap;
 
+use norn_cell_do::principal::FixturePrincipals;
 use quint_itf::{int, map, str_map, traces};
 use serde_json::{Value, json};
-use norn_cell_do::principal::FixturePrincipals;
 use step_cell::{
     APPROVER, Cell, MELT_ACTION, NAMES, NOW, OPERATOR, REVOKED, call, cell, melt_body,
 };
@@ -149,139 +149,183 @@ struct Retried {
     decision: Option<String>,
 }
 
-#[test]
-fn approval_fencing_quint_traces() {
-    let (mut executed, mut reparked, mut denied, mut revisions, mut revocations) =
-        (0_usize, 0_usize, 0_usize, 0_usize, 0_usize);
-    for (file, trace) in traces("approval-fencing") {
-        let name = file.display();
-        let mut cell = cell();
+/// One trace replayed against one cell.
+struct Replay {
+    cell: Cell,
+    decision: BTreeMap<i64, String>,
+    retried: BTreeMap<i64, Retried>,
+    counts: Counts,
+}
+
+#[derive(Default)]
+struct Counts {
+    executed: usize,
+    reparked: usize,
+    denied: usize,
+    revisions: usize,
+    revocations: usize,
+}
+
+impl Replay {
+    fn new(counts: Counts) -> Self {
+        let cell = cell();
         gate(&cell);
-        let mut decision: BTreeMap<i64, String> = BTreeMap::new();
-        let mut retried: BTreeMap<i64, Retried> = BTreeMap::new();
-        for (step, pair) in trace.windows(2).enumerate() {
-            let (before, after) = (&pair[0], &pair[1]);
-            if int(after, "revisions") > int(before, "revisions") {
-                // The writer the model's action version names: a revision
-                // that changes the action installs the other writer, any
-                // other one reinstalls the current writer unchanged.
-                let action = str_map(&after["active"])["action"]
-                    .as_i64()
-                    .expect("version");
-                revise(
-                    &cell,
-                    if action == 0 {
-                        step_cell::DERIVES_LOSS
-                    } else {
-                        step_cell::action_cell::OMITS_LOSS
-                    },
-                );
-                revisions += 1;
-                continue;
-            }
-            if int(after, "authorityChanges") > int(before, "authorityChanges") {
-                // The requester's grant: revoked keeps the same subject,
-                // verified now with no role (APPROVAL-RECOVERY-1, S2).
-                let authorized = after["authorized"].as_bool().expect("authorized");
-                cell.principals = FixturePrincipals::new(
-                    if authorized { NAMES } else { REVOKED },
-                    std::sync::Arc::clone(&cell.caller),
-                );
-                if !authorized {
-                    revocations += 1;
-                }
-                continue;
-            }
-            let (old, new) = (states(before), states(after));
-            let (&c, now) = new
-                .iter()
-                .find(|(c, s)| old[c] != **s)
-                .unwrap_or_else(|| panic!("{name} step {step}: no transition"));
-            match (old[&c].as_str(), now.as_str()) {
-                ("none", "parked") => {
-                    let (status, parked) = request(&cell, c);
-                    assert_eq!(status, 202, "{name} step {step}: call {c} parks: {parked}");
-                    decision.insert(c, decision_id(&parked));
-                }
-                ("parked", "approved") => {
-                    let id = &decision[&c];
-                    let (status, decided) = call(
-                        &cell,
-                        "POST",
-                        &format!("/v1/decisions/{id}:decide"),
-                        APPROVER,
-                        &json!({ "choice": "approve", "idempotencyKey": format!("approve-{id}") })
-                            .to_string(),
-                    );
-                    assert_eq!(status, 200, "{name} step {step}: {decided}");
-                    assert_eq!(
-                        decided["call"],
-                        not_executed(),
-                        "{name} step {step}: call {c}: the decide runs nothing"
-                    );
-                    assert_eq!(melt_status(&cell, c), 404, "{name} step {step}: call {c}");
-                }
-                ("approved", "checking") => {
-                    let (status, answer) = request(&cell, c);
-                    let (allowed, matched) = (flag(after, "allowed", c), flag(after, "matched", c));
-                    let expected = match (allowed, matched) {
-                        (false, _) => 403,
-                        (true, true) => 200,
-                        (true, false) => 202,
-                    };
-                    assert_eq!(status, expected, "{name} step {step}: call {c}: {answer}");
-                    let fresh = (status == 202).then(|| decision_id(&answer));
-                    if let Some(fresh) = &fresh {
-                        assert_ne!(
-                            fresh, &decision[&c],
-                            "{name} step {step}: call {c} parks a fresh decision"
-                        );
-                    }
-                    retried.insert(c, Retried { status, decision: fresh });
-                }
-                ("checking", outcome) => {
-                    let Retried { status, decision: fresh } = retried
-                        .remove(&c)
-                        .unwrap_or_else(|| panic!("{name} step {step}: call {c} not retried"));
-                    let id = decision[&c].clone();
-                    match (outcome, status) {
-                        ("executed", 200) => {
-                            assert_eq!(melt_status(&cell, c), 200, "{name} step {step}: call {c}");
-                            assert_eq!(
-                                standing(&cell, &id),
-                                json!({ "committed": true, "state": "committed" }),
-                                "{name} step {step}: call {c}"
-                            );
-                            executed += 1;
-                        }
-                        ("approved", 403) => {
-                            assert_eq!(melt_status(&cell, c), 404, "{name} step {step}: call {c}");
-                            assert_eq!(
-                                standing(&cell, &id),
-                                not_executed(),
-                                "{name} step {step}: call {c}: the denial records nothing"
-                            );
-                            denied += 1;
-                        }
-                        ("parked", 202) => {
-                            assert_eq!(melt_status(&cell, c), 404, "{name} step {step}: call {c}");
-                            assert_eq!(
-                                standing(&cell, &id),
-                                not_executed(),
-                                "{name} step {step}: call {c}: the stale approval is never consumed"
-                            );
-                            decision.insert(c, fresh.expect("the fresh decision"));
-                            reparked += 1;
-                        }
-                        (outcome, status) => {
-                            panic!("{name} step {step}: call {c} {outcome} after {status}")
-                        }
-                    }
-                }
-                (from, to) => panic!("{name} step {step}: unexpected {from} -> {to}"),
-            }
+        Self {
+            cell,
+            decision: BTreeMap::new(),
+            retried: BTreeMap::new(),
+            counts,
         }
     }
+
+    /// The model's step from `before` to `after`, `at` naming it.
+    fn step(&mut self, at: &str, before: &Value, after: &Value) {
+        if int(after, "revisions") > int(before, "revisions") {
+            // The writer the model's action version names: a revision that
+            // changes the action installs the other writer, any other one
+            // reinstalls the current writer unchanged.
+            let action = str_map(&after["active"])["action"]
+                .as_i64()
+                .expect("version");
+            revise(
+                &self.cell,
+                if action == 0 {
+                    step_cell::DERIVES_LOSS
+                } else {
+                    step_cell::action_cell::OMITS_LOSS
+                },
+            );
+            self.counts.revisions = self.counts.revisions.saturating_add(1);
+            return;
+        }
+        if int(after, "authorityChanges") > int(before, "authorityChanges") {
+            // The requester's grant: revoked keeps the same subject, verified
+            // now with no role (APPROVAL-RECOVERY-1, S2).
+            let authorized = after["authorized"].as_bool().expect("authorized");
+            self.cell.principals = FixturePrincipals::new(
+                if authorized { NAMES } else { REVOKED },
+                std::sync::Arc::clone(&self.cell.caller),
+            );
+            if !authorized {
+                self.counts.revocations = self.counts.revocations.saturating_add(1);
+            }
+            return;
+        }
+        let (old, new) = (states(before), states(after));
+        let (&c, now) = new
+            .iter()
+            .find(|(c, s)| old[c] != **s)
+            .unwrap_or_else(|| panic!("{at}: no transition"));
+        let at = format!("{at}: call {c}");
+        match (old[&c].as_str(), now.as_str()) {
+            ("none", "parked") => {
+                let (status, parked) = request(&self.cell, c);
+                assert_eq!(status, 202, "{at} parks: {parked}");
+                self.decision.insert(c, decision_id(&parked));
+            }
+            ("parked", "approved") => self.approve(&at, c),
+            ("approved", "checking") => self.retry(&at, c, after),
+            ("checking", outcome) => self.settle(&at, c, outcome),
+            (from, to) => panic!("{at}: unexpected {from} -> {to}"),
+        }
+    }
+
+    /// The approver's decide records the approval and runs nothing.
+    fn approve(&self, at: &str, c: i64) {
+        let id = &self.decision[&c];
+        let (status, decided) = call(
+            &self.cell,
+            "POST",
+            &format!("/v1/decisions/{id}:decide"),
+            APPROVER,
+            &json!({ "choice": "approve", "idempotencyKey": format!("approve-{id}") }).to_string(),
+        );
+        assert_eq!(status, 200, "{at}: {decided}");
+        assert_eq!(
+            decided["call"],
+            not_executed(),
+            "{at}: the decide runs nothing"
+        );
+        assert_eq!(melt_status(&self.cell, c), 404, "{at}");
+    }
+
+    /// The requester's retry answers as the model's authority decision and
+    /// command comparison say.
+    fn retry(&mut self, at: &str, c: i64, after: &Value) {
+        let (status, answer) = request(&self.cell, c);
+        let expected = match (flag(after, "allowed", c), flag(after, "matched", c)) {
+            (false, _) => 403,
+            (true, true) => 200,
+            (true, false) => 202,
+        };
+        assert_eq!(status, expected, "{at}: {answer}");
+        let fresh = (status == 202).then(|| decision_id(&answer));
+        if let Some(fresh) = &fresh {
+            assert_ne!(fresh, &self.decision[&c], "{at} parks a fresh decision");
+        }
+        self.retried.insert(
+            c,
+            Retried {
+                status,
+                decision: fresh,
+            },
+        );
+    }
+
+    /// Where the retried call stands afterwards.
+    fn settle(&mut self, at: &str, c: i64, outcome: &str) {
+        let Retried {
+            status,
+            decision: fresh,
+        } = self
+            .retried
+            .remove(&c)
+            .unwrap_or_else(|| panic!("{at} not retried"));
+        let id = self.decision[&c].clone();
+        let (melt, standing_is) = match (outcome, status) {
+            ("executed", 200) => {
+                self.counts.executed = self.counts.executed.saturating_add(1);
+                (200, json!({ "committed": true, "state": "committed" }))
+            }
+            // The denial records nothing.
+            ("approved", 403) => {
+                self.counts.denied = self.counts.denied.saturating_add(1);
+                (404, not_executed())
+            }
+            // The stale approval is never consumed.
+            ("parked", 202) => {
+                self.decision.insert(c, fresh.expect("the fresh decision"));
+                self.counts.reparked = self.counts.reparked.saturating_add(1);
+                (404, not_executed())
+            }
+            (outcome, status) => panic!("{at} {outcome} after {status}"),
+        };
+        assert_eq!(melt_status(&self.cell, c), melt, "{at} {outcome}");
+        assert_eq!(standing(&self.cell, &id), standing_is, "{at} {outcome}");
+    }
+}
+
+#[test]
+fn approval_fencing_quint_traces() {
+    let mut counts = Counts::default();
+    for (file, trace) in traces("approval-fencing") {
+        let mut replay = Replay::new(counts);
+        for (step, pair) in trace.windows(2).enumerate() {
+            replay.step(
+                &format!("{} step {step}", file.display()),
+                &pair[0],
+                &pair[1],
+            );
+        }
+        counts = replay.counts;
+    }
+    let Counts {
+        executed,
+        reparked,
+        denied,
+        revisions,
+        revocations,
+    } = counts;
     assert!(
         executed >= 5 && reparked >= 2 && denied >= 2 && revisions >= 5 && revocations >= 3,
         "{executed} executed, {reparked} reparked, {denied} denied, {revisions} revisions, \
