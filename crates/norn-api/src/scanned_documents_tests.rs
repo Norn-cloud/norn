@@ -855,8 +855,10 @@ fn corrected_with_history(host: &DevHost<NativeEngine>, slipped: u64) {
     let (newest, oldest) = (&history.versions[0], &history.versions[1]);
     // The writer is the action and its verified actor, and nothing of the
     // call's effective input: the kernel stores that as one plain value even
-    // when preparation or a derivation put restricted values in it.
-    let named = serde_json::json!({ "kind": "action", "actionId": CORRECT, "actor": STEWARD });
+    // when preparation or a derivation put restricted values in it. The
+    // deprecated `input` stays in the frozen contract, always empty.
+    let named =
+        serde_json::json!({ "kind": "action", "actionId": CORRECT, "actor": STEWARD, "input": {} });
     assert_eq!(
         serde_json::to_value(&newest.writer).expect("writer"),
         named,

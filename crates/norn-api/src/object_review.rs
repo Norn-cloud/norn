@@ -102,12 +102,29 @@ pub enum NornVersionWriter {
         action_id: String,
         /// The verified caller the server attributed the call to.
         actor: String,
+        /// Deprecated: always `{}`. The call's effective input is never
+        /// disclosed (see the module docs); the property stays, empty, so the
+        /// frozen contract keeps its shape.
+        #[schema(schema_with = withheld_input_schema)]
+        input: WithheldInput,
     },
     /// Another writer (an import, a migration or a kernel rule), or one this
     /// caller is not told: an action whose call record the caller may not
     /// read, a mapping whose lineage the caller may not read (no Sources), or
     /// a marked version.
     Other,
+}
+
+/// The action writer's deprecated `input`: it serializes as the empty object
+/// and carries nothing, so no call input can reach a history reader.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct WithheldInput;
+
+impl Serialize for WithheldInput {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        serializer.serialize_map(Some(0))?.end()
+    }
 }
 
 /// One proven version of an object.
@@ -158,6 +175,17 @@ fn lineage_schema() -> Ref {
     Ref::builder()
         .ref_location_from_schema_name("NornInstanceSourceProvenance")
         .description(Some("The version's source lineage (`/lineage?version=`)."))
+        .build()
+}
+
+fn withheld_input_schema() -> Object {
+    ObjectBuilder::new()
+        .schema_type(SchemaType::Type(utoipa::openapi::Type::Object))
+        .additional_properties(Some(AdditionalProperties::FreeForm(true)))
+        .deprecated(Some(utoipa::openapi::Deprecated::True))
+        .description(Some(
+            "Deprecated: always the empty object. The call's effective input is never disclosed.",
+        ))
         .build()
 }
 
@@ -370,7 +398,11 @@ fn action_writer<E: SqlEngine>(
     let (Some(action_id), Some(actor)) = (text("actionId"), text("actor")) else {
         return Ok(None);
     };
-    Ok(Some(NornVersionWriter::Action { action_id, actor }))
+    Ok(Some(NornVersionWriter::Action {
+        action_id,
+        actor,
+        input: WithheldInput,
+    }))
 }
 
 /// The read decision over one version: the version's own record (the row
