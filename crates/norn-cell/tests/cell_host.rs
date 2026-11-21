@@ -524,6 +524,13 @@ impl DoStorage for HidesFailedCommit {
     fn exec_batch(&self, sql: &str) -> Result<(), CellError> {
         self.0.exec_batch(sql)
     }
+
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.0.definition_writes(f)
+    }
 }
 
 impl Transact for MisreadsRollback {
@@ -598,6 +605,13 @@ impl DoStorage for MisreadsRollback {
     fn exec_batch(&self, sql: &str) -> Result<(), CellError> {
         self.0.exec_batch(sql)
     }
+
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.0.definition_writes(f)
+    }
 }
 
 impl DoStorage for CommitsOnRollback {
@@ -607,6 +621,13 @@ impl DoStorage for CommitsOnRollback {
 
     fn exec_batch(&self, sql: &str) -> Result<(), CellError> {
         self.0.exec_batch(sql)
+    }
+
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.0.definition_writes(f)
     }
 }
 
