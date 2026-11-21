@@ -1,0 +1,4 @@
+{
+  "order": 13,
+  "value": "cargo test --locked -p norn-cell-do --test hosted_timers_quint --test approval_fencing_quint"
+}

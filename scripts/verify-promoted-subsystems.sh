@@ -760,6 +760,40 @@ run_gate full kernel-v2-commit-conformance \
   "cargo test --locked -p norn-cell --lib suites::kernel_quint::" rust-tests \
   cargo test --locked -p norn-cell --lib suites::kernel_quint::
 
+# Hosted timers and approval fencing (#1464): the models, every mutant refuted, then the real code driven by their traces.
+run_gate fast hosted-timers-quint-typecheck \
+  "quint typecheck verification/hosted-timers-v1/models/hosted-timers.qnt" command \
+  quint typecheck verification/hosted-timers-v1/models/hosted-timers.qnt
+
+run_gate fast hosted-timers-quint \
+  "quint verify verification/hosted-timers-v1/models/hosted-timers.qnt --backend apalache --invariants typeOk wakeCovers expiryRecoverable expiryAtomic timerRunsPinnedRule --max-steps 6" command \
+  quint verify verification/hosted-timers-v1/models/hosted-timers.qnt --backend apalache --invariants typeOk wakeCovers expiryRecoverable expiryAtomic timerRunsPinnedRule --max-steps 6 --out "$result_root/hosted-timers-quint.json"
+
+run_gate full hosted-timers-progress-quint \
+  "quint verify verification/hosted-timers-v1/models/hosted-timers.qnt --backend apalache --init initOpened --step stepProgress --invariants typeOk dueProgress healthyNotStarved --max-steps 5" command \
+  quint verify verification/hosted-timers-v1/models/hosted-timers.qnt --backend apalache --init initOpened --step stepProgress --invariants typeOk dueProgress healthyNotStarved --max-steps 5 --out "$result_root/hosted-timers-progress-quint.json"
+
+run_gate fast hosted-timers-progress-sim \
+  "quint run verification/hosted-timers-v1/models/hosted-timers.qnt --init initOpened --step stepProgress --invariant progress --max-steps 15 --max-samples 10000 --seed 1" command \
+  quint run verification/hosted-timers-v1/models/hosted-timers.qnt --init initOpened --step stepProgress --invariant progress --max-steps 15 --max-samples 10000 --seed 1
+
+run_gate fast approval-fencing-quint-typecheck \
+  "quint typecheck verification/hosted-timers-v1/models/approval-fencing.qnt" command \
+  quint typecheck verification/hosted-timers-v1/models/approval-fencing.qnt
+
+run_gate fast approval-fencing-quint \
+  "quint verify verification/hosted-timers-v1/models/approval-fencing.qnt --backend apalache --invariants typeOk noStaleApprovedExecution --max-steps 10" command \
+  quint verify verification/hosted-timers-v1/models/approval-fencing.qnt --backend apalache --invariants typeOk noStaleApprovedExecution --max-steps 10 --out "$result_root/approval-fencing-quint.json"
+
+run_gate full hosted-timers-variants \
+  "python3 verification/hosted-timers-v1/check_variants.py" command \
+  python3 verification/hosted-timers-v1/check_variants.py
+
+# The real run_due/next_due and the DO approval dispatch, driven by the models' traces.
+run_gate full hosted-timers-conformance \
+  "cargo test --locked -p norn-cell-do --test hosted_timers_quint --test approval_fencing_quint" rust-tests \
+  cargo test --locked -p norn-cell-do --test hosted_timers_quint --test approval_fencing_quint
+
 
 run_gate full kernel-l1-reference \
   "scripts/verify-kernel-l1-lean.sh" command \

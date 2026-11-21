@@ -223,10 +223,10 @@ about. `GET /v1/decisions` lists it with its `call` to holders of a decider role
 never to its requester, who cannot decide it either (#618). Deciding records the
 resolution in DECISION-LEDGER-1 and runs no flow turn. The resolution is the
 record the dispatch consults: an approved call commits through the same dispatch
-under the requester's current authority, with everything (including the laws
-the cell checks at commit) decided again there. That authority is established
-only by the requester's own verified credential on the request, never by the
-roles recorded when the call parked, so the approver's decide runs nothing and
+under the authority of the requester's own verified token on that request,
+with everything (including the laws the cell checks at commit) decided again
+there. That authority is established only by the requester's own verified
+credential on the request, never by the roles recorded when the call parked, so the approver's decide runs nothing and
 reports `call: {committed: false, state: "not_executed"}`; the requester's
 retry commits it once (APPROVAL-RECOVERY-1). A rejected call's retry refuses
 `approval.rejected` (409), an expired one's `approval.expired` (410); neither
@@ -280,12 +280,30 @@ every replay; the approver's decide with another key answers
 `decision.resolved` with the same `call`, read only.
 
 An approved call that is not executed runs only on the requester's own
-request, under the requester's current authority: the requester's retry of
-the call (for a flow step, the starter's retry of the run). A request by
-anyone else, the approver's decide and its replay included, cannot establish
-that authority and runs nothing: the call stays `not_executed` for the
-requester's authenticated retry, so a role revoked after the call parked is
-revoked for it. The dispatch takes the request's authenticated principal apart
+request, under the authority that request's verified token carries: the
+requester's retry of the call (for a flow step, the starter's retry of the
+run). A request by anyone else, the approver's decide and its replay
+included, cannot establish that authority and runs nothing: the call stays
+`not_executed` for the requester's authenticated retry, so a role revoked
+after the call parked is revoked for it once the requester's token no longer
+carries it. The authority is as of that token, not the issuer's state at the
+commit: the cell keeps no membership store, the token's roles are resolved
+before the dispatch takes the definition epoch, and the dispatch decides on
+that request's verified principal only. The bound on revocation is the
+token verifier's, as it is for live reads (UI-LIVE-1): the verifier refuses a
+token whose signed lifetime (`exp` minus `iat`) exceeds 300 s
+(`MAX_LIFETIME_SECONDS`), but accepts it until 30 s past its `exp`
+(`LEEWAY_SECONDS`, on the cell's clock); the token is verified once, at
+request entry, and the dispatch decides on that principal without checking
+expiry again at the commit. An issuer revocation therefore reaches an
+approved call at most 330 s after the `iat` of the newest token minted before
+it (300 s signed lifetime plus 30 s leeway), plus the duration of any request
+verified before `exp` + 30 s (the verifier rejects at equality): such a request may still commit the call after its
+token has expired. A retry under a token verified before the revocation can
+run the call. The approval fencing model checks exactly this guarantee
+(verification/hosted-timers-v1, `noStaleApprovedExecution`); it does not
+model time, so the 300 s, the leeway and the request duration are the code's
+bound, not the model's. The dispatch takes the request's authenticated principal apart
 from the subject the call runs as, and consumes an approval only when that
 principal is the parked requester (the same subject, actor kind and role
 table), compared under its own hold; any other principal gets the opaque

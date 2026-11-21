@@ -1,0 +1,4 @@
+{
+  "order": 10,
+  "value": "Hosted timers (#1464): verification/hosted-timers-v1 models the merged wake (write-ahead guard, post-commit rearm that can fail, recovery wake kept while a request writes, arming at open), per-item retry with doubling backoff by original deadline, recorded-then-resolved decision expiry and the run's starting-rule pin to a bounded depth; progress is bounded response under explicit alarm-fairness and fault-budget assumptions, not unbounded liveness. Conformance is trace-driven (hosted-timers-conformance replays the models' traces through the real run_due/next_due over timer rows and the real DO approval dispatch); wake.mjs, decision expiry and isolate losses are not driven from the model, and a cell from before alarms is armed only when first opened."
+}
