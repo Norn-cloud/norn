@@ -124,9 +124,9 @@ async function main(argv: readonly string[]) {
   const stage = argv[argv.indexOf("--stage") + 1]
   if (argv.indexOf("--stage") < 0 || stage !== "preview") throw new Error("--stage preview is required; prod gets org_demo only on promotion")
   const members = parseMembers(argv.flatMap((arg, index) => argv[index - 1] === "--member" ? [arg] : []))
-  const { CLOUDFLARE_ACCOUNT_ID: account, CLOUDFLARE_API_TOKEN: token } = process.env
-  if (!account || !token) throw new Error("CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN are required (Infisical prod /norn/cloudflare)")
-  const api = (path: string) => discoverD1(`https://api.cloudflare.com/client/v4/accounts/${account}/d1/database${path}`, { authorization: `Bearer ${token}`, "content-type": "application/json" })
+  const { CLOUDFLARE_ACCOUNT_ID: account, CLOUDFLARE_API_TOKEN: apiToken } = process.env
+  if (!account || !apiToken) throw new Error("CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN are required (Infisical prod /norn/cloudflare)")
+  const api = (path: string) => discoverD1(`https://api.cloudflare.com/client/v4/accounts/${account}/d1/database${path}`, { authorization: `Bearer ${apiToken}`, "content-type": "application/json" })
   const name = `norn-studio-auth-${stage}`
   const found = await api(`?name=${name}`)
   if (!found.success) throw new SeedFailure(`could not list D1 databases: ${JSON.stringify(found.errors)}`, SEED_EXIT.refused)
