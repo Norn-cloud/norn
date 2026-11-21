@@ -26,6 +26,10 @@
 //! - `NORN_ERP_REOPEN=1`: only open the kept cell, then time the first
 //!   command and one cycle (the cell-size operations run).
 //! - `NORN_ERP_BUN` (default `bun`): the runtime for the compile worker.
+//! - `NORN_ERP_RUN`: a fixed run prefix for the keys, and `NORN_ERP_OUTCOMES`:
+//!   a file for every command's outcome (ERP-EQUIV-1). With one client and
+//!   `NORN_ERP_COMMANDS`, two builds given the same prefix run the same
+//!   commands in the same order, so their outcome files must be identical.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -303,6 +307,9 @@ struct Tally {
     stale_retries: u64,
     parked: u64,
     unexpected: Vec<String>,
+    /// ERP-EQUIV-1: every command's outcome in call order (action, key,
+    /// status, refusal code, answer shape), for comparing two builds.
+    outcomes: Vec<String>,
 }
 
 impl Tally {
@@ -316,6 +323,7 @@ impl Tally {
         self.stale_retries += other.stale_retries;
         self.parked += other.parked;
         self.unexpected.extend(other.unexpected);
+        self.outcomes.extend(other.outcomes);
     }
 
     fn all(&self) -> Vec<u64> {
@@ -323,6 +331,25 @@ impl Tally {
         all.sort_unstable();
         all
     }
+}
+
+/// ERP-EQUIV-1: what a command's answer says independent of the wall clock:
+/// its status, its refusal code, and its sorted top-level keys with every
+/// integer member (sequences and versions).
+fn outcome(action: &str, key: &str, status: u16, body: &Value) -> String {
+    let code = body.get("code").and_then(Value::as_str).unwrap_or("");
+    let shape: Vec<String> = body.as_object().map_or_else(Vec::new, |object| {
+        let mut keys: Vec<String> = object
+            .iter()
+            .map(|(name, value)| match value {
+                Value::Number(number) if number.is_u64() => format!("{name}={number}"),
+                _ => name.clone(),
+            })
+            .collect();
+        keys.sort();
+        keys
+    });
+    format!("{action}\t{key}\t{status}\t{code}\t{}", shape.join(","))
 }
 
 fn percentile(sorted: &[u64], p: f64) -> f64 {
@@ -397,6 +424,7 @@ impl Client<'_> {
             Some(&json!({ "input": input, "idempotencyKey": key })),
         );
         let micros = started.elapsed().as_micros() as u64;
+        self.tally.outcomes.push(outcome(action, key, status, &body));
         if status == 200 {
             self.tally.latency.entry(action).or_default().push(micros);
             self.tally.committed += 1;
@@ -420,6 +448,9 @@ impl Client<'_> {
         let (status, body) =
             self.conn
                 .call("GET", &format!("/v1/objects/erp.{kind}/{id}"), &token, None);
+        self.tally
+            .outcomes
+            .push(format!("read\t{kind}/{id}\t{status}\t{}", body["values"]));
         (status == 200).then_some(body)
     }
 
@@ -720,7 +751,7 @@ fn setup(host: &Host) {
 fn level(host: &Host, clients: usize, seconds: f64, target: Option<u64>) -> (Tally, f64, u64) {
     let committed = AtomicU64::new(0);
     let stop = AtomicBool::new(false);
-    let run = nonce();
+    let run = std::env::var("NORN_ERP_RUN").unwrap_or_else(|_| nonce());
     let started = Instant::now();
     let deadline = started + Duration::from_secs_f64(seconds);
     let tallies = Mutex::new(Vec::new());
@@ -885,6 +916,7 @@ fn erp_day() {
             reconnects,
             &host,
         );
+        write_outcomes(&tally);
         let grown = host.cell_bytes().saturating_sub(before);
         println!(
             "ERP storage: {} commands grew the cell {:.1} MB = {:.0} bytes/command",
@@ -909,4 +941,13 @@ fn erp_day() {
         }
     }
     assert_eq!(unexpected, 0, "unexpected refusals; see above");
+}
+
+/// ERP-EQUIV-1: with `NORN_ERP_OUTCOMES` set, write every command's outcome.
+fn write_outcomes(tally: &Tally) {
+    if let Ok(path) = std::env::var("NORN_ERP_OUTCOMES") {
+        let mut text = tally.outcomes.join("\n");
+        text.push('\n');
+        std::fs::write(path, text).unwrap();
+    }
 }
