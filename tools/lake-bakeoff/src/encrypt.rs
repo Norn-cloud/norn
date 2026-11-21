@@ -56,7 +56,7 @@ fn write(path: &Path, batches: &[RecordBatch], encryption: Option<Arc<FileEncryp
     let at = Instant::now();
     let mut props = WriterProperties::builder()
         .set_compression(parquet::basic::Compression::ZSTD(Default::default()))
-        .set_max_row_group_size(122_880);
+        .set_max_row_group_row_count(Some(122_880));
     if let Some(e) = encryption {
         props = props.with_file_encryption_properties(e);
     }

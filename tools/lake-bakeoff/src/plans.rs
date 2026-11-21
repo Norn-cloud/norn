@@ -5,7 +5,8 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use datafusion::common::Column;
-use datafusion::functions_aggregate::expr_fn::{count_all, sum};
+use datafusion::functions_aggregate::count::count_all;
+use datafusion::functions_aggregate::expr_fn::sum;
 use datafusion::logical_expr::{LogicalPlan, LogicalPlanBuilder};
 use datafusion::prelude::*;
 use serde_json::{Value as Json, json};

@@ -12,7 +12,8 @@ use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::common::{Column, Result, ScalarValue};
 use datafusion::execution::runtime_env::RuntimeEnvBuilder;
-use datafusion::functions_aggregate::expr_fn::{count_all, count_distinct, sum};
+use datafusion::functions_aggregate::count::count_all;
+use datafusion::functions_aggregate::expr_fn::{count_distinct, sum};
 use datafusion::logical_expr::{
     ColumnarValue, ScalarFunctionArgs, ScalarUDF, ScalarUDFImpl, Signature, Volatility,
 };
