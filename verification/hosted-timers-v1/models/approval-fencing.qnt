@@ -2,19 +2,35 @@
 // revoked authority, under APPROVAL-RECOVERY-1 (#1483).
 //
 // Source of truth for the shape: crates/norn-api/src/actions.rs
-// (through_gate, approval_of, effective_digest), approvals.rs (hold,
-// call_command_id, require_requester), decisions.rs (decide) and
-// cell_definitions.rs. A parked call records its action's effective digest
+// (call_action, through_gate, approval_of, effective_digest), approvals.rs
+// (hold, call_command_id, require_requester), decisions.rs (decide),
+// cell_definitions.rs, and the request's principal: crates/norn-cell-do/src/
+// server.rs handle_all (RequestScope, `principals.resolve`), principal.rs
+// TokenPrincipals (the roles are the verified token's) and policy.rs
+// ReadPolicy (`member`, `action`, `verified_principal` read only that
+// request's CallerSlot). A parked call records its action's effective digest
 // and the gate revision in its command id. The approver's decide records the
 // approval and runs nothing (`call: not_executed`). Only the requester's own
 // retry runs the call: under the definition epoch and the cell it holds, it
 // derives the command id from the definition active now, consumes the
 // approval only when that id is the approved one, and decides the call again
-// under the requester's current authority. A retry whose id no longer
-// matches parks the call anew (a fresh decision; the old approval is never
-// consumed); a retry whose authority was revoked is denied, records
+// under the authority of the retry's own verified token. A retry whose id no
+// longer matches parks the call anew (a fresh decision; the old approval is
+// never consumed); a retry whose token carries no grant is denied, records
 // nothing, and leaves the call approved and not executed. A definitions
 // install takes the epoch exclusively.
+//
+// Authority is the request's token, not the issuer's state now. The cell
+// holds no membership store: the roles are resolved from the bearer token
+// before dispatch (server.rs, principal.rs) and the epoch is taken after
+// (actions.rs call_action, call_action_bound). The issuer revokes a grant at
+// any time, independently of the epoch, and a token minted before the
+// revocation stays valid for its lifetime (at most MAX_LIFETIME_SECONDS, 300 s,
+// crates/norn-api/src/principal.rs). So the guarantee is "never under
+// authority older than the request's own verified token": revocation reaches
+// an approved call within one token lifetime, as it reaches live reads
+// (UI-LIVE-1). The witness witnessOutstandingTokenExecutes shows the gap is
+// real, not hidden by the model.
 //
 // A supporting check of the hosted approval path. It is not evidence for
 // INV-AUTH-STALE-REJECT (the owner-version compare-and-swap).
@@ -30,16 +46,23 @@
 //      output-type defaults, relevant law pins and the gate's decider roles;
 //   F4 the approver's decide records the approval only and never runs the
 //      call (APPROVAL-RECOVERY-1);
-//   F5 the requester's retry is decided under the requester's authority as
-//      verified now, never the roles recorded when the call parked.
+//   F5 the requester's retry is decided under the authority of its own
+//      verified token, never the roles recorded when the call parked;
+//   F6 the verified principal lives exactly as long as its request
+//      (RequestScope, end_request): a retry never decides on a principal an
+//      earlier request left behind.
 module approval_fencing {
   type Def = str -> int
+  // A verified grant: whether it allows the call, and which token it came
+  // from (tokens are numbered as the requester gets them).
+  type Auth = { grant: bool, gen: int }
   type Mut = {
     unfencedCheck: bool,
     consumeSuperseded: bool,
     narrowDigest: bool,
     decideExecutes: bool,
     parkedAuthority: bool,
+    staleSlot: bool,
   }
   pure val NOMUT: Mut = {
     unfencedCheck: false,
@@ -47,6 +70,7 @@ module approval_fencing {
     narrowDigest: false,
     decideExecutes: false,
     parkedAuthority: false,
+    staleSlot: false,
   }
 
   pure val CALLS = Set(1, 2)
@@ -56,23 +80,34 @@ module approval_fencing {
   // A revision either changes one part or leaves every part as it was.
   pure val CHANGES = PARTS.union(Set("unrelated"))
   pure val MAX_REVISIONS = 2
-  pure val MAX_AUTHORITY_CHANGES = 2
+  pure val MAX_ISSUER_CHANGES = 2
+  pure val MAX_TOKENS = 3
   pure val STATES = Set("none", "parked", "approved", "checking", "executed")
+
+  pure val FIRST_TOKEN: Auth = { grant: true, gen: 0 }
 
   var active: Def               // the active definition, one version per part
   var revisions: int
-  var authorized: bool          // the requester holds the action's grant now
-  var authorityChanges: int
+  var issuer: bool              // the issuer grants the requester the action now
+  var issuerChanges: int
+  var token: Auth               // the requester's latest verified token
+  var tokenIssues: int
+  var slot: Auth                // the principal the last request verified
   var readers: Set[int]         // calls holding the definition epoch for read
   var state: int -> str
   var parked: int -> Def        // the definition the call's current decision parked under
+  var parkedAuth: int -> Auth   // the token the call's last park was verified with
   var superseded: int -> Def    // the definition its last superseded approval parked under
   var hasSuperseded: int -> bool
   var matched: int -> bool      // the retry's command comparison
+  var requestAuth: int -> Auth  // the retry's own verified token
+  var usedAuth: int -> Auth     // the authority the retry was decided under
   var allowed: int -> bool      // the retry's authority decision
   var ran: int -> Def           // the definition an executed step ran under
   var consumed: int -> Def      // the definition the approval it consumed parked under
-  var ranAuthorized: int -> bool // the requester's authority when it ran
+  var ranAuth: int -> Auth      // the authority it ran under
+  var ranRequest: int -> Auth   // the token of the request that ran it
+  var issuerAtRun: int -> bool  // the issuer's grant when it ran
   // History, for the witnesses.
   var parkedAt: int -> int      // revisions when the call last parked
   var ranAt: int -> int         // revisions when it executed
@@ -86,18 +121,26 @@ module approval_fencing {
   action init = all {
     active' = INITIAL,
     revisions' = 0,
-    authorized' = true,
-    authorityChanges' = 0,
+    issuer' = true,
+    issuerChanges' = 0,
+    token' = FIRST_TOKEN,
+    tokenIssues' = 0,
+    slot' = FIRST_TOKEN,
     readers' = Set(),
     state' = CALLS.mapBy(_ => "none"),
     parked' = CALLS.mapBy(_ => INITIAL),
+    parkedAuth' = CALLS.mapBy(_ => FIRST_TOKEN),
     superseded' = CALLS.mapBy(_ => INITIAL),
     hasSuperseded' = CALLS.mapBy(_ => false),
     matched' = CALLS.mapBy(_ => false),
+    requestAuth' = CALLS.mapBy(_ => FIRST_TOKEN),
+    usedAuth' = CALLS.mapBy(_ => FIRST_TOKEN),
     allowed' = CALLS.mapBy(_ => false),
     ran' = CALLS.mapBy(_ => INITIAL),
     consumed' = CALLS.mapBy(_ => INITIAL),
-    ranAuthorized' = CALLS.mapBy(_ => false),
+    ranAuth' = CALLS.mapBy(_ => FIRST_TOKEN),
+    ranRequest' = CALLS.mapBy(_ => FIRST_TOKEN),
+    issuerAtRun' = CALLS.mapBy(_ => true),
     parkedAt' = CALLS.mapBy(_ => 0),
     ranAt' = CALLS.mapBy(_ => 0),
     reparks' = CALLS.mapBy(_ => 0),
@@ -105,18 +148,21 @@ module approval_fencing {
   }
 
   // The requester's call parks for approval under the active definition. A
-  // call its requester may not make is refused as it would be ungated and
-  // parks nothing.
+  // call its requester's token does not allow is refused as it would be
+  // ungated and parks nothing.
   action park(c: int): bool = all {
     state.get(c) == "none",
-    authorized,
+    token.grant,
     state' = state.set(c, "parked"),
     parked' = parked.set(c, active),
+    parkedAuth' = parkedAuth.set(c, token),
     parkedAt' = parkedAt.set(c, revisions),
-    active' = active, revisions' = revisions, authorized' = authorized,
-    authorityChanges' = authorityChanges, readers' = readers, superseded' = superseded,
-    hasSuperseded' = hasSuperseded, matched' = matched, allowed' = allowed, ran' = ran,
-    consumed' = consumed, ranAuthorized' = ranAuthorized, ranAt' = ranAt, reparks' = reparks,
+    slot' = token,
+    active' = active, revisions' = revisions, issuer' = issuer, issuerChanges' = issuerChanges,
+    token' = token, tokenIssues' = tokenIssues, readers' = readers, superseded' = superseded,
+    hasSuperseded' = hasSuperseded, matched' = matched, requestAuth' = requestAuth,
+    usedAuth' = usedAuth, allowed' = allowed, ran' = ran, consumed' = consumed, ranAuth' = ranAuth,
+    ranRequest' = ranRequest, issuerAtRun' = issuerAtRun, ranAt' = ranAt, reparks' = reparks,
     denials' = denials,
   }
 
@@ -126,30 +172,47 @@ module approval_fencing {
     revisions < MAX_REVISIONS,
     active' = if (p == "unrelated") active else active.set(p, active.get(p) + 1),
     revisions' = revisions + 1,
-    authorized' = authorized, authorityChanges' = authorityChanges, readers' = readers,
-    state' = state, parked' = parked, superseded' = superseded, hasSuperseded' = hasSuperseded,
-    matched' = matched, allowed' = allowed, ran' = ran, consumed' = consumed,
-    ranAuthorized' = ranAuthorized, parkedAt' = parkedAt, ranAt' = ranAt, reparks' = reparks,
-    denials' = denials,
+    issuer' = issuer, issuerChanges' = issuerChanges, token' = token, tokenIssues' = tokenIssues,
+    slot' = slot, readers' = readers, state' = state, parked' = parked, parkedAuth' = parkedAuth,
+    superseded' = superseded, hasSuperseded' = hasSuperseded, matched' = matched,
+    requestAuth' = requestAuth, usedAuth' = usedAuth, allowed' = allowed, ran' = ran,
+    consumed' = consumed, ranAuth' = ranAuth, ranRequest' = ranRequest, issuerAtRun' = issuerAtRun,
+    parkedAt' = parkedAt, ranAt' = ranAt, reparks' = reparks, denials' = denials,
   }
 
-  // The requester's grant is revoked or restored. A role change commits in
-  // the cell, never inside a dispatch's hold.
-  action reauthorize: bool = all {
-    readers == Set(),
-    authorityChanges < MAX_AUTHORITY_CHANGES,
-    authorized' = not(authorized),
-    authorityChanges' = authorityChanges + 1,
-    active' = active, revisions' = revisions, readers' = readers, state' = state,
-    parked' = parked, superseded' = superseded, hasSuperseded' = hasSuperseded,
-    matched' = matched, allowed' = allowed, ran' = ran, consumed' = consumed,
-    ranAuthorized' = ranAuthorized, parkedAt' = parkedAt, ranAt' = ranAt, reparks' = reparks,
-    denials' = denials,
+  // The issuer revokes or restores the requester's grant. It is not the
+  // cell's state: it happens at any time, a dispatch's hold included, and
+  // reaches the cell only through the next token.
+  action issuerChange: bool = all {
+    issuerChanges < MAX_ISSUER_CHANGES,
+    issuer' = not(issuer),
+    issuerChanges' = issuerChanges + 1,
+    active' = active, revisions' = revisions, token' = token, tokenIssues' = tokenIssues,
+    slot' = slot, readers' = readers, state' = state, parked' = parked, parkedAuth' = parkedAuth,
+    superseded' = superseded, hasSuperseded' = hasSuperseded, matched' = matched,
+    requestAuth' = requestAuth, usedAuth' = usedAuth, allowed' = allowed, ran' = ran,
+    consumed' = consumed, ranAuth' = ranAuth, ranRequest' = ranRequest, issuerAtRun' = issuerAtRun,
+    parkedAt' = parkedAt, ranAt' = ranAt, reparks' = reparks, denials' = denials,
+  }
+
+  // The requester gets a new token: the issuer's grant as of now. Its
+  // requests carry it until the next one.
+  action issueToken: bool = all {
+    tokenIssues < MAX_TOKENS,
+    token' = { grant: issuer, gen: tokenIssues + 1 },
+    tokenIssues' = tokenIssues + 1,
+    active' = active, revisions' = revisions, issuer' = issuer, issuerChanges' = issuerChanges,
+    slot' = slot, readers' = readers, state' = state, parked' = parked, parkedAuth' = parkedAuth,
+    superseded' = superseded, hasSuperseded' = hasSuperseded, matched' = matched,
+    requestAuth' = requestAuth, usedAuth' = usedAuth, allowed' = allowed, ran' = ran,
+    consumed' = consumed, ranAuth' = ranAuth, ranRequest' = ranRequest, issuerAtRun' = issuerAtRun,
+    parkedAt' = parkedAt, ranAt' = ranAt, reparks' = reparks, denials' = denials,
   }
 
   // The approver approves: the approval is recorded and nothing runs.
   // Mutant (F4): the decide runs the call itself, as the requester recorded
-  // when it parked, inside one fenced step.
+  // when it parked, inside one fenced step; the requester's own token now is
+  // the latest one.
   action approve(c: int, m: Mut): bool = all {
     state.get(c) == "parked",
     val fresh = digest(active, m) == digest(parked.get(c), m)
@@ -158,30 +221,43 @@ module approval_fencing {
       state' = state.set(c, if (runs) "executed" else "approved"),
       ran' = if (runs) ran.set(c, active) else ran,
       consumed' = if (runs) consumed.set(c, parked.get(c)) else consumed,
-      ranAuthorized' = if (runs) ranAuthorized.set(c, authorized) else ranAuthorized,
+      ranAuth' = if (runs) ranAuth.set(c, parkedAuth.get(c)) else ranAuth,
+      ranRequest' = if (runs) ranRequest.set(c, token) else ranRequest,
+      issuerAtRun' = if (runs) issuerAtRun.set(c, issuer) else issuerAtRun,
       ranAt' = if (runs) ranAt.set(c, revisions) else ranAt,
     },
-    active' = active, revisions' = revisions, authorized' = authorized,
-    authorityChanges' = authorityChanges, readers' = readers, parked' = parked,
-    superseded' = superseded, hasSuperseded' = hasSuperseded, matched' = matched,
-    allowed' = allowed, parkedAt' = parkedAt, reparks' = reparks, denials' = denials,
+    active' = active, revisions' = revisions, issuer' = issuer, issuerChanges' = issuerChanges,
+    token' = token, tokenIssues' = tokenIssues, slot' = slot, readers' = readers,
+    parked' = parked, parkedAuth' = parkedAuth, superseded' = superseded,
+    hasSuperseded' = hasSuperseded, matched' = matched, requestAuth' = requestAuth,
+    usedAuth' = usedAuth, allowed' = allowed, parkedAt' = parkedAt, reparks' = reparks,
+    denials' = denials,
   }
 
-  // The requester retries the approved call: under the held epoch it derives
-  // the command id from the active definition and decides its authority now.
+  // The requester retries the approved call with its current token: the
+  // request verifies the token, then under the held epoch derives the
+  // command id from the active definition and decides the call under that
+  // token's grant.
   // Mutant (F1): the read is released as soon as the command is compared.
   // Mutant (F5): the authority is the one recorded when the call parked.
+  // Mutant (F6): the authority is the principal the last request left.
   action retry(c: int, m: Mut): bool = all {
     state.get(c) == "approved",
+    val used = if (m.parkedAuthority) parkedAuth.get(c) else if (m.staleSlot) slot else token
+    all {
+      usedAuth' = usedAuth.set(c, used),
+      allowed' = allowed.set(c, used.grant),
+    },
     state' = state.set(c, "checking"),
     matched' = matched.set(c, digest(active, m) == digest(parked.get(c), m)),
-    allowed' = allowed.set(c, m.parkedAuthority or authorized),
+    requestAuth' = requestAuth.set(c, token),
+    slot' = token,
     readers' = if (m.unfencedCheck) readers else readers.union(Set(c)),
-    active' = active, revisions' = revisions, authorized' = authorized,
-    authorityChanges' = authorityChanges, parked' = parked, superseded' = superseded,
-    hasSuperseded' = hasSuperseded, ran' = ran, consumed' = consumed,
-    ranAuthorized' = ranAuthorized, parkedAt' = parkedAt, ranAt' = ranAt, reparks' = reparks,
-    denials' = denials,
+    active' = active, revisions' = revisions, issuer' = issuer, issuerChanges' = issuerChanges,
+    token' = token, tokenIssues' = tokenIssues, parked' = parked, parkedAuth' = parkedAuth,
+    superseded' = superseded, hasSuperseded' = hasSuperseded, ran' = ran, consumed' = consumed,
+    ranAuth' = ranAuth, ranRequest' = ranRequest, issuerAtRun' = issuerAtRun,
+    parkedAt' = parkedAt, ranAt' = ranAt, reparks' = reparks, denials' = denials,
   }
 
   // Still in the same epoch: a denied retry records nothing and leaves the
@@ -196,9 +272,12 @@ module approval_fencing {
       state' = state.set(c, if (denied) "approved" else if (runs) "executed" else "parked"),
       ran' = if (runs) ran.set(c, active) else ran,
       consumed' = if (runs) consumed.set(c, parked.get(c)) else consumed,
-      ranAuthorized' = if (runs) ranAuthorized.set(c, authorized) else ranAuthorized,
+      ranAuth' = if (runs) ranAuth.set(c, usedAuth.get(c)) else ranAuth,
+      ranRequest' = if (runs) ranRequest.set(c, requestAuth.get(c)) else ranRequest,
+      issuerAtRun' = if (runs) issuerAtRun.set(c, issuer) else issuerAtRun,
       ranAt' = if (runs) ranAt.set(c, revisions) else ranAt,
       parked' = if (reparked) parked.set(c, active) else parked,
+      parkedAuth' = if (reparked) parkedAuth.set(c, requestAuth.get(c)) else parkedAuth,
       parkedAt' = if (reparked) parkedAt.set(c, revisions) else parkedAt,
       superseded' = if (reparked) superseded.set(c, parked.get(c)) else superseded,
       hasSuperseded' = if (reparked) hasSuperseded.set(c, true) else hasSuperseded,
@@ -206,8 +285,9 @@ module approval_fencing {
       denials' = if (denied) denials.set(c, denials.get(c) + 1) else denials,
     },
     readers' = readers.exclude(Set(c)),
-    active' = active, revisions' = revisions, authorized' = authorized,
-    authorityChanges' = authorityChanges, matched' = matched, allowed' = allowed,
+    active' = active, revisions' = revisions, issuer' = issuer, issuerChanges' = issuerChanges,
+    token' = token, tokenIssues' = tokenIssues, slot' = slot, matched' = matched,
+    requestAuth' = requestAuth, usedAuth' = usedAuth, allowed' = allowed,
   }
 
   // Mutant only (F2): the requester's retry consumes the superseded approval
@@ -215,24 +295,28 @@ module approval_fencing {
   action consumeSuperseded(c: int, m: Mut): bool = all {
     m.consumeSuperseded,
     hasSuperseded.get(c),
-    authorized,
+    token.grant,
     state.get(c) == "parked" or state.get(c) == "approved",
     state' = state.set(c, "executed"),
     ran' = ran.set(c, active),
     consumed' = consumed.set(c, superseded.get(c)),
-    ranAuthorized' = ranAuthorized.set(c, authorized),
+    ranAuth' = ranAuth.set(c, token),
+    ranRequest' = ranRequest.set(c, token),
+    issuerAtRun' = issuerAtRun.set(c, issuer),
     ranAt' = ranAt.set(c, revisions),
-    active' = active, revisions' = revisions, authorized' = authorized,
-    authorityChanges' = authorityChanges, readers' = readers, parked' = parked,
-    superseded' = superseded, hasSuperseded' = hasSuperseded, matched' = matched,
-    allowed' = allowed, parkedAt' = parkedAt, reparks' = reparks, denials' = denials,
+    slot' = token,
+    active' = active, revisions' = revisions, issuer' = issuer, issuerChanges' = issuerChanges,
+    token' = token, tokenIssues' = tokenIssues, readers' = readers, parked' = parked,
+    parkedAuth' = parkedAuth, superseded' = superseded, hasSuperseded' = hasSuperseded,
+    matched' = matched, requestAuth' = requestAuth, usedAuth' = usedAuth, allowed' = allowed,
+    parkedAt' = parkedAt, reparks' = reparks, denials' = denials,
   }
 
   action stepWith(m: Mut): bool = {
     nondet c = CALLS.oneOf()
     nondet p = CHANGES.oneOf()
     any {
-      park(c), change(p), reauthorize, approve(c, m), retry(c, m), dispatch(c),
+      park(c), change(p), issuerChange, issueToken, approve(c, m), retry(c, m), dispatch(c),
       consumeSuperseded(c, m),
     }
   }
@@ -247,7 +331,8 @@ module approval_fencing {
     any {
       park(c),
       all { p == "unrelated" or active.get("action") == 0, change(p) },
-      reauthorize,
+      issuerChange,
+      issueToken,
       approve(c, NOMUT),
       retry(c, NOMUT),
       dispatch(c),
@@ -258,21 +343,29 @@ module approval_fencing {
   action stepNarrowDigest = stepWith({ ...NOMUT, narrowDigest: true })
   action stepDecideExecutes = stepWith({ ...NOMUT, decideExecutes: true })
   action stepParkedAuthority = stepWith({ ...NOMUT, parkedAuthority: true })
+  action stepStaleSlot = stepWith({ ...NOMUT, staleSlot: true })
 
   def typeOk: bool = and {
     revisions >= 0, revisions <= MAX_REVISIONS,
-    authorityChanges >= 0, authorityChanges <= MAX_AUTHORITY_CHANGES,
+    issuerChanges >= 0, issuerChanges <= MAX_ISSUER_CHANGES,
+    tokenIssues >= 0, tokenIssues <= MAX_TOKENS, token.gen == tokenIssues,
     readers.subseteq(CALLS),
     CALLS.forall(c => STATES.contains(state.get(c))),
     PARTS.forall(p => active.get(p) >= 0 and active.get(p) <= MAX_REVISIONS),
   }
 
   // No stale-approved step executes: a step runs only under exactly the
-  // definition the approval it consumed was given for, and only while its
-  // requester holds the authority to make the call (none under revoked
-  // authority).
+  // definition the approval it consumed was given for, and only under a
+  // grant no older than the verified token of the request that ran it (none
+  // under a token that carries no grant). Authority is as of the request's
+  // own verified token: an issuer revocation that no token carries yet is
+  // not seen (witnessOutstandingTokenExecutes).
   def noStaleApprovedExecution: bool = CALLS.forall(c =>
-    state.get(c) == "executed" implies (ran.get(c) == consumed.get(c) and ranAuthorized.get(c)))
+    state.get(c) == "executed" implies and {
+      ran.get(c) == consumed.get(c),
+      ranAuth.get(c).grant,
+      ranAuth.get(c).gen >= ranRequest.get(c).gen,
+    })
 
   def safety: bool = and { typeOk, noStaleApprovedExecution }
 
@@ -288,10 +381,16 @@ module approval_fencing {
   // Parked, made stale by a change, parked anew, approved and executed.
   def witnessReparkedThenExecuted: bool = not(CALLS.exists(c =>
     state.get(c) == "executed" and reparks.get(c) >= 1 and parkedAt.get(c) >= 1))
-  // A revoked requester's retry was denied and the call stays approved.
+  // A retry under a token without the grant was denied and the call stays
+  // approved.
   def witnessDeniedStaysApproved: bool = not(CALLS.exists(c =>
-    state.get(c) == "approved" and denials.get(c) >= 1 and not(authorized)))
-  // Denied while revoked, restored, and the retry then executed the call.
+    state.get(c) == "approved" and denials.get(c) >= 1 and not(token.grant)))
+  // Denied under a revoked token, restored, and the retry then executed the
+  // call.
   def witnessRestoredThenExecuted: bool = not(CALLS.exists(c =>
     state.get(c) == "executed" and denials.get(c) >= 1))
+  // The guarantee's edge, reached on purpose: the issuer had revoked the
+  // grant when the call ran, under a token verified before the revocation.
+  def witnessOutstandingTokenExecutes: bool = not(CALLS.exists(c =>
+    state.get(c) == "executed" and not(issuerAtRun.get(c))))
 }

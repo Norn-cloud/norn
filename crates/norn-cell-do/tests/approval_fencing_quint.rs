@@ -2,12 +2,14 @@
 //! fencing model's ITF traces (verification/hosted-timers-v1, `stepConform`)
 //! are the oracle, replayed through the real DO dispatch: a call parks
 //! (`POST /v1/actions`), a definitions revision installs (changing the
-//! action's writer, or reinstalling it unchanged), the requester's grant is
-//! revoked or restored, and the approver's `:decide` records the approval
-//! and runs nothing (`not_executed`). Only the requester's retry of the call
-//! runs it, exactly as the model's command comparison and authority decision
-//! say: it commits, parks the call anew under the changed definition, or is
-//! denied and leaves the call approved and not executed.
+//! action's writer, or reinstalling it unchanged), the requester gets a new
+//! token carrying the issuer's grant (an issuer revocation alone changes
+//! nothing the cell can see), and the approver's `:decide` records the
+//! approval and runs nothing (`not_executed`). Only the requester's retry of
+//! the call runs it, exactly as the model's command comparison and the
+//! retry's own token say: it commits, parks the call anew under the changed
+//! definition, or is denied `authz.denied` and leaves the call approved and
+//! not executed.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -164,6 +166,10 @@ struct Counts {
     denied: usize,
     revisions: usize,
     revocations: usize,
+    issuer_changes: usize,
+    /// Executions after the issuer revoked the grant, under a token verified
+    /// before: authority is as of the request's token.
+    outstanding: usize,
 }
 
 impl Replay {
@@ -198,15 +204,22 @@ impl Replay {
             self.counts.revisions = self.counts.revisions.saturating_add(1);
             return;
         }
-        if int(after, "authorityChanges") > int(before, "authorityChanges") {
-            // The requester's grant: revoked keeps the same subject, verified
-            // now with no role (APPROVAL-RECOVERY-1, S2).
-            let authorized = after["authorized"].as_bool().expect("authorized");
+        if int(after, "issuerChanges") > int(before, "issuerChanges") {
+            // The issuer's grant alone: the cell keeps no membership store,
+            // so nothing changes until the requester's next token.
+            self.counts.issuer_changes = self.counts.issuer_changes.saturating_add(1);
+            return;
+        }
+        if int(after, "tokenIssues") > int(before, "tokenIssues") {
+            // The requester's next token: the issuer's grant as of now. A
+            // revoked one keeps the same subject, verified with no role
+            // (APPROVAL-RECOVERY-1, S2).
+            let grant = after["token"]["grant"].as_bool().expect("grant");
             self.cell.principals = FixturePrincipals::new(
-                if authorized { NAMES } else { REVOKED },
+                if grant { NAMES } else { REVOKED },
                 std::sync::Arc::clone(&self.cell.caller),
             );
-            if !authorized {
+            if !grant {
                 self.counts.revocations = self.counts.revocations.saturating_add(1);
             }
             return;
@@ -225,7 +238,7 @@ impl Replay {
             }
             ("parked", "approved") => self.approve(&at, c),
             ("approved", "checking") => self.retry(&at, c, after),
-            ("checking", outcome) => self.settle(&at, c, outcome),
+            ("checking", outcome) => self.settle(&at, c, outcome, after),
             (from, to) => panic!("{at}: unexpected {from} -> {to}"),
         }
     }
@@ -250,7 +263,8 @@ impl Replay {
     }
 
     /// The requester's retry answers as the model's authority decision and
-    /// command comparison say.
+    /// command comparison say: a denial is the opaque `authz.denied`, a
+    /// reparked call names a fresh decision.
     fn retry(&mut self, at: &str, c: i64, after: &Value) {
         let (status, answer) = request(&self.cell, c);
         let expected = match (flag(after, "allowed", c), flag(after, "matched", c)) {
@@ -259,6 +273,9 @@ impl Replay {
             (true, false) => 202,
         };
         assert_eq!(status, expected, "{at}: {answer}");
+        if status == 403 {
+            assert_eq!(answer["code"], json!("authz.denied"), "{at}: {answer}");
+        }
         let fresh = (status == 202).then(|| decision_id(&answer));
         if let Some(fresh) = &fresh {
             assert_ne!(fresh, &self.decision[&c], "{at} parks a fresh decision");
@@ -273,7 +290,7 @@ impl Replay {
     }
 
     /// Where the retried call stands afterwards.
-    fn settle(&mut self, at: &str, c: i64, outcome: &str) {
+    fn settle(&mut self, at: &str, c: i64, outcome: &str, after: &Value) {
         let Retried {
             status,
             decision: fresh,
@@ -285,14 +302,19 @@ impl Replay {
         let (melt, standing_is) = match (outcome, status) {
             ("executed", 200) => {
                 self.counts.executed = self.counts.executed.saturating_add(1);
+                if !flag(after, "issuerAtRun", c) {
+                    self.counts.outstanding = self.counts.outstanding.saturating_add(1);
+                }
                 (200, json!({ "committed": true, "state": "committed" }))
             }
-            // The denial records nothing.
+            // The denial records nothing: the approval stays not executed
+            // and the melt absent.
             ("approved", 403) => {
                 self.counts.denied = self.counts.denied.saturating_add(1);
                 (404, not_executed())
             }
-            // The stale approval is never consumed.
+            // The stale approval is never consumed: it stays not executed,
+            // the melt absent, and the call waits on the fresh decision.
             ("parked", 202) => {
                 self.decision.insert(c, fresh.expect("the fresh decision"));
                 self.counts.reparked = self.counts.reparked.saturating_add(1);
@@ -325,10 +347,19 @@ fn approval_fencing_quint_traces() {
         denied,
         revisions,
         revocations,
+        issuer_changes,
+        outstanding,
     } = counts;
     assert!(
-        executed >= 5 && reparked >= 2 && denied >= 2 && revisions >= 5 && revocations >= 3,
+        executed >= 5
+            && reparked >= 2
+            && denied >= 2
+            && revisions >= 5
+            && revocations >= 3
+            && issuer_changes >= 3
+            && outstanding >= 1,
         "{executed} executed, {reparked} reparked, {denied} denied, {revisions} revisions, \
-         {revocations} revocations"
+         {revocations} revocations, {issuer_changes} issuer changes, {outstanding} under an \
+         outstanding token"
     );
 }
