@@ -1,0 +1,8 @@
+{
+  "format": "norn-project/1",
+  "name": "erp-day",
+  "sources": ["src"],
+  "scope": { "orgId": "org_erp", "environmentId": "dev" },
+  "dev": { "port": 0, "actor": "local:developer" },
+  "cell": ".norn/cell.sqlite"
+}
