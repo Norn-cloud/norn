@@ -333,7 +333,10 @@ pub(crate) fn lower(
             sup: Expr::Named(sup),
         }) = item
         {
-            named_sups.entry(sub.as_str()).or_default().push(sup.as_str());
+            named_sups
+                .entry(sub.as_str())
+                .or_default()
+                .push(sup.as_str());
         }
     }
     let context = Context {
@@ -693,7 +696,10 @@ fn restriction_shape(
         return defer(
             &codes::OWL_EXTERNAL_REFERENCE,
             NornHome::MappingIr,
-            format!("{} is not declared in the import set", model.compact(property)),
+            format!(
+                "{} is not declared in the import set",
+                model.compact(property)
+            ),
         );
     };
     if !context.members.contains_key(property) || property_kind == PropertyKind::Annotation {
@@ -748,9 +754,11 @@ fn restriction_shape(
                         uses_range,
                     })
                 }
-                PropertyKind::Annotation => {
-                    defer(&codes::OWL_CLASS_EXPRESSION, NornHome::EntityIr, "annotation property".into())
-                }
+                PropertyKind::Annotation => defer(
+                    &codes::OWL_CLASS_EXPRESSION,
+                    NornHome::EntityIr,
+                    "annotation property".into(),
+                ),
             };
         }
         Restriction::Min(0) => return Ok(Ask::Vacuous),
@@ -796,7 +804,10 @@ fn restriction_shape(
             model.compact(property),
             range.map_or_else(
                 || " (the property has no single named range)".to_owned(),
-                |range| format!(" ({filler_text} does not cover the range {})", model.compact(range)),
+                |range| format!(
+                    " ({filler_text} does not cover the range {})",
+                    model.compact(range)
+                ),
             ),
         );
         // Under the closed-world policy, the existence of some value still
@@ -818,9 +829,11 @@ fn restriction_shape(
                     degraded,
                     uses_range: true,
                 }),
-                PropertyKind::Annotation => {
-                    defer(&codes::OWL_CLASS_EXPRESSION, NornHome::EntityIr, "annotation property".into())
-                }
+                PropertyKind::Annotation => defer(
+                    &codes::OWL_CLASS_EXPRESSION,
+                    NornHome::EntityIr,
+                    "annotation property".into(),
+                ),
             };
         }
         let open = if least >= 1 && !closed {
@@ -881,9 +894,11 @@ fn restriction_shape(
             degraded,
             uses_range: range.is_some(),
         }),
-        PropertyKind::Annotation => {
-            defer(&codes::OWL_CLASS_EXPRESSION, NornHome::EntityIr, "annotation property".into())
-        }
+        PropertyKind::Annotation => defer(
+            &codes::OWL_CLASS_EXPRESSION,
+            NornHome::EntityIr,
+            "annotation property".into(),
+        ),
     }
 }
 

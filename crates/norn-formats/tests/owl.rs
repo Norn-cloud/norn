@@ -452,7 +452,11 @@ fn owl_separate_witnesses_are_not_one_link() {
     let interfaces = interfaces(&import);
     // Neither filler narrows the link, and neither is an inheritance conflict.
     for axiom in [LTV_PRINCIPAL, LTV_APPRAISED] {
-        assert_eq!(code_of(&import, axiom), "format.owl.filler_scoped", "{axiom}");
+        assert_eq!(
+            code_of(&import, axiom),
+            "format.owl.filler_scoped",
+            "{axiom}"
+        );
     }
     assert!(
         link(&interfaces, "ex.rt.LoanToValueRatio", "has_argument").is_none(),
@@ -472,7 +476,10 @@ fn owl_qualified_min_zero_constrains_nothing() {
     let import = ratios(WitnessPolicy::Open);
     let interfaces = interfaces(&import);
     let holds = link(&interfaces, "ex.rt.Holder", "holds").unwrap();
-    assert_eq!(holds["target"], "ex.rt.Gadget", "min 0 does not narrow: {holds}");
+    assert_eq!(
+        holds["target"], "ex.rt.Gadget",
+        "min 0 does not narrow: {holds}"
+    );
     let axiom = "SubClassOf(ex-rt:Holder ObjectMinCardinality(0 ex-rt:holds ex-rt:Widget))";
     let entry = import
         .loss_report
@@ -492,7 +499,11 @@ fn owl_qualified_min_zero_constrains_nothing() {
             );
             assert!(degraded.is_none());
         }
-        other => panic!("{other:?}"),
+        other @ (Disposition::Extension { .. }
+        | Disposition::Deferred { .. }
+        | Disposition::Rejected { .. }
+        | Disposition::Dropped { .. }
+        | Disposition::Unexplained) => panic!("{other:?}"),
     }
 }
 

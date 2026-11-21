@@ -23,9 +23,7 @@ use norn_formats::contract::sha256_hex;
 use norn_formats::owl::{
     OwlConfig, OwlGraph, OwlNamespace, OwlNormaliser, OwlReader, WitnessPolicy,
 };
-use norn_formats::owl_align::{
-    AlignmentFinding, OwlAlignment, OwlAnchor, OwlHeld, align, term_of,
-};
+use norn_formats::owl_align::{AlignmentFinding, OwlAlignment, OwlAnchor, OwlHeld, align, term_of};
 use norn_ir::{ArtifactEnvelope, DiagnosticSeverity, OntologySource, OntologySourceFile};
 
 const GRAPH: &[u8] = include_bytes!("fixtures/synthetic/ledger.nt");
@@ -272,7 +270,9 @@ fn owl_alignment_held_lineage_is_a_reported_residual() {
     // A held class may not also be an anchor.
     let error = align(&interfaces, &admission, &alignment).unwrap_err();
     assert!(error.contains("also an anchor"), "{error}");
-    alignment.anchors.retain(|row| row.class != format!("{LN}Loan"));
+    alignment
+        .anchors
+        .retain(|row| row.class != format!("{LN}Loan"));
     let aligned = align(&interfaces, &admission, &alignment).unwrap();
     for loan in ["ex.ln.Loan", "ex.ln.SecuredLoan", "ex.ln.UnsecuredLoan"] {
         assert!(
@@ -317,7 +317,10 @@ fn owl_fibo_credit_agreement_is_held_not_a_claim() {
     let table: OwlAlignment =
         serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
     assert!(
-        !table.anchors.iter().any(|row| row.class == CREDIT_AGREEMENT),
+        !table
+            .anchors
+            .iter()
+            .any(|row| row.class == CREDIT_AGREEMENT),
         "no anchor aligns the whole credit agreement"
     );
     assert!(
