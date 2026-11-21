@@ -2539,18 +2539,19 @@ fn a_store_answers_its_own_receipt_and_refuses_any_other_body() {
     inflated.landed.data.as_mut().expect("data").rows += 1;
     assert_eq!(
         engine
-            .store(&inflated, |_data, _held| panic!("a refused store sends nothing"))
+            .store(&inflated, |_data, _held| panic!(
+                "a refused store sends nothing"
+            ))
             .expect_err("counts the landing never answered")
             .code,
         stale
     );
-    assert_eq!(attempts(dir.path()), vec![landed.attempt.clone()], "intact");
+    assert_eq!(attempts(dir.path()), vec![landed.attempt], "intact");
     let stored = store(&engine, &honest).expect("stored");
     assert!(stored.stored.is_some());
     assert!(attempts(dir.path()).is_empty());
-    let replay = |body: &StoreRequest| {
-        engine.store(body, |_data, _held| panic!("a replay sends nothing"))
-    };
+    let replay =
+        |body: &StoreRequest| engine.store(body, |_data, _held| panic!("a replay sends nothing"));
     // Changed row counts.
     let mut counts = honest.clone();
     counts.landed.load.rows = 1_000;
@@ -2562,7 +2563,10 @@ fn a_store_answers_its_own_receipt_and_refuses_any_other_body() {
     let mut other_landing = honest.clone();
     other_landing.land.landing = "landing-2".into();
     other_landing.landed.landing = "landing-2".into();
-    assert_eq!(replay(&other_landing).expect_err("changed landing").code, stale);
+    assert_eq!(
+        replay(&other_landing).expect_err("changed landing").code,
+        stale
+    );
     // A changed load identity.
     let mut other_load = honest.clone();
     other_load.land.load.load = "land-2".into();
