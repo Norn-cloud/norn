@@ -4175,15 +4175,39 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         Ok(found.is_some())
     }
 
+    /// The outbox entry `command_id`, consumed or not, with the commit that
+    /// enqueued it: a parked call's decision read back after it resolved
+    /// (APPROVAL-RECOVERY-1).
+    ///
+    /// # Errors
+    ///
+    /// SQL engine or decode errors.
+    pub fn outbox_entry(&self, command_id: &str) -> Result<Option<PendingCommand>, CellError> {
+        Ok(self
+            .outbox_select("\"command_id\" = ?1", "", params![command_id], " LIMIT 1")?
+            .into_iter()
+            .next())
+    }
+
     fn outbox_rows(
         &self,
         filter: &str,
         bindings: &[SqlValue],
         limit: &str,
     ) -> Result<Vec<PendingCommand>, CellError> {
+        self.outbox_select("\"consumed_commit_seq\" IS NULL", filter, bindings, limit)
+    }
+
+    fn outbox_select(
+        &self,
+        base: &str,
+        filter: &str,
+        bindings: &[SqlValue],
+        limit: &str,
+    ) -> Result<Vec<PendingCommand>, CellError> {
         let rows = self.conn.query(
             &format!(
-                "SELECT \"position\", \"commit_seq\", \"command_id\", \"generation\", \"idempotency_key\", \"deadline\", \"command\", \"result\" FROM \"{OUTBOX}\" WHERE \"consumed_commit_seq\" IS NULL {filter} ORDER BY \"position\"{limit}"
+                "SELECT \"position\", \"commit_seq\", \"command_id\", \"generation\", \"idempotency_key\", \"deadline\", \"command\", \"result\" FROM \"{OUTBOX}\" WHERE {base} {filter} ORDER BY \"position\"{limit}"
             ),
             bindings,
         )?;

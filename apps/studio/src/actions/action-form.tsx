@@ -1,7 +1,8 @@
 import { ShieldX } from "lucide-react"
 import { refusedGuardWords } from "../lib/guard-words.ts"
 import { Chip } from "@/components/chip"
-import { AlertTriangle, CheckCircle2, ChevronLeft, Hourglass, Inbox, Lock, Pencil, Plus, Undo2, X } from "lucide-react"
+import { AlertTriangle, CheckCircle2, ChevronLeft, Hourglass, Inbox, Lock, Pencil, Play, Plus, Undo2, X } from "lucide-react"
+import { useQuery } from "@tanstack/react-query"
 import { createContext, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react"
 import { CopyId } from "@/components/copy-id"
 import { Button } from "@/components/ui/button"
@@ -13,7 +14,9 @@ import {
   ACTIONS_UNAVAILABLE, callAction, decimalExample, sentMembers, inputPointer, itemNoun, newIdempotencyKey, receiptVerb, risky as isRisky, writesWhole, draftAt, emptyDraft, emptyFor, encodeObject, fieldsOf, groupsOf, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt,
   type ActionReceipt, type ActionSummary, type Diagnostic, type Draft, type FormField, type Section, type Spec,
 } from "../lib/actions.ts"
-import type { Phase } from "../lib/screen/call.ts"
+import { parkedOf, type ParkedCall, type Phase } from "../lib/screen/call.ts"
+import { listRequested, requestedOne, requestedPath, requestedWords, runnable, type RequestedDecision } from "../lib/decisions.ts"
+import { useLiveRefresh } from "../lib/live-reads.ts"
 import { useCall, type Call } from "../lib/screen/use-call.ts"
 import { LawRefusal, RedactedLawRefusal, type InputField, type RefusalRequest } from "./law-refusal.tsx"
 import { RecordPicker, control, type Aria } from "./record-picker.tsx"
@@ -32,7 +35,7 @@ const unreachable = (phase: Extract<Phase, { kind: "failed" }>) =>
  * decides; the form shows each refusal at the field its pointer names, and the receipt on success.
  * A draft keeps one idempotency key until it changes, so a retry after an outage never commits twice.
  */
-export function ActionForm({ action, objectTitle, technical = false, prefill = {}, onDirty, onClose, onView, remembered, onDraft, onCommitted, onChanged, call = callAction }: {
+export function ActionForm({ action, objectTitle, technical = false, prefill = {}, onDirty, onClose, onView, remembered, onDraft, onCommitted, onChanged, parked, onParked, onUnparked, runNow = false, call = callAction }: {
   readonly action: ActionSummary
   /** The object type in words ("Holding"), for the business sentence on success. */
   readonly objectTitle: string
@@ -51,6 +54,14 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
   readonly onCommitted?: () => void
   /** The cell committed something (the call or its undo): read what it shows again. */
   readonly onChanged?: () => void
+  /** A call this form sent that parked for approval: the form opens on it, not on a new draft. */
+  readonly parked?: ParkedCall
+  /** The call parked: its decision, encoded input and key, for the sheet to keep while it waits. */
+  readonly onParked?: (call: ParkedCall) => void
+  /** The form left its parked call for a new draft; the call still waits in the cell. */
+  readonly onUnparked?: () => void
+  /** Run the parked call as soon as the cell offers it (the inbox's "Approved, run it" opened this form). */
+  readonly runNow?: boolean
   readonly call?: Call
 }) {
   const fields = useMemo(() => fieldsOf(action.inputSchema), [action])
@@ -75,8 +86,12 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
     target?.focus()
   }, [step, wizard])
   const risky = isRisky(action)
-  const [machine, dispatch] = useCall({ actionId: action.actionId, risky }, call, onChanged)
+  const [machine, dispatch] = useCall({ actionId: action.actionId, risky }, call, onChanged, parked)
   const { phase } = machine
+  // The last call this form sent was the approved call the cell offered to run: its answer is read
+  // on the parked call's panel, never over a form whose fields that call did not come from.
+  const [ranApproved, setRanApproved] = useState<string | null>(null)
+  const parkedNow = parkedOf(machine)
   const committed = phase.kind === "done" || phase.kind === "undoing" || phase.kind === "undo-failed" || phase.kind === "undone"
   const dirty = JSON.stringify(draft) !== JSON.stringify(initial) && !committed
   const diagnostics = phase.kind === "refused" ? phase.diagnostics : []
@@ -103,6 +118,7 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
     if (phase.kind === "done") { onDirty?.(false); onCommitted?.() }
     if (phase.kind === "pending") onDirty?.(false)
   }, [phase.kind])
+  useEffect(() => { if (parkedNow !== null) onParked?.(parkedNow) }, [parkedNow?.decision.id, parkedNow?.key])
   useEffect(() => {
     if (phase.kind !== "refused" || !wizard) return
     const first = problemsBySection(sections, phase.diagnostics).findIndex((n) => n > 0)
@@ -119,7 +135,19 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
 
   const submit = () => dispatch({ kind: "submit", input: encodeObject(fields, draft as { readonly [name: string]: Draft }) })
 
-  if (phase.kind === "pending") return <SentForApproval action={action} expiresAtMs={phase.decision.expiresAtMs} decisionId={phase.decision.id} technical={technical} onClose={onClose} />
+  const refusal = phase.kind === "refused" ? <RefusalPanel phase={phase} action={action} technical={technical} request={request} at={refusedAt ?? new Date()} guard={guard} top={unplaced(diagnostics, fields)} atFields={ranApproved === null} onUse={ranApproved !== null ? undefined : (path, text) => edit(`/${path}`, text)} /> : null
+
+  if (phase.kind === "pending" || (ranApproved !== null && (phase.kind === "sending" || phase.kind === "refused" || phase.kind === "failed"))) {
+    return <ParkedCallPanel action={action} decisionId={phase.kind === "pending" ? phase.decision.id : ranApproved!} parkedExpiresAtMs={phase.kind === "pending" ? phase.decision.expiresAtMs : null}
+      phase={phase} technical={technical} runNow={runNow} refusal={refusal} failure={phase.kind === "failed" ? unreachable(phase) : null}
+      onRetry={() => dispatch({ kind: "retry" })} onRun={(call) => { setRanApproved(call.decisionId); dispatch({ kind: "run-approved", ...call }) }}
+      onNew={phase.kind === "pending" || phase.kind === "refused" ? () => {
+        // A new draft is a new call under a new key; the parked one keeps waiting in the cell.
+        onUnparked?.(); setDraft(initial); setStep(0); setReached(0); setRanApproved(null)
+        if (phase.kind === "pending") dispatch({ kind: "again", key: newKey() })
+        else dispatch({ kind: "edit", key: newKey() })
+      } : undefined} onClose={onClose} />
+  }
 
   if (committed) {
     return <Receipt action={action} objectTitle={objectTitle} technical={technical} onView={onView} phase={phase}
@@ -143,21 +171,7 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
       }}>
       {action.description && <p className="text-sm text-muted-foreground">{action.description}</p>}
       {blocked !== null && <p role="alert" className="rounded-lg border border-node-border bg-muted/50 p-3 text-sm">Studio can't build a form for this action yet ({blocked}). It's listed so you know it exists.</p>}
-      {phase.kind === "refused" && phase.reason !== undefined && phase.code === "core.laws.violated" && <LawRefusal code={phase.code} reason={phase.reason} explanation={phase.explanation ?? phase.message} fields={(action.inputSchema as { properties?: Readonly<Record<string, InputField>> } | null)?.properties ?? {}} technical={technical} onUse={(path, text) => edit(`/${path}`, text)} request={request} at={refusedAt ?? new Date()} />}
-      {phase.kind === "refused" && phase.reason === undefined && phase.code === "core.laws.violated" && (
-        <RedactedLawRefusal code={phase.code} message={phase.explanation ?? phase.message} technical={technical} request={request} at={refusedAt ?? new Date()} />
-      )}
-      {phase.kind === "refused" && phase.code !== "core.laws.violated" && (
-        <div role="alert" className="grid gap-1.5 rounded-xl border border-border bg-card px-3 py-2.5 text-sm">
-          <span className="flex flex-wrap items-center gap-2"><Chip tone="red" icon={ShieldX}>Refused</Chip><span className="font-medium">{REFUSED[phase.code] ?? phase.message}</span></span>
-          {guard !== null && <span className="text-sm text-foreground">Requires: {guard}</span>}
-          {/* A guard the cell quoted is shown in words above; its declared text stays under Technical. */}
-          {(guard === null || technical) && (phase.explanation ? <span className="text-meta text-foreground">{phase.explanation}</span> : REFUSED[phase.code] !== undefined && <span className="text-meta text-foreground">{phase.message}</span>)}
-          <span className="font-mono text-xs text-muted-foreground">{phase.code}</span>
-          {top.map((d) => <span key={`${d.pointer}:${d.code}:${d.message}`} className="text-meta text-destructive-text">{d.message}</span>)}
-          {top.length === 0 && phase.diagnostics.length > 0 && <span className="text-meta">Each problem is shown at its field below.</span>}
-        </div>
-      )}
+      {refusal}
       {phase.kind === "failed" && (
         <div role="alert" className="flex flex-wrap items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
           <span>{unreachable(phase)}</span><span className="flex-1" />
@@ -448,25 +462,103 @@ function when(ms: number, now = Date.now()): string {
   return new Date(ms).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
 }
 
-/** An approval-gated call: the cell committed nothing and put a decision in the inbox. */
-function SentForApproval({ action, expiresAtMs, decisionId, technical, onClose }: {
-  readonly action: ActionSummary; readonly expiresAtMs: number; readonly decisionId: string; readonly technical: boolean; readonly onClose: (() => void) | undefined
+/** A refusal as the form shows it: a broken law (named, or redacted for this role), or the cell's refusal in words. */
+function RefusalPanel({ phase, action, technical, request, at, guard, top, atFields, onUse }: {
+  readonly phase: Extract<Phase, { kind: "refused" }>; readonly action: ActionSummary; readonly technical: boolean; readonly request: RefusalRequest; readonly at: Date
+  readonly guard: string | null; readonly top: readonly Diagnostic[]
+  /** The form's fields are shown below, so a problem at a field is shown there. */
+  readonly atFields: boolean
+  readonly onUse: ((path: string, text: string) => void) | undefined
 }) {
-  const expires = new Date(expiresAtMs)
+  if (phase.code === "core.laws.violated" && phase.reason !== undefined) {
+    return <LawRefusal code={phase.code} reason={phase.reason} explanation={phase.explanation ?? phase.message} fields={(action.inputSchema as { properties?: Readonly<Record<string, InputField>> } | null)?.properties ?? {}} technical={technical} onUse={onUse} request={request} at={at} />
+  }
+  if (phase.code === "core.laws.violated") return <RedactedLawRefusal code={phase.code} message={phase.explanation ?? phase.message} technical={technical} request={request} at={at} />
+  const shown = atFields ? top : phase.diagnostics
   return (
-    <section aria-label="Sent for approval" className="grid gap-4">
+    <div role="alert" className="grid gap-1.5 rounded-xl border border-border bg-card px-3 py-2.5 text-sm">
+      <span className="flex flex-wrap items-center gap-2"><Chip tone="red" icon={ShieldX}>Refused</Chip><span className="font-medium">{REFUSED[phase.code] ?? phase.message}</span></span>
+      {guard !== null && <span className="text-sm text-foreground">Requires: {guard}</span>}
+      {/* A guard the cell quoted is shown in words above; its declared text stays under Technical. */}
+      {(guard === null || technical) && (phase.explanation ? <span className="text-meta text-foreground">{phase.explanation}</span> : REFUSED[phase.code] !== undefined && <span className="text-meta text-foreground">{phase.message}</span>)}
+      <span className="font-mono text-xs text-muted-foreground">{phase.code}</span>
+      {shown.map((d) => <span key={`${d.pointer}:${d.code}:${d.message}`} className="text-meta text-destructive-text">{d.message}</span>)}
+      {atFields && top.length === 0 && phase.diagnostics.length > 0 && <span className="text-meta">Each problem is shown at its field below.</span>}
+    </div>
+  )
+}
+
+const requestedKey = (id: string) => ["decisions", "requested", id] as const
+
+/**
+ * A call that parked for approval, as the cell's requested-call document says it stands
+ * (APPROVAL-REQUESTED-1). While a decider has it, it waits; once approved, "Approved, run it" appears
+ * only when the cell offers it (`canRun`) and sends back exactly the call the cell holds, under its
+ * key. The answer is read here: the receipt replaces the panel, a refusal shows in the refusal panel.
+ */
+function ParkedCallPanel({ action, decisionId, parkedExpiresAtMs, phase, technical, runNow, refusal, failure, onRetry, onRun, onNew, onClose }: {
+  readonly action: ActionSummary; readonly decisionId: string; readonly parkedExpiresAtMs: number | null
+  readonly phase: Phase; readonly technical: boolean; readonly runNow: boolean
+  readonly refusal: ReactNode; readonly failure: string | null; readonly onRetry: () => void
+  readonly onRun: (call: NonNullable<ReturnType<typeof runnable>>) => void
+  /** Leave this call for a new draft (it keeps waiting in the cell). */
+  readonly onNew: (() => void) | undefined
+  readonly onClose: (() => void) | undefined
+}) {
+  const read = useQuery({ queryKey: requestedKey(decisionId), queryFn: () => listRequested(decisionId), retry: false })
+  // A decider's answer reaches the panel when the cell commits it; nothing polls.
+  useLiveRefresh(requestedPath(decisionId), requestedKey(decisionId))
+  const item: RequestedDecision | null = read.data?.kind === "ok" ? requestedOne(read.data.value, decisionId) : null
+  const offer = phase.kind === "pending" && item !== null ? runnable(item) : null
+  const sending = phase.kind === "sending"
+  // Opened from the inbox's "Approved, run it": run once, as soon as the cell offers it here.
+  const ran = useRef(false)
+  useEffect(() => { if (runNow && offer !== null && !ran.current) { ran.current = true; onRun(offer) } }, [runNow, offer?.decisionId])
+  const expiresAtMs = item?.expiresAtMs ?? parkedExpiresAtMs
+  const expires = expiresAtMs === null ? null : new Date(expiresAtMs)
+  const approved = item?.status === "approved"
+  const final = item !== null && (item.status === "rejected" || item.status === "expired" || item.status === "withdrawn" || item.call.state?.state === "refused")
+  return (
+    <section aria-label={approved ? "Approved call" : "Sent for approval"} className="grid gap-4">
       <div className="grid gap-3 rounded-node border border-node-border bg-card p-4 shadow-[var(--node-highlight),var(--elevation-node)]">
         <p role="status" className="flex items-start gap-2 text-sm font-medium">
-          <Hourglass className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
-          <span>{action.title} was sent for approval. Nothing changes until a decider approves it.</span>
+          {approved
+            ? <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-[var(--tint-outcome)]" aria-hidden />
+            : final ? <ShieldX className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden />
+            : <Hourglass className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />}
+          <span>{phase.kind === "refused" ? `${action.title} was approved, but the cell refused it when you ran it. Nothing was changed.`
+            : item === null ? `${action.title} was sent for approval. Nothing changes until a decider approves it.` : `${action.title}: ${requestedWords(item)}`}</span>
         </p>
-        <p className="text-meta text-muted-foreground">
-          It waits in Decisions until <time dateTime={expires.toISOString()} title={expires.toISOString()}>{expires.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</time>.
-        </p>
-        <Button asChild variant="outline" size="sm" className="justify-self-start border-node-border"><a href="/decisions"><Inbox /> Open Decisions</a></Button>
-        {technical && <div className="text-meta text-muted-foreground">Decision <CopyId value={decisionId} short={16} /></div>}
+        {item?.status !== "approved" && !final && expires !== null && (
+          <p className="text-meta text-muted-foreground">
+            It waits in Decisions until <time dateTime={expires.toISOString()} title={expires.toISOString()}>{expires.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</time>.
+          </p>
+        )}
+        {read.data?.kind === "refused" && <p role="alert" className="text-meta text-destructive-text">{read.data.refusal.message}</p>}
+        {read.isError && <p role="alert" className="text-meta text-destructive-text">Couldn't read where this call stands. <button type="button" className="underline" onClick={() => void read.refetch()}>Read again</button></p>}
+        <div className="flex flex-wrap items-center gap-2">
+          {(offer !== null || sending) && (
+            <Button type="button" size="sm" disabled={sending} onClick={() => { if (offer !== null) onRun(offer) }}>
+              <Play /> {sending ? "Running…" : "Approved, run it"}
+            </Button>
+          )}
+          {!approved && !final && <Button asChild variant="outline" size="sm" className="border-node-border"><a href="/decisions"><Inbox /> Open Decisions</a></Button>}
+        </div>
+        {offer !== null && <p className="text-meta text-muted-foreground">It sends exactly the call that was approved. The cell checks it again under your current role before anything changes.</p>}
+        {technical && <div className="text-meta text-muted-foreground">Decision <CopyId value={decisionId} short={16} />{item !== null && <> · key <CopyId value={item.call.idempotencyKey} short={12} /></>}</div>}
       </div>
-      {onClose && <div className="flex justify-end"><Button type="button" variant="ghost" onClick={onClose}>Close</Button></div>}
+      {refusal}
+      {failure !== null && (
+        <div role="alert" className="flex flex-wrap items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+          <span>{failure}</span><span className="flex-1" />
+          <Button type="button" variant="outline" size="sm" onClick={onRetry}>Retry</Button>
+        </div>
+      )}
+      <div className="flex flex-wrap gap-2">
+        {onNew && <Button type="button" variant="outline" className="border-node-border" onClick={onNew}><Plus /> New request</Button>}
+        <span className="flex-1" />
+        {onClose && <Button type="button" variant="ghost" onClick={onClose}>Close</Button>}
+      </div>
     </section>
   )
 }

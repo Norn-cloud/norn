@@ -615,6 +615,7 @@ fn probes(route: Route, ids: &Ids) -> Vec<Probe> {
         Route::Run => get(format!("/v1/runs/{run}")),
         Route::QuestionsCatalog => get("/v1/questions:catalog".into()),
         Route::Decisions => get("/v1/decisions".into()),
+        Route::DecisionsRequested => get("/v1/decisions:requested".into()),
         Route::Decide => post(
             format!("/v1/decisions/{decision}:decide"),
             json!({"choice": "approve", "idempotencyKey": "k-1"}),

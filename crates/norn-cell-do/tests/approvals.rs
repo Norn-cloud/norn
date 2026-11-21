@@ -200,6 +200,97 @@ fn an_approved_call_commits_on_its_requesters_retry() {
     assert_eq!(cell.caller.current(), None);
 }
 
+/// The caller's own approval-gated calls (`GET /v1/decisions:requested`),
+/// or with `id` that one decision.
+fn requested(cell: &Cell, auth: Option<&str>, id: Option<&str>) -> Value {
+    let query = match id {
+        Some(id) => format!("{SCOPE}&id={id}"),
+        None => SCOPE.to_owned(),
+    };
+    let (status, page) = call_with(cell, "GET", "/v1/decisions:requested", &query, auth, "");
+    assert_eq!(status, 200, "{page}");
+    page
+}
+
+/// APPROVAL-REQUESTED-1: the requester reads their own parked call, exactly
+/// as it waits (its input as canonical text and its key), and is offered to
+/// run it (`canRun`) once it is approved and not yet executed. Retrying
+/// exactly what the document serves commits it; nobody else, the approver
+/// included, ever reads it, and a rejected call is never offered.
+#[test]
+fn the_requester_reads_and_runs_their_approved_call() {
+    let cell = cell();
+    gate(&cell, None);
+    let (status, parked) = convert(&cell, OPERATOR, &melt7("operator-r1"));
+    assert_eq!(status, 202, "{parked}");
+    let id = parked["decision"]["id"].as_str().unwrap().to_owned();
+
+    let page = requested(&cell, OPERATOR, None);
+    assert_eq!(page["items"].as_array().unwrap().len(), 1, "{page}");
+    let waiting = &page["items"][0];
+    assert_eq!(waiting["id"], json!(id));
+    assert_eq!(waiting["status"], json!("pending"));
+    assert_eq!(waiting["canRun"], json!(false));
+    assert_eq!(waiting["question"], json!("Convert this melt?"));
+    assert_eq!(waiting["expiresAtMs"], parked["decision"]["expiresAtMs"]);
+    assert_eq!(waiting["call"]["action"], json!(MELT_ACTION));
+    assert_eq!(waiting["call"]["idempotencyKey"], json!("operator-r1"));
+    assert_eq!(
+        waiting["call"]["encodedInput"],
+        json!(r#"{"id":"melt-7","input_fine_g":"12","output_fine_g":"10"}"#)
+    );
+    assert_eq!(waiting["call"].get("state"), None);
+
+    // Never the approver's, nor anyone else's, even by id.
+    for other in [APPROVER, MEMBER] {
+        assert_eq!(requested(&cell, other, None)["items"], json!([]));
+        assert_eq!(requested(&cell, other, Some(&id))["items"], json!([]));
+    }
+
+    let (status, decided) = decide(&cell, APPROVER, &id, "approve");
+    assert_eq!(status, 200, "{decided}");
+    assert_eq!(decided["call"], not_executed(), "{decided}");
+    assert_eq!(requested(&cell, APPROVER, Some(&id))["items"], json!([]));
+
+    let page = requested(&cell, OPERATOR, None);
+    let approved = &page["items"][0];
+    assert_eq!(approved["status"], json!("approved"), "{page}");
+    assert_eq!(approved["canRun"], json!(true));
+    assert_eq!(approved["call"]["state"], not_executed());
+    assert!(approved["resolvedAtMs"].is_u64(), "{approved}");
+
+    // The served call, sent back exactly, is the requester's retry.
+    let retry = format!(
+        r#"{{"input":{},"idempotencyKey":{}}}"#,
+        approved["call"]["encodedInput"].as_str().unwrap(),
+        approved["call"]["idempotencyKey"]
+    );
+    let (status, committed) = convert(&cell, OPERATOR, &retry);
+    assert_eq!(status, 200, "{committed}");
+    assert_eq!(committed["outcome"], json!("committed"));
+    assert_eq!(melt_status(&cell), 200);
+
+    // It no longer waits; by id it reads committed, with nothing to run.
+    assert_eq!(requested(&cell, OPERATOR, None)["items"], json!([]));
+    let done = requested(&cell, OPERATOR, Some(&id));
+    assert_eq!(done["items"][0]["status"], json!("approved"), "{done}");
+    assert_eq!(done["items"][0]["canRun"], json!(false));
+    assert_eq!(
+        done["items"][0]["call"]["state"],
+        json!({ "committed": true, "state": "committed" })
+    );
+
+    // A rejected call reads rejected and is never offered.
+    let (_, parked) = convert(&cell, OPERATOR, &melt_body("melt-8", "12", "10", "operator-r2"));
+    let rejected_id = parked["decision"]["id"].as_str().unwrap().to_owned();
+    let (status, _) = decide(&cell, APPROVER, &rejected_id, "reject");
+    assert_eq!(status, 200);
+    assert_eq!(requested(&cell, OPERATOR, None)["items"], json!([]));
+    let rejected = requested(&cell, OPERATOR, Some(&rejected_id));
+    assert_eq!(rejected["items"][0]["status"], json!("rejected"), "{rejected}");
+    assert_eq!(rejected["items"][0]["canRun"], json!(false));
+}
+
 /// The active definitions version.
 fn definitions_version(cell: &Cell) -> u64 {
     let (status, catalog) = call_with(cell, "GET", "/v1/definitions", SCOPE, OPERATOR, "");

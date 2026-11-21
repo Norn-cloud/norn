@@ -915,6 +915,305 @@ pub fn list_decisions<E: SqlEngine>(
     })
 }
 
+/// `GET /v1/decisions:requested` query.
+#[derive(Debug, Clone, Default, Deserialize, IntoParams)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[into_params(parameter_in = Query, rename_all = "camelCase")]
+pub struct RequestedQuery {
+    /// Organization (required).
+    #[param(required = true, nullable = false)]
+    pub org_id: Option<String>,
+    /// Environment (required).
+    #[param(required = true, nullable = false)]
+    pub environment_id: Option<String>,
+    /// Only this decision, in whatever state it stands (the id a parked
+    /// call's `202` answer named). Without it, the calls that wait: those
+    /// pending a decider and those approved and not yet run.
+    pub id: Option<String>,
+}
+
+/// Where the caller's parked call stands with its approval.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RequestedStatus {
+    /// It waits for a decider.
+    Pending,
+    /// A decider approved it; `call.state` says whether it ran.
+    Approved,
+    /// A decider rejected it; it never runs.
+    Rejected,
+    /// No one decided before its deadline; it never runs.
+    Expired,
+    /// It was withdrawn before anyone decided.
+    Withdrawn,
+}
+
+/// The parked call itself, exactly as it waits: retrying it means calling
+/// `action` with `encodedInput` as the input and `idempotencyKey` as the key.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RequestedCall {
+    /// The action called.
+    pub action: String,
+    /// The approval definition that gates it.
+    pub definition: String,
+    /// The call's admitted input.
+    #[schema(value_type = BTreeMap<String, serde_json::Value>)]
+    pub input: RuntimeValue,
+    /// The same input as canonical JSON text, numbers digit for digit, so a
+    /// client that parses JSON into binary floats can still send it back
+    /// exactly.
+    pub encoded_input: String,
+    /// The call's idempotency key.
+    pub idempotency_key: String,
+    /// Once it is approved, where the call stands (APPROVAL-RECOVERY-1).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state: Option<DecidedCall>,
+}
+
+/// One approval-gated call the caller made, as its requester sees it
+/// (APPROVAL-1): never a decider's view, and never anyone else's call.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RequestedDecision {
+    /// The opaque decision id.
+    pub id: String,
+    /// The approval's question.
+    pub question: String,
+    /// How much is at stake.
+    pub risk: DecisionRisk,
+    /// When the call parked (logical milliseconds).
+    pub requested_at_ms: u64,
+    /// When the decision expires (logical milliseconds).
+    pub expires_at_ms: u64,
+    /// Where it stands.
+    pub status: RequestedStatus,
+    /// When it was resolved (logical milliseconds), once it was.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved_at_ms: Option<u64>,
+    /// The call.
+    pub call: RequestedCall,
+    /// The cell offers the caller to run it now: it is approved, not yet
+    /// executed, a direct call (a flow step's call runs by retrying its
+    /// run), and the caller is its requester. An offer, not a grant: the
+    /// retry is decided again under the caller's current authority.
+    pub can_run: bool,
+}
+
+/// The caller's own approval-gated calls.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RequestedPage {
+    /// Soonest deadline first, ties to the oldest request, then id.
+    pub items: Vec<RequestedDecision>,
+    /// More calls were not examined.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub total_capped: bool,
+    /// The cell's clock when the page was read (logical milliseconds).
+    pub server_now_ms: u64,
+}
+
+/// Whether `held` is a direct call `actor` made: a flow step's call is
+/// its run's, and the run's retry drives it.
+fn requested_by<E: SqlEngine>(
+    store: &CellStore<E>,
+    held: &HeldCall,
+    actor: &str,
+) -> Result<bool, Refusal> {
+    Ok(held.call.requester.subject == actor
+        && held.call.attempt.is_none()
+        && crate::flow_driver::run_waiting_on(store, &held.call.idempotency_key)?.is_none())
+}
+
+fn requested_document(
+    decision: &OpenDecision,
+    held: &HeldCall,
+    status: RequestedStatus,
+    resolved_at_ms: Option<u64>,
+    state: Option<&CallState>,
+) -> Result<RequestedDecision, Refusal> {
+    let input = RuntimeValue::Object(held.call.input.clone());
+    let encoded_input = String::from_utf8(input.canonical_json().map_err(Refusal::host)?)
+        .map_err(Refusal::host)?;
+    Ok(RequestedDecision {
+        id: decision.id.clone(),
+        question: decision.request.question.clone(),
+        risk: risk(&decision.request),
+        requested_at_ms: decision.requested_at_ms,
+        expires_at_ms: decision.expires_at_ms,
+        status,
+        resolved_at_ms,
+        can_run: status == RequestedStatus::Approved
+            && matches!(state, Some(CallState::NotExecuted)),
+        call: RequestedCall {
+            action: held.call.action.clone(),
+            definition: held.call.definition.clone(),
+            input,
+            encoded_input,
+            idempotency_key: held.call.idempotency_key.clone(),
+            state: state.map(|state| DecidedCall::of(state, None)),
+        },
+    })
+}
+
+/// The resolved decision `decision_id` as its requester `actor` sees it;
+/// `None` when it is not a direct call of theirs.
+fn resolved_requested<E: SqlEngine>(
+    cell: &ActionCell<E>,
+    decision_id: &str,
+    actor: &str,
+) -> Result<Option<RequestedDecision>, Refusal> {
+    let store = cell.store();
+    let Some(row) = store
+        .read()
+        .decision_resolution(MAIN_WORLD, decision_id)
+        .map_err(Refusal::host)?
+    else {
+        return Ok(None);
+    };
+    let Some(pending) = store
+        .read()
+        .outbox_entry(&row.resolved.command_id)
+        .map_err(Refusal::host)?
+    else {
+        return Ok(None);
+    };
+    let Some(decision) = parked_decision(store, &pending)? else {
+        return Ok(None);
+    };
+    let Some(held) = decision.call.as_ref() else {
+        return Ok(None);
+    };
+    if decision.id != decision_id || !requested_by(store, held, actor)? {
+        return Ok(None);
+    }
+    let approved = row.resolved.resolution == Resolution::Decided
+        && row.resolved.choice.as_deref() == Some(crate::approvals::APPROVE);
+    let status = match row.resolved.resolution {
+        Resolution::Decided if approved => RequestedStatus::Approved,
+        Resolution::Decided => RequestedStatus::Rejected,
+        Resolution::Expired => RequestedStatus::Expired,
+        Resolution::Withdrawn => RequestedStatus::Withdrawn,
+    };
+    let state = if approved {
+        let Some(approved_row) = store
+            .read()
+            .approved_call(MAIN_WORLD, decision_id)
+            .map_err(Refusal::host)?
+        else {
+            return Ok(None);
+        };
+        let (_held, state) = crate::approvals::approved_state(cell, &approved_row)?;
+        // A call approved before approved calls were recorded as direct is
+        // offered only when its approval still binds it to a direct call.
+        if crate::approvals::binding(cell, &approved_row, held)?
+            != crate::approvals::Binding::Direct
+        {
+            return Ok(None);
+        }
+        Some(state)
+    } else {
+        None
+    };
+    requested_document(
+        &decision,
+        held,
+        status,
+        Some(row.resolved_at_ms),
+        state.as_ref(),
+    )
+    .map(Some)
+}
+
+/// `GET /v1/decisions:requested`: the caller's own approval-gated calls, as
+/// their requester sees them (APPROVAL-1, APPROVAL-RECOVERY-1). A requester
+/// never decides their call and never lists it among the decisions waiting
+/// on them; this is where they learn that it was approved and retry it
+/// (`canRun`), with the exact input and key it parked with. Without `id`:
+/// the calls pending a decider and those approved and not yet run. With
+/// `id`: that decision in any state, or no item when it is not the caller's
+/// direct call (the cell does not say which).
+///
+/// # Errors
+/// Missing or foreign scope; a missing caller (one opaque 403); an invalid
+/// id; a host failure.
+#[utoipa::path(get, path = "/v1/decisions:requested", params(RequestedQuery), responses((status = 200, description = "The caller's own approval-gated calls.", body = RequestedPage), (status = 400, description = "The request was refused as invalid.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
+pub fn requested_decisions<E: SqlEngine>(
+    host: &DevHost<E>,
+    query: &RequestedQuery,
+    actor: Option<&str>,
+    now: LogicalTime,
+) -> Result<RequestedPage, Refusal> {
+    let _epoch = host.definition_read()?;
+    host.scope()
+        .admit(query.org_id.as_deref(), query.environment_id.as_deref())?;
+    let actor = actor
+        .filter(|actor| !actor.trim().is_empty())
+        .ok_or_else(crate::authz::read_denied)?;
+    let wanted = query.id.as_deref();
+    if wanted.is_some_and(|id| id.is_empty() || id.len() > MAX_IDEMPOTENCY_KEY_BYTES) {
+        return Err(Refusal::invalid("id must be a decision id"));
+    }
+    let cell = host.cell()?;
+    let store = cell.store();
+    let now_ms = now.as_millis().max(cell.now().as_millis());
+    let mut items = Vec::new();
+    let mut capped = false;
+    for decision in open_decisions(store)? {
+        if wanted.is_some_and(|id| id != decision.id) {
+            continue;
+        }
+        let Some(held) = decision.call.as_ref() else {
+            continue;
+        };
+        if !requested_by(store, held, actor)? {
+            continue;
+        }
+        if items.len() == MAX_DECISION_SCAN {
+            capped = true;
+            break;
+        }
+        // Its deadline passed and the expiry is not recorded yet: it never
+        // runs, whatever records it.
+        let status = if decision.expires_at_ms <= now_ms {
+            RequestedStatus::Expired
+        } else {
+            RequestedStatus::Pending
+        };
+        items.push(requested_document(&decision, held, status, None, None)?);
+    }
+    match wanted {
+        Some(id) if items.is_empty() => items.extend(resolved_requested(&cell, id, actor)?),
+        Some(_open) => {}
+        None => {
+            let waiting = store
+                .read()
+                .unconsumed_approved_calls(MAIN_WORLD, MAX_DECISION_SCAN)
+                .map_err(Refusal::host)?;
+            capped |= waiting.len() == MAX_DECISION_SCAN;
+            for row in waiting {
+                if let Some(item) = resolved_requested(&cell, &row.decision_id, actor)?
+                    && item.can_run
+                {
+                    items.push(item);
+                }
+            }
+        }
+    }
+    items.sort_by(|left, right| {
+        (left.expires_at_ms, left.requested_at_ms, left.id.as_str()).cmp(&(
+            right.expires_at_ms,
+            right.requested_at_ms,
+            right.id.as_str(),
+        ))
+    });
+    Ok(RequestedPage {
+        items,
+        total_capped: capped,
+        server_now_ms: now_ms,
+    })
+}
+
 fn request_hash(body: &DecideRequest) -> Result<String, Refusal> {
     norn_ir::canonical::domain_hash_hex(b"norn.decision.decide/1\0", &(&body.choice, &body.note))
         .map_err(Refusal::host)

@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
@@ -9,6 +9,8 @@ import { listActions, type ActionSummary, type CatalogRead, type Draft } from ".
 import { useAccount } from "../lib/session.ts"
 import { ActionForm } from "./action-form.tsx"
 import { keptDrafts, sessionKey } from "./kept-drafts.ts"
+import { parkedCalls } from "./parked-calls.ts"
+import type { ParkedCall } from "../lib/screen/call.ts"
 
 /**
  * The actions the cell offers this reader for one object type, or for one record in its current
@@ -20,7 +22,14 @@ export function useActions(objectKind: string, objectId?: string, enabled = true
 
 const draftKey = (open: OpenAction) => `${open.action.actionId}:${JSON.stringify(open.prefill ?? {})}`
 
-export interface OpenAction { readonly action: ActionSummary; readonly prefill?: Readonly<Record<string, string>> }
+export interface OpenAction {
+  readonly action: ActionSummary
+  readonly prefill?: Readonly<Record<string, string>>
+  /** Open on this parked call (the inbox's "Approved, run it"), as the cell serves it. */
+  readonly parked?: ParkedCall
+  /** Run the parked call as soon as the cell offers it. */
+  readonly runNow?: boolean
+}
 
 /**
  * A governed action's form in a sheet. Closing a draft with unsent changes asks first; so does
@@ -45,6 +54,9 @@ export function ActionSheet({ open, onClose, onView }: { readonly open: OpenActi
     setBanner(draft !== undefined)
   }, [open, session])
   const client = useQueryClient()
+  // A call this form sent that parked: the form reopens on it until it commits or a new draft starts.
+  // Read when the sheet opens on a form; the form reports later changes to the store, not to this value.
+  const parked = useMemo<ParkedCall | undefined>(() => open === null ? undefined : open.parked ?? parkedCalls.get(session, draftKey(open)), [open, session])
   useEffect(() => { if (open === null) { setDirty(false); setAsking(false) } }, [open])
   useEffect(() => {
     if (!dirty) return
@@ -57,6 +69,8 @@ export function ActionSheet({ open, onClose, onView }: { readonly open: OpenActi
       void client.invalidateQueries({ queryKey: ["records", open.action.objectKind] })
       // A record's offered actions follow its state.
       void client.invalidateQueries({ queryKey: ["actions", open.action.objectKind] })
+      // A parked call that ran, or one that parked, moves the requester's list.
+      void client.invalidateQueries({ queryKey: ["decisions"] })
     }
     onClose()
   }
@@ -78,15 +92,18 @@ export function ActionSheet({ open, onClose, onView }: { readonly open: OpenActi
                 : <SheetDescription className="sr-only">{open.action.title}</SheetDescription>}
             </SheetHeader>
             <div className="px-6">
-              {banner && (
+              {banner && parked === undefined && (
                 <p role="status" className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-node-border bg-muted/50 px-3 py-2 text-sm">
                   Restored your draft from earlier in this session.
                   <span className="flex-1" />
                   <Button type="button" variant="ghost" size="sm" className="h-7" onClick={() => { kept.delete(draftKey(open)); latest.current = null; setRestored(undefined); setBanner(false); setDirty(false); setGeneration((g) => g + 1) }}>Start over</Button>
                 </p>
               )}
-              <ActionForm key={`${draftKey(open)}:${generation}:${restored === undefined ? "new" : "kept"}`} action={open.action} objectTitle={conceptTitle(open.action.objectKind)}
-                remembered={restored} onDraft={(draft) => { latest.current = draft }} onCommitted={() => { kept.delete(draftKey(open)); setBanner(false) }}
+              <ActionForm key={`${draftKey(open)}:${generation}:${restored === undefined ? "new" : "kept"}:${parked?.decision.id ?? "draft"}`} action={open.action} objectTitle={conceptTitle(open.action.objectKind)}
+                remembered={parked === undefined ? restored : undefined} onDraft={(draft) => { latest.current = draft }}
+                onCommitted={() => { kept.delete(draftKey(open)); parkedCalls.delete(session, draftKey(open)); setBanner(false) }}
+                parked={parked} runNow={open.runNow === true && parked === open.parked}
+                onParked={(call) => parkedCalls.set(session, draftKey(open), call)} onUnparked={() => parkedCalls.delete(session, draftKey(open))}
                 onChanged={() => void client.invalidateQueries({ queryKey: ["records", open.action.objectKind] })}
                 technical={technical} prefill={open.prefill} onDirty={setDirty} onClose={close}
                 onView={onView === undefined ? undefined : (id) => { close(); onView(id) }} />

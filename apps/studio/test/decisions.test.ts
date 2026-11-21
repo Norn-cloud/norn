@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
-import { badgeText, cellNow, countDecisions, decide, flowTitle, listDecisions, needsConfirm, remaining, stepTitle, urgent } from "../src/lib/decisions.ts"
+import { badgeText, cellNow, countDecisions, decide, flowTitle, listDecisions, listRequested, needsConfirm, parkedFrom, remaining, requestedAction, requestedWords, runnable, stepTitle, urgent, type RequestedDecision } from "../src/lib/decisions.ts"
+import type { ActionSummary } from "../src/lib/actions.ts"
 import { getRun, newRunId, phaseOf, refreshEvery, runTitle, startRun, type RunStep } from "../src/lib/runs.ts"
 
 const ME = { user: { id: "u" }, organization: { id: "org_demo", name: "Demo", role: "member" }, environmentId: "analytics" }
@@ -118,4 +119,41 @@ test("a run is read with its ETag; an unchanged run answers 304; starting one po
   expect(await startRun("canon.daily_totals", "run_1", post.fetcher)).toMatchObject({ kind: "ok", status: 201 })
   expect(post.calls[0]?.init?.body).toBe('{"flow":"canon.daily_totals","runId":"run_1"}')
   expect(await getRun("nope", null, cell(refusal(404, "run.not_found")).fetcher)).toMatchObject({ kind: "refused", refusal: { code: "run.not_found" } })
+})
+
+// APPROVAL-REQUESTED-1: the requester's own calls, as the cell serves them.
+const requested = (over: Partial<RequestedDecision> = {}): RequestedDecision => ({
+  id: "dec_1", question: "Refund 1,240.00 USD?", risk: "medium", requestedAtMs: 1, expiresAtMs: 9, status: "approved",
+  call: { action: "ops.refund", definition: "ops.refund_approval", input: { amount: 1240 }, encodedInput: '{"amount":1240.000,"id":"r-1"}', idempotencyKey: "k-parked", state: { committed: false, state: "not_executed" } },
+  canRun: true, ...over,
+})
+
+test("the requested calls are read scoped, by id when one is named", async () => {
+  const live = cell(() => Response.json({ items: [], serverNowMs: 1 }))
+  expect(await listRequested(undefined, live.fetcher)).toMatchObject({ kind: "ok", value: { items: [] } })
+  expect(await listRequested("dec_1", live.fetcher)).toMatchObject({ kind: "ok" })
+  expect(live.calls.map(({ url }) => url.pathname)).toEqual(["/api/host/v1/decisions:requested", "/api/host/v1/decisions:requested"])
+  expect(live.calls[0]!.url.searchParams.get("id")).toBeNull()
+  expect(live.calls[1]!.url.searchParams.get("id")).toBe("dec_1")
+  expect(live.calls[1]!.url.searchParams.get("orgId")).toBe("org_demo")
+})
+
+test("run it is offered only when the cell offers it, and sends the served call digit for digit", () => {
+  expect(runnable(requested())).toEqual({ decisionId: "dec_1", actionId: "ops.refund", input: '{"amount":1240.000,"id":"r-1"}', key: "k-parked" })
+  // The cell's offer decides; Studio adds nothing of its own.
+  expect(runnable(requested({ canRun: false }))).toBeNull()
+  expect(runnable(requested({ status: "pending" }))).toBeNull()
+  expect(runnable(requested({ status: "rejected" }))).toBeNull()
+  // The sheet opens on exactly the served call: its decision, its encoded input (not a re-encoding of `input`) and its key.
+  expect(parkedFrom(requested())).toEqual({ decision: { id: "dec_1", expiresAtMs: 9 }, input: '{"amount":1240.000,"id":"r-1"}', key: "k-parked" })
+})
+
+test("a requested call reads in the requester's words, and names its action even when the catalog no longer offers it", () => {
+  expect(requestedWords(requested({ status: "pending", canRun: false }))).toBe("Waiting for a decider's approval.")
+  expect(requestedWords(requested())).toBe("Approved. It runs when you run it.")
+  expect(requestedWords(requested({ canRun: false, call: { ...requested().call, state: { committed: true, state: "committed" } } }))).toBe("Approved and run.")
+  expect(requestedWords(requested({ status: "rejected", canRun: false }))).toContain("rejected")
+  const listed = { actionId: "ops.refund", title: "Issue refund" } as ActionSummary
+  expect(requestedAction([listed], requested())).toBe(listed)
+  expect(requestedAction([], requested())).toMatchObject({ actionId: "ops.refund", title: "Refund", uiEffects: { destructive: false, irreversible: false } })
 })

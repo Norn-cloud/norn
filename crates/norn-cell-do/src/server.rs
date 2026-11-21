@@ -4,7 +4,7 @@
 //! `/v1/definitions/{id}:retire`), the one governed action route,
 //! `POST /v1/actions/{actionId}`, the run routes (`POST /v1/runs`,
 //! `GET /v1/runs/{id}`), the decision routes (`GET /v1/decisions`,
-//! `POST /v1/decisions/{id}:decide`); and `POST /v1/mcp`, whose tools call
+//! `GET /v1/decisions:requested`, `POST /v1/decisions/{id}:decide`); and `POST /v1/mcp`, whose tools call
 //! these same routes ([`crate::mcp`]).
 //!
 //! The transport carries method, path, query, the `Authorization` header and
@@ -226,6 +226,8 @@ routes! {
     QuestionsCatalog => ("GET", "/v1/questions:catalog"),
     /// `GET /v1/decisions` (DECISIONS-1).
     Decisions => ("GET", "/v1/decisions"),
+    /// `GET /v1/decisions:requested` (APPROVAL-REQUESTED-1).
+    DecisionsRequested => ("GET", "/v1/decisions:requested"),
     /// `POST /v1/decisions/{id}:decide` (DECISIONS-1).
     Decide => ("POST", "/v1/decisions/{id}:decide"),
     /// `GET /v1/transforms/{transform}/rows`.
@@ -291,6 +293,7 @@ impl Route {
             "/v1/runs" => return Some(Self::RunStart),
             "/v1/questions:catalog" => return Some(Self::QuestionsCatalog),
             "/v1/decisions" => return Some(Self::Decisions),
+            "/v1/decisions:requested" => return Some(Self::DecisionsRequested),
             "/v1/datasets:load" => return Some(Self::DatasetLoad),
             "/v1/transforms:compile" => return Some(Self::TransformsCompile),
             "/v1/guard:prompt" => return Some(Self::GuardPrompt),

@@ -238,6 +238,22 @@ retry drives it) runs the call and moves the run. Named scenarios (`crates/norn-
 **APPROVAL-STEP-PARKS**, **APPROVAL-STEP-REJECTED**, and on hosts serving MCP
 **APPROVAL-MCP-PARKS** (a tool call answers the same pending decision).
 
+**APPROVAL-REQUESTED-1** (#1531): a requester never lists their call among
+the decisions waiting on them, so `GET /v1/decisions:requested` is where they
+read it: their own direct parked calls (never a flow step's, which its run's
+retry drives, and never anyone else's), each with its `status` (`pending`,
+`approved`, `rejected`, `expired`, `withdrawn`), the call exactly as it waits
+(`action`, `input`, `encodedInput` as canonical JSON text, `idempotencyKey`)
+and, once approved, its `state` as the decide answer reports it. Without `id`
+it lists the calls pending a decider and those approved and not yet executed;
+with `id` it reads that decision in any state, and answers no item for one
+that is not the caller's. `canRun` is the cell's offer to retry it now
+(approved, `not_executed`, a direct call of the caller's); it grants nothing:
+sending back exactly the served call is the requester's retry, decided again
+under their current authority, so a role revoked after parking is refused
+there. Named scenario (`crates/norn-cell-do/tests/approvals.rs`):
+**APPROVAL-REQUESTED-1**.
+
 **APPROVAL-RIDES-SET-1** (#1469): a pack's approvals ride its definitions
 apply (`POST /v1/cell/definitions:apply`, and MCP's `norn_apply_definitions`,
 which forwards the same `approvals`): each is admitted against the candidate

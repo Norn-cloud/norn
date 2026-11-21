@@ -27,7 +27,10 @@ use std::collections::BTreeMap;
 use http::StatusCode;
 use norn_api::actions::ActionAnswer;
 use norn_api::authz::ReadCapability;
-use norn_api::decisions::{DecideCall, DecideRequest, DecisionsQuery, decide, list_decisions};
+use norn_api::decisions::{
+    DecideCall, DecideRequest, DecisionsQuery, RequestedQuery, decide, list_decisions,
+    requested_decisions,
+};
 use norn_api::host::DevHost;
 use norn_api::question_routes::AdHocQuestions;
 use norn_api::refusal::Refusal;
@@ -148,16 +151,21 @@ fn runs<E: SqlEngine>(
     }
 }
 
-/// A decision route: `/v1/decisions` or `/v1/decisions/{id}:decide`.
+/// A decision route: `/v1/decisions`, `/v1/decisions:requested` or
+/// `/v1/decisions/{id}:decide`.
 #[derive(Debug, Clone, Copy)]
 enum DecisionsRoute<'p> {
     Collection,
+    Requested,
     Decide(&'p str),
 }
 
 fn decisions_route(path: &str) -> Option<DecisionsRoute<'_>> {
     if path == "/v1/decisions" {
         return Some(DecisionsRoute::Collection);
+    }
+    if path == "/v1/decisions:requested" {
+        return Some(DecisionsRoute::Requested);
     }
     path.strip_prefix("/v1/decisions/")
         .and_then(|rest| rest.strip_suffix(":decide"))
@@ -203,6 +211,18 @@ fn decisions<E: SqlEngine>(
             Ok((
                 StatusCode::OK,
                 document_json(&list_decisions(host, &query, actor, now)?)?,
+            ))
+        }
+        (DecisionsRoute::Requested, "GET") => {
+            let mut fields = parse(request.query, &["orgId", "environmentId", "id"])?;
+            let query = RequestedQuery {
+                org_id: fields.remove("orgId"),
+                environment_id: fields.remove("environmentId"),
+                id: fields.remove("id"),
+            };
+            Ok((
+                StatusCode::OK,
+                document_json(&requested_decisions(host, &query, actor, now)?)?,
             ))
         }
         (DecisionsRoute::Decide(id), "POST") => {
@@ -270,6 +290,9 @@ fn decisions<E: SqlEngine>(
             }
         }
         (DecisionsRoute::Collection, _) => Err(not_allowed("decisions are listed with GET")),
+        (DecisionsRoute::Requested, _) => {
+            Err(not_allowed("the caller's requested calls are listed with GET"))
+        }
         (DecisionsRoute::Decide(_), _) => Err(not_allowed("a decision is decided with POST")),
     }
 }
