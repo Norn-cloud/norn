@@ -38,19 +38,22 @@ pub struct DevHost<E: SqlEngine> {
     /// The marking catalog of the active definitions, by definitions version.
     markings: Mutex<Option<(Option<u64>, crate::privacy::MarkingCatalog)>>,
     /// ADMIT-CACHE-1 (#1533): the active definitions' verified retained
-    /// actions, keyed by their version and admission receipt digest. Filled
+    /// actions, keyed by their version and admission receipt digest and by
+    /// the store's foreign-write revision when they were verified. Filled
     /// only by a verification this process ran ([`RetainedActions::load`]);
-    /// any other identity misses and verifies again, and an install clears
-    /// it.
+    /// any other identity or revision misses and verifies again, and an
+    /// install clears it.
     ///
     /// [`RetainedActions::load`]: crate::action_admission::RetainedActions::load
     retained: Mutex<Option<CachedRetained>>,
 }
 
 /// One verified retained set ([`DevHost::retained`]): the identity it was
-/// verified under and what the verification admitted.
+/// verified under, the foreign-write revision it was read at, and what the
+/// verification admitted.
 type CachedRetained = (
     (u64, String),
+    u64,
     std::sync::Arc<crate::action_admission::RetainedActions>,
 );
 
@@ -264,9 +267,20 @@ impl<E: SqlEngine> DevHost<E> {
     /// ADMIT-CACHE-1 (#1533): the verified retained actions of the active
     /// definitions `reader` sees, with their version, or `None` with nothing
     /// installed. The receipt is verified against the retained set once per
-    /// definitions identity (version and receipt digest) in this process;
-    /// a call under the same identity reuses that verification, and a
-    /// refused verification is never kept, so the next call verifies again.
+    /// definitions identity (version and receipt digest) and foreign-write
+    /// revision in this process; a call under the same identity and revision
+    /// reuses that verification, and a refused verification is never kept,
+    /// so the next call verifies again.
+    ///
+    /// The revision is the engine's count of commits by any other connection
+    /// or process (`PRAGMA data_version` on native SQLite; constant on an
+    /// engine that is its database's only writer), read before anything it
+    /// covers. This connection writes the retained tables only by an install,
+    /// which clears the cache ([`Self::model_changed`]). So an in-place edit
+    /// of the retained set or its receipt, with the digest column held
+    /// constant, misses here and is verified, and refused, exactly as a fresh
+    /// host would. An engine that offers no revision (inside a transaction)
+    /// verifies on every call and keeps nothing.
     /// # Errors
     /// The retained set does not verify, or a store failure.
     pub(crate) fn retained(
@@ -279,6 +293,12 @@ impl<E: SqlEngine> DevHost<E> {
         )>,
         Refusal,
     > {
+        // C1 (#1547): read before the identity and the set it covers, so a
+        // foreign commit after this read is seen by the next call.
+        let foreign = reader
+            .database_revision()
+            .map_err(Refusal::host)?
+            .map(|(_local, foreign)| foreign);
         let Some(identity) = reader
             .active_definitions_identity()
             .map_err(Refusal::host)?
@@ -286,11 +306,15 @@ impl<E: SqlEngine> DevHost<E> {
             return Ok(None);
         };
         let mut cached = self.retained.lock().map_err(Refusal::host)?;
-        if let Some((at, actions)) = cached.as_ref()
+        if let (Some(foreign), Some((at, seen, actions))) = (foreign, cached.as_ref())
             && *at == identity
+            && *seen == foreign
         {
             return Ok(Some((identity.0, std::sync::Arc::clone(actions))));
         }
+        // A miss drops what it misses: nothing verified at another identity
+        // or revision is served again.
+        *cached = None;
         let installed = reader
             .installed_definitions(Some(identity.0))
             .map_err(Refusal::host)?
@@ -302,7 +326,9 @@ impl<E: SqlEngine> DevHost<E> {
             &installed,
             self.scope(),
         )?);
-        *cached = Some((identity, std::sync::Arc::clone(&actions)));
+        if let Some(foreign) = foreign {
+            *cached = Some((identity, foreign, std::sync::Arc::clone(&actions)));
+        }
         Ok(Some((installed.version, actions)))
     }
     /// Physical scope, never taken from client claims.

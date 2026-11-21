@@ -236,6 +236,10 @@ pub trait SqlEngine {
     /// Hosts without this capability return `None`; no cache survives their read boundary.
     /// Return `None` while uncommitted state could later roll back without
     /// changing the token. Native engines only offer revisions in autocommit mode.
+    /// The second component alone counts commits by every other connection or
+    /// process (native SQLite's `PRAGMA data_version`), and is constant on an
+    /// engine whose connection is its database's only writer: equal values
+    /// mean nothing but this connection wrote in between (ADMIT-CACHE-1).
     /// This is a host optimization, not an extension of admitted SQL.
     ///
     /// # Errors

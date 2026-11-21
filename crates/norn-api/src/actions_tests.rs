@@ -937,6 +937,117 @@ fn a_changed_definitions_identity_is_verified_again_before_any_call() {
     assert_eq!(dump(&host), before, "a refused call writes nothing");
 }
 
+/// Edit `column` of `table`'s version-1 row in place through another
+/// connection, as an out-of-process editor would; the receipt digest column
+/// on the active row stays as it was.
+fn edit_in_place(path: &std::path::Path, table: &str, column: &str, edit: fn(&mut Value)) {
+    use norn_cell::engine::{SqlEngine, SqlValue};
+    let raw = NativeEngine::open(path, norn_cell::StoreOptions::default()).unwrap();
+    let digest = |raw: &NativeEngine| {
+        raw.query_row(
+            "SELECT \"receipt_sha256\" FROM \"_norn_definition_version\" WHERE \"version\" = 1",
+            &[],
+            |row| row.get::<String>(0),
+        )
+        .unwrap()
+    };
+    let held = digest(&raw);
+    let text = raw
+        .query_row(
+            &format!("SELECT \"{column}\" FROM \"{table}\" WHERE \"version\" = 1"),
+            &[],
+            |row| row.get::<String>(0),
+        )
+        .unwrap();
+    let mut value: Value = serde_json::from_str(&text).unwrap();
+    edit(&mut value);
+    let edited = serde_json::to_string(&value).unwrap();
+    assert_ne!(edited, text, "the edit changes the retained bytes");
+    raw.execute(
+        &format!("UPDATE \"{table}\" SET \"{column}\" = ?1 WHERE \"version\" = 1"),
+        &[SqlValue::Text(edited)],
+    )
+    .unwrap();
+    assert_eq!(digest(&raw), held, "the digest column is held constant");
+}
+
+#[test]
+fn a_warm_host_refuses_definitions_edited_in_place_as_a_fresh_host_does() {
+    // C1 (#1547): the cache is keyed by the definitions identity and by the
+    // store's foreign-write revision, so an in-place edit of the retained
+    // set or of its receipt that keeps the digest column misses the warm
+    // cache and is verified again. The warm host must refuse exactly as a
+    // host opened afresh on an identical, identically edited file.
+    let drop_last_artifact: fn(&mut Value) = |set| {
+        set.as_array_mut().unwrap().pop().unwrap();
+    };
+    let annotate_receipt: fn(&mut Value) = |receipt| {
+        receipt
+            .as_object_mut()
+            .unwrap()
+            .insert("edited".into(), json!(true));
+    };
+    for (table, column, edit) in [
+        ("_norn_definition_version", "canonical_set", drop_last_artifact),
+        ("_norn_definition_admission_receipt", "receipt", annotate_receipt),
+    ] {
+        let (_dir, a, b) = twin_files(DERIVES_LOSS);
+        let warm = open_melt(&a, DERIVES_LOSS);
+        let operator = Some(OPERATOR);
+        let first = LogicalTime::from_millis(1_700_000_000_000);
+        let later = LogicalTime::from_millis(1_700_000_000_001);
+        let warming = melt_body("melt-1", "12", "10", "one");
+        // The first call verifies and keeps the retained set; the twin takes
+        // the same commit, so both files hold the same cell.
+        call_at(&warm, &scoped("org_demo"), operator, MELT_ACTION, &warming, first).unwrap();
+        call_at(
+            &open_melt(&b, DERIVES_LOSS),
+            &scoped("org_demo"),
+            operator,
+            MELT_ACTION,
+            &warming,
+            first,
+        )
+        .unwrap();
+        for path in [&a, &b] {
+            edit_in_place(path, table, column, edit);
+        }
+        let before = dump(&warm);
+        let body = melt_body("melt-2", "12", "10", "two");
+        let answer = |host: &DevHost<NativeEngine>| {
+            call_at(host, &scoped("org_demo"), operator, MELT_ACTION, &body, later)
+        };
+        let warm_answer = answer(&warm);
+        let fresh = {
+            let (model, input) = action_cell::melt_install(
+                DERIVES_LOSS,
+                crate::action_admission::prepare_action_model,
+                1,
+            );
+            let engine = NativeEngine::open(&b, norn_cell::StoreOptions::default()).unwrap();
+            CellStore::provision_definitions(engine, model, &input, "org_demo/dev").map(host_of)
+        };
+        let refused = warm_answer.as_ref().expect_err(column);
+        match fresh {
+            // A fresh host that opens refuses the call itself: the same answer.
+            Ok(fresh) => assert_eq!(
+                format!("{warm_answer:?}"),
+                format!("{:?}", answer(&fresh)),
+                "{column}"
+            ),
+            // A fresh host that refuses to open serves nothing: a host refusal.
+            Err(_refused_open) => assert_eq!(refused.status, 500, "{column}: {refused:?}"),
+        }
+        assert_eq!(dump(&warm), before, "{column}: a refused call writes nothing");
+        // A refused verification is never kept: the next call refuses again.
+        assert_eq!(
+            format!("{:?}", answer(&warm)),
+            format!("{warm_answer:?}"),
+            "{column}"
+        );
+    }
+}
+
 #[test]
 fn an_install_drops_the_verified_definitions_of_the_last_revision() {
     // ADMIT-CACHE-1: an install clears the cache, and the next call runs under
