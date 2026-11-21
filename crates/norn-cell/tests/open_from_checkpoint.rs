@@ -933,13 +933,18 @@ fn a_hidden_idempotency_key_is_never_committed_twice() {
     );
     let mut store = open(&path).expect("the open verifies from the checkpoint");
     assert!(!history_ready(&store));
+    // The client's retry, stamped with the host's current time.
+    let retry = CommitBatch {
+        logical_time: 10_000 + EVERY + 20,
+        ..put(n)
+    };
     assert!(
-        matches!(store.commit(&put(n)), Err(CellError::Verifying(_))),
+        matches!(store.commit(&retry), Err(CellError::Verifying(_))),
         "a retry of a hidden key was not held back"
     );
     assert!(matches!(store.scrub_to_end(), ScrubStatus::Fenced { .. }));
     assert!(
-        matches!(store.commit(&put(n)), Err(CellError::Fenced(_))),
+        matches!(store.commit(&retry), Err(CellError::Fenced(_))),
         "a fenced cell committed"
     );
     drop(store);
