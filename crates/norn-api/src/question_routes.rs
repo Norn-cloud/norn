@@ -235,7 +235,13 @@ fn answer_plan<E: SqlEngine>(
         return Err(read_denied());
     }
     let historical = snapshot.cutoff.is_some() || plan.as_of();
-    refuse_labeled_paths(host, cell.store(), plan, &snapshot.context.world, historical)?;
+    refuse_labeled_paths(
+        host,
+        cell.store(),
+        plan,
+        &snapshot.context.world,
+        historical,
+    )?;
     let permits = |row: &ObjectRecord, grant| allowed(host, runtime, actor, question, row, grant);
     let mut withheld = BTreeSet::new();
     let mut visible = |row: &ObjectRecord| visible_recording(row, &permits, &mut withheld);
@@ -554,7 +560,13 @@ fn trace_plan<E: SqlEngine>(
         return Err(read_denied());
     }
     let historical = snapshot.cutoff.is_some() || answered.is_some() || plan.as_of();
-    refuse_labeled_paths(host, cell.store(), plan, &snapshot.context.world, historical)?;
+    refuse_labeled_paths(
+        host,
+        cell.store(),
+        plan,
+        &snapshot.context.world,
+        historical,
+    )?;
     if snapshot.cutoff.is_some() {
         return Err(Refusal::from_compute(CellError::ComputeRefused(
             "core.compute.unsupported_engine",
