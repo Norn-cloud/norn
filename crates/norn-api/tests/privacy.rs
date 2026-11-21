@@ -408,6 +408,10 @@ fn every_mode_is_applied_on_the_server_and_an_unkeyed_pseudonym_redacts() {
 /// history: its version, commit and time would tell that a hidden value
 /// changed then. A later write that changes a visible value is listed, and
 /// its change is read against the last version listed.
+///
+/// The asserted versions are historical ones: this fixture's later commits
+/// leave the head's current marking snapshot unset, so the head (v4) is
+/// projected fail-closed with every property withheld, as its object read is.
 #[test]
 fn a_history_omits_a_write_that_changed_only_a_withheld_field() {
     let (host, _directory) = host_with(
@@ -417,6 +421,7 @@ fn a_history_omits_a_write_that_changed_only_a_withheld_field() {
         &[
             vec![customer("c1", "Ada", "ada@new.example.com")],
             vec![customer("c1", "Ada Lovelace", "ada@new.example.com")],
+            vec![customer("c1", "Ada King", "ada@new.example.com")],
         ],
     );
     let history =
@@ -426,20 +431,17 @@ fn a_history_omits_a_write_that_changed_only_a_withheld_field() {
         .iter()
         .map(|version| version.version)
         .collect();
-    assert_eq!(listed, [3, 1], "{history:#?}");
-    let names: Vec<Option<&V>> = history
-        .versions
-        .iter()
-        .map(|version| {
-            version
-                .values
-                .as_ref()
-                .and_then(|values| values.get("name"))
-        })
-        .collect();
+    assert_eq!(listed, [4, 3, 1], "{history:#?}");
+    let name = |index: usize| {
+        history.versions[index]
+            .values
+            .as_ref()
+            .and_then(|values| values.get("name"))
+            .cloned()
+    };
     assert_eq!(
-        names,
-        [Some(&V::from("Ada Lovelace")), Some(&V::from("Ada"))]
+        (name(1), name(2)),
+        (Some(V::from("Ada Lovelace")), Some(V::from("Ada")))
     );
     let document = serde_json::to_string(&history).unwrap();
     for withheld in ["example.com", "\"logicalTime\":3,"] {
