@@ -24,6 +24,7 @@ fn store_options() -> StoreOptions {
     StoreOptions {
         journal_mode: JournalMode::Delete,
         cache_pages: None,
+        checkpoint_key: None,
     }
 }
 

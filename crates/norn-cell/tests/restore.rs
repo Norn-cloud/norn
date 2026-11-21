@@ -305,6 +305,7 @@ async fn wipe_restore_preserves_all_tables_receipts_links_and_export_continuatio
         let options = StoreOptions {
             journal_mode,
             cache_pages: Some(10),
+            checkpoint_key: None,
         };
         let mut store = CellStore::open(&path, model(), options).expect("store");
         store.bind("scope", "org_demo/dev").expect("binding");

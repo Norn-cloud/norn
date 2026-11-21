@@ -105,6 +105,8 @@ counters = ["norn-ir/counters"]
 [dependencies]
 ct-merkle = "=0.3.0"
 transparency-sha2 = { package = "sha2", version = "0.11" }
+# OPEN-CHECKPOINT-1 (#1551 round 4): the open checkpoint's HMAC-SHA256.
+hmac = "=0.13.0"
 base64 = { version = "0.23.1", default-features = false, features = ["std"] }
 norn-checker = { path = "../norn-checker" }
 norn-ir = { path = "../norn-ir" }

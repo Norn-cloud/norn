@@ -158,12 +158,21 @@ impl NornCell {
     /// (fetched at `now_ms`, Unix milliseconds); without the `fixtures` feature
     /// both are required. `lineage_key` is the stage secret
     /// (`NORN_LINEAGE_KEY`) that keys the analytics cell's lineage handles.
+    /// `checkpoint_key` (`NORN_CHECKPOINT_KEY`, 64 hexadecimal digits, from
+    /// the Worker's secret store) authenticates the cell's open checkpoint
+    /// (OPEN-CHECKPOINT-1, #1551): without it, every open verifies the whole
+    /// history and no checkpoint is recorded; a malformed one refuses the
+    /// open, as a malformed signing key does.
     ///
     /// # Errors
     /// Seeding failed, the storage holds a cell this host cannot serve, no
     /// usable issuer keys were supplied, or the analytics cell has no lineage
     /// key of at least 32 bytes.
     #[wasm_bindgen(constructor)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "wasm-bindgen constructors take the Worker's bindings positionally"
+    )]
     pub fn new(
         storage: JsValue,
         org_id: String,
@@ -172,15 +181,24 @@ impl NornCell {
         jwks: Option<String>,
         lineage_key: Option<String>,
         now_ms: f64,
+        checkpoint_key: Option<String>,
     ) -> Result<Self, JsValue> {
         crate::incident::install_panic_log();
         let lineage_key = lineage_key.map(String::into_bytes);
+        let checkpoint_key = checkpoint_key
+            .as_deref()
+            .map(norn_cell::CheckpointKey::from_hex)
+            .transpose()
+            .map_err(|error| JsValue::from_str(&format!("NORN_CHECKPOINT_KEY: {error}")))?;
+        let engine = move |storage: JsValue| {
+            WorkersEngine::new(storage).with_checkpoint_key(checkpoint_key)
+        };
         let scope = CellScope {
             org_id,
             environment_id,
         };
         let tenant = (if scope == seed::demo_scope() {
-            let store = seed::provision(WorkersEngine::new(storage), &scope).map_err(rejected)?;
+            let store = seed::provision(engine(storage), &scope).map_err(rejected)?;
             // The demo cell publishes no questions: its decisions and action
             // calls answer with the lineage-keyed receipt handles.
             Tenant::seeded(scope.clone(), &DEMO_GRANTS, store, None)
@@ -191,7 +209,7 @@ impl NornCell {
                 plan,
                 definitions,
                 catalog,
-            } = analytics::provision(WorkersEngine::new(storage), &scope).map_err(rejected)?;
+            } = analytics::provision(engine(storage), &scope).map_err(rejected)?;
             let questions = DemoQuestions::new(plan, scope.clone())
                 .try_with_handle_key(lineage_key.as_deref())
                 .map_err(rejected)?
@@ -201,7 +219,7 @@ impl NornCell {
             Tenant::open(
                 scope.clone(),
                 &DEMO_GRANTS,
-                Box::new(move || Ok(WorkersEngine::new(storage.clone()))),
+                Box::new(move || Ok(engine(storage.clone()))),
                 lineage_key.as_deref(),
             )
         })

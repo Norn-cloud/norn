@@ -64,25 +64,57 @@ pub(crate) fn verify_history_after(
     engine: &impl SqlEngine,
     checkpoint: Option<&crate::open_checkpoint::OpenCheckpoint>,
 ) -> Result<(), CellError> {
-    let current = read(engine)?;
     let commits = checkpoint.map_or(0, |checkpoint| checkpoint.head.commits);
     if let Some(checkpoint) = checkpoint {
-        if last_record_through(engine, commits)? != checkpoint.export {
-            return Err(crate::open_checkpoint::corrupt(
-                commits,
-                "the last export record it covers is not the one it pinned",
-            ));
-        }
-        if let Some(pin) = &checkpoint.export {
-            verify_record_names(engine, pin.seq, current.as_ref())?;
-        }
+        verify_export_pin(engine, checkpoint)?;
     }
+    verify_records_between(engine, commits, u64::MAX)
+}
+
+/// The checkpoint's export pin (S2, #1551 round 2): the last record at or
+/// before it is the one it pinned, hash-verifies and names the live
+/// binding. Shared by the open, the scrub and every advancement (S3).
+///
+/// # Errors
+/// A different, missing or foreign record; SQL failures.
+pub(crate) fn verify_export_pin(
+    engine: &impl SqlEngine,
+    checkpoint: &crate::open_checkpoint::OpenCheckpoint,
+) -> Result<(), CellError> {
+    let commits = checkpoint.head.commits;
+    if last_record_through(engine, commits)? != checkpoint.export {
+        return Err(crate::open_checkpoint::corrupt(
+            commits,
+            "the last export record it covers is not the one it pinned",
+        ));
+    }
+    if let Some(pin) = &checkpoint.export {
+        verify_record_names(engine, pin.seq, read(engine)?.as_ref())?;
+    }
+    Ok(())
+}
+
+/// Every export record committed after `after` through `through` names
+/// this cell's identity: one chunk of the history scrub, or the whole
+/// suffix with `through = u64::MAX`.
+///
+/// # Errors
+/// A record naming another identity; SQL failures.
+pub(crate) fn verify_records_between(
+    engine: &impl SqlEngine,
+    after: u64,
+    through: u64,
+) -> Result<(), CellError> {
+    let current = read(engine)?;
     let mut next = engine.query_optional(
         "SELECT commit_seq FROM _norn_export_journal WHERE commit_seq > ?1 ORDER BY commit_seq LIMIT 1",
-        params![crate::read::to_i64(commits, "commit sequence")?],
+        params![crate::read::to_i64(after, "commit sequence")?],
         |row| row.get::<i64>(0),
     )?;
     while let Some(sequence) = next {
+        if crate::read::to_u64(sequence, "commit sequence")? > through {
+            break;
+        }
         verify_record_names(
             engine,
             crate::read::to_u64(sequence, "commit sequence")?,

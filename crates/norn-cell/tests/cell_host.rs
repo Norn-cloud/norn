@@ -1481,6 +1481,7 @@ fn open(path: &Path) -> OrderCell {
         StoreOptions {
             journal_mode: JournalMode::Wal,
             cache_pages: None,
+            checkpoint_key: None,
         },
         "org_demo/dev",
         charge_responder,

@@ -1199,6 +1199,9 @@ pub struct StoreReader<'a, E: SqlEngine = DefaultEngine> {
     /// The receipt cache belongs to one read-only pass inside a transaction:
     /// nothing writes while it lives, so it holds without a read revision.
     pub(crate) verified_receipts_transaction: bool,
+    /// OPEN-CHECKPOINT-1 (#1551 round 4): which history reads wait for the
+    /// cell's scrub. Open on every reader but the store's served one.
+    pub(crate) history_gate: crate::scrub::Gate,
 }
 
 impl<'a, E: SqlEngine> StoreReader<'a, E> {
@@ -1280,7 +1283,15 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             source_disputes_transaction: false,
             verified_receipts: None,
             verified_receipts_transaction: false,
+            history_gate: crate::scrub::Gate::OPEN,
         }
+    }
+
+    /// The same reader, refusing the history reads `gate` holds back.
+    #[must_use]
+    pub(crate) const fn with_history_gate(mut self, gate: crate::scrub::Gate) -> Self {
+        self.history_gate = gate;
+        self
     }
 
     /// A receipt cache for one read-only pass inside a transaction.
@@ -2952,6 +2963,10 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
     ///
     /// SQL engine or decode errors.
     pub fn ledger_page(&self, after: u64, limit: usize) -> Result<Vec<LedgerEntry>, CellError> {
+        // S8 (#1551 round 4): an entry is served on its own hash, which does
+        // not prove it is the chain's; entries the open checkpoint covers
+        // wait until the scrub has verified the chain through them.
+        self.history_gate.ledger(after)?;
         // No stored sequence exceeds the host's exact-integer bound, so a cursor at or past it
         // has nothing after it.
         match i64::try_from(after) {
@@ -3240,6 +3255,9 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         limit: usize,
         budget: &mut DecodeBudget,
     ) -> Result<Option<FindingLedgerPage>, CellError> {
+        // S8 (#1551 round 4): a scan that selects findings by position
+        // relies on every covered entry being present.
+        self.history_gate.ledger(after)?;
         let mut page = FindingLedgerPage {
             entries: Vec::new(),
             scanned_rows: 0,
@@ -3851,7 +3869,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         &self,
         checkpoint: &LedgerHead,
     ) -> Result<(LedgerHead, Option<crate::quantity::FormatBoundary>), CellError> {
-        self.verify_ledger_after(checkpoint, BoundaryAtCheckpoint::Lookup)
+        self.verify_ledger_after(checkpoint, BoundaryAtCheckpoint::Lookup, None)
     }
 
     /// [`Self::verify_ledger_with_boundary`] from an open checkpoint that
@@ -3864,7 +3882,23 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         checkpoint: &LedgerHead,
         boundary: Option<crate::quantity::FormatBoundary>,
     ) -> Result<(LedgerHead, Option<crate::quantity::FormatBoundary>), CellError> {
-        self.verify_ledger_after(checkpoint, BoundaryAtCheckpoint::Known(boundary))
+        self.verify_ledger_after(checkpoint, BoundaryAtCheckpoint::Known(boundary), None)
+    }
+
+    /// One chunk of the history scrub (#1551 round 4): the checks of
+    /// [`Self::verify_ledger_with_boundary`] for the commits after `from`
+    /// through commit `through`, from `boundary` (the quantity boundary in
+    /// force at `from`). The checks that need the whole ledger (no event
+    /// past the last receipt, the boundary against the cell's pointer, the
+    /// projection replay) are the open's, over live state; the scrub checks
+    /// its last chunk's head and boundary against the open's instead.
+    pub(crate) fn verify_ledger_span(
+        &self,
+        from: &LedgerHead,
+        boundary: Option<crate::quantity::FormatBoundary>,
+        through: u64,
+    ) -> Result<(LedgerHead, Option<crate::quantity::FormatBoundary>), CellError> {
+        self.verify_ledger_after(from, BoundaryAtCheckpoint::Known(boundary), Some(through))
     }
 
     #[allow(
@@ -3875,6 +3909,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         &self,
         checkpoint: &LedgerHead,
         known_boundary: BoundaryAtCheckpoint,
+        through: Option<u64>,
     ) -> Result<(LedgerHead, Option<crate::quantity::FormatBoundary>), CellError> {
         let base = checkpoint.seq;
         let anchor_corrupt = || CellError::LedgerCorrupt {
@@ -3938,6 +3973,9 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         let receipts = self.receipt_stream_from(checkpoint.commits);
         for receipt in receipts {
             let receipt = receipt?;
+            if through.is_some_and(|through| receipt.body.commit_seq > through) {
+                break;
+            }
             expected_commit = next(expected_commit, "commit_seq")?;
             let corrupt = |reason: &str| CellError::LedgerCorrupt {
                 seq: receipt.body.commit_seq,
@@ -4052,7 +4090,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
                 {
                     return Err(norn_kernel::quantity::QuantityError::Corrupt.into());
                 }
-                if base > 0 {
+                if base > 0 && through.is_none() {
                     for request in requests.iter() {
                         crate::quantity::verify_transition_projection(
                             self.conn,
@@ -4063,6 +4101,14 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
                     }
                 }
             }
+        }
+        let tail = LedgerHead {
+            seq: expected_seq,
+            hash: prev,
+            commits: expected_commit,
+        };
+        if through.is_some() {
+            return Ok((tail, boundary));
         }
         if let Some(entry) = self
             .ledger_range(
@@ -4084,14 +4130,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         if base == 0 {
             crate::quantity::verify_projections(self.conn, self.receipt_stream())?;
         }
-        Ok((
-            LedgerHead {
-                seq: expected_seq,
-                hash: prev,
-                commits: expected_commit,
-            },
-            boundary,
-        ))
+        Ok((tail, boundary))
     }
 
     /// Pending outbox commands, in enqueue order.

@@ -104,8 +104,17 @@ impl DueWork {
 pub fn next_due<E: SqlEngine>(host: &DevHost<E>) -> Result<Option<u64>, Refusal> {
     let _epoch = host.definition_read()?;
     let cell = host.cell()?;
+    // OPEN-CHECKPOINT-1 (#1551): a running history scrub is due at once.
+    if cell.store().scrub_pending() {
+        return Ok(Some(0));
+    }
     next_wake(&cell)
 }
+
+/// OPEN-CHECKPOINT-1 (#1551): how long after a wake that ran a scrub step
+/// the next one is due (logical milliseconds), so requests interleave with
+/// the scrub's steps.
+pub const SCRUB_PAUSE_MS: u64 = 1;
 
 /// One item due at a wake.
 enum Item {
@@ -153,6 +162,16 @@ impl Item {
 pub fn run_due<E: SqlEngine>(host: &DevHost<E>, now: LogicalTime) -> Result<DueWork, Refusal> {
     let _epoch = host.definition_read()?;
     let mut cell = host.cell()?;
+    // OPEN-CHECKPOINT-1 (#1551): one bounded step of the history scrub per
+    // wake, between commits (the Durable Object's alarm, the dev host's
+    // timer loop). A defect fences the cell; the next request is refused.
+    let scrub = cell.store().scrub_step();
+    if let norn_cell::ScrubStatus::Fenced { finding } = &scrub {
+        let mut work = DueWork::default();
+        work.failed.push(format!("history scrub: the cell is fenced: {finding}"));
+        return Ok(work);
+    }
+    let scrubbing = matches!(scrub, norn_cell::ScrubStatus::Verifying { .. });
     let now = crate::actions::turn_clock(&mut cell, now)?;
     let at = now.as_millis();
     cell.store().prune_timer_retries().map_err(Refusal::host)?;
@@ -204,6 +223,10 @@ pub fn run_due<E: SqlEngine>(host: &DevHost<E>, now: LogicalTime) -> Result<DueW
         }
     }
     work.next = if more { Some(at) } else { next_wake(&cell)? };
+    if scrubbing {
+        let pause = at.saturating_add(SCRUB_PAUSE_MS);
+        work.next = Some(work.next.map_or(pause, |next| next.min(pause)));
+    }
     Ok(work)
 }
 

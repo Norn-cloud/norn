@@ -129,6 +129,9 @@ impl<S: SqlEngine> HistoryRead<'_, '_, S> {
         budget: &mut crate::reactive::DecodeBudget,
     ) -> Result<HistoricalEvidence, CellError> {
         let reader = self.reader;
+        // S7 (#1551 round 4): the selection trusts that every version it
+        // scans is present, which the scrub proves for the covered history.
+        reader.history_gate.history("as-of reads")?;
         reader.select_evidence_known_at_with_budget(
             world,
             kind,
@@ -448,6 +451,8 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         id: &str,
         commit_seq: u64,
     ) -> Result<u64, CellError> {
+        // S7 (#1551 round 4): `MAX(version)` trusts the scan's completeness.
+        self.history_gate.history("as-of reads")?;
         let root = self.root_type(object_type)?;
         let version: Option<Option<i64>> = self.conn.query_optional(
             &format!("SELECT MAX(\"version\") FROM \"{FACT_VALUES}\" WHERE \"world\" = ?1 AND \"root_type\" = ?2 AND \"id\" = ?3 AND \"commit_seq\" <= ?4"),
@@ -791,8 +796,21 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     /// Every value version written after `commits` matches its receipt's
     /// digest (OPEN-CHECKPOINT-1: `commits` is the open checkpoint's, or 0).
     pub(crate) fn verify_value_history_after(&self, commits: u64) -> Result<(), CellError> {
-        for receipt in self.receipt_stream_from(commits) {
+        self.verify_value_history_range(commits, u64::MAX)
+    }
+
+    /// [`Self::verify_value_history_after`] for the commits after `after`
+    /// through `through` only: one chunk of the history scrub.
+    pub(crate) fn verify_value_history_range(
+        &self,
+        after: u64,
+        through: u64,
+    ) -> Result<(), CellError> {
+        for receipt in self.receipt_stream_from(after) {
             let receipt = receipt?;
+            if receipt.body.commit_seq > through {
+                break;
+            }
             for row in receipt.body.written {
                 let stored: Option<(String, String, String)> = self.conn.query_optional(
                     &format!("SELECT root_type,snapshot,hash FROM \"{FACT_VALUES}\" WHERE world=?1 AND commit_seq=?2 AND object_type=?3 AND id=?4 AND version=?5"),
@@ -885,6 +903,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         through: Option<u64>,
         budget: &mut crate::reactive::DecodeBudget,
     ) -> Result<Option<Vec<ObjectRecord>>, CellError> {
+        // S7 (#1551 round 4): a version list (history, as-of metrics) is
+        // complete only once the scrub has proven the covered history.
+        self.history_gate.history("version history")?;
         let root = self.root_type(object_type).unwrap_or(object_type);
         // At a knowledge cutoff only versions committed by its frontier exist.
         let through = through.map_or(Ok(crate::engine::MAX_SAFE_INTEGER), |commit| {

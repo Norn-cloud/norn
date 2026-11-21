@@ -605,6 +605,7 @@ fn a_crash_at_any_commit_point_recovers_to_a_committed_state() {
         let options = StoreOptions {
             journal_mode,
             cache_pages: Some(10),
+            checkpoint_key: None,
         };
         // The reference post-commit state.
         let reference_dir = tempfile::tempdir().expect("tempdir");

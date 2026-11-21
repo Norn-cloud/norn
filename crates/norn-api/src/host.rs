@@ -317,8 +317,13 @@ impl<E: SqlEngine> DevHost<E> {
         self.waiting
             .fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
         let guard = guard.map_err(Refusal::host)?;
-        if guard.is_none() {
+        let Some(cell) = guard.as_ref() else {
             return Err(Refusal::host("the cell is unavailable"));
+        };
+        // OPEN-CHECKPOINT-1 (#1551): a cell its history scrub fenced serves
+        // nothing, live reads included.
+        if let norn_cell::ScrubStatus::Fenced { finding } = cell.store().scrub_status() {
+            return Err(Refusal::fenced(finding));
         }
         Ok(CellGuard(guard))
     }

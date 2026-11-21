@@ -163,7 +163,7 @@ export class Cell {
       const jwks = issuer === undefined ? undefined : await this.jwks(true);
       // NORN_LINEAGE_KEY is the stage secret for keyed lineage handles (D53); the
       // analytics cell refuses to open without one of at least 32 bytes.
-      this.cell = new NornCell(this.ctx.storage, org, env, issuer, jwks?.text, this.env.NORN_LINEAGE_KEY, jwks?.at ?? Date.now());
+      this.cell = new NornCell(this.ctx.storage, org, env, issuer, jwks?.text, this.env.NORN_LINEAGE_KEY, jwks?.at ?? Date.now(), this.env.NORN_CHECKPOINT_KEY);
       // #921: the connections (NORN_SOURCES) and the secrets and storage settings they name stay in the cell.
       try {
         this.cell.configureConnect(this.env.NORN_SOURCES ?? "[]", connectVars(this.env));

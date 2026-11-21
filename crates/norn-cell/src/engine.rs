@@ -254,6 +254,15 @@ pub trait SqlEngine {
         Ok(())
     }
 
+    /// OPEN-CHECKPOINT-1 (#1551 round 4): the host's open-checkpoint key,
+    /// held outside the cell file and given by the host when it opens the
+    /// engine. Only a checkpoint whose MAC verifies under it shortens an
+    /// open; with none, every open verifies from genesis and the cell
+    /// records no checkpoint.
+    fn checkpoint_key(&self) -> Option<crate::open_checkpoint::CheckpointKey> {
+        None
+    }
+
     /// Decode the first row; absence is an error.
     ///
     /// # Errors
@@ -514,6 +523,8 @@ pub struct NativeEngine {
     user_sql: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// The journal mode an open asked for, applied once a store admits the file.
     journal_mode: std::cell::Cell<Option<&'static str>>,
+    /// The host's open-checkpoint key ([`SqlEngine::checkpoint_key`]).
+    checkpoint_key: Option<crate::open_checkpoint::CheckpointKey>,
 }
 
 #[cfg(feature = "native")]
@@ -532,7 +543,8 @@ impl NativeEngine {
         path: &std::path::Path,
         options: crate::store::StoreOptions,
     ) -> Result<Self, CellError> {
-        let engine = Self::configured(rusqlite::Connection::open(path)?)?;
+        let mut engine = Self::configured(rusqlite::Connection::open(path)?)?;
+        engine.checkpoint_key = options.checkpoint_key;
         crate::engine_release::admission(&engine)?;
         let conn = &engine.conn;
         engine.journal_mode.set(Some(match options.journal_mode {
@@ -638,7 +650,19 @@ impl NativeEngine {
             conn,
             user_sql,
             journal_mode: std::cell::Cell::new(None),
+            checkpoint_key: None,
         })
+    }
+
+    /// The same engine holding the host's open-checkpoint key (an in-memory
+    /// engine, which has no [`crate::StoreOptions`]).
+    #[must_use]
+    pub fn with_checkpoint_key(
+        mut self,
+        key: Option<crate::open_checkpoint::CheckpointKey>,
+    ) -> Self {
+        self.checkpoint_key = key;
+        self
     }
 
     /// Close the native file before publishing a staged restore.
@@ -671,7 +695,8 @@ impl crate::fork::ForkEngine for NativeEngine {
             }
         }
         conn.execute_batch("PRAGMA foreign_keys = ON")?;
-        Self::configured(conn)
+        // A fork keeps the host's key: its checkpoint is the base's.
+        Ok(Self::configured(conn)?.with_checkpoint_key(self.checkpoint_key))
     }
 }
 
@@ -789,6 +814,10 @@ impl Drop for StatementCount<'_> {
 impl SqlEngine for NativeEngine {
     fn read_isolation(&self) -> ReadIsolation {
         ReadIsolation::Revisioned
+    }
+
+    fn checkpoint_key(&self) -> Option<crate::open_checkpoint::CheckpointKey> {
+        self.checkpoint_key
     }
 
     fn admitted(&self) -> Result<(), CellError> {

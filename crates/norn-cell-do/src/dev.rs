@@ -72,6 +72,16 @@ mod timers;
 
 use policy::{DevMetrics, DevPrincipals, LocalDeveloper};
 
+/// OPEN-CHECKPOINT-1 (#1551): the dev host authenticates its cell's open
+/// checkpoint with the fixed, public development key. A deployed host takes
+/// its key from its secret store.
+fn dev_store_options() -> StoreOptions {
+    StoreOptions {
+        checkpoint_key: Some(norn_cell::CheckpointKey::INSECURE_DEV_AND_TEST),
+        ..StoreOptions::default()
+    }
+}
+
 /// `norn-dev-host` options. The compile worker command follows `--`; the
 /// authoring CLI's `norn dev` supplies it.
 #[derive(Debug, Parser)]
@@ -835,7 +845,7 @@ impl Session<'_> {
                 diagnostics,
             })?
         };
-        let engine = NativeEngine::open(cell_path, StoreOptions::default())
+        let engine = NativeEngine::open(cell_path, dev_store_options())
             .map_err(|error| refused(error.to_string()))?;
         let store = CellStore::provision_definitions_riding(
             engine,
@@ -908,7 +918,7 @@ fn reopen(
     if !path.exists() {
         return Ok((None, None));
     }
-    let engine = NativeEngine::open(path, StoreOptions::default())
+    let engine = NativeEngine::open(path, dev_store_options())
         .map_err(|error| unreadable(error.to_string()))?;
     let Some(active) = CellStore::read_active_definitions(&engine)
         .map_err(|error| unreadable(error.to_string()))?

@@ -453,6 +453,18 @@ pub enum CellError {
         /// What failed.
         reason: String,
     },
+    /// OPEN-CHECKPOINT-1 (#1551 round 4): the cell opened from its
+    /// checkpoint and its history scrub has not finished, so a read whose
+    /// answer depends on the history being complete (an as-of read, a
+    /// ledger page over the covered range, an idempotency lookup that could
+    /// miss a covered receipt) is refused. Retryable: nothing changed.
+    #[error("{code}: the cell is still verifying its history ({0}); retry", code = crate::scrub::VERIFYING)]
+    Verifying(&'static str),
+    /// OPEN-CHECKPOINT-1 (#1551 round 4): the history scrub found a defect.
+    /// The cell is fenced: it refuses every commit and history read, and its
+    /// next open verifies from genesis.
+    #[error("{code}: the cell's history did not verify: {0}", code = crate::scrub::FENCED)]
+    Fenced(String),
     /// A stored value does not decode with its column's encoding.
     #[error("stored value `{table}`.`{column}` is corrupt")]
     CorruptValue {

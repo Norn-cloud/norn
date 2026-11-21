@@ -24,6 +24,12 @@ pub mod codes {
     pub const INVALID_REQUEST: &str = "request.invalid";
     /// The cell host failed.
     pub const HOST_ERROR: &str = "host.error";
+    /// OPEN-CHECKPOINT-1 (#1551): the cell is verifying its history after an
+    /// open from its checkpoint; the read or write waits for it (retryable).
+    pub const CELL_VERIFYING: &str = "cell.verifying";
+    /// OPEN-CHECKPOINT-1 (#1551): the cell's history did not verify; it is
+    /// fenced and serves nothing.
+    pub const CELL_FENCED: &str = "cell.fenced";
 }
 
 /// What the caller can do about a refusal: the kernel refusal taxonomy's
@@ -443,16 +449,53 @@ impl Refusal {
         .with_category(RefusalCategory::Precondition)
     }
 
-    /// A host failure (the request changed nothing).
+    /// A host failure (the request changed nothing). A cell still
+    /// verifying its history, or fenced by it, answers its own refusal.
     #[must_use]
     pub fn host(detail: impl std::fmt::Display) -> Self {
+        let cause = detail.to_string();
+        if cause.starts_with(codes::CELL_VERIFYING) {
+            return Self::verifying();
+        }
+        if cause.starts_with(codes::CELL_FENCED) {
+            return Self::fenced(cause);
+        }
         Self::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             codes::HOST_ERROR,
             "the cell host failed; nothing was committed",
             Self::UNPROVEN_DETAIL,
         )
-        .with_cause(detail)
+        .with_cause(cause)
+    }
+
+    /// OPEN-CHECKPOINT-1 (#1551): the cell opened from its checkpoint and
+    /// has not finished verifying the history this request depends on.
+    /// Nothing changed; retry.
+    #[must_use]
+    pub fn verifying() -> Self {
+        let mut refusal = Self::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            codes::CELL_VERIFYING,
+            "the cell is verifying its history",
+            "this request depends on history the cell is still verifying; nothing was committed; retry",
+        )
+        .with_category(RefusalCategory::Precondition);
+        refusal.retryable = true;
+        refusal
+    }
+
+    /// OPEN-CHECKPOINT-1 (#1551): the cell's history did not verify, so it
+    /// serves nothing until an operator restores it.
+    #[must_use]
+    pub fn fenced(finding: impl std::fmt::Display) -> Self {
+        Self::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            codes::CELL_FENCED,
+            "the cell's history did not verify; it serves nothing",
+            Self::UNPROVEN_DETAIL,
+        )
+        .with_cause(finding)
     }
 }
 

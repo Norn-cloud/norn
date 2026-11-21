@@ -55,7 +55,7 @@
 use crate::{
     CellError, LedgerHead,
     engine::{SqlEngine, SqlRow, params},
-    read::{to_i64, to_u64},
+    read::to_i64,
 };
 
 /// The table holding the cell's one open checkpoint.
@@ -70,12 +70,77 @@ pub(crate) const DDL: &str = r#"CREATE TABLE IF NOT EXISTS "_norn_open_checkpoin
       "boundary_seq" INTEGER, "boundary_commit" INTEGER,
       "quantity_receipts" TEXT NOT NULL,
       "export_seq" INTEGER, "export_hash" TEXT,
-      "definitions" TEXT NOT NULL
+      "definitions" TEXT NOT NULL,
+      "mac" TEXT NOT NULL
     )"#;
 
 /// How many commits apart checkpoints are written: an open verifies at most
 /// this many commits of history before the latest one.
 pub(crate) const EVERY: u64 = 128;
+
+/// The most commits a commit's own checkpoint advancement verifies. A
+/// longer gap (a checkpoint seeded behind a busy head) is closed by the
+/// scrub, off the commit path, never inside a commit (S10, #1551 round 3).
+pub(crate) const MAX_ADVANCE: u64 = 2 * EVERY;
+
+/// OPEN-CHECKPOINT-1 (#1551 round 4): the key the host authenticates its
+/// cells' open checkpoints with. It is held outside every cell file (the
+/// host's secret store) and given to the engine when the host opens it
+/// ([`crate::StoreOptions::checkpoint_key`],
+/// [`crate::engine::SqlEngine::checkpoint_key`]). A checkpoint row is
+/// trusted only when its HMAC-SHA256 under this key verifies, over the row
+/// and the cell's identity; anyone who can write the file but does not hold
+/// the key cannot forge one, nor copy one from another cell.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct CheckpointKey([u8; 32]);
+
+impl std::fmt::Debug for CheckpointKey {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("CheckpointKey(<redacted>)")
+    }
+}
+
+impl CheckpointKey {
+    /// A fixed, public key for development hosts and tests only. It
+    /// authenticates nothing against anyone who has read this source: a
+    /// deployed host must use a key from its secret store.
+    pub const INSECURE_DEV_AND_TEST: Self = Self(*b"norn.open-checkpoint.TEST-KEY.v1");
+
+    /// A key of 32 secret bytes.
+    #[must_use]
+    pub const fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
+    /// A key given as 64 hexadecimal digits (how a secret store holds it).
+    ///
+    /// # Errors
+    /// [`CellError::Encoding`] for anything but 64 hexadecimal digits.
+    pub fn from_hex(text: &str) -> Result<Self, CellError> {
+        let bytes = decode_hex(text.trim())
+            .filter(|bytes| bytes.len() == 32)
+            .ok_or_else(|| {
+                CellError::Encoding("an open-checkpoint key is 64 hexadecimal digits".to_owned())
+            })?;
+        let mut key = [0_u8; 32];
+        key.copy_from_slice(&bytes);
+        Ok(Self(key))
+    }
+}
+
+fn decode_hex(text: &str) -> Option<Vec<u8>> {
+    if !text.len().is_multiple_of(2) {
+        return None;
+    }
+    text.as_bytes()
+        .chunks(2)
+        .map(|pair| {
+            let digit = |byte: u8| char::from(byte).to_digit(16);
+            let (high, low) = (digit(*pair.first()?)?, digit(*pair.get(1)?)?);
+            u8::try_from(high.checked_mul(16)?.checked_add(low)?).ok()
+        })
+        .collect()
+}
 
 /// One verified ledger head and the transparency root of its receipts.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -115,10 +180,59 @@ pub(crate) struct ExportPin {
     pub(crate) hash: String,
 }
 
+/// What an open finds in the checkpoint table (#1551 round 4). Only
+/// [`Loaded::Authentic`] shortens an open; every other case is a genesis
+/// open, never a refusal.
+#[derive(Debug)]
+pub(crate) enum Loaded {
+    /// No checkpoint was written.
+    Absent,
+    /// The host gave no key, so no row can be trusted.
+    Unkeyed,
+    /// The cell has no identity binding to authenticate the row with.
+    Unbound,
+    /// The row's MAC does not verify under the host's key and this cell's
+    /// identity: a rewritten row, one copied from another cell, or one
+    /// written under another key.
+    Unauthentic,
+    /// The row this engine recorded for this cell.
+    Authentic(OpenCheckpoint),
+}
+
+/// The HMAC-SHA256, under `key`, of `checkpoint` bound to the cell
+/// identity `cell_id`: a domain tag, the identity and every column, in one
+/// JSON array.
+fn mac(
+    key: &CheckpointKey,
+    cell_id: &str,
+    checkpoint: &OpenCheckpoint,
+) -> Result<hmac::Hmac<transparency_sha2::Sha256>, CellError> {
+    use hmac::{KeyInit as _, Mac as _};
+    let message = serde_json::to_vec(&(
+        "norn.open-checkpoint.mac/1",
+        cell_id,
+        checkpoint.head.commits,
+        checkpoint.head.seq,
+        &checkpoint.head.hash,
+        &checkpoint.receipts_root,
+        checkpoint
+            .boundary
+            .map(|boundary| (boundary.seq, boundary.commit_seq)),
+        &checkpoint.quantity_receipts,
+        checkpoint.export.as_ref().map(|pin| (pin.seq, &pin.hash)),
+        &checkpoint.definitions,
+    ))
+    .map_err(|error| CellError::Encoding(error.to_string()))?;
+    let mut mac = hmac::Hmac::<transparency_sha2::Sha256>::new_from_slice(&key.0)
+        .map_err(|_length| CellError::Encoding("open-checkpoint key length".to_owned()))?;
+    mac.update(&message);
+    Ok(mac)
+}
+
 /// The checkpoint row. Every column is qualified by the table alias, so a
 /// column an older layout lacks is an error under either setting of
 /// SQLite's double-quoted-string mode, never a string literal (S5, #1551).
-pub(crate) const LOAD_SQL: &str = r#"SELECT c."commits", c."seq", c."hash", c."receipts_root", c."boundary_seq", c."boundary_commit", c."quantity_receipts", c."export_seq", c."export_hash", c."definitions" FROM "_norn_open_checkpoint" AS c WHERE c."id" = 1"#;
+pub(crate) const LOAD_SQL: &str = r#"SELECT c."commits", c."seq", c."hash", c."receipts_root", c."boundary_seq", c."boundary_commit", c."quantity_receipts", c."export_seq", c."export_hash", c."definitions", c."mac" FROM "_norn_open_checkpoint" AS c WHERE c."id" = 1"#;
 
 /// The `(commit, receipt digest)` of every quantity receipt, in commit
 /// order, read through the receipt table's two quantity indexes (a single
@@ -170,61 +284,105 @@ pub(crate) fn definitions_digest(
         )
 }
 
-/// The cell's open checkpoint, if one was written.
+/// The cell's open checkpoint (#1551 round 4): authentic only when its
+/// MAC verifies under the engine's key and the cell's identity.
 ///
 /// # Errors
-/// SQL failures, or a checkpoint row out of range.
-pub(crate) fn load(engine: &impl SqlEngine) -> Result<Option<OpenCheckpoint>, CellError> {
+/// SQL failures, or a checkpoint row of an older layout (S5).
+pub(crate) fn load(engine: &impl SqlEngine) -> Result<Loaded, CellError> {
+    use hmac::Mac as _;
     let Some(row) = engine.query(LOAD_SQL, params![])?.into_iter().next() else {
-        return Ok(None);
+        return Ok(Loaded::Absent);
+    };
+    let Some(key) = engine.checkpoint_key() else {
+        return Ok(Loaded::Unkeyed);
+    };
+    let Some(cell_id) = crate::cell_identity::read(engine)? else {
+        return Ok(Loaded::Unbound);
     };
     let row = SqlRow(row);
+    let Some(checkpoint) = decode(&row)? else {
+        return Ok(Loaded::Unauthentic);
+    };
+    let tag = decode_hex(&row.get::<String>(10)?);
+    let verified = tag.is_some_and(|tag| {
+        mac(&key, cell_id.as_str(), &checkpoint).is_ok_and(|mac| mac.verify_slice(&tag).is_ok())
+    });
+    Ok(if verified {
+        Loaded::Authentic(checkpoint)
+    } else {
+        Loaded::Unauthentic
+    })
+}
+
+/// The row's fields, or `None` for values out of range (an unauthentic row
+/// is never an error: the open verifies from genesis).
+fn decode(row: &SqlRow) -> Result<Option<OpenCheckpoint>, CellError> {
+    let unsigned = |value: i64| u64::try_from(value).ok();
+    let (Some(commits), Some(seq)) = (unsigned(row.get(0)?), unsigned(row.get(1)?)) else {
+        return Ok(None);
+    };
+    let boundary = match (row.get::<Option<i64>>(4)?, row.get::<Option<i64>>(5)?) {
+        (None, None) => None,
+        (Some(seq), Some(commit)) => match (unsigned(seq), unsigned(commit)) {
+            (Some(seq), Some(commit_seq)) => {
+                Some(crate::quantity::FormatBoundary { seq, commit_seq })
+            }
+            _ => return Ok(None),
+        },
+        _ => return Ok(None),
+    };
+    let export = match (row.get::<Option<i64>>(7)?, row.get::<Option<String>>(8)?) {
+        (None, None) => None,
+        (Some(seq), Some(hash)) => match unsigned(seq) {
+            Some(seq) => Some(ExportPin { seq, hash }),
+            None => return Ok(None),
+        },
+        _ => return Ok(None),
+    };
     Ok(Some(OpenCheckpoint {
         head: LedgerHead {
-            commits: to_u64(row.get(0)?, "open checkpoint commits")?,
-            seq: to_u64(row.get(1)?, "open checkpoint sequence")?,
+            commits,
+            seq,
             hash: row.get(2)?,
         },
         receipts_root: row.get(3)?,
-        boundary: match (row.get::<Option<i64>>(4)?, row.get::<Option<i64>>(5)?) {
-            (None, None) => None,
-            (Some(seq), Some(commit)) => Some(crate::quantity::FormatBoundary {
-                seq: to_u64(seq, "open checkpoint boundary")?,
-                commit_seq: to_u64(commit, "open checkpoint boundary commit")?,
-            }),
-            _ => return Err(corrupt(0, "a half-recorded quantity boundary")),
-        },
+        boundary,
         quantity_receipts: row.get(6)?,
-        export: match (row.get::<Option<i64>>(7)?, row.get::<Option<String>>(8)?) {
-            (None, None) => None,
-            (Some(seq), Some(hash)) => Some(ExportPin {
-                seq: to_u64(seq, "open checkpoint export record")?,
-                hash,
-            }),
-            _ => return Err(corrupt(0, "a half-recorded export record")),
-        },
+        export,
         definitions: row.get(9)?,
     }))
 }
 
-/// Record `checkpoint` as the cell's open checkpoint, replacing the last.
+/// Record `checkpoint` as the cell's open checkpoint, replacing the last,
+/// MAC'd under the engine's key and bound to the cell's identity. Returns
+/// whether it was recorded: a host with no key, or a cell with no identity,
+/// records none, and its opens verify from genesis.
 ///
 /// # Errors
 /// SQL failures.
 pub(crate) fn record(
     engine: &impl SqlEngine,
     checkpoint: &OpenCheckpoint,
-) -> Result<(), CellError> {
+) -> Result<bool, CellError> {
+    use hmac::Mac as _;
+    let (Some(key), Some(cell_id)) = (
+        engine.checkpoint_key(),
+        crate::cell_identity::read(engine)?,
+    ) else {
+        return Ok(false);
+    };
+    let tag = root_hex(&mac(&key, cell_id.as_str(), checkpoint)?.finalize().into_bytes());
     engine.execute(
         &format!(
-            "INSERT INTO \"{TABLE}\" (\"id\", \"commits\", \"seq\", \"hash\", \"receipts_root\", \"boundary_seq\", \"boundary_commit\", \"quantity_receipts\", \"export_seq\", \"export_hash\", \"definitions\") \
-             VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) \
+            "INSERT INTO \"{TABLE}\" (\"id\", \"commits\", \"seq\", \"hash\", \"receipts_root\", \"boundary_seq\", \"boundary_commit\", \"quantity_receipts\", \"export_seq\", \"export_hash\", \"definitions\", \"mac\") \
+             VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11) \
              ON CONFLICT (\"id\") DO UPDATE SET \"commits\" = excluded.\"commits\", \"seq\" = excluded.\"seq\", \
              \"hash\" = excluded.\"hash\", \"receipts_root\" = excluded.\"receipts_root\", \
              \"boundary_seq\" = excluded.\"boundary_seq\", \"boundary_commit\" = excluded.\"boundary_commit\", \
              \"quantity_receipts\" = excluded.\"quantity_receipts\", \
              \"export_seq\" = excluded.\"export_seq\", \"export_hash\" = excluded.\"export_hash\", \
-             \"definitions\" = excluded.\"definitions\""
+             \"definitions\" = excluded.\"definitions\", \"mac\" = excluded.\"mac\""
         ),
         params![
             to_i64(checkpoint.head.commits, "open checkpoint commits")?,
@@ -246,9 +404,20 @@ pub(crate) fn record(
                 .map(|pin| to_i64(pin.seq, "open checkpoint export record"))
                 .transpose()?,
             checkpoint.export.as_ref().map(|pin| pin.hash.clone()),
-            checkpoint.definitions.clone()
+            checkpoint.definitions.clone(),
+            tag
         ],
-    )
+    )?;
+    Ok(true)
+}
+
+/// Drop the cell's checkpoint, so its next open verifies from genesis: the
+/// durable half of a fence (#1551 round 4).
+///
+/// # Errors
+/// SQL failures.
+pub(crate) fn drop_row(engine: &impl SqlEngine) -> Result<(), CellError> {
+    engine.execute(&format!("DELETE FROM \"{TABLE}\""), params![])
 }
 
 /// Lowercase hex of a transparency root.

@@ -167,7 +167,9 @@ fn definitions_digest(store: &CellStore<NativeEngine>) -> String {
 /// and the upgrading open records in it the head it verified, with the root
 /// of its receipts, the digest of its quantity receipts, the last export
 /// record it covers and the digest of its definition versions: the one row
-/// it writes besides the stamp.
+/// it writes besides the stamp. The row's MAC (#1551 round 4) is checked
+/// here independently: HMAC-SHA256 under the test key over the row and the
+/// cell's identity.
 fn add_open_checkpoint(
     expected: &mut Value,
     after: &Value,
@@ -185,6 +187,45 @@ fn add_open_checkpoint(
         .clone();
     assert_eq!(entry["type"], "table");
     let ((export_seq, export_hash), definitions) = pins;
+    let cell_id = after["tables"]["_norn_meta"]["rows"]
+        .as_array()
+        .expect("meta rows")
+        .iter()
+        .find(|row| row[1] == "binding:cell_id")
+        .and_then(|row| row[2].as_str())
+        .expect("the fixture is bound to a cell identity")
+        .to_owned();
+    let export = if export_seq.is_null() {
+        Value::Null
+    } else {
+        serde_json::json!([export_seq, export_hash])
+    };
+    let message = serde_json::to_vec(&serde_json::json!([
+        "norn.open-checkpoint.mac/1",
+        cell_id,
+        head.commits,
+        head.seq,
+        head.hash,
+        root,
+        null,
+        quantity,
+        export,
+        definitions
+    ]))
+    .expect("mac message");
+    let mac = {
+        use hmac::{KeyInit as _, Mac as _};
+        let mut mac = hmac::Hmac::<transparency_sha2::Sha256>::new_from_slice(
+            b"norn.open-checkpoint.TEST-KEY.v1",
+        )
+        .expect("key");
+        mac.update(&message);
+        mac.finalize()
+            .into_bytes()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    };
     expected["schema"]
         .as_array_mut()
         .expect("schema")
@@ -192,8 +233,8 @@ fn add_open_checkpoint(
     expected["tables"].as_object_mut().expect("tables").insert(
         "_norn_open_checkpoint".to_owned(),
         serde_json::json!({
-            "columns": ["rowid", "id", "commits", "seq", "hash", "receipts_root", "boundary_seq", "boundary_commit", "quantity_receipts", "export_seq", "export_hash", "definitions"],
-            "rows": [[1, 1, head.commits, head.seq, head.hash, root, null, null, quantity, export_seq, export_hash, definitions]],
+            "columns": ["rowid", "id", "commits", "seq", "hash", "receipts_root", "boundary_seq", "boundary_commit", "quantity_receipts", "export_seq", "export_hash", "definitions", "mac"],
+            "rows": [[1, 1, head.commits, head.seq, head.hash, root, null, null, quantity, export_seq, export_hash, definitions, mac]],
         }),
     );
 }
@@ -218,8 +259,16 @@ fn raw(path: &Path) -> NativeEngine {
     NativeEngine::open(path, StoreOptions::default()).expect("engine")
 }
 
+/// Opens with the test key, as a keyed host opens (#1551 round 4).
+fn keyed() -> StoreOptions {
+    StoreOptions {
+        checkpoint_key: Some(norn_cell::CheckpointKey::INSECURE_DEV_AND_TEST),
+        ..StoreOptions::default()
+    }
+}
+
 fn open(path: &Path) -> Result<CellStore<NativeEngine>, CellError> {
-    CellStore::open(path, engine_fixture::model(), StoreOptions::default())
+    CellStore::open(path, engine_fixture::model(), keyed())
 }
 
 /// Write `stamp` as another engine would, below this engine's admission.
@@ -267,7 +316,7 @@ fn bytes(path: &Path) -> Vec<u8> {
 fn wal() -> StoreOptions {
     StoreOptions {
         journal_mode: JournalMode::Wal,
-        ..StoreOptions::default()
+        ..keyed()
     }
 }
 
@@ -420,6 +469,9 @@ fn a_storage_v1_cell_opens_on_this_engine_with_identical_receipts() {
     by_name(&mut reopened);
     assert_eq!(reopened, catalog, "a current open writes nothing");
     let mut store = open(&path).expect("reopen");
+    // A new idempotency key waits for the history scrub (#1551 round 4),
+    // which the host's due-work clock runs.
+    assert_eq!(store.scrub_to_end(), norn_cell::ScrubStatus::Idle);
     let mut next = engine_fixture::batches()[1].clone();
     next.idempotency_key = Some("after-upgrade".to_owned());
     next.logical_time = 4_000;
