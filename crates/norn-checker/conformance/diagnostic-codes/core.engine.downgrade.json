@@ -1,0 +1,7 @@
+{
+  "code": "core.engine.downgrade",
+  "message": "the cell was written by a newer storage version than this engine reads",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T6"
+}

@@ -2107,7 +2107,10 @@ impl CellStore<NativeEngine> {
 }
 
 // Check before DDL, definition decoding, or host model selection touches old data.
+// ENGINE-UPGRADE-1: a cell newer than this engine, or one it cannot order,
+// refuses here, before the format check names it a pre-alpha store.
 fn validate_store_format<E: SqlEngine>(engine: &E) -> Result<(), CellError> {
+    crate::engine_release::admission(engine)?;
     let exists = engine
         .query_optional(
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1",
@@ -2157,6 +2160,9 @@ impl<E: SqlEngine> CellStore<E> {
     ///
     /// [`CellError::StoreFormat`] or [`CellError::SchemaMismatch`] when the
     /// engine already contains a store for another format or model;
+    /// [`CellError::EngineDowngrade`], [`CellError::EngineUnknownVersion`] or
+    /// [`CellError::EngineUpgradeUnsupported`] when its storage version is one
+    /// this engine cannot serve ([`crate::engine_release`]);
     /// [`CellError::LedgerCorrupt`] when its ledger does not verify; engine
     /// errors otherwise.
     /// Fresh stores use SQLite's `lower`, `hex`, and `randomblob` functions.
@@ -2179,6 +2185,7 @@ impl<E: SqlEngine> CellStore<E> {
             ));
         }
         conn.transaction(|| Self::init_schema(&conn, &model, &mut |_| Ok(cell_id.clone())))?;
+        conn.admitted()?;
         Ok(Self::unverified(conn, model))
     }
 
@@ -2268,6 +2275,9 @@ impl<E: SqlEngine> CellStore<E> {
     ) -> Result<Self, CellError> {
         let identity = hash_json(&(scope, model.model_hash(), model.ddl_hash(), input))?;
         let mut store = Self::unverified(conn, model);
+        // ENGINE-UPGRADE-1: nothing of a cell this engine cannot serve is
+        // read. The provisioning transaction checks again before it writes.
+        validate_store_format(&store.conn)?;
         // FORK-PIN-1: a fork reopened through provisioning stays a fork.
         if !Self::engine_is_fresh(&store.conn)? {
             store.fork = crate::fork::load_pin(&store.conn)?;
@@ -2309,10 +2319,7 @@ impl<E: SqlEngine> CellStore<E> {
             .map_err(|error| match error {
                 GuardedError::Guard(error) | GuardedError::Store(error) => error,
             })?;
-        if store.fork.is_some() {
-            let head = store.verified_head()?.commits;
-            store.refuse_pin_past(head)?;
-        }
+        store.conn.admitted()?;
         Ok(store)
     }
 
@@ -2437,6 +2444,9 @@ impl<E: SqlEngine> CellStore<E> {
         source: &mut impl FnMut(&E) -> Result<norn_ir::cell_id::CellId, CellError>,
     ) -> Result<(), CellError> {
         validate_store_format(conn)?;
+        // Ordered migrations see the layout they were written for: before
+        // this engine's schema statements, inside the open transaction.
+        crate::engine_release::upgrade(conn)?;
         for statement in SYSTEM_DDL
             .iter()
             .chain(&crate::flow_run::DDL)
@@ -2476,6 +2486,7 @@ impl<E: SqlEngine> CellStore<E> {
                 )?;
                 conn.execute(&insert, params!["format", STORE_FORMAT])?;
                 conn.execute(&insert, params!["ddl_hash", model.ddl_hash()])?;
+                crate::engine_release::stamp_fresh(conn)?;
             }
             (Some(format), Some(found)) if format == STORE_FORMAT && found == model.ddl_hash() => {}
             // Older formats lack exact encoding or durable marking coverage.
@@ -2518,8 +2529,24 @@ impl<E: SqlEngine> CellStore<E> {
         model: Model,
         mut source: impl FnMut(&E) -> Result<norn_ir::cell_id::CellId, CellError>,
     ) -> Result<Self, CellError> {
+        Self::open_admitted(conn, model, &mut source, None)
+    }
+
+    /// Open, and commit the schema step and any storage upgrade only once
+    /// every check that can refuse the file has passed: the format and
+    /// storage version, the ledger, receipts and definition history, the
+    /// fork pin and, when `expected` is given, the cell identity. A refused
+    /// open rolls everything back (ENGINE-UPGRADE-1, #1494).
+    pub(crate) fn open_admitted(
+        conn: E,
+        model: Model,
+        source: &mut impl FnMut(&E) -> Result<norn_ir::cell_id::CellId, CellError>,
+        expected: Option<&norn_ir::cell_id::CellId>,
+    ) -> Result<Self, CellError> {
         model.validate_identity_profile()?;
-        conn.transaction(|| Self::init_schema(&conn, &model, &mut source))?;
+        // Refuse a cell this engine cannot serve before taking its write lock;
+        // the transaction checks again before its first statement.
+        validate_store_format(&conn)?;
         let mut store = Self::unverified(conn, model);
         // An existing file is admitted only if its ledger and receipts verify.
         // Chain, receipts and all quantity caches share one open snapshot.
@@ -2528,42 +2555,48 @@ impl<E: SqlEngine> CellStore<E> {
         // One proof cache for this read-only pass (#1423): receipts and the
         // retained writer models are proven once per pass, not once per event.
         let pass = RefCell::default();
-        let (head, boundary) = store.conn.transaction(|| {
+        let (head, boundary, transparency, fork) = store.conn.transaction(|| {
+            Self::init_schema(&store.conn, &store.model, source)?;
+            if let Some(expected) = expected {
+                store.require_cell_id(expected)?;
+            }
             crate::cell_identity::verify_history(&store.conn)?;
-            let verified = store
+            let (head, boundary) = store
                 .read()
                 .with_transaction_verified_receipts(&pass)
                 .verify_ledger_with_boundary(&LedgerHead::genesis())?;
             store.verify_definition_history()?;
             store.read().verify_value_history()?;
             crate::identity::validate(&store.read())?;
-            Ok::<_, CellError>(verified)
+            let transparency = crate::transparency::load(&store.conn)?;
+            let fork = crate::fork::load_pin(&store.conn)?;
+            refuse_pin_past(fork.as_ref(), head.commits)?;
+            Ok::<_, CellError>((head, boundary, transparency, fork))
         })?;
         store.verified.replace(head);
         store.quantity_boundary.set(boundary);
-        store
-            .transparency
-            .replace(crate::transparency::load(&store.conn)?);
-        store.fork = crate::fork::load_pin(&store.conn)?;
-        let head = store.verified.borrow().commits;
-        store.refuse_pin_past(head)?;
+        store.transparency.replace(transparency);
+        store.fork = fork;
+        // Only an accepted file takes the requested journal mode (#1504).
+        store.conn.admitted()?;
         Ok(store)
     }
+}
 
-    /// FORK-PIN-1: a fork's base is never past its store's head.
-    fn refuse_pin_past(&self, head_commits: u64) -> Result<(), CellError> {
-        if self
-            .fork
-            .as_ref()
-            .is_some_and(|pin| pin.base.commits > head_commits)
-        {
-            return Err(CellError::Encoding(
-                "fork pin: the base is past the store's head".to_owned(),
-            ));
-        }
-        Ok(())
+/// FORK-PIN-1: a fork's base is never past its store's head.
+fn refuse_pin_past(
+    fork: Option<&crate::fork::ForkPin>,
+    head_commits: u64,
+) -> Result<(), CellError> {
+    if fork.is_some_and(|pin| pin.base.commits > head_commits) {
+        return Err(CellError::Encoding(
+            "fork pin: the base is past the store's head".to_owned(),
+        ));
     }
+    Ok(())
+}
 
+impl<E: SqlEngine> CellStore<E> {
     #[allow(
         clippy::too_many_lines,
         reason = "startup validates every retained install before serving the cell"
@@ -3179,6 +3212,12 @@ impl<E: SqlEngine> CellStore<E> {
                         )?;
                     }
                 } else {
+                    // ENGINE-UPGRADE-1: another opener may have changed the
+                    // cell since the reads before this transaction; admit it
+                    // and bring it to this engine's storage version before
+                    // any statement below touches it.
+                    validate_store_format(&self.conn)?;
+                    crate::engine_release::upgrade(&self.conn)?;
                     // A file provisioned before a system table existed gains it here,
                     // so the next run start or write finds it (idempotent DDL).
                     for statement in SYSTEM_DDL
@@ -3206,6 +3245,8 @@ impl<E: SqlEngine> CellStore<E> {
                     self.verify_definition_history()?;
                     self.read().verify_value_history()?;
                     crate::identity::validate(&self.read())?;
+                    // FORK-PIN-1: refused before the transaction commits.
+                    refuse_pin_past(self.fork.as_ref(), head.commits)?;
                     self.verified.replace(head);
                     admitted_boundary.set(boundary);
                     let receipt = self.read().receipt_at(1)?.ok_or_else(|| CellError::Engine("missing provisioning receipt".to_owned()))?;
@@ -3509,6 +3550,13 @@ impl<E: SqlEngine> CellStore<E> {
                 &receipt,
                 consumed_input,
                 install_record,
+                // A replayed record keeps the version that first wrote it.
+                match origin {
+                    CommitOrigin::Retained(record) => record.storage_version,
+                    CommitOrigin::Current | CommitOrigin::Provisioning(..) => {
+                        Some(crate::engine_release::STORAGE_VERSION)
+                    }
+                },
             )?;
             probe(CommitPoint::ReceiptWritten)?;
             Ok((admitted, CommitOutcome::Committed(receipt)))

@@ -107,6 +107,18 @@ impl CellStore<NativeEngine> {
         if manifest.head_commit_seq == 0 {
             return Err(RestoreError::EmptyExport);
         }
+        // Fetch again by the verified addresses: even a changing remote prefix
+        // cannot substitute bytes beneath this trusted manifest during replay.
+        let records = load_prefix(exporter, &manifest).await?;
+        // ENGINE-UPGRADE-1: every record names the storage version that wrote
+        // it, inside its content address; one newer than this engine refuses
+        // before anything is staged or compared.
+        for record in &records {
+            crate::engine_release::admit_export(
+                record.storage_version,
+                crate::engine_release::THIS_ENGINE,
+            )?;
+        }
         if manifest.ddl_hash != model.ddl_hash() {
             return Err(RestoreError::ModelMismatch);
         }
@@ -119,9 +131,6 @@ impl CellStore<NativeEngine> {
         {
             return Err(RestoreError::IdentityMismatch);
         }
-        // Fetch again by the verified addresses: even a changing remote prefix
-        // cannot substitute bytes beneath this trusted manifest during replay.
-        let records = load_prefix(exporter, &manifest).await?;
         let parent = path
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
@@ -353,6 +362,9 @@ impl CellStore<NativeEngine> {
 /// cache).
 fn diagnose(engine: &NativeEngine) -> Result<(HistoryDiagnosis, Vec<ExportRecord>), CellError> {
     engine.read_transaction(|| {
+        // ENGINE-UPGRADE-1: an older tool never diagnoses, and so never
+        // restores a prefix of, a cell a newer engine wrote.
+        crate::engine_release::admission(engine)?;
         let records = journal(engine)?;
         let model = latest_model(&records)?;
         let pass = std::cell::RefCell::default();

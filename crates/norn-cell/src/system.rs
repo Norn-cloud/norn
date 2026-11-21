@@ -3,7 +3,7 @@
 //!
 //! | table | row | written by |
 //! | --- | --- | --- |
-//! | `_norn_meta` | store format, the model's DDL hash, and the property-column layout | open |
+//! | `_norn_meta` | store format, engine storage-version stamp, the model's DDL hash, and the property-column layout | open |
 //! | `_norn_ledger` | one event, hash-chained to the previous one | commit |
 //! | `_norn_receipt` | one commit: ledger span and head, request hash, consumption, written versions, idempotency key | commit |
 //! | `_norn_outbox` | one command id: its latest generation, its recorded result, and the commit that consumed it (unconsumed rows are the `perform` queue, in enqueue order) | commit; perform |
@@ -30,7 +30,9 @@ use crate::engine::{MAX_SAFE_INTEGER, SqlEngine, SqlRow, SqlValue, params};
 use crate::error::CellError;
 
 /// Pre-alpha format /8 binds producing receipts to exact incarnation digests.
-/// Stores /2 through /7 must be recreated, never upgraded in place.
+/// Stores /2 through /7 must be recreated, never upgraded in place. Ledger
+/// events name this format, so it no longer changes: later changes to what
+/// an engine writes are storage versions ([`crate::engine_release`]).
 pub const STORE_FORMAT: &str = "norn.cell.store/8";
 /// Reverse index of pending relation intents, maintained with their records.
 pub(crate) const PENDING_LINK_INDEX: &str = "_norn_pending_link";
