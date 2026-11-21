@@ -201,7 +201,7 @@ class Scenarios(unittest.TestCase):
         # Sol round 5, S5: 3.1.1 re-pinned to 3.1.0 with storage 4 -> 5 read as a new release.
         self.base(lock("3.1.1"), "3.1.1", [("3.1.1", 4)], 4)
         self.tree(lock("3.1.0"), "3.1.0", [("3.1.1", 4), ("3.1.0", 5)], 5)
-        self.assert_refused("is downgraded from 3.1.1 to 3.1.0")
+        self.assert_refused("RivetKit 3.1.0 at storage version 5 does not start above 3.1.1 at 4")
         # The same downgrade with the older release dropped: the head alone is consistent.
         self.tree(lock("3.1.0"), "3.1.0", [("3.1.0", 5)], 5)
         self.assert_tree_alone_passes()
