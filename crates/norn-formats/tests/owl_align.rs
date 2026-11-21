@@ -305,6 +305,90 @@ fn owl_alignment_held_lineage_is_a_reported_residual() {
     );
 }
 
+/// `class` also extends `parent` (a second lineage into the vocabulary).
+fn with_parent(interfaces: &mut [ArtifactEnvelope], class: &str, parent: &str) {
+    let artifact = interfaces
+        .iter_mut()
+        .find(|artifact| {
+            serde_json::to_value(&*artifact).unwrap()["payload"]["interface"]["name"] == class
+        })
+        .unwrap();
+    let mut value = serde_json::to_value(&*artifact).unwrap();
+    value["payload"]["interface"]["extends"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!(parent));
+    *artifact = serde_json::from_value(value).unwrap();
+}
+
+/// Holding a lineage keeps its residual but does not hide what else it
+/// reaches (#1537 round 2, S3): a held descendant's anchors, and any
+/// conflict between them, are reported on its finding and residual note,
+/// and a held descendant may not carry an anchor of its own.
+#[test]
+fn owl_alignment_held_descendants_still_report_their_anchors() {
+    let (mut interfaces, admission) = vocabulary();
+    let mut alignment = table(false);
+    alignment
+        .anchors
+        .retain(|row| row.class != format!("{LN}Loan"));
+    alignment.held.push(OwlHeld {
+        class: format!("{LN}Loan"),
+        note: "only the creditor's right is a claim.".into(),
+    });
+    // A direct anchor below a held class is refused, not silently held.
+    let mut anchored_below = alignment.clone();
+    anchored_below.anchors.push(anchor(
+        &format!("{LN}SecuredLoan"),
+        "core.Claim",
+        "norn.core.claim",
+        &[],
+    ));
+    let error = align(&interfaces, &admission, &anchored_below).unwrap_err();
+    assert!(
+        error.contains("SecuredLoan") && error.contains("held"),
+        "{error}"
+    );
+    // A secured loan is also collateral here: through that second parent it
+    // reaches core.Resource beside the contract's core.Commitment.
+    with_parent(&mut interfaces, "ex.ln.SecuredLoan", "ex.ln.Collateral");
+    let aligned = align(&interfaces, &admission, &alignment).unwrap();
+    // Read through the wire form, as the import report shows it.
+    let wire = |name: &str| serde_json::to_value(finding(&aligned.findings, name)).unwrap();
+    let secured = wire("ex.ln.SecuredLoan");
+    assert_eq!(secured["outcome"], "held", "{secured}");
+    assert_eq!(secured["via"], format!("{LN}Loan"), "{secured}");
+    assert_eq!(
+        secured["anchors"],
+        serde_json::json!(["core.Commitment", "core.Resource"]),
+        "{secured}"
+    );
+    let unsecured = wire("ex.ln.UnsecuredLoan");
+    assert_eq!(unsecured["outcome"], "held", "{unsecured}");
+    assert_eq!(
+        unsecured["anchors"],
+        serde_json::json!(["core.Commitment"]),
+        "{unsecured}"
+    );
+    let summary = aligned.summary();
+    assert_eq!(summary["held"], 3);
+    assert_eq!(summary["heldConflicts"], 1);
+    let link = serde_json::to_value(&aligned.packs[1]).unwrap();
+    let note = link["payload"]["residuals"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|residual| residual["termId"] == term_of("ex.ln.SecuredLoan"))
+        .unwrap()["note"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(
+        note.contains("core.Commitment and core.Resource") && note.contains("disjoint"),
+        "{note}"
+    );
+}
+
 const CREDIT_AGREEMENT: &str =
     "https://spec.edmcouncil.org/fibo/ontology/FBC/DebtAndEquities/Debt/CreditAgreement";
 

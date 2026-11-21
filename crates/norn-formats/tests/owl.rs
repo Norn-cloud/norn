@@ -410,8 +410,13 @@ const RATIOS: &str = concat!(
 );
 
 fn ratios(witnesses: WitnessPolicy) -> norn_formats::SchemaImport {
+    import_ratios(RATIOS, witnesses)
+}
+
+/// Import `text` with the `ex-rt` namespace owned.
+fn import_ratios(text: &'static str, witnesses: WitnessPolicy) -> norn_formats::SchemaImport {
     let mut config = config();
-    config.graph_sha256 = sha256_hex(RATIOS.as_bytes());
+    config.graph_sha256 = sha256_hex(text.as_bytes());
     config.namespaces = vec![OwlNamespace {
         iri: "https://example.org/onto/Ratios/".into(),
         prefix: "ex-rt".into(),
@@ -419,7 +424,7 @@ fn ratios(witnesses: WitnessPolicy) -> norn_formats::SchemaImport {
     config.witnesses = witnesses;
     let graph = OwlGraph {
         path: "ratios.nt",
-        bytes: RATIOS.as_bytes(),
+        bytes: text.as_bytes(),
     };
     let import = OwlReader.import(graph, &config);
     assert!(
@@ -589,4 +594,168 @@ fn owl_unrelated_universal_targets_still_conflict() {
         code_of(&import, "SubClassOf(ex-rt:KeeperMinder ex-rt:Minder)"),
         "format.owl.inheritance_conflict"
     );
+}
+
+/// Data properties under filler-scoped `some` (S1 of #1537 round 2) and
+/// documentation that a definition displaces (S2): `notes` has no bound,
+/// `code` is functional, and `tag` is capped at one on the whole property.
+const NOTES: &str = concat!(
+    "<https://example.org/onto/Ratios/> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Ontology> .\n",
+    "<https://example.org/onto/Ratios/Holder> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .\n",
+    "<https://example.org/onto/Ratios/Holder> <http://www.w3.org/2000/01/rdf-schema#label> \"holder\"@en .\n",
+    "<https://example.org/onto/Ratios/Holder> <http://www.w3.org/2004/02/skos/core#definition> \"One who holds.\"@en .\n",
+    "<https://example.org/onto/Ratios/Keeper> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .\n",
+    "<https://example.org/onto/Ratios/Keeper> <http://www.w3.org/2000/01/rdf-schema#label> \"keeper\"@en .\n",
+    "<https://example.org/onto/Ratios/SubHolder> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .\n",
+    "<https://example.org/onto/Ratios/SubHolder> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <https://example.org/onto/Ratios/Holder> .\n",
+    // notes: many strings; a holder has some token among them.
+    "<https://example.org/onto/Ratios/notes> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .\n",
+    "<https://example.org/onto/Ratios/notes> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#string> .\n",
+    "<https://example.org/onto/Ratios/notes> <http://www.w3.org/2000/01/rdf-schema#label> \"notes\"@en .\n",
+    "<https://example.org/onto/Ratios/notes> <http://www.w3.org/2004/02/skos/core#definition> \"Free remarks.\"@en .\n",
+    "<https://example.org/onto/Ratios/Holder> <http://www.w3.org/2000/01/rdf-schema#subClassOf> _:n1 .\n",
+    "_:n1 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Restriction> .\n",
+    "_:n1 <http://www.w3.org/2002/07/owl#onProperty> <https://example.org/onto/Ratios/notes> .\n",
+    "_:n1 <http://www.w3.org/2002/07/owl#someValuesFrom> <http://www.w3.org/2001/XMLSchema#token> .\n",
+    // code: functional, so one value at most.
+    "<https://example.org/onto/Ratios/code> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .\n",
+    "<https://example.org/onto/Ratios/code> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#FunctionalProperty> .\n",
+    "<https://example.org/onto/Ratios/code> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#string> .\n",
+    "<https://example.org/onto/Ratios/code> <http://www.w3.org/2000/01/rdf-schema#label> \"code\"@en .\n",
+    "<https://example.org/onto/Ratios/code> <http://www.w3.org/2004/02/skos/core#definition> \"A short identifier.\"@en .\n",
+    "<https://example.org/onto/Ratios/Holder> <http://www.w3.org/2000/01/rdf-schema#subClassOf> _:n2 .\n",
+    "_:n2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Restriction> .\n",
+    "_:n2 <http://www.w3.org/2002/07/owl#onProperty> <https://example.org/onto/Ratios/code> .\n",
+    "_:n2 <http://www.w3.org/2002/07/owl#someValuesFrom> <http://www.w3.org/2001/XMLSchema#token> .\n",
+    // tag: at most one on a holder (so on a sub-holder), and some token.
+    "<https://example.org/onto/Ratios/tag> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .\n",
+    "<https://example.org/onto/Ratios/tag> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#string> .\n",
+    "<https://example.org/onto/Ratios/Holder> <http://www.w3.org/2000/01/rdf-schema#subClassOf> _:n3 .\n",
+    "_:n3 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Restriction> .\n",
+    "_:n3 <http://www.w3.org/2002/07/owl#onProperty> <https://example.org/onto/Ratios/tag> .\n",
+    "_:n3 <http://www.w3.org/2002/07/owl#maxCardinality> \"1\"^^<http://www.w3.org/2001/XMLSchema#nonNegativeInteger> .\n",
+    "<https://example.org/onto/Ratios/SubHolder> <http://www.w3.org/2000/01/rdf-schema#subClassOf> _:n4 .\n",
+    "_:n4 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Restriction> .\n",
+    "_:n4 <http://www.w3.org/2002/07/owl#onProperty> <https://example.org/onto/Ratios/tag> .\n",
+    "_:n4 <http://www.w3.org/2002/07/owl#someValuesFrom> <http://www.w3.org/2001/XMLSchema#token> .\n",
+    // keeps: Keeper's only documentation is its label, as is the member's.
+    "<https://example.org/onto/Ratios/keeps> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#DatatypeProperty> .\n",
+    "<https://example.org/onto/Ratios/keeps> <http://www.w3.org/2000/01/rdf-schema#domain> <https://example.org/onto/Ratios/Keeper> .\n",
+    "<https://example.org/onto/Ratios/keeps> <http://www.w3.org/2000/01/rdf-schema#range> <http://www.w3.org/2001/XMLSchema#string> .\n",
+    "<https://example.org/onto/Ratios/keeps> <http://www.w3.org/2000/01/rdf-schema#label> \"keeps\"@en .\n",
+);
+
+fn property<'a>(interfaces: &'a BTreeMap<String, Value>, class: &str, id: &str) -> Option<&'a Value> {
+    interfaces[class]["properties"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|property| property["id"] == id)
+}
+
+/// A data member is one value, so a filler-scoped `some` lowers its
+/// existence (closed) only where the property is already bounded to one.
+#[test]
+fn owl_closed_filler_scoped_data_existence_needs_a_bound_of_one() {
+    let import = import_ratios(NOTES, WitnessPolicy::Closed);
+    let interfaces = interfaces(&import);
+    let notes = "SubClassOf(ex-rt:Holder DataSomeValuesFrom(ex-rt:notes xsd:token))";
+    assert_eq!(code_of(&import, notes), "format.owl.filler_scoped");
+    let entry = import
+        .loss_report
+        .entry(&SourceElement::definition("owl.axiom", notes))
+        .unwrap();
+    let Disposition::Deferred { detail, .. } = &entry.disposition else {
+        panic!("{:?}", entry.disposition);
+    };
+    assert!(detail.contains("one value"), "{detail}");
+    assert!(
+        property(&interfaces, "ex.rt.Holder", "notes").is_none(),
+        "no scalar caps the many notes: {}",
+        interfaces["ex.rt.Holder"]
+    );
+    // Functional: the scalar bound holds, so existence is lowered.
+    let code = property(&interfaces, "ex.rt.Holder", "code").unwrap();
+    assert!(code.get("constraints").is_none(), "required: {code}");
+    assert_eq!(
+        code_of(
+            &import,
+            "SubClassOf(ex-rt:Holder DataSomeValuesFrom(ex-rt:code xsd:token))"
+        ),
+        "mapped"
+    );
+    // Capped at one on the whole property by an ancestor's `max 1`.
+    let tag = property(&interfaces, "ex.rt.SubHolder", "tag").unwrap();
+    assert!(tag.get("constraints").is_none(), "required: {tag}");
+    assert_eq!(
+        code_of(
+            &import,
+            "SubClassOf(ex-rt:SubHolder DataSomeValuesFrom(ex-rt:tag xsd:token))"
+        ),
+        "mapped"
+    );
+}
+
+fn annotation(
+    import: &norn_formats::SchemaImport,
+    element: SourceElement,
+) -> &norn_formats::contract::LossEntry {
+    import
+        .loss_report
+        .entry(&element)
+        .unwrap_or_else(|| panic!("no entry for {element:?}"))
+}
+
+/// A label is mapped only where the description carries it; a definition
+/// takes precedence, and the label it displaces is deferred.
+#[test]
+fn owl_only_the_selected_annotation_is_mapped() {
+    use norn_formats::contract::Facet;
+    let import = import_ratios(NOTES, WitnessPolicy::Closed);
+    let interfaces = interfaces(&import);
+    let rt = "https://example.org/onto/Ratios/";
+    let class = |local: &str, key: &str| {
+        SourceElement::dataset_facet(&format!("{rt}{local}"), Facet::Key(key.into()))
+    };
+    let member = |local: &str, key: &str| {
+        SourceElement::definition_facet(
+            "owl.datatype_property",
+            &format!("{rt}{local}"),
+            Facet::Key(key.into()),
+        )
+    };
+    assert_eq!(
+        interfaces["ex.rt.Holder"]["description"],
+        format!("One who holds. <{rt}Holder>")
+    );
+    let mapped = |entry: &norn_formats::contract::LossEntry| {
+        matches!(entry.disposition, Disposition::Mapped { .. })
+    };
+    let displaced = |entry: &norn_formats::contract::LossEntry| match &entry.disposition {
+        Disposition::Deferred { code, detail, .. } => {
+            code == "format.owl.annotation" && detail.contains("skos:definition")
+        }
+        _ => false,
+    };
+    // The class: definition carried, label displaced.
+    assert!(mapped(annotation(&import, class("Holder", "skos:definition"))));
+    let label = annotation(&import, class("Holder", "rdfs:label"));
+    assert!(displaced(label), "{:?}", label.disposition);
+    // A class with only a label carries it.
+    assert!(mapped(annotation(&import, class("Keeper", "rdfs:label"))));
+    // A placed member: the definition wins over the label.
+    let code = property(&interfaces, "ex.rt.Holder", "code").unwrap();
+    assert_eq!(code["description"], format!("A short identifier. <{rt}code>"));
+    assert!(mapped(annotation(&import, member("code", "skos:definition"))));
+    let label = annotation(&import, member("code", "rdfs:label"));
+    assert!(displaced(label), "{:?}", label.disposition);
+    // A member with only a label carries it.
+    let keeps = property(&interfaces, "ex.rt.Keeper", "keeps").unwrap();
+    assert_eq!(keeps["description"], format!("keeps <{rt}keeps>"));
+    assert!(mapped(annotation(&import, member("keeps", "rdfs:label"))));
+    // `notes` lowers no member (S1): neither annotation is emitted.
+    let notes_label = annotation(&import, member("notes", "rdfs:label"));
+    assert!(!mapped(notes_label), "{:?}", notes_label.disposition);
+    let notes_definition = annotation(&import, member("notes", "skos:definition"));
+    assert!(!mapped(notes_definition), "{:?}", notes_definition.disposition);
 }
