@@ -139,6 +139,25 @@ and a run against this compose stack show that offload is in it:
   - Backups here are bucket replication plus the log disks.
   - There is no consistent snapshot or export command.
 
+## Operating limits found in the rehearsal (#1130)
+
+- **Open files:** the engine needs `nofile` far above Docker's default of 1024.
+  At 1024, a sustained write load failed the log shard with `EMFILE` and the
+  engine fail-stopped. The compose file sets 1048576, as Rivet's systemd unit
+  does (`LimitNOFILE`).
+- **A dead runner's cells move after `pegboard.node_lost_threshold`** (default
+  40 s; measured 44-51 s end to end). A restarted engine is back in 3-10 s.
+  Lowering the threshold shortens runner-crash outages, but it has not been
+  measured here, and a lower value moves cells off a runner sooner on a long
+  pause (the thawed runner is fenced either way).
+- **Bulk writes into one actor are rate-limited by the engine's cold-store
+  compaction.** On a 4-vCPU machine, sustained 8-64 MiB commits at 20-66 MB/s
+  were refused (`write_refused`), and the actor's volume was fenced
+  (`staged_write_abort_failed`) and reopened in a new generation. No
+  acknowledged write was lost. Past about 4 GiB in one actor, every further
+  256 MiB load was fenced. Large dataset loads need a bounded rate (or a
+  bigger engine machine) until this is understood upstream.
+
 ## Durability and cost evidence
 
 `durability/durability.py` runs on a Boat VM. It brings this stack up with an
