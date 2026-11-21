@@ -4,15 +4,19 @@
 //! Both are value-level. The findings need Population, Values and Sources on
 //! the row, the same capabilities as its lineage (D67); the history needs
 //! Population and Values, and names a version's source lineage only to a
-//! caller who also holds Sources. Unlike an authoritative read, they also
+//! caller who also holds Sources on that version. Unlike an authoritative read, they also
 //! serve a quarantined object: OBS-EVIDENCE-1 keeps imported source truth
 //! readable to those allowed to review it, and a finding without its subject
 //! cannot be reviewed. A refused object refuses with the same opaque 404 as
 //! lineage.
 //!
-//! The history lists every proven version of the row, newest first, with the
-//! receipt that committed it and what wrote it: a mapping (the version's
-//! source lineage, as `/lineage?version=` serves it, under Sources) or an
+//! The history lists the proven versions of the row the caller may read,
+//! newest first, with the receipt that committed it and what wrote it. Each
+//! version is decided on its own record, not on the current row: a version
+//! the caller could not read is not listed, nor is one that changed only what
+//! the caller may not see. What wrote a version is a mapping (the version's
+//! source lineage, as `/lineage?version=` serves it, under that version's
+//! Sources) or an
 //! admitted action (the action-call record of that commit: which action and
 //! which verified actor). An action's call record is disclosed under its own
 //! read decision: a caller who may not read it (Population and Values on that
@@ -131,7 +135,9 @@ pub struct NornObjectHistory {
     pub object_type: String,
     /// The object id.
     pub id: String,
-    /// The versions listed, newest first.
+    /// The versions the caller may read, newest first. A version is listed
+    /// only when the caller holds Population and Values on that version's own
+    /// record, and only when it changed a value the caller may see.
     pub versions: Vec<NornObjectVersion>,
     /// True when older versions exist beyond [`MAX_HISTORY_VERSIONS`].
     pub truncated: bool,
@@ -367,14 +373,50 @@ fn action_writer<E: SqlEngine>(
     Ok(Some(NornVersionWriter::Action { action_id, actor }))
 }
 
-/// One version with its receipt and writer; its source lineage only when
-/// `sources` (the caller holds Sources on the row).
-fn version_entry<E: SqlEngine>(
-    (host, access, actor, sources): (&DevHost<E>, &dyn ObjectAccess, &str, bool),
+/// The read decision over one version: the version's own record (the row
+/// it deletes, for a tombstone) holds Population and Values for the caller,
+/// and whether it also holds Sources. `None` withholds the whole version.
+///
+/// Each version is decided on its own row, never on the current one: a
+/// permission field the row once held is the one its earlier values were
+/// written under, and a grant made later does not open them.
+fn version_read<E: SqlEngine>(
+    (host, access, actor): (&DevHost<E>, &dyn ObjectAccess, &str),
     reader: &StoreReader<'_, E>,
     row: &ObjectRecord,
     version: u64,
-) -> Result<NornObjectVersion, Refusal> {
+) -> Result<Option<(Option<ObjectRecord>, bool)>, Refusal> {
+    let stored = reader
+        .object_at_version(MAIN_WORLD, &row.object_type, &row.id, version)
+        .map_err(Refusal::host)?;
+    let decided_on = match &stored {
+        Some(record) => Some(record.clone()),
+        None if version > 1 => reader
+            .object_at_version(MAIN_WORLD, &row.object_type, &row.id, version - 1)
+            .map_err(Refusal::host)?,
+        None => None,
+    };
+    let Some(decided_on) = decided_on else {
+        return Ok(None);
+    };
+    let readable = [Population, Values]
+        .into_iter()
+        .all(|capability| permitted(host, access, actor, &decided_on, capability));
+    Ok(readable.then(|| (stored, permitted(host, access, actor, &decided_on, Sources))))
+}
+
+/// One version with its receipt and writer, or `None` when the caller may not
+/// read it ([`version_read`]); its source lineage only under that version's
+/// Sources.
+fn version_entry<E: SqlEngine>(
+    (host, access, actor): (&DevHost<E>, &dyn ObjectAccess, &str),
+    reader: &StoreReader<'_, E>,
+    row: &ObjectRecord,
+    version: u64,
+) -> Result<Option<NornObjectVersion>, Refusal> {
+    let Some((stored, sources)) = version_read((host, access, actor), reader, row, version)? else {
+        return Ok(None);
+    };
     let receipt = reader
         .receipt_for_fact_version(MAIN_WORLD, &row.object_type, &row.id, version)
         .map_err(Refusal::host)?;
@@ -382,10 +424,7 @@ fn version_entry<E: SqlEngine>(
     // PRIVACY-1: each version's values are projected under that version's
     // own markings; a marked version names no writer input or source row.
     let mut marked = false;
-    let values = match reader
-        .object_at_version(MAIN_WORLD, &row.object_type, &row.id, version)
-        .map_err(Refusal::host)?
-    {
+    let values = match stored {
         Some(mut record) => {
             let markings = crate::privacy::version_markings(reader, &catalog, &record)?;
             marked = markings
@@ -410,13 +449,13 @@ fn version_entry<E: SqlEngine>(
         None => action_writer((host, access, actor), reader, &receipt)?
             .unwrap_or(NornVersionWriter::Other),
     };
-    Ok(NornObjectVersion {
+    Ok(Some(NornObjectVersion {
         version,
         commit: receipt.body.commit_seq,
         logical_time: receipt.body.logical_time,
         values,
         writer,
-    })
+    }))
 }
 
 /// HOST-READ-6: an object's proven versions, newest first, with what wrote each.
@@ -425,7 +464,7 @@ fn version_entry<E: SqlEngine>(
 /// A denied gate (the opaque 403); an absent or withheld object (one 404;
 /// Sources is not needed, and gates only each version's lineage); a commit
 /// between the reads (409 `object.snapshot_moved`); or a host failure.
-#[utoipa::path(get, path = "/v1/objects/{type}/{id}/history", operation_id = "get_object_history", params(ScopeQuery, ("type" = String, Path, description = "The object type (concept) name; percent-escapes are decoded."), ("id" = String, Path, description = "The object identity; percent-escapes are decoded.")), responses((status = 200, description = "The object's proven versions, newest first, each with its commit and what wrote it.", body = NornObjectHistory), (status = 400, description = "The request was refused as invalid (`request.invalid`): an unknown or repeated query parameter, a query over the host bound, or a path segment that is not UTF-8 once decoded.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied, with the same document whatever the reason.", body = Refusal), (status = 404, description = "The request was refused (`object.not_found`): the object is absent or withheld (no Population or Values); these are not told apart. Sources is not needed: without it no version names its source lineage. A quarantined object is served.", body = Refusal), (status = 409, description = "The request was refused (`object.snapshot_moved`, retryable): the cell committed between the reads.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal), (status = 503, description = "The request was refused (`object.snapshot_unavailable`): the engine cannot pin one snapshot for the read. The shipped engines do not return it.", body = Refusal)))]
+#[utoipa::path(get, path = "/v1/objects/{type}/{id}/history", operation_id = "get_object_history", params(ScopeQuery, ("type" = String, Path, description = "The object type (concept) name; percent-escapes are decoded."), ("id" = String, Path, description = "The object identity; percent-escapes are decoded.")), responses((status = 200, description = "The object's proven versions the caller may read, newest first, each with its commit and what wrote it.", body = NornObjectHistory), (status = 400, description = "The request was refused as invalid (`request.invalid`): an unknown or repeated query parameter, a query over the host bound, or a path segment that is not UTF-8 once decoded.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied, with the same document whatever the reason.", body = Refusal), (status = 404, description = "The request was refused (`object.not_found`): the object is absent or withheld (no Population or Values); these are not told apart. Sources is not needed: without it no version names its source lineage. A quarantined object is served.", body = Refusal), (status = 409, description = "The request was refused (`object.snapshot_moved`, retryable): the cell committed between the reads.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal), (status = 503, description = "The request was refused (`object.snapshot_unavailable`): the engine cannot pin one snapshot for the read. The shipped engines do not return it.", body = Refusal)))]
 pub fn get_object_history<E: SqlEngine>(
     host: &DevHost<E>,
     scope: &ScopeQuery,
@@ -436,21 +475,31 @@ pub fn get_object_history<E: SqlEngine>(
 ) -> Result<NornObjectHistory, Refusal> {
     let (_epoch, actor) = collection(host, scope, actor, object_type, access)?;
     let mut start = None;
-    // The history is the row's values over time: Population and Values. Its
-    // source lineage is Sources', decided once here for every version.
+    // The history is the row's values over time: Population and Values on the
+    // current row to read it at all, then each version's own decision.
     let row = raw_row(host, access, (object_type, id), &mut start)?;
     let row = readable(host, access, &actor, row)?;
-    let sources = permitted(host, access, &actor, &row, Sources);
     let oldest = row
         .version
         .saturating_sub(MAX_HISTORY_VERSIONS)
         .saturating_add(1)
         .max(1);
     locked(host, access, &mut start, |reader| {
-        let versions = (oldest..=row.version)
-            .rev()
-            .map(|version| version_entry((host, access, &actor, sources), reader, &row, version))
-            .collect::<Result<Vec<_>, _>>()?;
+        // Oldest first, so each version is compared with the last one listed.
+        let mut versions: Vec<NornObjectVersion> = Vec::new();
+        for version in oldest..=row.version {
+            let Some(entry) = version_entry((host, access, &actor), reader, &row, version)? else {
+                continue;
+            };
+            // A write that changed nothing the caller may see (only a withheld
+            // field, or nothing) is not listed: its version, commit and time
+            // would tell that a hidden value changed then.
+            if versions.last().is_some_and(|last| last.values == entry.values) {
+                continue;
+            }
+            versions.push(entry);
+        }
+        versions.reverse();
         Ok(NornObjectHistory {
             object_type: row.object_type.clone(),
             id: row.id.clone(),

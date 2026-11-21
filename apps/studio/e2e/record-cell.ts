@@ -63,8 +63,18 @@ const explorer = (objectType: string, id: string, read: string): string | null =
   try { return file(`fixtures/demo/explorer/objects/${objectType}/${recordedName(id)}.${read}.json`) } catch { return null }
 }
 
-/** The record as the cell projects it for `reader`: a Party from the privacy pages, any other from the recording. */
+/**
+ * The record as the cell projects it for `reader`, read after the governed action in its history: the
+ * recorded document at the version that action wrote (one past the recording's), so the page's
+ * version and its history's newest agree, as one cell's reads do.
+ */
 function record(reader: Reader, objectType: string, id: string): Record<string, unknown> | null {
+  const recorded = recordedRecord(reader, objectType, id)
+  return recorded === null ? null : { ...recorded, version: Number(recorded.version) + 1 }
+}
+
+/** The record as recorded: a Party from the privacy pages, any other from the recording. */
+function recordedRecord(reader: Reader, objectType: string, id: string): Record<string, unknown> | null {
   if (objectType === "canon.Party" && id.startsWith("demo/party/0")) {
     const page = JSON.parse(file(`fixtures/privacy/canon.Party.${reader === "admin" ? "auditor" : "viewer"}.page.json`)) as { records: { id: string }[] }
     return page.records.find((candidate) => candidate.id === id) ?? null
@@ -83,7 +93,7 @@ const lineage = (objectType: string, id: string): string | null =>
  * verified actor only to a role that reads call records (an admin), the import its lineage only to a
  * role with Sources, and no version carries the call's input.
  */
-function history(reader: Reader, objectType: string, id: string, values: Record<string, unknown>, source: unknown) {
+function history(reader: Reader, { objectType, id, values, version }: { objectType: string; id: string; values: Record<string, unknown>; version: number }, source: unknown) {
   // The fact the action changed, and what it read before: a Party was first imported as an organization.
   const changed = objectType === "canon.Party" ? "kind" : Object.keys(values).find((key) => typeof values[key] === "string") ?? "id"
   const earlier = objectType === "canon.Party" ? (values.kind === "organization" ? "person" : "organization") : `Earlier ${String(values[changed] ?? "value")}`
@@ -91,8 +101,8 @@ function history(reader: Reader, objectType: string, id: string, values: Record<
   return {
     objectType, id, truncated: false,
     versions: [
-      { version: 2, commit: 412, logicalTime: Date.parse("2026-11-20T14:05:00Z"), values, writer: reader === "admin" ? { kind: "action", actionId: VERIFY.actionId, actor: "user:sara" } : { kind: "other" } },
-      { version: 1, commit: 37, logicalTime: Date.parse("2026-11-18T09:12:00Z"), values: before, writer: source === null ? { kind: "other" } : { kind: "mapping", lineage: source } },
+      { version, commit: 412, logicalTime: Date.parse("2026-11-20T14:05:00Z"), values, writer: reader === "admin" ? { kind: "action", actionId: VERIFY.actionId, actor: "user:sara" } : { kind: "other" } },
+      { version: version - 1, commit: 37, logicalTime: Date.parse("2026-11-18T09:12:00Z"), values: before, writer: source === null ? { kind: "other" } : { kind: "mapping", lineage: source } },
     ],
   }
 }
@@ -143,14 +153,16 @@ export async function recordCell(page: Page, initial: Reader, access?: { status:
       case "/lineage": return sources === null ? notFound() : route.fulfill({ body: sources, contentType: "application/json" })
       case "/findings": return route.fulfill({ json: { objectType, id, quarantined: false, findings: [], evidence: [] } })
       // The cell serves a record's history to a role that reads its values; its lineage only under Sources.
-      case "/history": return historyRefused ? notFound() : route.fulfill({ json: history(reader, objectType, id, found.values as Record<string, unknown>, sources === null ? null : JSON.parse(sources)) })
+      case "/history": return historyRefused ? notFound() : route.fulfill({ json: history(reader, { objectType, id, values: found.values as Record<string, unknown>, version: Number(found.version) }, sources === null ? null : JSON.parse(sources)) })
       case "/reveal": {
         reveals.push(JSON.parse(route.request().postData() ?? "null"))
         // The cell decided the reveal when it was asked, for who was asking then.
         const asking = reader
         if (held !== null) { const wait = held; held = null; await wait }
         if (asking !== "admin") return route.fulfill({ status: 403, json: { code: "authz.denied", message: "The reveal is not authorized." } })
-        return route.fulfill({ body: file("fixtures/privacy/canon.Party.reveal.json"), contentType: "application/json" })
+        // The recorded reveal, of the version the cell serves now.
+        const revealed = JSON.parse(file("fixtures/privacy/canon.Party.reveal.json")) as { receipt: Record<string, unknown> }
+        return route.fulfill({ json: { ...revealed, receipt: { ...revealed.receipt, version: found.version } } })
       }
       default: return notFound()
     }

@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { MarkingChips, useMarkingCatalog } from "@/components/marking-chip"
 import { Link, useParams } from "@tanstack/react-router"
 import { LifecycleStepper } from "@/components/lifecycle-stepper"
@@ -63,6 +63,10 @@ export function ObjectPage() {
   const { read: catalogRead, catalog } = useCatalog()
   const concept = catalog?.byName.get(name)
   const reads = useQuery({ queryKey: ["object", name, id], queryFn: () => transport.object(name, id) })
+  // The header names the version this read shows and, from the history, the commit that wrote it: a
+  // read again reads both, so neither is left from an earlier read.
+  const queries = useQueryClient()
+  const readAgain = () => { void reads.refetch(); void queries.invalidateQueries({ queryKey: ["history", name, id] }) }
   const live = useMode().data?.kind === "live"
   // Where each value was read, when a document scan carries it: the evidence the cell links to the record.
   const review = useQuery({ queryKey: ["findings", name, id], queryFn: () => readFindings(name, id), enabled: live, retry: false })
@@ -98,11 +102,11 @@ export function ObjectPage() {
           {data && <div className="flex flex-wrap items-center gap-1.5 text-muted-foreground">
             <CopyId value={id} />
             <AsOf objectType={name} id={id} version={data.object.document.version} live={data.object.origin === "live"} />
-            {data.object.origin === "live" && <Button type="button" variant="ghost" size="sm" disabled={reads.isFetching} onClick={() => void reads.refetch()} title="Read this record from the cell again">
+            {data.object.origin === "live" && <Button type="button" variant="ghost" size="sm" disabled={reads.isFetching} onClick={readAgain} title="Read this record from the cell again">
               <RefreshCw className={reads.isFetching ? "animate-spin" : undefined} />Read again
             </Button>}
           </div>}
-          {data?.object.origin === "live" && <div className="pt-1"><RecordActions objectType={name} id={id} onDone={() => void reads.refetch()} /></div>}
+          {data?.object.origin === "live" && <div className="pt-1"><RecordActions objectType={name} id={id} onDone={readAgain} /></div>}
         </div>
       </header>
       {data && concept && broken[0] && <Broken concept={concept} reads={data} finding={broken[0]} heldBack={heldBack} />}
@@ -110,7 +114,7 @@ export function ObjectPage() {
       {problem === undefined && (reads.isPending || catalogRead.isPending) && <p className="text-muted-foreground">Reading the record…</p>}
       {reads.isError && <p className="text-destructive">{reads.error.message}</p>}
       {reads.isSuccess && data === null && (live
-        ? <QuarantinedRecord objectType={name} id={id} onDone={() => void reads.refetch()} />
+        ? <QuarantinedRecord objectType={name} id={id} onDone={readAgain} />
         : <p className="text-muted-foreground">This record is not available yet.</p>)}
       {data && concept && (
         <Tabs value={tab} onValueChange={setTab}>
@@ -154,7 +158,7 @@ export function ObjectPage() {
           </TabsContent>
         </Tabs>
       )}
-      {corrections.sheet(() => { void reads.refetch(); void review.refetch() })}
+      {corrections.sheet(() => { readAgain(); void review.refetch() })}
     </section>
   )
 }
