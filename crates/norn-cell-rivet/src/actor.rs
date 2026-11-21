@@ -1258,7 +1258,9 @@ mod tests {
     };
 
     use super::admit;
-    use crate::config::{ADMISSION_FLOOR, RIVETKIT_CHANNEL, RivetkitRelease, admission_floor};
+    use crate::config::{
+        ADMISSION_FLOOR, RIVET_ENGINE, RIVETKIT_CHANNEL, RivetkitRelease, admission_floor,
+    };
 
     fn stamped(storage: u32) -> StoredVersion {
         StoredVersion::Stamped(
@@ -1271,30 +1273,35 @@ mod tests {
         )
     }
 
-    /// The host's floor is the retained channel's: a cell stamped below it,
-    /// written under a retired `RivetKit` release, is refused at startup,
-    /// though the shared engine (`THIS_ENGINE`, floor `UPGRADES_FROM`) would
-    /// upgrade it. A stamp in the retained interval is admitted.
+    /// The host's floor is the retained channel's (or the engine's own, when
+    /// higher), read from [`RIVET_ENGINE`] rather than restated: a cell
+    /// stamped one below it is refused at startup, though the shared engine
+    /// (`THIS_ENGINE`, floor `UPGRADES_FROM`) would upgrade it whenever the
+    /// channel's floor is the higher one. The floor itself and every stamp up
+    /// to `STORAGE_VERSION` are admitted.
     #[test]
     fn startup_refuses_a_stamp_below_the_retained_channel() {
-        assert_eq!(
-            ADMISSION_FLOOR, 4,
-            "the channel retains RivetKit 3.1.1 from storage version 4"
-        );
-        let retired = ADMISSION_FLOOR.saturating_sub(1);
-        assert!(matches!(
-            engine_release::admit(&stamped(retired), engine_release::THIS_ENGINE),
-            Ok(Admission::Upgrade { .. })
-        ));
+        let floor = RIVET_ENGINE.upgrades_from;
+        assert_eq!(floor, ADMISSION_FLOOR.max(engine_release::UPGRADES_FROM));
+        assert_eq!(RIVET_ENGINE.storage, STORAGE_VERSION);
+        let retired = floor.saturating_sub(1);
+        if ADMISSION_FLOOR > engine_release::UPGRADES_FROM {
+            assert!(matches!(
+                engine_release::admit(&stamped(retired), engine_release::THIS_ENGINE),
+                Ok(Admission::Upgrade { .. })
+            ));
+        }
         assert!(matches!(
             admit(&stamped(retired)),
             Err(CellError::EngineUpgradeUnsupported { cell, .. }) if cell == retired
         ));
-        assert!(matches!(
-            admit(&StoredVersion::Unstamped),
-            Err(CellError::EngineUpgradeUnsupported { cell: 1, .. })
-        ));
-        for retained in ADMISSION_FLOOR..=STORAGE_VERSION {
+        if floor > 1 {
+            assert!(matches!(
+                admit(&StoredVersion::Unstamped),
+                Err(CellError::EngineUpgradeUnsupported { cell: 1, .. })
+            ));
+        }
+        for retained in floor..=STORAGE_VERSION {
             assert!(
                 admit(&stamped(retained)).is_ok(),
                 "storage version {retained} is admitted"
