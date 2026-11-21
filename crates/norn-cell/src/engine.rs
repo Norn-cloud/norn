@@ -524,8 +524,17 @@ impl NativeEngine {
                 row.get(0)
             })?;
         conn.execute_batch("PRAGMA synchronous = FULL")?;
-        if let Some(pages) = options.cache_pages {
-            conn.execute_batch(&format!("PRAGMA cache_size = {pages}"))?;
+        match options.cache_pages {
+            Some(pages) => conn.execute_batch(&format!("PRAGMA cache_size = {pages}"))?,
+            // INGEST-CACHE-1: a page of an import writes megabytes (its
+            // journal record alone is about 2 MB for 87 rows); in SQLite's
+            // default 2 MiB cache that transaction spilled pages to the file
+            // before its commit and read them back. The cache only grows to
+            // what the cell touches.
+            None => conn.execute_batch(&format!(
+                "PRAGMA cache_size = -{}",
+                crate::store::DEFAULT_CACHE_KIB
+            ))?,
         }
         conn.execute_batch("PRAGMA foreign_keys = ON")?;
         Self::configured(conn)

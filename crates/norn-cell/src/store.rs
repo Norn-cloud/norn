@@ -467,11 +467,17 @@ pub enum JournalMode {
 pub struct StoreOptions {
     /// The journal mode.
     pub journal_mode: JournalMode,
-    /// The native page cache size in pages. A small cache makes
-    /// SQLite spill uncommitted pages to the file mid-transaction, which the
-    /// crash simulations use to exercise hot-journal and WAL recovery.
+    /// The native page cache size in pages; `None` is
+    /// [`DEFAULT_CACHE_KIB`]. A small cache makes SQLite spill uncommitted
+    /// pages to the file mid-transaction, which the crash simulations use to
+    /// exercise hot-journal and WAL recovery.
     pub cache_pages: Option<u32>,
 }
+
+/// The native page cache a file-backed store keeps when
+/// [`StoreOptions::cache_pages`] is `None`: 16 MiB, so one import page's
+/// transaction fits without spilling (INGEST-CACHE-1).
+pub const DEFAULT_CACHE_KIB: u32 = 16 * 1024;
 
 /// One retained, checker-admitted definition set installed in the cell.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
