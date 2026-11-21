@@ -490,8 +490,9 @@ known = {"test/" + shard for shard in shards.split()} | {
 # green tasks over 287 Boat bundle jobs of 80 green runs (40 merge groups, 40 pull requests,
 # runs 44493680372..44951869655, 2026-11-19..21). A test task's seconds are net of the test
 # build it carries, read from cargo's own "Finished `test` profile" lines of that task.
-# The weights these replace (2026-11-14..18) were 0.5 to 0.9 of today's: integration was
-# 920 against 1841 observed, so one bundle took 52 min while the others took 33-36.
+# The weights these replace (2026-11-14..18) mostly undercounted today's tasks: integration
+# was 920 against 1841 observed. Replaying today's p50s through the old weights gives one
+# bundle 52 min while the others get 33-36.
 weights = {
     "test/heavy-1": 13, "test/heavy-2": 244, "test/heavy-3": 90,
     "test/heavy-4": 35, "test/heavy-5": 26, "test/heavy-6": 57,
