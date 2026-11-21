@@ -471,10 +471,7 @@ mod tests {
     }
 
     fn verifies(key: &CheckpointKey, cell: &str, row: &OpenCheckpoint, tag: &[u8]) -> bool {
-        mac(key, cell, row)
-            .expect("mac")
-            .verify_slice(tag)
-            .is_ok()
+        mac(key, cell, row).expect("mac").verify_slice(tag).is_ok()
     }
 
     /// #1551 round 4: the MAC binds every column, the cell's identity and
@@ -484,7 +481,10 @@ mod tests {
     fn the_mac_binds_the_row_the_cell_and_the_key() {
         let key = CheckpointKey::INSECURE_DEV_AND_TEST;
         let row = checkpoint();
-        let tag = mac(&key, "cell-a", &row).expect("mac").finalize().into_bytes();
+        let tag = mac(&key, "cell-a", &row)
+            .expect("mac")
+            .finalize()
+            .into_bytes();
         assert!(verifies(&key, "cell-a", &row, &tag));
         assert!(!verifies(&key, "cell-b", &row, &tag), "copied across cells");
         let mut changed = row.clone();
