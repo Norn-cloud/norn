@@ -1,0 +1,65 @@
+# Lake engine bake-off (#1533): DuckDB (the engine olapd runs today) against
+# Apache DataFusion on the same workloads, files and VM. A measurement
+# harness, not product code: its own workspace and lockfile, so it never
+# moves the main lockfile or any shipped crate's dependencies.
+[package]
+name = "lake-bakeoff"
+version = "0.0.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+[workspace]
+
+[features]
+default = ["duckdb-engine", "df-engine"]
+duckdb-engine = ["dep:duckdb"]
+df-engine = ["dep:datafusion", "dep:datafusion-substrait", "dep:prost", "dep:parquet", "dep:tokio"]
+
+[[bin]]
+name = "bakeoff"
+path = "src/main.rs"
+required-features = ["duckdb-engine", "df-engine"]
+
+# Binary-size probes: the same trivial query linked against one engine each.
+[[bin]]
+name = "size-duckdb"
+path = "src/bin/size_duckdb.rs"
+required-features = ["duckdb-engine"]
+
+[[bin]]
+name = "size-datafusion"
+path = "src/bin/size_datafusion.rs"
+required-features = ["df-engine"]
+
+[dependencies]
+# The pin and features norn-cell builds olapd's engine with.
+duckdb = { version = "=1.20000.1", default-features = false, features = ["bundled", "json", "parquet"], optional = true }
+datafusion = { version = "=55.3.0", default-features = false, features = [
+  "parquet",
+  "parquet_encryption",
+  "sql",
+  "datetime_expressions",
+  "string_expressions",
+  "unicode_expressions",
+  "nested_expressions",
+  "recursive_protection",
+], optional = true }
+datafusion-substrait = { version = "=55.3.0", optional = true }
+prost = { version = "0.14.1", optional = true }
+# The arrow-rs Parquet crate DataFusion 55.3 resolves to, with modular encryption.
+parquet = { version = "59.2.0", default-features = false, features = ["arrow", "async", "zstd", "encryption"], optional = true }
+tokio = { version = "1.47", features = ["rt-multi-thread", "macros"], optional = true }
+unicode-normalization = "0.1.24"
+sha2 = "0.10.9"
+serde_json = "1.0.140"
+libc = "0.2.175"
+
+# As the workspace release profile: overflow checks stay on.
+[profile.release]
+overflow-checks = true
+
+# The binary-size probes, measured stripped.
+[profile.size]
+inherits = "release"
+strip = true
