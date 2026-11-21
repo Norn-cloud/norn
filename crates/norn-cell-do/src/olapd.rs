@@ -235,9 +235,7 @@ pub fn serve(listener: &TcpListener, config: Config, clock: Arc<dyn Clock>) -> s
 pub trait Seam: Send + Sync {
     /// A `/v1/store` of `tenant` returned from the engine, `stored` or
     /// refused, and its answer is not yet sent.
-    fn stored(&self, tenant: &TenantId, stored: bool) {
-        let _unused = (tenant, stored);
-    }
+    fn stored(&self, _tenant: &TenantId, _stored: bool) {}
 }
 
 /// The seam of a production daemon: announces nothing.
