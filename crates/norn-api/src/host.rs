@@ -37,7 +37,22 @@ pub struct DevHost<E: SqlEngine> {
     pseudonyms: Option<crate::privacy::PseudonymKey>,
     /// The marking catalog of the active definitions, by definitions version.
     markings: Mutex<Option<(Option<u64>, crate::privacy::MarkingCatalog)>>,
+    /// ADMIT-CACHE-1 (#1533): the active definitions' verified retained
+    /// actions, keyed by their version and admission receipt digest. Filled
+    /// only by a verification this process ran ([`RetainedActions::load`]);
+    /// any other identity misses and verifies again, and an install clears
+    /// it.
+    ///
+    /// [`RetainedActions::load`]: crate::action_admission::RetainedActions::load
+    retained: Mutex<Option<CachedRetained>>,
 }
+
+/// One verified retained set ([`DevHost::retained`]): the identity it was
+/// verified under and what the verification admitted.
+type CachedRetained = (
+    (u64, String),
+    std::sync::Arc<crate::action_admission::RetainedActions>,
+);
 
 /// A read in progress ([`DevHost::reading`]): no load commits until it ends.
 pub struct Reading<'a> {
@@ -195,6 +210,7 @@ impl<E: SqlEngine> DevHost<E> {
             reads: RwLock::new(()),
             pseudonyms: None,
             markings: Mutex::new(None),
+            retained: Mutex::new(None),
         })
     }
     /// Supply the trusted server policy before sharing this host.
@@ -244,6 +260,45 @@ impl<E: SqlEngine> DevHost<E> {
         let (at, catalog) = crate::privacy::catalog_of(reader)?;
         *cached = Some((at, std::sync::Arc::clone(&catalog)));
         Ok(catalog)
+    }
+    /// ADMIT-CACHE-1 (#1533): the verified retained actions of the active
+    /// definitions `reader` sees, with their version, or `None` with nothing
+    /// installed. The receipt is verified against the retained set once per
+    /// definitions identity (version and receipt digest) in this process;
+    /// a call under the same identity reuses that verification, and a
+    /// refused verification is never kept, so the next call verifies again.
+    /// # Errors
+    /// The retained set does not verify, or a store failure.
+    pub(crate) fn retained(
+        &self,
+        reader: &norn_cell::StoreReader<'_, E>,
+    ) -> Result<Option<(u64, std::sync::Arc<crate::action_admission::RetainedActions>)>, Refusal>
+    {
+        let Some(identity) = reader
+            .active_definitions_identity()
+            .map_err(Refusal::host)?
+        else {
+            return Ok(None);
+        };
+        let mut cached = self.retained.lock().map_err(Refusal::host)?;
+        if let Some((at, actions)) = cached.as_ref()
+            && *at == identity
+        {
+            return Ok(Some((identity.0, std::sync::Arc::clone(actions))));
+        }
+        let installed = reader
+            .installed_definitions(Some(identity.0))
+            .map_err(Refusal::host)?
+            .ok_or_else(|| Refusal::host("the active definitions are not retained"))?;
+        if installed.receipt_sha256 != identity.1 {
+            return Err(Refusal::host("the active definitions changed while read"));
+        }
+        let actions = std::sync::Arc::new(crate::action_admission::RetainedActions::load(
+            &installed,
+            self.scope(),
+        )?);
+        *cached = Some((identity, std::sync::Arc::clone(&actions)));
+        Ok(Some((installed.version, actions)))
     }
     /// Physical scope, never taken from client claims.
     #[must_use]
@@ -921,6 +976,11 @@ impl<E: SqlEngine> DevHost<E> {
     /// Tell the authorizer the model changed, under the write epoch the
     /// caller holds, with the cell it just installed into.
     pub(crate) fn model_changed(&self, cell: &ActionCell<E>) {
+        // ADMIT-CACHE-1: the next call verifies the new revision.
+        match self.retained.lock() {
+            Ok(mut cached) => *cached = None,
+            Err(poisoned) => *poisoned.into_inner() = None,
+        }
         let types: Vec<norn_ir::ObjectTypeDef> =
             cell.store().model().object_types().cloned().collect();
         self.authorizer.model_changed(&types);

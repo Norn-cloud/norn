@@ -60,7 +60,16 @@ pub struct ActionPolicy {
     resource_attributes: BTreeMap<String, BTreeMap<String, CedarAttribute>>,
     /// Whether the rules read the principal's `id`.
     principal_id: bool,
+    /// ADMIT-CACHE-1 (#1533): each caller's PDP (the base rules plus that
+    /// caller's call grant), compiled once per revision instead of per call.
+    /// The grant is a function of the caller's subject and kind and of this
+    /// revision alone; at most [`CALLER_PDPS`] are kept.
+    callers: std::sync::Mutex<BTreeMap<(String, &'static str), std::sync::Arc<Pdp>>>,
 }
+
+/// The most callers whose PDP one revision keeps; past it the cache is
+/// emptied and refills, so a flood of callers never grows it without bound.
+const CALLER_PDPS: usize = 1024;
 
 impl std::fmt::Debug for ActionPolicy {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -273,6 +282,7 @@ impl ActionPolicy {
             key: scope_key(scope),
             resource_attributes,
             principal_id,
+            callers: std::sync::Mutex::new(BTreeMap::new()),
         }))
     }
 
@@ -314,6 +324,41 @@ impl ActionPolicy {
         self.callable.contains(action_id)
     }
 
+    /// The PDP deciding `subject`'s calls: the base rules and the call
+    /// capability for exactly the callable actions, compiled on its first
+    /// call under this revision (ADMIT-CACHE-1).
+    fn caller_pdp(
+        &self,
+        subject: &str,
+        kind: &'static str,
+        actor_kind: ActorKind,
+    ) -> Result<std::sync::Arc<Pdp>, ActionDenial> {
+        let denied = || ActionDenial::Forbidden {
+            reason: norn_api::refusal::codes::AUTHZ_DENIED.into(),
+        };
+        let key = (subject.to_owned(), kind);
+        let mut callers = self.callers.lock().map_err(|_poisoned| denied())?;
+        if let Some(pdp) = callers.get(&key) {
+            return Ok(std::sync::Arc::clone(pdp));
+        }
+        let grant = CapabilityGrant {
+            subject_id: subject.to_owned(),
+            actor_kind,
+            agent_session_id: None,
+            scope: Some(self.key.clone()),
+            capabilities: self.callable.iter().cloned().collect(),
+            binding: None,
+        };
+        let pdp = std::sync::Arc::new(
+            Pdp::new(self.base.policy_set().clone(), &[grant]).map_err(|_unbuildable| denied())?,
+        );
+        if callers.len() >= CALLER_PDPS {
+            callers.clear();
+        }
+        callers.insert(key, std::sync::Arc::clone(&pdp));
+        Ok(pdp)
+    }
+
     /// Decide the kernel's action request for `caller`, the request's
     /// verified principal: the call capability for exactly the callable
     /// actions, and the tenant's rules deciding.
@@ -336,16 +381,7 @@ impl ActionPolicy {
             "service" => ActorKind::Service,
             _ => return Err(denied()),
         };
-        let grant = CapabilityGrant {
-            subject_id: caller.subject_id.clone(),
-            actor_kind,
-            agent_session_id: None,
-            scope: Some(self.key.clone()),
-            capabilities: self.callable.iter().cloned().collect(),
-            binding: None,
-        };
-        let pdp =
-            Pdp::new(self.base.policy_set().clone(), &[grant]).map_err(|_unbuildable| denied())?;
+        let pdp = self.caller_pdp(&caller.subject_id, caller.actor_kind, actor_kind)?;
         let key = self.key.clone();
         let roles = caller.roles.clone();
         let principal_attributes = if self.principal_id {
