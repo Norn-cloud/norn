@@ -386,9 +386,9 @@ pub(crate) fn call_action_bound<E: SqlEngine>(
         return Err(stale_pin(&mut cell, approved, principal, attempt)?);
     }
     let model = cell.store().model().clone();
-    let catalog = TypeCatalog::new(model.object_types())
-        .with_property_types(model.property_types())
-        .with_interfaces(model.interfaces())
+    // ADMIT-CACHE-1: the model's definition work is derived once per model.
+    let catalog = model
+        .type_catalog()
         .with_governing_laws(model.law_artifacts())
         .with_action_rules(&admitted.rules);
     let now = turn_clock(&mut cell, now)?;

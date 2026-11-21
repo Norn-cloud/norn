@@ -21,7 +21,7 @@ use norn_cell::engine::SqlEngine;
 use norn_ir::{RuntimeObject, RuntimeValue};
 use norn_kernel::{
     CellCommit, CommandId, Consumed, DecisionTurn, EnvelopeLimits, FactEvent, FactKey, Generation,
-    LogicalTime, TypeCatalog, World,
+    LogicalTime, World,
 };
 
 use norn_cell::flow_run::RunStarter;
@@ -95,10 +95,7 @@ pub(crate) fn result_turn<E: SqlEngine>(
     )
     .map_err(|error| refused(error.code(), "the flow refused the result"))?;
     let model = cell.store().model().clone();
-    let catalog = TypeCatalog::new(model.object_types())
-        .with_property_types(model.property_types())
-        .with_interfaces(model.interfaces())
-        .with_governing_laws(model.law_artifacts());
+    let catalog = model.type_catalog().with_governing_laws(model.law_artifacts());
     let turn = DecisionTurn {
         id: format!(
             "norn.run/{}/result/{}/{attempt}",

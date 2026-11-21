@@ -37,7 +37,7 @@ use norn_cell::read::PendingTimer;
 use norn_ir::RuntimeObject;
 use norn_kernel::{
     CellCommit, CellHost, DecisionTurn, DueTimer, EnvelopeLimits, FactEvent, FactKey, LogicalTime,
-    TypeCatalog, World,
+    World,
 };
 
 use crate::decisions::OpenDecision;
@@ -386,10 +386,7 @@ fn fire_timer<E: SqlEngine>(
                     )
                     .map_err(|error| Refusal::host(error.to_string()))?;
                     let model = cell.store().model().clone();
-                    let catalog = TypeCatalog::new(model.object_types())
-                        .with_property_types(model.property_types())
-                        .with_interfaces(model.interfaces())
-                        .with_governing_laws(model.law_artifacts());
+                    let catalog = model.type_catalog().with_governing_laws(model.law_artifacts());
                     let turn = DecisionTurn {
                         id: format!(
                             "norn.run/{run_id}/timer/{}/{}",

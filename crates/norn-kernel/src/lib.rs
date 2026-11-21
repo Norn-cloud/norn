@@ -120,7 +120,7 @@ pub use decider::{
     step,
 };
 pub use decision_commit::{
-    DataQualityRuleClassification, DecisionRefusal, DecisionTurn, EffectiveValuesError, FactEvent,
+    DataQualityRuleClassification, DecisionRefusal, DefinitionWork, DecisionTurn, EffectiveValuesError, FactEvent,
     FactSlice, PreparedDecision, TypeCatalog, commit_decision, commit_decision_with_limits,
     commit_decision_with_meter, decision_cell_commit, load_slice, prepare_decision,
     prepare_decision_with_limits, prepare_decision_with_source_owned_targets,
