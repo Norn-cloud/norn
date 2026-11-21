@@ -58,6 +58,11 @@ export function ActionSheet({ open, onClose, onView }: { readonly open: OpenActi
   // Read when the sheet opens on a form; the form reports later changes to the store, not to this value.
   const parked = useMemo<ParkedCall | undefined>(() => open === null ? undefined : open.parked ?? parkedCalls.get(session, draftKey(open)), [open, session])
   useEffect(() => { if (open === null) { setDirty(false); setAsking(false) } }, [open])
+  // A form opened as one reader never stays open as another (a tenant switch, an expiry, someone
+  // else signing in): its parked call and draft were that reader's, so the sheet closes.
+  const openedAs = useRef(session)
+  useEffect(() => { openedAs.current = session }, [open])
+  useEffect(() => { if (open !== null && openedAs.current !== session) { setDirty(false); setAsking(false); onClose() } }, [session])
   useEffect(() => {
     if (!dirty) return
     const warn = (event: BeforeUnloadEvent) => { event.preventDefault() }
@@ -99,7 +104,7 @@ export function ActionSheet({ open, onClose, onView }: { readonly open: OpenActi
                   <Button type="button" variant="ghost" size="sm" className="h-7" onClick={() => { kept.delete(draftKey(open)); latest.current = null; setRestored(undefined); setBanner(false); setDirty(false); setGeneration((g) => g + 1) }}>Start over</Button>
                 </p>
               )}
-              <ActionForm key={`${draftKey(open)}:${generation}:${restored === undefined ? "new" : "kept"}:${parked?.decision.id ?? "draft"}`} action={open.action} objectTitle={conceptTitle(open.action.objectKind)}
+              <ActionForm key={`${session}:${draftKey(open)}:${generation}:${restored === undefined ? "new" : "kept"}:${parked?.decision.id ?? "draft"}`} action={open.action} objectTitle={conceptTitle(open.action.objectKind)}
                 remembered={parked === undefined ? restored : undefined} onDraft={(draft) => { latest.current = draft }}
                 onCommitted={() => { kept.delete(draftKey(open)); parkedCalls.delete(session, draftKey(open)); setBanner(false) }}
                 parked={parked} runNow={open.runNow === true && parked === open.parked}

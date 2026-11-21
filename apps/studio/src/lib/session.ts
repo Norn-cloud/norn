@@ -30,8 +30,8 @@ function forgetReads(client: QueryClient): void {
 /**
  * The session query. Whenever a read of it names a different reader than the last one (the session
  * expired and `/api/me` answered 401, someone else signed in, or the organization changed), the
- * previous reader's reads are forgotten before the new answer is shown, the way a sign-out forgets
- * them. Hygiene only: every read is the server's decision for whoever asks.
+ * previous reader's reads and parked calls are forgotten before the new answer is shown, the way a
+ * sign-out forgets them. Hygiene only: every read is the server's decision for whoever asks.
  */
 export function accountQuery(client: QueryClient, fetcher: Fetch = (input, init) => fetch(input, init)) {
   return queryOptions({
@@ -39,7 +39,12 @@ export function accountQuery(client: QueryClient, fetcher: Fetch = (input, init)
     queryFn: async () => {
       const account = await readAccount(fetcher)
       const previous = client.getQueryData<Account | null>(SESSION)
-      if (previous !== undefined && sessionKey(previous) !== sessionKey(account)) forgetReads(client)
+      if (previous !== undefined && sessionKey(previous) !== sessionKey(account)) {
+        // A parked call's exact input and key are the previous reader's: never kept for the next,
+        // nor for the same reader coming back after a tenant switch or an expiry.
+        forgetParkedCalls()
+        forgetReads(client)
+      }
       return account
     },
     staleTime: 60_000,

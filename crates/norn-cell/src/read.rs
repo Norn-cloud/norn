@@ -4189,6 +4189,53 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             .next())
     }
 
+    /// APPROVAL-REQUESTED-1: the parked calls whose requester is exactly
+    /// `requester` (its subject, actor kind and role table), as their
+    /// `(command_id, generation)`, in enqueue order. Only those two columns
+    /// are read back, so a caller names its own calls before any parked
+    /// payload is loaded or decoded, and another requester's call costs it
+    /// nothing more than an id that exists nowhere. With `waiting`, only the
+    /// calls that still wait: undecided (no result recorded), or approved
+    /// and neither run nor refused, in `world`.
+    ///
+    /// SQL narrows on the stored command, as [`Self::parked_commands`] does;
+    /// the caller re-checks every row it loads.
+    ///
+    /// # Errors
+    ///
+    /// SQL engine or decode errors.
+    pub fn parked_calls_of(
+        &self,
+        world: &str,
+        requester: (&str, &str, &str),
+        waiting: bool,
+    ) -> Result<Vec<(String, u64)>, CellError> {
+        let (subject, actor_kind, role_table) = requester;
+        let approved = crate::decision_ledger::APPROVED_CALL;
+        let select = format!(
+            r#"SELECT o."command_id", o."generation" FROM "{OUTBOX}" o WHERE substr(o."command_id",1,14)='norn.approval/' AND json_extract(o."command",'$.payload.approval.requester.subject') IS ?1 AND json_extract(o."command",'$.payload.approval.requester.actorKind') IS ?2 AND json_extract(o."command",'$.payload.approval.requester.roleTable') IS ?3"#
+        );
+        let rows = if waiting {
+            self.conn.query(
+                &format!(
+                    r#"{select} AND ((o."result" IS NULL AND o."consumed_commit_seq" IS NULL) OR EXISTS (SELECT 1 FROM "{approved}" a WHERE a."world"=?4 AND a."command_id"=o."command_id" AND a."consumed_seq" IS NULL AND a."refused_code" IS NULL)) ORDER BY o."position""#
+                ),
+                params![subject, actor_kind, role_table, world],
+            )?
+        } else {
+            self.conn.query(
+                &format!(r#"{select} ORDER BY o."position""#),
+                params![subject, actor_kind, role_table],
+            )?
+        };
+        rows.into_iter()
+            .map(|values| {
+                let row = SqlRow(values);
+                Ok((row.get(0)?, to_u64(row.get(1)?, "generation")?))
+            })
+            .collect()
+    }
+
     fn outbox_rows(
         &self,
         filter: &str,

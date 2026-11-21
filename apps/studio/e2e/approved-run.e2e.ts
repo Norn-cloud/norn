@@ -152,3 +152,23 @@ test("revoked: a requester whose role was revoked after parking gets the cell's 
   expect(asker.actions.calls.filter((c) => c.actionId === "canon.holding.adjust")).toHaveLength(0)
   await shoot(asker.page, "revoked")
 })
+
+test("decide (direct call): the approver's sheet offers no run to open, before or after, and says the call waits for its requester", async ({ browser }) => {
+  const cell = approvalCell()
+  await park((await requester(browser, cell)).page)
+  const decider = await approver(browser, cell)
+  await decider.getByRole("list", { name: "Decisions waiting on you" }).getByRole("button").filter({ hasText: "Adjust this holding's counted quantity?" }).click()
+  await expect(decider.locator("norn-decision-sheet .norn-sheet")).toHaveAttribute("data-engine", "ready", { timeout: 30_000 })
+  // No run waits on a direct call: the sheet links to none.
+  await expect(sheet(decider).getByRole("link", { name: "Open run" })).toHaveCount(0)
+  await expect(sheet(decider).locator('a[href^="/runs/"]')).toHaveCount(0)
+  await sheet(decider).getByLabel("Approve").check()
+  await sheet(decider).getByRole("button", { name: "Decide: Approve" }).click()
+  await expect(sheet(decider).getByRole("alertdialog")).toContainText("an approved call runs when its requester runs it")
+  await expect(sheet(decider).getByRole("alertdialog")).not.toContainText("The run goes on")
+  await sheet(decider).getByRole("button", { name: "Yes, approve" }).click()
+  await expect(sheet(decider).locator('[data-region="outcome-call"]')).toHaveText("Approved; waiting for the requester to run it.")
+  await expect(sheet(decider).getByRole("link", { name: "See the run go on" })).toHaveCount(0)
+  await expect(sheet(decider).locator('a[href^="/runs/"]:visible')).toHaveCount(0)
+  await shoot(decider, "approver-direct-call")
+})

@@ -244,10 +244,16 @@ read it: their own direct parked calls (never a flow step's, which its run's
 retry drives, and never anyone else's), each with its `status` (`pending`,
 `approved`, `rejected`, `expired`, `withdrawn`), the call exactly as it waits
 (`action`, `input`, `encodedInput` as canonical JSON text, `idempotencyKey`)
-and, once approved, its `state` as the decide answer reports it. Without `id`
-it lists the calls pending a decider and those approved and not yet executed;
-with `id` it reads that decision in any state, and answers no item for one
-that is not the caller's. `canRun` is the cell's offer to retry it now
+and, once approved, its `state` as the decide answer reports it. The caller
+is the host's verified principal, matched as the dispatch matches the
+requester (subject, actor kind and role table): the same subject under
+another kind or role table reads nothing. The cell finds the caller's calls
+by that identity before it loads any parked payload, so another requester's
+id costs what an id that exists nowhere costs. Without `id` it lists the
+calls pending a decider before their deadline and those approved and not yet
+executed, its limit counting only the caller's own; with `id` it reads that
+decision in any state (`expired` once its deadline passed, recorded or not),
+and answers no item for one that is not the caller's. `canRun` is the cell's offer to retry it now
 (approved, `not_executed`, a direct call of the caller's); it grants nothing:
 sending back exactly the served call is the requester's retry, decided again
 under their current authority, so a role revoked after parking is refused

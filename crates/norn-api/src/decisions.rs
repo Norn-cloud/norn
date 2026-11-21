@@ -28,6 +28,7 @@ use norn_cell::decision_ledger::{
     OptionEffect, Resolution,
 };
 use norn_cell::engine::SqlEngine;
+use norn_cell::flow_run::RunStarter;
 use norn_cell::read::PendingCommand;
 use norn_cell::{CellStore, MAIN_WORLD};
 use norn_ir::{RuntimeObject, RuntimeValue};
@@ -1013,16 +1014,20 @@ pub struct RequestedPage {
     pub server_now_ms: u64,
 }
 
-/// Whether `held` is a direct call `actor` made: a flow step's call is
-/// its run's, and the run's retry drives it.
+/// Whether `held` is a direct call `principal` made: exactly the requester
+/// its dispatch admits (subject, actor kind and role table,
+/// [`crate::approvals::is_requester`]); a flow step's call is its run's,
+/// and the run's retry drives it.
 fn requested_by<E: SqlEngine>(
     store: &CellStore<E>,
     held: &HeldCall,
-    actor: &str,
+    principal: &RunStarter,
 ) -> Result<bool, Refusal> {
-    Ok(held.call.requester.subject == actor
-        && held.call.attempt.is_none()
-        && crate::flow_driver::run_waiting_on(store, &held.call.idempotency_key)?.is_none())
+    Ok(
+        crate::approvals::is_requester(Some(principal), &held.call.requester)
+            && held.call.attempt.is_none()
+            && crate::flow_driver::run_waiting_on(store, &held.call.idempotency_key)?.is_none(),
+    )
 }
 
 fn requested_document(
@@ -1056,25 +1061,25 @@ fn requested_document(
     })
 }
 
-/// The resolved decision `decision_id` as its requester `actor` sees it;
-/// `None` when it is not a direct call of theirs.
-fn resolved_requested<E: SqlEngine>(
+/// The parked call `command_id` (at `generation`, decision `decision_id`)
+/// as its requester `principal` sees it; `None` when it is not a direct call
+/// of theirs, or no longer the call that id names. Its payload is loaded
+/// only here, for a row [`StoreReader::parked_calls_of`] already found to be
+/// the principal's own.
+///
+/// [`StoreReader::parked_calls_of`]: norn_cell::read::StoreReader::parked_calls_of
+fn requested_call<E: SqlEngine>(
     cell: &ActionCell<E>,
-    decision_id: &str,
-    actor: &str,
+    (command_id, generation, decision_id): (&str, u64, &str),
+    principal: &RunStarter,
+    now_ms: u64,
 ) -> Result<Option<RequestedDecision>, Refusal> {
     let store = cell.store();
-    let Some(row) = store
-        .read()
-        .decision_resolution(MAIN_WORLD, decision_id)
-        .map_err(Refusal::host)?
-    else {
-        return Ok(None);
-    };
     let Some(pending) = store
         .read()
-        .outbox_entry(&row.resolved.command_id)
+        .outbox_entry(command_id)
         .map_err(Refusal::host)?
+        .filter(|pending| pending.command.generation == generation)
     else {
         return Ok(None);
     };
@@ -1084,9 +1089,28 @@ fn resolved_requested<E: SqlEngine>(
     let Some(held) = decision.call.as_ref() else {
         return Ok(None);
     };
-    if decision.id != decision_id || !requested_by(store, held, actor)? {
+    if decision.id != decision_id || !requested_by(store, held, principal)? {
         return Ok(None);
     }
+    if pending.result.is_none() {
+        // Its deadline passed and the expiry is not recorded yet: it never
+        // runs, whatever records it.
+        let status = if decision.expires_at_ms <= now_ms {
+            RequestedStatus::Expired
+        } else {
+            RequestedStatus::Pending
+        };
+        return requested_document(&decision, held, status, None, None).map(Some);
+    }
+    let Some(row) = store
+        .read()
+        .decision_resolution(MAIN_WORLD, decision_id)
+        .map_err(Refusal::host)?
+        .filter(|row| row.resolved.command_id == command_id)
+    else {
+        // A result is recorded and its resolving commit is still to come.
+        return Ok(None);
+    };
     let approved = row.resolved.resolution == Resolution::Decided
         && row.resolved.choice.as_deref() == Some(crate::approvals::APPROVE);
     let status = match row.resolved.resolution {
@@ -1130,9 +1154,15 @@ fn resolved_requested<E: SqlEngine>(
 /// never decides their call and never lists it among the decisions waiting
 /// on them; this is where they learn that it was approved and retry it
 /// (`canRun`), with the exact input and key it parked with. Without `id`:
-/// the calls pending a decider and those approved and not yet run. With
-/// `id`: that decision in any state, or no item when it is not the caller's
-/// direct call (the cell does not say which).
+/// the calls pending a decider before their deadline and those approved and
+/// not yet run. With `id`: that decision in any state, or no item when it is
+/// not the caller's direct call (the cell does not say which).
+///
+/// The caller is the host's verified principal, compared as the dispatch
+/// compares it (subject, actor kind and role table): the same subject under
+/// another kind or role table is someone else, and reads nothing. Its calls
+/// are found by that identity before any parked payload is loaded, so
+/// another requester's id costs what an id that exists nowhere costs.
 ///
 /// # Errors
 /// Missing or foreign scope; a missing caller (one opaque 403); an invalid
@@ -1155,49 +1185,47 @@ pub fn requested_decisions<E: SqlEngine>(
         return Err(Refusal::invalid("id must be a decision id"));
     }
     let cell = host.cell()?;
-    let store = cell.store();
     let now_ms = now.as_millis().max(cell.now().as_millis());
     let mut items = Vec::new();
     let mut capped = false;
-    for decision in open_decisions(store)? {
-        if wanted.is_some_and(|id| id != decision.id) {
-            continue;
-        }
-        let Some(held) = decision.call.as_ref() else {
-            continue;
-        };
-        if !requested_by(store, held, actor)? {
-            continue;
-        }
-        if items.len() == MAX_DECISION_SCAN {
-            capped = true;
-            break;
-        }
-        // Its deadline passed and the expiry is not recorded yet: it never
-        // runs, whatever records it.
-        let status = if decision.expires_at_ms <= now_ms {
-            RequestedStatus::Expired
-        } else {
-            RequestedStatus::Pending
-        };
-        items.push(requested_document(&decision, held, status, None, None)?);
-    }
-    match wanted {
-        Some(id) if items.is_empty() => items.extend(resolved_requested(&cell, id, actor)?),
-        Some(_open) => {}
-        None => {
-            let waiting = store
-                .read()
-                .unconsumed_approved_calls(MAIN_WORLD, MAX_DECISION_SCAN)
-                .map_err(Refusal::host)?;
-            capped |= waiting.len() == MAX_DECISION_SCAN;
-            for row in waiting {
-                if let Some(item) = resolved_requested(&cell, &row.decision_id, actor)?
-                    && item.can_run
-                {
-                    items.push(item);
-                }
+    // No verified principal: nobody's requester, so nothing is theirs.
+    if let Some(principal) = host.authorizer.verified_principal(actor) {
+        let own = cell
+            .store()
+            .read()
+            .parked_calls_of(
+                MAIN_WORLD,
+                (
+                    &principal.subject,
+                    &principal.actor_kind,
+                    &principal.role_table,
+                ),
+                wanted.is_none(),
+            )
+            .map_err(Refusal::host)?;
+        for (command_id, generation) in own {
+            let id = decision_id(&command_id, generation)?;
+            if wanted.is_some_and(|wanted| wanted != id) {
+                continue;
             }
+            let Some(item) =
+                requested_call(&cell, (&command_id, generation, &id), &principal, now_ms)?
+            else {
+                continue;
+            };
+            // Without an id only the calls that wait: pending a decider
+            // before their deadline, or approved and not yet run.
+            if wanted.is_none()
+                && !(item.status == RequestedStatus::Pending || item.can_run)
+            {
+                continue;
+            }
+            // The limit counts only the caller's own calls that wait.
+            if items.len() == MAX_DECISION_SCAN {
+                capped = true;
+                break;
+            }
+            items.push(item);
         }
     }
     items.sort_by(|left, right| {

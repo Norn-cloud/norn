@@ -15,6 +15,7 @@
 
 #[path = "support/step_cell.rs"]
 mod step_cell;
+use norn_cell::engine::SqlEngine;
 use serde_json::{Value, json};
 use step_cell::{
     APPROVER, Cell, FLOW_ID, MELT_ACTION, MEMBER, NOW, OPERATOR, SCOPE, call, call_at, call_with,
@@ -25,13 +26,15 @@ const APPROVAL_ID: &str = "ops.melt_approval";
 
 /// Install the approval gating the melt action, deciders `admin`, signed by
 /// the operator.
-fn gate(cell: &Cell, expires_in_ms: Option<u64>) {
+fn gate<E: SqlEngine>(cell: &Cell<E>, expires_in_ms: Option<u64>) {
     gate_asking(cell, expires_in_ms, "Convert this melt?", None);
 }
 
 /// [`gate`], asking `question`, replacing revision `replaces` when given:
 /// installing it again with another question is a new definitions version.
-fn gate_asking(cell: &Cell, expires_in_ms: Option<u64>, question: &str, replaces: Option<u64>) {
+fn gate_asking<E: SqlEngine>(
+    cell: &Cell<E>,
+    expires_in_ms: Option<u64>, question: &str, replaces: Option<u64>) {
     let mut payload = json!({
         "action": MELT_ACTION,
         "decider": { "roles": ["admin"] },
@@ -68,7 +71,7 @@ fn melt7(key: &str) -> String {
     melt_body("melt-7", "12", "10", key)
 }
 
-fn convert(cell: &Cell, auth: Option<&str>, body: &str) -> (u16, Value) {
+fn convert<E: SqlEngine>(cell: &Cell<E>, auth: Option<&str>, body: &str) -> (u16, Value) {
     call(
         cell,
         "POST",
@@ -85,7 +88,7 @@ fn pending(cell: &Cell, auth: Option<&str>) -> Value {
     page
 }
 
-fn decide(cell: &Cell, auth: Option<&str>, id: &str, choice: &str) -> (u16, Value) {
+fn decide<E: SqlEngine>(cell: &Cell<E>, auth: Option<&str>, id: &str, choice: &str) -> (u16, Value) {
     call(
         cell,
         "POST",
@@ -202,7 +205,7 @@ fn an_approved_call_commits_on_its_requesters_retry() {
 
 /// The caller's own approval-gated calls (`GET /v1/decisions:requested`),
 /// or with `id` that one decision.
-fn requested(cell: &Cell, auth: Option<&str>, id: Option<&str>) -> Value {
+fn requested<E: SqlEngine>(cell: &Cell<E>, auth: Option<&str>, id: Option<&str>) -> Value {
     let query = match id {
         Some(id) => format!("{SCOPE}&id={id}"),
         None => SCOPE.to_owned(),
@@ -970,4 +973,215 @@ fn a_refusal_racing_an_exact_commit_never_masks_it() {
     let (status, replayed) = convert(&cell, OPERATOR, &body);
     assert_eq!(status, 200, "{replayed}");
     assert_eq!(replayed["outcome"], json!("replayed"), "{replayed}");
+}
+
+/// `GET /v1/decisions:requested` as the host's verified principal
+/// `caller`, called directly so the principal's actor kind and role table
+/// are the test's to choose.
+fn requested_as(cell: &Cell, caller: norn_cell_do::policy::Caller, id: Option<&str>) -> Value {
+    let subject = caller.subject_id.clone();
+    cell.caller.record(Some(caller));
+    let page = norn_api::decisions::requested_decisions(
+        &cell.host,
+        &norn_api::decisions::RequestedQuery {
+            org_id: Some("org_demo".into()),
+            environment_id: Some("dev".into()),
+            id: id.map(str::to_owned),
+        },
+        Some(&subject),
+        norn_kernel::LogicalTime::from_millis(NOW * 1000),
+    );
+    cell.caller.record(None);
+    serde_json::to_value(page.unwrap()).unwrap()
+}
+
+/// #1532 S1: the requester is the principal the dispatch admits: subject,
+/// actor kind and role table. The same subject under another actor kind, or
+/// another role table, is someone else: it reads neither the call's input
+/// nor its key, and is offered nothing to run, by list or by id.
+#[test]
+fn the_requesters_subject_under_another_kind_or_role_table_reads_nothing() {
+    use norn_cell_do::policy::Caller;
+    let cell = cell();
+    gate(&cell, None);
+    let (status, parked) = convert(&cell, OPERATOR, &melt7("operator-kind"));
+    assert_eq!(status, 202, "{parked}");
+    let id = parked["decision"]["id"].as_str().unwrap().to_owned();
+    let (status, decided) = decide(&cell, APPROVER, &id, "approve");
+    assert_eq!(status, 200, "{decided}");
+    let as_operator = |kind: &'static str, table: &'static str| Caller {
+        subject_id: "operator@steps".to_owned(),
+        roles: vec!["admin".to_owned()],
+        actor_kind: kind,
+        role_table: table,
+    };
+    // The requester itself, as the dispatch admits it, is offered the run.
+    let own = requested_as(
+        &cell,
+        as_operator("user", norn_cell_do::principal::FIXTURE_ROLES),
+        Some(&id),
+    );
+    assert_eq!(own["items"][0]["canRun"], json!(true), "{own}");
+    for other in [
+        as_operator("service", norn_cell_do::principal::FIXTURE_ROLES),
+        as_operator("user", "fixtures/other"),
+    ] {
+        for wanted in [None, Some(id.as_str())] {
+            let page = requested_as(&cell, other.clone(), wanted);
+            assert_eq!(page["items"], json!([]), "{page}");
+            assert!(!page.to_string().contains("operator-kind"), "{page}");
+        }
+    }
+}
+
+/// The native engine, counting the statements a request runs and those
+/// that load a parked call's payload (an outbox row's `command`) or a
+/// receipt.
+struct Counted {
+    inner: norn_cell::engine::NativeEngine,
+    counts: std::rc::Rc<std::cell::Cell<(u64, u64)>>,
+}
+
+impl Counted {
+    fn tick(&self, sql: &str) {
+        let (all, payloads) = self.counts.get();
+        let select = sql.split_once(" FROM ").map_or("", |(select, _)| select);
+        let payload = (sql.contains(r#"FROM "_norn_outbox""#) && select.contains(r#""command""#))
+            || sql.contains(r#"FROM "_norn_receipt""#);
+        self.counts.set((all + 1, payloads + u64::from(payload)));
+    }
+}
+
+impl SqlEngine for Counted {
+    fn execute(
+        &self,
+        sql: &str,
+        params: &[norn_cell::engine::SqlValue],
+    ) -> Result<(), norn_cell::CellError> {
+        self.tick(sql);
+        self.inner.execute(sql, params)
+    }
+    fn query(
+        &self,
+        sql: &str,
+        params: &[norn_cell::engine::SqlValue],
+    ) -> Result<Vec<Vec<norn_cell::engine::SqlValue>>, norn_cell::CellError> {
+        self.tick(sql);
+        self.inner.query(sql, params)
+    }
+    fn execute_batch(&self, sql: &str) -> Result<(), norn_cell::CellError> {
+        self.tick(sql);
+        self.inner.execute_batch(sql)
+    }
+    fn transaction<T, X: From<norn_cell::CellError>>(
+        &self,
+        f: impl FnOnce() -> Result<T, X>,
+    ) -> Result<T, X> {
+        self.inner.transaction(f)
+    }
+    fn platform_table_globs(&self) -> &'static [&'static str] {
+        self.inner.platform_table_globs()
+    }
+    fn read_isolation(&self) -> norn_cell::engine::ReadIsolation {
+        self.inner.read_isolation()
+    }
+    fn read_cache_revision(&self) -> Result<Option<(u64, u64)>, norn_cell::CellError> {
+        self.inner.read_cache_revision()
+    }
+}
+
+/// #1532 S2: another requester's decision id is looked up by the caller's
+/// own identity first: it loads no parked payload and no receipt, and costs
+/// exactly what an id that exists nowhere costs, while it waits and after
+/// it is approved. The requester's own id loads its call (the control).
+#[test]
+fn another_requesters_id_loads_no_payload() {
+    let counts = std::rc::Rc::new(std::cell::Cell::new((0, 0)));
+    let engine = Counted {
+        inner: norn_cell::engine::NativeEngine::open_in_memory().unwrap(),
+        counts: std::rc::Rc::clone(&counts),
+    };
+    let cell = step_cell::cell_on(engine, true);
+    gate(&cell, None);
+    let (status, parked) = convert(&cell, OPERATOR, &melt7("operator-cost"));
+    assert_eq!(status, 202, "{parked}");
+    let id = parked["decision"]["id"].as_str().unwrap().to_owned();
+    let nowhere = format!("dec_{}", "0".repeat(32));
+    let cost = |auth: Option<&str>, wanted: &str| {
+        // Warm: a first read may compile what any later read reuses.
+        requested(&cell, auth, Some(wanted));
+        counts.set((0, 0));
+        let page = requested(&cell, auth, Some(wanted));
+        (page["items"].as_array().unwrap().len(), counts.get())
+    };
+    for phase in ["pending", "approved"] {
+        let (items, foreign) = cost(APPROVER, &id);
+        let (_, absent) = cost(APPROVER, &nowhere);
+        assert_eq!(items, 0, "{phase}");
+        assert_eq!(foreign.1, 0, "{phase}: a foreign id loaded a payload");
+        assert_eq!(foreign, absent, "{phase}: a foreign id costs what no id costs");
+        let (items, own) = cost(OPERATOR, &id);
+        assert_eq!(items, 1, "{phase}");
+        assert!(own.1 > 0, "{phase}: the control loads the call");
+        if phase == "pending" {
+            let (status, decided) = decide(&cell, APPROVER, &id, "approve");
+            assert_eq!(status, 200, "{decided}");
+        }
+    }
+}
+
+/// #1532 S4: the list holds only calls that wait. A call whose deadline
+/// passed is not listed, whether or not its expiry is recorded yet (by id
+/// it reads expired, with nothing to run).
+#[test]
+fn a_call_past_its_deadline_is_not_listed() {
+    let cell = cell();
+    gate(&cell, Some(60_000));
+    let (status, parked) = convert(&cell, OPERATOR, &melt7("operator-late"));
+    assert_eq!(status, 202, "{parked}");
+    let id = parked["decision"]["id"].as_str().unwrap().to_owned();
+    let read = |query: String, at: u64| {
+        let (status, page) = call_at(
+            &cell,
+            ("GET", "/v1/decisions:requested", &query),
+            OPERATOR,
+            "",
+            at,
+        );
+        assert_eq!(status, 200, "{page}");
+        page
+    };
+    assert_eq!(read(SCOPE.to_owned(), NOW)["items"].as_array().unwrap().len(), 1);
+    let late = NOW + 120;
+    assert_eq!(read(SCOPE.to_owned(), late)["items"], json!([]));
+    let by_id = read(format!("{SCOPE}&id={id}"), late);
+    assert_eq!(by_id["items"][0]["status"], json!("expired"), "{by_id}");
+    assert_eq!(by_id["items"][0]["canRun"], json!(false));
+}
+
+/// #1532 S4: the list's limit counts only the caller's own calls. Another
+/// requester's approved calls, as many as the limit and approved first,
+/// neither hide the caller's approved call nor mark the page capped.
+#[test]
+fn other_requesters_approved_calls_never_hide_yours() {
+    let cell = cell();
+    gate(&cell, None);
+    for n in 0..norn_api::decisions::MAX_DECISION_SCAN {
+        let body = melt_body(&format!("melt-o{n}"), "12", "10", &format!("approver-{n}"));
+        let (status, parked) = convert(&cell, APPROVER, &body);
+        assert_eq!(status, 202, "{parked}");
+        let other = parked["decision"]["id"].as_str().unwrap().to_owned();
+        let (status, decided) = decide(&cell, OPERATOR, &other, "approve");
+        assert_eq!(status, 200, "{decided}");
+    }
+    let (status, parked) = convert(&cell, OPERATOR, &melt7("operator-mine"));
+    assert_eq!(status, 202, "{parked}");
+    let id = parked["decision"]["id"].as_str().unwrap().to_owned();
+    let (status, decided) = decide(&cell, APPROVER, &id, "approve");
+    assert_eq!(status, 200, "{decided}");
+    let page = requested(&cell, OPERATOR, None);
+    assert_eq!(page["items"].as_array().unwrap().len(), 1, "{page}");
+    assert_eq!(page["items"][0]["id"], json!(id));
+    assert_eq!(page["items"][0]["canRun"], json!(true));
+    assert_eq!(page.get("totalCapped"), None, "{page}");
 }

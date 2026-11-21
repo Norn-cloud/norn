@@ -1176,3 +1176,93 @@ fn the_storage_free_gate_answers_outsiders_as_the_cell_does() {
     };
     assert!(gate.outsider::<Counting>(&tokens, &request).is_none());
 }
+
+// ----------------------------------------------------- a parked call by id
+
+/// B with one direct parked call: an approval (deciders `owner`) gates the
+/// valuation action, and B's admin calls it. Its decision id.
+fn park_direct_call(b: &mut Host, scope: &CellScope) -> String {
+    let at = query(scope);
+    let owner = user(&scope.org_id, "owner");
+    let mut gate = json!({ "kind": "approval", "id": "ops.valuation_approval", "payload": {
+        "action": "canon.valuation_policy.set", "decider": { "roles": ["owner"] },
+        "question": "Set this valuation policy?", "risk": "high" } });
+    let admitted = send(b, "POST", "/v1/definitions:admit", &at, Some(&owner), &gate.to_string());
+    assert_eq!(admitted.response.status, 200, "{}", admitted.response.body);
+    gate["signoff"] =
+        json!({ "restatementSha256": json_of(&admitted.response)["restatementSha256"] });
+    let installed = send(b, "POST", "/v1/definitions:install", &at, Some(&owner), &gate.to_string());
+    assert_eq!(installed.response.status, 200, "{}", installed.response.body);
+    let call = json!({ "input": { "id": "VP-B-PARKED", "label": "B's parked policy",
+        "valuation_method": "fifo" }, "idempotencyKey": "b-parked-1" });
+    let parked = send(
+        b,
+        "POST",
+        "/v1/actions/canon.valuation_policy.set",
+        &at,
+        Some(&user(&scope.org_id, "admin")),
+        &call.to_string(),
+    );
+    assert_eq!(parked.response.status, 202, "{}", parked.response.body);
+    json_of(&parked.response)["decision"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+/// #1532 S5: B's direct parked call, named by its id. Its requester reads
+/// it (the control). Every outsider at B is answered as at a vacant scope,
+/// with no storage touched; B's other members, and A's members in A's own
+/// cell, read no item, at exactly the cost of an id that exists nowhere.
+#[test]
+fn a_parked_call_by_id_is_its_requesters_alone() {
+    let (mut b, ids) = tenant_b();
+    let parked = park_direct_call(&mut b, &ids.scope);
+    let at_b = query(&ids.scope);
+    let path = "/v1/decisions:requested";
+    let named = format!("{at_b}&id={parked}");
+    let absent = format!("{at_b}&id={}", "z".repeat(parked.len()));
+    let requester = user(&ids.scope.org_id, "admin");
+    let own = send(&mut b, "GET", path, &named, Some(&requester), "");
+    assert_eq!(own.response.status, 200, "{}", own.response.body);
+    assert_eq!(json_of(&own.response)["items"][0]["id"], json!(parked));
+
+    let mut nowhere = vacant(&ids.scope);
+    for outsider in outsiders() {
+        let served = send(&mut b, "GET", path, &named, outsider.as_deref(), "");
+        let vacant = send(&mut nowhere, "GET", path, &named, outsider.as_deref(), "");
+        assert_eq!(served, vacant, "{outsider:?}");
+        assert_eq!(served.calls, 0, "{outsider:?}");
+        assert!(!served.response.body.contains(&parked), "{outsider:?}");
+    }
+    for role in ["owner", "member", "viewer"] {
+        let member = user(&ids.scope.org_id, role);
+        // Warm: a first request compiles the member's policies once.
+        send(&mut b, "GET", path, &absent, Some(&member), "");
+        let by_id = send(&mut b, "GET", path, &named, Some(&member), "");
+        let no_id = send(&mut b, "GET", path, &absent, Some(&member), "");
+        assert_eq!(
+            (by_id.response.status, by_id.calls),
+            (no_id.response.status, no_id.calls),
+            "{role}"
+        );
+        assert_eq!(json_of(&by_id.response)["items"], json!([]), "{role}");
+        assert!(!by_id.response.body.contains(&parked), "{role}");
+    }
+    let scope_a = scope("org_a", "prod");
+    let mut a = seeded(&scope_a, None);
+    let at_a = query(&scope_a);
+    let in_a = |id: &str| format!("{at_a}&id={id}");
+    for role in ["owner", "admin", "member", "viewer"] {
+        let member = user("org_a", role);
+        send(&mut a, "GET", path, &in_a(&"z".repeat(parked.len())), Some(&member), "");
+        let by_id = send(&mut a, "GET", path, &in_a(&parked), Some(&member), "");
+        let no_id = send(&mut a, "GET", path, &in_a(&"z".repeat(parked.len())), Some(&member), "");
+        assert_eq!(
+            (by_id.response.status, by_id.calls),
+            (no_id.response.status, no_id.calls),
+            "{role}"
+        );
+        assert!(!by_id.response.body.contains(&parked), "{role}");
+    }
+}
