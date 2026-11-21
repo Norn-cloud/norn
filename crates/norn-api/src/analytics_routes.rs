@@ -1067,8 +1067,7 @@ fn bulk_contract<E: SqlEngine>(
         ));
     }
     let mapping_id = id_of(mapping);
-    let canonical = serde_json::to_vec(mapping).map_err(Refusal::host)?;
-    let mapping_pin = format!("{mapping_id}@{}", hex_digest(&canonical));
+    let mapping_pin = dataset_mapping_pin(&mapping_id, mapping).map_err(Refusal::host)?;
     let pins = store
         .dataset_pins(object_type, &binding, &mapping_pin)
         .map_err(Refusal::host)?;
@@ -1170,6 +1169,20 @@ fn replayed(
         bytes: manifest.source.bytes,
         millis: 0,
     }
+}
+
+/// The pin a dataset manifest names for its mapping: `<artifact id>@<sha256>`
+/// of the mapping's Norn1 canonical bytes (#2882), so the key order or number
+/// spelling of the stored artifact never changes it.
+///
+/// # Errors
+/// The mapping has no Norn1 canonical form (for example a non-finite number).
+pub fn dataset_mapping_pin(
+    mapping_id: &str,
+    mapping: &serde_json::Value,
+) -> Result<String, norn_ir::canonical::CanonicalJsonError> {
+    let canonical = norn_ir::canonical::canonical_json_of(mapping)?;
+    Ok(format!("{mapping_id}@{}", hex_digest(&canonical)))
 }
 
 /// MANIFEST-CACHE-1: the content-addressed object key of a landed file:
