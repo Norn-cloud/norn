@@ -174,15 +174,22 @@ across pages, intra-page links in both orders, and pages refused for framing).
 identity dispute freezes the observed link claims of the disputed event. They
 keep their standing (they supersede older claims of their contribution, contest
 rivals and keep their edge) but authorize no new edge. Which disputes a link
-plan sees is fixed by inbox order: a delivery sees the dispute rows captured
-before it, never one captured after it, so one-by-one and paged delivery draw
-the same boundary (a page captures every record before it commits any). A
-dispute row captured between two records of a page ends that page's commit
-run. An edge the freeze withholds is an open `core.boundary.link_held` finding
-on the disputed source subject, derived from the retained evidence, for as
-long as the dispute lasts. Releasing a dispute and re-planning its links is the
-governed review action FEED-CONFLICT names; until it exists, a frozen claim
-stays frozen (#1549).
+plan sees is fixed by inbox order: an `Add` is dated at the latest of the
+delivery being planned and the deliveries that established its two endpoints,
+and it sees exactly the dispute rows captured before that date. So one-by-one
+and paged delivery draw the same boundary (a page captures every record before
+it commits any), and a delivery processed late (a retried record) dates its
+`Add` no earlier than processing it on time would have. A dispute row captured
+between two records of a page ends that page's commit run, and a pending page
+whose members straddle one (a page captured before that rule) is applied
+record by record. An edge the freeze withholds is one open
+`core.boundary.link_held` finding on the disputed source subject (one per
+edge, with every holding claim's lineage), derived from the retained evidence,
+for as long as the dispute lasts. It names the target, so a host discloses it,
+and counts it, only to a caller who may see both endpoints, under the policy
+that lists the link itself. Releasing a dispute and re-planning its links is
+the governed review action FEED-CONFLICT names; until it exists, a frozen
+claim stays frozen (#1549).
 
 **Ingest rulings** (2026-11-20, from the distributor-1 deployment test, #1484;
 pending maintainer review; additions beside OBS-PAGE-1, which is unchanged):

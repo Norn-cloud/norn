@@ -5,6 +5,7 @@ use crate::{
     engine::{SqlEngine, params},
     host::GuardView,
     mapping_bundle::MappingBundle,
+    mapping_conflict::EventDispute,
     system::INBOX,
 };
 use norn_ir::{RuntimeObject, RuntimeValue, mapping::ObservedLinkClaim};
@@ -26,6 +27,8 @@ static WIDE_SCOPE_CHECK: std::sync::atomic::AtomicBool = std::sync::atomic::Atom
 pub fn check_link_plans_against_wide_scope(on: bool) {
     WIDE_SCOPE_CHECK.store(on, std::sync::atomic::Ordering::Relaxed);
 }
+/// OBS-LINK-DISPUTE-1: the rule of the finding a held edge raises.
+pub const LINK_HELD_RULE: &str = "core.boundary.link_held";
 const MAX_CLAIM_BUNDLES: usize = 1000;
 const MAX_CLAIM_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_CLAIMS: usize = 20_000;
@@ -36,10 +39,11 @@ struct Entry {
     id: String,
     contribution: String,
     fresh: bool,
-    /// OBS-LINK-DISPUTE-1: the claim's source event is in conflict or its
-    /// identity is disputed by a row captured before the delivery being
-    /// planned; `link_plan_over` freezes such claims.
-    disputed: bool,
+    /// OBS-LINK-DISPUTE-1: the inbox position of the earliest dispute row
+    /// (conflict or identity) covering the claim's source event; `None` when
+    /// it is undisputed or fresh. `link_plan_over` freezes the claim for an
+    /// `Add` dated after that row.
+    dispute: Option<u64>,
 }
 
 /// The kernel's per-contribution standing, recomputed over a journal group.
@@ -264,29 +268,23 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                 Some(closed)
             }
         };
-        // OBS-LINK-DISPUTE-1: a delivery sees exactly the disputes captured
-        // before it in inbox order. A dispute is captured without a commit,
-        // and a page captures every record before it commits any, so "the
-        // disputes that exist when the commit runs" would differ between one
-        // by one and paged delivery; inbox order is the same on both.
-        let horizon = self.delivery_horizon(current)?;
         let mut bundles = Vec::new();
         for id in self.claim_bundles(selection.as_ref(), MAX_CLAIM_BUNDLES)? {
             let bundle = match cache.remove(&id) {
                 Some(bundle) => bundle,
                 None => self.claim_bundle(&id)?,
             };
-            let disputed = self
+            let dispute = self
                 .mapping_event_dispute(&bundle)?
-                .is_some_and(|dispute| horizon.is_none_or(|h| dispute.position < h));
-            bundles.push((bundle, false, disputed));
+                .map(|dispute| dispute.position);
+            bundles.push((bundle, false, dispute));
         }
         for bundle in current {
-            bundles.push((bundle.clone(), true, false));
+            bundles.push((bundle.clone(), true, None));
         }
         let mut history = BTreeMap::<String, Vec<(String, String)>>::new();
         let mut entries = Vec::new();
-        for (bundle, fresh, disputed) in &bundles {
+        for (bundle, fresh, dispute) in &bundles {
             let version = source_version(bundle)?;
             let mut recorded = Vec::new();
             for mut claim in bundle.link_claims()? {
@@ -305,7 +303,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                     id,
                     contribution,
                     fresh: *fresh,
-                    disputed: *disputed,
+                    dispute: *dispute,
                 });
             }
             for (contribution, id) in recorded {
@@ -357,13 +355,109 @@ impl<S: SqlEngine> StoreReader<'_, S> {
             .transpose()
     }
 
+    /// OBS-LINK-DISPUTE-1: the inbox position of the mapping delivery that
+    /// established `key` (its latest absent-to-present version), measured as
+    /// [`Self::delivery_horizon`] measured it for that commit: the earliest
+    /// mapping bundle that commit consumed. `horizon` when this commit
+    /// creates `key`; `None` when no mapping delivery established it (an
+    /// action, say), which moves no boundary.
+    fn established_position<E, C, T>(
+        &self,
+        model: CommitModel<'_, '_>,
+        commit: &CellCommit<E, C, T>,
+        key: &FactKey,
+        horizon: u64,
+    ) -> Result<Option<u64>, CellError> {
+        let canonical = model.canonical(key);
+        if GuardView(self).concrete(&canonical)?.is_none() {
+            // Present after this commit (the caller checked) and absent before it.
+            let written = commit
+                .writes
+                .iter()
+                .any(|w| w.key.key == canonical.key && model.canonical(&w.key) == canonical);
+            return Ok(written.then_some(horizon));
+        }
+        let root = self.root_type(canonical.object_type.as_str())?;
+        let facts = crate::system::FACT_VALUES;
+        let receipts = crate::system::RECEIPT;
+        let seq: Option<i64> = self
+            .conn
+            .query_optional(
+                &format!(
+                    "SELECT MIN(f.\"commit_seq\") FROM \"{facts}\" f WHERE f.\"world\" = ?1 AND f.\"root_type\" = ?2 AND f.\"id\" = ?3 \
+                     AND f.\"version\" > COALESCE((SELECT MAX(t.\"version\") FROM \"{facts}\" t WHERE t.\"world\" = ?1 AND t.\"root_type\" = ?2 AND t.\"id\" = ?3 AND json_extract(t.\"snapshot\", '$.values') IS NULL), 0)"
+                ),
+                params![MAIN_WORLD, root, &canonical.key],
+                |row| row.get::<Option<i64>>(0),
+            )?
+            .flatten();
+        let Some(seq) = seq else {
+            return Ok(None);
+        };
+        let position: Option<i64> = self
+            .conn
+            .query_optional(
+                &format!(
+                    "SELECT MIN(m.\"position\") FROM \"{receipts}\" r JOIN {INBOX} m ON m.\"consumed_commit_seq\" = r.\"commit_seq\" \
+                     WHERE r.\"commit_seq\" = ?1 AND json_extract(r.\"receipt\", '$.consumed.kind') = 'observation' \
+                     AND m.\"observation_id\" LIKE 'mapping-bundle:%' \
+                     AND (m.\"observation_id\" = json_extract(r.\"receipt\", '$.consumed.observationId') \
+                          OR m.\"observation_id\" IN (SELECT value FROM json_each((SELECT p.\"observed\" FROM {INBOX} p WHERE p.\"observation_id\" = json_extract(r.\"receipt\", '$.consumed.observationId') AND p.\"observation_id\" LIKE 'mapping-page:%'), '$.input.members')))"
+                ),
+                params![seq],
+                |row| row.get::<Option<i64>>(0),
+            )?
+            .flatten();
+        position
+            .map(|position| crate::read::to_u64(position, "inbox position"))
+            .transpose()
+    }
+
+    /// OBS-LINK-DISPUTE-1: whether a dispute at inbox position `dispute`
+    /// freezes `entry`'s `Add` of `source -> to` in this commit. The `Add` is
+    /// dated at the latest of the delivery being planned (`horizon`) and the
+    /// deliveries that established its endpoints: the point in inbox order
+    /// from which one-by-one delivery could have made it. A retried delivery
+    /// keeps its own old position, so without the endpoints' dates it would
+    /// add an edge whose target first arrived after the dispute.
+    fn add_frozen<E, C, T>(
+        &self,
+        model: CommitModel<'_, '_>,
+        commit: &CellCommit<E, C, T>,
+        entry: &Entry,
+        (source, to): (&FactKey, &FactKey),
+        horizon: Option<u64>,
+    ) -> Result<bool, CellError> {
+        let Some(dispute) = entry.dispute else {
+            return Ok(false);
+        };
+        let Some(horizon) = horizon else {
+            return Ok(true);
+        };
+        if dispute < horizon {
+            return Ok(true);
+        }
+        for key in [source, to] {
+            if self
+                .established_position(model, commit, key, horizon)?
+                .is_some_and(|established| dispute < established)
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// OBS-LINK-DISPUTE-1: one open finding per edge a dispute holds back
-    /// from `key`: a current claim from `key` whose source event is disputed,
-    /// whose endpoints are both present and whose edge is absent, so the
-    /// freeze withheld its `Add`. Derived from the retained evidence, like the
-    /// dispute findings themselves; it lasts as long as the dispute does.
-    /// Read only for a subject that is in dispute, so an undisputed object's
-    /// findings cost no journal read.
+    /// from `key`: the current claims from `key` whose source event is
+    /// disputed, whose endpoints are both present and whose edge is absent,
+    /// so the freeze withheld their `Add`. Claims of several contributions
+    /// for one edge make one finding, with each claim's lineage. Derived from
+    /// the retained evidence, like the dispute findings themselves; it lasts
+    /// as long as the dispute does. Read only for a subject that is in
+    /// dispute, so an undisputed object's findings cost no journal read. The
+    /// target is a subject: hosts disclose the finding only to a caller who
+    /// may see both endpoints, as for the link itself.
     ///
     /// # Errors
     /// The same evidence/pin/budget errors as `observed_link_claims`.
@@ -408,12 +502,13 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                     .push(entry);
             }
         }
+        // Each held edge, by canonical link: its claims and their disputes.
+        let mut held = BTreeMap::<LinkKey, (LinkKey, Vec<(&Entry, EventDispute)>)>::new();
         let mut live = BTreeMap::new();
-        let mut findings = BTreeMap::new();
         for ((source, role), group) in &groups {
             for (entry, standing) in group.iter().zip(standings(group, target)) {
                 let Some(to) = target(entry) else { continue };
-                if !entry.disputed || standing != Standing::Current {
+                if entry.dispute.is_none() || standing != Standing::Current {
                     continue;
                 }
                 let link = LinkKey::new(source.clone(), role.as_str(), to.clone());
@@ -427,51 +522,80 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                 let Some(dispute) = self.mapping_event_dispute(&bundle)? else {
                     continue;
                 };
-                let rows: Vec<String> = dispute.rows.iter().cloned().collect();
-                let cause = rows
-                    .iter()
-                    .map(|row| match row.split_once(':') {
-                        Some(("mapping-conflict", id)) => format!("conflict {id}"),
-                        Some((_, id)) => format!("identity {id}"),
-                        None => row.clone(),
-                    })
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                let finding = norn_ir::DataQualityFinding::v2(
-                    norn_ir::DataQualityRuleRef::Builtin {
-                        id: "core.boundary.link_held".into(),
-                        version: "1".into(),
-                    },
-                    vec![
-                        norn_ir::DataQualitySubject::new(source.object_type.clone(), &source.key),
-                        norn_ir::DataQualitySubject::new(to.object_type.clone(), &to.key),
-                    ],
-                    norn_ir::DataQualitySeverity::Warning,
-                    format!(
-                        "link {} -{}-> {} held: record in dispute ({cause})",
-                        source.key,
-                        role.as_str(),
-                        to.key
-                    ),
-                    norn_ir::DataQualityOutcome::NotSatisfied,
-                    vec![norn_ir::DataQualityLineage::new(
-                        entry.claim.provenance.clone(),
-                        std::iter::once(entry.claim.observation_id.clone())
-                            .chain(rows.iter().cloned())
-                            .collect(),
-                    )],
-                    dispute.first_seen.clone(),
-                    dispute.first_seen.clone(),
-                    norn_ir::DataQualityFindingStatus::Open,
-                )?
-                .with_evidence_digest(norn_ir::canonical::domain_hash_hex(
-                    b"norn.link.held.v1\0",
-                    &(&entry.id, &rows),
-                )?)?;
-                findings.insert(finding.id.clone(), finding);
+                held.entry(model.canonical_link(&link))
+                    .or_insert_with(|| (link, Vec::new()))
+                    .1
+                    .push((entry, dispute));
             }
         }
-        Ok(findings.into_values().collect())
+        let mut findings = Vec::with_capacity(held.len());
+        for (link, claims) in held.into_values() {
+            let rows: BTreeSet<String> = claims
+                .iter()
+                .flat_map(|(_, dispute)| dispute.rows.iter().cloned())
+                .collect();
+            let Some(first_seen) = claims
+                .iter()
+                .min_by_key(|(_, dispute)| dispute.position)
+                .map(|(_, dispute)| dispute.first_seen.clone())
+            else {
+                continue;
+            };
+            let cause = rows
+                .iter()
+                .map(|row| match row.split_once(':') {
+                    Some(("mapping-conflict", id)) => format!("conflict {id}"),
+                    Some((_, id)) => format!("identity {id}"),
+                    None => row.clone(),
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            let lineage = claims
+                .iter()
+                .map(|(entry, dispute)| {
+                    norn_ir::DataQualityLineage::new(
+                        entry.claim.provenance.clone(),
+                        std::iter::once(entry.claim.observation_id.clone())
+                            .chain(dispute.rows.iter().cloned())
+                            .collect(),
+                    )
+                })
+                .collect();
+            let ids: BTreeSet<&str> = claims.iter().map(|(entry, _)| entry.id.as_str()).collect();
+            let finding = norn_ir::DataQualityFinding::v2(
+                norn_ir::DataQualityRuleRef::Builtin {
+                    id: LINK_HELD_RULE.into(),
+                    version: "1".into(),
+                },
+                vec![
+                    norn_ir::DataQualitySubject::new(
+                        link.source.object_type.clone(),
+                        &link.source.key,
+                    ),
+                    norn_ir::DataQualitySubject::new(
+                        link.target.object_type.clone(),
+                        &link.target.key,
+                    ),
+                ],
+                norn_ir::DataQualitySeverity::Warning,
+                format!(
+                    "link {} -{}-> {} held: record in dispute ({cause})",
+                    link.source.key, link.link, link.target.key
+                ),
+                norn_ir::DataQualityOutcome::NotSatisfied,
+                lineage,
+                first_seen.clone(),
+                first_seen,
+                norn_ir::DataQualityFindingStatus::Open,
+            )?
+            .with_evidence_digest(norn_ir::canonical::domain_hash_hex(
+                b"norn.link.held.v2\0",
+                &(&ids, &rows),
+            )?)?;
+            findings.push(finding);
+        }
+        findings.sort_by(|a, b| a.id.cmp(&b.id));
+        Ok(findings)
     }
 
     /// Retained claims about one canonical link identity; membership is read separately.
@@ -608,7 +732,13 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         // dropping the disputed claims here revived the claims they had
         // superseded, and whichever later commit happened to read the group
         // applied that, so the end state depended on batching (#1490).
-        // Which disputes a plan sees is fixed by inbox order (`claim_journal`).
+        // Which disputes a plan sees is fixed by inbox order: a delivery sees
+        // exactly the disputes captured before it. A dispute is captured
+        // without a commit, and a page captures every record before it
+        // commits any, so "the disputes that exist when the commit runs"
+        // would differ between one by one and paged delivery; inbox order is
+        // the same on both (`add_frozen` dates each `Add`).
+        let horizon = self.delivery_horizon(bundles)?;
         let mut groups = BTreeMap::<_, Vec<&Entry>>::new();
         for entry in &entries {
             let source = fact(&entry.claim.source_type, &entry.claim.source_key);
@@ -649,7 +779,10 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                     .any(|(o, s)| *s != Standing::Superseded && target(o).as_ref() == Some(&to));
                 let mutation = match standing {
                     Standing::Current
-                        if !entry.disputed && !exists && present(source)? && present(&to)? =>
+                        if !exists
+                            && present(source)?
+                            && present(&to)?
+                            && !self.add_frozen(model, commit, entry, (source, &to), horizon)? =>
                     {
                         LinkMutation::Add {
                             values: model

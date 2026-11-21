@@ -8,56 +8,20 @@
     reason = "synthetic mapped-link correspondence"
 )]
 use norn_cell::mapping_bundle::MappingInput;
-use norn_cell::{CellStore, InstalledDefinitionInput, MAIN_WORLD, Model, SqliteCell, StoreOptions};
-use norn_ir::{
-    ArtifactEnvelope, InterfaceDef, ObjectTypeDef, PropertyTypeDef, RuntimeObject, RuntimeValue,
-};
+use norn_cell::{CellStore, MAIN_WORLD, SqliteCell, StoreOptions};
+use norn_ir::{ArtifactEnvelope, RuntimeObject, RuntimeValue};
 use norn_kernel::{FactKey, LinkKey, ObservationEvent, ObservationId, Observed};
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
-    path::{Path, PathBuf},
+    path::Path,
 };
 
 type Cell = SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject>;
-fn root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
-}
-fn fixture_artifacts() -> Vec<ArtifactEnvelope> {
-    let mut artifacts: Vec<ArtifactEnvelope> = Vec::new();
-    for dir in [
-        "core",
-        "packs/canon",
-        "packs/erpnext",
-        "packs/shopify",
-        "packs/odoo",
-    ] {
-        for file in
-            fs::read_dir(root().join(format!("registry/{dir}/artifacts"))).expect("artifacts")
-        {
-            let artifact: ArtifactEnvelope = serde_json::from_str(
-                &fs::read_to_string(file.expect("file").path()).expect("read"),
-            )
-            .expect("artifact");
-            if ![
-                "commerce.SalesOrder.entity",
-                "core.Order.interface",
-                "core.Entitlement.entity",
-                "identity.BusinessUnit.entity",
-                "location.Region.entity",
-                "location.Space.entity",
-                "party.Brand.entity",
-            ]
-            .contains(&artifact.artifact_id.as_str())
-            {
-                artifacts.push(artifact);
-            }
-        }
-    }
-    artifacts
-}
-
+#[path = "support/mapped_cell.rs"]
+mod mapped_cell;
+use mapped_cell::{fixture_artifacts, root};
 fn setup(path: &Path) -> Cell {
     setup_with(path, |_| {})
 }
@@ -65,76 +29,7 @@ fn setup(path: &Path) -> Cell {
 fn setup_with(path: &Path, edit: impl FnOnce(&mut Vec<ArtifactEnvelope>)) -> Cell {
     // Every plan in these tests is also checked against the wide journal scope.
     norn_cell::check_link_plans_against_wide_scope(true);
-    let mut artifacts = fixture_artifacts();
-    edit(&mut artifacts);
-    artifacts.sort_by(|a, b| a.artifact_id.cmp(&b.artifact_id));
-    let (base, candidate): (Vec<_>, Vec<_>) = artifacts
-        .iter()
-        .cloned()
-        .partition(|a| a.artifact_id.starts_with("core.") || a.artifact_id.starts_with("std."));
-    let diagnostics = norn_checker::check_artifact_set(
-        &candidate,
-        &norn_checker::EntityArtifactSetContext {
-            registry: &BTreeSet::new(),
-            base: &base,
-            tenant: None,
-        },
-    );
-    assert!(
-        diagnostics
-            .iter()
-            .all(|d| d.severity != norn_ir::DiagnosticSeverity::Error),
-        "{diagnostics:#?}"
-    );
-    let mut types: Vec<ObjectTypeDef> = vec![];
-    let mut interfaces: Vec<InterfaceDef> = vec![];
-    let mut properties: Vec<PropertyTypeDef> = vec![];
-    for artifact in &artifacts {
-        let payload = serde_json::to_value(artifact).expect("artifact")["payload"].clone();
-        if let Some(value) = payload.get("objectType") {
-            types.push(serde_json::from_value(value.clone()).expect("object"));
-        }
-        if let Some(value) = payload.get("interface") {
-            interfaces.push(serde_json::from_value(value.clone()).expect("interface"));
-        }
-        if let Some(value) = payload.get("propertyTypes") {
-            properties.extend(
-                serde_json::from_value::<Vec<PropertyTypeDef>>(value.clone()).expect("properties"),
-            );
-        }
-    }
-    let model = Model::from_definitions_with_interfaces(&types, &properties, &interfaces)
-        .expect("model")
-        .with_governing_laws(&artifacts)
-        .expect("laws");
-    let mut store = CellStore::open(path, model.clone(), StoreOptions::default()).expect("store");
-    // Bound before the first commit, so every exported record carries it.
-    store.bind("scope", "org_demo/dev").expect("scope");
-    store
-        .install_definitions(
-            model,
-            InstalledDefinitionInput {
-                canonical_set: String::from_utf8(
-                    norn_ir::canonical::canonical_json_of(&artifacts).expect("set"),
-                )
-                .expect("UTF8"),
-                registry: vec![],
-                // A well-formed digest, so the cell's history exports.
-                receipt_sha256: norn_ir::canonical::domain_hash_hex(
-                    b"norn.test.receipt\0",
-                    &"synthetic-mapped-links",
-                )
-                .expect("receipt digest"),
-                admission_receipt: None,
-                readmission: None,
-                diff: json!({}),
-                installed_at: 1_793_702_400_000,
-                layout: None,
-            },
-            None,
-            "org_demo/dev",
-        )
-        .expect("install");
+    let store = mapped_cell::store(path, edit);
     SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("cell")
 }
 fn fixture(system: &str) -> Value {
@@ -941,6 +836,11 @@ proptest::proptest! {
 
 /// A raw erpnext row at a fixed delivery clock, as a connector extract writes it.
 fn raw_of(row: &Value, event: &str) -> (Observed<RuntimeValue>, MappingInput) {
+    raw_in(row, event, "snapshot")
+}
+
+/// [`raw_of`] read from `partition`: another contributor of the same records.
+fn raw_in(row: &Value, event: &str, partition: &str) -> (Observed<RuntimeValue>, MappingInput) {
     let record = &row["record"];
     let alias = record["name"].as_str().expect("source alias").to_owned();
     let payload = RuntimeValue::from_json(record.clone()).expect("payload");
@@ -949,7 +849,11 @@ fn raw_of(row: &Value, event: &str) -> (Observed<RuntimeValue>, MappingInput) {
         .expect("digest");
     let source = "synthetic-erpnext".to_owned();
     let raw = Observed {
-        id: ObservationId(format!("delivery-{event}-{alias}")),
+        id: ObservationId(if partition == "snapshot" {
+            format!("delivery-{event}-{alias}")
+        } else {
+            format!("delivery-{partition}-{event}-{alias}")
+        }),
         provenance: norn_kernel::Provenance {
             source: source.clone(),
             source_id: alias.clone(),
@@ -965,7 +869,7 @@ fn raw_of(row: &Value, event: &str) -> (Observed<RuntimeValue>, MappingInput) {
         mapping: "erpnext.three.mapping".into(),
         dataset: row["dataset"].as_str().expect("dataset").into(),
         connector_instance: "demo".into(),
-        partition: "snapshot".into(),
+        partition: partition.into(),
         recorded_at: norn_ir::provenance::UtcTimestamp("2026-11-03T00:00:00Z".into()),
     };
     (raw, input)
@@ -1417,23 +1321,183 @@ fn refers_after(
     [&single, &paged]
         .into_iter()
         .map(|cell| {
-            let links = graph(cell)
-                .into_iter()
-                .filter(|(_, _, link, _, _)| link == "refers")
-                .map(|(_, source, _, _, target)| (source, target))
-                .collect();
-            let held = cell
-                .store()
-                .read()
-                .observation_findings(MAIN_WORLD, "canon.Party", REFERRED)
-                .expect("findings")
-                .into_iter()
-                .filter(|f| matches!(&f.rule_ref, norn_ir::DataQualityRuleRef::Builtin { id, .. } if id == "core.boundary.link_held"))
-                .map(|f| f.message)
-                .collect();
-            (links, held)
+            (
+                refers(cell),
+                held(cell).into_iter().map(|f| f.message).collect(),
+            )
         })
         .collect()
+}
+
+/// A cell's `refers` links, as (source, target).
+fn refers(cell: &Cell) -> BTreeSet<(String, String)> {
+    graph(cell)
+        .into_iter()
+        .filter(|(_, _, link, _, _)| link == "refers")
+        .map(|(_, source, _, _, target)| (source, target))
+        .collect()
+}
+
+/// The referred party's held-link findings.
+fn held(cell: &Cell) -> Vec<norn_ir::DataQualityFinding> {
+    cell.store()
+        .read()
+        .observation_findings(MAIN_WORLD, "canon.Party", REFERRED)
+        .expect("findings")
+        .into_iter()
+        .filter(|f| matches!(&f.rule_ref, norn_ir::DataQualityRuleRef::Builtin { id, .. } if id == norn_cell::LINK_HELD_RULE))
+        .collect()
+}
+
+/// A referring-parties cell named `name` in `directory`.
+fn referring_cell(directory: &Path, name: &str) -> Cell {
+    setup_with(&directory.join(name), |a| referring_parties(a))
+}
+
+/// Capture `(row, event, partition)` and process it one by one.
+fn one_by_one(cell: &mut Cell, (row, event, partition): (&Value, &str, &str)) -> String {
+    let (raw, input) = raw_in(row, event, partition);
+    let (id, _) = cell.inject_mapping_bundle(&raw, &input).expect("capture");
+    cell.process_mapping_outcome(&id).expect("one by one");
+    id
+}
+
+/// A party row named `name` whose record is the canonical `demo/party/<of>`:
+/// another source row for that party, which claims no `refers` link.
+fn alias_row(name: &str, of: &str, label: &str) -> Value {
+    let mut row = party_row(name, label);
+    row["record"]["custom_norn_ref"] = json!(format!("demo/party/{of}"));
+    row
+}
+
+/// OBS-LINK-DISPUTE-1 (Sol round 2, S1): a page captured before capture
+/// split runs at a dispute row can hold one between its members: here an
+/// unrelated party, the conflicting re-send of the referred party, then zed.
+/// One by one, zed's commit sees the conflict and holds the edge; the page's
+/// one plan used its first member's position and added it. A pending page
+/// whose members straddle a dispute row is now applied record by record.
+#[test]
+fn obs_link_dispute_inside_a_page_captured_before_the_split_applies_record_by_record() {
+    let directory = tempfile::tempdir().expect("directory");
+    let mut single = referring_cell(directory.path(), "single.sqlite");
+    let mut paged = referring_cell(directory.path(), "paged.sqlite");
+    let referred = party_row("referred", "Referred");
+    for cell in [&mut single, &mut paged] {
+        one_by_one(cell, (&referred, "1", "snapshot"));
+    }
+    let batch = [
+        party_row("other", "Other"),
+        party_row("referred", "Referred, re-sent"),
+        party_row("zed", "Zed"),
+    ];
+    for row in &batch {
+        one_by_one(&mut single, (row, "1", "snapshot"));
+    }
+    // The previous version's capture: each record's own row, then one page
+    // row naming both mapped records, with the conflict row between them.
+    let mut members = Vec::new();
+    let mut provenance = None;
+    for row in &batch {
+        let (raw, input) = raw_of(row, "1");
+        let (id, _) = paged.inject_mapping_bundle(&raw, &input).expect("capture");
+        if id.starts_with("mapping-bundle:") {
+            provenance.get_or_insert(raw.provenance.clone());
+            members.push(id);
+        }
+    }
+    assert_eq!(members.len(), 2, "the re-send is a conflict row, not a member");
+    let page = format!(
+        "mapping-page:{}",
+        norn_ir::canonical::domain_hash_hex(b"norn.mapping.page.v1\0", &members)
+            .expect("page digest")
+    );
+    paged
+        .inject(&Observed {
+            id: ObservationId(page.clone()),
+            provenance: provenance.expect("provenance"),
+            input: RuntimeObject::from([
+                (
+                    "contract".to_owned(),
+                    RuntimeValue::from("norn.mapping_page/v1".to_owned()),
+                ),
+                (
+                    "members".to_owned(),
+                    RuntimeValue::Array(members.iter().cloned().map(RuntimeValue::from).collect()),
+                ),
+            ]),
+        })
+        .expect("page row");
+    paged.process_mapping_page(&page).expect("page");
+    same_end_state(&single, &paged).expect("the old page equals one by one");
+    for (cell, path) in [(&single, "one by one"), (&paged, "paged")] {
+        assert_eq!(refers(cell), BTreeSet::new(), "{path}: refers links");
+        assert_eq!(held(cell).len(), 1, "{path}: held findings");
+    }
+}
+
+/// OBS-LINK-DISPUTE-1 (Sol round 2, S3): an `Add` is dated by the deliveries
+/// that established its endpoints, not only by the delivery being planned.
+/// An update to the referred party from another partition (it claims no
+/// link) is captured before the conflict and left pending; zed lands after
+/// the conflict, so the edge is held. Retrying the update re-plans the
+/// referred party's group at the update's old position: before the fix it
+/// added the edge, though zed first arrived after the freeze. Processed right
+/// away, the update finds zed absent and adds nothing; both orders now end in
+/// the same state.
+#[test]
+fn obs_link_dispute_a_retried_update_dates_its_add_by_the_target() {
+    let directory = tempfile::tempdir().expect("directory");
+    let referred = party_row("referred", "Referred");
+    let update = alias_row("referred-desk", "referred", "Referred desk");
+    let resend = party_row("referred", "Referred, re-sent");
+    let zed = party_row("zed", "Zed");
+    let mut cells = Vec::new();
+    for (name, retried) in [("right-away.sqlite", false), ("retried.sqlite", true)] {
+        let mut cell = referring_cell(directory.path(), name);
+        one_by_one(&mut cell, (&referred, "1", "snapshot"));
+        let (raw, input) = raw_in(&update, "2", "desk");
+        let (pending, _) = cell.inject_mapping_bundle(&raw, &input).expect("capture");
+        if !retried {
+            cell.process_mapping_outcome(&pending).expect("right away");
+        }
+        one_by_one(&mut cell, (&resend, "1", "snapshot"));
+        one_by_one(&mut cell, (&zed, "1", "snapshot"));
+        if retried {
+            cell.process_mapping_outcome(&pending).expect("retried");
+        }
+        assert_eq!(refers(&cell), BTreeSet::new(), "{name}: refers links");
+        assert_eq!(held(&cell).len(), 1, "{name}: held findings");
+        cells.push(cell);
+    }
+    same_end_state(&cells[0], &cells[1]).expect("a retry equals processing right away");
+}
+
+/// OBS-LINK-DISPUTE-1 (Sol round 2, S4): two disputed contributions holding
+/// one edge make one held finding, with both claims' lineage.
+#[test]
+fn obs_link_dispute_one_held_finding_per_edge() {
+    let directory = tempfile::tempdir().expect("directory");
+    let mut cell = referring_cell(directory.path(), "two.sqlite");
+    for partition in ["snapshot", "desk"] {
+        one_by_one(&mut cell, (&party_row("referred", "Referred"), "1", partition));
+    }
+    for partition in ["snapshot", "desk"] {
+        one_by_one(
+            &mut cell,
+            (&party_row("referred", "Referred, re-sent"), "1", partition),
+        );
+    }
+    one_by_one(&mut cell, (&party_row("zed", "Zed"), "1", "snapshot"));
+    assert_eq!(refers(&cell), BTreeSet::new(), "the edge is held");
+    let held = held(&cell);
+    assert_eq!(held.len(), 1, "{held:#?}");
+    assert_eq!(held[0].provenance.len(), 2, "both claims' lineage");
+    assert_eq!(
+        held[0].message.matches("conflict ").count(),
+        2,
+        "{}",
+        held[0].message
+    );
 }
 
 /// OBS-LINK-DISPUTE-1 (Sol, #1544): which disputes a link plan sees is fixed

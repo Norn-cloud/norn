@@ -13,7 +13,9 @@
 //! the run, so the records before it and after it each commit together. So
 //! does a dispute row (a conflict or identity finding) captured between two
 //! members, so every member of a page row sees the same disputes
-//! (OBS-LINK-DISPUTE-1). A record the cell refuses at commit
+//! (OBS-LINK-DISPUTE-1); a page captured before that rule whose pending
+//! members straddle a dispute row is applied record by record. A record the
+//! cell refuses at commit
 //! stays pending as quarantined evidence, as it does one by one: such a page
 //! is applied record by record, and its row is consumed (applying nothing)
 //! once no member is left pending.
@@ -252,6 +254,27 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         Ok(Some(ids))
     }
 
+    /// OBS-LINK-DISPUTE-1: whether a dispute row was captured between the
+    /// first and the last of `members` in inbox order.
+    pub(crate) fn dispute_among(
+        &self,
+        members: &[(String, MappingBundle)],
+    ) -> Result<bool, CellError> {
+        let mut range: Option<(u64, u64)> = None;
+        for (id, _) in members {
+            let position = self
+                .inbox_position(id)?
+                .ok_or(CellError::MappingBundleMismatch)?;
+            range = Some(range.map_or((position, position), |(low, high)| {
+                (low.min(position), high.max(position))
+            }));
+        }
+        match range {
+            Some((low, high)) if low < high => self.dispute_captured_between(low, high),
+            _ => Ok(false),
+        }
+    }
+
     /// A pending page's members that are still pending, in page order, with
     /// their bundles. Members consumed earlier (one by one, or by another
     /// page) are skipped: each record is consumed once.
@@ -313,6 +336,16 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
         let Some((observed, members)) = self.pending_page(page_id)? else {
             return Ok(PageAttempt::Consumed);
         };
+        // OBS-LINK-DISPUTE-1: one plan serves a page's members only when they
+        // all see the same disputes. Capture now ends a run at a dispute row,
+        // but a page captured before that rule can still hold one between its
+        // pending members; such a page is applied record by record, so each
+        // member's plan sees the disputes captured before it, as one by one.
+        if self.store().read().dispute_among(&members)? {
+            return Ok(PageAttempt::Refused(
+                members.into_iter().map(|(id, _)| id).collect(),
+            ));
+        }
         match self.commit_page(&observed, &members) {
             Ok(()) => Ok(PageAttempt::Landed(
                 members
