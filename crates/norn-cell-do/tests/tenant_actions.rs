@@ -1272,7 +1272,10 @@ fn a_record_conditioned_rule_answers_conditional() {
 fn a_member_reads_a_records_history_without_its_sources_or_the_calls_input() {
     let directory = tempfile::tempdir().unwrap();
     let mut cell = provisioned(&directory.path().join("a.sqlite"), &with_policy(&["admin"]));
-    assert_eq!(cell.melt(MELT_ACTION, Some(&user("admin")), "h1").status, 200);
+    assert_eq!(
+        cell.melt(MELT_ACTION, Some(&user("admin")), "h1").status,
+        200
+    );
     let history = format!("/v1/objects/{MELT}/h1/history");
     let read = |cell: &mut Cell, role: &str| {
         let response = cell.call("GET", &history, Some(&user(role)), "");
@@ -1283,7 +1286,11 @@ fn a_member_reads_a_records_history_without_its_sources_or_the_calls_input() {
     let versions = member["versions"].as_array().unwrap();
     assert_eq!(versions.len(), 1, "{member}");
     assert_eq!(versions[0]["values"]["id"], json!("h1"), "{member}");
-    assert_eq!(versions[0]["writer"], json!({ "kind": "other" }), "{member}");
+    assert_eq!(
+        versions[0]["writer"],
+        json!({ "kind": "other" }),
+        "{member}"
+    );
     let admin = read(&mut cell, "admin");
     let writer = &admin["versions"][0]["writer"];
     assert_eq!(

@@ -857,9 +857,38 @@ fn corrected_with_history(host: &DevHost<NativeEngine>, slipped: u64) {
         Mapping { lineage } => assert_eq!(lineage.mapping_pin.artifact_id, "docs.scans.mapping"),
         other @ (Action { .. } | Other) => panic!("the import is the mapping's: {other:?}"),
     }
-    // A caller with Population and Values but no Sources (a member) reads
-    // the history: every version and its values, the action's writer, and no
-    // version's source lineage, which stays Sources' as `/lineage` keeps it.
+    without_sources(host, slipped, &history, named);
+    let value = |version: &crate::object_review::NornObjectVersion| match version
+        .values
+        .as_ref()
+        .and_then(|values| values.get("total"))
+    {
+        Some(RuntimeValue::Number(number)) => number.to_string(),
+        other => format!("{other:?}"),
+    };
+    assert_eq!(
+        (value(newest).as_str(), value(oldest).as_str()),
+        ("72", "720")
+    );
+    crate::object_review::get_object_lineage_at(
+        host,
+        &scope_query(),
+        Some(STEWARD),
+        (DOCUMENT, "SCAN-RPT-1117", slipped),
+        &Access,
+    )
+    .expect("the imported version keeps its lineage");
+}
+
+/// A caller with Population and Values but no Sources (a member) reads the
+/// history: every version and its values, the action's writer (`named`), and
+/// no version's source lineage, which stays Sources' as `/lineage` keeps it.
+fn without_sources(
+    host: &DevHost<NativeEngine>,
+    slipped: u64,
+    history: &crate::object_review::NornObjectHistory,
+    named: serde_json::Value,
+) {
     let without_sources = crate::object_review::get_object_history(
         host,
         &scope_query(),
@@ -899,26 +928,6 @@ fn corrected_with_history(host: &DevHost<NativeEngine>, slipped: u64) {
         &NoSources,
     )
     .expect_err("the lineage is not served without Sources");
-    let value = |version: &crate::object_review::NornObjectVersion| match version
-        .values
-        .as_ref()
-        .and_then(|values| values.get("total"))
-    {
-        Some(RuntimeValue::Number(number)) => number.to_string(),
-        other => format!("{other:?}"),
-    };
-    assert_eq!(
-        (value(newest).as_str(), value(oldest).as_str()),
-        ("72", "720")
-    );
-    crate::object_review::get_object_lineage_at(
-        host,
-        &scope_query(),
-        Some(STEWARD),
-        (DOCUMENT, "SCAN-RPT-1117", slipped),
-        &Access,
-    )
-    .expect("the imported version keeps its lineage");
 }
 
 #[test]
