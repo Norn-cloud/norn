@@ -298,7 +298,7 @@ request entry, and the dispatch decides on that principal without checking
 expiry again at the commit. An issuer revocation therefore reaches an
 approved call at most 330 s after the `iat` of the newest token minted before
 it (300 s signed lifetime plus 30 s leeway), plus the duration of any request
-verified before then: such a request may still commit the call after its
+verified before `exp` + 30 s (the verifier rejects at equality): such a request may still commit the call after its
 token has expired. A retry under a token verified before the revocation can
 run the call. The approval fencing model checks exactly this guarantee
 (verification/hosted-timers-v1, `noStaleApprovedExecution`); it does not
