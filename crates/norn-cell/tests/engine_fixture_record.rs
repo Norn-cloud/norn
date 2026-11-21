@@ -7,7 +7,9 @@
 //!
 //! It uses only APIs every storage version has, so it builds unchanged
 //! against an older checkout. `engine-storage-v1.json` was recorded this way
-//! on `main` at 962938d9d8, the last storage-version-1 engine.
+//! on `main` at 962938d9d8, the last storage-version-1 engine, and
+//! `engine-storage-v2.json` on `main` at 592458be94, the last
+//! storage-version-2 engine.
 #![cfg(feature = "native")]
 #![allow(clippy::expect_used, missing_docs, reason = "fixture recorder")]
 
