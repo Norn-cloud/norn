@@ -6,52 +6,61 @@
 //! last event sequence and hash), the RFC 6962 root of the first `commits`
 //! receipt digests, and digests of what live reads consume from the history
 //! it covers: the quantity receipts, the last export record and the retained
-//! definition versions. It is written every [`EVERY`] commits and at the end
-//! of an open that upgraded the cell. It is metadata, not evidence: it is
-//! never part of a receipt, a ledger event or an export.
+//! definition versions. It is metadata, not evidence: it is never part of a
+//! receipt, a ledger event or an export.
 //!
-//! # Genesis parity (#1551 round 3)
+//! # Claim and threat model (#1551 round 4)
 //!
-//! Every check a genesis open runs has an equivalent from a checkpoint:
-//! **(a)** re-run in full on every open, **(b)** pinned by a digest in the
-//! checkpoint and re-checked on every open and every advancement, or **(c)**
-//! checked on the suffix only, with the reason the prefix cannot affect it.
-//! The writer advances a checkpoint only inside the transaction that
-//! records it, after verifying from the previous durable checkpoint (from
-//! genesis with none) everything it newly covers, never from a handle's
-//! cached head (S3): so every row a checkpoint covers was verified once
-//! against a pinned anchor, and the pins below keep it from changing since.
+//! The adversary can rewrite the cell file (any row, its digests, and the
+//! checkpoint row together) but does not hold the host's checkpoint key.
 //!
-//! | Genesis open checks | From a checkpoint |
-//! |---|---|
-//! | Ledger chain: sequence, `prev` links, entry hashes, every event in its receipt's commit and world, no orphan event | Suffix (a). Prefix (b): the head's sequence and hash are pinned, and the receipt root pins every commit's `ledgerHead`. Every ledger read also rehashes each entry it serves, so an event changed in place is never served. |
-//! | Logical time never goes back | (a) on the suffix, from the anchor receipt's own time, in the verifier every open and every advancement share (S1). Prefix (b): receipt bodies are pinned by the root, and their order was checked when the checkpoint advanced over them. |
-//! | Receipts: body hash, lookup columns, commit tiling, quantity provenance | Suffix (a). Prefix (b): the root pins every digest; every receipt read checks the body against its digest and its lookup columns against the body, including an idempotency lookup (S4). |
-//! | Transparency log | (a) rebuilt from every digest, and (b) the covered digests must rebuild the recorded root. The writer builds that root only from digests equal to the ones on disk. |
-//! | Cell identity: every export record names the live binding | Suffix (a). Prefix (b): the last covered record is pinned by commit and stored digest, and must hash-verify and name the live binding (S2). The earlier records are not live; restore and export verify the journal chain themselves. |
-//! | Definition history: version order, each install's typed proof, the active pointer | Suffix (a). Prefix: order (a); the active-at-checkpoint version's typed proof (a, S6); every covered version row (b), by the `definitions` digest, since superseded versions are read live (historical compute, mapping bundles, run routes). The active pointer (a). |
-//! | Value history: each version against its receipt's digest | Suffix (a). Prefix (c): history is not live state, and every historical read proves the version against its receipt (`object_at_version`), whose digest the root pins. |
-//! | Quantity projections (balances, holds, postings, timers, history) and the cell clock | (a): replayed from every quantity receipt; the `quantity_receipts` digest (b) names which covered receipts carry quantity, and a qualified load (S5) refuses an older layout. The clock projection against the head receipt (a). |
-//! | Quantity boundary | (b) recorded in the checkpoint, (a) checked against the cell's pointer and every quantity event after it. |
-//! | Object identities (normalized keys) | (a) over current state. |
-//! | Schema, storage version, markings, fork pin | (a): `init_schema` and the fork pin run before either verification. |
+//! - A checkpointed cell detects every edit a genesis open detects. Edits
+//!   to live state are detected at open. Edits to history are detected
+//!   within one history scrub ([`crate::scrub`]), and no read that depends
+//!   on that history being complete is served before it ends.
+//! - Forging a checkpoint needs the key. The row is MAC'd (HMAC-SHA256,
+//!   [`CheckpointKey`]) over every column and the cell's identity, under a
+//!   key the host keeps outside the file. A pin stored in the file cannot
+//!   authenticate itself (round 3, S2); only the MAC makes the pins trusted.
+//! - Missing key, a MAC that does not verify, no identity, or a checkpoint
+//!   past the end of the file (a restore that trimmed history): the open is
+//!   a genesis open, never a refusal.
+//! - Not claimed: a rollback of the whole file to an older consistent state
+//!   (a genesis open does not detect it either), an adversary holding the
+//!   key, or completeness of history without reading it. A per-row
+//!   authenticated index is a post-beta option.
 //!
-//! Selectors that locate covered rows but are not re-derived on open are
-//! cross-checked where they are read: an idempotency lookup against the
-//! hashed body (S4); the quantity evidence lookups by ledger `world` against
-//! the replayed projections, so a hidden or moved event refuses the write;
-//! a payload's receipt `world` against the payload reference it locates.
+//! # Genesis parity
 //!
-//! What is not re-read at open is the body of the history before the
-//! checkpoint. A consistent rewrite of it changes the anchored head, the
-//! receipt root or a pinned digest and refuses. A verification from genesis
-//! still checks every row (an operator's scrub opens a copy with no
-//! checkpoint row). A checkpoint row that is missing never weakens an open:
-//! with none the open verifies from genesis, and one that does not anchor
-//! the file, or has an older layout, refuses it. A restore that cuts the
-//! history independently of the rest of the file must delete a checkpoint
-//! past the cut (`docs/platform/engine-upgrades.md`, "Restores that trim
-//! history").
+//! Every check a genesis open runs has an equivalent from a checkpoint.
+//! **(a)** re-run in full on every open; **(b)** pinned by a digest in the
+//! MAC'd row and re-checked on every open and every advancement; **(c)**
+//! checked on the suffix only, with the reason the prefix cannot affect what
+//! is served. The scrub column says what the history scrub re-runs from
+//! genesis over the prefix, and what waits for it.
+//!
+//! | Genesis open checks | From a checkpoint, at open | Scrub, from genesis |
+//! |---|---|---|
+//! | Ledger chain: sequence, `prev` links, entry hashes, every event in its receipt's commit and world, no orphan event | Suffix (a). Prefix (b): the head's sequence and hash, and the receipt root (which pins every commit's `ledgerHead`). | Full chain (S8). Ledger and finding pages over the prefix wait for it. |
+//! | Logical time never goes back | Suffix (a), from the anchor receipt's time (S1). | Full. |
+//! | Receipts: body hash, lookup columns, commit tiling, quantity provenance | Suffix (a). Prefix (b) by the root; every receipt read checks body and columns (S4). | Every receipt, columns included, and the rebuilt root against the row's. A commit whose idempotency key misses waits for it (S4). |
+//! | Transparency log | (a) rebuilt; (b) the covered digests rebuild the root. | Rebuilt again from the bodies it verified; it seeds the next root. |
+//! | Cell identity: every export record names the live binding | Suffix (a). Prefix (b): the last covered record, pinned by commit and digest, names the live binding (S2). | Every record. |
+//! | Definition history: order, each install's typed proof, the active pointer | Suffix (a). Prefix: order (a); the active version's proof (a, S6); every covered version (b) by the `definitions` digest. The pointer (a). | Every install, superseded ones included (S9). |
+//! | Value history: each version against its receipt's digest | Suffix (a). Prefix (c): exact-version reads prove their version. | Every version (S7). As-of reads and version lists wait for it. |
+//! | Quantity projections and the cell clock | (a): replayed from every quantity receipt; (b) the `quantity_receipts` digest names them; a qualified load (S5). | The digest is re-folded from the verified receipts for the seed. |
+//! | Quantity boundary | (b) recorded; (a) against the pointer and the suffix. | Re-derived from the markers; must equal the open's. |
+//! | Object identities | (a) over current state. | Live: not repeated. |
+//! | Schema, storage version, markings, fork pin | (a). | Live: not repeated. |
+//!
+//! # Advancement
+//!
+//! A checkpoint advances or is re-seeded only from scrub-verified state.
+//! A commit advances it every [`EVERY`] commits, from the row this handle
+//! validated, once its scrub has ended. It re-runs the open's pin checks on
+//! that row (S3) and verifies at most [`MAX_ADVANCE`] commits. A longer gap
+//! goes to the scrub, off the commit path (S10). The scrub seeds the row at
+//! the head it verified.
 use crate::{
     CellError, LedgerHead,
     engine::{SqlEngine, SqlRow, params},
@@ -366,13 +375,15 @@ pub(crate) fn record(
     checkpoint: &OpenCheckpoint,
 ) -> Result<bool, CellError> {
     use hmac::Mac as _;
-    let (Some(key), Some(cell_id)) = (
-        engine.checkpoint_key(),
-        crate::cell_identity::read(engine)?,
-    ) else {
+    let (Some(key), Some(cell_id)) = (engine.checkpoint_key(), crate::cell_identity::read(engine)?)
+    else {
         return Ok(false);
     };
-    let tag = root_hex(&mac(&key, cell_id.as_str(), checkpoint)?.finalize().into_bytes());
+    let tag = root_hex(
+        &mac(&key, cell_id.as_str(), checkpoint)?
+            .finalize()
+            .into_bytes(),
+    );
     engine.execute(
         &format!(
             "INSERT INTO \"{TABLE}\" (\"id\", \"commits\", \"seq\", \"hash\", \"receipts_root\", \"boundary_seq\", \"boundary_commit\", \"quantity_receipts\", \"export_seq\", \"export_hash\", \"definitions\", \"mac\") \
@@ -441,6 +452,63 @@ pub(crate) fn corrupt(commits: u64, reason: &str) -> CellError {
 #[cfg(all(test, feature = "native"))]
 #[allow(clippy::expect_used, reason = "test assertions")]
 mod tests {
+    use super::{CheckpointKey, OpenCheckpoint, mac};
+    use hmac::Mac as _;
+
+    fn checkpoint() -> OpenCheckpoint {
+        OpenCheckpoint {
+            head: crate::LedgerHead {
+                commits: 128,
+                seq: 300,
+                hash: "h".to_owned(),
+            },
+            receipts_root: "r".to_owned(),
+            boundary: None,
+            quantity_receipts: "q".to_owned(),
+            export: None,
+            definitions: "d".to_owned(),
+        }
+    }
+
+    fn verifies(key: &CheckpointKey, cell: &str, row: &OpenCheckpoint, tag: &[u8]) -> bool {
+        mac(key, cell, row)
+            .expect("mac")
+            .verify_slice(tag)
+            .is_ok()
+    }
+
+    /// #1551 round 4: the MAC binds every column, the cell's identity and
+    /// the key. A row MAC'd for one cell does not verify for another, and
+    /// one changed column, or another key, fails it.
+    #[test]
+    fn the_mac_binds_the_row_the_cell_and_the_key() {
+        let key = CheckpointKey::INSECURE_DEV_AND_TEST;
+        let row = checkpoint();
+        let tag = mac(&key, "cell-a", &row).expect("mac").finalize().into_bytes();
+        assert!(verifies(&key, "cell-a", &row, &tag));
+        assert!(!verifies(&key, "cell-b", &row, &tag), "copied across cells");
+        let mut changed = row.clone();
+        changed.receipts_root = "r2".to_owned();
+        assert!(!verifies(&key, "cell-a", &changed, &tag), "a changed root");
+        let other = CheckpointKey::from_bytes([7; 32]);
+        assert!(!verifies(&other, "cell-a", &row, &tag), "another key");
+    }
+
+    #[test]
+    fn a_key_is_64_hexadecimal_digits() {
+        let hex = "07".repeat(32);
+        assert_eq!(
+            CheckpointKey::from_hex(&hex).expect("key"),
+            CheckpointKey::from_bytes([7; 32])
+        );
+        assert!(CheckpointKey::from_hex("07").is_err());
+        assert!(CheckpointKey::from_hex(&"zz".repeat(32)).is_err());
+        assert_eq!(
+            format!("{:?}", CheckpointKey::INSECURE_DEV_AND_TEST),
+            "CheckpointKey(<redacted>)"
+        );
+    }
+
     /// S5 (#1551 round 2): a checkpoint table of an older layout, with no
     /// `quantity_receipts` column, refuses the load under either setting of
     /// SQLite's double-quoted-string mode. The unqualified form the load

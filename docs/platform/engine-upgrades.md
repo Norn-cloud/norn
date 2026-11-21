@@ -43,19 +43,66 @@ Hosts already turn an open refusal into `cell.unopenable`, and the reason reache
 
 ## Checkpointed open
 
-From storage version 5 an open does not re-verify every commit from the first one. `_norn_open_checkpoint` holds one row: a ledger head this engine verified (commit count, last event sequence and hash), the RFC 6962 root of the receipt digests of those commits, the quantity boundary in force at it (so the open never scans the receipts before it to find the boundary), a digest of the `(commit, receipt digest)` list of the quantity receipts it covers, the commit and stored digest of the last export record it covers, and a digest of every retained definition version it covers. The code is `crates/norn-cell/src/open_checkpoint.rs`; its module doc holds the genesis-parity table (each check a genesis open runs, and how an open from a checkpoint matches it).
+From storage version 5 an open does not re-verify every commit from the first one. `_norn_open_checkpoint` holds one row: a ledger head this engine verified (commit count, last event sequence and hash), the RFC 6962 root of the receipt digests of those commits, the quantity boundary in force at it, a digest of the `(commit, receipt digest)` list of the quantity receipts it covers, the commit and stored digest of the last export record it covers, a digest of every retained definition version it covers, and a MAC. The code is `crates/norn-cell/src/open_checkpoint.rs` (the row, its MAC and the genesis-parity table) and `crates/norn-cell/src/scrub.rs` (the history scrub).
 
-A checkpoint may skip re-verifying history. It never exempts live state, or the history that live reads consume.
+### Claim and threat model
 
-- **When it is written.** After every 128th commit, and at the end of an open that upgraded the cell (that open writes anyway). The writer verifies, inside the transaction that records the new checkpoint, everything it newly covers, starting from the previous durable checkpoint (from genesis when there is none), never from a handle's cached head: the chain and receipts (including logical time order), each export record's cell identity, the definition installs and the value history. The new root is built only from receipt digests equal to the ones on disk. A record that fails keeps the previous checkpoint, so the next open verifies it and refuses. A same-version open still writes nothing. The row is metadata: it is never part of a receipt, a ledger event or an export, and a failed write keeps the previous checkpoint. Cost: about 10 ms every 128th commit at any depth, more with quantity commits (see the PR for measurements). With no checkpoint row, the first checkpoint verifies from genesis once.
-- **What an open checks.** The checkpoint must still anchor the file: the ledger entry at its sequence carries its hash, and its last commit's receipt names that head and verifies. The receipt digests of its commits must rebuild its root, so no receipt it covers was replaced, even one rewritten with its own hash. Everything after it is verified exactly as a genesis open verifies it: the chain, receipts and their logical time order, the definition history, the value history and each export record's cell identity. Live state is checked in full on every open:
+- **Who we defend against:** anyone who can rewrite the cell file (its rows, digests and the checkpoint row together) but does not hold the host's checkpoint key.
+- **The claim:** a checkpointed cell detects every edit a genesis open detects. Edits to live state are detected at open. Edits to history are detected within one scrub, before any read that depends on that history being complete is served.
+- **Forging a checkpoint needs the key.** The row is authenticated by HMAC-SHA256 under a key held outside the cell file: the host's secret store (Infisical or OpenBao in alpha, `NORN_CHECKPOINT_KEY` on the Durable Object host). Dev hosts and tests use a fixed, public key, `CheckpointKey::INSECURE_DEV_AND_TEST`. The MAC covers every column and the cell's identity binding, so a row copied from another cell does not verify either.
+- **Fail-safe:** a missing key, a cell with no identity, or a row whose MAC does not verify gives a genesis open, never a refusal. The same holds for a checkpoint past the end of the file, as after a restore that trimmed history. A lost or rotated key costs open time, not the cell.
+- **Not claimed:** a rollback of the whole file to an older consistent state, which a genesis open does not detect either. An attacker who holds the key. Proving history complete without reading it; a per-row authenticated index (a Merkle index over value versions and selectors) is a post-beta option.
+
+### What an open checks
+
+An open from an authentic checkpoint verifies all live state, and the history after the checkpoint, exactly as a genesis open does:
+
+- **The anchor.** The ledger entry at the checkpoint's sequence carries its hash, and its last commit's receipt names that head and verifies. The receipt digests of the commits it covers rebuild its root.
+- **The suffix.** Everything after the checkpoint: the chain, receipts and their logical time order, the definition history, the value history and each export record's cell identity.
+- **Live state, in full:**
   - The object identities, over the current state.
-  - The cell identity binding: the last export record at or before the checkpoint must be the one it pinned (same commit and stored digest), hash-verify and name the binding, so changing the binding, even with that record and its digest, refuses at a head checkpoint.
-  - The definitions: every retained version it covers must still fold to its definitions digest (superseded versions are read live too, by historical compute and mapping bundles), and the version active at it is proven again in full against its typed export record.
-  - The quantity projections (ledger heads, balances, holds, reservations, postings, timers and balance history), replayed from every quantity receipt and compared row for row, as a genesis open does. Only the quantity receipts are read: the receipt table's two quantity indexes list them, and that list must fold to the checkpoint's quantity digest, so none is hidden from the replay. If the list does not fold to it, the open replays from every receipt instead. This part of the open grows with the number of quantity commits, not with the history.
-  With no checkpoint the open verifies from genesis; one that does not anchor the file, or has an older layout, refuses the open.
-- **What it does not re-read.** The bodies of rows before the checkpoint. A consistent rewrite of that history changes the anchored head, the receipt root or a pinned digest and refuses. An old row changed in place with its stored hashes kept is refused when it is read, because every historical read verifies its own proof: a ledger entry against its stored hash, a value version against its receipt's digest, and a receipt (`receipts`, `receipts_after`, `receipt_at`, lookup by idempotency key) against its stored hash, which is the leaf the root is built from, with its lookup columns checked against its body. A verification from genesis finds it: an operator's scrub opens a copy of the file with its checkpoint row deleted.
-- **Restores that trim history.** A whole-file snapshot (a file copy, a Durable Object point-in-time bookmark, a Rivet actor snapshot) restores the checkpoint row with the history it covers, so it is consistent. A restore that cuts the ledger, receipts or journal independently of the rest of the file (for example an LTX-cut point-in-time restore that keeps commits `1..=cut`) must also delete the open checkpoint when its `commits` is past the cut: `DELETE FROM "_norn_open_checkpoint" WHERE "commits" > ?cut`. The next open then verifies from genesis and the writer records a new checkpoint. A checkpoint left past the cut never admits the file: its open refuses ("the cell holds fewer receipts than it covers"). This repository's restore (`restore.rs`) replays an export into a new file, so it never carries a checkpoint over.
+  - The cell identity binding against the last export record the checkpoint pins.
+  - The definitions: every retained version it covers folds to its definitions digest, and the version active at it is proven again against its typed export record.
+  - The quantity projections, replayed from every quantity receipt and compared row for row. The receipt table's quantity indexes list those receipts, and the list must fold to the checkpoint's quantity digest.
+  - The schema, storage version, markings and fork pin.
+
+### The history scrub
+
+The history before the checkpoint is verified after the open, by the scrub. It runs the checks a genesis open runs, from genesis to the head the open verified, in bounded steps between commits:
+
+1. **Receipts:** each body against its digest, its lookup columns against its body, each digest against the one the open loaded, and the rebuilt root against the checkpoint's.
+2. **History:** the ledger chain, every export record's identity, every definition install (superseded ones included), and every value version against its receipt.
+3. **Seed:** the checkpoint at that head, built only from what the scrub verified, MAC'd and recorded.
+
+Placement:
+
+- The scrub runs on the cell's own connection, one step per wake of the host's due-work clock (`norn_api::timers`): the Durable Object's alarm, and the dev host's timer loop.
+- A step reads at most 512 receipts or verifies 64 commits, each step in its own transaction, so a commit waits for at most one step.
+- A separate read connection over a WAL snapshot was considered and not used. A Durable Object has one storage connection and no threads, and an in-memory cell cannot be opened twice, so one stepped scrub serves every host.
+- On a Durable Object the scrub's state lives in memory. An evicted object scrubs again on its next open, and its alarm keeps it awake while the scrub runs.
+
+Until the scrub ends, reads that depend on history being complete are refused with the retryable `cell.verifying`. Live reads and writes are served.
+
+| Held back until | Reads |
+|---|---|
+| the history phase ends | as-of reads (`version_as_of`, knowledge-cutoff evidence), version lists (object history, as-of metrics and other historical compute), ledger and finding-ledger pages that reach an entry the checkpoint covers |
+| the receipts phase ends | a commit whose idempotency key finds no receipt: the miss cannot be dated, and a changed selector could hide a covered receipt, so the write is refused as retryable rather than committed twice |
+
+A defect fences the cell. Every commit and every request is refused with `cell.fenced`, and the finding is logged and returned by the host's due-work report. The checkpoint row is dropped, so the next open verifies from genesis and refuses the same defect.
+
+### When a checkpoint is written
+
+- **By a commit.** After every 128th commit, and only from the checkpoint this handle validated, once the scrub has verified the history it covers. The commit re-runs the pins an open runs on that checkpoint, verifies everything it newly covers, and builds the new root only from digests equal to the ones on disk. A commit verifies at most 256 commits. A longer gap is handed to the scrub, which closes it off the commit path and seeds the next checkpoint. A commit never runs a catch-up from genesis. A history of 256 commits or fewer is checkpointed from genesis by its first due commit.
+- **By the scrub.** At the end of every scrub, at the head it verified. That covers after a checkpointed open, after a genesis open of a history over 256 commits (where the scrub only rebuilds what the seed records), and after a restore.
+- **By an upgrading open,** which writes anyway.
+- **Never otherwise.** A same-version open writes nothing. The row is metadata: it is never part of a receipt, a ledger event or an export. A failed write keeps the previous checkpoint.
+
+### Restores
+
+- **Whole-file snapshots** (a file copy, a Durable Object point-in-time bookmark, a Rivet actor snapshot) restore the checkpoint with the history it covers, and are consistent.
+- **A restore that trims history** (an LTX-cut point-in-time restore) may leave a checkpoint past its end. The open then verifies from genesis, and the scrub re-seeds the checkpoint at the restored head.
+- **The earlier runbook step** `DELETE FROM "_norn_open_checkpoint" WHERE "commits" > ?cut` is no longer needed, and stays harmless.
+- **This repository's restore** (`restore.rs`) replays an export into a new file, so it never carries a checkpoint over.
 
 ## Exports and restore
 

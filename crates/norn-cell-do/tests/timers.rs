@@ -572,7 +572,11 @@ fn the_history_scrub_runs_on_the_due_work_clock() {
         std::collections::BTreeMap::new()
     })
     .unwrap();
-    assert_eq!(next_due(&host).unwrap(), Some(0), "the scrub is due at once");
+    assert_eq!(
+        next_due(&host).unwrap(),
+        Some(0),
+        "the scrub is due at once"
+    );
     let mut wakes = 0_u32;
     while next_due(&host).unwrap() == Some(0) {
         let work = run_due(&host, at(10)).unwrap();

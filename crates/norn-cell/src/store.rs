@@ -2617,23 +2617,24 @@ impl<E: SqlEngine> CellStore<E> {
             crate::engine_release::admission(&store.conn)?,
             crate::engine_release::Admission::Upgrade { .. }
         );
-        let (head, boundary, transparency, fork, trusted, recorded) = store.conn.transaction(|| {
-            Self::init_schema(&store.conn, &store.model, source)?;
-            if let Some(expected) = expected {
-                store.require_cell_id(expected)?;
-            }
-            let (head, boundary, transparency, trusted) = store.verify_history(&pass)?;
-            let fork = crate::fork::load_pin(&store.conn)?;
-            refuse_pin_past(fork.as_ref(), head.commits)?;
-            // An upgrading open verified from genesis (a pre-v5 cell has no
-            // checkpoint), so what it records covers verified history.
-            let recorded = if upgrading && trusted.is_none() {
-                store.record_open_checkpoint(None, &head, boundary, &transparency)?
-            } else {
-                None
-            };
-            Ok::<_, CellError>((head, boundary, transparency, fork, trusted, recorded))
-        })?;
+        let (head, boundary, transparency, fork, trusted, recorded) =
+            store.conn.transaction(|| {
+                Self::init_schema(&store.conn, &store.model, source)?;
+                if let Some(expected) = expected {
+                    store.require_cell_id(expected)?;
+                }
+                let (head, boundary, transparency, trusted) = store.verify_history(&pass)?;
+                let fork = crate::fork::load_pin(&store.conn)?;
+                refuse_pin_past(fork.as_ref(), head.commits)?;
+                // An upgrading open verified from genesis (a pre-v5 cell has no
+                // checkpoint), so what it records covers verified history.
+                let recorded = if upgrading && trusted.is_none() {
+                    store.record_open_checkpoint(None, &head, boundary, &transparency)?
+                } else {
+                    None
+                };
+                Ok::<_, CellError>((head, boundary, transparency, fork, trusted, recorded))
+            })?;
         let keyed = store.conn.checkpoint_key().is_some()
             && crate::cell_identity::read(&store.conn)?.is_some();
         store.scrub.replace(crate::scrub::Scrub::after_open(
@@ -2911,7 +2912,8 @@ impl<E: SqlEngine> CellStore<E> {
         {
             return;
         }
-        let gap_ok = |from: u64| commits.saturating_sub(from) <= crate::open_checkpoint::MAX_ADVANCE;
+        let gap_ok =
+            |from: u64| commits.saturating_sub(from) <= crate::open_checkpoint::MAX_ADVANCE;
         let advance = self.scrub.borrow().advancement();
         let previous = match advance {
             crate::scrub::Advance::Hold => return,
@@ -2931,7 +2933,11 @@ impl<E: SqlEngine> CellStore<E> {
                     crate::open_checkpoint::Loaded::Authentic(row) if row == *previous => {}
                     // Another handle advanced it, or it was rewritten: the
                     // scrub re-seeds from what it verifies itself.
-                    _ => return Ok(None),
+                    crate::open_checkpoint::Loaded::Authentic(_)
+                    | crate::open_checkpoint::Loaded::Absent
+                    | crate::open_checkpoint::Loaded::Unkeyed
+                    | crate::open_checkpoint::Loaded::Unbound
+                    | crate::open_checkpoint::Loaded::Unauthentic => return Ok(None),
                 }
             }
             let from = previous

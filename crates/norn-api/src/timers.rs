@@ -168,7 +168,8 @@ pub fn run_due<E: SqlEngine>(host: &DevHost<E>, now: LogicalTime) -> Result<DueW
     let scrub = cell.store().scrub_step();
     if let norn_cell::ScrubStatus::Fenced { finding } = &scrub {
         let mut work = DueWork::default();
-        work.failed.push(format!("history scrub: the cell is fenced: {finding}"));
+        work.failed
+            .push(format!("history scrub: the cell is fenced: {finding}"));
         return Ok(work);
     }
     let scrubbing = matches!(scrub, norn_cell::ScrubStatus::Verifying { .. });

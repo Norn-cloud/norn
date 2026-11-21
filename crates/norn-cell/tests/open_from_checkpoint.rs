@@ -860,31 +860,51 @@ fn a_checkpoint_rewritten_with_the_history_it_covers_is_never_trusted() {
 }
 
 /// (b) A valid checkpoint row copied from another cell is never trusted:
-/// the MAC binds the cell's identity. On 0030aa90b2 a copied row whose
-/// pins matched was trusted.
+/// the MAC binds the cell's identity. The other cell here is this cell's
+/// history under another identity (every export record and the binding
+/// rewritten), holding the row MAC'd for the first identity. The open is a
+/// genesis open. On 0030aa90b2 the row was trusted and its export pin
+/// refused the open; a row is now judged by its MAC alone.
 #[test]
 fn a_checkpoint_row_from_another_cell_is_never_trusted() {
+    const OTHER: &str = "0123456789abcdef0123456789abcdef";
     let dir = tempfile::tempdir().expect("directory");
-    let ours = dir.path().join("ours.sqlite");
-    let theirs = dir.path().join("theirs.sqlite");
-    cell(&ours, EVERY + 10);
-    cell(&theirs, EVERY + 10);
-    let row = raw(&theirs)
-        .query("SELECT * FROM _norn_open_checkpoint", &[])
-        .expect("their row")
-        .remove(0);
-    let engine = raw(&ours);
-    engine
-        .execute("DELETE FROM _norn_open_checkpoint", &[])
-        .expect("clear");
+    let path = dir.path().join("cell.sqlite");
+    cell(&path, EVERY + 10);
+    let store = open_unkeyed(&path).expect("open");
+    let records: Vec<_> = (1..=EVERY + 10)
+        .filter_map(|commit| {
+            store
+                .export_record(commit)
+                .expect("record")
+                .map(|record| (commit, record))
+        })
+        .collect();
+    drop(store);
+    let engine = raw(&path);
+    for (commit, mut record) in records {
+        record
+            .bindings
+            .insert("cell_id".to_owned(), OTHER.to_owned());
+        engine
+            .execute(
+                "UPDATE _norn_export_journal SET record = ?1, hash = ?2 WHERE commit_seq = ?3",
+                &[
+                    SqlValue::Text(serde_json::to_string(&record).expect("record")),
+                    SqlValue::Text(record.hash().expect("hash")),
+                    SqlValue::Integer(i64::try_from(commit).expect("commit")),
+                ],
+            )
+            .expect("rewrite the record");
+    }
     engine
         .execute(
-            "INSERT INTO _norn_open_checkpoint VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-            &row,
+            &format!("UPDATE _norn_meta SET value = '{OTHER}' WHERE key = 'binding:cell_id'"),
+            &[],
         )
-        .expect("copy their row");
+        .expect("rebind");
     drop(engine);
-    let store = open(&ours).expect("a genesis open");
+    let store = open(&path).expect("a genesis open of the other cell");
     assert!(
         history_ready(&store),
         "a row from another cell was trusted: {:?}",
@@ -939,9 +959,7 @@ fn an_as_of_read_waits_for_the_scrub_over_a_deleted_version() {
     let commit = EVERY - 30;
     let row = raw(&path)
         .query(
-            &format!(
-                "SELECT object_type, id FROM _norn_fact_values WHERE commit_seq = {commit}"
-            ),
+            &format!("SELECT object_type, id FROM _norn_fact_values WHERE commit_seq = {commit}"),
             &[],
         )
         .expect("row");
@@ -955,14 +973,18 @@ fn an_as_of_read_waits_for_the_scrub_over_a_deleted_version() {
     let store = open(&path).expect("the open verifies from the checkpoint");
     assert!(
         matches!(
-            store.read().version_as_of(MAIN_WORLD, object_type, id, commit),
+            store
+                .read()
+                .version_as_of(MAIN_WORLD, object_type, id, commit),
             Err(CellError::Verifying(_))
         ),
         "an as-of read trusted the scan before the scrub"
     );
     assert!(matches!(store.scrub_to_end(), ScrubStatus::Fenced { .. }));
     assert!(matches!(
-        store.read().version_as_of(MAIN_WORLD, object_type, id, commit),
+        store
+            .read()
+            .version_as_of(MAIN_WORLD, object_type, id, commit),
         Err(CellError::Fenced(_))
     ));
 }

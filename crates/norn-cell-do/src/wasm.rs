@@ -190,9 +190,8 @@ impl NornCell {
             .map(norn_cell::CheckpointKey::from_hex)
             .transpose()
             .map_err(|error| JsValue::from_str(&format!("NORN_CHECKPOINT_KEY: {error}")))?;
-        let engine = move |storage: JsValue| {
-            WorkersEngine::new(storage).with_checkpoint_key(checkpoint_key)
-        };
+        let engine =
+            move |storage: JsValue| WorkersEngine::new(storage).with_checkpoint_key(checkpoint_key);
         let scope = CellScope {
             org_id,
             environment_id,

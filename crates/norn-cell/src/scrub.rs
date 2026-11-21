@@ -120,7 +120,9 @@ impl Gate {
             return Err(fenced());
         }
         if self.covered_seq.is_some_and(|seq| after < seq) {
-            return Err(CellError::Verifying("ledger pages the open checkpoint covers"));
+            return Err(CellError::Verifying(
+                "ledger pages the open checkpoint covers",
+            ));
         }
         Ok(())
     }
@@ -405,9 +407,9 @@ impl Scrub {
                 finding: finding.clone(),
             };
         }
-        self.run.as_ref().map_or(ScrubStatus::Idle, |run| {
-            run.status(self.covered.is_none())
-        })
+        self.run
+            .as_ref()
+            .map_or(ScrubStatus::Idle, |run| run.status(self.covered.is_none()))
     }
 }
 
@@ -540,7 +542,9 @@ impl<E: SqlEngine> CellStore<E> {
             Some(quantity) => quantity,
             None => open_checkpoint::quantity_seed()?,
         };
-        let page = self.verifier().receipts_after(run.receipts_at, RECEIPT_STEP)?;
+        let page = self
+            .verifier()
+            .receipts_after(run.receipts_at, RECEIPT_STEP)?;
         let read = page.len();
         for receipt in page {
             let commit = receipt.body.commit_seq;
@@ -604,10 +608,7 @@ impl<E: SqlEngine> CellStore<E> {
             },
         };
         let after = run.ledger.commits;
-        let through = run
-            .target
-            .commits
-            .min(after.saturating_add(HISTORY_STEP));
+        let through = run.target.commits.min(after.saturating_add(HISTORY_STEP));
         let (head, boundary) = reader.verify_ledger_span(&run.ledger, run.boundary, through)?;
         if head.commits != through {
             return Err(defect(
