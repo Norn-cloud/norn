@@ -59,6 +59,10 @@ use crate::JsonValue;
 #[derive(Clone, Copy)]
 pub struct Decimal(rust_decimal::Decimal);
 
+/// The wire decimal grammar, in words ([`Decimal::parse_wire`]).
+pub const WIRE_DECIMAL_GRAMMAR: &str =
+    "a JSON decimal `-?(0|[1-9][0-9]*)(.[0-9]+)?` without exponent, `+` or whitespace";
+
 /// A runtime object: properties in key order.
 pub type RuntimeObject = BTreeMap<String, RuntimeValue>;
 
@@ -142,6 +146,39 @@ impl Decimal {
                 message: format!("{text:?} is not a JSON number"),
             }),
         }
+    }
+
+    /// VAL-EXACT-1 / MAP-DECIMAL-TEXT-1: the one strict decoder for decimal
+    /// text on the wire, shared by the action boundary and source mappings:
+    /// the JSON decimal grammar `-?(0|[1-9][0-9]*)(.[0-9]+)?` exactly (no
+    /// exponent, `+`, leading zero or whitespace), then [`Self::parse`]'s
+    /// precision bound (96-bit mantissa, at most 28 fractional digits).
+    ///
+    /// # Errors
+    ///
+    /// [`RuntimeValueError::InvalidJson`] for text outside the grammar;
+    /// [`RuntimeValueError::Inexact`] for a value outside the decimal range.
+    pub fn parse_wire(text: &str) -> Result<Self, RuntimeValueError> {
+        if !Self::is_wire_decimal(text) {
+            return Err(RuntimeValueError::InvalidJson {
+                message: format!("{text:?} is not {WIRE_DECIMAL_GRAMMAR}"),
+            });
+        }
+        Self::parse(text)
+    }
+
+    /// Whether `text` is in the strict wire decimal grammar
+    /// ([`Self::parse_wire`]), before any precision bound.
+    #[must_use]
+    pub fn is_wire_decimal(text: &str) -> bool {
+        let unsigned = text.strip_prefix('-').unwrap_or(text);
+        let (int, frac) = match unsigned.split_once('.') {
+            Some((int, frac)) => (int, Some(frac)),
+            None => (unsigned, None),
+        };
+        let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+        let int_ok = digits(int) && (int == "0" || !int.starts_with('0'));
+        int_ok && frac.is_none_or(digits)
     }
 
     /// The decimal of a Norn1 canonical number string (already normalized:

@@ -8,9 +8,12 @@
 //! that applies its still-pending records in page order; the kernel's one
 //! write per key per commit then never merges two records' writes, so
 //! versions, events and the CAS chain are the one-by-one ones. A record the
-//! mapping or the cell refuses stays pending as quarantined evidence, as it
-//! does one by one: such a page is applied record by record, and its row is
-//! consumed (applying nothing) once no member is left pending.
+//! mapping refused (its bundle retains diagnostics) joins no page row: it is
+//! quarantined evidence before any commit, exactly as one by one, and it ends
+//! the run, so the records before it and after it each commit together. A record the cell refuses at commit
+//! stays pending as quarantined evidence, as it does one by one: such a page
+//! is applied record by record, and its row is consumed (applying nothing)
+//! once no member is left pending.
 use crate::{
     CellError, CellStore, SqliteCell, StoreReader,
     engine::SqlEngine,
@@ -53,6 +56,19 @@ pub(crate) fn members(observed: &RuntimeValue) -> Result<Vec<String>, CellError>
                 .ok_or(CellError::MappingBundleMismatch)
         })
         .collect()
+}
+
+/// The first step of consuming a captured page row
+/// ([`SqliteCell::try_mapping_page`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PageAttempt {
+    /// The page was consumed before; nothing committed.
+    Consumed,
+    /// Every pending member landed in the page's one commit.
+    Landed(Vec<(String, MappingOutcome)>),
+    /// The cell refused the page commit: these members, in page order, are
+    /// processed one by one, then the page is finished.
+    Refused(Vec<String>),
 }
 
 /// What capturing a page recorded.
@@ -106,6 +122,7 @@ impl<E: SqlEngine> CellStore<E> {
             let mut runs: Vec<(Vec<String>, BTreeSet<FactKey>, &Observed<RuntimeValue>)> =
                 Vec::new();
             let mut records = Vec::with_capacity(raws.len());
+            let mut split = false;
             for raw in raws {
                 let (id, _new) = self.capture_mapping_bundle(raw, input)?;
                 records.push(id.clone());
@@ -114,18 +131,29 @@ impl<E: SqlEngine> CellStore<E> {
                     continue;
                 }
                 let bundle = self.read().inbox_bundle(&id)?;
+                if !bundle.diagnostics.is_empty() {
+                    // INGEST-BATCH-1: a record the mapping refused is quarantined
+                    // evidence before any commit, as one by one; it joins no
+                    // page, so it never sends its page down the per-record path.
+                    // It still ends the run: records on either side of it never
+                    // share a commit they would not share one by one
+                    // (OBS-PAGE-EQUIV).
+                    split = true;
+                    continue;
+                }
                 let keys: BTreeSet<FactKey> = bundle
                     .records
                     .iter()
                     .map(|r| canonical.canonical(&FactKey::new(r.object_type.as_str(), &r.key)))
                     .collect();
                 match runs.last_mut() {
-                    Some((ids, written, _)) if written.is_disjoint(&keys) => {
+                    Some((ids, written, _)) if !split && written.is_disjoint(&keys) => {
                         ids.push(id);
                         written.extend(keys);
                     }
                     _ => runs.push((vec![id], keys, raw)),
                 }
+                split = false;
             }
             let mut pages = Vec::with_capacity(runs.len());
             for (ids, _, first) in runs {
@@ -228,6 +256,9 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
     /// member stays pending as quarantined evidence, exactly as one by one)
     /// and then the page row in a commit of its own. Returns each member's
     /// outcome, in page order; `None` when the page was already consumed.
+    /// [`Self::try_mapping_page`] and [`Self::finish_mapping_page`] are the
+    /// same steps, one commit each, for a host that releases the cell between
+    /// commits (INGEST-YIELD-1).
     ///
     /// # Errors
     /// Store failures only; refusals are outcomes.
@@ -235,6 +266,75 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
         &mut self,
         page_id: &str,
     ) -> Result<Option<Vec<(String, MappingOutcome)>>, CellError> {
+        match self.try_mapping_page(page_id)? {
+            PageAttempt::Consumed => Ok(None),
+            PageAttempt::Landed(outcomes) => Ok(Some(outcomes)),
+            PageAttempt::Refused(members) => {
+                // The per-record path: the same outcomes one-by-one delivery has.
+                let mut outcomes = Vec::with_capacity(members.len());
+                for id in members {
+                    let outcome = self.process_mapping_outcome(&id)?;
+                    outcomes.push((id, outcome));
+                }
+                self.finish_mapping_page(page_id)?;
+                Ok(Some(outcomes))
+            }
+        }
+    }
+
+    /// The first step of [`Self::process_mapping_page`]: one commit applying
+    /// every still-pending member of the page, or, when the cell refuses it,
+    /// the members to process one by one (one commit each, through
+    /// [`Self::process_mapping_outcome`]) before [`Self::finish_mapping_page`].
+    ///
+    /// # Errors
+    /// Store failures only; refusals are outcomes.
+    pub fn try_mapping_page(&mut self, page_id: &str) -> Result<PageAttempt, CellError> {
+        let Some((observed, members)) = self.pending_page(page_id)? else {
+            return Ok(PageAttempt::Consumed);
+        };
+        match self.commit_page(&observed, &members) {
+            Ok(()) => Ok(PageAttempt::Landed(
+                members
+                    .into_iter()
+                    .map(|(id, _)| (id, MappingOutcome::Landed))
+                    .collect(),
+            )),
+            Err(error @ (CellError::Sqlite(_) | CellError::Engine(_))) => Err(error),
+            Err(_refused) => Ok(PageAttempt::Refused(
+                members.into_iter().map(|(id, _)| id).collect(),
+            )),
+        }
+    }
+
+    /// The last step of a refused page ([`Self::try_mapping_page`]): the page
+    /// is consumed, in a commit of its own, once its last member is; a
+    /// quarantined member keeps it pending, and it applies when that member
+    /// is processed again. Returns whether it committed.
+    ///
+    /// # Errors
+    /// Store failures, or a refused consumption.
+    pub fn finish_mapping_page(&mut self, page_id: &str) -> Result<bool, CellError> {
+        let Some((observed, members)) = self.pending_page(page_id)? else {
+            return Ok(false);
+        };
+        if !members.is_empty() {
+            return Ok(false);
+        }
+        self.commit_page(&observed, &[])?;
+        Ok(true)
+    }
+
+    /// A pending page row and its still-pending members; `None` when the page
+    /// was consumed.
+    #[allow(
+        clippy::type_complexity,
+        reason = "the page row with its pending members"
+    )]
+    fn pending_page(
+        &self,
+        page_id: &str,
+    ) -> Result<Option<(Observed<RuntimeValue>, Vec<(String, MappingBundle)>)>, CellError> {
         let Some(pending) = self.store().read().pending_observation(page_id)? else {
             return Ok(None);
         };
@@ -250,34 +350,7 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
             .store()
             .read()
             .pending_page_members(&pending.observed)?;
-        match self.commit_page(&observed, &members) {
-            Ok(()) => {
-                return Ok(Some(
-                    members
-                        .into_iter()
-                        .map(|(id, _)| (id, MappingOutcome::Landed))
-                        .collect(),
-                ));
-            }
-            Err(error @ (CellError::Sqlite(_) | CellError::Engine(_))) => return Err(error),
-            Err(_refused) => {}
-        }
-        // The per-record path: the same outcomes one-by-one delivery has.
-        let mut outcomes = Vec::with_capacity(members.len());
-        for (id, _) in &members {
-            outcomes.push((id.clone(), self.process_mapping_outcome(id)?));
-        }
-        // The page is consumed once its last member is: a quarantined member
-        // keeps it pending, and it applies when that member is processed again.
-        if self
-            .store()
-            .read()
-            .pending_page_members(&pending.observed)?
-            .is_empty()
-        {
-            self.commit_page(&observed, &[])?;
-        }
-        Ok(Some(outcomes))
+        Ok(Some((observed, members)))
     }
 
     /// One commit consuming `page` and applying `members` in page order.
