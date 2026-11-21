@@ -320,7 +320,9 @@ impl Schema {
         use norn_ir::{Decimal, RuntimeValue};
         match (self, value) {
             (Self::Decimal(_), RuntimeValue::String(text)) => {
-                let decimal = Decimal::parse(&text)
+                // VAL-EXACT-1: the strict wire decoder source mappings share
+                // (MAP-DECIMAL-TEXT-1); `1e3`, `+5` and ` 5` refuse here too.
+                let decimal = Decimal::parse_wire(&text)
                     .map_err(|_error| Violation::new(path, "invalid decimal text"))?;
                 let decoded = RuntimeValue::Number(decimal);
                 let value =

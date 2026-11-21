@@ -213,7 +213,7 @@ pub use rule::{
     RULE_IR_V1_VERSION, RULE_IR_V2_VERSION, RuleContractV2, RuleDecisionV1, RuleRoot,
     RuleSourceCommand, RuleTrigger, SliceDeclaration, SliceKey,
 };
-pub use runtime::{Decimal, RuntimeObject, RuntimeValue, RuntimeValueError};
+pub use runtime::{Decimal, RuntimeObject, RuntimeValue, RuntimeValueError, WIRE_DECIMAL_GRAMMAR};
 pub use sealing::{
     CustomizationOverlayOperation, ExtensionContributionKind, ExtensionPointDefinition,
     SEAL_PRECEDENCE_LADDER, SEALING_IR_VERSION, SealAnnotation, SealError, SealInput, SealOutcome,
