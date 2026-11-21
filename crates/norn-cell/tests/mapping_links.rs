@@ -1401,7 +1401,7 @@ fn obs_link_dispute_inside_a_page_captured_before_the_split_applies_record_by_re
         let (raw, input) = raw_of(row, "1");
         let (id, _) = paged.inject_mapping_bundle(&raw, &input).expect("capture");
         if id.starts_with("mapping-bundle:") {
-            provenance.get_or_insert(raw.provenance.clone());
+            provenance.get_or_insert_with(|| raw.provenance.clone());
             members.push(id);
         }
     }

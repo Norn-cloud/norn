@@ -17,12 +17,12 @@ use std::{
 };
 
 /// The repository root.
-pub fn root() -> PathBuf {
+pub(crate) fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
 /// The core, canon, erpnext, shopify and odoo artifacts these tests install.
-pub fn fixture_artifacts() -> Vec<ArtifactEnvelope> {
+pub(crate) fn fixture_artifacts() -> Vec<ArtifactEnvelope> {
     let mut artifacts: Vec<ArtifactEnvelope> = Vec::new();
     for dir in [
         "core",
@@ -57,7 +57,7 @@ pub fn fixture_artifacts() -> Vec<ArtifactEnvelope> {
 }
 
 /// A store at `path` with the artifacts installed after `edit`, its scope bound.
-pub fn store(path: &Path, edit: impl FnOnce(&mut Vec<ArtifactEnvelope>)) -> CellStore {
+pub(crate) fn store(path: &Path, edit: impl FnOnce(&mut Vec<ArtifactEnvelope>)) -> CellStore {
     let mut artifacts = fixture_artifacts();
     edit(&mut artifacts);
     artifacts.sort_by(|a, b| a.artifact_id.cmp(&b.artifact_id));
