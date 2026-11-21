@@ -165,10 +165,9 @@ mod tests {
     fn locked(name: &str) -> String {
         let lock = include_str!("../Cargo.lock");
         let entry = format!("name = \"{name}\"\n");
-        let at = lock
-            .find(&entry)
+        let (_, rest) = lock
+            .split_once(&entry)
             .unwrap_or_else(|| panic!("{name} is not in Cargo.lock"));
-        let rest = &lock[at + entry.len()..];
         rest.strip_prefix("version = \"")
             .and_then(|v| v.split('"').next())
             .unwrap_or_else(|| panic!("{name} has no version in Cargo.lock"))
