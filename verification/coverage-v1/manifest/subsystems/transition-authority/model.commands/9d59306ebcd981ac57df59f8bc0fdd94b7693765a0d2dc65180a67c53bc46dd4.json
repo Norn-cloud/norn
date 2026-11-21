@@ -1,0 +1,4 @@
+{
+  "order": 11,
+  "value": "quint verify verification/hosted-timers-v1/models/approval-fencing.qnt --backend apalache --invariants typeOk noStaleApprovedExecution --max-steps 10"
+}
