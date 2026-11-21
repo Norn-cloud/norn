@@ -13,8 +13,13 @@ runners (a `conformance` build, NORN_CELL_RIVET) on this machine. Phases:
            then a second engine's after the first rebuilt, then a full restart; the same oracle.
   load     S3 requests made by 10,000 commits (and the offload after them).
   idle     S3 requests made by an idle cluster over --idle-seconds (3600 by default).
-  latency  warm read and commit latency p50/p99 through the router, and the storage floor (a
+  latency  warm read and commit latency p50/p95/p99 through the router, and the storage floor (a
            one-row commit in a probe actor).
+  rehearsal  cells are created and commit; the cluster crashes (a runner, one engine, everything)
+           and restarts; every cell answers the same verified head and listing bytes, and commits
+           again on its chain. Create and commit latency, recovery time per crash.
+  storage  bytes per cell on the engines' log disks (all replicas) and in the bucket, after
+           --storage-cells cells with --storage-commits commits each and the offload settled.
 
     NORN_CELL_RIVET=BIN durability.py --reference REF --phase kill,disk,load,latency --out OUT
 
@@ -77,7 +82,7 @@ def summary(values):
     if not ordered:
         return {}
     pick = lambda q: ordered[min(len(ordered) - 1, int(q * len(ordered)))]
-    return {"n": len(ordered), "p50": round(statistics.median(ordered), 2), "p90": round(pick(0.90), 2), "p99": round(pick(0.99), 2), "max": round(ordered[-1], 2)}
+    return {"n": len(ordered), "p50": round(statistics.median(ordered), 2), "p90": round(pick(0.90), 2), "p95": round(pick(0.95), 2), "p99": round(pick(0.99), 2), "max": round(ordered[-1], 2)}
 
 
 def run(argv, check=True, **kwargs):
@@ -502,6 +507,110 @@ def phase_idle(cluster, reference, state, seconds, settle):
     return {"seconds": seconds, "cells": len(writers.cells), "s3": counts, "classAPerMonth": round(counts["classA"] * per_month), "classBPerMonth": round(counts["classB"] * per_month)}
 
 
+def evidence(base, cell):
+    """What a cell answers, as bytes: its verified head (the hash chain over every commit and
+    receipt, as the Rust cell serialized it) and its full definition listing."""
+    status, body, _ = request(base, "GET", "/__conformance/head", f"{SCOPE}&conformanceObject={cell}", timeout=300)
+    if status != 200:
+        raise RuntimeError(f"head {cell}: {status} {body[:200]!r}")
+    pages, cursor = [], None
+    while True:
+        query = f"{SCOPE}&conformanceObject={cell}&kind=dashboard&limit=100" + (f"&cursor={urllib.parse.quote(cursor)}" if cursor else "")
+        listed, page, _ = request(base, "GET", "/v1/definitions:list", query, headers={"authorization": ADMIN}, timeout=120)
+        if listed != 200:
+            raise RuntimeError(f"definitions {cell}: {listed} {page[:200]!r}")
+        pages.append(page)
+        cursor = json.loads(page).get("cursor")
+        if not cursor:
+            break
+    return json.loads(body)["headJson"], b"\n".join(pages)
+
+
+def phase_rehearsal(cluster, reference, state, commits):
+    """The alpha's life on the cluster: cells are created, commit, the cluster crashes (a runner;
+    one engine; everything at once), restarts, and every cell answers again with the same head
+    and listing bytes, then commits on the chain it had."""
+    writers = Writers(cluster, reference, state, count=3, tag="r")
+    base = cluster.urls()[0]
+    created = []
+    for cell in writers.cells:
+        started = time.perf_counter()
+        head(base, cell, timeout=300)
+        created.append((time.perf_counter() - started) * 1000)
+    latencies = []
+    for cell in writers.cells:
+        for i in range(commits):
+            status, body, ms = writers.install(cell, f"studio.dashboard.dura-{cell}-{i}", base)
+            if status != 200:
+                raise RuntimeError(f"commit {cell}/{i}: {status} {body[:200]!r}")
+            latencies.append(ms)
+    rounds, failures = [], []
+    for kind in ("runner", "engine", "everything"):
+        before = {cell: evidence(base, cell) for cell in writers.cells}
+        engine = random.choice(ENGINES)
+        if kind in ("runner", "everything"):
+            for index in range(len(cluster.children)):
+                cluster.kill_runner(index)
+        if kind == "engine":
+            cluster.kill_engine(engine)
+        if kind == "everything":
+            for service in ENGINES:
+                cluster.kill_engine(service)
+        killed = time.perf_counter()
+        time.sleep(1)
+        if kind == "engine":
+            cluster.start_engine(engine)
+        if kind == "everything":
+            for service in ENGINES:
+                cluster.start_engine(service)
+        if kind in ("runner", "everything"):
+            for index in range(len(cluster.children)):
+                cluster.start_runner(index)
+        recovered(cluster, writers.cells)
+        recovery = (time.perf_counter() - killed) * 1000
+        after = {cell: evidence(cluster.urls()[1], cell) for cell in writers.cells}
+        same = [cell for cell in writers.cells if after[cell] == before[cell]]
+        # The recovered cell keeps committing on the chain it had.
+        resumed = 0
+        for cell in writers.cells:
+            status, _, _ = writers.install(cell, f"studio.dashboard.dura-{cell}-after-{kind}", base)
+            seq_before = json.loads(before[cell][0])["seq"]
+            seq_after = json.loads(evidence(base, cell)[0])["seq"]
+            resumed += status == 200 and seq_after == seq_before + 1
+        row = {"crash": kind if kind != "engine" else f"engine ({engine})", "recoveryMs": round(recovery), "identical": f"{len(same)}/{len(writers.cells)}", "resumed": f"{resumed}/{len(writers.cells)}"}
+        rounds.append(row)
+        log(f"rehearsal: {row}")
+        if len(same) != len(writers.cells) or resumed != len(writers.cells):
+            failures.append(row)
+    return {"status": "fail" if failures else "pass", "cells": len(writers.cells), "commitsPerCell": commits,
+            "createMs": summary(created), "commitMs": summary(latencies), "rounds": rounds}
+
+
+def volume_bytes(cluster, volume):
+    path = run(["sudo", "docker", "volume", "inspect", "-f", "{{.Mountpoint}}", f"{cluster.project}_{volume}"]).stdout.strip()
+    return int(run(["sudo", "du", "-sb", path]).stdout.split()[0])
+
+
+def phase_storage(cluster, reference, state, cells, commits, settle):
+    """Bytes per cell: each engine's log disk and the bucket, before and after `cells` cells with
+    `commits` governed installs each, once offload has settled."""
+    volumes = [f"{service}-log" for service in ENGINES] + ["s3-data"]
+    time.sleep(settle)
+    before = {volume: volume_bytes(cluster, volume) for volume in volumes}
+    writers = Writers(cluster, reference, state, count=cells, tag="s")
+    writers.open_cells()
+    writers.start(limit=commits)
+    for thread in writers.threads:
+        thread.join()
+    time.sleep(settle)
+    after = {volume: volume_bytes(cluster, volume) for volume in volumes}
+    grown = {volume: after[volume] - before[volume] for volume in volumes}
+    logs = sum(grown[f"{service}-log"] for service in ENGINES)
+    return {"cells": cells, "commitsPerCell": commits, "acked": writers.total(), "settleSeconds": settle,
+            "bytesGrown": grown, "logBytesPerCellAllReplicas": round(logs / cells), "bucketBytesPerCell": round(grown["s3-data"] / cells),
+            "bytesPerCommitAllReplicas": round(logs / max(1, writers.total()))}
+
+
 def phase_latency(cluster, reference, state, samples):
     writers = Writers(cluster, reference, state, count=1, tag="t")
     writers.open_cells()
@@ -537,6 +646,9 @@ def main():
     parser.add_argument("--settle", type=int, default=180)
     parser.add_argument("--rebuild-wait", type=int, default=240)
     parser.add_argument("--samples", type=int, default=300)
+    parser.add_argument("--rehearsal-commits", type=int, default=20, help="commits per cell before the rehearsal's crashes")
+    parser.add_argument("--storage-cells", type=int, default=20)
+    parser.add_argument("--storage-commits", type=int, default=50, help="commits per cell in the storage phase")
     parser.add_argument("--state", type=Path)
     parser.add_argument("--project", default="norn-dura", help="compose project: one per concurrent cluster")
     parser.add_argument("--lb-port", type=int, default=6420, help="loopback port of the engines' load balancer")
@@ -556,6 +668,8 @@ def main():
         "load": lambda: phase_load(cluster, reference, state, args.commits, args.settle),
         "idle": lambda: phase_idle(cluster, reference, state, args.idle_seconds, args.settle),
         "latency": lambda: phase_latency(cluster, reference, state, args.samples),
+        "rehearsal": lambda: phase_rehearsal(cluster, reference, state, args.rehearsal_commits),
+        "storage": lambda: phase_storage(cluster, reference, state, args.storage_cells, args.storage_commits, args.settle),
     }
     try:
         cluster.up()
