@@ -17,7 +17,9 @@
 //!   write's reply and before its deadline update (`x-norn-conformance-hold:
 //!   after-write`), a restamp below the engine (`/__conformance/restamp`),
 //!   and a digest of the actor's persisted `SQLite` pages
-//!   (`/__conformance/pages`);
+//!   (`/__conformance/pages`), also printed to the runner's log by a start
+//!   that refuses the cell (`norn-conformance-start-refused`), since that
+//!   actor never serves;
 //! - the probe actor: the Rivet platform properties the cell relies on, one
 //!   route each, over the same primitives the cell host uses.
 //!
@@ -53,6 +55,8 @@ const NOW_HEADER: &str = "x-norn-conformance-now";
 const HOLD_HEADER: &str = "x-norn-conformance-hold";
 const MARKER_HEADER: &str = "x-norn-conformance-marker";
 const MARKER_LINE: &str = "norn-conformance-hold-reached";
+/// The line a start that refuses its cell prints, with its pages' digest.
+const START_REFUSED_LINE: &str = "norn-conformance-start-refused";
 /// A wake seam waits this long for the wake it paused or released.
 const WAKE_SEAM_TIMEOUT: Duration = Duration::from_mins(2);
 
@@ -179,6 +183,23 @@ fn mark(token: &str) {
     // The marker is the runner's only evidence; a failed write leaves the
     // boundary untested, never killed.
     let _written = writeln!(stderr, "{MARKER_LINE} {token}").and_then(|()| stderr.flush());
+}
+
+/// A conformance cell's start refused its cell: print the digest of its
+/// persisted pages, read before the start fails, to stderr (the host log),
+/// as `norn-conformance-start-refused <key> <json>`. The actor never
+/// serves, so the log is where the runner reads what each start left.
+pub(crate) async fn start_refused(ctx: &Ctx<CellActor>) {
+    let key = match ctx.key().as_slice() {
+        [rivetkit::ActorKeySegment::String(key)] if key.starts_with("conformance/") => key.clone(),
+        _ => return,
+    };
+    let digest = pages(ctx)
+        .await
+        .unwrap_or_else(|error| json!({"error": format!("{error:#}")}));
+    let mut stderr = std::io::stderr().lock();
+    let _written =
+        writeln!(stderr, "{START_REFUSED_LINE} {key} {digest}").and_then(|()| stderr.flush());
 }
 
 /// The wake's seams on one cell actor: a pause at the wake's final deadline
@@ -342,7 +363,7 @@ async fn wake_seam(actor: &Arc<CellActor>, ctx: &Ctx<CellActor>, call: &Call) ->
                     })
                     .await?
                     .map_err(|error| anyhow!(error.to_string()))?;
-                // The alarm is due: the next start's re-arm fires it at once.
+                // The alarm row is due: a start that went ahead would fire it.
                 ctx.sql()
                     .run("UPDATE _norn_host_alarm SET at = 0 WHERE id = 1", None)
                     .await?;
@@ -357,7 +378,8 @@ async fn wake_seam(actor: &Arc<CellActor>, ctx: &Ctx<CellActor>, call: &Call) ->
 }
 
 /// A digest of every page of the actor's database as the engine persisted
-/// it (host tables, schema and free pages included), and the page count.
+/// it (host tables, schema and free pages included), the page count, and
+/// the schedule's triggers (not part of the digest).
 async fn pages(ctx: &Ctx<CellActor>) -> Result<Value> {
     use rivet_envoy_protocol::{SqliteGetPagesRequest, SqliteGetPagesResponse};
     let fetch = |pgnos: Vec<u32>| async move {
@@ -399,7 +421,15 @@ async fn pages(ctx: &Ctx<CellActor>) -> Result<Value> {
             digest.update(b"missing");
         }
     }
+    let triggers: Vec<Value> = ctx
+        .schedule()
+        .list()
+        .await?
+        .into_iter()
+        .map(|event| json!({"action": event.action, "at": event.run_at}))
+        .collect();
     Ok(json!({
+        "triggers": triggers,
         "pages": count,
         "returned": all.pages.len(),
         "missing": missing,

@@ -59,6 +59,8 @@ NOW_HEADER = "x-norn-conformance-now"
 HOLD_HEADER = "x-norn-conformance-hold"
 MARKER_HEADER = "x-norn-conformance-marker"
 MARKER_LINE = "norn-conformance-hold-reached"
+# How far ahead the refused-upgrade test arms the Rivet trigger: it must still be pending at the kill.
+TRIGGER_LEAD_MS = 15_000
 REFERENCE_FORMAT = "norn/host-conformance-reference@2"
 SCRIPT_STEPS = 12
 ADMIN = "Bearer fixture:admin@demo"
@@ -769,25 +771,67 @@ class Suite:
 
     def wake_refused_upgrade(self):
         """ENGINE-UPGRADE-1 for the host's own tables: a cell stamped by a newer engine, or with a stamp
-        this engine cannot read, keeps its alarm through a restart and the actor's real wake, and its
-        persisted SQLite pages (host tables, schema and free pages included) stay byte-identical."""
+        this engine cannot read, is not served, and nothing a restart runs writes to it. The alarm's
+        real Rivet trigger is overdue when the host comes back, so a start that went ahead would claim
+        it from `_rivet_schedule_events` before any handler could refuse. The persisted SQLite pages
+        (host tables, Rivet's schedule, schema and free pages included) stay byte-identical: read from
+        the running actor before the kill, then at each start after the restart (a refused start prints
+        its digest to the runner's log, since that actor never serves) or, should the actor serve,
+        from the actor itself."""
         if self.host.name != "rivet-native":
             return "not tested", "the wake seams are served by the native Rivet host only"
         rows, ok = [], True
         for stamp in ("newer", "unknown"):
             obj = f"wake-stamp-{stamp}-{secrets.token_hex(4)}"
             head(self.base, obj=obj, timeout=300)
-            seam(self.base, "alarm", obj, set=int(time.time() * 1000) + 3_600_000)
+            # The alarm row and its Rivet trigger at `due`; the restamp then makes the row due at once
+            # and leaves the trigger, which comes due while the host is down.
+            due = int(time.time() * 1000) + TRIGGER_LEAD_MS
+            seam(self.base, "alarm", obj, set=due)
             seam(self.base, "restamp", obj, stamp=stamp)
             before = seam(self.base, "pages", obj)
             self.host.kill()
+            killed = int(time.time() * 1000)
+            time.sleep(max(0, due - int(time.time() * 1000)) / 1000 + 2)
             self.host.start()
-            woke = seam(self.base, "wake", obj, now=int(time.time() * 1000))
-            after = seam(self.base, "pages", obj)
-            same = before["sha256"] == after["sha256"] and before["pages"] == after["pages"] and before["missing"] == after["missing"]
-            ok &= same
-            rows.append(f"{stamp} stamp: {before['pages']} pages before, {after['pages']} after, identical={same} (wake {woke.get('outcome')!r:.80})")
+            restarted = int(time.time() * 1000)
+            # A build whose pages seam lists no triggers (one before this test) is checked by time alone.
+            pending = "triggers" not in before or [t for t in before["triggers"] if t.get("action") == "norn.wake"] == [{"action": "norn.wake", "at": due}]
+            if not pending or killed >= due:
+                return "fail", f"{stamp} stamp: the Rivet trigger was not pending at the kill (triggers {before.get('triggers')}, killed {killed - due:+d} ms from it), so the restart was not tested"
+            served, afters = self.starts_after_restart(obj)
+            same = [after.get("sha256") == before["sha256"] and after.get("pages") == before["pages"] and after.get("missing") == before["missing"] for after in afters]
+            ok &= bool(afters) and all(same) and not served
+            how = "the actor served" if served else f"{len(afters)} refused starts"
+            rows.append(f"{stamp} stamp: trigger overdue {restarted - due} ms once the host was back; {before['pages']} pages before, after: {how}, pages {[a.get('pages', a.get('error')) for a in afters]}, identical={same}")
         return ("pass" if ok else "fail"), "; ".join(rows)
+
+    def starts_after_restart(self, obj, seconds=180):
+        """What the restarted host's starts of `obj` left: (served, digests). A start that refuses the
+        cell prints its pages' digest to the runner's log; two of them are waited for, so the first
+        failed start's own teardown is covered too. A request each round asks for a start. An actor
+        that serves answers its pages seam instead."""
+        prefix = f"norn-conformance-start-refused conformance/{obj} ".encode()
+        stop_at = time.time() + seconds
+        digests = []
+        while time.time() < stop_at:
+            try:
+                status, body, _, _ = request(self.base, "GET", "/__conformance/pages", at(ANALYTICS, obj), timeout=15)
+            except OSError:
+                status, body = None, b""
+            if status == 200:
+                return True, [json.loads(body)]
+            digests = []
+            for path in self.host.logs():
+                try:
+                    lines = path.read_bytes().splitlines()
+                except OSError:
+                    continue
+                digests += [json.loads(line[len(prefix):]) for line in lines if line.startswith(prefix)]
+            if len(digests) >= 2:
+                return False, digests
+            time.sleep(2)
+        return False, digests
 
     # -- interleaving
 
@@ -1411,7 +1455,7 @@ def run(args, reference, cleanup):
         ("no split brain when a frozen runner thaws after its cell moved", suite.zombie_frozen, True),
         ("alarms (platform probes): fire, re-fire after a failing handler, rollback, kill", suite.alarms, False),
         ("a wake's alarm decision never erases a concurrent write's recovery wake (kill before its update)", suite.wake_writer_race, True),
-        ("a refused storage version: restart and wake leave every SQLite page identical", suite.wake_refused_upgrade, True),
+        ("a refused storage version: a restart with its trigger overdue leaves every SQLite page identical", suite.wake_refused_upgrade, True),
         ("SQLite version, affinity, limits", suite.sqlite, False),
         ("clock inside a synchronous call (measurement)", suite.clock, False),
         ("waitUntil background work completes after the reply", suite.wait_until, False),
