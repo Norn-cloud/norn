@@ -1,0 +1,7 @@
+{
+  "code": "core.engine.upgrade_unsupported",
+  "message": "the cell's storage version cannot be upgraded in place by this engine",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T6"
+}
