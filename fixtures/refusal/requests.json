@@ -1,0 +1,16 @@
+{
+  "refusal": {
+    "id": "SCAN-INV-1041",
+    "currency": "USD",
+    "total": "30.00",
+    "correction_reason": "typo",
+    "correction_evidence": "SCAN-INV-1041~total"
+  },
+  "receipt": {
+    "id": "SCAN-INV-1041",
+    "currency": "USD",
+    "total": "30.50",
+    "correction_reason": "typo",
+    "correction_evidence": "SCAN-INV-1041~total"
+  }
+}

@@ -4,7 +4,7 @@ import { Link, useParams } from "@tanstack/react-router"
 import { LifecycleStepper } from "@/components/lifecycle-stepper"
 import { Clock, GitCommitHorizontal, Pause, ShieldX } from "lucide-react"
 import { Chip, FactChip } from "@/components/chip"
-import { Braces, Database, GitBranch, History as HistoryIcon, KeyRound, Link2, RefreshCw, Rows3, ShieldCheck, ShieldOff, type LucideIcon } from "lucide-react"
+import { Braces, Database, EyeOff, GitBranch, History as HistoryIcon, Link2, RefreshCw, Rows3, ShieldCheck, type LucideIcon } from "lucide-react"
 import { Fragment, useEffect, useState, type ReactNode } from "react"
 import { Button } from "@/components/ui/button"
 import { EmptyState, Panel, Well } from "@/components/panel"
@@ -32,7 +32,11 @@ import { atScale, exactPretty, factDisplay, readProblem, recordName } from "./li
 import { compared, isList, roleOf } from "./lib/law-values.ts"
 import { stamp } from "./lib/format.ts"
 import { transport, type ObjectReads, type SourceLineage } from "./lib/transport.ts"
-import { countText, keyFacts, linkGroups, type CountedLinkPage, type LinkGroup } from "./lib/record-page.ts"
+import { countText, linkGroups, type CountedLinkPage, type LinkGroup } from "./lib/record-page.ts"
+import { maskedOf } from "./lib/privacy.ts"
+import { MaskedValue } from "@/components/masked-value"
+import { SourceChip } from "@/components/source-chip"
+import { RecentChanges, RulesKept, WhoCanAct, useTypeAccess } from "./record-rail.tsx"
 import { RecordLineage } from "./record-lineage.tsx"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { liveAccess } from "./lib/live.ts"
@@ -73,6 +77,11 @@ export function ObjectPage() {
   const lineage = data?.source?.document
   const problem = readProblem(catalogRead, reads)
   const { icon: TypeIcon, text, fill } = KINDS.objectType
+  // The cell's own decisions over this type: the reader's Sources grant and each role's actions.
+  const typeAccess = useTypeAccess(name, live)
+  const access = typeAccess.data?.kind === "read" ? typeAccess.data.read.document : undefined
+  const sources = access?.capabilities.sources.decision
+  const actionTitles = new Map(access?.roles.flatMap(({ actions }) => actions.map(({ actionId, title }) => [actionId, title] as const)) ?? [])
   return (
     <section className="space-y-6">
       <header className="flex flex-wrap items-start gap-4">
@@ -84,7 +93,7 @@ export function ObjectPage() {
             {data?.object.origin === "recorded" && <Chip tone="gray" title={RECORDED_HINT}>Recorded</Chip>}
             {heldBack && <Chip tone="amber" icon={Pause} title="An open finding keeps this record out of answers and totals until a correction satisfies the law.">Held back</Chip>}
             {broken.length > 0 && <Chip tone="red" dot>{broken.length} {broken.length === 1 ? "rule broken" : "rules broken"}</Chip>}
-            {data?.source?.document && <Chip tone="teal" title="The connected system this record was read from">{systemName(data.source.document.sourceRecordRef.system)}</Chip>}
+            {data?.source?.document && <SourceChip system={data.source.document.sourceRecordRef.system} title="The connected system this record was read from" />}
           </div>
           {data && <div className="flex flex-wrap items-center gap-1.5 text-muted-foreground">
             <CopyId value={id} />
@@ -97,7 +106,6 @@ export function ObjectPage() {
         </div>
       </header>
       {data && concept && broken[0] && <Broken concept={concept} reads={data} finding={broken[0]} heldBack={heldBack} />}
-      {data && concept && <KeyFacts concept={concept} reads={data} onLineage={() => setTab("lineage")} />}
       {problem !== undefined && <p role="alert" className="text-destructive">{problem}</p>}
       {problem === undefined && (reads.isPending || catalogRead.isPending) && <p className="text-muted-foreground">Reading the record…</p>}
       {reads.isError && <p className="text-destructive">{reads.error.message}</p>}
@@ -113,25 +121,23 @@ export function ObjectPage() {
             <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_24rem]">
               <div className="min-w-0 space-y-6">
                 {view === "technical" && <p className="text-pretty text-muted-foreground">{summaryOf(concept, data, catalog?.concepts ?? [])}</p>}
+                <Facts concept={concept} reads={data} onLineage={() => setTab("lineage")} sources={sources} />
                 {concept.lifecycles.map((lifecycle) => (
                   <Panel key={lifecycle.property} icon={GitBranch} label={`Lifecycle · ${lifecycle.property.replaceAll("_", " ")}`}>
                     <Well className="px-4 py-3"><LifecycleStepper lifecycle={lifecycle} record={data.object.document} /></Well>
                   </Panel>
                 ))}
                 {live && <Findings objectType={name} id={id} actionFor={corrections.actionFor} />}
-                {live ? <History objectType={name} id={id} /> : <Panel icon={HistoryIcon} label="History"><Well>
+                {live ? <div id="record-history" className="scroll-mt-6"><History objectType={name} id={id} /></div> : <Panel icon={HistoryIcon} label="History"><Well>
                   <Empty icon={HistoryIcon} action={<Button variant="outline" size="sm" onClick={() => setTab("lineage")}>See where it came from</Button>}>A recorded snapshot keeps no change history. Version {data.object.document.version} is the one stored.</Empty>
                 </Well></Panel>}
                 {view === "technical" && <Technical name={name} lineage={lineage} />}
               </div>
-              <aside className="min-w-0 space-y-6" aria-label="Facts and links">
-                <Facts concept={concept} reads={data} onLineage={() => setTab("lineage")} />
+              <aside className="min-w-0 space-y-6" aria-label="Who can act, rules, changes and links">
+                <WhoCanAct objectType={name} live={live} />
+                <RulesKept rules={concept.rules} title={concept.title} />
+                {live && <RecentChanges objectType={name} id={id} actionTitles={actionTitles} onAll={() => document.getElementById("record-history")?.scrollIntoView({ behavior: "smooth", block: "start" })} />}
                 <LinksRail concept={concept} id={id} links={data.links.document} concepts={catalog?.concepts ?? []} live={live} />
-                <div className="flex flex-wrap gap-1.5">
-                  {concept.rules.map((rule) => <Chip key={rule} tone="green" icon={ShieldCheck} className="max-w-xs" title={rule}><span className="truncate">{rule}</span></Chip>)}
-                  {/* Personal data is marked by the server in the documents it sends; these mark none. */}
-                  <Chip tone="gray" icon={ShieldOff} title="The documents the server sent for this record mark no field as personal data.">No personal data marked</Chip>
-                </div>
               </aside>
             </div>
           </TabsContent>
@@ -146,13 +152,6 @@ export function ObjectPage() {
                 : <ul className="space-y-2 text-sm">{concept.rules.map((rule) => <li key={rule} className="flex gap-2"><ShieldCheck className={cn("mt-0.5 size-4 shrink-0", KINDS.guarantee.text)} />{rule}</li>)}</ul>}
             </Well></Panel>
           </TabsContent>
-          <TabsContent value="access" className="pt-4">
-            <Panel icon={KeyRound} label="Access"><Well>
-              {data.object.origin === "live"
-                ? <Empty icon={KeyRound} action={null}>The cell decided this read for your account; it does not publish the decision and its policy for one record yet.</Empty>
-                : <Empty icon={KeyRound} action={null}>The recorded demo has no sign-in, so the server made no access decision for this read. With sign-in, each permit or refusal shows here with its policy.</Empty>}
-            </Well></Panel>
-          </TabsContent>
         </Tabs>
       )}
       {corrections.sheet(() => { void reads.refetch(); void review.refetch() })}
@@ -160,7 +159,7 @@ export function ObjectPage() {
   )
 }
 
-const TABS = [["overview", "Overview"], ["lineage", "Lineage"], ["guarantees", "Guarantees"], ["access", "Access"]] as const
+const TABS = [["overview", "Overview"], ["lineage", "Lineage"], ["guarantees", "Guarantees"]] as const
 
 /**
  * Which read this page shows: the version and, live, the commit that wrote it and when, from the
@@ -227,23 +226,6 @@ function Broken({ concept, reads, finding, heldBack }: { readonly concept: Conce
   )
 }
 
-/** The record's key facts, in its definition's presentation order, each opening where it came from. */
-function KeyFacts({ concept, reads, onLineage }: { readonly concept: Concept; readonly reads: ObjectReads; readonly onLineage: () => void }) {
-  const fields = keyFacts(concept, reads.object.document.values)
-  const markings = useMarkingCatalog()
-  if (fields.length === 0) return null
-  return (
-    <dl className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,10rem),1fr))] gap-px overflow-hidden rounded-xl border border-border bg-border">
-      {fields.map((field) => (
-        <div key={field.id} className="min-w-0 bg-card px-4 py-3">
-          <dt className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground"><span className="truncate">{field.label ?? field.id.replaceAll("_", " ")}</span><MarkingChips markings={field.markings} catalog={markings} /></dt>
-          <dd className={cn("truncate pt-1 text-section font-semibold tracking-tight", field.decimal && "tabular-nums")}><FactValue field={field} reads={reads} onLineage={onLineage} /></dd>
-        </div>
-      ))}
-    </dl>
-  )
-}
-
 /** One fact's exact text, opening its card; an empty fact is a dash with no card. */
 function FactValue({ field, reads, onLineage }: { readonly field: Concept["fields"][number]; readonly reads: ObjectReads; readonly onLineage: () => void }) {
   const { view } = useView()
@@ -251,6 +233,10 @@ function FactValue({ field, reads, onLineage }: { readonly field: Concept["field
   // One renderer for every value: grouped digits with their unit, dates and choices in words (Technical: as sent).
   const text = factDisplay(field, reads.object.document, reads.object.numbers, "", view)
   const value = reads.object.document.values[field.id]
+  // A marked fact arrives projected for this reader: shown as the server projected it, never as the value.
+  const masked = maskedOf(reads.object.document, field.id)
+  // A reveal belongs to the version and projection it was revealed under; a newer one starts masked again.
+  if (masked !== null) return <MaskedValue key={`${objectType}/${id}/${field.id}`} objectType={objectType} id={id} version={version} property={field.id} masked={masked} projected={value} />
   if (value === null || value === undefined) return <span className="text-muted-foreground">{text}</span>
   const label = field.label ?? field.id.replaceAll("_", " ")
   return (
@@ -267,7 +253,10 @@ function FactValue({ field, reads, onLineage }: { readonly field: Concept["field
  * returned. Records that link here open in full, fact by fact.
  */
 function LinksRail({ concept, id, links, concepts, live }: { readonly concept: Concept; readonly id: string; readonly links: CountedLinkPage; readonly concepts: readonly Concept[]; readonly live: boolean }) {
-  const groups = linkGroups(concept, incomingOf(concept, concepts), id, links)
+  const declared = linkGroups(concept, incomingOf(concept, concepts), id, links)
+  // A link type with nothing stored folds into one line under the ones that hold records.
+  const groups = declared.filter((group) => group.ids.length > 0 || (group.count ?? 0) > 0)
+  const empty = declared.length - groups.length
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set())
   const [table, setTable] = useState<LinkGroup | null>(null)
   const from = table ? concepts.find(({ name }) => name === table.otherType) : undefined
@@ -275,8 +264,8 @@ function LinksRail({ concept, id, links, concepts, live }: { readonly concept: C
   return (
     <Panel icon={Link2} label="Links" action={links.counts ? (links.counts.complete ? "Counted by the cell" : `Counted to ${links.counts.bound.toLocaleString("en")}`) : undefined}>
       <Well className="p-1.5">
-        {groups.length === 0
-          ? <p className="p-2 text-sm text-muted-foreground">{links.counts ? "No link touches this record." : "This concept declares no relationships."}</p>
+        {declared.length === 0 || (groups.length === 0 && links.counts?.complete === true && !links.hasMore)
+          ? <p className="p-2 text-sm text-muted-foreground">{declared.length > 0 || links.counts ? "No link touches this record." : "This concept declares no relationships."}</p>
           : <ul className="divide-y divide-border/70">
             {groups.map((group) => {
               const all = expanded.has(group.key)
@@ -299,6 +288,7 @@ function LinksRail({ concept, id, links, concepts, live }: { readonly concept: C
                 </li>
               )
             })}
+            {empty > 0 && <li data-links-empty={empty} className="px-2 py-2 text-meta text-muted-foreground">{groups.length === 0 ? `${empty} link ${empty === 1 ? "type" : "types"}` : `${empty} more`}, {none.charAt(0).toLowerCase()}{none.slice(1)}</li>}
           </ul>}
       </Well>
       <Sheet open={table !== null} onOpenChange={(next) => { if (!next) setTable(null) }}>
@@ -361,8 +351,18 @@ function Lineage({ lineage, evidence = [], actionFor }: { readonly lineage: Sour
   )
 }
 
-/** The record's facts in words, or, in the technical view, the exact document the server sent. */
-function Facts({ concept, reads, onLineage }: { readonly concept: Concept; readonly reads: ObjectReads; readonly onLineage: () => void }) {
+/**
+ * The record's facts in words, each with the source system the cell says it was read from (its
+ * field provenance) and, for a marked fact, the server's projection and a tag saying it is hidden from
+ * this reader's role. In the technical view, the exact document the server sent.
+ */
+function Facts({ concept, reads, onLineage, sources }: {
+  readonly concept: Concept
+  readonly reads: ObjectReads
+  readonly onLineage: () => void
+  /** The reader's Sources decision on this type, as the cell made it; undefined when not read. */
+  readonly sources: "permit" | "deny" | undefined
+}) {
   const { view } = useView()
   const { catalog } = useCatalog()
   const markings = useMarkingCatalog()
@@ -372,17 +372,45 @@ function Facts({ concept, reads, onLineage }: { readonly concept: Concept; reado
   if (view === "technical") {
     return <Panel icon={Braces} label="Record document"><Well className="p-3"><Code code={exactPretty(reads.object.document, reads.object.numbers, "")} /></Well></Panel>
   }
+  const lineage = reads.source?.document
+  const systemOf = (field: string): string | undefined => lineage?.fieldProvenance[field]?.source.system
+  const fields = concept.fields.filter((field) => !provenance.has(field.id))
+  const systems = [...new Set(fields.flatMap((field) => systemOf(field.id) ?? []))]
+  const unsourced = lineage === undefined
+    ? sources === "deny" ? "Your role does not see where these values came from." : "No source record is kept for this version: it was written in Norn, or your role may not see its source."
+    : null
   return (
-    <Panel icon={Rows3} label="Facts"><Well className="p-1.5">
-      <dl className="divide-y divide-border/60 text-sm">
-        {concept.fields.filter((field) => !provenance.has(field.id)).map((field) => (
-          <div key={field.id} className="grid min-h-row-read grid-cols-[minmax(0,10rem)_minmax(0,1fr)] items-center gap-3 px-2">
-            <dt className="flex min-w-0 items-center gap-1.5 text-muted-foreground" title={field.id}><span className="truncate">{field.label ?? field.id.replaceAll("_", " ")}</span><MarkingChips markings={field.markings} catalog={markings} /></dt>
-            <dd className={cn("min-w-0 truncate", field.decimal && "tabular-nums")}><FactValue field={field} reads={reads} onLineage={onLineage} /></dd>
-          </div>
-        ))}
-      </dl>
-    </Well></Panel>
+    <Panel icon={Rows3} label="Facts" action={systems.length > 0 ? <span className="flex flex-wrap items-center gap-1.5" aria-label="Read from">{systems.map((system) => <SourceChip key={system} system={system} />)}</span> : undefined}>
+      <Well className="px-1.5 pb-1.5">
+        <dl className="divide-y divide-border/60 text-sm" aria-label="Facts">
+          {fields.map((field) => {
+            const masked = maskedOf(reads.object.document, field.id)
+            const system = systemOf(field.id)
+            return (
+              <div key={field.id} data-fact={field.id} className="grid min-h-row-read grid-cols-[minmax(0,11rem)_minmax(0,1fr)_auto] items-center gap-3 px-3">
+                <dt className="flex min-w-0 items-center gap-1.5 text-muted-foreground" title={field.id}><span className="truncate">{field.label ?? field.id.replaceAll("_", " ")}</span><MarkingChips markings={field.markings} catalog={markings} /></dt>
+                <dd className={cn("flex min-w-0 items-center gap-2", field.decimal && "tabular-nums")}>
+                  <span className="min-w-0 truncate font-medium"><FactValue field={field} reads={reads} onLineage={onLineage} /></span>
+                  {masked !== null && <HiddenTag revealable={masked.revealable} />}
+                </dd>
+                <dd className="flex justify-end">{system !== undefined && <SourceChip system={system} />}</dd>
+              </div>
+            )
+          })}
+        </dl>
+        {unsourced !== null && <p className="px-3 pt-2 pb-1 text-meta text-muted-foreground">{unsourced}</p>}
+      </Well>
+    </Panel>
+  )
+}
+
+/** A marked fact's tag: hidden from this reader's role, or masked with a reveal the server allows. */
+function HiddenTag({ revealable }: { readonly revealable: boolean }) {
+  return (
+    <span data-hidden-tag="" className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md bg-foreground/[0.06] px-2 text-xs font-medium text-muted-foreground"
+      title={revealable ? "Masked for everyone; your role may reveal it, and the cell records a receipt" : "The server never sent this value to your role"}>
+      <EyeOff aria-hidden className="size-3.5" />{revealable ? "Masked · you may reveal" : "Hidden from your role"}
+    </span>
   )
 }
 

@@ -639,7 +639,7 @@ pub type RevealSlot = Arc<RwLock<Option<Arc<crate::reveal::RevealPolicy>>>>;
 /// The compiled policy for one cell.
 pub struct ReadPolicy {
     /// The compiled rules with no grant; each request adds its caller's.
-    base: ReadRules,
+    base: Arc<ReadRules>,
     key: ScopeKey,
     table: &'static GrantTable,
     caller: Arc<CallerSlot>,
@@ -672,7 +672,7 @@ impl ReadPolicy {
         table: &'static GrantTable,
     ) -> Result<Self, SeedError> {
         Ok(Self {
-            base: ReadRules::new(ReadRules::compile(object_types)?),
+            base: Arc::new(ReadRules::new(ReadRules::compile(object_types)?)),
             key: scope_key(scope),
             table,
             caller: Arc::default(),
@@ -694,6 +694,18 @@ impl ReadPolicy {
     #[must_use]
     pub fn reveal_slot(&self) -> RevealSlot {
         Arc::clone(&self.reveal)
+    }
+
+    /// The read PDP as `GET /v1/access?objectType=` asks it about one
+    /// declared role at a time ([`RoleReads`]); it follows the rules'
+    /// recompiles, so a type added later is decided like every other.
+    #[must_use]
+    pub fn role_reads(&self) -> RoleReads {
+        RoleReads {
+            base: Arc::clone(&self.base),
+            key: self.key.clone(),
+            table: self.table,
+        }
     }
 
     /// The installed action policy, if any.
@@ -1036,6 +1048,73 @@ pub fn collection_access(
     object_type: &str,
 ) -> norn_kernel::authz::AccessRequest {
     collection_access_key(&scope_key(scope), subject, capability, object_type)
+}
+
+/// The subject id a declared role is decided under when no caller holds it:
+/// a role is asked about, never a person, so no grant of a real subject is
+/// built or kept for it.
+#[must_use]
+pub fn role_subject(role: &str) -> String {
+    format!("norn:role/{role}")
+}
+
+/// The cell's read PDP, asked what one declared role alone may read
+/// (`GET /v1/access?objectType=`). Each answer is the PDP's own decision for
+/// a principal holding exactly the grant the table gives that role, as a
+/// caller holding only that role would be decided; nothing here grants.
+pub struct RoleReads {
+    base: Arc<ReadRules>,
+    key: ScopeKey,
+    table: &'static GrantTable,
+}
+
+impl std::fmt::Debug for RoleReads {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RoleReads")
+            .field("table", &self.table.version)
+            .finish_non_exhaustive()
+    }
+}
+
+impl RoleReads {
+    /// The roles the declared table names, in its order.
+    #[must_use]
+    pub fn roles(&self) -> Vec<&'static str> {
+        self.table.entries.iter().map(|(role, _)| *role).collect()
+    }
+
+    /// The table's identity.
+    #[must_use]
+    pub fn table(&self) -> &'static str {
+        self.table.version
+    }
+
+    /// Whether `role` alone may read `capability` of `object_type`: the PDP's
+    /// decision, as for any caller holding only that role. The kernel's own
+    /// call records are read by definition writers only, as for a caller.
+    #[must_use]
+    pub fn permits(&self, role: &str, capability: ReadCapability, object_type: &str) -> bool {
+        let roles = [role.to_owned()];
+        let kernel_record = object_type == norn_kernel::ACTION_CALL_TYPE
+            || object_type == norn_kernel::OWNED_ROWS_TYPE;
+        if kernel_record && !self.table.writes_definitions(&roles) {
+            return false;
+        }
+        let capabilities = self.table.capabilities(&roles);
+        if capabilities.is_empty() {
+            return false;
+        }
+        let subject = role_subject(role);
+        self.base
+            .granted(&self.key, &subject, &capabilities)
+            .is_some_and(|pdp| {
+                authz::authorize(
+                    &pdp,
+                    &collection_access_key(&self.key, &subject, capability, object_type),
+                )
+                .is_ok()
+            })
+    }
 }
 
 fn collection_access_key(
