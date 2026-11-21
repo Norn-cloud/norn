@@ -157,6 +157,22 @@ def scripted(base, step, now_ms, hold=None, timeout=120, obj=None, marker=None):
     return request(base, step["method"], step["path"], at(step["query"], obj), step["body"] or None, headers, timeout)
 
 
+def seam(base, path, obj, deadline_s=180, **params):
+    """A wake seam's answer on the conformance cell `obj` (`/__conformance/<path>`), waiting out the
+    503/504 a host answers while it re-places the cell after a crash; raises on any other failure."""
+    query = at(ANALYTICS, obj) + "".join(f"&{k}={urllib.parse.quote(str(v))}" for k, v in params.items())
+    stop_at = time.time() + deadline_s
+    while True:
+        status, body, _, _ = request(base, "GET", f"/__conformance/{path}", query, timeout=180)
+        if status not in (503, 504) or time.time() > stop_at:
+            break
+        time.sleep(1)
+    document = json.loads(body) if body else {}
+    if status != 200 or "error" in document:
+        raise RuntimeError(f"seam {path}: {status} {body[:300]!r}")
+    return document
+
+
 def wait_ready(base, deadline_s, child=None):
     stop_at = time.time() + deadline_s
     while time.time() < stop_at:
@@ -685,6 +701,93 @@ class Suite:
         if survived != want["headJson"]:
             return "fail", f"acknowledged commit lost: head {survived} != {want['headJson']}"
         return "pass", f"acknowledged install (200) then the host was killed: the head after restart is the acknowledged one (answered again after {waited:.0f} ms)"
+
+    def log_has(self, token):
+        line = f"{MARKER_LINE} {token}".encode()
+        for path in self.host.logs():
+            try:
+                if line in path.read_bytes():
+                    return True
+            except OSError:
+                pass
+        return False
+
+    def wake_writer_race(self):
+        """TIMER-ALARM-1 under a concurrent write: a wake that read "no writer, nothing due" and then
+        pauses before it updates the alarm must not erase the recovery wake of a writer that started
+        meanwhile. The wake is paused at its final decision (a seam, no timing); a write starts; once
+        the write has either committed or is shown waiting for the wake's decision, the wake is
+        released; the host is killed after the write committed and before it updated the alarm. After
+        the restart the recovery alarm must still be set, so the cell wakes again."""
+        if self.host.name != "rivet-native":
+            return "not tested", "the wake seams are served by the native Rivet host only"
+        steps = self.ref["kill"]["script"]
+        want = self.ref["kill"]["native"]["steps"][0]
+        obj = f"wake-race-{secrets.token_hex(4)}"
+        head(self.base, obj=obj, timeout=300)
+        # What a delivery leaves before it decides: a recovery wake stands, nothing is due.
+        recovery = int(time.time() * 1000) + 60_000
+        seam(self.base, "alarm", obj, set=recovery)
+        token = secrets.token_hex(16)
+        paused = seam(self.base, "wake", obj, now=recovery, pause=1, token=token)
+        if paused.get("paused") is not True:
+            return "fail", f"the wake did not pause at its decision: {paused}"
+        writer_token = secrets.token_hex(16)
+        replied = []
+
+        def send():
+            try:
+                status, _, _, _ = scripted(self.base, steps[0], self.now, hold="after-write", timeout=600, obj=obj, marker=writer_token)
+                replied.append(status)
+            except OSError as error:
+                replied.append(f"error: {type(error).__name__}")
+
+        with concurrent.futures.ThreadPoolExecutor(1) as pool:
+            future = pool.submit(send)
+            # Whichever comes first: the write committed (old order), or it waits on the decision.
+            seen = wait_for(lambda: "waiting" if self.log_has(f"{token}-waiting") else "committed" if self.log_has(writer_token) else None, 120)
+            if seen is None:
+                return "fail", f"the write neither committed nor waited for the wake (replies {replied})"
+            released = seam(self.base, "wake-release", obj)
+            if not wait_for(lambda: self.log_has(writer_token) or None, 120):
+                return "fail", f"the write never reached its reply after the wake ({released}; replies {replied})"
+            if replied:
+                return "fail", f"the held write answered ({replied[0]}) before the kill"
+            self.host.kill()
+            future.result(timeout=120)
+        self.host.start()
+        # Read the alarm before anything opens the cell: an open re-arms from the cell's deadlines.
+        after = seam(self.base, "alarm", obj)
+        survived, _ = recovered_head(self.base, obj=obj)
+        landed = survived == want["headJson"]
+        detail = f"the write {seen} first; the wake released ({released.get('outcome')}); killed after the commit, before its alarm update; after the restart alarm={after.get('alarm')}, write landed={landed}"
+        if after.get("alarm") is None:
+            return "fail", "the recovery wake was erased: " + detail
+        if not landed:
+            return "fail", "the committed write did not survive: " + detail
+        return "pass", detail
+
+    def wake_refused_upgrade(self):
+        """ENGINE-UPGRADE-1 for the host's own tables: a cell stamped by a newer engine, or with a stamp
+        this engine cannot read, keeps its alarm through a restart and the actor's real wake, and its
+        persisted SQLite pages (host tables, schema and free pages included) stay byte-identical."""
+        if self.host.name != "rivet-native":
+            return "not tested", "the wake seams are served by the native Rivet host only"
+        rows, ok = [], True
+        for stamp in ("newer", "unknown"):
+            obj = f"wake-stamp-{stamp}-{secrets.token_hex(4)}"
+            head(self.base, obj=obj, timeout=300)
+            seam(self.base, "alarm", obj, set=int(time.time() * 1000) + 3_600_000)
+            seam(self.base, "restamp", obj, stamp=stamp)
+            before = seam(self.base, "pages", obj)
+            self.host.kill()
+            self.host.start()
+            woke = seam(self.base, "wake", obj, now=int(time.time() * 1000))
+            after = seam(self.base, "pages", obj)
+            same = before["sha256"] == after["sha256"] and before["pages"] == after["pages"] and before["missing"] == after["missing"]
+            ok &= same
+            rows.append(f"{stamp} stamp: {before['pages']} pages before, {after['pages']} after, identical={same} (wake {woke.get('outcome')!r:.80})")
+        return ("pass" if ok else "fail"), "; ".join(rows)
 
     # -- interleaving
 
@@ -1307,6 +1410,8 @@ def run(args, reference, cleanup):
         ("no split brain when a runner stalls mid-commit", suite.zombie, True),
         ("no split brain when a frozen runner thaws after its cell moved", suite.zombie_frozen, True),
         ("alarms (platform probes): fire, re-fire after a failing handler, rollback, kill", suite.alarms, False),
+        ("a wake's alarm decision never erases a concurrent write's recovery wake (kill before its update)", suite.wake_writer_race, True),
+        ("a refused storage version: restart and wake leave every SQLite page identical", suite.wake_refused_upgrade, True),
         ("SQLite version, affinity, limits", suite.sqlite, False),
         ("clock inside a synchronous call (measurement)", suite.clock, False),
         ("waitUntil background work completes after the reply", suite.wait_until, False),

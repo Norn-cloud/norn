@@ -2113,6 +2113,7 @@ dependencies = [
  "norn-cell",
  "norn-cell-do",
  "reqwest",
+ "rivet-envoy-protocol",
  "rivetkit",
  "serde",
  "serde_json",

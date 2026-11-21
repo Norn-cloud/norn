@@ -1,7 +1,7 @@
 //! The actor's cell thread: one OS thread per actor owns the opened cell and
 //! runs every cell call in arrival order. It is the cell's writer lock
 //! (`RivetKit` runs actions and HTTP callbacks concurrently; #1130 section 5),
-//! and the synchronous `SqlEngine` blocks on Rivet's async SQLite from here,
+//! and the synchronous `SqlEngine` blocks on Rivet's async `SQLite` from here,
 //! never from a runtime worker.
 //!
 //! A panic inside a call is contained: the call answers [`CellGone::Panicked`],

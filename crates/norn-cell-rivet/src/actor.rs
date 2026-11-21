@@ -12,6 +12,14 @@
 //!   scope in `x-norn-cell`, and the actor refuses a scope its key does not
 //!   name.
 //! - TIMER-ALARM-1: the wake rules of `wake.mjs`, over [`crate::alarm`].
+//!   Writer admission, a write's deadline update and the wake's final
+//!   deadline decision run under one actor lock (`deadline`): a wake that
+//!   found no writer can never erase the recovery wake of a writer admitted
+//!   after it looked.
+//! - ENGINE-UPGRADE-1: the wake and the start's re-arm read the cell's
+//!   storage version first, without writing; for a cell this engine refuses
+//!   (a newer or unreadable stamp) they change nothing, so a refused upgrade
+//!   leaves the actor's database, host tables included, as it was.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -20,11 +28,13 @@ use std::time::Duration;
 use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
 use norn_api::scope::CellScope;
+use norn_cell::CellError;
+use norn_cell::engine_release::{self, THIS_ENGINE};
 use rivetkit::action::Raw;
 use rivetkit::{Action, Actor, Ctx, Handler, Request, Response, WebSocket};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, MutexGuard};
 
 use crate::alarm::{Alarm, WAKE_ACTION};
 use crate::config::{FIXTURE_STAGES, HostConfig};
@@ -54,7 +64,7 @@ const JWKS_TIMEOUT: Duration = Duration::from_secs(5);
 /// Engine steps one request may take (D102).
 const ENGINE_STEPS: usize = 64;
 /// A hung engine call must not hold the cell.
-const ENGINE_TIMEOUT: Duration = Duration::from_secs(120);
+const ENGINE_TIMEOUT: Duration = Duration::from_mins(2);
 /// The largest engine answer read back, in bytes.
 const MAX_ENGINE_BODY: usize = 64 * 1024 * 1024;
 /// A source page or an uploaded object, read once and bounded.
@@ -195,8 +205,15 @@ pub struct CellActor {
     open: Mutex<OpenState>,
     /// Requests whose writes may not be reflected in the next deadline yet.
     writing: AtomicU32,
+    /// Held across writer admission (`writing` and the guard wake), a
+    /// write's deadline update, and the wake's final deadline decision and
+    /// its update: the three never interleave.
+    deadline: Mutex<()>,
     live: crate::live::Sockets,
     http: reqwest::Client,
+    /// The wake's conformance seams.
+    #[cfg(feature = "conformance")]
+    pub(crate) seam: crate::conformance::WakeSeam,
     /// This instance (conformance identity).
     pub instance: String,
     /// When this instance was constructed (Unix ms).
@@ -248,16 +265,28 @@ impl Actor for CellActor {
             alarm: Alarm::default(),
             open: Mutex::new(OpenState::default()),
             writing: AtomicU32::new(0),
+            deadline: Mutex::new(()),
             live: crate::live::Sockets::default(),
             http: outbound_client()?,
+            #[cfg(feature = "conformance")]
+            seam: crate::conformance::WakeSeam::default(),
             instance: uuid::Uuid::new_v4().to_string(),
             constructed_at: now_ms(),
         })
     }
 
     /// Every start re-arms the alarm's trigger from its row: a trigger lost
-    /// with a crash comes back with the restart.
+    /// with a crash comes back with the restart. A cell this engine refuses
+    /// is not re-armed: a release that reads it re-arms on its own start.
     async fn on_start(self: Arc<Self>, ctx: Ctx<Self>) -> Result<()> {
+        match self.storage_admitted().await {
+            Ok(true) => {}
+            Ok(false) => return Ok(()),
+            Err(error) => {
+                tracing::error!(error = %format!("{error:#}"), "storage version unread; the alarm is not re-armed");
+                return Ok(());
+            }
+        }
         if let Err(error) = self.alarm.resync(&ctx).await {
             tracing::error!(error = %format!("{error:#}"), "alarm resync failed");
         }
@@ -281,14 +310,7 @@ impl Actor for CellActor {
 
 impl Handler<WakeNow> for CellActor {
     async fn handle(self: Arc<Self>, ctx: Ctx<Self>, _action: WakeNow) -> Result<()> {
-        let now = signed(now_ms());
-        let actor = Arc::clone(&self);
-        let woken = ctx.clone();
-        self.alarm
-            .fire(&ctx, now, |_delivery| async move {
-                actor.alarm_run(&woken).await
-            })
-            .await
+        self.wake(&ctx, signed(now_ms())).await
     }
 }
 
@@ -303,6 +325,37 @@ impl CellActor {
     #[must_use]
     pub const fn cell(&self) -> &CellThread {
         &self.cell
+    }
+
+    /// The actor's alarm (conformance seams).
+    #[cfg(feature = "conformance")]
+    pub(crate) const fn alarm(&self) -> &Alarm {
+        &self.alarm
+    }
+
+    /// Forget the last failed open and the kept-scope flag (conformance
+    /// seams: the next request or wake opens the cell from storage again).
+    #[cfg(feature = "conformance")]
+    pub(crate) async fn forget_open(&self) {
+        let mut state = self.open.lock().await;
+        state.failure = None;
+        state.scope_kept = false;
+    }
+
+    /// The alarm's trigger fired at `now` (Unix ms): the `WakeNow` handler.
+    /// Nothing is written for a cell this engine refuses: the alarm row
+    /// stays as it was, for a release that reads the cell.
+    pub(crate) async fn wake(self: &Arc<Self>, ctx: &Ctx<Self>, now: i64) -> Result<()> {
+        if !self.storage_admitted().await? {
+            return Ok(());
+        }
+        let actor = Arc::clone(self);
+        let woken = ctx.clone();
+        self.alarm
+            .fire(ctx, now, |_delivery| async move {
+                actor.alarm_run(&woken).await
+            })
+            .await
     }
 
     async fn serve_http(self: &Arc<Self>, ctx: &Ctx<Self>, req: &Request) -> Response {
@@ -428,6 +481,8 @@ impl CellActor {
             );
         }
         let response = self.respond(ctx, call).await;
+        #[cfg(feature = "conformance")]
+        self.seam.after_respond().await;
         if let Err(error) = self.after_write(ctx, now_ms()).await {
             tracing::error!(error = %format!("{error:#}"), "alarm rearm failed; the recovery wake stands");
         }
@@ -610,6 +665,44 @@ impl CellActor {
         Ok(())
     }
 
+    /// ENGINE-UPGRADE-1, read only: whether this engine opens the cell stored
+    /// in the actor's database (none yet, current, or upgradable). A refusal
+    /// is logged and answers `false`.
+    ///
+    /// # Errors
+    /// The cell thread stopped, or the storage could not be read.
+    async fn storage_admitted(&self) -> Result<bool> {
+        let admitted = self
+            .cell
+            .call(|slot| {
+                engine_release::stored_version(&slot.engine()())
+                    .and_then(|stored| engine_release::admit(&stored, THIS_ENGINE))
+            })
+            .await?;
+        match admitted {
+            Ok(_) => Ok(true),
+            Err(
+                refusal @ (CellError::EngineDowngrade { .. }
+                | CellError::EngineUnknownVersion { .. }
+                | CellError::EngineUpgradeUnsupported { .. }),
+            ) => {
+                tracing::error!(error = %refusal, "this engine does not serve the stored cell; its alarm is left untouched");
+                Ok(false)
+            }
+            Err(error) => Err(anyhow!("read the cell's storage version: {error}")),
+        }
+    }
+
+    /// Take the deadline lock (the `deadline` field).
+    async fn deadline_lock(&self) -> MutexGuard<'_, ()> {
+        #[cfg(feature = "conformance")]
+        match self.deadline.try_lock() {
+            Ok(held) => return held,
+            Err(_busy) => self.seam.waiting(),
+        }
+        self.deadline.lock().await
+    }
+
     async fn serving(&self) -> Result<bool, CellGone> {
         self.cell
             .call(|slot| slot.core.as_ref().is_some_and(CellCore::serving))
@@ -648,12 +741,14 @@ impl CellActor {
         if !self.serving().await? {
             return Ok(());
         }
+        let _decision = self.deadline_lock().await;
         let next = self.next_due(now).await?;
         self.earliest(ctx, next, now).await
     }
 
     /// Before a request that may write: the guard wake is durable first.
     async fn before_write(&self, ctx: &Ctx<Self>, now: u64) -> Result<()> {
+        let _admission = self.deadline_lock().await;
         self.writing.fetch_add(1, Ordering::AcqRel);
         let guarded = async {
             if !self.serving().await? {
@@ -680,6 +775,7 @@ impl CellActor {
     /// After that request, whatever its reply: the alarm follows the cell's
     /// next deadline.
     async fn after_write(&self, ctx: &Ctx<Self>, now: u64) -> Result<()> {
+        let _decision = self.deadline_lock().await;
         self.release_writer();
         if !self.serving().await? {
             return Ok(());
@@ -713,18 +809,26 @@ impl CellActor {
             .cell
             .call(move |slot| slot.core.as_mut().and_then(|core| core.sync_due(now)))
             .await?;
-        let next = self.next_due(now).await?;
-        let recovery = now.saturating_add(RECOVERY_MS);
-        if self.writing.load(Ordering::Acquire) > 0 {
-            if let Some(next) = next
-                && next.max(now) < recovery
-            {
+        {
+            // No writer is admitted, and none updates its deadline, until
+            // this decision is stored.
+            let _decision = self.deadline_lock().await;
+            let writing = self.writing.load(Ordering::Acquire) > 0;
+            let next = self.next_due(now).await?;
+            let recovery = now.saturating_add(RECOVERY_MS);
+            #[cfg(feature = "conformance")]
+            self.seam.decided().await;
+            if writing {
+                if let Some(next) = next
+                    && next.max(now) < recovery
+                {
+                    self.alarm.set(ctx, signed(next.max(now))).await?;
+                }
+            } else if let Some(next) = next {
                 self.alarm.set(ctx, signed(next.max(now))).await?;
+            } else {
+                self.alarm.delete(ctx).await?;
             }
-        } else if let Some(next) = next {
-            self.alarm.set(ctx, signed(next.max(now))).await?;
-        } else {
-            self.alarm.delete(ctx).await?;
         }
         if let Some(failed) = due.failed {
             tracing::error!(failed = %failed, "due work not handled");
