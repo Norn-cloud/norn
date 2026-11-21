@@ -750,7 +750,7 @@ fn a_reader_sees_no_row_of_a_landing_until_it_is_stored() {
     assert_eq!(
         engine
             .settle(&SettleRequest {
-                land: retry.clone(),
+                land: retry,
                 through: 0,
                 findings: Vec::new(),
             })
