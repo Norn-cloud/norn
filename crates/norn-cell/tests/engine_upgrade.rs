@@ -223,8 +223,11 @@ fn add_open_checkpoint(
         mac.finalize()
             .into_bytes()
             .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>()
+            .fold(String::new(), |mut hex, byte| {
+                use std::fmt::Write as _;
+                let _infallible = write!(hex, "{byte:02x}");
+                hex
+            })
     };
     expected["schema"]
         .as_array_mut()

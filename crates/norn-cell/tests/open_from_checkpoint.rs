@@ -805,7 +805,7 @@ fn history_ready(store: &CellStore<NativeEngine>) -> bool {
     match store.scrub_status() {
         ScrubStatus::Idle => true,
         ScrubStatus::Verifying { history_ready, .. } => history_ready,
-        _ => false,
+        ScrubStatus::Fenced { .. } => false,
     }
 }
 
@@ -829,8 +829,11 @@ fn receipts_root_at(path: &Path, commits: u64) -> String {
     tree.root()
         .as_bytes()
         .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+        .fold(String::new(), |mut hex, byte| {
+            use std::fmt::Write as _;
+            let _infallible = write!(hex, "{byte:02x}");
+            hex
+        })
 }
 
 /// (a) S2: a covered receipt rewritten with its digest, together with the
@@ -1115,7 +1118,7 @@ fn a_trimmed_restore_reseeds_the_checkpoint_through_the_scrub() {
         Some(2 * EVERY + 72),
         "re-seeded at the restored head"
     );
-    for n in 2 * EVERY + 72..3 * EVERY + 1 {
+    for n in (2 * EVERY + 72)..=(3 * EVERY) {
         store.commit(&put(n)).expect("commit");
     }
     drop(store);
