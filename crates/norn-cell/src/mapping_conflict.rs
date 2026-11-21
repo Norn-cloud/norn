@@ -225,7 +225,13 @@ pub(crate) struct EventDispute {
 }
 
 impl SourceDisputeIndex {
-    fn dispute(&mut self, keys: [String; 5], position: u64, row: String, finding: &DataQualityFinding) {
+    fn dispute(
+        &mut self,
+        keys: [String; 5],
+        position: u64,
+        row: String,
+        finding: &DataQualityFinding,
+    ) {
         let entry = self.events.entry(keys).or_insert_with(|| EventDispute {
             position,
             rows: BTreeSet::new(),

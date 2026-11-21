@@ -1394,14 +1394,19 @@ fn party_row(name: &str, label: &str) -> Value {
     let mut row = fixture("erpnext")["snapshot"][2].clone();
     let record = row["record"].as_object_mut().expect("record");
     record.insert("name".into(), json!(format!("SYN-ERPNEXT-{name}")));
-    record.insert("custom_norn_ref".into(), json!(format!("demo/party/{name}")));
+    record.insert(
+        "custom_norn_ref".into(),
+        json!(format!("demo/party/{name}")),
+    );
     record.insert("label".into(), json!(label));
     row
 }
 
 /// The `refers` links and held-link findings of each path, after `batches`.
 #[allow(clippy::type_complexity, reason = "both paths' links and findings")]
-fn refers_after(batches: &[Vec<(Value, String)>]) -> Vec<(BTreeSet<(String, String)>, Vec<String>)> {
+fn refers_after(
+    batches: &[Vec<(Value, String)>],
+) -> Vec<(BTreeSet<(String, String)>, Vec<String>)> {
     let directory = tempfile::tempdir().expect("directory");
     let open = |name: &str| setup_with(&directory.path().join(name), |a| referring_parties(a));
     let (mut single, mut paged) = (open("single.sqlite"), open("paged.sqlite"));
@@ -1447,13 +1452,27 @@ fn obs_link_dispute_boundary_is_inbox_order_on_both_paths() {
     let zed = || (party_row("zed", "Zed"), "1".to_owned());
     let edge = BTreeSet::from([(REFERRED.to_owned(), ZED.to_owned())]);
     for (case, batch, links, held) in [
-        ("target, then conflict", vec![zed(), resend()], edge.clone(), false),
-        ("conflict, then target", vec![resend(), zed()], BTreeSet::new(), true),
+        (
+            "target, then conflict",
+            vec![zed(), resend()],
+            edge.clone(),
+            false,
+        ),
+        (
+            "conflict, then target",
+            vec![resend(), zed()],
+            BTreeSet::new(),
+            true,
+        ),
     ] {
         let paths = refers_after(&[vec![referred()], batch]);
         for ((found, findings), path) in paths.iter().zip(["one by one", "paged"]) {
             assert_eq!(found, &links, "{case}, {path}: refers links");
-            assert_eq!(findings.len(), usize::from(held), "{case}, {path}: {findings:?}");
+            assert_eq!(
+                findings.len(),
+                usize::from(held),
+                "{case}, {path}: {findings:?}"
+            );
             for message in findings {
                 assert!(
                     message.starts_with(&format!(
