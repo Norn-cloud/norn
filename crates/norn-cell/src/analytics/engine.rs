@@ -439,15 +439,11 @@ impl Engine {
         if held.leased {
             return Err(refusal(ATTEMPT_BUSY, "the landing attempt is in use"));
         }
-        let Some(landed) = held
-            .landed
-            .as_ref()
-            .filter(|landed| {
-                landed.request == contract(request)
-                    && landed.phase() == phase
-                    && answer.is_none_or(|answer| *answer == landed.answer)
-            })
-        else {
+        let Some(landed) = held.landed.as_ref().filter(|landed| {
+            landed.request == contract(request)
+                && landed.phase() == phase
+                && answer.is_none_or(|answer| *answer == landed.answer)
+        }) else {
             return Err(refusal(
                 STALE,
                 "the landing attempt is another landing's or another step's",
