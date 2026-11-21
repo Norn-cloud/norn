@@ -271,6 +271,46 @@ fn route_of(path: &str) -> Option<Route<'_>> {
     }
 }
 
+/// OLAP-01: names in the connection secret namespace that deployment-wide
+/// secrets used to have, or might be given: the object store's keys (now
+/// `NORN_S3_*`), the analytics signing key (now `NORN_OLAP_SIGNING_KEY`) and
+/// the retired analytics token. A connector names its secret freely and the
+/// pull host sends it to a source endpoint, so a deployment secret in this
+/// namespace would be a tenant's to read.
+const RESERVED_SECRETS: &[&str] = &[
+    "NORN_SECRET_S3_",
+    "NORN_SECRET_OLAP_",
+    "NORN_SECRET_DUCKDB_",
+];
+
+/// OLAP-01: the secrets a connector's auth may resolve (`secretRef`, through
+/// [`norn_api::sources::secret_env`]): the `NORN_SECRET_*` variables, which
+/// hold connection secrets only. Storage keys and the analytics signing key
+/// live outside that namespace and are never in this map, whatever name a
+/// connector asks for.
+///
+/// # Errors
+/// A variable under a reserved deployment-secret name: the deployment still
+/// uses an old name, and the cell refuses rather than expose it.
+fn connection_secrets(vars: &BTreeMap<String, String>) -> Result<BTreeMap<String, String>, String> {
+    if let Some(name) = vars.keys().find(|name| {
+        RESERVED_SECRETS
+            .iter()
+            .any(|prefix| name.starts_with(prefix))
+    }) {
+        return Err(format!(
+            "{name} is a deployment secret in the connection secret namespace, where a \
+             connector could read it; use NORN_S3_* for storage keys and \
+             NORN_OLAP_SIGNING_KEY for the analytics signing key"
+        ));
+    }
+    Ok(vars
+        .iter()
+        .filter(|(name, _)| name.starts_with("NORN_SECRET_"))
+        .map(|(name, value)| (name.clone(), value.clone()))
+        .collect())
+}
+
 fn scope_of(query: &str) -> ScopeQuery {
     let mut scope = ScopeQuery {
         org_id: None,
@@ -302,15 +342,12 @@ impl Connect {
     /// and the operator's `NORN_SOURCE_ALLOWED_HOSTS`, SYNC-URL-1).
     ///
     /// # Errors
-    /// Malformed configuration.
+    /// Malformed configuration, or a deployment secret under a connection
+    /// secret's name (`NORN_SECRET_S3_*`, `NORN_SECRET_OLAP_*`, `NORN_SECRET_DUCKDB_*`).
     pub fn new(config: &str, vars: &str) -> Result<Self, String> {
         let vars: BTreeMap<String, String> =
             serde_json::from_str(vars).map_err(|e| format!("server variables: {e}"))?;
-        let secrets = vars
-            .iter()
-            .filter(|(name, _)| name.starts_with("NORN_SECRET_"))
-            .map(|(name, value)| (name.clone(), value.clone()))
-            .collect();
+        let secrets = connection_secrets(&vars)?;
         Ok(Self {
             sources: Sources::with_allowed_hosts(
                 config,
@@ -562,7 +599,9 @@ impl Connect {
                 }
             }
             Route::Read => Routed::reply(self.read(&host.scope().key(), request.body, now_ms)),
-            Route::Observations => Routed::reply(load_observations(host, request.body)),
+            Route::Observations => {
+                Routed::reply(load_observations(host, request.body, &HOSTED_LOAD))
+            }
         })
     }
 
@@ -947,25 +986,53 @@ pub fn observations<E: SqlEngine>(
         )
         .is_ok();
     Some(if allowed {
-        load_observations(host, request.body)
+        load_observations(host, request.body, &DEV_LOAD)
     } else {
         server::outside::<E>(request)
     })
 }
 
-/// The most rows one load carries, and the most page commits it may make (a
-/// row repeating a record already in its page starts the next commit, as a
-/// record's history does). A load runs inside one cell call; on the hosted
-/// cell a commit costs about 0.8 s and a row about 0.1 s, so these keep a load
-/// to roughly 15 s at most, and a client sizes its loads well under them.
-const MAX_LOAD_ROWS: usize = 100;
-const MAX_LOAD_COMMITS: usize = 8;
+/// What one load may carry (INGEST-BATCH-1): its rows, and, on a host that
+/// runs a load inside one bounded call, a work budget charged for every row
+/// captured and every commit the cell actually attempts. A load that reaches
+/// the budget stops at a page boundary and answers `next`, the row the
+/// caller resumes from.
+struct LoadBound {
+    /// The most rows one load carries.
+    rows: usize,
+    /// The work one load may take; `None` when the host releases the cell
+    /// between commits and serves reads in between (INGEST-YIELD-1), so a
+    /// load's length never holds a read.
+    budget: Option<norn_api::host::WorkBudget>,
+}
 
-/// `POST /v1/observations:load`: one page of a recorded export, captured and
+/// A hosted cell runs a load inside one cell call: a commit costs about
+/// 0.8 s and a row about 0.1 s there, so a load stops at the work of 100
+/// rows and 8 commits (about 16 s), however the cell splits its pages.
+const HOSTED_LOAD: LoadBound = LoadBound {
+    rows: 100,
+    budget: Some(norn_api::host::WorkBudget {
+        row_ms: 100,
+        commit_ms: 800,
+        total_ms: 100 * 100 + 8 * 800,
+    }),
+};
+
+/// The dev host commits a page at a time and serves waiting reads between
+/// commits, so one load carries up to one OBS-PAGE-1 page bound of rows.
+const DEV_LOAD: LoadBound = LoadBound {
+    rows: norn_cell::mapping_page::MAX_PAGE_RECORDS,
+    budget: None,
+};
+
+/// `POST /v1/observations:load`: rows of a recorded export, captured and
 /// mapped through the cell's admitted mappings exactly as a source sync's
 /// rows are (OBS-PAGE-1). No caller supplies facts: a row the mapping
-/// refuses stays in the inbox as quarantined evidence, with its reasons.
-fn load_observations<E: SqlEngine>(host: &DevHost<E>, body: &str) -> Response {
+/// refuses stays in the inbox as quarantined evidence, with its reasons,
+/// and the answer explains each one (MAP-EXPLAIN-1): the record, its
+/// dataset, the code, the mapping rule and, for a nonconforming field, the
+/// field, its value and the declared type.
+fn load_observations<E: SqlEngine>(host: &DevHost<E>, body: &str, bound: &LoadBound) -> Response {
     let answer = |refusal: &Refusal| crate::incident::respond(refusal.clone());
     let recorded = match serde_json::from_str::<Value>(body)
         .map_err(|error| error.to_string())
@@ -1006,33 +1073,47 @@ fn load_observations<E: SqlEngine>(host: &DevHost<E>, body: &str) -> Response {
         Ok(rows) => rows,
         Err(error) => return answer(&Refusal::invalid(error)),
     };
-    let commits = norn_api::host::page_count(&rows);
-    if rows.len() > MAX_LOAD_ROWS || commits > MAX_LOAD_COMMITS {
+    if rows.len() > bound.rows {
         return refused(
             413,
             "observations.too_large",
             &format!(
-                "a load carries at most {MAX_LOAD_ROWS} rows and {MAX_LOAD_COMMITS} commits (this one: {} rows, {commits} commits); send it in smaller slices",
+                "a load carries at most {} rows (this one: {}); send it in smaller slices",
+                bound.rows,
                 rows.len()
             ),
         );
     }
-    let ingested = match host.ingest(&rows) {
-        Ok(ingested) => ingested,
+    let report = match host.ingest_within(&rows, bound.budget) {
+        Ok(report) => report,
         Err(refusal) => return answer(&refusal),
     };
+    let ingested = &report.outcomes;
     let (mut landed, mut already, mut quarantined) = (0_usize, 0_usize, 0_usize);
     let mut reasons: BTreeMap<String, usize> = BTreeMap::new();
-    for row in &ingested {
+    let mut explained = Vec::new();
+    for (row, (raw, input)) in ingested.iter().zip(&rows) {
         match &row.outcome {
             norn_cell::MappingOutcome::Landed => landed = landed.saturating_add(1),
             norn_cell::MappingOutcome::AlreadyLanded => already = already.saturating_add(1),
-            norn_cell::MappingOutcome::Quarantined(codes) => {
+            norn_cell::MappingOutcome::Quarantined(why) => {
                 quarantined = quarantined.saturating_add(1);
-                for code in codes {
-                    let n = reasons.entry(code.clone()).or_insert(0);
+                for code in row.outcome.codes() {
+                    let n = reasons.entry(code).or_insert(0);
                     *n = n.saturating_add(1);
                 }
+                explained.extend(why.iter().map(|reason| {
+                    json!({
+                        "record": raw.provenance.source_id,
+                        "dataset": input.dataset,
+                        "code": reason.code,
+                        "map": reason.map,
+                        "field": reason.field,
+                        "value": reason.value,
+                        "expected": reason.expected,
+                        "reason": reason.reason,
+                    })
+                }));
             }
         }
     }
@@ -1046,6 +1127,12 @@ fn load_observations<E: SqlEngine>(host: &DevHost<E>, body: &str) -> Response {
             "alreadyLanded": already,
             "quarantined": quarantined,
             "quarantineReasons": reasons,
+            "quarantine": explained,
+            "pages": report.pages,
+            "commits": report.commits,
+            // Resume with `snapshot[next..]` when the work budget stopped
+            // the load; null when every row is reported.
+            "next": report.next,
         }),
     )
 }
@@ -1098,12 +1185,79 @@ mod tests {
             "NORN_S3_ENDPOINT": "https://storage.example.test",
             "NORN_S3_BUCKET": "uploads-bucket",
             "NORN_S3_DOCUMENTS_BUCKET": "documents-bucket",
-            "NORN_SECRET_S3_ACCESS_KEY_ID": "key-id",
-            "NORN_SECRET_S3_SECRET_ACCESS_KEY": secret,
-            "NORN_SECRET_S3_DOCUMENTS_ACCESS_KEY_ID": "documents-key-id",
-            "NORN_SECRET_S3_DOCUMENTS_SECRET_ACCESS_KEY": secret,
+            "NORN_S3_ACCESS_KEY_ID": "key-id",
+            "NORN_S3_SECRET_ACCESS_KEY": secret,
+            "NORN_S3_DOCUMENTS_ACCESS_KEY_ID": "documents-key-id",
+            "NORN_S3_DOCUMENTS_SECRET_ACCESS_KEY": secret,
         });
         Connect::new("[]", &vars.to_string()).expect("configuration")
+    }
+
+    /// OLAP-01: no secretRef a connector can write reaches a deployment
+    /// secret: storage keys and the analytics signing key are outside the
+    /// map connector auth resolves from, under any name, and a deployment
+    /// that still keeps one under a connection secret's name is refused.
+    #[test]
+    fn deployment_secrets_never_reach_connector_auth() {
+        const DEPLOYMENT: [&str; 5] = [
+            "s3-uploads-secret",
+            "s3-documents-secret",
+            "s3-uploads-id",
+            "s3-documents-id",
+            "k1:olap-signing-seed",
+        ];
+        let vars: BTreeMap<String, String> = [
+            ("NORN_S3_ENDPOINT", "https://storage.example.test"),
+            ("NORN_S3_BUCKET", "uploads-bucket"),
+            ("NORN_S3_SECRET_ACCESS_KEY", DEPLOYMENT[0]),
+            ("NORN_S3_DOCUMENTS_SECRET_ACCESS_KEY", DEPLOYMENT[1]),
+            ("NORN_S3_ACCESS_KEY_ID", DEPLOYMENT[2]),
+            ("NORN_S3_DOCUMENTS_ACCESS_KEY_ID", DEPLOYMENT[3]),
+            ("NORN_OLAP_SIGNING_KEY", DEPLOYMENT[4]),
+            ("NORN_SECRET_ERPNEXT_REST_TOKEN", "connection-token"),
+        ]
+        .into_iter()
+        .map(|(name, value)| (name.to_owned(), value.to_owned()))
+        .collect();
+        let secrets = connection_secrets(&vars).expect("configured");
+        assert_eq!(
+            secrets.values().collect::<Vec<_>>(),
+            ["connection-token"],
+            "only the connection's own secret"
+        );
+        // Every name a secretRef resolves to, whatever the connector writes,
+        // misses every deployment secret.
+        for reference in [
+            "s3_secret_access_key",
+            "S3_SECRET_ACCESS_KEY",
+            "../NORN_S3_SECRET_ACCESS_KEY",
+            "olap_signing_key",
+            "OLAP-SIGNING-KEY",
+            "",
+        ] {
+            let resolved = secrets.get(&norn_api::sources::secret_env(reference));
+            assert!(
+                resolved.is_none_or(|value| !DEPLOYMENT.contains(&value.as_str())),
+                "{reference}"
+            );
+        }
+        // The storage still gets its keys from their own names.
+        assert!(S3Config::from_vars(&vars, Store::Uploads).is_some());
+        // A deployment that kept an old name is refused, never served.
+        for old in [
+            "NORN_SECRET_S3_SECRET_ACCESS_KEY",
+            "NORN_SECRET_S3_DOCUMENTS_ACCESS_KEY_ID",
+            "NORN_SECRET_OLAP_SIGNING_KEY",
+            "NORN_SECRET_DUCKDB_TOKEN",
+        ] {
+            let mut stale = vars.clone();
+            stale.insert(old.to_owned(), "x".to_owned());
+            assert!(
+                connection_secrets(&stale).is_err_and(|e| e.contains(old)),
+                "{old}"
+            );
+            assert!(Connect::new("[]", &serde_json::to_string(&stale).expect("json")).is_err());
+        }
     }
 
     /// UPLOAD-ID-1: a cell that never saw an upload (a restart) resolves its

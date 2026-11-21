@@ -362,6 +362,15 @@
     "core.compute.unsupported_engine": {
       "message": "Query semantics are unsupported by the selected compute profile."
     },
+    "core.engine.downgrade": {
+      "message": "the cell was written by a newer storage version than this engine reads"
+    },
+    "core.engine.unknown_version": {
+      "message": "the cell's engine stamp is not a version this engine can read"
+    },
+    "core.engine.upgrade_unsupported": {
+      "message": "the cell's storage version cannot be upgraded in place by this engine"
+    },
     "core.graph.catalog_write": {
       "message": "catalog projections cannot activate definitions"
     },

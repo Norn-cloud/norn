@@ -6,12 +6,13 @@
 //! request until the client closes it, asks `connection: close` or idles past
 //! [`IDLE`]. Bun's `fetch` reuses a pooled connection even after a
 //! `connection: close` answer, so a host that closed after one answer reset
-//! that client's next request. Each connection gets its own thread, and the
-//! requests themselves are still answered one at a time, in arrival order.
+//! that client's next request. Each connection gets its own thread, and at
+//! most [`WORKERS`] requests are answered at once (DEV-CONCURRENT-1), so a long
+//! request (a load) never holds the others back.
 use std::io::{BufRead, BufReader, Read as _, Write as _};
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::time::Duration;
 
 use crate::server::{self, Request, Response};
@@ -33,6 +34,8 @@ const IDLE: Duration = Duration::from_secs(10);
 /// and closed on the accepting thread, so a flood of idle connections cannot
 /// grow the host's threads without bound.
 const MAX_CONNECTIONS: usize = 32;
+/// Requests the dev host answers at once (DEV-CONCURRENT-1).
+const WORKERS: usize = 4;
 
 /// The serving state shared with the session: `None` until the first
 /// revision is installed.
@@ -68,21 +71,52 @@ struct Handler<'a> {
     questions: &'a DevMetrics,
     engine: Option<&'a dyn Transport>,
     connections: &'a DevConnections,
-    /// Held while a request is answered: one request at a time, as before.
+    /// DEV-CONCURRENT-1: how many requests are being answered, at most
+    /// [`WORKERS`]. Each request runs on its connection's thread from start to
+    /// answer, so its verified caller stays its own
+    /// ([`crate::policy::CallerSlot`]); the cell is shared under its own lock,
+    /// which a load takes one commit at a time (INGEST-YIELD-1).
     /// Ordering contract: requests on one connection are answered in the
-    /// order they arrive. Across connections, a request enters the order when
-    /// its head and body are fully read and it takes this lock, not when its
-    /// connection was accepted. A client that waits for an answer before
-    /// sending its next request (every dev client) sees its causal order kept.
-    one_at_a_time: Mutex<()>,
+    /// order they arrive. Across connections, requests are answered
+    /// concurrently, once fully read; the cell orders their steps. A client
+    /// that waits for an answer before sending its next request (every dev
+    /// client) sees its causal order kept.
+    answering: (Mutex<usize>, Condvar),
+}
+
+/// One of the [`WORKERS`] turns to answer a request, given back when dropped.
+struct Turn<'a>(&'a (Mutex<usize>, Condvar));
+
+impl<'a> Turn<'a> {
+    fn take(gate: &'a (Mutex<usize>, Condvar)) -> Self {
+        let (count, freed) = gate;
+        let mut answering = count
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        while *answering >= WORKERS {
+            answering = freed
+                .wait(answering)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+        *answering = answering.saturating_add(1);
+        Self(gate)
+    }
+}
+
+impl Drop for Turn<'_> {
+    fn drop(&mut self) {
+        let (count, freed) = self.0;
+        let mut answering = count
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *answering = answering.saturating_sub(1);
+        freed.notify_one();
+    }
 }
 
 impl Handler<'_> {
     fn answer(&self, parsed: &Parsed) -> Response {
-        let _turn = self
-            .one_at_a_time
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _turn = Turn::take(&self.answering);
         dispatch(
             parsed,
             self.serving,
@@ -109,7 +143,7 @@ pub(crate) fn serve(
         questions,
         engine,
         connections,
-        one_at_a_time: Mutex::new(()),
+        answering: (Mutex::new(0), Condvar::new()),
     };
     let open = AtomicUsize::new(0);
     std::thread::scope(|scope| {
@@ -640,7 +674,17 @@ mod tests {
             &choice,
         );
         assert_eq!(status, 200, "{decided}");
-        assert_eq!(decided["call"], json!({ "committed": true }), "{decided}");
+        // The reviewer's request never runs the developer's call
+        // (APPROVAL-RECOVERY-1): it waits for the developer's own retry.
+        assert_eq!(
+            decided["call"],
+            json!({ "committed": false, "state": "not_executed" }),
+            "{decided}"
+        );
+        assert_eq!(melt(&dev), 404);
+        let (status, committed) =
+            call(&dev, Some(DEVELOPER_TOKEN), ("POST", &action, SCOPE), &body);
+        assert_eq!(status, 200, "{committed}");
         assert_eq!(melt(&dev), 200);
 
         // The approved call committed as its requester, never as the

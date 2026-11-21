@@ -218,8 +218,8 @@ run_phase() {
       (cd packages/norn-sdk && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun run typecheck && bun test --timeout 60000)
       (cd packages/norn-demo-ui && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun run typecheck && bun test)
       (cd apps/studio && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun run typecheck && bun test && bun run build)
-      # TIMER-ALARM-1: the Durable Object's wake rules (no dependencies).
-      (cd apps/norn-cell-do && bun test ./wake.test.mjs ./worker.test.mjs)
+      # TIMER-ALARM-1: the Durable Object's wake rules; OLAP-01: what connections receive (no dependencies).
+      (cd apps/norn-cell-do && bun test ./wake.test.mjs ./worker.test.mjs ./connect_vars.test.mjs)
       python3 verification/coverage-v1/negative_canaries.py --workflow-contract
       python3 scripts/ci/frontier.py self-test
       python3 scripts/ci/python_isolation.py
@@ -524,10 +524,15 @@ if len(tasks) != len(set(tasks)) or set(tasks) - known:
 if plan["mode"] == "full" and set(tasks) != known:
     raise SystemExit("full bundle plan omitted a registered task")
 target_seconds = 11 * 60
+# Every bundle is one Boat VM start, and the account allows 840 starts per rolling 24 h for
+# CI and every work lane together: at 6 bundles CI alone spent the cap on 2026-11-19 (720
+# jobs). Three bundles keep a push at 4 starts (core + 3) for about 14 more minutes of wall
+# time; each bundle still runs its tasks one after another on a default VM.
+max_bundles = 3
 # Use the fewest jobs that meet the service target. If an indivisible task
 # exceeds it, minimize the critical path before allocating additional VMs.
 candidates = []
-maximum = min(6, max(1, len(tasks) // 2)) if tasks else 0
+maximum = min(max_bundles, max(1, len(tasks) // 2)) if tasks else 0
 for count in range(1, maximum + 1):
     bins, costs, compiled = [[] for _ in range(count)], [0] * count, [False] * count
     for task in sorted(tasks, key=lambda task: (-cold_cost(task), task)):
@@ -675,9 +680,11 @@ PY
     pruned='' previous=''
     while IFS=/ read -r kind item; do
       task="$kind/$item"
-      # Other bundle tasks never share build outputs (the planner packs them freely), so a
-      # task may drop the previous task's target dir when disk runs low (#1059).
-      if [[ -n $pruned ]] && ! { shares_build "$previous" && shares_build "$task"; } && (( $(df -Pk / | awk 'NR == 2 {print $4}') < 40 * 1024 * 1024 )); then
+      # Other bundle tasks never share build outputs (the planner packs them freely), so each
+      # drops the previous task's target dir and starts as on a fresh VM (#1059). Three bundles
+      # put disk-heavy tasks together: guards after integration ran out of a default VM's disk
+      # with more than 40 GiB free at the boundary (#1498), so a free-space threshold is not enough.
+      if [[ -n $pruned ]] && ! { shares_build "$previous" && shares_build "$task"; }; then
         prune_target
         printf '::notice::pruned target before %s; %s KiB free\n' "$task" "$(df -Pk / | awk 'NR == 2 {print $4}')"
       fi

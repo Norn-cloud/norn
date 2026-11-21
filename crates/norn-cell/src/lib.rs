@@ -38,6 +38,7 @@ pub mod compute;
 pub mod decision_ledger;
 pub mod due_retry;
 pub mod engine;
+pub mod engine_release;
 pub mod error;
 pub mod export;
 mod export_journal;
@@ -99,7 +100,7 @@ pub use error::CellError;
 pub use fork::{ForkEngine, ForkPin, StoreImage};
 pub use history::{FactSnapshot, FactVersionEvidence, HistoricalEvidence, KnowledgeCutoff};
 pub use host::{CommitRecord, PerformClaim, Responder, SqliteCell};
-pub use mapping_process::MappingOutcome;
+pub use mapping_process::{MappingOutcome, QuarantineReason};
 pub use model::{BindingIndexSpec, Model, ModelDefinitionSnapshot};
 pub use read::{
     BindingSortValue, BindingSortedCandidate, BindingSortedPosition, FindingLedgerPage,
