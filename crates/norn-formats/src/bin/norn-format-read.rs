@@ -200,7 +200,10 @@ fn outside_repository(target: &Path, manifest_path: &Path) -> Result<(), String>
 }
 
 /// Read an OWL manifest's graph and write its import to `emit_dir`.
-#[allow(clippy::too_many_lines, reason = "one linear pass: read, check, emit, align")]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one linear pass: read, check, emit, align"
+)]
 fn run_owl(
     manifest_path: &Path,
     text: &str,

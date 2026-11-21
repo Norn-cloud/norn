@@ -212,7 +212,9 @@ fn members_of(interface: &Value) -> Vec<Member> {
     };
     let mut members = Vec::new();
     for property in list("properties") {
-        let Some(id) = text(property, "/id") else { continue };
+        let Some(id) = text(property, "/id") else {
+            continue;
+        };
         let value_type = match text(property, "/type/kind").as_deref() {
             Some("boolean") => "boolean",
             Some("date" | "timestamp") => "date_time",
@@ -263,7 +265,9 @@ fn shape_of(name: &str, by_name: &BTreeMap<String, Class>) -> Value {
         if !visited.insert(node.clone()) {
             continue;
         }
-        let Some(class) = by_name.get(&node) else { continue };
+        let Some(class) = by_name.get(&node) else {
+            continue;
+        };
         for member in &class.members {
             if !seen.insert(member.id.clone()) {
                 continue;

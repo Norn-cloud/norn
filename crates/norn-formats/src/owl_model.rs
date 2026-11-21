@@ -489,7 +489,10 @@ impl Model {
     }
 
     /// The class expression (or data range) `term` denotes.
-    #[allow(clippy::too_many_lines, reason = "one arm per OWL class-expression form")]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one arm per OWL class-expression form"
+    )]
     pub(crate) fn expr(&self, term: &Term, depth: usize) -> Result<Expr, String> {
         if depth > MAX_EXPRESSION_DEPTH {
             return Err("a class expression deeper than 32 levels, or cyclic".into());

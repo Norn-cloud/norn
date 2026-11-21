@@ -145,7 +145,11 @@ impl Vocabulary {
         let mut properties: BTreeMap<String, Value> = BTreeMap::new();
         let mut links: BTreeMap<String, Value> = BTreeMap::new();
         for name in self.lineage(roots) {
-            for property in self.interfaces[&name]["properties"].as_array().into_iter().flatten() {
+            for property in self.interfaces[&name]["properties"]
+                .as_array()
+                .into_iter()
+                .flatten()
+            {
                 let id = property["id"].as_str().expect("id").to_owned();
                 let Some(held) = properties.get_mut(&id) else {
                     properties.insert(id, property.clone());
@@ -157,7 +161,11 @@ impl Vocabulary {
                     object.remove("constraints");
                 }
             }
-            for link in self.interfaces[&name]["links"].as_array().into_iter().flatten() {
+            for link in self.interfaces[&name]["links"]
+                .as_array()
+                .into_iter()
+                .flatten()
+            {
                 let id = link["id"].as_str().expect("id").to_owned();
                 let Some(held) = links.get_mut(&id) else {
                     links.insert(id, link.clone());
@@ -182,7 +190,10 @@ impl Vocabulary {
                 }
             }
         }
-        (properties.into_values().collect(), links.into_values().collect())
+        (
+            properties.into_values().collect(),
+            links.into_values().collect(),
+        )
     }
 }
 
@@ -191,7 +202,9 @@ fn ledger() -> Vocabulary {
         "../../norn-formats/tests/goldens/owl/ledger.output.json"
     ))
     .expect("ledger golden");
-    Vocabulary::new(serde_json::from_value(output["layers"][0]["artifacts"].clone()).expect("layer"))
+    Vocabulary::new(
+        serde_json::from_value(output["layers"][0]["artifacts"].clone()).expect("layer"),
+    )
 }
 
 fn required(link: &Value) -> bool {
@@ -251,7 +264,11 @@ impl Plan {
                     .chain(work.iter().map(|(n, _)| n))
                     .find(|candidate| {
                         let implements = plan.types.get(*candidate).map_or_else(
-                            || work.iter().find(|(n, _)| n == *candidate).map(|(_, i)| i.clone()),
+                            || {
+                                work.iter()
+                                    .find(|(n, _)| n == *candidate)
+                                    .map(|(_, i)| i.clone())
+                            },
                             |t| Some(t.implements.clone()),
                         );
                         implements.is_some_and(|i| vocabulary.lineage(&i).contains(&target))
@@ -270,7 +287,9 @@ impl Plan {
 
     /// The object type of `name`: in `ontology` mode it implements its
     /// interfaces and carries their members; in `plain` mode it carries only
-    /// the members its records fill, with links to the concrete types.
+    /// the members its records fill. A link whose target interface has a
+    /// planned type targets that type (a narrowing of the interface's
+    /// target); the others keep the interface.
     fn object_type(&self, name: &str, ontology: bool, reads: &[&str]) -> Value {
         let plan = &self.types[name];
         let nullable = |p: &Value| p["constraints"]["nullable"].as_bool() == Some(true);
@@ -287,8 +306,8 @@ impl Plan {
             .filter(|l| ontology || required(l))
             .map(|link| {
                 let mut link = link.clone();
-                if !ontology {
-                    link["target"] = json!(self.choice[link["target"].as_str().expect("target")]);
+                if let Some(chosen) = self.choice.get(link["target"].as_str().expect("target")) {
+                    link["target"] = json!(chosen);
                 }
                 link
             })
@@ -396,7 +415,12 @@ fn law((id, expression, rationale): (&str, &str, &str)) -> ArtifactEnvelope {
 
 /// The definitions set of one mode: the vocabulary (ontology mode only),
 /// the planned object types and the laws.
-fn definitions(vocabulary: &Vocabulary, plan: &Plan, example: &Example, ontology: bool) -> Vec<ArtifactEnvelope> {
+fn definitions(
+    vocabulary: &Vocabulary,
+    plan: &Plan,
+    example: &Example,
+    ontology: bool,
+) -> Vec<ArtifactEnvelope> {
     let mut set = if ontology {
         vocabulary.artifacts.clone()
     } else {
@@ -414,7 +438,10 @@ fn definitions(vocabulary: &Vocabulary, plan: &Plan, example: &Example, ontology
 /// The model a host projects from a set: entity roots and governing laws.
 fn model(artifacts: &[ArtifactEnvelope]) -> Model {
     let (mut objects, mut interfaces) = (Vec::new(), Vec::new());
-    for artifact in artifacts.iter().filter(|a| a.kind() == ArtifactKind::Entity) {
+    for artifact in artifacts
+        .iter()
+        .filter(|a| a.kind() == ArtifactKind::Entity)
+    {
         let root: EntityRoot = serde_json::from_value(
             serde_json::to_value(artifact.payload.to_json_value()).expect("payload"),
         )
@@ -513,7 +540,10 @@ fn loan(plan: &Plan, key: &str, principal: &str, flags: &[(&str, bool)]) -> Comm
             "principal".into(),
             RuntimeValue::from(Decimal::parse(principal).expect("decimal")),
         );
-        values.insert("principal_currency".into(), RuntimeValue::from("EGP".to_owned()));
+        values.insert(
+            "principal_currency".into(),
+            RuntimeValue::from("EGP".to_owned()),
+        );
         for (flag, value) in flags {
             values.insert((*flag).into(), RuntimeValue::from(*value));
         }
@@ -536,7 +566,10 @@ fn seed(plan: &Plan) -> Commit {
             "principal".into(),
             RuntimeValue::from(Decimal::parse("1.00").expect("decimal")),
         );
-        values.insert("principal_currency".into(), RuntimeValue::from("EGP".to_owned()));
+        values.insert(
+            "principal_currency".into(),
+            RuntimeValue::from("EGP".to_owned()),
+        );
     }
     commit
 }
@@ -565,11 +598,13 @@ fn run(vocabulary: &Vocabulary, example: &Example, ontology: bool, loans: usize)
         if ontology { "ontology" } else { "plain" },
         installed.errors
     );
-    let mut cell = Cell::new(installed.store, SCOPE, |command| command.payload.clone()).expect("cell");
+    let mut cell =
+        Cell::new(installed.store, SCOPE, |command| command.payload.clone()).expect("cell");
     let seed = seed(&plan);
     let seed_records = seed.writes.len();
     let seed_links = seed.links.len();
-    cell.commit(seed).expect("the seed records close every required link");
+    cell.commit(seed)
+        .expect("the seed records close every required link");
     let _warm = norn_ir::counters::take();
     let mut samples = Vec::with_capacity(loans);
     let mut counts = Value::Null;
@@ -578,7 +613,8 @@ fn run(vocabulary: &Vocabulary, example: &Example, ontology: bool, loans: usize)
         let commit = loan(&plan, &format!("loan-{index}"), "250000.00", &[]);
         loan_writes = (commit.writes.len(), commit.links.len());
         let started = Instant::now();
-        cell.commit(commit).expect("a loan with a positive principal is admitted");
+        cell.commit(commit)
+            .expect("a loan with a positive principal is admitted");
         samples.push(started.elapsed().as_nanos());
         if index == 0 {
             let taken = norn_ir::counters::take();
@@ -593,16 +629,26 @@ fn run(vocabulary: &Vocabulary, example: &Example, ontology: bool, loans: usize)
     let refused = cell
         .commit(loan(&plan, "loan-zero", "0.00", &[]))
         .expect_err("a loan with no principal is refused");
-    let mut refusals = vec![json!({ "law": PRINCIPAL_LAW.0, "code": refused.code(), "message": refused.to_string() })];
-    assert!(refused.to_string().contains("principal") || refused.to_string().contains(PRINCIPAL_LAW.0), "{refused}");
+    let mut refusals = vec![
+        json!({ "law": PRINCIPAL_LAW.0, "code": refused.code(), "message": refused.to_string() }),
+    ];
+    assert!(
+        refused.to_string().contains("principal") || refused.to_string().contains(PRINCIPAL_LAW.0),
+        "{refused}"
+    );
     if example.laws.len() > 1 {
         let flags = [("in_default", true), ("is_deferred", true)];
         let refused = cell
             .commit(loan(&plan, "loan-deferred-default", "1000.00", &flags))
             .expect_err("a deferred loan in default is refused");
         refusals.push(json!({ "law": example.laws[1].0, "code": refused.code(), "message": refused.to_string() }));
-        cell.commit(loan(&plan, "loan-deferred", "1000.00", &[("is_deferred", true)]))
-            .expect("a deferred loan that is not in default is admitted");
+        cell.commit(loan(
+            &plan,
+            "loan-deferred",
+            "1000.00",
+            &[("is_deferred", true)],
+        ))
+        .expect("a deferred loan that is not in default is admitted");
     }
     samples.sort_unstable();
     let members = |name: &str| {
@@ -647,12 +693,19 @@ fn ledger_lending_cell_admits_and_refuses() {
 fn owl_lending_cell() {
     let dir = std::env::var("NORN_OWL_EMIT_DIR").expect("NORN_OWL_EMIT_DIR: an owl --emit-dir");
     let artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(
-        &std::fs::read_to_string(std::path::Path::new(&dir).join("artifacts.json")).expect("artifacts.json"),
+        &std::fs::read_to_string(std::path::Path::new(&dir).join("artifacts.json"))
+            .expect("artifacts.json"),
     )
     .expect("vocabulary");
     let vocabulary = Vocabulary::new(artifacts);
     let ontology = std::env::var("NORN_LENDING_MODE").map_or(true, |mode| mode != "plain");
     let loans = std::env::var("NORN_LENDING_LOANS").map_or(200, |n| n.parse().expect("count"));
+    if let Ok(path) = std::env::var("NORN_LENDING_DUMP") {
+        // The installed definitions, for a Studio rendering of the cell.
+        let plan = Plan::new(&vocabulary, &FIBO);
+        let set = definitions(&vocabulary, &plan, &FIBO, ontology);
+        std::fs::write(&path, serde_json::to_string(&set).expect("set")).expect("dump");
+    }
     let record = run(&vocabulary, &FIBO, ontology, loans);
     println!("NORN_OWL_LENDING {record}");
 }

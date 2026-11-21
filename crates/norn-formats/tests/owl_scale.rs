@@ -218,7 +218,12 @@ fn owl_scale_admission() {
             record["ontologyRegistry"] = match registry {
                 Ok(()) => json!("valid"),
                 Err(diagnostics) => {
-                    json!(registry_errors(&diagnostics).into_iter().take(5).collect::<Vec<_>>())
+                    json!(
+                        registry_errors(&diagnostics)
+                            .into_iter()
+                            .take(5)
+                            .collect::<Vec<_>>()
+                    )
                 }
             };
             record["linkRegistryMillis"] = json!(link_millis);
@@ -264,7 +269,9 @@ fn owl_scale_admission() {
                 .iter()
                 .flat_map(|dir| read_dir(dir))
                 .filter(|a| !excluded.contains(&a.artifact_id.as_str()))
-                .partition(|a| a.artifact_id.starts_with("core.") || a.artifact_id.starts_with("std."));
+                .partition(|a| {
+                    a.artifact_id.starts_with("core.") || a.artifact_id.starts_with("std.")
+                });
             let (millis, errors) = admit(&candidate, &base);
             record["artifacts"] = json!(candidate.len());
             record["base"] = json!(base.len());
