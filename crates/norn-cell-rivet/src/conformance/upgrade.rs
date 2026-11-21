@@ -2,7 +2,7 @@
 //! check lives in `norn-cell` below the host seam, so the Rivet host runs it
 //! with no host code. This probe proves it on a real actor database.
 //!
-//! - The storage version 1 and 2 fixtures (`crates/norn-cell/tests/fixtures`,
+//! - The storage version 1, 2 and 3 fixtures (`crates/norn-cell/tests/fixtures`,
 //!   written by those engines) are loaded into a fresh actor's database
 //!   through [`RivetEngine`]. Each opens through `CellStore`, upgrades in
 //!   place to this engine's storage version, and keeps its ledger and receipts
@@ -22,6 +22,7 @@ use crate::engine::RivetEngine;
 
 const STORAGE_V1: &str = include_str!("../../../norn-cell/tests/fixtures/engine-storage-v1.json");
 const STORAGE_V2: &str = include_str!("../../../norn-cell/tests/fixtures/engine-storage-v2.json");
+const STORAGE_V3: &str = include_str!("../../../norn-cell/tests/fixtures/engine-storage-v3.json");
 const IMAGE_FORMAT: &str = "norn.cell.sqlite-image/1";
 
 /// Which check the probe runs on its (fresh) actor database.
@@ -31,6 +32,8 @@ pub(crate) enum Case {
     UpgradeV1,
     /// Load the storage version 2 fixture and open it.
     UpgradeV2,
+    /// Load the storage version 3 fixture and open it.
+    UpgradeV3,
     /// Upgrade the v1 fixture, then stamp it as a newer engine would.
     Downgrade,
     /// Upgrade the v1 fixture, then give it a stamp this engine cannot read.
@@ -44,6 +47,7 @@ impl Case {
         Some(match name {
             "v1" => Self::UpgradeV1,
             "v2" => Self::UpgradeV2,
+            "v3" => Self::UpgradeV3,
             "downgrade" => Self::Downgrade,
             "unknown" => Self::UnknownStamp,
             _ => return None,
@@ -358,6 +362,7 @@ pub(crate) fn run(case: Case, fresh: &dyn Fn() -> RivetEngine) -> Result<Value, 
     match case {
         Case::UpgradeV1 => upgrade(fresh, STORAGE_V1, 1),
         Case::UpgradeV2 => upgrade(fresh, STORAGE_V2, 2),
+        Case::UpgradeV3 => upgrade(fresh, STORAGE_V3, 3),
         Case::Downgrade => refusal(
             fresh,
             &format!(

@@ -473,7 +473,7 @@ async fn on_engine<T: Send + 'static>(
 }
 
 /// ENGINE-UPGRADE-1 on this actor's database ([`upgrade`]); `case` is `v1`,
-/// `v2`, `downgrade` or `unknown`, on a fresh `object`.
+/// `v2`, `v3`, `downgrade` or `unknown`, on a fresh `object`.
 async fn engine_upgrade(ctx: &Ctx<ProbeActor>, params: &HashMap<String, String>) -> Response {
     let Some(case) = params
         .get("case")
@@ -481,7 +481,7 @@ async fn engine_upgrade(ctx: &Ctx<ProbeActor>, params: &HashMap<String, String>)
     else {
         return json_response(
             400,
-            json!({"error": "case is v1, v2, downgrade or unknown"}).to_string(),
+            json!({"error": "case is v1, v2, v3, downgrade or unknown"}).to_string(),
         );
     };
     let db = ctx.sql().clone();
