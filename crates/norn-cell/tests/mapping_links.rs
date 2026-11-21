@@ -1332,3 +1332,224 @@ fn obs_page_members_trace_under_the_default_budget() {
         "{traced:?}"
     );
 }
+
+/// MAP-DERIVATION-1 / MAP-REPROCESS-1: a holding quarantined before decimal
+/// text conformed (its bundle retains the pre-MAP-EXPLAIN-1 diagnostic and no
+/// derivation) rechecks under its own derivation, so disclosure and a replay
+/// of the same event still work and the row stays quarantined; it lands only
+/// through the explicit reprocessing path, which consumes the original.
+#[test]
+fn a_bundle_quarantined_before_decimal_text_rechecks_under_its_own_derivation_and_lands_only_when_reprocessed()
+ {
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("legacy.sqlite");
+    let mut cell = setup(&path);
+    let source = fixture("erpnext");
+    let rows = source["snapshot"].as_array().expect("rows");
+    for row in rows
+        .iter()
+        .filter(|row| row["dataset"] != "Warehouse Lot Balance")
+    {
+        capture(&mut cell, "erpnext", row, "snapshot");
+    }
+    let mut holding = rows
+        .iter()
+        .find(|row| row["dataset"] == "Warehouse Lot Balance")
+        .expect("holding")
+        .clone();
+    holding["record"]["quantity"] = json!("200.50");
+    holding["record"]["name"] = json!("SYN-ERPNEXT-legacy");
+    let id = retain_in(&mut cell, "erpnext", &holding, "snapshot", "snapshot");
+    let bundles = |cell: &Cell| {
+        cell.store().read().source_event_mapping_bundles(
+            "demo",
+            "snapshot",
+            "synthetic-erpnext",
+            "SYN-ERPNEXT-legacy",
+            "snapshot",
+        )
+    };
+    let current = bundles(&cell).expect("captured").remove(0);
+    assert!(current.diagnostics.is_empty() && !current.records.is_empty());
+    assert_eq!(current.derivation, 2);
+
+    retain_as_before_decimal_text(&path, &id, current);
+
+    // Verified under its own derivation: disclosed, and a replay of the same
+    // event is the same row, still quarantined (it was bundle_mismatch).
+    assert_eq!(bundles(&cell).expect("rechecks").len(), 1);
+    assert_eq!(
+        retain_in(&mut cell, "erpnext", &holding, "snapshot", "snapshot"),
+        id
+    );
+    let outcome = cell.process_mapping_outcome(&id).expect("outcome");
+    assert_eq!(
+        outcome.codes(),
+        vec!["mapping.runtime.invalid_record".to_owned()],
+        "{outcome:?}"
+    );
+    assert!(
+        cell.store()
+            .read()
+            .pending_observation(&id)
+            .expect("read")
+            .is_some()
+    );
+
+    // Only the explicit, governed path re-derives it, and it consumes the
+    // original.
+    let landed = cell.reprocess_quarantined_bundle(&id).expect("reprocess");
+    assert_eq!(landed, norn_cell::MappingOutcome::Landed);
+    assert!(
+        cell.store()
+            .read()
+            .pending_observation(&id)
+            .expect("read")
+            .is_none()
+    );
+    let both = bundles(&cell).expect("both recheck");
+    assert_eq!(both.len(), 2);
+    assert_eq!(both[1].reprocesses.as_deref(), Some(id.as_str()));
+    assert_eq!(
+        cell.reprocess_quarantined_bundle(&id).expect("again"),
+        norn_cell::MappingOutcome::AlreadyLanded
+    );
+    retain_in(&mut cell, "erpnext", &holding, "snapshot", "snapshot");
+    assert_eq!(
+        cell.process_mapping_outcome(&id).expect("replay"),
+        norn_cell::MappingOutcome::AlreadyLanded
+    );
+}
+
+/// Rewrite the captured inbox row `id` as a capture before
+/// MAP-DECIMAL-TEXT-1 retained it: the derivation-1 refusal, in the
+/// diagnostic shape of that time, and no derivation field.
+fn retain_as_before_decimal_text(
+    path: &Path,
+    id: &str,
+    current: norn_cell::mapping_bundle::MappingBundle,
+) {
+    let mut artifacts = fixture_artifacts();
+    artifacts.sort_by(|a, b| a.artifact_id.cmp(&b.artifact_id));
+    let mapping = artifacts
+        .iter()
+        .find(|a| a.artifact_id == "erpnext.three.mapping")
+        .expect("mapping");
+    let compiled = norn_checker::mapping::compile_mapping_artifact(mapping, &artifacts, &[])
+        .expect("compiles");
+    let payload =
+        serde_json::to_string(current.raw.get("payload").expect("payload")).expect("json");
+    let document =
+        norn_checker::mapping::SourceDocument::from_json("Warehouse Lot Balance", &payload, None)
+            .expect("document");
+    let diagnostics: Vec<RuntimeValue> = compiled
+        .apply_derived(
+            &[document],
+            &current.input.recorded_at,
+            norn_checker::mapping::Derivation::V1,
+        )
+        .expect_err("decimal text refused before MAP-DECIMAL-TEXT-1")
+        .iter()
+        .map(|refusal| norn_ir::runtime::encode(&refusal.diagnostic().to_json()).expect("encode"))
+        .collect();
+    let legacy = norn_cell::mapping_bundle::MappingBundle {
+        records: Vec::new(),
+        diagnostics,
+        derivation: 1,
+        ..current
+    };
+    let encoded =
+        serde_json::to_value(norn_ir::runtime::encode(&legacy).expect("encode")).expect("json");
+    assert!(encoded.get("derivation").is_none(), "{encoded}");
+    let db = rusqlite::Connection::open(path).expect("open");
+    let stored: String = db
+        .query_row(
+            "SELECT observed FROM _norn_inbox WHERE observation_id = ?1",
+            [id],
+            |row| row.get(0),
+        )
+        .expect("row");
+    let mut observed: Value = serde_json::from_str(&stored).expect("observed");
+    observed["input"] = encoded;
+    db.execute(
+        "UPDATE _norn_inbox SET observed = ?1 WHERE observation_id = ?2",
+        rusqlite::params![observed.to_string(), id],
+    )
+    .expect("legacy row");
+}
+
+/// The cell, holding row and inbox id of one `ERPNext` holding whose quantity
+/// is exact decimal text, retained but not processed. The main-era fixture
+/// (`fixtures/mapping-bundle-main-decimal-text.json`) was captured by this
+/// exact sequence on the merged main parent's code.
+fn decimal_text_holding(path: &Path) -> (Cell, Value, String) {
+    let mut cell = setup(path);
+    let source = fixture("erpnext");
+    let rows = source["snapshot"].as_array().expect("rows");
+    for row in rows
+        .iter()
+        .filter(|row| row["dataset"] != "Warehouse Lot Balance")
+    {
+        capture(&mut cell, "erpnext", row, "snapshot");
+    }
+    let mut holding = rows
+        .iter()
+        .find(|row| row["dataset"] == "Warehouse Lot Balance")
+        .expect("holding")
+        .clone();
+    holding["record"]["quantity"] = json!("200.50");
+    holding["record"]["name"] = json!("SYN-ERPNEXT-main");
+    let id = retain_in(&mut cell, "erpnext", &holding, "snapshot", "snapshot");
+    (cell, holding, id)
+}
+
+/// S1 (#1488): main already captured exact decimal text in unversioned
+/// bundles (MAPPING-DECIMAL-TEXT-1). Such a bundle, as main's code retained
+/// it, still rechecks and lands: unversioned evidence verifies under either
+/// historical derivation.
+#[test]
+fn an_unversioned_bundle_main_captured_with_decimal_text_rechecks_and_lands() {
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("main.sqlite");
+    let (mut cell, _holding, id) = decimal_text_holding(&path);
+    let main_bundle: Value = serde_json::from_str(include_str!(
+        "fixtures/mapping-bundle-main-decimal-text.json"
+    ))
+    .expect("fixture");
+    assert!(main_bundle.get("derivation").is_none(), "unversioned");
+    let db = rusqlite::Connection::open(&path).expect("open");
+    let stored: String = db
+        .query_row(
+            "SELECT observed FROM _norn_inbox WHERE observation_id = ?1",
+            [&id],
+            |row| row.get(0),
+        )
+        .expect("row");
+    let mut observed: Value = serde_json::from_str(&stored).expect("observed");
+    observed["input"] = main_bundle;
+    db.execute(
+        "UPDATE _norn_inbox SET observed = ?1 WHERE observation_id = ?2",
+        rusqlite::params![observed.to_string(), id],
+    )
+    .expect("main-era row");
+    drop(db);
+
+    let bundles = cell
+        .store()
+        .read()
+        .source_event_mapping_bundles(
+            "demo",
+            "snapshot",
+            "synthetic-erpnext",
+            "SYN-ERPNEXT-main",
+            "snapshot",
+        )
+        .expect("a bundle main retained rechecks");
+    assert_eq!(bundles.len(), 1);
+    assert_eq!(bundles[0].derivation, 1);
+    assert!(bundles[0].diagnostics.is_empty() && !bundles[0].records.is_empty());
+    assert_eq!(
+        cell.process_mapping_outcome(&id).expect("outcome"),
+        norn_cell::MappingOutcome::Landed
+    );
+}

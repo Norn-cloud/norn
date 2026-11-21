@@ -163,6 +163,12 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
         }
     }
 
+    /// The store, for in-crate captures the cell makes itself
+    /// (MAP-REPROCESS-1).
+    pub(crate) const fn store_mut(&mut self) -> &mut CellStore<S> {
+        &mut self.store
+    }
+
     /// Capture pinned mapping evidence while the cell owns its store.
     ///
     /// # Errors
