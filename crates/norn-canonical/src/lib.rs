@@ -1712,7 +1712,7 @@ mod direct {
     use super::JsonValue;
 
     /// `serde_json`'s raw-value token (`serde_json::raw::TOKEN`).
-    const RAW_VALUE: &str = "$serde_json::private::RawValue";
+    pub(super) const RAW_VALUE: &str = "$serde_json::private::RawValue";
     /// Nesting this deep declines, far inside the parser's own limit, so a
     /// depth refusal is always the text path's.
     const MAX_DEPTH: usize = 64;
@@ -2035,7 +2035,7 @@ mod direct {
         type Ok = JsonValue;
         type Error = Declined;
         fn serialize_key<T: Serialize + ?Sized>(&mut self, key: &T) -> Result<()> {
-            self.key = Some(key.serialize(KeySerializer)?);
+            self.key = Some(key.serialize(KeySerializer { raw: false })?);
             Ok(())
         }
         fn serialize_value<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<()> {
@@ -2063,7 +2063,9 @@ mod direct {
                 if key != RAW_VALUE || !matches!(self.raw, Raw::Pending) {
                     return Err(Declined);
                 }
-                let text = value.serialize(KeySerializer)?;
+                // Serde JSON's raw emitter takes only `serialize_str`; any
+                // other shape is its refusal, so the text path decides it.
+                let text = value.serialize(KeySerializer { raw: true })?;
                 let parsed = super::parse(text.as_bytes()).map_err(|_error| Declined)?;
                 if matches!(parsed, JsonValue::Array(_) | JsonValue::Object(_)) {
                     return Err(Declined);
@@ -2100,7 +2102,12 @@ mod direct {
     }
 
     /// Map keys: strings only (and what Serde JSON writes as one plainly).
-    struct KeySerializer;
+    /// A raw value's text (`raw`) is a string only: Serde JSON's raw emitter
+    /// refuses a `char`, a unit variant or a newtype, where a map key takes
+    /// them.
+    struct KeySerializer {
+        raw: bool,
+    }
 
     impl ser::Serializer for KeySerializer {
         type Ok = String;
@@ -2117,6 +2124,9 @@ mod direct {
             Ok(value.to_owned())
         }
         fn serialize_char(self, value: char) -> Result<String> {
+            if self.raw {
+                return Err(Declined);
+            }
             Ok(value.to_string())
         }
         fn serialize_unit_variant(
@@ -2125,6 +2135,9 @@ mod direct {
             _index: u32,
             variant: &'static str,
         ) -> Result<String> {
+            if self.raw {
+                return Err(Declined);
+            }
             Ok(variant.to_owned())
         }
         fn serialize_newtype_struct<T: Serialize + ?Sized>(
@@ -2132,7 +2145,7 @@ mod direct {
             name: &'static str,
             value: &T,
         ) -> Result<String> {
-            if name.starts_with("$serde_json::") {
+            if self.raw || name.starts_with("$serde_json::") {
                 return Err(Declined);
             }
             value.serialize(self)
@@ -2803,6 +2816,51 @@ mod direct_equivalence {
         }
         assert!(direct::to_value(&deep).is_none());
         assert!(canonical_json_of(&deep).is_err());
+    }
+
+    /// A raw value whose text is written through `serialize`, not as a
+    /// string.
+    struct RawOf<T>(T);
+
+    impl<T: Serialize> Serialize for RawOf<T> {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            use serde::ser::SerializeStruct as _;
+            let mut raw = serializer.serialize_struct(super::direct::RAW_VALUE, 1)?;
+            raw.serialize_field(super::direct::RAW_VALUE, &self.0)?;
+            raw.end()
+        }
+    }
+
+    #[derive(Serialize)]
+    enum Digit {
+        #[serde(rename = "7")]
+        Seven,
+    }
+
+    #[derive(Serialize)]
+    struct Text(&'static str);
+
+    /// #1527 S3: Serde JSON's raw emitter takes the text as a string only. A
+    /// `char`, a unit variant or a newtype is its refusal, and must be in
+    /// every build, not only where a debug cross-check runs.
+    #[test]
+    fn a_raw_value_written_as_anything_but_a_string_is_refused() {
+        assert!(canonical_json_of(&RawOf("1")).is_ok());
+        for refused in [
+            canonical_json_of(&RawOf('1')),
+            canonical_json_of(&RawOf(Digit::Seven)),
+            canonical_json_of(&RawOf(Text("1"))),
+        ] {
+            assert!(
+                matches!(refused, Err(super::CanonicalJsonError::Serialize { .. })),
+                "{refused:?}"
+            );
+        }
+        assert!(direct::to_value(&RawOf('1')).is_none());
+        assert_eq!(
+            canonical_json_of(&RawOf('1')),
+            canonical_json_of_text(&RawOf('1'))
+        );
     }
 
     fn serde_bytes_like() -> impl Serialize {
