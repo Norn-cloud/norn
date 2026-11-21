@@ -7,6 +7,8 @@
  *   host through the hosted admit, sign-off and install path, and retired
  *   when the sources drop it.
  * - APPROVAL-WHEN-1: a submit over 1000 parks; the requester never decides it.
+ * - APPROVAL-RECOVERY-1: the sign-off runs nothing; the requester's own retry
+ *   of the parked submit commits it once.
  * - DEV-ACCESS-1: the access policy decides every local principal's call,
  *   so a requester never approves their own request (structured refusal).
  * - CALLER-FIELD-1: `requester` is the caller; a caller cannot supply it.
@@ -131,8 +133,15 @@ test("purchase_requests_builder_loop: load, workflow, approval and separation of
     expect({ status: own.status, code: own.body.code }).toEqual({ status: 404, code: "decision.not_found" })
     const signed = await http(reviewer, "POST", `/v1/decisions/${decision}:decide`, { choice: "approve", idempotencyKey: "sign" })
     expect(signed.status).toBe(200)
-    expect(signed.body.call).toEqual({ committed: true })
+    // APPROVAL-RECOVERY-1: the reviewer's sign-off runs nothing. The call
+    // commits only on its requester's own authenticated retry, under the
+    // requester's current authority, exactly as approved (same key, input).
+    expect(signed.body.call).toEqual({ committed: false, state: "not_executed" })
+    expect((await request("PR-1")).values.status).toBe("draft")
+    expect((await act(developer, "submit", { request_id: "PR-1" }, "s-1")).status).toBe(200)
     expect((await request("PR-1")).values.status).toBe("submitted")
+    const replayed = await http(reviewer, "POST", `/v1/decisions/${decision}:decide`, { choice: "approve", idempotencyKey: "sign" })
+    expect(replayed.body.call).toEqual({ committed: true, state: "committed" })
 
     // ACTION-CATALOG-STATE-1: the cell offers only what can act on PR-1 now.
     const offered = async (id: string) => ((await http(reviewer, "GET", `/v1/actions?objectKind=purchasing.PurchaseRequest&objectId=${id}`)).body.items as Event[])

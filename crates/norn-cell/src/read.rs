@@ -4112,6 +4112,35 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             .next())
     }
 
+    /// The outbox command `command_id`, consumed or not: what a parked
+    /// command carried after the commit that consumed its result
+    /// (APPROVAL-RECOVERY-1 reads an approved call from it).
+    ///
+    /// # Errors
+    ///
+    /// SQL engine or decode errors.
+    pub fn outbox_command(&self, command_id: &str) -> Result<Option<OutboxCommand>, CellError> {
+        self.conn.query_optional(
+            &format!(
+                "SELECT \"command_id\", \"generation\", \"idempotency_key\", \"deadline\", \"command\" FROM \"{OUTBOX}\" WHERE \"command_id\" = ?1"
+            ),
+            params![command_id],
+            |row| {
+                let deadline: Option<i64> = row.get(3)?;
+                let command: String = row.get(4)?;
+                Ok(OutboxCommand {
+                    command_id: row.get(0)?,
+                    generation: to_u64(row.get(1)?, "generation")?,
+                    idempotency_key: row.get(2)?,
+                    deadline: deadline
+                        .map(|value| to_u64(value, "deadline"))
+                        .transpose()?,
+                    command: serde_json::from_str(&command)?,
+                })
+            },
+        )
+    }
+
     /// The unconsumed outbox row at `position`, if any, read and decoded alone.
     ///
     /// # Errors

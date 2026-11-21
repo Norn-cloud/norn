@@ -2455,6 +2455,7 @@ impl<E: SqlEngine> CellStore<E> {
         {
             conn.execute_batch(statement)?;
         }
+        conn.execute_batch(crate::decision_ledger::BACKFILL_APPROVED_CALLS)?;
         // Claim endpoints of bundles consumed before the table existed; a
         // no-op for every bundle already indexed.
         conn.execute(&crate::system::claim_endpoints_of("1"), params![])?;
@@ -3227,6 +3228,7 @@ impl<E: SqlEngine> CellStore<E> {
             .chain(&crate::due_retry::DDL) {
                         self.conn.execute_batch(statement)?;
                     }
+                    self.conn.execute_batch(crate::decision_ledger::BACKFILL_APPROVED_CALLS)?;
                     crate::retained::init(&self.conn)?;
                     crate::compute::materialize::init(&self.conn)?;
                     let binding = |key: &str| self.conn.query_optional(

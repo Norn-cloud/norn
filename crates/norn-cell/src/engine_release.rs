@@ -62,10 +62,14 @@ pub const CHANNEL: &[StorageVersion] = &[
         version: 2,
         change: "the engine stamp: _norn_meta `engine` records the storage version and the release that wrote it",
     },
+    StorageVersion {
+        version: 3,
+        change: "APPROVAL-RECOVERY-1 (#1483): the ledger events norn.approval.refused, norn.approval.consumed and norn.step.call_owned, and their ledger-derived tables _norn_approved_call and _norn_step_call",
+    },
 ];
 
 /// The storage version this engine writes.
-pub const STORAGE_VERSION: u32 = 2;
+pub const STORAGE_VERSION: u32 = 3;
 
 /// The oldest storage version this engine upgrades in place. Raising it
 /// retires the steps below it; an older cell must first open on a bridge
@@ -310,7 +314,11 @@ fn run_chain(
 fn migrate_to<E: SqlEngine>(_engine: &E, to: u32) -> Result<(), CellError> {
     match to {
         // Version 2 adds the stamp alone, which `upgrade` writes after the chain.
-        2 => Ok(()),
+        // Version 3 adds the approval recovery tables. They derive from the
+        // ledger alone: the schema statements that follow the chain create
+        // them, and `BACKFILL_APPROVED_CALLS` fills `_norn_approved_call`
+        // from the cell's own approving decisions. No row is rewritten.
+        2 | 3 => Ok(()),
         _ => Err(CellError::EngineUpgradeUnsupported {
             cell: to.saturating_sub(1),
             engine: STORAGE_VERSION,
