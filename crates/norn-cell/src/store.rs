@@ -2668,7 +2668,7 @@ impl<E: SqlEngine> CellStore<E> {
     /// keeps the previous checkpoint, which still anchors the file, and is
     /// reported, never hidden: the next open verifies more, never less.
     fn checkpoint_after_commit(&self, commits: u64) {
-        if commits == 0 || commits % crate::open_checkpoint::EVERY != 0 {
+        if commits == 0 || !commits.is_multiple_of(crate::open_checkpoint::EVERY) {
             return;
         }
         let recorded = self.verified_head().and_then(|head| {
