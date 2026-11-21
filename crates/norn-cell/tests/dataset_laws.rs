@@ -260,17 +260,39 @@ fn csv(lines: &[Line]) -> String {
     out
 }
 
-/// A landing of `bytes` under `attempt`, checked by every rule of the cell.
-fn begin(
+/// Land `bytes`, checked by every rule of the cell, in an attempt the
+/// engine mints: the request (naming that attempt, for its settles and
+/// store) and the landing's first answer.
+fn land(
     engine: &Engine,
     cell: &Cell,
     bytes: &[u8],
     format: FileFormat,
-    attempt: &str,
-) -> LandRequest {
-    let (_path, mut file) = engine.begin_attempt(&tenant(), attempt).expect("begun");
-    file.write_all(bytes).expect("source");
-    drop(file);
+) -> (LandRequest, LandResponse) {
+    let mut request = land_request(cell, bytes, format);
+    let landed = engine
+        .land(&request, |mut file| {
+            file.write_all(bytes).expect("source");
+            Ok(())
+        })
+        .expect("landed");
+    request.attempt.clone_from(&landed.attempt);
+    (request, landed)
+}
+
+/// The files an attempt wrote under the engine directory `root`.
+fn files(root: &std::path::Path, attempt: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+    let dir = root
+        .join("t")
+        .join(tenant().as_str())
+        .join("scratch")
+        .join(attempt);
+    (dir.join("data.parquet"), dir.join("held.parquet"))
+}
+
+/// A landing of `bytes`, checked by every rule of the cell. It names no
+/// attempt: the engine mints one.
+fn land_request(cell: &Cell, bytes: &[u8], format: FileFormat) -> LandRequest {
     let store = cell.store();
     let table = store.analytics_table(TYPE).expect("table");
     let checks = store.dataset_checks(TYPE, &table).expect("checks");
@@ -291,7 +313,7 @@ fn begin(
             .dataset_pins(TYPE, &BTreeMap::new(), "bench.dataset.mapping@test")
             .expect("pins"),
         landing: "landing-1".into(),
-        attempt: attempt.into(),
+        attempt: String::new(),
         checks,
         residue_page: 7,
     }
@@ -411,11 +433,10 @@ fn set_based(cell: &Cell, lines: &[Line]) -> SetBased {
 
 /// [`set_based`], of a file of the lines in `format`.
 fn set_based_file(cell: &Cell, bytes: &[u8], format: FileFormat) -> SetBased {
-    let (_dir, engine) = engine();
-    let request = begin(&engine, cell, bytes, format, "a1");
-    let landed = engine.land(&request).expect("landed");
+    let (dir, engine) = engine();
+    let (request, landed) = land(&engine, cell, bytes, format);
     let (landed, residue, rows) = settle_all(&engine, cell, &request, landed);
-    let (data, held_path) = engine.landed_files(&tenant(), "a1").expect("files");
+    let (data, held_path) = files(dir.path(), &landed.attempt);
     let mut findings = BTreeSet::new();
     let mut held = BTreeSet::new();
     for (row, rule, holds) in parquet_rows(&held_path, "\":rule\", \":holds\"") {
@@ -645,14 +666,7 @@ fn a_reader_sees_no_row_of_a_landing_until_it_is_stored() {
             occurred_at: INSTANTS[0],
         })
         .collect();
-    let request = begin(
-        &engine,
-        &cell,
-        csv(&first).as_bytes(),
-        FileFormat::Csv,
-        "a1",
-    );
-    let landed = engine.land(&request).expect("landed");
+    let (request, landed) = land(&engine, &cell, csv(&first).as_bytes(), FileFormat::Csv);
     let (landed, _, _) = settle_all(&engine, &cell, &request, landed);
     let (data, held) = (
         landed.data.clone().expect("data"),
@@ -694,25 +708,11 @@ fn a_reader_sees_no_row_of_a_landing_until_it_is_stored() {
             occurred_at: INSTANTS[2],
         })
         .collect();
-    let again = begin(
-        &engine,
-        &cell,
-        csv(&second).as_bytes(),
-        FileFormat::Csv,
-        "a2",
-    );
-    let pending = engine.land(&again).expect("landed with residue");
+    let (again, pending) = land(&engine, &cell, csv(&second).as_bytes(), FileFormat::Csv);
     assert!(pending.residue_total > 0 && pending.data.is_none());
     assert_eq!(read(&stored).expect("unchanged"), current);
     // A retry is its own attempt; the first attempt's residue is untouched.
-    let retry = begin(
-        &engine,
-        &cell,
-        csv(&second).as_bytes(),
-        FileFormat::Csv,
-        "a3",
-    );
-    let retried = engine.land(&retry).expect("retried");
+    let (retry, retried) = land(&engine, &cell, csv(&second).as_bytes(), FileFormat::Csv);
     assert_eq!(retried.residue_total, pending.residue_total);
     // A settle whose findings fail their check refuses and drops the attempt.
     let forged = SettleRequest {
@@ -737,19 +737,12 @@ fn a_reader_sees_no_row_of_a_landing_until_it_is_stored() {
             })
             .expect_err("the attempt is gone")
             .code,
-        "core.compute.stale_input"
+        norn_cell::analytics::engine::ATTEMPT_UNKNOWN
     );
     assert_eq!(read(&stored).expect("unchanged"), current);
     // The retry settles on its own and lands what a clean run lands.
     let (retried, _, _) = settle_all(&engine, &cell, &retry, retried);
-    let clean = begin(
-        &engine,
-        &cell,
-        csv(&second).as_bytes(),
-        FileFormat::Csv,
-        "a4",
-    );
-    let clean_landed = engine.land(&clean).expect("landed");
+    let (clean, clean_landed) = land(&engine, &cell, csv(&second).as_bytes(), FileFormat::Csv);
     let (clean_landed, _, _) = settle_all(&engine, &cell, &clean, clean_landed);
     assert_eq!(
         (retried.data, retried.held, retried.findings),
@@ -763,7 +756,7 @@ fn a_reader_sees_no_row_of_a_landing_until_it_is_stored() {
 #[test]
 fn parquet_instants_import_with_every_nanosecond_and_their_instant() {
     let (_dir, cell) = cell(&[]);
-    let (_engine_dir, engine) = engine();
+    let (engine_dir, engine) = engine();
     let scratch = tempfile::tempdir().expect("scratch");
     let conn = duckdb::Connection::open_in_memory().expect("writer");
     let mut landed_instants = Vec::new();
@@ -792,10 +785,9 @@ fn parquet_instants_import_with_every_nanosecond_and_their_instant() {
         ))
         .expect("parquet written");
         let bytes = std::fs::read(&path).expect("parquet");
-        let request = begin(&engine, &cell, &bytes, FileFormat::Parquet, attempt);
-        let landed = engine.land(&request).expect("landed");
+        let (_request, landed) = land(&engine, &cell, &bytes, FileFormat::Parquet);
         assert_eq!(landed.residue_total, 0);
-        let (data, _) = engine.landed_files(&tenant(), attempt).expect("files");
+        let (data, _) = files(engine_dir.path(), &landed.attempt);
         landed_instants.extend(
             parquet_rows(&data, "occurred_at, CAST(NULL AS BOOLEAN)")
                 .into_iter()

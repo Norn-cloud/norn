@@ -32,6 +32,10 @@
 //! has its own scratch directory (exports and `DuckDB` spill), and each
 //! landing attempt downloads into a directory of its own that the engine
 //! creates exclusively (MANIFEST-02); nothing in a request names a path.
+//! The engine mints each attempt's token itself and holds the attempt for
+//! one operation at a time; that operation is its one cleanup owner, so a
+//! store, replayed or not, never removes an attempt still downloading or
+//! one a later landing made.
 
 use std::ffi::OsString;
 use std::io::{BufRead as _, BufReader, Read as _, Write as _};
@@ -223,10 +227,39 @@ pub fn run(config: Config) -> std::io::Result<()> {
 /// # Errors
 /// The engine directory cannot be opened.
 pub fn serve(listener: &TcpListener, config: Config, clock: Arc<dyn Clock>) -> std::io::Result<()> {
+    serve_with(listener, config, clock, Arc::new(NoSeam))
+}
+
+/// Points in a call the daemon announces to a [`Seam`], so a test can run
+/// other calls there and interleave them deterministically.
+pub trait Seam: Send + Sync {
+    /// A `/v1/store` of `tenant` returned from the engine, `stored` or
+    /// refused, and its answer is not yet sent.
+    fn stored(&self, tenant: &TenantId, stored: bool) {
+        let _unused = (tenant, stored);
+    }
+}
+
+/// The seam of a production daemon: announces nothing.
+pub struct NoSeam;
+
+impl Seam for NoSeam {}
+
+/// [`serve`], announcing each [`Seam`] point to `seam`.
+///
+/// # Errors
+/// The engine directory cannot be opened.
+pub fn serve_with(
+    listener: &TcpListener,
+    config: Config,
+    clock: Arc<dyn Clock>,
+    seam: Arc<dyn Seam>,
+) -> std::io::Result<()> {
     let engine = Arc::new(Engine::new(config.settings)?);
     let gate = Arc::new(Gate {
         keys_file: config.keys_file,
         clock,
+        seam,
     });
     let active = Arc::new(AtomicUsize::new(0));
     for stream in listener.incoming().flatten() {
@@ -256,6 +289,7 @@ pub fn serve(listener: &TcpListener, config: Config, clock: Arc<dyn Clock>) -> s
 struct Gate {
     keys_file: PathBuf,
     clock: Arc<dyn Clock>,
+    seam: Arc<dyn Seam>,
 }
 
 /// The one field the scope check reads before the request is routed or
@@ -430,7 +464,11 @@ fn connection(stream: &TcpStream, engine: &Engine, gate: &Gate) -> std::io::Resu
         "/v1/page" => call.answer(|r: PageRequest| engine.page(&r)),
         "/v1/land" => call.answer(|r: LandRequest| land(engine, &r)),
         "/v1/settle" => call.answer(|r: SettleRequest| settle(engine, &r)),
-        "/v1/store" => call.answer(|r: StoreRequest| store(engine, &r)),
+        "/v1/store" => call.answer(|r: StoreRequest| {
+            let stored = store(engine, &r);
+            gate.seam.stored(&tenant, stored.is_ok());
+            stored
+        }),
         "/v1/export" => export(&call, engine),
         _ => refuse(
             stream,
@@ -631,52 +669,35 @@ fn upload(agent: &ureq::Agent, url: &str, path: &std::path::Path, sha256: &str) 
     }
 }
 
-/// MANIFEST-LAND-1: download the presigned source into the attempt's own
-/// directory and land it there. A failed landing removes the attempt.
+/// MANIFEST-LAND-1: land the presigned source in a fresh attempt the engine
+/// mints, downloading it into the attempt's own source file. The engine
+/// holds the attempt throughout; a failed landing removes it.
 fn land(engine: &Engine, request: &LandRequest) -> Outcome<LandResponse> {
-    let tenant = &request.load.tenant;
-    let (_path, file) = engine.begin_attempt(tenant, &request.attempt)?;
-    let landed =
-        download(&agent(), &request.load.file.url, file).and_then(|()| engine.land(request));
-    if landed.is_err() {
-        engine.end_attempt(tenant, &request.attempt);
-    }
-    landed
+    engine.land(request, |file| {
+        download(&agent(), &request.load.file.url, file)
+    })
 }
 
-/// MANIFEST-LAWS-1: settle an attempt's residue rows; a refused settle
-/// removes the attempt.
+/// MANIFEST-LAWS-1: settle an attempt's residue rows. The engine's settle
+/// takes the attempt by its token and owns its cleanup: a refused settle
+/// removes the attempt it took, and nothing else.
 fn settle(engine: &Engine, request: &SettleRequest) -> Outcome<LandResponse> {
-    let settled = engine.settle(request);
-    if settled.is_err() {
-        engine.end_attempt(&request.land.load.tenant, &request.land.attempt);
-    }
-    settled
+    engine.settle(request)
 }
 
 /// MANIFEST-LAND-1: send an attempt's landed files to their content-addressed
 /// objects, each only if the bytes sent are its answered digest, then keep
-/// them for the dataset's cache identity. The attempt is removed either way.
+/// them for the dataset's cache identity. The engine's store owns the
+/// attempt's cleanup; nothing here removes anything.
 fn store(engine: &Engine, request: &StoreRequest) -> Outcome<LandResponse> {
-    let tenant = &request.land.load.tenant;
-    let attempt = &request.land.attempt;
-    let stored = engine
-        .landed_files(tenant, attempt)
-        .and_then(|(data, held)| {
-            let (Some(data_file), Some(held_file)) = (&request.landed.data, &request.landed.held)
-            else {
-                return Err(refusal(
-                    "analytics.invalid",
-                    "the landing has residue to settle",
-                ));
-            };
-            let agent = agent();
-            upload(&agent, &request.data.url, &data, &data_file.sha256)?;
-            upload(&agent, &request.held.url, &held, &held_file.sha256)?;
-            engine.store(request)
-        });
-    engine.end_attempt(tenant, attempt);
-    stored
+    let sha256 = |file: &Option<norn_cell::analytics::LandedFile>| {
+        file.as_ref().map(|file| file.sha256.clone()).unwrap_or_default()
+    };
+    engine.store(request, |data, held| {
+        let agent = agent();
+        upload(&agent, &request.data.url, data, &sha256(&request.landed.data))?;
+        upload(&agent, &request.held.url, held, &sha256(&request.landed.held))
+    })
 }
 
 /// Export into a scratch file, stream it as the body, then delete it.

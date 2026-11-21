@@ -1237,8 +1237,8 @@ const MAX_LAND_STEPS: usize = 100_000;
 const RESIDUE_PAGE: u32 = 2_000;
 
 /// MANIFEST-LAND-1: type `record` by `object_type` on the engine, land it
-/// as the data and held-set Parquet files under a fresh attempt, and store
-/// them at their content-addressed objects.
+/// as the data and held-set Parquet files under an attempt the engine
+/// mints, and store them at their content-addressed objects.
 ///
 /// MANIFEST-01: the landing's identity is the digest of its whole request
 /// without the attempt: the file, the table, the binding and the pins it is
@@ -1299,13 +1299,8 @@ fn land_upload<E: SqlEngine>(
         [&identity, &settle_digest, &store_digest].contains(&&answer.digest)
     };
     let mut answer = transport.resumed().filter(ours);
-    // A fresh attempt is this request's own; an answer names the attempt it ran as.
-    request.attempt = format!(
-        "a{}",
-        hex_digest(format!("{identity}\n{now_ms}").as_bytes())
-            .get(..32)
-            .unwrap_or_default()
-    );
+    // OLAP-02: the engine mints the attempt (a landing names none); an
+    // answer names the attempt it ran as, and the store takes exactly that.
     let unconfigured = || Refusal::host("the object store is not configured");
     let mut call = EngineCall {
         op: "land".to_owned(),
