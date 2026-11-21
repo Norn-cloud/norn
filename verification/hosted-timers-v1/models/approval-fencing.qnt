@@ -25,11 +25,16 @@
 // before dispatch (server.rs, principal.rs) and the epoch is taken after
 // (actions.rs call_action, call_action_bound). The issuer revokes a grant at
 // any time, independently of the epoch, and a token minted before the
-// revocation stays valid for its lifetime (at most MAX_LIFETIME_SECONDS, 300 s,
-// crates/norn-api/src/principal.rs). So the guarantee is "never under
-// authority older than the request's own verified token": revocation reaches
-// an approved call within one token lifetime, as it reaches live reads
-// (UI-LIVE-1). The witness witnessOutstandingTokenExecutes shows the gap is
+// revocation stays valid until it expires. The verifier
+// (crates/norn-api/src/principal.rs) caps the signed lifetime exp - iat at
+// MAX_LIFETIME_SECONDS (300 s) but accepts exp with LEEWAY_SECONDS (30 s) of
+// leeway, and the dispatch decides on the principal verified at request entry
+// without re-checking expiry at the commit. So the guarantee is "only under
+// the authority of the request's own verified token": revocation reaches an
+// approved call at most 330 s after the iat of the newest token minted before
+// it, plus the duration of a request verified before then, which may still
+// commit, as for live reads (UI-LIVE-1). The model has no time: those bounds
+// are the code's. The witness witnessOutstandingTokenExecutes shows the gap is
 // real, not hidden by the model.
 //
 // A supporting check of the hosted approval path. It is not evidence for
@@ -48,9 +53,13 @@
 //      call (APPROVAL-RECOVERY-1);
 //   F5 the requester's retry is decided under the authority of its own
 //      verified token, never the roles recorded when the call parked;
-//   F6 the verified principal lives exactly as long as its request
-//      (RequestScope, end_request): a retry never decides on a principal an
-//      earlier request left behind.
+//   F6 each request records its own verified principal in the slot
+//      (`principals.resolve`, which replaces the slot on every request)
+//      before its dispatch reads it: a retry never decides on a principal an
+//      earlier request left behind. The mutant is a read-before-replace
+//      regression (the authority read from the slot before resolve records
+//      this request's token); removing end_request alone does not produce it
+//      on this route, since resolve replaces the slot first.
 module approval_fencing {
   type Def = str -> int
   // A verified grant: whether it allows the call, and which token it came
@@ -62,7 +71,7 @@ module approval_fencing {
     narrowDigest: bool,
     decideExecutes: bool,
     parkedAuthority: bool,
-    staleSlot: bool,
+    readBeforeReplace: bool,
   }
   pure val NOMUT: Mut = {
     unfencedCheck: false,
@@ -70,7 +79,7 @@ module approval_fencing {
     narrowDigest: false,
     decideExecutes: false,
     parkedAuthority: false,
-    staleSlot: false,
+    readBeforeReplace: false,
   }
 
   pure val CALLS = Set(1, 2)
@@ -240,10 +249,12 @@ module approval_fencing {
   // token's grant.
   // Mutant (F1): the read is released as soon as the command is compared.
   // Mutant (F5): the authority is the one recorded when the call parked.
-  // Mutant (F6): the authority is the principal the last request left.
+  // Mutant (F6): read-before-replace: the authority is read from the slot
+  // before this request's token is recorded in it, so it is the principal
+  // the previous request left.
   action retry(c: int, m: Mut): bool = all {
     state.get(c) == "approved",
-    val used = if (m.parkedAuthority) parkedAuth.get(c) else if (m.staleSlot) slot else token
+    val used = if (m.parkedAuthority) parkedAuth.get(c) else if (m.readBeforeReplace) slot else token
     all {
       usedAuth' = usedAuth.set(c, used),
       allowed' = allowed.set(c, used.grant),
@@ -343,7 +354,7 @@ module approval_fencing {
   action stepNarrowDigest = stepWith({ ...NOMUT, narrowDigest: true })
   action stepDecideExecutes = stepWith({ ...NOMUT, decideExecutes: true })
   action stepParkedAuthority = stepWith({ ...NOMUT, parkedAuthority: true })
-  action stepStaleSlot = stepWith({ ...NOMUT, staleSlot: true })
+  action stepReadBeforeReplace = stepWith({ ...NOMUT, readBeforeReplace: true })
 
   def typeOk: bool = and {
     revisions >= 0, revisions <= MAX_REVISIONS,
@@ -355,16 +366,17 @@ module approval_fencing {
   }
 
   // No stale-approved step executes: a step runs only under exactly the
-  // definition the approval it consumed was given for, and only under a
-  // grant no older than the verified token of the request that ran it (none
-  // under a token that carries no grant). Authority is as of the request's
+  // definition the approval it consumed was given for, and only under the
+  // grant of the verified token of the request that ran it: that token's
+  // own, never an older or a newer one (none under a token that carries no
+  // grant). Authority is as of the request's
   // own verified token: an issuer revocation that no token carries yet is
   // not seen (witnessOutstandingTokenExecutes).
   def noStaleApprovedExecution: bool = CALLS.forall(c =>
     state.get(c) == "executed" implies and {
       ran.get(c) == consumed.get(c),
       ranAuth.get(c).grant,
-      ranAuth.get(c).gen >= ranRequest.get(c).gen,
+      ranAuth.get(c) == ranRequest.get(c),
     })
 
   def safety: bool = and { typeOk, noStaleApprovedExecution }

@@ -289,11 +289,21 @@ after the call parked is revoked for it once the requester's token no longer
 carries it. The authority is as of that token, not the issuer's state at the
 commit: the cell keeps no membership store, the token's roles are resolved
 before the dispatch takes the definition epoch, and the dispatch decides on
-that request's verified principal only. An issuer revocation therefore
-reaches an approved call within one token lifetime (at most 300 s), as it
-reaches live reads (UI-LIVE-1); a retry under a token verified before the
-revocation can still run the call. The approval fencing model checks exactly
-this guarantee (verification/hosted-timers-v1, `noStaleApprovedExecution`). The dispatch takes the request's authenticated principal apart
+that request's verified principal only. The bound on revocation is the
+token verifier's, as it is for live reads (UI-LIVE-1): the verifier refuses a
+token whose signed lifetime (`exp` minus `iat`) exceeds 300 s
+(`MAX_LIFETIME_SECONDS`), but accepts it until 30 s past its `exp`
+(`LEEWAY_SECONDS`, on the cell's clock); the token is verified once, at
+request entry, and the dispatch decides on that principal without checking
+expiry again at the commit. An issuer revocation therefore reaches an
+approved call at most 330 s after the `iat` of the newest token minted before
+it (300 s signed lifetime plus 30 s leeway), plus the duration of any request
+verified before then: such a request may still commit the call after its
+token has expired. A retry under a token verified before the revocation can
+run the call. The approval fencing model checks exactly this guarantee
+(verification/hosted-timers-v1, `noStaleApprovedExecution`); it does not
+model time, so the 300 s, the leeway and the request duration are the code's
+bound, not the model's. The dispatch takes the request's authenticated principal apart
 from the subject the call runs as, and consumes an approval only when that
 principal is the parked requester (the same subject, actor kind and role
 table), compared under its own hold; any other principal gets the opaque

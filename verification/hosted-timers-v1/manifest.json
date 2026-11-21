@@ -285,10 +285,10 @@
           "meaning": "#1483 APPROVAL-RECOVERY-1 S2: the requester's retry is decided under the token recorded at park, older than the retry's own verified token"
         },
         {
-          "step": "stepStaleSlot",
+          "step": "stepReadBeforeReplace",
           "invariant": "noStaleApprovedExecution",
           "maxSteps": 6,
-          "meaning": "#1471 Sol round 2 S1: the verified principal outlives its request (no RequestScope / end_request), so a retry is decided on the principal an earlier request left, older than its own token"
+          "meaning": "#1471 Sol round 2 S1, round 3 S3: read-before-replace regression: the retry's authority is read from the principal slot before resolve records this request's verified token in it, so the retry is decided on the principal the previous request left, older than its own token (on this route resolve replaces the slot on every request before dispatch, so removing end_request alone does not produce this)"
         }
       ],
       "witnesses": [
@@ -340,7 +340,7 @@
         "seeds": 24,
         "test": "crates/norn-cell-do/tests/approval_fencing_quint.rs"
       },
-      "guarantee": "Authority is as of the request's own verified token, not the issuer's state now: an approved call executes only under exactly the definition its consumed approval was given for, and only under a grant no older than the verified token of the request that ran it. The cell keeps no membership store; the token's roles are resolved before dispatch and the definition epoch is taken after, so an issuer revocation reaches an approved call within one token lifetime (at most 300 s, MAX_LIFETIME_SECONDS), as it reaches live reads (UI-LIVE-1). A call can run after the issuer revoked the grant, under a token verified before the revocation (witnessOutstandingTokenExecutes)."
+      "guarantee": "Authority is as of the request's own verified token, not the issuer's state now: an approved call executes only under exactly the definition its consumed approval was given for, and only under the grant of the verified token of the request that ran it. The cell keeps no membership store; the token's roles are resolved before dispatch and the definition epoch is taken after, so the bound on revocation is the verifier's, as for live reads (UI-LIVE-1): it caps a token's signed lifetime (exp - iat) at 300 s (MAX_LIFETIME_SECONDS) but accepts it until 30 s past exp (LEEWAY_SECONDS), and the dispatch decides on the principal verified at request entry without re-checking expiry at the commit. An issuer revocation therefore reaches an approved call at most 330 s after the iat of the newest token minted before it, plus the duration of any request verified before then, which may still commit. A call can run after the issuer revoked the grant, under a token verified before the revocation (witnessOutstandingTokenExecutes)."
     }
   ],
   "notProved": [
@@ -348,7 +348,7 @@
     "Progress is bounded response under explicit fairness (A2) and a fault budget (A3), checked as invariants to the BMC depth; it is not unbounded LTL liveness with weak fairness.",
     "Bounded: Apalache BMC to the stated depths over three item slots, one request in flight, budget two, logical time 0..7, two calls, two revisions, two issuer changes and three tokens; nothing beyond those bounds is claimed.",
     "A decider's own resolution is one step (its record-then-commit crash window is its caller's retry, not the wake's); live-law validation at install, sync scheduling against the global sync lease and the published severity of defs.live_data_unchecked are not modelled.",
-    "Token lifetime is not modelled as time: a token carries the issuer's grant as of its minting until the requester's next token, with no expiry; the 300 s bound (MAX_LIFETIME_SECONDS) is the code's, not the model's. A re-check of the grant against the issuer under the dispatch's hold is not a property of the code and is not claimed."
+    "Token lifetime is not modelled as time: a token carries the issuer's grant as of its minting until the requester's next token, with no expiry; the bound (300 s signed lifetime, MAX_LIFETIME_SECONDS, plus 30 s verification leeway, LEEWAY_SECONDS, plus the duration of a request verified before expiry, which may still commit) is the code's, not the model's. A re-check of the grant against the issuer under the dispatch's hold is not a property of the code and is not claimed."
   ],
   "conformanceGate": "hosted-timers-conformance"
 }
