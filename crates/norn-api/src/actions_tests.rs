@@ -988,8 +988,16 @@ fn a_warm_host_refuses_definitions_edited_in_place_as_a_fresh_host_does() {
             .insert("edited".into(), json!(true));
     };
     for (table, column, edit) in [
-        ("_norn_definition_version", "canonical_set", drop_last_artifact),
-        ("_norn_definition_admission_receipt", "receipt", annotate_receipt),
+        (
+            "_norn_definition_version",
+            "canonical_set",
+            drop_last_artifact,
+        ),
+        (
+            "_norn_definition_admission_receipt",
+            "receipt",
+            annotate_receipt,
+        ),
     ] {
         let (_dir, a, b) = twin_files(DERIVES_LOSS);
         let warm = open_melt(&a, DERIVES_LOSS);
@@ -999,7 +1007,15 @@ fn a_warm_host_refuses_definitions_edited_in_place_as_a_fresh_host_does() {
         let warming = melt_body("melt-1", "12", "10", "one");
         // The first call verifies and keeps the retained set; the twin takes
         // the same commit, so both files hold the same cell.
-        call_at(&warm, &scoped("org_demo"), operator, MELT_ACTION, &warming, first).unwrap();
+        call_at(
+            &warm,
+            &scoped("org_demo"),
+            operator,
+            MELT_ACTION,
+            &warming,
+            first,
+        )
+        .unwrap();
         call_at(
             &open_melt(&b, DERIVES_LOSS),
             &scoped("org_demo"),
@@ -1015,7 +1031,14 @@ fn a_warm_host_refuses_definitions_edited_in_place_as_a_fresh_host_does() {
         let before = dump(&warm);
         let body = melt_body("melt-2", "12", "10", "two");
         let answer = |host: &DevHost<NativeEngine>| {
-            call_at(host, &scoped("org_demo"), operator, MELT_ACTION, &body, later)
+            call_at(
+                host,
+                &scoped("org_demo"),
+                operator,
+                MELT_ACTION,
+                &body,
+                later,
+            )
         };
         let warm_answer = answer(&warm);
         let fresh = {
@@ -1038,7 +1061,11 @@ fn a_warm_host_refuses_definitions_edited_in_place_as_a_fresh_host_does() {
             // A fresh host that refuses to open serves nothing: a host refusal.
             Err(_refused_open) => assert_eq!(refused.status, 500, "{column}: {refused:?}"),
         }
-        assert_eq!(dump(&warm), before, "{column}: a refused call writes nothing");
+        assert_eq!(
+            dump(&warm),
+            before,
+            "{column}: a refused call writes nothing"
+        );
         // A refused verification is never kept: the next call refuses again.
         assert_eq!(
             format!("{:?}", answer(&warm)),
