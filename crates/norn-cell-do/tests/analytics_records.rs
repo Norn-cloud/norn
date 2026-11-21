@@ -49,30 +49,22 @@ impl Transport for Loading {
                 // MANIFEST-02: the download goes into the attempt's own file.
                 let request: LandRequest = serde_json::from_str(&call.body).expect("a landing");
                 let bytes = self.1.lock().unwrap()[&request.load.file.url].clone();
-                engine
-                    .begin_attempt(&request.load.tenant, &request.attempt)
-                    .and_then(|(_path, mut file)| {
-                        use std::io::Write as _;
-                        file.write_all(&bytes).expect("source file");
-                        drop(file);
-                        engine.land(&request)
-                    })
+                engine.land(&request, |mut file| {
+                    use std::io::Write as _;
+                    file.write_all(&bytes).expect("source file");
+                    Ok(())
+                })
             }
             "store" => {
                 // MANIFEST-LAND-1: the landed files go to their PUT URLs.
                 let request: StoreRequest = serde_json::from_str(&call.body).expect("a store");
-                let tenant = &request.land.load.tenant;
-                let (data, held) = engine
-                    .landed_files(tenant, &request.land.attempt)
-                    .expect("files");
-                let mut files = self.1.lock().unwrap();
-                for (url, path) in [(&request.data.url, &data), (&request.held.url, &held)] {
-                    files.insert(url.clone(), std::fs::read(path).expect("landed file"));
-                }
-                drop(files);
-                let stored = engine.store(&request);
-                engine.end_attempt(tenant, &request.land.attempt);
-                stored
+                engine.store(&request, |data, held| {
+                    let mut files = self.1.lock().unwrap();
+                    for (url, path) in [(&request.data.url, data), (&request.held.url, held)] {
+                        files.insert(url.clone(), std::fs::read(path).expect("landed file"));
+                    }
+                    Ok(())
+                })
             }
             _ => return self.0.call(call),
         };

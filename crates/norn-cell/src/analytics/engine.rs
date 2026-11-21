@@ -67,6 +67,70 @@ pub struct Settings {
 pub struct Engine {
     settings: Settings,
     tenants: Mutex<BTreeMap<TenantId, Arc<Mutex<Connection>>>>,
+    /// OLAP-02: the landing attempts this engine minted and still holds, by
+    /// tenant and token. An attempt exists from the moment its directory is
+    /// created until its one owner removes it; while an operation holds it
+    /// (`leased`) no other operation may touch it.
+    attempts: Mutex<BTreeMap<(TenantId, String), Held>>,
+}
+
+/// OLAP-02: one held landing attempt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Held {
+    /// An operation (the landing's download and load, or a store) holds it.
+    leased: bool,
+    /// The landing identity it landed, once landed; only a store of that
+    /// landing may take it.
+    landing: Option<String>,
+}
+
+/// A refusal of a landing attempt this engine does not hold (never minted,
+/// or already removed by its owner).
+pub const ATTEMPT_UNKNOWN: &str = "bulk.attempt_unknown";
+/// A refusal of a landing attempt another operation holds: its download or
+/// load is still running, or another store of it is.
+pub const ATTEMPT_BUSY: &str = "bulk.attempt_busy";
+
+/// OLAP-02: exclusive use of one landing attempt, minted by the engine
+/// ([`Engine::land`]) or taken by a store of its landing. The lease is the
+/// attempt's one cleanup owner: dropped, it removes the attempt's directory
+/// and forgets the attempt, unless it was released as landed. Nothing else
+/// removes an attempt, and nothing names one but its engine-minted token.
+struct Lease<'e> {
+    engine: &'e Engine,
+    tenant: TenantId,
+    token: String,
+    dir: PathBuf,
+    /// Set when the attempt landed: the lease then releases it, kept, for a
+    /// store of this landing.
+    landed: Option<String>,
+}
+
+impl Lease<'_> {
+    fn files(&self) -> (PathBuf, PathBuf) {
+        (self.dir.join("data.parquet"), self.dir.join("held.parquet"))
+    }
+}
+
+impl Drop for Lease<'_> {
+    fn drop(&mut self) {
+        let key = (self.tenant.clone(), std::mem::take(&mut self.token));
+        if let Some(landing) = self.landed.take() {
+            let mut attempts = self.engine.attempts();
+            attempts.insert(
+                key,
+                Held {
+                    leased: false,
+                    landing: Some(landing),
+                },
+            );
+            return;
+        }
+        // Held by this lease alone, so no other operation can be using the
+        // directory, and its token is never minted again.
+        let _removed = std::fs::remove_dir_all(&self.dir);
+        self.engine.attempts().remove(&key);
+    }
 }
 
 fn ident(name: &str) -> String {
@@ -151,6 +215,7 @@ impl Engine {
         Ok(Self {
             settings,
             tenants: Mutex::new(BTreeMap::new()),
+            attempts: Mutex::new(BTreeMap::new()),
         })
     }
 
@@ -213,61 +278,86 @@ impl Engine {
         Ok(dir)
     }
 
-    /// MANIFEST-02: the directory of one landing attempt of `tenant`.
-    fn attempt_dir(&self, tenant: &TenantId, attempt: &str) -> Outcome<PathBuf> {
-        let valid = !attempt.is_empty()
-            && attempt.len() <= 80
-            && attempt.bytes().all(|b| b.is_ascii_alphanumeric());
-        if !valid {
-            return Err(refusal(
-                "analytics.invalid",
-                "an attempt is 1 to 80 letters and digits",
-            ));
-        }
-        Ok(self.private(tenant)?.join("scratch").join(attempt))
+    fn attempts(&self) -> std::sync::MutexGuard<'_, BTreeMap<(TenantId, String), Held>> {
+        self.attempts.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// MANIFEST-02: begin a landing attempt of `tenant`: its directory,
-    /// created here and only here (an attempt that exists already refuses),
-    /// and its source file, created empty for the caller to write the
-    /// downloaded object into. The landing reads that file and nothing else.
-    ///
-    /// # Errors
-    /// `bulk.attempt_exists`, an invalid attempt, or an I/O failure.
-    pub fn begin_attempt(
-        &self,
-        tenant: &TenantId,
-        attempt: &str,
-    ) -> Outcome<(PathBuf, std::fs::File)> {
-        let dir = self.attempt_dir(tenant, attempt)?;
-        match std::fs::create_dir(&dir) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                return Err(refusal("bulk.attempt_exists", "the landing attempt exists"));
-            }
-            Err(error) => return Err(refusal("analytics.engine", error.to_string())),
+    /// OLAP-02 / MANIFEST-02: mint a landing attempt of `tenant`, held by
+    /// the returned lease: a fresh token no caller chose, its directory
+    /// created exclusively under the tenant's private scratch, and its
+    /// source file, created empty for the download.
+    fn begin_attempt(&self, tenant: &TenantId) -> Outcome<(Lease<'_>, std::fs::File)> {
+        let failed = |error: std::io::Error| refusal("analytics.engine", error.to_string());
+        let scratch = self.private(tenant)?.join("scratch");
+        // Created exclusively under a random name (retried on a clash), so
+        // the token names no directory that existed before, even one a
+        // previous process left.
+        let dir = tempfile::Builder::new()
+            .prefix("a")
+            .rand_bytes(31)
+            .tempdir_in(&scratch)
+            .map_err(failed)?
+            .keep();
+        let token = dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default()
+            .to_owned();
+        let key = (tenant.clone(), token);
+        let mut attempts = self.attempts();
+        if attempts.contains_key(&key) {
+            // The directory is new, so this cannot happen; if it did, the
+            // entry is another lease's and only the new directory goes.
+            drop(attempts);
+            let _removed = std::fs::remove_dir_all(&dir);
+            return Err(refusal("analytics.engine", "a landing token was reused"));
         }
-        private_dir(&dir)?;
-        let path = dir.join("source");
-        let file = create_new(&path)?;
-        Ok((path, file))
+        attempts.insert(
+            key.clone(),
+            Held {
+                leased: true,
+                landing: None,
+            },
+        );
+        drop(attempts);
+        let lease = Lease {
+            engine: self,
+            tenant: key.0,
+            token: key.1,
+            dir,
+            landed: None,
+        };
+        private_dir(&lease.dir)?;
+        let file = create_new(&lease.dir.join("source"))?;
+        Ok((lease, file))
     }
 
-    /// Remove a landing attempt's directory and everything in it.
-    pub fn end_attempt(&self, tenant: &TenantId, attempt: &str) {
-        if let Ok(dir) = self.attempt_dir(tenant, attempt) {
-            let _removed = std::fs::remove_dir_all(dir);
+    /// OLAP-02: take the landed attempt `token` of `tenant` for an operation
+    /// of `landing`. An attempt this engine does not hold is
+    /// [`ATTEMPT_UNKNOWN`]; one another operation holds (its download, its
+    /// load or another store is still running) is [`ATTEMPT_BUSY`]; one of
+    /// another landing is stale. A refusal touches nothing.
+    fn lease_attempt(&self, tenant: &TenantId, token: &str, landing: &str) -> Outcome<Lease<'_>> {
+        let dir = self.private(tenant)?.join("scratch").join(token);
+        let mut attempts = self.attempts();
+        let Some(held) = attempts.get_mut(&(tenant.clone(), token.to_owned())) else {
+            return Err(refusal(ATTEMPT_UNKNOWN, "the landing attempt is not held"));
+        };
+        if held.leased {
+            return Err(refusal(ATTEMPT_BUSY, "the landing attempt is in use"));
         }
-    }
-
-    /// The landed data and held-set files of an attempt, for the caller to
-    /// send to object storage.
-    ///
-    /// # Errors
-    /// An invalid attempt.
-    pub fn landed_files(&self, tenant: &TenantId, attempt: &str) -> Outcome<(PathBuf, PathBuf)> {
-        let dir = self.attempt_dir(tenant, attempt)?;
-        Ok((dir.join("data.parquet"), dir.join("held.parquet")))
+        if held.landing.as_deref() != Some(landing) {
+            return Err(refusal(STALE, "the landing attempt is another landing's"));
+        }
+        held.leased = true;
+        drop(attempts);
+        Ok(Lease {
+            engine: self,
+            tenant: tenant.clone(),
+            token: token.to_owned(),
+            dir,
+            landed: None,
+        })
     }
 
     fn with<T>(&self, tenant: &TenantId, f: impl FnOnce(&Connection) -> Outcome<T>) -> Outcome<T> {
@@ -447,9 +537,11 @@ impl Engine {
         })
     }
 
-    /// MANIFEST-LAND-1: load the attempt's source file (written into the
-    /// file [`Self::begin_attempt`] created) under staging tables of the
-    /// attempt alone, then write the attempt's two Parquet files: the data
+    /// MANIFEST-LAND-1: land `request` in a fresh attempt: the engine mints
+    /// the attempt (OLAP-02: a token no caller chooses, so `request.attempt`
+    /// must be empty), `fetch` writes the source object into the attempt's
+    /// own source file, and the file is loaded under staging tables of the
+    /// attempt alone, then written as the attempt's two Parquet files: the data
     /// file (every column of the staged table but the landing identity, in
     /// source row order) and the held-set file (each held-back source row
     /// with its reason and its text values). The staging is dropped in the
@@ -460,12 +552,30 @@ impl Engine {
     /// directory only this process writes, so the bytes hashed are the bytes
     /// read and sent.
     ///
+    /// The answer names the attempt; it stays held, landed, for a store of
+    /// this landing ([`Self::store`]). Until then the landing holds it, so
+    /// no store, replayed or not, can remove it while `fetch` is still
+    /// writing; a failed landing removes it, and nothing else does.
+    ///
     /// # Errors
-    /// As [`Self::load`], or the files cannot be written or read back.
-    pub fn land(&self, request: &LandRequest) -> Outcome<LandResponse> {
+    /// `analytics.invalid` for a caller-named attempt, what `fetch` refuses,
+    /// as [`Self::load`], or the files cannot be written or read back.
+    pub fn land(
+        &self,
+        request: &LandRequest,
+        fetch: impl FnOnce(std::fs::File) -> Outcome<()>,
+    ) -> Outcome<LandResponse> {
+        if !request.attempt.is_empty() {
+            return Err(refusal(
+                "analytics.invalid",
+                "the engine names a landing's attempt; send none",
+            ));
+        }
+        let (mut lease, source) = self.begin_attempt(&request.load.tenant)?;
+        fetch(source)?;
         let started = Instant::now();
         let load_request = &request.load;
-        let dir = self.attempt_dir(&load_request.tenant, &request.attempt)?;
+        let dir = lease.dir.clone();
         let file = dir.join("source");
         seal(&file)?;
         let (digest, bytes) =
@@ -478,10 +588,7 @@ impl Engine {
         }
         let data = dir.join("data.parquet");
         let held = dir.join("held.parquet");
-        if data.exists() || held.exists() {
-            return Err(refusal("bulk.attempt_exists", "the attempt has landed"));
-        }
-        let staged_table = staged(&load_request.table, &request.attempt);
+        let staged_table = staged(&load_request.table, &lease.token);
         let staged = LoadRequest {
             table: staged_table.clone(),
             ..load_request.clone()
@@ -523,27 +630,41 @@ impl Engine {
                 bytes,
             })
         };
-        Ok(LandResponse {
+        let response = LandResponse {
             landing: request.landing.clone(),
-            attempt: request.attempt.clone(),
+            attempt: lease.token.clone(),
             data: landed(&data, load.rows)?,
             held: landed(&held, load.rejected)?,
             load,
             valid_time,
             stored: None,
-        })
+        };
+        lease.landed = Some(request.landing.clone());
+        Ok(response)
     }
 
     /// MANIFEST-CACHE-1: keep an attempt's files, which the caller has sent
     /// to their objects, as the files of the cache identity
     /// [`dataset_cache_id`] names. Each file must still be the digest the
     /// request names; it moves into the tenant's object directory under that
-    /// digest (an object already there must be the same digest). The
-    /// attempt's directory is removed.
+    /// digest (an object already there must be the same digest). `send`
+    /// sends the two files (data, held) to their objects first.
+    ///
+    /// OLAP-02: the store takes the attempt by its engine-minted token, and
+    /// only once it has landed this landing and nothing else holds it; it is
+    /// then the attempt's one owner and removes it, stored or not. A store
+    /// of an attempt still landing is [`ATTEMPT_BUSY`] and touches nothing.
+    /// A replayed store of an attempt already stored answers what the store
+    /// answered, from the kept record, and removes nothing.
     ///
     /// # Errors
-    /// `bulk.digest_mismatch`, or an I/O or engine failure.
-    pub fn store(&self, request: &StoreRequest) -> Outcome<LandResponse> {
+    /// [`ATTEMPT_UNKNOWN`], [`ATTEMPT_BUSY`], `bulk.digest_mismatch`, what
+    /// `send` refuses, or an I/O or engine failure.
+    pub fn store(
+        &self,
+        request: &StoreRequest,
+        send: impl FnOnce(&Path, &Path) -> Outcome<()>,
+    ) -> Outcome<LandResponse> {
         let land = &request.land;
         let landed = &request.landed;
         let tenant = &land.load.tenant;
@@ -551,13 +672,23 @@ impl Engine {
         if landed.landing != land.landing || landed.attempt != land.attempt {
             return Err(refusal(STALE, "the answer is not this landing's"));
         }
-        let (data, held) = self.landed_files(tenant, &land.attempt)?;
-        let objects = self.private(tenant)?.join("objects");
-        let mut kept = Vec::new();
-        for (path, file) in [(&data, &landed.data), (&held, &landed.held)] {
+        for file in [&landed.data, &landed.held] {
             if !is_hex64(&file.sha256) {
                 return Err(refusal("analytics.invalid", "a digest is 64 hex digits"));
             }
+        }
+        let lease = match self.lease_attempt(tenant, &land.attempt, &land.landing) {
+            Ok(lease) => lease,
+            Err(unknown) if unknown.code == ATTEMPT_UNKNOWN => {
+                return self.stored(request).ok_or(unknown);
+            }
+            Err(refused) => return Err(refused),
+        };
+        let (data, held) = lease.files();
+        send(&data, &held)?;
+        let objects = self.private(tenant)?.join("objects");
+        let mut kept = Vec::new();
+        for (path, file) in [(&data, &landed.data), (&held, &landed.held)] {
             let target = objects.join(format!("{}.parquet", file.sha256));
             verify_object(path, &file.sha256)?;
             if target.exists() {
@@ -587,8 +718,33 @@ impl Engine {
         self.with(tenant, |conn| {
             set_meta(conn, &format!("landing:{cache}"), &text)
         })?;
-        self.end_attempt(tenant, &land.attempt);
+        drop(lease);
         Ok(LandResponse {
+            stored: Some(cache),
+            ..landed.clone()
+        })
+    }
+
+    /// OLAP-02: the answer of a store of `request` that already happened:
+    /// the record kept for its cache identity holds exactly its files and
+    /// objects. Reads only; `None` when no such store happened.
+    fn stored(&self, request: &StoreRequest) -> Option<LandResponse> {
+        let landed = &request.landed;
+        let table = &request.land.load.table;
+        let cache = dataset_cache_id(table, &landed.data.sha256, &landed.held.sha256);
+        let text = self
+            .with(&request.land.load.tenant, |conn| {
+                meta(conn, &format!("landing:{cache}"))
+            })
+            .ok()??;
+        let kept: KeptLanding = serde_json::from_str(&text).ok()?;
+        let same = |kept: &KeptFile, file: &LandedFile, object: &super::StoredObject| {
+            kept.sha256 == file.sha256 && kept.uri == object.uri
+        };
+        (kept.table == *table
+            && same(&kept.data, &landed.data, &request.data)
+            && same(&kept.held, &landed.held, &request.held))
+        .then(|| LandResponse {
             stored: Some(cache),
             ..landed.clone()
         })

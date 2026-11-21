@@ -647,6 +647,9 @@ pub struct LandRequest {
     #[serde(default)]
     pub landing: String,
     /// The attempt: one landing's own staging and files, never another's.
+    /// OLAP-02: the engine mints it, so a landing sends none (an attempt
+    /// named by the caller refuses); a store names the one its landing's
+    /// answer named.
     #[serde(default)]
     pub attempt: String,
 }
@@ -711,7 +714,7 @@ pub struct ValidRange {
 pub struct LandResponse {
     /// The landing identity the request named.
     pub landing: String,
-    /// The attempt the request named.
+    /// The attempt the engine minted for the landing.
     pub attempt: String,
     /// The load's counts, as [`LoadResponse`].
     pub load: LoadResponse,

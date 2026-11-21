@@ -872,7 +872,8 @@ impl norn_api::analytics_routes::Transport for ThreeAndOne {
                 };
                 let answer = norn_cell::analytics::LandResponse {
                     landing: request.landing.clone(),
-                    attempt: request.attempt.clone(),
+                    // OLAP-02: the engine mints the attempt.
+                    attempt: "aMinted".to_owned(),
                     load: norn_cell::analytics::LoadResponse {
                         load: request.load.load.clone(),
                         rows: 3,
@@ -1059,7 +1060,11 @@ fn a_dataset_load_commits_one_manifest_of_its_stored_files() {
         manifest.manifest.pins, landed[0].pins,
         "the manifest commits the pins the landing ran by"
     );
-    assert_eq!(stored[0].land.attempt, landed[0].attempt);
+    assert_eq!(
+        (landed[0].attempt.as_str(), stored[0].land.attempt.as_str()),
+        ("", "aMinted"),
+        "a landing names no attempt; the store takes the one the engine minted"
+    );
 }
 
 /// MANIFEST-01: definitions installed while a landing is in flight refuse
