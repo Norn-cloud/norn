@@ -4241,7 +4241,9 @@ mod journal_proof_tests {
         assert!(
             matches!(
                 outcome,
-                Err(super::GuardedError::Store(CellError::HistoricalValueUnproven(_)))
+                Err(super::GuardedError::Store(
+                    CellError::HistoricalValueUnproven(_)
+                ))
             ),
             "{outcome:?}"
         );
