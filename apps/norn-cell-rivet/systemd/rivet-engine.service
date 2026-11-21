@@ -1,0 +1,21 @@
+# One Rivet Engine instance (control plane) per machine; three machines in
+# production. /etc/rivet/config.json is systemd/engine.json.example with this
+# machine's private address and zone. The log directory is a dedicated block
+# disk (no NFS), never shared between instances.
+[Unit]
+Description=Rivet Engine (control plane for Norn cells)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=rivet
+Group=rivet
+ExecStart=/usr/local/bin/rivet-engine --config /etc/rivet/config.json
+Restart=always
+RestartSec=2
+# A clean stop hands volumes over before the process exits.
+TimeoutStopSec=660
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target
