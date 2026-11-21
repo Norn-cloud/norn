@@ -32,13 +32,15 @@ jobs:
     # other job, fork, bot or user runs hosted, never queued on Boat.
     if: github.event_name != 'pull_request_target' && github.event_name != 'issue_comment'
     # The writable cache key is an environment secret of `ci-cache-writer` (deployment branch:
-    # main only). Merge groups and pull requests see only the read-only repository key.
-    environment: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'ci-cache-writer' || '' }}
+    # main only). Merge groups and pull requests see only the read-only repository key, and a
+    # main push enters the environment only when it runs on Boat (#1369): hosted runners use
+    # the Actions cache and never need the key.
+    environment: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.NORN_MAIN_RUNNER == 'boat' && 'ci-cache-writer' || '' }}
     env:
       SCCACHE_CACHE_SIZE: 10G
       SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
       NORN_INTEROP_CACHE: ~/.cache/norn-interop
-    runs-on: ${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}
+    runs-on: ${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat') || (github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor == 'github-merge-queue[bot]' && github.triggering_actor == 'github-merge-queue[bot]' && vars.NORN_MAIN_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}
     timeout-minutes: 110
     # The gate plan is computed on the core VM, not a VM of its own: each Boat job is one
     # sandbox start, and the plan takes seconds. Bundles read it from here.
@@ -207,8 +209,10 @@ jobs:
     needs: [core]
     if: fromJSON(needs.core.outputs.plan).bundle[0] != null && !(github.event_name == 'pull_request' && github.event.pull_request.draft)
     # The writable cache key is an environment secret of `ci-cache-writer` (deployment branch:
-    # main only). Merge groups and pull requests see only the read-only repository key.
-    environment: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'ci-cache-writer' || '' }}
+    # main only). Merge groups and pull requests see only the read-only repository key, and a
+    # main push enters the environment only when it runs on Boat (#1369): hosted runners use
+    # the Actions cache and never need the key.
+    environment: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.NORN_MAIN_RUNNER == 'boat' && 'ci-cache-writer' || '' }}
     env:
       SCCACHE_CACHE_SIZE: 10G
       SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
@@ -218,7 +222,7 @@ jobs:
       NORN_CI_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before || 'origin/main' }}
       PLAN: ${{ needs.core.outputs.plan }}
       BUNDLE_ID: ${{ matrix.bundle.id }}
-    runs-on: ${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}
+    runs-on: ${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat') || (github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor == 'github-merge-queue[bot]' && github.triggering_actor == 'github-merge-queue[bot]' && vars.NORN_MAIN_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}
     timeout-minutes: 110
     strategy:
       fail-fast: false

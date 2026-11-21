@@ -55,25 +55,21 @@ const GATE_FILES: [&str; 26] = [
 ];
 
 /// Exact opt-in contract: event payloads and arbitrary variables cannot select a runner.
-/// Boat runs merge groups and same-repository pull requests: a fork head never reaches
-/// a Boat VM. The pull-request arm requires Boat CI's public-repository allowlist
-/// (`boat ci public`): author, actor and re-runner must be that user, so Dependabot or
-/// another user's pull request runs hosted instead of queueing forever. Trusted-policy
-/// jobs stay hosted. The gate plan is a step of `core`, so no `plan` job may take a Boat start.
-const BOAT_RUNNER: &str = "${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}";
-
-/// [`BOAT_RUNNER`] plus one arm for main pushes (#1369), so the shared compiler cache, which
-/// only a push to main may write, gets a writer on Boat. The arm admits only a push of
-/// `refs/heads/main` made and started by the merge queue's bot (every main commit lands
-/// through the queue), and only while `NORN_MAIN_RUNNER` is `boat`. Both expressions are
-/// admitted until the workflow takes this one; the guard then drops [`BOAT_RUNNER`].
-const BOAT_RUNNER_WITH_MAIN: &str = "${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat') || (github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor == 'github-merge-queue[bot]' && github.triggering_actor == 'github-merge-queue[bot]' && vars.NORN_MAIN_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}";
+/// Boat runs merge groups, same-repository pull requests and merge-queue main pushes: a fork
+/// head never reaches a Boat VM. The pull-request arm requires Boat CI's public-repository
+/// allowlist (`boat ci public`): author, actor and re-runner must be that user, so Dependabot or
+/// another user's pull request runs hosted instead of queueing forever. The main-push arm
+/// (#1369) gives the shared compiler cache, which only a push to main may write, a writer on
+/// Boat: a push of `refs/heads/main` made and started by the merge queue's bot, only while
+/// `NORN_MAIN_RUNNER` is `boat`. Trusted-policy jobs stay hosted. The gate plan is a step of
+/// `core`, so no `plan` job may take a Boat start.
+const BOAT_RUNNER: &str = "${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat') || (github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor == 'github-merge-queue[bot]' && github.triggering_actor == 'github-merge-queue[bot]' && vars.NORN_MAIN_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}";
 
 fn runner_is_admitted(path: &str, job: &str, runner: Option<&str>) -> bool {
     matches!(runner, Some("ubuntu-latest" | "ubuntu-24.04"))
         || (path == ".github/workflows/ci-policy.yml"
             && matches!(job, "core" | "test" | "full")
-            && (runner == Some(BOAT_RUNNER) || runner == Some(BOAT_RUNNER_WITH_MAIN)))
+            && runner == Some(BOAT_RUNNER))
 }
 
 /// The pull-request arm every admitted concurrency group starts with: one group per
@@ -1172,8 +1168,10 @@ mod tests {
         let path = ".github/workflows/ci-policy.yml";
         let legacy = r#"${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'self-hosted' && fromJSON(format('["self-hosted","norn-merge","norn-run-{0}"]', github.run_id)) || 'ubuntu-24.04' }}"#;
         let merge_only = "${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat' && 'boat' || 'ubuntu-24.04' }}";
+        // Before main pushes could reach Boat (#1369).
+        let before_main = "${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}";
         for job in ["core", "plan", "test", "phase", "full", "trusted-policy"] {
-            for runner in ["boat", "self-hosted", legacy, merge_only] {
+            for runner in ["boat", "self-hosted", legacy, merge_only, before_main] {
                 assert!(!super::runner_is_admitted(path, job, Some(runner)));
             }
             assert!(super::runner_is_admitted(path, job, Some("ubuntu-24.04")));
@@ -1272,14 +1270,14 @@ mod tests {
     #[test]
     fn runner_routing_admits_merge_queue_main_pushes_only_by_opt_in() {
         let path = ".github/workflows/ci-policy.yml";
-        let main = super::BOAT_RUNNER_WITH_MAIN;
-        // The main arm extends the admitted expression; it changes nothing else.
+        let main = super::BOAT_RUNNER;
+        // The main arm is the only change to the runner admitted before #1369.
         assert_eq!(
             main.replace(
                 " || (github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor == 'github-merge-queue[bot]' && github.triggering_actor == 'github-merge-queue[bot]' && vars.NORN_MAIN_RUNNER == 'boat')",
                 ""
             ),
-            super::BOAT_RUNNER
+            "${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}"
         );
         let reject = |job: &str, changed: &str| {
             assert_ne!(changed, main, "no-op mutation");

@@ -1573,6 +1573,9 @@ def workflow_context_canaries(source: str) -> None:
                                                    "(github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'merge_group')"))),
                     ("cache writer for every push", lambda job: job.__setitem__("environment",
                         job["environment"].replace(" && github.ref == 'refs/heads/main'", ""))),
+                    # A hosted main push uses the Actions cache: it never receives the writable key (#1369).
+                    ("cache writer for hosted main pushes", lambda job: job.__setitem__("environment",
+                        job["environment"].replace(" && vars.NORN_MAIN_RUNNER == 'boat'", ""))),
                     ("merge groups write the shared cache", lambda job: next(step for step in job["steps"]
                         if step.get("name") == "Start sccache or compile without it").__setitem__("run",
                         next(step for step in job["steps"] if step.get("name") == "Start sccache or compile without it")["run"]
@@ -1655,21 +1658,27 @@ def workflow_context_canaries(source: str) -> None:
             return next(step for step in document["jobs"][job]["steps"]
                         if step.get("uses", "").startswith(action + "@"))
 
-        runner = "${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}"
+        runner = "${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat') || (github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor == 'github-merge-queue[bot]' && github.triggering_actor == 'github-merge-queue[bot]' && vars.NORN_MAIN_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}"
+        # The runner before main pushes could reach Boat (#1369): superseded.
+        before_main = "${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}"
         merge_only = "${{ github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat' && 'boat' || 'ubuntu-24.04' }}"
         same_repo = "github.event.pull_request.head.repo.full_name == github.repository && "
         legacy = '${{ github.event_name == \'merge_group\' && vars.NORN_MERGE_RUNNER == \'self-hosted\' && fromJSON(format(\'["self-hosted","norn-merge","norn-run-{0}"]\', github.run_id)) || \'ubuntu-24.04\' }}'
         expression = runner.removeprefix("${{ ").removesuffix(" }}")
-        boat_users = ("Youssef-Tarek-Ali-26", "dependabot[bot]", "other-maintainer")
+        boat_users = ("Youssef-Tarek-Ali-26", "github-merge-queue[bot]", "dependabot[bot]")
         for event in ("merge_group", "pull_request", "pull_request_target", "issue_comment", "push", "workflow_dispatch"):
-            # Boat CI runs public-repository jobs only for its allowlisted user: any
-            # other PR author, actor or re-runner (Dependabot included) stays hosted.
-            for merge_variable, pr_variable, head_repository, author, actor, rerunner in itertools.product(
-                    ("", "boat", "self-hosted", "other"), ("", "boat", "self-hosted", "other"),
-                    ("Norn-cloud/norn", "attacker/norn", ""), *[boat_users] * 3):
+            # Boat CI runs public-repository jobs only for its allowlisted users: any other
+            # PR author, actor or re-runner (Dependabot included) stays hosted, and a main push
+            # reaches Boat only when the merge queue made and started it (#1369).
+            for merge_variable, pr_variable, main_variable, ref, head_repository, author, actor, rerunner in itertools.product(
+                    ("", "boat", "other"), ("", "boat", "other"), ("", "boat", "other"),
+                    ("refs/heads/main", "refs/heads/demo/robin"),
+                    ("Norn-cloud/norn", "attacker/norn"), *[boat_users] * 3):
                 concrete = (expression.replace("github.event_name", repr(event))
                             .replace("vars.NORN_MERGE_RUNNER", repr(merge_variable))
                             .replace("vars.NORN_PR_RUNNER", repr(pr_variable))
+                            .replace("vars.NORN_MAIN_RUNNER", repr(main_variable))
+                            .replace("github.ref", repr(ref))
                             .replace("github.event.pull_request.head.repo.full_name", repr(head_repository))
                             .replace("github.event.pull_request.user.login", repr(author))
                             .replace("github.triggering_actor", repr(rerunner))
@@ -1679,10 +1688,12 @@ def workflow_context_canaries(source: str) -> None:
                 expected = ("boat" if (event == "merge_group" and merge_variable == "boat")
                             or (event == "pull_request" and pr_variable == "boat"
                                 and head_repository == "Norn-cloud/norn"
-                                and author == actor == rerunner == "Youssef-Tarek-Ali-26") else "ubuntu-24.04")
+                                and author == actor == rerunner == "Youssef-Tarek-Ali-26")
+                            or (event == "push" and ref == "refs/heads/main" and main_variable == "boat"
+                                and actor == rerunner == "github-merge-queue[bot]") else "ubuntu-24.04")
                 if condition_value(concrete) != expected:
                     raise AssertionError("Boat runner evaluation drift: " + "/".join(
-                        (event, merge_variable, pr_variable, head_repository, author, actor, rerunner)))
+                        (event, merge_variable, pr_variable, main_variable, ref, head_repository, author, actor, rerunner)))
         for name in ("core", "test", "full", "trusted-policy"):
             unsafe = ["boat", "self-hosted", ["self-hosted", "norn-merge"], legacy,
                       "${{ vars.NORN_MERGE_RUNNER || 'ubuntu-24.04' }}",
@@ -1705,7 +1716,18 @@ def workflow_context_canaries(source: str) -> None:
                                      "github.event.pull_request.user.type != 'Bot'"),
                       runner.replace("'Youssef-Tarek-Ali-26'", "'dependabot[bot]'"),
                       runner.replace("== 'boat'", "== 'self-hosted'"),
-                      runner.replace("|| 'ubuntu-24.04'", "|| 'boat'")]
+                      runner.replace("|| 'ubuntu-24.04'", "|| 'boat'"),
+                      before_main,
+                      # A main push reaches Boat only from the merge queue, on main, by opt-in.
+                      runner.replace("github.event_name == 'push' && ", ""),
+                      runner.replace(" && github.ref == 'refs/heads/main'", ""),
+                      runner.replace("github.ref == 'refs/heads/main'", "github.ref != ''"),
+                      runner.replace(" && github.actor == 'github-merge-queue[bot]'", ""),
+                      runner.replace(" && github.triggering_actor == 'github-merge-queue[bot]'", ""),
+                      runner.replace("'github-merge-queue[bot]'", "'dependabot[bot]'"),
+                      runner.replace(" && vars.NORN_MAIN_RUNNER == 'boat'", ""),
+                      runner.replace("vars.NORN_MAIN_RUNNER", "vars.NORN_PR_RUNNER"),
+                      runner.replace("'push'", "'workflow_dispatch'")]
             for event in ("pull_request", "pull_request_target", "issue_comment", "push", "workflow_dispatch"):
                 unsafe.append(runner.replace("'merge_group'", repr(event)))
             for event in ("pull_request_target", "issue_comment", "push", "workflow_dispatch"):
