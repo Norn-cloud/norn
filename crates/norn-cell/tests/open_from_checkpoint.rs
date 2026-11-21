@@ -22,7 +22,7 @@ use std::path::Path;
 use norn_cell::engine::{NativeEngine, SqlEngine, SqlValue};
 use norn_cell::test_door::TestCommit as _;
 use norn_cell::{CellError, CellStore, CommitBatch, FactWriteRow, MAIN_WORLD, StoreOptions};
-use norn_ir::RuntimeValue;
+use norn_ir::{RuntimeValue, runtime_object};
 
 /// Commits apart the engine records a checkpoint (`open_checkpoint::EVERY`).
 const EVERY: u64 = 128;
@@ -49,6 +49,9 @@ fn put(n: u64) -> CommitBatch {
                 RuntimeValue::from(i64::try_from(n).expect("qty")),
             )]),
         }],
+        events: vec![
+            runtime_object! { "type" => "fixture.put", "n" => i64::try_from(n).expect("n") },
+        ],
         ..CommitBatch::default()
     }
 }
@@ -193,6 +196,17 @@ fn any_change_after_the_checkpoint_refuses_the_open() {
         ),
     );
     refused(&path);
+    // A receipt after the checkpoint.
+    let receipt = dir.path().join("receipt.sqlite");
+    std::fs::copy(&fresh, &receipt).expect("copy");
+    execute(
+        &receipt,
+        &format!(
+            "UPDATE _norn_receipt SET receipt_hash = 'ff' || substr(receipt_hash, 3) WHERE commit_seq = {}",
+            EVERY + 5
+        ),
+    );
+    refused(&receipt);
     // A value version after the checkpoint.
     execute(
         &fresh,
