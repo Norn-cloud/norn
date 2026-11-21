@@ -49,6 +49,10 @@ The stack has these services:
   without an HAProxy restart.
 - `pool`: creates the `default` pool before any runner connects.
 - `runner-1`, `runner-2`: `runner-1` publishes `NORN_PORT` (default 8787).
+  They reach `lb` over plain http on the compose network, so the token stays
+  on this machine; they say so with `NORN_RIVET_PLAINTEXT_ENGINE=single-host`.
+  Without it the runner refuses a plaintext endpoint to anything but loopback.
+  More than one machine means TLS ("Transport security").
 - `s3`, `s3-bucket` (profile `s3`): a local test bucket, RustFS 1.0.6
   (Apache-2.0).
   - MinIO no longer publishes community images or binaries. Its Docker Hub
@@ -61,16 +65,18 @@ Ports:
 | Port | What | Exposure |
 |---|---|---|
 | 8787 | The runners' router: the cell API, MCP and live sockets | Public, behind TLS |
-| 6420 | The engines (API, actor traffic, node connections) | Private; loopback in compose |
+| 6420 | The engines (API, actor traffic, node connections) | Private; loopback in compose; TLS on every hop between machines |
 | 6421 | Instance to instance | Plaintext and unauthenticated: private network only, never exposed |
 | 6430 | Engine metrics | Private |
 
 ## Three machines (production)
 
-`systemd/` has the units:
+`systemd/` has the units and configurations:
 
 - `rivet-engine.service`, with `engine.json.example` as
   `/etc/rivet/config.json`;
+- `haproxy-engine.cfg`: TLS in front of each engine, on the engine's machine;
+- `haproxy-lb.cfg`: the private load balancer, TLS on both sides;
 - `norn-cell-rivet.service`, with `/etc/norn/cell-rivet.env`.
 
 The machines share one private network. The addresses below are examples;
@@ -78,7 +84,7 @@ use your own and keep them consistent:
 
 | Machine | Private address | Listens on |
 |---|---|---|
-| engine-1, engine-2, engine-3 | 10.0.0.11, .12, .13 | 6420 (API), 6421 (peers), 6430 (metrics), private address only |
+| engine-1, engine-2, engine-3 | 10.0.0.11, .12, .13 | 6420 (TLS, in front of the engine on 127.0.0.1:6420), 6421 (peers), 6430 (metrics), private address only |
 | load balancer (private only, no public interface) | 10.0.0.2 | 6420 |
 | runners | 10.0.0.21, .22 | 8787, behind the public TLS proxy |
 | monitoring (Prometheus) | 10.0.0.30 | |
@@ -87,9 +93,10 @@ use your own and keep them consistent:
 What may reach each engine port:
 
 - **6420** (API, actor traffic, node connections): the private load balancer
-  and the operator bastion only. Runners reach it through the load balancer,
-  never directly. Every route needs the admin token; the Boat probe below
-  shows the refusals.
+  and the operator bastion only, over TLS with a client certificate (see
+  "Transport security"). Runners reach it through the load balancer, never
+  directly. Every route needs the admin token; the Boat probe below shows the
+  refusals.
 - **6421** (instance to instance): the other two engines only. It is
   plaintext and unauthenticated, so the network is its only protection.
 - **6430** (metrics): the monitoring host and the operator bastion only.
@@ -102,22 +109,31 @@ On each of the three engine machines:
    least 100 GiB. Rivet refuses to start with less than 10% of the disk, or
    less than 4 GiB, free.
 2. Write `/etc/rivet/config.json`. The admin token and the bucket are the same
-   on every machine. Each machine sets its own `storage.zone` and binds every
-   listener to its own private address: `guard.host` (6420), `metrics.host`
-   (6430), `api_peer.host` (6421) and `api_peer.advertise_address`
-   (`<private ip>:6421`). Left unset, `guard.host` and `metrics.host` bind
-   `[::]`, every interface, including the public one.
-3. Install the firewall below before starting the engine.
+   on every machine. Each machine sets its own `storage.zone`. The guard
+   (6420) binds loopback only (`guard.host: 127.0.0.1`): the token reaches it
+   only through the TLS proxy on the same machine. The other listeners bind
+   the machine's own private address: `metrics.host` (6430), `api_peer.host`
+   (6421) and `api_peer.advertise_address` (`<private ip>:6421`). Left unset,
+   `guard.host` and `metrics.host` bind `[::]`, every interface, including
+   the public one.
+3. Issue the engine's certificate and install `haproxy-engine.cfg` as
+   `/etc/haproxy/haproxy.cfg`, with this machine's private address on the
+   `bind` line ("Transport security" below). Install the firewall below
+   before starting the engine.
 4. Start all three within about a minute of each other. The first storage
    placement then spans all three; the instances find each other through the
    bucket.
 5. Check the bindings and the health:
 
    ```sh
-   ss -ltn '( sport = :6420 or sport = :6421 or sport = :6430 )'   # each on 10.0.0.1N only
-   curl http://10.0.0.1N:6420/health
+   ss -ltnp '( sport = :6420 or sport = :6421 or sport = :6430 )'
+   # rivet-engine on 127.0.0.1:6420, 10.0.0.1N:6421 and 10.0.0.1N:6430; haproxy on 10.0.0.1N:6420
+   curl --cacert /etc/rivet/tls/ca.pem --cert /etc/rivet/tls/bastion.pem https://10.0.0.1N:6420/health   # from the bastion
    # {"architecture":"v3",…,"status":"ok","version":"3.1.1"}
    ```
+
+   Without the client certificate the handshake fails, and plain `http://`
+   gets no answer from the engine.
 
    From a machine that is not allowed (a runner, say), the connections must
    time out: `nc -zv -w 3 10.0.0.11 6421` and `nc -zv -w 3 10.0.0.11 6430`.
@@ -125,12 +141,20 @@ On each of the three engine machines:
 ### Engine firewall
 
 nftables, `/etc/nftables.conf` on engine-1 (on engine-2 and engine-3 the
-`peers` set holds the other two addresses). Load it with
+`peers` set holds the other two addresses). `priv` is the private network's
+interface: on Hetzner Cloud it is `enp7s0` on current server types (`ens10` on
+older ones); check with `ip -br addr` and set it to the interface holding
+10.0.0.1N. Every exception is on that interface only, so the same source
+address arriving on the public interface is dropped. The table is `inet`, so
+IPv6 is filtered by the same policy: no IPv6 exception exists, and every IPv6
+packet but ICMPv6 and replies is dropped. Load it with
 `systemctl enable --now nftables`:
 
 ```nft
 #!/usr/sbin/nft -f
 flush ruleset
+
+define priv = "enp7s0"
 
 table inet rivet {
   set lb         { type ipv4_addr; elements = { 10.0.0.2 } }
@@ -144,32 +168,39 @@ table inet rivet {
     ct state invalid drop
     iif lo accept
     meta l4proto { icmp, ipv6-icmp } accept
-    tcp dport 22   ip saddr @operators  accept
-    tcp dport 6420 ip saddr @lb         accept
-    tcp dport 6420 ip saddr @operators  accept
-    tcp dport 6421 ip saddr @peers      accept
-    tcp dport 6430 ip saddr @monitoring accept
-    tcp dport 6430 ip saddr @operators  accept
+    iifname $priv tcp dport 22   ip saddr @operators  accept
+    iifname $priv tcp dport 6420 ip saddr @lb         accept
+    iifname $priv tcp dport 6420 ip saddr @operators  accept
+    iifname $priv tcp dport 6421 ip saddr @peers      accept
+    iifname $priv tcp dport 6430 ip saddr @monitoring accept
+    iifname $priv tcp dport 6430 ip saddr @operators  accept
   }
   chain forward { type filter hook forward priority filter; policy drop; }
   chain output  { type filter hook output priority filter; policy accept; }
 }
 ```
 
-The same rules with ufw, on engine-1:
+The same rules with ufw, on engine-1 (`enp7s0` as above):
 
 ```sh
+grep -qx 'IPV6=yes' /etc/default/ufw || { echo 'set IPV6=yes in /etc/default/ufw first'; exit 1; }
 ufw default deny incoming
+ufw default deny routed
 ufw default allow outgoing
-ufw allow from 10.0.0.40 to any port 22 proto tcp
-ufw allow from 10.0.0.2  to 10.0.0.11 port 6420 proto tcp
-ufw allow from 10.0.0.40 to 10.0.0.11 port 6420 proto tcp
-ufw allow from 10.0.0.12 to 10.0.0.11 port 6421 proto tcp
-ufw allow from 10.0.0.13 to 10.0.0.11 port 6421 proto tcp
-ufw allow from 10.0.0.30 to 10.0.0.11 port 6430 proto tcp
-ufw allow from 10.0.0.40 to 10.0.0.11 port 6430 proto tcp
+ufw allow in on enp7s0 from 10.0.0.40 to 10.0.0.11 port 22   proto tcp
+ufw allow in on enp7s0 from 10.0.0.2  to 10.0.0.11 port 6420 proto tcp
+ufw allow in on enp7s0 from 10.0.0.40 to 10.0.0.11 port 6420 proto tcp
+ufw allow in on enp7s0 from 10.0.0.12 to 10.0.0.11 port 6421 proto tcp
+ufw allow in on enp7s0 from 10.0.0.13 to 10.0.0.11 port 6421 proto tcp
+ufw allow in on enp7s0 from 10.0.0.30 to 10.0.0.11 port 6430 proto tcp
+ufw allow in on enp7s0 from 10.0.0.40 to 10.0.0.11 port 6430 proto tcp
 ufw enable
+ufw status verbose | grep -q 'deny (incoming), allow (outgoing), deny (routed)'   # all three defaults
+ip6tables -S ufw6-user-input >/dev/null                                           # IPv6 filtering is on
 ```
+
+With `IPV6=no`, ufw loads no IPv6 rules at all, and every IPv6 port is open;
+the first line refuses to go on in that case.
 
 These rules hold because the engines run under systemd. A process in Docker
 with published ports bypasses both nftables input rules and ufw, so never
@@ -179,21 +210,130 @@ or SSH from the bastion only).
 
 Then:
 
-6. Put the private load balancer on port 6420 of every engine (its private
-   address as source), with an idle timeout of 3600 s and a health check on
-   `GET /health`. Runners hold one long-lived connection to it. The load
-   balancer itself accepts 6420 from the runners and the bastion only.
+6. Put the private load balancer in front of port 6420 of every engine:
+   `haproxy-lb.cfg` as `/etc/haproxy/haproxy.cfg` on 10.0.0.2, with its server
+   certificate and its client certificate ("Transport security"). It checks
+   `GET /health` on each engine over TLS and allows idle connections for
+   3600 s; runners hold one long-lived connection to it. The load balancer's
+   firewall accepts 6420 on its private interface from the runners and the
+   bastion only.
 7. Create the pool from the bastion:
 
    ```sh
-   curl -X PUT "http://10.0.0.2:6420/pools/default?namespace=default" \
+   curl --cacert /etc/rivet/tls/ca.pem -X PUT "https://10.0.0.2:6420/pools/default?namespace=default" \
      -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' -d '{}'
    ```
 
 8. Start the runners with
-   `RIVET_ENDPOINT=http://default:<token>@10.0.0.2:6420`, plus the Norn
-   variables in `env.example`. The runners' firewall accepts 8787 from the TLS
-   proxy only.
+   `RIVET_ENDPOINT=https://default:<token>@10.0.0.2:6420` and
+   `SSL_CERT_FILE=/etc/norn/rivet-ca.pem` (the private CA), plus the Norn
+   variables in `env.example`. The runner refuses a plaintext `http://`
+   endpoint to anything but loopback. The runners' firewall accepts 8787 from
+   the TLS proxy only.
+
+### Transport security
+
+The admin token travels on three hops between machines, and each is TLS from
+the cluster's own private CA:
+
+| Hop | Client | Server | Client proves itself with |
+|---|---|---|---|
+| bastion → load balancer | `curl --cacert ca.pem` | `lb.pem` (IP 10.0.0.2) | the admin token |
+| runner → load balancer | the runner (`https://`, `SSL_CERT_FILE`) | `lb.pem` | the admin token (the node socket's handshake) |
+| load balancer → engine | HAProxy, `verify required`, `verifyhost engine-N.rivet.internal` | `engine.pem` on the engine's machine | `lb-client.pem` and the token |
+| bastion → engine (rebuild check) | `curl --cacert ca.pem --cert bastion.pem` | `engine.pem` | `bastion.pem` and the token |
+
+On the engine's machine the proxy forwards to the guard on 127.0.0.1, so the
+only cleartext copy of the token is on loopback. 6421 and 6430 carry no token
+(6421 is unauthenticated, 6430 is metrics); the firewall is their protection.
+The runner's TLS client reads trust roots from the system store and from
+`SSL_CERT_FILE` (rustls-native-certs, in RivetKit's socket and HTTP clients),
+so `SSL_CERT_FILE=/etc/norn/rivet-ca.pem` trusts the private CA.
+
+**Rehearsed on Boat** (2026-11-21, `haproxy-engine.cfg` and `haproxy-lb.cfg`
+as committed, the certificates made with the commands below). Each machine
+was a container at its README address on one private bridge: three engines
+with their TLS proxies, the load balancer, two runners and the bastion.
+`tcpdump` ran on that bridge for the whole run, which covered pool creation,
+`/namespaces` through the load balancer and on each engine, both runners
+joining, and 10 actor commits and reads through each runner:
+
+- 19,479 packets, 266 TLS handshakes to 6420, no cleartext HTTP request line
+  to 6420, and the 64-character token **0 times** in the capture.
+- Control: one request with the token sent in cleartext to 6421 put it in a
+  second capture once, so a cleartext token would have been seen.
+- Each engine refused a client without a certificate and one with a
+  certificate from another CA (TLS handshake failure, curl exit 56). Plain
+  `http://` to 6420 got no HTTP answer (exit 52).
+- A runner given `RIVET_ENDPOINT=http://…@10.0.0.2:6420` refused to start.
+- Both runners served every actor through the load balancer, and the same
+  actor instance answered from either runner.
+
+The firewall recipes were rehearsed the same day in network namespaces: an
+engine with a private (`enp7s0`) and a public interface, and clients using the
+load balancer's source address on each. With the nftables ruleset or the ufw
+commands above, 6420 answered only on the private interface; 22, 6421 and 6430
+were dropped for that source; and every IPv6 SYN was dropped, on both
+interfaces. With no firewall, all of them answered. With `IPV6=no`, the ufw
+recipe stopped at its first line.
+
+**Issuing certificates.** The CA key lives in Infisical
+(`/ops/rivet/RIVET_TLS_CA_KEY`, with the certificate at
+`/ops/rivet/RIVET_TLS_CA_CERT`) and is only ever written to a tmpfs on the
+bastion while signing. Every other key is made on the machine that uses it and
+never leaves it; only certificate requests and certificates move.
+
+```sh
+# Once: the CA (EC P-256, 2 years), on the bastion in a tmpfs; store both files in Infisical, then wipe them.
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 730 \
+  -subj '/CN=norn-rivet private CA' \
+  -addext 'basicConstraints=critical,CA:TRUE,pathlen:0' -addext 'keyUsage=critical,keyCertSign,cRLSign' \
+  -keyout ca.key -out ca.pem
+
+# On the machine that will hold the key (engine-1 here):
+openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -subj '/CN=engine-1.rivet.internal' \
+  -keyout /etc/rivet/tls/engine.key -out engine-1.csr
+chmod 600 /etc/rivet/tls/engine.key
+
+# On the bastion, sign it for 90 days. The SAN and usage come from here, never from the request:
+openssl x509 -req -in engine-1.csr -CA ca.pem -CAkey ca.key -days 90 -out engine-1.crt -extfile <(printf '%s\n' \
+  'subjectAltName=DNS:engine-1.rivet.internal,IP:10.0.0.11' 'extendedKeyUsage=serverAuth' \
+  'basicConstraints=critical,CA:FALSE' 'keyUsage=critical,digitalSignature')
+
+# Back on engine-1: HAProxy takes the certificate and key in one file.
+cat engine-1.crt /etc/rivet/tls/engine.key > /etc/rivet/tls/engine.pem && chmod 600 /etc/rivet/tls/engine.pem
+```
+
+The same with these names and extensions:
+
+| Certificate | On | `subjectAltName` | `extendedKeyUsage` |
+|---|---|---|---|
+| `engine.pem` | engine-N | `DNS:engine-N.rivet.internal,IP:10.0.0.1N` | `serverAuth` |
+| `lb.pem` | load balancer | `DNS:lb.rivet.internal,IP:10.0.0.2` | `serverAuth` |
+| `lb-client.pem` | load balancer | `DNS:lb.rivet.internal` | `clientAuth` |
+| `bastion.pem` | bastion | `DNS:bastion.rivet.internal` | `clientAuth` |
+
+`ca.pem` (the certificate only) goes to every engine, the load balancer, the
+bastion and every runner (`/etc/norn/rivet-ca.pem`).
+
+**Rotation.**
+
+- Leaves last 90 days and are renewed at 60: a new key and request on the
+  machine, signed as above, then `systemctl reload haproxy`. A reload keeps
+  open connections on the old process until they close, so runners are not
+  cut off. Alert at 21 days left:
+  `openssl x509 -checkend 1814400 -noout -in <cert>` on every machine, from the
+  monitoring host.
+- The CA is replaced a year before it expires, and at once if its key may have
+  leaked:
+  1. Make the new CA.
+  2. Put a bundle of both CA certificates as `ca.pem` everywhere (engines,
+     load balancer, bastion, runners), and reload HAProxy and restart the
+     runners.
+  3. Re-issue every leaf from the new CA and reload.
+  4. Remove the old CA from every bundle and reload.
+- If any private key or the admin token may have leaked, rotate the admin
+  token too (it is the same on every engine and runner).
 
 ### Admin and fork routes refuse missing or wrong credentials
 
@@ -298,9 +438,11 @@ complete:
 
 ```sh
 # From the operator bastion (3 machines). In compose, run the same against
-# engine-1..3 from: docker run --rm --network norn-rivet_default curlimages/curl:8.17.0 ...
+# engine-1..3 over http (no TLS on one machine) from:
+# docker run --rm --network norn-rivet_default curlimages/curl:8.17.0 ...
+tls='--cacert /etc/rivet/tls/ca.pem --cert /etc/rivet/tls/bastion.pem'
 for e in 10.0.0.11 10.0.0.12 10.0.0.13; do
-  printf '%s ' "$e"; curl -sf "http://$e:6420/health" >/dev/null && printf 'health=ok ' || printf 'health=FAIL '
+  printf '%s ' "$e"; curl -sf $tls "https://$e:6420/health" >/dev/null && printf 'health=ok ' || printf 'health=FAIL '
   curl -s "http://$e:6430/metrics" | awk '
     /^rivet_depot_tablets\{worker_role="replica"\}/                      {printf "replicas=%s ", $2}
     /^rivet_depot_coordinator_placement\{kind="zone_degraded"\}/         {printf "zone_degraded=%s ", $2}

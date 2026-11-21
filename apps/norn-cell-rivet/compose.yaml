@@ -55,6 +55,9 @@ x-runner: &runner
 
 x-runner-env: &runner-env
   RIVET_ENDPOINT: http://default:${RIVET_ADMIN_TOKEN}@lb:6420
+  # One machine: the token stays on this host's bridge network. The runner refuses plaintext to
+  # any other engine (README.md, "Transport security"); the three-machine recipe is https.
+  NORN_RIVET_PLAINTEXT_ENGINE: single-host
   NORN_HOST_ISSUER: ${NORN_HOST_ISSUER:?set NORN_HOST_ISSUER}
   NORN_HOST_JWKS_URL: ${NORN_HOST_JWKS_URL:?set NORN_HOST_JWKS_URL}
   NORN_LINEAGE_KEY: ${NORN_LINEAGE_KEY:?set NORN_LINEAGE_KEY}

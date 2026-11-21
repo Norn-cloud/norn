@@ -1,6 +1,7 @@
 //! `norn-cell-rivet`: a runner process. It serves the cell actors (and, in
 //! conformance builds, the probe actor) to the Rivet engine named by
-//! `RIVET_ENDPOINT` (`http://<namespace>:<token>@host:6420`), and the public
+//! `RIVET_ENDPOINT` (`https://<namespace>:<token>@host:6420`; plaintext only to
+//! loopback or with `NORN_RIVET_PLAINTEXT_ENGINE=single-host`), and the public
 //! router on `NORN_LISTEN` (default `127.0.0.1:8787`). Any runner routes to
 //! any cell: requests reach the actor through the engine's gateway.
 
@@ -42,6 +43,11 @@ async fn main() -> Result<()> {
             "RIVET_ENDPOINT names the engine (or NORN_RIVET_DEV_ENGINE=1 for a local one)"
         ),
     };
+    config::check_engine_transport(
+        &endpoint,
+        std::env::var("NORN_RIVET_PLAINTEXT_ENGINE").ok().as_deref(),
+    )
+    .map_err(anyhow::Error::msg)?;
     let listen = std::env::var("NORN_LISTEN").unwrap_or_else(|_unset| "127.0.0.1:8787".to_owned());
     let mut runner_config = rivetkit::ServeConfig::from_env()?;
     if dev_engine {

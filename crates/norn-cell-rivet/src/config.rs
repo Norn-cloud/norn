@@ -125,3 +125,69 @@ pub fn install(config: HostConfig) -> Arc<HostConfig> {
 pub fn get() -> Arc<HostConfig> {
     Arc::clone(CONFIG.get_or_init(|| Arc::new(HostConfig::from_env())))
 }
+
+/// The value of `NORN_RIVET_PLAINTEXT_ENGINE` that allows a plaintext engine
+/// endpoint on a single machine's private bridge network (the compose stacks).
+pub const PLAINTEXT_SINGLE_HOST: &str = "single-host";
+
+/// Refuse an engine endpoint that would carry the admin token in cleartext
+/// across a network. `RIVET_ENDPOINT` holds the token (it travels in every
+/// request and in the node socket's handshake), so it must be `https` or
+/// `wss`, except to a loopback address, or when the operator states with
+/// `NORN_RIVET_PLAINTEXT_ENGINE=single-host` that the engine is on the same
+/// machine's bridge network. The error never repeats the endpoint, which
+/// holds the token.
+///
+/// # Errors
+/// A description of why the endpoint is refused.
+pub fn check_engine_transport(endpoint: &str, plaintext: Option<&str>) -> Result<(), String> {
+    let url = reqwest::Url::parse(endpoint)
+        .map_err(|_unparsed| "RIVET_ENDPOINT is not a URL".to_owned())?;
+    match url.scheme() {
+        "https" | "wss" => Ok(()),
+        "http" | "ws" => {
+            let host = url.host_str().unwrap_or_default();
+            let bare = host.trim_start_matches('[').trim_end_matches(']');
+            let loopback = host == "localhost"
+                || bare
+                    .parse::<std::net::IpAddr>()
+                    .is_ok_and(|ip| ip.is_loopback());
+            if loopback || plaintext == Some(PLAINTEXT_SINGLE_HOST) {
+                Ok(())
+            } else {
+                Err(
+                    "RIVET_ENDPOINT is plaintext http to a non-loopback engine, which would send \
+                     the admin token in cleartext: use https (apps/norn-cell-rivet/README.md, \
+                     \"Transport security\"), or set NORN_RIVET_PLAINTEXT_ENGINE=single-host \
+                     when the engine is on this machine's bridge network"
+                        .to_owned(),
+                )
+            }
+        }
+        _other => Err("RIVET_ENDPOINT must be https (or http to loopback)".to_owned()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PLAINTEXT_SINGLE_HOST, check_engine_transport};
+
+    #[test]
+    fn engine_transport_refuses_cleartext_tokens_off_the_machine() {
+        let ok =
+            |endpoint: &str, flag: Option<&str>| check_engine_transport(endpoint, flag).is_ok();
+        assert!(ok("https://default:t@10.0.0.2:6420", None));
+        assert!(ok("wss://default:t@lb.rivet.internal:6420", None));
+        assert!(ok("http://default:t@127.0.0.1:6420", None));
+        assert!(ok("http://default:t@[::1]:6420", None));
+        assert!(ok("http://default:t@localhost:6420", None));
+        assert!(ok("http://default:t@lb:6420", Some(PLAINTEXT_SINGLE_HOST)));
+        assert!(!ok("http://default:t@10.0.0.2:6420", None));
+        assert!(!ok("http://default:t@lb:6420", None));
+        assert!(!ok("http://default:t@10.0.0.2:6420", Some("1")));
+        assert!(!ok("ftp://default:t@10.0.0.2", None));
+        assert!(!ok("not a url", None));
+        let refused = check_engine_transport("http://default:secret-token@10.0.0.2:6420", None);
+        assert!(refused.is_err_and(|message| !message.contains("secret-token")));
+    }
+}
