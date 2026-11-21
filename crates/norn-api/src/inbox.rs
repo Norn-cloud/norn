@@ -551,20 +551,23 @@ fn held_back<E: SqlEngine>(
         let (held, exhausted) = scan_type(host, access, &object_type, &mut budget, &mut start)?;
         approximate |= !exhausted;
         // The quarantined list's row gate, outside the cell lock; a held link
-        // is disclosed as the link would be (OBS-LINK-DISPUTE-1).
-        let visible: Vec<Held> = held
+        // is disclosed as the link would be, and the snapshot is confirmed
+        // after the policy whether or not a record below reads evidence
+        // (OBS-LINK-DISPUTE-1).
+        let readable: Vec<Scanned> = held
             .into_iter()
             .filter(|(row, _)| {
                 [Population, Values]
                     .into_iter()
                     .all(|capability| permitted(host, access, actor, row, capability))
             })
-            .map(|(row, open)| Held {
-                open: crate::object_links::disclosed_findings(host, access, actor, open),
-                row,
-            })
-            .filter(|held| !held.open.is_empty())
             .collect();
+        let visible: Vec<Held> =
+            crate::object_links::disclosed_findings(host, access, actor, &mut start, readable)?
+                .into_iter()
+                .map(|(row, open)| Held { row, open })
+                .filter(|held| !held.open.is_empty())
+                .collect();
         let mut by_rule: BTreeMap<DataQualityRuleRef, Vec<(&Held, &DataQualityFinding)>> =
             BTreeMap::new();
         for held in &visible {

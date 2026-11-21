@@ -1091,13 +1091,28 @@ fn deliver_rows(single: &mut Cell, by_page: &mut Cell, batch: &[(Value, String)]
                 single.process_mapping_outcome(&id).expect("one by one");
             }
             let delivered: Vec<_> = page.iter().map(|(raw, _)| raw.clone()).collect();
-            let ids = by_page
-                .inject_mapping_page(&delivered, &page[0].1)
-                .expect("page capture");
+            deliver_page(by_page, &delivered, &page[0].1);
+        }
+    }
+}
+
+/// Deliver one page as a host does (`DevHost::ingest`): captured and
+/// committed whole, or, when the cell refuses a page that would capture a
+/// dispute after a record it commits (OBS-LINK-DISPUTE-1), one record per
+/// page, each captured and committed in order.
+fn deliver_page(cell: &mut Cell, raws: &[Observed<RuntimeValue>], input: &MappingInput) {
+    match cell.inject_mapping_page(raws, input) {
+        Ok(ids) => {
             for (id, _) in ids.pages {
-                by_page.process_mapping_page(&id).expect("page");
+                cell.process_mapping_page(&id).expect("page");
             }
         }
+        Err(norn_cell::CellError::MappingPageSpansDispute) if raws.len() > 1 => {
+            for raw in raws {
+                deliver_page(cell, std::slice::from_ref(raw), input);
+            }
+        }
+        Err(error) => panic!("page capture: {error}"),
     }
 }
 
@@ -1370,12 +1385,37 @@ fn alias_row(name: &str, of: &str, label: &str) -> Value {
     row
 }
 
-/// OBS-LINK-DISPUTE-1 (Sol round 2, S1): a page captured before capture
-/// split runs at a dispute row can hold one between its members: here an
-/// unrelated party, the conflicting re-send of the referred party, then zed.
-/// One by one, zed's commit sees the conflict and holds the edge; the page's
-/// one plan used its first member's position and added it. A pending page
-/// whose members straddle a dispute row is now applied record by record.
+/// Write a page row naming `members`, as an earlier version's capture did.
+fn page_row(cell: &mut Cell, members: &[String], provenance: norn_kernel::Provenance) -> String {
+    let page = format!(
+        "mapping-page:{}",
+        norn_ir::canonical::domain_hash_hex(b"norn.mapping.page.v1\0", members)
+            .expect("page digest")
+    );
+    cell.inject(&Observed {
+        id: ObservationId(page.clone()),
+        provenance,
+        input: RuntimeObject::from([
+            (
+                "contract".to_owned(),
+                RuntimeValue::from("norn.mapping_page/v1".to_owned()),
+            ),
+            (
+                "members".to_owned(),
+                RuntimeValue::Array(members.iter().cloned().map(RuntimeValue::from).collect()),
+            ),
+        ]),
+    })
+    .expect("page row");
+    page
+}
+
+/// OBS-LINK-DISPUTE-1 (Sol round 2, S1): a page captured by an earlier
+/// version can hold a dispute row between its members: here an unrelated
+/// party, the conflicting re-send of the referred party, then zed. One by
+/// one, zed's commit sees the conflict and holds the edge. The freeze reads
+/// the disputes that exist when a commit runs (round 4), so the old page's
+/// one commit, which runs after the conflict was captured, holds it too.
 #[test]
 fn obs_link_dispute_inside_a_page_captured_before_the_split_applies_record_by_record() {
     let directory = tempfile::tempdir().expect("directory");
@@ -1410,27 +1450,7 @@ fn obs_link_dispute_inside_a_page_captured_before_the_split_applies_record_by_re
         2,
         "the re-send is a conflict row, not a member"
     );
-    let page = format!(
-        "mapping-page:{}",
-        norn_ir::canonical::domain_hash_hex(b"norn.mapping.page.v1\0", &members)
-            .expect("page digest")
-    );
-    paged
-        .inject(&Observed {
-            id: ObservationId(page.clone()),
-            provenance: provenance.expect("provenance"),
-            input: RuntimeObject::from([
-                (
-                    "contract".to_owned(),
-                    RuntimeValue::from("norn.mapping_page/v1".to_owned()),
-                ),
-                (
-                    "members".to_owned(),
-                    RuntimeValue::Array(members.iter().cloned().map(RuntimeValue::from).collect()),
-                ),
-            ]),
-        })
-        .expect("page row");
+    let page = page_row(&mut paged, &members, provenance.expect("provenance"));
     paged.process_mapping_page(&page).expect("page");
     same_end_state(&single, &paged).expect("the old page equals one by one");
     for (cell, path) in [(&single, "one by one"), (&paged, "paged")] {
@@ -1439,14 +1459,14 @@ fn obs_link_dispute_inside_a_page_captured_before_the_split_applies_record_by_re
     }
 }
 
-/// OBS-LINK-DISPUTE-1 (Sol round 2, S3): an `Add` is dated by the deliveries
-/// that established its endpoints, not only by the delivery being planned.
-/// An update to the referred party from another partition (it claims no
-/// link) is captured before the conflict and left pending; zed lands after
-/// the conflict, so the edge is held. Retrying the update re-plans the
-/// referred party's group at the update's old position: before the fix it
-/// added the edge, though zed first arrived after the freeze. Processed right
-/// away, the update finds zed absent and adds nothing; both orders now end in
+/// OBS-LINK-DISPUTE-1 (Sol round 2, S3): a retried delivery commits under
+/// the disputes that exist when it is retried. An update to the referred
+/// party from another partition (it claims no link) is captured before the
+/// conflict and left pending; zed lands after the conflict, so the edge is
+/// held. Retrying the update re-plans the referred party's group: round 2
+/// dated that plan at the update's old position and added the edge. The
+/// dispute exists at the retry, so the edge stays held; processed right
+/// away, the update finds zed absent and adds nothing. Both orders end in
 /// the same state.
 #[test]
 fn obs_link_dispute_a_retried_update_dates_its_add_by_the_target() {
@@ -1474,6 +1494,261 @@ fn obs_link_dispute_a_retried_update_dates_its_add_by_the_target() {
         cells.push(cell);
     }
     same_end_state(&cells[0], &cells[1]).expect("a retry equals processing right away");
+}
+
+/// An inbox row's position, read from the cell's file.
+fn position_of(db: &rusqlite::Connection, id: &str) -> i64 {
+    db.query_row(
+        "SELECT position FROM _norn_inbox WHERE observation_id = ?1",
+        [id],
+        |row| row.get(0),
+    )
+    .expect("inbox row")
+}
+
+/// The state a version before the run split (round 2) left in `cell` for
+/// `rows` (an unrelated party, the referred party's conflicting re-send,
+/// zed), captured as one page: each record's own row, one page row naming
+/// both mapped records with the conflict row between them, and that page
+/// committed as one, holding the edge (the round-1 freeze read the
+/// disputes that existed at commit). Round 3 refuses to commit such a page
+/// whole, so the test reaches that state by committing it while the
+/// unrelated record's inbox row is moved past the page, then moving it
+/// back: the positions end as they were captured.
+fn legacy_page_committed_across_the_conflict(cell: &mut Cell, path: &Path, rows: &[Value]) {
+    let mut members = Vec::new();
+    let mut provenance = None;
+    for row in rows {
+        let (raw, input) = raw_of(row, "1");
+        let (id, _) = cell.inject_mapping_bundle(&raw, &input).expect("capture");
+        if id.starts_with("mapping-bundle:") {
+            provenance.get_or_insert_with(|| raw.provenance.clone());
+            members.push(id);
+        }
+    }
+    assert_eq!(members.len(), 2, "the re-send is a conflict row");
+    let page = page_row(cell, &members, provenance.expect("provenance"));
+    let db = rusqlite::Connection::open(path).expect("open");
+    let captured = position_of(&db, &members[0]);
+    let past: i64 = db
+        .query_row("SELECT MAX(position) + 1 FROM _norn_inbox", [], |row| {
+            row.get(0)
+        })
+        .expect("last position");
+    let moved = |to: i64| {
+        db.execute(
+            "UPDATE _norn_inbox SET position = ?1 WHERE observation_id = ?2",
+            rusqlite::params![to, &members[0]],
+        )
+        .expect("move");
+    };
+    moved(past);
+    let outcomes = cell
+        .process_mapping_page(&page)
+        .expect("page")
+        .expect("pending");
+    moved(captured);
+    assert!(
+        outcomes
+            .iter()
+            .all(|(_, outcome)| *outcome == norn_cell::MappingOutcome::Landed),
+        "{outcomes:?}"
+    );
+    let consumed: BTreeSet<i64> = members
+        .iter()
+        .map(|id| {
+            db.query_row(
+                "SELECT consumed_commit_seq FROM _norn_inbox WHERE observation_id = ?1",
+                [id],
+                |row| row.get(0),
+            )
+            .expect("consumed")
+        })
+        .collect();
+    assert_eq!(consumed.len(), 1, "one commit consumed both members");
+    let conflict = position_of(
+        &db,
+        &db.query_row(
+            "SELECT observation_id FROM _norn_inbox WHERE observation_id LIKE 'mapping-conflict:%'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .expect("conflict"),
+    );
+    assert!(
+        captured < conflict && conflict < position_of(&db, &members[1]),
+        "the page straddles the conflict"
+    );
+    assert_eq!(refers(cell), BTreeSet::new(), "the page held the edge");
+}
+
+/// OBS-LINK-DISPUTE-1 (Sol round 3, S3): an update to the referred party,
+/// captured before the conflict, is retried after a page an earlier version
+/// committed across the conflict (the unrelated party before it, zed after
+/// it). Round 3 dated zed by that commit's earliest member, before the
+/// conflict, so the retry added the edge; one by one, zed lands after the
+/// conflict and the retry holds it. The freeze reads the dispute that exists
+/// at the retry, so both hold it.
+#[test]
+fn obs_link_dispute_a_retry_after_a_legacy_page_keeps_the_edge_held() {
+    let directory = tempfile::tempdir().expect("directory");
+    let referred = party_row("referred", "Referred");
+    let update = alias_row("referred-desk", "referred", "Referred desk");
+    let batch = [
+        party_row("other", "Other"),
+        party_row("referred", "Referred, re-sent"),
+        party_row("zed", "Zed"),
+    ];
+    let mut cells = Vec::new();
+    for (name, legacy) in [("one-by-one.sqlite", false), ("legacy.sqlite", true)] {
+        let path = directory.path().join(name);
+        let mut cell = referring_cell(directory.path(), name);
+        one_by_one(&mut cell, (&referred, "1", "snapshot"));
+        let (raw, input) = raw_in(&update, "2", "desk");
+        let (pending, _) = cell.inject_mapping_bundle(&raw, &input).expect("capture");
+        if legacy {
+            legacy_page_committed_across_the_conflict(&mut cell, &path, &batch);
+        } else {
+            for row in &batch {
+                one_by_one(&mut cell, (row, "1", "snapshot"));
+            }
+        }
+        assert_eq!(
+            cell.process_mapping_outcome(&pending).expect("retried"),
+            norn_cell::MappingOutcome::Landed
+        );
+        cells.push((name, cell));
+    }
+    let found: Vec<_> = cells
+        .iter()
+        .map(|(name, cell)| (*name, refers(cell), held(cell).len()))
+        .collect();
+    assert_eq!(
+        found,
+        [
+            ("one-by-one.sqlite", BTreeSet::new(), 1),
+            ("legacy.sqlite", BTreeSet::new(), 1)
+        ],
+        "the edge stays held after the retry"
+    );
+    same_end_state(&cells[0].1, &cells[1].1).expect("the legacy page equals one by one");
+}
+
+/// OBS-LINK-DISPUTE-1 (Sol round 3, S3a): zed is created by an action after
+/// the conflict, so no mapping delivery establishes it and round 3 had no
+/// inbox position to date it by. An update to the referred party captured
+/// before the conflict, retried afterwards, then added the disputed edge.
+/// The dispute exists at the retry, so the edge stays held, as it does when
+/// the update is processed right away (zed is absent then).
+#[test]
+fn obs_link_dispute_a_retry_after_an_action_created_target_keeps_the_edge_held() {
+    let directory = tempfile::tempdir().expect("directory");
+    let referred = party_row("referred", "Referred");
+    let update = alias_row("referred-desk", "referred", "Referred desk");
+    let resend = party_row("referred", "Referred, re-sent");
+    let zed = FactKey::new("canon.Party", ZED);
+    // Zed's values as a mapping writes them, for the action to write.
+    let values = {
+        let mut cell = referring_cell(directory.path(), "values.sqlite");
+        one_by_one(&mut cell, (&party_row("zed", "Zed"), "1", "snapshot"));
+        norn_kernel::CellHost::load(&cell, &zed)
+            .expect("zed")
+            .values
+            .expect("present")
+    };
+    let mut found = Vec::new();
+    for (name, retried) in [("right-away.sqlite", false), ("retried.sqlite", true)] {
+        let mut cell = referring_cell(directory.path(), name);
+        one_by_one(&mut cell, (&referred, "1", "snapshot"));
+        let (raw, input) = raw_in(&update, "2", "desk");
+        let (pending, _) = cell.inject_mapping_bundle(&raw, &input).expect("capture");
+        if !retried {
+            cell.process_mapping_outcome(&pending).expect("right away");
+        }
+        one_by_one(&mut cell, (&resend, "1", "snapshot"));
+        norn_kernel::CellHost::commit(
+            &mut cell,
+            norn_kernel::CellCommit {
+                writes: vec![norn_kernel::FactWrite {
+                    key: zed.clone(),
+                    expected: norn_kernel::FactVersion::ABSENT,
+                    mutation: norn_kernel::FactMutation::Put {
+                        values: values.clone(),
+                    },
+                }],
+                ..norn_kernel::CellCommit::empty()
+            },
+        )
+        .expect("the action creates zed");
+        if retried {
+            assert_eq!(
+                cell.process_mapping_outcome(&pending).expect("retried"),
+                norn_cell::MappingOutcome::Landed
+            );
+        }
+        found.push((name, refers(&cell), held(&cell).len()));
+    }
+    assert_eq!(
+        found,
+        [
+            ("right-away.sqlite", BTreeSet::new(), 1),
+            ("retried.sqlite", BTreeSet::new(), 1)
+        ],
+        "the edge stays held after the retry"
+    );
+}
+
+/// OBS-LINK-DISPUTE-1 (round 4): a page that would capture a new dispute row
+/// after a record it commits captures nothing (its transaction rolls back),
+/// so the host can deliver its records one at a time. A page whose dispute
+/// comes before every record it commits is captured as before.
+#[test]
+fn obs_link_dispute_a_page_never_captures_a_dispute_after_a_member() {
+    let directory = tempfile::tempdir().expect("directory");
+    let mut cell = referring_cell(directory.path(), "capture.sqlite");
+    one_by_one(
+        &mut cell,
+        (&party_row("referred", "Referred"), "1", "snapshot"),
+    );
+    let page = |rows: &[Value]| -> (Vec<Observed<RuntimeValue>>, MappingInput) {
+        let mut input = None;
+        let raws = rows
+            .iter()
+            .map(|row| {
+                let (raw, row_input) = raw_of(row, "1");
+                input.get_or_insert(row_input);
+                raw
+            })
+            .collect();
+        (raws, input.expect("input"))
+    };
+    let (zed, resend) = (
+        party_row("zed", "Zed"),
+        party_row("referred", "Referred, re-sent"),
+    );
+    let before = cell.store().read().dump().expect("dump");
+    let (raws, input) = page(&[zed.clone(), resend.clone()]);
+    let refused = cell
+        .inject_mapping_page(&raws, &input)
+        .expect_err("the conflict follows zed");
+    assert!(
+        matches!(refused, norn_cell::CellError::MappingPageSpansDispute),
+        "{refused}"
+    );
+    assert_eq!(
+        cell.store().read().dump().expect("dump"),
+        before,
+        "nothing was captured"
+    );
+    let (raws, input) = page(&[resend, zed]);
+    let captured = cell
+        .inject_mapping_page(&raws, &input)
+        .expect("the conflict comes first");
+    assert!(
+        captured.records[0].starts_with("mapping-conflict:"),
+        "{captured:?}"
+    );
+    assert_eq!(captured.pages.len(), 1, "{captured:?}");
 }
 
 /// OBS-LINK-DISPUTE-1 (Sol round 2, S4): two disputed contributions holding
@@ -1507,15 +1782,14 @@ fn obs_link_dispute_one_held_finding_per_edge() {
     );
 }
 
-/// OBS-LINK-DISPUTE-1 (Sol, #1544): which disputes a link plan sees is fixed
-/// by inbox order, so paging never moves the dispute boundary. The referred
-/// party lands with a pending claim to the absent zed; then one batch holds
-/// zed and a conflicting re-send of the referred party, in either order.
-/// Zed first: one by one commits the edge before the conflict is captured,
-/// and a page (which captures the conflict before it commits) now sees the
-/// conflict only from its own inbox position on, so it adds the edge too.
-/// Conflict first: the freeze holds the edge on both paths, and the held
-/// edge is a finding on the referred party.
+/// OBS-LINK-DISPUTE-1 (Sol, #1544): paging never moves the dispute boundary.
+/// The referred party lands with a pending claim to the absent zed; then one
+/// batch holds zed and a conflicting re-send of the referred party, in either
+/// order. Zed first: one by one commits the edge before the conflict is
+/// captured; the page would capture the conflict after zed, so the cell
+/// refuses it and the host delivers its records one at a time, adding the
+/// edge too. Conflict first: the freeze holds the edge on both paths, and
+/// the held edge is a finding on the referred party.
 #[test]
 fn obs_link_dispute_boundary_is_inbox_order_on_both_paths() {
     let referred = || (party_row("referred", "Referred"), "1".to_owned());

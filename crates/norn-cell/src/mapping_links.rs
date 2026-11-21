@@ -39,11 +39,10 @@ struct Entry {
     id: String,
     contribution: String,
     fresh: bool,
-    /// OBS-LINK-DISPUTE-1: the inbox position of the earliest dispute row
-    /// (conflict or identity) covering the claim's source event; `None` when
-    /// it is undisputed or fresh. `link_plan_over` freezes the claim for an
-    /// `Add` dated after that row.
-    dispute: Option<u64>,
+    /// OBS-LINK-DISPUTE-1: a dispute row (conflict or identity) covers the
+    /// claim's source event now; never for a fresh claim, whose bundle
+    /// `check_mapping_bundle` refuses when disputed.
+    disputed: bool,
 }
 
 /// The kernel's per-contribution standing, recomputed over a journal group.
@@ -274,17 +273,15 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                 Some(bundle) => bundle,
                 None => self.claim_bundle(&id)?,
             };
-            let dispute = self
-                .mapping_event_dispute(&bundle)?
-                .map(|dispute| dispute.position);
-            bundles.push((bundle, false, dispute));
+            let disputed = self.mapping_event_is_disputed(&bundle)?;
+            bundles.push((bundle, false, disputed));
         }
         for bundle in current {
-            bundles.push((bundle.clone(), true, None));
+            bundles.push((bundle.clone(), true, false));
         }
         let mut history = BTreeMap::<String, Vec<(String, String)>>::new();
         let mut entries = Vec::new();
-        for (bundle, fresh, dispute) in &bundles {
+        for (bundle, fresh, disputed) in &bundles {
             let version = source_version(bundle)?;
             let mut recorded = Vec::new();
             for mut claim in bundle.link_claims()? {
@@ -303,7 +300,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                     id,
                     contribution,
                     fresh: *fresh,
-                    dispute: *dispute,
+                    disputed: *disputed,
                 });
             }
             for (contribution, id) in recorded {
@@ -326,126 +323,6 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                 .retain(|e| groups.contains(&(e.claim.source_key.clone(), e.claim.role.clone())));
         }
         Ok(entries)
-    }
-
-    /// OBS-LINK-DISPUTE-1: the inbox position of the earliest of `current`,
-    /// the deliveries a commit applies; `None` (every dispute visible) when
-    /// none was captured. A page never holds a dispute row between its
-    /// members (`inject_mapping_page`), so every member sees the same ones.
-    fn delivery_horizon(&self, current: &[MappingBundle]) -> Result<Option<u64>, CellError> {
-        let mut horizon: Option<u64> = None;
-        for bundle in current {
-            let id = format!("mapping-bundle:{}", bundle.digest);
-            if let Some(position) = self.inbox_position(&id)? {
-                horizon = Some(horizon.map_or(position, |h| h.min(position)));
-            }
-        }
-        Ok(horizon)
-    }
-
-    /// An inbox row's position, consumed or not.
-    pub(crate) fn inbox_position(&self, id: &str) -> Result<Option<u64>, CellError> {
-        self.conn
-            .query_optional(
-                &format!("SELECT position FROM {INBOX} WHERE observation_id = ?1"),
-                params![id],
-                |row| row.get::<i64>(0),
-            )?
-            .map(|position| crate::read::to_u64(position, "inbox position"))
-            .transpose()
-    }
-
-    /// OBS-LINK-DISPUTE-1: the inbox position of the mapping delivery that
-    /// established `key` (its latest absent-to-present version), measured as
-    /// [`Self::delivery_horizon`] measured it for that commit: the earliest
-    /// mapping bundle that commit consumed. `horizon` when this commit
-    /// creates `key`; `None` when no mapping delivery established it (an
-    /// action, say), which moves no boundary.
-    fn established_position<E, C, T>(
-        &self,
-        model: CommitModel<'_, '_>,
-        commit: &CellCommit<E, C, T>,
-        key: &FactKey,
-        horizon: u64,
-    ) -> Result<Option<u64>, CellError> {
-        let canonical = model.canonical(key);
-        if GuardView(self).concrete(&canonical)?.is_none() {
-            // Present after this commit (the caller checked) and absent before it.
-            let written = commit
-                .writes
-                .iter()
-                .any(|w| w.key.key == canonical.key && model.canonical(&w.key) == canonical);
-            return Ok(written.then_some(horizon));
-        }
-        let root = self.root_type(canonical.object_type.as_str())?;
-        let facts = crate::system::FACT_VALUES;
-        let receipts = crate::system::RECEIPT;
-        let seq: Option<i64> = self
-            .conn
-            .query_optional(
-                &format!(
-                    "SELECT MIN(f.\"commit_seq\") FROM \"{facts}\" f WHERE f.\"world\" = ?1 AND f.\"root_type\" = ?2 AND f.\"id\" = ?3 \
-                     AND f.\"version\" > COALESCE((SELECT MAX(t.\"version\") FROM \"{facts}\" t WHERE t.\"world\" = ?1 AND t.\"root_type\" = ?2 AND t.\"id\" = ?3 AND json_extract(t.\"snapshot\", '$.values') IS NULL), 0)"
-                ),
-                params![MAIN_WORLD, root, &canonical.key],
-                |row| row.get::<Option<i64>>(0),
-            )?
-            .flatten();
-        let Some(seq) = seq else {
-            return Ok(None);
-        };
-        let position: Option<i64> = self
-            .conn
-            .query_optional(
-                &format!(
-                    "SELECT MIN(m.\"position\") FROM \"{receipts}\" r JOIN {INBOX} m ON m.\"consumed_commit_seq\" = r.\"commit_seq\" \
-                     WHERE r.\"commit_seq\" = ?1 AND json_extract(r.\"receipt\", '$.consumed.kind') = 'observation' \
-                     AND m.\"observation_id\" LIKE 'mapping-bundle:%' \
-                     AND (m.\"observation_id\" = json_extract(r.\"receipt\", '$.consumed.observationId') \
-                          OR m.\"observation_id\" IN (SELECT value FROM json_each((SELECT p.\"observed\" FROM {INBOX} p WHERE p.\"observation_id\" = json_extract(r.\"receipt\", '$.consumed.observationId') AND p.\"observation_id\" LIKE 'mapping-page:%'), '$.input.members')))"
-                ),
-                params![seq],
-                |row| row.get::<Option<i64>>(0),
-            )?
-            .flatten();
-        position
-            .map(|position| crate::read::to_u64(position, "inbox position"))
-            .transpose()
-    }
-
-    /// OBS-LINK-DISPUTE-1: whether a dispute at inbox position `dispute`
-    /// freezes `entry`'s `Add` of `source -> to` in this commit. The `Add` is
-    /// dated at the latest of the delivery being planned (`horizon`) and the
-    /// deliveries that established its endpoints: the point in inbox order
-    /// from which one-by-one delivery could have made it. A retried delivery
-    /// keeps its own old position, so without the endpoints' dates it would
-    /// add an edge whose target first arrived after the dispute.
-    fn add_frozen<E, C, T>(
-        &self,
-        model: CommitModel<'_, '_>,
-        commit: &CellCommit<E, C, T>,
-        entry: &Entry,
-        (source, to): (&FactKey, &FactKey),
-        horizon: Option<u64>,
-    ) -> Result<bool, CellError> {
-        let Some(dispute) = entry.dispute else {
-            return Ok(false);
-        };
-        let Some(horizon) = horizon else {
-            return Ok(true);
-        };
-        if dispute < horizon {
-            return Ok(true);
-        }
-        for key in [source, to] {
-            if self
-                .established_position(model, commit, key, horizon)?
-                .is_some_and(|established| dispute < established)
-            {
-                return Ok(true);
-            }
-        }
-        Ok(false)
     }
 
     /// OBS-LINK-DISPUTE-1: one open finding per edge a dispute holds back
@@ -508,7 +385,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         for ((source, role), group) in &groups {
             for (entry, standing) in group.iter().zip(standings(group, target)) {
                 let Some(to) = target(entry) else { continue };
-                if entry.dispute.is_none() || standing != Standing::Current {
+                if !entry.disputed || standing != Standing::Current {
                     continue;
                 }
                 let link = LinkKey::new(source.clone(), role.as_str(), to.clone());
@@ -735,13 +612,11 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         // dropping the disputed claims here revived the claims they had
         // superseded, and whichever later commit happened to read the group
         // applied that, so the end state depended on batching (#1490).
-        // Which disputes a plan sees is fixed by inbox order: a delivery sees
-        // exactly the disputes captured before it. A dispute is captured
-        // without a commit, and a page captures every record before it
-        // commits any, so "the disputes that exist when the commit runs"
-        // would differ between one by one and paged delivery; inbox order is
-        // the same on both (`add_frozen` dates each `Add`).
-        let horizon = self.delivery_horizon(bundles)?;
+        // The freeze reads the disputes that exist when this commit runs, on
+        // every path: no positional dating. Paged delivery commits at the
+        // same dispute state as one by one because a page never captures a
+        // dispute row after a record it commits (`inject_mapping_page`
+        // refuses, and the host delivers that page's records one at a time).
         let mut groups = BTreeMap::<_, Vec<&Entry>>::new();
         for entry in &entries {
             let source = fact(&entry.claim.source_type, &entry.claim.source_key);
@@ -782,16 +657,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                     .any(|(o, s)| *s != Standing::Superseded && target(o).as_ref() == Some(&to));
                 let mutation = match standing {
                     Standing::Current
-                        if !exists
-                            && present(source)?
-                            && present(&to)?
-                            && !self.add_frozen(
-                                model,
-                                commit,
-                                entry,
-                                (source, &to),
-                                horizon,
-                            )? =>
+                        if !entry.disputed && !exists && present(source)? && present(&to)? =>
                     {
                         LinkMutation::Add {
                             values: model

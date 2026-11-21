@@ -231,8 +231,9 @@ fn endpoint_listed<E: SqlEngine>(
 /// OBS-LINK-DISPUTE-1: a finding about one link (`core.boundary.link_held`)
 /// names both of its endpoints, so it is disclosed under the policy links are
 /// listed under: [`endpoint_listed`] on every row it names. The rows are read
-/// under the cell lock ([`gate_findings`]); the policy runs outside it
-/// ([`disclosed_findings`]). Every other finding passes unchanged.
+/// under the cell lock ([`gate_findings`]); the policy runs outside it, and
+/// the snapshot is confirmed after it ([`disclosed_findings`]), as the link
+/// route does. Every other finding passes unchanged.
 pub(crate) struct GatedFinding {
     finding: norn_ir::DataQualityFinding,
     /// The rows a link finding names (`None` for one that is absent);
@@ -270,27 +271,45 @@ pub(crate) fn gate_findings<E: SqlEngine>(
         .collect()
 }
 
-/// The findings of `gated` the caller may see, outside the lock.
-pub(crate) fn disclosed_findings<E: SqlEngine>(
+/// The findings of each entry of `gated` the caller may see, decided outside
+/// the lock, then confirmed at the snapshot `start` the rows were read at:
+/// a commit while the policy ran (say, one changing an endpoint's
+/// access-driving fields) refuses the read (`object.snapshot_moved`) rather
+/// than disclose by a row that no longer holds, as [`visible_batch`] does
+/// for links. One confirmation covers every entry, whether or not any later
+/// read of the route takes the lock again.
+///
+/// # Errors
+/// `object.snapshot_moved` when the cell committed since `start`.
+pub(crate) fn disclosed_findings<E: SqlEngine, K>(
     host: &DevHost<E>,
     access: &dyn ObjectAccess,
     actor: &str,
-    gated: Vec<GatedFinding>,
-) -> Vec<norn_ir::DataQualityFinding> {
+    start: &mut Option<(u64, Option<(u64, u64)>)>,
+    gated: Vec<(K, Vec<GatedFinding>)>,
+) -> Result<Vec<(K, Vec<norn_ir::DataQualityFinding>)>, Refusal> {
     let mut collections = BTreeMap::new();
-    gated
+    let disclosed = gated
         .into_iter()
-        .filter(|gated| {
-            gated.endpoints.as_ref().is_none_or(|rows| {
-                rows.iter().all(|row| {
-                    row.as_ref().is_some_and(|row| {
-                        endpoint_listed(host, access, actor, row, &mut collections)
+        .map(|(key, findings)| {
+            let findings = findings
+                .into_iter()
+                .filter(|gated| {
+                    gated.endpoints.as_ref().is_none_or(|rows| {
+                        rows.iter().all(|row| {
+                            row.as_ref().is_some_and(|row| {
+                                endpoint_listed(host, access, actor, row, &mut collections)
+                            })
+                        })
                     })
                 })
-            })
+                .map(|gated| gated.finding)
+                .collect();
+            (key, findings)
         })
-        .map(|gated| gated.finding)
-        .collect()
+        .collect();
+    locked(host, access, start, |_| Ok(()))?;
+    Ok(disclosed)
 }
 
 /// The state of one links scan under one snapshot.

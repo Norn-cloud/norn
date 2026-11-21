@@ -315,8 +315,12 @@ pub fn get_object_findings<E: SqlEngine>(
             .map_err(Refusal::host)?,
         ))
     })?;
-    // OBS-LINK-DISPUTE-1: a held link is disclosed as the link would be.
-    document.findings = disclosed_findings(host, access, &actor, gated);
+    // OBS-LINK-DISPUTE-1: a held link is disclosed as the link would be,
+    // at the snapshot the findings were read at.
+    document.findings = disclosed_findings(host, access, &actor, &mut start, vec![((), gated)])?
+        .into_iter()
+        .flat_map(|((), findings)| findings)
+        .collect();
     // Each evidence row is disclosed on its own Population and Values.
     for (object_type, id) in linked {
         let evidence = locked(host, access, &mut start, |reader| {
@@ -635,18 +639,21 @@ pub fn get_quarantined_objects<E: SqlEngine>(
         }
     };
     // Authorization runs outside the cell lock, row by row.
-    let items = candidates
+    let readable: Vec<_> = candidates
         .into_iter()
         .filter(|(row, _)| {
             [Population, Values]
                 .into_iter()
                 .all(|capability| permitted(host, access, &actor, row, capability))
         })
+        .collect();
+    // OBS-LINK-DISPUTE-1: a held link counts only where it is disclosed, at
+    // the snapshot the rows were read at.
+    let items = disclosed_findings(host, access, &actor, &mut start, readable)?
+        .into_iter()
         .map(|(row, open)| NornQuarantinedObject {
             id: row.id,
-            // OBS-LINK-DISPUTE-1: a held link counts only where it is disclosed.
-            open_findings: u64::try_from(disclosed_findings(host, access, &actor, open).len())
-                .unwrap_or(u64::MAX),
+            open_findings: u64::try_from(open.len()).unwrap_or(u64::MAX),
         })
         .collect();
     Ok(NornQuarantinedPage {

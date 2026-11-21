@@ -215,8 +215,9 @@ pub(crate) struct SourceDisputeIndex {
 /// OBS-LINK-DISPUTE-1: the dispute rows covering one source event.
 #[derive(Debug, Clone)]
 pub(crate) struct EventDispute {
-    /// The inbox position of the earliest row: deliveries captured before it
-    /// plan their links as if the event were undisputed, on every path.
+    /// The inbox position of the earliest row, whose `first_seen` dates a
+    /// held-link finding. It orders evidence only: the freeze itself reads
+    /// whether a row exists when the commit runs.
     pub(crate) position: u64,
     /// The dispute rows' inbox ids (`mapping-conflict:` / `mapping-identity:`).
     pub(crate) rows: BTreeSet<String>,
@@ -430,7 +431,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         &self,
         bundle: &MappingBundle,
     ) -> Result<bool, CellError> {
-        Ok(self.mapping_event_dispute(bundle)?.is_some())
+        let keys = crate::mapping_identity::keys(&bundle.raw, &bundle.input)?
+            .map(|key| norn_ir::canonical::nfc(&key));
+        self.with_source_dispute_index(|index| index.events.contains_key(&keys))
     }
 
     /// The dispute rows covering `bundle`'s source event, if any.
@@ -441,23 +444,5 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         let keys = crate::mapping_identity::keys(&bundle.raw, &bundle.input)?
             .map(|key| norn_ir::canonical::nfc(&key));
         self.with_source_dispute_index(|index| index.events.get(&keys).cloned())
-    }
-
-    /// OBS-LINK-DISPUTE-1: whether a dispute row was captured strictly between
-    /// inbox positions `a` and `b` (in either order).
-    pub(crate) fn dispute_captured_between(&self, a: u64, b: u64) -> Result<bool, CellError> {
-        let (low, high) = (a.min(b), a.max(b));
-        let found: Option<i64> = self.conn.query_optional(
-            &format!(
-                "SELECT 1 FROM {INBOX} WHERE position > ?1 AND position < ?2 \
-                 AND (observation_id LIKE 'mapping-conflict:%' OR observation_id LIKE 'mapping-identity:%') LIMIT 1"
-            ),
-            params![
-                crate::read::to_i64(low, "inbox position")?,
-                crate::read::to_i64(high, "inbox position")?
-            ],
-            |row| row.get::<i64>(0),
-        )?;
-        Ok(found.is_some())
     }
 }

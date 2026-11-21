@@ -10,13 +10,14 @@
 //! versions, events and the CAS chain are the one-by-one ones. A record the
 //! mapping refused (its bundle retains diagnostics) joins no page row: it is
 //! quarantined evidence before any commit, exactly as one by one, and it ends
-//! the run, so the records before it and after it each commit together. So
-//! does a dispute row (a conflict or identity finding) captured between two
-//! members, so every member of a page row sees the same disputes
-//! (OBS-LINK-DISPUTE-1); a page captured before that rule whose pending
-//! members straddle a dispute row is applied record by record. A record the
-//! cell refuses at commit
-//! stays pending as quarantined evidence, as it does one by one: such a page
+//! the run, so the records before it and after it each commit together.
+//! OBS-LINK-DISPUTE-1: a link plan reads the disputes that exist when it
+//! commits, so a page must never capture a new dispute row (a conflict or
+//! identity finding) after a record it commits: one by one commits that
+//! record first. Such a page captures nothing
+//! ([`CellError::MappingPageSpansDispute`]) and the host delivers its records
+//! one at a time, which is the one-by-one path itself. A record the cell
+//! refuses at commit stays pending as quarantined evidence, as it does one by one: such a page
 //! is applied record by record, and its row is consumed (applying nothing)
 //! once no member is left pending.
 use crate::{
@@ -131,13 +132,19 @@ impl<E: SqlEngine> CellStore<E> {
                 Vec::new();
             let mut records = Vec::with_capacity(raws.len());
             let mut split = false;
-            // The inbox position of the last record joined to a run.
-            let mut last: Option<u64> = None;
+            // Whether a record this page commits was captured yet.
+            let mut member = false;
             for raw in raws {
-                let (id, _new) = self.capture_mapping_bundle(raw, input)?;
+                let (id, new) = self.capture_mapping_bundle(raw, input)?;
                 records.push(id.clone());
                 if !id.starts_with("mapping-bundle:") {
-                    // Conflict and identity findings stay pending, as one by one.
+                    // Conflict and identity findings stay pending, as one by
+                    // one. OBS-LINK-DISPUTE-1: a new one after a member would
+                    // exist at that member's commit, which one by one makes
+                    // before capturing it; the transaction rolls back.
+                    if new && member {
+                        return Err(CellError::MappingPageSpansDispute);
+                    }
                     continue;
                 }
                 let bundle = self.read().inbox_bundle(&id)?;
@@ -156,20 +163,7 @@ impl<E: SqlEngine> CellStore<E> {
                     .iter()
                     .map(|r| canonical.canonical(&FactKey::new(r.object_type.as_str(), &r.key)))
                     .collect();
-                let position = self
-                    .read()
-                    .inbox_position(&id)?
-                    .ok_or(CellError::MappingBundleMismatch)?;
-                // OBS-LINK-DISPUTE-1: a link plan sees the disputes captured
-                // before its delivery in inbox order. A dispute row between
-                // two members (this page's conflict or identity finding)
-                // ends the run, so one plan never serves members that see
-                // different disputes; one by one they would not either.
-                if let Some(previous) = last
-                    && self.read().dispute_captured_between(previous, position)?
-                {
-                    split = true;
-                }
+                member = true;
                 match runs.last_mut() {
                     Some((ids, written, _)) if !split && written.is_disjoint(&keys) => {
                         ids.push(id);
@@ -177,7 +171,6 @@ impl<E: SqlEngine> CellStore<E> {
                     }
                     _ => runs.push((vec![id], keys, raw)),
                 }
-                last = Some(position);
                 split = false;
             }
             let mut pages = Vec::with_capacity(runs.len());
@@ -257,27 +250,6 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         Ok(Some(ids))
     }
 
-    /// OBS-LINK-DISPUTE-1: whether a dispute row was captured between the
-    /// first and the last of `members` in inbox order.
-    pub(crate) fn dispute_among(
-        &self,
-        members: &[(String, MappingBundle)],
-    ) -> Result<bool, CellError> {
-        let mut range: Option<(u64, u64)> = None;
-        for (id, _) in members {
-            let position = self
-                .inbox_position(id)?
-                .ok_or(CellError::MappingBundleMismatch)?;
-            range = Some(range.map_or((position, position), |(low, high)| {
-                (low.min(position), high.max(position))
-            }));
-        }
-        match range {
-            Some((low, high)) if low < high => self.dispute_captured_between(low, high),
-            _ => Ok(false),
-        }
-    }
-
     /// A pending page's members that are still pending, in page order, with
     /// their bundles. Members consumed earlier (one by one, or by another
     /// page) are skipped: each record is consumed once.
@@ -339,16 +311,6 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
         let Some((observed, members)) = self.pending_page(page_id)? else {
             return Ok(PageAttempt::Consumed);
         };
-        // OBS-LINK-DISPUTE-1: one plan serves a page's members only when they
-        // all see the same disputes. Capture now ends a run at a dispute row,
-        // but a page captured before that rule can still hold one between its
-        // pending members; such a page is applied record by record, so each
-        // member's plan sees the disputes captured before it, as one by one.
-        if self.store().read().dispute_among(&members)? {
-            return Ok(PageAttempt::Refused(
-                members.into_iter().map(|(id, _)| id).collect(),
-            ));
-        }
         match self.commit_page(&observed, &members) {
             Ok(()) => Ok(PageAttempt::Landed(
                 members
