@@ -16,6 +16,10 @@
     reason = "privacy correspondence"
 )]
 
+// #1485 S6: fixtures write through the kernel path, never the raw door.
+#[path = "../../norn-cell/tests/support/governed.rs"]
+mod governed;
+use governed::GovernedCommit as _;
 use std::collections::{BTreeMap, BTreeSet};
 
 use norn_api::authz::{AccessRequest, Authorizer, ReadCapability, ReadRequest};
@@ -1046,10 +1050,12 @@ fn an_applied_pack_keeps_the_privacy_markings() {
         .unwrap()
     })
     .collect();
+    let kinds = norn_api::definition_routes::DefinitionKinds::default();
     let plan = plan_definitions(
         &cell,
         &scope,
         Some("owner"),
+        &kinds,
         &json!({ "artifacts": pack }).to_string(),
     )
     .unwrap();
@@ -1057,6 +1063,7 @@ fn an_applied_pack_keeps_the_privacy_markings() {
         &cell,
         &scope,
         Some("owner"),
+        &kinds,
         &json!({ "artifacts": pack, "expectedVersion": plan.base_version }).to_string(),
         10,
     )

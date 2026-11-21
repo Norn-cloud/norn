@@ -1,10 +1,11 @@
 // One Norn tenant cell per Durable Object (#728, #819). The router only picks
 // the object; the Rust cell admits scope, resolves the principal and decides
 // every read. Nothing here inspects data or grants access.
-import { initSync, NornCell } from "./pkg/norn_cell_do.js";
+import { initSync, NornCell, NornGate } from "./pkg/norn_cell_do.js";
 import module from "./pkg/norn_cell_do_bg.wasm";
 import * as live from "./subscribe.mjs";
 import { Wake } from "./wake.mjs";
+import { connectVars, OLAP_SIGNING_KEY } from "./connect_vars.mjs";
 import { instrument, noteRefusal, syncFinished } from "./telemetry.mjs";
 initSync({ module });
 
@@ -56,8 +57,13 @@ export class Cell {
     this.env = env;
     this.cell = null;
     this.opening = null;
+    // TENANT-ISOLATION-1: the scope's membership gate, which holds no storage (see gate()).
+    this.gating = null;
     // The last failed cold open and when it failed (see open()).
     this.openFailure = null;
+    // S1: the last failed gate and when it failed, apart from the cell's: a failed open (storage,
+    // alarms) never changes what an outsider is answered.
+    this.gateFailure = null;
     // TIMER-ALARM-1: the object's alarm follows the cell's deadlines (wake.mjs).
     this.wake = new Wake(ctx.storage);
     // Whether this instance has stored the scope it serves.
@@ -80,22 +86,78 @@ export class Cell {
   static scopeOf(request) {
     return JSON.parse(request.headers.get(CELL_HEADER));
   }
-  open(scope) {
-    // A failed open is cached for OPEN_RETRY_MS and refused at once with the same
-    // error: no JWKS fetch, no provisioning reads and no 5 s hold on the object per
-    // request while the issuer is unreachable or the stage is misconfigured.
-    if (this.openFailure !== null) {
+  /**
+   * A failed open (`which` = "openFailure") or gate ("gateFailure") is cached for OPEN_RETRY_MS:
+   * the cached error, or null to try again. Each is refused at once with the same error: no JWKS
+   * fetch, no provisioning reads and no 5 s hold on the object per request while the issuer is
+   * unreachable or the stage is misconfigured.
+   */
+  failedRecently(which = "openFailure") {
+    const failure = this[which];
+    if (failure !== null) {
       // A clock that moved backwards (negative elapsed) expires the entry too, so recovery is never delayed past the interval.
-      const elapsed = Date.now() - this.openFailure.at;
-      if (elapsed >= 0 && elapsed < OPEN_RETRY_MS) return Promise.reject(this.openFailure.error);
-      this.openFailure = null;
+      const elapsed = Date.now() - failure.at;
+      if (elapsed >= 0 && elapsed < OPEN_RETRY_MS) return failure.error;
+      this[which] = null;
     }
+    return null;
+  }
+  /** Refuse a build or stage that may not serve, before anything is opened. */
+  checkStage() {
+    if (NornCell.fixturesEnabled() && !FIXTURE_STAGES.has(this.env.NORN_STAGE)) {
+      throw new Error("this cell build accepts fixture principals and serves only a smoke or test stage (NORN_STAGE)");
+    }
+  }
+  /**
+   * TENANT-ISOLATION-1 (S1, S3): the scope's membership gate, or null for a demo scope (seeded by
+   * this build, served to anyone). It is built from configuration and the pinned JWKS only: no
+   * storage. An outsider is answered by it, so a tenant cell's storage is never opened, read, armed
+   * or synced for them, and nothing the cell holds (its saved scope, deadlines, sockets) shapes the
+   * answer.
+   */
+  async gate(scope) {
+    if (isDemo(scope)) return null;
+    const failed = this.failedRecently("gateFailure");
+    if (failed !== null) throw failed;
+    this.gating ??= (async () => {
+      this.checkStage();
+      const [org, env] = scope;
+      const issuer = this.env.NORN_HOST_ISSUER;
+      const jwks = issuer === undefined ? undefined : await this.jwks(true);
+      return new NornGate(org, env, issuer, jwks?.text, this.env.NORN_LINEAGE_KEY, this.env.NORN_SOURCES ?? "[]", connectVars(this.env), jwks?.at ?? Date.now());
+    })().catch((error) => {
+      this.gating = null;
+      this.gateFailure = { error, at: Date.now() };
+      console.error(`cell gate refused: ${error}`);
+      throw error;
+    });
+    const gate = await this.gating;
+    if (gate.jwksDue(Date.now())) await this.refreshJwks(gate);
+    return gate;
+  }
+  /** The gate's reply to an outsider at `scope`, as the Worker serves it; null for a caller the cell serves. */
+  async outside(scope, request, body) {
+    const gate = await this.gate(scope);
+    if (gate === null) return null;
+    const url = new URL(request.url);
+    const check = () => gate.check(request.method, url.pathname, url.search.slice(1), request.headers.get("authorization") ?? undefined, Date.now(), body);
+    let reply = check();
+    // An unknown key id, at most once per retry interval: refetch the pinned JWKS and decide again.
+    if (reply?.refreshJwks && (await this.refreshJwks(gate))) reply = check();
+    if (reply === undefined || reply === null) return null;
+    return noteRefusal(this.env, new Response(reply.body, { status: reply.status, headers: { "content-type": "application/json" } }), reply.body);
+  }
+  /** An outsider's live read: the gate's answer, never the cell's (an admitted token closes the socket, to reopen as a member). */
+  askOutside(gate, pathname, query, authorization) {
+    return gate.check("GET", pathname, query, authorization ?? undefined, Date.now(), undefined) ?? { status: 401, body: "" };
+  }
+  open(scope) {
+    const failed = this.failedRecently();
+    if (failed !== null) return Promise.reject(failed);
     // One opening per object; seeding, provisioning and dispatch are synchronous Wasm. A scope
     // nobody provisioned opens vacant: the cell reads its storage and writes nothing.
     this.opening ??= (async () => {
-      if (NornCell.fixturesEnabled() && !FIXTURE_STAGES.has(this.env.NORN_STAGE)) {
-        throw new Error("this cell build accepts fixture principals and serves only a smoke or test stage (NORN_STAGE)");
-      }
+      this.checkStage();
       const [org, env] = scope;
       const issuer = this.env.NORN_HOST_ISSUER;
       const jwks = issuer === undefined ? undefined : await this.jwks(true);
@@ -109,7 +171,16 @@ export class Cell {
         console.error(`source connections not configured: ${error}`);
       }
       // D102: questions are answered on the tenant analytics engine when the Worker has one.
-      if (this.env.NORN_OLAP_URL !== undefined) this.cell.enableAnalytics();
+      // OLAP-CRED-1 (#1493): the cell signs each engine call for its own tenant; no shared token.
+      // OLAP-01: the signing key goes to the analytics path only; its name is outside the
+      // connection secret namespace, so connectVars never hands it to a connector.
+      if (this.env.NORN_OLAP_URL !== undefined) {
+        try {
+          this.cell.enableAnalytics(this.env[OLAP_SIGNING_KEY]);
+        } catch (error) {
+          console.error(`analytics not enabled: ${error}`);
+        }
+      }
       // TIMER-ALARM-1: a serving cell keeps its scope for alarms, and arms for whatever was
       // already due when it opened (a cell from before alarms, a lost alarm).
       await this.keepScope(scope);
@@ -133,14 +204,14 @@ export class Cell {
     return this.cell.fetch(request.method, url.pathname, url.search.slice(1), request.headers.get("authorization") ?? undefined, Date.now(), body);
   }
   /**
-   * D102: perform one engine call the cell asked for. The engine trusts only
-   * this Worker's token; the cell decided the call and checks the answer.
+   * D102: perform one engine call the cell asked for, with the credential the
+   * cell minted for it; the cell decided the call and checks the answer.
    */
   async engine(call) {
     try {
       const response = await fetch(`${this.env.NORN_OLAP_URL}/v1/${call.op}`, {
         method: "POST",
-        headers: { authorization: `Bearer ${this.env.NORN_SECRET_DUCKDB_TOKEN}`, "content-type": "application/json" },
+        headers: { authorization: `Bearer ${call.credential}`, "content-type": "application/json" },
         body: call.body,
         redirect: "manual",
         signal: AbortSignal.timeout(ENGINE_TIMEOUT_MS),
@@ -159,7 +230,7 @@ export class Cell {
     try {
       const response = await fetch(`${this.env.NORN_OLAP_URL}/v1/${call.op}`, {
         method: "POST",
-        headers: { authorization: `Bearer ${this.env.NORN_SECRET_DUCKDB_TOKEN}`, "content-type": "application/json" },
+        headers: { authorization: `Bearer ${call.credential}`, "content-type": "application/json" },
         body: call.body,
         redirect: "manual",
         signal: AbortSignal.timeout(ENGINE_TIMEOUT_MS),
@@ -195,11 +266,11 @@ export class Cell {
     }
     return reply;
   }
-  /** Refetch the pinned JWKS and install it. On failure the cached keys keep aging; the cell refuses them past its stale bound. */
-  async refreshJwks() {
+  /** Refetch the pinned JWKS and install it in `into` (the cell by default). On failure the cached keys keep aging; the cell refuses them past its stale bound. */
+  async refreshJwks(into = this.cell) {
     try {
       const jwks = await this.jwks(false);
-      this.cell.replaceJwks(jwks.text, jwks.at);
+      into.replaceJwks(jwks.text, jwks.at);
       return true;
     } catch (error) {
       console.error(`JWKS refresh failed: ${error}`);
@@ -218,6 +289,18 @@ export class Cell {
   async webSocketMessage(ws, message) {
     const attachment = ws.deserializeAttachment();
     if (!attachment) return ws.close(1011, "no live state");
+    const role = live.roleOf(attachment);
+    if (role === live.OUTSIDE) {
+      // TENANT-ISOLATION-1: an outsider's socket is answered by the gate; the cell is never opened for it.
+      const gate = await this.gate(attachment.scope);
+      if (gate === null) return ws.close(1011, "no live state");
+      return live.message(ws, message, (path, query, authorization) => this.askOutside(gate, path, query, authorization));
+    }
+    // S3: a socket no membership decision classified (accepted before the gate existed) is never
+    // taken for a member: it is closed, and the client reconnects through the gate.
+    if (role !== live.MEMBER) return live.reclassify(ws);
+    // A member's socket woken from hibernation is a member again before storage is reopened for it.
+    if (!(await this.member(attachment.scope, attachment.authorization))) return ws.close(4401, "not a member");
     await this.ready(attachment.scope);
     await live.message(ws, message, (path, query, authorization) => this.ask(path, query, authorization));
   }
@@ -228,13 +311,35 @@ export class Cell {
       // Already closed.
     }
   }
-  /** After a commit, every live subscription on this object is answered again; resolves to the changed snapshots sent. */
-  publish() {
-    if (this.ctx.getWebSockets().length === 0) return Promise.resolve(0);
-    return live.publish(this.ctx, (path, query, authorization) => this.ask(path, query, authorization)).catch((error) => {
+  /** Whether `authorization` reaches the cell at `scope` (S3): the gate admits it, or the scope is a demo one. */
+  async member(scope, authorization) {
+    const gate = await this.gate(scope);
+    if (gate === null) return true;
+    const [org, env] = scope;
+    const query = `orgId=${encodeURIComponent(org)}&environmentId=${encodeURIComponent(env)}`;
+    return gate.check("GET", "/v1/subscribe", query, authorization ?? undefined, Date.now(), undefined) == null;
+  }
+  /**
+   * After a commit, every live subscription on this object is answered again; resolves to the
+   * changed snapshots sent. S3: a commit is observable only on the sockets of callers who are
+   * members now. A socket accepted as a member is re-checked at the gate first, so a former
+   * member (an expired token, a lost membership) is sent nothing; an outsider's answer is the
+   * gate's, which no commit changes; an unclassified socket is not touched. No socket is closed
+   * here: each ends on its own message (`webSocketMessage`), whether or not anyone commits.
+   */
+  async publish() {
+    try {
+      const members = [];
+      for (const ws of live.members(this.ctx)) {
+        const { scope, authorization } = ws.deserializeAttachment();
+        if (await this.member(scope, authorization)) members.push(ws);
+      }
+      if (members.length === 0) return 0;
+      return await live.publish({ getWebSockets: () => members }, (path, query, authorization) => this.ask(path, query, authorization));
+    } catch (error) {
       console.error(`live publish failed: ${error}`);
       return 0;
-    });
+    }
   }
   async fetch(request) {
     const url = new URL(request.url);
@@ -247,6 +352,11 @@ export class Cell {
         return Response.json({ format: "norn/refusal@2", retryable: false, reason: null, code: "authn.required", category: "permission", message: "sign in first", explanation: "a live socket carries the caller's token" }, { status: 401 });
       }
       const scope = Cell.scopeOf(request);
+      // S3: membership first. An outsider's socket is counted only among outsiders' and answered
+      // by the gate, so the cell's own sockets (and whether it exists) never shape the upgrade.
+      const gate = await this.gate(scope);
+      const outsider = gate !== null && gate.check("GET", url.pathname, url.search.slice(1), authorization, Date.now(), undefined) != null;
+      if (outsider) return live.accept(this.ctx, scope, authorization, request.headers.get("sec-websocket-protocol") ?? "", { outside: true });
       await this.ready(scope);
       return live.accept(this.ctx, scope, authorization, request.headers.get("sec-websocket-protocol") ?? "");
     }
@@ -257,6 +367,10 @@ export class Cell {
       return Response.json({ format: "norn/refusal@2", retryable: false, reason: null, code: "request.too_large", category: "limit", message: "the request body is too large", explanation: `submissions are at most ${limit} bytes` }, { status: 413 });
     }
     const scope = Cell.scopeOf(request);
+    // S1: membership first. An outsider is answered before the cell's storage is opened: no saved
+    // scope, deadline, alarm or sync is read or touched for them, at a busy cell or a vacant scope.
+    const outside = await this.outside(scope, request, body);
+    if (outside !== null) return outside;
     await this.open(scope);
     // Keys at their maximum age are refetched before serving, whether or not any
     // token names an unknown key id, so a removed key stops verifying.
@@ -417,11 +531,6 @@ const MAX_STEP_ROWS = 500;
 const MAX_SOURCE_BODY = 20 * 1024 * 1024;
 // One outbound source or storage request may take this long.
 const SOURCE_FETCH_TIMEOUT_MS = 30_000;
-
-/** The server variables the cell's connections and uploads read, by name: secrets, storage settings and the operator's source host allowlist (SYNC-URL-1) only. Never logged. */
-function connectVars(env) {
-  return JSON.stringify(Object.fromEntries(Object.entries(env).filter(([name, value]) => typeof value === "string" && (name.startsWith("NORN_SECRET_") || name.startsWith("NORN_S3_") || name === "NORN_SOURCE_ALLOWED_HOSTS"))));
-}
 
 /** Perform exactly the request the cell planned; the status and bytes go back to the cell, unread here. */
 async function perform(request) {

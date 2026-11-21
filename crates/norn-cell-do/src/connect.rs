@@ -10,7 +10,8 @@
 //! Routes (all `POST`, scoped by `orgId` and `environmentId` like every other):
 //! - `/v1/sources/{id}:sync`: sync now; 202 `{"run": …}`.
 //! - `/v1/uploads:begin`: `{fileName, contentType, size, prefix?}` → a signed
-//!   `PUT` the browser sends the bytes to.
+//!   `PUT` the browser sends the bytes to, always under `uploads/<scope>/`
+//!   (a `prefix` names a folder there, UPLOAD-SCOPE-1).
 //! - `/v1/uploads/{id}:complete`: the cell reads the object, records its URI
 //!   and SHA-256 and profiles it.
 //! - `/v1/uploads/{id}:define`: [`LoadRequest`]; installs the generated
@@ -33,7 +34,13 @@
 //! UPLOAD-ID-1: an upload id carries its store and object key, sealed with the
 //! store's secret, so `:complete`, `:load` and `:read` work after the Durable
 //! Object restarts; an id resolves only in the scope whose prefix its key names
-//! (or `synthetic/`).
+//! (or a read-only host fixture, `fixtures/`).
+//! UPLOAD-SCOPE-1: every key a tenant creates is under its own
+//! `uploads/<scope>/`; `fixtures/` holds the operator's shared fixtures,
+//! which every scope may read and none may write (no `PUT` is ever signed
+//! there, under these rules or the ones before them). A bare `synthetic/`
+//! key is a legacy tenant write (the old rules signed `PUT`s there for any
+//! scope), so it is read by no scope, by URI or by sealed id.
 //! UPLOAD-RECORD-1: `:complete` keeps what the cell read back (URI, SHA-256,
 //! size, the CSV profile, who completed it) as a `source.Upload` object
 //! before it answers; after a restart `:load`, `:define` and the bulk loader
@@ -196,12 +203,28 @@ fn same(a: &[u8], b: &[u8]) -> bool {
     a.len() == b.len() && a.iter().zip(b).fold(0u8, |diff, (x, y)| diff | (x ^ y)) == 0
 }
 
-/// Whether `key` lies under a prefix the cell serving `scope_key` writes.
+/// Whether `key` lies under the prefix the cell serving `scope_key` writes.
 fn owns(key: &str, scope_key: &str) -> bool {
     key.strip_prefix("uploads/")
         .and_then(|rest| rest.strip_prefix(scope_key))
         .is_some_and(|rest| rest.starts_with('/'))
-        || key.starts_with("synthetic/")
+        && !key.contains("..")
+}
+
+/// The operator-only namespace of shared fixtures (UPLOAD-SCOPE-1): no
+/// tenant has ever been able to sign a write under it.
+const FIXTURES: &str = "fixtures/";
+
+/// Whether `key` is one of the operator's shared fixtures (UPLOAD-SCOPE-1):
+/// readable from every scope, writable from none. A legacy bare
+/// `synthetic/` key is not one: any tenant could write there.
+fn fixture(key: &str) -> bool {
+    key.starts_with(FIXTURES) && !key.contains("..")
+}
+
+/// Whether the cell serving `scope_key` may read `key`: its own, or a fixture.
+fn readable(key: &str, scope_key: &str) -> bool {
+    owns(key, scope_key) || fixture(key)
 }
 
 enum Route<'a> {
@@ -212,6 +235,13 @@ enum Route<'a> {
     Load(&'a str),
     Read,
     Observations,
+}
+
+/// Whether `path` is one of the source and upload routes [`Connect::route`]
+/// serves (TENANT-ISOLATION-1: the membership gate answers an outsider there
+/// as these routes do).
+pub(crate) fn serves(path: &str) -> bool {
+    route_of(path).is_some()
 }
 
 fn route_of(path: &str) -> Option<Route<'_>> {
@@ -239,6 +269,46 @@ fn route_of(path: &str) -> Option<Route<'_>> {
         "load" => Some(Route::Load(id)),
         _ => None,
     }
+}
+
+/// OLAP-01: names in the connection secret namespace that deployment-wide
+/// secrets used to have, or might be given: the object store's keys (now
+/// `NORN_S3_*`), the analytics signing key (now `NORN_OLAP_SIGNING_KEY`) and
+/// the retired analytics token. A connector names its secret freely and the
+/// pull host sends it to a source endpoint, so a deployment secret in this
+/// namespace would be a tenant's to read.
+const RESERVED_SECRETS: &[&str] = &[
+    "NORN_SECRET_S3_",
+    "NORN_SECRET_OLAP_",
+    "NORN_SECRET_DUCKDB_",
+];
+
+/// OLAP-01: the secrets a connector's auth may resolve (`secretRef`, through
+/// [`norn_api::sources::secret_env`]): the `NORN_SECRET_*` variables, which
+/// hold connection secrets only. Storage keys and the analytics signing key
+/// live outside that namespace and are never in this map, whatever name a
+/// connector asks for.
+///
+/// # Errors
+/// A variable under a reserved deployment-secret name: the deployment still
+/// uses an old name, and the cell refuses rather than expose it.
+fn connection_secrets(vars: &BTreeMap<String, String>) -> Result<BTreeMap<String, String>, String> {
+    if let Some(name) = vars.keys().find(|name| {
+        RESERVED_SECRETS
+            .iter()
+            .any(|prefix| name.starts_with(prefix))
+    }) {
+        return Err(format!(
+            "{name} is a deployment secret in the connection secret namespace, where a \
+             connector could read it; use NORN_S3_* for storage keys and \
+             NORN_OLAP_SIGNING_KEY for the analytics signing key"
+        ));
+    }
+    Ok(vars
+        .iter()
+        .filter(|(name, _)| name.starts_with("NORN_SECRET_"))
+        .map(|(name, value)| (name.clone(), value.clone()))
+        .collect())
 }
 
 fn scope_of(query: &str) -> ScopeQuery {
@@ -272,15 +342,12 @@ impl Connect {
     /// and the operator's `NORN_SOURCE_ALLOWED_HOSTS`, SYNC-URL-1).
     ///
     /// # Errors
-    /// Malformed configuration.
+    /// Malformed configuration, or a deployment secret under a connection
+    /// secret's name (`NORN_SECRET_S3_*`, `NORN_SECRET_OLAP_*`, `NORN_SECRET_DUCKDB_*`).
     pub fn new(config: &str, vars: &str) -> Result<Self, String> {
         let vars: BTreeMap<String, String> =
             serde_json::from_str(vars).map_err(|e| format!("server variables: {e}"))?;
-        let secrets = vars
-            .iter()
-            .filter(|(name, _)| name.starts_with("NORN_SECRET_"))
-            .map(|(name, value)| (name.clone(), value.clone()))
-            .collect();
+        let secrets = connection_secrets(&vars)?;
         Ok(Self {
             sources: Sources::with_allowed_hosts(
                 config,
@@ -326,7 +393,18 @@ impl Connect {
                 columns: Vec::new(),
             }
         };
-        owns(&upload.key, scope_key).then_some(upload)
+        readable(&upload.key, scope_key).then_some(upload)
+    }
+
+    /// Whether `id` is an upload id this host issued (sealed, UPLOAD-ID-1),
+    /// readable from the cell serving `scope_key`, for the object at exactly
+    /// `uri`: what a loader checks a kept record against before it signs
+    /// anything (S5), since a record names a URI but only the seal is the
+    /// host's.
+    #[must_use]
+    pub fn issued_upload(&self, id: &str, scope_key: &str, uri: &str) -> bool {
+        self.resolve(id, scope_key)
+            .is_some_and(|upload| upload.uri == uri)
     }
 
     /// The upload `id` names in the cell `host` serves: [`Self::resolve`], its
@@ -495,7 +573,7 @@ impl Connect {
                     Routed::reply(refused(404, "source.unknown", "no such connection"))
                 }
             },
-            Route::Begin => Routed::reply(self.begin(host, request.body, now_ms)),
+            Route::Begin => Routed::reply(self.begin(&host.scope().key(), request.body, now_ms)),
             Route::Complete(id) => {
                 let actor = actor.clone();
                 self.fetch_object((id, &host.scope().key()), now_ms, |upload| {
@@ -520,12 +598,12 @@ impl Connect {
                     Err(e) => Routed::reply(refused(400, "upload.invalid_request", &e.to_string())),
                 }
             }
-            Route::Read => Routed::reply(self.read(host, request.body, now_ms)),
+            Route::Read => Routed::reply(self.read(&host.scope().key(), request.body, now_ms)),
             Route::Observations => Routed::reply(load_observations(host, request.body)),
         })
     }
 
-    fn begin<E: SqlEngine>(&mut self, host: &DevHost<E>, body: &str, now_ms: u64) -> Response {
+    fn begin(&mut self, scope_key: &str, body: &str, now_ms: u64) -> Response {
         let begin: Begin = match serde_json::from_str(body) {
             Ok(begin) => begin,
             Err(e) => return refused(400, "upload.invalid_request", &e.to_string()),
@@ -554,8 +632,11 @@ impl Connect {
             })
             .take(100)
             .collect();
+        // UPLOAD-SCOPE-1: a caller's prefix is a folder of its own scope's
+        // uploads, never a key outside it (never a bare `synthetic/` key, and
+        // never `fixtures/`, the operator's).
         let prefix = match begin.prefix.as_deref() {
-            None => format!("uploads/{}", host.scope().key()),
+            None => format!("uploads/{scope_key}"),
             Some(p)
                 if p.starts_with("synthetic/")
                     && p.len() <= 100
@@ -563,7 +644,7 @@ impl Connect {
                         .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '-' | '_'))
                     && !p.contains("//") =>
             {
-                p.trim_end_matches('/').to_owned()
+                format!("uploads/{scope_key}/{}", p.trim_end_matches('/'))
             }
             Some(_) => {
                 return refused(
@@ -574,8 +655,8 @@ impl Connect {
             }
         };
         let nonce = self.token(now_ms);
-        // Seeded synthetic objects keep their names, so their URIs are known in
-        // advance; a person's upload gets the id in its key.
+        // Named synthetic objects keep their names (in this scope), so their
+        // URIs are known in advance; a person's upload gets the id in its key.
         let key = if begin.prefix.is_some() {
             format!("{prefix}/{name}")
         } else {
@@ -637,16 +718,15 @@ impl Connect {
     }
 
     /// A signed `GET` for an object this cell recorded, by upload id, or by
-    /// URI under a prefix this cell writes (`uploads/<scope>/`, `synthetic/`).
-    fn read<E: SqlEngine>(&self, host: &DevHost<E>, body: &str, now_ms: u64) -> Response {
+    /// URI under the prefix this cell writes (`uploads/<scope>/`) or of a
+    /// host fixture (`fixtures/`).
+    fn read(&self, scope_key: &str, body: &str, now_ms: u64) -> Response {
         let not_found = || refused(404, "upload.not_found", "no such upload");
         let request: Value = serde_json::from_str(body).unwrap_or_default();
-        let scope_key = host.scope().key();
         let found = if let Some(id) = request.get("uploadId").and_then(Value::as_str) {
-            self.resolve(id, &scope_key)
+            self.resolve(id, scope_key)
                 .and_then(|u| Some((self.store(u.store)?, u.key)))
         } else {
-            let own = format!("uploads/{scope_key}/");
             let uri = request
                 .get("uri")
                 .and_then(Value::as_str)
@@ -656,9 +736,7 @@ impl Connect {
                 .filter_map(|store| self.store(store))
                 .find_map(|s3| {
                     let key = uri.strip_prefix(&format!("s3://{}/", s3.bucket))?;
-                    ((key.starts_with(&own) || key.starts_with("synthetic/"))
-                        && !key.contains(".."))
-                    .then(|| (s3, key.to_owned()))
+                    readable(key, scope_key).then(|| (s3, key.to_owned()))
                 })
         };
         let Some((s3, key)) = found else {
@@ -936,6 +1014,19 @@ fn load_observations<E: SqlEngine>(host: &DevHost<E>, body: &str) -> Response {
     if recorded.rows.is_empty() {
         return answer(&Refusal::invalid("a load carries at least one row"));
     }
+    // UPLOAD-RECORD-2 (S5): the cell's own reports (connections, sync runs,
+    // upload records) land only from the cell itself, never from a caller's
+    // export: a forged `source.Upload` would name an object to sign.
+    if recorded.source == norn_api::sources::REPORT_SOURCE
+        || recorded.mapping == norn_api::sources::REPORT_MAPPING
+        || recorded.instance == norn_api::sources::CELL_INSTANCE
+    {
+        return refused(
+            403,
+            norn_api::refusal::codes::AUTHZ_DENIED,
+            "the cell's own records are written by the cell, never loaded",
+        );
+    }
     // A mapping this cell has not admitted refuses before anything is
     // captured, naming the mapping (not a host failure).
     match host.installed_artifact(&recorded.mapping) {
@@ -1044,12 +1135,79 @@ mod tests {
             "NORN_S3_ENDPOINT": "https://storage.example.test",
             "NORN_S3_BUCKET": "uploads-bucket",
             "NORN_S3_DOCUMENTS_BUCKET": "documents-bucket",
-            "NORN_SECRET_S3_ACCESS_KEY_ID": "key-id",
-            "NORN_SECRET_S3_SECRET_ACCESS_KEY": secret,
-            "NORN_SECRET_S3_DOCUMENTS_ACCESS_KEY_ID": "documents-key-id",
-            "NORN_SECRET_S3_DOCUMENTS_SECRET_ACCESS_KEY": secret,
+            "NORN_S3_ACCESS_KEY_ID": "key-id",
+            "NORN_S3_SECRET_ACCESS_KEY": secret,
+            "NORN_S3_DOCUMENTS_ACCESS_KEY_ID": "documents-key-id",
+            "NORN_S3_DOCUMENTS_SECRET_ACCESS_KEY": secret,
         });
         Connect::new("[]", &vars.to_string()).expect("configuration")
+    }
+
+    /// OLAP-01: no secretRef a connector can write reaches a deployment
+    /// secret: storage keys and the analytics signing key are outside the
+    /// map connector auth resolves from, under any name, and a deployment
+    /// that still keeps one under a connection secret's name is refused.
+    #[test]
+    fn deployment_secrets_never_reach_connector_auth() {
+        const DEPLOYMENT: [&str; 5] = [
+            "s3-uploads-secret",
+            "s3-documents-secret",
+            "s3-uploads-id",
+            "s3-documents-id",
+            "k1:olap-signing-seed",
+        ];
+        let vars: BTreeMap<String, String> = [
+            ("NORN_S3_ENDPOINT", "https://storage.example.test"),
+            ("NORN_S3_BUCKET", "uploads-bucket"),
+            ("NORN_S3_SECRET_ACCESS_KEY", DEPLOYMENT[0]),
+            ("NORN_S3_DOCUMENTS_SECRET_ACCESS_KEY", DEPLOYMENT[1]),
+            ("NORN_S3_ACCESS_KEY_ID", DEPLOYMENT[2]),
+            ("NORN_S3_DOCUMENTS_ACCESS_KEY_ID", DEPLOYMENT[3]),
+            ("NORN_OLAP_SIGNING_KEY", DEPLOYMENT[4]),
+            ("NORN_SECRET_ERPNEXT_REST_TOKEN", "connection-token"),
+        ]
+        .into_iter()
+        .map(|(name, value)| (name.to_owned(), value.to_owned()))
+        .collect();
+        let secrets = connection_secrets(&vars).expect("configured");
+        assert_eq!(
+            secrets.values().collect::<Vec<_>>(),
+            ["connection-token"],
+            "only the connection's own secret"
+        );
+        // Every name a secretRef resolves to, whatever the connector writes,
+        // misses every deployment secret.
+        for reference in [
+            "s3_secret_access_key",
+            "S3_SECRET_ACCESS_KEY",
+            "../NORN_S3_SECRET_ACCESS_KEY",
+            "olap_signing_key",
+            "OLAP-SIGNING-KEY",
+            "",
+        ] {
+            let resolved = secrets.get(&norn_api::sources::secret_env(reference));
+            assert!(
+                resolved.is_none_or(|value| !DEPLOYMENT.contains(&value.as_str())),
+                "{reference}"
+            );
+        }
+        // The storage still gets its keys from their own names.
+        assert!(S3Config::from_vars(&vars, Store::Uploads).is_some());
+        // A deployment that kept an old name is refused, never served.
+        for old in [
+            "NORN_SECRET_S3_SECRET_ACCESS_KEY",
+            "NORN_SECRET_S3_DOCUMENTS_ACCESS_KEY_ID",
+            "NORN_SECRET_OLAP_SIGNING_KEY",
+            "NORN_SECRET_DUCKDB_TOKEN",
+        ] {
+            let mut stale = vars.clone();
+            stale.insert(old.to_owned(), "x".to_owned());
+            assert!(
+                connection_secrets(&stale).is_err_and(|e| e.contains(old)),
+                "{old}"
+            );
+            assert!(Connect::new("[]", &serde_json::to_string(&stale).expect("json")).is_err());
+        }
     }
 
     /// UPLOAD-ID-1: a cell that never saw an upload (a restart) resolves its
@@ -1102,19 +1260,193 @@ mod tests {
         }
     }
 
+    /// The answer's JSON document.
+    fn document(response: &Response) -> Value {
+        serde_json::from_str(&response.body).expect("a JSON answer")
+    }
+
+    /// UPLOAD-SCOPE-1 (S4): every key a tenant begins is under its own
+    /// `uploads/<scope>/`, a `synthetic/` prefix included, so no tenant
+    /// signs a `PUT` outside its scope or over a shared fixture, and no
+    /// tenant gets a signed read of another's object by id or by URI.
     #[test]
-    fn synthetic_objects_resolve_in_every_scope() {
+    fn a_tenant_never_signs_another_scopes_key_or_writes_a_fixture() {
+        let mut cell = connect("secret-one");
+        let body = |prefix: Option<&str>| {
+            json!({"fileName": "rows.csv", "contentType": "text/csv", "size": 3, "prefix": prefix})
+                .to_string()
+        };
+        let begun = |cell: &mut Connect, scope: &str, prefix: Option<&str>| {
+            let response = cell.begin(scope, &body(prefix), 1_000);
+            assert_eq!(response.status, 200, "{}", response.body);
+            let document = document(&response);
+            (
+                document["uploadId"].as_str().expect("an id").to_owned(),
+                document["uri"].as_str().expect("a uri").to_owned(),
+                document["putUrl"].as_str().expect("a put url").to_owned(),
+            )
+        };
+        for prefix in [None, Some("synthetic/scans"), Some("synthetic/")] {
+            let (_, uri, put) = begun(&mut cell, "org_a/prod", prefix);
+            assert!(
+                uri.starts_with("s3://uploads-bucket/uploads/org_a/prod/"),
+                "{prefix:?}: {uri}"
+            );
+            assert!(put.contains("/uploads/org_a/prod/"), "{prefix:?}: {put}");
+            assert!(!uri.starts_with("s3://uploads-bucket/synthetic/"), "{uri}");
+        }
+        // A prefix outside `synthetic/…` (another scope's) is refused outright.
+        for prefix in [
+            "uploads/org_b/prod",
+            "../uploads/org_b/prod",
+            "synthetic//x",
+        ] {
+            let response = cell.begin("org_a/prod", &body(Some(prefix)), 1_000);
+            assert_eq!(response.status, 400, "{prefix}");
+        }
+        // B's object, by id or by URI, is not A's to read; B reads it.
+        let (b_id, b_uri, _) = begun(&mut cell, "org_b/prod", Some("synthetic/scans"));
+        for request in [json!({"uploadId": b_id}), json!({"uri": b_uri})] {
+            let body = request.to_string();
+            assert_eq!(cell.read("org_a/prod", &body, 1_000).status, 404, "{body}");
+            assert_eq!(cell.read("org_b/prod", &body, 1_000).status, 200, "{body}");
+        }
+        assert!(cell.resolve(&b_id, "org_a/prod").is_none());
+        // What B wrote under its `synthetic/scans` is B's alone: a shared
+        // fixture is a different, read-only object in the operator's namespace.
+        assert_eq!(
+            cell.read(
+                "org_a/prod",
+                &json!({"uri": "s3://uploads-bucket/fixtures/scans/rows.csv"}).to_string(),
+                1_000,
+            )
+            .status,
+            200,
+            "a fixture stays readable"
+        );
+        assert_ne!(b_uri, "s3://uploads-bucket/synthetic/scans/rows.csv");
+        assert!(
+            !b_uri.starts_with("s3://uploads-bucket/fixtures/"),
+            "{b_uri}"
+        );
+        // No prefix names the operator's namespace.
+        for prefix in ["fixtures/scans", "synthetic/../fixtures/scans"] {
+            assert_eq!(
+                cell.begin("org_a/prod", &body(Some(prefix)), 1_000).status,
+                400,
+                "{prefix}"
+            );
+        }
+    }
+
+    /// S5: a loader signs a kept record only when its upload id is one this
+    /// host sealed, readable from the scope, for exactly the record's URI.
+    #[test]
+    fn only_an_issued_upload_for_its_scope_and_uri_is_issued() {
+        let mut cell = connect("secret-one");
+        let response = cell.begin(
+            "org_a/prod",
+            &json!({"fileName": "rows.csv", "contentType": "text/csv", "size": 3}).to_string(),
+            1_000,
+        );
+        let begun = document(&response);
+        let id = begun["uploadId"].as_str().expect("an id");
+        let uri = begun["uri"].as_str().expect("a uri");
+        assert!(cell.issued_upload(id, "org_a/prod", uri));
+        // After a restart the seal alone still answers.
+        assert!(connect("secret-one").issued_upload(id, "org_a/prod", uri));
+        assert!(!cell.issued_upload(id, "org_b/prod", uri));
+        assert!(!cell.issued_upload(
+            id,
+            "org_a/prod",
+            "s3://uploads-bucket/uploads/org_b/prod/x.csv"
+        ));
+        assert!(!connect("secret-two").issued_upload(id, "org_a/prod", uri));
+        let s3 = cell.store(Store::Uploads).expect("uploads store").clone();
+        let other = upload_id(Store::Uploads, "uploads/org_b/prod/x.csv", &s3);
+        assert!(!cell.issued_upload(
+            &other,
+            "org_a/prod",
+            "s3://uploads-bucket/uploads/org_b/prod/x.csv"
+        ));
+        assert!(!cell.issued_upload("u-forged", "org_a/prod", uri));
+    }
+
+    #[test]
+    fn operator_fixtures_resolve_in_every_scope() {
         let cell = connect("secret-one");
         let s3 = cell
             .store(Store::Documents)
             .expect("documents store")
             .clone();
-        let id = upload_id(Store::Documents, "synthetic/scans/receipt-01.pdf", &s3);
-        let upload = cell.resolve(&id, "org_z/dev").expect("resolves");
-        assert_eq!(upload.file_name, "receipt-01.pdf");
-        assert_eq!(
-            upload.uri,
-            "s3://documents-bucket/synthetic/scans/receipt-01.pdf"
-        );
+        let id = upload_id(Store::Documents, "fixtures/scans/receipt-01.pdf", &s3);
+        for scope in ["org_z/dev", "org_a/prod"] {
+            let upload = cell.resolve(&id, scope).expect("resolves");
+            assert_eq!(upload.file_name, "receipt-01.pdf");
+            assert_eq!(
+                upload.uri,
+                "s3://documents-bucket/fixtures/scans/receipt-01.pdf"
+            );
+        }
+    }
+
+    /// S9: the scan fixtures the repository ships name their documents in
+    /// the operator-only `fixtures/scans/` namespace, which every scope
+    /// resolves, and never a legacy bare `synthetic/` key, which none does.
+    #[test]
+    fn shipped_scan_fixtures_name_operator_fixture_keys() {
+        let cell = connect("secret-one");
+        let s3 = cell
+            .store(Store::Documents)
+            .expect("documents store")
+            .clone();
+        let mut keys = std::collections::BTreeSet::new();
+        for text in [
+            include_str!("../../../fixtures/documents/scans.snapshot.json"),
+            include_str!("../../../fixtures/connectors/scans/extractions.page.json"),
+        ] {
+            for uri in text.split('"').filter(|part| part.starts_with("s3://")) {
+                let key = uri
+                    .strip_prefix("s3://documents-bucket/")
+                    .unwrap_or_else(|| panic!("{uri} is in the documents store"));
+                keys.insert(key.to_owned());
+            }
+        }
+        assert!(keys.len() >= 10, "{keys:?}");
+        for key in &keys {
+            assert!(key.starts_with("fixtures/scans/") && fixture(key), "{key}");
+            let id = upload_id(Store::Documents, key, &s3);
+            for scope in ["org_a/prod", "org_z/dev"] {
+                assert!(cell.resolve(&id, scope).is_some(), "{scope}: {key}");
+            }
+        }
+    }
+
+    /// S4: a bare `synthetic/` key is what the old rules let any tenant
+    /// sign a `PUT` for, so it is no shared fixture: no scope (the writer's
+    /// included) reads it, by sealed id or by URI, in either store.
+    #[test]
+    fn a_legacy_bare_synthetic_key_is_read_by_no_scope() {
+        let cell = connect("secret-one");
+        for (store, bucket) in [
+            (Store::Uploads, "uploads-bucket"),
+            (Store::Documents, "documents-bucket"),
+        ] {
+            let s3 = cell.store(store).expect("store").clone();
+            // The id the old `:begin` sealed for org_b's `synthetic/scans` prefix.
+            let key = "synthetic/scans/rows.csv";
+            let id = upload_id(store, key, &s3);
+            let uri = format!("s3://{bucket}/{key}");
+            for scope in ["org_a/prod", "org_b/prod", "org_z/dev"] {
+                assert!(cell.resolve(&id, scope).is_none(), "{scope}: {key}");
+                assert!(!cell.issued_upload(&id, scope, &uri), "{scope}: {key}");
+                for request in [json!({"uploadId": id}), json!({"uri": uri})] {
+                    let body = request.to_string();
+                    let read = cell.read(scope, &body, 1_000);
+                    assert_eq!(read.status, 404, "{scope}: {body}");
+                    assert!(!read.body.contains("X-Amz-Signature"), "{scope}: {body}");
+                }
+            }
+        }
     }
 }

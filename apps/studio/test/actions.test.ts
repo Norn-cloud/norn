@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { callAction, decimalExample, itemNoun, newIdempotencyKey, pastTense, writesWhole, draftAt, emptyDraft, emptyFor, encodeObject, fieldsOf, groupsOf, inputPointer, listActions, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt, type Draft } from "../src/lib/actions.ts"
+import { callAction, decimalExample, itemNoun, newIdempotencyKey, pastTense, receiptVerb, writesWhole, draftAt, emptyDraft, emptyFor, encodeObject, fieldsOf, groupsOf, inputPointer, listActions, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt, type Draft } from "../src/lib/actions.ts"
 import { OPEN_HOLDING, RESTOCK_HOLDING } from "../e2e/action-fixtures.ts"
 
 // Real admitted actions from the cell's own fixtures: an upsert with exact decimals and a transition.
@@ -240,4 +240,20 @@ test("a list names its entries: the items' own title, else its label made singul
   expect([itemNoun(null, "Lots"), itemNoun(null, "Entries"), itemNoun(null, "Boxes"), itemNoun(null, "Status"), itemNoun(null, "Stock")]).toEqual(["lot", "entry", "box", "status", "stock"])
   const restock = fieldsOf(RESTOCK_HOLDING.inputSchema).find((f) => f.name === "lots")
   expect(restock?.spec).toMatchObject({ kind: "array", itemTitle: null })
+})
+
+test("a record's catalog is narrowed by the cell to what its state can take", async () => {
+  const live = cell(() => Response.json({ items: [] }))
+  await listActions("purchasing.PurchaseRequest", live.fetcher, "PR-1")
+  expect(Object.fromEntries(live.calls[0]!.url.searchParams)).toEqual({ objectKind: "purchasing.PurchaseRequest", objectId: "PR-1", orgId: "org_demo", environmentId: "analytics" })
+})
+
+test("a receipt says what the record is now, from the cell's answer, never a guessed past tense", () => {
+  const action = (effect: "upsert_input_object" | "fire_transition", toState?: string) =>
+    ({ actionId: "a", title: effect === "fire_transition" ? "Submit for approval" : "New purchase request", description: null, objectKind: "purchasing.PurchaseRequest", effect, objectIdField: "request_id", inputSchema: {}, uiEffects: { irreversible: false, destructive: false, money: [] }, ...toState === undefined ? {} : { toState } }) as const
+  expect(receiptVerb(action("upsert_input_object"), 1)).toBe("created")
+  expect(receiptVerb(action("upsert_input_object"), 3)).toBe("updated")
+  expect(receiptVerb(action("fire_transition", "submitted"), 2)).toBe("is now submitted")
+  expect(receiptVerb(action("fire_transition", "on_hold"), 2)).toBe("is now on hold")
+  expect(receiptVerb(action("fire_transition"), 2)).toBe("updated")
 })

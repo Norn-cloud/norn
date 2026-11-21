@@ -121,7 +121,16 @@ def artifact_matches(artifact: str, test: ObservedTest) -> bool:
     source_relative = Path(*parts[boundary:]).as_posix()
     if source_relative.startswith("tests/"):
         expected_binary = Path(source_relative).stem
-        return (
+        # #1485 S6: a suite its crate compiles in (`src/suites.rs`, for raw
+        # commits only that crate's tests may use) runs in the lib test binary
+        # as `suites::<stem>::`.
+        in_crate = (
+            Path(source_relative).parent.as_posix() == "tests"
+            and test.source_hint == "src/lib.rs"
+            and test.binary_hint.startswith(f"{crate_binary}-")
+            and test.qualified_name.startswith(f"suites::{expected_binary}::")
+        )
+        return in_crate or (
             test.source_hint == source_relative
             and test.binary_hint.startswith(f"{expected_binary}-")
         )
@@ -188,6 +197,24 @@ def run_canaries() -> None:
     ):
         raise SelectorEvidenceError(
             "Rust selector parser did not attribute a test under an ANSI-coloured Running header"
+        )
+    suites = [
+        ObservedTest(test.qualified_name, test.leaf_name, test.source_hint, "norn_engine-canary")
+        for test in rust_passes(
+            "     Running unittests src/lib.rs (target/debug/deps/canary)\n"
+            "test suites::canary_bin::in_crate_case ... ok\n"
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured\n"
+        )
+    ]
+    if not selector_observed(
+        "crates/norn-engine/tests/canary_bin.rs", "in_crate_case", suites
+    ) or selector_observed(
+        "crates/norn-engine/tests/other_bin.rs", "in_crate_case", suites
+    ) or selector_observed(
+        "crates/norn-engine/tests/nested/canary_bin.rs", "in_crate_case", suites
+    ):
+        raise SelectorEvidenceError(
+            "Rust selector parser misattributed a suite compiled in its crate"
         )
     wrong_crate = [
         ObservedTest(

@@ -24,12 +24,14 @@ use norn_api::refusal::Refusal;
 use norn_api::routes::object_counts;
 use norn_api::scope::{CellScope, ScopeQuery};
 use norn_cell::engine::NativeEngine;
+// #1485 S6: fixtures write through the kernel path, never the raw door.
 use norn_cell::{CellStore, CommitBatch, FactWriteRow, MAIN_WORLD, ObjectRecord};
 use norn_ir::RuntimeValue as V;
 use norn_kernel::authz::{
     AccessRequest as PdpRequest, ActorKind, Delegation, PrincipalInput, ResourceInput, ScopeKey,
 };
 use proptest::prelude::*;
+use query_support::governed::GovernedCommit as _;
 use query_support::{CLOCK, TYPE, object_type};
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};

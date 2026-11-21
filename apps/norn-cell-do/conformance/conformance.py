@@ -535,6 +535,22 @@ class Suite:
         ok = str(adapter["result"]).endswith(":pass") and "nested" in str(adapter["result"])
         return ("pass" if ok else "fail"), f"Norn refuses nesting before the platform (adapter={adapter['result']}); platform nesting (measured): inner error {nested['inner']!r}, outer kept={nested['outerKept']}"
 
+    def engine_upgrade(self):
+        """ENGINE-UPGRADE-1 (#1494) on the host's own SQLite: the storage version 1 and 2 fixtures open,
+        upgrade in place with ledger and receipts unchanged, and a newer or unreadable stamp refuses
+        and leaves the cell identical. Each case loads into a fresh probe object."""
+        if self.host.name != "rivet-native":
+            return "not tested", "probed on the native Rivet host only; native Rust runs crates/norn-cell/tests/engine_upgrade.rs"
+        run = secrets.token_hex(4)
+        results = {case: probed(self.base, "engine-upgrade", "ok", object_name=f"upgrade-{case}-{run}", case=case, timeout=120) for case in ("v1", "v2", "downgrade", "unknown")}
+        ok = all(result["ok"] is True for result in results.values())
+        v1, v2 = results["v1"], results["v2"]
+        detail = (f"v1→{v1['to']} and v2→{v2['to']}: ledger+receipts unchanged={v1['ledgerAndReceiptsUnchanged'] and v2['ledgerAndReceiptsUnchanged']}, "
+                  f"reopen writes nothing={v1['reopenWritesNothing'] and v2['reopenWritesNothing']}, heads v1 {v1['head']['commits']} commits / v2 {v2['head']['commits']}; "
+                  f"newer stamp: {str(results['downgrade'].get('refusal'))[:60]!r} unchanged={results['downgrade'].get('unchanged')}; "
+                  f"unreadable stamp: {str(results['unknown'].get('refusal'))[:60]!r} unchanged={results['unknown'].get('unchanged')}")
+        return ("pass" if ok else "fail"), detail
+
     # -- kills
 
     def wait_marker(self, token, replied, seconds=60):
@@ -1297,6 +1313,7 @@ def run(args, reference, cleanup):
         ("WebSocket live subscription across 15 s idle", suite.websocket, False),
         ("WebSocket survives the object hibernating", suite.websocket_hibernation, False),
         ("backup and restore in place", suite.backup_restore, True),
+        ("storage version upgrade and downgrade refusal on the host's SQLite", suite.engine_upgrade, False),
     ]
     only = set(args.only.split(",")) if args.only else None
     try:

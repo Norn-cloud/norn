@@ -60,6 +60,11 @@ pub struct EngineCall {
     /// instead of re-entering (an export).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stream: Option<BTreeMap<String, String>>,
+    /// OLAP-CRED-1: the cell's credential for this call, the host's bearer
+    /// to the engine. The host transport attaches it when it hands the call
+    /// to the host; it names the cell's own tenant only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential: Option<String>,
 }
 
 /// The engine's answer to an [`EngineCall`].
@@ -84,6 +89,7 @@ impl EngineCall {
             digest: hex_digest(body.as_bytes()),
             body,
             stream: None,
+            credential: None,
         })
     }
 }
@@ -528,6 +534,11 @@ pub struct UploadRecord {
 pub trait Uploads {
     /// The completed upload `id`, if any.
     fn record(&self, id: &str) -> Option<UploadRecord>;
+    /// Whether `id` is an upload identity this host issued, readable from the
+    /// cell scope `scope_key`, sealed to the object at exactly `uri`
+    /// (UPLOAD-ID-1). A kept `source.Upload` record names a URI; only this
+    /// answer makes it one the cell may sign (S5).
+    fn issued(&self, id: &str, scope_key: &str, uri: &str) -> bool;
     /// A GET URL for exactly `uri`, valid for `seconds` from `now_ms`.
     fn presigned_get(&self, uri: &str, seconds: u64, now_ms: u64) -> Option<String>;
 }
@@ -602,6 +613,13 @@ pub fn load_dataset<E: SqlEngine>(
             })
             .ok_or_else(dataset_not_found)?,
     };
+    // S5: a record is data in the cell, not the host's word. Before anything
+    // is signed or the engine is called, the upload id must be one this host
+    // issued for this scope, sealed to the very URI the record names; a
+    // record pointing anywhere else answers as no such upload.
+    if !uploads.issued(&request.upload_id, &host.scope().key(), &record.uri) {
+        return Err(dataset_not_found());
+    }
     let loaded = load_upload(
         host,
         &request.object_type,

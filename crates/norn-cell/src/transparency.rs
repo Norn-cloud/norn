@@ -247,3 +247,6 @@ impl<E: SqlEngine> CellStore<E> {
         Ok(Some(ConsistencyProof(log.prove_consistency(additions))))
     }
 }
+
+#[cfg(test)]
+mod rfc6962_vectors;

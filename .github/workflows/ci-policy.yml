@@ -40,6 +40,10 @@ jobs:
       NORN_INTEROP_CACHE: ~/.cache/norn-interop
     runs-on: ${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}
     timeout-minutes: 110
+    # The gate plan is computed on the core VM, not a VM of its own: each Boat job is one
+    # sandbox start, and the plan takes seconds. Bundles read it from here.
+    outputs:
+      plan: ${{ steps.plan.outputs.plan }}
     steps:
       - name: Reclaim runner disk space
         if: ${{ runner.environment == 'github-hosted' }}
@@ -184,21 +188,9 @@ jobs:
       - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: nextest@0.9.150,cargo-deny@0.19.0,wasm-bindgen@0.2.129
-      - run: bash scripts/ci/core.sh cheap
-  # The full gate: `core.sh all` split into parallel jobs. The plan comes from
-  # core.sh itself, so CI runs exactly its shards and phases (all but formal).
-  # Pull requests and merge groups use affected plans; main runs the full set.
-  plan:
-    if: github.event_name != 'pull_request_target' && github.event_name != 'issue_comment' && !(github.event_name == 'pull_request' && github.event.pull_request.draft)
-    runs-on: ${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}
-    timeout-minutes: 5
-    outputs:
-      plan: ${{ steps.plan.outputs.plan }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          fetch-depth: 0
+      # The full gate is `core.sh all` split into parallel bundle jobs. The plan comes from
+      # core.sh itself, so CI runs exactly its shards and phases (all but formal).
+      # Pull requests and merge groups use affected plans; main runs the full set.
       - id: plan
         env:
           BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || '' }}
@@ -208,10 +200,12 @@ jobs:
           plan=$(jq -c --arg base "$BASE" --arg head "$HEAD_SHA" '. + {base_sha: $base, head_sha: $head}' <<<"$plan")
           echo "plan=$plan" >> "$GITHUB_OUTPUT"
           echo "$plan"
+      - run: bash scripts/ci/core.sh cheap
+  # A draft head runs only core: no bundle until it is ready for review.
   test:
     name: bundle (${{ matrix.bundle.id }})
-    needs: [core, plan]
-    if: fromJSON(needs.plan.outputs.plan).bundle[0] != null
+    needs: [core]
+    if: fromJSON(needs.core.outputs.plan).bundle[0] != null && !(github.event_name == 'pull_request' && github.event.pull_request.draft)
     # The writable cache key is an environment secret of `ci-cache-writer` (deployment branch:
     # main only). Merge groups and pull requests see only the read-only repository key.
     environment: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'ci-cache-writer' || '' }}
@@ -219,17 +213,17 @@ jobs:
       SCCACHE_CACHE_SIZE: 10G
       SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
       NORN_INTEROP_CACHE: ~/.cache/norn-interop
-      NORN_CI_PACKAGES: ${{ fromJSON(needs.plan.outputs.plan).packages }}
-      NORN_CI_REST_SHARDS: ${{ fromJSON(needs.plan.outputs.plan).rest_shards }}
+      NORN_CI_PACKAGES: ${{ fromJSON(needs.core.outputs.plan).packages }}
+      NORN_CI_REST_SHARDS: ${{ fromJSON(needs.core.outputs.plan).rest_shards }}
       NORN_CI_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before || 'origin/main' }}
-      PLAN: ${{ needs.plan.outputs.plan }}
+      PLAN: ${{ needs.core.outputs.plan }}
       BUNDLE_ID: ${{ matrix.bundle.id }}
     runs-on: ${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}
     timeout-minutes: 110
     strategy:
       fail-fast: false
       matrix:
-        bundle: ${{ fromJSON(needs.plan.outputs.plan).bundle }}
+        bundle: ${{ fromJSON(needs.core.outputs.plan).bundle }}
     steps:
       - name: Reclaim runner disk space
         if: ${{ runner.environment == 'github-hosted' }}
@@ -367,7 +361,7 @@ jobs:
           tool: nextest@0.9.150,cargo-deny@0.19.0,wasm-bindgen@0.2.129
       - run: bash scripts/ci/core.sh bundle "$PLAN" "$BUNDLE_ID"
   full:
-    needs: [core, plan, test]
+    needs: [core, test]
     if: >-
       always() && github.event_name != 'pull_request_target' && github.event_name != 'issue_comment' &&
       !(cancelled() && github.event_name == 'pull_request' && !github.event.pull_request.draft)
@@ -380,9 +374,8 @@ jobs:
           DRAFT: ${{ github.event.pull_request.draft || false }}
           BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || '' }}
           HEAD_SHA: ${{ github.event.merge_group.head_sha || github.sha }}
-          PLAN: ${{ needs.plan.outputs.plan }}
+          PLAN: ${{ needs.core.outputs.plan }}
           CORE: ${{ needs.core.result }}
-          PLANNED: ${{ needs.plan.result }}
           TEST: ${{ needs.test.result }}
         run: |
           set -euo pipefail
@@ -392,7 +385,7 @@ jobs:
             .base_sha == $base and .head_sha == $head and
             (.shard | type == "array" and all(.[]; type == "string" and length > 0) and length == (unique | length)) and
             (.phase | type == "array" and all(.[]; type == "string" and length > 0) and length == (unique | length)) and
-            (.bundle | type == "array" and length <= 6 and all(.[];
+            (.bundle | type == "array" and length <= 3 and all(.[];
               type == "object" and (.id | type == "string" and length > 0) and
               (.tasks | type == "array" and length > 0 and all(.[]; type == "string"))) and
               (map(.id) | length) == (map(.id) | unique | length)) and
@@ -400,7 +393,7 @@ jobs:
           ' <<<"$PLAN" >/dev/null || { echo "Malformed or unbound gate plan"; exit 1; }
           # A job may be skipped only when the plan gave it nothing to run.
           ran() { [ "$1" = success ] || { [ "$1" = skipped ] && [ "$2" -eq 0 ]; }; }
-          [ "$CORE" = success ] && [ "$PLANNED" = success ] || { echo "core $CORE, plan $PLANNED"; exit 1; }
+          [ "$CORE" = success ] || { echo "core $CORE"; exit 1; }
           mode=$(jq -er .mode <<<"$PLAN")
           [ "$EVENT" = pull_request ] || [ "$EVENT" = merge_group ] || [ "$mode" = full ] || { echo "$EVENT needs the full plan, got $mode"; exit 1; }
           # An affected merge-group plan must keep the always-run phases (core.sh plan).

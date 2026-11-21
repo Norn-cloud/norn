@@ -6,7 +6,7 @@
 //!
 //! - **commit** runs the kernel's own admission check ([`Proposed`] →
 //!   [`Checked`], [`norn_kernel::check_commit`]) *inside* the store's commit transaction
-//!   ([`CellStore::commit_guarded`]), then writes the consumed delivery, the
+//!   (`CellStore::commit_guarded_unchecked`), then writes the consumed delivery, the
 //!   whole-object writes, the ledger events, and the command/timer enqueues
 //!   in that one SQLite transaction: commit and enqueue are atomic, and a
 //!   refused commit writes nothing.
@@ -85,6 +85,9 @@ pub struct SqliteCell<E, C, I, S: SqlEngine = DefaultEngine> {
     now: LogicalTime,
     responder: Responder<C, I>,
     published: Vec<CommitReceipt>,
+    /// S6c, S5a: the bookkeeping events the next commit carries, set only
+    /// for the span of [`Self::attributed`].
+    attached: Vec<norn_ir::RuntimeValue>,
     events: PhantomData<fn() -> E>,
 }
 
@@ -125,6 +128,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             now,
             responder: Box::new(responder),
             published: Vec::new(),
+            attached: Vec::new(),
             events: PhantomData,
         })
     }
@@ -154,6 +158,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             now: self.now,
             responder: self.responder,
             published: self.published,
+            attached: self.attached,
             events: PhantomData,
         }
     }
@@ -243,7 +248,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             .into_iter()
             .map(|event| to_runtime(&event))
             .collect::<Result<Vec<_>, _>>()?;
-        self.store.commit(&CommitBatch {
+        self.store.commit_unchecked(&CommitBatch {
             world: MAIN_WORLD.to_owned(),
             scope: self.scope.clone(),
             logical_time: self.now.as_millis(),
@@ -279,7 +284,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             .read()
             .receipt_by_idempotency_key(MAIN_WORLD, idempotency_key)?
             .map_or(self.now.as_millis(), |receipt| receipt.body.logical_time);
-        self.store.commit(&CommitBatch {
+        self.store.commit_unchecked(&CommitBatch {
             world: MAIN_WORLD.to_owned(),
             scope: self.scope.clone(),
             logical_time,
@@ -320,7 +325,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             .read()
             .receipt_by_idempotency_key(MAIN_WORLD, idempotency_key)?
             .map_or(self.now.as_millis(), |receipt| receipt.body.logical_time);
-        self.store.commit(&CommitBatch {
+        self.store.commit_unchecked(&CommitBatch {
             world: MAIN_WORLD.to_owned(),
             scope: self.scope.clone(),
             logical_time,
@@ -349,7 +354,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             .receipt_by_idempotency_key(MAIN_WORLD, idempotency_key)?;
         let logical_time =
             previous.map_or(self.now.as_millis(), |receipt| receipt.body.logical_time);
-        self.store.commit(&CommitBatch {
+        self.store.commit_unchecked(&CommitBatch {
             world: MAIN_WORLD.to_owned(),
             scope: self.scope.clone(),
             logical_time,
@@ -423,7 +428,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             .store
             .read()
             .quantity_balance_versions(&deadline.world, &request)?;
-        self.store.commit(&CommitBatch {
+        self.store.commit_unchecked(&CommitBatch {
             world: deadline.world,
             scope: self.scope.clone(),
             logical_time: self.now.as_millis(),
@@ -506,6 +511,32 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             expected_version,
             &self.scope,
             change,
+        )?;
+        self.advance_to(LogicalTime::from_millis(installed.installed_at));
+        Ok(installed)
+    }
+
+    /// Install a checker-admitted definition set with retained revisions
+    /// riding it, in one transaction; see
+    /// [`CellStore::install_definitions_riding`].
+    ///
+    /// # Errors
+    ///
+    /// A definitions-version or retained-revision conflict, unsafe model
+    /// migration, or store error; any of them installs nothing.
+    pub fn install_definitions_riding(
+        &mut self,
+        candidate_model: Model,
+        input: &InstalledDefinitionInput,
+        expected_version: Option<u64>,
+        riding: &[crate::retained::RetainedDefinitionChange],
+    ) -> Result<InstalledDefinitionSet, CellError> {
+        let installed = self.store.install_definitions_riding(
+            candidate_model,
+            input,
+            expected_version,
+            &self.scope,
+            riding,
         )?;
         self.advance_to(LogicalTime::from_millis(installed.installed_at));
         Ok(installed)
@@ -1369,6 +1400,9 @@ where
             // hash-chained ledger but is not an `E` to decode.
             if crate::flow_run::is_run_start(&entry.event)
                 || crate::decision_ledger::is_decision_resolved(&entry.event)
+                || crate::decision_ledger::is_approval_refused(&entry.event)
+                || crate::decision_ledger::is_approval_consumed(&entry.event)
+                || crate::decision_ledger::is_step_call_owned(&entry.event)
             {
                 continue;
             }
@@ -1484,7 +1518,7 @@ where
             self.store.refuse_perform_in_fork()?;
             return Ok(Some(PerformClaim::OutcomeUnknown(command)));
         }
-        self.store.commit(&CommitBatch {
+        self.store.commit_unchecked(&CommitBatch {
             world: MAIN_WORLD.to_owned(),
             scope: self.scope.clone(),
             logical_time: self.now.as_millis(),
@@ -1681,6 +1715,46 @@ where
         self.commit_with_authorization(commit, None, None, None, &[], &[], &[], &[], Some(event))
     }
 
+    /// S6c, S5a: run `act` with `events`, bookkeeping events, attached to
+    /// the first commit it makes that carries none of its own, so that
+    /// commit and its records are one transaction; detached afterwards on
+    /// every return, whether or not anything committed.
+    pub fn attributed<T>(
+        &mut self,
+        events: Vec<norn_ir::RuntimeValue>,
+        act: impl FnOnce(&mut Self) -> T,
+    ) -> T {
+        self.attached = events;
+        let answer = act(self);
+        self.attached = Vec::new();
+        answer
+    }
+
+    /// APPROVAL-RECOVERY-1: commit the refusal an approved action call got,
+    /// alone, so the ledger records it and export replay rebuilds it. The
+    /// decision must have approved a call with no refusal recorded yet;
+    /// otherwise the store refuses (`approval.*`) and nothing commits.
+    ///
+    /// # Errors
+    /// A [`CommitError`]; nothing was applied.
+    pub fn commit_approval_refusal(
+        &mut self,
+        refused: &crate::decision_ledger::ApprovalRefused,
+    ) -> Result<CommitReceipt, CommitError<CellError>> {
+        let event = refused.event().map_err(CommitError::Host)?;
+        self.commit_with_authorization(
+            CellCommit::empty(),
+            None,
+            None,
+            None,
+            &[],
+            &[],
+            &[],
+            &[],
+            Some(event),
+        )
+    }
+
     pub(crate) fn commit_observed_evidence(
         &mut self,
         mut commit: CellCommit<E, C, I>,
@@ -1788,10 +1862,12 @@ where
             }
         }
         let mut batch = self.batch(&commit).map_err(CommitError::Host)?;
-        if let Some(event) = bookkeeping {
-            // RUN-LEDGER-1 / DECISION-LEDGER-1: the store records the run start
-            // or the decision's resolution in this commit's transaction.
-            batch.events.push(event);
+        // RUN-LEDGER-1 / DECISION-LEDGER-1: the store records the run start
+        // or the decision's resolution in this commit's transaction; S6c,
+        // S5a: else the events attached for it.
+        match bookkeeping {
+            Some(event) => batch.events.push(event),
+            None => batch.events.append(&mut self.attached),
         }
         // Only the non-serializable, kernel-bound proof reaches this path.
         // Persist additive occurrence inputs so export/restore replays the

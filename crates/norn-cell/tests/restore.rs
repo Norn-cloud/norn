@@ -8,6 +8,7 @@
 
 //! Verified export → wipe → typed replay, and fail-closed tamper cases.
 
+use norn_cell::test_door::TestCommit as _;
 use std::collections::BTreeMap;
 
 use norn_cell::export::{ExportError, ExportRecord, Exporter, MANIFEST_PATH, object_path};

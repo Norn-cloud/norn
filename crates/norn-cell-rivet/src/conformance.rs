@@ -37,6 +37,8 @@ use crate::alarm::Alarm;
 use crate::core::Call;
 use crate::engine::{RivetEngine, StatementHook};
 
+mod upgrade;
+
 /// The probe actor's name in the registry.
 pub const PROBE_ACTOR: &str = "probe";
 const NOW_HEADER: &str = "x-norn-conformance-now";
@@ -339,6 +341,11 @@ impl Actor for ProbeActor {
                     .collect()
             })
             .unwrap_or_default();
+        // The upgrade probe loads a fixture cell into a fresh actor database,
+        // so it runs before the probe's own tables exist.
+        if route == "engine-upgrade" {
+            return Ok(engine_upgrade(&ctx, &params).await);
+        }
         let answered = match self.ensure(&ctx).await {
             Ok(()) => self.route(&ctx, &route, &params).await,
             Err(error) => Err(error),
@@ -463,6 +470,32 @@ async fn on_engine<T: Send + 'static>(
             let _sent = reply.send(f(&engine));
         })?;
     answer.await.context("the probe thread panicked")
+}
+
+/// ENGINE-UPGRADE-1 on this actor's database ([`upgrade`]); `case` is `v1`,
+/// `v2`, `downgrade` or `unknown`, on a fresh `object`.
+async fn engine_upgrade(ctx: &Ctx<ProbeActor>, params: &HashMap<String, String>) -> Response {
+    let Some(case) = params.get("case").and_then(|name| upgrade::Case::parse(name)) else {
+        return json_response(400, json!({"error": "case is v1, v2, downgrade or unknown"}).to_string());
+    };
+    let db = ctx.sql().clone();
+    let runtime = tokio::runtime::Handle::current();
+    let (reply, answer) = tokio::sync::oneshot::channel();
+    let spawned = std::thread::Builder::new()
+        .name("norn-probe-upgrade".to_owned())
+        .spawn(move || {
+            let fresh = || RivetEngine::new(db.clone(), runtime.clone());
+            let _sent = reply.send(upgrade::run(case, &fresh));
+        });
+    let answered = match spawned {
+        Ok(_) => answer.await.map_err(|_| "the probe thread panicked".to_owned()),
+        Err(error) => Err(error.to_string()),
+    };
+    match answered {
+        Ok(Ok(value)) => json_response(200, value.to_string()),
+        Ok(Err(error)) => json_response(500, json!({"error": error.to_string()}).to_string()),
+        Err(error) => json_response(500, json!({"error": error}).to_string()),
+    }
 }
 
 /// `crates/norn-cell/examples/workers_sql.rs`'s adapter laws over the Rivet
