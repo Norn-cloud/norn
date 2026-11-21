@@ -2519,7 +2519,7 @@
           "crate::object_review"
         ],
         "summary": "HOST-READ-6: an object's proven versions, newest first, with what wrote each.",
-        "description": "# Errors\nA denied gate (the opaque 403); an absent, withheld or source-withheld\nobject (one 404); a commit between the reads (409 `object.snapshot_moved`);\nor a host failure.",
+        "description": "# Errors\nA denied gate (the opaque 403); an absent or withheld object (one 404;\nSources is not needed, and gates only each version's lineage); a commit\nbetween the reads (409 `object.snapshot_moved`); or a host failure.",
         "operationId": "get_object_history",
         "parameters": [
           {
@@ -2561,7 +2561,7 @@
         ],
         "responses": {
           "200": {
-            "description": "The object's proven versions, newest first, each with its commit and what wrote it.",
+            "description": "The object's proven versions the caller may read, newest first, each with its commit and what wrote it.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2591,7 +2591,7 @@
             }
           },
           "404": {
-            "description": "The request was refused (`object.not_found`): the object is absent, withheld or source-withheld; these are not told apart. A quarantined object is served.",
+            "description": "The request was refused (`object.not_found`): the object is absent or withheld (no Population or Values); these are not told apart. Sources is not needed: without it no version names its source lineage. A quarantined object is served.",
             "content": {
               "application/json": {
                 "schema": {
@@ -33122,7 +33122,7 @@
             "items": {
               "$ref": "#/components/schemas/NornObjectVersion"
             },
-            "description": "The versions listed, newest first."
+            "description": "The versions the caller may read, newest first. A version is listed\nonly when the caller holds Population and Values on that version's own\nrecord, and only when it changed a value the caller may see."
           }
         }
       },
@@ -34863,8 +34863,9 @@
               },
               "input": {
                 "type": "object",
-                "description": "The effective input (caller input plus server derivations); decimals are exact JSON number tokens.",
-                "additionalProperties": true
+                "description": "Deprecated: always the empty object. The call's effective input is never disclosed.",
+                "additionalProperties": true,
+                "deprecated": true
               },
               "kind": {
                 "type": "string",
@@ -34876,7 +34877,7 @@
           },
           {
             "type": "object",
-            "description": "Another writer (an import, a migration or a kernel rule).",
+            "description": "Another writer (an import, a migration or a kernel rule), or one this\ncaller is not told: an action whose call record the caller may not\nread, a mapping whose lineage the caller may not read (no Sources), or\na marked version.",
             "required": [
               "kind"
             ],
