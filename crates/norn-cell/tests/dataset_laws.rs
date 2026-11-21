@@ -655,7 +655,7 @@ fn present_parquet_text_is_decided_as_the_per_row_path_decides_it() {
 #[test]
 fn a_reader_sees_no_row_of_a_landing_until_it_is_stored() {
     let (_dir, cell) = cell(&laws(&[FUNCTION]));
-    let (_engine_dir, engine) = engine();
+    let (engine_dir, engine) = engine();
     let first: Vec<Line> = (0..3)
         .map(|i| Line {
             invoice: "A1",
@@ -742,6 +742,21 @@ fn a_reader_sees_no_row_of_a_landing_until_it_is_stored() {
     assert_eq!(read(&stored).expect("unchanged"), current);
     // The retry settles on its own and lands what a clean run lands.
     let (retried, _, _) = settle_all(&engine, &cell, &retry, retried);
+    // OLAP-02: a settle replayed once the files are written refuses and
+    // removes nothing; the attempt is still the store's to take.
+    assert_eq!(
+        engine
+            .settle(&SettleRequest {
+                land: retry.clone(),
+                through: 0,
+                findings: Vec::new(),
+            })
+            .expect_err("a replayed settle")
+            .code,
+        "core.compute.stale_input"
+    );
+    let (retried_data, retried_held) = files(engine_dir.path(), &retried.attempt);
+    assert!(retried_data.exists() && retried_held.exists());
     let (clean, clean_landed) = land(&engine, &cell, csv(&second).as_bytes(), FileFormat::Csv);
     let (clean_landed, _, _) = settle_all(&engine, &cell, &clean, clean_landed);
     assert_eq!(
