@@ -56,9 +56,9 @@ const REFUSAL_CODES = new Set(Object.entries({
     "grant.invalid policy.invalid policy.lint policy.parse schema.invalid schema.parse " +
     "schema.scope_type",
   bulk:
-    "above_max attempt_exists below_min digest_mismatch invalid_finding missing_column unmapped " +
-    "unreadable unsupported_encoding unsupported_law unsupported_mapping unsupported_marking " +
-    "unwritable",
+    "above_max attempt_busy attempt_unknown below_min digest_mismatch invalid_finding " +
+    "missing_column unmapped unreadable unsupported_encoding unsupported_law unsupported_mapping " +
+    "unsupported_marking unwritable",
   cell:
     "base_mismatch not_provisioned provision_conflict provision_refused reserved_artifact " +
     "scope_conflict sqlite unopenable",
