@@ -141,5 +141,24 @@ and a run against this compose stack show that offload is in it:
 
 ## Durability and cost evidence
 
-The kill loop, disk loss, S3 operation counts and latency for this stack are
+`durability/durability.py` runs on a Boat VM. It brings this stack up with an
+S3 request meter in front of the bucket (`durability/compose.meter.yaml`, an
+HAProxy that logs every request, counted the way S3 and R2 bill them) and
+runs the norn-cell-rivet runners (a `conformance` build) on the machine:
+
+```sh
+NORN_CELL_RIVET=crates/norn-cell-rivet/target/release/norn-cell-rivet \
+  python3 apps/norn-cell-rivet/durability/durability.py \
+  --reference "$P/reference.json" --phase kill,disk,load,latency --out results.json
+python3 apps/norn-cell-rivet/durability/durability.py ... --phase idle --project norn-idle --lb-port 6520
+```
+
+- `kill`: writers commit governed installs, each acknowledged id fsynced to
+  a file; every round SIGKILLs a runner, an engine, both, or everything.
+- `disk`: one engine's disk is lost and it restarts empty, while writers run.
+- `load` and `idle`: S3 requests for 10,000 commits, and for an idle hour.
+- `latency`: warm read and commit p50/p99, and a one-row commit.
+
+The oracle is every acknowledged id present and no id that was never sent,
+with each cell's hash chain verified from genesis on reopen. The results are
 on #1130.
