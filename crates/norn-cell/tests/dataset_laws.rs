@@ -677,12 +677,15 @@ fn a_reader_sees_no_row_of_a_landing_until_it_is_stored() {
         url: String::new(),
     };
     let stored = engine
-        .store(&StoreRequest {
-            land: request,
-            landed,
-            data: object(&data.sha256),
-            held: object(&held.sha256),
-        })
+        .store(
+            &StoreRequest {
+                land: request,
+                landed,
+                data: object(&data.sha256),
+                held: object(&held.sha256),
+            },
+            |_data, _held| Ok(()),
+        )
         .expect("stored")
         .stored
         .expect("a cache identity");
