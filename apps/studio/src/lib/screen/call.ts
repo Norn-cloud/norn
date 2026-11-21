@@ -69,9 +69,11 @@ export type Msg =
   | { readonly kind: "retry" }
   /**
    * Run the approved call, exactly as the cell's requested-call document serves it: the same action,
-   * input and key the call parked with. Only from the pending phase of that decision.
+   * input and key the call parked with. Only from the pending phase of that decision. `next` is the
+   * draft's new key: only the served call is ever sent under the parked key, so a draft sent after a
+   * refusal is a new call.
    */
-  | { readonly kind: "run-approved"; readonly decisionId: string; readonly actionId: string; readonly input: string; readonly key: string }
+  | { readonly kind: "run-approved"; readonly decisionId: string; readonly actionId: string; readonly input: string; readonly key: string; readonly next: string }
   /** Start a fresh draft after a commit. */
   | { readonly kind: "again"; readonly key: string }
   | { readonly kind: "undo"; readonly key: string }
@@ -125,7 +127,7 @@ export function update(state: State, msg: Msg): readonly [State, readonly Cmd[]]
     case "run-approved":
       // Only the decision this machine waits on, only its own action: never another call's key.
       if (phase.kind !== "pending" || phase.decision.id !== msg.decisionId || msg.actionId !== state.target.actionId) return [state, []]
-      return [{ ...state, phase: { kind: "sending" }, key: msg.key, sent: { input: msg.input, key: msg.key } }, [call(state.target.actionId, msg.input, msg.key)]]
+      return [{ ...state, phase: { kind: "sending" }, key: msg.next, sent: { input: msg.input, key: msg.key } }, [call(state.target.actionId, msg.input, msg.key)]]
     case "again":
       // A new draft is a new call; an undo left unconfirmed keeps its own Retry until then.
       if (phase.kind !== "done" && phase.kind !== "undone" && phase.kind !== "undo-failed" && phase.kind !== "pending") return [state, []]

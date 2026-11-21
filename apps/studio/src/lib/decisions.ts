@@ -167,7 +167,22 @@ export interface RequestedPage { readonly items: readonly RequestedDecision[]; r
 
 export const requestedPath = (id?: string) => `/v1/decisions:requested${id === undefined ? "" : `?${new URLSearchParams({ id })}`}`
 
-export const listRequested = (id?: string, fetcher: Fetch = defaultFetch) => cellCall<RequestedPage>(requestedPath(id), {}, fetcher)
+/** One served requested call, or null: an item without the call's exact text and key is not offered. */
+function requestedItem(value: unknown): RequestedDecision | null {
+  if (typeof value !== "object" || value === null) return null
+  const v = value as Partial<RequestedDecision>
+  const call = v.call as Partial<RequestedCall> | undefined
+  if (typeof v.id !== "string" || typeof v.status !== "string" || typeof v.canRun !== "boolean" || typeof v.expiresAtMs !== "number") return null
+  if (typeof call !== "object" || call === null || typeof call.action !== "string" || typeof call.encodedInput !== "string" || typeof call.idempotencyKey !== "string") return null
+  return v as RequestedDecision
+}
+
+export async function listRequested(id?: string, fetcher: Fetch = defaultFetch): Promise<CellResult<RequestedPage>> {
+  const result = await cellCall<RequestedPage>(requestedPath(id), {}, fetcher)
+  if (result.kind !== "ok") return result
+  const items = Array.isArray(result.value.items) ? result.value.items.map(requestedItem).filter((item): item is RequestedDecision => item !== null) : []
+  return { ...result, value: { ...result.value, items } }
+}
 
 /** The one requested call with this id, as the cell read it; null when the cell says it isn't the caller's. */
 export const requestedOne = (page: RequestedPage, id: string): RequestedDecision | null => page.items.find((item) => item.id === id) ?? null
@@ -205,7 +220,7 @@ export function requestedWords(item: RequestedDecision): string {
       const state = item.call.state?.state
       if (state === "committed") return "Approved and run."
       if (state === "refused") return `Approved, but the cell refused it when it ran${item.call.state?.code ? ` (${item.call.state.code})` : ""}. This approval never runs it again.`
-      return item.canRun ? "Approved. It runs when you run it." : "Approved."
+      return item.canRun ? "Approved. Run it to make the change." : "Approved."
     }
   }
 }

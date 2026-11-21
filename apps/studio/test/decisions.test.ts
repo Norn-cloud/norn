@@ -150,10 +150,17 @@ test("run it is offered only when the cell offers it, and sends the served call 
 
 test("a requested call reads in the requester's words, and names its action even when the catalog no longer offers it", () => {
   expect(requestedWords(requested({ status: "pending", canRun: false }))).toBe("Waiting for a decider's approval.")
-  expect(requestedWords(requested())).toBe("Approved. It runs when you run it.")
+  expect(requestedWords(requested())).toBe("Approved. Run it to make the change.")
   expect(requestedWords(requested({ canRun: false, call: { ...requested().call, state: { committed: true, state: "committed" } } }))).toBe("Approved and run.")
   expect(requestedWords(requested({ status: "rejected", canRun: false }))).toContain("rejected")
   const listed = { actionId: "ops.refund", title: "Issue refund" } as ActionSummary
   expect(requestedAction([listed], requested())).toBe(listed)
   expect(requestedAction([], requested())).toMatchObject({ actionId: "ops.refund", title: "Refund", uiEffects: { destructive: false, irreversible: false } })
+})
+
+test("a served requested call without its exact text and key is not offered", async () => {
+  const good = requested()
+  const live = cell(() => Response.json({ items: [good, { ...good, id: "dec_2", call: { action: "ops.refund", input: {} } }, { id: "dec_3" }], serverNowMs: 1 }))
+  const read = await listRequested(undefined, live.fetcher)
+  expect(read.kind === "ok" ? read.value.items.map((item) => item.id) : null).toEqual(["dec_1"])
 })

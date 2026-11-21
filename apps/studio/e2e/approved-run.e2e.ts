@@ -80,7 +80,7 @@ test("run: submit, park, the approver approves, the requester runs it from the s
 
   // The requester's open sheet hears the approval from the cell and offers the run.
   await expect(runIt(asker.page)).toBeVisible()
-  await expect(sheet(asker.page).getByRole("region", { name: "Approved call" }).getByRole("status")).toContainText("Approved. It runs when you run it.")
+  await expect(sheet(asker.page).getByRole("region", { name: "Approved call" }).getByRole("status")).toContainText("Approved. Run it to make the change.")
   await shoot(asker.page, "approved")
   await runIt(asker.page).click()
   await expect(sheet(asker.page).getByRole("region", { name: "Receipt" }).getByRole("status")).toContainText(`Holding ${HOLDING} is now counted`)
@@ -98,7 +98,7 @@ test("run: the requester sees the approved call in their inbox and runs it from 
   const cell = approvalCell()
   const asker = await requester(browser, cell)
   await park(asker.page)
-  await sheet(asker.page).getByRole("button", { name: "Close" }).click()
+  await sheet(asker.page).getByRole("region", { name: "Sent for approval" }).getByRole("button", { name: "Close" }).click()
 
   await asker.page.goto("/decisions")
   const mine = asker.page.getByRole("list", { name: "Your requests" })

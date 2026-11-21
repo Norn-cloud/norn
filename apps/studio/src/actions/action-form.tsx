@@ -140,7 +140,7 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
   if (phase.kind === "pending" || (ranApproved !== null && (phase.kind === "sending" || phase.kind === "refused" || phase.kind === "failed"))) {
     return <ParkedCallPanel action={action} decisionId={phase.kind === "pending" ? phase.decision.id : ranApproved!} parkedExpiresAtMs={phase.kind === "pending" ? phase.decision.expiresAtMs : null}
       phase={phase} technical={technical} runNow={runNow} refusal={refusal} failure={phase.kind === "failed" ? unreachable(phase) : null}
-      onRetry={() => dispatch({ kind: "retry" })} onRun={(call) => { setRanApproved(call.decisionId); dispatch({ kind: "run-approved", ...call }) }}
+      onRetry={() => dispatch({ kind: "retry" })} onRun={(call) => { setRanApproved(call.decisionId); dispatch({ kind: "run-approved", ...call, next: newKey() }) }}
       onNew={phase.kind === "pending" || phase.kind === "refused" ? () => {
         // A new draft is a new call under a new key; the parked one keeps waiting in the cell.
         onUnparked?.(); setDraft(initial); setStep(0); setReached(0); setRanApproved(null)
@@ -522,7 +522,9 @@ function ParkedCallPanel({ action, decisionId, parkedExpiresAtMs, phase, technic
     <section aria-label={approved ? "Approved call" : "Sent for approval"} className="grid gap-4">
       <div className="grid gap-3 rounded-node border border-node-border bg-card p-4 shadow-[var(--node-highlight),var(--elevation-node)]">
         <p role="status" className="flex items-start gap-2 text-sm font-medium">
-          {approved
+          {phase.kind === "refused" || phase.kind === "failed"
+            ? <ShieldX className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden />
+            : approved
             ? <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-[var(--tint-outcome)]" aria-hidden />
             : final ? <ShieldX className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden />
             : <Hourglass className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />}
