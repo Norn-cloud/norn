@@ -880,7 +880,7 @@
           "crate::decisions"
         ],
         "summary": "`POST /v1/decisions/{id}:decide`.",
-        "description": "For the approval of a parked action call (APPROVAL-1) the decider is\nnever the call's requester (#618), and no flow turn runs: the answer is\nrecorded, and an approved call then commits through the shared action\ndispatch as its requester ([`AsStarter`] makes the requester the host's\nverified caller for that one call), its authority decided again there.\n\n# Errors\nIn this order: 404 `decision.not_found` (also for a caller who may not\ndecide it), 409 `decision.resolved`, 410 `decision.expired`, 403\n`decision.law_not_satisfied`, 422 `decision.unknown_choice` (`/choice`),\n`decision.note_too_long` (`/note`) or `request.invalid`, 409\n`decision.idempotency_conflict`; the flow's or the kernel's refusal of the\nrun's result turn; a host failure.",
+        "description": "For the approval of a parked action call (APPROVAL-1) the decider is\nnever the call's requester (#618), and no flow turn runs: the answer is\nrecorded, and an approved call then runs through the shared action\ndispatch only under the requester's current authority ([`AsStarter`]:\nthe host runs it only when it can establish that authority, which a\ndecider's request never does). Otherwise the answer's `call` is\n`not_executed` and the requester's own authenticated retry runs it\n(APPROVAL-RECOVERY-1).\n\n# Errors\nIn this order: 404 `decision.not_found` (also for a caller who may not\ndecide it), 409 `decision.resolved`, 410 `decision.expired`, 403\n`decision.law_not_satisfied`, 422 `decision.unknown_choice` (`/choice`),\n`decision.note_too_long` (`/note`) or `request.invalid`, 409\n`decision.idempotency_conflict`; the flow's or the kernel's refusal of the\nrun's result turn; a host failure.",
         "operationId": "decide",
         "parameters": [
           {
@@ -5318,7 +5318,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/DecidedCall",
-                "description": "For an approved action call (APPROVAL-1), what committing it as its\nrequester answered; on a replay, present only while a run's step still\nwaits on the call, as what dispatching it again through the\napproval's fence answered."
+                "description": "For an approved action call (APPROVAL-1), where it stands after this\ncall (APPROVAL-RECOVERY-1): on a replay its recorded outcome, or, while\nit is approved and not yet executed, what running it now answered."
               },
               {
                 "type": "null"
@@ -5345,9 +5345,10 @@
       },
       "DecidedCall": {
         "type": "object",
-        "description": "What committing an approved call as its requester answered (APPROVAL-1).\nThe approval stands either way: the requester's own retry of the call\ncommits it.",
+        "description": "What the approved call is now (APPROVAL-1, APPROVAL-RECOVERY-1). The\napproval stands either way.",
         "required": [
-          "committed"
+          "committed",
+          "state"
         ],
         "properties": {
           "code": {
@@ -5355,13 +5356,26 @@
               "string",
               "null"
             ],
-            "description": "The requester's refusal code when it did not."
+            "description": "The refusal code when it did not: its recorded refusal, or why this\ntry could not run it."
           },
           "committed": {
             "type": "boolean",
             "description": "Whether the call committed."
+          },
+          "state": {
+            "$ref": "#/components/schemas/DecidedCallState",
+            "description": "Where it stands."
           }
         }
+      },
+      "DecidedCallState": {
+        "type": "string",
+        "description": "Where an approved action call stands (APPROVAL-RECOVERY-1).",
+        "enum": [
+          "committed",
+          "refused",
+          "not_executed"
+        ]
       },
       "DecidedDecision": {
         "type": "object",
@@ -5677,6 +5691,17 @@
               "null"
             ],
             "description": "Who, in display words, never an id."
+          },
+          "call": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DecidedCall",
+                "description": "For an approval of a parked action call, where the call stands\n(APPROVAL-RECOVERY-1), read only: nothing runs. Present for the\napprover and for a reader of the run."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "choice": {
             "type": [
