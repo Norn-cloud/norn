@@ -28,7 +28,7 @@ const IMAGE_FORMAT: &str = "norn.cell.sqlite-image/1";
 
 /// Which check the probe runs on its (fresh) actor database.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Case {
+pub(crate) enum Case {
     /// Load the storage version 1 fixture and open it.
     UpgradeV1,
     /// Load the storage version 2 fixture and open it.
@@ -42,7 +42,7 @@ pub enum Case {
 impl Case {
     /// The case a probe's `case` parameter names.
     #[must_use]
-    pub fn parse(name: &str) -> Option<Self> {
+    pub(crate) fn parse(name: &str) -> Option<Self> {
         Some(match name {
             "v1" => Self::UpgradeV1,
             "v2" => Self::UpgradeV2,
@@ -94,10 +94,13 @@ fn decode(value: &Value) -> Result<SqlValue, CellError> {
                     .get("blob")
                     .and_then(Value::as_str)
                     .ok_or_else(|| fail("image blob"))?;
-                let bytes = (0..hex.len())
-                    .step_by(2)
-                    .map(|at| {
-                        hex.get(at..at + 2)
+                let bytes = hex
+                    .as_bytes()
+                    .chunks(2)
+                    .map(|pair| {
+                        std::str::from_utf8(pair)
+                            .ok()
+                            .filter(|pair| pair.len() == 2)
                             .and_then(|pair| u8::from_str_radix(pair, 16).ok())
                             .ok_or_else(|| fail("image hex"))
                     })
@@ -336,10 +339,7 @@ fn refusal(
     }
     set_stamp(&fresh(), stamp)?;
     let before = digest(&fresh(), None)?;
-    let refused = match CellStore::from_engine(fresh(), model()?) {
-        Ok(_) => None,
-        Err(error) => Some(error),
-    };
+    let refused = CellStore::from_engine(fresh(), model()?).err();
     let unchanged = digest(&fresh(), None)? == before;
     let matched = refused.as_ref().is_some_and(expected);
     Ok(json!({
@@ -355,7 +355,7 @@ fn refusal(
 ///
 /// A step the probe could not run (as opposed to a check that failed, which
 /// answers `ok: false`).
-pub fn run(case: Case, fresh: &dyn Fn() -> RivetEngine) -> Result<Value, CellError> {
+pub(crate) fn run(case: Case, fresh: &dyn Fn() -> RivetEngine) -> Result<Value, CellError> {
     match case {
         Case::UpgradeV1 => upgrade(fresh, STORAGE_V1, 1),
         Case::UpgradeV2 => upgrade(fresh, STORAGE_V2, 2),
@@ -363,13 +363,13 @@ pub fn run(case: Case, fresh: &dyn Fn() -> RivetEngine) -> Result<Value, CellErr
             fresh,
             &format!(
                 r#"{{"format":"{STAMP_FORMAT}","storage":{},"writer":"drop-99"}}"#,
-                STORAGE_VERSION + 1
+                STORAGE_VERSION.saturating_add(1)
             ),
             |error| {
                 matches!(
                     error,
                     CellError::EngineDowngrade { cell, writer, engine }
-                        if *cell == STORAGE_VERSION + 1 && writer == "drop-99" && *engine == STORAGE_VERSION
+                        if *cell == STORAGE_VERSION.saturating_add(1) && writer == "drop-99" && *engine == STORAGE_VERSION
                 )
             },
         ),
