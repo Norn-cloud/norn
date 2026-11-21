@@ -7855,7 +7855,7 @@ fn an_install_whose_pointer_cascades_into_the_receipts_is_refused_and_writes_not
     second.admission_receipt = Some(second_receipt);
     assert!(
         store
-            .install_definitions(original.clone(), second, Some(1), "org_demo/dev")
+            .install_definitions(original, second, Some(1), "org_demo/dev")
             .is_err(),
         "the install's pointer delete would cascade into a retained receipt"
     );

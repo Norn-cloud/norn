@@ -1437,7 +1437,7 @@ fn an_export_never_carries_a_row_committed_after_its_marking_decision() {
         let engine = Hooked {
             inner: NativeEngine::open(&path, norn_cell::StoreOptions::default()).unwrap(),
             marker: format!("analytics.dataset:{RUN}"),
-            hook: std::sync::Mutex::new(hooked.then(|| {
+            hook: std::sync::Mutex::new(hooked.then(|| -> Box<dyn FnOnce() + Send> {
                 Box::new(move || {
                     let mut store =
                         CellStore::open(&foreign.0, foreign.1, norn_cell::StoreOptions::default())
@@ -1451,7 +1451,7 @@ fn an_export_never_carries_a_row_committed_after_its_marking_decision() {
                             ..CommitBatch::default()
                         })
                         .unwrap();
-                }) as Box<dyn FnOnce() + Send>
+                })
             })),
         };
         let store = CellStore::from_engine(engine, model.clone()).unwrap();
