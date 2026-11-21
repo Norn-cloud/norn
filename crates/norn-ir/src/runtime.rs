@@ -178,21 +178,29 @@ impl Decimal {
         self.0.is_integer()
     }
 
-    /// The exact sum, or `None` when it cannot be held without rounding.
+    /// The exact sum, normalized, or `None` when it cannot be held without
+    /// rounding (and, at the 96-bit limit, when the exact sum would need its
+    /// trailing zeros dropped to fit).
     #[must_use]
     pub fn checked_add(self, other: Self) -> Option<Self> {
-        let sum = self.0.checked_add(other.0)?;
-        // The 96-bit mantissa can force a rescale on overflow; an exact sum
-        // subtracts back to its operand.
-        (sum.checked_sub(other.0) == Some(self.0)).then_some(Self(sum))
+        self.exact(other, self.0.checked_add(other.0)?)
     }
 
-    /// The exact difference, or `None` when it cannot be held without rounding.
+    /// The exact difference, normalized, or `None` as for [`Self::checked_add`].
     #[must_use]
     pub fn checked_sub(self, other: Self) -> Option<Self> {
-        let difference = self.0.checked_sub(other.0)?;
-        // As for a sum: an exact difference adds back to its operand.
-        (difference.checked_add(other.0) == Some(self.0)).then_some(Self(difference))
+        self.exact(other, self.0.checked_sub(other.0)?)
+    }
+
+    /// `result` of a sum or difference of `self` and `other`, normalized, or
+    /// `None` when it was rounded. The exact result has the operands' larger
+    /// scale; when its 96-bit mantissa overflows, the engine rescales to fewer
+    /// digits, rounding (dectest `dqadd75034`: a back-subtraction rounds too,
+    /// so it cannot detect this). A result that lost only trailing zeros to
+    /// that rescale is refused as well: near the 96-bit limit the scale is
+    /// the only exact witness.
+    fn exact(self, other: Self, result: rust_decimal::Decimal) -> Option<Self> {
+        (result.scale() == self.0.scale().max(other.0.scale())).then(|| Self(result.normalize()))
     }
 
     /// The value as an `i64`, when it is an integer in range.
