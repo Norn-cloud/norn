@@ -15,7 +15,7 @@
 # static (musl). Sources come from the commit's tracked files.
 set -euo pipefail
 
-TOOLCHAIN=1.98.0
+TOOLCHAIN=1.100.0
 ZIG_VERSION=0.13.0
 ZIG_SHA256=d45312e61ebcc48032b77bc4cf7fd6915c11fa16e4aad116b66c9468211230ea # zig-linux-x86_64-0.13.0.tar.xz
 CARGO_ZIGBUILD=0.24.1

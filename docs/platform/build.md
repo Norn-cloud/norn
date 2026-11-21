@@ -4,7 +4,7 @@ How the Rust workspace builds, and what the build settings in the repository do.
 
 ## Toolchain
 
-There is no `rust-toolchain.toml`. CI installs Rust 1.98.0 (`.github/workflows/ci-policy.yml`), with `rustfmt`, `clippy` and the `wasm32-unknown-unknown` target. Use the same version locally to match CI. The workspace uses edition 2024 and resolver 2.
+There is no `rust-toolchain.toml`. CI installs Rust 1.100.0 (`.github/workflows/ci-policy.yml`), with `rustfmt`, `clippy` and the `wasm32-unknown-unknown` target. Use the same version locally to match CI. The workspace uses edition 2024 and resolver 2.
 
 ## `.cargo/config.toml`
 
