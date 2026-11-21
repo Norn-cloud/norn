@@ -1014,11 +1014,12 @@ impl SqlEngine for NativeEngine {
         }
         // Inside a definition-writes scope each statement of the batch is
         // prepared with its own target, as `execute_batch` steps it: once.
-        use rusqlite::fallible_iterator::FallibleIterator as _;
         let mut batch = rusqlite::Batch::new(&self.conn, sql);
         loop {
             self.next_statement();
-            let Some(mut statement) = batch.next()? else {
+            let Some(mut statement) =
+                rusqlite::fallible_iterator::FallibleIterator::next(&mut batch)?
+            else {
                 return Ok(());
             };
             let mut rows = statement.raw_query();
