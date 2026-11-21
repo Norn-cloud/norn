@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /** Compile typed definitions and run the authoritative Rust checker ABI. */
-import { statSync, writeFileSync } from "node:fs"
-import { resolve } from "node:path"
+import { existsSync, statSync, writeFileSync } from "node:fs"
+import { join, resolve } from "node:path"
 import { ProfileChecker } from "./check.ts"
 import { compileDashboards, compileQuestions } from "./compiler/definitions.ts"
 import { loadChecker, sourceMappedDiagnostics } from "./checker-abi.ts"
@@ -86,9 +86,13 @@ if (command === "dashboard") {
   else process.stdout.write(document)
   process.exit(0)
 }
+// A project directory (one holding norn.json) is read exactly as `norn dev`
+// and `norn explain` read it: its manifest's sources and scope, its JSON
+// artifacts and definitions (one loader, `compileProjectPack`).
+const project = statSync(input).isDirectory() && existsSync(join(input, "norn.json"))
 const orgId = option("--org")
 const environmentId = option("--env")
-if (!orgId || !environmentId) {
+if (!project && (!orgId || !environmentId)) {
   process.stderr.write("--org and --env are required\n")
   process.exit(2)
 }
@@ -97,7 +101,14 @@ if (command === "check") {
   const { warnAuthoringVersion } = await import("./authoring-version.ts")
   warnAuthoringVersion(resolve(input))
 }
-const pack = compilePack(resolve(input), { scope: { orgId, environmentId }, root: process.cwd(), ...(statSync(input).isFile() ? { modules: [resolve(input)] } : {}) })
+const pack = project
+  ? await (async () => {
+      const { readProject } = await import("./project.ts")
+      const { compileProjectPack } = await import("./worker.ts")
+      const { root, manifest } = readProject(resolve(input))
+      return compileProjectPack(root, manifest)
+    })()
+  : compilePack(resolve(input), { scope: { orgId: orgId!, environmentId: environmentId! }, root: process.cwd(), ...(statSync(input).isFile() ? { modules: [resolve(input)] } : {}) })
 if (!pack.ok) {
   process.stdout.write(`${JSON.stringify(pack)}\n`)
   process.exit(1)

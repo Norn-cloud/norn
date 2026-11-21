@@ -15,9 +15,12 @@
 //! resolver without a caller slot records no starter, and its runs' action
 //! steps are denied.
 //!
-//! APPROVAL-1: approving a parked action call commits it through the same
-//! dispatch with its requester made the slot's caller for that one call, the
-//! same way.
+//! APPROVAL-1, APPROVAL-RECOVERY-1: an approved call (a fresh decide, its
+//! replay, or the drive of a step waiting on it) runs only under the
+//! requester's current authority, which is established only by the
+//! requester's own verified credential on the request: never by the roles
+//! recorded when the call parked. On another principal's request the call
+//! stays approved and not executed for the requester's authenticated retry.
 
 use std::collections::BTreeMap;
 
@@ -115,7 +118,11 @@ fn runs<E: SqlEngine>(
             let starter = steps.starter(subject);
             let (status, run) =
                 start_run(host, &scope, actor, &body, &reads(subject), now, starter)?;
-            let run = if status == StatusCode::CREATED && steps.drive(&run.id, now) {
+            // A start, or its exact retry (APPROVAL-RECOVERY-1: the starter's
+            // authenticated retry runs a step's approved call), drives the run.
+            let run = if (status == StatusCode::CREATED || status == StatusCode::OK)
+                && steps.drive(&run.id, now)
+            {
                 get_run(host, &scope, subject, &run.id, &reads(subject)).unwrap_or(run)
             } else {
                 run
@@ -233,7 +240,7 @@ fn decisions<E: SqlEngine>(
             let as_requester =
                 |principal: &RunStarter,
                  call: &mut dyn FnMut() -> Result<ActionAnswer, Refusal>| {
-                    steps.as_principal(principal, call)
+                    steps.as_present(principal, call)
                 };
             match decide(host, &call, &reads, runtime, &as_requester) {
                 Ok(mut decided) => {
@@ -315,6 +322,24 @@ impl<E: SqlEngine> Steps<'_, E> {
         Some(call())
     }
 
+    /// Run one approved call as its requester (APPROVAL-RECOVERY-1): only
+    /// when the request's own verified caller is that requester (the same
+    /// subject, actor kind and role table), as that caller is verified now,
+    /// so a role revoked since the call parked is revoked for it. `None`
+    /// otherwise: the requester's current authority cannot be established,
+    /// and the call is not run.
+    fn as_present(
+        &self,
+        requester: &RunStarter,
+        call: &mut dyn FnMut() -> Result<ActionAnswer, Refusal>,
+    ) -> Option<Result<ActionAnswer, Refusal>> {
+        let current = self.caller?.current()?;
+        (current.subject_id == requester.subject
+            && current.actor_kind == requester.actor_kind
+            && current.role_table == requester.role_table)
+            .then(call)
+    }
+
     /// Run `run_id`'s pending action steps under its recorded starter;
     /// `true` when it could try. A failure leaves the step pending for the
     /// next drive.
@@ -326,8 +351,18 @@ impl<E: SqlEngine> Steps<'_, E> {
             |principal: &RunStarter, call: &mut dyn FnMut() -> Result<ActionAnswer, Refusal>| {
                 self.as_principal(principal, call)
             };
-        let driven: Result<(), Refusal> =
-            norn_api::flow_driver::drive_run(self.host, run_id, &as_starter, runtime, now);
+        let as_requester =
+            |principal: &RunStarter, call: &mut dyn FnMut() -> Result<ActionAnswer, Refusal>| {
+                self.as_present(principal, call)
+            };
+        let driven: Result<(), Refusal> = norn_api::flow_driver::drive_run(
+            self.host,
+            run_id,
+            &as_starter,
+            &as_requester,
+            runtime,
+            now,
+        );
         driven.is_ok()
     }
 }

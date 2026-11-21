@@ -542,11 +542,12 @@ fn a_flow_install_and_a_reopen_keep_the_action_and_its_policy() {
     assert_eq!(cell.melts()["records"].as_array().map(Vec::len), Some(3));
 }
 
-/// A `rel` or `context` condition never permits on a tenant cell. The host
-/// projects no relationship metadata and supplies an empty context, so the
-/// strict Cedar validator finds the rule impossible: the policy does not
-/// compile, the cell serves no action (even to the admin the rule's role
-/// names), nothing commits, and the operator is told why.
+/// A `rel` or `context` condition never permits on a tenant cell. A `rel`
+/// names a link the type must declare (`constitution.Melt` declares no
+/// `owner`), and the host supplies an empty context, so the strict Cedar
+/// validator finds the rule impossible: the policy does not compile, the cell
+/// serves no action (even to the admin the rule's role names), nothing
+/// commits, and the operator is told why.
 #[test]
 fn relationship_and_context_conditions_never_permit() {
     let directory = tempfile::tempdir().unwrap();
@@ -554,13 +555,15 @@ fn relationship_and_context_conditions_never_permit() {
         (
             "rel",
             json!({ "rel": { "from": "resource", "role": "owner" } }),
+            "'constitution.Melt.owner' is not a projected ontology link",
         ),
         (
             "context",
             json!({ "context": { "name": "channel", "op": "eq", "value": "web" } }),
+            "policy is impossible",
         ),
     ];
-    for (case, condition) in conditions {
+    for (case, condition, why) in conditions {
         let mut artifacts = melt(Some(&access()));
         let mut gated = policy(POLICY, &[MELT_ACTION], &["admin"]);
         gated["payload"]["rules"][0]["allOf"]
@@ -578,7 +581,7 @@ fn relationship_and_context_conditions_never_permit() {
             "{case}"
         );
         let reason = cell.tenant.action_policy_error().unwrap_or_default();
-        assert!(reason.contains("policy is impossible"), "{case}: {reason}");
+        assert!(reason.contains(why), "{case}: {reason}");
         assert_eq!(
             cell.melts()["records"].as_array().map(Vec::len),
             Some(0),
@@ -823,13 +826,13 @@ fn a_flow_install_is_readable_without_a_restart() {
     );
 }
 
-/// A `resource` condition never permits on a tenant cell: the host compiles
-/// policies without `EntityIR` projection metadata, so the policy does not
-/// compile (`authz.access.projection_required`), the cell serves no action
-/// (even to the admin the rule's role names), nothing commits, and the
-/// operator is told why.
+/// ACTION-RESOURCE-1: a `resource` condition decides on the target's values.
+/// The policy compiles against the projected schema, and the PDP sees the
+/// values the kernel supplies for the call (the proposed melt for a create):
+/// the admin the rule names may melt `m` and nothing else, a member may not
+/// melt it at all, and nothing commits that the rule does not grant.
 #[test]
-fn a_resource_condition_never_permits() {
+fn a_resource_condition_decides_on_the_target_values() {
     let directory = tempfile::tempdir().unwrap();
     let mut artifacts = melt(Some(&access()));
     let mut gated = policy(POLICY, &[MELT_ACTION], &["admin"]);
@@ -840,14 +843,35 @@ fn a_resource_condition_never_permits() {
     artifacts.push(gated);
     let (mut cell, provisioned) = provision(&directory.path().join("a.sqlite"), &artifacts);
     assert_eq!(provisioned.status, 200, "{}", provisioned.body);
+    assert_eq!(cell.tenant.action_policy_error(), None);
+    let denied = denial(&mut cell);
+    assert_eq!(cell.melt(MELT_ACTION, Some(&user("admin")), "x"), denied);
+    assert_eq!(cell.melt(MELT_ACTION, Some(&user("member")), "m"), denied);
+    assert_eq!(cell.melts()["records"].as_array().map(Vec::len), Some(0));
+    let granted = cell.melt(MELT_ACTION, Some(&user("admin")), "m");
+    assert_eq!(granted.status, 200, "{}", granted.body);
+    assert_eq!(cell.melts()["records"].as_array().map(Vec::len), Some(1));
+}
+
+/// ACTION-RESOURCE-1: a principal attribute other than the verified `id` is
+/// one this host cannot vouch for, so a policy that reads one serves no
+/// action, and the operator is told why.
+#[test]
+fn an_unverified_principal_attribute_never_permits() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut artifacts = melt(Some(&access()));
+    let mut gated = policy(POLICY, &[MELT_ACTION], &["admin"]);
+    gated["payload"]["rules"][0]["allOf"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({ "resource": { "name": "id", "op": "eq", "value": { "principalAttribute": "team" } } }));
+    artifacts.push(gated);
+    let (mut cell, provisioned) = provision(&directory.path().join("a.sqlite"), &artifacts);
+    assert_eq!(provisioned.status, 200, "{}", provisioned.body);
     let denied = denial(&mut cell);
     assert_eq!(cell.melt(MELT_ACTION, Some(&user("admin")), "m"), denied);
-    assert_eq!(cell.melts()["records"].as_array().map(Vec::len), Some(0));
     let reason = cell.tenant.action_policy_error().unwrap_or_default();
-    assert!(
-        reason.contains("authz.access.projection_required"),
-        "{reason}"
-    );
+    assert!(reason.contains("principal attribute \"team\""), "{reason}");
 }
 
 /// A tenant concept that derives metrics: additive amounts at a timestamp.
@@ -957,8 +981,10 @@ fn outsiders_cannot_tell_a_vacant_scope_from_a_tenant_with_live_questions() {
     let directory = tempfile::tempdir().unwrap();
     let mut served = provisioned(&directory.path().join("served.sqlite"), &[sale()]);
     let mut vacant = opened(&directory.path().join("vacant.sqlite"));
-    served.tenant.enable_analytics();
-    vacant.tenant.enable_analytics();
+    let issuer =
+        || norn_api::olap_credential::Issuer::parse(&format!("k1:{}", "A".repeat(43))).unwrap();
+    served.tenant.enable_analytics(issuer());
+    vacant.tenant.enable_analytics(issuer());
     assert!(served.tenant.is_provisioned() && !vacant.tenant.is_provisioned());
     let question = json!({ "question": sale_question("shop.amount") }).to_string();
     let outsiders: [Option<String>; 5] = [

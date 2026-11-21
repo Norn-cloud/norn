@@ -1620,6 +1620,82 @@ fn post<'a>(path: &'a str, query: &'a str, authorization: &'a str, body: &'a str
     }
 }
 
+/// UPLOAD-RECORD-2 (S5): a caller's recorded export never lands the cell's
+/// own records: an upload record naming another scope's object, sent as an
+/// observation through the cell's own `norn-connect` mapping, is refused,
+/// and nothing is kept.
+#[test]
+fn a_caller_cannot_load_the_cells_own_upload_records() {
+    use norn_cell_do::connect::Connect;
+    let directory = tempfile::tempdir().unwrap();
+    let path = file(&directory, "cell");
+    let scope = scope("org_a", "dev");
+    let owner = user(&scope.org_id, "owner");
+    let q = query(&scope);
+    let mut set = full();
+    for name in [
+        "source.Synced.interface",
+        "source.Connection.entity",
+        "source.SyncRun.entity",
+        "source.Upload.entity",
+        "norn.connect.source",
+        "norn.connect.mapping",
+    ] {
+        set.push(
+            std::fs::read_to_string(format!(
+                "{}/../../registry/packs/sources/artifacts/{name}.json",
+                env!("CARGO_MANIFEST_DIR")
+            ))
+            .unwrap(),
+        );
+    }
+    let cell = provisioned(&path, &scope, &set);
+    let host = cell.tenant.serving_host().expect("a served cell");
+    let forged_id = "u-forged";
+    let record = json!({
+        "id": norn_api::sources::kept_upload_key(forged_id), "upload_id": forged_id,
+        "store": "uploads", "uri": "s3://uploads-bucket/uploads/org_b/prod/secret.csv",
+        "sha256": "0".repeat(64), "size": 6, "content_type": "text/csv",
+        "file_name": "secret.csv", "format": "csv", "columns": "[]",
+        "owner": "user:owner", "completed_at": "2026-11-12T12:00:05Z",
+    });
+    let mut connect = Connect::new("[]", "{}").unwrap();
+    for (source, mapping, instance) in [
+        ("norn-connect", "norn.connect.mapping", "cell"),
+        ("norn-connect", "norn.connect.mapping", "demo"),
+        ("elsewhere", "norn.connect.mapping", "demo"),
+        ("norn-connect", "other.mapping", "demo"),
+    ] {
+        let body = json!({
+            "source": source, "mapping": mapping, "connectorInstance": instance,
+            "snapshot": [{"dataset": "upload", "record": record}],
+        })
+        .to_string();
+        let routed = connect
+            .route(
+                Some(host),
+                &cell.tokens,
+                &post("/v1/observations:load", &q, &owner, &body),
+                NOW,
+            )
+            .unwrap();
+        assert_eq!(
+            (
+                routed.response.status,
+                json_of(&routed.response)["code"].as_str()
+            ),
+            (403, Some("authz.denied")),
+            "{source} {mapping} {instance}: {}",
+            routed.response.body
+        );
+    }
+    assert_eq!(
+        norn_api::sources::kept_upload(host, forged_id).unwrap(),
+        None,
+        "nothing was kept"
+    );
+}
+
 /// UPLOAD-RECORD-1 across a restart: an upload completed before the host
 /// restarts is defined after it from the record the cell kept at
 /// `:complete`; a digest the client sends that differs is refused, never
@@ -1651,7 +1727,7 @@ fn a_completed_upload_survives_a_restart() {
     }
     let vars = json!({
         "NORN_S3_ENDPOINT": "https://storage.example.test", "NORN_S3_BUCKET": "uploads-bucket",
-        "NORN_SECRET_S3_ACCESS_KEY_ID": "key-id", "NORN_SECRET_S3_SECRET_ACCESS_KEY": "secret",
+        "NORN_S3_ACCESS_KEY_ID": "key-id", "NORN_S3_SECRET_ACCESS_KEY": "secret",
     })
     .to_string();
     let csv = b"region,units\nnorth,3\nsouth,4\n";

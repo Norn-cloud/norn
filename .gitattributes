@@ -2,3 +2,6 @@
 * text=auto
 
 apps/studio/worker/migrations/*.sql text eol=lf
+# Vendored upstream bytes stay byte-identical to their pinned source (registry/standards/*.source.json).
+third_party/json-canonicalization/** -text
+third_party/transparency-dev-merkle/** -text

@@ -1,4 +1,5 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { type QueryClient, queryOptions, useQuery, useQueryClient } from "@tanstack/react-query"
+import { forgetDrafts, sessionKey } from "../actions/kept-drafts.ts"
 
 /** Who is signed in, as the Worker reports it (/api/me). Display only: the server decides every permission. */
 export interface Account {
@@ -11,16 +12,44 @@ const SESSION = ["session"] as const
 /** A refusal the auth server explained, shown to the user as is. */
 export class AuthRefusal extends Error {}
 
-async function readAccount(): Promise<Account | null> {
-  const response = await fetch("/api/me", { headers: { accept: "application/json" } })
+type Fetch = (input: string, init?: RequestInit) => Promise<Response>
+
+async function readAccount(fetcher: Fetch): Promise<Account | null> {
+  const response = await fetcher("/api/me", { headers: { accept: "application/json" } })
   if (response.status === 401) return null
   if (!response.ok) throw new Error(`The session check failed (${response.status}).`)
   return (await response.json()) as Account
 }
 
+/** Forget every read made as the reader who made it (records, picker choices, the inbox): all but the session itself. */
+function forgetReads(client: QueryClient): void {
+  client.removeQueries({ predicate: (query) => query.queryKey[0] !== SESSION[0] })
+}
+
+/**
+ * The session query. Whenever a read of it names a different reader than the last one (the session
+ * expired and `/api/me` answered 401, someone else signed in, or the organization changed), the
+ * previous reader's reads are forgotten before the new answer is shown, the way a sign-out forgets
+ * them. Hygiene only: every read is the server's decision for whoever asks.
+ */
+export function accountQuery(client: QueryClient, fetcher: Fetch = (input, init) => fetch(input, init)) {
+  return queryOptions({
+    queryKey: SESSION,
+    queryFn: async () => {
+      const account = await readAccount(fetcher)
+      const previous = client.getQueryData<Account | null>(SESSION)
+      if (previous !== undefined && sessionKey(previous) !== sessionKey(account)) forgetReads(client)
+      return account
+    },
+    staleTime: 60_000,
+    retry: false,
+  })
+}
+
 /** The current account: undefined while loading, null when signed out. */
 export function useAccount() {
-  return useQuery({ queryKey: SESSION, queryFn: readAccount, staleTime: 60_000, retry: false })
+  const client = useQueryClient()
+  return useQuery(accountQuery(client))
 }
 
 async function call(path: string, body: Record<string, string>): Promise<void> {
@@ -44,4 +73,16 @@ export const authApi = {
 export function useRefreshAccount() {
   const client = useQueryClient()
   return () => client.invalidateQueries({ queryKey: SESSION })
+}
+
+/**
+ * End the session, then forget everything read or kept as that reader (records, picker choices,
+ * the inbox, unsent drafts) so the next reader in this tab never sees it, and re-read the session. A sign-out the
+ * server did not complete forgets nothing and rethrows.
+ */
+export async function endSession(client: QueryClient, signOut: () => Promise<void> = authApi.signOut): Promise<void> {
+  await signOut()
+  forgetDrafts()
+  forgetReads(client)
+  await client.invalidateQueries({ queryKey: SESSION })
 }

@@ -3,12 +3,14 @@
 import argparse
 import hashlib
 import http.client
+import io
 import json
 import os
 from pathlib import Path
 import time
 import tempfile
 import urllib.request
+import zipfile
 ROOT = Path(__file__).resolve().parents[2]
 
 def acquire_interop(output):
@@ -22,6 +24,22 @@ def acquire_interop(output):
                 raise ValueError(f"pinned interop digest mismatch: {name}")
             store(name, raw)
         (output / name).write_bytes(raw)
+        if "members" in pin:
+            extract(raw, pin, output / pin["extractTo"])
+
+
+# An archive pin lists the members tests read, each with its own digest; only
+# those members are written, under plain names.
+def extract(raw, pin, directory):
+    directory.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+        for member, digest in pin["members"].items():
+            if Path(member).name != member:
+                raise ValueError(f"archive member must be a plain name: {member}")
+            data = archive.read(member)
+            if hashlib.sha256(data).hexdigest() != digest:
+                raise ValueError(f"pinned archive member digest mismatch: {member}")
+            (directory / member).write_bytes(data)
 
 
 # Optional digest-checked cache: CI restores it so upstream DNS or host outages

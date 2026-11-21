@@ -22,7 +22,7 @@ use wasm_bindgen::prelude::*;
 use crate::analytics::{self, DemoQuestions};
 use crate::policy::DEMO_GRANTS;
 use crate::principal::{PrincipalResolver, TokenPrincipals};
-use crate::tenant::Tenant;
+use crate::tenant::{Gate, Served, Tenant};
 use crate::{seed, server};
 
 enum Principals {
@@ -36,11 +36,63 @@ enum Principals {
     reason = "the fixture variant exists only in fixture builds"
 )]
 impl Principals {
+    /// Token principals for `scope` from the pinned `issuer` and its `jwks`
+    /// (fetched at `now_ms`), recording into `slot`; fixture principals in a
+    /// `fixtures` build given neither.
+    fn of(
+        issuer: Option<String>,
+        jwks: Option<String>,
+        scope: CellScope,
+        slot: std::sync::Arc<crate::policy::CallerSlot>,
+        now_ms: f64,
+    ) -> Result<Self, JsValue> {
+        match (issuer, jwks) {
+            (Some(issuer), Some(jwks)) => Ok(Self::Tokens(
+                TokenPrincipals::new(&issuer, &jwks, scope, slot, seconds(now_ms))
+                    .map_err(|refusal| JsValue::from_str(&refusal.code))?,
+            )),
+            #[cfg(feature = "fixtures")]
+            (None, None) => Ok(Self::Fixtures(
+                crate::principal::FixturePrincipals::new(crate::principal::DEMO_FIXTURES, slot)
+                    .of_org(crate::principal::FIXTURE_ORG, &scope),
+            )),
+            _ => Err(JsValue::from_str(
+                "the token issuer and its JWKS are required",
+            )),
+        }
+    }
+
     fn resolver(&self) -> &dyn PrincipalResolver {
         match self {
             Self::Tokens(tokens) => tokens,
             #[cfg(feature = "fixtures")]
             Self::Fixtures(fixtures) => fixtures,
+        }
+    }
+
+    fn replace_jwks(&self, jwks: &str, now_ms: f64) -> Result<(), JsValue> {
+        match self {
+            Self::Tokens(tokens) => tokens
+                .replace_jwks(jwks, seconds(now_ms))
+                .map_err(|refusal| JsValue::from_str(&refusal.code)),
+            #[cfg(feature = "fixtures")]
+            Self::Fixtures(_) => Ok(()),
+        }
+    }
+
+    fn jwks_due(&self, now_ms: f64) -> bool {
+        match self {
+            Self::Tokens(tokens) => tokens.refresh_due(seconds(now_ms)),
+            #[cfg(feature = "fixtures")]
+            Self::Fixtures(_) => false,
+        }
+    }
+
+    fn take_unknown_kid(&self, now_ms: f64) -> bool {
+        match self {
+            Self::Tokens(tokens) => tokens.take_unknown_kid(seconds(now_ms)),
+            #[cfg(feature = "fixtures")]
+            Self::Fixtures(_) => false,
         }
     }
 }
@@ -154,23 +206,7 @@ impl NornCell {
             )
         })
         .map_err(rejected)?;
-        let slot = tenant.caller();
-        let principals = match (issuer, jwks) {
-            (Some(issuer), Some(jwks)) => Principals::Tokens(
-                TokenPrincipals::new(&issuer, &jwks, scope, slot, seconds(now_ms))
-                    .map_err(|refusal| JsValue::from_str(&refusal.code))?,
-            ),
-            #[cfg(feature = "fixtures")]
-            (None, None) => Principals::Fixtures(
-                crate::principal::FixturePrincipals::new(crate::principal::DEMO_FIXTURES, slot)
-                    .of_org(crate::principal::FIXTURE_ORG, &scope),
-            ),
-            _ => {
-                return Err(JsValue::from_str(
-                    "the token issuer and its JWKS are required",
-                ));
-            }
-        };
+        let principals = Principals::of(issuer, jwks, scope, tenant.caller(), now_ms)?;
         Ok(Self {
             tenant,
             principals,
@@ -180,9 +216,26 @@ impl NornCell {
 
     /// D102: answer questions on the tenant analytics engine the Worker
     /// reaches (`NORN_OLAP_URL`); without it this cell has no analytics.
+    /// OLAP-CRED-1: `signing_key` (`NORN_OLAP_SIGNING_KEY`,
+    /// `<kid>:<base64url Ed25519 seed>`) mints this cell's credential for
+    /// each engine call; without a valid one the cell has no analytics.
+    ///
+    /// # Errors
+    /// A missing or malformed signing key.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "wasm-bindgen passes an optional string by value"
+    )]
     #[wasm_bindgen(js_name = enableAnalytics)]
-    pub fn enable_analytics(&mut self) {
-        self.tenant.enable_analytics();
+    pub fn enable_analytics(&mut self, signing_key: Option<String>) -> Result<(), JsValue> {
+        let issuer = norn_api::olap_credential::Issuer::parse(
+            signing_key
+                .as_deref()
+                .ok_or_else(|| JsValue::from_str("NORN_OLAP_SIGNING_KEY is required"))?,
+        )
+        .map_err(|e| JsValue::from_str(&format!("NORN_OLAP_SIGNING_KEY: {e}")))?;
+        self.tenant.enable_analytics(issuer);
+        Ok(())
     }
 
     /// The cell's verified ledger head as JSON (`{seq, hash, commits}`), for
@@ -243,13 +296,7 @@ impl NornCell {
     /// aging, so they are refused once past the stale bound.
     #[wasm_bindgen(js_name = replaceJwks)]
     pub fn replace_jwks(&self, jwks: &str, now_ms: f64) -> Result<(), JsValue> {
-        match &self.principals {
-            Principals::Tokens(tokens) => tokens
-                .replace_jwks(jwks, seconds(now_ms))
-                .map_err(|refusal| JsValue::from_str(&refusal.code)),
-            #[cfg(feature = "fixtures")]
-            Principals::Fixtures(_) => Ok(()),
-        }
+        self.principals.replace_jwks(jwks, now_ms)
     }
 
     /// Whether the keys have reached their maximum age and the host should
@@ -259,11 +306,7 @@ impl NornCell {
     #[wasm_bindgen(js_name = jwksDue)]
     #[must_use]
     pub fn jwks_due(&self, now_ms: f64) -> bool {
-        match &self.principals {
-            Principals::Tokens(tokens) => tokens.refresh_due(seconds(now_ms)),
-            #[cfg(feature = "fixtures")]
-            Principals::Fixtures(_) => false,
-        }
+        self.principals.jwks_due(now_ms)
     }
 
     /// Serve one request at `now_ms` (the host clock, Unix milliseconds);
@@ -290,52 +333,43 @@ impl NornCell {
             now: seconds(now_ms),
             body: body.as_deref().unwrap_or_default(),
         };
-        // #921: the cell's source and upload routes, decided by its own policy.
-        if let Some(connect) = self.connect.as_mut()
-            && let Some(routed) = connect.route(
-                self.tenant.serving_host(),
-                self.principals.resolver(),
-                &request,
-                millis(now_ms),
-            )
-        {
-            let (then_token, then_request) =
-                routed.then.map_or((None, None), |(token, planned)| {
-                    (Some(token), serde_json::to_string(&planned).ok())
-                });
-            return Reply {
-                status: routed.response.status,
-                body: routed.response.body,
-                refresh_jwks: false,
-                start_sync: routed.start_sync,
-                then_token,
-                then_request,
-                engine: None,
-                policy_error: None,
-            };
-        }
-        // D102: loads read the cell's own uploads.
-        let uploads = self
-            .connect
-            .as_ref()
-            .map(|connect| -> &dyn norn_api::analytics_routes::Uploads { connect });
-        let response = self
-            .tenant
-            .handle_analytics(self.principals.resolver(), uploads, &request)
-            .unwrap_or_else(|| self.tenant.handle(self.principals.resolver(), &request));
+        // #921: the cell's source and upload routes, decided by its own
+        // policy; then D102's engine routes (loads read the cell's own
+        // uploads); then the cell's other routes: one portable dispatch.
+        let served = self.tenant.serve(
+            self.connect.as_mut(),
+            self.principals.resolver(),
+            &request,
+            millis(now_ms),
+        );
+        let response = match served {
+            Served::Cell(response) => response,
+            Served::Connect(routed) => {
+                let (then_token, then_request) =
+                    routed.then.map_or((None, None), |(token, planned)| {
+                        (Some(token), serde_json::to_string(&planned).ok())
+                    });
+                return Reply {
+                    status: routed.response.status,
+                    body: routed.response.body,
+                    refresh_jwks: false,
+                    start_sync: routed.start_sync,
+                    then_token,
+                    then_request,
+                    engine: None,
+                    policy_error: None,
+                };
+            }
+        };
         let policy_error = self
             .tenant
             .open_error()
             .or_else(|| self.tenant.action_policy_error())
             .map(str::to_owned);
-        let refresh_jwks = match &self.principals {
-            Principals::Tokens(tokens) => tokens.take_unknown_kid(seconds(now_ms)),
-            #[cfg(feature = "fixtures")]
-            Principals::Fixtures(_) => false,
-        };
+        let refresh_jwks = self.principals.take_unknown_kid(now_ms);
         let engine = self
             .tenant
-            .take_engine_call()
+            .take_engine_call(millis(now_ms))
             .and_then(|call| serde_json::to_string(&call).ok());
         Reply {
             status: response.status,
@@ -488,6 +522,113 @@ impl NornCell {
             engine: None,
             policy_error: None,
         }
+    }
+}
+
+/// TENANT-ISOLATION-1 (S1, S3): a scope's membership gate, asked before the
+/// Durable Object opens the cell's storage ([`Gate`]). It holds the scope,
+/// the host's grant table, the receipt handles and the verified issuer keys,
+/// never the storage: an outsider's request is answered here, with exactly
+/// what a scope with no cell answers, and the cell is never opened, read,
+/// armed or synced for it.
+#[wasm_bindgen]
+pub struct NornGate {
+    gate: Gate,
+    principals: Principals,
+}
+
+#[wasm_bindgen]
+impl NornGate {
+    /// The gate of the DO's own scope. `issuer`, `jwks`, `lineage_key` and
+    /// `now_ms` are what [`NornCell::new`] is given; `sources` and `vars`
+    /// what `configureConnect` is (the gate only asks whether they configure
+    /// source and upload routes).
+    ///
+    /// # Errors
+    /// No usable issuer keys, or a lineage key shorter than 32 bytes.
+    #[wasm_bindgen(constructor)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the gate is given what the cell is given"
+    )]
+    pub fn new(
+        org_id: String,
+        environment_id: String,
+        issuer: Option<String>,
+        jwks: Option<String>,
+        lineage_key: Option<String>,
+        sources: &str,
+        vars: &str,
+        now_ms: f64,
+    ) -> Result<Self, JsValue> {
+        crate::incident::install_panic_log();
+        let lineage_key = lineage_key.map(String::into_bytes);
+        let scope = CellScope {
+            org_id,
+            environment_id,
+        };
+        let connect = crate::connect::Connect::new(sources, vars).is_ok();
+        let gate = Gate::new(scope.clone(), &DEMO_GRANTS, lineage_key.as_deref(), connect)
+            .map_err(rejected)?;
+        let principals = Principals::of(issuer, jwks, scope, gate.caller(), now_ms)?;
+        Ok(Self { gate, principals })
+    }
+
+    /// `undefined` when the request reaches the cell (a verified member, or
+    /// a provisioner provisioning); otherwise the outsider's whole reply,
+    /// which carries no continuation, sync or engine call.
+    #[must_use]
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "wasm-bindgen passes optional strings by value"
+    )]
+    pub fn check(
+        &self,
+        method: &str,
+        path: &str,
+        query: &str,
+        authorization: Option<String>,
+        now_ms: f64,
+        body: Option<String>,
+    ) -> Option<Reply> {
+        let request = server::Request {
+            method,
+            path,
+            query,
+            authorization: authorization.as_deref(),
+            now: seconds(now_ms),
+            body: body.as_deref().unwrap_or_default(),
+        };
+        let response = self
+            .gate
+            .outsider::<WorkersEngine>(self.principals.resolver(), &request);
+        let refresh_jwks = self.principals.take_unknown_kid(now_ms);
+        response.map(|response| Reply {
+            status: response.status,
+            body: response.body,
+            refresh_jwks,
+            start_sync: None,
+            then_token: None,
+            then_request: None,
+            engine: None,
+            policy_error: None,
+        })
+    }
+
+    /// As [`NornCell::replace_jwks`].
+    ///
+    /// # Errors
+    /// The document is unusable; the previous keys stay in force.
+    #[wasm_bindgen(js_name = replaceJwks)]
+    pub fn replace_jwks(&self, jwks: &str, now_ms: f64) -> Result<(), JsValue> {
+        self.principals.replace_jwks(jwks, now_ms)
+    }
+
+    /// As [`NornCell::jwks_due`].
+    #[wasm_bindgen(js_name = jwksDue)]
+    #[must_use]
+    pub fn jwks_due(&self, now_ms: f64) -> bool {
+        self.principals.jwks_due(now_ms)
     }
 }
 

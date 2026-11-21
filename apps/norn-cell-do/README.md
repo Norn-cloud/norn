@@ -88,7 +88,7 @@ Build into a directory outside the checkout, then smoke it:
 ```sh
 export NORN_CELL_DO_PROJECT="${CARGO_TARGET_DIR:?}/norn-cell-do"
 mkdir -p "$NORN_CELL_DO_PROJECT"
-cp apps/norn-cell-do/{worker.mjs,subscribe.mjs,wake.mjs,telemetry.mjs,otlp.mjs,wrangler.json} "$NORN_CELL_DO_PROJECT/"
+cp apps/norn-cell-do/{worker.mjs,subscribe.mjs,wake.mjs,connect_vars.mjs,telemetry.mjs,otlp.mjs,wrangler.json} "$NORN_CELL_DO_PROJECT/"
 cargo build --locked -p norn-cell-do --features fixtures --target wasm32-unknown-unknown --profile wasm-release
 wasm-bindgen "$CARGO_TARGET_DIR/wasm32-unknown-unknown/wasm-release/norn_cell_do.wasm" \
   --target web --out-name norn_cell_do --out-dir "$NORN_CELL_DO_PROJECT/pkg"
@@ -136,6 +136,31 @@ The analytics cell keys its lineage handles (D53) with a third Worker secret,
 `wrangler secret put NORN_LINEAGE_KEY`. Without it (or with a shorter one)
 the cell refuses to open and the Worker logs `cell open refused`; answers and
 traces are never served unkeyed.
+
+With `NORN_OLAP_URL` set, the cells sign their calls to the analytics engine
+(`norn-olapd`) with a fourth Worker secret, `NORN_OLAP_SIGNING_KEY`
+(`<kid>:<base64url Ed25519 seed>`, from `norn-olapd --new-key <kid>`), set with
+`wrangler secret put NORN_OLAP_SIGNING_KEY`. Each call carries a
+two-minute credential for the calling cell's own tenant (OLAP-CRED-1, #1493);
+there is no shared engine token. Without a valid key the Worker logs
+`analytics not enabled` and the cells serve without analytics. Rotation is
+described under `norn-olapd` in `crates/norn-cell-do/README.md`.
+
+Deployment-wide secrets stay out of the connection secret namespace
+(OLAP-01). A connector's auth resolves `NORN_SECRET_<REF>` by any name it
+declares and sends the value to its source, so only per-connection secrets
+belong there. The analytics signing key is `NORN_OLAP_SIGNING_KEY`, passed to
+the analytics path only, and the object store keys are `NORN_S3_ACCESS_KEY_ID`,
+`NORN_S3_SECRET_ACCESS_KEY`, `NORN_S3_DOCUMENTS_ACCESS_KEY_ID` and
+`NORN_S3_DOCUMENTS_SECRET_ACCESS_KEY`, read by the upload path only. A Worker
+that still has `NORN_SECRET_S3_*`, `NORN_SECRET_OLAP_*` or
+`NORN_SECRET_DUCKDB_*` set refuses to configure its connections (it logs
+`source connections not configured`) until they are renamed or deleted.
+
+The Worker reaches `norn-olapd` over a protected transport only: TLS, or a
+private network that nothing else can join. A credential is bound to one
+call's operation and exact body, but whoever sees a request in transit can
+replay that same request until the credential expires (at most two minutes).
 
 ## Guarantees and their mechanism here
 
