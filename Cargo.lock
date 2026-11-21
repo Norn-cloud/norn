@@ -2256,7 +2256,6 @@ dependencies = [
  "norn-builtins",
  "norn-cell",
  "norn-checker",
- "norn-expr",
  "norn-ir",
  "norn-kernel",
  "norn-projections",

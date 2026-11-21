@@ -2,7 +2,7 @@
 //!
 //! Every invariant and governing law of the dataset's type becomes one
 //! [`RuleCheck`]. Its condition and predicate are lowered from the admitted
-//! ZEN source through `norn_expr::row_expression`, the VIEW-ENGINE-1 row
+//! ZEN source through `governing_laws::law_row_tree`, the VIEW-ENGINE-1 row
 //! subset, into a typed [`RowPredicate`] that the engine evaluates over the
 //! whole dataset in one pass. The engine decides a row only where its SQL
 //! and the per-row evaluator provably agree. That is the case when every
@@ -20,7 +20,7 @@
 
 use std::collections::BTreeMap;
 
-use norn_expr::{RowArithmetic, RowComparison, RowExpr};
+use norn_checker::transform::{RowArithmetic, RowComparison, RowExpr};
 use norn_ir::{
     DataQualityRuleRef, DataQualitySeverity, LawModality, LawResponse, LawSeverity, ObjectTypeName,
     RuntimeValue,
@@ -61,7 +61,7 @@ fn catalog(model: &Model) -> TypeCatalog<'_> {
 
 /// Lower one admitted ZEN source over `self`, or `None` outside the subset.
 fn lower_source(source: &str, table: &TableSchema) -> Option<RowPredicate> {
-    let tree = norn_expr::row_expression(source, "self").ok()??;
+    let tree = norn_kernel::governing_laws::law_row_tree(source)?;
     let lowered = lower(&tree)?;
     lowered.kind(table)?;
     Some(lowered)
