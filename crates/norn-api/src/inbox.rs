@@ -498,8 +498,8 @@ fn scan_type<E: SqlEngine>(
                     .filter(|finding| finding.status == DataQualityFindingStatus::Open)
                     .collect();
                 if !open.is_empty() {
-                    let open = crate::object_links::gate_findings(reader, open)
-                        .map_err(Refusal::host)?;
+                    let open =
+                        crate::object_links::gate_findings(reader, open).map_err(Refusal::host)?;
                     batch.push((row, open));
                 }
             }

@@ -530,72 +530,75 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         }
         let mut findings = Vec::with_capacity(held.len());
         for (link, claims) in held.into_values() {
-            let rows: BTreeSet<String> = claims
-                .iter()
-                .flat_map(|(_, dispute)| dispute.rows.iter().cloned())
-                .collect();
-            let Some(first_seen) = claims
-                .iter()
-                .min_by_key(|(_, dispute)| dispute.position)
-                .map(|(_, dispute)| dispute.first_seen.clone())
-            else {
-                continue;
-            };
-            let cause = rows
-                .iter()
-                .map(|row| match row.split_once(':') {
-                    Some(("mapping-conflict", id)) => format!("conflict {id}"),
-                    Some((_, id)) => format!("identity {id}"),
-                    None => row.clone(),
-                })
-                .collect::<Vec<_>>()
-                .join(", ");
-            let lineage = claims
-                .iter()
-                .map(|(entry, dispute)| {
-                    norn_ir::DataQualityLineage::new(
-                        entry.claim.provenance.clone(),
-                        std::iter::once(entry.claim.observation_id.clone())
-                            .chain(dispute.rows.iter().cloned())
-                            .collect(),
-                    )
-                })
-                .collect();
-            let ids: BTreeSet<&str> = claims.iter().map(|(entry, _)| entry.id.as_str()).collect();
-            let finding = norn_ir::DataQualityFinding::v2(
-                norn_ir::DataQualityRuleRef::Builtin {
-                    id: LINK_HELD_RULE.into(),
-                    version: "1".into(),
-                },
-                vec![
-                    norn_ir::DataQualitySubject::new(
-                        link.source.object_type.clone(),
-                        &link.source.key,
-                    ),
-                    norn_ir::DataQualitySubject::new(
-                        link.target.object_type.clone(),
-                        &link.target.key,
-                    ),
-                ],
-                norn_ir::DataQualitySeverity::Warning,
-                format!(
-                    "link {} -{}-> {} held: record in dispute ({cause})",
-                    link.source.key, link.link, link.target.key
-                ),
-                norn_ir::DataQualityOutcome::NotSatisfied,
-                lineage,
-                first_seen.clone(),
-                first_seen,
-                norn_ir::DataQualityFindingStatus::Open,
-            )?
-            .with_evidence_digest(norn_ir::canonical::domain_hash_hex(
-                b"norn.link.held.v2\0",
-                &(&ids, &rows),
-            )?)?;
-            findings.push(finding);
+            findings.extend(Self::held_link_finding(&link, &claims)?);
         }
         findings.sort_by(|a, b| a.id.cmp(&b.id));
         Ok(findings)
+    }
+
+    /// The one held-link finding for `link`, from the disputed claims that
+    /// hold it; `None` when there are none.
+    fn held_link_finding(
+        link: &LinkKey,
+        claims: &[(&Entry, EventDispute)],
+    ) -> Result<Option<norn_ir::DataQualityFinding>, CellError> {
+        let rows: BTreeSet<String> = claims
+            .iter()
+            .flat_map(|(_, dispute)| dispute.rows.iter().cloned())
+            .collect();
+        let Some(first_seen) = claims
+            .iter()
+            .min_by_key(|(_, dispute)| dispute.position)
+            .map(|(_, dispute)| dispute.first_seen.clone())
+        else {
+            return Ok(None);
+        };
+        let cause = rows
+            .iter()
+            .map(|row| match row.split_once(':') {
+                Some(("mapping-conflict", id)) => format!("conflict {id}"),
+                Some((_, id)) => format!("identity {id}"),
+                None => row.clone(),
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let lineage = claims
+            .iter()
+            .map(|(entry, dispute)| {
+                norn_ir::DataQualityLineage::new(
+                    entry.claim.provenance.clone(),
+                    std::iter::once(entry.claim.observation_id.clone())
+                        .chain(dispute.rows.iter().cloned())
+                        .collect(),
+                )
+            })
+            .collect();
+        let ids: BTreeSet<&str> = claims.iter().map(|(entry, _)| entry.id.as_str()).collect();
+        let finding = norn_ir::DataQualityFinding::v2(
+            norn_ir::DataQualityRuleRef::Builtin {
+                id: LINK_HELD_RULE.into(),
+                version: "1".into(),
+            },
+            vec![
+                norn_ir::DataQualitySubject::new(link.source.object_type.clone(), &link.source.key),
+                norn_ir::DataQualitySubject::new(link.target.object_type.clone(), &link.target.key),
+            ],
+            norn_ir::DataQualitySeverity::Warning,
+            format!(
+                "link {} -{}-> {} held: record in dispute ({cause})",
+                link.source.key, link.link, link.target.key
+            ),
+            norn_ir::DataQualityOutcome::NotSatisfied,
+            lineage,
+            first_seen.clone(),
+            first_seen,
+            norn_ir::DataQualityFindingStatus::Open,
+        )?
+        .with_evidence_digest(norn_ir::canonical::domain_hash_hex(
+            b"norn.link.held.v2\0",
+            &(&ids, &rows),
+        )?)?;
+        Ok(Some(finding))
     }
 
     /// Retained claims about one canonical link identity; membership is read separately.
@@ -782,7 +785,13 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                         if !exists
                             && present(source)?
                             && present(&to)?
-                            && !self.add_frozen(model, commit, entry, (source, &to), horizon)? =>
+                            && !self.add_frozen(
+                                model,
+                                commit,
+                                entry,
+                                (source, &to),
+                                horizon,
+                            )? =>
                     {
                         LinkMutation::Add {
                             values: model

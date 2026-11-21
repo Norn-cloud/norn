@@ -218,7 +218,10 @@ fn obs_link_dispute_held_link_is_disclosed_only_with_both_endpoints() {
             },
             Some(actor),
             &Mapping,
-            (false, norn_kernel::LogicalTime::from_millis(1_793_702_400_000)),
+            (
+                false,
+                norn_kernel::LogicalTime::from_millis(1_793_702_400_000),
+            ),
         )
         .expect("inbox");
         let groups = inbox
@@ -235,5 +238,9 @@ fn obs_link_dispute_held_link_is_disclosed_only_with_both_endpoints() {
     assert_eq!(limited.0, 0, "limited never sees the owner: {counts:?}");
     assert_eq!(full.1, limited.1, "every other finding is served alike");
     assert_eq!(full.2, limited.2 + 1, "the count includes it only for full");
-    assert_eq!((full.3, limited.3), (1, 0), "the inbox groups it only for full");
+    assert_eq!(
+        (full.3, limited.3),
+        (1, 0),
+        "the inbox groups it only for full"
+    );
 }

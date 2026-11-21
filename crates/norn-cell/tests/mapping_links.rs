@@ -1405,7 +1405,11 @@ fn obs_link_dispute_inside_a_page_captured_before_the_split_applies_record_by_re
             members.push(id);
         }
     }
-    assert_eq!(members.len(), 2, "the re-send is a conflict row, not a member");
+    assert_eq!(
+        members.len(),
+        2,
+        "the re-send is a conflict row, not a member"
+    );
     let page = format!(
         "mapping-page:{}",
         norn_ir::canonical::domain_hash_hex(b"norn.mapping.page.v1\0", &members)
@@ -1479,7 +1483,10 @@ fn obs_link_dispute_one_held_finding_per_edge() {
     let directory = tempfile::tempdir().expect("directory");
     let mut cell = referring_cell(directory.path(), "two.sqlite");
     for partition in ["snapshot", "desk"] {
-        one_by_one(&mut cell, (&party_row("referred", "Referred"), "1", partition));
+        one_by_one(
+            &mut cell,
+            (&party_row("referred", "Referred"), "1", partition),
+        );
     }
     for partition in ["snapshot", "desk"] {
         one_by_one(
