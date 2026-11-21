@@ -226,7 +226,12 @@ fn write_response(mut stream: &TcpStream, response: &Response, open: bool) -> st
         422 => "Unprocessable Content",
         _ => "Status",
     };
-    stream.write_all(&encode_response(response.status, reason, &response.body, open))?;
+    stream.write_all(&encode_response(
+        response.status,
+        reason,
+        &response.body,
+        open,
+    ))?;
     stream.flush()
 }
 
@@ -1222,7 +1227,10 @@ mod keepalive_tests {
             assert_eq!(answer(&mut reader).0, 409);
         }
         let took = started.elapsed();
-        assert!(took < Duration::from_millis(500), "20 round trips took {took:?}");
+        assert!(
+            took < Duration::from_millis(500),
+            "20 round trips took {took:?}"
+        );
     }
 
     #[test]
