@@ -61,6 +61,30 @@ export async function revealProperty(
   }
 }
 
+/**
+ * The server-issued context a reveal is decided under: the record's version and the projection the
+ * cell sent for the property (its mode, its markings and whether this reader may reveal it). A
+ * revealed value, and an answer still on its way, belong to the context they were asked under: when
+ * the cell sends another (a newer version, a grant revoked, a marking added) they are dropped. This
+ * decides nothing; it only forgets what the cell's newer answer no longer covers.
+ */
+export const revealContext = (version: number | string, masked: Masked): string =>
+  JSON.stringify([version, masked.mode, [...masked.markings].sort(), masked.revealable])
+
+/** A value the cell revealed, with its receipt and the context it was revealed under. */
+export interface Revealed {
+  readonly value: unknown
+  readonly receipt: RevealReceipt
+  readonly context: string
+}
+
+/**
+ * What to show for a marked property now: the revealed value only while the cell's current
+ * projection still allows a reveal and is the one it was revealed under; otherwise nothing.
+ */
+export const shownReveal = (revealed: Revealed | null, masked: Masked, context: string): Revealed | null =>
+  revealed !== null && masked.revealable && revealed.context === context ? revealed : null
+
 /** What a mode says to the reader, for titles and the chip's label. */
 export function maskHint(masked: Masked): string {
   const what = masked.markings.length > 0 ? masked.markings.join(", ") : "an undeclared marking"
