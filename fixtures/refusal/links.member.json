@@ -1,0 +1,85 @@
+{
+  "status": 200,
+  "body": {
+    "objectType": "docs.ScannedDocument",
+    "id": "SCAN-INV-1041",
+    "items": [
+      {
+        "sourceType": "docs.DocumentLine",
+        "link": "document",
+        "source": "SCAN-INV-1041~line-1",
+        "targetType": "docs.ScannedDocument",
+        "target": "SCAN-INV-1041",
+        "version": 1
+      },
+      {
+        "sourceType": "docs.DocumentLine",
+        "link": "document",
+        "source": "SCAN-INV-1041~line-2",
+        "targetType": "docs.ScannedDocument",
+        "target": "SCAN-INV-1041",
+        "version": 1
+      },
+      {
+        "sourceType": "docs.FieldEvidence",
+        "link": "of",
+        "source": "SCAN-INV-1041~lines.1.amount",
+        "targetType": "docs.ScannedDocument",
+        "target": "SCAN-INV-1041",
+        "version": 1
+      },
+      {
+        "sourceType": "docs.FieldEvidence",
+        "link": "of",
+        "source": "SCAN-INV-1041~lines.2.amount",
+        "targetType": "docs.ScannedDocument",
+        "target": "SCAN-INV-1041",
+        "version": 1
+      },
+      {
+        "sourceType": "docs.FieldEvidence",
+        "link": "of",
+        "source": "SCAN-INV-1041~total",
+        "targetType": "docs.ScannedDocument",
+        "target": "SCAN-INV-1041",
+        "version": 1
+      },
+      {
+        "sourceType": "docs.ScannedDocument",
+        "link": "ledger_entry",
+        "source": "SCAN-INV-1041",
+        "targetType": "docs.LedgerEntry",
+        "target": "demo/ledger/JE-1041",
+        "version": 1
+      }
+    ],
+    "next": null,
+    "counts": {
+      "groups": [
+        {
+          "sourceType": "docs.ScannedDocument",
+          "link": "ledger_entry",
+          "targetType": "docs.LedgerEntry",
+          "direction": "out",
+          "count": 1
+        },
+        {
+          "sourceType": "docs.DocumentLine",
+          "link": "document",
+          "targetType": "docs.ScannedDocument",
+          "direction": "in",
+          "count": 2
+        },
+        {
+          "sourceType": "docs.FieldEvidence",
+          "link": "of",
+          "targetType": "docs.ScannedDocument",
+          "direction": "in",
+          "count": 3
+        }
+      ],
+      "complete": true,
+      "bound": 500
+    }
+  }
+}

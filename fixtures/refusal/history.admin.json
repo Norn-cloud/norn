@@ -1,0 +1,259 @@
+{
+  "status": 200,
+  "body": {
+    "objectType": "docs.ScannedDocument",
+    "id": "SCAN-INV-1041",
+    "versions": [
+      {
+        "version": 1,
+        "commit": 4,
+        "logicalTime": 1800000000000,
+        "values": {
+          "corrected_by": null,
+          "correction_evidence": null,
+          "correction_reason": null,
+          "currency": "USD",
+          "doc_number": "INV-1041",
+          "document_digest": "51a1562d2801485ffa3b1144d1bbf08459c8d56aea9c04b56c4187b89ea0f26e",
+          "document_uri": "s3://documents-bucket/fixtures/scans/SCAN-INV-1041.png",
+          "extractor": "tesseract",
+          "extractor_version": "5.3.4+norn-extractor/0.1.0",
+          "id": "SCAN-INV-1041",
+          "issued_on": "2026-03-12",
+          "kind": "invoice",
+          "line_count": 2,
+          "media_type": "image/png",
+          "total": 30.5,
+          "vendor": "Atlas Casting Supply"
+        },
+        "writer": {
+          "kind": "mapping",
+          "lineage": {
+            "bundleDigest": "2e6d351844b29e4fe67098a5fbd444b46faeb86da905c583364df696bd008437",
+            "sourceRecordRef": {
+              "system": "synthetic-scans",
+              "record": "Scanned Document/synthetic-scans/demo/SCAN-INV-1041"
+            },
+            "documentRef": {
+              "system": "synthetic-scans",
+              "record": "SCAN-INV-1041"
+            },
+            "documentDigest": "7372c5c313bdc273f3e8bdcb7f2236d01ff8d7e8a51369d3b8f2ab812ce57490",
+            "mappingPin": {
+              "artifactId": "docs.scans.mapping",
+              "version": "0.1.0",
+              "sha256": "68b60e9cd01279675df084c46f168f206053578bb309d6b3b0fc982f1621f4ec"
+            },
+            "fieldProvenance": {
+              "corrected_by": {
+                "source": {
+                  "system": "synthetic-scans",
+                  "record": "Scanned Document/synthetic-scans/demo/SCAN-INV-1041"
+                },
+                "mappingVersion": "docs.scans.mapping@0.1.0",
+                "transform": "document.corrected_by",
+                "recordedAt": "2026-11-02T12:00:00Z",
+                "sourceFields": [
+                  "name"
+                ]
+              },
+              "correction_evidence": {
+                "source": {
+                  "system": "synthetic-scans",
+                  "record": "Scanned Document/synthetic-scans/demo/SCAN-INV-1041"
+                },
+                "mappingVersion": "docs.scans.mapping@0.1.0",
+                "transform": "document.correction_evidence",
+                "recordedAt": "2026-11-02T12:00:00Z",
+                "sourceFields": [
+                  "name"
+                ]
+              },
+              "correction_reason": {
+                "source": {
+                  "system": "synthetic-scans",
+                  "record": "Scanned Document/synthetic-scans/demo/SCAN-INV-1041"
+                },
+                "mappingVersion": "docs.scans.mapping@0.1.0",
+                "transform": "document.correction_reason",
+                "recordedAt": "2026-11-02T12:00:00Z",
+                "sourceFields": [
+                  "name"
+                ]
+              },
+              "currency": {
+                "source": {
+                  "system": "synthetic-scans",
+                  "record": "Scanned Document/synthetic-scans/demo/SCAN-INV-1041"
+                },
+                "mappingVersion": "docs.scans.mapping@0.1.0",
+                "transform": "document.currency",
+                "recordedAt": "2026-11-02T12:00:00Z",
+                "sourceFields": [
+                  "name",
+                  "currency"
+                ]
+              },
+              "doc_number": {
+                "source": {
+                  "system": "synthetic-scans",
+                  "record": "Scanned Document/synthetic-scans/demo/SCAN-INV-1041"
+                },
+                "mappingVersion": "docs.scans.mapping@0.1.0",
+                "transform": "document.doc_number",
+                "recordedAt": "2026-11-02T12:00:00Z",
+                "sourceFields": [
+                  "name",
+                  "doc_number"
+                ]
+              },
+              "document_digest": {
+                "source": {
+                  "system": "synthetic-scans",
+                  "record": "Scanned Document/synthetic-scans/demo/SCAN-INV-1041"
+                },
+                "mappingVersion": "docs.scans.mapping@0.1.0",
+                "transform": "document.document_digest",
+                "recordedAt": "2026-11-02T12:00:00Z",
+                "sourceFields": [
+                  "name",
+                  "document_digest"
+                ]
+              },
+              "document_uri": {
+                "source": {
+                  "system": "synthetic-scans",
+                  "record": "Scanned Document/synthetic-scans/demo/SCAN-INV-1041"
+                },
+                "mappingVersion": "docs.scans.mapping@0.1.0",
+                "transform": "document.document_uri",
+                "recordedAt": "2026-11-02T12:00:00Z",
+                "sourceFields": [
+                  "name",
+                  "document_uri"
+                ]
+              },
+              "extractor": {
+                "source": {
+                  "system": "synthetic-scans",
+                  "record": "Scanned Document/synthetic-scans/demo/SCAN-INV-1041"
+                },
+                "mappingVersion": "docs.scans.mapping@0.1.0",
+                "transform": "document.extractor",
+                "recordedAt": "2026-11-02T12:00:00Z",
+                "sourceFields": [
+                  "name",
+                  "extractor"
+                ]
+              },
+              "extractor_version": {
+                "source": {
+                  "system": "synthetic-scans",
+                  "record": "Scanned Document/synthetic-scans/demo/SCAN-INV-1041"
+                },
+                "mappingVersion": "docs.scans.mapping@0.1.0",
+                "transform": "document.extractor_version",
+                "recordedAt": "2026-11-02T12:00:00Z",
+                "sourceFields": [
+                  "name",
+                  "extractor_version"
+                ]
+              },
+              "id": {
+                "source": {
+                  "system": "synthetic-scans",
+                  "record": "Scanned Document/synthetic-scans/demo/SCAN-INV-1041"
+                },
+                "mappingVersion": "docs.scans.mapping@0.1.0",
+                "transform": "document.id",
+                "recordedAt": "2026-11-02T12:00:00Z",
+                "sourceFields": [
+                  "name"
+                ]
+              },
+              "issued_on": {
+                "source": {
+                  "system": "synthetic-scans",
+                  "record": "Scanned Document/synthetic-scans/demo/SCAN-INV-1041"
+                },
+                "mappingVersion": "docs.scans.mapping@0.1.0",
+                "transform": "document.issued_on",
+                "recordedAt": "2026-11-02T12:00:00Z",
+                "sourceFields": [
+                  "name",
+                  "issued_on"
+                ]
+              },
+              "kind": {
+                "source": {
+                  "system": "synthetic-scans",
+                  "record": "Scanned Document/synthetic-scans/demo/SCAN-INV-1041"
+                },
+                "mappingVersion": "docs.scans.mapping@0.1.0",
+                "transform": "document.kind",
+                "recordedAt": "2026-11-02T12:00:00Z",
+                "sourceFields": [
+                  "name",
+                  "kind"
+                ]
+              },
+              "line_count": {
+                "source": {
+                  "system": "synthetic-scans",
+                  "record": "Scanned Document/synthetic-scans/demo/SCAN-INV-1041"
+                },
+                "mappingVersion": "docs.scans.mapping@0.1.0",
+                "transform": "document.line_count",
+                "recordedAt": "2026-11-02T12:00:00Z",
+                "sourceFields": [
+                  "name",
+                  "line_count"
+                ]
+              },
+              "media_type": {
+                "source": {
+                  "system": "synthetic-scans",
+                  "record": "Scanned Document/synthetic-scans/demo/SCAN-INV-1041"
+                },
+                "mappingVersion": "docs.scans.mapping@0.1.0",
+                "transform": "document.media_type",
+                "recordedAt": "2026-11-02T12:00:00Z",
+                "sourceFields": [
+                  "name",
+                  "media_type"
+                ]
+              },
+              "total": {
+                "source": {
+                  "system": "synthetic-scans",
+                  "record": "Scanned Document/synthetic-scans/demo/SCAN-INV-1041"
+                },
+                "mappingVersion": "docs.scans.mapping@0.1.0",
+                "transform": "document.total",
+                "recordedAt": "2026-11-02T12:00:00Z",
+                "sourceFields": [
+                  "name",
+                  "total"
+                ]
+              },
+              "vendor": {
+                "source": {
+                  "system": "synthetic-scans",
+                  "record": "Scanned Document/synthetic-scans/demo/SCAN-INV-1041"
+                },
+                "mappingVersion": "docs.scans.mapping@0.1.0",
+                "transform": "document.vendor",
+                "recordedAt": "2026-11-02T12:00:00Z",
+                "sourceFields": [
+                  "name",
+                  "vendor"
+                ]
+              }
+            }
+          }
+        }
+      }
+    ],
+    "truncated": false
+  }
+}

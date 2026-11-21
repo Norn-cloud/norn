@@ -140,7 +140,7 @@ for (const walk of all) {
 const CALLS = [
   ["committed", { committed: true, state: "committed" }, "The approved call committed."],
   ["refused", { committed: false, code: "action.precondition_failed", state: "refused" }, "The approved call was refused (action.precondition_failed); this approval never runs it again."],
-  ["not_executed", { committed: false, state: "not_executed" }, "Approved, not yet executed: it runs when the requester retries it."],
+  ["not_executed", { committed: false, state: "not_executed" }, "Approved; waiting for the requester to run it."],
 ] as const
 for (const [state, call, line] of CALLS) {
   test(`decided: the approved call reads ${state}`, async ({ page }) => {

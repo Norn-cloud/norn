@@ -330,6 +330,52 @@ function encodeValue(spec: Spec, draft: Draft): string | undefined {
   return text === "" ? undefined : encodeLeaf(spec, text)
 }
 
+/**
+ * The members of an encoded `input` object, each as the text that was sent: a string as its text, any
+ * other value (a number, `null`, a list, an object) as its JSON, byte for byte, so no digit is
+ * rounded. Null when the text is not one JSON object.
+ */
+export function sentMembers(input: string): readonly { readonly name: string; readonly text: string }[] | null {
+  let parsed: unknown
+  try { parsed = JSON.parse(input) } catch { return null }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return null
+  const members: { name: string; text: string }[] = []
+  let at = 0
+  const space = () => { while (at < input.length && " \t\n\r".includes(input[at]!)) at++ }
+  // One JSON value's extent from `at`: a string, a nested list or object, or a bare token.
+  const value = (): string => {
+    const start = at
+    if (input[at] === "\"") { string(); return input.slice(start, at) }
+    if (input[at] === "{" || input[at] === "[") {
+      let depth = 0
+      do {
+        const char = input[at]
+        if (char === "\"") { string(); continue }
+        if (char === "{" || char === "[") depth++
+        else if (char === "}" || char === "]") depth--
+        at++
+      } while (depth > 0 && at < input.length)
+      return input.slice(start, at)
+    }
+    while (at < input.length && !",}] \t\n\r".includes(input[at]!)) at++
+    return input.slice(start, at)
+  }
+  const string = () => { at++; while (at < input.length && input[at] !== "\"") at += input[at] === "\\" ? 2 : 1; at++ }
+  space(); at++ // {
+  for (;;) {
+    space()
+    if (input[at] === "}") break
+    const name = JSON.parse(value()) as string
+    space(); at++ // :
+    space()
+    const raw = value()
+    members.push({ name, text: raw.startsWith("\"") ? JSON.parse(raw) as string : raw })
+    space()
+    if (input[at] === ",") at++
+  }
+  return members
+}
+
 /** The draft as the `input` object's JSON text. Fields left empty are omitted; the cell says which it requires. */
 export function encodeObject(fields: readonly FormField[], draft: { readonly [name: string]: Draft }): string {
   const members = fields.flatMap((field) => {
