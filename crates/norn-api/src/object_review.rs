@@ -423,8 +423,8 @@ fn version_entry<E: SqlEngine>(
 ///
 /// # Errors
 /// A denied gate (the opaque 403); an absent or withheld object (one 404;
-/// Sources is not needed, and gates only each version's lineage); a commit between the reads (409 `object.snapshot_moved`);
-/// or a host failure.
+/// Sources is not needed, and gates only each version's lineage); a commit
+/// between the reads (409 `object.snapshot_moved`); or a host failure.
 #[utoipa::path(get, path = "/v1/objects/{type}/{id}/history", operation_id = "get_object_history", params(ScopeQuery, ("type" = String, Path, description = "The object type (concept) name; percent-escapes are decoded."), ("id" = String, Path, description = "The object identity; percent-escapes are decoded.")), responses((status = 200, description = "The object's proven versions, newest first, each with its commit and what wrote it.", body = NornObjectHistory), (status = 400, description = "The request was refused as invalid (`request.invalid`): an unknown or repeated query parameter, a query over the host bound, or a path segment that is not UTF-8 once decoded.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied, with the same document whatever the reason.", body = Refusal), (status = 404, description = "The request was refused (`object.not_found`): the object is absent or withheld (no Population or Values); these are not told apart. Sources is not needed: without it no version names its source lineage. A quarantined object is served.", body = Refusal), (status = 409, description = "The request was refused (`object.snapshot_moved`, retryable): the cell committed between the reads.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal), (status = 503, description = "The request was refused (`object.snapshot_unavailable`): the engine cannot pin one snapshot for the read. The shipped engines do not return it.", body = Refusal)))]
 pub fn get_object_history<E: SqlEngine>(
     host: &DevHost<E>,
