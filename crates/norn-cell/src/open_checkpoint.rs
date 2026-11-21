@@ -3,45 +3,55 @@
 //! open time stays flat as the history grows.
 //!
 //! A checkpoint names a ledger head this engine verified (its commit count,
-//! last event sequence and hash) and the RFC 6962 root of the first
-//! `commits` receipt digests. It is written every [`EVERY`] commits, after
-//! [`crate::CellStore::verified_head`] has verified the chain up to it, and
-//! at the end of an open that upgraded the cell. It is metadata, not
-//! evidence: it is never part of a receipt, a ledger event or an export.
+//! last event sequence and hash), the RFC 6962 root of the first `commits`
+//! receipt digests, and digests of what live reads consume from the history
+//! it covers: the quantity receipts, the last export record and the retained
+//! definition versions. It is written every [`EVERY`] commits and at the end
+//! of an open that upgraded the cell. It is metadata, not evidence: it is
+//! never part of a receipt, a ledger event or an export.
 //!
-//! An open from a checkpoint admits the file only if:
-//! - the checkpoint still anchors the file: the ledger entry at its sequence
-//!   carries its hash, and the receipt of its last commit names that head
-//!   and verifies;
-//! - the receipt digests of its first `commits` commits rebuild its
-//!   recorded transparency root, so no receipt before it was replaced, even
-//!   one rewritten together with its own hash;
-//! - everything after it verifies as a genesis open verifies it: the hash
-//!   chain and receipts, the definition history, the value history and the
-//!   cell identity of each export record;
-//! - live state verifies in full, never exempted (#1551): the object
-//!   identities, the cell identity binding (also against the last export
-//!   record the checkpoint covers) and the quantity projections, replayed
-//!   from every quantity receipt. The checkpoint's `quantity_receipts`
-//!   digest names those receipts, so the open reads them alone.
+//! # Genesis parity (#1551 round 3)
 //!
-//! The writer advances the checkpoint only over records it verified: the
-//! ledger and receipts ([`crate::CellStore::verified_head`]), and the export
-//! identities, definition installs and value history since the previous
-//! checkpoint. A restore that cuts the history independently of the rest of
-//! the file must delete a checkpoint past the cut
-//! (`docs/platform/engine-upgrades.md`, "Restores that trim history").
+//! Every check a genesis open runs has an equivalent from a checkpoint:
+//! **(a)** re-run in full on every open, **(b)** pinned by a digest in the
+//! checkpoint and re-checked on every open and every advancement, or **(c)**
+//! checked on the suffix only, with the reason the prefix cannot affect it.
+//! The writer advances a checkpoint only inside the transaction that
+//! records it, after verifying from the previous durable checkpoint (from
+//! genesis with none) everything it newly covers, never from a handle's
+//! cached head (S3): so every row a checkpoint covers was verified once
+//! against a pinned anchor, and the pins below keep it from changing since.
+//!
+//! | Genesis open checks | From a checkpoint |
+//! |---|---|
+//! | Ledger chain: sequence, `prev` links, entry hashes, every event in its receipt's commit and world, no orphan event | Suffix (a). Prefix (b): the head's sequence and hash are pinned, and the receipt root pins every commit's `ledgerHead`. Every ledger read also rehashes each entry it serves, so an event changed in place is never served. |
+//! | Logical time never goes back | (a) on the suffix, from the anchor receipt's own time, in the verifier every open and every advancement share (S1). Prefix (b): receipt bodies are pinned by the root, and their order was checked when the checkpoint advanced over them. |
+//! | Receipts: body hash, lookup columns, commit tiling, quantity provenance | Suffix (a). Prefix (b): the root pins every digest; every receipt read checks the body against its digest and its lookup columns against the body, including an idempotency lookup (S4). |
+//! | Transparency log | (a) rebuilt from every digest, and (b) the covered digests must rebuild the recorded root. The writer builds that root only from digests equal to the ones on disk. |
+//! | Cell identity: every export record names the live binding | Suffix (a). Prefix (b): the last covered record is pinned by commit and stored digest, and must hash-verify and name the live binding (S2). The earlier records are not live; restore and export verify the journal chain themselves. |
+//! | Definition history: version order, each install's typed proof, the active pointer | Suffix (a). Prefix: order (a); the active-at-checkpoint version's typed proof (a, S6); every covered version row (b), by the `definitions` digest, since superseded versions are read live (historical compute, mapping bundles, run routes). The active pointer (a). |
+//! | Value history: each version against its receipt's digest | Suffix (a). Prefix (c): history is not live state, and every historical read proves the version against its receipt (`object_at_version`), whose digest the root pins. |
+//! | Quantity projections (balances, holds, postings, timers, history) and the cell clock | (a): replayed from every quantity receipt; the `quantity_receipts` digest (b) names which covered receipts carry quantity, and a qualified load (S5) refuses an older layout. The clock projection against the head receipt (a). |
+//! | Quantity boundary | (b) recorded in the checkpoint, (a) checked against the cell's pointer and every quantity event after it. |
+//! | Object identities (normalized keys) | (a) over current state. |
+//! | Schema, storage version, markings, fork pin | (a): `init_schema` and the fork pin run before either verification. |
+//!
+//! Selectors that locate covered rows but are not re-derived on open are
+//! cross-checked where they are read: an idempotency lookup against the
+//! hashed body (S4); the quantity evidence lookups by ledger `world` against
+//! the replayed projections, so a hidden or moved event refuses the write;
+//! a payload's receipt `world` against the payload reference it locates.
 //!
 //! What is not re-read at open is the body of the history before the
-//! checkpoint. A consistent rewrite of it changes the anchored head or the
-//! receipt root and refuses; an isolated edit of an old row that keeps its
-//! stored hashes is refused when that row is read, because every historical
-//! read verifies its own proof (a value version against its receipt's
-//! digest, a receipt against its hash), and a verification from genesis
-//! finds it (an operator's scrub opens a copy with no checkpoint row). A
-//! checkpoint row that is missing or
-//! malformed never weakens an open: with no checkpoint the open verifies
-//! from genesis, and one that does not anchor the file refuses it.
+//! checkpoint. A consistent rewrite of it changes the anchored head, the
+//! receipt root or a pinned digest and refuses. A verification from genesis
+//! still checks every row (an operator's scrub opens a copy with no
+//! checkpoint row). A checkpoint row that is missing never weakens an open:
+//! with none the open verifies from genesis, and one that does not anchor
+//! the file, or has an older layout, refuses it. A restore that cuts the
+//! history independently of the rest of the file must delete a checkpoint
+//! past the cut (`docs/platform/engine-upgrades.md`, "Restores that trim
+//! history").
 use crate::{
     CellError, LedgerHead,
     engine::{SqlEngine, SqlRow, params},
@@ -58,7 +68,9 @@ pub(crate) const DDL: &str = r#"CREATE TABLE IF NOT EXISTS "_norn_open_checkpoin
       "commits" INTEGER NOT NULL, "seq" INTEGER NOT NULL, "hash" TEXT NOT NULL,
       "receipts_root" TEXT NOT NULL,
       "boundary_seq" INTEGER, "boundary_commit" INTEGER,
-      "quantity_receipts" TEXT NOT NULL
+      "quantity_receipts" TEXT NOT NULL,
+      "export_seq" INTEGER, "export_hash" TEXT,
+      "definitions" TEXT NOT NULL
     )"#;
 
 /// How many commits apart checkpoints are written: an open verifies at most
@@ -82,7 +94,31 @@ pub(crate) struct OpenCheckpoint {
     /// an open replays the quantity projections from those receipts alone
     /// and a quantity receipt hidden from that lookup refuses (S1, #1551).
     pub(crate) quantity_receipts: String,
+    /// The last export record at or before the head, if any: its commit and
+    /// stored digest (S2, #1551 round 2). An open checks the current cell
+    /// identity against this record, so the record cannot be rewritten
+    /// together with the identity.
+    pub(crate) export: Option<ExportPin>,
+    /// [`definitions_digest`] over every retained definition version it
+    /// covers. Superseded versions are read live too (historical compute,
+    /// mapping bundles pinned to a version), so an open re-derives this
+    /// digest from the retained rows and refuses a changed one.
+    pub(crate) definitions: String,
 }
+
+/// One export record named by its commit and stored digest.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ExportPin {
+    /// Its commit.
+    pub(crate) seq: u64,
+    /// Its stored Norn1 digest.
+    pub(crate) hash: String,
+}
+
+/// The checkpoint row. Every column is qualified by the table alias, so a
+/// column an older layout lacks is an error under either setting of
+/// SQLite's double-quoted-string mode, never a string literal (S5, #1551).
+pub(crate) const LOAD_SQL: &str = r#"SELECT c."commits", c."seq", c."hash", c."receipts_root", c."boundary_seq", c."boundary_commit", c."quantity_receipts", c."export_seq", c."export_hash", c."definitions" FROM "_norn_open_checkpoint" AS c WHERE c."id" = 1"#;
 
 /// The `(commit, receipt digest)` of every quantity receipt, in commit
 /// order, read through the receipt table's two quantity indexes (a single
@@ -114,18 +150,35 @@ pub(crate) fn quantity_extend(
     crate::codec::hash_json(&(digest, commit_seq, receipt_hash))
 }
 
+/// The digest of the retained definition versions installed at or before
+/// commit `commits`, in version order: each row (its canonical set,
+/// registry, admission receipt, model and DDL hashes and layout, none of
+/// which changes after its install) hashed in turn.
+///
+/// # Errors
+/// Encoding failures.
+pub(crate) fn definitions_digest(
+    versions: &[crate::store::InstalledDefinitionSet],
+    commits: u64,
+) -> Result<String, CellError> {
+    versions
+        .iter()
+        .take_while(|version| version.commit_seq <= commits)
+        .try_fold(
+            crate::codec::hash_json(&"norn.open-checkpoint.definitions/1")?,
+            |digest, version| {
+                crate::codec::hash_json(&(digest, crate::codec::hash_json(version)?))
+            },
+        )
+}
+
 /// The cell's open checkpoint, if one was written.
 ///
 /// # Errors
 /// SQL failures, or a checkpoint row out of range.
 pub(crate) fn load(engine: &impl SqlEngine) -> Result<Option<OpenCheckpoint>, CellError> {
     let Some(row) = engine
-        .query(
-            &format!(
-                "SELECT \"commits\", \"seq\", \"hash\", \"receipts_root\", \"boundary_seq\", \"boundary_commit\", \"quantity_receipts\" FROM \"{TABLE}\" WHERE \"id\" = 1"
-            ),
-            params![],
-        )?
+        .query(LOAD_SQL, params![])?
         .into_iter()
         .next()
     else {
@@ -148,6 +201,15 @@ pub(crate) fn load(engine: &impl SqlEngine) -> Result<Option<OpenCheckpoint>, Ce
             _ => return Err(corrupt(0, "a half-recorded quantity boundary")),
         },
         quantity_receipts: row.get(6)?,
+        export: match (row.get::<Option<i64>>(7)?, row.get::<Option<String>>(8)?) {
+            (None, None) => None,
+            (Some(seq), Some(hash)) => Some(ExportPin {
+                seq: to_u64(seq, "open checkpoint export record")?,
+                hash,
+            }),
+            _ => return Err(corrupt(0, "a half-recorded export record")),
+        },
+        definitions: row.get(9)?,
     }))
 }
 
@@ -161,12 +223,14 @@ pub(crate) fn record(
 ) -> Result<(), CellError> {
     engine.execute(
         &format!(
-            "INSERT INTO \"{TABLE}\" (\"id\", \"commits\", \"seq\", \"hash\", \"receipts_root\", \"boundary_seq\", \"boundary_commit\", \"quantity_receipts\") \
-             VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7) \
+            "INSERT INTO \"{TABLE}\" (\"id\", \"commits\", \"seq\", \"hash\", \"receipts_root\", \"boundary_seq\", \"boundary_commit\", \"quantity_receipts\", \"export_seq\", \"export_hash\", \"definitions\") \
+             VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) \
              ON CONFLICT (\"id\") DO UPDATE SET \"commits\" = excluded.\"commits\", \"seq\" = excluded.\"seq\", \
              \"hash\" = excluded.\"hash\", \"receipts_root\" = excluded.\"receipts_root\", \
              \"boundary_seq\" = excluded.\"boundary_seq\", \"boundary_commit\" = excluded.\"boundary_commit\", \
-             \"quantity_receipts\" = excluded.\"quantity_receipts\""
+             \"quantity_receipts\" = excluded.\"quantity_receipts\", \
+             \"export_seq\" = excluded.\"export_seq\", \"export_hash\" = excluded.\"export_hash\", \
+             \"definitions\" = excluded.\"definitions\""
         ),
         params![
             to_i64(checkpoint.head.commits, "open checkpoint commits")?,
@@ -181,7 +245,14 @@ pub(crate) fn record(
                 .boundary
                 .map(|boundary| to_i64(boundary.commit_seq, "open checkpoint boundary commit"))
                 .transpose()?,
-            checkpoint.quantity_receipts.clone()
+            checkpoint.quantity_receipts.clone(),
+            checkpoint
+                .export
+                .as_ref()
+                .map(|pin| to_i64(pin.seq, "open checkpoint export record"))
+                .transpose()?,
+            checkpoint.export.as_ref().map(|pin| pin.hash.clone()),
+            checkpoint.definitions.clone()
         ],
     )
 }
@@ -201,5 +272,42 @@ pub(crate) fn corrupt(commits: u64, reason: &str) -> CellError {
     CellError::LedgerCorrupt {
         seq: commits,
         reason: format!("open checkpoint: {reason}"),
+    }
+}
+
+#[cfg(all(test, feature = "native"))]
+#[allow(clippy::expect_used, reason = "test assertions")]
+mod tests {
+    /// S5 (#1551 round 2): a checkpoint table of an older layout, with no
+    /// `quantity_receipts` column, refuses the load under either setting of
+    /// SQLite's double-quoted-string mode. The unqualified form the load
+    /// used before reads the missing column back as its own name when the
+    /// mode is on.
+    #[test]
+    fn an_older_checkpoint_layout_refuses_under_either_quoted_string_mode() {
+        use rusqlite::config::DbConfig;
+        const UNQUALIFIED: &str = r#"SELECT "commits", "quantity_receipts" FROM "_norn_open_checkpoint" WHERE "id" = 1"#;
+        for dqs in [true, false] {
+            let conn = rusqlite::Connection::open_in_memory().expect("database");
+            conn.set_db_config(DbConfig::SQLITE_DBCONFIG_DQS_DML, dqs)
+                .expect("quoted-string mode");
+            conn.execute_batch(
+                r#"CREATE TABLE "_norn_open_checkpoint" ("id" INTEGER PRIMARY KEY, "commits" INTEGER NOT NULL,
+                     "seq" INTEGER NOT NULL, "hash" TEXT NOT NULL, "receipts_root" TEXT NOT NULL,
+                     "boundary_seq" INTEGER, "boundary_commit" INTEGER);
+                   INSERT INTO "_norn_open_checkpoint" VALUES (1, 128, 300, 'h', 'r', NULL, NULL);"#,
+            )
+            .expect("older layout");
+            if dqs {
+                let read: String = conn
+                    .query_row(UNQUALIFIED, [], |row| row.get(1))
+                    .expect("the unqualified form reads a literal");
+                assert_eq!(read, "quantity_receipts");
+            }
+            assert!(
+                conn.prepare(super::LOAD_SQL).is_err(),
+                "the load admitted an older layout (quoted-string mode {dqs})"
+            );
+        }
     }
 }

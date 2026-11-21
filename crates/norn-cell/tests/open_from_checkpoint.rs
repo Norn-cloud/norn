@@ -683,7 +683,7 @@ fn install_input(model: &norn_cell::Model, version: &str) -> norn_cell::Installe
         admission_receipt: None,
         readmission: None,
         diff: serde_json::json!({"added": {"count": 1, "ids": [version]}}),
-        installed_at: 1,
+        installed_at: 10_000,
         layout: None,
     }
 }
@@ -714,6 +714,48 @@ fn an_old_ledger_event_changed_in_place_is_never_served() {
             "ledger_page served the changed event"
         );
     }
+    execute(&path, "DELETE FROM _norn_open_checkpoint");
+    refused(&path);
+}
+
+/// Beyond S6: a superseded definition version is read live too (historical
+/// compute, a mapping bundle pinned to it), so its retained set, changed
+/// after the checkpoint covers it, refuses the open: the checkpoint pins a
+/// digest of every retained version it covers.
+#[test]
+fn a_changed_superseded_definition_set_refuses_an_open_from_the_checkpoint() {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("cell.sqlite");
+    engine_fixture::write_cell(&path);
+    let model = engine_fixture::model();
+    let mut store = open(&path).expect("open");
+    for (expected, version) in [(0, "0.1.0"), (1, "0.1.1")] {
+        store
+            .install_definitions(
+                model.clone(),
+                install_input(&model, version),
+                Some(expected),
+                engine_fixture::SCOPE,
+            )
+            .expect("install");
+    }
+    let installed = store.read().verify_ledger().expect("ledger").commits;
+    for n in installed..EVERY + 10 {
+        store.commit(&put(n)).expect("commit");
+    }
+    drop(store);
+    assert_eq!(checkpoint(&path).map(|(commits, ..)| commits), Some(EVERY));
+    open(&path).expect("the untouched cell opens from its checkpoint");
+    raw(&path)
+        .execute(
+            "UPDATE _norn_definition_version SET canonical_set = ?1 WHERE version = 1",
+            &[SqlValue::Text(install_input(&model, "0.2.0").canonical_set)],
+        )
+        .expect("tamper");
+    assert!(
+        open(&path).is_err(),
+        "a changed superseded definition set opened from the checkpoint"
+    );
     execute(&path, "DELETE FROM _norn_open_checkpoint");
     refused(&path);
 }

@@ -1111,24 +1111,28 @@ pub(crate) fn receipt_by_key(
     world: &str,
     key: &str,
 ) -> Result<Option<Receipt>, CellError> {
-    let row: Option<(String, String)> = conn.query_optional(
+    // The same columns `receipt_at` reads, decoded the same way (S4, #1551
+    // round 2): the hashed body's own world and key must be the ones looked
+    // up, so a changed lookup column never returns another world's receipt.
+    let rows = conn.query(
         &format!(
-            "SELECT \"receipt\", \"receipt_hash\" FROM \"{RECEIPT}\" WHERE \"world\" = ?1 AND \"idempotency_key\" = ?2"
+            "SELECT \"commit_seq\", \"world\", \"idempotency_key\", \"request_hash\", \"receipt\", \"receipt_hash\" FROM \"{RECEIPT}\" WHERE \"world\" = ?1 AND \"idempotency_key\" = ?2 LIMIT 2"
         ),
         params![world, key],
-        |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
-    row.map(|(body, hash)| {
-        let body: ReceiptBody = serde_json::from_str(&body)?;
-        if hash_json(&body)? != hash {
-            return Err(CellError::LedgerCorrupt {
-                seq: body.commit_seq,
-                reason: "receipt hash does not verify".to_owned(),
-            });
-        }
-        Ok(Receipt { body, hash })
-    })
-    .transpose()
+    let mut receipts = decode_receipts(rows)?.into_iter();
+    let receipt = receipts.next();
+    if receipts.next().is_some()
+        || receipt.as_ref().is_some_and(|receipt| {
+            receipt.body.world != world || receipt.body.idempotency_key.as_deref() != Some(key)
+        })
+    {
+        return Err(CellError::LedgerCorrupt {
+            seq: receipt.map_or(0, |receipt| receipt.body.commit_seq),
+            reason: "receipt columns disagree with the hashed receipt".to_owned(),
+        });
+    }
+    Ok(receipt)
 }
 
 /// Decode `columns` from `row` starting at column `offset` (the stored
@@ -3457,9 +3461,14 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
                 prev_hash: row.get(4)?,
                 hash: row.get(5)?,
             };
-            // Result placeholders must never escape when their encoding index
-            // is missing or changed. Valid legacy lookalikes retain their own hash.
-            if entry.event.get("type").and_then(Value::as_str) == Some("command.result")
+            // Every served entry still hashes to its stored digest, so an
+            // event changed in place is never served, also one before an
+            // open checkpoint that no open re-reads (#1551 round 2). Result
+            // placeholders must never escape when their encoding index is
+            // missing or changed; a diagnosis read (`verify` off) checks them
+            // alone. Valid legacy lookalikes retain their own hash.
+            if (verify
+                || entry.event.get("type").and_then(Value::as_str) == Some("command.result"))
                 && entry_hash(
                     entry.seq,
                     entry.commit_seq,
@@ -3470,7 +3479,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             {
                 return Err(CellError::LedgerCorrupt {
                     seq: entry.seq,
-                    reason: "command result payload does not verify".to_owned(),
+                    reason: "entry hash does not verify".to_owned(),
                 });
             }
             if verify {
@@ -3869,8 +3878,13 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
                 return Err(anchor_corrupt());
             }
         }
+        // S1 (#1551 round 2): logical time never goes back across receipts,
+        // checked here, in the one verifier every open and checkpoint write
+        // shares, from the anchor receipt's own time (0 from genesis).
+        let mut time_floor = 0_u64;
         if checkpoint.commits > 0 {
             let anchor = self.receipts_after(checkpoint.commits.saturating_sub(1), 1)?;
+            time_floor = anchor.first().map_or(0, |receipt| receipt.body.logical_time);
             if !anchor.first().is_some_and(|receipt| {
                 receipt.body.commit_seq == checkpoint.commits
                     && receipt.body.ledger_head == checkpoint.hash
@@ -3914,6 +3928,10 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             if receipt.body.commit_seq != expected_commit {
                 return Err(corrupt("commit sequence gap"));
             }
+            if receipt.body.logical_time < time_floor {
+                return Err(corrupt("receipt logical time goes back"));
+            }
+            time_floor = receipt.body.logical_time;
             if receipt.body.quantity.is_some() != receipt.body.quantity_result.is_some()
                 || (receipt.body.quantity_intent.is_some() && receipt.body.quantity.is_none())
                 || receipt.body.quantity.as_ref().is_some_and(|requests| {
@@ -3964,16 +3982,9 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
                 {
                     return Err(corrupt("an event does not belong to its receipt"));
                 }
-                let hash = entry_hash(
-                    entry.seq,
-                    entry.commit_seq,
-                    &entry.world,
-                    &entry.event,
-                    &prev,
-                )?;
-                if hash != entry.hash {
-                    return Err(event_corrupt("entry hash does not verify"));
-                }
+                // `ledger_range` served the entry only because it hashes, over
+                // its own `prev_hash`, to its stored digest; that is `prev`.
+                let hash = entry.hash.clone();
                 if receipt.body.quantity.is_some() {
                     if let Some(marker) = crate::quantity::boundary_marker(&entry, &receipt.body)?
                         && boundary.replace(marker).is_some()

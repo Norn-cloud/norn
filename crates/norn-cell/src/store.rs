@@ -38,7 +38,7 @@ use crate::read::{
 };
 use crate::system::{
     DEFINITION_ACTIVE, DEFINITION_ADMISSION_RECEIPT, DEFINITION_LAYOUT, DEFINITION_REGISTRY,
-    DEFINITION_VERSION, INBOX, MARKING_CURRENT, MARKING_SNAPSHOT, MARKING_VERSION, META, OUTBOX,
+    DEFINITION_VERSION, INBOX, MARKING_CURRENT, MARKING_SNAPSHOT, MARKING_VERSION, META, OUTBOX, RECEIPT,
     RUN, STORE_FORMAT, SYSTEM_DDL, ensure_marking_subject, marking_subject,
 };
 use crate::write::Writer;
@@ -2572,8 +2572,7 @@ impl<E: SqlEngine> CellStore<E> {
             refuse_pin_past(fork.as_ref(), head.commits)?;
             if upgrading {
                 let previous = crate::open_checkpoint::load(&store.conn)?;
-                let quantity = store.quantity_receipts_through(previous, head.commits)?;
-                store.record_open_checkpoint(&head, boundary, &transparency, quantity)?;
+                store.record_open_checkpoint(previous, &head, boundary, &transparency)?;
             }
             Ok::<_, CellError>((head, boundary, transparency, fork))
         })?;
@@ -2628,7 +2627,7 @@ impl<E: SqlEngine> CellStore<E> {
             .as_ref()
             .map_or_else(LedgerHead::genesis, |checkpoint| checkpoint.head.clone());
         let transparency = crate::transparency::load_bound(&self.conn, checkpoint.as_ref())?;
-        crate::cell_identity::verify_history_after(&self.conn, from.commits)?;
+        crate::cell_identity::verify_history_after(&self.conn, checkpoint.as_ref())?;
         let reader = self.read().with_transaction_verified_receipts(pass);
         let (head, boundary) = match &checkpoint {
             Some(checkpoint) => {
@@ -2636,7 +2635,7 @@ impl<E: SqlEngine> CellStore<E> {
             }
             None => reader.verify_ledger_with_boundary(&from)?,
         };
-        self.verify_definition_history(from.commits)?;
+        self.verify_definition_history(checkpoint.as_ref())?;
         self.read().verify_value_history_after(from.commits)?;
         crate::identity::validate(&self.read())?;
         // A genesis verification replayed the quantity projections above.
@@ -2733,14 +2732,22 @@ impl<E: SqlEngine> CellStore<E> {
     }
 
     /// OPEN-CHECKPOINT-1: record `head`, which this engine verified, with the
-    /// root of `log`, its receipt digests, as the cell's open checkpoint.
+    /// root of `log`, its receipt digests, as the cell's open checkpoint,
+    /// advancing it from `previous` (the durable checkpoint it replaces). It
+    /// also pins the quantity receipts and the last export record it covers.
     fn record_open_checkpoint(
         &self,
+        previous: Option<crate::open_checkpoint::OpenCheckpoint>,
         head: &LedgerHead,
         boundary: Option<crate::quantity::FormatBoundary>,
         log: &crate::transparency::ReceiptLog,
-        quantity_receipts: String,
     ) -> Result<(), CellError> {
+        let quantity_receipts = self.quantity_receipts_through(previous, head.commits)?;
+        let export = crate::cell_identity::last_record_through(&self.conn, head.commits)?;
+        let definitions = crate::open_checkpoint::definitions_digest(
+            &self.read().installed_definition_versions()?,
+            head.commits,
+        )?;
         if log.len() != head.commits {
             return Err(crate::open_checkpoint::corrupt(
                 head.commits,
@@ -2754,67 +2761,226 @@ impl<E: SqlEngine> CellStore<E> {
                 receipts_root: crate::open_checkpoint::root_hex(log.root().as_bytes()),
                 boundary,
                 quantity_receipts,
+                export,
+                definitions,
             },
         )
     }
 
     /// OPEN-CHECKPOINT-1: after the commit that made the cell `commits` long,
-    /// every [`crate::open_checkpoint::EVERY`] commits, verify the chain up to
-    /// the head ([`Self::verified_head`], which verifies only what was
-    /// committed since its last verification) and record it. A failure here
-    /// keeps the previous checkpoint, which still anchors the file, and is
+    /// every [`crate::open_checkpoint::EVERY`] commits, verify everything the
+    /// new checkpoint would newly cover and record it. A failure here keeps
+    /// the previous checkpoint, which still anchors the file, and is
     /// reported, never hidden: the next open verifies more, never less.
     ///
-    /// S3 (#1551): a checkpoint exempts what it covers from later opens, so
-    /// before it advances, everything newly covered is verified as an open
-    /// verifies it: the export records' cell identity, the definition
-    /// installs and the value history committed since the previous
-    /// checkpoint (from genesis when there is none), in the transaction that
-    /// records it.
+    /// A checkpoint exempts what it covers from later opens, so it advances
+    /// only over records verified, inside the transaction that records it,
+    /// from the previous durable checkpoint (from genesis when there is
+    /// none), never from this handle's cached head (S3, #1551 round 2): a row
+    /// changed between that checkpoint and this handle's open is revisited.
+    /// That covers the ledger chain and receipts (with their logical time),
+    /// the export records' cell identity against the pinned record, the
+    /// definition installs (and the active version's proof) and the value
+    /// history. The receipt digests the new root is built from must be the
+    /// ones on disk.
     fn checkpoint_after_commit(&self, commits: u64) {
         if commits == 0 || !commits.is_multiple_of(crate::open_checkpoint::EVERY) {
             return;
         }
-        let recorded = self.verified_head().and_then(|head| {
+        let recorded = self.conn.transaction(|| {
+            let previous = crate::open_checkpoint::load(&self.conn)?;
+            let from = previous
+                .as_ref()
+                .map_or_else(LedgerHead::genesis, |previous| previous.head.clone());
+            if from.commits >= commits {
+                return Ok(());
+            }
+            let pass = RefCell::default();
+            let reader = self.read().with_transaction_verified_receipts(&pass);
+            let (head, boundary) = match &previous {
+                Some(previous) => {
+                    reader.verify_ledger_from_open_checkpoint(&from, previous.boundary)?
+                }
+                None => reader.verify_ledger_with_boundary(&from)?,
+            };
             if head.commits != commits {
                 // Another handle committed past this one; its own commit
                 // checkpoints that head.
                 return Ok(());
             }
-            // `verified_head` left the boundary it verified in the store.
-            let boundary = self.quantity_boundary.get();
-            self.conn.transaction(|| {
-                let previous = crate::open_checkpoint::load(&self.conn)?;
-                let from = previous
-                    .as_ref()
-                    .map_or(0, |previous| previous.head.commits);
-                if from >= commits {
-                    return Ok(());
-                }
-                crate::cell_identity::verify_history_after(&self.conn, from)?;
-                self.verify_definition_history(from)?;
-                self.read().verify_value_history_after(from)?;
-                let quantity = self.quantity_receipts_through(previous, commits)?;
-                self.record_open_checkpoint(&head, boundary, &self.transparency.borrow(), quantity)
-            })
+            let log = self.transparency.borrow();
+            self.receipt_digests_match_log(from.commits, &log)?;
+            crate::cell_identity::verify_history_after(&self.conn, previous.as_ref())?;
+            self.verify_definition_history(previous.as_ref())?;
+            self.read().verify_value_history_after(from.commits)?;
+            self.record_open_checkpoint(previous, &head, boundary, &log)
         });
         if let Err(error) = recorded {
             tracing::warn!(%error, commits, "open checkpoint not recorded; the last one stands");
         }
     }
 
+    /// The stored receipt digests after commit `from` are the leaves of `log`
+    /// at their positions, and `log` holds no more: the root a checkpoint
+    /// records is built from the receipts it verified.
+    fn receipt_digests_match_log(
+        &self,
+        from: u64,
+        log: &crate::transparency::ReceiptLog,
+    ) -> Result<(), CellError> {
+        let mut expected = from;
+        for row in self.conn.query(
+            &format!(
+                "SELECT \"commit_seq\", \"receipt_hash\" FROM \"{RECEIPT}\" WHERE \"commit_seq\" > ?1 ORDER BY \"commit_seq\""
+            ),
+            params![to_i64(from, "commit_seq")?],
+        )? {
+            let row = crate::engine::SqlRow(row);
+            let commit = to_u64(row.get(0)?, "commit_seq")?;
+            expected = expected
+                .checked_add(1)
+                .ok_or(CellError::OutOfRange("commit_seq"))?;
+            let leaf = usize::try_from(commit.saturating_sub(1))
+                .ok()
+                .and_then(|index| log.get(index));
+            if commit != expected || leaf != Some(&row.get::<String>(1)?) {
+                return Err(crate::open_checkpoint::corrupt(
+                    commit,
+                    "a stored receipt digest is not the one this handle verified",
+                ));
+            }
+        }
+        if log.len() != expected {
+            return Err(crate::open_checkpoint::corrupt(
+                expected,
+                "the receipt log and the ledger disagree on the commit count",
+            ));
+        }
+        Ok(())
+    }
+
+    /// The typed install proof of retained definition version
+    /// `versions[index]`, installed by `receipt`: its export record, admission
+    /// receipt, readmission against the version before it, ledger event,
+    /// retained model and governing laws all agree with the retained row.
+    /// Run for every install after an open checkpoint and, on every open,
+    /// for the version active at the checkpoint (S6, #1551 round 2): live
+    /// catalog reads consume its retained set.
+    fn verify_definition_install(
+        &self,
+        reader: &StoreReader<'_, E>,
+        versions: &[InstalledDefinitionSet],
+        version_index: usize,
+        receipt: &Receipt,
+    ) -> Result<(), CellError> {
+        let version = versions
+            .get(version_index)
+            .ok_or(CellError::OutOfRange("definition history index"))?;
+        let record = self
+            .local_export_record(version.commit_seq)?
+            .ok_or_else(|| CellError::LedgerCorrupt {
+                seq: version.commit_seq,
+                reason: "installed definitions have no typed export record".to_owned(),
+            })?;
+        let installation =
+            record
+                .definition_install
+                .as_ref()
+                .ok_or_else(|| CellError::LedgerCorrupt {
+                    seq: version.commit_seq,
+                    reason: "installed definitions have no typed export record".to_owned(),
+                })?;
+        if let Some(receipt_text) = &version.admission_receipt {
+            verify_admission_receipt(receipt_text, &version.receipt_sha256)?;
+        }
+        if let Some(readmission) = &installation.readmission {
+            let previous = version_index
+                .checked_sub(1)
+                .and_then(|index| versions.get(index))
+                .ok_or_else(|| CellError::LedgerCorrupt {
+                    seq: version.commit_seq,
+                    reason: "definition readmission has no prior version".to_owned(),
+                })?;
+            if readmission.previous_receipt_sha256 != previous.receipt_sha256
+                || !readmission_canonical_set_matches(
+                    &previous.canonical_set,
+                    &version.canonical_set,
+                    previous.layout.as_deref(),
+                    version.layout.as_deref(),
+                    previous.layout_revision,
+                    readmission.layout_migration,
+                )?
+                || previous.registry != version.registry
+                || previous.model_hash != version.model_hash
+                || previous.ddl_hash != version.ddl_hash
+                || version.admission_receipt.is_none()
+            {
+                return Err(CellError::LedgerCorrupt {
+                    seq: version.commit_seq,
+                    reason: "definition readmission changed its definitions or lost receipt evidence"
+                        .to_owned(),
+                });
+            }
+            validate_readmission_transition(previous, version, readmission)?;
+        }
+        let event = definition_event(
+            version.version,
+            (version.version > 1).then_some(version.version.saturating_sub(1)),
+            &version.receipt_sha256,
+            &version.registry,
+            &installation.diff,
+            installation.readmission.as_ref(),
+        )?;
+        let installed_model = Model::from_retained_snapshot(&installation.model)?;
+        installed_model.check_governing_laws(&version.canonical_set)?;
+        let entries =
+            reader.ledger_page(receipt.body.first_event_seq.saturating_sub(1), 1)?;
+        if installation.installed != *version
+            || record.receipt != *receipt
+            || installed_model.model_hash() != version.model_hash
+            || installed_model.ddl_hash() != version.ddl_hash
+            || record.model_hash != version.model_hash
+            || record.ddl_hash != version.ddl_hash
+            || receipt.body.event_count != 1
+            || record.batch.events.len() != 1
+            || record.batch.events.first() != Some(&event)
+            || record.entries != entries
+        {
+            return Err(CellError::LedgerCorrupt {
+                seq: version.commit_seq,
+                reason: "definition history disagrees with its typed export record"
+                    .to_owned(),
+            });
+        }
+        Ok(())
+    }
+
     /// Verify the retained definition history from the receipts after
-    /// `commits` (OPEN-CHECKPOINT-1: the open checkpoint's, or 0 for a whole
-    /// verification). The versions installed at or before `commits` were
-    /// verified before that checkpoint was written; they are checked here for
-    /// order and as the active version at the checkpoint alone.
+    /// `checkpoint` (OPEN-CHECKPOINT-1; from genesis with none). The versions
+    /// installed at or before it were proven before it was written; here
+    /// their retained rows must still fold to its `definitions` digest, they
+    /// are checked for order, and the one active at the checkpoint is proven
+    /// again in full (S6, #1551 round 2), as live reads consume it.
     #[allow(
         clippy::too_many_lines,
         reason = "startup validates every retained install before serving the cell"
     )]
-    fn verify_definition_history(&self, commits: u64) -> Result<(), CellError> {
+    fn verify_definition_history(
+        &self,
+        checkpoint: Option<&crate::open_checkpoint::OpenCheckpoint>,
+    ) -> Result<(), CellError> {
+        let commits = checkpoint.map_or(0, |checkpoint| checkpoint.head.commits);
         let reader = self.read();
         let versions = reader.installed_definition_versions()?;
+        if let Some(checkpoint) = checkpoint
+            && crate::open_checkpoint::definitions_digest(&versions, commits)?
+                != checkpoint.definitions
+        {
+            return Err(crate::open_checkpoint::corrupt(
+                commits,
+                "the retained definition versions it covers changed",
+            ));
+        }
         let receipts = reader.receipt_stream_from(commits);
         let mut next_version = 1_u64;
         let mut version_index = 0_usize;
@@ -2839,6 +3005,19 @@ impl<E: SqlEngine> CellStore<E> {
             version_index = version_index
                 .checked_add(1)
                 .ok_or(CellError::OutOfRange("definition history index"))?;
+        }
+        if let Some(index) = version_index.checked_sub(1) {
+            let version = versions
+                .get(index)
+                .ok_or(CellError::OutOfRange("definition history index"))?;
+            let receipt = reader
+                .receipt_at(version.commit_seq)?
+                .filter(|receipt| receipt.body.definitions_version == version.version)
+                .ok_or_else(|| CellError::LedgerCorrupt {
+                    seq: version.commit_seq,
+                    reason: "the active definitions have no installing receipt".to_owned(),
+                })?;
+            self.verify_definition_install(&reader, &versions, index, &receipt)?;
         }
         if commits > 0
             && reader
@@ -2868,82 +3047,7 @@ impl<E: SqlEngine> CellStore<E> {
                             .to_owned(),
                     });
                 }
-                let record = self
-                    .local_export_record(version.commit_seq)?
-                    .ok_or_else(|| CellError::LedgerCorrupt {
-                        seq: version.commit_seq,
-                        reason: "installed definitions have no typed export record".to_owned(),
-                    })?;
-                let installation =
-                    record
-                        .definition_install
-                        .as_ref()
-                        .ok_or_else(|| CellError::LedgerCorrupt {
-                            seq: version.commit_seq,
-                            reason: "installed definitions have no typed export record".to_owned(),
-                        })?;
-                if let Some(receipt_text) = &version.admission_receipt {
-                    verify_admission_receipt(receipt_text, &version.receipt_sha256)?;
-                }
-                if let Some(readmission) = &installation.readmission {
-                    let previous = version_index
-                        .checked_sub(1)
-                        .and_then(|index| versions.get(index))
-                        .ok_or_else(|| CellError::LedgerCorrupt {
-                            seq: version.commit_seq,
-                            reason: "definition readmission has no prior version".to_owned(),
-                        })?;
-                    if readmission.previous_receipt_sha256 != previous.receipt_sha256
-                        || !readmission_canonical_set_matches(
-                            &previous.canonical_set,
-                            &version.canonical_set,
-                            previous.layout.as_deref(),
-                            version.layout.as_deref(),
-                            previous.layout_revision,
-                            readmission.layout_migration,
-                        )?
-                        || previous.registry != version.registry
-                        || previous.model_hash != version.model_hash
-                        || previous.ddl_hash != version.ddl_hash
-                        || version.admission_receipt.is_none()
-                    {
-                        return Err(CellError::LedgerCorrupt {
-                            seq: version.commit_seq,
-                            reason: "definition readmission changed its definitions or lost receipt evidence"
-                                .to_owned(),
-                        });
-                    }
-                    validate_readmission_transition(previous, version, readmission)?;
-                }
-                let event = definition_event(
-                    version.version,
-                    (version.version > 1).then_some(version.version.saturating_sub(1)),
-                    &version.receipt_sha256,
-                    &version.registry,
-                    &installation.diff,
-                    installation.readmission.as_ref(),
-                )?;
-                let installed_model = Model::from_retained_snapshot(&installation.model)?;
-                installed_model.check_governing_laws(&version.canonical_set)?;
-                let entries =
-                    reader.ledger_page(receipt.body.first_event_seq.saturating_sub(1), 1)?;
-                if installation.installed != *version
-                    || record.receipt != receipt
-                    || installed_model.model_hash() != version.model_hash
-                    || installed_model.ddl_hash() != version.ddl_hash
-                    || record.model_hash != version.model_hash
-                    || record.ddl_hash != version.ddl_hash
-                    || receipt.body.event_count != 1
-                    || record.batch.events.len() != 1
-                    || record.batch.events.first() != Some(&event)
-                    || record.entries != entries
-                {
-                    return Err(CellError::LedgerCorrupt {
-                        seq: version.commit_seq,
-                        reason: "definition history disagrees with its typed export record"
-                            .to_owned(),
-                    });
-                }
+                self.verify_definition_install(&reader, &versions, version_index, &receipt)?;
                 active_version = version.version;
                 previous_install_seq = version.commit_seq;
                 next_version = next_version

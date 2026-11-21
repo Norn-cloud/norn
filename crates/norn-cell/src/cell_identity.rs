@@ -50,25 +50,32 @@ pub(crate) fn read(engine: &impl SqlEngine) -> Result<Option<CellId>, CellError>
     parse_binding(format.as_deref(), value.as_deref())
 }
 
-/// Every export record committed after `commits` names this cell's identity
-/// (OPEN-CHECKPOINT-1: `commits` is the open checkpoint's, or 0; the records
-/// before it were verified before the checkpoint was written).
+/// Every export record committed after `checkpoint` (or every record, with
+/// none) names this cell's identity (OPEN-CHECKPOINT-1).
 ///
-/// The current binding is live state, so a checkpoint never exempts it: from
-/// a checkpoint, the last export record at or before it, hash-verified, must
-/// also name the current identity. Changing the binding alone therefore
-/// refuses an open at a head checkpoint, where no record follows it, as it
-/// refuses a genesis open.
-pub(crate) fn verify_history_after(engine: &impl SqlEngine, commits: u64) -> Result<(), CellError> {
+/// The current binding is live state, so a checkpoint never exempts it: the
+/// last export record at or before the checkpoint must be the one it pinned
+/// (same commit, same stored digest), hash-verify and name the current
+/// identity too (S2, #1551 round 2). Changing the binding, even together
+/// with that record and its stored digest, therefore refuses an open at a
+/// head checkpoint, where no record follows it, as it refuses a genesis
+/// open.
+pub(crate) fn verify_history_after(
+    engine: &impl SqlEngine,
+    checkpoint: Option<&crate::open_checkpoint::OpenCheckpoint>,
+) -> Result<(), CellError> {
     let current = read(engine)?;
-    if commits > 0
-        && let Some(sequence) = engine.query_optional(
-            "SELECT commit_seq FROM _norn_export_journal WHERE commit_seq <= ?1 ORDER BY commit_seq DESC LIMIT 1",
-            params![crate::read::to_i64(commits, "commit sequence")?],
-            |row| row.get::<i64>(0),
-        )?
-    {
-        verify_record_names(engine, crate::read::to_u64(sequence, "commit sequence")?, current.as_ref())?;
+    let commits = checkpoint.map_or(0, |checkpoint| checkpoint.head.commits);
+    if let Some(checkpoint) = checkpoint {
+        if last_record_through(engine, commits)? != checkpoint.export {
+            return Err(crate::open_checkpoint::corrupt(
+                commits,
+                "the last export record it covers is not the one it pinned",
+            ));
+        }
+        if let Some(pin) = &checkpoint.export {
+            verify_record_names(engine, pin.seq, current.as_ref())?;
+        }
     }
     let mut next = engine.query_optional(
         "SELECT commit_seq FROM _norn_export_journal WHERE commit_seq > ?1 ORDER BY commit_seq LIMIT 1",
@@ -88,6 +95,30 @@ pub(crate) fn verify_history_after(engine: &impl SqlEngine, commits: u64) -> Res
         )?;
     }
     Ok(())
+}
+
+/// The commit and stored digest of the last export record at or before
+/// `commits`: what an open checkpoint at `commits` pins.
+///
+/// # Errors
+/// SQL failures.
+pub(crate) fn last_record_through(
+    engine: &impl SqlEngine,
+    commits: u64,
+) -> Result<Option<crate::open_checkpoint::ExportPin>, CellError> {
+    engine
+        .query_optional(
+            "SELECT commit_seq, hash FROM _norn_export_journal WHERE commit_seq <= ?1 ORDER BY commit_seq DESC LIMIT 1",
+            params![crate::read::to_i64(commits, "commit sequence")?],
+            |row| Ok((row.get::<i64>(0)?, row.get::<String>(1)?)),
+        )?
+        .map(|(seq, hash)| {
+            Ok(crate::open_checkpoint::ExportPin {
+                seq: crate::read::to_u64(seq, "commit sequence")?,
+                hash,
+            })
+        })
+        .transpose()
 }
 
 /// The hash-verified export record at `sequence` names `current`.
