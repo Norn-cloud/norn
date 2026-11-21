@@ -468,7 +468,7 @@ impl crate::object_routes::ObjectAccess for NoSources {
 }
 
 /// [`Access`] under a row-level rule: a document is read only once a
-/// steward has corrected it (its `corrected_by` is set). The rule reads the
+/// steward has corrected it (its `corrected_by` names one). The rule reads the
 /// row it is asked about, so a document's earlier versions, written before
 /// the field was set, stay denied after it is.
 struct CorrectedOnly;
@@ -483,7 +483,7 @@ impl crate::object_routes::ObjectAccess for CorrectedOnly {
     ) -> Result<norn_kernel::authz::AccessRequest, Refusal> {
         if let Some(row) = row
             && row.object_type == DOCUMENT
-            && !row.values.contains_key("corrected_by")
+            && !matches!(row.values.get("corrected_by"), Some(RuntimeValue::String(_)))
         {
             return Err(read_denied());
         }
