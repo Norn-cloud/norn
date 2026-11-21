@@ -95,7 +95,9 @@ pub(crate) fn result_turn<E: SqlEngine>(
     )
     .map_err(|error| refused(error.code(), "the flow refused the result"))?;
     let model = cell.store().model().clone();
-    let catalog = model.type_catalog().with_governing_laws(model.law_artifacts());
+    let catalog = model
+        .type_catalog()
+        .with_governing_laws(model.law_artifacts());
     let turn = DecisionTurn {
         id: format!(
             "norn.run/{}/result/{}/{attempt}",

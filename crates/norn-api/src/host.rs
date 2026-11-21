@@ -272,8 +272,13 @@ impl<E: SqlEngine> DevHost<E> {
     pub(crate) fn retained(
         &self,
         reader: &norn_cell::StoreReader<'_, E>,
-    ) -> Result<Option<(u64, std::sync::Arc<crate::action_admission::RetainedActions>)>, Refusal>
-    {
+    ) -> Result<
+        Option<(
+            u64,
+            std::sync::Arc<crate::action_admission::RetainedActions>,
+        )>,
+        Refusal,
+    > {
         let Some(identity) = reader
             .active_definitions_identity()
             .map_err(Refusal::host)?

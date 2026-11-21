@@ -563,7 +563,9 @@ fn commit_start<E: SqlEngine>(
     let output = norn_kernel::flow_turn::start(&flow.rule, &flow.environment_hash, run_id)
         .map_err(|error| turn_refused(error.code(), "the flow refused to start"))?;
     let model = cell.store().model().clone();
-    let catalog = model.type_catalog().with_governing_laws(model.law_artifacts());
+    let catalog = model
+        .type_catalog()
+        .with_governing_laws(model.law_artifacts());
     let run_key = FactKey::new(flow.object_type.clone(), run_id.to_owned());
     let slice = norn_kernel::load_slice(&*cell, [run_key]).map_err(Refusal::host)?;
     let turn = DecisionTurn {

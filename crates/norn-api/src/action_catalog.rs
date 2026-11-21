@@ -78,10 +78,7 @@ pub fn callable_actions<E: SqlEngine>(
         })
         .cloned()
         .collect();
-    Ok(CallableActions {
-        version,
-        actions,
-    })
+    Ok(CallableActions { version, actions })
 }
 
 /// `GET /v1/actions` query: the scope, and optionally one target object type.

@@ -88,8 +88,13 @@ fn capability_schema() -> Result<Schema, AuthzError> {
         std::sync::OnceLock::new();
     PARSED
         .get_or_init(|| {
-            let (schema, warnings) = Schema::from_cedarschema_str(CAPABILITY_SCHEMA)
-                .map_err(|error| (AuthzCode::SchemaParse, format!("capability schema: {error}")))?;
+            let (schema, warnings) =
+                Schema::from_cedarschema_str(CAPABILITY_SCHEMA).map_err(|error| {
+                    (
+                        AuthzCode::SchemaParse,
+                        format!("capability schema: {error}"),
+                    )
+                })?;
             if warnings.count() != 0 {
                 return Err((
                     AuthzCode::SchemaInvalid,

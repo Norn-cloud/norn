@@ -798,18 +798,68 @@ fn mixed_calls() -> Vec<(ActionQuery, Option<&'static str>, &'static str, String
     };
     let mut calls = Vec::new();
     for n in 0..6 {
-        let body = melt_body(&format!("melt-{n}"), "12", &format!("{}", 10 - n % 3), &format!("k{n}"));
-        calls.push((scoped("org_demo"), Some(OPERATOR), MELT_ACTION, body.clone()));
+        let body = melt_body(
+            &format!("melt-{n}"),
+            "12",
+            &format!("{}", 10 - n % 3),
+            &format!("k{n}"),
+        );
+        calls.push((
+            scoped("org_demo"),
+            Some(OPERATOR),
+            MELT_ACTION,
+            body.clone(),
+        ));
         calls.push((scoped("org_demo"), Some(OPERATOR), MELT_ACTION, body));
     }
-    calls.push((scoped("org_demo"), Some(OPERATOR), MELT_ACTION, melt_body("melt-0", "12", "7", "k0")));
-    calls.push((scoped("org_demo"), Some(OPERATOR), MELT_ACTION, melt_body("melt-p", "4", "9", "pre")));
-    calls.push((current, Some(OPERATOR), MELT_ACTION, melt_body("melt-v", "12", "10", "pin")));
-    calls.push((stale, Some(OPERATOR), MELT_ACTION, melt_body("melt-s", "12", "10", "stale")));
-    calls.push((scoped("org_demo"), Some(OPERATOR), "shop.unknown", melt_body("melt-u", "12", "10", "u")));
-    calls.push((scoped("org_demo"), Some(HOST_ONLY), MELT_ACTION, melt_body("melt-h", "12", "10", "h")));
-    calls.push((scoped("org_demo"), Some(AUDITOR), MELT_ACTION, melt_body("melt-a", "12", "10", "a")));
-    calls.push((scoped("org_other"), Some(OPERATOR), MELT_ACTION, melt_body("melt-o", "12", "10", "o")));
+    calls.push((
+        scoped("org_demo"),
+        Some(OPERATOR),
+        MELT_ACTION,
+        melt_body("melt-0", "12", "7", "k0"),
+    ));
+    calls.push((
+        scoped("org_demo"),
+        Some(OPERATOR),
+        MELT_ACTION,
+        melt_body("melt-p", "4", "9", "pre"),
+    ));
+    calls.push((
+        current,
+        Some(OPERATOR),
+        MELT_ACTION,
+        melt_body("melt-v", "12", "10", "pin"),
+    ));
+    calls.push((
+        stale,
+        Some(OPERATOR),
+        MELT_ACTION,
+        melt_body("melt-s", "12", "10", "stale"),
+    ));
+    calls.push((
+        scoped("org_demo"),
+        Some(OPERATOR),
+        "shop.unknown",
+        melt_body("melt-u", "12", "10", "u"),
+    ));
+    calls.push((
+        scoped("org_demo"),
+        Some(HOST_ONLY),
+        MELT_ACTION,
+        melt_body("melt-h", "12", "10", "h"),
+    ));
+    calls.push((
+        scoped("org_demo"),
+        Some(AUDITOR),
+        MELT_ACTION,
+        melt_body("melt-a", "12", "10", "a"),
+    ));
+    calls.push((
+        scoped("org_other"),
+        Some(OPERATOR),
+        MELT_ACTION,
+        melt_body("melt-o", "12", "10", "o"),
+    ));
     calls
 }
 
@@ -826,13 +876,25 @@ fn cached_and_uncached_definitions_admit_and_refuse_identically() {
         let mut answers = (Vec::new(), Vec::new());
         for (n, (query, actor, action, body)) in mixed_calls().into_iter().enumerate() {
             let now = LogicalTime::from_millis(1_700_000_000_000 + u64::try_from(n).unwrap());
-            answers.0.push(format!("{:?}", call_at(&cached, &query, actor, action, &body, now)));
+            answers.0.push(format!(
+                "{:?}",
+                call_at(&cached, &query, actor, action, &body, now)
+            ));
             let fresh = open_melt(&b, writer);
-            answers.1.push(format!("{:?}", call_at(&fresh, &query, actor, action, &body, now)));
+            answers.1.push(format!(
+                "{:?}",
+                call_at(&fresh, &query, actor, action, &body, now)
+            ));
         }
         assert_eq!(answers.0, answers.1, "{writer}");
-        assert!(answers.0.iter().any(|answer| answer.starts_with("Ok")), "{answers:?}");
-        assert!(answers.0.iter().any(|answer| answer.starts_with("Err")), "{answers:?}");
+        assert!(
+            answers.0.iter().any(|answer| answer.starts_with("Ok")),
+            "{answers:?}"
+        );
+        assert!(
+            answers.0.iter().any(|answer| answer.starts_with("Err")),
+            "{answers:?}"
+        );
         assert_eq!(dump(&cached), dump(&open_melt(&b, writer)), "{writer}");
     }
 }
@@ -845,7 +907,14 @@ fn a_changed_definitions_identity_is_verified_again_before_any_call() {
     let (_dir, a, _b) = twin_files(DERIVES_LOSS);
     let host = open_melt(&a, DERIVES_LOSS);
     let operator = Some(OPERATOR);
-    call(&host, &scoped("org_demo"), operator, MELT_ACTION, &melt_body("melt-1", "12", "10", "one")).unwrap();
+    call(
+        &host,
+        &scoped("org_demo"),
+        operator,
+        MELT_ACTION,
+        &melt_body("melt-1", "12", "10", "one"),
+    )
+    .unwrap();
     let raw = NativeEngine::open(&a, norn_cell::StoreOptions::default()).unwrap();
     norn_cell::engine::SqlEngine::execute(
         &raw,
@@ -855,7 +924,14 @@ fn a_changed_definitions_identity_is_verified_again_before_any_call() {
     .unwrap();
     drop(raw);
     let before = dump(&host);
-    let refused = call(&host, &scoped("org_demo"), operator, MELT_ACTION, &melt_body("melt-2", "12", "10", "two")).unwrap_err();
+    let refused = call(
+        &host,
+        &scoped("org_demo"),
+        operator,
+        MELT_ACTION,
+        &melt_body("melt-2", "12", "10", "two"),
+    )
+    .unwrap_err();
     assert_eq!(refused.status, 500, "{refused:?}");
     assert_eq!(dump(&host), before, "a refused call writes nothing");
 }
@@ -870,15 +946,41 @@ fn an_install_drops_the_verified_definitions_of_the_last_revision() {
         version: Some(version),
         ..scoped("org_demo")
     };
-    call(&host, &pinned(1), operator, MELT_ACTION, &melt_body("melt-1", "12", "10", "one")).unwrap();
+    call(
+        &host,
+        &pinned(1),
+        operator,
+        MELT_ACTION,
+        &melt_body("melt-1", "12", "10", "one"),
+    )
+    .unwrap();
     let (model, input) = action_cell::melt_install(
         DERIVES_LOSS,
         crate::action_admission::prepare_action_model,
         2,
     );
-    assert_eq!(host.install_definitions(model, input, Some(1)).unwrap().version, 2);
-    let stale = call(&host, &pinned(1), operator, MELT_ACTION, &melt_body("melt-2", "12", "10", "two")).unwrap_err();
+    assert_eq!(
+        host.install_definitions(model, input, Some(1))
+            .unwrap()
+            .version,
+        2
+    );
+    let stale = call(
+        &host,
+        &pinned(1),
+        operator,
+        MELT_ACTION,
+        &melt_body("melt-2", "12", "10", "two"),
+    )
+    .unwrap_err();
     assert_eq!((stale.status, stale.code.as_str()), (409, "defs.stale"));
-    let committed = call(&host, &pinned(2), operator, MELT_ACTION, &melt_body("melt-3", "12", "10", "three")).unwrap();
+    let committed = call(
+        &host,
+        &pinned(2),
+        operator,
+        MELT_ACTION,
+        &melt_body("melt-3", "12", "10", "three"),
+    )
+    .unwrap();
     assert_eq!(committed.outcome, ActionCallOutcome::Committed);
 }

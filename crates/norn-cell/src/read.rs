@@ -3314,7 +3314,9 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             return Ok(None);
         };
         let digest: Option<String> = self.conn.query_optional(
-            &format!("SELECT \"receipt_sha256\" FROM \"{DEFINITION_VERSION}\" WHERE \"version\" = ?1"),
+            &format!(
+                "SELECT \"receipt_sha256\" FROM \"{DEFINITION_VERSION}\" WHERE \"version\" = ?1"
+            ),
             params![to_i64(version, "definitions version")?],
             |row| row.get(0),
         )?;

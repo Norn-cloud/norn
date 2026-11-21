@@ -2107,7 +2107,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         let Some(values) = snapshot.values else {
             return Ok(None);
         };
-        let catalog = model.type_catalog().with_governing_laws(model.law_artifacts());
+        let catalog = model
+            .type_catalog()
+            .with_governing_laws(model.law_artifacts());
         let mut links = crate::link_laws::PinnedLinks {
             reader: self,
             world: &entry.world,

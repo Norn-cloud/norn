@@ -386,7 +386,9 @@ fn fire_timer<E: SqlEngine>(
                     )
                     .map_err(|error| Refusal::host(error.to_string()))?;
                     let model = cell.store().model().clone();
-                    let catalog = model.type_catalog().with_governing_laws(model.law_artifacts());
+                    let catalog = model
+                        .type_catalog()
+                        .with_governing_laws(model.law_artifacts());
                     let turn = DecisionTurn {
                         id: format!(
                             "norn.run/{run_id}/timer/{}/{}",
