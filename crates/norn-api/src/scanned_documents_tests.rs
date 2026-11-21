@@ -923,7 +923,11 @@ fn granted_later(
         &CorrectedOnly,
     )
     .expect("the corrected row is readable");
-    let versions: Vec<u64> = later.versions.iter().map(|version| version.version).collect();
+    let versions: Vec<u64> = later
+        .versions
+        .iter()
+        .map(|version| version.version)
+        .collect();
     assert_eq!(versions, [history.versions[0].version], "{later:#?}");
     let imported = history
         .versions
@@ -936,7 +940,10 @@ fn granted_later(
         format!("\"commit\":{},", imported.commit),
         format!("\"logicalTime\":{},", imported.logical_time),
     ] {
-        assert!(!document.contains(&withheld), "{withheld} leaked: {document}");
+        assert!(
+            !document.contains(&withheld),
+            "{withheld} leaked: {document}"
+        );
     }
     assert!(
         !later.versions.iter().any(|version| version.values.as_ref().is_some_and(|values| {
