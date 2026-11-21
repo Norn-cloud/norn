@@ -882,8 +882,14 @@ fn cached_and_uncached_definitions_admit_and_refuse_identically() {
             ));
         }
         assert_eq!(answers.0, answers.1, "{writer}");
+        // The lawful writer commits; the lawless one is refused by the law.
+        let expected = if writer == DERIVES_LOSS {
+            "Ok"
+        } else {
+            "core.laws.violated"
+        };
         assert!(
-            answers.0.iter().any(|answer| answer.starts_with("Ok")),
+            answers.0.iter().any(|answer| answer.contains(expected)),
             "{answers:?}"
         );
         assert!(
@@ -952,29 +958,33 @@ fn an_install_drops_the_verified_definitions_of_the_last_revision() {
     let (model, input) = action_cell::melt_install(
         DERIVES_LOSS,
         crate::action_admission::prepare_action_model,
-        2,
+        // After the first call: the cell's clock never runs backwards.
+        1_700_000_000_001,
     );
+    let later = LogicalTime::from_millis(1_700_000_000_002);
     assert_eq!(
         host.install_definitions(model, input, Some(1))
             .unwrap()
             .version,
         2
     );
-    let stale = call(
+    let stale = call_at(
         &host,
         &pinned(1),
         operator,
         MELT_ACTION,
         &melt_body("melt-2", "12", "10", "two"),
+        later,
     )
     .unwrap_err();
     assert_eq!((stale.status, stale.code.as_str()), (409, "defs.stale"));
-    let committed = call(
+    let committed = call_at(
         &host,
         &pinned(2),
         operator,
         MELT_ACTION,
         &melt_body("melt-3", "12", "10", "three"),
+        later,
     )
     .unwrap();
     assert_eq!(committed.outcome, ActionCallOutcome::Committed);
