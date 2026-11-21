@@ -167,6 +167,10 @@ impl<S: SqlEngine> FaultEngine<S> {
 }
 
 impl<S: SqlEngine> SqlEngine for FaultEngine<S> {
+    fn admitted(&self) -> Result<(), CellError> {
+        self.inner.admitted()
+    }
+
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
         self.statement()?;
         self.inner.execute(sql, params)

@@ -961,6 +961,30 @@
       "no_fix": null
     },
     {
+      "code": "core.engine.downgrade",
+      "tier": "T6",
+      "severity": "error",
+      "message": "the cell was written by a newer storage version than this engine reads",
+      "fix": "Open the cell with a release whose storage version is at least the cell's, or restore a backup taken before the upgrade.",
+      "no_fix": null
+    },
+    {
+      "code": "core.engine.unknown_version",
+      "tier": "T6",
+      "severity": "error",
+      "message": "the cell's engine stamp is not a version this engine can read",
+      "fix": "Open the cell with the release that wrote it or a newer one; if no release wrote this stamp, restore the cell from its export.",
+      "no_fix": null
+    },
+    {
+      "code": "core.engine.upgrade_unsupported",
+      "tier": "T6",
+      "severity": "error",
+      "message": "the cell's storage version cannot be upgraded in place by this engine",
+      "fix": "Open the cell first with a release whose upgrade floor admits the cell's storage version, then with this one; if a migration refused the data, restore the cell from its export.",
+      "no_fix": null
+    },
+    {
       "code": "core.graph.catalog_write",
       "tier": "T2",
       "severity": "error",
