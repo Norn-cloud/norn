@@ -640,7 +640,17 @@ mod tests {
             &choice,
         );
         assert_eq!(status, 200, "{decided}");
-        assert_eq!(decided["call"], json!({ "committed": true }), "{decided}");
+        // The reviewer's request never runs the developer's call
+        // (APPROVAL-RECOVERY-1): it waits for the developer's own retry.
+        assert_eq!(
+            decided["call"],
+            json!({ "committed": false, "state": "not_executed" }),
+            "{decided}"
+        );
+        assert_eq!(melt(&dev), 404);
+        let (status, committed) =
+            call(&dev, Some(DEVELOPER_TOKEN), ("POST", &action, SCOPE), &body);
+        assert_eq!(status, 200, "{committed}");
         assert_eq!(melt(&dev), 200);
 
         // The approved call committed as its requester, never as the

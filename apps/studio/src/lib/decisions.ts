@@ -9,8 +9,10 @@ import { cellCall, defaultFetch, humanize, type CellResult, type Diagnostic, typ
  *        is a decider for (the cell decides; Studio filters nothing), soonest `expiresAtMs` first,
  *        ties to the oldest `requestedAtMs`. `limit=0` returns only the count.
  *   POST /v1/decisions/{id}:decide   { choice, note?, idempotencyKey }
- *        200 { outcome: "decided" | "replayed", decision, receipt, run }; the same key and body
- *        replays. Refusals, in this order: 404 decision.not_found (also a non-decider: the cell
+ *        200 { outcome: "decided" | "replayed", decision, receipt, run, call? }; the same key and body
+ *        replays. `call` (an approval of a parked action call) says where the call stands:
+ *        "committed", "refused" (final, with `code`) or "not_executed" (approved, not yet executed:
+ *        only the requester's own retry runs it, once). Refusals, in this order: 404 decision.not_found (also a non-decider: the cell
  *        does not say the decision exists), 409 decision.resolved (with `resolution`), 410
  *        decision.expired, 403 decision.not_a_decider | decision.law_not_satisfied, 422
  *        decision.unknown_choice (/choice) | decision.note_too_long (/note) | request.invalid,
@@ -53,18 +55,22 @@ export interface DecisionsPage {
   readonly serverNowMs: number
 }
 
+/** Where an approved action call stands (APPROVAL-RECOVERY-1). */
+export interface DecidedCall { readonly committed: boolean; readonly code?: string; readonly state: "committed" | "refused" | "not_executed" }
+
 export interface Decided {
   readonly outcome: "decided" | "replayed"
   readonly decision: { readonly id: string; readonly choice: string; readonly note?: string | null; readonly decidedBy: string; readonly decidedAtMs: number }
   readonly receipt: { readonly receiptHash: string; readonly commitSeq: number; readonly recordedAtMs: number }
   readonly run: { readonly id: string; readonly state: string | null }
+  readonly call?: DecidedCall
 }
 
 /**
  * Who got there first (409 `decision.resolved`). `choice` is the option they chose, sent only when
  * this reader may read the run; absent, Studio says who and when, not what.
  */
-export interface Resolution { readonly resolution: "decided" | "expired" | "withdrawn"; readonly by: string | null; readonly atMs: number; readonly choice: string | null }
+export interface Resolution { readonly resolution: "decided" | "expired" | "withdrawn"; readonly by: string | null; readonly atMs: number; readonly choice: string | null; readonly call?: DecidedCall }
 
 export type DecideResult =
   | { readonly kind: "decided"; readonly decided: Decided }
@@ -100,9 +106,10 @@ export async function decide(id: string, body: { readonly choice: string; readon
       const { refusal } = result
       if (refusal.code === "decision.not_found") return { kind: "not-found", message: refusal.message }
       if (refusal.code === "decision.resolved") {
-        const r = refusal.body["resolution"] as { resolution?: unknown; by?: unknown; atMs?: unknown; choice?: unknown } | undefined
+        const r = refusal.body["resolution"] as { resolution?: unknown; by?: unknown; atMs?: unknown; choice?: unknown; call?: unknown } | undefined
         const kind = r?.resolution === "expired" || r?.resolution === "withdrawn" ? r.resolution : "decided"
-        return { kind: "resolved", message: refusal.message, resolution: { resolution: kind, by: typeof r?.by === "string" ? r.by : null, atMs: typeof r?.atMs === "number" ? r.atMs : 0, choice: typeof r?.choice === "string" ? r.choice : null } }
+        const call = decidedCall(r?.call)
+        return { kind: "resolved", message: refusal.message, resolution: { resolution: kind, by: typeof r?.by === "string" ? r.by : null, atMs: typeof r?.atMs === "number" ? r.atMs : 0, choice: typeof r?.choice === "string" ? r.choice : null, ...call ? { call } : {} } }
       }
       if (refusal.code === "decision.expired") return { kind: "expired", message: refusal.message }
       return { kind: "refused", status: refusal.status, code: refusal.code, message: refusal.message, diagnostics: refusal.diagnostics }
@@ -110,6 +117,14 @@ export async function decide(id: string, body: { readonly choice: string; readon
     case "not-modified": return { kind: "unavailable" }
     default: return result
   }
+}
+
+/** An approved call's state as the cell sent it; anything else is absent. */
+function decidedCall(value: unknown): DecidedCall | undefined {
+  if (typeof value !== "object" || value === null) return undefined
+  const v = value as { committed?: unknown; code?: unknown; state?: unknown }
+  if (typeof v.committed !== "boolean" || (v.state !== "committed" && v.state !== "refused" && v.state !== "not_executed")) return undefined
+  return { committed: v.committed, state: v.state, ...typeof v.code === "string" ? { code: v.code } : {} }
 }
 
 // ---- Reading a decision ------------------------------------------------------------------------
