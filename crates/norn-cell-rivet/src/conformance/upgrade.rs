@@ -221,8 +221,7 @@ fn digest<E: SqlEngine>(engine: &E, only: Option<&[&str]>) -> Result<String, Cel
         else {
             return Err(fail("catalog text"));
         };
-        if is_platform(&table, globs) || only.is_some_and(|only| !only.contains(&table.as_str()))
-        {
+        if is_platform(&table, globs) || only.is_some_and(|only| !only.contains(&table.as_str())) {
             continue;
         }
         let _ = write!(out, "{kind} {name} on {table}: ");
@@ -263,18 +262,11 @@ const EVIDENCE: &[&str] = &["_norn_ledger", "_norn_receipt"];
 
 /// Load `fixture`, open it on this engine, and check what ENGINE-UPGRADE-1
 /// promises. `fresh` builds another engine over the same actor database.
-fn upgrade(
-    fresh: &dyn Fn() -> RivetEngine,
-    fixture: &str,
-    from: u32,
-) -> Result<Value, CellError> {
+fn upgrade(fresh: &dyn Fn() -> RivetEngine, fixture: &str, from: u32) -> Result<Value, CellError> {
     let image: Value = serde_json::from_str(fixture).map_err(|error| fail(error.to_string()))?;
     let raw = fresh();
     if raw
-        .query_optional(
-            "SELECT 1 FROM sqlite_master WHERE name = '_norn_meta'",
-            &[],
-        )?
+        .query_optional("SELECT 1 FROM sqlite_master WHERE name = '_norn_meta'", &[])?
         .is_some()
     {
         return Err(fail("the probe needs a fresh actor (pass a new object=)"));
@@ -282,7 +274,9 @@ fn upgrade(
     load(&raw, &image)?;
     let admitted = engine_release::admission(&raw)?;
     if admitted != (Admission::Upgrade { from }) {
-        return Err(fail(format!("admission {admitted:?}, expected upgrade from {from}")));
+        return Err(fail(format!(
+            "admission {admitted:?}, expected upgrade from {from}"
+        )));
     }
     let evidence = digest(&raw, Some(EVIDENCE))?;
     drop(raw);
@@ -298,8 +292,8 @@ fn upgrade(
             &[SqlValue::from(STAMP_KEY)],
         )?
         .and_then(|row| row.into_iter().next());
-    let current = serde_json::to_string(&EngineStamp::current())
-        .map_err(|error| fail(error.to_string()))?;
+    let current =
+        serde_json::to_string(&EngineStamp::current()).map_err(|error| fail(error.to_string()))?;
     let evidence_kept = digest(&raw, Some(EVIDENCE))? == evidence;
     let upgraded = digest(&raw, None)?;
     drop(raw);
