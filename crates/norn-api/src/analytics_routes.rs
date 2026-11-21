@@ -65,6 +65,11 @@ pub struct EngineCall {
     /// instead of re-entering (an export).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stream: Option<BTreeMap<String, String>>,
+    /// OLAP-CRED-1: the cell's credential for this call, the host's bearer
+    /// to the engine. The host transport attaches it when it hands the call
+    /// to the host; it names the cell's own tenant only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential: Option<String>,
 }
 
 /// The engine's answer to an [`EngineCall`].
@@ -89,6 +94,7 @@ impl EngineCall {
             digest: hex_digest(body.as_bytes()),
             body,
             stream: None,
+            credential: None,
         })
     }
 }

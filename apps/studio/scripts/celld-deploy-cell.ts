@@ -83,7 +83,7 @@ export function probeServesNewBuild(status: number, body: string): boolean {
 }
 
 /** What a cell bundle must hold: the host's modules and the built cell. */
-export const BUNDLE_FILES = ["worker.mjs", "subscribe.mjs", "wake.mjs", "telemetry.mjs", "otlp.mjs", join("pkg", "norn_cell_do_bg.wasm")]
+export const BUNDLE_FILES = ["worker.mjs", "subscribe.mjs", "wake.mjs", "connect_vars.mjs", "telemetry.mjs", "otlp.mjs", join("pkg", "norn_cell_do_bg.wasm")]
 
 const env = (name: string): string => {
   const value = process.env[name]
