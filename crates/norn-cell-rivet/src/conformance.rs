@@ -213,10 +213,6 @@ impl WakeSeam {
     }
 
     /// A writer found the wake's decision in progress and waits for it.
-    #[allow(
-        dead_code,
-        reason = "called by the deadline lock, which the S1 fix introduces"
-    )]
     pub(crate) fn waiting(&self) {
         if let Some(token) = self.token() {
             mark(&format!("{token}-waiting"));
