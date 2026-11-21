@@ -1312,6 +1312,7 @@ fn land_upload<E: SqlEngine>(
         digest: identity.clone(),
         body: String::new(),
         stream: None,
+        credential: None,
     };
     for _ in 0..MAX_LAND_STEPS {
         let done = if let Some(done) = answer.take() {
@@ -1367,6 +1368,7 @@ fn land_upload<E: SqlEngine>(
                 digest: settle_digest.clone(),
                 body: serde_json::to_string(&settle).map_err(Refusal::host)?,
                 stream: None,
+                credential: None,
             };
             continue;
         }
@@ -1415,6 +1417,7 @@ fn land_upload<E: SqlEngine>(
             digest: store_digest.clone(),
             body: serde_json::to_string(&store_request).map_err(Refusal::host)?,
             stream: None,
+            credential: None,
         };
     }
     Err(Refusal::host("the landing did not settle"))
