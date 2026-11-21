@@ -172,7 +172,7 @@ fn preimage(input: &ConsumedInput) -> Result<Option<Value>, CellError> {
 /// before, and refuse the commit if the two ever differ.
 #[allow(
     clippy::too_many_arguments,
-    reason = "the commit's own parts, passed through"
+    reason = "one commit's record fields, all written in the same transaction"
 )]
 pub(crate) fn record<E: SqlEngine>(
     engine: &E,
@@ -182,6 +182,7 @@ pub(crate) fn record<E: SqlEngine>(
     receipt: &Receipt,
     consumed_input: Option<Value>,
     definition_install: Option<DefinitionInstallRecord>,
+    storage_version: Option<u32>,
     entries: Vec<LedgerEntry>,
 ) -> Result<(), CellError> {
     let commit_seq = receipt.body.commit_seq;
@@ -271,6 +272,7 @@ pub(crate) fn record<E: SqlEngine>(
         initial_model: (commit_seq == 1 && definition_install.is_none())
             .then(|| model.definitions_snapshot()),
         definition_install,
+        storage_version,
     };
     // The record's hash and its packed encoding both start from its canonical
     // text; canonicalize it once.

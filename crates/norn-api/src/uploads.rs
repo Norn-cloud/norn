@@ -93,10 +93,10 @@ impl Store {
 impl S3Config {
     /// The storage of `store` named by `vars`: `NORN_S3_ENDPOINT` and
     /// `NORN_S3_REGION` (shared), then `NORN_S3_BUCKET` with
-    /// `NORN_SECRET_S3_ACCESS_KEY_ID` / `NORN_SECRET_S3_SECRET_ACCESS_KEY`,
+    /// `NORN_S3_ACCESS_KEY_ID` / `NORN_S3_SECRET_ACCESS_KEY`,
     /// or `NORN_S3_DOCUMENTS_BUCKET` with
-    /// `NORN_SECRET_S3_DOCUMENTS_ACCESS_KEY_ID` /
-    /// `NORN_SECRET_S3_DOCUMENTS_SECRET_ACCESS_KEY`. `None` when not configured.
+    /// `NORN_S3_DOCUMENTS_ACCESS_KEY_ID` /
+    /// `NORN_S3_DOCUMENTS_SECRET_ACCESS_KEY`. `None` when not configured.
     #[must_use]
     pub fn from_vars(vars: &BTreeMap<String, String>, store: Store) -> Option<Self> {
         let get = |name: &str| vars.get(name).filter(|v| !v.is_empty()).cloned();
@@ -108,13 +108,13 @@ impl S3Config {
         let (bucket, id, secret) = match store {
             Store::Uploads => (
                 "NORN_S3_BUCKET",
-                "NORN_SECRET_S3_ACCESS_KEY_ID",
-                "NORN_SECRET_S3_SECRET_ACCESS_KEY",
+                "NORN_S3_ACCESS_KEY_ID",
+                "NORN_S3_SECRET_ACCESS_KEY",
             ),
             Store::Documents => (
                 "NORN_S3_DOCUMENTS_BUCKET",
-                "NORN_SECRET_S3_DOCUMENTS_ACCESS_KEY_ID",
-                "NORN_SECRET_S3_DOCUMENTS_SECRET_ACCESS_KEY",
+                "NORN_S3_DOCUMENTS_ACCESS_KEY_ID",
+                "NORN_S3_DOCUMENTS_SECRET_ACCESS_KEY",
             ),
         };
         Some(Self {

@@ -482,6 +482,18 @@
       "message": "دلالات الاستعلام غير مدعومة في ملف الحوسبة المختار.",
       "review": "needs_review"
     },
+    "core.engine.downgrade": {
+      "message": "الخلية مكتوبة بإصدار تخزين أحدث مما يقرؤه هذا المحرك",
+      "review": "needs_review"
+    },
+    "core.engine.unknown_version": {
+      "message": "ختم المحرك في الخلية ليس إصدارًا يستطيع هذا المحرك قراءته",
+      "review": "needs_review"
+    },
+    "core.engine.upgrade_unsupported": {
+      "message": "لا يستطيع هذا المحرك ترقية إصدار تخزين الخلية في مكانها",
+      "review": "needs_review"
+    },
     "core.graph.catalog_write": {
       "message": "إسقاطات الكتالوج لا يمكنها تفعيل التعريفات",
       "review": "needs_review"

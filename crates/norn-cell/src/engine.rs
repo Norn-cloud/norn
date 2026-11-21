@@ -244,6 +244,16 @@ pub trait SqlEngine {
         Ok(None)
     }
 
+    /// A store has accepted this engine's database. A host applies here the
+    /// persistent settings it deferred at open, so that a refused open
+    /// leaves the file exactly as found (ENGINE-UPGRADE-1, #1504).
+    ///
+    /// # Errors
+    /// Backend errors applying the deferred settings.
+    fn admitted(&self) -> Result<(), CellError> {
+        Ok(())
+    }
+
     /// Decode the first row; absence is an error.
     ///
     /// # Errors
@@ -502,27 +512,33 @@ impl SqlEngine for NoEngine {
 pub struct NativeEngine {
     conn: rusqlite::Connection,
     user_sql: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// The journal mode an open asked for, applied once a store admits the file.
+    journal_mode: std::cell::Cell<Option<&'static str>>,
 }
 
 #[cfg(feature = "native")]
 impl NativeEngine {
     /// Open a file with the existing native journal and cache options.
     ///
+    /// ENGINE-UPGRADE-1 (#1494, #1504): the journal mode is stored in the
+    /// file, so it is set only once a store accepts the file
+    /// ([`SqlEngine::admitted`]): a cell refused for its storage version,
+    /// ledger or any other check keeps the mode it was found in.
+    ///
     /// # Errors
-    /// SQLite open or configuration errors.
+    /// SQLite open or configuration errors, or the storage-version refusals
+    /// of [`crate::engine_release::admission`].
     pub fn open(
         path: &std::path::Path,
         options: crate::store::StoreOptions,
     ) -> Result<Self, CellError> {
-        let conn = rusqlite::Connection::open(path)?;
-        let mode = match options.journal_mode {
+        let engine = Self::configured(rusqlite::Connection::open(path)?)?;
+        crate::engine_release::admission(&engine)?;
+        let conn = &engine.conn;
+        engine.journal_mode.set(Some(match options.journal_mode {
             crate::store::JournalMode::Delete => "DELETE",
             crate::store::JournalMode::Wal => "WAL",
-        };
-        let _applied: String =
-            conn.query_row(&format!("PRAGMA journal_mode = {mode}"), [], |row| {
-                row.get(0)
-            })?;
+        }));
         conn.execute_batch("PRAGMA synchronous = FULL")?;
         match options.cache_pages {
             Some(pages) => conn.execute_batch(&format!("PRAGMA cache_size = {pages}"))?,
@@ -537,7 +553,7 @@ impl NativeEngine {
             ))?,
         }
         conn.execute_batch("PRAGMA foreign_keys = ON")?;
-        Self::configured(conn)
+        Ok(engine)
     }
 
     /// Open an existing file read-only, for an operator's diagnosis (#1423):
@@ -618,7 +634,11 @@ impl NativeEngine {
                 Authorization::Allow
             }
         }))?;
-        Ok(Self { conn, user_sql })
+        Ok(Self {
+            conn,
+            user_sql,
+            journal_mode: std::cell::Cell::new(None),
+        })
     }
 
     /// Close the native file before publishing a staged restore.
@@ -769,6 +789,17 @@ impl Drop for StatementCount<'_> {
 impl SqlEngine for NativeEngine {
     fn read_isolation(&self) -> ReadIsolation {
         ReadIsolation::Revisioned
+    }
+
+    fn admitted(&self) -> Result<(), CellError> {
+        if let Some(mode) = self.journal_mode.take() {
+            let _applied: String =
+                self.conn
+                    .query_row(&format!("PRAGMA journal_mode = {mode}"), [], |row| {
+                        row.get(0)
+                    })?;
+        }
+        Ok(())
     }
 
     fn read_cache_revision(&self) -> Result<Option<(u64, u64)>, CellError> {
