@@ -29,7 +29,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use norn_api::scope::CellScope;
 use norn_cell::Model;
-use norn_ir::access::{AccessIr, AccessRule, PolicyRoot};
+use norn_ir::access::{AccessCondition, AccessIr, AccessRule, PolicyRoot};
 use norn_ir::{ActionRoot, ArtifactEnvelope, ArtifactKind, IrVersion01, RuntimeValue};
 use norn_kernel::authz::{
     self, AccessRequest, ActorKind, AttrValue, AuthzSchema, CapabilityGrant, Delegation, Pdp,
@@ -65,6 +65,30 @@ pub struct ActionPolicy {
     /// The grant is a function of the caller's subject and kind and of this
     /// revision alone; at most [`CALLER_PDPS`] are kept.
     callers: std::sync::Mutex<BTreeMap<(String, &'static str), std::sync::Arc<Pdp>>>,
+    /// Each callable action's target type and title, for
+    /// `GET /v1/access?objectType=` ([`ActionPolicy::role_decisions`]).
+    targets: BTreeMap<String, (String, String)>,
+    /// For each callable action, the role lists of every rule that grants it
+    /// under a condition other than a role (a resource value, a relation, a
+    /// context value, the caller's identity): a role every list names (or a
+    /// rule with no role condition) may call it depending on the record or
+    /// the person.
+    conditional: BTreeMap<String, Vec<Vec<Vec<String>>>>,
+}
+
+/// What one declared role alone may do with one action
+/// ([`ActionPolicy::role_decisions`]).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RoleAction {
+    /// The action identity.
+    pub action_id: String,
+    /// Its title, or its identity when it declares none.
+    pub title: String,
+    /// `permit`: a rule grants the role whatever the record; `conditional`:
+    /// only a rule that names the role and also reads the record or the
+    /// caller could grant it, decided at each call; `deny`: no rule grants it.
+    pub decision: &'static str,
 }
 
 /// The most callers whose PDP one revision keeps; past it the cache is
@@ -84,6 +108,64 @@ fn payload<T: serde::de::DeserializeOwned>(artifact: &ArtifactEnvelope) -> Resul
     serde_json::to_value(artifact.payload.to_json_value())
         .and_then(serde_json::from_value)
         .map_err(|error| SeedError(format!("{}: {error}", artifact.artifact_id)))
+}
+
+/// The object type an action's effect targets; `None` without an effect
+/// program (nothing a caller can run).
+fn target_kind(action: &ActionRoot) -> Option<&str> {
+    Some(action.effect_program.as_ref()?.target().object_kind)
+}
+
+/// For each action, the role lists of every rule that grants it under a
+/// condition other than a role ([`ActionPolicy::role_decisions`]).
+fn conditional_rules(rules: &[AccessRule]) -> BTreeMap<String, Vec<Vec<Vec<String>>>> {
+    let mut conditional: BTreeMap<String, Vec<Vec<Vec<String>>>> = BTreeMap::new();
+    for rule in rules {
+        if rule
+            .all_of
+            .iter()
+            .all(|condition| matches!(condition, AccessCondition::Role(_)))
+        {
+            continue;
+        }
+        let named: Vec<Vec<String>> = rule
+            .all_of
+            .iter()
+            .filter_map(|condition| match condition {
+                AccessCondition::Role(role) => Some(role.any_of.clone()),
+                AccessCondition::Rel(_)
+                | AccessCondition::Context(_)
+                | AccessCondition::Resource(_)
+                | AccessCondition::Marking(_)
+                | AccessCondition::Entitlement(_) => None,
+            })
+            .collect();
+        for action in &rule.actions {
+            conditional
+                .entry(action.clone())
+                .or_default()
+                .push(named.clone());
+        }
+    }
+    conditional
+}
+
+/// Each callable action's target type and title.
+fn callable_targets<'a>(
+    actions: impl Iterator<Item = &'a ActionRoot>,
+    callable: &BTreeSet<String>,
+) -> BTreeMap<String, (String, String)> {
+    actions
+        .filter(|action| callable.contains(&action.action_id))
+        .filter_map(|action| {
+            let kind = target_kind(action)?;
+            let title = action
+                .title
+                .clone()
+                .unwrap_or_else(|| action.action_id.clone());
+            Some((action.action_id.clone(), (kind.to_owned(), title)))
+        })
+        .collect()
 }
 
 /// The rules of each governing policy, each narrowed to the actions that
@@ -265,6 +347,8 @@ impl ActionPolicy {
             .iter()
             .flat_map(|rule| rule.actions.iter().cloned())
             .collect();
+        let conditional = conditional_rules(&rules);
+        let targets = callable_targets(actions.iter().map(|(_, action)| action), &callable);
         if callable.is_empty() {
             return Ok(None);
         }
@@ -283,6 +367,8 @@ impl ActionPolicy {
             resource_attributes,
             principal_id,
             callers: std::sync::Mutex::new(BTreeMap::new()),
+            targets,
+            conditional,
         }))
     }
 
@@ -314,6 +400,79 @@ impl ActionPolicy {
                     _ => return None,
                 };
                 Some((name.clone(), attribute))
+            })
+            .collect()
+    }
+
+    /// What `role` alone may do with each callable action on `object_type`,
+    /// ordered by action identity. The PDP decides each for a principal
+    /// holding only that role, with no record and no identity: a rule that
+    /// grants on the role alone permits; one that also reads the record or the
+    /// caller cannot hold without them, so that action answers `conditional`
+    /// and is decided at each call. No record value is read here.
+    #[must_use]
+    pub fn role_decisions(&self, role: &str, object_type: &str) -> Vec<RoleAction> {
+        let subject = crate::policy::role_subject(role);
+        let pdp = Pdp::new(
+            self.base.policy_set().clone(),
+            &[CapabilityGrant {
+                subject_id: subject.clone(),
+                actor_kind: ActorKind::User,
+                agent_session_id: None,
+                scope: Some(self.key.clone()),
+                capabilities: self.callable.iter().cloned().collect(),
+                binding: None,
+            }],
+        );
+        self.targets
+            .iter()
+            .filter(|(_, (kind, _))| kind == object_type)
+            .map(|(action_id, (_, title))| {
+                let permitted = pdp.as_ref().is_ok_and(|pdp| {
+                    authz::authorize(
+                        pdp,
+                        &AccessRequest {
+                            principal: PrincipalInput {
+                                subject_id: subject.clone(),
+                                actor_kind: ActorKind::User,
+                                agent_session_id: None,
+                                roles: vec![role.to_owned()],
+                                attributes: BTreeMap::new(),
+                            },
+                            scope: Some(self.key.clone()),
+                            capability: action_id.clone(),
+                            action_id: action_id.clone(),
+                            resource: ResourceInput {
+                                object_type: object_type.to_owned(),
+                                id: String::new(),
+                                scope: self.key.clone(),
+                                attributes: BTreeMap::new(),
+                            },
+                            context: BTreeMap::new(),
+                            binding: None,
+                            delegation: Delegation::Direct,
+                        },
+                    )
+                    .is_ok()
+                });
+                let decision = if permitted {
+                    "permit"
+                } else if self.conditional.get(action_id).is_some_and(|rules| {
+                    rules.iter().any(|lists| {
+                        lists
+                            .iter()
+                            .all(|list| list.iter().any(|named| named == role))
+                    })
+                }) {
+                    "conditional"
+                } else {
+                    "deny"
+                };
+                RoleAction {
+                    action_id: action_id.clone(),
+                    title: title.clone(),
+                    decision,
+                }
             })
             .collect()
     }

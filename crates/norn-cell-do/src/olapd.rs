@@ -324,14 +324,19 @@ struct Request {
     body: Vec<u8>,
 }
 
+/// DEV-ONE-WRITE-1 (#1533): head and body go out in one write with
+/// `TCP_NODELAY`, so an answer never waits for the client's delayed ACK.
 fn respond(mut stream: &TcpStream, status: u16, kind: &str, body: &[u8]) -> std::io::Result<()> {
-    write!(
-        stream,
+    let head = format!(
         "HTTP/1.1 {status} {}\r\ncontent-type: {kind}\r\ncache-control: no-store\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
         reason(status),
         body.len()
-    )?;
-    stream.write_all(body)?;
+    );
+    let mut bytes = Vec::with_capacity(head.len().saturating_add(body.len()));
+    bytes.extend_from_slice(head.as_bytes());
+    bytes.extend_from_slice(body);
+    stream.set_nodelay(true)?;
+    stream.write_all(&bytes)?;
     stream.flush()
 }
 
