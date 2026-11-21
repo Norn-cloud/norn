@@ -8,7 +8,7 @@ import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 import { parseFragment } from "parse5"
 
-import { type SheetDecision, type SheetDocument, decideRequest, needsConfirm, sheetMarkup } from "../src/elements/decision-sheet.ts"
+import { type SheetDecision, type SheetDocument, decideRequest, directCall, needsConfirm, sheetMarkup } from "../src/elements/decision-sheet.ts"
 import { type Evaluate, type Snapshot, enabled, init, update, walks, wasmEvaluate } from "../src/machine/index.ts"
 import { sheetPayloads } from "./support/sheet-payloads.ts"
 
@@ -46,6 +46,17 @@ describe("sheetMarkup", () => {
     const drawn = new Set(tree.map((n) => attr(n, "data-node")).filter(Boolean))
     const controls = machine.events.flatMap((event) => (event.source.kind === "user" ? [event.source.nodeId] : []))
     for (const control of controls) expect(drawn.has(control)).toBe(true)
+  })
+  test("an approval of a direct call offers no run to open; a flow's ask and a flow step's call do", () => {
+    const call = { action: "canon.holding.adjust", definition: "ops.adjust_approval", input: {} }
+    const direct = { ...decision, run: { id: "norn.approval/abc", state: null }, call }
+    const step = { ...decision, run: { id: "run_1", state: "waiting" }, call }
+    expect([directCall(direct), directCall(step), directCall(decision)]).toEqual([true, false, false])
+    const runLinks = (d: SheetDecision) => all(parseFragment(sheetMarkup(document, d, "en")) as unknown as Node)
+      .filter((n) => n.nodeName === "a" && (attr(n, "href") ?? "").startsWith("/runs/"))
+    expect(runLinks(direct)).toHaveLength(0)
+    expect(runLinks(step)).toHaveLength(1)
+    expect(runLinks(decision)).toHaveLength(1)
   })
   test("Arabic draws right to left with the page's own labels", () => {
     const ar = sheetMarkup(document, decision, "ar")

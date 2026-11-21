@@ -120,6 +120,8 @@ export async function decisionCell(page: Page, options: { readonly empty?: boole
     const url = new URL(route.request().url())
     if (!scoped(url)) return refuse(route, 403, "scope.denied", "Not your workspace.")
     if (fail) { fail = false; return route.fulfill({ status: 500, body: "upstream reset" }) }
+    // This actor made no approval-gated call (APPROVAL-REQUESTED-1).
+    if (url.pathname.endsWith("/v1/decisions:requested")) return route.fulfill({ json: { items: [], serverNowMs: now } })
     if (route.request().method() === "GET") {
       const items = open()
       const limit = Number(url.searchParams.get("limit") ?? "50")

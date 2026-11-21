@@ -20,13 +20,24 @@ export interface SheetDecision {
   readonly id: string
   readonly question: string
   readonly risk: "low" | "medium" | "high"
-  readonly run: { readonly id: string }
+  /** The run waiting on it; for an approval of a direct action call, the parked call's id with no state. */
+  readonly run: { readonly id: string; readonly state?: string | null }
   readonly flow: { readonly title: string | null; readonly ruleId: string }
   readonly step: { readonly id: string; readonly label: string | null }
   readonly options: readonly { readonly id: string; readonly label: string; readonly scope: string; readonly effect: { readonly action: string } | { readonly binding: string } }[]
   readonly agentPick: string | null
   readonly expiresAtMs: number
+  /** For the approval of a parked action call, the call; absent for a flow's ask. */
+  readonly call?: unknown
 }
+
+/**
+ * Whether `decision` approves a direct action call: a parked call no run waits on (the cell names
+ * the call's own id there, with no state). Approving it runs nothing and there is no run to open:
+ * its requester runs it.
+ */
+export const directCall = (decision: Pick<SheetDecision, "run" | "call">): boolean =>
+  decision.call !== undefined && decision.call !== null && (decision.run.state ?? null) === null
 
 interface WidgetNodeDoc {
   readonly nodeId: string
@@ -69,6 +80,8 @@ const WORDS = {
     "confirm.high": "This is a high-risk decision.", "confirm.action": "This starts an action.",
     "confirm.body": "You're choosing \"{0}\" ({1}). The run goes on with it as soon as the cell records it.",
     "confirm.bodyNoScope": "You're choosing \"{0}\". The run goes on with it as soon as the cell records it.",
+    "confirm.call": "You're choosing \"{0}\" ({1}). The cell records it; an approved call runs when its requester runs it.",
+    "confirm.callNoScope": "You're choosing \"{0}\". The cell records it; an approved call runs when its requester runs it.",
     failed: "The cell did not answer; nothing was decided.", openRun: "Open run", seeRun: "See the run go on", back: "Back to inbox",
     decidedAs: "Decided: {0} · {1}", byYou: "by you", byOther: "by {0}", replayed: " (already recorded; the cell returned the first receipt)",
     details: "Details", copy: "Copy", receipt: "Receipt", commit: "Commit", recorded: "Recorded", decision: "Decision",
@@ -77,7 +90,7 @@ const WORDS = {
     expired: "Expired", gone: "No longer here", awaiting: "Waiting for approval", awaitingBody: "Your choice waits for an approval before it takes effect.",
     leaveBody: "Nothing has been sent. Your choice and note will be cleared; the decision stays in your inbox.", left: "{0} left", lapsed: "Expired",
     "call.committed": "The approved call committed.", "call.refused": "The approved call was refused ({0}); this approval never runs it again.",
-    "call.not_executed": "Approved, not yet executed: it runs when the requester retries it.",
+    "call.not_executed": "Approved; waiting for the requester to run it.",
   },
   ar: {
     "risk.low": "مخاطرة منخفضة", "risk.medium": "مخاطرة متوسطة", "risk.high": "مخاطرة عالية", suggested: "مقترح", suggestedTitle: "توصية الوكيل؛ والقرار لك.",
@@ -86,6 +99,8 @@ const WORDS = {
     "confirm.high": "هذا قرار عالي المخاطرة.", "confirm.action": "هذا يبدأ إجراءً.",
     "confirm.body": "تختار «{0}» ({1}). يتابع التشغيل به فور تسجيل الخلية له.",
     "confirm.bodyNoScope": "تختار «{0}». يتابع التشغيل به فور تسجيل الخلية له.",
+    "confirm.call": "تختار «{0}» ({1}). تسجّله الخلية؛ ويُنفّذ الإجراء الموافق عليه عندما ينفّذه مقدّم الطلب.",
+    "confirm.callNoScope": "تختار «{0}». تسجّله الخلية؛ ويُنفّذ الإجراء الموافق عليه عندما ينفّذه مقدّم الطلب.",
     failed: "لم تُجب الخلية؛ لم يُتخذ أي قرار.", openRun: "فتح التشغيل", seeRun: "تابع التشغيل", back: "العودة إلى الصندوق",
     decidedAs: "تقرّر: {0} · {1}", byYou: "بواسطتك", byOther: "بواسطة {0}", replayed: " (مسجّل من قبل؛ أعادت الخلية الإيصال الأول)",
     details: "التفاصيل", copy: "نسخ", receipt: "الإيصال", commit: "الالتزام", recorded: "سُجّل", decision: "القرار",
@@ -192,7 +207,7 @@ export function sheetMarkup(document: SheetDocument, decision: SheetDecision, lo
           <span class="norn-chip" data-tone="risk-${escape(decision.risk)}">${escape(w[`risk.${decision.risk}`])}</span>
           <span class="norn-meta" data-region="countdown"></span>
           <span class="norn-spacer"></span>
-          <a class="norn-link" href="/runs/${escape(encodeURIComponent(decision.run.id))}" data-link>${escape(w.openRun)}</a>
+          ${directCall(decision) ? "" : `<a class="norn-link" href="/runs/${escape(encodeURIComponent(decision.run.id))}" data-link>${escape(w.openRun)}</a>`}
         </div>
       </header>
       <div class="norn-status" role="alert" data-region="status" hidden></div>
@@ -327,7 +342,8 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Dr
       heading = say("decidedAs", optionLabel(decided.choice), by === null || by === "you" ? w.byYou : say("byOther", by)) + (doc.outcome === "replayed" ? w.replayed : "")
       words = text(decided.note) ? `“${text(decided.note)}”` : ""
       const runId = text(record(doc.run).id)
-      if (runId) {
+      // A direct call's approval has no run behind it: the call line says it waits for its requester.
+      if (runId && !directCall(decision)) {
         run.href = `/runs/${encodeURIComponent(runId)}`
         run.hidden = false
       }
@@ -398,7 +414,8 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Dr
     if (confirmBody) {
       // The scope is named only when the options differ in it.
       const scope = new Set(decision.options.map((o) => o.scope)).size > 1 ? decision.options.find((o) => o.id === choice)?.scope ?? "" : ""
-      confirmBody.textContent = say(scope ? "confirm.body" : "confirm.bodyNoScope", optionLabel(choice), scope)
+      const direct = directCall(decision)
+      confirmBody.textContent = say(scope ? (direct ? "confirm.call" : "confirm.body") : direct ? "confirm.callNoScope" : "confirm.bodyNoScope", optionLabel(choice), scope)
     }
     q('[data-region="confirm"]')?.toggleAttribute("hidden", state !== "confirming")
     q('[data-region="decision-leave"]')?.toggleAttribute("hidden", state !== "leaving")

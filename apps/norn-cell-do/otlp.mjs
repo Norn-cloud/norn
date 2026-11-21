@@ -436,6 +436,7 @@ export const CELL_ROUTES = [
   "/v1/runs",
   "/v1/runs/{run}",
   "/v1/decisions",
+  "/v1/decisions:requested",
   "/v1/decisions/{decision}:decide",
   "/v1/transforms:compile",
   "/v1/transforms/{transform}:refresh",

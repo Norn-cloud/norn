@@ -238,6 +238,28 @@ retry drives it) runs the call and moves the run. Named scenarios (`crates/norn-
 **APPROVAL-STEP-PARKS**, **APPROVAL-STEP-REJECTED**, and on hosts serving MCP
 **APPROVAL-MCP-PARKS** (a tool call answers the same pending decision).
 
+**APPROVAL-REQUESTED-1** (#1531): a requester never lists their call among
+the decisions waiting on them, so `GET /v1/decisions:requested` is where they
+read it: their own direct parked calls (never a flow step's, which its run's
+retry drives, and never anyone else's), each with its `status` (`pending`,
+`approved`, `rejected`, `expired`, `withdrawn`), the call exactly as it waits
+(`action`, `input`, `encodedInput` as canonical JSON text, `idempotencyKey`)
+and, once approved, its `state` as the decide answer reports it. The caller
+is the host's verified principal, matched as the dispatch matches the
+requester (subject, actor kind and role table): the same subject under
+another kind or role table reads nothing. The cell finds the caller's calls
+by that identity before it loads any parked payload, so another requester's
+id costs what an id that exists nowhere costs. Without `id` it lists the
+calls pending a decider before their deadline and those approved and not yet
+executed, its limit counting only the caller's own; with `id` it reads that
+decision in any state (`expired` once its deadline passed, recorded or not),
+and answers no item for one that is not the caller's. `canRun` is the cell's offer to retry it now
+(approved, `not_executed`, a direct call of the caller's); it grants nothing:
+sending back exactly the served call is the requester's retry, decided again
+under their current authority, so a role revoked after parking is refused
+there. Named scenario (`crates/norn-cell-do/tests/approvals.rs`):
+**APPROVAL-REQUESTED-1**.
+
 **APPROVAL-RIDES-SET-1** (#1469): a pack's approvals ride its definitions
 apply (`POST /v1/cell/definitions:apply`, and MCP's `norn_apply_definitions`,
 which forwards the same `approvals`): each is admitted against the candidate
