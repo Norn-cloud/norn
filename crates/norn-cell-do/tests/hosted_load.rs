@@ -156,8 +156,8 @@ fn the_synthetic_snapshots_land_whole_on_a_hosted_style_tenant() {
     let vars = json!({
         "NORN_S3_ENDPOINT": "https://storage.example.test",
         "NORN_S3_BUCKET": "uploads-bucket",
-        "NORN_SECRET_S3_ACCESS_KEY_ID": "key-id",
-        "NORN_SECRET_S3_SECRET_ACCESS_KEY": "secret",
+        "NORN_S3_ACCESS_KEY_ID": "key-id",
+        "NORN_S3_SECRET_ACCESS_KEY": "secret",
     });
     let mut connect = Connect::new("[]", &vars.to_string()).unwrap();
     let mut quarantined = BTreeMap::<String, u64>::new();

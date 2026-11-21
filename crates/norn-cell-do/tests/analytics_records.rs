@@ -44,7 +44,12 @@ impl Transport for Loading {
         }
         let request: LoadRequest = serde_json::from_str(&call.body).expect("a load");
         let bytes = self.1.lock().unwrap()[&request.file.url].clone();
-        let path = self.0.0.scratch().join(format!("load-{}", request.load));
+        let path = self
+            .0
+            .0
+            .scratch(&request.tenant)
+            .expect("scratch")
+            .join(format!("load-{}", request.load));
         std::fs::write(&path, bytes).expect("scratch file");
         let loaded = self.0.0.load(&request, &path);
         std::fs::remove_file(&path).expect("scratch removed");

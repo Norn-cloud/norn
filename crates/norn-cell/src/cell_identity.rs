@@ -102,10 +102,9 @@ impl<E: SqlEngine> CellStore<E> {
         model: crate::Model,
         expected: &CellId,
     ) -> Result<Self, CellError> {
-        let store =
-            Self::from_engine_with_identity_source(engine, model, |_| Ok(expected.clone()))?;
-        store.require_cell_id(expected)?;
-        Ok(store)
+        // Checked inside the open transaction, so a different file is
+        // refused before its open writes anything (ENGINE-UPGRADE-1).
+        Self::open_admitted(engine, model, &mut |_| Ok(expected.clone()), Some(expected))
     }
 
     /// Persisted logical identity. Legacy files without a binding remain local-only.

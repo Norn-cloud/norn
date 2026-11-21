@@ -222,8 +222,8 @@ impl Cell {
         let vars = json!({
             "NORN_S3_ENDPOINT": "https://storage.example.test",
             "NORN_S3_BUCKET": "uploads-bucket",
-            "NORN_SECRET_S3_ACCESS_KEY_ID": "key-id",
-            "NORN_SECRET_S3_SECRET_ACCESS_KEY": "secret",
+            "NORN_S3_ACCESS_KEY_ID": "key-id",
+            "NORN_S3_SECRET_ACCESS_KEY": "secret",
         });
         let connect = Connect::new("[]", &vars.to_string()).unwrap();
         Self {

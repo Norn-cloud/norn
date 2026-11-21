@@ -1,0 +1,7 @@
+{
+  "code": "core.engine.unknown_version",
+  "message": "the cell's engine stamp is not a version this engine can read",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T6"
+}
