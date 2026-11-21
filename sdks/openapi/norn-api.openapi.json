@@ -2637,7 +2637,7 @@
         ],
         "responses": {
           "200": {
-            "description": "The object's proven versions, newest first, each with its commit and what wrote it.",
+            "description": "The object's proven versions the caller may read, newest first, each with its commit and what wrote it.",
             "content": {
               "application/json": {
                 "schema": {
@@ -33125,7 +33125,7 @@
             "items": {
               "$ref": "#/components/schemas/NornObjectVersion"
             },
-            "description": "The versions listed, newest first."
+            "description": "The versions the caller may read, newest first. A version is listed\nonly when the caller holds Population and Values on that version's own\nrecord, and only when it changed a value the caller may see."
           }
         }
       },
@@ -34852,6 +34852,7 @@
             "required": [
               "actionId",
               "actor",
+              "input",
               "kind"
             ],
             "properties": {
@@ -34862,6 +34863,12 @@
               "actor": {
                 "type": "string",
                 "description": "The verified caller the server attributed the call to."
+              },
+              "input": {
+                "type": "object",
+                "description": "Deprecated: always the empty object. The call's effective input is never disclosed.",
+                "additionalProperties": true,
+                "deprecated": true
               },
               "kind": {
                 "type": "string",

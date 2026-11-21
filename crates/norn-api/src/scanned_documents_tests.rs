@@ -467,6 +467,33 @@ impl crate::object_routes::ObjectAccess for NoSources {
     }
 }
 
+/// [`Access`] under a row-level rule: a document is read only once a
+/// steward has corrected it (its `corrected_by` names one). The rule reads the
+/// row it is asked about, so a document's earlier versions, written before
+/// the field was set, stay denied after it is.
+struct CorrectedOnly;
+impl crate::object_routes::ObjectAccess for CorrectedOnly {
+    fn access(
+        &self,
+        scope: &CellScope,
+        actor: &str,
+        capability: ReadCapability,
+        object_type: &str,
+        row: Option<&ObjectRecord>,
+    ) -> Result<norn_kernel::authz::AccessRequest, Refusal> {
+        if let Some(row) = row
+            && row.object_type == DOCUMENT
+            && !matches!(
+                row.values.get("corrected_by"),
+                Some(RuntimeValue::String(_))
+            )
+        {
+            return Err(read_denied());
+        }
+        Access.access(scope, actor, capability, object_type, row)
+    }
+}
+
 fn scope_query() -> crate::scope::ScopeQuery {
     crate::scope::ScopeQuery {
         org_id: Some("org_demo".into()),
@@ -828,8 +855,10 @@ fn corrected_with_history(host: &DevHost<NativeEngine>, slipped: u64) {
     let (newest, oldest) = (&history.versions[0], &history.versions[1]);
     // The writer is the action and its verified actor, and nothing of the
     // call's effective input: the kernel stores that as one plain value even
-    // when preparation or a derivation put restricted values in it.
-    let named = serde_json::json!({ "kind": "action", "actionId": CORRECT, "actor": STEWARD });
+    // when preparation or a derivation put restricted values in it. The
+    // deprecated `input` stays in the frozen contract, always empty.
+    let named =
+        serde_json::json!({ "kind": "action", "actionId": CORRECT, "actor": STEWARD, "input": {} });
     assert_eq!(
         serde_json::to_value(&newest.writer).expect("writer"),
         named,
@@ -858,6 +887,7 @@ fn corrected_with_history(host: &DevHost<NativeEngine>, slipped: u64) {
         other @ (Action { .. } | Other) => panic!("the import is the mapping's: {other:?}"),
     }
     without_sources(host, slipped, &history, named);
+    granted_later(host, slipped, &history);
     let value = |version: &crate::object_review::NornObjectVersion| match version
         .values
         .as_ref()
@@ -878,6 +908,54 @@ fn corrected_with_history(host: &DevHost<NativeEngine>, slipped: u64) {
         &Access,
     )
     .expect("the imported version keeps its lineage");
+}
+
+/// A caller whose row-level grant opened only with the correction (#1519 S5)
+/// is listed the corrected version alone: the imported version's values,
+/// lineage, version, commit and time were written under the row's denial, and
+/// stay withheld.
+fn granted_later(
+    host: &DevHost<NativeEngine>,
+    slipped: u64,
+    history: &crate::object_review::NornObjectHistory,
+) {
+    let later = crate::object_review::get_object_history(
+        host,
+        &scope_query(),
+        Some(STEWARD),
+        DOCUMENT,
+        "SCAN-RPT-1117",
+        &CorrectedOnly,
+    )
+    .expect("the corrected row is readable");
+    let versions: Vec<u64> = later
+        .versions
+        .iter()
+        .map(|version| version.version)
+        .collect();
+    assert_eq!(versions, [history.versions[0].version], "{later:#?}");
+    let imported = history
+        .versions
+        .iter()
+        .find(|version| version.version == slipped)
+        .expect("the import is listed to a caller who may read it");
+    let document = serde_json::to_string(&later).expect("history");
+    for withheld in [
+        "docs.scans.mapping".to_owned(),
+        format!("\"commit\":{},", imported.commit),
+        format!("\"logicalTime\":{},", imported.logical_time),
+    ] {
+        assert!(
+            !document.contains(&withheld),
+            "{withheld} leaked: {document}"
+        );
+    }
+    assert!(
+        !later.versions.iter().any(|version| version.values.as_ref().is_some_and(|values| {
+            matches!(values.get("total"), Some(RuntimeValue::Number(total)) if total.to_string() == "720")
+        })),
+        "{later:#?}"
+    );
 }
 
 /// A caller with Population and Values but no Sources (a member) reads the

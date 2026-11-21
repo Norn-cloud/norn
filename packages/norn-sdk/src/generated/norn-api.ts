@@ -11952,7 +11952,11 @@ export interface components {
             objectType: string;
             /** @description True when older versions exist beyond [`MAX_HISTORY_VERSIONS`]. */
             truncated: boolean;
-            /** @description The versions listed, newest first. */
+            /**
+             * @description The versions the caller may read, newest first. A version is listed
+             *     only when the caller holds Population and Values on that version's own
+             *     record, and only when it changed a value the caller may see.
+             */
             versions: components["schemas"]["NornObjectVersion"][];
         };
         /**
@@ -12751,6 +12755,13 @@ export interface components {
             actionId: string;
             /** @description The verified caller the server attributed the call to. */
             actor: string;
+            /**
+             * @deprecated
+             * @description Deprecated: always the empty object. The call's effective input is never disclosed.
+             */
+            input: {
+                [key: string]: unknown;
+            };
             /** @enum {string} */
             kind: "action";
         } | {
@@ -14965,7 +14976,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The object's proven versions, newest first, each with its commit and what wrote it. */
+            /** @description The object's proven versions the caller may read, newest first, each with its commit and what wrote it. */
             200: {
                 headers: {
                     [name: string]: unknown;

@@ -187,6 +187,16 @@ test("changes: a member (no Sources, no call records) sees the history list in b
   await expect(recent).not.toContainText("Imported from")
   const history = page.locator("#record-history")
   await expect(history.locator("ol > li")).toHaveCount(2)
+  // The header names the version the page shows, and the commit and time that wrote it, from the same cell.
+  const chip = (label: string) => page.locator("section > header").first().locator('[data-slot="fact-chip"]', { hasText: label }).locator("span").last()
+  await expect(chip("version")).toHaveText("2")
+  await expect(chip("commit")).toHaveText("412")
+  await expect(chip("as of")).toContainText("20 Nov")
+  // A writer the cell does not name is said in short, with the reason in its tooltip.
+  const hidden = history.locator("[data-hidden-writer]").first()
+  await expect(hidden).toContainText("Change not shown to you")
+  await expect(hidden).toHaveAttribute("title", "Written by a rule, an import, or a call not shown to you")
+  await expect(page.getByText("Written by a rule, an import, or a call not shown to you", { exact: true })).toHaveCount(0)
   await expect(page.locator("[data-history-unavailable]")).toHaveCount(0)
   await expect(page.getByText("No such readable object.")).toHaveCount(0)
   await expect(page.getByText("The history could not be read.")).toHaveCount(0)
