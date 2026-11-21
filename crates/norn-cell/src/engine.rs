@@ -1004,8 +1004,9 @@ mod retained_writes {
 
     /// A native cell file and, through another connection to it (an
     /// out-of-process editor), a parent table whose rows a foreign-key action
-    /// cascades into a retained receipt table, and a trigger that writes
-    /// that table under a mixed-case name.
+    /// cascades into a retained receipt table, and a retained table the
+    /// editor created under a mixed-case name (SQLite reports the name as
+    /// stored), which a trigger writes.
     fn edited() -> (tempfile::TempDir, NativeEngine) {
         let dir = tempfile::tempdir().expect("directory");
         let path = dir.path().join("cell.sqlite");
@@ -1023,8 +1024,10 @@ mod retained_writes {
                 );
                 INSERT INTO "editor_parent" VALUES (1);
                 INSERT INTO "_norn_definition_admission_receipt" VALUES (1, 'receipt', 1);
+                CREATE TABLE "_NORN_Retained_Definition" ("id" TEXT PRIMARY KEY);
+                INSERT INTO "_NORN_Retained_Definition" VALUES ('kept');
                 CREATE TRIGGER "editor_rewrite" AFTER INSERT ON "editor_log" BEGIN
-                  DELETE FROM "_NORN_Definition_Admission_Receipt";
+                  DELETE FROM "_norn_retained_definition";
                 END;"#,
             )
             .expect("editor schema");
@@ -1060,14 +1063,21 @@ mod retained_writes {
             engine
                 .execute(r#"INSERT INTO "editor_log" VALUES (1)"#, &[])
                 .is_err(),
-            "the trigger writes the receipt table under a mixed-case name"
+            "the trigger writes a retained table stored under a mixed-case name"
         );
         assert!(
             engine
-                .execute(r#"DELETE FROM "_NORN_RETAINED_definition""#, &[])
+                .execute(r#"DELETE FROM "_norn_retained_definition""#, &[])
                 .is_err()
         );
-        assert_eq!(receipts(&engine), 1);
+        let kept: i64 = engine
+            .query_row(
+                r#"SELECT COUNT(*) FROM "_norn_retained_definition""#,
+                &[],
+                |row| row.get(0),
+            )
+            .expect("count");
+        assert_eq!(kept, 1);
     }
 }
 
