@@ -974,7 +974,7 @@ fn a_residue_past_the_page_bound_is_refused_and_leaves_nothing_staged() {
     let pages = usize::try_from(MAX_RESIDUE_PAGES).expect("pages");
     let fits: Vec<Line> = (0..pages).map(|_| plain(Some("ann"))).collect();
     let over: Vec<Line> = (0..=pages).map(|_| plain(Some("ann"))).collect();
-    let paged = |lines: &[Line]| {
+    let land_paged = |lines: &[Line]| {
         let bytes = csv(lines);
         let mut request = land_request(&cell, bytes.as_bytes(), FileFormat::Csv);
         request.residue_page = 1;
@@ -984,10 +984,10 @@ fn a_residue_past_the_page_bound_is_refused_and_leaves_nothing_staged() {
         });
         (request, landed)
     };
-    let (_, refused) = paged(&over);
+    let (_, refused) = land_paged(&over);
     assert_eq!(refused.expect_err("too many pages").code, RESIDUE_EXCEEDED);
     assert_eq!(attempts_left(engine_dir.path()), 0, "nothing is staged");
-    let (mut request, landed) = paged(&fits);
+    let (mut request, landed) = land_paged(&fits);
     let landed = landed.expect("the bound itself lands");
     request.attempt.clone_from(&landed.attempt);
     let (landed, residue, _) = settle_all(&engine, &cell, &request, landed);
