@@ -135,16 +135,45 @@ fn quantity_receipts(store: &CellStore<NativeEngine>) -> String {
         )
 }
 
+/// The last export record at or before the head, as the open checkpoint
+/// pins it (S2, #1551 round 2): its commit and digest, or none.
+fn export_pin(store: &CellStore<NativeEngine>, commits: u64) -> (Value, Value) {
+    (1..=commits)
+        .rev()
+        .find_map(|commit| {
+            store
+                .export_record(commit)
+                .expect("export record")
+                .map(|record| (commit.into(), record.hash().expect("record digest").into()))
+        })
+        .unwrap_or((Value::Null, Value::Null))
+}
+
+/// The open checkpoint's definitions digest, folded here independently over
+/// every retained definition version (#1551 round 3).
+fn definitions_digest(store: &CellStore<NativeEngine>) -> String {
+    store
+        .read()
+        .installed_definition_versions()
+        .expect("definition versions")
+        .iter()
+        .fold(norn1(&"norn.open-checkpoint.definitions/1"), |digest, version| {
+            norn1(&(digest.as_str(), norn1(version).as_str()))
+        })
+}
+
 /// Storage version 5 (OPEN-CHECKPOINT-1, #1533) adds `_norn_open_checkpoint`,
 /// and the upgrading open records in it the head it verified, with the root
-/// of its receipts and the digest of its quantity receipts: the one row it
-/// writes besides the stamp.
+/// of its receipts, the digest of its quantity receipts, the last export
+/// record it covers and the digest of its definition versions: the one row
+/// it writes besides the stamp.
 fn add_open_checkpoint(
     expected: &mut Value,
     after: &Value,
     head: &LedgerHead,
     root: &str,
     quantity: &str,
+    pins: &((Value, Value), String),
 ) {
     let entry = after["schema"]
         .as_array()
@@ -154,6 +183,7 @@ fn add_open_checkpoint(
         .expect("the upgrade adds the open checkpoint table")
         .clone();
     assert_eq!(entry["type"], "table");
+    let ((export_seq, export_hash), definitions) = pins;
     expected["schema"]
         .as_array_mut()
         .expect("schema")
@@ -161,8 +191,8 @@ fn add_open_checkpoint(
     expected["tables"].as_object_mut().expect("tables").insert(
         "_norn_open_checkpoint".to_owned(),
         serde_json::json!({
-            "columns": ["rowid", "id", "commits", "seq", "hash", "receipts_root", "boundary_seq", "boundary_commit", "quantity_receipts"],
-            "rows": [[1, 1, head.commits, head.seq, head.hash, root, null, null, quantity]],
+            "columns": ["rowid", "id", "commits", "seq", "hash", "receipts_root", "boundary_seq", "boundary_commit", "quantity_receipts", "export_seq", "export_hash", "definitions"],
+            "rows": [[1, 1, head.commits, head.seq, head.hash, root, null, null, quantity, export_seq, export_hash, definitions]],
         }),
     );
 }
@@ -312,6 +342,7 @@ fn a_storage_v1_cell_opens_on_this_engine_with_identical_receipts() {
     let head = store.read().verify_ledger().expect("the ledger verifies");
     let root = receipts_root(&store);
     let quantity = quantity_receipts(&store);
+    let pins = (export_pin(&store, head.commits), definitions_digest(&store));
     assert_eq!(head.commits, 3);
     let receipts = store.read().receipts().expect("receipts");
     assert_eq!(receipts.len(), 3);
@@ -366,7 +397,7 @@ fn a_storage_v1_cell_opens_on_this_engine_with_identical_receipts() {
     }));
     // The v1 fixture holds no decision, so nothing is backfilled.
     add_approval_recovery_tables(&mut expected, &serde_json::json!([]));
-    add_open_checkpoint(&mut expected, &after, &head, &root, &quantity);
+    add_open_checkpoint(&mut expected, &after, &head, &root, &quantity, &pins);
     let mut catalog = after;
     by_name(&mut catalog);
     by_name(&mut expected);
@@ -433,6 +464,7 @@ fn a_storage_v2_cell_opens_on_this_engine_with_identical_receipts() {
     let mut store = open(&path).expect("a v2 cell opens on this engine");
     let root = receipts_root(&store);
     let quantity = quantity_receipts(&store);
+    let pins = (export_pin(&store, head.commits), definitions_digest(&store));
     let head = store.read().verify_ledger().expect("the ledger verifies");
     assert_eq!(head.commits, engine_fixture::COMMITS);
     let receipts = store.read().receipts().expect("receipts");
@@ -490,7 +522,7 @@ fn a_storage_v2_cell_opens_on_this_engine_with_identical_receipts() {
     stamp_row[2] = stamp.into();
     expected["storage"] = STORAGE_VERSION.into();
     add_approval_recovery_tables(&mut expected, approved);
-    add_open_checkpoint(&mut expected, &after, &head, &root, &quantity);
+    add_open_checkpoint(&mut expected, &after, &head, &root, &quantity, &pins);
     let mut catalog = after;
     by_name(&mut catalog);
     by_name(&mut expected);
@@ -535,6 +567,7 @@ fn a_storage_v3_cell_opens_on_this_engine_with_identical_receipts() {
     let head = store.read().verify_ledger().expect("the ledger verifies");
     let root = receipts_root(&store);
     let quantity = quantity_receipts(&store);
+    let pins = (export_pin(&store, head.commits), definitions_digest(&store));
     assert_eq!(head.commits, engine_fixture::COMMITS);
     let receipts = store.read().receipts().expect("receipts");
     assert_eq!(
@@ -587,7 +620,7 @@ fn a_storage_v3_cell_opens_on_this_engine_with_identical_receipts() {
         .expect("the v3 cell is stamped");
     stamp_row[2] = stamp.into();
     expected["storage"] = STORAGE_VERSION.into();
-    add_open_checkpoint(&mut expected, &after, &head, &root, &quantity);
+    add_open_checkpoint(&mut expected, &after, &head, &root, &quantity, &pins);
     let mut catalog = after;
     by_name(&mut catalog);
     by_name(&mut expected);
@@ -630,6 +663,7 @@ fn a_storage_v4_cell_opens_on_this_engine_with_identical_receipts() {
     let head = store.read().verify_ledger().expect("the ledger verifies");
     let root = receipts_root(&store);
     let quantity = quantity_receipts(&store);
+    let pins = (export_pin(&store, head.commits), definitions_digest(&store));
     assert_eq!(head.commits, engine_fixture::COMMITS);
     let receipts = store.read().receipts().expect("receipts");
     for (batch, receipt) in engine_fixture::batches().iter().zip(&receipts) {
@@ -652,7 +686,7 @@ fn a_storage_v4_cell_opens_on_this_engine_with_identical_receipts() {
         .expect("the v4 cell is stamped");
     stamp_row[2] = stamp.into();
     expected["storage"] = STORAGE_VERSION.into();
-    add_open_checkpoint(&mut expected, &after, &head, &root, &quantity);
+    add_open_checkpoint(&mut expected, &after, &head, &root, &quantity, &pins);
     let mut catalog = after;
     by_name(&mut catalog);
     by_name(&mut expected);
