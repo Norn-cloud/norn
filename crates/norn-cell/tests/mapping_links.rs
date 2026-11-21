@@ -1314,6 +1314,13 @@ fn obs_link_dispute_freezes_the_disputed_records_links() {
         vec![conflict.clone(), vec![(north, owner, 1)]],
     ]
     .concat();
+    // The owner lands only after the conflict: the disputed claim B keeps
+    // its standing but adds no edge, on either path.
+    let absent = [
+        history.to_vec(),
+        vec![conflict.clone(), vec![(party_owner, owner, 1)]],
+    ]
+    .concat();
     // The customer lands only after the conflict, so its commit reads
     // south's group on both paths and in production too. Before the fix it
     // revived A and added south -peers-> customer.
@@ -1332,6 +1339,7 @@ fn obs_link_dispute_freezes_the_disputed_records_links() {
             dispute_mismatches(&issue, &[(NORTH, OWNER), (SOUTH, OWNER)]),
         ),
         ("late target", dispute_mismatches(&late, &[(SOUTH, OWNER)])),
+        ("owner absent at dispute", dispute_mismatches(&absent, &[])),
     ];
     assert!(
         mismatches.iter().all(|(_, found)| found.is_empty()),
