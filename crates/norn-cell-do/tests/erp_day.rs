@@ -167,6 +167,22 @@ impl Host {
             .map(|meta| meta.len())
             .sum()
     }
+
+    /// The host process's CPU time so far (user + system), in seconds, from
+    /// `/proc` (Linux; 0 elsewhere). Clock ticks are 100 per second on the
+    /// Linux targets this bench runs on.
+    fn cpu_seconds(&self) -> f64 {
+        let Ok(stat) = std::fs::read_to_string(format!("/proc/{}/stat", self.child.id())) else {
+            return 0.0;
+        };
+        let Some((_, rest)) = stat.rsplit_once(')') else {
+            return 0.0;
+        };
+        let fields: Vec<&str> = rest.split_whitespace().collect();
+        // After the command name: state is field 3, utime 14, stime 15.
+        let ticks = |index: usize| fields.get(index - 3).and_then(|f| f.parse::<f64>().ok()).unwrap_or(0.0);
+        (ticks(14) + ticks(15)) / 100.0
+    }
 }
 
 impl Drop for Host {
@@ -749,6 +765,15 @@ fn level(host: &Host, clients: usize, seconds: f64, target: Option<u64>) -> (Tal
     (tally, elapsed, reconnects.into_inner())
 }
 
+/// ERP-DAY-1: the host's CPU per committed command and its utilisation.
+fn cpu(tally: &Tally, elapsed: f64, cpu: f64) {
+    println!(
+        "  host cpu {cpu:.1}s = {:.2} ms/command, {:.0}% of one core",
+        cpu * 1000.0 / tally.committed.max(1) as f64,
+        cpu * 100.0 / elapsed
+    );
+}
+
 fn report(label: &str, tally: &Tally, elapsed: f64, reconnects: u64, host: &Host) {
     let all = tally.all();
     println!(
@@ -850,7 +875,9 @@ fn erp_day() {
     let mut unexpected = 0;
     if let Some(target) = target {
         let before = host.cell_bytes();
+        let cpu_before = host.cpu_seconds();
         let (tally, elapsed, reconnects) = level(&host, levels[0], 1e9, Some(target));
+        cpu(&tally, elapsed, host.cpu_seconds() - cpu_before);
         report(
             &format!("{} clients, storage run", levels[0]),
             &tally,
@@ -868,7 +895,9 @@ fn erp_day() {
         unexpected += tally.unexpected.len();
     } else {
         for clients in levels {
+            let cpu_before = host.cpu_seconds();
             let (tally, elapsed, reconnects) = level(&host, clients, seconds, None);
+            cpu(&tally, elapsed, host.cpu_seconds() - cpu_before);
             report(
                 &format!("{clients} clients"),
                 &tally,
