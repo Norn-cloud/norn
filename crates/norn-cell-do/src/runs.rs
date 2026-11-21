@@ -173,6 +173,26 @@ fn decisions_route(path: &str) -> Option<DecisionsRoute<'_>> {
         .map(DecisionsRoute::Decide)
 }
 
+/// `GET /v1/decisions:requested` (APPROVAL-REQUESTED-1): the caller's own
+/// approval-gated calls.
+fn requested<E: SqlEngine>(
+    host: &DevHost<E>,
+    actor: Option<&str>,
+    query: &str,
+    now: norn_kernel::LogicalTime,
+) -> Result<(StatusCode, String), Refusal> {
+    let mut fields = parse(query, &["orgId", "environmentId", "id"])?;
+    let query = RequestedQuery {
+        org_id: fields.remove("orgId"),
+        environment_id: fields.remove("environmentId"),
+        id: fields.remove("id"),
+    };
+    Ok((
+        StatusCode::OK,
+        document_json(&requested_decisions(host, &query, actor, now)?)?,
+    ))
+}
+
 fn decisions<E: SqlEngine>(
     steps: &Steps<'_, E>,
     actor: Option<&str>,
@@ -213,18 +233,7 @@ fn decisions<E: SqlEngine>(
                 document_json(&list_decisions(host, &query, actor, now)?)?,
             ))
         }
-        (DecisionsRoute::Requested, "GET") => {
-            let mut fields = parse(request.query, &["orgId", "environmentId", "id"])?;
-            let query = RequestedQuery {
-                org_id: fields.remove("orgId"),
-                environment_id: fields.remove("environmentId"),
-                id: fields.remove("id"),
-            };
-            Ok((
-                StatusCode::OK,
-                document_json(&requested_decisions(host, &query, actor, now)?)?,
-            ))
-        }
+        (DecisionsRoute::Requested, "GET") => requested(host, actor, request.query, now),
         (DecisionsRoute::Decide(id), "POST") => {
             let fields = parse(request.query, &["orgId", "environmentId"])?;
             let scope = ScopeQuery {

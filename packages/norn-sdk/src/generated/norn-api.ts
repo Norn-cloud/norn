@@ -222,6 +222,35 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/decisions:requested": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /v1/decisions:requested`: the caller's own approval-gated calls, as
+         *     their requester sees them (APPROVAL-1, APPROVAL-RECOVERY-1). A requester
+         *     never decides their call and never lists it among the decisions waiting
+         *     on them; this is where they learn that it was approved and retry it
+         *     (`canRun`), with the exact input and key it parked with. Without `id`:
+         *     the calls pending a decider and those approved and not yet run. With
+         *     `id`: that decision in any state, or no item when it is not the caller's
+         *     direct call (the cell does not say which).
+         * @description # Errors
+         *     Missing or foreign scope; a missing caller (one opaque 403); an invalid
+         *     id; a host failure.
+         */
+        get: operations["requested_decisions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/definitions": {
         parameters: {
             query?: never;
@@ -12919,6 +12948,84 @@ export interface components {
             /** @description RFC 6901 JSON pointer into the submitted document. */
             pointer: string;
         };
+        /**
+         * @description The parked call itself, exactly as it waits: retrying it means calling
+         *     `action` with `encodedInput` as the input and `idempotencyKey` as the key.
+         */
+        RequestedCall: {
+            /** @description The action called. */
+            action: string;
+            /** @description The approval definition that gates it. */
+            definition: string;
+            /**
+             * @description The same input as canonical JSON text, numbers digit for digit, so a
+             *     client that parses JSON into binary floats can still send it back
+             *     exactly.
+             */
+            encodedInput: string;
+            /** @description The call's idempotency key. */
+            idempotencyKey: string;
+            /** @description The call's admitted input. */
+            input: {
+                [key: string]: unknown;
+            };
+            state?: components["schemas"]["DecidedCall"] | null;
+        };
+        /**
+         * @description One approval-gated call the caller made, as its requester sees it
+         *     (APPROVAL-1): never a decider's view, and never anyone else's call.
+         */
+        RequestedDecision: {
+            /** @description The call. */
+            call: components["schemas"]["RequestedCall"];
+            /**
+             * @description The cell offers the caller to run it now: it is approved, not yet
+             *     executed, a direct call (a flow step's call runs by retrying its
+             *     run), and the caller is its requester. An offer, not a grant: the
+             *     retry is decided again under the caller's current authority.
+             */
+            canRun: boolean;
+            /**
+             * Format: int64
+             * @description When the decision expires (logical milliseconds).
+             */
+            expiresAtMs: number;
+            /** @description The opaque decision id. */
+            id: string;
+            /** @description The approval's question. */
+            question: string;
+            /**
+             * Format: int64
+             * @description When the call parked (logical milliseconds).
+             */
+            requestedAtMs: number;
+            /**
+             * Format: int64
+             * @description When it was resolved (logical milliseconds), once it was.
+             */
+            resolvedAtMs?: number | null;
+            /** @description How much is at stake. */
+            risk: components["schemas"]["DecisionRisk"];
+            /** @description Where it stands. */
+            status: components["schemas"]["RequestedStatus"];
+        };
+        /** @description The caller's own approval-gated calls. */
+        RequestedPage: {
+            /** @description Soonest deadline first, ties to the oldest request, then id. */
+            items: components["schemas"]["RequestedDecision"][];
+            /**
+             * Format: int64
+             * @description The cell's clock when the page was read (logical milliseconds).
+             */
+            serverNowMs: number;
+            /** @description More calls were not examined. */
+            totalCapped?: boolean;
+        };
+        /**
+         * @description Where the caller's parked call stands with its approval.
+         * @enum {string}
+         */
+        RequestedStatus: "pending" | "approved" | "rejected" | "expired" | "withdrawn";
         /** @description `POST /v1/definitions/{id}:retire`. */
         RetireDefinitionRequest: {
             /**
@@ -13768,6 +13875,64 @@ export interface operations {
             };
             /** @description The choice or note was refused. */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    requested_decisions: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+                /**
+                 * @description Only this decision, in whatever state it stands (the id a parked
+                 *     call's `202` answer named). Without it, the calls that wait: those
+                 *     pending a decider and those approved and not yet run.
+                 */
+                id?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The caller's own approval-gated calls. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestedPage"];
+                };
+            };
+            /** @description The request was refused as invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description The request was refused: scope or authority denied. */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

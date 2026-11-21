@@ -1010,6 +1010,92 @@
         ]
       }
     },
+    "/v1/decisions:requested": {
+      "get": {
+        "tags": [
+          "crate::decisions"
+        ],
+        "summary": "`GET /v1/decisions:requested`: the caller's own approval-gated calls, as\ntheir requester sees them (APPROVAL-1, APPROVAL-RECOVERY-1). A requester\nnever decides their call and never lists it among the decisions waiting\non them; this is where they learn that it was approved and retry it\n(`canRun`), with the exact input and key it parked with. Without `id`:\nthe calls pending a decider and those approved and not yet run. With\n`id`: that decision in any state, or no item when it is not the caller's\ndirect call (the cell does not say which).",
+        "description": "# Errors\nMissing or foreign scope; a missing caller (one opaque 403); an invalid\nid; a host failure.",
+        "operationId": "requested_decisions",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "query",
+            "description": "Only this decision, in whatever state it stands (the id a parked\ncall's `202` answer named). Without it, the calls that wait: those\npending a decider and those approved and not yet run.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The caller's own approval-gated calls.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestedPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request was refused as invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
     "/v1/definitions": {
       "get": {
         "tags": [
@@ -35263,6 +35349,153 @@
             "description": "RFC 6901 JSON pointer into the submitted document."
           }
         }
+      },
+      "RequestedCall": {
+        "type": "object",
+        "description": "The parked call itself, exactly as it waits: retrying it means calling\n`action` with `encodedInput` as the input and `idempotencyKey` as the key.",
+        "required": [
+          "action",
+          "definition",
+          "input",
+          "encodedInput",
+          "idempotencyKey"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "The action called."
+          },
+          "definition": {
+            "type": "string",
+            "description": "The approval definition that gates it."
+          },
+          "encodedInput": {
+            "type": "string",
+            "description": "The same input as canonical JSON text, numbers digit for digit, so a\nclient that parses JSON into binary floats can still send it back\nexactly."
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "description": "The call's idempotency key."
+          },
+          "input": {
+            "type": "object",
+            "description": "The call's admitted input.",
+            "additionalProperties": {},
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "state": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DecidedCall",
+                "description": "Once it is approved, where the call stands (APPROVAL-RECOVERY-1)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "RequestedDecision": {
+        "type": "object",
+        "description": "One approval-gated call the caller made, as its requester sees it\n(APPROVAL-1): never a decider's view, and never anyone else's call.",
+        "required": [
+          "id",
+          "question",
+          "risk",
+          "requestedAtMs",
+          "expiresAtMs",
+          "status",
+          "call",
+          "canRun"
+        ],
+        "properties": {
+          "call": {
+            "$ref": "#/components/schemas/RequestedCall",
+            "description": "The call."
+          },
+          "canRun": {
+            "type": "boolean",
+            "description": "The cell offers the caller to run it now: it is approved, not yet\nexecuted, a direct call (a flow step's call runs by retrying its\nrun), and the caller is its requester. An offer, not a grant: the\nretry is decided again under the caller's current authority."
+          },
+          "expiresAtMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When the decision expires (logical milliseconds).",
+            "minimum": 0
+          },
+          "id": {
+            "type": "string",
+            "description": "The opaque decision id."
+          },
+          "question": {
+            "type": "string",
+            "description": "The approval's question."
+          },
+          "requestedAtMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When the call parked (logical milliseconds).",
+            "minimum": 0
+          },
+          "resolvedAtMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When it was resolved (logical milliseconds), once it was.",
+            "minimum": 0
+          },
+          "risk": {
+            "$ref": "#/components/schemas/DecisionRisk",
+            "description": "How much is at stake."
+          },
+          "status": {
+            "$ref": "#/components/schemas/RequestedStatus",
+            "description": "Where it stands."
+          }
+        }
+      },
+      "RequestedPage": {
+        "type": "object",
+        "description": "The caller's own approval-gated calls.",
+        "required": [
+          "items",
+          "serverNowMs"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RequestedDecision"
+            },
+            "description": "Soonest deadline first, ties to the oldest request, then id."
+          },
+          "serverNowMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The cell's clock when the page was read (logical milliseconds).",
+            "minimum": 0
+          },
+          "totalCapped": {
+            "type": "boolean",
+            "description": "More calls were not examined."
+          }
+        }
+      },
+      "RequestedStatus": {
+        "type": "string",
+        "description": "Where the caller's parked call stands with its approval.",
+        "enum": [
+          "pending",
+          "approved",
+          "rejected",
+          "expired",
+          "withdrawn"
+        ]
       },
       "RetireDefinitionRequest": {
         "type": "object",
