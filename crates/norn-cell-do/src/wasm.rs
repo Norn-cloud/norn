@@ -171,7 +171,8 @@ impl NornCell {
     #[wasm_bindgen(constructor)]
     #[allow(
         clippy::too_many_arguments,
-        reason = "wasm-bindgen constructors take the Worker's bindings positionally"
+        clippy::needless_pass_by_value,
+        reason = "wasm-bindgen constructors take the Worker's bindings positionally, optional strings by value"
     )]
     pub fn new(
         storage: JsValue,
