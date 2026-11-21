@@ -49,7 +49,7 @@ globalThis.fetch = async (input) => {
 
 // The Worker as it ships (every module beside it), with the built package as its pkg/.
 const dir = mkdtempSync(join(tmpdir(), "norn-cell-wasm-boundary-"));
-for (const file of ["worker.mjs", "subscribe.mjs", "wake.mjs", "telemetry.mjs", "otlp.mjs"]) copyFileSync(join(import.meta.dir, file), join(dir, file));
+for (const file of ["worker.mjs", "subscribe.mjs", "wake.mjs", "connect_vars.mjs", "telemetry.mjs", "otlp.mjs"]) copyFileSync(join(import.meta.dir, file), join(dir, file));
 // The whole package: wasm-bindgen's inline JS snippets live beside the module.
 cpSync(PKG, join(dir, "pkg"), { recursive: true });
 // The Workers bundler imports the .wasm as a compiled module; so does this loader.
