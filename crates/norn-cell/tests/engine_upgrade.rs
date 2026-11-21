@@ -157,9 +157,10 @@ fn definitions_digest(store: &CellStore<NativeEngine>) -> String {
         .installed_definition_versions()
         .expect("definition versions")
         .iter()
-        .fold(norn1(&"norn.open-checkpoint.definitions/1"), |digest, version| {
-            norn1(&(digest.as_str(), norn1(version).as_str()))
-        })
+        .fold(
+            norn1(&"norn.open-checkpoint.definitions/1"),
+            |digest, version| norn1(&(digest.as_str(), norn1(version).as_str())),
+        )
 }
 
 /// Storage version 5 (OPEN-CHECKPOINT-1, #1533) adds `_norn_open_checkpoint`,
@@ -464,8 +465,8 @@ fn a_storage_v2_cell_opens_on_this_engine_with_identical_receipts() {
     let mut store = open(&path).expect("a v2 cell opens on this engine");
     let root = receipts_root(&store);
     let quantity = quantity_receipts(&store);
-    let pins = (export_pin(&store, head.commits), definitions_digest(&store));
     let head = store.read().verify_ledger().expect("the ledger verifies");
+    let pins = (export_pin(&store, head.commits), definitions_digest(&store));
     assert_eq!(head.commits, engine_fixture::COMMITS);
     let receipts = store.read().receipts().expect("receipts");
     assert_eq!(
