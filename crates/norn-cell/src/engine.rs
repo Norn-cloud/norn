@@ -744,11 +744,13 @@ impl NativeEngine {
 /// ASCII case, as SQLite resolves it.
 #[cfg(feature = "native")]
 fn retained_table(table: &str) -> bool {
-    ["_norn_definition_", "_norn_retained_"].iter().any(|prefix| {
-        table
-            .get(..prefix.len())
-            .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
-    })
+    ["_norn_definition_", "_norn_retained_"]
+        .iter()
+        .any(|prefix| {
+            table
+                .get(..prefix.len())
+                .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
+        })
 }
 
 /// Ends a [`SqlEngine::definition_writes`] scope, also on unwinding: the
@@ -1010,8 +1012,8 @@ mod retained_writes {
     fn edited() -> (tempfile::TempDir, NativeEngine) {
         let dir = tempfile::tempdir().expect("directory");
         let path = dir.path().join("cell.sqlite");
-        let engine = NativeEngine::open(&path, crate::store::StoreOptions::default())
-            .expect("engine opens");
+        let engine =
+            NativeEngine::open(&path, crate::store::StoreOptions::default()).expect("engine opens");
         rusqlite::Connection::open(&path)
             .expect("editor connection")
             .execute_batch(

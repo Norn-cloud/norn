@@ -1251,9 +1251,14 @@ fn a_kernel_label_in_a_cell_without_markings_leaves_public_reads_served() {
     let item = get_queried_object(&cell, &scope("org_a"), Some("viewer"), ITEM, "i1", &Mapping)
         .expect("a public object is served");
     assert_eq!(item.values.unwrap().get("name"), Some(&V::from("Lathe")));
-    if let Ok(run) =
-        get_queried_object(&cell, &scope("org_a"), Some("viewer"), "norn.RuleRun", "r1", &Mapping)
-    {
+    if let Ok(run) = get_queried_object(
+        &cell,
+        &scope("org_a"),
+        Some("viewer"),
+        "norn.RuleRun",
+        "r1",
+        &Mapping,
+    ) {
         assert_eq!(run.values.unwrap().get("detail"), None);
     }
 }
@@ -1278,7 +1283,10 @@ fn a_declassified_history_is_never_served_clear_from_an_empty_catalog() {
             norn_cell::StoreOptions::default(),
         )
         .unwrap()
-        .execute("UPDATE \"_norn_marking_current\" SET \"markings\" = '[]'", &[])
+        .execute(
+            "UPDATE \"_norn_marking_current\" SET \"markings\" = '[]'",
+            &[],
+        )
         .unwrap();
     }
     swap_retained_set(&dir, &|set| {
