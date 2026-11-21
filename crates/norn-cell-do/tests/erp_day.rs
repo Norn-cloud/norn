@@ -450,7 +450,11 @@ impl Client<'_> {
                 .call("GET", &format!("/v1/objects/erp.{kind}/{id}"), &token, None);
         self.tally
             .outcomes
-            .push(format!("read\t{kind}/{id}\t{status}\t{}", body["values"]));
+            .push(if status == 200 {
+                format!("read\t{kind}/{id}\t{status}\t{}", body["values"])
+            } else {
+                format!("read\t{kind}/{id}\t{status}\t{body}")
+            });
         (status == 200).then_some(body)
     }
 
@@ -460,7 +464,8 @@ impl Client<'_> {
         let bin = format!("BIN-{item:04}");
         for attempt in 0..50 {
             let Some(current) = self.read("Bin", &bin) else {
-                self.tally.unexpected.push(format!("no bin {bin}"));
+                let why = self.tally.outcomes.last().cloned().unwrap_or_default();
+                self.tally.unexpected.push(format!("no bin {bin}: {why}"));
                 return;
             };
             let on_hand = cents(&current["values"]["on_hand"]) / 100;
