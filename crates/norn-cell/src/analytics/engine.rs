@@ -688,8 +688,12 @@ impl Engine {
     /// engine failure.
     pub fn settle(&self, request: &SettleRequest) -> Outcome<LandResponse> {
         let land = &request.land;
-        let mut lease =
-            self.lease_attempt(&land.load.tenant, &land.attempt, &land.landing, Phase::Staged)?;
+        let mut lease = self.lease_attempt(
+            &land.load.tenant,
+            &land.attempt,
+            &land.landing,
+            Phase::Staged,
+        )?;
         let staged_table = staged(&land.load.table, &land.attempt);
         let settled = self.with(&land.load.tenant, |conn| {
             if meta(conn, &format!("load:{}", staged_table.name))?.as_deref()
@@ -853,8 +857,7 @@ impl Engine {
                 return Err(refusal("analytics.invalid", "a digest is 64 hex digits"));
             }
         }
-        let lease = match self.lease_attempt(tenant, &land.attempt, &land.landing, Phase::Written)
-        {
+        let lease = match self.lease_attempt(tenant, &land.attempt, &land.landing, Phase::Written) {
             Ok(lease) => lease,
             Err(unknown) if unknown.code == ATTEMPT_UNKNOWN => {
                 return self.stored(request, data_file, held_file).ok_or(unknown);

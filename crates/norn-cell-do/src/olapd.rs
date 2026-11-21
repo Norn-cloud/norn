@@ -688,13 +688,18 @@ fn settle(engine: &Engine, request: &SettleRequest) -> Outcome<LandResponse> {
 /// them for the dataset's cache identity. The engine's store owns the
 /// attempt's cleanup; nothing here removes anything.
 fn store(engine: &Engine, request: &StoreRequest) -> Outcome<LandResponse> {
-    let sha256 = |file: &Option<norn_cell::analytics::LandedFile>| {
-        file.as_ref().map(|file| file.sha256.clone()).unwrap_or_default()
+    // The engine sends only files whose answer names both digests.
+    let sha256 = |file: Option<&norn_cell::analytics::LandedFile>| {
+        file.map(|file| file.sha256.clone()).unwrap_or_default()
     };
+    let (data_sha256, held_sha256) = (
+        sha256(request.landed.data.as_ref()),
+        sha256(request.landed.held.as_ref()),
+    );
     engine.store(request, |data, held| {
         let agent = agent();
-        upload(&agent, &request.data.url, data, &sha256(&request.landed.data))?;
-        upload(&agent, &request.held.url, held, &sha256(&request.landed.held))
+        upload(&agent, &request.data.url, data, &data_sha256)?;
+        upload(&agent, &request.held.url, held, &held_sha256)
     })
 }
 
