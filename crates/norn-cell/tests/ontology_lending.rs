@@ -183,8 +183,8 @@ impl Vocabulary {
                     held["target"].as_str().expect("target").to_owned(),
                     link["target"].as_str().expect("target").to_owned(),
                 );
-                if !self.lineage(&[mine.clone()]).contains(&theirs)
-                    && self.lineage(&[theirs.clone()]).contains(&mine)
+                if !self.lineage(std::slice::from_ref(&mine)).contains(&theirs)
+                    && self.lineage(std::slice::from_ref(&theirs)).contains(&mine)
                 {
                     held["target"] = json!(theirs);
                 }
@@ -384,7 +384,7 @@ impl Plan {
 
 type Commit = CellCommit<FactEvent, JsonObject, JsonObject>;
 
-fn entity(name: &str, object_type: Value) -> ArtifactEnvelope {
+fn entity(name: &str, object_type: &Value) -> ArtifactEnvelope {
     let (namespace, local) = name.rsplit_once('.').expect("qualified");
     serde_json::from_value(json!({
         "irVersion": "0.1", "artifactId": format!("{name}.entity"), "kind": "entity",
@@ -429,7 +429,7 @@ fn definitions(
     set.extend(
         plan.order
             .iter()
-            .map(|name| entity(name, plan.object_type(name, ontology, example.reads))),
+            .map(|name| entity(name, &plan.object_type(name, ontology, example.reads))),
     );
     set.extend(example.laws.iter().copied().map(law));
     set
