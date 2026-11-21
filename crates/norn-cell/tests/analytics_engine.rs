@@ -2507,6 +2507,78 @@ fn a_store_never_removes_an_attempt_it_does_not_hold() {
     assert!(attempts(dir.path()).is_empty());
 }
 
+/// OLAP-02 (Sol r4 S1): a store answers from the engine's own record of the
+/// attempt, never from the caller's body. The first store takes only the
+/// answer its landing gave; a replay is the saved receipt of exactly that
+/// store (only the presigned URLs, minted per call, may differ) and answers
+/// what the store answered. A replay that changes the row counts, the
+/// landing, the load or the attempt is refused, and a refused replay
+/// changes nothing a later honest replay reads.
+#[test]
+fn a_store_answers_its_own_receipt_and_refuses_any_other_body() {
+    use norn_cell::analytics::engine::ATTEMPT_UNKNOWN;
+    let (dir, engine) = engine();
+    let (_store, plan, _context) = by_metal(true, 100);
+    let request = landing_request(&plan);
+    let landed = land(&engine, &request);
+    let honest = store_request(&request, &landed);
+    let stale = "core.compute.stale_input";
+    // The first store takes only the answer the landing gave.
+    let mut inflated = honest.clone();
+    inflated.landed.load.rows += 1;
+    inflated.landed.data.rows += 1;
+    assert_eq!(
+        engine
+            .store(&inflated, |_data, _held| panic!("a refused store sends nothing"))
+            .expect_err("counts the landing never answered")
+            .code,
+        stale
+    );
+    assert_eq!(attempts(dir.path()), vec![landed.attempt.clone()], "intact");
+    let stored = store(&engine, &honest).expect("stored");
+    assert!(stored.stored.is_some());
+    assert!(attempts(dir.path()).is_empty());
+    let replay = |body: &StoreRequest| {
+        engine.store(body, |_data, _held| panic!("a replay sends nothing"))
+    };
+    // Changed row counts.
+    let mut counts = honest.clone();
+    counts.landed.load.rows = 1_000;
+    counts.landed.load.rejected = 0;
+    counts.landed.data.rows = 1_000;
+    counts.landed.held.rows = 0;
+    assert_eq!(replay(&counts).expect_err("changed counts").code, stale);
+    // A changed landing identity, consistent across the body.
+    let mut other_landing = honest.clone();
+    other_landing.land.landing = "landing-2".into();
+    other_landing.landed.landing = "landing-2".into();
+    assert_eq!(replay(&other_landing).expect_err("changed landing").code, stale);
+    // A changed load identity.
+    let mut other_load = honest.clone();
+    other_load.land.load.load = "land-2".into();
+    other_load.landed.load.load = "land-2".into();
+    assert_eq!(replay(&other_load).expect_err("changed load").code, stale);
+    // A changed object URI.
+    let mut other_uri = honest.clone();
+    other_uri.data.uri = "s3://synthetic/elsewhere.parquet".into();
+    assert_eq!(replay(&other_uri).expect_err("changed object").code, stale);
+    // Another attempt token, never stored: no receipt names it.
+    let mut other_attempt = honest.clone();
+    other_attempt.land.attempt = "aNeverStored".into();
+    other_attempt.landed.attempt = "aNeverStored".into();
+    assert_eq!(
+        replay(&other_attempt).expect_err("unknown attempt").code,
+        ATTEMPT_UNKNOWN
+    );
+    // Refreshed presigned URLs (PUT and GET) replay as the saved answer.
+    let mut refreshed = honest.clone();
+    refreshed.data.url = "https://synthetic/put-data?sig=2".into();
+    refreshed.held.url = "https://synthetic/put-held?sig=2".into();
+    refreshed.land.load.file.url = "https://synthetic/get?sig=2".into();
+    assert_eq!(replay(&refreshed).expect("refreshed URLs replay"), stored);
+    assert_eq!(replay(&honest).expect("replayed"), stored);
+}
+
 /// MANIFEST-COMMIT-1 / MANIFEST-PIN-1 / MANIFEST-CURRENT-1 / MANIFEST-04: a
 /// manifest commits as one governed command with one receipt; its cache
 /// identity must be the one its digests make; stale pins or a malformed
