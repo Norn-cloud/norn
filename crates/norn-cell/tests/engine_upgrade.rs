@@ -123,9 +123,16 @@ fn quantity_receipts(store: &CellStore<NativeEngine>) -> String {
         .expect("receipts")
         .iter()
         .filter(|receipt| receipt.body.quantity.is_some())
-        .fold(norn1(&"norn.open-checkpoint.quantity/1"), |digest, receipt| {
-            norn1(&(digest.as_str(), receipt.body.commit_seq, receipt.hash.as_str()))
-        })
+        .fold(
+            norn1(&"norn.open-checkpoint.quantity/1"),
+            |digest, receipt| {
+                norn1(&(
+                    digest.as_str(),
+                    receipt.body.commit_seq,
+                    receipt.hash.as_str(),
+                ))
+            },
+        )
 }
 
 /// Storage version 5 (OPEN-CHECKPOINT-1, #1533) adds `_norn_open_checkpoint`,

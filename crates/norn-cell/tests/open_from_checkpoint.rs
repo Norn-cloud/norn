@@ -352,7 +352,10 @@ fn a_changed_quantity_projection_refuses_an_open_from_a_head_checkpoint() {
         let copy = dir.path().join("tampered.sqlite");
         std::fs::copy(&path, &copy).expect("copy");
         raw(&copy).execute_batch(tamper).expect("tamper");
-        assert!(open(&copy).is_err(), "{name} changed under the checkpoint opened");
+        assert!(
+            open(&copy).is_err(),
+            "{name} changed under the checkpoint opened"
+        );
         // A verification from genesis refuses it too.
         execute(&copy, "DELETE FROM _norn_open_checkpoint");
         assert!(open(&copy).is_err(), "{name} changed opened from genesis");
@@ -430,7 +433,10 @@ fn an_old_receipt_changed_in_place_is_never_served() {
         let store = open(&path).expect("the open verifies from the checkpoint");
         let reader = store.read();
         assert!(reader.receipts().is_err(), "receipts() served it");
-        assert!(reader.receipts_after(6, 1).is_err(), "receipts_after served it");
+        assert!(
+            reader.receipts_after(6, 1).is_err(),
+            "receipts_after served it"
+        );
         assert!(reader.receipt_at(7).is_err(), "receipt_at served it");
     }
     execute(&path, "DELETE FROM _norn_open_checkpoint");

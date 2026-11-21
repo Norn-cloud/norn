@@ -2678,7 +2678,8 @@ impl<E: SqlEngine> CellStore<E> {
             if commit > covered {
                 break;
             }
-            digest = crate::open_checkpoint::quantity_extend(&digest, commit, &row.get::<String>(1)?)?;
+            digest =
+                crate::open_checkpoint::quantity_extend(&digest, commit, &row.get::<String>(1)?)?;
             commits.push(commit);
         }
         let reader = self.read();
@@ -2784,7 +2785,9 @@ impl<E: SqlEngine> CellStore<E> {
             let boundary = self.quantity_boundary.get();
             self.conn.transaction(|| {
                 let previous = crate::open_checkpoint::load(&self.conn)?;
-                let from = previous.as_ref().map_or(0, |previous| previous.head.commits);
+                let from = previous
+                    .as_ref()
+                    .map_or(0, |previous| previous.head.commits);
                 if from >= commits {
                     return Ok(());
                 }

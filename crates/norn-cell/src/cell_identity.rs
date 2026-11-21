@@ -76,7 +76,11 @@ pub(crate) fn verify_history_after(engine: &impl SqlEngine, commits: u64) -> Res
         |row| row.get::<i64>(0),
     )?;
     while let Some(sequence) = next {
-        verify_record_names(engine, crate::read::to_u64(sequence, "commit sequence")?, current.as_ref())?;
+        verify_record_names(
+            engine,
+            crate::read::to_u64(sequence, "commit sequence")?,
+            current.as_ref(),
+        )?;
         next = engine.query_optional(
             "SELECT commit_seq FROM _norn_export_journal WHERE commit_seq > ?1 ORDER BY commit_seq LIMIT 1",
             params![sequence],
