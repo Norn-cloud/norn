@@ -1305,6 +1305,13 @@ fn nfc_borrowed(value: &str) -> std::borrow::Cow<'_, str> {
     std::borrow::Cow::Owned(value.nfc().collect())
 }
 
+/// Append `value`'s Norn1 canonical JSON string (NFC, quoted, escaped) to
+/// `output`: the bytes [`canonical_json_of`] writes for a string, for a caller
+/// that composes canonical text from parts without copying them first.
+pub fn write_canonical_string(value: &str, output: &mut String) {
+    write_string(value, output);
+}
+
 /// Unicode Normalization Form C of `value`: the form Norn1 canonicalizes
 /// strings to, also an `EntityIR` v2 identity-key normalization step (#2848).
 #[must_use]
