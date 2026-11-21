@@ -1155,14 +1155,24 @@ fn a_mapping_pin_is_stable_under_key_reordering() {
         let mapping: Value = serde_json::from_str(text).expect("mapping");
         dataset_mapping_pin("m", &mapping).expect("pin")
     };
-    let first = pin(r#"{"artifactId":"m","payload":{"source":{"schemaId":"s","table":"t"},"fields":[{"name":"a","to":"x"}]},"version":"1.0.0"}"#);
-    let reordered = pin(r#"{"version":"1.0.0","payload":{"fields":[{"to":"x","name":"a"}],"source":{"table":"t","schemaId":"s"}},"artifactId":"m"}"#);
+    let first = pin(
+        r#"{"artifactId":"m","payload":{"source":{"schemaId":"s","table":"t"},"fields":[{"name":"a","to":"x"}]},"version":"1.0.0"}"#,
+    );
+    let reordered = pin(
+        r#"{"version":"1.0.0","payload":{"fields":[{"to":"x","name":"a"}],"source":{"table":"t","schemaId":"s"}},"artifactId":"m"}"#,
+    );
     assert_eq!(first, reordered, "key order never changes the pin");
     let expected = norn_api::uploads::sha256_hex(
         br#"{"artifactId":"m","payload":{"fields":[{"name":"a","to":"x"}],"source":{"schemaId":"s","table":"t"}},"version":"1.0.0"}"#,
     );
-    assert_eq!(first, format!("m@{expected}"), "the pin is the canonical bytes' digest");
-    let changed = pin(r#"{"artifactId":"m","payload":{"source":{"schemaId":"s","table":"u"},"fields":[{"name":"a","to":"x"}]},"version":"1.0.0"}"#);
+    assert_eq!(
+        first,
+        format!("m@{expected}"),
+        "the pin is the canonical bytes' digest"
+    );
+    let changed = pin(
+        r#"{"artifactId":"m","payload":{"source":{"schemaId":"s","table":"u"},"fields":[{"name":"a","to":"x"}]},"version":"1.0.0"}"#,
+    );
     assert_ne!(first, changed, "a changed value changes the pin");
 }
 
