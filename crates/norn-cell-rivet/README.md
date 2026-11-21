@@ -70,6 +70,16 @@ NORN_CELL_RIVET=crates/norn-cell-rivet/target/release/norn-cell-rivet \
 `--host rivet-native` runs Rivet Engine 3.1.1 in Docker, pinned by digest,
 with two runner processes.
 
+## RivetKit upgrades
+
+RivetKit is pinned at `=3.1.1` (`RIVETKIT_VERSION` in `src/config.rs`). RivetKit may commit its own SQLite schema migrations before `on_start` admits a cell, so:
+
+- a RivetKit version change ships only together with a Norn storage version bump;
+- the host refuses cells stamped by a different RivetKit version unless that version is in its allowed-upgrade list (`RIVETKIT_CHANNEL`);
+- rollback across a RivetKit version is unsupported: restore from a backup or a point-in-time restore instead.
+
+A unit test fails when `Cargo.lock`'s RivetKit version and `RIVETKIT_VERSION` differ, or when a new `RIVETKIT_CHANNEL` entry does not come with a higher storage version. See `docs/platform/engine-upgrades.md`, "RivetKit upgrades".
+
 ## Not covered yet
 
 - WebSocket hibernation: an open socket keeps the actor awake.

@@ -59,6 +59,18 @@ The check lives in `norn-cell`, below the host seam. The native host, the Durabl
 
 A step may only rewrite derived or physical state: projections, indexes, metadata. Ledger entries and receipts are evidence, and no step rewrites them. If a change would need to rewrite them, it is a new store format, not a storage version.
 
+## RivetKit upgrades
+
+The Rivet host runs a cell on RivetKit's own SQLite, and RivetKit may commit its internal schema migrations when an actor starts, before `on_start` reads the Norn stamp. A refused cell is then still written if the restart also brings a new RivetKit. RivetKit's public API has no hook that runs before those migrations, so the Rivet host rules out the combination by policy:
+
+1. **A RivetKit version change ships only together with a Norn storage version bump.** The release that moves `rivetkit` also adds a `CHANNEL` entry and raises `STORAGE_VERSION`, even when Norn's own layout is unchanged.
+2. **An engine refuses cells stamped by a different RivetKit version unless that version is in its allowed-upgrade list.** The list is `RIVETKIT_CHANNEL` in `crates/norn-cell-rivet/src/config.rs`: each RivetKit release and the first storage version written under it. A cell written under a newer RivetKit carries a newer storage version, so it refuses `core.engine.downgrade` before any Norn code touches it. A cell from an older RivetKit opens only if that release is still listed and its storage versions are at or above `UPGRADES_FROM`. Dropping a release from the list also raises `UPGRADES_FROM` past it.
+3. **Rollback across a RivetKit version is unsupported.** The older RivetKit may already have been run over by the newer one's migrations. The way back is a backup or a point-in-time restore taken before the upgrade, never a re-pin.
+
+The unit test `config::tests::rivetkit_pin_matches_the_lock_and_the_storage_version` (run by `scripts/ci/core.sh rivet`) enforces this. It fails when `Cargo.lock`'s `rivetkit` or `rivetkit-core` differs from `RIVETKIT_VERSION`, when the last `RIVETKIT_CHANNEL` entry is not that version, and when a new entry does not start at a storage version above the previous one. So a RivetKit bump cannot land without a storage version bump.
+
+The real fix, a RivetKit hook that admits the cell before RivetKit's own migrations plus a conformance case with a pending Rivet schema migration, is post-beta work (#1550).
+
 ## Release channel
 
 Releases are the `drop-N` tags. Packaging (installers, `cargo-dist`, `NORN_RELEASE` set in release builds, the storage window in release notes) is post-beta work, tracked in #1482.

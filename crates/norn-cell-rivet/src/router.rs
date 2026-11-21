@@ -489,3 +489,37 @@ pub fn app(router: Arc<Router>) -> axum::Router {
         )
         .with_state(router)
 }
+
+/// The router's listener: every accepted connection sets `TCP_NODELAY`.
+/// hyper writes a response in more than one segment, and with Nagle's
+/// algorithm on the last one waits for the client's delayed ACK (an 88 ms
+/// floor per request at one client on the dev host).
+pub fn listener(
+    listener: tokio::net::TcpListener,
+) -> impl axum::serve::Listener<Io = tokio::net::TcpStream, Addr = std::net::SocketAddr> {
+    use axum::serve::ListenerExt as _;
+    listener.tap_io(|tcp| {
+        if let Err(error) = tcp.set_nodelay(true) {
+            tracing::warn!(%error, "could not set TCP_NODELAY on an accepted connection");
+        }
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::serve::Listener as _;
+
+    #[tokio::test]
+    async fn accepted_connections_set_nodelay() {
+        let bound = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = bound.local_addr().unwrap();
+        let mut listener = super::listener(bound);
+        let ((stream, _), client) =
+            tokio::join!(listener.accept(), tokio::net::TcpStream::connect(addr));
+        client.unwrap();
+        assert!(
+            stream.nodelay().unwrap(),
+            "an accepted connection has TCP_NODELAY"
+        );
+    }
+}

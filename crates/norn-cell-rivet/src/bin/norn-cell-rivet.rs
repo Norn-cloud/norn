@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result};
 use norn_cell_rivet::config::{self, HostConfig};
-use norn_cell_rivet::router::{Router, app};
+use norn_cell_rivet::router::{Router, app, listener as nodelay};
 use rivetkit::client::{Client, ClientConfig};
 use tokio_util::sync::CancellationToken;
 
@@ -66,7 +66,7 @@ async fn main() -> Result<()> {
         .await
         .with_context(|| format!("listen on {listen}"))?;
     tracing::info!(listen = %listen, conformance = config.conformance, "norn-cell-rivet serving");
-    let routing = axum::serve(listener, app(router)).with_graceful_shutdown({
+    let routing = axum::serve(nodelay(listener), app(router)).with_graceful_shutdown({
         let shutdown = shutdown.clone();
         async move { shutdown.cancelled().await }
     });
