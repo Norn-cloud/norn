@@ -190,7 +190,11 @@ test("a refused row names the field, its value and the type expected", async () 
     const fatal = await dev.next((event) => event.event === "fatal", 0, 120_000)
     expect(fatal.diagnostic.code).toBe("norn.dev.load_refused")
     expect(fatal.diagnostic.message).toContain("mapping.runtime.invalid_record")
-    expect(fatal.diagnostic.message).toContain('field "grand_total" value "7,800.00" is not a number')
+    // MAP-EXPLAIN-1: the refusal names the record, the map, the field, the
+    // value as sent and the declared type. Decimal text is accepted only when
+    // exact (MAP-DECIMAL-TEXT-1), so a thousands separator is still refused.
+    expect(fatal.diagnostic.message).toContain("Material Request MAT-MR-2026-00002 was refused by the mapping")
+    expect(fatal.diagnostic.message).toContain('field grand_total = "7,800.00", expected decimal')
   } finally {
     await dev.stop()
     rmSync(root, { recursive: true, force: true })
