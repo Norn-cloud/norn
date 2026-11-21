@@ -494,7 +494,10 @@ pub fn get_object_history<E: SqlEngine>(
             // A write that changed nothing the caller may see (only a withheld
             // field, or nothing) is not listed: its version, commit and time
             // would tell that a hidden value changed then.
-            if versions.last().is_some_and(|last| last.values == entry.values) {
+            if versions
+                .last()
+                .is_some_and(|last| last.values == entry.values)
+            {
                 continue;
             }
             versions.push(entry);

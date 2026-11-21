@@ -421,17 +421,32 @@ fn a_history_omits_a_write_that_changed_only_a_withheld_field() {
     );
     let history =
         get_object_history(&host, &scope("org_a"), Some("viewer"), TYPE, "c1", &Mapping).unwrap();
-    let listed: Vec<u64> = history.versions.iter().map(|version| version.version).collect();
+    let listed: Vec<u64> = history
+        .versions
+        .iter()
+        .map(|version| version.version)
+        .collect();
     assert_eq!(listed, [3, 1], "{history:#?}");
     let names: Vec<Option<&V>> = history
         .versions
         .iter()
-        .map(|version| version.values.as_ref().and_then(|values| values.get("name")))
+        .map(|version| {
+            version
+                .values
+                .as_ref()
+                .and_then(|values| values.get("name"))
+        })
         .collect();
-    assert_eq!(names, [Some(&V::from("Ada Lovelace")), Some(&V::from("Ada"))]);
+    assert_eq!(
+        names,
+        [Some(&V::from("Ada Lovelace")), Some(&V::from("Ada"))]
+    );
     let document = serde_json::to_string(&history).unwrap();
     for withheld in ["example.com", "\"logicalTime\":3,"] {
-        assert!(!document.contains(withheld), "{withheld} leaked: {document}");
+        assert!(
+            !document.contains(withheld),
+            "{withheld} leaked: {document}"
+        );
     }
 }
 
