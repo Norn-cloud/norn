@@ -638,7 +638,7 @@ pub fn run_with_evidence(root: &Path, base: &Path, evidence: Option<&Path>) -> V
                             job.get("runs-on").and_then(yaml::Value::as_str),
                         ) {
                             errors.push(format!(
-                                "{path}::{name}: runner must be hosted or the exact merge-only Boat opt-in"
+                                "{path}::{name}: runner must be hosted or the exact approved Boat runner expression"
                             ));
                         }
                     }
