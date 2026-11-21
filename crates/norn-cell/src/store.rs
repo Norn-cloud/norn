@@ -2571,7 +2571,9 @@ impl<E: SqlEngine> CellStore<E> {
             let fork = crate::fork::load_pin(&store.conn)?;
             refuse_pin_past(fork.as_ref(), head.commits)?;
             if upgrading {
-                store.record_open_checkpoint(&head, boundary, &transparency)?;
+                let previous = crate::open_checkpoint::load(&store.conn)?;
+                let quantity = store.quantity_receipts_through(previous, head.commits)?;
+                store.record_open_checkpoint(&head, boundary, &transparency, quantity)?;
             }
             Ok::<_, CellError>((head, boundary, transparency, fork))
         })?;
@@ -2604,7 +2606,11 @@ impl<E: SqlEngine> CellStore<E> {
     /// still anchor the ledger and rebuild its receipt root, and everything
     /// after it is verified in full: the chain and receipts, the definition
     /// history, the value history and each export record's cell identity.
-    /// The object identities are checked over the whole current state.
+    /// Live state is never exempted by a checkpoint: the object identities
+    /// and the cell identity binding are checked over the current state, and
+    /// the quantity projections (balances, holds, timers and their history)
+    /// are replayed from every quantity receipt, as a genesis open replays
+    /// them (S1, #1551).
     /// Returns the verified head, its quantity boundary and the receipt log.
     fn verify_history(
         &self,
@@ -2633,6 +2639,10 @@ impl<E: SqlEngine> CellStore<E> {
         self.verify_definition_history(from.commits)?;
         self.read().verify_value_history_after(from.commits)?;
         crate::identity::validate(&self.read())?;
+        // A genesis verification replayed the quantity projections above.
+        if let Some(checkpoint) = &checkpoint {
+            self.verify_quantity_from_checkpoint(checkpoint)?;
+        }
         if transparency.len() != head.commits {
             return Err(crate::open_checkpoint::corrupt(
                 head.commits,
@@ -2642,6 +2652,85 @@ impl<E: SqlEngine> CellStore<E> {
         Ok((head, boundary, transparency))
     }
 
+    /// S1 (#1551): replay the quantity projections from every quantity
+    /// receipt, as a genesis open does, reading only those receipts. The
+    /// receipt table's quantity indexes name the ones the checkpoint covers;
+    /// their `(commit, digest)` list must fold to the checkpoint's
+    /// `quantity_receipts`, and the receipt digests are bound by its receipt
+    /// root, so no covered quantity receipt is hidden from the replay or
+    /// added to it. Every receipt read here has its body hash checked. The
+    /// receipts after the checkpoint are all read. When the indexed list does
+    /// not fold to the recorded digest, the replay reads every receipt
+    /// instead, so a mismatch costs time and never admits less.
+    fn verify_quantity_from_checkpoint(
+        &self,
+        checkpoint: &crate::open_checkpoint::OpenCheckpoint,
+    ) -> Result<(), CellError> {
+        let covered = checkpoint.head.commits;
+        let mut digest = crate::open_checkpoint::quantity_seed()?;
+        let mut commits = Vec::new();
+        for row in self
+            .conn
+            .query(crate::open_checkpoint::QUANTITY_RECEIPTS_SQL, params![])?
+        {
+            let row = crate::engine::SqlRow(row);
+            let commit = crate::read::to_u64(row.get(0)?, "quantity receipt commit")?;
+            if commit > covered {
+                break;
+            }
+            digest = crate::open_checkpoint::quantity_extend(&digest, commit, &row.get::<String>(1)?)?;
+            commits.push(commit);
+        }
+        let reader = self.read();
+        if digest != checkpoint.quantity_receipts {
+            tracing::warn!(
+                commits = covered,
+                "open checkpoint: the indexed quantity receipts do not fold to its digest; replaying every receipt"
+            );
+            return crate::quantity::verify_projections(&self.conn, reader.receipt_stream());
+        }
+        let covered_receipts = commits.into_iter().map(|commit| {
+            reader
+                .receipt_at(commit)?
+                .filter(|receipt| receipt.body.quantity.is_some())
+                .ok_or_else(|| {
+                    crate::open_checkpoint::corrupt(commit, "a quantity receipt it names is gone")
+                })
+        });
+        let suffix = reader
+            .receipt_stream_from(covered)
+            .filter(|receipt| !matches!(receipt, Ok(receipt) if receipt.body.quantity.is_none()));
+        crate::quantity::verify_projections(&self.conn, covered_receipts.chain(suffix))
+    }
+
+    /// The `quantity_receipts` digest through commit `to`: `previous`'s,
+    /// extended by the quantity receipts after it (each body hash-checked as
+    /// it is read), or folded from the first receipt when there is none.
+    fn quantity_receipts_through(
+        &self,
+        previous: Option<crate::open_checkpoint::OpenCheckpoint>,
+        to: u64,
+    ) -> Result<String, CellError> {
+        let (from, mut digest) = match previous {
+            Some(previous) => (previous.head.commits, previous.quantity_receipts),
+            None => (0, crate::open_checkpoint::quantity_seed()?),
+        };
+        for receipt in self.read().receipt_stream_from(from) {
+            let receipt = receipt?;
+            if receipt.body.commit_seq > to {
+                break;
+            }
+            if receipt.body.quantity.is_some() {
+                digest = crate::open_checkpoint::quantity_extend(
+                    &digest,
+                    receipt.body.commit_seq,
+                    &receipt.hash,
+                )?;
+            }
+        }
+        Ok(digest)
+    }
+
     /// OPEN-CHECKPOINT-1: record `head`, which this engine verified, with the
     /// root of `log`, its receipt digests, as the cell's open checkpoint.
     fn record_open_checkpoint(
@@ -2649,6 +2738,7 @@ impl<E: SqlEngine> CellStore<E> {
         head: &LedgerHead,
         boundary: Option<crate::quantity::FormatBoundary>,
         log: &crate::transparency::ReceiptLog,
+        quantity_receipts: String,
     ) -> Result<(), CellError> {
         if log.len() != head.commits {
             return Err(crate::open_checkpoint::corrupt(
@@ -2662,6 +2752,7 @@ impl<E: SqlEngine> CellStore<E> {
                 head: head.clone(),
                 receipts_root: crate::open_checkpoint::root_hex(log.root().as_bytes()),
                 boundary,
+                quantity_receipts,
             },
         )
     }
@@ -2672,6 +2763,13 @@ impl<E: SqlEngine> CellStore<E> {
     /// committed since its last verification) and record it. A failure here
     /// keeps the previous checkpoint, which still anchors the file, and is
     /// reported, never hidden: the next open verifies more, never less.
+    ///
+    /// S3 (#1551): a checkpoint exempts what it covers from later opens, so
+    /// before it advances, everything newly covered is verified as an open
+    /// verifies it: the export records' cell identity, the definition
+    /// installs and the value history committed since the previous
+    /// checkpoint (from genesis when there is none), in the transaction that
+    /// records it.
     fn checkpoint_after_commit(&self, commits: u64) {
         if commits == 0 || !commits.is_multiple_of(crate::open_checkpoint::EVERY) {
             return;
@@ -2685,7 +2783,16 @@ impl<E: SqlEngine> CellStore<E> {
             // `verified_head` left the boundary it verified in the store.
             let boundary = self.quantity_boundary.get();
             self.conn.transaction(|| {
-                self.record_open_checkpoint(&head, boundary, &self.transparency.borrow())
+                let previous = crate::open_checkpoint::load(&self.conn)?;
+                let from = previous.as_ref().map_or(0, |previous| previous.head.commits);
+                if from >= commits {
+                    return Ok(());
+                }
+                crate::cell_identity::verify_history_after(&self.conn, from)?;
+                self.verify_definition_history(from)?;
+                self.read().verify_value_history_after(from)?;
+                let quantity = self.quantity_receipts_through(previous, commits)?;
+                self.record_open_checkpoint(&head, boundary, &self.transparency.borrow(), quantity)
             })
         });
         if let Err(error) = recorded {

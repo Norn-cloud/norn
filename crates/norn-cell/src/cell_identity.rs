@@ -53,35 +53,58 @@ pub(crate) fn read(engine: &impl SqlEngine) -> Result<Option<CellId>, CellError>
 /// Every export record committed after `commits` names this cell's identity
 /// (OPEN-CHECKPOINT-1: `commits` is the open checkpoint's, or 0; the records
 /// before it were verified before the checkpoint was written).
+///
+/// The current binding is live state, so a checkpoint never exempts it: from
+/// a checkpoint, the last export record at or before it, hash-verified, must
+/// also name the current identity. Changing the binding alone therefore
+/// refuses an open at a head checkpoint, where no record follows it, as it
+/// refuses a genesis open.
 pub(crate) fn verify_history_after(engine: &impl SqlEngine, commits: u64) -> Result<(), CellError> {
     let current = read(engine)?;
+    if commits > 0
+        && let Some(sequence) = engine.query_optional(
+            "SELECT commit_seq FROM _norn_export_journal WHERE commit_seq <= ?1 ORDER BY commit_seq DESC LIMIT 1",
+            params![crate::read::to_i64(commits, "commit sequence")?],
+            |row| row.get::<i64>(0),
+        )?
+    {
+        verify_record_names(engine, crate::read::to_u64(sequence, "commit sequence")?, current.as_ref())?;
+    }
     let mut next = engine.query_optional(
         "SELECT commit_seq FROM _norn_export_journal WHERE commit_seq > ?1 ORDER BY commit_seq LIMIT 1",
         params![crate::read::to_i64(commits, "commit sequence")?],
         |row| row.get::<i64>(0),
     )?;
     while let Some(sequence) = next {
-        let sequence_u64 = crate::read::to_u64(sequence, "commit sequence")?;
-        let record =
-            crate::export_journal::read_record(engine, sequence_u64)?.ok_or_else(|| {
-                CellError::LedgerCorrupt {
-                    seq: sequence_u64,
-                    reason: "retained journal record disappeared during admission".to_owned(),
-                }
-            })?;
-        let retained = from_bindings(&record.bindings)?;
-        if retained != current {
-            return Err(CellError::BindingMismatch {
-                key: KEY.to_owned(),
-                expected: current.map_or_else(String::new, String::from),
-                found: retained.map_or_else(String::new, String::from),
-            });
-        }
+        verify_record_names(engine, crate::read::to_u64(sequence, "commit sequence")?, current.as_ref())?;
         next = engine.query_optional(
             "SELECT commit_seq FROM _norn_export_journal WHERE commit_seq > ?1 ORDER BY commit_seq LIMIT 1",
             params![sequence],
             |row| row.get::<i64>(0),
         )?;
+    }
+    Ok(())
+}
+
+/// The hash-verified export record at `sequence` names `current`.
+fn verify_record_names(
+    engine: &impl SqlEngine,
+    sequence: u64,
+    current: Option<&CellId>,
+) -> Result<(), CellError> {
+    let record = crate::export_journal::read_record(engine, sequence)?.ok_or_else(|| {
+        CellError::LedgerCorrupt {
+            seq: sequence,
+            reason: "retained journal record disappeared during admission".to_owned(),
+        }
+    })?;
+    let retained = from_bindings(&record.bindings)?;
+    if retained.as_ref() != current {
+        return Err(CellError::BindingMismatch {
+            key: KEY.to_owned(),
+            expected: current.map_or_else(String::new, |id| id.as_str().to_owned()),
+            found: retained.map_or_else(String::new, String::from),
+        });
     }
     Ok(())
 }

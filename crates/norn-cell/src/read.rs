@@ -711,10 +711,17 @@ fn decode_receipts(rows: Vec<Vec<SqlValue>>) -> Result<Vec<Receipt>, CellError> 
                 reason: "receipt columns disagree with the hashed receipt".to_owned(),
             });
         }
-        out.push(Receipt {
-            body,
-            hash: row.get(5)?,
-        });
+        let hash: String = row.get(5)?;
+        // A historical read serves only a receipt whose body still hashes to
+        // its stored digest, the leaf the transparency root is built from
+        // (OPEN-CHECKPOINT-1: an open from a checkpoint never re-reads it).
+        if hash_json(&body)? != hash {
+            return Err(CellError::LedgerCorrupt {
+                seq: commit_seq,
+                reason: "receipt hash does not verify".to_owned(),
+            });
+        }
+        out.push(Receipt { body, hash });
     }
     Ok(out)
 }
@@ -1112,10 +1119,14 @@ pub(crate) fn receipt_by_key(
         |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
     row.map(|(body, hash)| {
-        Ok(Receipt {
-            body: serde_json::from_str(&body)?,
-            hash,
-        })
+        let body: ReceiptBody = serde_json::from_str(&body)?;
+        if hash_json(&body)? != hash {
+            return Err(CellError::LedgerCorrupt {
+                seq: body.commit_seq,
+                reason: "receipt hash does not verify".to_owned(),
+            });
+        }
+        Ok(Receipt { body, hash })
     })
     .transpose()
 }
@@ -3917,9 +3928,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             {
                 return Err(corrupt("quantity receipt provenance is incomplete"));
             }
-            if hash_json(&receipt.body)? != receipt.hash {
-                return Err(corrupt("receipt hash does not verify"));
-            }
+            // The stream's decode verified the receipt hash.
             if receipt.body.first_event_seq != next(expected_seq, "seq")? {
                 return Err(corrupt("receipt span does not continue the ledger"));
             }

@@ -18,7 +18,19 @@
 //!   one rewritten together with its own hash;
 //! - everything after it verifies as a genesis open verifies it: the hash
 //!   chain and receipts, the definition history, the value history and the
-//!   cell identity of each export record.
+//!   cell identity of each export record;
+//! - live state verifies in full, never exempted (#1551): the object
+//!   identities, the cell identity binding (also against the last export
+//!   record the checkpoint covers) and the quantity projections, replayed
+//!   from every quantity receipt. The checkpoint's `quantity_receipts`
+//!   digest names those receipts, so the open reads them alone.
+//!
+//! The writer advances the checkpoint only over records it verified: the
+//! ledger and receipts ([`crate::CellStore::verified_head`]), and the export
+//! identities, definition installs and value history since the previous
+//! checkpoint. A restore that cuts the history independently of the rest of
+//! the file must delete a checkpoint past the cut
+//! (`docs/platform/engine-upgrades.md`, "Restores that trim history").
 //!
 //! What is not re-read at open is the body of the history before the
 //! checkpoint. A consistent rewrite of it changes the anchored head or the
@@ -45,7 +57,8 @@ pub(crate) const DDL: &str = r#"CREATE TABLE IF NOT EXISTS "_norn_open_checkpoin
       "id" INTEGER NOT NULL PRIMARY KEY CHECK ("id" = 1),
       "commits" INTEGER NOT NULL, "seq" INTEGER NOT NULL, "hash" TEXT NOT NULL,
       "receipts_root" TEXT NOT NULL,
-      "boundary_seq" INTEGER, "boundary_commit" INTEGER
+      "boundary_seq" INTEGER, "boundary_commit" INTEGER,
+      "quantity_receipts" TEXT NOT NULL
     )"#;
 
 /// How many commits apart checkpoints are written: an open verifies at most
@@ -63,6 +76,42 @@ pub(crate) struct OpenCheckpoint {
     /// The quantity boundary in force at the head, if the cell has one, so
     /// an open never scans the receipts before it to find it.
     pub(crate) boundary: Option<crate::quantity::FormatBoundary>,
+    /// [`quantity_extend`] folded over the `(commit, receipt digest)` of every
+    /// quantity receipt among the first `head.commits`, from
+    /// [`quantity_seed`]. It names which covered receipts carry quantity, so
+    /// an open replays the quantity projections from those receipts alone
+    /// and a quantity receipt hidden from that lookup refuses (S1, #1551).
+    pub(crate) quantity_receipts: String,
+}
+
+/// The `(commit, receipt digest)` of every quantity receipt, in commit
+/// order, read through the receipt table's two quantity indexes (a single
+/// request and a group), never by scanning receipt bodies.
+pub(crate) const QUANTITY_RECEIPTS_SQL: &str = r#"SELECT "commit_seq", "receipt_hash" FROM "_norn_receipt" INDEXED BY "_norn_receipt/quantity_boundary"
+      WHERE json_extract("receipt", '$.quantity.version')='norn.quantity.commit/2'
+    UNION
+    SELECT "commit_seq", "receipt_hash" FROM "_norn_receipt" INDEXED BY "_norn_receipt/quantity_group_boundary"
+      WHERE json_type("receipt", '$.quantity')='array'
+    ORDER BY 1"#;
+
+/// The quantity digest of a history with no quantity receipt.
+///
+/// # Errors
+/// Encoding failures.
+pub(crate) fn quantity_seed() -> Result<String, CellError> {
+    crate::codec::hash_json(&"norn.open-checkpoint.quantity/1")
+}
+
+/// `digest` extended by one quantity receipt.
+///
+/// # Errors
+/// Encoding failures.
+pub(crate) fn quantity_extend(
+    digest: &str,
+    commit_seq: u64,
+    receipt_hash: &str,
+) -> Result<String, CellError> {
+    crate::codec::hash_json(&(digest, commit_seq, receipt_hash))
 }
 
 /// The cell's open checkpoint, if one was written.
@@ -73,7 +122,7 @@ pub(crate) fn load(engine: &impl SqlEngine) -> Result<Option<OpenCheckpoint>, Ce
     let Some(row) = engine
         .query(
             &format!(
-                "SELECT \"commits\", \"seq\", \"hash\", \"receipts_root\", \"boundary_seq\", \"boundary_commit\" FROM \"{TABLE}\" WHERE \"id\" = 1"
+                "SELECT \"commits\", \"seq\", \"hash\", \"receipts_root\", \"boundary_seq\", \"boundary_commit\", \"quantity_receipts\" FROM \"{TABLE}\" WHERE \"id\" = 1"
             ),
             params![],
         )?
@@ -98,6 +147,7 @@ pub(crate) fn load(engine: &impl SqlEngine) -> Result<Option<OpenCheckpoint>, Ce
             }),
             _ => return Err(corrupt(0, "a half-recorded quantity boundary")),
         },
+        quantity_receipts: row.get(6)?,
     }))
 }
 
@@ -111,11 +161,12 @@ pub(crate) fn record(
 ) -> Result<(), CellError> {
     engine.execute(
         &format!(
-            "INSERT INTO \"{TABLE}\" (\"id\", \"commits\", \"seq\", \"hash\", \"receipts_root\", \"boundary_seq\", \"boundary_commit\") \
-             VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6) \
+            "INSERT INTO \"{TABLE}\" (\"id\", \"commits\", \"seq\", \"hash\", \"receipts_root\", \"boundary_seq\", \"boundary_commit\", \"quantity_receipts\") \
+             VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7) \
              ON CONFLICT (\"id\") DO UPDATE SET \"commits\" = excluded.\"commits\", \"seq\" = excluded.\"seq\", \
              \"hash\" = excluded.\"hash\", \"receipts_root\" = excluded.\"receipts_root\", \
-             \"boundary_seq\" = excluded.\"boundary_seq\", \"boundary_commit\" = excluded.\"boundary_commit\""
+             \"boundary_seq\" = excluded.\"boundary_seq\", \"boundary_commit\" = excluded.\"boundary_commit\", \
+             \"quantity_receipts\" = excluded.\"quantity_receipts\""
         ),
         params![
             to_i64(checkpoint.head.commits, "open checkpoint commits")?,
@@ -129,7 +180,8 @@ pub(crate) fn record(
             checkpoint
                 .boundary
                 .map(|boundary| to_i64(boundary.commit_seq, "open checkpoint boundary commit"))
-                .transpose()?
+                .transpose()?,
+            checkpoint.quantity_receipts.clone()
         ],
     )
 }

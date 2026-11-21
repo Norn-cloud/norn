@@ -3,6 +3,11 @@
 //! checkpoint that no longer anchors the ledger, a replaced receipt it
 //! covers, or any change after it refuses the open, and an old row changed
 //! in place is refused when it is read and by a verification from genesis.
+//!
+//! Live state is never exempted (#1551 round 1): a changed balance, hold or
+//! timer, or a changed cell identity binding, refuses an open from a
+//! checkpoint at the head; a checkpoint never advances over a record it has
+//! not verified; and an old receipt changed in place is never served.
 #![cfg(feature = "native")]
 #![allow(
     clippy::arithmetic_side_effects,
@@ -15,6 +20,8 @@
 
 #[path = "support/engine_fixture.rs"]
 mod engine_fixture;
+#[path = "quantity_support/mod.rs"]
+mod quantity_support;
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -22,7 +29,9 @@ use std::path::Path;
 use norn_cell::engine::{NativeEngine, SqlEngine, SqlValue};
 use norn_cell::test_door::TestCommit as _;
 use norn_cell::{CellError, CellStore, CommitBatch, FactWriteRow, MAIN_WORLD, StoreOptions};
+use norn_ir::quantity_ledger::QuantityRequest;
 use norn_ir::{RuntimeValue, runtime_object};
+use quantity_support::{define, post, reserve};
 
 /// Commits apart the engine records a checkpoint (`open_checkpoint::EVERY`).
 const EVERY: u64 = 128;
@@ -256,6 +265,174 @@ fn an_old_row_changed_in_place_is_refused_when_read_and_from_genesis() {
     drop(store);
     // ... and a verification from genesis (an open with no checkpoint, as a
     // scrub runs it) refuses the cell.
+    execute(&path, "DELETE FROM _norn_open_checkpoint");
+    refused(&path);
+}
+
+/// Commit `request` as commit `n`, fenced at the balances it reads.
+fn commit_quantity(store: &mut CellStore<NativeEngine>, n: u64, request: &QuantityRequest) {
+    let mut request = request.clone();
+    request.balance_versions = store
+        .read()
+        .quantity_balance_versions(MAIN_WORLD, &request)
+        .expect("fences");
+    store
+        .commit(&CommitBatch {
+            world: MAIN_WORLD.to_owned(),
+            scope: engine_fixture::SCOPE.to_owned(),
+            logical_time: 10_000 + n,
+            idempotency_key: Some(format!("quantity-{n}")),
+            quantity: Some(request.into()),
+            ..CommitBatch::default()
+        })
+        .expect("quantity commit");
+}
+
+/// A cell exactly [`EVERY`] commits long, so its open checkpoint is its
+/// head, with quantity history before it: a ledger, a funding posting and an
+/// open hold (a held balance and an expiry timer).
+fn quantity_cell(path: &Path) {
+    engine_fixture::write_cell(path);
+    let mut store = open(path).expect("open");
+    let requests = [
+        define(),
+        post(0, "fund", "fund", 10),
+        reserve(0, "hold", 3, 1_000_000),
+    ];
+    let mut n = engine_fixture::COMMITS;
+    for request in &requests {
+        commit_quantity(&mut store, n, request);
+        n += 1;
+    }
+    for n in n..EVERY {
+        store.commit(&put(n)).expect("commit");
+    }
+    drop(store);
+    assert_eq!(
+        checkpoint(path).map(|(commits, ..)| commits),
+        Some(EVERY),
+        "the checkpoint is the head"
+    );
+}
+
+#[test]
+fn a_changed_quantity_projection_refuses_an_open_from_a_head_checkpoint() {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("cell.sqlite");
+    quantity_cell(&path);
+    let held: i64 = raw(&path)
+        .query_row(
+            r#"SELECT count(*) FROM "_norn_quantity_balance" WHERE "held" <> '0'"#,
+            &[],
+            |row| row.get(0),
+        )
+        .expect("holds");
+    assert!(held > 0, "the fixture holds a quantity");
+    open(&path).expect("the untouched cell opens from its checkpoint");
+    for (name, tamper) in [
+        (
+            "a current balance",
+            r#"UPDATE "_norn_quantity_balance" SET "posted" = '11' WHERE "account" = 'lot'"#,
+        ),
+        (
+            "a balance with its history",
+            r#"UPDATE "_norn_quantity_balance" SET "posted" = '11' WHERE "account" = 'lot';
+               UPDATE "_norn_quantity_history" SET "posted" = '11' WHERE "account" = 'lot'"#,
+        ),
+        (
+            "a hold",
+            r#"UPDATE "_norn_quantity_balance" SET "held" = '0';
+               UPDATE "_norn_quantity_history" SET "held" = '0'"#,
+        ),
+        (
+            "an expiry timer",
+            r#"DELETE FROM "_norn_timer" WHERE "timer_id" >= 'norn.quantity.expiry/' AND "timer_id" < 'norn.quantity.expiry0'"#,
+        ),
+    ] {
+        let copy = dir.path().join("tampered.sqlite");
+        std::fs::copy(&path, &copy).expect("copy");
+        raw(&copy).execute_batch(tamper).expect("tamper");
+        assert!(open(&copy).is_err(), "{name} changed under the checkpoint opened");
+        // A verification from genesis refuses it too.
+        execute(&copy, "DELETE FROM _norn_open_checkpoint");
+        assert!(open(&copy).is_err(), "{name} changed opened from genesis");
+    }
+}
+
+#[test]
+fn a_changed_cell_identity_refuses_an_open_from_a_head_checkpoint() {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("cell.sqlite");
+    cell(&path, EVERY);
+    assert_eq!(checkpoint(&path).map(|(commits, ..)| commits), Some(EVERY));
+    let records: i64 = raw(&path)
+        .query_row("SELECT count(*) FROM _norn_export_journal", &[], |row| {
+            row.get(0)
+        })
+        .expect("records");
+    assert!(records > 0, "the history holds export records");
+    execute(
+        &path,
+        "UPDATE _norn_meta SET value = '0123456789abcdef0123456789abcdef' WHERE key = 'binding:cell_id'",
+    );
+    assert!(
+        matches!(open(&path), Err(CellError::BindingMismatch { .. })),
+        "a changed identity opened from the head checkpoint"
+    );
+    execute(&path, "DELETE FROM _norn_open_checkpoint");
+    assert!(
+        matches!(open(&path), Err(CellError::BindingMismatch { .. })),
+        "as a genesis open refuses it"
+    );
+}
+
+#[test]
+fn a_checkpoint_never_advances_over_a_record_it_has_not_verified() {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("cell.sqlite");
+    cell(&path, EVERY + 10);
+    let mut store = open(&path).expect("open");
+    for n in EVERY + 10..2 * EVERY - 3 {
+        store.commit(&put(n)).expect("commit");
+    }
+    // A value version this handle wrote after its open, changed before the
+    // next checkpoint is due. No later commit here reads its key.
+    execute(
+        &path,
+        &format!(
+            "UPDATE _norn_fact_values SET hash = 'ff' || substr(hash, 3) WHERE commit_seq = {}",
+            2 * EVERY - 3
+        ),
+    );
+    for n in 2 * EVERY - 3..2 * EVERY + 2 {
+        store.commit(&put(n)).expect("commit");
+    }
+    drop(store);
+    assert_eq!(
+        checkpoint(&path).map(|(commits, ..)| commits),
+        Some(EVERY),
+        "the checkpoint stays before the unverified record"
+    );
+    refused(&path);
+}
+
+#[test]
+fn an_old_receipt_changed_in_place_is_never_served() {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("cell.sqlite");
+    cell(&path, EVERY + 10);
+    // A field no lookup column mirrors, its stored digest kept.
+    execute(
+        &path,
+        "UPDATE _norn_receipt SET receipt = json_set(receipt, '$.logicalTime', 1) WHERE commit_seq = 7",
+    );
+    {
+        let store = open(&path).expect("the open verifies from the checkpoint");
+        let reader = store.read();
+        assert!(reader.receipts().is_err(), "receipts() served it");
+        assert!(reader.receipts_after(6, 1).is_err(), "receipts_after served it");
+        assert!(reader.receipt_at(7).is_err(), "receipt_at served it");
+    }
     execute(&path, "DELETE FROM _norn_open_checkpoint");
     refused(&path);
 }
