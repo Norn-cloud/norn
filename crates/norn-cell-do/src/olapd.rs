@@ -50,7 +50,8 @@ use norn_api::olap_credential::{Denied, Keyring, body_digest};
 use norn_cell::analytics::engine::{Engine, Outcome, Settings};
 use norn_cell::analytics::{
     EngineRefusal, EvaluateRequest, ExportRequest, FrontierRequest, LandRequest, LandResponse,
-    MembersRequest, PageRequest, ProfileRequest, StoreRequest, SyncRequest, TenantId,
+    MembersRequest, PageRequest, ProfileRequest, SettleRequest, StoreRequest, SyncRequest,
+    TenantId,
 };
 use norn_kernel::LogicalTime;
 use serde::Serialize;
@@ -291,8 +292,8 @@ struct Gate {
 
 /// The one field the scope check reads before the request is routed or
 /// parsed into its type; every other field is left for the typed parse. A
-/// landing names its tenant in its load (`load.tenant`), and a store in the
-/// landing it stores (`land.load.tenant`).
+/// landing names its tenant in its load (`load.tenant`), and a settle or a
+/// store in the landing it settles or stores (`land.load.tenant`).
 #[derive(serde::Deserialize)]
 struct Named {
     tenant: Option<TenantId>,
@@ -316,7 +317,7 @@ impl Named {
     fn tenant(self, op: &str) -> Option<TenantId> {
         match op {
             "land" => self.load.map(|load| load.tenant),
-            "store" => self.land.map(|land| land.load.tenant),
+            "settle" | "store" => self.land.map(|land| land.load.tenant),
             _ => self.tenant,
         }
     }
@@ -389,6 +390,12 @@ impl Scoped for StoreRequest {
     }
 }
 
+impl Scoped for SettleRequest {
+    fn tenant(&self) -> &TenantId {
+        &self.land.load.tenant
+    }
+}
+
 struct Request {
     method: String,
     path: String,
@@ -454,6 +461,7 @@ fn connection(stream: &TcpStream, engine: &Engine, gate: &Gate) -> std::io::Resu
         "/v1/profile" => call.answer(|r: ProfileRequest| engine.profile(&r)),
         "/v1/page" => call.answer(|r: PageRequest| engine.page(&r)),
         "/v1/land" => call.answer(|r: LandRequest| land(engine, &r)),
+        "/v1/settle" => call.answer(|r: SettleRequest| settle(engine, &r)),
         "/v1/store" => call.answer(|r: StoreRequest| {
             let stored = store(engine, &r);
             gate.seam.stored(&tenant, stored.is_ok());
@@ -668,15 +676,30 @@ fn land(engine: &Engine, request: &LandRequest) -> Outcome<LandResponse> {
     })
 }
 
+/// MANIFEST-LAWS-1: settle an attempt's residue rows. The engine's settle
+/// takes the attempt by its token and owns its cleanup: a refused settle
+/// removes the attempt it took, and nothing else.
+fn settle(engine: &Engine, request: &SettleRequest) -> Outcome<LandResponse> {
+    engine.settle(request)
+}
+
 /// MANIFEST-LAND-1: send an attempt's landed files to their content-addressed
 /// objects, each only if the bytes sent are its answered digest, then keep
 /// them for the dataset's cache identity. The engine's store owns the
 /// attempt's cleanup; nothing here removes anything.
 fn store(engine: &Engine, request: &StoreRequest) -> Outcome<LandResponse> {
+    // The engine sends only files whose answer names both digests.
+    let sha256 = |file: Option<&norn_cell::analytics::LandedFile>| {
+        file.map(|file| file.sha256.clone()).unwrap_or_default()
+    };
+    let (data_sha256, held_sha256) = (
+        sha256(request.landed.data.as_ref()),
+        sha256(request.landed.held.as_ref()),
+    );
     engine.store(request, |data, held| {
         let agent = agent();
-        upload(&agent, &request.data.url, data, &request.landed.data.sha256)?;
-        upload(&agent, &request.held.url, held, &request.landed.held.sha256)
+        upload(&agent, &request.data.url, data, &data_sha256)?;
+        upload(&agent, &request.held.url, held, &held_sha256)
     })
 }
 

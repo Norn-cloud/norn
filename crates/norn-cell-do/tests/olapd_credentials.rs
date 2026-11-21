@@ -585,6 +585,8 @@ fn concurrent_landings_of_the_same_load_never_share_bytes() {
         },
         landing: "same".to_owned(),
         attempt: String::new(),
+        checks: Vec::new(),
+        residue_page: 64,
     };
     let loads = [
         (
@@ -645,6 +647,8 @@ fn land_request(of: &TenantId, url: String, bytes: &[u8]) -> LandRequest {
         },
         landing: format!("landing-{}", body_digest(bytes)),
         attempt: String::new(),
+        checks: Vec::new(),
+        residue_page: 64,
     }
 }
 
@@ -660,8 +664,8 @@ fn store_request(store: SocketAddr, land: &LandRequest, landed: &LandResponse) -
             ..land.clone()
         },
         landed: landed.clone(),
-        data: object(&landed.data.sha256),
-        held: object(&landed.held.sha256),
+        data: object(&landed.data.as_ref().unwrap().sha256),
+        held: object(&landed.held.as_ref().unwrap().sha256),
     }
 }
 
@@ -854,7 +858,7 @@ fn a_store_never_removes_a_landing_made_while_it_finishes() {
     );
     assert_eq!(status(&stored_b), "200", "{}", body(&stored_b));
     let puts = store.puts.lock().unwrap();
-    assert!(puts.contains_key(&format!("/put/{}", landed_b.data.sha256)));
+    assert!(puts.contains_key(&format!("/put/{}", landed_b.data.as_ref().unwrap().sha256)));
     assert!(daemon.attempts(&of).is_empty());
 }
 
@@ -900,9 +904,13 @@ fn a_store_during_a_download_leaves_the_download_intact() {
             bytes: 1,
             millis: 0,
         },
-        data: file("ab"),
-        held: file("cd"),
+        data: Some(file("ab")),
+        held: Some(file("cd")),
         valid_time: Vec::new(),
+        findings: std::collections::BTreeMap::new(),
+        held_by_rules: 0,
+        residue_total: 0,
+        residue: Vec::new(),
         stored: None,
     };
     let early = serde_json::to_string(&store_request(store.addr, &land, &early)).unwrap();

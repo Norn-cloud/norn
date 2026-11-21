@@ -20,8 +20,8 @@ use std::collections::BTreeMap;
 
 use norn_cell::analytics::{
     EngineRefusal, EvaluateRequest, EvaluateResponse, ExportFormat, ExportRequest, FileFormat,
-    FileSource, FrontierResponse, LandRequest, LandResponse, LoadRequest, Source, StoreRequest,
-    StoredObject, TableSchema, TenantId, dataset_cache_id, hex_digest,
+    FileSource, FrontierResponse, LandRequest, LandResponse, LoadRequest, RuleCheck, SettleRequest,
+    Source, StoreRequest, StoredObject, TableSchema, TenantId, dataset_cache_id, hex_digest,
 };
 use norn_cell::compute::{ALL_MEMBERS, QueryContext, QueryResult};
 use norn_cell::dataset_manifest::{
@@ -585,16 +585,33 @@ pub struct NornDatasetLoad {
     pub data: NornDatasetFile,
     /// The landed held-set file: every held-back row and its reason.
     pub held: NornDatasetFile,
-    /// Rows admitted.
+    /// Rows admitted as trusted: typed, and held back by no rule (LAW-02).
     pub rows: u64,
-    /// Rows quarantined.
+    /// Rows quarantined because they could not be typed.
     pub rejected: u64,
     /// Quarantined rows per reason code (`bulk.*`).
     pub reasons: BTreeMap<String, u64>,
+    /// MANIFEST-LAWS-1: findings of each law and invariant, by rule.
+    pub findings: BTreeMap<String, NornRuleFindings>,
+    /// Typed rows a law or invariant holds back: in the held-set file, not
+    /// among `rows`.
+    pub held_by_rules: u64,
     /// Source file size in bytes.
     pub bytes: u64,
     /// Load time in milliseconds.
     pub millis: u64,
+}
+
+/// MANIFEST-LAWS-1: one law or invariant's findings over a dataset.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NornRuleFindings {
+    /// The law (`law:<id>`) or invariant (`invariant:<id>`).
+    pub label: String,
+    /// Rows that fail it.
+    pub rows: u64,
+    /// Whether a failing row is held back.
+    pub holds: bool,
 }
 
 /// One landed dataset file, named by content.
@@ -764,10 +781,14 @@ pub fn load_dataset<E: SqlEngine>(
             actor: actor.unwrap_or_default(),
             started_ms: now_ms,
             ended_ms: now_ms.saturating_add(loaded.millis),
+            // LAW-02: rows a rule holds back are not landed as trusted.
             counts: (
-                loaded.rows.saturating_add(loaded.rejected),
-                loaded.rows,
-                loaded.rejected,
+                manifest.counts.source,
+                manifest.counts.admitted,
+                manifest
+                    .counts
+                    .source
+                    .saturating_sub(manifest.counts.admitted),
             ),
             reasons: loaded.reasons.clone(),
         },
@@ -783,9 +804,11 @@ pub fn load_dataset<E: SqlEngine>(
         sha256: record.sha256,
         data: (&manifest.data).into(),
         held: (&manifest.held).into(),
-        rows: loaded.rows,
+        rows: manifest.counts.admitted,
         rejected: loaded.rejected,
         reasons: loaded.reasons.clone(),
+        findings: rule_findings(&manifest.counts),
+        held_by_rules: manifest.counts.held_by_rules,
         bytes: loaded.bytes,
         millis: loaded.millis,
     })
@@ -806,6 +829,8 @@ struct BulkContract {
     table: TableSchema,
     /// The pins, the resolved mapping's (`<artifact id>@<sha256>`) among them.
     pins: ManifestPins,
+    /// MANIFEST-LAWS-1: the type's laws and invariants, as the landing checks them.
+    checks: Vec<RuleCheck>,
 }
 
 fn unsupported(code: &str, detail: impl Into<String>) -> Refusal {
@@ -1046,26 +1071,11 @@ fn bulk_contract<E: SqlEngine>(
             ),
         ));
     }
-    // MANIFEST-PIN-1: no law or invariant is checked on this path yet, so
-    // a type that declares one is refused rather than admitted unchecked.
-    if !store
-        .model()
-        .governing_laws(object_type)
-        .map_err(Refusal::host)?
-        .is_empty()
-        || !store
-            .model()
-            .effective_invariants(object_type)
-            .map_err(Refusal::host)?
-            .is_empty()
-    {
-        return Err(Refusal::new(
-            http::StatusCode::UNPROCESSABLE_ENTITY,
-            "bulk.unsupported_law",
-            "the dataset was not loaded",
-            "the type declares laws or invariants, which a dataset load does not check yet; load it through observations",
-        ));
-    }
+    // MANIFEST-LAWS-1: every law and invariant of the type, checked
+    // set-based; the checks are part of the landing's identity.
+    let checks = store
+        .dataset_checks(object_type, &table)
+        .map_err(dataset_refusal)?;
     let mapping_id = id_of(mapping);
     let canonical = serde_json::to_vec(mapping).map_err(Refusal::host)?;
     let mapping_pin = format!("{mapping_id}@{}", hex_digest(&canonical));
@@ -1077,6 +1087,7 @@ fn bulk_contract<E: SqlEngine>(
         binding,
         table,
         pins,
+        checks,
     })
 }
 
@@ -1165,11 +1176,43 @@ fn replayed(
         data: (&manifest.data).into(),
         held: (&manifest.held).into(),
         rows: manifest.counts.admitted,
-        rejected: manifest.held.rows,
+        rejected: manifest.counts.held.values().sum(),
         reasons: manifest.counts.held.clone(),
+        findings: rule_findings(&manifest.counts),
+        held_by_rules: manifest.counts.held_by_rules,
         bytes: manifest.source.bytes,
         millis: 0,
     }
+}
+
+/// MANIFEST-LAWS-1: the findings of each law and invariant, by rule.
+fn rule_findings(counts: &ManifestCounts) -> BTreeMap<String, NornRuleFindings> {
+    counts
+        .findings
+        .iter()
+        .map(|(rule, count)| {
+            (
+                rule.clone(),
+                NornRuleFindings {
+                    label: count.label.clone(),
+                    rows: count.rows,
+                    holds: count.holds,
+                },
+            )
+        })
+        .collect()
+}
+
+fn dataset_refusal(error: CellError) -> Refusal {
+    if let CellError::DatasetRefused { code, detail } = &error {
+        return Refusal::new(
+            http::StatusCode::UNPROCESSABLE_ENTITY,
+            code,
+            "the dataset was not loaded",
+            detail,
+        );
+    }
+    Refusal::host(error)
 }
 
 /// MANIFEST-CACHE-1: the content-addressed object key of a landed file:
@@ -1187,8 +1230,11 @@ struct Landing {
     uris: [String; 2],
 }
 
-/// Landing steps one load may take: the landing, then storing its files.
-const MAX_LAND_STEPS: usize = 4;
+/// Landing steps one load may take: the landing, its residue settles, then
+/// storing its files.
+const MAX_LAND_STEPS: usize = 100_000;
+/// Residue rows one landing answer carries at most.
+const RESIDUE_PAGE: u32 = 2_000;
 
 /// MANIFEST-LAND-1: type `record` by `object_type` on the engine, land it
 /// as the data and held-set Parquet files under an attempt the engine
@@ -1216,6 +1262,7 @@ fn land_upload<E: SqlEngine>(
     // them; the commit decides by the contract's pins, carried here.
     let table = contract.table.clone();
     let pins = contract.pins.clone();
+    let checks = contract.checks.clone();
     let format = if record.content_type.contains("parquet") || record.uri.ends_with(".parquet") {
         FileFormat::Parquet
     } else {
@@ -1238,6 +1285,8 @@ fn land_upload<E: SqlEngine>(
         pins,
         landing: String::new(),
         attempt: String::new(),
+        checks,
+        residue_page: RESIDUE_PAGE,
     };
     let identity = EngineCall::new("land", &request)
         .map_err(engine_failure)?
@@ -1245,7 +1294,10 @@ fn land_upload<E: SqlEngine>(
     request.load.load = format!("l{identity}");
     request.landing.clone_from(&identity);
     let store_digest = hex_digest(format!("store\n{identity}").as_bytes());
-    let ours = |answer: &EngineAnswer| answer.digest == identity || answer.digest == store_digest;
+    let settle_digest = hex_digest(format!("settle\n{identity}").as_bytes());
+    let ours = |answer: &EngineAnswer| {
+        [&identity, &settle_digest, &store_digest].contains(&&answer.digest)
+    };
     let mut answer = transport.resumed().filter(ours);
     // OLAP-02: the engine mints the attempt (a landing names none); an
     // answer names the attempt it ran as, and the store takes exactly that.
@@ -1287,9 +1339,42 @@ fn land_upload<E: SqlEngine>(
             return Err(stale_landing());
         }
         request.attempt.clone_from(&land.attempt);
+        if land.residue_total > 0 {
+            // MANIFEST-LAWS-1: the residue rows are decided by the per-row
+            // evaluator, for the rules the engine left them (LAW-04), then
+            // settled on the engine.
+            let findings = host
+                .cell()?
+                .store()
+                .residue_findings(object_type, &request.load.table, &land.residue)
+                .map_err(dataset_refusal)?;
+            let through = land
+                .residue
+                .last()
+                .map(|row| row.row)
+                .ok_or_else(|| Refusal::host("the engine reported residue without rows"))?;
+            let settle = SettleRequest {
+                land: request.clone(),
+                through,
+                findings,
+            };
+            call = EngineCall {
+                op: "settle".to_owned(),
+                digest: settle_digest.clone(),
+                body: serde_json::to_string(&settle).map_err(Refusal::host)?,
+                stream: None,
+                credential: None,
+            };
+            continue;
+        }
+        let (Some(data), Some(held)) = (&land.data, &land.held) else {
+            return Err(Refusal::host(
+                "the engine answered a landing without its files",
+            ));
+        };
         let keys = [
-            object_key(&scope_key, object_type, &land.data.sha256),
-            object_key(&scope_key, object_type, &land.held.sha256),
+            object_key(&scope_key, object_type, &data.sha256),
+            object_key(&scope_key, object_type, &held.sha256),
         ];
         let mut objects = Vec::new();
         for key in &keys {
@@ -1358,7 +1443,10 @@ fn commit_manifest<E: SqlEngine>(
     let land = &landing.land;
     let request = &landing.request;
     let table = &request.load.table;
-    let cache = dataset_cache_id(table, &land.data.sha256, &land.held.sha256);
+    let (Some(data), Some(held)) = (&land.data, &land.held) else {
+        return Err(stale_landing());
+    };
+    let cache = dataset_cache_id(table, &data.sha256, &held.sha256);
     if land.landing != request.landing
         || land.attempt != request.attempt
         || land.stored.as_deref() != Some(cache.as_str())
@@ -1381,20 +1469,23 @@ fn commit_manifest<E: SqlEngine>(
         pins: request.pins.clone(),
         data: ManifestFile {
             uri: data_uri,
-            sha256: land.data.sha256.clone(),
-            rows: land.data.rows,
-            bytes: land.data.bytes,
+            sha256: data.sha256.clone(),
+            rows: data.rows,
+            bytes: data.bytes,
         },
         held: ManifestFile {
             uri: held_uri,
-            sha256: land.held.sha256.clone(),
-            rows: land.held.rows,
-            bytes: land.held.bytes,
+            sha256: held.sha256.clone(),
+            rows: held.rows,
+            bytes: held.bytes,
         },
+        // LAW-02: the data file holds the typed rows no rule holds back.
         counts: ManifestCounts {
             source: land.load.rows.saturating_add(land.load.rejected),
-            admitted: land.load.rows,
+            admitted: data.rows,
             held: land.load.reasons.clone(),
+            findings: land.findings.clone(),
+            held_by_rules: land.held_by_rules,
         },
         valid_time: land.valid_time.clone(),
     };

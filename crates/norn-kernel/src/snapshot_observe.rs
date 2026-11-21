@@ -1543,6 +1543,131 @@ fn property_finding_rule_ref(
         .ok_or_else(|| ObservationRefusal::Encoding("property domain is not retained".to_owned()))
 }
 
+/// The rule identity, outcome and severity an invariant or property
+/// failure is recorded under.
+fn failure_rule(
+    catalog: &TypeCatalog<'_>,
+    failure: &InvariantFailure,
+) -> Result<(DataQualityRuleRef, DataQualityOutcome, DataQualitySeverity), ObservationRefusal> {
+    let (rule_ref, outcome) = match &failure.finding_outcome {
+        Some(outcome @ DataQualityOutcome::InvalidTemporalObservation { .. }) => (
+            DataQualityRuleRef::Builtin {
+                id: TEMPORAL_PROPERTY_RULE_ID.to_owned(),
+                version: "1".to_owned(),
+            },
+            outcome.clone(),
+        ),
+        Some(outcome) => {
+            return Err(ObservationRefusal::Encoding(format!(
+                "unsupported built-in invariant finding outcome: {outcome:?}"
+            )));
+        }
+        None if failure.id.as_str().starts_with("$property.") => (
+            property_finding_rule_ref(catalog, failure)?,
+            failure.outcome.clone(),
+        ),
+        None => {
+            let version = catalog
+                .invariant_owner_version(&failure.owner)
+                .map_err(|error| ObservationRefusal::Encoding(error.to_string()))?
+                .ok_or_else(|| {
+                    ObservationRefusal::Encoding(format!(
+                        "invariant owner {:?} is absent from the catalog",
+                        failure.owner
+                    ))
+                })?;
+            (
+                DataQualityRuleRef::Invariant {
+                    owner: failure.owner.clone(),
+                    invariant_id: failure.id.clone(),
+                    version,
+                },
+                failure.outcome.clone(),
+            )
+        }
+    };
+    let severity = match failure.classification {
+        ConstraintClass::Integrity => DataQualitySeverity::Error,
+        ConstraintClass::Quality => DataQualitySeverity::Warning,
+    };
+    Ok((rule_ref, outcome, severity))
+}
+
+/// MANIFEST-LAWS-1: one finding an observed record gets, without the
+/// observation's provenance.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuleFinding {
+    /// The rule the record fails.
+    pub rule_ref: DataQualityRuleRef,
+    /// The declared severity.
+    pub severity: DataQualitySeverity,
+    /// The evaluation outcome.
+    pub outcome: DataQualityOutcome,
+    /// DATA-QUARANTINE: whether the finding holds the record back.
+    pub quarantines: bool,
+}
+
+/// DATA-QUARANTINE: whether a finding of `rule_ref` at `severity` holds its
+/// record back: an integrity rule always does, a built-in one at error.
+///
+/// # Errors
+/// The rule reference cannot be canonicalized.
+pub fn finding_quarantines(
+    catalog: &TypeCatalog<'_>,
+    rule_ref: &DataQualityRuleRef,
+    severity: DataQualitySeverity,
+) -> Result<bool, norn_ir::canonical::CanonicalJsonError> {
+    let class = catalog.classify_data_quality_rule(rule_ref)?;
+    Ok(class == crate::DataQualityRuleClassification::Integrity
+        || (class == crate::DataQualityRuleClassification::Builtin
+            && severity == DataQualitySeverity::Error))
+}
+
+/// MANIFEST-LAWS-1: the findings an observation of `values` as `key` records,
+/// rule by rule, by the per-row path's own evaluation: the effective values,
+/// every property check and invariant, then every governing law. A law that
+/// reads a link refuses: a dataset row has no links.
+///
+/// # Errors
+/// Invalid effective values, exhausted evaluation fuel, a law that reads a
+/// link, or unsupported law semantics.
+pub fn observation_rule_findings(
+    catalog: &TypeCatalog<'_>,
+    key: &FactKey,
+    values: &JsonObject,
+) -> Result<Vec<RuleFinding>, ObservationRefusal> {
+    let current = effective_observed_values(catalog, key, values)?;
+    let failures = evaluate_observed_invariants(catalog, key, &current)?;
+    let mut found = Vec::new();
+    for failure in &failures {
+        let (rule_ref, outcome, severity) = failure_rule(catalog, failure)?;
+        found.push((rule_ref, severity, outcome));
+    }
+    let mut remaining = EvaluationBudget::default().units();
+    for failure in crate::governing_laws::evaluate_linked(
+        catalog,
+        key,
+        &current,
+        &mut crate::governing_laws::NoLinkTargets,
+        &mut remaining,
+    )? {
+        found.push((failure.rule_ref, failure.severity, failure.outcome));
+    }
+    found
+        .into_iter()
+        .map(|(rule_ref, severity, outcome)| {
+            let quarantines = finding_quarantines(catalog, &rule_ref, severity)
+                .map_err(|error| ObservationRefusal::Encoding(error.to_string()))?;
+            Ok(RuleFinding {
+                rule_ref,
+                severity,
+                outcome,
+                quarantines,
+            })
+        })
+        .collect()
+}
+
 fn findings_for(
     catalog: &TypeCatalog<'_>,
     key: &FactKey,
@@ -1584,47 +1709,7 @@ fn findings_for(
     let mut findings = failures
         .iter()
         .map(|failure| {
-            let (rule_ref, outcome) = match &failure.finding_outcome {
-                Some(outcome @ DataQualityOutcome::InvalidTemporalObservation { .. }) => (
-                    DataQualityRuleRef::Builtin {
-                        id: TEMPORAL_PROPERTY_RULE_ID.to_owned(),
-                        version: "1".to_owned(),
-                    },
-                    outcome.clone(),
-                ),
-                Some(outcome) => {
-                    return Err(ObservationRefusal::Encoding(format!(
-                        "unsupported built-in invariant finding outcome: {outcome:?}"
-                    )));
-                }
-                None if failure.id.as_str().starts_with("$property.") => (
-                    property_finding_rule_ref(catalog, failure)?,
-                    failure.outcome.clone(),
-                ),
-                None => {
-                    let version = catalog
-                        .invariant_owner_version(&failure.owner)
-                        .map_err(|error| ObservationRefusal::Encoding(error.to_string()))?
-                        .ok_or_else(|| {
-                            ObservationRefusal::Encoding(format!(
-                                "invariant owner {:?} is absent from the catalog",
-                                failure.owner
-                            ))
-                        })?;
-                    (
-                        DataQualityRuleRef::Invariant {
-                            owner: failure.owner.clone(),
-                            invariant_id: failure.id.clone(),
-                            version,
-                        },
-                        failure.outcome.clone(),
-                    )
-                }
-            };
-            let severity = match failure.classification {
-                ConstraintClass::Integrity => DataQualitySeverity::Error,
-                ConstraintClass::Quality => DataQualitySeverity::Warning,
-            };
+            let (rule_ref, outcome, severity) = failure_rule(catalog, failure)?;
             build(rule_ref, severity, failure.message.clone(), outcome)
         })
         .collect::<Result<Vec<_>, _>>()?;

@@ -22,8 +22,9 @@ use super::{
     BucketTotals, Column, ColumnKind, ColumnProfile, EngineRefusal, EvaluateRequest,
     EvaluateResponse, ExportFormat, ExportRequest, FileFormat, Filter, FrontierRequest,
     FrontierResponse, GroupKey, LandRequest, LandResponse, LandedFile, Literal, LoadRequest,
-    LoadResponse, Lowered, MemberRow, MembersRequest, MembersResponse, MirrorRow, PageClause,
-    PageOp, PageOperand, PageRequest, PageResponse, PageRow, ProfileRequest, ProfileResponse,
+    LoadResponse, Lowered, MAX_PREDICATE_SCALE, MemberRow, MembersRequest, MembersResponse,
+    MirrorRow, PageClause, PageOp, PageOperand, PageRequest, PageResponse, PageRow, PredicateKind,
+    ProfileRequest, ProfileResponse, ResidueRow, RowPredicate, RuleCheck, RuleCount, SettleRequest,
     Source, StoreRequest, SyncRequest, TIME_LINK_COLUMN, TableSchema, TenantId, Test, TimeLink,
     ValidRange, Value, dataset_cache_id, hex,
 };
@@ -77,22 +78,31 @@ pub struct Engine {
 /// OLAP-02: one held landing attempt.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Held {
-    /// An operation (the landing's download and load, or a store) holds it.
+    /// An operation (the landing's download and load, a settle or a store)
+    /// holds it.
     leased: bool,
-    /// The landing contract it landed, once landed; only a store of exactly
+    /// The landing contract it landed and the step it is at, once landed;
+    /// only a settle (residue left) or a store (files written) of exactly
     /// that contract may take it.
     landed: Option<Landed>,
 }
 
 /// OLAP-02 (Sol r4): the landing contract of an attempt, recorded by the
-/// engine when it landed: the request it landed (by [`contract`]) and the
-/// answer it gave. A later step of the attempt must name exactly this
-/// request, and a store exactly this answer; nothing a caller echoes
-/// replaces what the engine recorded.
+/// engine at land time: the request it landed (by [`contract`]: landing
+/// identity, load identity, table, file, binding, pins and rules) and its
+/// latest answer. A later step must name exactly this request, and a store
+/// exactly this answer; nothing a caller echoes replaces what the engine
+/// recorded.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Landed {
     request: LandRequest,
     answer: LandResponse,
+}
+
+impl Landed {
+    fn phase(&self) -> Phase {
+        Phase::of(&self.answer)
+    }
 }
 
 /// The immutable part of a landing request: all of it, with the attempt the
@@ -131,15 +141,34 @@ fn receipt_key(attempt: &str) -> String {
     format!("store:{attempt}")
 }
 
+/// How far a landed attempt is: which next step may take it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Phase {
+    /// Residue rows remain for the per-row evaluator: a settle's.
+    Staged,
+    /// The data and held-set files are written: a store's.
+    Written,
+}
+
+impl Phase {
+    fn of(response: &LandResponse) -> Self {
+        if response.data.is_some() && response.held.is_some() {
+            Self::Written
+        } else {
+            Self::Staged
+        }
+    }
+}
+
 /// A refusal of a landing attempt this engine does not hold (never minted,
 /// or already removed by its owner).
 pub const ATTEMPT_UNKNOWN: &str = "bulk.attempt_unknown";
 /// A refusal of a landing attempt another operation holds: its download or
-/// load is still running, or another store of it is.
+/// load is still running, or another settle or store of it is.
 pub const ATTEMPT_BUSY: &str = "bulk.attempt_busy";
 
 /// OLAP-02: exclusive use of one landing attempt, minted by the engine
-/// ([`Engine::land`]) or taken by a store of its landing. The lease is the
+/// ([`Engine::land`]) or taken by a settle or a store of its landing. The lease is the
 /// attempt's one cleanup owner: dropped, it removes the attempt's directory
 /// and forgets the attempt, unless it was released as landed. Nothing else
 /// removes an attempt, and nothing names one but its engine-minted token.
@@ -148,8 +177,8 @@ struct Lease<'e> {
     tenant: TenantId,
     token: String,
     dir: PathBuf,
-    /// Set when the attempt landed: the lease then releases it, kept, for a
-    /// store of exactly this contract.
+    /// Set when the attempt landed (or settled): the lease then releases
+    /// it, kept, for the next step of exactly this contract.
     landed: Option<Landed>,
 }
 
@@ -199,6 +228,11 @@ fn dataset_table(name: &str) -> String {
 /// The mirrored edges of one link table (METRIC-GRAIN-LINK-1).
 fn link_table(name: &str) -> String {
     ident(&format!("k:{name}"))
+}
+
+/// The residue rows of a landing: left to the per-row evaluator.
+fn residue_table(name: &str) -> String {
+    ident(&format!("r:{name}"))
 }
 
 fn quarantine_table(name: &str) -> String {
@@ -380,18 +414,20 @@ impl Engine {
     }
 
     /// OLAP-02: take the landed attempt `request.attempt` of its tenant for
-    /// a step of `request`, with the answer its landing gave. An attempt
-    /// this engine does not hold is [`ATTEMPT_UNKNOWN`]; one another
-    /// operation holds (its download, its load or another store is still
-    /// running) is [`ATTEMPT_BUSY`]; one landed by any other request (Sol
-    /// r4: another landing, load, table, file, binding or pins), or whose
-    /// answer is not `answer`, is stale. Every check is made before the
-    /// attempt is taken, so a refusal touches nothing: the attempt stays
-    /// held as it was.
+    /// the step `phase` of `request`, with the answer its last step gave.
+    /// An attempt this engine does not hold is [`ATTEMPT_UNKNOWN`]; one
+    /// another operation holds (its download, its load, or another settle
+    /// or store is still running) is [`ATTEMPT_BUSY`]; one landed by any
+    /// other request (Sol r4: another landing, load, table, file, binding,
+    /// pins or rules), or not at that step, or (for a store, `answer`)
+    /// whose last answer is not `answer`, is stale. Every check is made
+    /// before the attempt is taken, so a refusal touches nothing: the
+    /// attempt, its staging and its files stay as they were.
     fn lease_attempt(
         &self,
         request: &LandRequest,
-        answer: &LandResponse,
+        phase: Phase,
+        answer: Option<&LandResponse>,
     ) -> Outcome<(Lease<'_>, LandResponse)> {
         let tenant = &request.load.tenant;
         let token = &request.attempt;
@@ -403,12 +439,15 @@ impl Engine {
         if held.leased {
             return Err(refusal(ATTEMPT_BUSY, "the landing attempt is in use"));
         }
-        let Some(landed) = held
-            .landed
-            .as_ref()
-            .filter(|landed| landed.request == contract(request) && landed.answer == *answer)
-        else {
-            return Err(refusal(STALE, "the landing attempt is another landing's"));
+        let Some(landed) = held.landed.as_ref().filter(|landed| {
+            landed.request == contract(request)
+                && landed.phase() == phase
+                && answer.is_none_or(|answer| *answer == landed.answer)
+        }) else {
+            return Err(refusal(
+                STALE,
+                "the landing attempt is another landing's or another step's",
+            ));
         };
         let answer = landed.answer.clone();
         held.leased = true;
@@ -602,29 +641,36 @@ impl Engine {
         })
     }
 
-    /// MANIFEST-LAND-1: land `request` in a fresh attempt: the engine mints
-    /// the attempt (OLAP-02: a token no caller chooses, so `request.attempt`
-    /// must be empty), `fetch` writes the source object into the attempt's
-    /// own source file, and the file is loaded under staging tables of the
-    /// attempt alone, then written as the attempt's two Parquet files: the data
-    /// file (every column of the staged table but the landing identity, in
-    /// source row order) and the held-set file (each held-back source row
-    /// with its reason and its text values). The staging is dropped in the
-    /// same call: nothing a reader sees changes until a manifest of exactly
-    /// these files commits and is read at its cache identity.
+    /// MANIFEST-LAND-1 / MANIFEST-LAWS-1: land `request` in a fresh attempt.
+    /// The engine mints the attempt (OLAP-02: a token no caller chooses, so
+    /// `request.attempt` must be empty) and `fetch` writes the source object
+    /// into the attempt's own source file. The file is loaded under staging
+    /// tables of the attempt alone (`<type>#<attempt>`), then every rule is
+    /// checked set-based over the typed rows. A rule the engine cannot
+    /// decide exactly for a row is left as that row's residue for the
+    /// per-row evaluator ([`Self::settle`]); every other decision stands
+    /// (LAW-04). With no residue the attempt's two Parquet files are written
+    /// (`Self::landing`).
+    ///
+    /// LAW-01: nothing a reader sees changes. Staging is the attempt's own,
+    /// a retry is another attempt, and a dataset is read only at a stored
+    /// cache identity a committed manifest names. A refused step drops the
+    /// attempt's staging.
     ///
     /// MANIFEST-02: every file is made read-only before it is hashed, in a
     /// directory only this process writes, so the bytes hashed are the bytes
     /// read and sent.
     ///
-    /// The answer names the attempt; it stays held, landed, for a store of
-    /// this landing ([`Self::store`]). Until then the landing holds it, so
-    /// no store, replayed or not, can remove it while `fetch` is still
-    /// writing; a failed landing removes it, and nothing else does.
+    /// The answer names the attempt; it stays held, for a settle of its
+    /// residue or a store of its files. Until then the landing holds it, so
+    /// no settle or store, replayed or not, can remove it while `fetch` is
+    /// still writing; a failed landing removes it, and nothing else does.
     ///
     /// # Errors
     /// `analytics.invalid` for a caller-named attempt, what `fetch` refuses,
-    /// as [`Self::load`], or the files cannot be written or read back.
+    /// as [`Self::load`], `bulk.unsupported_law` for a rule the engine does
+    /// not type, `bulk.unsupported_encoding` for a column the file cannot
+    /// carry exactly, or the files cannot be written or read back.
     pub fn land(
         &self,
         request: &LandRequest,
@@ -638,10 +684,13 @@ impl Engine {
         }
         let (mut lease, source) = self.begin_attempt(&request.load.tenant)?;
         fetch(source)?;
+        let request = &LandRequest {
+            attempt: lease.token.clone(),
+            ..request.clone()
+        };
         let started = Instant::now();
         let load_request = &request.load;
-        let dir = lease.dir.clone();
-        let file = dir.join("source");
+        let file = lease.dir.join("source");
         seal(&file)?;
         let (digest, bytes) =
             sha256_file(&file).map_err(|error| refusal("bulk.unreadable", error.to_string()))?;
@@ -651,40 +700,175 @@ impl Engine {
                 "the file is not the recorded upload",
             ));
         }
-        let data = dir.join("data.parquet");
-        let held = dir.join("held.parquet");
-        let staged_table = staged(&load_request.table, &lease.token);
-        let staged = LoadRequest {
+        let staged_table = staged(&load_request.table, &request.attempt);
+        let staged_load = LoadRequest {
             table: staged_table.clone(),
             ..load_request.clone()
         };
-        let (load, valid_time) = self.with(&load_request.tenant, |conn| {
+        let landed = self.with(&load_request.tenant, |conn| {
             let landed = (|| {
-                let load = load_locked(conn, &staged, &file, bytes, started)?;
-                copy_parquet(
+                let load = load_locked(conn, &staged_load, &file, bytes, started)?;
+                db(conn.execute_batch("BEGIN TRANSACTION"))?;
+                let checked = check_rules(conn, &staged_table, request);
+                if checked.is_err() {
+                    let _rolled_back = conn.execute_batch("ROLLBACK");
+                }
+                checked?;
+                db(conn.execute_batch("COMMIT"))?;
+                set_meta(
                     conn,
-                    &format!(
-                        "SELECT {} FROM {} ORDER BY \":row\"",
-                        data_columns(&staged_table).join(", "),
-                        dataset_table(&staged_table.name)
-                    ),
-                    &data,
+                    &format!("counts:{}", staged_table.name),
+                    &counts_text(&load)?,
                 )?;
-                copy_parquet(
-                    conn,
-                    &format!(
-                        "SELECT {} FROM {} ORDER BY \":row\", \":reason\"",
-                        held_columns(&staged_table).join(", "),
-                        quarantine_table(&staged_table.name)
-                    ),
-                    &held,
-                )?;
-                Ok((load, valid_ranges(conn, &staged_table)?))
+                Self::landing(conn, &lease.dir, request, load)
             })();
-            drop_staged(conn, &staged_table)?;
+            if landed.is_err() {
+                drop_staged(conn, &staged_table)?;
+            }
             landed
-        })?;
+        });
         let _source = std::fs::remove_file(&file);
+        let landed = landed?;
+        lease.landed = Some(Landed {
+            request: contract(request),
+            answer: landed.clone(),
+        });
+        Ok(landed)
+    }
+
+    /// MANIFEST-LAWS-1: record the per-row evaluator's findings for the
+    /// residue rows up to `through`, then answer as [`Self::land`] does:
+    /// the next residue rows, or the landed files once none remains. A
+    /// finding of a rule the engine did not leave to that row refuses, and
+    /// so does a step of an attempt that is not staged (another attempt's
+    /// retry never resets this one's findings, LAW-01).
+    ///
+    /// OLAP-02: the settle takes the attempt by its engine-minted token,
+    /// only while it has residue, for exactly the request it landed (Sol r4:
+    /// the landing contract recorded at land time, so a settle that echoes
+    /// the landing but changes the load is refused before the attempt is
+    /// taken), and while nothing else holds it; a refusal to take it touches
+    /// nothing. Once taken, a refused settle drops the attempt's staging and
+    /// removes it; it is the one owner.
+    ///
+    /// # Errors
+    /// [`ATTEMPT_UNKNOWN`], [`ATTEMPT_BUSY`], `core.compute.stale_input`
+    /// for an attempt that is not staged, `bulk.invalid_finding`, or an
+    /// engine failure.
+    pub fn settle(&self, request: &SettleRequest) -> Outcome<LandResponse> {
+        let land = &request.land;
+        let (mut lease, _answer) = self.lease_attempt(land, Phase::Staged, None)?;
+        let staged_table = staged(&land.load.table, &land.attempt);
+        let settled = self.with(&land.load.tenant, |conn| {
+            // Taken: from here every refusal drops the staging with the
+            // attempt, so nothing of it is left behind.
+            let settled = (|| {
+                if meta(conn, &format!("load:{}", staged_table.name))?.as_deref()
+                    != Some(land.load.load.as_str())
+                {
+                    return Err(refusal(STALE, "the landing attempt is not staged"));
+                }
+                let load: LoadResponse = serde_json::from_str(
+                    &meta(conn, &format!("counts:{}", staged_table.name))?
+                        .ok_or_else(|| refusal(STALE, "the landing attempt is unknown"))?,
+                )
+                .map_err(|e| refusal("analytics.engine", e.to_string()))?;
+                db(conn.execute_batch("BEGIN TRANSACTION"))?;
+                let settled = settle_rows(conn, &staged_table, request);
+                if settled.is_err() {
+                    let _rolled_back = conn.execute_batch("ROLLBACK");
+                }
+                settled?;
+                db(conn.execute_batch("COMMIT"))?;
+                Self::landing(conn, &lease.dir, land, load)
+            })();
+            if settled.is_err() {
+                drop_staged(conn, &staged_table)?;
+            }
+            settled
+        })?;
+        lease.landed = Some(Landed {
+            request: contract(land),
+            answer: settled.clone(),
+        });
+        Ok(settled)
+    }
+
+    /// The answer to a landing step: the next residue rows, or (none left)
+    /// the attempt's written files (in `dir`, the attempt's directory) and
+    /// the findings by rule, after which the attempt's staging is dropped.
+    ///
+    /// LAW-02: the data file holds exactly the typed rows no rule holds
+    /// back, and its valid time spans only them; the held-set file holds
+    /// every row that could not be typed and every finding.
+    fn landing(
+        conn: &Connection,
+        dir: &Path,
+        request: &LandRequest,
+        load: LoadResponse,
+    ) -> Outcome<LandResponse> {
+        let table = staged(&request.load.table, &request.attempt);
+        let residue_total = query_u64(
+            conn,
+            &Frag::raw(format!(
+                "SELECT count(DISTINCT \":row\") FROM {}",
+                residue_table(&table.name)
+            )),
+        )?;
+        let (findings, held_by_rules) = rule_counts(conn, &table)?;
+        let mut response = LandResponse {
+            landing: request.landing.clone(),
+            attempt: request.attempt.clone(),
+            load,
+            data: None,
+            held: None,
+            valid_time: Vec::new(),
+            findings,
+            held_by_rules,
+            residue_total,
+            residue: Vec::new(),
+            stored: None,
+        };
+        if residue_total > 0 {
+            response.residue = residue_rows(conn, &table, request.residue_page)?;
+            return Ok(response);
+        }
+        let (data, held) = (dir.join("data.parquet"), dir.join("held.parquet"));
+        let trusted = trusted_rows(&table);
+        copy_parquet(
+            conn,
+            &format!(
+                "SELECT {} FROM {} WHERE {trusted} ORDER BY \":row\"",
+                data_columns(&table).join(", "),
+                dataset_table(&table.name)
+            ),
+            &data,
+        )?;
+        copy_parquet(
+            conn,
+            &format!(
+                "SELECT {} FROM {} ORDER BY \":row\", \":rule\" NULLS FIRST, \":reason\"",
+                held_columns(&table).join(", "),
+                quarantine_table(&table.name)
+            ),
+            &held,
+        )?;
+        let data_rows = query_u64(
+            conn,
+            &Frag::raw(format!(
+                "SELECT count(*) FROM {} WHERE {trusted}",
+                dataset_table(&table.name)
+            )),
+        )?;
+        let held_rows = query_u64(
+            conn,
+            &Frag::raw(format!(
+                "SELECT count(*) FROM {}",
+                quarantine_table(&table.name)
+            )),
+        )?;
+        response.valid_time = valid_ranges(conn, &table, &trusted)?;
+        drop_staged(conn, &table)?;
         let landed = |path: &Path, rows: u64| -> Outcome<LandedFile> {
             seal(path)?;
             let (sha256, bytes) = sha256_file(path)
@@ -695,22 +879,8 @@ impl Engine {
                 bytes,
             })
         };
-        let response = LandResponse {
-            landing: request.landing.clone(),
-            attempt: lease.token.clone(),
-            data: landed(&data, load.rows)?,
-            held: landed(&held, load.rejected)?,
-            load,
-            valid_time,
-            stored: None,
-        };
-        lease.landed = Some(Landed {
-            request: contract(&LandRequest {
-                attempt: lease.token.clone(),
-                ..request.clone()
-            }),
-            answer: response.clone(),
-        });
+        response.data = Some(landed(&data, data_rows)?);
+        response.held = Some(landed(&held, held_rows)?);
         Ok(response)
     }
 
@@ -722,10 +892,11 @@ impl Engine {
     /// `send` sends the two files (data, held) to their objects first.
     ///
     /// OLAP-02: the store takes the attempt by its engine-minted token, and
-    /// only for exactly the request it landed and the answer it gave (Sol
-    /// r4: the answer stored is the engine's own record, never the
-    /// caller's); it is then the attempt's one owner and removes it, stored
-    /// or not. A store of an attempt still landing is [`ATTEMPT_BUSY`] and
+    /// only once its files are written, for exactly the request it landed
+    /// and the answer it gave (Sol r4: the answer stored is the engine's own
+    /// record, never the caller's), and while nothing else holds it; it is
+    /// then the attempt's one owner and removes it, stored or not. A store
+    /// of an attempt still landing or settling is [`ATTEMPT_BUSY`] and
     /// touches nothing. A store keeps its receipt by tenant and attempt; a
     /// replay of an attempt already stored must be that receipt's request
     /// (only the presigned URLs may differ) and answers the receipt's
@@ -746,18 +917,31 @@ impl Engine {
         if request.landed.landing != land.landing || request.landed.attempt != land.attempt {
             return Err(refusal(STALE, "the answer is not this landing's"));
         }
-        let (lease, answer) = match self.lease_attempt(land, &request.landed) {
+        if request.landed.data.is_none() || request.landed.held.is_none() {
+            return Err(refusal(
+                "analytics.invalid",
+                "the landing has residue to settle",
+            ));
+        }
+        let leased = self.lease_attempt(land, Phase::Written, Some(&request.landed));
+        let (lease, answer) = match leased {
             Ok(leased) => leased,
             Err(unknown) if unknown.code == ATTEMPT_UNKNOWN => {
                 return self.replayed(request)?.ok_or(unknown);
             }
             Err(refused) => return Err(refused),
         };
+        let (Some(data_file), Some(held_file)) = (&answer.data, &answer.held) else {
+            return Err(refusal(
+                "analytics.engine",
+                "a written attempt names its files",
+            ));
+        };
         let (data, held) = lease.files();
         send(&data, &held)?;
         let objects = self.private(tenant)?.join("objects");
         let mut kept = Vec::new();
-        for (path, file) in [(&data, &answer.data), (&held, &answer.held)] {
+        for (path, file) in [(&data, data_file), (&held, held_file)] {
             let target = objects.join(format!("{}.parquet", file.sha256));
             verify_object(path, &file.sha256)?;
             if target.exists() {
@@ -768,29 +952,29 @@ impl Engine {
             }
             kept.push(target);
         }
-        let cache = dataset_cache_id(table, &answer.data.sha256, &answer.held.sha256);
+        let cache = dataset_cache_id(table, &data_file.sha256, &held_file.sha256);
         let record = KeptLanding {
             table: table.clone(),
             data: KeptFile {
                 path: kept.first().cloned().unwrap_or_default(),
-                sha256: answer.data.sha256.clone(),
+                sha256: data_file.sha256.clone(),
                 uri: request.data.uri.clone(),
             },
             held: KeptFile {
                 path: kept.get(1).cloned().unwrap_or_default(),
-                sha256: answer.held.sha256.clone(),
+                sha256: held_file.sha256.clone(),
                 uri: request.held.uri.clone(),
             },
         };
+        let record = json_text(&record)?;
         let response = LandResponse {
             stored: Some(cache.clone()),
             ..answer
         };
-        let receipt = StoreReceipt {
+        let receipt = json_text(&StoreReceipt {
             request: store_contract(request),
             response: response.clone(),
-        };
-        let (record, receipt) = (json_text(&record)?, json_text(&receipt)?);
+        })?;
         // The kept record and the receipt commit together, before the lease
         // is released: a replay that finds the attempt gone finds its receipt.
         self.with(tenant, |conn| {
@@ -1400,11 +1584,16 @@ impl Scope {
                     hydrate(conn, table, load)?;
                 }
                 let schema = schema_of(conn, &format!("dataset:{table}"))?;
+                // DATA-QUARANTINE / MANIFEST-LAWS-1: a row a rule holds back
+                // is in no answer, as a held-back observation is in none.
                 Ok(Self {
                     table: dataset_table(table),
                     columns: schema.columns,
                     all: Frag::raw("TRUE"),
-                    population: Frag::raw("TRUE"),
+                    population: Frag::raw(format!(
+                        "\":row\" NOT IN (SELECT \":row\" FROM {} WHERE \":holds\" AND \":rule\" IS NOT NULL)",
+                        quarantine_table(table)
+                    )),
                     versions: None,
                     excluded: Vec::new(),
                     at: None,
@@ -2451,8 +2640,11 @@ fn dataset_ddl(table: &TableSchema) -> String {
 
 /// Read the file once into `":file"` (insertion order is the file's), then
 /// in one pass into `":checked"`: per table column `c{i}` its text (found by
-/// header or Parquet field name; an empty or blank field is null), its
-/// parsed value, and `":reason"`, the first refusal in column order.
+/// header or Parquet field name), its parsed value, and `":reason"`, the
+/// first refusal in column order. A CSV field has no null, so an empty or
+/// blank one is null; a Parquet value is null only when the file says so,
+/// and present text, empty or blank, is kept as it is (LAW-02/05: as the
+/// per-row path reads it).
 fn check_file(conn: &Connection, request: &LoadRequest, file: &Path) -> Outcome<()> {
     let path = file.to_string_lossy().replace('\'', "''");
     let source = match request.file.format {
@@ -2473,6 +2665,10 @@ fn check_file(conn: &Connection, request: &LoadRequest, file: &Path) -> Outcome<
         Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
     }))?
     .collect::<Result<_, _>>())?;
+    let nanos = match request.file.format {
+        FileFormat::Parquet => nanosecond_fields(conn, &path)?,
+        FileFormat::Csv => std::collections::BTreeSet::new(),
+    };
     let mut texts = Vec::new();
     let mut parsed = Vec::new();
     let mut reasons = Vec::new();
@@ -2485,16 +2681,44 @@ fn check_file(conn: &Connection, request: &LoadRequest, file: &Path) -> Outcome<
             ));
         };
         let f = ident(name);
+        // LAW-03: an instant is imported exactly or not at all: its every
+        // nanosecond and its instant (never the session's zone), so a rule
+        // decides the value the file holds.
+        let lossy = || {
+            refusal(
+                "bulk.unsupported_encoding",
+                format!("{name} holds instants this load cannot import exactly"),
+            )
+        };
         let text = match (column.kind, data_type.as_str()) {
-            (ColumnKind::Timestamp, kind) if kind.starts_with("TIMESTAMP") => {
+            (ColumnKind::Timestamp, "TIMESTAMP_NS") => {
+                // The second is taken in HUGEINT: near the lower bound of
+                // TIMESTAMP_NS, the nanoseconds less their fraction are
+                // below BIGINT's range though the microseconds are not.
+                let fraction =
+                    format!("(((epoch_ns({f}) % 1000000000) + 1000000000) % 1000000000)");
+                format!(
+                    "strftime(make_timestamp(CAST((CAST(epoch_ns({f}) AS HUGEINT) - {fraction}) // 1000 AS BIGINT)), '%Y-%m-%dT%H:%M:%S') \
+                     || '.' || lpad(CAST({fraction} AS VARCHAR), 9, '0') || 'Z'"
+                )
+            }
+            (ColumnKind::Timestamp, _) if nanos.contains(name) => return Err(lossy()),
+            (ColumnKind::Timestamp, "TIMESTAMP WITH TIME ZONE") => {
+                format!("strftime(make_timestamp(epoch_us({f})), '%Y-%m-%dT%H:%M:%S.%fZ')")
+            }
+            (ColumnKind::Timestamp, "TIMESTAMP" | "TIMESTAMP_MS" | "TIMESTAMP_S") => {
                 format!("strftime(CAST({f} AS TIMESTAMP), '%Y-%m-%dT%H:%M:%S.%fZ')")
             }
+            (ColumnKind::Timestamp, kind) if kind.starts_with("TIMESTAMP") => return Err(lossy()),
             (ColumnKind::Date, "DATE") => format!("strftime({f}, '%Y-%m-%d')"),
             _ => format!("CAST({f} AS VARCHAR)"),
         };
-        texts.push(format!(
-            "CASE WHEN trim({text}) = '' THEN NULL ELSE {text} END AS c{i}"
-        ));
+        texts.push(match request.file.format {
+            FileFormat::Csv => {
+                format!("CASE WHEN trim({text}) = '' THEN NULL ELSE {text} END AS c{i}")
+            }
+            FileFormat::Parquet => format!("{text} AS c{i}"),
+        });
         let Parsed { columns, reason } = parse_sql(column.kind, i);
         parsed.extend(columns);
         let missing = if column.nullable {
@@ -2524,6 +2748,30 @@ fn check_file(conn: &Connection, request: &LoadRequest, file: &Path) -> Outcome<
         texts.join(", "),
     )))?;
     Ok(())
+}
+
+/// LAW-03: the Parquet fields that hold nanosecond instants (a `NANOS`
+/// timestamp or a legacy `INT96` one). The engine imports such a field only
+/// as `TIMESTAMP_NS`; read as anything narrower, it is refused.
+fn nanosecond_fields(conn: &Connection, path: &str) -> Outcome<std::collections::BTreeSet<String>> {
+    let mut statement = db(conn.prepare(&format!(
+        "SELECT name, CAST(type AS VARCHAR), coalesce(CAST(logical_type AS VARCHAR), '') FROM parquet_schema('{path}')"
+    )))?;
+    let fields = db(db(statement.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+            row.get::<_, String>(2)?,
+        ))
+    }))?
+    .collect::<Result<Vec<_>, _>>())?;
+    Ok(fields
+        .into_iter()
+        .filter(|(_, physical, logical)| {
+            physical == "INT96" || logical.contains("NANOS=NanoSeconds")
+        })
+        .map(|(name, _, _)| name)
+        .collect())
 }
 
 fn load_file(
@@ -2687,7 +2935,7 @@ fn copy_parquet(conn: &Connection, query: &str, path: &Path) -> Outcome<()> {
 }
 
 /// Each temporal column's earliest and latest admitted value, by instant.
-fn valid_ranges(conn: &Connection, table: &TableSchema) -> Outcome<Vec<ValidRange>> {
+fn valid_ranges(conn: &Connection, table: &TableSchema, rows: &str) -> Outcome<Vec<ValidRange>> {
     let dataset = dataset_table(&table.name);
     let mut ranges = Vec::new();
     for column in &table.columns {
@@ -2701,10 +2949,10 @@ fn valid_ranges(conn: &Connection, table: &TableSchema) -> Outcome<Vec<ValidRang
         );
         let end = |direction: &str| -> Outcome<Option<String>> {
             let mut statement = db(conn.prepare(&format!(
-                "SELECT {c} FROM {dataset} WHERE {c} IS NOT NULL ORDER BY {t} {direction}, {n} {direction} LIMIT 1"
+                "SELECT {c} FROM {dataset} WHERE {c} IS NOT NULL AND {rows} ORDER BY {t} {direction}, {n} {direction} LIMIT 1"
             )))?;
-            let mut rows = db(statement.query([]))?;
-            match db(rows.next())? {
+            let mut found = db(statement.query([]))?;
+            match db(found.next())? {
                 Some(row) => Ok(Some(db(row.get(0))?)),
                 None => Ok(None),
             }
@@ -2718,6 +2966,500 @@ fn valid_ranges(conn: &Connection, table: &TableSchema) -> Outcome<Vec<ValidRang
         }
     }
     Ok(ranges)
+}
+
+/// LAW-02: the typed rows of a staged table that no rule holds back.
+fn trusted_rows(table: &TableSchema) -> String {
+    format!(
+        "\":row\" NOT IN (SELECT \":row\" FROM {} WHERE \":holds\" AND \":rule\" IS NOT NULL)",
+        quarantine_table(&table.name)
+    )
+}
+
+fn counts_text(load: &LoadResponse) -> Outcome<String> {
+    serde_json::to_string(load).map_err(|e| refusal("analytics.engine", e.to_string()))
+}
+
+/// The largest mantissa the per-row evaluator's decimal holds exactly
+/// (`2^96 - 1`): a value whose scaled magnitude passes it is not computed
+/// set-based.
+const EXACT_MANTISSA: &str = "79228162514264337593543950335";
+
+/// `|x| <= EXACT_MANTISSA / 10^scale`, and false when it cannot be computed.
+fn in_range(value: &Frag, scale: u32) -> Outcome<Frag> {
+    let digits = EXACT_MANTISSA.len();
+    let scale_digits = usize::try_from(scale).map_err(|_e| refusal(LAW, "a scale"))?;
+    let bound = if scale_digits == 0 {
+        EXACT_MANTISSA.to_owned()
+    } else {
+        let split = digits
+            .checked_sub(scale_digits)
+            .ok_or_else(|| refusal(LAW, "a scale past the exact range"))?;
+        format!(
+            "{}.{}",
+            EXACT_MANTISSA.get(..split).unwrap_or("0"),
+            EXACT_MANTISSA.get(split..).unwrap_or_default()
+        )
+    };
+    Ok(Frag::fmt(
+        &format!("coalesce(TRY(abs({{}}) <= CAST('{bound}' AS DECIMAL(38,{scale}))), FALSE)"),
+        &[value],
+    ))
+}
+
+const LAW: &str = "bulk.unsupported_law";
+
+/// LAW-05: the per-row evaluator compares text by its NFC form, the engine
+/// by its bytes. They agree exactly where the text is already NFC, so text
+/// that is not is left to the per-row evaluator as residue.
+fn nfc_guard(text: &Frag) -> Frag {
+    Frag::fmt("(nfc_normalize({}) = {})", &[text, text])
+}
+
+/// One lowered predicate: its SQL, null-free over rows whose reads are all
+/// present, and the guards that must all hold for it to be exact.
+struct LoweredRule {
+    sql: Frag,
+    kind: PredicateKind,
+    guards: Vec<Frag>,
+}
+
+/// MANIFEST-LAWS-1: the SQL of `predicate` over `table`, with every value
+/// bound. The predicate is typed again here, by the engine's own schema.
+fn predicate_sql(predicate: &RowPredicate, table: &TableSchema) -> Outcome<LoweredRule> {
+    if predicate.kind(table).is_none() {
+        return Err(refusal(LAW, "a rule the engine does not type"));
+    }
+    lower_node(predicate, table)
+}
+
+/// A literal or column read: its SQL and the guard a number needs.
+fn lower_leaf(node: &RowPredicate, table: &TableSchema) -> Outcome<LoweredRule> {
+    use PredicateKind as K;
+    use RowPredicate as P;
+    Ok(match node {
+        P::Null => return Err(refusal(LAW, "null outside an equality")),
+        P::Bool(flag) => LoweredRule {
+            sql: Frag::raw(if *flag { "TRUE" } else { "FALSE" }),
+            kind: K::Bool,
+            guards: Vec::new(),
+        },
+        P::Number(text) => {
+            let Some(K::Number(scale)) = node.kind(table) else {
+                return Err(refusal(LAW, "a number literal"));
+            };
+            let sql = Frag::bind(
+                &format!("CAST(? AS DECIMAL(38,{scale}))"),
+                Sql::Text(text.clone()),
+            );
+            let guard = in_range(&sql, scale)?;
+            LoweredRule {
+                sql,
+                kind: K::Number(scale),
+                guards: vec![guard],
+            }
+        }
+        P::Text(text) => {
+            let sql = Frag::bind("CAST(? AS VARCHAR)", Sql::Text(text.clone()));
+            let guards = vec![nfc_guard(&sql)];
+            LoweredRule {
+                sql,
+                kind: K::Text,
+                guards,
+            }
+        }
+        P::Column(id) => {
+            let kind = node
+                .kind(table)
+                .ok_or_else(|| refusal(LAW, format!("no typed column {id}")))?;
+            let sql = Frag::raw(ident(id));
+            let guards = match kind {
+                K::Number(scale) => vec![in_range(&sql, scale)?],
+                K::Text => vec![nfc_guard(&sql)],
+                K::Null | K::Bool => Vec::new(),
+            };
+            LoweredRule { sql, kind, guards }
+        }
+        P::Not(_)
+        | P::Negate(_)
+        | P::Add(..)
+        | P::Subtract(..)
+        | P::Multiply(..)
+        | P::Equal(..)
+        | P::NotEqual(..)
+        | P::Less(..)
+        | P::LessOrEqual(..)
+        | P::Greater(..)
+        | P::GreaterOrEqual(..)
+        | P::And(..)
+        | P::Or(..)
+        | P::Conditional(..) => return Err(refusal(LAW, "not a literal or a column")),
+    })
+}
+
+/// `a == b` or `a != b`; against `null` it is a null test.
+fn lower_equality(
+    equal: bool,
+    a: &RowPredicate,
+    b: &RowPredicate,
+    table: &TableSchema,
+) -> Outcome<LoweredRule> {
+    use PredicateKind as K;
+    use RowPredicate as P;
+    Ok(match (a, b) {
+        (P::Null, P::Null) => LoweredRule {
+            sql: Frag::raw(if equal { "TRUE" } else { "FALSE" }),
+            kind: K::Bool,
+            guards: Vec::new(),
+        },
+        (P::Null, value) | (value, P::Null) => {
+            let value = lower_node(value, table)?;
+            let test = if equal { "IS NULL" } else { "IS NOT NULL" };
+            LoweredRule {
+                sql: Frag::fmt(&format!("({{}} {test})"), &[&value.sql]),
+                kind: K::Bool,
+                guards: value.guards,
+            }
+        }
+        (a, b) => {
+            let (a, b) = (lower_node(a, table)?, lower_node(b, table)?);
+            let mut guards = a.guards;
+            guards.extend(b.guards);
+            let op = if equal { "=" } else { "<>" };
+            LoweredRule {
+                sql: Frag::fmt(&format!("({{}} {op} {{}})"), &[&a.sql, &b.sql]),
+                kind: K::Bool,
+                guards,
+            }
+        }
+    })
+}
+
+fn lower_node(node: &RowPredicate, table: &TableSchema) -> Outcome<LoweredRule> {
+    use PredicateKind as K;
+    use RowPredicate as P;
+    let binary = |op: &str, a: &RowPredicate, b: &RowPredicate, kind: K| -> Outcome<LoweredRule> {
+        let (a, b) = (lower_node(a, table)?, lower_node(b, table)?);
+        let mut guards = a.guards;
+        guards.extend(b.guards);
+        Ok(LoweredRule {
+            sql: Frag::fmt(&format!("({{}} {op} {{}})"), &[&a.sql, &b.sql]),
+            kind,
+            guards,
+        })
+    };
+    let number = |a: &RowPredicate, b: &RowPredicate| -> Outcome<(u32, u32)> {
+        match (a.kind(table), b.kind(table)) {
+            (Some(K::Number(x)), Some(K::Number(y))) => Ok((x, y)),
+            _ => Err(refusal(LAW, "arithmetic on a value that is not a number")),
+        }
+    };
+    let arithmetic =
+        |op: &str, a: &RowPredicate, b: &RowPredicate, scale: u32| -> Outcome<LoweredRule> {
+            let mut lowered = binary(op, a, b, K::Number(scale))?;
+            lowered.guards.push(in_range(&lowered.sql, scale)?);
+            Ok(lowered)
+        };
+    Ok(match node {
+        P::Null | P::Bool(_) | P::Number(_) | P::Text(_) | P::Column(_) => lower_leaf(node, table)?,
+        P::Not(inner) => {
+            let inner = lower_node(inner, table)?;
+            LoweredRule {
+                sql: Frag::fmt("(NOT {})", &[&inner.sql]),
+                kind: K::Bool,
+                guards: inner.guards,
+            }
+        }
+        P::Negate(inner) => {
+            let inner = lower_node(inner, table)?;
+            LoweredRule {
+                sql: Frag::fmt("(- {})", &[&inner.sql]),
+                kind: inner.kind,
+                guards: inner.guards,
+            }
+        }
+        P::Add(a, b) => {
+            let (x, y) = number(a, b)?;
+            arithmetic("+", a, b, x.max(y))?
+        }
+        P::Subtract(a, b) => {
+            let (x, y) = number(a, b)?;
+            arithmetic("-", a, b, x.max(y))?
+        }
+        P::Multiply(a, b) => {
+            let (x, y) = number(a, b)?;
+            arithmetic(
+                "*",
+                a,
+                b,
+                x.checked_add(y)
+                    .filter(|s| *s <= MAX_PREDICATE_SCALE)
+                    .ok_or_else(|| refusal(LAW, "a scale past the exact range"))?,
+            )?
+        }
+        P::Equal(a, b) | P::NotEqual(a, b) => {
+            lower_equality(matches!(node, P::Equal(..)), a, b, table)?
+        }
+        P::Less(a, b) => binary("<", a, b, K::Bool)?,
+        P::LessOrEqual(a, b) => binary("<=", a, b, K::Bool)?,
+        P::Greater(a, b) => binary(">", a, b, K::Bool)?,
+        P::GreaterOrEqual(a, b) => binary(">=", a, b, K::Bool)?,
+        P::And(a, b) => binary("AND", a, b, K::Bool)?,
+        P::Or(a, b) => binary("OR", a, b, K::Bool)?,
+        P::Conditional(c, a, b) => {
+            let kind = node
+                .kind(table)
+                .ok_or_else(|| refusal(LAW, "a conditional the engine does not type"))?;
+            let (c, a, b) = (
+                lower_node(c, table)?,
+                lower_node(a, table)?,
+                lower_node(b, table)?,
+            );
+            let mut guards = c.guards;
+            guards.extend(a.guards);
+            guards.extend(b.guards);
+            LoweredRule {
+                sql: Frag::fmt(
+                    "(CASE WHEN {} THEN {} ELSE {} END)",
+                    &[&c.sql, &a.sql, &b.sql],
+                ),
+                kind,
+                guards,
+            }
+        }
+    })
+}
+
+/// MANIFEST-LAWS-1: one check's SQL over the cache table: whether the row is
+/// residue (a read is absent, a guard fails, or the engine cannot compute
+/// the predicate) and, if it is not, whether it fails the rule.
+fn check_sql(check: &RuleCheck, table: &TableSchema) -> Outcome<(Frag, Frag)> {
+    let Some(predicate) = &check.predicate else {
+        // Outside the lowered subset: every row goes to the per-row evaluator.
+        return Ok((Frag::raw("TRUE"), Frag::raw("FALSE")));
+    };
+    let mut reads = predicate.reads();
+    if let Some(condition) = &check.condition {
+        for read in condition.reads() {
+            if !reads.contains(&read) {
+                reads.push(read);
+            }
+        }
+    }
+    let predicate = predicate_sql(predicate, table)?;
+    if predicate.kind != PredicateKind::Bool {
+        return Err(refusal(LAW, "a rule whose predicate is not Boolean"));
+    }
+    let condition = match &check.condition {
+        Some(condition) => {
+            let lowered = predicate_sql(condition, table)?;
+            if lowered.kind != PredicateKind::Bool {
+                return Err(refusal(LAW, "a rule whose condition is not Boolean"));
+            }
+            Some(lowered)
+        }
+        None => None,
+    };
+    let mut residue: Vec<Frag> = reads
+        .iter()
+        .map(|read| Frag::raw(format!("{} IS NULL", ident(read))))
+        .collect();
+    let mut guards = predicate.guards.clone();
+    if let Some(condition) = &condition {
+        guards.extend(condition.guards.clone());
+        residue.push(Frag::fmt("TRY({}) IS NULL", &[&condition.sql]));
+    }
+    residue.extend(guards.iter().map(|guard| Frag::fmt("NOT {}", &[guard])));
+    residue.push(Frag::fmt("TRY({}) IS NULL", &[&predicate.sql]));
+    let residue = Frag::fmt("({})", &[&Frag::join(&residue, " OR ")]);
+    let expect = if check.expect { "TRUE" } else { "FALSE" };
+    let fails = match &condition {
+        Some(condition) => Frag::fmt(
+            &format!("(TRY({{}}) AND TRY({{}}) <> {expect})"),
+            &[&condition.sql, &predicate.sql],
+        ),
+        None => Frag::fmt(&format!("(TRY({{}}) <> {expect})"), &[&predicate.sql]),
+    };
+    Ok((residue, fails))
+}
+
+/// MANIFEST-LAWS-1 / LAW-04: check every rule over the staged typed rows
+/// in one pass. For each rule, a row it cannot decide exactly is residue
+/// of that rule alone (`(row, rule)`); every row it decides and fails is a
+/// finding, whatever the row's other rules leave.
+fn check_rules(conn: &Connection, table: &TableSchema, request: &LandRequest) -> Outcome<()> {
+    let dataset = dataset_table(&table.name);
+    let quarantine = quarantine_table(&table.name);
+    let residue = residue_table(&table.name);
+    db(conn.execute_batch(&format!(
+        "DROP TABLE IF EXISTS {residue}; CREATE TABLE {residue} (\":row\" UBIGINT, \":rule\" VARCHAR, PRIMARY KEY (\":row\", \":rule\"));"
+    )))?;
+    if request.checks.is_empty() {
+        return Ok(());
+    }
+    let mut select = vec![Frag::raw(ident(":row"))];
+    let mut columns = vec![format!("{} UBIGINT", ident(":row"))];
+    for (i, check) in request.checks.iter().enumerate() {
+        let (residue, fails) = check_sql(check, table)?;
+        select.push(Frag::fmt(&format!("{{}} AS \"r{i}\""), &[&residue]));
+        select.push(Frag::fmt(&format!("{{}} AS \"f{i}\""), &[&fails]));
+        columns.push(format!("\"r{i}\" BOOLEAN"));
+        columns.push(format!("\"f{i}\" BOOLEAN"));
+    }
+    // Values are bound, so the outcome is inserted rather than created from a query.
+    db(conn.execute_batch(&format!(
+        "CREATE OR REPLACE TEMP TABLE \":outcome\" ({});",
+        columns.join(", ")
+    )))?;
+    let outcome = Frag::fmt(
+        &format!("INSERT INTO \":outcome\" SELECT {{}} FROM {dataset}"),
+        &[&Frag::join(&select, ", ")],
+    );
+    db(conn.execute(&outcome.text, params_from_iter(outcome.params)))?;
+    for (i, check) in request.checks.iter().enumerate() {
+        db(conn.execute(
+            &format!("INSERT INTO {residue} SELECT \":row\", ? FROM \":outcome\" WHERE \"r{i}\""),
+            params_from_iter([Sql::Text(check.rule.clone())]),
+        ))?;
+        db(conn.execute(
+            &format!(
+                "INSERT INTO {quarantine} (\":row\", \":load\", \":reason\", \":rule\", \":holds\") \
+                 SELECT \":row\", ?, ?, ?, ? FROM \":outcome\" WHERE NOT \"r{i}\" AND \"f{i}\""
+            ),
+            params_from_iter([
+                Sql::Text(request.load.load.clone()),
+                Sql::Text(check.label.clone()),
+                Sql::Text(check.rule.clone()),
+                Sql::Boolean(check.holds),
+            ]),
+        ))?;
+    }
+    db(conn.execute_batch("DROP TABLE \":outcome\";"))
+}
+
+/// MANIFEST-LAWS-1 / LAW-04: record the per-row findings of the residue
+/// rows up to `through` and remove those rows from the residue. A finding
+/// must name a rule the engine left to that row, once.
+fn settle_rows(conn: &Connection, table: &TableSchema, request: &SettleRequest) -> Outcome<()> {
+    let quarantine = quarantine_table(&table.name);
+    let residue = residue_table(&table.name);
+    let mut statement = db(conn.prepare(&format!(
+        "SELECT count(*) FROM {residue} WHERE \":row\" = ? AND \":rule\" = ? AND \":row\" <= ?"
+    )))?;
+    let mut seen = std::collections::BTreeSet::new();
+    for finding in &request.findings {
+        let present: u64 = db(statement.query_row(
+            params_from_iter([
+                Sql::UBigInt(finding.row),
+                Sql::Text(finding.rule.clone()),
+                Sql::UBigInt(request.through),
+            ]),
+            |row| row.get(0),
+        ))?;
+        if present != 1 || !seen.insert((finding.row, finding.rule.clone())) {
+            return Err(refusal(
+                "bulk.invalid_finding",
+                format!(
+                    "row {} is not residue of that rule up to {}",
+                    finding.row, request.through
+                ),
+            ));
+        }
+        db(conn.execute(
+            &format!(
+                "INSERT INTO {quarantine} (\":row\", \":load\", \":reason\", \":rule\", \":holds\") VALUES (?, ?, ?, ?, ?)"
+            ),
+            params_from_iter([
+                Sql::UBigInt(finding.row),
+                Sql::Text(request.land.load.load.clone()),
+                Sql::Text(finding.label.clone()),
+                Sql::Text(finding.rule.clone()),
+                Sql::Boolean(finding.holds),
+            ]),
+        ))?;
+    }
+    db(conn.execute(
+        &format!("DELETE FROM {residue} WHERE \":row\" <= ?"),
+        params_from_iter([Sql::UBigInt(request.through)]),
+    ))?;
+    Ok(())
+}
+
+/// Findings by rule, and how many admitted rows a rule holds back.
+fn rule_counts(
+    conn: &Connection,
+    table: &TableSchema,
+) -> Outcome<(BTreeMap<String, RuleCount>, u64)> {
+    let quarantine = quarantine_table(&table.name);
+    let mut statement = db(conn.prepare(&format!(
+        "SELECT \":rule\", min(\":reason\"), count(*), bool_or(\":holds\") FROM {quarantine} \
+         WHERE \":rule\" IS NOT NULL GROUP BY \":rule\" ORDER BY \":rule\""
+    )))?;
+    let counts = db(db(statement.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            RuleCount {
+                label: row.get(1)?,
+                rows: row.get(2)?,
+                holds: row.get(3)?,
+            },
+        ))
+    }))?
+    .collect::<Result<BTreeMap<_, _>, _>>())?;
+    let held = query_u64(
+        conn,
+        &Frag::raw(format!(
+            "SELECT count(DISTINCT \":row\") FROM {quarantine} WHERE \":rule\" IS NOT NULL AND \":holds\""
+        )),
+    )?;
+    Ok((counts, held))
+}
+
+/// The first `limit` residue rows, in row order, with their present values.
+fn residue_rows(conn: &Connection, table: &TableSchema, limit: u32) -> Outcome<Vec<ResidueRow>> {
+    let mut select = vec![format!("d.{}", ident(":row"))];
+    for column in &table.columns {
+        select.push(format!("CAST(d.{} AS VARCHAR)", ident(&column.id)));
+        if matches!(column.kind, ColumnKind::Timestamp | ColumnKind::Date) {
+            select.push(format!("d.{}", derived(&column.id, "t")));
+            select.push(format!("d.{}", derived(&column.id, "n")));
+        } else {
+            select.push("CAST(NULL AS BIGINT)".to_owned());
+            select.push("CAST(NULL AS INTEGER)".to_owned());
+        }
+    }
+    select.push("r.\":rules\"".to_owned());
+    let mut statement = db(conn.prepare(&format!(
+        "SELECT {} FROM {} AS d JOIN (SELECT \":row\", string_agg(\":rule\", chr(10) ORDER BY \":rule\") AS \":rules\" \
+         FROM {} GROUP BY \":row\") AS r ON d.\":row\" = r.\":row\" ORDER BY d.\":row\" LIMIT ?",
+        select.join(", "),
+        dataset_table(&table.name),
+        residue_table(&table.name),
+    )))?;
+    let rules_at = table.columns.len().saturating_mul(3).saturating_add(1);
+    let rows = db(
+        statement.query_map(params_from_iter([Sql::UInt(limit.max(1))]), |row| {
+            let mut values = BTreeMap::new();
+            for (i, column) in table.columns.iter().enumerate() {
+                let at = i.saturating_mul(3).saturating_add(1);
+                if let Some(value) = present(
+                    column.kind,
+                    row.get(at)?,
+                    row.get(at.saturating_add(1))?,
+                    row.get(at.saturating_add(2))?,
+                ) {
+                    values.insert(column.id.clone(), value);
+                }
+            }
+            let rules: String = row.get(rules_at)?;
+            Ok(ResidueRow {
+                row: row.get(0)?,
+                values,
+                rules: rules.split('\n').map(str::to_owned).collect(),
+            })
+        }),
+    )?;
+    db(rows.collect())
 }
 
 /// MANIFEST-CACHE-1: the files a stored landing is kept as, by cache identity.
@@ -2824,11 +3566,12 @@ fn staged(table: &TableSchema, attempt: &str) -> TableSchema {
 /// Drop an attempt's staging tables and their records.
 fn drop_staged(conn: &Connection, staged: &TableSchema) -> Outcome<()> {
     db(conn.execute_batch(&format!(
-        "DROP TABLE IF EXISTS {}; DROP TABLE IF EXISTS {};",
+        "DROP TABLE IF EXISTS {}; DROP TABLE IF EXISTS {}; DROP TABLE IF EXISTS {};",
         dataset_table(&staged.name),
         quarantine_table(&staged.name),
+        residue_table(&staged.name),
     )))?;
-    for key in ["load", "dataset"] {
+    for key in ["load", "dataset", "counts"] {
         db(conn.execute(
             "DELETE FROM \":meta\" WHERE key = ?",
             [format!("{key}:{}", staged.name)],

@@ -2337,8 +2337,18 @@ export interface components {
             connectionId: string;
             /** @description The landed data file: every admitted row, columnar. */
             data: components["schemas"]["NornDatasetFile"];
+            /** @description MANIFEST-LAWS-1: findings of each law and invariant, by rule. */
+            findings: {
+                [key: string]: components["schemas"]["NornRuleFindings"];
+            };
             /** @description The landed held-set file: every held-back row and its reason. */
             held: components["schemas"]["NornDatasetFile"];
+            /**
+             * Format: int64
+             * @description Typed rows a law or invariant holds back: in the held-set file, not
+             *     among `rows`.
+             */
+            heldByRules: number;
             /** @description The landing identity; answers over the dataset name it. */
             load: string;
             /** @description MANIFEST-1: the committed manifest's identity. */
@@ -2358,12 +2368,12 @@ export interface components {
             receipt: string;
             /**
              * Format: int64
-             * @description Rows quarantined.
+             * @description Rows quarantined because they could not be typed.
              */
             rejected: number;
             /**
              * Format: int64
-             * @description Rows admitted.
+             * @description Rows admitted as trusted: typed, and held back by no rule (LAW-02).
              */
             rows: number;
             /** @description The source file's SHA-256, verified by the engine. */
@@ -12519,6 +12529,18 @@ export interface components {
             receipt: components["schemas"]["NornRevealReceipt"];
             /** @description The stored value, of the property's type; decimals are exact JSON number tokens. */
             value: unknown;
+        };
+        /** @description MANIFEST-LAWS-1: one law or invariant's findings over a dataset. */
+        NornRuleFindings: {
+            /** @description Whether a failing row is held back. */
+            holds: boolean;
+            /** @description The law (`law:<id>`) or invariant (`invariant:<id>`). */
+            label: string;
+            /**
+             * Format: int64
+             * @description Rows that fail it.
+             */
+            rows: number;
         };
         /**
          * @description A sort direction.
