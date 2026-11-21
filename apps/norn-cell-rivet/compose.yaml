@@ -85,7 +85,7 @@ services:
     volumes: [engine-3-log:/var/lib/rivet/log]
 
   lb:
-    image: haproxy:3.0.31-alpine3.24
+    image: haproxy:3.0.31-alpine3.24@sha256:7430e63d3052198b18a40665b59a5826bc428e8bceb0c561d82258149ef855ee
     restart: unless-stopped
     volumes: [./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro]
     depends_on: [engine-1, engine-2, engine-3]
@@ -93,7 +93,7 @@ services:
 
   # The `default` pool, created before any runner connects (idempotent).
   pool:
-    image: curlimages/curl:8.17.0
+    image: curlimages/curl:8.17.0@sha256:935d9100e9ba842cdb060de42472c7ca90cfe9a7c96e4dacb55e79e560b3ff40
     restart: "no"
     depends_on: [lb]
     environment:
@@ -103,7 +103,7 @@ services:
       - -c
       - >-
         for i in $$(seq 120); do
-        curl -sf -X PUT "http://lb:6420/pools/default?namespace=default"
+        curl -sf --connect-timeout 5 --max-time 10 -X PUT "http://lb:6420/pools/default?namespace=default"
         -H "authorization: Bearer $$RIVET_ADMIN_TOKEN" -H "content-type: application/json" -d '{}' && exit 0;
         sleep 2; done; exit 1
 
@@ -128,7 +128,7 @@ services:
     volumes: [s3-data:/data]
   s3-bucket:
     profiles: [s3]
-    image: curlimages/curl:8.17.0
+    image: curlimages/curl:8.17.0@sha256:935d9100e9ba842cdb060de42472c7ca90cfe9a7c96e4dacb55e79e560b3ff40
     restart: "no"
     depends_on: [s3]
     environment:

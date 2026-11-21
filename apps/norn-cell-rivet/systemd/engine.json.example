@@ -4,6 +4,8 @@
     "log_directory": "/var/lib/rivet/log",
     "zone": "REPLACE: this machine's failure domain, e.g. fsn1-dc14"
   },
+  "guard": { "host": "REPLACE: this machine's private IP (port 6420: API, actors, node connections)" },
+  "metrics": { "host": "REPLACE: this machine's private IP (port 6430: Prometheus metrics)" },
   "api_peer": {
     "host": "REPLACE: this machine's private IP, e.g. 10.0.0.11",
     "advertise_address": "REPLACE: the same IP with port 6421, e.g. 10.0.0.11:6421"

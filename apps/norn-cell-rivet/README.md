@@ -33,12 +33,20 @@ cp apps/norn-cell-rivet/env.example apps/norn-cell-rivet/.env    # fill it in; n
 docker compose -f apps/norn-cell-rivet/compose.yaml --profile s3 up -d --build
 ```
 
+The runner image builds from the repository root. The root `.dockerignore`
+keeps `.env` files, keys and other credential files, `.git`, `target/` and
+`node_modules/` out of the build context, so the filled-in `.env` never reaches
+a layer (checked on Boat: a build with a dummy `.env` beside the compose file
+has no such file in its context or image).
+
 The stack has these services:
 
 - `engine-1..3`: zones `zone-1..3`. Each advertises `engine-N:6421` to its
   peers.
 - `lb`: HAProxy in front of the engines on port 6420. It health-checks
-  `/health`, and it listens on loopback only.
+  `/health`, and it listens on loopback only. It finds the engines through
+  Docker's DNS at run time, so a recreated engine with a new address rejoins
+  without an HAProxy restart.
 - `pool`: creates the `default` pool before any runner connects.
 - `runner-1`, `runner-2`: `runner-1` publishes `NORN_PORT` (default 8787).
 - `s3`, `s3-bucket` (profile `s3`): a local test bucket, RustFS 1.0.6
@@ -65,34 +73,133 @@ Ports:
   `/etc/rivet/config.json`;
 - `norn-cell-rivet.service`, with `/etc/norn/cell-rivet.env`.
 
+The machines share one private network. The addresses below are examples;
+use your own and keep them consistent:
+
+| Machine | Private address | Listens on |
+|---|---|---|
+| engine-1, engine-2, engine-3 | 10.0.0.11, .12, .13 | 6420 (API), 6421 (peers), 6430 (metrics), private address only |
+| load balancer (private only, no public interface) | 10.0.0.2 | 6420 |
+| runners | 10.0.0.21, .22 | 8787, behind the public TLS proxy |
+| monitoring (Prometheus) | 10.0.0.30 | |
+| operator bastion (or WireGuard peer) | 10.0.0.40 | |
+
+What may reach each engine port:
+
+- **6420** (API, actor traffic, node connections): the private load balancer
+  and the operator bastion only. Runners reach it through the load balancer,
+  never directly. Every route needs the admin token; the Boat probe below
+  shows the refusals.
+- **6421** (instance to instance): the other two engines only. It is
+  plaintext and unauthenticated, so the network is its only protection.
+- **6430** (metrics): the monitoring host only.
+- Nothing on the public interface. Outbound HTTPS (443) to the bucket stays
+  open.
+
 On each of the three engine machines:
 
 1. Put the log directory on a dedicated block disk (NFS is not supported), at
    least 100 GiB. Rivet refuses to start with less than 10% of the disk, or
    less than 4 GiB, free.
 2. Write `/etc/rivet/config.json`. The admin token and the bucket are the same
-   on every machine. Each machine sets its own `api_peer.host`,
-   `api_peer.advertise_address` (`<private ip>:6421`) and `storage.zone`.
-3. Start all three within about a minute of each other. The first storage
+   on every machine. Each machine sets its own `storage.zone` and binds every
+   listener to its own private address: `guard.host` (6420), `metrics.host`
+   (6430), `api_peer.host` (6421) and `api_peer.advertise_address`
+   (`<private ip>:6421`). Left unset, `guard.host` and `metrics.host` bind
+   `[::]`, every interface, including the public one.
+3. Install the firewall below before starting the engine.
+4. Start all three within about a minute of each other. The first storage
    placement then spans all three; the instances find each other through the
    bucket.
-4. Check `curl http://<ip>:6420/health`. It returns
-   `{"architecture":"v3",…,"status":"ok","version":"3.1.1"}`.
+5. Check the bindings and the health:
+
+   ```sh
+   ss -ltn '( sport = :6420 or sport = :6421 or sport = :6430 )'   # each on 10.0.0.1N only
+   curl http://10.0.0.1N:6420/health
+   # {"architecture":"v3",…,"status":"ok","version":"3.1.1"}
+   ```
+
+   From a machine that is not allowed (a runner, say), the connections must
+   time out: `nc -zv -w 3 10.0.0.11 6421` and `nc -zv -w 3 10.0.0.11 6430`.
+
+### Engine firewall
+
+nftables, `/etc/nftables.conf` on engine-1 (on engine-2 and engine-3 the
+`peers` set holds the other two addresses). Load it with
+`systemctl enable --now nftables`:
+
+```nft
+#!/usr/sbin/nft -f
+flush ruleset
+
+table inet rivet {
+  set lb         { type ipv4_addr; elements = { 10.0.0.2 } }
+  set operators  { type ipv4_addr; elements = { 10.0.0.40 } }
+  set peers      { type ipv4_addr; elements = { 10.0.0.12, 10.0.0.13 } }
+  set monitoring { type ipv4_addr; elements = { 10.0.0.30 } }
+
+  chain input {
+    type filter hook input priority filter; policy drop;
+    ct state established,related accept
+    ct state invalid drop
+    iif lo accept
+    meta l4proto { icmp, ipv6-icmp } accept
+    tcp dport 22   ip saddr @operators  accept
+    tcp dport 6420 ip saddr @lb         accept
+    tcp dport 6420 ip saddr @operators  accept
+    tcp dport 6421 ip saddr @peers      accept
+    tcp dport 6430 ip saddr @monitoring accept
+  }
+  chain forward { type filter hook forward priority filter; policy drop; }
+  chain output  { type filter hook output priority filter; policy accept; }
+}
+```
+
+The same rules with ufw, on engine-1:
+
+```sh
+ufw default deny incoming
+ufw default allow outgoing
+ufw allow from 10.0.0.40 to any port 22 proto tcp
+ufw allow from 10.0.0.2  to 10.0.0.11 port 6420 proto tcp
+ufw allow from 10.0.0.40 to 10.0.0.11 port 6420 proto tcp
+ufw allow from 10.0.0.12 to 10.0.0.11 port 6421 proto tcp
+ufw allow from 10.0.0.13 to 10.0.0.11 port 6421 proto tcp
+ufw allow from 10.0.0.30 to 10.0.0.11 port 6430 proto tcp
+ufw enable
+```
+
+These rules hold because the engines run under systemd. A process in Docker
+with published ports bypasses both nftables input rules and ufw, so never
+publish 6420, 6421 or 6430 from a container on these machines. Add the same
+allowlist as a Hetzner Cloud Firewall on the public interface (inbound: none,
+or SSH from the bastion only).
 
 Then:
 
-5. Put a load balancer on port 6420 of every engine, with an idle timeout of
-   3600 s. Runners hold one long-lived connection to it.
-6. Create the pool:
+6. Put the private load balancer on port 6420 of every engine (its private
+   address as source), with an idle timeout of 3600 s and a health check on
+   `GET /health`. Runners hold one long-lived connection to it. The load
+   balancer itself accepts 6420 from the runners and the bastion only.
+7. Create the pool from the bastion:
 
    ```sh
-   curl -X PUT "https://<lb>/pools/default?namespace=default" \
+   curl -X PUT "http://10.0.0.2:6420/pools/default?namespace=default" \
      -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' -d '{}'
    ```
 
-7. Start the runners with
-   `RIVET_ENDPOINT=https://default:<token>@<lb>`, plus the Norn variables in
-   `env.example`.
+8. Start the runners with
+   `RIVET_ENDPOINT=http://default:<token>@10.0.0.2:6420`, plus the Norn
+   variables in `env.example`. The runners' firewall accepts 8787 from the TLS
+   proxy only.
+
+### Admin and fork routes refuse missing or wrong credentials
+
+Probed on Boat against the compose stack (engine 3.1.1, through `lb`).
+Requests were sent with no `authorization` header, with a wrong bearer token,
+and with the right one:
+
+RESULTS_PLACEHOLDER
 
 ### Hetzner Object Storage
 
@@ -157,6 +264,59 @@ and a run against this compose stack show that offload is in it:
   acknowledged write was lost. Past about 4 GiB in one actor, every further
   256 MiB load was fenced. Large dataset loads need a bounded rate (or a
   bigger engine machine) until this is understood upstream.
+
+## Losing a second disk before the first one is rebuilt
+
+One lost disk loses no acknowledged commit. Two lost disks in quick succession
+can stop the cluster, and the cause is not known:
+
+- In the #1130 rehearsal, a second disk lost 120 s after the first stopped the
+  cluster from serving (`depot request_deadline_exceeded`). Either the first
+  replica rebuild had not finished, or the engine hit the 1024-file limit
+  (since raised). The logs that would tell them apart were lost.
+- The pass with 600 s between the two losses (0 lost of 16,043) is a single
+  rehearsal. It does not establish that 600 s is always enough.
+
+So no fixed wait is safe. Before any planned work on another engine (a restart,
+an upgrade, a disk or machine replacement), check that the replica rebuild is
+complete:
+
+```sh
+# On each engine, from the monitoring host (3 machines), or in compose:
+#   docker run --rm --network norn-rivet_default curlimages/curl:8.17.0 -s http://engine-N:6430/metrics
+for e in 10.0.0.11 10.0.0.12 10.0.0.13; do
+  printf '%s ' "$e"; curl -sf "http://$e:6420/health" >/dev/null && printf 'health=ok ' || printf 'health=FAIL '
+  curl -s "http://$e:6430/metrics" \
+    | awk '/^depot_learner_uncovered_volumes /{printf "uncovered=%s ", $2}
+           /^depot_tablets\{worker_role="replica"\}/{printf "replicas=%s", $2}'
+  echo
+done
+```
+
+The rebuild is complete only when, on two reads at least 60 s apart:
+
+- every engine answers `health=ok`;
+- `depot_learner_uncovered_volumes` is 0 on every engine (no loaded volume
+  still lacks proof of its replica set);
+- `depot_tablets{worker_role="replica"}` is the same on all three engines (the
+  rebuilt engine holds a replica of every tablet again).
+
+REBUILD_PLACEHOLDER
+
+If a second disk fails before the first rebuild is complete:
+
+1. Stop replacing anything. Do not wipe, reformat or replace another disk, and
+   do not restart the engines one by one.
+2. Preserve what survives. Leave the surviving log disks attached and
+   untouched. Snapshot them (a Hetzner Volume snapshot, or `dd` to a spare
+   disk) before any further step.
+3. Keep the logs: `journalctl -u rivet-engine` (or `docker logs`) from every
+   engine since the first failure, plus a `/metrics` capture from each engine
+   still running. Copy them off the machines.
+4. Escalate to the owner with the timeline (first failure, second failure,
+   which disks survive) before any further replacement or restart. The
+   bucket's replica and the surviving disks are the only copies of the
+   commits since the last offload.
 
 ## Durability and cost evidence
 
