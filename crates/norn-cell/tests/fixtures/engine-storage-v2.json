@@ -460,9 +460,9 @@
         [
           1,
           1,
-          3000,
-          3,
-          "dc7fd672d4b15c335a587e27102b0f014556c1ea1f9f687329522f7c1eb96a3b"
+          5000,
+          5,
+          "4f65f97d7aedeee92917450261d5d8fd046ced7b85b96c08e4e18f8e3c86e837"
         ]
       ]
     },
@@ -617,6 +617,15 @@
           "{\"key\":\"a4\",\"type\":\"fixture.deleted\"}",
           "04dd82760447e487966981c294d18e233bdeafe8faa54beb6dae0eedc6a9fb04",
           "bedbc5ec850aa11924e373b155d4bd9eed3da701c338fba13aba29df2aae31ea"
+        ],
+        [
+          3,
+          3,
+          5,
+          "main",
+          "{\"decision\":{\"choice\":\"approve\",\"commandId\":\"norn.approval/fixture-call\",\"decidedBy\":\"approver\",\"decisionId\":\"dec_0f1e2d3c4b5a69788796a5b4c3d2e1f0\",\"generation\":1,\"idempotencyKey\":\"approve-fixture-call\",\"resolution\":\"decided\",\"runId\":\"norn.approval/fixture-call\",\"step\":\"approval\"},\"type\":\"norn.decision.resolved\"}",
+          "bedbc5ec850aa11924e373b155d4bd9eed3da701c338fba13aba29df2aae31ea",
+          "c98bc827132ad07fcbb978bd0168c7afd8e834b286862a8040d4b6374870cc5e"
         ]
       ]
     },
@@ -657,6 +666,24 @@
           "c48af50c2ba60894330b7d19aa3c9cf81d30fc6771119f716b74d16d8dd631fb",
           "{\"commitSeq\":3,\"enqueued\":[],\"eventCount\":1,\"firstEventSeq\":2,\"idempotencyKey\":\"delete\",\"ledgerHead\":\"bedbc5ec850aa11924e373b155d4bd9eed3da701c338fba13aba29df2aae31ea\",\"logicalTime\":3000,\"requestHash\":\"c48af50c2ba60894330b7d19aa3c9cf81d30fc6771119f716b74d16d8dd631fb\",\"scheduled\":[],\"world\":\"main\",\"written\":[{\"key\":\"a4\",\"objectType\":\"fixture.Item\",\"snapshotSha256\":\"b789750d6c50aaec7b621b67627b4f7aaec39ad313743dec4ada82ceee9e4a75\",\"version\":2}]}",
           "dc7fd672d4b15c335a587e27102b0f014556c1ea1f9f687329522f7c1eb96a3b"
+        ],
+        [
+          4,
+          4,
+          "main",
+          null,
+          "41527d632bf1daca50174a03db9b4e0349b26c8b0bc8a402305e9a4caca75c23",
+          "{\"commitSeq\":4,\"enqueued\":[\"norn.approval/fixture-call\"],\"eventCount\":0,\"firstEventSeq\":3,\"ledgerHead\":\"bedbc5ec850aa11924e373b155d4bd9eed3da701c338fba13aba29df2aae31ea\",\"logicalTime\":4000,\"requestHash\":\"41527d632bf1daca50174a03db9b4e0349b26c8b0bc8a402305e9a4caca75c23\",\"scheduled\":[],\"world\":\"main\",\"written\":[]}",
+          "a2f4cd8b24d9d59329b08ad450b9d3a0d5cfe044f910839c4f1b15fbb244f818"
+        ],
+        [
+          5,
+          5,
+          "main",
+          null,
+          "855c8af96846aae5e02da38a80a67895495e27cee183f16191525e8cc27a3e5b",
+          "{\"commitSeq\":5,\"consumed\":{\"commandId\":\"norn.approval/fixture-call\",\"generation\":1,\"kind\":\"result\"},\"enqueued\":[],\"eventCount\":1,\"firstEventSeq\":3,\"ledgerHead\":\"c98bc827132ad07fcbb978bd0168c7afd8e834b286862a8040d4b6374870cc5e\",\"logicalTime\":5000,\"requestHash\":\"855c8af96846aae5e02da38a80a67895495e27cee183f16191525e8cc27a3e5b\",\"scheduled\":[],\"world\":\"main\",\"written\":[]}",
+          "4f65f97d7aedeee92917450261d5d8fd046ced7b85b96c08e4e18f8e3c86e837"
         ]
       ]
     },
@@ -673,7 +700,20 @@
         "result",
         "consumed_commit_seq"
       ],
-      "rows": []
+      "rows": [
+        [
+          1,
+          "norn.approval/fixture-call",
+          1,
+          1,
+          4,
+          "norn.approval/fixture-call",
+          null,
+          "{\"deadline\":null,\"freshness\":\"append_only\",\"generation\":1,\"id\":\"norn.approval/fixture-call\",\"idempotency_key\":\"norn.approval/fixture-call\",\"payload\":{\"approval\":{\"action\":\"fixture.adjust\",\"actionDigest\":\"\",\"definition\":\"fixture.approval\",\"idempotencyKey\":\"fixture-call\",\"input\":{\"qty\":3},\"requester\":{\"subject\":\"requester\"}},\"attempt\":1,\"function\":\"norn.decision\",\"functionVersion\":\"1\",\"idempotencyKey\":\"norn.approval/fixture-call\",\"kind\":\"perform\",\"runId\":\"norn.approval/fixture-call\",\"step\":\"approval\"}}",
+          "{\"choice\":\"approve\"}",
+          5
+        ]
+      ]
     },
     "_norn_perform_claim": {
       "columns": [
@@ -703,7 +743,16 @@
         "outcome",
         "consumed_commit_seq"
       ],
-      "rows": []
+      "rows": [
+        [
+          1,
+          "norn.approval/fixture-call",
+          1,
+          1,
+          "{\"choice\":\"approve\"}",
+          5
+        ]
+      ]
     },
     "_norn_inbox": {
       "columns": [
@@ -1537,7 +1586,25 @@
         "resolved_at_ms",
         "commit_seq"
       ],
-      "rows": []
+      "rows": [
+        [
+          1,
+          "main",
+          "dec_0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+          "norn.approval/fixture-call",
+          1,
+          "norn.approval/fixture-call",
+          "approval",
+          "decided",
+          "approve",
+          null,
+          "approver",
+          "approve-fixture-call",
+          null,
+          5000,
+          5
+        ]
+      ]
     },
     "_norn_due_retry": {
       "columns": [
@@ -1574,6 +1641,18 @@
           3,
           "27d0eb166400331e5078bfaddc9b30a98da42a72f25e5f810a0d18b4a552d14f",
           "norn.cell.payload-storage/1:{\"commit_seq\":3,\"inline\":\"{\\\"batch\\\":{\\\"effects\\\":[],\\\"events\\\":[{\\\"key\\\":\\\"a4\\\",\\\"type\\\":\\\"fixture.deleted\\\"}],\\\"facts\\\":[],\\\"idempotencyKey\\\":\\\"delete\\\",\\\"links\\\":[],\\\"logicalTime\\\":3000,\\\"scope\\\":\\\"fixture/dev\\\",\\\"world\\\":\\\"main\\\",\\\"writes\\\":[{\\\"delete\\\":{\\\"key\\\":\\\"a4\\\",\\\"objectType\\\":\\\"fixture.Item\\\"}}]},\\\"bindings\\\":{\\\"cell_id\\\":\\\"0f1e2d3c4b5a69788796a5b4c3d2e1f0\\\",\\\"cell_identity_format\\\":\\\"norn.cell.identity/v1\\\",\\\"scope\\\":\\\"fixture/dev\\\"},\\\"consumedInput\\\":null,\\\"ddlHash\\\":\\\"4fd2931b26362a54d53ec6479db55c71182096d043dafe509363d55c3a4ba668\\\",\\\"ddlSql\\\":null,\\\"entries\\\":[{\\\"commitSeq\\\":3,\\\"event\\\":{\\\"key\\\":\\\"a4\\\",\\\"type\\\":\\\"fixture.deleted\\\"},\\\"hash\\\":\\\"bedbc5ec850aa11924e373b155d4bd9eed3da701c338fba13aba29df2aae31ea\\\",\\\"prevHash\\\":\\\"04dd82760447e487966981c294d18e233bdeafe8faa54beb6dae0eedc6a9fb04\\\",\\\"seq\\\":2,\\\"world\\\":\\\"main\\\"}],\\\"format\\\":\\\"norn.cell.export/5\\\",\\\"modelHash\\\":\\\"ba5a88c1f05fa26cc51fea6e2fc36a58753cddd81d79231bc1805b8d15bed983\\\",\\\"previous\\\":\\\"73ba42db524f8cccabc3b867a22c775fd66e565ca5fb34b45b9975882f04884d\\\",\\\"receipt\\\":{\\\"body\\\":{\\\"commitSeq\\\":3,\\\"enqueued\\\":[],\\\"eventCount\\\":1,\\\"firstEventSeq\\\":2,\\\"idempotencyKey\\\":\\\"delete\\\",\\\"ledgerHead\\\":\\\"bedbc5ec850aa11924e373b155d4bd9eed3da701c338fba13aba29df2aae31ea\\\",\\\"logicalTime\\\":3000,\\\"requestHash\\\":\\\"c48af50c2ba60894330b7d19aa3c9cf81d30fc6771119f716b74d16d8dd631fb\\\",\\\"scheduled\\\":[],\\\"world\\\":\\\"main\\\",\\\"written\\\":[{\\\"key\\\":\\\"a4\\\",\\\"objectType\\\":\\\"fixture.Item\\\",\\\"snapshotSha256\\\":\\\"b789750d6c50aaec7b621b67627b4f7aaec39ad313743dec4ada82ceee9e4a75\\\",\\\"version\\\":2}]},\\\"hash\\\":\\\"dc7fd672d4b15c335a587e27102b0f014556c1ea1f9f687329522f7c1eb96a3b\\\"},\\\"storageVersion\\\":2,\\\"storeFormat\\\":\\\"norn.cell.store/8\\\"}\",\"references\":[{\"path\":[\"ddlSql\"],\"reference\":{\"hash\":\"cfc188be2326716ce154885dfe8d5f83e60ce084614fc7d7b2a0e1f7141e3abb\",\"scope\":\"fixture/dev\",\"world\":\"main\"}}],\"scope\":\"fixture/dev\",\"world\":\"main\"}"
+        ],
+        [
+          4,
+          4,
+          "5257617d522c6350729b9c9bb360756c55277bf4e1092c471181ccfea0568d2a",
+          "norn.cell.payload-storage/1:{\"commit_seq\":4,\"inline\":\"{\\\"batch\\\":{\\\"effects\\\":[{\\\"enqueue\\\":{\\\"command\\\":{\\\"command\\\":{\\\"deadline\\\":null,\\\"freshness\\\":\\\"append_only\\\",\\\"generation\\\":1,\\\"id\\\":\\\"norn.approval/fixture-call\\\",\\\"idempotency_key\\\":\\\"norn.approval/fixture-call\\\",\\\"payload\\\":{\\\"approval\\\":{\\\"action\\\":\\\"fixture.adjust\\\",\\\"actionDigest\\\":\\\"\\\",\\\"definition\\\":\\\"fixture.approval\\\",\\\"idempotencyKey\\\":\\\"fixture-call\\\",\\\"input\\\":{\\\"qty\\\":3},\\\"requester\\\":{\\\"subject\\\":\\\"requester\\\"}},\\\"attempt\\\":1,\\\"function\\\":\\\"norn.decision\\\",\\\"functionVersion\\\":\\\"1\\\",\\\"idempotencyKey\\\":\\\"norn.approval/fixture-call\\\",\\\"kind\\\":\\\"perform\\\",\\\"runId\\\":\\\"norn.approval/fixture-call\\\",\\\"step\\\":\\\"approval\\\"}},\\\"commandId\\\":\\\"norn.approval/fixture-call\\\",\\\"deadline\\\":null,\\\"generation\\\":1,\\\"idempotencyKey\\\":\\\"norn.approval/fixture-call\\\"}}}],\\\"events\\\":[],\\\"facts\\\":[],\\\"links\\\":[],\\\"logicalTime\\\":4000,\\\"scope\\\":\\\"fixture/dev\\\",\\\"world\\\":\\\"main\\\",\\\"writes\\\":[]},\\\"bindings\\\":{\\\"cell_id\\\":\\\"0f1e2d3c4b5a69788796a5b4c3d2e1f0\\\",\\\"cell_identity_format\\\":\\\"norn.cell.identity/v1\\\",\\\"scope\\\":\\\"fixture/dev\\\"},\\\"consumedInput\\\":null,\\\"ddlHash\\\":\\\"4fd2931b26362a54d53ec6479db55c71182096d043dafe509363d55c3a4ba668\\\",\\\"ddlSql\\\":null,\\\"entries\\\":[],\\\"format\\\":\\\"norn.cell.export/5\\\",\\\"modelHash\\\":\\\"ba5a88c1f05fa26cc51fea6e2fc36a58753cddd81d79231bc1805b8d15bed983\\\",\\\"previous\\\":\\\"27d0eb166400331e5078bfaddc9b30a98da42a72f25e5f810a0d18b4a552d14f\\\",\\\"receipt\\\":{\\\"body\\\":{\\\"commitSeq\\\":4,\\\"enqueued\\\":[\\\"norn.approval/fixture-call\\\"],\\\"eventCount\\\":0,\\\"firstEventSeq\\\":3,\\\"ledgerHead\\\":\\\"bedbc5ec850aa11924e373b155d4bd9eed3da701c338fba13aba29df2aae31ea\\\",\\\"logicalTime\\\":4000,\\\"requestHash\\\":\\\"41527d632bf1daca50174a03db9b4e0349b26c8b0bc8a402305e9a4caca75c23\\\",\\\"scheduled\\\":[],\\\"world\\\":\\\"main\\\",\\\"written\\\":[]},\\\"hash\\\":\\\"a2f4cd8b24d9d59329b08ad450b9d3a0d5cfe044f910839c4f1b15fbb244f818\\\"},\\\"storageVersion\\\":2,\\\"storeFormat\\\":\\\"norn.cell.store/8\\\"}\",\"references\":[{\"path\":[\"ddlSql\"],\"reference\":{\"hash\":\"cfc188be2326716ce154885dfe8d5f83e60ce084614fc7d7b2a0e1f7141e3abb\",\"scope\":\"fixture/dev\",\"world\":\"main\"}}],\"scope\":\"fixture/dev\",\"world\":\"main\"}"
+        ],
+        [
+          5,
+          5,
+          "5dd3da764263e61a6cf2d804f001ce24fa94b263581df15df34e6ee9395ed0b6",
+          "norn.cell.payload-storage/1:{\"commit_seq\":5,\"inline\":\"{\\\"batch\\\":{\\\"consumes\\\":{\\\"commandId\\\":\\\"norn.approval/fixture-call\\\",\\\"generation\\\":1,\\\"kind\\\":\\\"result\\\"},\\\"effects\\\":[],\\\"events\\\":[{\\\"decision\\\":{\\\"choice\\\":\\\"approve\\\",\\\"commandId\\\":\\\"norn.approval/fixture-call\\\",\\\"decidedBy\\\":\\\"approver\\\",\\\"decisionId\\\":\\\"dec_0f1e2d3c4b5a69788796a5b4c3d2e1f0\\\",\\\"generation\\\":1,\\\"idempotencyKey\\\":\\\"approve-fixture-call\\\",\\\"resolution\\\":\\\"decided\\\",\\\"runId\\\":\\\"norn.approval/fixture-call\\\",\\\"step\\\":\\\"approval\\\"},\\\"type\\\":\\\"norn.decision.resolved\\\"}],\\\"facts\\\":[],\\\"links\\\":[],\\\"logicalTime\\\":5000,\\\"scope\\\":\\\"fixture/dev\\\",\\\"world\\\":\\\"main\\\",\\\"writes\\\":[]},\\\"bindings\\\":{\\\"cell_id\\\":\\\"0f1e2d3c4b5a69788796a5b4c3d2e1f0\\\",\\\"cell_identity_format\\\":\\\"norn.cell.identity/v1\\\",\\\"scope\\\":\\\"fixture/dev\\\"},\\\"consumedInput\\\":{\\\"command\\\":{\\\"command\\\":{\\\"deadline\\\":null,\\\"freshness\\\":\\\"append_only\\\",\\\"generation\\\":1,\\\"id\\\":\\\"norn.approval/fixture-call\\\",\\\"idempotency_key\\\":\\\"norn.approval/fixture-call\\\",\\\"payload\\\":{\\\"approval\\\":{\\\"action\\\":\\\"fixture.adjust\\\",\\\"actionDigest\\\":\\\"\\\",\\\"definition\\\":\\\"fixture.approval\\\",\\\"idempotencyKey\\\":\\\"fixture-call\\\",\\\"input\\\":{\\\"qty\\\":3},\\\"requester\\\":{\\\"subject\\\":\\\"requester\\\"}},\\\"attempt\\\":1,\\\"function\\\":\\\"norn.decision\\\",\\\"functionVersion\\\":\\\"1\\\",\\\"idempotencyKey\\\":\\\"norn.approval/fixture-call\\\",\\\"kind\\\":\\\"perform\\\",\\\"runId\\\":\\\"norn.approval/fixture-call\\\",\\\"step\\\":\\\"approval\\\"}},\\\"commandId\\\":\\\"norn.approval/fixture-call\\\",\\\"deadline\\\":null,\\\"generation\\\":1,\\\"idempotencyKey\\\":\\\"norn.approval/fixture-call\\\"},\\\"commitSeq\\\":4,\\\"kind\\\":\\\"result\\\",\\\"position\\\":1,\\\"result\\\":{\\\"choice\\\":\\\"approve\\\"},\\\"runs\\\":[{\\\"attempt\\\":1,\\\"commandId\\\":\\\"norn.approval/fixture-call\\\",\\\"consumedCommitSeq\\\":null,\\\"generation\\\":1,\\\"outcome\\\":{\\\"choice\\\":\\\"approve\\\"}}]},\\\"ddlHash\\\":\\\"4fd2931b26362a54d53ec6479db55c71182096d043dafe509363d55c3a4ba668\\\",\\\"ddlSql\\\":null,\\\"entries\\\":[{\\\"commitSeq\\\":5,\\\"event\\\":{\\\"decision\\\":{\\\"choice\\\":\\\"approve\\\",\\\"commandId\\\":\\\"norn.approval/fixture-call\\\",\\\"decidedBy\\\":\\\"approver\\\",\\\"decisionId\\\":\\\"dec_0f1e2d3c4b5a69788796a5b4c3d2e1f0\\\",\\\"generation\\\":1,\\\"idempotencyKey\\\":\\\"approve-fixture-call\\\",\\\"resolution\\\":\\\"decided\\\",\\\"runId\\\":\\\"norn.approval/fixture-call\\\",\\\"step\\\":\\\"approval\\\"},\\\"type\\\":\\\"norn.decision.resolved\\\"},\\\"hash\\\":\\\"c98bc827132ad07fcbb978bd0168c7afd8e834b286862a8040d4b6374870cc5e\\\",\\\"prevHash\\\":\\\"bedbc5ec850aa11924e373b155d4bd9eed3da701c338fba13aba29df2aae31ea\\\",\\\"seq\\\":3,\\\"world\\\":\\\"main\\\"}],\\\"format\\\":\\\"norn.cell.export/5\\\",\\\"modelHash\\\":\\\"ba5a88c1f05fa26cc51fea6e2fc36a58753cddd81d79231bc1805b8d15bed983\\\",\\\"previous\\\":\\\"5257617d522c6350729b9c9bb360756c55277bf4e1092c471181ccfea0568d2a\\\",\\\"receipt\\\":{\\\"body\\\":{\\\"commitSeq\\\":5,\\\"consumed\\\":{\\\"commandId\\\":\\\"norn.approval/fixture-call\\\",\\\"generation\\\":1,\\\"kind\\\":\\\"result\\\"},\\\"enqueued\\\":[],\\\"eventCount\\\":1,\\\"firstEventSeq\\\":3,\\\"ledgerHead\\\":\\\"c98bc827132ad07fcbb978bd0168c7afd8e834b286862a8040d4b6374870cc5e\\\",\\\"logicalTime\\\":5000,\\\"requestHash\\\":\\\"855c8af96846aae5e02da38a80a67895495e27cee183f16191525e8cc27a3e5b\\\",\\\"scheduled\\\":[],\\\"world\\\":\\\"main\\\",\\\"written\\\":[]},\\\"hash\\\":\\\"4f65f97d7aedeee92917450261d5d8fd046ced7b85b96c08e4e18f8e3c86e837\\\"},\\\"storageVersion\\\":2,\\\"storeFormat\\\":\\\"norn.cell.store/8\\\"}\",\"references\":[{\"path\":[\"ddlSql\"],\"reference\":{\"hash\":\"cfc188be2326716ce154885dfe8d5f83e60ce084614fc7d7b2a0e1f7141e3abb\",\"scope\":\"fixture/dev\",\"world\":\"main\"}}],\"scope\":\"fixture/dev\",\"world\":\"main\"}"
         ]
       ]
     },
@@ -1631,7 +1710,14 @@
         "generation",
         "commit_seq"
       ],
-      "rows": []
+      "rows": [
+        [
+          1,
+          "norn.approval/fixture-call",
+          1,
+          4
+        ]
+      ]
     },
     "_norn_export_payload": {
       "columns": [
@@ -1656,6 +1742,18 @@
         [
           3,
           3,
+          0,
+          "cfc188be2326716ce154885dfe8d5f83e60ce084614fc7d7b2a0e1f7141e3abb"
+        ],
+        [
+          4,
+          4,
+          0,
+          "cfc188be2326716ce154885dfe8d5f83e60ce084614fc7d7b2a0e1f7141e3abb"
+        ],
+        [
+          5,
+          5,
           0,
           "cfc188be2326716ce154885dfe8d5f83e60ce084614fc7d7b2a0e1f7141e3abb"
         ]

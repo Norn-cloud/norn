@@ -435,6 +435,30 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         Ok(Some(receipt))
     }
 
+    /// The version of `id` (an `object_type` identity) in `world` as of the
+    /// commit `commit_seq`: the last version committed at or before it, `0`
+    /// when none was (S5b).
+    ///
+    /// # Errors
+    /// Unknown object type; engine failures.
+    pub fn version_as_of(
+        &self,
+        world: &str,
+        object_type: &str,
+        id: &str,
+        commit_seq: u64,
+    ) -> Result<u64, CellError> {
+        let root = self.root_type(object_type)?;
+        let version: Option<Option<i64>> = self.conn.query_optional(
+            &format!("SELECT MAX(\"version\") FROM \"{FACT_VALUES}\" WHERE \"world\" = ?1 AND \"root_type\" = ?2 AND \"id\" = ?3 AND \"commit_seq\" <= ?4"),
+            params![world, root, id, to_i64(commit_seq, "commit sequence")?],
+            |row| row.get(0),
+        )?;
+        version
+            .flatten()
+            .map_or(Ok(0), |version| to_u64(version, "version"))
+    }
+
     /// Authenticate the receipt that emitted one exact committed fact version.
     /// The existing snapshot primary key locates its commit without scanning
     /// ledger events. Both the immutable snapshot and the receipt's hashed

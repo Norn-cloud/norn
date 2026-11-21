@@ -25,10 +25,18 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use norn_cell::cell_identity::CellId;
+use norn_cell::decision_ledger::{DecisionResolved, Resolution};
 use norn_cell::engine::{NativeEngine, SqlEngine, SqlValue};
 use norn_cell::test_door::TestCommit as _;
-use norn_cell::{CellStore, CommitBatch, FactWriteRow, MAIN_WORLD, Model, StoreOptions};
+use norn_cell::{
+    CellStore, CommitBatch, FactWriteRow, MAIN_WORLD, Model, SqliteCell, StoreOptions,
+};
 use norn_ir::{ObjectTypeDef, RuntimeValue, runtime_object};
+use norn_kernel::cell_host::JsonObject;
+use norn_kernel::{
+    CellCommit, CellHost as _, Command, CommandId, Consumed, Effect, FactEvent, FreshnessPolicy,
+    Generation, IdempotencyKey, LogicalTime,
+};
 use serde_json::{Value, json};
 
 /// Encoding of the image.
@@ -100,7 +108,108 @@ pub fn batches() -> Vec<CommitBatch> {
     ]
 }
 
-/// Write the fixture cell at `path` with whatever engine this build is.
+/// The parked direct call the fixture approves (APPROVAL-1): its command id
+/// carries the approval prefix, as every parked action call's does.
+pub const APPROVAL_COMMAND: &str = "norn.approval/fixture-call";
+/// The decision that approves it.
+pub const APPROVAL_DECISION: &str = "dec_0f1e2d3c4b5a69788796a5b4c3d2e1f0";
+/// Commits the fixture cell holds: [`batches`], the park, the approval.
+pub const COMMITS: u64 = 5;
+
+fn text_value(value: &str) -> RuntimeValue {
+    RuntimeValue::String(value.to_owned())
+}
+
+/// The parked call's `norn.decision@1` perform, shaped as an approval-gated
+/// action call parks it (`norn-api` `approvals::park`).
+fn approval_payload() -> JsonObject {
+    let approval: JsonObject = BTreeMap::from([
+        ("definition".to_owned(), text_value("fixture.approval")),
+        ("action".to_owned(), text_value("fixture.adjust")),
+        ("actionDigest".to_owned(), text_value("")),
+        (
+            "input".to_owned(),
+            RuntimeValue::Object(BTreeMap::from([(
+                "qty".to_owned(),
+                RuntimeValue::from(3_i64),
+            )])),
+        ),
+        ("idempotencyKey".to_owned(), text_value("fixture-call")),
+        (
+            "requester".to_owned(),
+            RuntimeValue::Object(BTreeMap::from([(
+                "subject".to_owned(),
+                text_value("requester"),
+            )])),
+        ),
+    ]);
+    BTreeMap::from([
+        ("kind".to_owned(), text_value("perform")),
+        ("function".to_owned(), text_value("norn.decision")),
+        ("functionVersion".to_owned(), text_value("1")),
+        ("runId".to_owned(), text_value(APPROVAL_COMMAND)),
+        ("step".to_owned(), text_value("approval")),
+        ("attempt".to_owned(), RuntimeValue::from(1_i64)),
+        ("idempotencyKey".to_owned(), text_value(APPROVAL_COMMAND)),
+        ("approval".to_owned(), RuntimeValue::Object(approval)),
+    ])
+}
+
+/// Park the direct call, then approve it: the answer is the parked
+/// command's result, consumed by the commit that records the resolution
+/// (`norn-api` `decisions::resolve_call`). Only kernel-path APIs every
+/// storage version since DECISION-LEDGER-1 has.
+fn park_and_approve(store: CellStore<NativeEngine>) -> CellStore<NativeEngine> {
+    let mut cell: SqliteCell<FactEvent, JsonObject, JsonObject, NativeEngine> =
+        SqliteCell::new(store, SCOPE, |_command: &Command<JsonObject>| {
+            JsonObject::new()
+        })
+        .expect("cell host");
+    let command = CommandId(APPROVAL_COMMAND.to_owned());
+    cell.advance_to(LogicalTime::from_millis(4_000));
+    cell.commit(CellCommit {
+        effects: vec![Effect::Perform(Command {
+            id: command.clone(),
+            generation: Generation(1),
+            idempotency_key: IdempotencyKey(APPROVAL_COMMAND.to_owned()),
+            freshness: FreshnessPolicy::AppendOnly,
+            deadline: None,
+            payload: approval_payload(),
+        })],
+        ..CellCommit::empty()
+    })
+    .expect("park the call");
+    cell.advance_to(LogicalTime::from_millis(5_000));
+    let answer: JsonObject = BTreeMap::from([("choice".to_owned(), text_value("approve"))]);
+    cell.complete_parked(&command, Generation(1), answer)
+        .expect("record the answer")
+        .expect("the call is parked");
+    let resolved = DecisionResolved {
+        decision_id: APPROVAL_DECISION.to_owned(),
+        command_id: APPROVAL_COMMAND.to_owned(),
+        generation: 1,
+        run_id: APPROVAL_COMMAND.to_owned(),
+        step: "approval".to_owned(),
+        resolution: Resolution::Decided,
+        choice: Some("approve".to_owned()),
+        note: None,
+        decided_by: Some("approver".to_owned()),
+        idempotency_key: Some("approve-fixture-call".to_owned()),
+        request_hash: None,
+    };
+    cell.commit_decision_resolution(
+        CellCommit::empty().consuming(Consumed::Result {
+            command,
+            generation: Generation(1),
+        }),
+        &resolved,
+    )
+    .expect("approve the call");
+    cell.into_store()
+}
+
+/// Write the fixture cell at `path` with whatever engine this build is:
+/// [`batches`], then a direct call that parks and is approved.
 pub fn write_cell(path: &Path) {
     let engine = NativeEngine::open(path, StoreOptions::default()).expect("engine");
     let mut store = CellStore::from_engine_with_identity_source(engine, model(), |_| {
@@ -111,6 +220,7 @@ pub fn write_cell(path: &Path) {
     for batch in batches() {
         store.commit(&batch).expect("recorded commit");
     }
+    drop(park_and_approve(store));
 }
 
 fn encode(value: &SqlValue) -> Value {

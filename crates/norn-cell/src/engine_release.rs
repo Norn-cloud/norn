@@ -64,12 +64,16 @@ pub const CHANNEL: &[StorageVersion] = &[
     },
     StorageVersion {
         version: 3,
+        change: "APPROVAL-RECOVERY-1 (#1483): the ledger events norn.approval.refused, norn.approval.consumed and norn.step.call_owned, and their ledger-derived tables _norn_approved_call and _norn_step_call",
+    },
+    StorageVersion {
+        version: 4,
         change: "MAP-DERIVATION-1 (#1488): a mapping bundle records the runtime derivation it was captured under (`derivation`) and the quarantined bundle it reprocesses (`reprocesses`)",
     },
 ];
 
 /// The storage version this engine writes.
-pub const STORAGE_VERSION: u32 = 3;
+pub const STORAGE_VERSION: u32 = 4;
 
 /// The oldest storage version this engine upgrades in place. Raising it
 /// retires the steps below it; an older cell must first open on a bridge
@@ -314,9 +318,13 @@ fn run_chain(
 fn migrate_to<E: SqlEngine>(_engine: &E, to: u32) -> Result<(), CellError> {
     match to {
         // Version 2 adds the stamp alone, which `upgrade` writes after the chain.
-        // Version 3 rewrites nothing: a bundle without `derivation` is
+        // Version 3 adds the approval recovery tables. They derive from the
+        // ledger alone: the schema statements that follow the chain create
+        // them, and `BACKFILL_APPROVED_CALLS` fills `_norn_approved_call`
+        // from the cell's own approving decisions. No row is rewritten.
+        // Version 4 rewrites nothing: a bundle without `derivation` is
         // derivation 1 and still verifies under it (MAP-DERIVATION-1).
-        2 | 3 => Ok(()),
+        2..=4 => Ok(()),
         _ => Err(CellError::EngineUpgradeUnsupported {
             cell: to.saturating_sub(1),
             engine: STORAGE_VERSION,
