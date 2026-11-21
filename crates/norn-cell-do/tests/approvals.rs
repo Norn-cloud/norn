@@ -1056,7 +1056,10 @@ impl Counted {
         let select = sql.split_once(" FROM ").map_or("", |(select, _)| select);
         let payload = (sql.contains(r#"FROM "_norn_outbox""#) && select.contains(r#""command""#))
             || sql.contains(r#"FROM "_norn_receipt""#);
-        self.counts.set((all.saturating_add(1), payloads.saturating_add(u64::from(payload))));
+        self.counts.set((
+            all.saturating_add(1),
+            payloads.saturating_add(u64::from(payload)),
+        ));
     }
 }
 
