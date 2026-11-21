@@ -126,8 +126,8 @@ fn add_open_checkpoint(expected: &mut Value, after: &Value, head: &LedgerHead, r
     expected["tables"].as_object_mut().expect("tables").insert(
         "_norn_open_checkpoint".to_owned(),
         serde_json::json!({
-            "columns": ["rowid", "id", "commits", "seq", "hash", "receipts_root"],
-            "rows": [[1, 1, head.commits, head.seq, head.hash, root]],
+            "columns": ["rowid", "id", "commits", "seq", "hash", "receipts_root", "boundary_seq", "boundary_commit"],
+            "rows": [[1, 1, head.commits, head.seq, head.hash, root, null, null]],
         }),
     );
 }

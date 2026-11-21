@@ -2571,7 +2571,7 @@ impl<E: SqlEngine> CellStore<E> {
             let fork = crate::fork::load_pin(&store.conn)?;
             refuse_pin_past(fork.as_ref(), head.commits)?;
             if upgrading {
-                store.record_open_checkpoint(&head, &transparency)?;
+                store.record_open_checkpoint(&head, boundary, &transparency)?;
             }
             Ok::<_, CellError>((head, boundary, transparency, fork))
         })?;
@@ -2623,10 +2623,13 @@ impl<E: SqlEngine> CellStore<E> {
             .map_or_else(LedgerHead::genesis, |checkpoint| checkpoint.head.clone());
         let transparency = crate::transparency::load_bound(&self.conn, checkpoint.as_ref())?;
         crate::cell_identity::verify_history_after(&self.conn, from.commits)?;
-        let (head, boundary) = self
-            .read()
-            .with_transaction_verified_receipts(pass)
-            .verify_ledger_with_boundary(&from)?;
+        let reader = self.read().with_transaction_verified_receipts(pass);
+        let (head, boundary) = match &checkpoint {
+            Some(checkpoint) => {
+                reader.verify_ledger_from_open_checkpoint(&from, checkpoint.boundary)?
+            }
+            None => reader.verify_ledger_with_boundary(&from)?,
+        };
         self.verify_definition_history(from.commits)?;
         self.read().verify_value_history_after(from.commits)?;
         crate::identity::validate(&self.read())?;
@@ -2644,6 +2647,7 @@ impl<E: SqlEngine> CellStore<E> {
     fn record_open_checkpoint(
         &self,
         head: &LedgerHead,
+        boundary: Option<crate::quantity::FormatBoundary>,
         log: &crate::transparency::ReceiptLog,
     ) -> Result<(), CellError> {
         if log.len() != head.commits {
@@ -2657,6 +2661,7 @@ impl<E: SqlEngine> CellStore<E> {
             &crate::open_checkpoint::OpenCheckpoint {
                 head: head.clone(),
                 receipts_root: crate::open_checkpoint::root_hex(log.root().as_bytes()),
+                boundary,
             },
         )
     }
@@ -2677,8 +2682,11 @@ impl<E: SqlEngine> CellStore<E> {
                 // checkpoints that head.
                 return Ok(());
             }
-            self.conn
-                .transaction(|| self.record_open_checkpoint(&head, &self.transparency.borrow()))
+            // `verified_head` left the boundary it verified in the store.
+            let boundary = self.quantity_boundary.get();
+            self.conn.transaction(|| {
+                self.record_open_checkpoint(&head, boundary, &self.transparency.borrow())
+            })
         });
         if let Err(error) = recorded {
             tracing::warn!(%error, commits, "open checkpoint not recorded; the last one stands");

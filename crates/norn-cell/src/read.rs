@@ -3801,13 +3801,34 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             .map(|(head, _)| head)
     }
 
+    pub(crate) fn verify_ledger_with_boundary(
+        &self,
+        checkpoint: &LedgerHead,
+    ) -> Result<(LedgerHead, Option<crate::quantity::FormatBoundary>), CellError> {
+        self.verify_ledger_after(checkpoint, None)
+    }
+
+    /// [`Self::verify_ledger_with_boundary`] from an open checkpoint that
+    /// names the quantity boundary in force at it (OPEN-CHECKPOINT-1), so no
+    /// receipt before it is read to find the boundary. The boundary is still
+    /// checked against the cell's recorded pointer and against every
+    /// quantity event after the checkpoint.
+    pub(crate) fn verify_ledger_from_open_checkpoint(
+        &self,
+        checkpoint: &LedgerHead,
+        boundary: Option<crate::quantity::FormatBoundary>,
+    ) -> Result<(LedgerHead, Option<crate::quantity::FormatBoundary>), CellError> {
+        self.verify_ledger_after(checkpoint, Some(boundary))
+    }
+
     #[allow(
         clippy::too_many_lines,
         reason = "one pass: the anchor, the hash chain, receipt tiling and quantity boundary"
     )]
-    pub(crate) fn verify_ledger_with_boundary(
+    fn verify_ledger_after(
         &self,
         checkpoint: &LedgerHead,
+        known_boundary: Option<Option<crate::quantity::FormatBoundary>>,
     ) -> Result<(LedgerHead, Option<crate::quantity::FormatBoundary>), CellError> {
         let base = checkpoint.seq;
         let anchor_corrupt = || CellError::LedgerCorrupt {
@@ -3845,10 +3866,10 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             return Err(anchor_corrupt());
         }
 
-        let mut boundary = self
-            .quantity_boundary
+        let mut boundary = known_boundary
+            .unwrap_or(self.quantity_boundary)
             .filter(|boundary| boundary.seq <= base);
-        if base > 0 && self.quantity_boundary.is_none() {
+        if base > 0 && known_boundary.is_none() && self.quantity_boundary.is_none() {
             boundary = crate::quantity::format_boundary(self.conn)?
                 .filter(|boundary| boundary.seq <= base);
         }

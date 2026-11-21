@@ -44,7 +44,8 @@ pub(crate) const TABLE: &str = "_norn_open_checkpoint";
 pub(crate) const DDL: &str = r#"CREATE TABLE IF NOT EXISTS "_norn_open_checkpoint" (
       "id" INTEGER NOT NULL PRIMARY KEY CHECK ("id" = 1),
       "commits" INTEGER NOT NULL, "seq" INTEGER NOT NULL, "hash" TEXT NOT NULL,
-      "receipts_root" TEXT NOT NULL
+      "receipts_root" TEXT NOT NULL,
+      "boundary_seq" INTEGER, "boundary_commit" INTEGER
     )"#;
 
 /// How many commits apart checkpoints are written: an open verifies at most
@@ -59,6 +60,9 @@ pub(crate) struct OpenCheckpoint {
     /// Lowercase hex of the RFC 6962 root over the first `head.commits`
     /// receipt digests.
     pub(crate) receipts_root: String,
+    /// The quantity boundary in force at the head, if the cell has one, so
+    /// an open never scans the receipts before it to find it.
+    pub(crate) boundary: Option<crate::quantity::FormatBoundary>,
 }
 
 /// The cell's open checkpoint, if one was written.
@@ -69,7 +73,7 @@ pub(crate) fn load(engine: &impl SqlEngine) -> Result<Option<OpenCheckpoint>, Ce
     let Some(row) = engine
         .query(
             &format!(
-                "SELECT \"commits\", \"seq\", \"hash\", \"receipts_root\" FROM \"{TABLE}\" WHERE \"id\" = 1"
+                "SELECT \"commits\", \"seq\", \"hash\", \"receipts_root\", \"boundary_seq\", \"boundary_commit\" FROM \"{TABLE}\" WHERE \"id\" = 1"
             ),
             params![],
         )?
@@ -86,6 +90,14 @@ pub(crate) fn load(engine: &impl SqlEngine) -> Result<Option<OpenCheckpoint>, Ce
             hash: row.get(2)?,
         },
         receipts_root: row.get(3)?,
+        boundary: match (row.get::<Option<i64>>(4)?, row.get::<Option<i64>>(5)?) {
+            (None, None) => None,
+            (Some(seq), Some(commit)) => Some(crate::quantity::FormatBoundary {
+                seq: to_u64(seq, "open checkpoint boundary")?,
+                commit_seq: to_u64(commit, "open checkpoint boundary commit")?,
+            }),
+            _ => return Err(corrupt(0, "a half-recorded quantity boundary")),
+        },
     }))
 }
 
@@ -99,15 +111,25 @@ pub(crate) fn record(
 ) -> Result<(), CellError> {
     engine.execute(
         &format!(
-            "INSERT INTO \"{TABLE}\" (\"id\", \"commits\", \"seq\", \"hash\", \"receipts_root\") VALUES (1, ?1, ?2, ?3, ?4) \
+            "INSERT INTO \"{TABLE}\" (\"id\", \"commits\", \"seq\", \"hash\", \"receipts_root\", \"boundary_seq\", \"boundary_commit\") \
+             VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6) \
              ON CONFLICT (\"id\") DO UPDATE SET \"commits\" = excluded.\"commits\", \"seq\" = excluded.\"seq\", \
-             \"hash\" = excluded.\"hash\", \"receipts_root\" = excluded.\"receipts_root\""
+             \"hash\" = excluded.\"hash\", \"receipts_root\" = excluded.\"receipts_root\", \
+             \"boundary_seq\" = excluded.\"boundary_seq\", \"boundary_commit\" = excluded.\"boundary_commit\""
         ),
         params![
             to_i64(checkpoint.head.commits, "open checkpoint commits")?,
             to_i64(checkpoint.head.seq, "open checkpoint sequence")?,
             checkpoint.head.hash.clone(),
-            checkpoint.receipts_root.clone()
+            checkpoint.receipts_root.clone(),
+            checkpoint
+                .boundary
+                .map(|boundary| to_i64(boundary.seq, "open checkpoint boundary"))
+                .transpose()?,
+            checkpoint
+                .boundary
+                .map(|boundary| to_i64(boundary.commit_seq, "open checkpoint boundary commit"))
+                .transpose()?
         ],
     )
 }
