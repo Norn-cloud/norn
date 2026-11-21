@@ -522,8 +522,8 @@ weights = {
     "test/rest-1": 656, "test/rest-2": 315, "test/rest-3": 165,
     "phase/doctest": 26, "phase/features": 618, "phase/duckdb": 363, "phase/wasm": 139,
     "phase/clippy": 81, "phase/doc": 56, "phase/guards": 434,
-    # Not yet recorded in CI: the lane's Boat run (default VM, warm sccache), 2026-11-21.
-    "phase/rivet": 400,
+    # Not yet recorded in CI: one Boat run on an empty target (default VM), 2026-11-21.
+    "phase/rivet": 496,
     "phase/integration": 920, "phase/provenance": 10, "phase/test-shards": 10,
     "phase/browser": 304,
 }
