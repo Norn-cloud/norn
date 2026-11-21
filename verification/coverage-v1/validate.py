@@ -702,7 +702,7 @@ await github.rest.repos.createCommitStatus({
 plan=$(jq -c --arg base "$BASE" --arg head "$HEAD_SHA" '. + {base_sha: $base, head_sha: $head}' <<<"$plan")
 echo "plan=$plan" >> "$GITHUB_OUTPUT"
 echo "$plan"'''
-    plan_env = {"BASE": "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || '' }}",
+    plan_env = {"BASE": "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}",
                 "HEAD_SHA": "${{ github.event.merge_group.head_sha || github.sha }}"}
     checkout = {"uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
                 "with": {"persist-credentials": False, "fetch-depth": 0}}
@@ -865,14 +865,14 @@ jq -e --arg base "$BASE" --arg head "$HEAD_SHA" '
 ran() { [ "$1" = success ] || { [ "$1" = skipped ] && [ "$2" -eq 0 ]; }; }
 [ "$CORE" = success ] || { echo "core $CORE"; exit 1; }
 mode=$(jq -er .mode <<<"$PLAN")
-[ "$EVENT" = pull_request ] || [ "$EVENT" = merge_group ] || [ "$mode" = full ] || { echo "$EVENT needs the full plan, got $mode"; exit 1; }
-# An affected merge-group plan must keep the always-run phases (core.sh plan).
-[ "$EVENT" != merge_group ] || [ "$mode" = full ] || jq -e '(["guards", "provenance", "clippy"] - .phase) == []' <<<"$PLAN" >/dev/null || { echo "merge_group affected plan dropped an always-run phase"; exit 1; }
+# Only pull-request feedback is narrowed; the merge queue, main and manual runs run every shard
+# and phase, so nothing reaches main without the full suite (#1348).
+[ "$EVENT" = pull_request ] || [ "$mode" = full ] || { echo "$EVENT needs the full plan, got $mode"; exit 1; }
 ran "$TEST" "$(jq -er '.bundle | length' <<<"$PLAN")" || { echo "test ended $TEST"; exit 1; }
 echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN")"'''
     verdict_env = {
         "DRAFT": "${{ github.event.pull_request.draft || false }}",
-        "BASE": "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || '' }}",
+        "BASE": "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}",
         "HEAD_SHA": "${{ github.event.merge_group.head_sha || github.sha }}",
         "EVENT": "${{ github.event_name }}", "PLAN": "${{ needs.core.outputs.plan }}",
         "CORE": "${{ needs.core.result }}",
