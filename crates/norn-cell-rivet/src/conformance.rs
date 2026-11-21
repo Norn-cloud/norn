@@ -15,7 +15,8 @@
 //!   wake run on demand and optionally paused at its final deadline decision
 //!   (`/__conformance/wake`, `/__conformance/wake-release`), a hold after a
 //!   write's reply and before its deadline update (`x-norn-conformance-hold:
-//!   after-write`), a restamp below the engine (`/__conformance/restamp`),
+//!   after-write`), a restamp below the engine (`/__conformance/restamp`:
+//!   newer, unreadable, or below the Rivet admission floor),
 //!   and a digest of the actor's persisted `SQLite` pages
 //!   (`/__conformance/pages`), also printed to the runner's log by a start
 //!   that refuses the cell (`norn-conformance-start-refused`), since that
@@ -349,7 +350,7 @@ async fn wake_seam(actor: &Arc<CellActor>, ctx: &Ctx<CellActor>, call: &Call) ->
             else {
                 return Some(json_response(
                     400,
-                    json!({"error": "stamp is newer or unknown"}).to_string(),
+                    json!({"error": "stamp is not newer, unknown or retired"}).to_string(),
                 ));
             };
             let result = async {

@@ -4,6 +4,8 @@
 
 use std::sync::{Arc, OnceLock};
 
+use norn_cell::engine_release::{EngineVersion, STORAGE_VERSION, UPGRADES_FROM};
+
 /// Stages a `fixtures` build may serve.
 pub const FIXTURE_STAGES: &[&str] = &["smoke", "test"];
 /// Environments a tenant cell may exist in when `NORN_TENANT_ENVIRONMENTS`
@@ -35,12 +37,46 @@ pub struct RivetkitRelease {
 /// opens, oldest first. The last is [`RIVETKIT_VERSION`], and each starts at
 /// a storage version above the one before it, so a cell written under a
 /// newer `RivetKit` carries a newer storage version and is refused
-/// (`core.engine.downgrade`). Dropping an entry also raises
-/// `UPGRADES_FROM` past its storage versions.
+/// (`core.engine.downgrade`). Dropping the oldest entries retires their
+/// releases: [`ADMISSION_FLOOR`] rises past their storage versions, so the
+/// host refuses their cells (`core.engine.upgrade_unsupported`).
+/// `scripts/ci/rivetkit_channel.py` (`core.sh rivet`) keeps the list
+/// append-only against the pull request's base and requires the entry of a
+/// new release at a storage version above the base's.
 pub const RIVETKIT_CHANNEL: &[RivetkitRelease] = &[RivetkitRelease {
     rivetkit: "3.1.1",
     from_storage: 4,
 }];
+
+/// The oldest storage version a cell on this host may carry: the lowest
+/// `from_storage` of the retained [`RIVETKIT_CHANNEL`]. A cell stamped below
+/// it was written under a retired `RivetKit` release (or none), whose
+/// `SQLite` schema this `RivetKit` may already have migrated at startup.
+pub const ADMISSION_FLOOR: u32 = admission_floor(RIVETKIT_CHANNEL);
+
+/// The window the Rivet host admits cells in: this engine's storage
+/// version, and the higher of its own upgrade floor and [`ADMISSION_FLOOR`].
+pub const RIVET_ENGINE: EngineVersion = EngineVersion {
+    storage: STORAGE_VERSION,
+    upgrades_from: if ADMISSION_FLOOR > UPGRADES_FROM {
+        ADMISSION_FLOOR
+    } else {
+        UPGRADES_FROM
+    },
+};
+
+/// The lowest `from_storage` of `channel`; an empty channel admits nothing.
+pub(crate) const fn admission_floor(channel: &[RivetkitRelease]) -> u32 {
+    let mut floor = u32::MAX;
+    let mut rest = channel;
+    while let Some((release, tail)) = rest.split_first() {
+        if release.from_storage < floor {
+            floor = release.from_storage;
+        }
+        rest = tail;
+    }
+    floor
+}
 
 /// Everything the host reads from its environment.
 #[derive(Clone, Default)]

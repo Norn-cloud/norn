@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query"
 import { ArrowDown, Clock, GitCommitHorizontal, PencilLine, Waypoints, type LucideIcon } from "lucide-react"
 import { useEffect, useState, type ReactNode, type SyntheticEvent } from "react"
 import { CopyId, DigestId } from "@/components/copy-id"
+import { HiddenWriter } from "@/components/hidden-writer"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
 import { systemName } from "@/lib/catalog"
@@ -66,7 +67,7 @@ export function ProvenanceSteps({ provenance }: { readonly provenance: ValueProv
       {transform.engine !== null && <Line>{transform.engine}</Line>}
     </Step>,
   )
-  else if (transform?.kind === "other") steps.push(<Step key="transform" kind="transform" title="Written by a rule, an import or a migration" />)
+  else if (transform?.kind === "other") steps.push(<Step key="transform" kind="transform" title={<HiddenWriter />} />)
   if (receipt || digests.length > 0) steps.push(
     <Step key="receipt" title={receipt === null ? "Pinned by" : receipt.kind === "commit" ? `Receipt · commit ${receipt.commit}` : `Ledger head · commit ${receipt.seq}`}>
       {receipt?.kind === "head" && <CopyId value={receipt.hash} short={12} className="text-muted-foreground" />}

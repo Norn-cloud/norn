@@ -770,8 +770,9 @@ class Suite:
         return "pass", detail
 
     def wake_refused_upgrade(self):
-        """ENGINE-UPGRADE-1 for the host's own tables: a cell stamped by a newer engine, or with a stamp
-        this engine cannot read, is not served, and nothing a restart runs writes to it. The alarm's
+        """ENGINE-UPGRADE-1 for the host's own tables: a cell stamped by a newer engine, with a stamp
+        this engine cannot read, or below the retained RivetKit channel's floor (written under a
+        retired RivetKit release, #1513 S4), is not served, and nothing a restart runs writes to it. The alarm's
         real Rivet trigger is overdue when the host comes back, so a start that went ahead would claim
         it from `_rivet_schedule_events` before any handler could refuse. The persisted SQLite pages
         (host tables, Rivet's schedule, schema and free pages included) stay byte-identical: read from
@@ -781,7 +782,7 @@ class Suite:
         if self.host.name != "rivet-native":
             return "not tested", "the wake seams are served by the native Rivet host only"
         rows, ok = [], True
-        for stamp in ("newer", "unknown"):
+        for stamp in ("newer", "unknown", "retired"):
             obj = f"wake-stamp-{stamp}-{secrets.token_hex(4)}"
             head(self.base, obj=obj, timeout=300)
             # The alarm row and its Rivet trigger at `due`; the restamp then makes the row due at once
