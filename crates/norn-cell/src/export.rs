@@ -97,6 +97,13 @@ pub struct ExportRecord {
     /// Never executable SQL; restore derives DDL from these typed definitions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initial_model: Option<ModelDefinitionSnapshot>,
+    /// ENGINE-UPGRADE-1 (#1494): the storage version of the engine that
+    /// committed this batch ([`crate::engine_release`]), content-addressed
+    /// with the rest of the record. A record written before the field has
+    /// none and counts as storage version 1; a restore refuses an export
+    /// with a record newer than its engine.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub storage_version: Option<u32>,
 }
 
 impl ExportRecord {
