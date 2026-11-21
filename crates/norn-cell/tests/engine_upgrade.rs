@@ -95,13 +95,16 @@ fn add_approval_recovery_tables(image: &mut Value, approved_calls: &Value) {
 
 /// The cell's transparency root, as the open checkpoint records it.
 fn receipts_root(store: &CellStore<NativeEngine>) -> String {
+    use std::fmt::Write as _;
     store
         .transparency_checkpoint()
         .expect("root")
         .as_bytes()
         .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+        .fold(String::new(), |mut hex, byte| {
+            write!(hex, "{byte:02x}").expect("hex");
+            hex
+        })
 }
 
 /// Storage version 5 (OPEN-CHECKPOINT-1, #1533) adds `_norn_open_checkpoint`,
