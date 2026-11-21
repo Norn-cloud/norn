@@ -25,11 +25,11 @@ use std::process::ExitCode;
 
 use norn_formats::owl::{OwlConfig, OwlGraph, OwlNamespace, OwlNormaliser, OwlReader};
 use norn_formats::owl_align::{OwlAlignment, align as align_vocabulary};
-use norn_formats::{Disposition, SchemaImporter};
 use norn_formats::pack::{ProjectionSpec, check_contract, project, render_review_module};
 use norn_formats::xsd::{
     MAX_BUNDLE_BYTES, MAX_FILE_BYTES, XsdConfig, XsdFile, XsdReader, repeating_fields,
 };
+use norn_formats::{Disposition, SchemaImporter};
 use norn_ir::source_schema::SourceSchemaIr;
 use norn_ir::{DiagnosticSeverity, OntologySource};
 
@@ -186,7 +186,8 @@ fn outside_repository(target: &Path, manifest_path: &Path) -> Result<(), String>
     }
     let parent = target.parent().filter(|p| !p.as_os_str().is_empty());
     let parent = parent.unwrap_or_else(|| Path::new("."));
-    let resolved = std::fs::canonicalize(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+    let resolved =
+        std::fs::canonicalize(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
     if repository_of(&resolved).is_some()
         || repository_of(manifest_path).is_some_and(|repo| resolved.starts_with(&repo))
     {
@@ -199,6 +200,7 @@ fn outside_repository(target: &Path, manifest_path: &Path) -> Result<(), String>
 }
 
 /// Read an OWL manifest's graph and write its import to `emit_dir`.
+#[allow(clippy::too_many_lines, reason = "one linear pass: read, check, emit, align")]
 fn run_owl(
     manifest_path: &Path,
     text: &str,
@@ -222,7 +224,10 @@ fn run_owl(
             return Err(format!("{}: digest mismatch", pin.path));
         }
     }
-    let graph = read_limited(&originals.join("graph.nt"), norn_formats::owl::MAX_GRAPH_BYTES)?;
+    let graph = read_limited(
+        &originals.join("graph.nt"),
+        norn_formats::owl::MAX_GRAPH_BYTES,
+    )?;
     let config = OwlConfig {
         admission: manifest.admission,
         observed_at: manifest.observed_at,
@@ -249,17 +254,29 @@ fn run_owl(
     let write = |name: &str, text: String| {
         std::fs::write(emit_dir.join(name), text).map_err(|e| format!("{name}: {e}"))
     };
-    let artifacts: Vec<_> = import.layers.iter().flat_map(|layer| &layer.artifacts).collect();
-    write("artifacts.json", serde_json::to_string(&artifacts).map_err(|e| e.to_string())?)?;
+    let artifacts: Vec<_> = import
+        .layers
+        .iter()
+        .flat_map(|layer| &layer.artifacts)
+        .collect();
+    write(
+        "artifacts.json",
+        serde_json::to_string(&artifacts).map_err(|e| e.to_string())?,
+    )?;
     let schema = import
         .source_schema_envelope(&config.admission.source_id.replace("source.", "owl."))?
         .ok_or("the reader produced no source schema")?;
-    write("source_schema.json", serde_json::to_string(&schema).map_err(|e| e.to_string())?)?;
+    write(
+        "source_schema.json",
+        serde_json::to_string(&schema).map_err(|e| e.to_string())?,
+    )?;
     let mut loss = String::new();
     let mut deferred = std::collections::BTreeMap::<&str, u64>::new();
     let mut degraded = std::collections::BTreeMap::<&str, u64>::new();
     for entry in &import.loss_report.entries {
-        let value = norn_formats::contract::sorted_keys(serde_json::to_value(entry).map_err(|e| e.to_string())?);
+        let value = norn_formats::contract::sorted_keys(
+            serde_json::to_value(entry).map_err(|e| e.to_string())?,
+        );
         loss.push_str(&serde_json::to_string(&value).map_err(|e| e.to_string())?);
         loss.push('\n');
         match &entry.disposition {
@@ -267,7 +284,10 @@ fn run_owl(
                 let count = deferred.entry(code).or_default();
                 *count = count.saturating_add(1);
             }
-            Disposition::Mapped { degraded: Some(degradation), .. } => {
+            Disposition::Mapped {
+                degraded: Some(degradation),
+                ..
+            } => {
                 let count = degraded.entry(&degradation.code).or_default();
                 *count = count.saturating_add(1);
             }
@@ -284,7 +304,12 @@ fn run_owl(
         artifacts
             .iter()
             .filter_map(|artifact| serde_json::to_value(artifact).ok())
-            .map(|value| value["payload"]["interface"][name].as_array().map_or(0, Vec::len))
+            .map(|value| {
+                value
+                    .pointer(&format!("/payload/interface/{name}"))
+                    .and_then(serde_json::Value::as_array)
+                    .map_or(0, Vec::len)
+            })
             .sum()
     };
     let mut report = serde_json::json!({
@@ -314,7 +339,10 @@ fn run_owl(
             .flat_map(|layer| layer.artifacts.iter().cloned())
             .collect();
         let aligned = align_vocabulary(&vocabulary, &config.admission, &table)?;
-        write("packs.json", serde_json::to_string(&aligned.packs).map_err(|e| e.to_string())?)?;
+        write(
+            "packs.json",
+            serde_json::to_string(&aligned.packs).map_err(|e| e.to_string())?,
+        )?;
         let alignment = serde_json::json!({
             "summary": aligned.summary(),
             "findings": aligned.findings,
@@ -323,7 +351,9 @@ fn run_owl(
             "alignment.json",
             serde_json::to_string_pretty(&alignment).map_err(|e| e.to_string())?,
         )?;
-        report["alignment"] = aligned.summary();
+        if let Some(fields) = report.as_object_mut() {
+            fields.insert("alignment".into(), aligned.summary());
+        }
     }
     let text = serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?;
     writeln!(std::io::stdout().lock(), "{text}").map_err(|e| e.to_string())?;
@@ -340,7 +370,12 @@ fn run(
         .map_err(|e| format!("{}: {e}", manifest_path.display()))?;
     let format = serde_json::from_str::<serde_json::Value>(&text)
         .ok()
-        .and_then(|value| value.get("format").and_then(|f| f.as_str()).map(str::to_owned));
+        .and_then(|value| {
+            value
+                .get("format")
+                .and_then(|f| f.as_str())
+                .map(str::to_owned)
+        });
     if format.as_deref() == Some("owl") {
         let emit_dir = emit.ok_or("an owl manifest needs --emit-dir <dir>")?;
         return run_owl(manifest_path, &text, originals, emit_dir, align);

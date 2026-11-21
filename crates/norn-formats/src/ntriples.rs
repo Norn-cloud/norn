@@ -356,10 +356,19 @@ mod tests {
         for (text, needle) in [
             ("<rel> <https://e.x/p> <https://e.x/o> .\n", "not absolute"),
             ("<https://e.x/s> <https://e.x/p> \"open .\n", "unterminated"),
-            ("<https://e.x/s> <https://e.x/p> <https://e.x/o>\n", "expected '.'"),
-            ("<https://e.x/s> <https://e.x/p> <https://e.x/o> . x\n", "after the final"),
+            (
+                "<https://e.x/s> <https://e.x/p> <https://e.x/o>\n",
+                "expected '.'",
+            ),
+            (
+                "<https://e.x/s> <https://e.x/p> <https://e.x/o> . x\n",
+                "after the final",
+            ),
             ("\"lit\" <https://e.x/p> <https://e.x/o> .\n", "subject"),
-            ("<https://e.x/s> <https://e.x/p> \"\\q\" .\n", "unknown escape"),
+            (
+                "<https://e.x/s> <https://e.x/p> \"\\q\" .\n",
+                "unknown escape",
+            ),
         ] {
             let error = parse(text.as_bytes()).expect_err(text);
             assert!(error.starts_with("line 1:"), "{error}");

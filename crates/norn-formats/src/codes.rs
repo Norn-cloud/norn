@@ -57,17 +57,21 @@ pub const OWL_EQUIVALENCE: Code = code("format.owl.equivalence", Warning, FixDef
 /// is needed.
 pub const OWL_CLASS_EXPRESSION: Code = code("format.owl.class_expression", Warning, FixDefinition);
 /// A count bound other than zero or one; kept as many, or deferred to a law.
-pub const OWL_CARDINALITY_BOUND: Code = code("format.owl.cardinality_bound", Warning, FixDefinition);
+pub const OWL_CARDINALITY_BOUND: Code =
+    code("format.owl.cardinality_bound", Warning, FixDefinition);
 /// A fixed-value (`hasValue`, `hasSelf`) restriction; it needs an invariant.
-pub const OWL_VALUE_RESTRICTION: Code = code("format.owl.value_restriction", Warning, FixDefinition);
+pub const OWL_VALUE_RESTRICTION: Code =
+    code("format.owl.value_restriction", Warning, FixDefinition);
 /// Sub-, inverse, equivalent or chained properties and property
 /// characteristics other than functional: inference rules.
 pub const OWL_PROPERTY_AXIOM: Code = code("format.owl.property_axiom", Warning, FixDefinition);
 /// A reference to a class or property outside the pinned import set.
-pub const OWL_EXTERNAL_REFERENCE: Code = code("format.owl.external_reference", Warning, FixDefinition);
+pub const OWL_EXTERNAL_REFERENCE: Code =
+    code("format.owl.external_reference", Warning, FixDefinition);
 /// A property no domain or restriction gives an owner type, or a link with no
 /// single named target.
-pub const OWL_UNPLACED_PROPERTY: Code = code("format.owl.unplaced_property", Warning, FixDefinition);
+pub const OWL_UNPLACED_PROPERTY: Code =
+    code("format.owl.unplaced_property", Warning, FixDefinition);
 /// A refinement not lowered because inherited requirements would conflict.
 pub const OWL_INHERITANCE_CONFLICT: Code =
     code("format.owl.inheritance_conflict", Warning, FixDefinition);

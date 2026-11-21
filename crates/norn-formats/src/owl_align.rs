@@ -131,11 +131,10 @@ impl Aligned {
             }
         }
         let total = aligned.saturating_add(gaps).saturating_add(conflicts);
-        let basis_points = if total == 0 {
-            0
-        } else {
-            aligned.saturating_mul(10_000) / total
-        };
+        let basis_points = aligned
+            .saturating_mul(10_000)
+            .checked_div(total)
+            .unwrap_or(0);
         json!({
             "classes": total,
             "aligned": aligned,
@@ -158,7 +157,7 @@ pub fn term_of(interface: &str) -> String {
     }
 }
 
-fn envelope(id: &str, name: &str, payload: Value) -> Result<ArtifactEnvelope, String> {
+fn envelope(id: &str, name: &str, payload: &Value) -> Result<ArtifactEnvelope, String> {
     serde_json::from_value(json!({
         "irVersion": "0.1",
         "artifactId": id,
@@ -186,17 +185,20 @@ fn classes(interfaces: &[ArtifactEnvelope]) -> Result<BTreeMap<String, Class>, S
     let mut by_name = BTreeMap::new();
     for artifact in interfaces {
         let value = serde_json::to_value(artifact).map_err(|error| error.to_string())?;
-        let interface = &value["payload"]["interface"];
-        let name = interface["name"]
-            .as_str()
+        let interface = value.pointer("/payload/interface").unwrap_or(&Value::Null);
+        let name = interface
+            .get("name")
+            .and_then(Value::as_str)
             .ok_or_else(|| format!("{}: not an interface", artifact.artifact_id))?
             .to_owned();
-        let iri = value["provenance"]["sourcePath"]
-            .as_str()
+        let iri = value
+            .pointer("/provenance/sourcePath")
+            .and_then(Value::as_str)
             .ok_or_else(|| format!("{name}: no class IRI in provenance.sourcePath"))?
             .to_owned();
-        let extends = interface["extends"]
-            .as_array()
+        let extends = interface
+            .get("extends")
+            .and_then(Value::as_array)
             .map(|parents| {
                 parents
                     .iter()
@@ -204,8 +206,9 @@ fn classes(interfaces: &[ArtifactEnvelope]) -> Result<BTreeMap<String, Class>, S
                     .collect()
             })
             .unwrap_or_default();
-        let description = interface["description"]
-            .as_str()
+        let description = interface
+            .get("description")
+            .and_then(Value::as_str)
             .filter(|text| !text.trim().is_empty())
             .map(str::to_owned);
         if by_name
@@ -297,13 +300,15 @@ pub fn align(
     let mut findings = Vec::new();
     let mut outcome: BTreeMap<&str, (Vec<&OwlAnchor>, Vec<String>)> = BTreeMap::new();
     for (name, found) in &reached {
-        let rows: Vec<&OwlAnchor> = found.iter().filter_map(|n| anchored.get(n).copied()).collect();
-        let (kept, set_aside): (Vec<&OwlAnchor>, Vec<&OwlAnchor>) =
-            rows.iter().partition(|row| {
-                !rows
-                    .iter()
-                    .any(|other| other.supersedes.iter().any(|class| class == &row.class))
-            });
+        let rows: Vec<&OwlAnchor> = found
+            .iter()
+            .filter_map(|n| anchored.get(n).copied())
+            .collect();
+        let (kept, set_aside): (Vec<&OwlAnchor>, Vec<&OwlAnchor>) = rows.iter().partition(|row| {
+            !rows
+                .iter()
+                .any(|other| other.supersedes.iter().any(|class| class == &row.class))
+        });
         // Rows of one core interface agree: keep one per interface.
         let mut by_interface: BTreeMap<&str, &OwlAnchor> = BTreeMap::new();
         for row in &kept {
@@ -346,16 +351,23 @@ pub fn align(
         if !term_ids.insert(term.clone()) {
             return Err(format!("two classes share term id {term}"));
         }
-        let local = name.rsplit_once('.').map_or(name.as_str(), |(_, local)| local);
+        let local = name
+            .rsplit_once('.')
+            .map_or(name.as_str(), |(_, local)| local);
         let definition = class.description.clone().unwrap_or_else(|| {
-            format!("The class <{}> of {source}, which gives it no definition.", class.iri)
+            format!(
+                "The class <{}> of {source}, which gives it no definition.",
+                class.iri
+            )
         });
         let mut entry = json!({
             "termId": term, "label": local, "definition": definition,
             "termKind": "class", "status": "active", "semanticAuthority": "semantic_only",
         });
-        if let Some(parent) = class.extends.first() {
-            entry["parentTermId"] = json!(term_of(parent));
+        if let Some(parent) = class.extends.first()
+            && let Some(fields) = entry.as_object_mut()
+        {
+            fields.insert("parentTermId".into(), json!(term_of(parent)));
         }
         terms.push(entry);
         mappings.push(json!({
@@ -370,7 +382,7 @@ pub fn align(
     let pack = envelope(
         &alignment.pack_id,
         &format!("{source} classes imported by the OWL reader"),
-        json!({
+        &json!({
             "packId": alignment.pack_id, "packVersion": "0.1", "packKind": "ontology",
             "sources": [admission], "terms": terms, "mappings": mappings,
         }),
@@ -421,13 +433,15 @@ pub fn align(
         "toPack": { "packId": alignment.canon_pack, "version": alignment.canon_version },
         "correspondences": correspondences,
     });
-    if !residuals.is_empty() {
-        link_payload["residuals"] = Value::Array(residuals);
+    if !residuals.is_empty()
+        && let Some(fields) = link_payload.as_object_mut()
+    {
+        fields.insert("residuals".into(), Value::Array(residuals));
     }
     let link = envelope(
         &alignment.link_id,
         &format!("{} to the Norn canon", alignment.pack_id),
-        link_payload,
+        &link_payload,
     )?;
     Ok(Aligned {
         packs: vec![pack, link],

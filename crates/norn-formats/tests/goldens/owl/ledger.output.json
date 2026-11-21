@@ -1,0 +1,735 @@
+{
+  "diagnostics": [],
+  "layers": [
+    {
+      "artifacts": [
+        {
+          "artifactId": "ex.agr.Agreement.interface",
+          "dependencies": [],
+          "irVersion": "0.1",
+          "kind": "entity",
+          "lifecycle": "draft",
+          "name": "Agreement",
+          "namespace": "ex.agr",
+          "payload": {
+            "entityVersion": "2.0",
+            "interface": {
+              "description": "agreement <https://example.org/onto/Agreements/Agreement>",
+              "links": [
+                {
+                  "cardinality": {
+                    "from": "many",
+                    "to": "many"
+                  },
+                  "description": "<https://example.org/onto/Agreements/hasParty>",
+                  "id": "has_party",
+                  "target": "ex.pty.Party"
+                }
+              ],
+              "name": "ex.agr.Agreement",
+              "properties": [
+                {
+                  "constraints": {
+                    "nullable": true
+                  },
+                  "description": "<https://example.org/onto/Agreements/hasEffectiveDate>",
+                  "id": "has_effective_date",
+                  "type": {
+                    "kind": "date"
+                  }
+                }
+              ]
+            }
+          },
+          "provenance": {
+            "source": "import",
+            "sourcePath": "https://example.org/onto/Agreements/Agreement"
+          },
+          "scope": {},
+          "version": "0.1.0"
+        },
+        {
+          "artifactId": "ex.agr.Contract.interface",
+          "dependencies": [],
+          "irVersion": "0.1",
+          "kind": "entity",
+          "lifecycle": "draft",
+          "name": "Contract",
+          "namespace": "ex.agr",
+          "payload": {
+            "entityVersion": "2.0",
+            "interface": {
+              "description": "contract <https://example.org/onto/Agreements/Contract>",
+              "extends": [
+                "ex.agr.Agreement"
+              ],
+              "links": [
+                {
+                  "cardinality": {
+                    "from": "many",
+                    "required": true,
+                    "to": "many"
+                  },
+                  "description": "<https://example.org/onto/Agreements/hasParty>",
+                  "id": "has_party",
+                  "target": "ex.pty.Party"
+                }
+              ],
+              "name": "ex.agr.Contract"
+            }
+          },
+          "provenance": {
+            "source": "import",
+            "sourcePath": "https://example.org/onto/Agreements/Contract"
+          },
+          "scope": {},
+          "version": "0.1.0"
+        },
+        {
+          "artifactId": "ex.ln.Collateral.interface",
+          "dependencies": [],
+          "irVersion": "0.1",
+          "kind": "entity",
+          "lifecycle": "draft",
+          "name": "Collateral",
+          "namespace": "ex.ln",
+          "payload": {
+            "entityVersion": "2.0",
+            "interface": {
+              "description": "<https://example.org/onto/Loans/Collateral>",
+              "name": "ex.ln.Collateral"
+            }
+          },
+          "provenance": {
+            "source": "import",
+            "sourcePath": "https://example.org/onto/Loans/Collateral"
+          },
+          "scope": {},
+          "version": "0.1.0"
+        },
+        {
+          "artifactId": "ex.ln.CreditLine.interface",
+          "dependencies": [],
+          "irVersion": "0.1",
+          "kind": "entity",
+          "lifecycle": "draft",
+          "name": "CreditLine",
+          "namespace": "ex.ln",
+          "payload": {
+            "entityVersion": "2.0",
+            "interface": {
+              "description": "<https://example.org/onto/Loans/CreditLine>",
+              "name": "ex.ln.CreditLine"
+            }
+          },
+          "provenance": {
+            "source": "import",
+            "sourcePath": "https://example.org/onto/Loans/CreditLine"
+          },
+          "scope": {},
+          "version": "0.1.0"
+        },
+        {
+          "artifactId": "ex.ln.Currency.interface",
+          "dependencies": [],
+          "irVersion": "0.1",
+          "kind": "entity",
+          "lifecycle": "draft",
+          "name": "Currency",
+          "namespace": "ex.ln",
+          "payload": {
+            "entityVersion": "2.0",
+            "interface": {
+              "description": "<https://example.org/onto/Loans/Currency>",
+              "name": "ex.ln.Currency"
+            }
+          },
+          "provenance": {
+            "source": "import",
+            "sourcePath": "https://example.org/onto/Loans/Currency"
+          },
+          "scope": {},
+          "version": "0.1.0"
+        },
+        {
+          "artifactId": "ex.ln.Facility.interface",
+          "dependencies": [],
+          "irVersion": "0.1",
+          "kind": "entity",
+          "lifecycle": "draft",
+          "name": "Facility",
+          "namespace": "ex.ln",
+          "payload": {
+            "entityVersion": "2.0",
+            "interface": {
+              "description": "<https://example.org/onto/Loans/Facility>",
+              "extends": [
+                "ex.ln.CreditLine"
+              ],
+              "name": "ex.ln.Facility"
+            }
+          },
+          "provenance": {
+            "source": "import",
+            "sourcePath": "https://example.org/onto/Loans/Facility"
+          },
+          "scope": {},
+          "version": "0.1.0"
+        },
+        {
+          "artifactId": "ex.ln.Guarantee.interface",
+          "dependencies": [],
+          "irVersion": "0.1",
+          "kind": "entity",
+          "lifecycle": "draft",
+          "name": "Guarantee",
+          "namespace": "ex.ln",
+          "payload": {
+            "entityVersion": "2.0",
+            "interface": {
+              "description": "<https://example.org/onto/Loans/Guarantee>",
+              "name": "ex.ln.Guarantee"
+            }
+          },
+          "provenance": {
+            "source": "import",
+            "sourcePath": "https://example.org/onto/Loans/Guarantee"
+          },
+          "scope": {},
+          "version": "0.1.0"
+        },
+        {
+          "artifactId": "ex.ln.Loan.interface",
+          "dependencies": [],
+          "irVersion": "0.1",
+          "kind": "entity",
+          "lifecycle": "draft",
+          "name": "Loan",
+          "namespace": "ex.ln",
+          "payload": {
+            "entityVersion": "2.0",
+            "interface": {
+              "description": "A contract under which a lender advances money a borrower repays. <https://example.org/onto/Loans/Loan>",
+              "extends": [
+                "ex.agr.Contract"
+              ],
+              "links": [
+                {
+                  "cardinality": {
+                    "from": "many",
+                    "required": true,
+                    "to": "one"
+                  },
+                  "description": "<https://example.org/onto/Loans/hasBorrower>",
+                  "id": "has_borrower",
+                  "target": "ex.pty.Party"
+                }
+              ],
+              "name": "ex.ln.Loan",
+              "properties": [
+                {
+                  "description": "<https://example.org/onto/Loans/hasPrincipal>",
+                  "id": "has_principal",
+                  "type": {
+                    "kind": "text"
+                  }
+                }
+              ]
+            }
+          },
+          "provenance": {
+            "source": "import",
+            "sourcePath": "https://example.org/onto/Loans/Loan"
+          },
+          "scope": {},
+          "version": "0.1.0"
+        },
+        {
+          "artifactId": "ex.ln.Pledge.interface",
+          "dependencies": [],
+          "irVersion": "0.1",
+          "kind": "entity",
+          "lifecycle": "draft",
+          "name": "Pledge",
+          "namespace": "ex.ln",
+          "payload": {
+            "entityVersion": "2.0",
+            "interface": {
+              "description": "<https://example.org/onto/Loans/Pledge>",
+              "links": [
+                {
+                  "cardinality": {
+                    "from": "many",
+                    "required": true,
+                    "to": "many"
+                  },
+                  "description": "<https://example.org/onto/Loans/secures>",
+                  "id": "secures",
+                  "target": "ex.ln.Collateral"
+                }
+              ],
+              "name": "ex.ln.Pledge"
+            }
+          },
+          "provenance": {
+            "source": "import",
+            "sourcePath": "https://example.org/onto/Loans/Pledge"
+          },
+          "scope": {},
+          "version": "0.1.0"
+        },
+        {
+          "artifactId": "ex.ln.PledgedSurety.interface",
+          "dependencies": [],
+          "irVersion": "0.1",
+          "kind": "entity",
+          "lifecycle": "draft",
+          "name": "PledgedSurety",
+          "namespace": "ex.ln",
+          "payload": {
+            "entityVersion": "2.0",
+            "interface": {
+              "description": "<https://example.org/onto/Loans/PledgedSurety>",
+              "extends": [
+                "ex.ln.Pledge"
+              ],
+              "name": "ex.ln.PledgedSurety"
+            }
+          },
+          "provenance": {
+            "source": "import",
+            "sourcePath": "https://example.org/onto/Loans/PledgedSurety"
+          },
+          "scope": {},
+          "version": "0.1.0"
+        },
+        {
+          "artifactId": "ex.ln.SecuredLoan.interface",
+          "dependencies": [],
+          "irVersion": "0.1",
+          "kind": "entity",
+          "lifecycle": "draft",
+          "name": "SecuredLoan",
+          "namespace": "ex.ln",
+          "payload": {
+            "entityVersion": "2.0",
+            "interface": {
+              "description": "<https://example.org/onto/Loans/SecuredLoan>",
+              "extends": [
+                "ex.ln.Loan"
+              ],
+              "name": "ex.ln.SecuredLoan"
+            }
+          },
+          "provenance": {
+            "source": "import",
+            "sourcePath": "https://example.org/onto/Loans/SecuredLoan"
+          },
+          "scope": {},
+          "version": "0.1.0"
+        },
+        {
+          "artifactId": "ex.ln.Surety.interface",
+          "dependencies": [],
+          "irVersion": "0.1",
+          "kind": "entity",
+          "lifecycle": "draft",
+          "name": "Surety",
+          "namespace": "ex.ln",
+          "payload": {
+            "entityVersion": "2.0",
+            "interface": {
+              "description": "<https://example.org/onto/Loans/Surety>",
+              "links": [
+                {
+                  "cardinality": {
+                    "from": "many",
+                    "required": true,
+                    "to": "many"
+                  },
+                  "description": "<https://example.org/onto/Loans/secures>",
+                  "id": "secures",
+                  "target": "ex.ln.Guarantee"
+                }
+              ],
+              "name": "ex.ln.Surety"
+            }
+          },
+          "provenance": {
+            "source": "import",
+            "sourcePath": "https://example.org/onto/Loans/Surety"
+          },
+          "scope": {},
+          "version": "0.1.0"
+        },
+        {
+          "artifactId": "ex.ln.UnsecuredLoan.interface",
+          "dependencies": [],
+          "irVersion": "0.1",
+          "kind": "entity",
+          "lifecycle": "draft",
+          "name": "UnsecuredLoan",
+          "namespace": "ex.ln",
+          "payload": {
+            "entityVersion": "2.0",
+            "interface": {
+              "description": "<https://example.org/onto/Loans/UnsecuredLoan>",
+              "extends": [
+                "ex.ln.Loan"
+              ],
+              "name": "ex.ln.UnsecuredLoan"
+            }
+          },
+          "provenance": {
+            "source": "import",
+            "sourcePath": "https://example.org/onto/Loans/UnsecuredLoan"
+          },
+          "scope": {},
+          "version": "0.1.0"
+        },
+        {
+          "artifactId": "ex.pty.Corporation.interface",
+          "dependencies": [],
+          "irVersion": "0.1",
+          "kind": "entity",
+          "lifecycle": "draft",
+          "name": "Corporation",
+          "namespace": "ex.pty",
+          "payload": {
+            "entityVersion": "2.0",
+            "interface": {
+              "description": "corporation <https://example.org/onto/Parties/Corporation>",
+              "extends": [
+                "ex.pty.LegalEntity"
+              ],
+              "name": "ex.pty.Corporation"
+            }
+          },
+          "provenance": {
+            "source": "import",
+            "sourcePath": "https://example.org/onto/Parties/Corporation"
+          },
+          "scope": {},
+          "version": "0.1.0"
+        },
+        {
+          "artifactId": "ex.pty.LegalEntity.interface",
+          "dependencies": [],
+          "irVersion": "0.1",
+          "kind": "entity",
+          "lifecycle": "draft",
+          "name": "LegalEntity",
+          "namespace": "ex.pty",
+          "payload": {
+            "entityVersion": "2.0",
+            "interface": {
+              "description": "legal entity <https://example.org/onto/Parties/LegalEntity>",
+              "extends": [
+                "ex.pty.Party"
+              ],
+              "name": "ex.pty.LegalEntity",
+              "properties": [
+                {
+                  "description": "<https://example.org/onto/Parties/hasLegalForm>",
+                  "id": "has_legal_form",
+                  "type": {
+                    "kind": "text"
+                  }
+                },
+                {
+                  "constraints": {
+                    "nullable": true
+                  },
+                  "description": "<https://example.org/onto/Parties/isRegisteredOn>",
+                  "id": "is_registered_on",
+                  "type": {
+                    "kind": "text"
+                  }
+                }
+              ]
+            }
+          },
+          "provenance": {
+            "source": "import",
+            "sourcePath": "https://example.org/onto/Parties/LegalEntity"
+          },
+          "scope": {},
+          "version": "0.1.0"
+        },
+        {
+          "artifactId": "ex.pty.NaturalPerson.interface",
+          "dependencies": [],
+          "irVersion": "0.1",
+          "kind": "entity",
+          "lifecycle": "draft",
+          "name": "NaturalPerson",
+          "namespace": "ex.pty",
+          "payload": {
+            "entityVersion": "2.0",
+            "interface": {
+              "description": "natural person <https://example.org/onto/Parties/NaturalPerson>",
+              "extends": [
+                "ex.pty.Party"
+              ],
+              "name": "ex.pty.NaturalPerson"
+            }
+          },
+          "provenance": {
+            "source": "import",
+            "sourcePath": "https://example.org/onto/Parties/NaturalPerson"
+          },
+          "scope": {},
+          "version": "0.1.0"
+        },
+        {
+          "artifactId": "ex.pty.Partnership.interface",
+          "dependencies": [],
+          "irVersion": "0.1",
+          "kind": "entity",
+          "lifecycle": "draft",
+          "name": "Partnership",
+          "namespace": "ex.pty",
+          "payload": {
+            "entityVersion": "2.0",
+            "interface": {
+              "description": "partnership <https://example.org/onto/Parties/Partnership>",
+              "extends": [
+                "ex.pty.LegalEntity"
+              ],
+              "name": "ex.pty.Partnership"
+            }
+          },
+          "provenance": {
+            "source": "import",
+            "sourcePath": "https://example.org/onto/Parties/Partnership"
+          },
+          "scope": {},
+          "version": "0.1.0"
+        },
+        {
+          "artifactId": "ex.pty.Party.interface",
+          "dependencies": [],
+          "irVersion": "0.1",
+          "kind": "entity",
+          "lifecycle": "draft",
+          "name": "Party",
+          "namespace": "ex.pty",
+          "payload": {
+            "entityVersion": "2.0",
+            "interface": {
+              "description": "A person or organization that takes part in an agreement. <https://example.org/onto/Parties/Party>",
+              "name": "ex.pty.Party",
+              "properties": [
+                {
+                  "constraints": {
+                    "nullable": true
+                  },
+                  "description": "The name a party is known by. <https://example.org/onto/Parties/hasName>",
+                  "id": "has_name",
+                  "type": {
+                    "kind": "text"
+                  }
+                }
+              ]
+            }
+          },
+          "provenance": {
+            "source": "import",
+            "sourcePath": "https://example.org/onto/Parties/Party"
+          },
+          "scope": {},
+          "version": "0.1.0"
+        },
+        {
+          "artifactId": "ex.pty.Trust.interface",
+          "dependencies": [],
+          "irVersion": "0.1",
+          "kind": "entity",
+          "lifecycle": "draft",
+          "name": "Trust",
+          "namespace": "ex.pty",
+          "payload": {
+            "entityVersion": "2.0",
+            "interface": {
+              "description": "<https://example.org/onto/Parties/Trust>",
+              "extends": [
+                "ex.pty.LegalEntity"
+              ],
+              "name": "ex.pty.Trust"
+            }
+          },
+          "provenance": {
+            "source": "import",
+            "sourcePath": "https://example.org/onto/Parties/Trust"
+          },
+          "scope": {},
+          "version": "0.1.0"
+        }
+      ],
+      "name": "owl.vocabulary"
+    }
+  ],
+  "provenance": {
+    "adapter": {
+      "name": "norn.formats.owl",
+      "version": "0.1.0"
+    },
+    "evaluator": {
+      "name": "zen-engine (Norn-cloud/zen)",
+      "version": "norn-v2.0.1-12"
+    },
+    "inputs": [
+      {
+        "bytes": 22133,
+        "name": "ledger.nt",
+        "sha256": "dbb7c5b9882b7cd717727b823f97628b5fc118f6fa97725635dad33322777471"
+      }
+    ],
+    "parser": {
+      "name": "rdflib",
+      "version": "7.6.0"
+    },
+    "tables": [
+      {
+        "artifactId": "norn.formats.owl.datatypes",
+        "sha256": "7729501d5b3503ba236b6258712960dad288050bb1c0a52001fbe8d4d0ad5b7e",
+        "version": "0.1.0"
+      }
+    ]
+  },
+  "sourceSchema": {
+    "adapter": {
+      "name": "norn.formats.owl",
+      "version": "0.1.0"
+    },
+    "datasets": [
+      {
+        "id": "https://example.org/onto/Agreements/Agreement",
+        "kind": "document",
+        "namespace": "https://example.org/onto/Agreements/",
+        "nativeName": "agreement"
+      },
+      {
+        "id": "https://example.org/onto/Agreements/Contract",
+        "kind": "document",
+        "namespace": "https://example.org/onto/Agreements/",
+        "nativeName": "contract"
+      },
+      {
+        "id": "https://example.org/onto/Loans/Collateral",
+        "kind": "document",
+        "namespace": "https://example.org/onto/Loans/",
+        "nativeName": "ex-ln:Collateral"
+      },
+      {
+        "id": "https://example.org/onto/Loans/CreditLine",
+        "kind": "document",
+        "namespace": "https://example.org/onto/Loans/",
+        "nativeName": "ex-ln:CreditLine"
+      },
+      {
+        "id": "https://example.org/onto/Loans/Currency",
+        "kind": "document",
+        "namespace": "https://example.org/onto/Loans/",
+        "nativeName": "ex-ln:Currency"
+      },
+      {
+        "id": "https://example.org/onto/Loans/Facility",
+        "kind": "document",
+        "namespace": "https://example.org/onto/Loans/",
+        "nativeName": "ex-ln:Facility"
+      },
+      {
+        "id": "https://example.org/onto/Loans/Guarantee",
+        "kind": "document",
+        "namespace": "https://example.org/onto/Loans/",
+        "nativeName": "ex-ln:Guarantee"
+      },
+      {
+        "description": "A contract under which a lender advances money a borrower repays.",
+        "id": "https://example.org/onto/Loans/Loan",
+        "kind": "document",
+        "namespace": "https://example.org/onto/Loans/",
+        "nativeName": "loan"
+      },
+      {
+        "id": "https://example.org/onto/Loans/Pledge",
+        "kind": "document",
+        "namespace": "https://example.org/onto/Loans/",
+        "nativeName": "ex-ln:Pledge"
+      },
+      {
+        "id": "https://example.org/onto/Loans/PledgedSurety",
+        "kind": "document",
+        "namespace": "https://example.org/onto/Loans/",
+        "nativeName": "ex-ln:PledgedSurety"
+      },
+      {
+        "id": "https://example.org/onto/Loans/SecuredLoan",
+        "kind": "document",
+        "namespace": "https://example.org/onto/Loans/",
+        "nativeName": "ex-ln:SecuredLoan"
+      },
+      {
+        "id": "https://example.org/onto/Loans/Surety",
+        "kind": "document",
+        "namespace": "https://example.org/onto/Loans/",
+        "nativeName": "ex-ln:Surety"
+      },
+      {
+        "id": "https://example.org/onto/Loans/UnsecuredLoan",
+        "kind": "document",
+        "namespace": "https://example.org/onto/Loans/",
+        "nativeName": "ex-ln:UnsecuredLoan"
+      },
+      {
+        "id": "https://example.org/onto/Parties/Corporation",
+        "kind": "document",
+        "namespace": "https://example.org/onto/Parties/",
+        "nativeName": "corporation"
+      },
+      {
+        "id": "https://example.org/onto/Parties/LegalEntity",
+        "kind": "document",
+        "namespace": "https://example.org/onto/Parties/",
+        "nativeName": "legal entity"
+      },
+      {
+        "id": "https://example.org/onto/Parties/NaturalPerson",
+        "kind": "document",
+        "namespace": "https://example.org/onto/Parties/",
+        "nativeName": "natural person"
+      },
+      {
+        "id": "https://example.org/onto/Parties/Partnership",
+        "kind": "document",
+        "namespace": "https://example.org/onto/Parties/",
+        "nativeName": "partnership"
+      },
+      {
+        "description": "A person or organization that takes part in an agreement.",
+        "id": "https://example.org/onto/Parties/Party",
+        "kind": "document",
+        "namespace": "https://example.org/onto/Parties/",
+        "nativeName": "party"
+      },
+      {
+        "id": "https://example.org/onto/Parties/Trust",
+        "kind": "document",
+        "namespace": "https://example.org/onto/Parties/",
+        "nativeName": "ex-pty:Trust"
+      }
+    ],
+    "format": "norn.source-schema/1",
+    "observedAt": "2026-11-20T00:00:00Z",
+    "rawMetadata": {
+      "sha256": "dbb7c5b9882b7cd717727b823f97628b5fc118f6fa97725635dad33322777471",
+      "uri": "urn:norn:owl-graph:sha256:dbb7c5b9882b7cd717727b823f97628b5fc118f6fa97725635dad33322777471"
+    },
+    "source": {
+      "instance": "source.test.synthetic-ledger",
+      "system": "OWL",
+      "version": "1.0"
+    }
+  }
+}

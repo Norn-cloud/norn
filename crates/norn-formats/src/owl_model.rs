@@ -73,19 +73,44 @@ pub(crate) enum Restriction {
 /// One logical axiom, structurally.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Axiom {
-    SubClassOf { sub: String, sup: Expr },
-    EquivalentClasses { class: String, other: Expr },
+    SubClassOf {
+        sub: String,
+        sup: Expr,
+    },
+    EquivalentClasses {
+        class: String,
+        other: Expr,
+    },
     DisjointClasses(Vec<Expr>),
-    DisjointUnion { class: String, members: Vec<Expr> },
-    Domain { property: String, domain: Expr },
-    Range { property: String, range: Expr },
+    DisjointUnion {
+        class: String,
+        members: Vec<Expr>,
+    },
+    Domain {
+        property: String,
+        domain: Expr,
+    },
+    Range {
+        property: String,
+        range: Expr,
+    },
     /// `owl:FunctionalProperty`, `owl:TransitiveProperty`, … by local name.
-    Characteristic { property: String, characteristic: String },
+    Characteristic {
+        property: String,
+        characteristic: String,
+    },
     /// `rdfs:subPropertyOf`, `owl:inverseOf`, `owl:equivalentProperty`,
     /// `owl:propertyDisjointWith`, `owl:propertyChainAxiom`.
-    PropertyRelation { property: String, relation: String, other: Expr },
+    PropertyRelation {
+        property: String,
+        relation: String,
+        other: Expr,
+    },
     /// An IRI typed by a class while also declared as something else (punning).
-    ClassAssertion { class: Expr, individual: String },
+    ClassAssertion {
+        class: Expr,
+        individual: String,
+    },
 }
 
 /// One accounted unit of the source graph.
@@ -102,7 +127,10 @@ pub(crate) enum Item {
     Individual(String, usize),
     Axiom(Axiom),
     /// One annotation predicate on a declared IRI (all its values).
-    Annotation { subject: String, predicate: String },
+    Annotation {
+        subject: String,
+        predicate: String,
+    },
     /// An annotated-axiom or `owl:AllDifferent` blank node, by its rendering.
     AxiomAnnotation(String),
     /// A statement nothing else accounts for, by its rendering.
@@ -181,7 +209,11 @@ impl Model {
         format!("<{iri}>")
     }
 
-    fn objects<'a>(&'a self, subject: &Term, predicate: &str) -> impl Iterator<Item = &'a Term> {
+    fn objects<'a>(
+        &'a self,
+        subject: &Term,
+        predicate: &str,
+    ) -> impl Iterator<Item = &'a Term> + use<'a> {
         let predicate = predicate.to_owned();
         self.subjects
             .get(subject)
@@ -234,7 +266,9 @@ impl Model {
         self.classes.contains(iri)
             || self.properties.contains_key(iri)
             || self.datatypes.contains(iri)
-            || self.types(&Term::Iri(iri.to_owned())).contains(&format!("{OWL}Ontology"))
+            || self
+                .types(&Term::Iri(iri.to_owned()))
+                .contains(&format!("{OWL}Ontology"))
     }
 
     fn partition(&mut self) -> Result<(), String> {
@@ -320,7 +354,10 @@ impl Model {
     fn classify(&self, iri: &str, predicate: &str, object: &Term) -> Result<Item, String> {
         let named = || Expr::Named(iri.to_owned());
         let property = || iri.to_owned();
-        let item = match predicate.strip_prefix(RDFS).or_else(|| predicate.strip_prefix(OWL)) {
+        let item = match predicate
+            .strip_prefix(RDFS)
+            .or_else(|| predicate.strip_prefix(OWL))
+        {
             Some("subClassOf") => Item::Axiom(Axiom::SubClassOf {
                 sub: iri.to_owned(),
                 sup: self.expr(object, 0)?,
@@ -350,7 +387,9 @@ impl Model {
                 range: self.expr(object, 0)?,
             }),
             Some(
-                relation @ ("subPropertyOf" | "inverseOf" | "equivalentProperty"
+                relation @ ("subPropertyOf"
+                | "inverseOf"
+                | "equivalentProperty"
                 | "propertyDisjointWith"),
             ) => Item::Axiom(Axiom::PropertyRelation {
                 property: property(),
@@ -385,9 +424,7 @@ impl Model {
             Some("Datatype") => Item::Datatype(iri.to_owned()),
             Some("ObjectProperty") => Item::Property(iri.to_owned(), PropertyKind::Object),
             Some("DatatypeProperty") => Item::Property(iri.to_owned(), PropertyKind::Datatype),
-            Some("AnnotationProperty") => {
-                Item::Property(iri.to_owned(), PropertyKind::Annotation)
-            }
+            Some("AnnotationProperty") => Item::Property(iri.to_owned(), PropertyKind::Annotation),
             Some(
                 characteristic @ ("FunctionalProperty"
                 | "InverseFunctionalProperty"
@@ -452,6 +489,7 @@ impl Model {
     }
 
     /// The class expression (or data range) `term` denotes.
+    #[allow(clippy::too_many_lines, reason = "one arm per OWL class-expression form")]
     pub(crate) fn expr(&self, term: &Term, depth: usize) -> Result<Expr, String> {
         if depth > MAX_EXPRESSION_DEPTH {
             return Err("a class expression deeper than 32 levels, or cyclic".into());
@@ -466,14 +504,14 @@ impl Model {
         if let Some(property) = one("onProperty").and_then(Term::iri) {
             let filler = ["someValuesFrom", "allValuesFrom", "onClass", "onDataRange"]
                 .into_iter()
-                .find_map(|name| one(name))
+                .find_map(&one)
                 .map(|filler| self.expr(filler, next).map(Box::new))
                 .transpose()?;
             let number = |name: &str| -> Option<Result<u64, String>> {
                 one(name).map(|value| match value {
                     Term::Literal { value, .. } => value
                         .parse::<u64>()
-                        .map_err(|_| format!("cardinality {value:?} is not a whole number")),
+                        .map_err(|_parse| format!("cardinality {value:?} is not a whole number")),
                     Term::Iri(_) | Term::Blank(_) => Err("a cardinality is a literal".into()),
                 })
             };
@@ -508,11 +546,12 @@ impl Model {
                 .flatten()
                 .filter(|(p, _)| p.starts_with(OWL) && p.as_str() != format!("{OWL}onProperty"))
                 .count();
-            let expected = if filler.is_some() && !matches!(kind, Restriction::Some | Restriction::All) {
-                2
-            } else {
-                1
-            };
+            let expected =
+                if filler.is_some() && !matches!(kind, Restriction::Some | Restriction::All) {
+                    2
+                } else {
+                    1
+                };
             if constructors != expected {
                 return Ok(Expr::Other(self.render_blank(blank, depth)?));
             }
@@ -540,7 +579,12 @@ impl Model {
                     Expr::OneOf(mut terms) if terms.len() == 1 => {
                         terms.pop().unwrap_or(Term::Iri(String::new()))
                     }
-                    other => Term::Literal {
+                    other @ (Expr::Restriction { .. }
+                    | Expr::Union(_)
+                    | Expr::Intersection(_)
+                    | Expr::Complement(_)
+                    | Expr::OneOf(_)
+                    | Expr::Other(_)) => Term::Literal {
                         value: format!("{other:?}"),
                         datatype: crate::ntriples::XSD_STRING.into(),
                         language: None,
@@ -606,8 +650,12 @@ impl Model {
                         format!("{family}HasValue({property} {value})")
                     }
                     Restriction::HasSelf => format!("ObjectHasSelf({property})"),
-                    Restriction::Min(n) => format!("{family}MinCardinality({n} {property}{filler})"),
-                    Restriction::Max(n) => format!("{family}MaxCardinality({n} {property}{filler})"),
+                    Restriction::Min(n) => {
+                        format!("{family}MinCardinality({n} {property}{filler})")
+                    }
+                    Restriction::Max(n) => {
+                        format!("{family}MaxCardinality({n} {property}{filler})")
+                    }
                     Restriction::Exact(n) => {
                         format!("{family}ExactCardinality({n} {property}{filler})")
                     }
@@ -671,7 +719,11 @@ impl Model {
                 property,
                 relation,
                 other,
-            } => format!("{relation}({} {})", self.compact(property), self.render(other)),
+            } => format!(
+                "{relation}({} {})",
+                self.compact(property),
+                self.render(other)
+            ),
             Axiom::ClassAssertion { class, individual } => format!(
                 "ClassAssertion({} {})",
                 self.render(class),

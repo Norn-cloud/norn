@@ -120,7 +120,10 @@ fn admit(graph: OwlGraph<'_>, config: &OwlConfig) -> Result<(), String> {
         return Err(format!("graph exceeds {MAX_GRAPH_BYTES} bytes"));
     }
     if sha256_hex(graph.bytes) != config.graph_sha256 {
-        return Err(format!("unadmitted bytes: {} is not the pinned graph", graph.path));
+        return Err(format!(
+            "unadmitted bytes: {} is not the pinned graph",
+            graph.path
+        ));
     }
     if config.namespaces.is_empty() {
         return Err("no owned namespace".into());
@@ -137,13 +140,22 @@ fn admit(graph: OwlGraph<'_>, config: &OwlConfig) -> Result<(), String> {
                 .chars()
                 .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
         if !namespace.iri.starts_with("https://") && !namespace.iri.starts_with("http://") {
-            return Err(format!("namespace {} is not an absolute IRI", namespace.iri));
+            return Err(format!(
+                "namespace {} is not an absolute IRI",
+                namespace.iri
+            ));
         }
         if !prefix_ok {
-            return Err(format!("prefix {:?} is not lowercase letters, digits and '-'", namespace.prefix));
+            return Err(format!(
+                "prefix {:?} is not lowercase letters, digits and '-'",
+                namespace.prefix
+            ));
         }
         if !seen.insert(namespace.iri.as_str()) || !seen.insert(namespace.prefix.as_str()) {
-            return Err(format!("namespace {} or prefix {} repeats", namespace.iri, namespace.prefix));
+            return Err(format!(
+                "namespace {} or prefix {} repeats",
+                namespace.iri, namespace.prefix
+            ));
         }
     }
     Ok(())
@@ -165,7 +177,11 @@ fn model_of(graph: OwlGraph<'_>, config: &OwlConfig) -> Result<Model, String> {
 /// The family of the declaration an annotation belongs to.
 fn family_of(model: &Model, iri: &str) -> &'static str {
     if model.classes.contains(iri) {
-        if model.split(iri).is_some() { "owl.class" } else { "owl.external_class" }
+        if model.split(iri).is_some() {
+            "owl.class"
+        } else {
+            "owl.external_class"
+        }
     } else if let Some(kind) = model.properties.get(iri) {
         match kind {
             PropertyKind::Object => "owl.object_property",
@@ -232,7 +248,11 @@ impl SchemaImporter for OwlReader {
     fn inventory(&self, source: Self::Source<'_>, config: &Self::Config) -> Vec<SourceElement> {
         let model = admit(source, config).and_then(|()| model_of(source, config));
         match model {
-            Ok(model) => model.items.iter().map(|item| element_of(&model, item)).collect(),
+            Ok(model) => model
+                .items
+                .iter()
+                .map(|item| element_of(&model, item))
+                .collect(),
             Err(_) => vec![SourceElement::definition("owl.graph", source.path)],
         }
     }
@@ -316,7 +336,11 @@ fn lower(
         artifacts.push(artifact);
         datasets.push(SourceDataset {
             id: iri.clone(),
-            native_name: model.labels.get(iri).cloned().unwrap_or_else(|| model.compact(iri)),
+            native_name: model
+                .labels
+                .get(iri)
+                .cloned()
+                .unwrap_or_else(|| model.compact(iri)),
             namespace: model.split(iri).map(|(namespace, _)| namespace.iri.clone()),
             kind: DatasetKind::Document,
             description: model.definitions.get(iri).cloned(),

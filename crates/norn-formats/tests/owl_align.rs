@@ -90,7 +90,11 @@ fn anchor(class: &str, interface: &str, term: &str, supersedes: &[&str]) -> OwlA
 /// commitment row.
 fn table(precedence: bool) -> OwlAlignment {
     let contract = format!("{AGR}Contract");
-    let supersedes: &[&str] = if precedence { &[contract.as_str()] } else { &[] };
+    let supersedes: &[&str] = if precedence {
+        &[contract.as_str()]
+    } else {
+        &[]
+    };
     OwlAlignment {
         pack_id: "norn.ontology-pack.test-ledger".into(),
         link_id: "norn.link.test-ledger.canon".into(),
@@ -101,8 +105,18 @@ fn table(precedence: bool) -> OwlAlignment {
         anchors: vec![
             anchor(&format!("{PTY}Party"), "core.Agent", "norn.core.agent", &[]),
             anchor(&contract, "core.Commitment", "norn.core.commitment", &[]),
-            anchor(&format!("{LN}Loan"), "core.Claim", "norn.core.claim", supersedes),
-            anchor(&format!("{LN}Collateral"), "core.Resource", "norn.core.resource.type", &[]),
+            anchor(
+                &format!("{LN}Loan"),
+                "core.Claim",
+                "norn.core.claim",
+                supersedes,
+            ),
+            anchor(
+                &format!("{LN}Collateral"),
+                "core.Resource",
+                "norn.core.resource.type",
+                &[],
+            ),
         ],
     }
 }
@@ -179,7 +193,9 @@ fn owl_alignment_packs_are_admitted_and_the_link_is_total() {
             },
         );
         assert!(
-            diagnostics.iter().all(|d| d.severity != DiagnosticSeverity::Error),
+            diagnostics
+                .iter()
+                .all(|d| d.severity != DiagnosticSeverity::Error),
             "{diagnostics:#?}"
         );
         let payloads: Vec<_> = set
@@ -212,7 +228,7 @@ fn owl_alignment_packs_are_admitted_and_the_link_is_total() {
             "{precedence}"
         );
         assert_eq!(
-            coverage.mapped.get(&loan).is_some(),
+            coverage.mapped.contains_key(&loan),
             precedence,
             "{precedence}"
         );

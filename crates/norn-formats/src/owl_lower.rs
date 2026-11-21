@@ -60,13 +60,14 @@ pub(crate) struct ValueType {
 /// range is unknown or not one named datatype).
 fn value_type(table: &mut TypeTable, datatype: &str) -> Result<ValueType, String> {
     let row = table.lookup(&[("datatype", TableInput::Text(datatype.to_owned()))])?;
-    let mut json = json!({ "kind": row.text("kind") });
-    if !row.text("format").is_empty() {
-        json["format"] = json!(row.text("format"));
+    let mut fields = serde_json::Map::new();
+    fields.insert("kind".into(), json!(row.text("kind")));
+    for key in ["format", "timezone"] {
+        if !row.text(key).is_empty() {
+            fields.insert(key.into(), json!(row.text(key)));
+        }
     }
-    if !row.text("timezone").is_empty() {
-        json["timezone"] = json!(row.text("timezone"));
-    }
+    let json = Value::Object(fields);
     Ok(ValueType {
         json,
         decision: TypeDecision {
@@ -165,7 +166,9 @@ pub(crate) fn namespace_of(prefix: &str) -> String {
         .filter(|segment| !segment.is_empty())
         .map(|segment| {
             let segment = snake(segment);
-            if segment.starts_with("p_") && segment.chars().nth(2).is_some_and(|c| c.is_ascii_digit()) {
+            if segment.starts_with("p_")
+                && segment.chars().nth(2).is_some_and(|c| c.is_ascii_digit())
+            {
                 segment.replacen("p_", "n", 1)
             } else {
                 segment
@@ -176,7 +179,10 @@ pub(crate) fn namespace_of(prefix: &str) -> String {
 }
 
 /// Name every owned class and member; refuse a collision.
-fn name(model: &Model) -> Result<(BTreeMap<String, String>, BTreeMap<String, String>), String> {
+/// Class IRI → interface name, and member IRI → member id.
+type Names = (BTreeMap<String, String>, BTreeMap<String, String>);
+
+fn name(model: &Model) -> Result<Names, String> {
     let mut names = BTreeMap::new();
     let mut taken = BTreeMap::new();
     for iri in &model.classes {
@@ -219,6 +225,11 @@ fn name(model: &Model) -> Result<(BTreeMap<String, String>, BTreeMap<String, Str
 }
 
 /// Lower `model` with `table` choosing datatype member types.
+#[allow(
+    clippy::too_many_lines,
+    clippy::result_large_err,
+    reason = "one pass over the axioms; a deferral carries its disposition"
+)]
 pub(crate) fn lower(model: &Model, table: &mut TypeTable) -> Result<Lowered, String> {
     let (names, members) = name(model)?;
     let mut lowered = Lowered {
@@ -235,11 +246,12 @@ pub(crate) fn lower(model: &Model, table: &mut TypeTable) -> Result<Lowered, Str
     let mut inverse_functional = BTreeSet::new();
     let mut ranges: BTreeMap<&str, Vec<(usize, &Expr)>> = BTreeMap::new();
     for (index, item) in model.items.iter().enumerate() {
-        match item {
-            Item::Axiom(Axiom::Characteristic {
-                property,
-                characteristic,
-            }) => match characteristic.as_str() {
+        if let Item::Axiom(Axiom::Characteristic {
+            property,
+            characteristic,
+        }) = item
+        {
+            match characteristic.as_str() {
                 "FunctionalProperty" => {
                     functional.insert(property.as_str());
                 }
@@ -247,24 +259,31 @@ pub(crate) fn lower(model: &Model, table: &mut TypeTable) -> Result<Lowered, Str
                     inverse_functional.insert(property.as_str());
                 }
                 _ => {}
-            },
-            Item::Axiom(Axiom::Range { property, range }) => {
-                ranges.entry(property.as_str()).or_default().push((index, range));
             }
-            _ => {}
+        } else if let Item::Axiom(Axiom::Range { property, range }) = item {
+            ranges
+                .entry(property.as_str())
+                .or_default()
+                .push((index, range));
         }
     }
     // The single named range of each placeable property, when it has one.
     let mut range_of: BTreeMap<&str, &str> = BTreeMap::new();
     for (property, list) in &ranges {
-        let named: BTreeSet<&str> = list
+        let named_ranges: BTreeSet<&str> = list
             .iter()
-            .filter_map(|(_, expr)| match expr {
-                Expr::Named(iri) => Some(iri.as_str()),
-                _ => None,
+            .filter_map(|(_, expr)| {
+                if let Expr::Named(iri) = expr {
+                    Some(iri.as_str())
+                } else {
+                    None
+                }
             })
             .collect();
-        if let (true, [only]) = (placeable(property), named.iter().copied().collect::<Vec<_>>().as_slice()) {
+        if let (true, [only]) = (
+            placeable(property),
+            named_ranges.iter().copied().collect::<Vec<_>>().as_slice(),
+        ) {
             range_of.insert(property, only);
         }
     }
@@ -329,7 +348,15 @@ pub(crate) fn lower(model: &Model, table: &mut TypeTable) -> Result<Lowered, Str
                     ))),
                 }
             }
-            _ => continue,
+            Axiom::SubClassOf { .. }
+            | Axiom::EquivalentClasses { .. }
+            | Axiom::DisjointClasses(_)
+            | Axiom::DisjointUnion { .. }
+            | Axiom::Domain { .. }
+            | Axiom::Range { .. }
+            | Axiom::Characteristic { .. }
+            | Axiom::PropertyRelation { .. }
+            | Axiom::ClassAssertion { .. } => continue,
         };
         match ask? {
             Ok((class, property, shape, degraded)) => {
@@ -379,13 +406,19 @@ pub(crate) fn lower(model: &Model, table: &mut TypeTable) -> Result<Lowered, Str
             && owned(sup)
             && sub != sup
         {
-            edges.entry(sub.clone()).or_default().insert(sup.clone(), index);
+            edges
+                .entry(sub.clone())
+                .or_default()
+                .insert(sup.clone(), index);
         }
     }
     let mut dropped_edges: BTreeMap<usize, Disposition> = BTreeMap::new();
     let pairs: Vec<(String, String, usize)> = edges
         .iter()
-        .flat_map(|(sub, sups)| sups.iter().map(move |(sup, index)| (sub.clone(), sup.clone(), *index)))
+        .flat_map(|(sub, sups)| {
+            sups.iter()
+                .map(move |(sup, index)| (sub.clone(), sup.clone(), *index))
+        })
         .collect();
     for (sub, sup, index) in pairs {
         if reaches(&edges, &sup, &sub) {
@@ -460,8 +493,8 @@ pub(crate) fn lower(model: &Model, table: &mut TypeTable) -> Result<Lowered, Str
                         "to": if *to_one { "one" } else { "many" },
                         "from": if *from_one { "one" } else { "many" },
                     });
-                    if *required {
-                        cardinality["required"] = json!(true);
+                    if *required && let Some(fields) = cardinality.as_object_mut() {
+                        fields.insert("required".into(), json!(true));
                     }
                     links.push(json!({
                         "id": id, "description": description,
@@ -472,8 +505,8 @@ pub(crate) fn lower(model: &Model, table: &mut TypeTable) -> Result<Lowered, Str
                     let mut property = json!({
                         "id": id, "description": description, "type": kind.json,
                     });
-                    if !required {
-                        property["constraints"] = json!({ "nullable": true });
+                    if !required && let Some(fields) = property.as_object_mut() {
+                        fields.insert("constraints".into(), json!({ "nullable": true }));
                     }
                     properties.push(property);
                 }
@@ -484,27 +517,40 @@ pub(crate) fn lower(model: &Model, table: &mut TypeTable) -> Result<Lowered, Str
             .get(iri)
             .or_else(|| model.labels.get(iri))
             .map_or_else(String::new, |text| format!("{} ", text.trim()));
-        let mut interface = json!({
-            "name": name,
-            "description": format!("{text}<{iri}>"),
-        });
+        let mut interface = serde_json::Map::new();
+        interface.insert("name".into(), json!(name));
+        interface.insert("description".into(), json!(format!("{text}<{iri}>")));
         if !parents.is_empty() {
-            interface["extends"] = json!(parents);
+            interface.insert("extends".into(), json!(parents));
         }
         if !properties.is_empty() {
-            interface["properties"] = Value::Array(properties);
+            interface.insert("properties".into(), Value::Array(properties));
         }
         if !links.is_empty() {
-            interface["links"] = Value::Array(links);
+            interface.insert("links".into(), Value::Array(links));
         }
-        lowered.interfaces.insert(iri.clone(), interface);
+        lowered
+            .interfaces
+            .insert(iri.clone(), Value::Object(interface));
     }
 
-    dispose(model, &mut lowered, &own, &rejected, dropped_edges, &edges, &range_of);
+    dispose(
+        model,
+        &mut lowered,
+        &own,
+        &rejected,
+        dropped_edges,
+        &edges,
+        &range_of,
+    );
     Ok(lowered)
 }
 
 /// The member shape of a restriction, or why it has none.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one arm per restriction kind and filler"
+)]
 fn restriction_shape(
     model: &Model,
     lowered: &Lowered,
@@ -525,32 +571,40 @@ fn restriction_shape(
         return Ok(Err(deferred(
             &codes::OWL_EXTERNAL_REFERENCE,
             NornHome::MappingIr,
-            format!("{} is not declared in the import set", model.compact(property)),
+            format!(
+                "{} is not declared in the import set",
+                model.compact(property)
+            ),
         )));
     };
     if !lowered.members.contains_key(property) || property_kind == PropertyKind::Annotation {
         return Ok(Err(deferred(
             &codes::OWL_EXTERNAL_REFERENCE,
             NornHome::MappingIr,
-            format!("{} is not an owned object or datatype property", model.compact(property)),
+            format!(
+                "{} is not an owned object or datatype property",
+                model.compact(property)
+            ),
         )));
     }
     let (required, to_one, degraded) = match kind {
-        Restriction::Some => (true, false, None),
-        Restriction::All => (false, false, None),
-        Restriction::Min(0) => (false, false, None),
-        Restriction::Min(1) => (true, false, None),
+        Restriction::Some | Restriction::Min(1) => (true, false, None),
+        Restriction::All | Restriction::Min(0) => (false, false, None),
         Restriction::Exact(1) => (true, true, None),
         Restriction::Max(1) => (false, true, None),
         Restriction::Min(n) | Restriction::Exact(n) if *n > 1 => (
             true,
             false,
-            Some(format!("at least {n} values: kept as a required many-member; the count bound needs a counting law")),
+            Some(format!(
+                "at least {n} values: kept as a required many-member; the count bound needs a counting law"
+            )),
         ),
         Restriction::Max(n) if *n > 1 => (
             false,
             false,
-            Some(format!("at most {n} values: kept as an optional many-member; the count bound needs a counting law")),
+            Some(format!(
+                "at most {n} values: kept as an optional many-member; the count bound needs a counting law"
+            )),
         ),
         Restriction::Max(0) | Restriction::Exact(0) => {
             return Ok(Err(deferred(
@@ -563,7 +617,8 @@ fn restriction_shape(
             return Ok(Err(deferred(
                 &codes::OWL_VALUE_RESTRICTION,
                 NornHome::RuleIr,
-                "a fixed value needs an invariant over the member; individuals are not imported".into(),
+                "a fixed value needs an invariant over the member; individuals are not imported"
+                    .into(),
             )));
         }
         Restriction::Min(_) | Restriction::Max(_) | Restriction::Exact(_) => {
@@ -611,7 +666,10 @@ fn restriction_shape(
         PropertyKind::Datatype => {
             let datatype = match filler {
                 Some(Expr::Named(iri)) => iri.clone(),
-                None => range_of.get(property).map(|range| (*range).to_owned()).unwrap_or_default(),
+                None => range_of
+                    .get(property)
+                    .map(|range| (*range).to_owned())
+                    .unwrap_or_default(),
                 Some(_) => String::new(),
             };
             Ok(Ok((
@@ -634,7 +692,13 @@ fn reaches(edges: &BTreeMap<String, BTreeMap<String, usize>>, from: &str, to: &s
             return true;
         }
         if seen.insert(node.clone()) {
-            stack.extend(edges.get(&node).into_iter().flat_map(BTreeMap::keys).cloned());
+            stack.extend(
+                edges
+                    .get(&node)
+                    .into_iter()
+                    .flat_map(BTreeMap::keys)
+                    .cloned(),
+            );
         }
     }
     false
@@ -655,11 +719,7 @@ enum Resolution {
 }
 
 /// The narrower of two shapes, or `None` when neither narrows the other.
-fn meet(
-    a: &Shape,
-    b: &Shape,
-    ancestors: &BTreeMap<String, BTreeSet<String>>,
-) -> Option<Shape> {
+fn meet(a: &Shape, b: &Shape, ancestors: &BTreeMap<String, BTreeSet<String>>) -> Option<Shape> {
     let under = |x: &str, y: &str| x == y || ancestors.get(x).is_some_and(|set| set.contains(y));
     match (a, b) {
         (
@@ -724,10 +784,21 @@ fn resolve(
     let mut ancestors: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for class in names.keys() {
         let mut seen = BTreeSet::new();
-        let mut stack: Vec<String> = edges.get(class).into_iter().flat_map(BTreeMap::keys).cloned().collect();
+        let mut stack: Vec<String> = edges
+            .get(class)
+            .into_iter()
+            .flat_map(BTreeMap::keys)
+            .cloned()
+            .collect();
         while let Some(node) = stack.pop() {
             if seen.insert(node.clone()) {
-                stack.extend(edges.get(&node).into_iter().flat_map(BTreeMap::keys).cloned());
+                stack.extend(
+                    edges
+                        .get(&node)
+                        .into_iter()
+                        .flat_map(BTreeMap::keys)
+                        .cloned(),
+                );
             }
         }
         ancestors.insert(class.clone(), seen);
@@ -797,8 +868,10 @@ fn resolve(
                 }
             }
         }
-        let mut all: BTreeMap<String, Shape> =
-            members.into_iter().map(|(property, (shape, _))| (property, shape)).collect();
+        let mut all: BTreeMap<String, Shape> = members
+            .into_iter()
+            .map(|(property, (shape, _))| (property, shape))
+            .collect();
         all.extend(mine.clone());
         effective.insert(class.clone(), all);
         declared.insert(class.clone(), mine);
@@ -807,7 +880,10 @@ fn resolve(
 }
 
 /// The disposition of every item.
-#[allow(clippy::too_many_lines, reason = "one arm per item kind keeps the accounting in one place")]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one arm per item kind keeps the accounting in one place"
+)]
 fn dispose(
     model: &Model,
     lowered: &mut Lowered,
@@ -819,7 +895,10 @@ fn dispose(
 ) {
     let target_of = |class: &str, member: Option<&str>| {
         let artifact = artifact_id(lowered.names.get(class).map_or("", String::as_str));
-        member.map_or_else(|| Target::artifact(&artifact), |member| Target::member(&artifact, member))
+        member.map_or_else(
+            || Target::artifact(&artifact),
+            |member| Target::member(&artifact, member),
+        )
     };
     // Where each property landed first (by class IRI), for the property's
     // own declaration, range, characteristics and annotations.
@@ -829,11 +908,17 @@ fn dispose(
         if let Some(detail) = rejected.get(&ask.item) {
             dispositions.insert(
                 ask.item,
-                deferred(&codes::OWL_INHERITANCE_CONFLICT, NornHome::EntityIr, detail.clone()),
+                deferred(
+                    &codes::OWL_INHERITANCE_CONFLICT,
+                    NornHome::EntityIr,
+                    detail.clone(),
+                ),
             );
             continue;
         }
-        placed.entry(ask.property.as_str()).or_insert(class.as_str());
+        placed
+            .entry(ask.property.as_str())
+            .or_insert(class.as_str());
         let member = lowered.members.get(&ask.property).map(String::as_str);
         let decision = match &ask.shape {
             Shape::Value { kind, .. } => Some(kind.decision.clone()),
@@ -859,7 +944,8 @@ fn dispose(
         deferred(
             &codes::OWL_UNPLACED_PROPERTY,
             NornHome::EntityIr,
-            "no domain or restriction gives the property an owner type, so no member carries it".into(),
+            "no domain or restriction gives the property an owner type, so no member carries it"
+                .into(),
         )
     };
     for (index, item) in model.items.iter().enumerate() {
@@ -934,7 +1020,10 @@ fn dispose(
     lowered.dispositions.extend(dispositions);
 }
 
-#[allow(clippy::too_many_arguments, reason = "the shared lowering context of one axiom")]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the shared lowering context of one axiom"
+)]
 fn axiom_disposition(
     model: &Model,
     lowered: &Lowered,
@@ -1003,7 +1092,12 @@ fn axiom_disposition(
                 NornHome::EntityIr,
                 "one of several named ranges (their intersection): a link has one target".into(),
             ),
-            _ => deferred(
+            Expr::Restriction { .. }
+            | Expr::Union(_)
+            | Expr::Intersection(_)
+            | Expr::Complement(_)
+            | Expr::OneOf(_)
+            | Expr::Other(_) => deferred(
                 &codes::OWL_CLASS_EXPRESSION,
                 NornHome::EntityIr,
                 "a class-expression range: a link target is one named type".into(),
@@ -1026,4 +1120,3 @@ fn axiom_disposition(
         ),
     }
 }
-

@@ -16,8 +16,8 @@
 //! never committed). `scripts/bench_ontology_admission.py` runs it once per
 //! set, in release mode, and prints one JSON line per run:
 //!
-//! - `NORN_OWL_SCALE_SET=owl:<fraction>`: the vocabulary layer, cut to the
-//!   first `fraction` of its interfaces by name and closed under `extends`
+//! - `NORN_OWL_SCALE_SET=owl:<per mille>`: the vocabulary layer, cut to the
+//!   first `per mille`/1000 of its interfaces by name and closed under `extends`
 //!   and link targets, admitted by `check_artifact_set` as a registry layer;
 //! - `owl-packs`: the ontology and link packs admitted, then the ontology
 //!   registry and the link registry (totality) validated with the canon;
@@ -29,10 +29,10 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use norn_checker::{
-    EntityArtifactSetContext, check_artifact_set, validate_link_registry,
+    Diagnostic, EntityArtifactSetContext, check_artifact_set, validate_link_registry,
     validate_ontology_registry,
 };
-use norn_ir::{ArtifactEnvelope, Diagnostic, DiagnosticSeverity};
+use norn_ir::ArtifactEnvelope;
 use serde_json::{Value, json};
 
 fn repo() -> PathBuf {
@@ -40,8 +40,10 @@ fn repo() -> PathBuf {
 }
 
 fn read_array(path: &Path) -> Vec<ArtifactEnvelope> {
-    serde_json::from_str(&std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{}: {e}", path.display())))
-        .unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+    serde_json::from_str(
+        &std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{}: {e}", path.display())),
+    )
+    .unwrap_or_else(|e| panic!("{}: {e}", path.display()))
 }
 
 fn read_dir(relative: &str) -> Vec<ArtifactEnvelope> {
@@ -66,11 +68,19 @@ fn peak_kib() -> Option<u64> {
         .and_then(|rest| rest.trim().trim_end_matches("kB").trim().parse().ok())
 }
 
+fn registry_errors(diagnostics: &[norn_ir::Diagnostic]) -> Vec<String> {
+    diagnostics
+        .iter()
+        .filter(|d| d.severity == norn_ir::DiagnosticSeverity::Error)
+        .map(|d| format!("{}: {}", d.code, d.message))
+        .collect()
+}
+
 fn errors(diagnostics: &[Diagnostic]) -> Vec<String> {
     diagnostics
         .iter()
-        .filter(|d| d.severity == DiagnosticSeverity::Error)
-        .map(|d| format!("{}: {}", d.code, d.message))
+        .filter(|d| d.is_error())
+        .map(|d| format!("{}: {}", d.code.as_str(), d.message))
         .collect()
 }
 
@@ -89,7 +99,9 @@ fn admit(artifacts: &[ArtifactEnvelope], base: &[ArtifactEnvelope]) -> (u128, Ve
 }
 
 /// Interface name → (artifact, the interface names it references).
-fn references(vocabulary: &[ArtifactEnvelope]) -> BTreeMap<String, (ArtifactEnvelope, Vec<String>)> {
+fn references(
+    vocabulary: &[ArtifactEnvelope],
+) -> BTreeMap<String, (ArtifactEnvelope, Vec<String>)> {
     vocabulary
         .iter()
         .map(|artifact| {
@@ -127,10 +139,10 @@ fn members(artifacts: &[ArtifactEnvelope], field: &str) -> usize {
         .sum()
 }
 
-/// The first `fraction` of the interfaces by name, closed under references.
-fn cut(vocabulary: &[ArtifactEnvelope], fraction: f64) -> Vec<ArtifactEnvelope> {
+/// The first `permille`/1000 of the interfaces by name, closed under references.
+fn cut(vocabulary: &[ArtifactEnvelope], permille: usize) -> Vec<ArtifactEnvelope> {
     let by_name = references(vocabulary);
-    let take = ((by_name.len() as f64) * fraction).ceil() as usize;
+    let take = by_name.len().saturating_mul(permille).div_ceil(1000);
     let mut chosen = BTreeSet::new();
     let mut stack: Vec<&str> = by_name.keys().take(take).map(String::as_str).collect();
     while let Some(name) = stack.pop() {
@@ -153,11 +165,14 @@ fn owl_scale_admission() {
     let set = std::env::var("NORN_OWL_SCALE_SET").unwrap_or_else(|_| "owl:1".into());
     let started = Instant::now();
     let mut record = json!({ "set": set });
-    match set.split_once(':').map_or((set.as_str(), ""), |(a, b)| (a, b)) {
-        ("owl", fraction) => {
+    match set
+        .split_once(':')
+        .map_or((set.as_str(), ""), |(a, b)| (a, b))
+    {
+        ("owl", permille) => {
             let vocabulary = read_array(&emit_dir().join("artifacts.json"));
-            let fraction: f64 = fraction.parse().expect("owl:<fraction>");
-            let subset = cut(&vocabulary, fraction);
+            let permille: usize = permille.parse().expect("owl:<per mille>");
+            let subset = cut(&vocabulary, permille);
             let (millis, errors) = admit(&subset, &[]);
             record["artifacts"] = json!(subset.len());
             record["extends"] = json!(members(&subset, "extends"));
@@ -171,8 +186,13 @@ fn owl_scale_admission() {
             let packs = read_array(&emit_dir().join("packs.json"));
             let canon = read_dir("registry/packs/canon/artifacts");
             let (admit_millis, admit_errors) = admit(&packs, &[]);
-            let mut set = packs.clone();
-            set.extend(canon.iter().filter(|a| a.artifact_id == "norn.ontology-pack.canon").cloned());
+            let mut set = packs;
+            set.extend(
+                canon
+                    .iter()
+                    .filter(|a| a.artifact_id == "norn.ontology-pack.canon")
+                    .cloned(),
+            );
             let payloads: Vec<_> = set
                 .iter()
                 .map(|artifact| artifact.payload.to_json_value())
@@ -196,7 +216,9 @@ fn owl_scale_admission() {
             record["ontologyRegistryMillis"] = json!(registry_millis);
             record["ontologyRegistry"] = match registry {
                 Ok(()) => json!("valid"),
-                Err(diagnostics) => json!(errors(&diagnostics).into_iter().take(5).collect::<Vec<_>>()),
+                Err(diagnostics) => {
+                    json!(registry_errors(&diagnostics).into_iter().take(5).collect::<Vec<_>>())
+                }
             };
             record["linkRegistryMillis"] = json!(link_millis);
             record["linkRegistry"] = match links {
@@ -216,7 +238,7 @@ fn owl_scale_admission() {
                         })
                         .collect(),
                 ),
-                Err(diagnostics) => json!(errors(&diagnostics).into_iter().take(5).collect::<Vec<_>>()),
+                Err(diagnostics) => json!(registry_errors(&diagnostics).into_iter().take(5).collect::<Vec<_>>()),
             };
         }
         (baseline @ ("canon" | "three-systems"), _) => {
@@ -228,10 +250,10 @@ fn owl_scale_admission() {
                     "registry/packs/odoo/artifacts",
                 ]);
             }
-            let all: Vec<ArtifactEnvelope> = dirs.iter().flat_map(|dir| read_dir(dir)).collect();
-            let (base, candidate): (Vec<_>, Vec<_>) = all
-                .into_iter()
-                .partition(|a| a.artifact_id.starts_with("core.") || a.artifact_id.starts_with("std."));
+            let (base, candidate): (Vec<_>, Vec<_>) =
+                dirs.iter().flat_map(|dir| read_dir(dir)).partition(|a| {
+                a.artifact_id.starts_with("core.") || a.artifact_id.starts_with("std.")
+            });
             let (millis, errors) = admit(&candidate, &base);
             record["artifacts"] = json!(candidate.len());
             record["base"] = json!(base.len());

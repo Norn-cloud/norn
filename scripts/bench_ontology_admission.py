@@ -6,7 +6,7 @@ so the reported peak resident set is that set's. Input is an OWL import written 
 repository by `norn-format-read <manifest> --originals <dir> --emit-dir <dir> --align <table>`;
 nothing upstream is committed. Run on a build host (Boat), never on the shared agent host:
 
-    python3 scripts/bench_ontology_admission.py --emit-dir <dir> [--fractions 0.125,0.25,0.5,1] [--repeat 3]
+    python3 scripts/bench_ontology_admission.py --emit-dir <dir> [--permille 125,250,500,1000] [--repeat 3]
 
 Prints one JSON object: every run's record (`set`, `artifacts`, `extends`, `links`,
 `properties`, `admitMillis`, `errors`, `peakKiB`) and, for the OWL vocabulary, the fitted
@@ -50,13 +50,13 @@ def exponent(points: list[tuple[int, float]]) -> float | None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--emit-dir", type=Path, required=True)
-    parser.add_argument("--fractions", default="0.125,0.25,0.5,1")
+    parser.add_argument("--permille", default="125,250,500,1000")
     parser.add_argument("--repeat", type=int, default=3)
     args = parser.parse_args()
     emit_dir = args.emit_dir.resolve()
     if ROOT in emit_dir.parents or emit_dir == ROOT:
         raise SystemExit("the import is upstream-derived: keep --emit-dir outside the repository")
-    sets = ["canon", "three-systems", *(f"owl:{f}" for f in args.fractions.split(","))]
+    sets = ["canon", "three-systems", *(f"owl:{f}" for f in args.permille.split(","))]
     if (emit_dir / "packs.json").exists():
         sets.append("owl-packs")
     runs = []
