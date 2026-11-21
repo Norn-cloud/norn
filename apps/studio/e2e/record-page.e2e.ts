@@ -109,6 +109,30 @@ test("markings: a reveal answered after the cell withdrew the reveal is never sh
   await expect(page.getByText("Amira Haddad")).toHaveCount(0)
 })
 
+test("markings: a reveal asked under a projection, answered after it changed and changed back, is never shown", async ({ page }) => {
+  const cell = await recordCell(page, "admin")
+  await page.goto(PARTY)
+  const release = cell.holdReveal()
+  const name = await askReveal(page)
+  await expect.poll(() => cell.reveals.length).toBe(1)
+  // A → B: the cell's next read withdraws the reveal.
+  cell.become("member")
+  await page.keyboard.press("Escape")
+  await page.getByRole("button", { name: "Read again" }).click()
+  await expect(name.locator("[data-hidden-tag]")).toHaveText("Hidden from your role")
+  // B → A: the read after allows it again, the same version and projection the reveal was asked under.
+  cell.become("admin")
+  await page.getByRole("button", { name: "Read again" }).click()
+  await expect(name.locator("[data-hidden-tag]")).toHaveText("Masked · you may reveal")
+  // The answer to the first ask lands: it belonged to the discarded instance, and is not shown.
+  const answered = page.waitForResponse((response) => new URL(response.url()).pathname.endsWith("/reveal"))
+  release()
+  await answered
+  await page.waitForTimeout(300)
+  await expect(name.locator("[data-revealed]")).toHaveCount(0)
+  await expect(page.getByText("Amira Haddad")).toHaveCount(0)
+})
+
 test("who can: each role's reads and actions are the cell's decisions, and your role is marked", async ({ page }) => {
   const cell = await recordCell(page, "member")
   await page.goto(PARTY)
@@ -146,10 +170,36 @@ test("changes: the last changes say what wrote them, who, when and why; Every ch
   await expect(newest).toContainText("user:sara")
   await expect(newest).toContainText("20 Nov 2026")
   await expect(newest).toContainText("changed kind")
-  await expect(newest).toContainText("Why: Confirmed by phone with the customer")
+  // The cell lists no call input and authorizes no reason field yet: no "why" is shown.
+  await expect(recent).not.toContainText("Why")
   await expect(recent.locator("li").nth(1)).toContainText("Imported from ERPNext")
   await page.getByRole("button", { name: "Every change" }).click()
   await expect(page.locator("#record-history")).toBeInViewport()
+})
+
+test("changes: a member (no Sources, no call records) sees the history list in both panels", async ({ page }) => {
+  await recordCell(page, "member")
+  await page.goto(PARTY)
+  const recent = page.getByRole("list", { name: "Recent changes" })
+  await expect(recent.locator("li")).toHaveCount(2)
+  await expect(recent.locator("li").first()).toContainText("changed kind")
+  await expect(recent).not.toContainText("user:sara")
+  await expect(recent).not.toContainText("Imported from")
+  const history = page.locator("#record-history")
+  await expect(history.locator("ol > li")).toHaveCount(2)
+  await expect(page.locator("[data-history-unavailable]")).toHaveCount(0)
+  await expect(page.getByText("No such readable object.")).toHaveCount(0)
+  await expect(page.getByText("The history could not be read.")).toHaveCount(0)
+  await shoot(page, "party-member-history")
+})
+
+test("changes: a refused history reads the same plain state in both panels, never the refusal's text", async ({ page }) => {
+  const cell = await recordCell(page, "member")
+  cell.refuseHistory()
+  await page.goto(PARTY)
+  await expect(page.locator("[data-history-unavailable]")).toHaveCount(2)
+  for (const panel of await page.locator("[data-history-unavailable]").all()) await expect(panel).toHaveText("History unavailable")
+  await expect(page.getByText("No such readable object.")).toHaveCount(0)
 })
 
 test("rules: the rail lists the rules the type keeps, and All rules opens the rules page", async ({ page }) => {

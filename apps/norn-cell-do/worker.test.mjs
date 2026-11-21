@@ -18,7 +18,8 @@ const LAPSED = "Bearer expired-member-of-org_b";
 const OUTSIDE_BODY = JSON.stringify({ format: "norn/refusal@2", code: "authz.denied", category: "permission" });
 
 /** What the fake Wasm saw, per test. */
-const world = { opened: 0, served: 0, gates: 0, failOpen: false };
+/** `wired` records what the Worker passes across the Wasm boundary: each call and its arguments. */
+const world = { opened: 0, served: 0, gates: 0, failOpen: false, wired: [] };
 
 class FakeCell {
   constructor(storage, org, env) {
@@ -33,8 +34,12 @@ class FakeCell {
   static fixturesEnabled() {
     return false;
   }
-  configureConnect() {}
-  enableAnalytics() {}
+  configureConnect(sources, vars) {
+    world.wired.push({ call: "configureConnect", vars });
+  }
+  enableAnalytics(signingKey) {
+    world.wired.push({ call: "enableAnalytics", signingKey });
+  }
   serving() {
     return this.provisioned;
   }
@@ -59,8 +64,9 @@ class FakeCell {
 }
 
 class FakeGate {
-  constructor(org) {
+  constructor(org, _env, _issuer, _jwks, _lineageKey, _sources, vars) {
     world.gates += 1;
+    world.wired.push({ call: "NornGate", vars });
     this.org = org;
   }
   check(_method, _path, _query, authorization) {
@@ -78,7 +84,7 @@ class FakeGate {
 globalThis.__nornFakeWasm = { NornCell: FakeCell, NornGate: FakeGate };
 const dir = mkdtempSync(join(tmpdir(), "norn-cell-isolation-"));
 // The bundle's modules (apps/studio/scripts/celld-deploy-cell.ts BUNDLE_FILES).
-for (const file of ["worker.mjs", "subscribe.mjs", "wake.mjs", "telemetry.mjs", "otlp.mjs"]) copyFileSync(join(import.meta.dir, file), join(dir, file));
+for (const file of ["worker.mjs", "subscribe.mjs", "wake.mjs", "connect_vars.mjs", "telemetry.mjs", "otlp.mjs"]) copyFileSync(join(import.meta.dir, file), join(dir, file));
 mkdirSync(join(dir, "pkg"));
 writeFileSync(join(dir, "pkg", "norn_cell_do_bg.wasm"), "");
 writeFileSync(
@@ -198,9 +204,9 @@ const B = ["org_b", "prod"];
 const NOWHERE = ["org_c", "prod"];
 
 /** A deployment whose cell objects are `objects` (by scope key), each served by `cellFor` (cold: a fresh instance per request). */
-function deploy(objects, { warm }) {
+function deploy(objects, { warm, bindings = {} }) {
   const instances = new Map();
-  const env = { ALLOWED_ORIGINS: "https://studio.example" };
+  const env = { ALLOWED_ORIGINS: "https://studio.example", ...bindings };
   env.CELLS = {
     idFromName: (name) => name,
     get: (name) => ({
@@ -468,5 +474,39 @@ describe("an outsider's live socket", () => {
     const env = deploy(objs, { warm: false });
     const member = await router.fetch(request(B, { path: "/v1/subscribe", authorization: "Bearer member-of-org_b", headers: { upgrade: "websocket" } }), env);
     expect(member.status).toBe(429);
+  });
+});
+
+describe("the analytics signing key's wiring (OLAP-01)", () => {
+  const SIGNING = "k1:c2lnbmluZy1zZWVkLW5ldmVyLWZvci1jb25uZWN0b3Jz";
+  // A deployment that still carries the binding the signing key had before OLAP-01.
+  const LEGACY = "k0:bGVnYWN5LXNpZ25pbmcta2V5LWluLWNvbm5lY3Rpb24tbmFtZXNwYWNl";
+  const bindings = {
+    NORN_OLAP_URL: "http://olapd.internal:8790",
+    NORN_OLAP_SIGNING_KEY: SIGNING,
+    NORN_SECRET_OLAP_SIGNING_KEY: LEGACY,
+    NORN_LINEAGE_KEY: "lineage-key-of-at-least-thirty-two-bytes",
+    NORN_SOURCES: "[]",
+    NORN_SECRET_ERPNEXT_REST_TOKEN: "connection-token",
+    NORN_S3_SECRET_ACCESS_KEY: "storage-secret",
+  };
+
+  test("a member's open hands the signing key to enableAnalytics only, never to a connection's variables", async () => {
+    const objs = objects();
+    const env = deploy(objs, { warm: false, bindings });
+    quiet(objs);
+    world.wired.length = 0;
+    const served = await router.fetch(request(B, { authorization: "Bearer member-of-org_b" }), env);
+    expect(served.status).toBe(200);
+    // The gate and the cell each got the connection variables once; analytics got its key once.
+    expect(world.wired.map((w) => w.call).sort()).toEqual(["NornGate", "configureConnect", "enableAnalytics"]);
+    const analytics = world.wired.filter((w) => w.call === "enableAnalytics");
+    expect(analytics).toEqual([{ call: "enableAnalytics", signingKey: SIGNING }]);
+    for (const { call, vars } of world.wired.filter((w) => w.call !== "enableAnalytics")) {
+      expect(vars, call).not.toContain(SIGNING);
+      expect(vars, call).not.toContain(SIGNING.split(":")[1]);
+      // The connections still get their own secrets and storage settings.
+      expect(JSON.parse(vars), call).toMatchObject({ NORN_SECRET_ERPNEXT_REST_TOKEN: "connection-token", NORN_S3_SECRET_ACCESS_KEY: "storage-secret" });
+    }
   });
 });

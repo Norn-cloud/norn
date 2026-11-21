@@ -32,7 +32,7 @@ test("without counts every declared relationship is a group, uncounted, never a 
 
 const version = (at: number, kind: "mapping" | "action" | "other", observed?: string): ObjectVersion => ({
   version: at, commit: 10 + at, logicalTime: Date.UTC(2026, 10, at), values: observed === undefined ? {} : { observed_at: observed },
-  writer: kind === "action" ? { kind, actionId: "a", actor: "admin@demo", input: {} } : kind === "mapping" ? { kind, lineage: {} as SourceLineage } : { kind },
+  writer: kind === "action" ? { kind, actionId: "a", actor: "admin@demo" } : kind === "mapping" ? { kind, lineage: {} as SourceLineage } : { kind },
 })
 
 test("the timeline keeps the server's knowledge order; valid time orders by the time property and puts untimed versions last", () => {
