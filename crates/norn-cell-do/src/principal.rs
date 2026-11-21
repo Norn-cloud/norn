@@ -302,6 +302,8 @@ pub struct FixturePrincipals {
     slot: Arc<CallerSlot>,
     /// Whether the fixtures belong to this cell's organization.
     member: bool,
+    /// The role table the fixtures report.
+    role_table: &'static str,
 }
 
 /// The role table fixture principals report.
@@ -325,7 +327,16 @@ impl FixturePrincipals {
             names,
             slot,
             member: true,
+            role_table: FIXTURE_ROLES,
         }
+    }
+
+    /// The fixtures as verified from another role table (a redeployed
+    /// table): the same subjects, another principal.
+    #[must_use]
+    pub const fn with_role_table(mut self, role_table: &'static str) -> Self {
+        self.role_table = role_table;
+        self
     }
 
     /// The fixtures as members of `org` only, as a verified host token is:
@@ -347,7 +358,7 @@ impl PrincipalResolver for FixturePrincipals {
                 subject_id: (*name).to_owned(),
                 roles: roles.iter().map(|role| (*role).to_owned()).collect(),
                 actor_kind: "user",
-                role_table: FIXTURE_ROLES,
+                role_table: self.role_table,
             });
         let subject = caller.as_ref().map(|caller| caller.subject_id.clone());
         self.slot.record(caller);
