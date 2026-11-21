@@ -413,7 +413,9 @@ impl<E: SqlEngine> DevHost<E> {
                 .iter()
                 .flat_map(|part| part.records.iter().cloned())
                 .collect();
-            let position = |id: &str| records.iter().position(|record| record == id);
+            // Each run member's own page position ([`member_position`]).
+            let mut cursor = 0_usize;
+            let mut locate = |id: &str| member_position(&records, &mut cursor, id);
             // S3 (#1488): page rows before `settled` belong to runs this call
             // attempted (or are no run's), so a stop inside the page resumes
             // there, never at the page's start: a continuation does not
@@ -431,7 +433,7 @@ impl<E: SqlEngine> DevHost<E> {
                 let members = match attempt {
                     norn_cell::mapping_page::PageAttempt::Consumed => continue,
                     norn_cell::mapping_page::PageAttempt::Landed(landed) => {
-                        if let Some(at) = landed.iter().filter_map(|(id, _)| position(id)).max() {
+                        if let Some(at) = landed.iter().filter_map(|(id, _)| locate(id)).max() {
                             settled = settled.max(at.saturating_add(1));
                         }
                         outcomes.extend(landed);
@@ -444,17 +446,18 @@ impl<E: SqlEngine> DevHost<E> {
                 if members.is_empty() {
                     continue;
                 }
+                let positions: Vec<Option<usize>> = members.iter().map(|id| locate(id)).collect();
                 // The per-record path, one commit each, as one by one.
                 let mut finishes = true;
-                for member in &members {
+                for (member, at) in members.iter().zip(&positions) {
                     if spent(report.work_ms, commit_ms) {
-                        stop = Some(position(member).unwrap_or(settled));
+                        stop = Some(at.unwrap_or(settled));
                         break 'runs;
                     }
                     let outcome = self.observing(|cell| cell.process_mapping_outcome(member))?;
                     report.charge(commit_ms);
                     finishes &= !matches!(outcome, norn_cell::MappingOutcome::Quarantined(_));
-                    if let Some(at) = position(member) {
+                    if let Some(at) = at {
                         settled = settled.max(at.saturating_add(1));
                     }
                     outcomes.insert(member.clone(), outcome);
@@ -463,8 +466,7 @@ impl<E: SqlEngine> DevHost<E> {
                 // pending; when it cannot fit, the continuation resumes this
                 // pending page from its first member.
                 if finishes && spent(report.work_ms, commit_ms) {
-                    let resume = members.first().and_then(|id| position(id));
-                    stop = Some(resume.unwrap_or(settled));
+                    stop = Some(positions.first().copied().flatten().unwrap_or(settled));
                     break;
                 }
                 if self.observing(|cell| cell.finish_mapping_page(page_id))? {
@@ -1009,6 +1011,20 @@ fn pages(
         }
     }
     pages
+}
+
+/// A run member's own position among a page's `records`: runs and their
+/// members come in page order, so it is the first record with its id at or
+/// after `cursor` (just past the previous member), never an earlier row that
+/// repeats the id (S3, #1488). Advances `cursor` past it.
+fn member_position(records: &[String], cursor: &mut usize, id: &str) -> Option<usize> {
+    let at = records
+        .get(*cursor..)?
+        .iter()
+        .position(|record| record == id)?
+        .saturating_add(*cursor);
+    *cursor = at.saturating_add(1);
+    Some(at)
 }
 
 /// Whether no source record identity appears under two mapping inputs of
