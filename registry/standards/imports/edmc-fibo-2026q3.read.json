@@ -1,0 +1,927 @@
+{
+  "format": "owl",
+  "atlasId": "edmc-fibo-2026q3",
+  "observedAt": "2026-11-20T00:00:00Z",
+  "selection": {
+    "roots": [
+      "https://spec.edmcouncil.org/fibo/ontology/FND/AllFND/",
+      "https://spec.edmcouncil.org/fibo/ontology/BE/AllBE/",
+      "https://spec.edmcouncil.org/fibo/ontology/FBC/AllFBC/",
+      "https://spec.edmcouncil.org/fibo/ontology/LOAN/AllLOAN/"
+    ],
+    "resolve": [
+      {
+        "namespace": "https://spec.edmcouncil.org/fibo/ontology/",
+        "url": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/{path}.rdf"
+      },
+      {
+        "namespace": "https://www.omg.org/spec/Commons/",
+        "url": "https://www.omg.org/spec/Commons/{path}.rdf",
+        "preferVersionUrl": true
+      },
+      {
+        "namespace": "https://www.omg.org/spec/LCC/",
+        "url": "https://www.omg.org/spec/LCC/{path}.rdf",
+        "preferVersionUrl": true
+      }
+    ],
+    "evidence": [
+      "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/LICENSE"
+    ]
+  },
+  "admission": {
+    "sourceId": "source.edmc-fibo",
+    "releaseId": "master_2026Q3@2d73435a4419b66b7c9f44cb9763e35fe8ac7890",
+    "releasedAt": "2026-10-20",
+    "retrievedAt": "2026-11-20",
+    "canonicalUrl": "https://github.com/edmcouncil/fibo/tree/2d73435a4419b66b7c9f44cb9763e35fe8ac7890",
+    "license": "MIT",
+    "redistribution": "reference_only",
+    "importMode": "import",
+    "importer": {
+      "name": "norn.formats.owl",
+      "version": "0.1.0"
+    },
+    "files": [
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/BE/AllBE.rdf",
+        "sha256": "460e19b552e33788311bbba9f994e59ebdf4fa0895e654f406adb385de7339eb"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/BE/FunctionalEntities/FunctionalEntities.rdf",
+        "sha256": "dd49654a5435f499633f693f0974b563edc52fc3e0a8e53ad133c0e1a058f4b2"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/BE/FunctionalEntities/Publishers.rdf",
+        "sha256": "52dc4fa3121b945675a09d16cf2ac667857ea974e3e8d588be8576218b9a93d6"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/BE/GovernmentEntities/GovernmentEntities.rdf",
+        "sha256": "811c4579da9e3fe338cf3ed44acee8f282ef517d0432794e1ea9a358a941f28d"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/BE/LegalEntities/CorporateBodies.rdf",
+        "sha256": "13bcc4c012154230cd00f775c3ec12f4cf29616e7c484f2b2b9f61f659dd3235"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/BE/LegalEntities/FormalBusinessOrganizations.rdf",
+        "sha256": "60686e1934350885e2c1fdd78a99e7d9ad6ca49f3f4ea0b15b52e185028d6f7b"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/BE/LegalEntities/LEIEntities.rdf",
+        "sha256": "6a24df8bfa2923512cdde5c48c725b9ab505a6d1fe0082d29c97071adf61e29e"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/BE/LegalEntities/LegalPersons.rdf",
+        "sha256": "d55897f004e97c7ad355ca8800641805f3836338a1c9cdb58614c7b5ef5eb101"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/BE/OwnershipAndControl/ControlParties.rdf",
+        "sha256": "4f6951000cd1170174aa5e156e7febf2fed7fb0e4dc7e61ce2b0fec9a47f2c5f"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/BE/OwnershipAndControl/CorporateControl.rdf",
+        "sha256": "8bef1195064a29e2a15322a2773afc815f0cfd170a0d821bd49a3687a8f0e120"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/BE/OwnershipAndControl/CorporateOwnership.rdf",
+        "sha256": "caa7cd8e61645849921ba376344ef633c90bcebf3c8775689522b9b0a896cc83"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/BE/OwnershipAndControl/Executives.rdf",
+        "sha256": "54bbad3e6efaab361333ac845c2ec394b7dc48590cad6f42a6a9425d72b6de28"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/BE/OwnershipAndControl/OwnershipParties.rdf",
+        "sha256": "05f6b0a9db27eee7ef7f4a56cb5a348b03d9bfa1b0fd72bec5b17815af3d39bf"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/BE/Partnerships/Partnerships.rdf",
+        "sha256": "fdca04ae8217b65cdcfccf96c87010c903e8667d9c102a8d632285375d71ad70"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/BE/PrivateLimitedCompanies/PrivateLimitedCompanies.rdf",
+        "sha256": "2f0d8b87d9db83d0726fef47222f049d990d526212b1968e54abb88d68f24341"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/BE/SoleProprietorships/SoleProprietorships.rdf",
+        "sha256": "35de4651fbcccc32e636480f38008424b8f5330ff6995c559b2ec949e32a3497"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/BE/Trusts/Trusts.rdf",
+        "sha256": "013d5d1bc25215ddc83e1e764e38fa0c7ddf62894fc08e3a113e7f9479793da5"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/FBC/AllFBC.rdf",
+        "sha256": "14d943fbfbfba69c86552e6008771d7dda7b3eaec457bf3f5f17f3478a269b14"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/FBC/DebtAndEquities/CreditEvents.rdf",
+        "sha256": "1d3df1c69304ab50a1bbd9de4bab3ef1bb1342670894db940ccf5e175687caa7"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/FBC/DebtAndEquities/CreditRatings.rdf",
+        "sha256": "97a8c8790e28c796fd2de5219a75899a263eb47c512a825840873222e41fe5a3"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/FBC/DebtAndEquities/Debt.rdf",
+        "sha256": "c9a2bce7d7ddc74d62ea9f1034f588ca188ced316836e329ff56793406013b53"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/FBC/DebtAndEquities/Guaranty.rdf",
+        "sha256": "c8764594184b83d3daf808825db17cf04ee7e7be441d364a39e51286c6579ac7"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/FBC/FinancialInstruments/FinancialInstruments.rdf",
+        "sha256": "5e8ef6606621e66dbb6998befd877b76ebef4b9e5baa22f8ea98bab2f41a106f"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/FBC/FinancialInstruments/InstrumentPricing.rdf",
+        "sha256": "a796a751bdfac7d3f092b7505c92e6bda1996a3749bbd4b222cac31a0c9e33fa"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/FBC/FinancialInstruments/Settlement.rdf",
+        "sha256": "45ed22079ecc6b6f90f75ae6d3ebff9c7228e716509bc4fb701e03b77e6daae1"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/FBC/FunctionalEntities/BusinessCenters.rdf",
+        "sha256": "1d1d6450712a3c27901386d6a0cc3dc449b4f6fba74867389596e7b887464a49"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/FBC/FunctionalEntities/BusinessRegistries.rdf",
+        "sha256": "6ae196f1b5b2f5ba8779a1dfacf0144409a5672ad0d85e4d2e47645f6a1df439"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/FBC/FunctionalEntities/FinancialServicesEntities.rdf",
+        "sha256": "f1047cce38f164b6f49bd6c21a340073f0168ff1b36a491e1556b79ad7d6d0da"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/FBC/FunctionalEntities/Markets.rdf",
+        "sha256": "c26937c21f4184f4d1658f552b1275860efad33674e8199d269661b8ffd2ffc4"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/FBC/FunctionalEntities/RegulatoryAgencies.rdf",
+        "sha256": "5036f185222c9c52a3baaebe9ce59f238c07dd02b5576703067509f07dacaafb"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/FBC/ProductsAndServices/ClientsAndAccounts.rdf",
+        "sha256": "6e97f64ff985a92d43af0babd325c3a01969b91362d2d09324f030bd06e331ae"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/FBC/ProductsAndServices/FinancialProductsAndServices.rdf",
+        "sha256": "84cfba5ccf3a9074027fd001fcfda12ef91a5a2aa7c5d9e976e7a68ee2014321"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/FND/Accounting/CurrencyAmount.rdf",
+        "sha256": "be01e537ca214a7f1fda1a4f8aeb23b854a002de547dbbc4b109b28e3e8c03d4"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/FND/Accounting/ISO4217-CurrencyCodes.rdf",
+        "sha256": "8da7c4e1e175ca9628c3daa898eb77da9a98f85adb8e55a97c86b118606624e9"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/FND/AgentsAndPeople/People.rdf",
+        "sha256": "de5483ee1328a44330c76aaa7c6cb70afe4ce56de39ae322a31da7fd878329bd"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/FND/Agreements/Agreements.rdf",
+        "sha256": "8f03910f2638fd6d9d0d67f85d82fb908de9e276c54f8af6eed3526c62a9e851"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/FND/Agreements/Contracts.rdf",
+        "sha256": "d1177c7b092ae26228c5cc07f63172443e99e867b6ed8139389f7fccfb0bf65e"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/FND/AllFND.rdf",
+        "sha256": "b0c2cd56d2bfef60351b4b4f568dc14b2a21606d14fd8114d76e97c268499f93"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/FND/Arrangements/Arrangements.rdf",
+        "sha256": "2b7ae23dcfcceee82c07275c03388d39067d40f006a74a4bc77382f458d98a49"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/FND/Arrangements/Assessments.rdf",
+        "sha256": "6586aa6d220aca95f048f412f351bd53f9526b5d875d2faac55e91590cbbc7f2"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/FND/Arrangements/ClassificationSchemes.rdf",
+        "sha256": "6965fd38d09b420286fa9d3ec493e6249ad6d3234e1be7bc6eaaa530b53e80e4"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/FND/Arrangements/Documents.rdf",
+        "sha256": "85c7e8ca07c62263c3817bf70f00ca3e1263ed20a6aba0fd3e99ab7d82c78968"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/FND/Arrangements/IdentifiersAndIndices.rdf",
+        "sha256": "ce50105aa7bac35a8ff2f424e325b5793ef9723ce8017ea272750d7577516c68"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/FND/Arrangements/Lifecycles.rdf",
+        "sha256": "8b81d1e6f9fa68a64a74564ae97f48f8f148a8b4da44d79959c5e957778140f9"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/FND/Arrangements/Ratings.rdf",
+        "sha256": "47e8afd2f0006474f749ad2c6c533157dc1b837ef686a7ddd5312e614685f700"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/FND/Arrangements/Reporting.rdf",
+        "sha256": "859fe8b85ab507cb4e9d6b9241ea226eb8dbd51e427ea04e132afdce98397e33"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/FND/DatesAndTimes/BusinessDates.rdf",
+        "sha256": "c959b708ac603b2b0ae7a6fc8c0a3003bf1c4139cab711e06fe9273e2ae76473"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/FND/DatesAndTimes/FinancialDates.rdf",
+        "sha256": "9a7ad36032eca33df0c49cd592b344abd5b8f3660a69a51f24899cebfcca0531"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/FND/DatesAndTimes/Occurrences.rdf",
+        "sha256": "ed38b6a6df233ebb667f5e2f926d1eb437274fd7b73f0fb16853f69c834d9eb9"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/FND/GoalsAndObjectives/Objectives.rdf",
+        "sha256": "a3f8f31c1b579047f55163fdf5ff0d14c58a840cff804bed4202acd09d6fb615"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/FND/Law/LegalCapacity.rdf",
+        "sha256": "78a290868169a7aed3e1c51202863eeda515df9e4efcd159c6bd70902774aac6"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/FND/Law/LegalCore.rdf",
+        "sha256": "8095fdeb20b85acf31923c9067cb431fd561669e4ed0681b95ae4d6b9a3b188e"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/FND/Organizations/FormalOrganizations.rdf",
+        "sha256": "096aa689714365c74308e35f71e0e1ccf8696e807fcee62885a568e6b018f961"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/FND/OwnershipAndControl/Control.rdf",
+        "sha256": "c96d1a23c9db41103a87c762a65ceca6704816db9136500cb87ced8f69d7b14e"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/FND/OwnershipAndControl/Ownership.rdf",
+        "sha256": "52a60e23377e440160c33d9a7ab2f24a882ceec879ac0a3fed331e738baff43e"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/FND/OwnershipAndControl/OwnershipAndControl.rdf",
+        "sha256": "85154189ed11e4ee44303c4b2b28a0ba855086e2e326d7c831689dbd9680abd5"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/FND/Parties/Parties.rdf",
+        "sha256": "6ada5986f86ad91bb506e1cdbec6cff126855d3ac44a9bf019a1e1485c4b6927"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/FND/Places/Addresses.rdf",
+        "sha256": "803e78d7595ae5032c53d66f9c381f1385d50690b849ada4714e5b0c1836543c"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/FND/Places/RealProperty.rdf",
+        "sha256": "ca19736b2ce96a4bfbe3de6d540e0d1816b484941dc0f0ddecf44037b217446a"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/FND/Places/VirtualPlaces.rdf",
+        "sha256": "438392ab8ef9dce6a82f22719521b06cd6aaa6c8e0e4266cf15f5e4f6428a79c"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/FND/ProductsAndServices/PaymentsAndSchedules.rdf",
+        "sha256": "7f9f6645a2e8e5387cd0d4dd9f5ba28c053283acb47bd37595851d7919d75dc0"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/FND/ProductsAndServices/ProductsAndServices.rdf",
+        "sha256": "936ef96bed298618994869b56f05e8bcc3390d25d9e03d9aeaa5e7bb01550834"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/FND/Relations/Relations.rdf",
+        "sha256": "e34a47bbf8c3d64aa2f747c14fd1f8871175eaea4a2720d1a347fb60837eaace"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/FND/Utilities/Analytics.rdf",
+        "sha256": "6d06b28f25094ffb0a2286beb4da2352f6d1c5327a7654fa5a13abe101994c06"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/FND/Utilities/AnnotationVocabulary.rdf",
+        "sha256": "fe863cf8a5bf58a3cff8a59d8555b00acf22a02096998c3189e0ec9f912c6e71"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/LICENSE",
+        "sha256": "59f852c87fa59411aa7dc527bd5629074d2caced7de4a48bbe7c5763359d8559"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/LOAN/AllLOAN.rdf",
+        "sha256": "6cab267b6551718efc4ccc1a4024ad0cda580ac78bdfd094caa9f174c699e12d"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/LOAN/LoansGeneral/LoanApplications.rdf",
+        "sha256": "ad7df5c986fa0bf6d1e108aff41f9772e18303b6300d97e3e0d5e7f6de038f67"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/LOAN/LoansGeneral/LoanEvents.rdf",
+        "sha256": "1ce1f1bf66edc321d141de34065e53f01f21d933b1c84335ba82cbf180ab2725"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/LOAN/LoansGeneral/Loans.rdf",
+        "sha256": "87024035dac38303e21738879202d87f0f37c1347a16119f9ec2b4e37e124f05"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/LOAN/LoansGeneral/LoansRegulatory.rdf",
+        "sha256": "2ac7db4283eb42d68cfa4acad8e0d41db324a1635789d771bb37b4ba3f7f9d35"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/LOAN/LoansGeneral/MetadataLOANLoansGeneral.rdf",
+        "sha256": "8c8d57295e4565b86a4de0818da5dfd49332af2f601dd7f22da896c07bc4e399"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/LOAN/LoansSpecific/CardAccounts.rdf",
+        "sha256": "09de725fc7569dfcbde5e5bbf024727bb7db6380ef9d22206bea153994c71938"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/LOAN/LoansSpecific/CommercialLoans.rdf",
+        "sha256": "f1368c816d6ba3e7a5b4d6e94fd76bd66df314ebe741adb7eecfc5ebbc0bcb52"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/LOAN/LoansSpecific/ConsumerLoans.rdf",
+        "sha256": "ed1bc2753636b9797e2b329147b236d69f20e0e7aa34cae2db7716a8892a9460"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/LOAN/LoansSpecific/GreenLoans.rdf",
+        "sha256": "510fa81ba4e12ce737e8b81c9bc43b61cf33cda44d0cbc7fac588bfd3e6e254a"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/LOAN/LoansSpecific/LoanProducts.rdf",
+        "sha256": "53a0b6df1545ae482cd770f591b794ad95885b2ccc5d40b6bfbd686252dccf1e"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/LOAN/LoansSpecific/MarineFinance.rdf",
+        "sha256": "f95a470fc34641bfbb2831094042a03321f2b60a5791dd6985ed5ef3702346cc"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/LOAN/LoansSpecific/MetadataLOANLoansSpecific.rdf",
+        "sha256": "29de4377a9a4804dcfe427f0c5d26990859f31ae045db9a8a37b12918002d9af"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/LOAN/LoansSpecific/StudentLoans.rdf",
+        "sha256": "2e988d8c097169157129178fe629acf566582bdb86b1cca02980abc08f3ae38d"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/LOAN/MetadataLOAN.rdf",
+        "sha256": "e14e8030a7bcdae00362ea9ab66fc96da34b750f2b0cd5b812e9cf77a89aa6c8"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/LOAN/RealEstateLoans/ConstructionLoans.rdf",
+        "sha256": "e74051751d6b3f53d4fd200ba735b2c08d6b191d03c406246cce97093df2ec4f"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/LOAN/RealEstateLoans/HomeMortgageDisclosureActCoveredMortgages.rdf",
+        "sha256": "ebf2e21857e3e4fca2d3b11b26057a45c1e54caf6486864c0296d3007214e15a"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/LOAN/RealEstateLoans/MetadataLOANRealEstateLoans.rdf",
+        "sha256": "48bebe6ec2f5af6c08c4fa7394cc9c6d0a97fa39132f7e0839a931aaf63fc444"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/LOAN/RealEstateLoans/MortgageOrigination.rdf",
+        "sha256": "dda3d7a2dc8fdcee8b5b0825f90373336231f5a6557977bb1457bde3a5d1eb2e"
+      },
+      {
+        "path": "https://raw.githubusercontent.com/edmcouncil/fibo/2d73435a4419b66b7c9f44cb9763e35fe8ac7890/LOAN/RealEstateLoans/Mortgages.rdf",
+        "sha256": "4d40e80c9add98aee948d11fd06f84f26f5bea2f228619b05adea1073bfa9634"
+      },
+      {
+        "path": "https://www.omg.org/spec/Commons/20221101/CodesAndCodeSets.rdf",
+        "sha256": "272ea377f588ed30759c37a2b0455a8b04643c8114ebf35ad31656c039d09150"
+      },
+      {
+        "path": "https://www.omg.org/spec/Commons/20221101/Collections.rdf",
+        "sha256": "44450edbe870cad6fa406319ecb21fed6a27824904e865b1d683f8bfd2a03553"
+      },
+      {
+        "path": "https://www.omg.org/spec/Commons/20221101/ContextualIdentifiers.rdf",
+        "sha256": "c26dd75874f66ca5a7dcfff0285b0f0cb8f2c66f0de56190e7f1220c702a28f7"
+      },
+      {
+        "path": "https://www.omg.org/spec/Commons/20221101/Identifiers.rdf",
+        "sha256": "c5ed5f3551ff4d0a711bd50ff6a7388383a1cf33a27bc1661e54f6bf7a75987a"
+      },
+      {
+        "path": "https://www.omg.org/spec/Commons/20221101/TextDatatype.rdf",
+        "sha256": "d29a6e24bffb67fd6a4fe9955880fb9e8bd2f858a12d3e846fc45fd571bd8314"
+      },
+      {
+        "path": "https://www.omg.org/spec/Commons/20230801/RolesAndCompositions.rdf",
+        "sha256": "81d40576c2afa3f1a9fabd0b08f67a31e1a82bead9467782d8450d7b331275fc"
+      },
+      {
+        "path": "https://www.omg.org/spec/Commons/20240801/QuantitiesAndUnits.rdf",
+        "sha256": "b1fbe90e6c4b23cd7c7485fbe06b94d373b598ece83f074c05b82b8bcc399d7f"
+      },
+      {
+        "path": "https://www.omg.org/spec/Commons/20250801/AnnotationVocabulary.rdf",
+        "sha256": "0f31efad729e9c5dc260d4cca8cb92c69ec25a4554ead4c866903f652e3789f7"
+      },
+      {
+        "path": "https://www.omg.org/spec/Commons/20250801/BusinessAuthorizations.rdf",
+        "sha256": "603b9985b7553c49cd5e9adfd055dab8c4fb1b3d88a6db51e031d6df9cef12d3"
+      },
+      {
+        "path": "https://www.omg.org/spec/Commons/20250801/ContextualDesignators.rdf",
+        "sha256": "aa1c6c1d403a79b04b5f1cf65d1cd993b64d87aee51b9f7a3889ea06f01a96a8"
+      },
+      {
+        "path": "https://www.omg.org/spec/Commons/20250801/DatesAndTimes.rdf",
+        "sha256": "29f48874c004475893202d0359ca1deb9e44e87d6e1a382e12e57c0fc86f90e7"
+      },
+      {
+        "path": "https://www.omg.org/spec/Commons/20250801/Designators.rdf",
+        "sha256": "6475c00a66050560c11560c91e824118aaa4f13f9e0d62e8eddaf2eb6a447eca"
+      },
+      {
+        "path": "https://www.omg.org/spec/Commons/20250801/Documents.rdf",
+        "sha256": "958264c82c7011097cf6da6352464dc094a9d1cada1d37a41ff26ed763f91a5c"
+      },
+      {
+        "path": "https://www.omg.org/spec/Commons/20250801/Locations.rdf",
+        "sha256": "0d6a8eedb4461f4256ea61f03506e882bdadc8b1ca2024493eb6585b3e574c31"
+      },
+      {
+        "path": "https://www.omg.org/spec/Commons/20250801/Organizations.rdf",
+        "sha256": "3a1ab7e936b656fff8aa8beb44d30ddc02aaa6f6eac5353d4157e355ef164eb7"
+      },
+      {
+        "path": "https://www.omg.org/spec/Commons/20250801/PartiesAndSituations.rdf",
+        "sha256": "1c207e4f04e51fee7d06bbee1e5c53ae90f04374da3568e0470699d8f20cc1f3"
+      },
+      {
+        "path": "https://www.omg.org/spec/Commons/20250801/RegistrationAuthorities.rdf",
+        "sha256": "38562388ef6790635abc5b09eee644a60a659544520b1f93a333ed3e50460991"
+      },
+      {
+        "path": "https://www.omg.org/spec/Commons/20250801/RegulatoryAgencies.rdf",
+        "sha256": "cd309406734bb8ba01a5626d1af7b5c8dc6bb3ab3a275e3faac791e5dd460d55"
+      },
+      {
+        "path": "https://www.omg.org/spec/Commons/Classifiers.rdf",
+        "sha256": "766312bdb13a27cdc6fe722d5be3c815135a284dbb5e6990455cc655aecad6e9"
+      },
+      {
+        "path": "https://www.omg.org/spec/Commons/SitesAndFacilities.rdf",
+        "sha256": "9c4672f52a8a6e1ce743af6110a0e3cd8229cd5120e8e21936f253d786fb72ac"
+      },
+      {
+        "path": "https://www.omg.org/spec/LCC/20211101/Countries/CountryRepresentation.rdf",
+        "sha256": "9f4cb2a7880e4d064adacd8edbf37a82d7e44016b964b60f1096f07c52584287"
+      },
+      {
+        "path": "https://www.omg.org/spec/LCC/20211101/Countries/ISO3166-1-CountryCodes.rdf",
+        "sha256": "58c609df159f063c8f13c7aab508487c10d0337306a7bf85023d105ee77c26c4"
+      },
+      {
+        "path": "https://www.omg.org/spec/LCC/20211101/Languages/LanguageRepresentation.rdf",
+        "sha256": "534744f6bedd336ca86702dc880bc185064b78674bd7b748752d16f6a69de7b5"
+      }
+    ]
+  },
+  "normaliser": {
+    "name": "rdflib",
+    "version": "7.6.0"
+  },
+  "namespaces": [
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/BE/AllBE/",
+      "prefix": "fibo-be-all"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/BE/FunctionalEntities/FunctionalEntities/",
+      "prefix": "fibo-be-fct-fct"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/BE/FunctionalEntities/Publishers/",
+      "prefix": "fibo-be-fct-pub"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/BE/GovernmentEntities/GovernmentEntities/",
+      "prefix": "fibo-be-ge-ge"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/BE/LegalEntities/CorporateBodies/",
+      "prefix": "fibo-be-le-cb"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/BE/LegalEntities/FormalBusinessOrganizations/",
+      "prefix": "fibo-be-le-fbo"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/BE/LegalEntities/LEIEntities/",
+      "prefix": "fibo-be-le-lei"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/BE/LegalEntities/LegalPersons/",
+      "prefix": "fibo-be-le-lp"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/BE/OwnershipAndControl/ControlParties/",
+      "prefix": "fibo-be-oac-cpty"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/BE/OwnershipAndControl/CorporateControl/",
+      "prefix": "fibo-be-oac-cctl"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/BE/OwnershipAndControl/CorporateOwnership/",
+      "prefix": "fibo-be-oac-cown"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/BE/OwnershipAndControl/Executives/",
+      "prefix": "fibo-be-oac-exec"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/BE/OwnershipAndControl/OwnershipParties/",
+      "prefix": "fibo-be-oac-opty"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/BE/Partnerships/Partnerships/",
+      "prefix": "fibo-be-ptr-ptr"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/BE/PrivateLimitedCompanies/PrivateLimitedCompanies/",
+      "prefix": "fibo-be-plc-plc"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/BE/SoleProprietorships/SoleProprietorships/",
+      "prefix": "fibo-be-sps-sps"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/BE/Trusts/Trusts/",
+      "prefix": "fibo-be-tr-tr"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FBC/AllFBC/",
+      "prefix": "fibo-fbc-all"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FBC/DebtAndEquities/CreditEvents/",
+      "prefix": "fibo-fbc-dae-cre"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FBC/DebtAndEquities/CreditRatings/",
+      "prefix": "fibo-fbc-dae-crt"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FBC/DebtAndEquities/Debt/",
+      "prefix": "fibo-fbc-dae-dbt"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FBC/DebtAndEquities/Guaranty/",
+      "prefix": "fibo-fbc-dae-gty"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FBC/FinancialInstruments/FinancialInstruments/",
+      "prefix": "fibo-fbc-fi-fi"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FBC/FinancialInstruments/InstrumentPricing/",
+      "prefix": "fibo-fbc-fi-ip"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FBC/FinancialInstruments/Settlement/",
+      "prefix": "fibo-fbc-fi-stl"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FBC/FunctionalEntities/BusinessCenters/",
+      "prefix": "fibo-fbc-fct-bc"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FBC/FunctionalEntities/BusinessRegistries/",
+      "prefix": "fibo-fbc-fct-breg"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FBC/FunctionalEntities/FinancialServicesEntities/",
+      "prefix": "fibo-fbc-fct-fse"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FBC/FunctionalEntities/Markets/",
+      "prefix": "fibo-fbc-fct-mkt"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FBC/FunctionalEntities/RegulatoryAgencies/",
+      "prefix": "fibo-fbc-fct-rga"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FBC/ProductsAndServices/ClientsAndAccounts/",
+      "prefix": "fibo-fbc-pas-caa"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FBC/ProductsAndServices/FinancialProductsAndServices/",
+      "prefix": "fibo-fbc-pas-fpas"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FND/Accounting/CurrencyAmount/",
+      "prefix": "fibo-fnd-acc-cur"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FND/Accounting/ISO4217-CurrencyCodes/",
+      "prefix": "fibo-fnd-acc-4217"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FND/AgentsAndPeople/People/",
+      "prefix": "fibo-fnd-aap-ppl"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FND/Agreements/Agreements/",
+      "prefix": "fibo-fnd-agr-agr"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FND/Agreements/Contracts/",
+      "prefix": "fibo-fnd-agr-ctr"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FND/AllFND/",
+      "prefix": "fibo-fnd-all"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FND/Arrangements/Arrangements/",
+      "prefix": "fibo-fnd-arr-arr"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FND/Arrangements/Assessments/",
+      "prefix": "fibo-fnd-arr-asmt"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FND/Arrangements/ClassificationSchemes/",
+      "prefix": "fibo-fnd-arr-cls"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FND/Arrangements/Documents/",
+      "prefix": "fibo-fnd-arr-doc"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FND/Arrangements/IdentifiersAndIndices/",
+      "prefix": "fibo-fnd-arr-id"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FND/Arrangements/Lifecycles/",
+      "prefix": "fibo-fnd-arr-lif"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FND/Arrangements/Ratings/",
+      "prefix": "fibo-fnd-arr-rt"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FND/Arrangements/Reporting/",
+      "prefix": "fibo-fnd-arr-rep"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FND/DatesAndTimes/BusinessDates/",
+      "prefix": "fibo-fnd-dt-bd"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FND/DatesAndTimes/FinancialDates/",
+      "prefix": "fibo-fnd-dt-fd"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FND/DatesAndTimes/Occurrences/",
+      "prefix": "fibo-fnd-dt-oc"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FND/GoalsAndObjectives/Objectives/",
+      "prefix": "fibo-fnd-gao-obj"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FND/Law/LegalCapacity/",
+      "prefix": "fibo-fnd-law-lcap"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FND/Law/LegalCore/",
+      "prefix": "fibo-fnd-law-cor"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FND/Organizations/FormalOrganizations/",
+      "prefix": "fibo-fnd-org-fm"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FND/OwnershipAndControl/Control/",
+      "prefix": "fibo-fnd-oac-ctl"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FND/OwnershipAndControl/Ownership/",
+      "prefix": "fibo-fnd-oac-own"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FND/OwnershipAndControl/OwnershipAndControl/",
+      "prefix": "fibo-fnd-oac-oac"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FND/Parties/Parties/",
+      "prefix": "fibo-fnd-pty-pty"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FND/Places/Addresses/",
+      "prefix": "fibo-fnd-plc-adr"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FND/Places/RealProperty/",
+      "prefix": "fibo-fnd-plc-rp"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FND/Places/VirtualPlaces/",
+      "prefix": "fibo-fnd-plc-vrt"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FND/ProductsAndServices/PaymentsAndSchedules/",
+      "prefix": "fibo-fnd-pas-psch"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FND/ProductsAndServices/ProductsAndServices/",
+      "prefix": "fibo-fnd-pas-pas"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FND/Relations/Relations/",
+      "prefix": "fibo-fnd-rel-rel"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FND/Utilities/Analytics/",
+      "prefix": "fibo-fnd-utl-alx"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/FND/Utilities/AnnotationVocabulary/",
+      "prefix": "fibo-fnd-utl-av"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/LOAN/AllLOAN/",
+      "prefix": "fibo-loan-all"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/LOAN/LoansGeneral/LoanApplications/",
+      "prefix": "fibo-loan-ln-app"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/LOAN/LoansGeneral/LoanEvents/",
+      "prefix": "fibo-loan-ln-ev"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/LOAN/LoansGeneral/Loans/",
+      "prefix": "fibo-loan-ln-ln"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/LOAN/LoansGeneral/LoansRegulatory/",
+      "prefix": "fibo-loan-ln-reg"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/LOAN/LoansGeneral/MetadataLOANLoansGeneral/",
+      "prefix": "fibo-loan-ln-mod"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/LOAN/LoansSpecific/CardAccounts/",
+      "prefix": "fibo-loan-spc-crd"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/LOAN/LoansSpecific/CommercialLoans/",
+      "prefix": "fibo-loan-spc-com"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/LOAN/LoansSpecific/ConsumerLoans/",
+      "prefix": "fibo-loan-spc-cns"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/LOAN/LoansSpecific/GreenLoans/",
+      "prefix": "fibo-loan-spc-grn"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/LOAN/LoansSpecific/LoanProducts/",
+      "prefix": "fibo-loan-spc-prod"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/LOAN/LoansSpecific/MarineFinance/",
+      "prefix": "fibo-loan-spc-mar"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/LOAN/LoansSpecific/MetadataLOANLoansSpecific/",
+      "prefix": "fibo-loan-spc-mod"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/LOAN/LoansSpecific/StudentLoans/",
+      "prefix": "fibo-loan-spc-stu"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/LOAN/MetadataLOAN/",
+      "prefix": "fibo-loan-mod"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/LOAN/RealEstateLoans/ConstructionLoans/",
+      "prefix": "fibo-loan-reln-cnst"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/LOAN/RealEstateLoans/HomeMortgageDisclosureActCoveredMortgages/",
+      "prefix": "fibo-loan-reln-hmda"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/LOAN/RealEstateLoans/MetadataLOANRealEstateLoans/",
+      "prefix": "fibo-loan-reln-mod"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/LOAN/RealEstateLoans/MortgageOrigination/",
+      "prefix": "fibo-loan-reln-org"
+    },
+    {
+      "iri": "https://spec.edmcouncil.org/fibo/ontology/LOAN/RealEstateLoans/Mortgages/",
+      "prefix": "fibo-loan-reln-mtg"
+    },
+    {
+      "iri": "https://www.omg.org/spec/Commons/AnnotationVocabulary/",
+      "prefix": "cmns-av"
+    },
+    {
+      "iri": "https://www.omg.org/spec/Commons/BusinessAuthorizations/",
+      "prefix": "cmns-bauth"
+    },
+    {
+      "iri": "https://www.omg.org/spec/Commons/Classifiers/",
+      "prefix": "cmns-cls"
+    },
+    {
+      "iri": "https://www.omg.org/spec/Commons/CodesAndCodeSets/",
+      "prefix": "cmns-cds"
+    },
+    {
+      "iri": "https://www.omg.org/spec/Commons/Collections/",
+      "prefix": "cmns-col"
+    },
+    {
+      "iri": "https://www.omg.org/spec/Commons/ContextualDesignators/",
+      "prefix": "cmns-cxtdsg"
+    },
+    {
+      "iri": "https://www.omg.org/spec/Commons/ContextualIdentifiers/",
+      "prefix": "cmns-cxtid"
+    },
+    {
+      "iri": "https://www.omg.org/spec/Commons/DatesAndTimes/",
+      "prefix": "cmns-dt"
+    },
+    {
+      "iri": "https://www.omg.org/spec/Commons/Designators/",
+      "prefix": "cmns-dsg"
+    },
+    {
+      "iri": "https://www.omg.org/spec/Commons/Documents/",
+      "prefix": "cmns-doc"
+    },
+    {
+      "iri": "https://www.omg.org/spec/Commons/Identifiers/",
+      "prefix": "cmns-id"
+    },
+    {
+      "iri": "https://www.omg.org/spec/Commons/Locations/",
+      "prefix": "cmns-loc"
+    },
+    {
+      "iri": "https://www.omg.org/spec/Commons/Organizations/",
+      "prefix": "cmns-org"
+    },
+    {
+      "iri": "https://www.omg.org/spec/Commons/PartiesAndSituations/",
+      "prefix": "cmns-pts"
+    },
+    {
+      "iri": "https://www.omg.org/spec/Commons/QuantitiesAndUnits/",
+      "prefix": "cmns-qtu"
+    },
+    {
+      "iri": "https://www.omg.org/spec/Commons/RegistrationAuthorities/",
+      "prefix": "cmns-ra"
+    },
+    {
+      "iri": "https://www.omg.org/spec/Commons/RegulatoryAgencies/",
+      "prefix": "cmns-rga"
+    },
+    {
+      "iri": "https://www.omg.org/spec/Commons/RolesAndCompositions/",
+      "prefix": "cmns-rlcmp"
+    },
+    {
+      "iri": "https://www.omg.org/spec/Commons/SitesAndFacilities/",
+      "prefix": "cmns-sfc"
+    },
+    {
+      "iri": "https://www.omg.org/spec/Commons/TextDatatype/",
+      "prefix": "cmns-txt"
+    },
+    {
+      "iri": "https://www.omg.org/spec/LCC/Countries/CountryRepresentation/",
+      "prefix": "lcc-cr"
+    },
+    {
+      "iri": "https://www.omg.org/spec/LCC/Countries/ISO3166-1-CountryCodes/",
+      "prefix": "lcc-3166-1"
+    },
+    {
+      "iri": "https://www.omg.org/spec/LCC/Languages/LanguageRepresentation/",
+      "prefix": "lcc-lr"
+    }
+  ],
+  "witnesses": "open",
+  "graph": {
+    "sha256": "f37f25a2e87c47eb2349b5a6efb6ba81e4552f351846badecbd83f9ac130af99",
+    "triples": 36237
+  }
+}
