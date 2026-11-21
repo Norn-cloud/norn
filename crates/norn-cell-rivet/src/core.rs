@@ -198,9 +198,19 @@ impl CellCore {
         })
     }
 
-    /// D102: answer questions on the tenant analytics engine.
-    pub fn enable_analytics(&mut self) {
-        self.tenant.enable_analytics();
+    /// D102: answer questions on the tenant analytics engine. OLAP-CRED-1:
+    /// `signing_key` is the host's key (`NORN_OLAP_SIGNING_KEY`); every
+    /// engine call carries a credential minted for this cell's tenant.
+    ///
+    /// # Errors
+    /// A missing or malformed signing key; the cell then has no analytics.
+    pub fn enable_analytics(&mut self, signing_key: Option<&str>) -> Result<(), String> {
+        let issuer = norn_api::olap_credential::Issuer::parse(
+            signing_key.ok_or_else(|| "NORN_OLAP_SIGNING_KEY is required".to_owned())?,
+        )
+        .map_err(|error| format!("NORN_OLAP_SIGNING_KEY: {error}"))?;
+        self.tenant.enable_analytics(issuer);
+        Ok(())
     }
 
     /// Configure the cell's source connections and the variables they read.
@@ -275,7 +285,7 @@ impl CellCore {
         };
         let engine = self
             .tenant
-            .take_engine_call()
+            .take_engine_call(call.now_ms)
             .and_then(|call| serde_json::to_string(&call).ok());
         Reply {
             status: response.status,

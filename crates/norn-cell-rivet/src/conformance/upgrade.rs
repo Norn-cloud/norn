@@ -10,8 +10,6 @@
 //! - A cell stamped by a newer engine, or with a stamp this engine cannot
 //!   read, refuses with the registered error and stays identical.
 
-use std::fmt::Write as _;
-
 use norn_cell::engine::{SqlEngine, SqlValue};
 use norn_cell::engine_release::{
     self, Admission, EngineStamp, STAMP_FORMAT, STAMP_KEY, STORAGE_VERSION,
@@ -192,22 +190,25 @@ fn is_platform(name: &str, globs: &[&str]) -> bool {
     })
 }
 
-fn render(value: &SqlValue, out: &mut String) {
-    // Tagged, so `1` and `'1'` digest differently.
-    let _ = match value {
-        SqlValue::Null => write!(out, "n;"),
-        SqlValue::Integer(integer) => write!(out, "i{integer};"),
-        SqlValue::Real(real) => write!(out, "r{};", real.to_bits()),
-        SqlValue::Text(text) => write!(out, "t{}:{text};", text.len()),
-        SqlValue::Blob(bytes) => write!(out, "b{}:{bytes:02x?};", bytes.len()),
-    };
+fn render(value: &SqlValue, out: &mut Sha256) {
+    // Tagged and length-prefixed, so `1` and `'1'` digest differently.
+    match value {
+        SqlValue::Null => out.update(b"n;"),
+        SqlValue::Integer(integer) => out.update(format!("i{integer};")),
+        SqlValue::Real(real) => out.update(format!("r{};", real.to_bits())),
+        SqlValue::Text(text) => out.update(format!("t{}:{text};", text.len())),
+        SqlValue::Blob(bytes) => {
+            out.update(format!("b{}:", bytes.len()));
+            out.update(bytes);
+        }
+    }
 }
 
 /// A digest of every cell object (catalog entries and all rows by rowid),
 /// the platform's own tables excluded, and of `only` tables when given.
 fn digest<E: SqlEngine>(engine: &E, only: Option<&[&str]>) -> Result<String, CellError> {
     let globs = engine.platform_table_globs();
-    let mut out = String::new();
+    let mut out = Sha256::new();
     let catalog = engine.query(
         "SELECT type, name, tbl_name, sql FROM sqlite_master \
          WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' ORDER BY type, name",
@@ -215,7 +216,7 @@ fn digest<E: SqlEngine>(engine: &E, only: Option<&[&str]>) -> Result<String, Cel
     )?;
     for entry in catalog {
         let [kind, name, table, sql] =
-            <[SqlValue; 4]>::try_from(entry).map_err(|_| fail("catalog row"))?;
+            <[SqlValue; 4]>::try_from(entry).map_err(|_row| fail("catalog row"))?;
         let (SqlValue::Text(kind), SqlValue::Text(name), SqlValue::Text(table)) =
             (kind, name, table)
         else {
@@ -224,20 +225,22 @@ fn digest<E: SqlEngine>(engine: &E, only: Option<&[&str]>) -> Result<String, Cel
         if is_platform(&table, globs) || only.is_some_and(|only| !only.contains(&table.as_str())) {
             continue;
         }
-        let _ = write!(out, "{kind} {name} on {table}: ");
+        out.update(format!("{kind} {name} on {table}: "));
         render(&sql, &mut out);
-        out.push('\n');
+        out.update(b"\n");
         if kind == "table" {
             for row in engine.query(
                 &format!("SELECT rowid, * FROM {} ORDER BY rowid", quote(&name)),
                 &[],
             )? {
-                row.iter().for_each(|value| render(value, &mut out));
-                out.push('\n');
+                for value in &row {
+                    render(value, &mut out);
+                }
+                out.update(b"\n");
             }
         }
     }
-    Ok(format!("{:x}", Sha256::digest(out.as_bytes())))
+    Ok(format!("{:x}", out.finalize()))
 }
 
 fn set_stamp<E: SqlEngine>(engine: &E, stamp: &str) -> Result<(), CellError> {
@@ -265,9 +268,9 @@ const EVIDENCE: &[&str] = &["_norn_ledger", "_norn_receipt"];
 fn upgrade(fresh: &dyn Fn() -> RivetEngine, fixture: &str, from: u32) -> Result<Value, CellError> {
     let image: Value = serde_json::from_str(fixture).map_err(|error| fail(error.to_string()))?;
     let raw = fresh();
-    if raw
-        .query_optional("SELECT 1 FROM sqlite_master WHERE name = '_norn_meta'", &[])?
-        .is_some()
+    if !raw
+        .query("SELECT 1 FROM sqlite_master WHERE name = '_norn_meta'", &[])?
+        .is_empty()
     {
         return Err(fail("the probe needs a fresh actor (pass a new object=)"));
     }
@@ -287,10 +290,12 @@ fn upgrade(fresh: &dyn Fn() -> RivetEngine, fixture: &str, from: u32) -> Result<
     let raw = fresh();
     let after = engine_release::admission(&raw)?;
     let stamp = raw
-        .query_optional(
+        .query(
             "SELECT \"value\" FROM \"_norn_meta\" WHERE \"key\" = ?1",
             &[SqlValue::from(STAMP_KEY)],
         )?
+        .into_iter()
+        .next()
         .and_then(|row| row.into_iter().next());
     let current =
         serde_json::to_string(&EngineStamp::current()).map_err(|error| fail(error.to_string()))?;

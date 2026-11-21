@@ -496,7 +496,7 @@ async fn engine_upgrade(ctx: &Ctx<ProbeActor>, params: &HashMap<String, String>)
     let answered = match spawned {
         Ok(_) => answer
             .await
-            .map_err(|_| "the probe thread panicked".to_owned()),
+            .map_err(|_closed| "the probe thread panicked".to_owned()),
         Err(error) => Err(error.to_string()),
     };
     match answered {
