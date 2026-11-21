@@ -34,9 +34,13 @@ async fn main() -> Result<()> {
     let dev_engine = std::env::var("NORN_RIVET_DEV_ENGINE").is_ok_and(|value| value == "1");
     let endpoint = match std::env::var("RIVET_ENDPOINT") {
         Ok(endpoint) if !dev_engine => endpoint,
-        Ok(_) => anyhow::bail!("NORN_RIVET_DEV_ENGINE=1 starts a local engine; unset RIVET_ENDPOINT"),
+        Ok(_) => {
+            anyhow::bail!("NORN_RIVET_DEV_ENGINE=1 starts a local engine; unset RIVET_ENDPOINT")
+        }
         Err(_) if dev_engine => "http://default:default@127.0.0.1:6420".to_owned(),
-        Err(_) => anyhow::bail!("RIVET_ENDPOINT names the engine (or NORN_RIVET_DEV_ENGINE=1 for a local one)"),
+        Err(_) => anyhow::bail!(
+            "RIVET_ENDPOINT names the engine (or NORN_RIVET_DEV_ENGINE=1 for a local one)"
+        ),
     };
     let listen = std::env::var("NORN_LISTEN").unwrap_or_else(|_unset| "127.0.0.1:8787".to_owned());
     let mut runner_config = rivetkit::ServeConfig::from_env()?;

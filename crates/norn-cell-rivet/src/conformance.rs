@@ -475,8 +475,14 @@ async fn on_engine<T: Send + 'static>(
 /// ENGINE-UPGRADE-1 on this actor's database ([`upgrade`]); `case` is `v1`,
 /// `v2`, `downgrade` or `unknown`, on a fresh `object`.
 async fn engine_upgrade(ctx: &Ctx<ProbeActor>, params: &HashMap<String, String>) -> Response {
-    let Some(case) = params.get("case").and_then(|name| upgrade::Case::parse(name)) else {
-        return json_response(400, json!({"error": "case is v1, v2, downgrade or unknown"}).to_string());
+    let Some(case) = params
+        .get("case")
+        .and_then(|name| upgrade::Case::parse(name))
+    else {
+        return json_response(
+            400,
+            json!({"error": "case is v1, v2, downgrade or unknown"}).to_string(),
+        );
     };
     let db = ctx.sql().clone();
     let runtime = tokio::runtime::Handle::current();
@@ -488,7 +494,9 @@ async fn engine_upgrade(ctx: &Ctx<ProbeActor>, params: &HashMap<String, String>)
             let _sent = reply.send(upgrade::run(case, &fresh));
         });
     let answered = match spawned {
-        Ok(_) => answer.await.map_err(|_| "the probe thread panicked".to_owned()),
+        Ok(_) => answer
+            .await
+            .map_err(|_| "the probe thread panicked".to_owned()),
         Err(error) => Err(error.to_string()),
     };
     match answered {
@@ -657,7 +665,9 @@ impl ProbeActor {
                 let total = number("mb", 16).max(0);
                 let chunk = number("chunk", 32).clamp(1, 96);
                 ctx.sql()
-                    .exec("CREATE TABLE IF NOT EXISTS fill (id INTEGER PRIMARY KEY, b BLOB NOT NULL)")
+                    .exec(
+                        "CREATE TABLE IF NOT EXISTS fill (id INTEGER PRIMARY KEY, b BLOB NOT NULL)",
+                    )
                     .await?;
                 let started = std::time::Instant::now();
                 let mut added = 0;
@@ -699,13 +709,22 @@ impl ProbeActor {
                     }
                 };
                 if after == 0 {
-                    for sql in ["SELECT seq, kind, at, detail FROM log ORDER BY seq", "SELECT k, v FROM kv ORDER BY k"] {
+                    for sql in [
+                        "SELECT seq, kind, at, detail FROM log ORDER BY seq",
+                        "SELECT k, v FROM kv ORDER BY k",
+                    ] {
                         for row in &ctx.sql().execute(sql, None).await?.rows {
                             feed(&mut hasher, row);
                         }
                     }
                 }
-                let has_fill = one_integer(ctx, "SELECT count(*) FROM sqlite_master WHERE name = 'fill'", vec![]).await? == Some(1);
+                let has_fill = one_integer(
+                    ctx,
+                    "SELECT count(*) FROM sqlite_master WHERE name = 'fill'",
+                    vec![],
+                )
+                .await?
+                    == Some(1);
                 let (mut last, mut count, mut bytes) = (after, 0_i64, 0_usize);
                 if has_fill {
                     let page = ctx
