@@ -372,7 +372,8 @@ fn parquet(lines: &[Line]) -> Vec<u8> {
                 quote(line.invoice),
                 quote(&line.quantity.to_string()),
                 quote(&line.price),
-                line.customer.map_or_else(|| "CAST(NULL AS VARCHAR)".to_owned(), &quote),
+                line.customer
+                    .map_or_else(|| "CAST(NULL AS VARCHAR)".to_owned(), &quote),
                 quote(line.country),
                 quote(line.occurred_at),
             )
