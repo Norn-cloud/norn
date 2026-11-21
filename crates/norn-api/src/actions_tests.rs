@@ -1075,6 +1075,95 @@ fn a_warm_host_refuses_definitions_edited_in_place_as_a_fresh_host_does() {
     }
 }
 
+/// The retained definition bytes of `path`, read through another connection.
+fn retained_bytes(path: &std::path::Path) -> Vec<String> {
+    use norn_cell::engine::SqlEngine;
+    let raw = NativeEngine::open(path, norn_cell::StoreOptions::default()).unwrap();
+    raw.query(
+        "SELECT \"canonical_set\" || ' ' || \"receipt_sha256\" FROM \"_norn_definition_version\" ORDER BY \"version\"",
+        &[],
+    )
+    .unwrap()
+    .into_iter()
+    .map(|row| format!("{row:?}"))
+    .collect()
+}
+
+#[test]
+fn a_trigger_installed_from_outside_cannot_edit_the_definitions_on_a_host_commit() {
+    // S1 (#1547): another connection adds a trigger that rewrites the
+    // retained set on an ordinary host commit. That write rides the serving
+    // connection's own commit, which `data_version` does not count, so the
+    // warm cache would serve the old actions while a fresh host refuses. The
+    // serving connection refuses any statement that fires such a trigger, so
+    // the warm host answers as a fresh host does and the set is untouched.
+    use norn_cell::engine::SqlEngine;
+    let (_dir, a, b) = twin_files(DERIVES_LOSS);
+    let warm = open_melt(&a, DERIVES_LOSS);
+    let operator = Some(OPERATOR);
+    let first = LogicalTime::from_millis(1_700_000_000_000);
+    let later = LogicalTime::from_millis(1_700_000_000_001);
+    let warming = melt_body("melt-1", "12", "10", "one");
+    for host in [&warm, &open_melt(&b, DERIVES_LOSS)] {
+        call_at(
+            host,
+            &scoped("org_demo"),
+            operator,
+            MELT_ACTION,
+            &warming,
+            first,
+        )
+        .unwrap();
+    }
+    for path in [&a, &b] {
+        let raw = NativeEngine::open(path, norn_cell::StoreOptions::default()).unwrap();
+        raw.execute_batch(
+            "CREATE TRIGGER \"rewrite_definitions\" AFTER INSERT ON \"_norn_ledger\" BEGIN \
+             UPDATE \"_norn_definition_version\" SET \"canonical_set\" = '[]' WHERE \"version\" = 1; \
+             END",
+        )
+        .unwrap();
+    }
+    let retained = retained_bytes(&a);
+    let before = dump(&warm);
+    let body = melt_body("melt-2", "12", "10", "two");
+    let answer = |host: &DevHost<NativeEngine>| {
+        call_at(
+            host,
+            &scoped("org_demo"),
+            operator,
+            MELT_ACTION,
+            &body,
+            later,
+        )
+    };
+    let warm_answer = answer(&warm);
+    let refused = warm_answer
+        .as_ref()
+        .expect_err("the commit fires the trigger");
+    assert_eq!(refused.status, 500, "{refused:?}");
+    assert_eq!(
+        retained_bytes(&a),
+        retained,
+        "the retained set is untouched"
+    );
+    assert_eq!(dump(&warm), before, "a refused call writes nothing");
+    // The next call refuses the same way: nothing stale was served or kept.
+    assert_eq!(format!("{:?}", answer(&warm)), format!("{warm_answer:?}"));
+    let fresh = {
+        let (model, input) = action_cell::melt_install(
+            DERIVES_LOSS,
+            crate::action_admission::prepare_action_model,
+            1,
+        );
+        let engine = NativeEngine::open(&b, norn_cell::StoreOptions::default()).unwrap();
+        CellStore::provision_definitions(engine, model, &input, "org_demo/dev").map(host_of)
+    };
+    if let Ok(fresh) = fresh {
+        assert_eq!(format!("{:?}", answer(&fresh)), format!("{warm_answer:?}"));
+    }
+}
+
 #[test]
 fn an_install_drops_the_verified_definitions_of_the_last_revision() {
     // ADMIT-CACHE-1: an install clears the cache, and the next call runs under

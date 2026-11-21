@@ -404,6 +404,56 @@ fn every_mode_is_applied_on_the_server_and_an_unkeyed_pseudonym_redacts() {
     assert_eq!(document["masked"]["email"]["mode"], "redacted");
 }
 
+/// Replace the retained canonical set of `dir`'s cell through another
+/// connection, as an out-of-process editor would; the previous set.
+fn swap_retained_set(dir: &tempfile::TempDir, edit: &dyn Fn(&mut Json)) -> String {
+    use norn_cell::engine::{SqlEngine as _, SqlValue};
+    let raw = NativeEngine::open(
+        &dir.path().join("cell.sqlite"),
+        norn_cell::StoreOptions::default(),
+    )
+    .unwrap();
+    let held = raw
+        .query_row(
+            "SELECT \"canonical_set\" FROM \"_norn_definition_version\" WHERE \"version\" = 1",
+            &[],
+            |row| row.get::<String>(0),
+        )
+        .unwrap();
+    let mut set: Json = serde_json::from_str(&held).unwrap();
+    edit(&mut set);
+    raw.execute(
+        "UPDATE \"_norn_definition_version\" SET \"canonical_set\" = ?1 WHERE \"version\" = 1",
+        &[SqlValue::Text(serde_json::to_string(&set).unwrap())],
+    )
+    .unwrap();
+    held
+}
+
+#[test]
+fn a_marked_field_is_never_served_clear_from_an_empty_catalog() {
+    // S2 (#1547): a retained set that transiently declares no marking yields
+    // an empty catalog. The catalog is keyed by the foreign-write revision,
+    // so the repaired set is read again; and an empty catalog over stored
+    // markings refuses, so the marked email is masked or refused, never
+    // served in the clear, both while the set is broken and after it is
+    // repaired at the same definitions version.
+    let (cell, dir) = host("org_a", &json!({"kind": "redacted"}), Some(&SECRET));
+    let clear = V::from("ada@example.com");
+    let read = || get_queried_object(&cell, &scope("org_a"), Some("viewer"), TYPE, "c1", &Mapping);
+    let held = swap_retained_set(&dir, &|set| {
+        set.as_array_mut()
+            .unwrap()
+            .retain(|artifact| artifact["artifactId"] != "shop.markings.entity");
+    });
+    match read() {
+        Err(refused) => assert_eq!(refused.status, 500, "{refused:?}"),
+        Ok(record) => assert_ne!(record.values.unwrap().get("email"), Some(&clear)),
+    }
+    swap_retained_set(&dir, &|set| *set = serde_json::from_str(&held).unwrap());
+    assert_eq!(email(&cell, "org_a", "viewer", "c1").0, V::from("•••"));
+}
+
 /// #1519 S6: a write that changed only a withheld field is not in the
 /// history: its version, commit and time would tell that a hidden value
 /// changed then. Here the second version changes only the refused email.

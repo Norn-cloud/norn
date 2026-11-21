@@ -627,11 +627,27 @@ impl NativeEngine {
         // Let SQLite parse transaction controls, including quoted SQL and
         // multi-statement batches. Only the adapter may control transactions.
         conn.authorizer(Some(move |context: AuthContext<'_>| {
-            if authorizer_flag.load(Ordering::Relaxed)
-                && matches!(
-                    context.action,
-                    AuthAction::Transaction { .. } | AuthAction::Savepoint { .. }
-                )
+            // S1 (#1547): the cell installs no trigger, so a trigger that
+            // writes the retained definitions was added from outside (the
+            // schema is shared by every connection to the file). Its write
+            // would ride this connection's own commit, which `data_version`
+            // does not count, past the retained-actions cache; refuse the
+            // statement that would fire it.
+            let retained_write = if let AuthAction::Insert { table_name }
+            | AuthAction::Update { table_name, .. }
+            | AuthAction::Delete { table_name } = context.action
+            {
+                table_name.starts_with("_norn_definition_")
+                    || table_name.starts_with("_norn_retained_")
+            } else {
+                false
+            };
+            if (context.accessor.is_some() && retained_write)
+                || (authorizer_flag.load(Ordering::Relaxed)
+                    && matches!(
+                        context.action,
+                        AuthAction::Transaction { .. } | AuthAction::Savepoint { .. }
+                    ))
             {
                 Authorization::Deny
             } else {

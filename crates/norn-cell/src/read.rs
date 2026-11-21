@@ -3329,6 +3329,22 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         Ok(Some((version, digest)))
     }
 
+    /// Whether any object holds a current marking label: a cell whose
+    /// definitions declare no marking holds none, so a host that finds its
+    /// marking catalog empty while this is true must not serve fields as
+    /// unmarked (S2, #1547). One probe of the partial nonempty index.
+    ///
+    /// # Errors
+    /// SQL errors.
+    pub fn stores_markings(&self) -> Result<bool, CellError> {
+        let held: Option<i64> = self.conn.query_optional(
+            &format!("SELECT 1 FROM \"{MARKING_CURRENT}\" WHERE \"markings\" != '[]' LIMIT 1"),
+            params![],
+            |row| row.get(0),
+        )?;
+        Ok(held.is_some())
+    }
+
     /// Whether a retained definition set is installed at `version`, without
     /// loading it: exactly `installed_definitions(Some(version)).is_some()`
     /// for any version at or below the active one.

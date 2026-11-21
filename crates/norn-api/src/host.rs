@@ -35,8 +35,10 @@ pub struct DevHost<E: SqlEngine> {
     /// PRIVACY-1: the key this cell's pseudonyms are computed under; without
     /// one a pseudonym projection redacts.
     pseudonyms: Option<crate::privacy::PseudonymKey>,
-    /// The marking catalog of the active definitions, by definitions version.
-    markings: Mutex<Option<(Option<u64>, crate::privacy::MarkingCatalog)>>,
+    /// The marking catalog of the active definitions, keyed as
+    /// [`Self::retained`] is: by definitions identity and foreign-write
+    /// revision (S2, #1547).
+    markings: Mutex<Option<CachedCatalog>>,
     /// ADMIT-CACHE-1 (#1533): the active definitions' verified retained
     /// actions, keyed by their version and admission receipt digest and by
     /// the store's foreign-write revision when they were verified. Filled
@@ -56,6 +58,10 @@ type CachedRetained = (
     u64,
     std::sync::Arc<crate::action_admission::RetainedActions>,
 );
+
+/// One marking catalog ([`DevHost::marking_catalog`]): the definitions
+/// identity and foreign-write revision it was read at, and the catalog.
+type CachedCatalog = (Option<(u64, String)>, u64, crate::privacy::MarkingCatalog);
 
 /// A read in progress ([`DevHost::reading`]): no load commits until it ends.
 pub struct Reading<'a> {
@@ -248,20 +254,50 @@ impl<E: SqlEngine> DevHost<E> {
     pub(crate) fn reveals(&self, actor: &str, marking_id: &str) -> bool {
         self.authorizer.reveal(actor, marking_id)
     }
-    /// The marking catalog of the active definitions `reader` sees.
+    /// The marking catalog of the active definitions `reader` sees, reused
+    /// under the same definitions identity and foreign-write revision as
+    /// [`Self::retained`] (S2, #1547).
+    ///
+    /// Fails closed: an empty catalog while the cell holds a marking label
+    /// (a retained set that is unreadable or inconsistent) refuses, so no
+    /// marked field is ever served as unmarked.
+    ///
+    /// # Errors
+    /// An empty catalog over stored markings, or a store failure.
     pub(crate) fn marking_catalog(
         &self,
         reader: &norn_cell::StoreReader<'_, E>,
     ) -> Result<crate::privacy::MarkingCatalog, Refusal> {
-        let version = reader.active_definitions_version().map_err(Refusal::host)?;
-        let mut cached = self.markings.lock().map_err(Refusal::host)?;
-        if let Some((at, catalog)) = cached.as_ref()
-            && *at == version
-        {
-            return Ok(std::sync::Arc::clone(catalog));
+        let foreign = reader
+            .database_revision()
+            .map_err(Refusal::host)?
+            .map(|(_local, foreign)| foreign);
+        let identity = reader
+            .active_definitions_identity()
+            .map_err(Refusal::host)?;
+        let catalog = {
+            let mut cached = self.markings.lock().map_err(Refusal::host)?;
+            match (foreign, cached.as_ref()) {
+                (Some(foreign), Some((at, seen, catalog)))
+                    if *at == identity && *seen == foreign =>
+                {
+                    std::sync::Arc::clone(catalog)
+                }
+                _ => {
+                    *cached = None;
+                    let (_version, catalog) = crate::privacy::catalog_of(reader)?;
+                    if let Some(foreign) = foreign {
+                        *cached = Some((identity, foreign, std::sync::Arc::clone(&catalog)));
+                    }
+                    catalog
+                }
+            }
+        };
+        if catalog.is_empty() && reader.stores_markings().map_err(Refusal::host)? {
+            return Err(Refusal::host(
+                "the cell holds markings its active definitions do not declare",
+            ));
         }
-        let (at, catalog) = crate::privacy::catalog_of(reader)?;
-        *cached = Some((at, std::sync::Arc::clone(&catalog)));
         Ok(catalog)
     }
     /// ADMIT-CACHE-1 (#1533): the verified retained actions of the active
