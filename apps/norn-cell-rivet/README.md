@@ -92,7 +92,7 @@ What may reach each engine port:
   shows the refusals.
 - **6421** (instance to instance): the other two engines only. It is
   plaintext and unauthenticated, so the network is its only protection.
-- **6430** (metrics): the monitoring host only.
+- **6430** (metrics): the monitoring host and the operator bastion only.
 - Nothing on the public interface. Outbound HTTPS (443) to the bucket stays
   open.
 
@@ -149,6 +149,7 @@ table inet rivet {
     tcp dport 6420 ip saddr @operators  accept
     tcp dport 6421 ip saddr @peers      accept
     tcp dport 6430 ip saddr @monitoring accept
+    tcp dport 6430 ip saddr @operators  accept
   }
   chain forward { type filter hook forward priority filter; policy drop; }
   chain output  { type filter hook output priority filter; policy accept; }
@@ -166,6 +167,7 @@ ufw allow from 10.0.0.40 to 10.0.0.11 port 6420 proto tcp
 ufw allow from 10.0.0.12 to 10.0.0.11 port 6421 proto tcp
 ufw allow from 10.0.0.13 to 10.0.0.11 port 6421 proto tcp
 ufw allow from 10.0.0.30 to 10.0.0.11 port 6430 proto tcp
+ufw allow from 10.0.0.40 to 10.0.0.11 port 6430 proto tcp
 ufw enable
 ```
 
@@ -199,7 +201,20 @@ Probed on Boat against the compose stack (engine 3.1.1, through `lb`).
 Requests were sent with no `authorization` header, with a wrong bearer token,
 and with the right one:
 
-RESULTS_PLACEHOLDER
+| Request | No `authorization` | Wrong bearer | Admin token |
+|---|---|---|---|
+| `GET /health` | 200 | 200 | 200 (health is public) |
+| `GET /namespaces` | 401 `invalid_token` | 401 `invalid_token` | 200 |
+| `PUT /pools/default?namespace=default` | 401 `invalid_token` | 401 `invalid_token` | 200 |
+| `GET /actors?namespace=default&name=probe` | 401 `invalid_token` | 401 `invalid_token` | 200 |
+| `POST /actors/{id}/fork?namespace=default` | 401 `invalid_token` | 401 `invalid_token` | 422 (array key) / 500 (unknown actor id) |
+
+- The same refusals (401) came straight from `engine-1:6420`, bypassing
+  `lb`, for the fork and pool routes.
+- 6421 and 6430 answered with no credentials at all (404 on `/`, 200 on
+  `/metrics`). That is why the firewall above is their only protection.
+- The 500 for a fork of an actor id that does not exist comes after the token
+  check; it is the engine's answer, not an authorization gap.
 
 ### Hetzner Object Storage
 
@@ -282,26 +297,36 @@ an upgrade, a disk or machine replacement), check that the replica rebuild is
 complete:
 
 ```sh
-# On each engine, from the monitoring host (3 machines), or in compose:
-#   docker run --rm --network norn-rivet_default curlimages/curl:8.17.0 -s http://engine-N:6430/metrics
+# From the operator bastion (3 machines). In compose, run the same against
+# engine-1..3 from: docker run --rm --network norn-rivet_default curlimages/curl:8.17.0 ...
 for e in 10.0.0.11 10.0.0.12 10.0.0.13; do
   printf '%s ' "$e"; curl -sf "http://$e:6420/health" >/dev/null && printf 'health=ok ' || printf 'health=FAIL '
-  curl -s "http://$e:6430/metrics" \
-    | awk '/^depot_learner_uncovered_volumes /{printf "uncovered=%s ", $2}
-           /^depot_tablets\{worker_role="replica"\}/{printf "replicas=%s", $2}'
+  curl -s "http://$e:6430/metrics" | awk '
+    /^rivet_depot_tablets\{worker_role="replica"\}/                      {printf "replicas=%s ", $2}
+    /^rivet_depot_coordinator_placement\{kind="zone_degraded"\}/         {printf "zone_degraded=%s ", $2}
+    /^rivet_depot_coordinator_placement\{kind="pending_replacements"\}/  {printf "pending=%s ", $2}
+    /^rivet_depot_coordinator_placement\{kind="(desired|projected)"\}/   {printf "%s ", $0}'
   echo
 done
 ```
 
-The rebuild is complete only when, on two reads at least 60 s apart:
+One engine at a time is the placement coordinator; only it reports
+`rivet_depot_coordinator_placement`. The rebuild is complete only when, on two
+reads at least 60 s apart:
 
 - every engine answers `health=ok`;
-- `depot_learner_uncovered_volumes` is 0 on every engine (no loaded volume
-  still lacks proof of its replica set);
-- `depot_tablets{worker_role="replica"}` is the same on all three engines (the
-  rebuilt engine holds a replica of every tablet again).
+- on the coordinator, `zone_degraded` and `pending` are 0, and `projected`
+  equals `desired`;
+- `replicas` (`rivet_depot_tablets{worker_role="replica"}`) is the same on all
+  three engines.
 
-REBUILD_PLACEHOLDER
+Observed on Boat (compose, idle cluster with 24 tablets): after engine-3's
+disk was deleted and the engine restarted empty, the coordinator reported
+`zone_degraded=24` and engine-3 `replicas=0`. At about 75 s `pending` rose to
+24, and at about 96 s every gauge was back (`zone_degraded=0`, `pending=0`,
+`replicas=24` on all three), and stayed so for the next 5 minutes. A cluster
+holding data takes longer; that is why the check reads the gauges rather than
+waiting a fixed time.
 
 If a second disk fails before the first rebuild is complete:
 
