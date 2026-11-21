@@ -1452,12 +1452,7 @@ fn obs_link_dispute_boundary_is_inbox_order_on_both_paths() {
     let zed = || (party_row("zed", "Zed"), "1".to_owned());
     let edge = BTreeSet::from([(REFERRED.to_owned(), ZED.to_owned())]);
     for (case, batch, links, held) in [
-        (
-            "target, then conflict",
-            vec![zed(), resend()],
-            edge.clone(),
-            false,
-        ),
+        ("target, then conflict", vec![zed(), resend()], edge, false),
         (
             "conflict, then target",
             vec![resend(), zed()],
