@@ -487,22 +487,24 @@ known = {"test/" + shard for shard in shards.split()} | {
     "phase/" + phase for phase in phases.split() + ["test-shards"]
     if phase not in {"cheap", "test", "formal"}}
 # Task seconds on Boat, where merge groups and allowlisted pull requests run (#1348): p50 of
-# green tasks over 24 recorded runs with all 20 tasks, 2026-11-14..18, net of the test build.
-# Each Boat VM starts with an empty compiler cache, so a test task that builds alone carries
-# that build: heavy-1 p50 230 s on its own build, 31 s on a build an earlier task made (n=4).
-# The hosted p50s these replace (warm shared cache) packed 2071 s of tasks into one bundle.
+# green tasks over 287 Boat bundle jobs of 80 green runs (40 merge groups, 40 pull requests,
+# runs 44493680372..44951869655, 2026-11-19..21). A test task's seconds are net of the test
+# build it carries, read from cargo's own "Finished `test` profile" lines of that task.
+# The weights these replace (2026-11-14..18) were 0.5 to 0.9 of today's: integration was
+# 920 against 1841 observed, so one bundle took 52 min while the others took 33-36.
 weights = {
-    "test/heavy-1": 31, "test/heavy-2": 293, "test/heavy-3": 203,
-    "test/heavy-4": 142, "test/heavy-5": 32, "test/heavy-6": 47,
-    "test/rest-1": 656, "test/rest-2": 315, "test/rest-3": 165,
-    "phase/doctest": 26, "phase/features": 618, "phase/duckdb": 363, "phase/wasm": 139,
-    "phase/clippy": 81, "phase/doc": 56, "phase/guards": 434,
-    "phase/integration": 920, "phase/provenance": 10, "phase/test-shards": 10,
-    "phase/browser": 304,
+    "test/heavy-1": 13, "test/heavy-2": 244, "test/heavy-3": 90,
+    "test/heavy-4": 35, "test/heavy-5": 26, "test/heavy-6": 57,
+    "test/rest-1": 521, "test/rest-2": 266, "test/rest-3": 257,
+    "phase/doctest": 48, "phase/features": 791, "phase/duckdb": 630, "phase/wasm": 239,
+    "phase/clippy": 119, "phase/doc": 88, "phase/guards": 532,
+    "phase/integration": 1841, "phase/provenance": 13, "phase/test-shards": 14,
+    "phase/browser": 596,
 }
-# A bundle's test build on a cold Boat VM: p50 of a test task on its own build minus the
-# same task on a shared one (heavy-1 199 s, heavy-5 190 s, heavy-6 167 s, test-shards 184 s).
-compile_seconds = 190
+# A bundle's test build on a Boat VM: p50 of cargo's "Finished `test` profile" time in the
+# first test task of a bundle (n=189, p90 470 s). The shared compiler cache has no writer yet
+# (#1369), so every such build is cold.
+compile_seconds = 386
 def compiles_tests(task):
     return task.startswith("test/") or task == "phase/test-shards"
 def cold_cost(task):
