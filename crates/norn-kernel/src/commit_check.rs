@@ -1037,13 +1037,17 @@ fn check_governing_laws<E, C, T, V: CommitView + ?Sized>(
         reason: crate::governing_laws::LawEvaluationError::Violated(Box::new(failure)),
     };
     let mut checked = BTreeSet::new();
+    let authorized = authorization.map(ObservationAuthorization::indexed);
     for write in &commit.writes {
         let FactMutation::Put { values } = &write.mutation else {
             continue;
         };
         checked.insert(model.canonical(&write.key));
         let failures = evaluate(commit, &write.key, values, &mut remaining)?;
-        if authorization.is_some_and(|authority| authority.authorizes_write(write)) {
+        if authorized
+            .as_ref()
+            .is_some_and(|index| index.authorizes(write))
+        {
             continue;
         }
         if let Some(failure) = failures.into_iter().find(|failure| failure.refuses_native) {
@@ -1190,10 +1194,15 @@ fn check_link_authority<E, C, T, V: CommitView + ?Sized>(
     view: &V,
     authorization: Option<&ObservationAuthorization>,
 ) -> Result<(), CommitError<V::Error>> {
+    // One write index for every claim write (not a scan of the authorized
+    // writes per claim).
+    let indexed = authorization.map(ObservationAuthorization::indexed);
     if commit.writes.iter().any(|write| {
         model.canonical(&write.key).object_type.as_str()
             == norn_ir::mapping::OBSERVED_LINK_CLAIM_TYPE
-            && !authorization.is_some_and(|a| a.authorizes_claim_write(write))
+            && !authorization
+                .zip(indexed.as_ref())
+                .is_some_and(|(a, index)| a.authorizes_claim_write(index, write))
     }) {
         return Err(CommitError::ObservationAuthorization);
     }
@@ -1206,12 +1215,18 @@ fn check_link_authority<E, C, T, V: CommitView + ?Sized>(
         return Err(CommitError::ObservationAuthorization);
     }
     check_source_markers(commit, view, authorization)?;
-    let convergent =
-        authorization.map_or_else(Vec::new, ObservationAuthorization::convergent_links);
+    let mut convergent: BTreeMap<&crate::LinkKey, Vec<&crate::LinkWrite>> = BTreeMap::new();
+    for write in authorization.map_or_else(Vec::new, ObservationAuthorization::convergent_links) {
+        convergent.entry(&write.key).or_default().push(write);
+    }
     let sources: BTreeSet<_> = commit
         .links
         .iter()
-        .filter(|write| !convergent.contains(write))
+        .filter(|write| {
+            !convergent
+                .get(&write.key)
+                .is_some_and(|same| same.contains(write))
+        })
         .map(|write| model.canonical(&write.key.source))
         .chain(
             authorization
@@ -1829,12 +1844,14 @@ fn check_invariants<E, C, T, V: CommitView + ?Sized>(
 ) -> Result<(), InvariantAdmissionError> {
     let catalog = model.catalog;
     let mut remaining = EvaluationBudget::default().units();
+    let authorized = authorization.map(ObservationAuthorization::indexed);
     for write in &commit.writes {
         let crate::cell_host::FactMutation::Put { values } = &write.mutation else {
             continue;
         };
-        let has_observation_authority =
-            authorization.is_some_and(|value| value.authorizes_write(write));
+        let has_observation_authority = authorized
+            .as_ref()
+            .is_some_and(|index| index.authorizes(write));
         let failures = evaluate_commit_invariants(
             catalog,
             &write.key,
@@ -1843,9 +1860,11 @@ fn check_invariants<E, C, T, V: CommitView + ?Sized>(
             has_observation_authority,
         )?;
         let mut links = CommitLinks::new(commit, model, view, &write.key);
-        if let Some((actual, expected)) = authorization
-            .and_then(|value| value.findings_for_write(catalog, write, &failures, &mut links))
-        {
+        if let Some((actual, expected)) = authorized.as_ref().and_then(|index| {
+            ObservationAuthorization::findings_for_write(
+                index, catalog, write, &failures, &mut links,
+            )
+        }) {
             if links.take_host_error().is_some() {
                 return Err(InvariantAdmissionError::ObservationAuthorization);
             }
@@ -2311,13 +2330,16 @@ fn check_versions<E, C, T, V: CommitView + ?Sized>(
     authorization: Option<&ObservationAuthorization>,
 ) -> Result<(), CommitError<V::Error>> {
     // ID-STABLE-1: event payloads never establish the per-write observation authority.
+    let authorized = authorization.map(ObservationAuthorization::indexed);
     for write in &commit.writes {
         if matches!(write.mutation, FactMutation::Put { .. }) {
             let key = model.canonical(&write.key);
             let version = view.version(&key).map_err(CommitError::Host)?;
             let live = view.concrete(&key).map_err(CommitError::Host)?.is_some();
             if version.has_committed_deletion(live)
-                && !authorization.is_some_and(|proof| proof.authorizes_write(write))
+                && !authorized
+                    .as_ref()
+                    .is_some_and(|index| index.authorizes(write))
             {
                 return Err(CommitError::IdentityReuse);
             }
