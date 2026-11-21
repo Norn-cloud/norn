@@ -517,6 +517,9 @@ mod tests {
         let ((stream, _), client) =
             tokio::join!(listener.accept(), tokio::net::TcpStream::connect(addr));
         client.unwrap();
-        assert!(stream.nodelay().unwrap(), "an accepted connection has TCP_NODELAY");
+        assert!(
+            stream.nodelay().unwrap(),
+            "an accepted connection has TCP_NODELAY"
+        );
     }
 }
