@@ -419,12 +419,15 @@ impl Engine {
     /// another operation holds (its download, its load, or another settle
     /// or store is still running) is [`ATTEMPT_BUSY`]; one landed by any
     /// other request (Sol r4: another landing, load, table, file, binding,
-    /// pins or rules), or not at that step, is stale. A refusal touches
-    /// nothing: the attempt, its staging and its files stay as they were.
+    /// pins or rules), or not at that step, or (for a store, `answer`)
+    /// whose last answer is not `answer`, is stale. Every check is made
+    /// before the attempt is taken, so a refusal touches nothing: the
+    /// attempt, its staging and its files stay as they were.
     fn lease_attempt(
         &self,
         request: &LandRequest,
         phase: Phase,
+        answer: Option<&LandResponse>,
     ) -> Outcome<(Lease<'_>, LandResponse)> {
         let tenant = &request.load.tenant;
         let token = &request.attempt;
@@ -439,7 +442,11 @@ impl Engine {
         let Some(landed) = held
             .landed
             .as_ref()
-            .filter(|landed| landed.request == contract(request) && landed.phase() == phase)
+            .filter(|landed| {
+                landed.request == contract(request)
+                    && landed.phase() == phase
+                    && answer.is_none_or(|answer| *answer == landed.answer)
+            })
         else {
             return Err(refusal(
                 STALE,
@@ -754,7 +761,7 @@ impl Engine {
     /// engine failure.
     pub fn settle(&self, request: &SettleRequest) -> Outcome<LandResponse> {
         let land = &request.land;
-        let (mut lease, _answer) = self.lease_attempt(land, Phase::Staged)?;
+        let (mut lease, _answer) = self.lease_attempt(land, Phase::Staged, None)?;
         let staged_table = staged(&land.load.table, &land.attempt);
         let settled = self.with(&land.load.tenant, |conn| {
             // Taken: from here every refusal drops the staging with the
@@ -920,16 +927,14 @@ impl Engine {
                 "the landing has residue to settle",
             ));
         }
-        let (lease, answer) = match self.lease_attempt(land, Phase::Written) {
+        let leased = self.lease_attempt(land, Phase::Written, Some(&request.landed));
+        let (lease, answer) = match leased {
             Ok(leased) => leased,
             Err(unknown) if unknown.code == ATTEMPT_UNKNOWN => {
                 return self.replayed(request)?.ok_or(unknown);
             }
             Err(refused) => return Err(refused),
         };
-        if request.landed != answer {
-            return Err(refusal(STALE, "the answer is not this landing's"));
-        }
         let (Some(data_file), Some(held_file)) = (&answer.data, &answer.held) else {
             return Err(refusal(
                 "analytics.engine",
