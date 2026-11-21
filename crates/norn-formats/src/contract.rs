@@ -716,7 +716,8 @@ struct EmittedArtifact {
 }
 
 /// Every emitted artifact id with its member names: property and link ids,
-/// key names, and owned-collection ids.
+/// key names, and owned-collection ids, of object types, extensions and
+/// interfaces.
 fn emitted_members(layers: &[ArtifactLayer]) -> BTreeMap<String, EmittedArtifact> {
     let mut out = BTreeMap::new();
     for artifact in layers.iter().flat_map(|layer| &layer.artifacts) {
@@ -726,8 +727,9 @@ fn emitted_members(layers: &[ArtifactLayer]) -> BTreeMap<String, EmittedArtifact
         let payload = value.get("payload");
         let extension_definition = payload.and_then(|payload| payload.get("objectTypeExtension"));
         let extension = extension_definition.is_some();
-        let definition =
-            extension_definition.or_else(|| payload.and_then(|payload| payload.get("objectType")));
+        let definition = extension_definition
+            .or_else(|| payload.and_then(|payload| payload.get("objectType")))
+            .or_else(|| payload.and_then(|payload| payload.get("interface")));
         let list = |name: &str| {
             definition
                 .and_then(|definition| definition.get(name))
