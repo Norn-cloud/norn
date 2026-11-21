@@ -40,6 +40,9 @@ norn-cell = { path = "../norn-cell", default-features = false }
 norn-cell-do = { path = "../norn-cell-do", default-features = false }
 # RivetKit's Rust SDK with SQLite in this process (one round trip per commit).
 rivetkit = { version = "=3.1.1", default-features = false, features = ["sqlite-local"] }
+# The protocol types of the actor's persisted SQLite pages, read back by the
+# conformance page digest only (the version RivetKit itself pins).
+rivet-envoy-protocol = { version = "=3.1.1", optional = true }
 anyhow = "1.0.100"
 async-trait = "0.1.89"
 axum = { version = "0.8.9", default-features = false, features = ["http1", "http2", "tokio", "ws", "query"] }
@@ -65,7 +68,7 @@ fixtures = ["norn-cell-do/fixtures"]
 # The host conformance seams (apps/norn-cell-do/conformance): a fixed request
 # clock, holds inside a commit's transaction, the verified head and the probe
 # actor. Served only when NORN_STAGE=test and NORN_CONFORMANCE=synthetic.
-conformance = ["fixtures"]
+conformance = ["fixtures", "dep:rivet-envoy-protocol"]
 
 [lints]
 workspace = true

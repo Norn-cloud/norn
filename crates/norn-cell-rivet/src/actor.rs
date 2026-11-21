@@ -197,6 +197,9 @@ pub struct CellActor {
     writing: AtomicU32,
     live: crate::live::Sockets,
     http: reqwest::Client,
+    /// The wake's conformance seams.
+    #[cfg(feature = "conformance")]
+    pub(crate) seam: crate::conformance::WakeSeam,
     /// This instance (conformance identity).
     pub instance: String,
     /// When this instance was constructed (Unix ms).
@@ -250,6 +253,8 @@ impl Actor for CellActor {
             writing: AtomicU32::new(0),
             live: crate::live::Sockets::default(),
             http: outbound_client()?,
+            #[cfg(feature = "conformance")]
+            seam: crate::conformance::WakeSeam::default(),
             instance: uuid::Uuid::new_v4().to_string(),
             constructed_at: now_ms(),
         })
@@ -281,14 +286,7 @@ impl Actor for CellActor {
 
 impl Handler<WakeNow> for CellActor {
     async fn handle(self: Arc<Self>, ctx: Ctx<Self>, _action: WakeNow) -> Result<()> {
-        let now = signed(now_ms());
-        let actor = Arc::clone(&self);
-        let woken = ctx.clone();
-        self.alarm
-            .fire(&ctx, now, |_delivery| async move {
-                actor.alarm_run(&woken).await
-            })
-            .await
+        self.wake(&ctx, signed(now_ms())).await
     }
 }
 
@@ -303,6 +301,32 @@ impl CellActor {
     #[must_use]
     pub const fn cell(&self) -> &CellThread {
         &self.cell
+    }
+
+    /// The actor's alarm (conformance seams).
+    #[cfg(feature = "conformance")]
+    pub(crate) const fn alarm(&self) -> &Alarm {
+        &self.alarm
+    }
+
+    /// Forget the last failed open and the kept-scope flag (conformance
+    /// seams: the next request or wake opens the cell from storage again).
+    #[cfg(feature = "conformance")]
+    pub(crate) async fn forget_open(&self) {
+        let mut state = self.open.lock().await;
+        state.failure = None;
+        state.scope_kept = false;
+    }
+
+    /// The alarm's trigger fired at `now` (Unix ms): the `WakeNow` handler.
+    pub(crate) async fn wake(self: &Arc<Self>, ctx: &Ctx<Self>, now: i64) -> Result<()> {
+        let actor = Arc::clone(self);
+        let woken = ctx.clone();
+        self.alarm
+            .fire(ctx, now, |_delivery| async move {
+                actor.alarm_run(&woken).await
+            })
+            .await
     }
 
     async fn serve_http(self: &Arc<Self>, ctx: &Ctx<Self>, req: &Request) -> Response {
@@ -428,6 +452,8 @@ impl CellActor {
             );
         }
         let response = self.respond(ctx, call).await;
+        #[cfg(feature = "conformance")]
+        self.seam.after_respond().await;
         if let Err(error) = self.after_write(ctx, now_ms()).await {
             tracing::error!(error = %format!("{error:#}"), "alarm rearm failed; the recovery wake stands");
         }
@@ -715,7 +741,10 @@ impl CellActor {
             .await?;
         let next = self.next_due(now).await?;
         let recovery = now.saturating_add(RECOVERY_MS);
-        if self.writing.load(Ordering::Acquire) > 0 {
+        let writing = self.writing.load(Ordering::Acquire) > 0;
+        #[cfg(feature = "conformance")]
+        self.seam.decided().await;
+        if writing {
             if let Some(next) = next
                 && next.max(now) < recovery
             {

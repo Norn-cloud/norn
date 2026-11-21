@@ -247,7 +247,8 @@ fn digest<E: SqlEngine>(engine: &E, only: Option<&[&str]>) -> Result<String, Cel
     Ok(format!("{:x}", out.finalize()))
 }
 
-fn set_stamp<E: SqlEngine>(engine: &E, stamp: &str) -> Result<(), CellError> {
+/// Write `stamp` below the engine, as another release would have.
+pub(super) fn set_stamp<E: SqlEngine>(engine: &E, stamp: &str) -> Result<(), CellError> {
     engine.transaction(|| {
         engine.execute(
             "INSERT INTO \"_norn_meta\" (\"key\", \"value\") VALUES (?1, ?2) \
@@ -352,6 +353,25 @@ fn refusal(
     }))
 }
 
+/// A stamp a newer engine writes (`newer`), or one this engine cannot read
+/// (`unknown`).
+pub(super) fn foreign_stamp(name: &str) -> Option<String> {
+    match name {
+        "newer" => Some(newer_stamp()),
+        "unknown" => Some(UNKNOWN_STAMP.to_owned()),
+        _ => None,
+    }
+}
+
+fn newer_stamp() -> String {
+    format!(
+        r#"{{"format":"{STAMP_FORMAT}","storage":{},"writer":"drop-99"}}"#,
+        STORAGE_VERSION.saturating_add(1)
+    )
+}
+
+const UNKNOWN_STAMP: &str = r#"{"format":"norn.cell.engine/99","storage":3,"writer":"drop-99"}"#;
+
 /// Run `case` over engines that `fresh` builds on one actor database.
 ///
 /// # Errors
@@ -363,24 +383,15 @@ pub(crate) fn run(case: Case, fresh: &dyn Fn() -> RivetEngine) -> Result<Value, 
         Case::UpgradeV1 => upgrade(fresh, STORAGE_V1, 1),
         Case::UpgradeV2 => upgrade(fresh, STORAGE_V2, 2),
         Case::UpgradeV3 => upgrade(fresh, STORAGE_V3, 3),
-        Case::Downgrade => refusal(
-            fresh,
-            &format!(
-                r#"{{"format":"{STAMP_FORMAT}","storage":{},"writer":"drop-99"}}"#,
-                STORAGE_VERSION.saturating_add(1)
-            ),
-            |error| {
-                matches!(
-                    error,
-                    CellError::EngineDowngrade { cell, writer, engine }
-                        if *cell == STORAGE_VERSION.saturating_add(1) && writer == "drop-99" && *engine == STORAGE_VERSION
-                )
-            },
-        ),
-        Case::UnknownStamp => refusal(
-            fresh,
-            r#"{"format":"norn.cell.engine/99","storage":3,"writer":"drop-99"}"#,
-            |error| matches!(error, CellError::EngineUnknownVersion { .. }),
-        ),
+        Case::Downgrade => refusal(fresh, &newer_stamp(), |error| {
+            matches!(
+                error,
+                CellError::EngineDowngrade { cell, writer, engine }
+                    if *cell == STORAGE_VERSION.saturating_add(1) && writer == "drop-99" && *engine == STORAGE_VERSION
+            )
+        }),
+        Case::UnknownStamp => refusal(fresh, UNKNOWN_STAMP, |error| {
+            matches!(error, CellError::EngineUnknownVersion { .. })
+        }),
     }
 }

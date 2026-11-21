@@ -11,6 +11,13 @@
 //!   marker to stderr (the host log the runner reads);
 //! - the verified ledger head (`/__conformance/head`) and per-request
 //!   statement counts (`/__conformance/stats`);
+//! - the wake seams: the alarm row (`/__conformance/alarm`), the actor's own
+//!   wake run on demand and optionally paused at its final deadline decision
+//!   (`/__conformance/wake`, `/__conformance/wake-release`), a hold after a
+//!   write's reply and before its deadline update (`x-norn-conformance-hold:
+//!   after-write`), a restamp below the engine (`/__conformance/restamp`),
+//!   and a digest of the actor's persisted SQLite pages
+//!   (`/__conformance/pages`);
 //! - the probe actor: the Rivet platform properties the cell relies on, one
 //!   route each, over the same primitives the cell host uses.
 //!
@@ -31,6 +38,7 @@ use norn_cell::engine::{SqlEngine, SqlValue};
 use rivetkit::action::Raw;
 use rivetkit::{Actor, BindParam, ColumnValue, Ctx, Handler, Request, Response};
 use serde_json::{Value, json};
+use sha2::{Digest as _, Sha256};
 
 use crate::actor::{CellActor, WakeNow, json_response, now_ms};
 use crate::alarm::Alarm;
@@ -45,6 +53,8 @@ const NOW_HEADER: &str = "x-norn-conformance-now";
 const HOLD_HEADER: &str = "x-norn-conformance-hold";
 const MARKER_HEADER: &str = "x-norn-conformance-marker";
 const MARKER_LINE: &str = "norn-conformance-hold-reached";
+/// A wake seam waits this long for the wake it paused or released.
+const WAKE_SEAM_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// This process, for the identity probes.
 static ISOLATE: std::sync::LazyLock<String> =
@@ -118,10 +128,7 @@ impl Seams {
     fn mark_and_hold(&self, ms: Option<u64>) {
         self.reached.set(true);
         if let Some(marker) = self.marker.borrow().as_deref() {
-            let mut stderr = std::io::stderr().lock();
-            // The marker is the runner's only evidence; a failed write leaves
-            // the boundary untested, never killed.
-            let _written = writeln!(stderr, "{MARKER_LINE} {marker}").and_then(|()| stderr.flush());
+            mark(marker);
         }
         // Spin, as the Workers entry spins its runtime thread: the runner
         // finds the process that holds the cell by its CPU time.
@@ -164,6 +171,245 @@ impl StatementHook for Seams {
             self.mark_and_hold(ms);
         }
     }
+}
+
+/// Print the runner's marker line for `token` to stderr (the host log).
+fn mark(token: &str) {
+    let mut stderr = std::io::stderr().lock();
+    // The marker is the runner's only evidence; a failed write leaves the
+    // boundary untested, never killed.
+    let _written = writeln!(stderr, "{MARKER_LINE} {token}").and_then(|()| stderr.flush());
+}
+
+/// The wake's seams on one cell actor: a pause at the wake's final deadline
+/// decision, a marker when a writer finds that decision in progress, and a
+/// hold after a write's reply and before its deadline update.
+#[derive(Default)]
+pub struct WakeSeam {
+    /// The next wake pauses at its decision.
+    paused: AtomicBool,
+    /// The paused wake's marker token.
+    token: std::sync::Mutex<Option<String>>,
+    reached: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+    done: tokio::sync::Notify,
+    outcome: std::sync::Mutex<Option<String>>,
+    /// The marker of the request held after its reply.
+    after_write: std::sync::Mutex<Option<String>>,
+}
+
+impl WakeSeam {
+    fn token(&self) -> Option<String> {
+        self.token.lock().ok().and_then(|token| token.clone())
+    }
+
+    /// The wake has read what it decides on: pause here when armed, until
+    /// `/__conformance/wake-release`.
+    pub(crate) async fn decided(&self) {
+        if self.paused.swap(false, Ordering::AcqRel) {
+            self.reached.notify_one();
+            self.release.notified().await;
+        }
+    }
+
+    /// A writer found the wake's decision in progress and waits for it.
+    #[allow(
+        dead_code,
+        reason = "called by the deadline lock, which the S1 fix introduces"
+    )]
+    pub(crate) fn waiting(&self) {
+        if let Some(token) = self.token() {
+            mark(&format!("{token}-waiting"));
+        }
+    }
+
+    /// After a write's reply, before its deadline update: a request asked to
+    /// be held here prints its marker and never continues (the runner kills
+    /// the host).
+    pub(crate) async fn after_respond(&self) {
+        let marker = self
+            .after_write
+            .lock()
+            .ok()
+            .and_then(|mut held| held.take());
+        if let Some(marker) = marker {
+            mark(&marker);
+            std::future::pending::<()>().await;
+        }
+    }
+
+    fn finish(&self, outcome: &Result<()>) {
+        if let Ok(mut kept) = self.outcome.lock() {
+            *kept = Some(outcome_text(outcome));
+        }
+        self.done.notify_one();
+    }
+
+    fn outcome(&self) -> Option<String> {
+        self.outcome.lock().ok().and_then(|mut kept| kept.take())
+    }
+}
+
+fn outcome_text(outcome: &Result<()>) -> String {
+    match outcome {
+        Ok(()) => "ok".to_owned(),
+        Err(error) => format!("error: {error:#}").chars().take(300).collect(),
+    }
+}
+
+fn query_param(query: &str, name: &str) -> Option<String> {
+    query
+        .split('&')
+        .filter_map(|pair| pair.split_once('='))
+        .find(|(key, _)| *key == name)
+        .map(|(_, value)| value.to_owned())
+}
+
+/// The wake seams' routes, or `None` for any other path.
+async fn wake_seam(actor: &Arc<CellActor>, ctx: &Ctx<CellActor>, call: &Call) -> Option<Response> {
+    let query = call.query.as_str();
+    let number = |name: &str| query_param(query, name).and_then(|value| value.parse::<i64>().ok());
+    let answer = |result: Result<Value>| match result {
+        Ok(value) => json_response(200, value.to_string()),
+        Err(error) => json_response(500, json!({"error": format!("{error:#}")}).to_string()),
+    };
+    Some(match call.path.as_str() {
+        "/__conformance/alarm" => {
+            let result = async {
+                if let Some(at) = number("set") {
+                    actor.alarm().set(ctx, at).await?;
+                }
+                Ok::<_, anyhow::Error>(
+                    json!({"alarm": actor.alarm().get(ctx).await?, "scope": actor.alarm().scope(ctx).await?}),
+                )
+            };
+            answer(result.await)
+        }
+        "/__conformance/wake" => {
+            let now = number("now").unwrap_or(i64::MAX);
+            if query_param(query, "pause").as_deref() != Some("1") {
+                let outcome = actor.wake(ctx, now).await;
+                return Some(answer(Ok(json!({"outcome": outcome_text(&outcome)}))));
+            }
+            if let Ok(mut token) = actor.seam.token.lock() {
+                *token = query_param(query, "token").filter(|token| marker_ok(token));
+            }
+            actor.seam.paused.store(true, Ordering::Release);
+            let woken = Arc::clone(actor);
+            let woken_ctx = ctx.clone();
+            ctx.wait_until(async move {
+                let outcome = woken.wake(&woken_ctx, now).await;
+                woken.seam.finish(&outcome);
+            });
+            let paused = tokio::time::timeout(WAKE_SEAM_TIMEOUT, async {
+                tokio::select! {
+                    () = actor.seam.reached.notified() => None,
+                    () = actor.seam.done.notified() => Some(actor.seam.outcome()),
+                }
+            })
+            .await;
+            answer(match paused {
+                Ok(None) => Ok(json!({"paused": true})),
+                Ok(Some(outcome)) => {
+                    actor.seam.paused.store(false, Ordering::Release);
+                    Ok(json!({"paused": false, "outcome": outcome}))
+                }
+                Err(_elapsed) => Err(anyhow!("the wake did not reach its decision")),
+            })
+        }
+        "/__conformance/wake-release" => {
+            actor.seam.release.notify_one();
+            let finished =
+                tokio::time::timeout(WAKE_SEAM_TIMEOUT, actor.seam.done.notified()).await;
+            answer(match finished {
+                Ok(()) => Ok(json!({"outcome": actor.seam.outcome()})),
+                Err(_elapsed) => Err(anyhow!("the released wake did not finish")),
+            })
+        }
+        "/__conformance/restamp" => {
+            let Some(stamp) =
+                query_param(query, "stamp").and_then(|name| upgrade::foreign_stamp(&name))
+            else {
+                return Some(json_response(
+                    400,
+                    json!({"error": "stamp is newer or unknown"}).to_string(),
+                ));
+            };
+            let result = async {
+                actor
+                    .cell()
+                    .call(move |slot| {
+                        // The cell closes; the stamp is written below it, as a
+                        // newer release (or an unreadable one) would have.
+                        slot.core = None;
+                        upgrade::set_stamp(&slot.engine()(), &stamp)
+                    })
+                    .await?
+                    .map_err(|error| anyhow!(error.to_string()))?;
+                // The alarm is due: the next start's re-arm fires it at once.
+                ctx.sql()
+                    .run("UPDATE _norn_host_alarm SET at = 0 WHERE id = 1", None)
+                    .await?;
+                actor.forget_open().await;
+                Ok::<_, anyhow::Error>(json!({"restamped": true}))
+            };
+            answer(result.await)
+        }
+        "/__conformance/pages" => answer(pages(ctx).await),
+        _ => return None,
+    })
+}
+
+/// A digest of every page of the actor's database as the engine persisted
+/// it (host tables, schema and free pages included), and the page count.
+async fn pages(ctx: &Ctx<CellActor>) -> Result<Value> {
+    use rivet_envoy_protocol::{SqliteGetPagesRequest, SqliteGetPagesResponse};
+    let fetch = |pgnos: Vec<u32>| async move {
+        match ctx
+            .sql()
+            .get_pages(SqliteGetPagesRequest {
+                actor_id: ctx.actor_id().to_owned().into(),
+                pgnos,
+                expected_generation: None,
+                expected_head_txid: None,
+            })
+            .await?
+        {
+            SqliteGetPagesResponse::SqliteGetPagesOk(ok) => Ok(ok),
+            SqliteGetPagesResponse::SqliteErrorResponse(error) => {
+                Err(anyhow!("get pages: {}", error.message))
+            }
+        }
+    };
+    let first = fetch(vec![1]).await?;
+    let header = first
+        .pages
+        .first()
+        .and_then(|page| page.bytes.as_ref())
+        .and_then(|bytes| bytes.get(28..32))
+        .and_then(|size| <[u8; 4]>::try_from(size).ok())
+        .context("page 1 carries no database size")?;
+    let count = u32::from_be_bytes(header).max(1);
+    let all = fetch((1..=count).collect()).await?;
+    let mut digest = Sha256::new();
+    let mut missing = 0_u32;
+    for page in &all.pages {
+        digest.update(page.pgno.to_be_bytes());
+        if let Some(bytes) = &page.bytes {
+            digest.update(u64::try_from(bytes.len()).unwrap_or(u64::MAX).to_be_bytes());
+            digest.update(bytes);
+        } else {
+            missing = missing.saturating_add(1);
+            digest.update(b"missing");
+        }
+    }
+    Ok(json!({
+        "pages": count,
+        "returned": all.pages.len(),
+        "missing": missing,
+        "headTxid": all.head_txid,
+        "sha256": format!("{:x}", digest.finalize()),
+    }))
 }
 
 fn refuse(code: &str, message: &str) -> Response {
@@ -246,6 +492,9 @@ pub async fn serve_cell(
         }
         return json_response(200, document.to_string());
     }
+    if let Some(response) = wake_seam(actor, ctx, &call).await {
+        return response;
+    }
     if let Some(now) = header(req, NOW_HEADER).and_then(|value| value.parse::<u64>().ok()) {
         call.now_ms = now;
     }
@@ -253,6 +502,11 @@ pub async fn serve_cell(
     let marker = header(req, MARKER_HEADER)
         .filter(|marker| marker_ok(marker))
         .map(str::to_owned);
+    if header(req, HOLD_HEADER) == Some("after-write")
+        && let Ok(mut held) = actor.seam.after_write.lock()
+    {
+        held.clone_from(&marker);
+    }
     let armed = actor
         .cell()
         .call(move |slot| {
