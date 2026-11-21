@@ -70,23 +70,25 @@ fn lower_source(source: &str, table: &TableSchema) -> Option<RowPredicate> {
 /// MANIFEST-LAWS-1 (S2): the nodes of an admitted ZEN source's row tree,
 /// before lowering (0 outside the subset, whose rows are all residue).
 fn source_nodes(source: &str) -> u64 {
-    norn_kernel::governing_laws::law_row_tree(source).map_or(0, |tree| nodes(&tree))
+    norn_kernel::governing_laws::law_row_tree(source).map_or(0, |tree| tree_nodes(&tree))
 }
 
-fn nodes(tree: &RowExpr) -> u64 {
+fn tree_nodes(tree: &RowExpr) -> u64 {
     let children = match tree {
         RowExpr::Null
         | RowExpr::Bool(_)
         | RowExpr::Number(_)
         | RowExpr::Text(_)
         | RowExpr::Column(_) => 0,
-        RowExpr::Not(inner) | RowExpr::Negate(inner) => nodes(inner),
+        RowExpr::Not(inner) | RowExpr::Negate(inner) => tree_nodes(inner),
         RowExpr::Arithmetic(_, a, b)
         | RowExpr::Compare(_, a, b)
         | RowExpr::And(a, b)
         | RowExpr::Or(a, b)
-        | RowExpr::Coalesce(a, b) => nodes(a).saturating_add(nodes(b)),
-        RowExpr::Conditional(c, a, b) => nodes(c).saturating_add(nodes(a)).saturating_add(nodes(b)),
+        | RowExpr::Coalesce(a, b) => tree_nodes(a).saturating_add(tree_nodes(b)),
+        RowExpr::Conditional(c, a, b) => tree_nodes(c)
+            .saturating_add(tree_nodes(a))
+            .saturating_add(tree_nodes(b)),
     };
     children.saturating_add(1)
 }
@@ -218,11 +220,9 @@ impl<E: SqlEngine> CellStore<E> {
                             .map_or(0, |condition| source_nodes(condition.as_str())),
                     );
                     match condition {
-                        Some(condition) => (
-                            condition,
-                            lower_source(expression.as_str(), table),
-                            nodes,
-                        ),
+                        Some(condition) => {
+                            (condition, lower_source(expression.as_str(), table), nodes)
+                        }
                         None => (None, None, nodes),
                     }
                 }

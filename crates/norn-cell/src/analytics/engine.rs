@@ -774,7 +774,8 @@ impl Engine {
     /// taken), `bulk.invalid_finding`, or an engine failure.
     pub fn settle(&self, request: &SettleRequest) -> Outcome<LandResponse> {
         let land = &request.land;
-        let (mut lease, _answer) = self.lease_attempt(land, Phase::Staged, None, Some(request.through))?;
+        let (mut lease, _answer) =
+            self.lease_attempt(land, Phase::Staged, None, Some(request.through))?;
         let staged_table = staged(&land.load.table, &land.attempt);
         let settled = self.with(&land.load.tenant, |conn| {
             // Taken: from here every refusal drops the staging with the
@@ -3005,6 +3006,15 @@ fn finding_columns(table: &TableSchema) -> String {
     columns.join(", ")
 }
 
+/// The values of [`finding_columns`]: the row (`row`), the load, reason,
+/// rule and hold flag bound, and the staged row's values.
+fn finding_values(table: &TableSchema, row: &str) -> String {
+    let mut values = vec![row.to_owned()];
+    values.extend(["?"; 4].map(str::to_owned));
+    values.extend(held_values(table));
+    values.join(", ")
+}
+
 fn quoted_path(path: &Path) -> String {
     format!("'{}'", path.to_string_lossy().replace('\'', "''"))
 }
@@ -3494,9 +3504,7 @@ fn check_rules(conn: &Connection, table: &TableSchema, request: &LandRequest) ->
     );
     db(conn.execute(&outcome.text, params_from_iter(outcome.params)))?;
     let held_into = finding_columns(table);
-    let mut held = vec!["d.\":row\"".to_owned(), "?".into(), "?".into(), "?".into(), "?".into()];
-    held.extend(held_values(table));
-    let held = held.join(", ");
+    let held = finding_values(table, "d.\":row\"");
     for (i, check) in request.checks.iter().enumerate() {
         db(conn.execute(
             &format!("INSERT INTO {residue} SELECT \":row\", ? FROM \":outcome\" WHERE \"r{i}\""),
@@ -3527,9 +3535,7 @@ fn settle_rows(conn: &Connection, table: &TableSchema, request: &SettleRequest) 
     let residue = residue_table(&table.name);
     let dataset = dataset_table(&table.name);
     let columns = finding_columns(table);
-    let mut values = vec!["?".to_owned(), "?".into(), "?".into(), "?".into(), "?".into()];
-    values.extend(held_values(table));
-    let values = values.join(", ");
+    let values = finding_values(table, "?");
     let mut statement = db(conn.prepare(&format!(
         "SELECT count(*) FROM {residue} WHERE \":row\" = ? AND \":rule\" = ? AND \":row\" <= ?"
     )))?;

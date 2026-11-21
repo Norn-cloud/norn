@@ -845,7 +845,7 @@ pub struct RuleCheck {
     /// MANIFEST-LAWS-1 (S2): a bound on the fuel the per-row evaluator
     /// charges for the rule's operations, apart from the data they read
     /// ([`rule_fuel`]). The engine adds what each row's values cost and
-    /// leaves a row whose rules may cost more than [`ROW_FUEL`] to the
+    /// leaves a row whose rules may cost more than [`row_fuel`] to the
     /// per-row evaluator.
     pub fuel: u64,
 }

@@ -1002,7 +1002,11 @@ fn a_residue_past_the_page_bound_is_refused_and_leaves_nothing_staged() {
 /// leaves it to that path, which refuses the dataset as it would.
 #[test]
 fn a_row_past_the_fuel_budget_is_left_to_the_per_row_path() {
-    let law = ("customer_is_invoice", "warning", "self.customer == self.invoice");
+    let law = (
+        "customer_is_invoice",
+        "warning",
+        "self.customer == self.invoice",
+    );
     let (_dir, cell) = cell(&[law]);
     let (_engine_dir, engine) = engine();
     let wide: &'static str = Box::leak("a".repeat(600_000).into_boxed_str());
@@ -1097,7 +1101,11 @@ fn a_residue_page_of_wide_rows_is_bounded_in_bytes() {
     let mut pages = 0;
     while landed.residue_total > 0 {
         let page = serde_json::to_string(&landed.residue).expect("page");
-        assert!(page.len() <= RESIDUE_PAGE_BYTES, "a page of {} bytes", page.len());
+        assert!(
+            page.len() <= RESIDUE_PAGE_BYTES,
+            "a page of {} bytes",
+            page.len()
+        );
         pages += 1;
         let findings = cell
             .store()
