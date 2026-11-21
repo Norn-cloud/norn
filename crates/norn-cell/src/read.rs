@@ -3329,20 +3329,33 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         Ok(Some((version, digest)))
     }
 
-    /// Whether any object holds a current marking label: a cell whose
-    /// definitions declare no marking holds none, so a host that finds its
-    /// marking catalog empty while this is true must not serve fields as
-    /// unmarked (S2, #1547). One probe of the partial nonempty index.
+    /// Whether any object version, current or past, holds a marking label.
+    /// A cell that holds none serves every field as itself whatever its
+    /// catalog; one that holds any projects them, and a label its catalog
+    /// does not resolve withholds its field (S2, S3, #1547). A declassified
+    /// current label leaves the labels of the versions before it, so both
+    /// tables count. One probe of each partial nonempty index, which
+    /// `INDEXED BY` holds to: a plan that could not use it fails, never scans.
     ///
     /// # Errors
     /// SQL errors.
     pub fn stores_markings(&self) -> Result<bool, CellError> {
-        let held: Option<i64> = self.conn.query_optional(
-            &format!("SELECT 1 FROM \"{MARKING_CURRENT}\" WHERE \"markings\" != '[]' LIMIT 1"),
-            params![],
-            |row| row.get(0),
-        )?;
-        Ok(held.is_some())
+        for (table, index) in [
+            (MARKING_CURRENT, crate::system::MARKING_CURRENT_NONEMPTY),
+            (MARKING_VERSION, crate::system::MARKING_VERSION_NONEMPTY),
+        ] {
+            let held: Option<i64> = self.conn.query_optional(
+                &format!(
+                    "SELECT 1 FROM \"{table}\" INDEXED BY \"{index}\" WHERE \"markings\" != '[]' LIMIT 1"
+                ),
+                params![],
+                |row| row.get(0),
+            )?;
+            if held.is_some() {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// Whether a retained definition set is installed at `version`, without

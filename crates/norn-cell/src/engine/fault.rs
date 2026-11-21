@@ -171,6 +171,13 @@ impl<S: SqlEngine> SqlEngine for FaultEngine<S> {
         self.inner.admitted()
     }
 
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.inner.definition_writes(f)
+    }
+
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
         self.statement()?;
         self.inner.execute(sql, params)

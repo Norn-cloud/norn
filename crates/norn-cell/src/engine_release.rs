@@ -70,10 +70,14 @@ pub const CHANNEL: &[StorageVersion] = &[
         version: 4,
         change: "MAP-DERIVATION-1 (#1488): a mapping bundle records the runtime derivation it was captured under (`derivation`) and the quarantined bundle it reprocesses (`reprocesses`)",
     },
+    StorageVersion {
+        version: 5,
+        change: "#1547 S2: the partial index _norn_marking_version_nonempty, the bounded probe of whether a cell's history holds a marking label; a storage version 4 engine refuses a marking table with an index it does not know",
+    },
 ];
 
 /// The storage version this engine writes.
-pub const STORAGE_VERSION: u32 = 4;
+pub const STORAGE_VERSION: u32 = 5;
 
 /// The oldest storage version this engine upgrades in place. Raising it
 /// retires the steps below it; an older cell must first open on a bridge
@@ -324,7 +328,10 @@ fn migrate_to<E: SqlEngine>(_engine: &E, to: u32) -> Result<(), CellError> {
         // from the cell's own approving decisions. No row is rewritten.
         // Version 4 rewrites nothing: a bundle without `derivation` is
         // derivation 1 and still verifies under it (MAP-DERIVATION-1).
-        2..=4 => Ok(()),
+        // Version 5 adds `_norn_marking_version_nonempty`, which the schema
+        // statements that follow the chain create from the rows the cell
+        // holds; no row is rewritten (#1547).
+        2..=5 => Ok(()),
         _ => Err(CellError::EngineUpgradeUnsupported {
             cell: to.saturating_sub(1),
             engine: STORAGE_VERSION,

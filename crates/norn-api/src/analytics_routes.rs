@@ -462,7 +462,7 @@ pub fn export_objects<E: SqlEngine>(
     let store = guard.store();
     // PRIVACY-1: an export carries stored values, so a cell that declares
     // markings exports nothing; a marked value leaves only through a reveal.
-    if !host.marking_catalog(&store.read())?.is_empty() {
+    if !stored_values_leave(host, &store.read(), object_type)? {
         return Err(crate::authz::read_denied());
     }
     let table = store.analytics_table(object_type).map_err(engine_failure)?;
@@ -760,7 +760,7 @@ pub fn serves_records<E: SqlEngine>(host: &DevHost<E>, object_type: &str) -> Res
     let has_type = guard.store().model().has_type(object_type);
     // PRIVACY-1: the engine mirror holds stored values, so a cell that
     // declares markings reads its records natively, where they are projected.
-    if has_type && !host.marking_catalog(&guard.store().read())?.is_empty() {
+    if has_type && !stored_values_leave(host, &guard.store().read(), object_type)? {
         return Ok(false);
     }
     Ok(has_type
@@ -1079,6 +1079,23 @@ fn page_clause(
 /// with no label on any of its properties. An unknown type, an incomplete
 /// snapshot or an unbounded summary counts as labeled: it fails closed to the
 /// native profile.
+/// PRIVACY-1: whether `object_type`'s current stored values may leave as
+/// they are stored: the cell holds no marking label, or it declares no
+/// marking and no live row of the type carries one, so its labels (the
+/// kernel's on its own records, or earlier versions') are elsewhere (#1547).
+///
+/// # Errors
+/// A store failure.
+fn stored_values_leave<E: SqlEngine>(
+    host: &DevHost<E>,
+    reader: &norn_cell::StoreReader<'_, E>,
+    object_type: &str,
+) -> Result<bool, Refusal> {
+    let catalog = host.marking_catalog(reader)?;
+    Ok(catalog.is_empty()
+        || (!crate::privacy::declares(&catalog) && unlabeled(reader, object_type)))
+}
+
 fn unlabeled<E: SqlEngine>(reader: &norn_cell::StoreReader<'_, E>, object_type: &str) -> bool {
     let Ok(properties) = reader.model().effective_property_types(object_type) else {
         return false;

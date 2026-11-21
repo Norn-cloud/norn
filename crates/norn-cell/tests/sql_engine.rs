@@ -192,6 +192,13 @@ impl SqlEngine for MeasuredEngine {
     fn read_isolation(&self) -> norn_cell::engine::ReadIsolation {
         self.native.read_isolation()
     }
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.native.definition_writes(f)
+    }
+
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
         self.note_values(params);
         self.native.execute(sql, params)
@@ -1249,6 +1256,13 @@ impl SqlEngine for PlatformTables {
     fn read_isolation(&self) -> norn_cell::engine::ReadIsolation {
         self.0.read_isolation()
     }
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.0.definition_writes(f)
+    }
+
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
         self.0.execute(sql, params)
     }

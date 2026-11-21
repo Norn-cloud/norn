@@ -227,6 +227,13 @@ impl<S: SqlEngine> SqlEngine for CommitsAfterFault<S> {
         self.inner.read_cache_revision()
     }
 
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.inner.definition_writes(f)
+    }
+
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
         self.inner.execute(sql, params)
     }
@@ -291,6 +298,13 @@ impl SqlEngine for RestrictedEngine {
     fn read_isolation(&self) -> norn_cell::engine::ReadIsolation {
         self.native.read_isolation()
     }
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.native.definition_writes(f)
+    }
+
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
         validate_do_sql(sql, params)?;
         self.native.execute(sql, params)
@@ -377,6 +391,13 @@ impl<S: SqlEngine> SqlEngine for DoSubset<S> {
 
     fn read_cache_revision(&self) -> Result<Option<(u64, u64)>, CellError> {
         self.0.read_cache_revision()
+    }
+
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.0.definition_writes(f)
     }
 
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {

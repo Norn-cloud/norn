@@ -254,16 +254,20 @@ impl<E: SqlEngine> DevHost<E> {
     pub(crate) fn reveals(&self, actor: &str, marking_id: &str) -> bool {
         self.authorizer.reveal(actor, marking_id)
     }
-    /// The marking catalog of the active definitions `reader` sees, reused
-    /// under the same definitions identity and foreign-write revision as
-    /// [`Self::retained`] (S2, #1547).
+    /// The marking catalog of the active definitions `reader` sees, with the
+    /// kernel's own markings, reused under the same definitions identity and
+    /// foreign-write revision as [`Self::retained`] (S2, #1547).
     ///
-    /// Fails closed: an empty catalog while the cell holds a marking label
-    /// (a retained set that is unreadable or inconsistent) refuses, so no
-    /// marked field is ever served as unmarked.
+    /// Empty only when nothing needs projecting: the definitions declare no
+    /// marking and no object version, current or past, holds a label (one
+    /// bounded probe of each partial index). A cell that declares none but
+    /// holds labels (a `norn.RuleRun`'s kernel label, a declassified field's
+    /// earlier versions) gets the kernel's markings, so every read projects
+    /// and a label the catalog does not resolve withholds its field instead
+    /// of refusing the read (S2, S3, #1547).
     ///
     /// # Errors
-    /// An empty catalog over stored markings, or a store failure.
+    /// A store failure.
     pub(crate) fn marking_catalog(
         &self,
         reader: &norn_cell::StoreReader<'_, E>,
@@ -294,9 +298,7 @@ impl<E: SqlEngine> DevHost<E> {
             }
         };
         if catalog.is_empty() && reader.stores_markings().map_err(Refusal::host)? {
-            return Err(Refusal::host(
-                "the cell holds markings its active definitions do not declare",
-            ));
+            return Ok(crate::privacy::built_in_catalog());
         }
         Ok(catalog)
     }

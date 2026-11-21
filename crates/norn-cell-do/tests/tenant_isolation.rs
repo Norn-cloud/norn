@@ -86,6 +86,13 @@ impl Counting {
 }
 
 impl SqlEngine for Counting {
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.inner.definition_writes(f)
+    }
+
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
         self.tick();
         self.inner.execute(sql, params)

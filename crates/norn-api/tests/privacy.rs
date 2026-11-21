@@ -422,10 +422,14 @@ fn swap_retained_set(dir: &tempfile::TempDir, edit: &dyn Fn(&mut Json)) -> Strin
         .unwrap();
     let mut set: Json = serde_json::from_str(&held).unwrap();
     edit(&mut set);
-    raw.execute(
-        "UPDATE \"_norn_definition_version\" SET \"canonical_set\" = ?1 WHERE \"version\" = 1",
-        &[SqlValue::Text(serde_json::to_string(&set).unwrap())],
-    )
+    // An out-of-process editor; this engine writes the retained tables only
+    // inside a definition-writes scope (S1, #1547).
+    raw.definition_writes(|| {
+        raw.execute(
+            "UPDATE \"_norn_definition_version\" SET \"canonical_set\" = ?1 WHERE \"version\" = 1",
+            &[SqlValue::Text(serde_json::to_string(&set).unwrap())],
+        )
+    })
     .unwrap();
     held
 }
@@ -433,11 +437,12 @@ fn swap_retained_set(dir: &tempfile::TempDir, edit: &dyn Fn(&mut Json)) -> Strin
 #[test]
 fn a_marked_field_is_never_served_clear_from_an_empty_catalog() {
     // S2 (#1547): a retained set that transiently declares no marking yields
-    // an empty catalog. The catalog is keyed by the foreign-write revision,
-    // so the repaired set is read again; and an empty catalog over stored
-    // markings refuses, so the marked email is masked or refused, never
-    // served in the clear, both while the set is broken and after it is
-    // repaired at the same definitions version.
+    // no declared marking. The catalog is keyed by the foreign-write
+    // revision, so the repaired set is read again; and a cell that holds
+    // labels its catalog does not resolve withholds those fields, so the
+    // marked email is masked or withheld, never served in the clear, both
+    // while the set is broken and after it is repaired at the same
+    // definitions version.
     let (cell, dir) = host("org_a", &json!({"kind": "redacted"}), Some(&SECRET));
     let clear = V::from("ada@example.com");
     let read = || get_queried_object(&cell, &scope("org_a"), Some("viewer"), TYPE, "c1", &Mapping);
@@ -446,10 +451,10 @@ fn a_marked_field_is_never_served_clear_from_an_empty_catalog() {
             .unwrap()
             .retain(|artifact| artifact["artifactId"] != "shop.markings.entity");
     });
-    match read() {
-        Err(refused) => assert_eq!(refused.status, 500, "{refused:?}"),
-        Ok(record) => assert_ne!(record.values.unwrap().get("email"), Some(&clear)),
-    }
+    let document = serde_json::to_value(read().expect("the read is served")).unwrap();
+    assert!(document["values"].get("email").is_none(), "{document}");
+    assert_ne!(document["values"]["email"], json!(clear.as_str()));
+    assert_eq!(document["masked"]["email"]["mode"], "refuse");
     swap_retained_set(&dir, &|set| *set = serde_json::from_str(&held).unwrap());
     assert_eq!(email(&cell, "org_a", "viewer", "c1").0, V::from("•••"));
 }
@@ -1186,5 +1191,115 @@ fn an_applied_pack_keeps_the_privacy_markings() {
         document["masked"]["display_name"]["markings"],
         json!(["pii.contact"]),
         "{document}"
+    );
+}
+
+// #1547 round 4 (S2, S3): a cell's labels, not its declarations, decide
+// whether a read projects.
+
+const ITEM: &str = "shop.Item";
+
+/// A cell that declares no marking: a public item, and a `norn.RuleRun`,
+/// whose detail the kernel labels `norn.unknown-lineage` as it commits.
+fn undeclared_cell() -> (DevHost<NativeEngine>, tempfile::TempDir) {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("cell.sqlite");
+    let types: Vec<norn_ir::ObjectTypeDef> = [
+        json!({"name": ITEM, "properties": [{"id": "name", "type": {"kind": "text"}}]}),
+        json!({"name": "norn.RuleRun", "properties": [{"id": "detail", "type": {"kind": "text"}}]}),
+    ]
+    .into_iter()
+    .map(|object| serde_json::from_value(object).unwrap())
+    .collect();
+    let model = norn_cell::Model::from_definitions(&types, &[]).unwrap();
+    {
+        let mut store =
+            CellStore::open(&path, model.clone(), norn_cell::StoreOptions::default()).unwrap();
+        let put = |object_type: &str, key: &str, property: &str, value: &str| FactWriteRow::Put {
+            object_type: object_type.into(),
+            key: key.into(),
+            values: BTreeMap::from([(property.to_owned(), V::from(value))]),
+        };
+        store
+            .commit(&CommitBatch {
+                world: MAIN_WORLD.into(),
+                scope: physical("org_a").key(),
+                logical_time: 2,
+                writes: vec![
+                    put(ITEM, "i1", "name", "Lathe"),
+                    put("norn.RuleRun", "r1", "detail", "rule detail"),
+                ],
+                ..CommitBatch::default()
+            })
+            .unwrap();
+    }
+    let store = CellStore::open(&path, model, norn_cell::StoreOptions::default()).unwrap();
+    let host = DevHost::from_store(store, physical("org_a"), |command| command.payload.clone())
+        .unwrap()
+        .with_authorizer(Policy)
+        .with_pseudonym_secret(Some(&SECRET));
+    (host, directory)
+}
+
+#[test]
+fn a_kernel_label_in_a_cell_without_markings_leaves_public_reads_served() {
+    // S3 (#1547): a cell with no marking declarations still holds the
+    // kernel's `norn.unknown-lineage` label on a RuleRun. A public object
+    // reads as itself, and the labelled detail is withheld, not served and
+    // not a refused read.
+    let (cell, _dir) = undeclared_cell();
+    let item = get_queried_object(&cell, &scope("org_a"), Some("viewer"), ITEM, "i1", &Mapping)
+        .expect("a public object is served");
+    assert_eq!(item.values.unwrap().get("name"), Some(&V::from("Lathe")));
+    if let Ok(run) =
+        get_queried_object(&cell, &scope("org_a"), Some("viewer"), "norn.RuleRun", "r1", &Mapping)
+    {
+        assert_eq!(run.values.unwrap().get("detail"), None);
+    }
+}
+
+#[test]
+fn a_declassified_history_is_never_served_clear_from_an_empty_catalog() {
+    // S2 (#1547): every current label is declassified, so only the earlier
+    // version holds one, and the definitions then declare no marking. The
+    // history still projects that version: its email is withheld, never
+    // served in the clear.
+    let (cell, dir) = host_with(
+        "org_a",
+        &json!({"kind": "redacted"}),
+        Some(&SECRET),
+        &[vec![customer("c1", "Ada B.", "ada@new.example.com")]],
+    );
+    {
+        use norn_cell::engine::SqlEngine as _;
+        // As the declassification flow leaves the current labels.
+        NativeEngine::open(
+            &dir.path().join("cell.sqlite"),
+            norn_cell::StoreOptions::default(),
+        )
+        .unwrap()
+        .execute("UPDATE \"_norn_marking_current\" SET \"markings\" = '[]'", &[])
+        .unwrap();
+    }
+    swap_retained_set(&dir, &|set| {
+        set.as_array_mut()
+            .unwrap()
+            .retain(|artifact| artifact["artifactId"] != "shop.markings.entity");
+    });
+    let history =
+        get_object_history(&cell, &scope("org_a"), Some("viewer"), TYPE, "c1", &Mapping).unwrap();
+    let document = serde_json::to_string(&history).unwrap();
+    assert!(
+        !document.contains("ada@example.com"),
+        "the earlier version's email leaked: {document}"
+    );
+    let first = history
+        .versions
+        .iter()
+        .find(|version| version.version == 1)
+        .expect("the first version is listed");
+    assert_eq!(
+        first.values.as_ref().and_then(|values| values.get("name")),
+        Some(&V::from("Ada"))
     );
 }

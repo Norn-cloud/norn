@@ -917,11 +917,13 @@ fn a_changed_definitions_identity_is_verified_again_before_any_call() {
     )
     .unwrap();
     let raw = NativeEngine::open(&a, norn_cell::StoreOptions::default()).unwrap();
-    norn_cell::engine::SqlEngine::execute(
-        &raw,
-        "UPDATE \"_norn_definition_version\" SET \"receipt_sha256\" = ?1 WHERE \"version\" = 1",
-        &[norn_cell::engine::SqlValue::Text("0".repeat(64))],
-    )
+    norn_cell::engine::SqlEngine::definition_writes(&raw, || {
+        norn_cell::engine::SqlEngine::execute(
+            &raw,
+            "UPDATE \"_norn_definition_version\" SET \"receipt_sha256\" = ?1 WHERE \"version\" = 1",
+            &[norn_cell::engine::SqlValue::Text("0".repeat(64))],
+        )
+    })
     .unwrap();
     drop(raw);
     let before = dump(&host);
@@ -963,10 +965,12 @@ fn edit_in_place(path: &std::path::Path, table: &str, column: &str, edit: fn(&mu
     edit(&mut value);
     let edited = serde_json::to_string(&value).unwrap();
     assert_ne!(edited, text, "the edit changes the retained bytes");
-    raw.execute(
-        &format!("UPDATE \"{table}\" SET \"{column}\" = ?1 WHERE \"version\" = 1"),
-        &[SqlValue::Text(edited)],
-    )
+    raw.definition_writes(|| {
+        raw.execute(
+            &format!("UPDATE \"{table}\" SET \"{column}\" = ?1 WHERE \"version\" = 1"),
+            &[SqlValue::Text(edited)],
+        )
+    })
     .unwrap();
     assert_eq!(digest(&raw), held, "the digest column is held constant");
 }

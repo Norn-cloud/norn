@@ -2790,10 +2790,12 @@ fn tampered_definition_history_fails_closed_on_reopen() {
 
     let tamper = NativeEngine::open(&path, StoreOptions::default()).expect("tamper engine opens");
     tamper
-        .execute(
-            "UPDATE \"_norn_definition_version\" SET \"canonical_set\" = ?1 WHERE \"version\" = 1",
-            &[SqlValue::from("[]")],
-        )
+        .definition_writes(|| {
+            tamper.execute(
+                "UPDATE \"_norn_definition_version\" SET \"canonical_set\" = ?1 WHERE \"version\" = 1",
+                &[SqlValue::from("[]")],
+            )
+        })
         .expect("tamper retained artifact bytes");
     drop(tamper);
 
@@ -2990,6 +2992,13 @@ impl SqlEngine for CountedEngine {
         Ok(Some((writes, remote)))
     }
 
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.inner.definition_writes(f)
+    }
+
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
         self.record_write();
         self.inner.execute(sql, params)
@@ -3055,6 +3064,13 @@ impl SqlEngine for ExplainEngine {
     fn read_isolation(&self) -> norn_cell::engine::ReadIsolation {
         self.inner.read_isolation()
     }
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.inner.definition_writes(f)
+    }
+
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
         self.inner.execute(sql, params)
     }
@@ -6047,10 +6063,12 @@ fn mapping_plan_reuse_matches_a_cold_store_and_a_changed_row_refuses() {
     drop(cold);
     let tamper = NativeEngine::open(&path, StoreOptions::default()).expect("tamper engine");
     tamper
-        .execute(
-            "UPDATE \"_norn_definition_version\" SET \"canonical_set\" = ?1",
-            &[SqlValue::from("[]")],
-        )
+        .definition_writes(|| {
+            tamper.execute(
+                "UPDATE \"_norn_definition_version\" SET \"canonical_set\" = ?1",
+                &[SqlValue::from("[]")],
+            )
+        })
         .expect("tamper retained artifact bytes");
     drop(tamper);
     assert!(
@@ -6144,7 +6162,9 @@ fn mapping_plan_hit_refuses_like_a_fresh_store() {
     for (name, tamper) in cases {
         let (warm, cold) = warm_and_fresh_refusals(|_, engine, version| {
             engine
-                .execute(&tamper.replace("?V", &version.to_string()), &[])
+                .definition_writes(|| {
+                    engine.execute(&tamper.replace("?V", &version.to_string()), &[])
+                })
                 .expect("tamper");
         });
         assert_eq!(warm, cold, "{name}: warm and cold refusals differ");
@@ -6595,6 +6615,13 @@ impl SqlEngine for ProvisionFault {
     fn read_isolation(&self) -> norn_cell::engine::ReadIsolation {
         self.inner.read_isolation()
     }
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.inner.definition_writes(f)
+    }
+
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
         self.inner.execute(sql, params)?;
         self.boundary()
