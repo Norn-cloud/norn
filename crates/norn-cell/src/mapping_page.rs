@@ -10,7 +10,10 @@
 //! versions, events and the CAS chain are the one-by-one ones. A record the
 //! mapping refused (its bundle retains diagnostics) joins no page row: it is
 //! quarantined evidence before any commit, exactly as one by one, and it ends
-//! the run, so the records before it and after it each commit together. A record the cell refuses at commit
+//! the run, so the records before it and after it each commit together. So
+//! does a dispute row (a conflict or identity finding) captured between two
+//! members, so every member of a page row sees the same disputes
+//! (OBS-LINK-DISPUTE-1). A record the cell refuses at commit
 //! stays pending as quarantined evidence, as it does one by one: such a page
 //! is applied record by record, and its row is consumed (applying nothing)
 //! once no member is left pending.
@@ -123,6 +126,8 @@ impl<E: SqlEngine> CellStore<E> {
                 Vec::new();
             let mut records = Vec::with_capacity(raws.len());
             let mut split = false;
+            // The inbox position of the last record joined to a run.
+            let mut last: Option<u64> = None;
             for raw in raws {
                 let (id, _new) = self.capture_mapping_bundle(raw, input)?;
                 records.push(id.clone());
@@ -146,6 +151,20 @@ impl<E: SqlEngine> CellStore<E> {
                     .iter()
                     .map(|r| canonical.canonical(&FactKey::new(r.object_type.as_str(), &r.key)))
                     .collect();
+                let position = self
+                    .read()
+                    .inbox_position(&id)?
+                    .ok_or(CellError::MappingBundleMismatch)?;
+                // OBS-LINK-DISPUTE-1: a link plan sees the disputes captured
+                // before its delivery in inbox order. A dispute row between
+                // two members (this page's conflict or identity finding)
+                // ends the run, so one plan never serves members that see
+                // different disputes; one by one they would not either.
+                if let Some(previous) = last
+                    && self.read().dispute_captured_between(previous, position)?
+                {
+                    split = true;
+                }
                 match runs.last_mut() {
                     Some((ids, written, _)) if !split && written.is_disjoint(&keys) => {
                         ids.push(id);
@@ -153,6 +172,7 @@ impl<E: SqlEngine> CellStore<E> {
                     }
                     _ => runs.push((vec![id], keys, raw)),
                 }
+                last = Some(position);
                 split = false;
             }
             let mut pages = Vec::with_capacity(runs.len());

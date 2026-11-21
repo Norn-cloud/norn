@@ -136,6 +136,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         if world == crate::MAIN_WORLD {
             findings.extend(self.source_conflict_findings(object_type, key)?);
             findings.extend(self.identity_findings(object_type, key)?);
+            findings.extend(self.held_link_findings(object_type, key)?);
         }
         Ok(findings)
     }

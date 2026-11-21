@@ -1144,19 +1144,33 @@ fn deliver(single: &mut Cell, by_page: &mut Cell, many: bool, batches: &[Vec<Ste
         "clear",
     ];
     for batch in batches {
+        let batch: Vec<(Value, String)> = batch
+            .iter()
+            .map(|&(row, party, version)| {
+                let mut row = rows[usize::from(row)].clone();
+                let record = row["record"].as_object_mut().expect("record");
+                let party = parties[usize::from(party)];
+                if record.contains_key("provider_ref") && party != "clear" {
+                    record.insert("provider_ref".into(), json!(party));
+                }
+                if many && record.contains_key("owner_ref") {
+                    record.insert("owner_ref".into(), json!(party));
+                }
+                (row, version.to_string())
+            })
+            .collect();
+        deliver_rows(single, by_page, &batch);
+    }
+}
+
+/// Deliver one batch of (erpnext row, source version) to `single` one record
+/// at a time and to `by_page` a page at a time, split as [`deliver`] splits.
+fn deliver_rows(single: &mut Cell, by_page: &mut Cell, batch: &[(Value, String)]) {
+    {
         let mut pages: Vec<Vec<(Observed<RuntimeValue>, MappingInput)>> = Vec::new();
         let mut seen = BTreeSet::new();
-        for &(row, party, version) in batch {
-            let mut row = rows[usize::from(row)].clone();
-            let record = row["record"].as_object_mut().expect("record");
-            let party = parties[usize::from(party)];
-            if record.contains_key("provider_ref") && party != "clear" {
-                record.insert("provider_ref".into(), json!(party));
-            }
-            if many && record.contains_key("owner_ref") {
-                record.insert("owner_ref".into(), json!(party));
-            }
-            let (raw, input) = raw_of(&row, &version.to_string());
+        for (row, version) in batch {
+            let (raw, input) = raw_of(row, version);
             let identity = raw.provenance.source_id.clone();
             let split = pages.last().is_none_or(|page| {
                 !seen.insert(identity.clone()) || page[0].1.dataset != input.dataset
@@ -1345,6 +1359,111 @@ fn obs_link_dispute_freezes_the_disputed_records_links() {
         mismatches.iter().all(|(_, found)| found.is_empty()),
         "{mismatches:#?}"
     );
+}
+
+/// A `refers` relation between parties, mapped from one party row: the
+/// referred party (`REFERRED`) refers to `ZED`. Its target is a record of the
+/// same dataset, so the target and a re-send of the referring row can share
+/// one page.
+fn referring_parties(artifacts: &mut [ArtifactEnvelope]) {
+    edit_artifact(artifacts, "canon.Party.entity", |a| {
+        a["payload"]["objectType"]["links"] = json!([{
+            "id":"refers", "target":"canon.Party", "cardinality":{"to":"many","from":"many"}
+        }]);
+    });
+    edit_artifact(artifacts, "erpnext.three.mapping", |a| {
+        let map = a["payload"]["maps"]
+            .as_array_mut()
+            .expect("maps")
+            .iter_mut()
+            .find(|m| m["id"] == "party")
+            .expect("party");
+        map["links"] = json!([{
+            "key": "input.name == 'SYN-ERPNEXT-referred' ? 'demo/party/zed' : null",
+            "link": "refers",
+            "targetMap": "party",
+        }]);
+    });
+}
+
+const REFERRED: &str = "demo/party/referred";
+const ZED: &str = "demo/party/zed";
+
+/// An erpnext Party row for `name` (`SYN-ERPNEXT-<name>`), labelled `label`.
+fn party_row(name: &str, label: &str) -> Value {
+    let mut row = fixture("erpnext")["snapshot"][2].clone();
+    let record = row["record"].as_object_mut().expect("record");
+    record.insert("name".into(), json!(format!("SYN-ERPNEXT-{name}")));
+    record.insert("custom_norn_ref".into(), json!(format!("demo/party/{name}")));
+    record.insert("label".into(), json!(label));
+    row
+}
+
+/// The `refers` links and held-link findings of each path, after `batches`.
+#[allow(clippy::type_complexity, reason = "both paths' links and findings")]
+fn refers_after(batches: &[Vec<(Value, String)>]) -> Vec<(BTreeSet<(String, String)>, Vec<String>)> {
+    let directory = tempfile::tempdir().expect("directory");
+    let open = |name: &str| setup_with(&directory.path().join(name), |a| referring_parties(a));
+    let (mut single, mut paged) = (open("single.sqlite"), open("paged.sqlite"));
+    for batch in batches {
+        deliver_rows(&mut single, &mut paged, batch);
+    }
+    same_end_state(&single, &paged).expect("pages equal one by one");
+    [&single, &paged]
+        .into_iter()
+        .map(|cell| {
+            let links = graph(cell)
+                .into_iter()
+                .filter(|(_, _, link, _, _)| link == "refers")
+                .map(|(_, source, _, _, target)| (source, target))
+                .collect();
+            let held = cell
+                .store()
+                .read()
+                .observation_findings(MAIN_WORLD, "canon.Party", REFERRED)
+                .expect("findings")
+                .into_iter()
+                .filter(|f| matches!(&f.rule_ref, norn_ir::DataQualityRuleRef::Builtin { id, .. } if id == "core.boundary.link_held"))
+                .map(|f| f.message)
+                .collect();
+            (links, held)
+        })
+        .collect()
+}
+
+/// OBS-LINK-DISPUTE-1 (Sol, #1544): which disputes a link plan sees is fixed
+/// by inbox order, so paging never moves the dispute boundary. The referred
+/// party lands with a pending claim to the absent zed; then one batch holds
+/// zed and a conflicting re-send of the referred party, in either order.
+/// Zed first: one by one commits the edge before the conflict is captured,
+/// and a page (which captures the conflict before it commits) now sees the
+/// conflict only from its own inbox position on, so it adds the edge too.
+/// Conflict first: the freeze holds the edge on both paths, and the held
+/// edge is a finding on the referred party.
+#[test]
+fn obs_link_dispute_boundary_is_inbox_order_on_both_paths() {
+    let referred = || (party_row("referred", "Referred"), "1".to_owned());
+    let resend = || (party_row("referred", "Referred, re-sent"), "1".to_owned());
+    let zed = || (party_row("zed", "Zed"), "1".to_owned());
+    let edge = BTreeSet::from([(REFERRED.to_owned(), ZED.to_owned())]);
+    for (case, batch, links, held) in [
+        ("target, then conflict", vec![zed(), resend()], edge.clone(), false),
+        ("conflict, then target", vec![resend(), zed()], BTreeSet::new(), true),
+    ] {
+        let paths = refers_after(&[vec![referred()], batch]);
+        for ((found, findings), path) in paths.iter().zip(["one by one", "paged"]) {
+            assert_eq!(found, &links, "{case}, {path}: refers links");
+            assert_eq!(findings.len(), usize::from(held), "{case}, {path}: {findings:?}");
+            for message in findings {
+                assert!(
+                    message.starts_with(&format!(
+                        "link {REFERRED} -refers-> {ZED} held: record in dispute (conflict "
+                    )),
+                    "{case}, {path}: {message}"
+                );
+            }
+        }
+    }
 }
 
 /// OBS-PAGE-1 export/restore: a page commit's export carries the members it

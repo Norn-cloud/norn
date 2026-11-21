@@ -170,6 +170,20 @@ creates or changes; a transient pending row that never commits is not part of
 the comparison; generated pages mix refusals, identities repeated
 across pages, intra-page links in both orders, and pages refused for framing).
 
+**OBS-LINK-DISPUTE-1** (#1490, #1544; beside OBS-PAGE-1): a FEED-CONFLICT or
+identity dispute freezes the observed link claims of the disputed event. They
+keep their standing (they supersede older claims of their contribution, contest
+rivals and keep their edge) but authorize no new edge. Which disputes a link
+plan sees is fixed by inbox order: a delivery sees the dispute rows captured
+before it, never one captured after it, so one-by-one and paged delivery draw
+the same boundary (a page captures every record before it commits any). A
+dispute row captured between two records of a page ends that page's commit
+run. An edge the freeze withholds is an open `core.boundary.link_held` finding
+on the disputed source subject, derived from the retained evidence, for as
+long as the dispute lasts. Releasing a dispute and re-planning its links is the
+governed review action FEED-CONFLICT names; until it exists, a frozen claim
+stays frozen (#1549).
+
 **Ingest rulings** (2026-11-20, from the distributor-1 deployment test, #1484;
 pending maintainer review; additions beside OBS-PAGE-1, which is unchanged):
 
