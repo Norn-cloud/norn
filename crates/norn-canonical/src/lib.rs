@@ -372,7 +372,8 @@ pub enum JsonValue {
     Null,
     /// A JSON boolean.
     Bool(bool),
-    /// An exact decimal JSON number in Norn1 form.
+    /// An exact decimal JSON number in Norn1 form ([`parse_json_tokens`]:
+    /// the number token as written).
     Number(String),
     /// A Unicode JSON string.
     String(String),
@@ -548,6 +549,29 @@ pub fn parse_json_verbatim(input: impl AsRef<[u8]>) -> Result<JsonValue, Canonic
     }
     let mut parser = Parser::new(bytes);
     parser.normalize_strings = false;
+    parser.parse_document()
+}
+
+/// Parse one JSON document like [`parse_json_verbatim`], but with every
+/// [`JsonValue::Number`] the validated number token exactly as written, not
+/// expanded to a Norn1 decimal: the read for a consumer that parses numbers
+/// itself (JCS's binary64 read, #1526), so an exponent such as `1e-1048576`
+/// is never expanded and so never meets [`MAX_CANONICAL_NUMBER_BYTES`].
+/// Duplicate member names are refused as by [`parse`].
+///
+/// # Errors
+///
+/// Returns the same errors as [`parse`], except a number's exact expansion.
+pub fn parse_json_tokens(input: impl AsRef<[u8]>) -> Result<JsonValue, CanonicalJsonError> {
+    let bytes = input.as_ref();
+    if let Err(error) = str::from_utf8(bytes) {
+        return Err(CanonicalJsonError::InvalidUtf8 {
+            offset: error.valid_up_to(),
+        });
+    }
+    let mut parser = Parser::new(bytes);
+    parser.normalize_strings = false;
+    parser.normalize_numbers = false;
     parser.parse_document()
 }
 
@@ -898,6 +922,8 @@ struct Parser<'a> {
     position: usize,
     /// Whether strings and keys are NFC-normalized (Norn1) or kept verbatim.
     normalize_strings: bool,
+    /// Whether numbers are expanded to Norn1 decimals or kept as their token.
+    normalize_numbers: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -906,6 +932,7 @@ impl<'a> Parser<'a> {
             input,
             position: 0,
             normalize_strings: true,
+            normalize_numbers: true,
         }
     }
 
@@ -1210,7 +1237,11 @@ impl<'a> Parser<'a> {
             .ok_or_else(|| self.invalid("number range overflow"))?;
         let raw = str::from_utf8(raw)
             .map_err(|_error| CanonicalJsonError::InvalidUtf8 { offset: start })?;
-        normalize_number(raw, start)
+        if self.normalize_numbers {
+            normalize_number(raw, start)
+        } else {
+            Ok(raw.to_owned())
+        }
     }
 
     fn consume_digits(&mut self) {
