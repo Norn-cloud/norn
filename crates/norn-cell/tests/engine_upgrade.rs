@@ -35,6 +35,7 @@ use serde_json::Value;
 
 const STORAGE_V1: &str = include_str!("fixtures/engine-storage-v1.json");
 const STORAGE_V2: &str = include_str!("fixtures/engine-storage-v2.json");
+const STORAGE_V3: &str = include_str!("fixtures/engine-storage-v3.json");
 
 /// Storage version 3 (#1483) adds the approval recovery tables, derived from
 /// the ledger, to every older cell: `_norn_approved_call` gains
@@ -261,8 +262,8 @@ fn a_storage_v1_cell_opens_on_this_engine_with_identical_receipts() {
         );
     }
     // Storage version 2 adds the stamp and changes nothing else; storage
-    // version 3 adds the approval recovery tables. A later data migration
-    // lists what it changes here.
+    // version 3 adds the approval recovery tables; storage version 4
+    // rewrites no row. A later data migration lists what it changes here.
     let stamp = serde_json::to_string(&EngineStamp::current()).expect("stamp");
     let mut expected = before;
     let meta = expected["tables"]["_norn_meta"]["rows"]
@@ -321,7 +322,8 @@ fn a_storage_v1_cell_opens_on_this_engine_with_identical_receipts() {
 
 /// A cell the last storage version 2 engine wrote (stamped, with #1469's
 /// index already in place) opens on this engine with its ledger and receipts
-/// intact; the upgrade restamps it and adds the approval recovery tables,
+/// intact; the upgrade runs steps 3 and 4, restamps it and adds the approval
+/// recovery tables,
 /// backfilling `_norn_approved_call` from the direct call the v2 engine
 /// parked and approved: row for row what this engine records replaying the
 /// same history into a new cell.
@@ -419,6 +421,105 @@ fn a_storage_v2_cell_opens_on_this_engine_with_identical_receipts() {
         engine_release::admission(&raw(&path)).expect("admission"),
         Admission::Current
     );
+}
+
+/// A cell the last storage version 3 engine wrote (#1483's approval recovery
+/// tables in place, holding the approved direct call it recorded as it
+/// committed) opens on this engine with its ledger and receipts intact. Step
+/// 4 (MAP-DERIVATION-1, #1488) rewrites nothing: the upgrade restamps the
+/// cell and changes no other row, table or index.
+#[test]
+fn a_storage_v3_cell_opens_on_this_engine_with_identical_receipts() {
+    let image: Value = serde_json::from_str(STORAGE_V3).expect("fixture");
+    assert_eq!(image["storage"], 3, "the fixture records storage version 3");
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("cell.sqlite");
+    engine_fixture::load(&image, &path);
+    let before = engine_fixture::image_of(&path);
+    assert_eq!(before, image, "the image loads losslessly");
+    assert_eq!(
+        engine_release::admission(&raw(&path)).expect("admission"),
+        Admission::Upgrade { from: 3 }
+    );
+    let approved = rows(&before, "_norn_approved_call");
+    assert_eq!(
+        approved.as_array().map(Vec::len),
+        Some(1),
+        "the v3 engine recorded the one approved call: {approved}"
+    );
+    assert_eq!(approved[0][2], engine_fixture::APPROVAL_DECISION);
+    assert_eq!(approved[0][3], engine_fixture::APPROVAL_COMMAND);
+
+    let mut store = open(&path).expect("a v3 cell opens on this engine");
+    let head = store.read().verify_ledger().expect("the ledger verifies");
+    assert_eq!(head.commits, engine_fixture::COMMITS);
+    let receipts = store.read().receipts().expect("receipts");
+    assert_eq!(
+        u64::try_from(receipts.len()).expect("count"),
+        engine_fixture::COMMITS
+    );
+    for (batch, receipt) in engine_fixture::batches().iter().zip(&receipts) {
+        match store.commit(batch).expect("replay") {
+            CommitOutcome::Replayed(replayed) => assert_eq!(&replayed, receipt),
+            CommitOutcome::Committed(_) => panic!("a recorded commit was committed again"),
+        }
+    }
+    assert_eq!(store.verified_head().expect("head"), head);
+    drop(store);
+
+    let after = engine_fixture::image_of(&path);
+    for table in [
+        "_norn_ledger",
+        "_norn_receipt",
+        "_norn_approved_call",
+        "_norn_step_call",
+    ] {
+        assert_eq!(
+            rows(&after, table),
+            rows(&before, table),
+            "{table} is unchanged"
+        );
+    }
+    // This engine, replaying the same history into a new cell, records the
+    // same approval recovery rows the v3 engine did.
+    let replayed = dir.path().join("replayed.sqlite");
+    engine_fixture::write_cell(&replayed);
+    let replayed = engine_fixture::image_of(&replayed);
+    for table in ["_norn_approved_call", "_norn_step_call"] {
+        assert_eq!(
+            rows(&after, table),
+            rows(&replayed, table),
+            "{table} matches a cell this engine writes"
+        );
+    }
+    // The step restamps the existing `engine` row in place; it adds no
+    // table or index and rewrites no row.
+    let stamp = serde_json::to_string(&EngineStamp::current()).expect("stamp");
+    let mut expected = before;
+    let stamp_row = expected["tables"]["_norn_meta"]["rows"]
+        .as_array_mut()
+        .expect("meta rows")
+        .iter_mut()
+        .find(|row| row[1] == STAMP_KEY)
+        .expect("the v3 cell is stamped");
+    stamp_row[2] = stamp.into();
+    expected["storage"] = STORAGE_VERSION.into();
+    let mut catalog = after;
+    by_name(&mut catalog);
+    by_name(&mut expected);
+    assert_eq!(catalog, expected, "the upgrade writes the stamp alone");
+    assert_eq!(
+        engine_release::admission(&raw(&path)).expect("admission"),
+        Admission::Current
+    );
+
+    // A reopen at the current version writes nothing.
+    let store = open(&path).expect("reopen");
+    assert_eq!(store.read().verify_ledger().expect("ledger"), head);
+    drop(store);
+    let mut reopened = engine_fixture::image_of(&path);
+    by_name(&mut reopened);
+    assert_eq!(reopened, catalog, "a current open writes nothing");
 }
 
 #[test]

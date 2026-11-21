@@ -82,8 +82,98 @@ pub enum MappingOutcome {
     /// It was already consumed (the same source event, captured before).
     AlreadyLanded,
     /// It stays in the inbox as quarantined evidence, for these reasons
-    /// (mapping diagnostic codes, or the cell's refusal code).
-    Quarantined(Vec<String>),
+    /// (mapping diagnostics, or the cell's refusal), each explained.
+    Quarantined(Vec<QuarantineReason>),
+}
+
+/// MAP-EXPLAIN-1: why a captured row is quarantined, in structure a client
+/// acts on without parsing a message: the stable code, the mapping rule
+/// (map) that refused it and, when a source field does not conform to its
+/// declared type, that field, the value it held and the declared type.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct QuarantineReason {
+    /// The stable code (`mapping.runtime.*`, `core.boundary.*`).
+    pub code: String,
+    /// The map (mapping rule) that refused the row, when a map did.
+    pub map: Option<String>,
+    /// The nonconforming source field, when the refusal is one.
+    pub field: Option<String>,
+    /// The value that field held, as canonical JSON text.
+    pub value: Option<String>,
+    /// The field's declared type, in words.
+    pub expected: Option<String>,
+    /// The refusal in words.
+    pub reason: String,
+    /// SEC-QUARANTINE-1: the cell refusal's own text, bounded, for a trusted
+    /// operator surface only (the dev `--load` report). It can name a stored
+    /// subject's live type or values, so no route answers it.
+    pub detail: Option<String>,
+}
+
+impl QuarantineReason {
+    /// A reason with only a code and words (a cell refusal or finding).
+    #[must_use]
+    pub fn coded(code: impl Into<String>, reason: impl Into<String>) -> Self {
+        Self {
+            code: code.into(),
+            map: None,
+            field: None,
+            value: None,
+            expected: None,
+            reason: reason.into(),
+            detail: None,
+        }
+    }
+
+    /// A commit the cell refused, as an allowlisted code and fixed words
+    /// (SEC-QUARANTINE-1): never the refusal's own text.
+    #[must_use]
+    pub fn refused(error: &CellError) -> Self {
+        let code = refusal_code(error);
+        let words = refusal_words(&code);
+        Self {
+            detail: Some(crate::mapping_bundle::bounded_text(&error.to_string())),
+            ..Self::coded(code, words)
+        }
+    }
+
+    /// The reason a retained mapping diagnostic records (MAP-EXPLAIN-1
+    /// fields when the bundle retained them; the code and message always).
+    fn of_diagnostic(diagnostic: &RuntimeValue) -> Self {
+        // Bounded, as a retained diagnostic is (a bundle captured before
+        // the bound repeats the field's whole text).
+        let text = |key: &str| {
+            diagnostic
+                .get(key)
+                .and_then(RuntimeValue::as_str)
+                .map(crate::mapping_bundle::bounded_text)
+        };
+        Self {
+            code: text("code").unwrap_or_else(|| "mapping.refused".to_owned()),
+            map: text("map"),
+            field: text("field"),
+            value: text("value"),
+            expected: text("expected"),
+            reason: text("reason")
+                .or_else(|| text("message"))
+                .unwrap_or_default(),
+            detail: None,
+        }
+    }
+}
+
+impl MappingOutcome {
+    /// The stable codes of a quarantined row, sorted and unique; none otherwise.
+    #[must_use]
+    pub fn codes(&self) -> Vec<String> {
+        let Self::Quarantined(reasons) = self else {
+            return Vec::new();
+        };
+        let mut codes: Vec<String> = reasons.iter().map(|r| r.code.clone()).collect();
+        codes.sort();
+        codes.dedup();
+        codes
+    }
 }
 
 impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S> {
@@ -102,7 +192,14 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
         {
             let pending = self.store().read().pending_observation(observation_id)?;
             return Ok(if pending.is_some() {
-                MappingOutcome::Quarantined(vec!["core.boundary.import_finding".into()])
+                MappingOutcome::Quarantined(vec![QuarantineReason::coded(
+                    "core.boundary.import_finding",
+                    if observation_id.starts_with("mapping-conflict:") {
+                        "the same source event (connector, partition, source, id, version) was already captured with different content; review it to accept one (FEED-CONFLICT)"
+                    } else {
+                        "the source identity is disputed (a spelling or binding conflict); review it before it maps"
+                    },
+                )])
             } else {
                 MappingOutcome::AlreadyLanded
             });
@@ -115,26 +212,85 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
         let bundle: MappingBundle =
             norn_ir::runtime::decode(&observed.input).map_err(CellError::Encoding)?;
         if !bundle.diagnostics.is_empty() {
-            let mut codes: Vec<String> = bundle
+            let mut reasons: Vec<QuarantineReason> = bundle
                 .diagnostics
                 .iter()
-                .map(|d| {
-                    d.get("code")
-                        .and_then(RuntimeValue::as_str)
-                        .unwrap_or("mapping.refused")
-                        .to_owned()
-                })
+                .map(QuarantineReason::of_diagnostic)
                 .collect();
-            codes.sort();
-            codes.dedup();
-            return Ok(MappingOutcome::Quarantined(codes));
+            reasons.sort();
+            reasons.dedup();
+            return Ok(MappingOutcome::Quarantined(reasons));
         }
         match self.process_mapping_bundle(observation_id) {
             Ok(true) => Ok(MappingOutcome::Landed),
             Ok(false) => Ok(MappingOutcome::AlreadyLanded),
             Err(error @ (CellError::Sqlite(_) | CellError::Engine(_))) => Err(error),
-            Err(error) => Ok(MappingOutcome::Quarantined(vec![refusal_code(&error)])),
+            Err(error) => Ok(MappingOutcome::Quarantined(vec![
+                QuarantineReason::refused(&error),
+            ])),
         }
+    }
+
+    /// MAP-REPROCESS-1: explicitly re-derive one quarantined `mapping-bundle:`
+    /// row under the current derivation (MAP-DERIVATION-1), for a row an older
+    /// derivation refused that the current one accepts (decimal text before
+    /// MAP-DECIMAL-TEXT-1). The original stays retained evidence, verified
+    /// under its own derivation; the re-derived bundle has an address of its
+    /// own, names the original, and the commit that lands it consumes the
+    /// original. Capture and replay never do this: only a trusted host acting
+    /// on an operator's decision calls it. A row the current derivation still
+    /// refuses is left as it is, with its current reasons.
+    ///
+    /// # Errors
+    /// A row that is not a pending, quarantined bundle of an older derivation
+    /// under the active definitions; store failures.
+    pub fn reprocess_quarantined_bundle(
+        &mut self,
+        observation_id: &str,
+    ) -> Result<MappingOutcome, CellError> {
+        let Some(pending) = self.store().read().pending_observation(observation_id)? else {
+            return Ok(MappingOutcome::AlreadyLanded);
+        };
+        if !observation_id.starts_with("mapping-bundle:") {
+            return Err(CellError::UnsupportedMappingProfile);
+        }
+        let observed: Observed<RuntimeValue> =
+            norn_ir::runtime::decode(&pending.observed).map_err(CellError::Encoding)?;
+        let reader = self.store().read();
+        let original = reader.inbox_bundle(observation_id)?;
+        reader.recheck_mapping_bundle(&original)?;
+        if original.diagnostics.is_empty()
+            || original.reprocesses.is_some()
+            || original.derivation >= crate::mapping_bundle::CURRENT_DERIVATION
+        {
+            return Err(CellError::UnsupportedMappingProfile);
+        }
+        if reader.installed_definitions(None)?.map(|d| d.version)
+            != Some(original.definitions_version)
+        {
+            return Err(CellError::MappingBundleMismatch);
+        }
+        let bundle = reader.derived_mapping_bundle(
+            &original.raw,
+            &original.input,
+            original.definitions_version,
+            norn_checker::mapping::Derivation::CURRENT,
+            Some(observation_id.to_owned()),
+        )?;
+        if !bundle.diagnostics.is_empty() {
+            let mut reasons: Vec<QuarantineReason> = bundle
+                .diagnostics
+                .iter()
+                .map(QuarantineReason::of_diagnostic)
+                .collect();
+            reasons.sort();
+            reasons.dedup();
+            return Ok(MappingOutcome::Quarantined(reasons));
+        }
+        let id = self
+            .store_mut()
+            .inject_reprocessed_bundle(&observed.provenance, &bundle)?;
+        self.process_mapping_outcome(&id)
     }
 }
 
@@ -174,14 +330,62 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
 /// its message when it has one; otherwise the generic mapping refusal with
 /// the underlying error after it, so the cause is never hidden behind the
 /// generic code (`core.boundary.mapping_refused: unknown object type …`).
+/// The stable code a cell refusal names, when its text starts with a token
+/// in the code grammar (`core.boundary.bundle_mismatch`: lowercase dotted
+/// identifiers); otherwise [`MAPPING_REFUSED`]. Never the refusal's text.
 fn refusal_code(error: &CellError) -> String {
     let text = error.to_string();
-    let code = text.split([':', ' ']).next().unwrap_or_default();
-    if code.contains('.') && !code.is_empty() {
-        code.to_owned()
+    let head = text.split([':', ' ']).next().unwrap_or_default();
+    let grammar = head.len() <= 96
+        && head.split('.').count() >= 2
+        && head.split('.').all(|part| {
+            !part.is_empty()
+                && part
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+        });
+    if grammar {
+        head.to_owned()
     } else {
-        format!("{MAPPING_REFUSED}: {text}")
+        MAPPING_REFUSED.to_owned()
     }
+}
+
+/// SEC-QUARANTINE-1: the codes and words a load may answer for a commit the
+/// cell refused. A refusal's own text can name a stored subject's live type
+/// or values, which a caller allowed only to sync sources may not read, so
+/// the answer is this fixed allowlist, never the refusal's text; the
+/// quarantined row keeps its evidence for an operator who can read it.
+const KNOWN_REFUSALS: &[(&str, &str)] = &[
+    (
+        "core.boundary.bundle_mismatch",
+        "the retained mapping evidence no longer matches its pinned definitions",
+    ),
+    (
+        "core.boundary.import_finding",
+        "the source event is disputed; review it before it maps",
+    ),
+    (
+        "core.boundary.unsupported_mapping_profile",
+        "this row is outside the mapping profile the cell applies",
+    ),
+    (
+        MAPPING_REFUSED,
+        "the cell refused the mapped change; an operator who can read the affected objects can review the quarantined row",
+    ),
+];
+
+/// The allowlisted words for `code` (the generic words for any other code).
+fn refusal_words(code: &str) -> &'static str {
+    KNOWN_REFUSALS
+        .iter()
+        .find(|(known, _)| *known == code)
+        .or_else(|| {
+            KNOWN_REFUSALS
+                .iter()
+                .find(|(known, _)| *known == MAPPING_REFUSED)
+        })
+        .map_or("", |(_, words)| words)
 }
 
 /// The generic reason of a mapping refusal whose error names no code.
@@ -274,23 +478,67 @@ mod tests {
 
     #[test]
     fn a_refusal_without_a_code_carries_its_underlying_error() {
-        // The cause stays visible: an unknown claim type (a set missing the
-        // cell-owned evidence types) or an exhausted claim budget, not only
-        // the generic code.
-        assert_eq!(
-            refusal_code(&CellError::UnknownObjectType(
-                "norn.ObservedLinkClaim".into()
-            )),
-            "core.boundary.mapping_refused: unknown object type `norn.ObservedLinkClaim`"
-        );
-        assert_eq!(
-            refusal_code(&CellError::OutOfRange("link claim evidence bytes")),
-            "core.boundary.mapping_refused: link claim evidence bytes is out of range"
-        );
+        // The cause stays visible to a trusted operator (an unknown claim
+        // type, a set missing the cell-owned evidence types, or an exhausted
+        // claim budget), in `detail`, never in the code (SEC-QUARANTINE-1).
+        for (error, cause) in [
+            (
+                CellError::UnknownObjectType("norn.ObservedLinkClaim".into()),
+                "unknown object type `norn.ObservedLinkClaim`",
+            ),
+            (
+                CellError::OutOfRange("link claim evidence bytes"),
+                "link claim evidence bytes is out of range",
+            ),
+        ] {
+            assert_eq!(refusal_code(&error), "core.boundary.mapping_refused");
+            let reason = super::QuarantineReason::refused(&error);
+            assert_eq!(reason.code, "core.boundary.mapping_refused");
+            assert!(!reason.reason.contains(cause), "{reason:?}");
+            assert!(
+                reason.detail.as_deref().is_some_and(|d| d.contains(cause)),
+                "{reason:?}"
+            );
+        }
         // A coded refusal keeps its stable code.
         assert_eq!(
             refusal_code(&CellError::SourceIdentityDisputed),
             "core.boundary.import_finding"
         );
+    }
+}
+
+#[cfg(test)]
+mod refusal_disclosure {
+    use super::{KNOWN_REFUSALS, QuarantineReason};
+    use crate::CellError;
+
+    /// SEC-QUARANTINE-1: a cell refusal answers an allowlisted code and fixed
+    /// words, never its own text (which can name a stored subject's live
+    /// type), and never puts text into the code.
+    #[test]
+    fn a_cell_refusal_is_answered_in_allowlisted_words_only() {
+        let secret = "subject canon.Item/demo is live as canon.SecretLedger";
+        for error in [
+            CellError::Encoding(secret.to_owned()),
+            CellError::Encoding(format!("core.commit.concrete_type_mismatch: {secret}")),
+            CellError::MappingBundleMismatch,
+            CellError::UnsupportedMappingProfile,
+        ] {
+            let reason = QuarantineReason::refused(&error);
+            assert!(!reason.reason.contains("Secret"), "{reason:?}");
+            assert!(!reason.code.contains("Secret"), "{reason:?}");
+            assert!(
+                !reason.code.contains([':', ' ']),
+                "a code is an identifier: {reason:?}"
+            );
+            assert!(
+                KNOWN_REFUSALS
+                    .iter()
+                    .any(|(_, words)| *words == reason.reason),
+                "{reason:?}"
+            );
+            assert!(reason.map.is_none() && reason.field.is_none() && reason.value.is_none());
+        }
     }
 }
