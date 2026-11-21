@@ -1,0 +1,76 @@
+{
+  "packId": "norn.ontology-pack.fibo",
+  "linkId": "norn.link.fibo.canon",
+  "canonPack": "norn.ontology-pack.canon",
+  "canonVersion": "0.1.0",
+  "reviewedBy": "lane fibo-1512 (agent, proposed)",
+  "reviewedAt": "2026-11-20T00:00:00Z",
+  "anchors": [
+    {
+      "class": "https://www.omg.org/spec/Commons/PartiesAndSituations/Agent",
+      "interface": "core.Agent",
+      "term": "norn.core.agent",
+      "justification": "an autonomous actor that holds resources, takes part in events and makes commitments is an REA agent; Party and LegalEntity specialise it."
+    },
+    {
+      "class": "https://spec.edmcouncil.org/fibo/ontology/FND/Agreements/Agreements/Commitment",
+      "interface": "core.Commitment",
+      "term": "norn.core.commitment",
+      "justification": "a promise by a party to act or refrain from acting is an REA commitment."
+    },
+    {
+      "class": "https://spec.edmcouncil.org/fibo/ontology/FND/Agreements/Contracts/Contract",
+      "interface": "core.Commitment",
+      "term": "norn.core.commitment",
+      "justification": "a contract binds its parties to promised future exchanges: REA commitments (FIBO places it under Agreement, not Commitment)."
+    },
+    {
+      "class": "https://spec.edmcouncil.org/fibo/ontology/FBC/DebtAndEquities/Debt/Debt",
+      "interface": "core.Claim",
+      "term": "norn.core.claim",
+      "justification": "an obligation to pay is, for its holder, a right to receive resources settled by economic events: an REA claim, not an open promise.",
+      "supersedes": [
+        "https://spec.edmcouncil.org/fibo/ontology/FND/Agreements/Agreements/Commitment"
+      ]
+    },
+    {
+      "class": "https://spec.edmcouncil.org/fibo/ontology/FBC/FinancialInstruments/FinancialInstruments/FinancialInstrument",
+      "interface": "core.Resource",
+      "term": "norn.core.resource.type",
+      "justification": "a financial instrument is held, valued and transferred as something of value: an REA resource; its contract terms are commitments recorded beside it.",
+      "supersedes": [
+        "https://spec.edmcouncil.org/fibo/ontology/FND/Agreements/Contracts/Contract"
+      ]
+    },
+    {
+      "class": "https://spec.edmcouncil.org/fibo/ontology/FBC/ProductsAndServices/ClientsAndAccounts/Account",
+      "interface": "core.Resource",
+      "term": "norn.core.resource.type",
+      "justification": "an account holds a conserved balance owned by an agent: an REA resource."
+    },
+    {
+      "class": "https://spec.edmcouncil.org/fibo/ontology/FND/ProductsAndServices/PaymentsAndSchedules/Payment",
+      "interface": "core.EconomicEvent",
+      "term": "norn.core.event",
+      "justification": "a delivery of money in fulfilment of an obligation is a posted transfer of a resource: an REA economic event."
+    },
+    {
+      "class": "https://spec.edmcouncil.org/fibo/ontology/FBC/ProductsAndServices/ClientsAndAccounts/IndividualTransaction",
+      "interface": "core.EconomicEvent",
+      "term": "norn.core.event",
+      "justification": "an event with a monetary impact recorded on an account is an REA economic event."
+    },
+    {
+      "class": "https://spec.edmcouncil.org/fibo/ontology/FBC/FinancialInstruments/FinancialInstruments/SecuritiesTransaction",
+      "interface": "core.EconomicEvent",
+      "term": "norn.core.event",
+      "justification": "an exchange of financial products between parties is a transfer of resources: an REA economic event."
+    }
+  ],
+  "held": [
+    {
+      "class": "https://spec.edmcouncil.org/fibo/ontology/FBC/DebtAndEquities/Debt/CreditAgreement",
+      "note": "a credit agreement binds both lender and borrower; only the creditor's right to repayment is an REA claim, and the debtor's side is an obligation. The lineage stays a reported residual until that right is modelled as its own class."
+    }
+  ]
+}

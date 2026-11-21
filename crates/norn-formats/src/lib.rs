@@ -11,6 +11,8 @@
 //! - [`contract`]: the shared [`SchemaImporter`] trait, its typed output, and
 //!   the [`LossReport`] every reader fills from a source inventory.
 //! - [`xsd`]: the XML Schema reader.
+//! - [`owl`]: the OWL 2 reader (an RDF graph as canonical N-Triples →
+//!   interfaces), over the bounded [`ntriples`] parser.
 //! - [`pack`]: the format-independent projection a pack's generated
 //!   `Norn.sourceSchema` module carries.
 //! - [`type_tables`]: deterministic type tables as `RuleIR` v2 decision
@@ -19,6 +21,12 @@
 
 pub mod codes;
 pub mod contract;
+pub mod ntriples;
+/// OWL 2 reader.
+pub mod owl;
+pub mod owl_align;
+mod owl_lower;
+mod owl_model;
 pub mod pack;
 pub mod type_tables;
 /// XML Schema reader.

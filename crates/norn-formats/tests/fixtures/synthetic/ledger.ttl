@@ -1,0 +1,78 @@
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+@prefix ex-pty: <https://example.org/onto/Parties/> .
+@prefix ex-agr: <https://example.org/onto/Agreements/> .
+@prefix ex-ln: <https://example.org/onto/Loans/> .
+
+# Three synthetic modules in the shape of a finance ontology. Not FIBO content.
+
+ex-pty: a owl:Ontology ; rdfs:label "Parties" ; dct:license "https://opensource.org/licenses/MIT" .
+ex-agr: a owl:Ontology ; owl:imports ex-pty: ; dct:license "https://opensource.org/licenses/MIT" .
+ex-ln: a owl:Ontology ; owl:imports ex-agr: ; dct:license "https://opensource.org/licenses/MIT" .
+
+ex-pty:Party a owl:Class ; rdfs:label "party"@en ; skos:definition "A person or organization that takes part in an agreement."@en ;
+  skos:example "a lender" .
+ex-pty:LegalEntity a owl:Class ; rdfs:subClassOf ex-pty:Party ; rdfs:label "legal entity"@en ;
+  owl:disjointWith ex-pty:NaturalPerson .
+ex-pty:NaturalPerson a owl:Class ; rdfs:subClassOf ex-pty:Party ; rdfs:label "natural person"@en .
+ex-pty:Corporation a owl:Class ; rdfs:subClassOf ex-pty:LegalEntity ; rdfs:label "corporation"@en .
+ex-pty:Partnership a owl:Class ; rdfs:subClassOf ex-pty:LegalEntity ; rdfs:label "partnership"@en .
+ex-pty:Trust a owl:Class ; rdfs:subClassOf ex-pty:LegalEntity .
+[] a owl:AllDisjointClasses ; owl:members ( ex-pty:Corporation ex-pty:Partnership ex-pty:Trust ) .
+
+ex-pty:hasName a owl:DatatypeProperty ; rdfs:domain ex-pty:Party ; rdfs:range xsd:string ;
+  skos:definition "The name a party is known by."@en .
+ex-pty:hasLegalForm a owl:DatatypeProperty ; rdfs:range xsd:string .
+ex-pty:LegalEntity rdfs:subClassOf [ a owl:Restriction ; owl:onProperty ex-pty:hasLegalForm ;
+  owl:qualifiedCardinality "1"^^xsd:nonNegativeInteger ; owl:onDataRange xsd:string ] .
+ex-pty:isRegisteredOn a owl:DatatypeProperty ; rdfs:range xsd:dateTime .
+ex-pty:LegalEntity rdfs:subClassOf [ a owl:Restriction ; owl:onProperty ex-pty:isRegisteredOn ;
+  owl:maxQualifiedCardinality "1"^^xsd:nonNegativeInteger ; owl:onDataRange xsd:dateTime ] .
+ex-pty:hasAlias a owl:DatatypeProperty .
+
+ex-agr:Agreement a owl:Class ; rdfs:label "agreement"@en .
+ex-agr:Contract a owl:Class ; rdfs:subClassOf ex-agr:Agreement ; rdfs:label "contract"@en ;
+  rdfs:subClassOf [ a owl:Restriction ; owl:onProperty ex-agr:hasParty ;
+    owl:minQualifiedCardinality "2"^^xsd:nonNegativeInteger ; owl:onClass ex-pty:Party ] .
+ex-agr:hasParty a owl:ObjectProperty ; rdfs:domain ex-agr:Agreement ; rdfs:range ex-pty:Party .
+ex-agr:isPartyTo a owl:ObjectProperty ; owl:inverseOf ex-agr:hasParty .
+ex-agr:hasEffectiveDate a owl:DatatypeProperty ; rdfs:domain ex-agr:Agreement ; rdfs:range xsd:date .
+
+ex-ln:Loan a owl:Class ; rdfs:subClassOf ex-agr:Contract ; rdfs:label "loan"@en ;
+  skos:definition "A contract under which a lender advances money a borrower repays."@en ;
+  rdfs:subClassOf [ a owl:Restriction ; owl:onProperty ex-ln:hasBorrower ; owl:someValuesFrom ex-pty:Party ] ;
+  rdfs:subClassOf [ a owl:Restriction ; owl:onProperty ex-ln:hasPrincipal ;
+    owl:qualifiedCardinality "1"^^xsd:nonNegativeInteger ; owl:onDataRange xsd:decimal ] ;
+  rdfs:subClassOf [ a owl:Restriction ; owl:onProperty ex-ln:hasCurrency ; owl:hasValue ex-ln:USD ] ;
+  rdfs:subClassOf [ a owl:Class ; owl:unionOf ( ex-ln:SecuredLoan ex-ln:UnsecuredLoan ) ] ;
+  rdfs:subClassOf <https://external.example/vocab/Product> ;
+  owl:equivalentClass [ a owl:Class ; owl:intersectionOf ( ex-agr:Contract
+    [ a owl:Restriction ; owl:onProperty ex-ln:hasBorrower ; owl:someValuesFrom ex-pty:Party ] ) ] .
+ex-ln:SecuredLoan a owl:Class ; rdfs:subClassOf ex-ln:Loan .
+ex-ln:UnsecuredLoan a owl:Class ; rdfs:subClassOf ex-ln:Loan .
+ex-ln:hasBorrower a owl:ObjectProperty , owl:FunctionalProperty ; rdfs:subPropertyOf ex-agr:hasParty ;
+  rdfs:range ex-pty:Party .
+ex-ln:hasPrincipal a owl:DatatypeProperty .
+ex-ln:hasCurrency a owl:ObjectProperty .
+ex-ln:hasLender a owl:ObjectProperty ; owl:propertyChainAxiom ( ex-agr:hasParty ex-ln:hasBorrower ) .
+ex-ln:Currency a owl:Class .
+ex-ln:USD a owl:NamedIndividual , ex-ln:Currency ; rdfs:label "US dollar" .
+
+# Two parents pass one member on with unrelated targets: the later edge is not lowered.
+ex-ln:Collateral a owl:Class .
+ex-ln:Guarantee a owl:Class .
+ex-ln:Pledge a owl:Class ; rdfs:subClassOf [ a owl:Restriction ; owl:onProperty ex-ln:secures ; owl:someValuesFrom ex-ln:Collateral ] .
+ex-ln:Surety a owl:Class ; rdfs:subClassOf [ a owl:Restriction ; owl:onProperty ex-ln:secures ; owl:someValuesFrom ex-ln:Guarantee ] .
+ex-ln:secures a owl:ObjectProperty .
+ex-ln:PledgedSurety a owl:Class ; rdfs:subClassOf ex-ln:Pledge , ex-ln:Surety .
+
+# A subclass cycle: an equivalence.
+ex-ln:Facility a owl:Class ; rdfs:subClassOf ex-ln:CreditLine .
+ex-ln:CreditLine a owl:Class ; rdfs:subClassOf ex-ln:Facility .
+
+# A class outside every owned namespace.
+<https://external.example/vocab/Product> a owl:Class .
