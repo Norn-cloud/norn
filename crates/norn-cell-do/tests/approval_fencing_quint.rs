@@ -1,10 +1,13 @@
-//! APPROVAL-REVISION-1 conformance: the approval fencing model's ITF traces
-//! (verification/hosted-timers-v1, `stepConform`) are the oracle, replayed
-//! through the real DO dispatch: a call parks (`POST /v1/actions`), a
-//! definitions revision installs (changing the action's writer, or
-//! reinstalling it unchanged), and an approval (`:decide`) either executes
-//! the call or answers `approval.definition_changed` and runs nothing,
-//! exactly as the model's digest comparison says.
+//! APPROVAL-REVISION-1 under APPROVAL-RECOVERY-1 conformance: the approval
+//! fencing model's ITF traces (verification/hosted-timers-v1, `stepConform`)
+//! are the oracle, replayed through the real DO dispatch: a call parks
+//! (`POST /v1/actions`), a definitions revision installs (changing the
+//! action's writer, or reinstalling it unchanged), the requester's grant is
+//! revoked or restored, and the approver's `:decide` records the approval
+//! and runs nothing (`not_executed`). Only the requester's retry of the call
+//! runs it, exactly as the model's command comparison and authority decision
+//! say: it commits, parks the call anew under the changed definition, or is
+//! denied and leaves the call approved and not executed.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -22,7 +25,10 @@ use std::collections::BTreeMap;
 
 use quint_itf::{int, map, str_map, traces};
 use serde_json::{Value, json};
-use step_cell::{APPROVER, Cell, MELT_ACTION, NOW, OPERATOR, call, cell, melt_body};
+use norn_cell_do::principal::FixturePrincipals;
+use step_cell::{
+    APPROVER, Cell, MELT_ACTION, NAMES, NOW, OPERATOR, REVOKED, call, cell, melt_body,
+};
 
 const APPROVAL_ID: &str = "ops.melt_approval";
 
@@ -74,15 +80,55 @@ fn body(c: i64) -> String {
     melt_body(&format!("melt-{c}"), "10", "10", &format!("call-{c}"))
 }
 
+/// Whether call `c`'s melt exists, read by a holder of the grant (the
+/// requester may be revoked).
 fn melt_status(cell: &Cell, c: i64) -> u16 {
     call(
         cell,
         "GET",
         &format!("/v1/objects/constitution.Melt/melt-{c}"),
-        OPERATOR,
+        APPROVER,
         "",
     )
     .0
+}
+
+/// The requester makes call `c` (or retries it).
+fn request(cell: &Cell, c: i64) -> (u16, Value) {
+    call(
+        cell,
+        "POST",
+        &format!("/v1/actions/{MELT_ACTION}"),
+        OPERATOR,
+        &body(c),
+    )
+}
+
+fn decision_id(parked: &Value) -> String {
+    parked["decision"]["id"]
+        .as_str()
+        .expect("decision id")
+        .to_owned()
+}
+
+/// Where decision `id`'s approved call stands, read only: the approver's
+/// decide with another key answers `decision.resolved` with it, and runs
+/// nothing.
+fn standing(cell: &Cell, id: &str) -> Value {
+    let (status, resolved) = call(
+        cell,
+        "POST",
+        &format!("/v1/decisions/{id}:decide"),
+        APPROVER,
+        &json!({ "choice": "approve", "idempotencyKey": format!("look-{id}") }).to_string(),
+    );
+    assert_eq!(status, 409, "{resolved}");
+    assert_eq!(resolved["code"], json!("decision.resolved"), "{resolved}");
+    resolved["resolution"]["call"].clone()
+}
+
+fn not_executed() -> Value {
+    json!({ "committed": false, "state": "not_executed" })
 }
 
 fn states(state: &Value) -> BTreeMap<i64, String> {
@@ -92,15 +138,27 @@ fn states(state: &Value) -> BTreeMap<i64, String> {
         .collect()
 }
 
+fn flag(state: &Value, var: &str, c: i64) -> bool {
+    map(state, var)[&c].as_bool().expect(var)
+}
+
+/// What the requester's retry answered: its status and, for a call parked
+/// anew, the fresh decision.
+struct Retried {
+    status: u16,
+    decision: Option<String>,
+}
+
 #[test]
 fn approval_fencing_quint_traces() {
-    let (mut executed, mut refused, mut revisions) = (0_usize, 0_usize, 0_usize);
+    let (mut executed, mut reparked, mut denied, mut revisions, mut revocations) =
+        (0_usize, 0_usize, 0_usize, 0_usize, 0_usize);
     for (file, trace) in traces("approval-fencing") {
         let name = file.display();
-        let cell = cell();
+        let mut cell = cell();
         gate(&cell);
         let mut decision: BTreeMap<i64, String> = BTreeMap::new();
-        let mut answered: BTreeMap<i64, bool> = BTreeMap::new();
+        let mut retried: BTreeMap<i64, Retried> = BTreeMap::new();
         for (step, pair) in trace.windows(2).enumerate() {
             let (before, after) = (&pair[0], &pair[1]);
             if int(after, "revisions") > int(before, "revisions") {
@@ -121,33 +179,31 @@ fn approval_fencing_quint_traces() {
                 revisions += 1;
                 continue;
             }
+            if int(after, "authorityChanges") > int(before, "authorityChanges") {
+                // The requester's grant: revoked keeps the same subject,
+                // verified now with no role (APPROVAL-RECOVERY-1, S2).
+                let authorized = after["authorized"].as_bool().expect("authorized");
+                cell.principals = FixturePrincipals::new(
+                    if authorized { NAMES } else { REVOKED },
+                    std::sync::Arc::clone(&cell.caller),
+                );
+                if !authorized {
+                    revocations += 1;
+                }
+                continue;
+            }
             let (old, new) = (states(before), states(after));
             let (&c, now) = new
                 .iter()
                 .find(|(c, s)| old[c] != **s)
                 .unwrap_or_else(|| panic!("{name} step {step}: no transition"));
             match (old[&c].as_str(), now.as_str()) {
-                ("none" | "refused", "parked") => {
-                    let (status, parked) = call(
-                        &cell,
-                        "POST",
-                        &format!("/v1/actions/{MELT_ACTION}"),
-                        OPERATOR,
-                        &body(c),
-                    );
+                ("none", "parked") => {
+                    let (status, parked) = request(&cell, c);
                     assert_eq!(status, 202, "{name} step {step}: call {c} parks: {parked}");
-                    let id = parked["decision"]["id"]
-                        .as_str()
-                        .expect("decision id")
-                        .to_owned();
-                    assert_ne!(
-                        decision.get(&c),
-                        Some(&id),
-                        "{name} step {step}: a fresh decision"
-                    );
-                    decision.insert(c, id);
+                    decision.insert(c, decision_id(&parked));
                 }
-                ("parked", "checking") => {
+                ("parked", "approved") => {
                     let id = &decision[&c];
                     let (status, decided) = call(
                         &cell,
@@ -158,35 +214,77 @@ fn approval_fencing_quint_traces() {
                             .to_string(),
                     );
                     assert_eq!(status, 200, "{name} step {step}: {decided}");
-                    let matched = map(after, "matched")[&c].as_bool().expect("matched");
-                    let expected = if matched {
-                        json!({ "committed": true })
-                    } else {
-                        json!({ "committed": false, "code": "approval.definition_changed" })
+                    assert_eq!(
+                        decided["call"],
+                        not_executed(),
+                        "{name} step {step}: call {c}: the decide runs nothing"
+                    );
+                    assert_eq!(melt_status(&cell, c), 404, "{name} step {step}: call {c}");
+                }
+                ("approved", "checking") => {
+                    let (status, answer) = request(&cell, c);
+                    let (allowed, matched) = (flag(after, "allowed", c), flag(after, "matched", c));
+                    let expected = match (allowed, matched) {
+                        (false, _) => 403,
+                        (true, true) => 200,
+                        (true, false) => 202,
                     };
-                    assert_eq!(decided["call"], expected, "{name} step {step}: call {c}");
-                    answered.insert(c, matched);
+                    assert_eq!(status, expected, "{name} step {step}: call {c}: {answer}");
+                    let fresh = (status == 202).then(|| decision_id(&answer));
+                    if let Some(fresh) = &fresh {
+                        assert_ne!(
+                            fresh, &decision[&c],
+                            "{name} step {step}: call {c} parks a fresh decision"
+                        );
+                    }
+                    retried.insert(c, Retried { status, decision: fresh });
                 }
                 ("checking", outcome) => {
-                    let ran = outcome == "executed";
-                    assert_eq!(
-                        answered.remove(&c),
-                        Some(ran),
-                        "{name} step {step}: call {c} {outcome}"
-                    );
-                    assert_eq!(
-                        melt_status(&cell, c),
-                        if ran { 200 } else { 404 },
-                        "{name} step {step}: call {c}"
-                    );
-                    if ran { executed += 1 } else { refused += 1 }
+                    let Retried { status, decision: fresh } = retried
+                        .remove(&c)
+                        .unwrap_or_else(|| panic!("{name} step {step}: call {c} not retried"));
+                    let id = decision[&c].clone();
+                    match (outcome, status) {
+                        ("executed", 200) => {
+                            assert_eq!(melt_status(&cell, c), 200, "{name} step {step}: call {c}");
+                            assert_eq!(
+                                standing(&cell, &id),
+                                json!({ "committed": true, "state": "committed" }),
+                                "{name} step {step}: call {c}"
+                            );
+                            executed += 1;
+                        }
+                        ("approved", 403) => {
+                            assert_eq!(melt_status(&cell, c), 404, "{name} step {step}: call {c}");
+                            assert_eq!(
+                                standing(&cell, &id),
+                                not_executed(),
+                                "{name} step {step}: call {c}: the denial records nothing"
+                            );
+                            denied += 1;
+                        }
+                        ("parked", 202) => {
+                            assert_eq!(melt_status(&cell, c), 404, "{name} step {step}: call {c}");
+                            assert_eq!(
+                                standing(&cell, &id),
+                                not_executed(),
+                                "{name} step {step}: call {c}: the stale approval is never consumed"
+                            );
+                            decision.insert(c, fresh.expect("the fresh decision"));
+                            reparked += 1;
+                        }
+                        (outcome, status) => {
+                            panic!("{name} step {step}: call {c} {outcome} after {status}")
+                        }
+                    }
                 }
                 (from, to) => panic!("{name} step {step}: unexpected {from} -> {to}"),
             }
         }
     }
     assert!(
-        executed >= 5 && refused >= 2 && revisions >= 5,
-        "{executed} executed, {refused} refused, {revisions} revisions"
+        executed >= 5 && reparked >= 2 && denied >= 2 && revisions >= 5 && revocations >= 3,
+        "{executed} executed, {reparked} reparked, {denied} denied, {revisions} revisions, \
+         {revocations} revocations"
     );
 }

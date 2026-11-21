@@ -230,7 +230,7 @@
     {
       "path": "models/approval-fencing.qnt",
       "module": "approval_fencing",
-      "scope": "the approved dispatch's digest and gate-revision fence, checked under the held definition epoch, against a concurrent definitions install (crates/norn-api/src/actions.rs through_gate/effective_digest, approvals.rs); a supporting check of the hosted approval path, not evidence for INV-AUTH-STALE-REJECT",
+      "scope": "the approval of a parked call under APPROVAL-RECOVERY-1: the decide records the approval only, and the requester's retry consumes it only when its command id (digest and gate revision) still matches under the held definition epoch and the requester's current authority allows the call, against a concurrent definitions install or role revocation (crates/norn-api/src/actions.rs through_gate/approval_of/effective_digest, approvals.rs, decisions.rs decide); a supporting check of the hosted approval path, not evidence for INV-AUTH-STALE-REJECT",
       "invariants": [
         "typeOk",
         "noStaleApprovedExecution"
@@ -244,40 +244,54 @@
           "laws",
           "gate"
         ],
-        "revisions": 2
+        "revisions": 2,
+        "authorityChanges": 2
       },
       "assumptions": [
-        "A1 a definition change takes the definition epoch exclusively; approvals take it for read",
-        "A2 the step a call licenses runs under the definition active at its dispatch"
+        "A1 a definition change takes the definition epoch exclusively; a retry takes it for read",
+        "A2 the step a call licenses runs under the definition active at its dispatch",
+        "A3 a change to the requester's roles commits in the cell, never inside a dispatch's hold; a request's authority is the one verified for it"
       ],
       "variants": [
         {
           "step": "stepUnfencedCheck",
           "invariant": "noStaleApprovedExecution",
           "maxSteps": 5,
-          "meaning": "#1464 Sol S6: the digest read releases its epoch before dispatch, so a definition change lands between check and step"
+          "meaning": "#1464 Sol S6: the command read releases its epoch before the commit, so a definition change lands between check and step"
         },
         {
-          "step": "stepDriveAfterRefusal",
+          "step": "stepConsumeSuperseded",
           "invariant": "noStaleApprovedExecution",
           "maxSteps": 6,
-          "meaning": "#1464 Sol S6: the hosted path still drives the waiting step after answering approval.definition_changed"
+          "meaning": "#1464 Sol S6: after a stale approval's call parks anew, the retry still consumes the superseded approval (found by its key, not its command id)"
         },
         {
           "step": "stepNarrowDigest",
           "invariant": "noStaleApprovedExecution",
           "maxSteps": 5,
           "meaning": "#1464 Sol should: the digest covers the action and writer only, so a change to defaults, law pins or decider roles keeps the approval"
+        },
+        {
+          "step": "stepDecideExecutes",
+          "invariant": "noStaleApprovedExecution",
+          "maxSteps": 3,
+          "meaning": "#1483 APPROVAL-RECOVERY-1: the approver's decide executes the call under the roles recorded when it parked, so a requester revoked meanwhile gets the call run"
+        },
+        {
+          "step": "stepParkedAuthority",
+          "invariant": "noStaleApprovedExecution",
+          "maxSteps": 5,
+          "meaning": "#1483 APPROVAL-RECOVERY-1 S2: the requester's retry is decided under the authority recorded at park, not the authority verified now"
         }
       ],
       "witnesses": [
         {
           "invariant": "witnessExecuted",
-          "maxSteps": 3
+          "maxSteps": 4
         },
         {
-          "invariant": "witnessRefusedAfterChange",
-          "maxSteps": 4
+          "invariant": "witnessReparkedAfterChange",
+          "maxSteps": 5
         },
         {
           "invariant": "witnessUnrelatedRevisionKeepsApproval",
@@ -285,6 +299,14 @@
         },
         {
           "invariant": "witnessReparkedThenExecuted",
+          "maxSteps": 8
+        },
+        {
+          "invariant": "witnessDeniedStaysApproved",
+          "maxSteps": 5
+        },
+        {
+          "invariant": "witnessRestoredThenExecuted",
           "maxSteps": 8
         }
       ],
