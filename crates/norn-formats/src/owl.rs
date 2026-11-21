@@ -5,7 +5,7 @@
 //!
 //! The reader reads canonical N-Triples ([`crate::ntriples`]), not RDF/XML
 //! or Turtle. A pack pins its originals file by file in its
-//! [`OntologySource`] admission; a pinned normaliser (the hash-locked rdflib
+//! [`OntologySource`](norn_ir::OntologySource) admission; a pinned normaliser (the hash-locked rdflib
 //! of `verification/ontology/tools/requirements.lock`, run by
 //! `scripts/importers/owl_sources.py`) parses them and writes the union graph
 //! as sorted N-Triples with canonical blank-node labels. The pack pins that
@@ -20,10 +20,10 @@
 //!   is in one of the configured namespaces), named
 //!   `<prefix as dotted segments>.<LocalName>` (`fibo-be-le-lp:LegalEntity` →
 //!   `fibo.be.le.lp.LegalEntity`), with the closed-world reading of
-//!   [`crate::owl_lower`].
+//!   `owl_lower`.
 //! - `SourceSchemaIR`: one dataset per owned class, carrying its IRI.
 //! - The loss report: one entry per declaration, axiom, annotation predicate,
-//!   individual and leftover statement ([`crate::owl_model::Item`]). The
+//!   individual and leftover statement (`owl_model::Item`). The
 //!   functional-syntax rendering of an axiom is its stable identity. Nothing
 //!   is dropped: everything the reader does not lower is `deferred` with a
 //!   registered `format.owl.*` code naming the reason, and its home.
