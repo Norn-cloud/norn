@@ -88,7 +88,7 @@ export function Cell({ field, row }: { readonly field: Field; readonly row: Grid
   const { view } = useView()
   const masked = isWithheld(row) ? null : maskedOf(row.record, field.id)
   // A marked property is the server's projection, never the value: a chip, and "Reveal" when allowed.
-  if (masked !== null) return <MaskedValue objectType={row.record.objectType} id={row.record.id} property={field.id} masked={masked} projected={row.record.values[field.id]} />
+  if (masked !== null) return <MaskedValue objectType={row.record.objectType} id={row.record.id} version={row.record.version} property={field.id} masked={masked} projected={row.record.values[field.id]} />
   if (fieldWithheld(row, field)) return <WithheldMark />
   const value = row.record.values[field.id]
   if (value === null || value === undefined) return <span className="text-muted-foreground" aria-label="No value">—</span>
@@ -119,7 +119,7 @@ export function RecordName({ row, fallback }: { readonly row: GridRow; readonly 
   if (!isWithheld(row)) {
     for (const property of NAME_PROPERTIES) {
       const masked = maskedOf(row.record, property)
-      if (masked !== null) return <MaskedValue objectType={row.record.objectType} id={row.record.id} property={property} masked={masked} projected={row.record.values[property]} />
+      if (masked !== null) return <MaskedValue objectType={row.record.objectType} id={row.record.id} version={row.record.version} property={property} masked={masked} projected={row.record.values[property]} />
     }
   }
   return <>{fallback}</>

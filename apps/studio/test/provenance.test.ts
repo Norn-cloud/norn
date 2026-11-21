@@ -21,7 +21,7 @@ test("a mapped fact names its source record and fields, the mapping rule and pin
 })
 
 test("a fact an action wrote names the action and its verified actor, never a source it did not read", () => {
-  const card = factProvenance("code", version({ kind: "action", actionId: "canon.item.correct", actor: "admin@demo", input: {} }), lineage)
+  const card = factProvenance("code", version({ kind: "action", actionId: "canon.item.correct", actor: "admin@demo" }), lineage)
   expect(card.sources).toEqual([])
   expect(card.transform).toEqual({ kind: "action", actionId: "canon.item.correct", actor: "admin@demo" })
   expect(card.receipt).toEqual({ kind: "commit", commit: 43 })
