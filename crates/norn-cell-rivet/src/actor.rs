@@ -578,14 +578,15 @@ impl CellActor {
         let sources = self.config.sources.clone();
         let vars = self.config.connect_vars.clone();
         let analytics = self.config.olap_url.is_some();
+        let signing_key = self.config.olap_signing_key.clone();
         self.cell
             .call(move |slot| -> Result<bool, String> {
                 let mut core = CellCore::open(slot.engine(), args)?;
                 if let Err(error) = core.configure_connect(&sources, &vars) {
                     tracing::error!(error = %error, "source connections not configured");
                 }
-                if analytics {
-                    core.enable_analytics();
+                if analytics && let Err(error) = core.enable_analytics(signing_key.as_deref()) {
+                    tracing::error!(error = %error, "analytics not enabled");
                 }
                 let serving = core.serving();
                 slot.core = Some(core);
@@ -883,7 +884,12 @@ impl CellActor {
         let sent = self
             .http
             .post(format!("{url}/v1/{op}"))
-            .bearer_auth(self.config.olap_token.as_deref().unwrap_or_default())
+            // OLAP-CRED-1: the credential the cell minted for this call.
+            .bearer_auth(
+                call.get("credential")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+            )
             .header("content-type", "application/json")
             .body(body)
             .timeout(ENGINE_TIMEOUT)

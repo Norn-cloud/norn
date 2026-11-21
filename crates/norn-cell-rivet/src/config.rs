@@ -28,8 +28,10 @@ pub struct HostConfig {
     pub connect_vars: String,
     /// `NORN_OLAP_URL`: the tenant analytics engine (D102).
     pub olap_url: Option<String>,
-    /// `NORN_SECRET_DUCKDB_TOKEN`: the engine's bearer token.
-    pub olap_token: Option<String>,
+    /// `NORN_OLAP_SIGNING_KEY`: the key the cell mints its per-call engine
+    /// credentials with (OLAP-CRED-1). Not a connection variable, so no
+    /// connector ever sees it.
+    pub olap_signing_key: Option<String>,
     /// `NORN_STAGE`.
     pub stage: Option<String>,
     /// `NORN_TENANT_ENVIRONMENTS`.
@@ -95,7 +97,7 @@ impl HostConfig {
             sources: var("NORN_SOURCES").unwrap_or_else(|| "[]".to_owned()),
             connect_vars: connect_vars.to_string(),
             olap_url: var("NORN_OLAP_URL"),
-            olap_token: var("NORN_SECRET_DUCKDB_TOKEN"),
+            olap_signing_key: var("NORN_OLAP_SIGNING_KEY"),
             stage,
             environments,
             allowed_origins: var("ALLOWED_ORIGINS")
