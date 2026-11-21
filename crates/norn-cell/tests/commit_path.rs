@@ -137,14 +137,15 @@ fn json_counts(counts: &Counts) -> Value {
         .into()
 }
 
-/// The counts of one checked commit of `rows` fresh objects, after one warm-up
-/// commit on the same cell.
-fn measure(invariants: usize, laws: usize, rows: usize) -> Counts {
+/// The counts of the first checked commit on a cell (one object), and of
+/// the next one (`rows` fresh objects) on the same cell.
+fn measure(invariants: usize, laws: usize, rows: usize) -> (Counts, Counts) {
     let mut cell = cell(invariants, laws);
-    cell.commit(creates("warm", 1)).expect("warm-up commit");
-    let _warm_up = counters::take();
+    let _open = counters::take();
+    cell.commit(creates("warm", 1)).expect("first commit");
+    let first = counters::take();
     cell.commit(creates("row", rows)).expect("measured commit");
-    counters::take()
+    (first, counters::take())
 }
 
 #[test]
@@ -157,8 +158,8 @@ fn commit_counters_by_size() {
     }
     let mut lines = Vec::new();
     let mut sample = |axis: &str, invariants: usize, laws: usize, rows: usize| {
-        let counts = measure(invariants, laws, rows);
-        lines.push(json!({"axis": axis, "rows": rows, "laws": laws, "invariants": invariants, "counts": json_counts(&counts)}));
+        let (first, counts) = measure(invariants, laws, rows);
+        lines.push(json!({"axis": axis, "rows": rows, "laws": laws, "invariants": invariants, "first": json_counts(&first), "counts": json_counts(&counts)}));
     };
     for rows in [10, 100, 1_000] {
         sample("rows", INVARIANTS, 4, rows);
@@ -169,27 +170,38 @@ fn commit_counters_by_size() {
     for invariants in [10, 100, 1_000] {
         sample("invariants", invariants, 4, 10);
     }
-    // P5: definition-derived work is done once per commit: one compile per
-    // declared invariant and law, one decode per law and one typed
-    // environment, whatever the row count.
+    // P5 and ADMIT-CACHE-1 (#1533): definition-derived work is done once
+    // per model, not per row or per commit. The first commit on a model
+    // compiles each declared invariant and law once and builds one typed
+    // environment; every later commit reuses them and compiles nothing,
+    // whatever its row count. Laws are decoded once per commit's catalog.
     for line in &lines {
         let declared = |name: &str| line[name].as_u64().expect("size");
-        let counts = &line["counts"];
+        let (first, counts) = (&line["first"], &line["counts"]);
         assert_eq!(
-            counts["expression_compiles"],
+            first["expression_compiles"],
             json!(declared("invariants") + declared("laws")),
-            "compiles: {line}"
+            "first compiles: {line}"
         );
         assert_eq!(
-            counts["law_decodes"],
-            json!(declared("laws")),
-            "decodes: {line}"
+            first["expression_environment_builds"],
+            json!(1),
+            "first environments: {line}"
         );
+        assert_eq!(counts["expression_compiles"], json!(0), "compiles: {line}");
         assert_eq!(
             counts["expression_environment_builds"],
-            json!(1),
+            json!(0),
             "environments: {line}"
         );
+        assert_eq!(counts["effective_model_builds"], json!(0), "effective models: {line}");
+        for counted in [first, counts] {
+            assert_eq!(
+                counted["law_decodes"],
+                json!(declared("laws")),
+                "decodes: {line}"
+            );
+        }
     }
     for line in &lines {
         println!("COMMIT-COUNTERS {line}");
@@ -199,7 +211,6 @@ fn commit_counters_by_size() {
             "rows_written",
             "bytes_written",
             "hashes",
-            "expression_compiles",
         ] {
             assert!(
                 counts[name].as_u64().is_some_and(|n| n > 0),
