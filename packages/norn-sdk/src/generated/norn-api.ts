@@ -235,10 +235,16 @@ export interface paths {
          *     never decides their call and never lists it among the decisions waiting
          *     on them; this is where they learn that it was approved and retry it
          *     (`canRun`), with the exact input and key it parked with. Without `id`:
-         *     the calls pending a decider and those approved and not yet run. With
-         *     `id`: that decision in any state, or no item when it is not the caller's
-         *     direct call (the cell does not say which).
-         * @description # Errors
+         *     the calls pending a decider before their deadline and those approved and
+         *     not yet run. With `id`: that decision in any state, or no item when it is
+         *     not the caller's direct call (the cell does not say which).
+         * @description The caller is the host's verified principal, compared as the dispatch
+         *     compares it (subject, actor kind and role table): the same subject under
+         *     another kind or role table is someone else, and reads nothing. Its calls
+         *     are found by that identity before any parked payload is loaded, so
+         *     another requester's id costs what an id that exists nowhere costs.
+         *
+         *     # Errors
          *     Missing or foreign scope; a missing caller (one opaque 403); an invalid
          *     id; a host failure.
          */
