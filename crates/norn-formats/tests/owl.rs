@@ -711,6 +711,7 @@ fn annotation(
 #[test]
 fn owl_only_the_selected_annotation_is_mapped() {
     use norn_formats::contract::Facet;
+    const SKOS: &str = "<http://www.w3.org/2004/02/skos/core#definition>";
     let import = import_ratios(NOTES, WitnessPolicy::Closed);
     let interfaces = interfaces(&import);
     let rt = "https://example.org/onto/Ratios/";
@@ -733,12 +734,12 @@ fn owl_only_the_selected_annotation_is_mapped() {
     };
     let displaced = |entry: &norn_formats::contract::LossEntry| match &entry.disposition {
         Disposition::Deferred { code, detail, .. } => {
-            code == "format.owl.annotation" && detail.contains("skos:definition")
+            code == "format.owl.annotation" && detail.contains(SKOS)
         }
         _ => false,
     };
     // The class: definition carried, label displaced.
-    assert!(mapped(annotation(&import, class("Holder", "skos:definition"))));
+    assert!(mapped(annotation(&import, class("Holder", SKOS))));
     let label = annotation(&import, class("Holder", "rdfs:label"));
     assert!(displaced(label), "{:?}", label.disposition);
     // A class with only a label carries it.
@@ -746,7 +747,7 @@ fn owl_only_the_selected_annotation_is_mapped() {
     // A placed member: the definition wins over the label.
     let code = property(&interfaces, "ex.rt.Holder", "code").unwrap();
     assert_eq!(code["description"], format!("A short identifier. <{rt}code>"));
-    assert!(mapped(annotation(&import, member("code", "skos:definition"))));
+    assert!(mapped(annotation(&import, member("code", SKOS))));
     let label = annotation(&import, member("code", "rdfs:label"));
     assert!(displaced(label), "{:?}", label.disposition);
     // A member with only a label carries it.
@@ -756,6 +757,6 @@ fn owl_only_the_selected_annotation_is_mapped() {
     // `notes` lowers no member (S1): neither annotation is emitted.
     let notes_label = annotation(&import, member("notes", "rdfs:label"));
     assert!(!mapped(notes_label), "{:?}", notes_label.disposition);
-    let notes_definition = annotation(&import, member("notes", "skos:definition"));
+    let notes_definition = annotation(&import, member("notes", SKOS));
     assert!(!mapped(notes_definition), "{:?}", notes_definition.disposition);
 }

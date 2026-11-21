@@ -23,8 +23,12 @@
 //! A `held` row keeps a lineage out of the canon on purpose: a class that is
 //! only partly one REA concept (a credit agreement binds both sides, and only
 //! the creditor's right is a claim) is reported `non_conforming` with the
-//! row's note, whatever anchors its lineage also reaches, until the part that
-//! conforms is modelled as its own class.
+//! row's note until the part that conforms is modelled as its own class.
+//! Holding does not hide the rest of the lineage: the anchors each held
+//! class still reaches (after precedence) are on its finding and residual
+//! note, so a held descendant that also reaches disjoint concepts through
+//! another parent is reported as that conflict too. An anchor on a held
+//! class or below one is refused: it would be held without a word.
 //!
 //! The checker proves the link total (`norn_checker::validate_link_registry`):
 //! every active term of the imported pack is mapped or residual, with its
@@ -129,6 +133,10 @@ pub enum AlignmentFinding {
         interface: String,
         /// The held class it reaches.
         via: String,
+        /// The core interfaces its lineage still reaches after precedence:
+        /// more than one is also a conflict.
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        anchors: Vec<String>,
     },
 }
 
@@ -147,6 +155,7 @@ impl Aligned {
     pub fn summary(&self) -> Value {
         let mut by_anchor = BTreeMap::<&str, u64>::new();
         let (mut aligned, mut gaps, mut conflicts, mut held) = (0_u64, 0_u64, 0_u64, 0_u64);
+        let mut held_conflicts = 0_u64;
         for finding in &self.findings {
             match finding {
                 AlignmentFinding::Aligned { anchor, .. } => {
@@ -156,7 +165,12 @@ impl Aligned {
                 }
                 AlignmentFinding::Gap { .. } => gaps = gaps.saturating_add(1),
                 AlignmentFinding::Conflict { .. } => conflicts = conflicts.saturating_add(1),
-                AlignmentFinding::Held { .. } => held = held.saturating_add(1),
+                AlignmentFinding::Held { anchors, .. } => {
+                    held = held.saturating_add(1);
+                    if anchors.len() > 1 {
+                        held_conflicts = held_conflicts.saturating_add(1);
+                    }
+                }
             }
         }
         let total = aligned
@@ -174,6 +188,7 @@ impl Aligned {
             "canonGaps": gaps,
             "nonConforming": conflicts.saturating_add(held),
             "held": held,
+            "heldConflicts": held_conflicts,
             "alignedByAnchor": by_anchor,
         })
     }
@@ -453,24 +468,21 @@ pub fn align(
     }
     let reached = lineages(&by_name, &anchored);
     let held_by = lineages(&by_name, &held);
+    // An anchor at or below a held class would be held without a word.
+    for (name, anchor) in &anchored {
+        if let Some(via) = held_by.get(name).and_then(|set| set.first()) {
+            return Err(format!(
+                "anchor <{}> is held: its lineage reaches held {via}; anchor the part that conforms as its own class or drop the hold",
+                anchor.class
+            ));
+        }
+    }
 
     // Precedence, then one finding per class.
     let mut findings = Vec::new();
     let mut outcome: BTreeMap<&str, (Vec<&OwlAnchor>, Vec<String>)> = BTreeMap::new();
-    let mut held_out: BTreeMap<&str, &OwlHeld> = BTreeMap::new();
+    let mut held_out: BTreeMap<&str, (&OwlHeld, Vec<String>)> = BTreeMap::new();
     for (name, found) in &reached {
-        if let Some(row) = held_by
-            .get(name)
-            .and_then(|set| set.first())
-            .and_then(|via| held.get(via).copied())
-        {
-            held_out.insert(name, row);
-            findings.push(AlignmentFinding::Held {
-                interface: (*name).to_owned(),
-                via: row.class.clone(),
-            });
-            continue;
-        }
         let rows: Vec<&OwlAnchor> = found
             .iter()
             .filter_map(|n| anchored.get(n).copied())
@@ -492,6 +504,21 @@ pub fn align(
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect();
+        // A held lineage stays a residual, but still reports what it reaches.
+        if let Some(row) = held_by
+            .get(name)
+            .and_then(|set| set.first())
+            .and_then(|via| held.get(via).copied())
+        {
+            let anchors: Vec<String> = by_interface.keys().map(|key| (*key).to_owned()).collect();
+            held_out.insert(name, (row, anchors.clone()));
+            findings.push(AlignmentFinding::Held {
+                interface: (*name).to_owned(),
+                via: row.class.clone(),
+                anchors,
+            });
+            continue;
+        }
         let finding = match by_interface.values().collect::<Vec<_>>().as_slice() {
             [] => AlignmentFinding::Gap {
                 interface: (*name).to_owned(),
@@ -567,15 +594,24 @@ pub fn align(
     // The link: every term mapped or residual, with its reason.
     let mut correspondences = Vec::new();
     let mut residuals = Vec::new();
-    for (name, row) in &held_out {
+    for (name, (row, anchors)) in &held_out {
         let via = by_iri.get(row.class.as_str()).copied().unwrap_or_default();
+        let held_note = if via == *name {
+            format!("Held out of the canon: {}", row.note)
+        } else {
+            format!("It specialises {via}, held out of the canon: {}", row.note)
+        };
+        let reaches = match anchors.as_slice() {
+            [] => String::new(),
+            [one] => format!(" Its lineage also reaches {one}."),
+            several => format!(
+                " Its lineage also reaches {}, which REA keeps disjoint and no precedence orders: a conflict beside the hold.",
+                several.join(" and ")
+            ),
+        };
         residuals.push(json!({
             "termId": term_of(name), "reason": "non_conforming",
-            "note": if via == *name {
-                format!("Held out of the canon: {}", row.note)
-            } else {
-                format!("It specialises {via}, held out of the canon: {}", row.note)
-            },
+            "note": format!("{held_note}{reaches}"),
         }));
     }
     for (name, (rows, superseded)) in &outcome {

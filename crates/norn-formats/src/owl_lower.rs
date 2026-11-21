@@ -27,7 +27,14 @@
 //!   member stays optional with a `format.owl.open_world` degradation,
 //!   unless the import's witness policy is `closed`, which requires it. Under
 //!   `closed`, a filler-scoped existence claim lowers only its existence (a
-//!   required member targeting the range), degraded.
+//!   required member targeting the range), degraded. A data member holds one
+//!   value, so for a datatype property that holds only where the property is
+//!   already bounded to one value (`FunctionalProperty`, or a `max 1` or
+//!   `exactly 1` over every value on the class or an ancestor); otherwise it
+//!   is deferred.
+//! - A member's or interface's description carries its `skos:definition`,
+//!   else its `rdfs:label`; only the annotation it carries is mapped, and a
+//!   label a definition displaces is deferred.
 //! - `FunctionalProperty(p)` → every member `p` links to one;
 //!   `InverseFunctionalProperty(p)` → the inverse multiplicity is one.
 //! - Datatype members take the type the datatype table chooses.
@@ -339,12 +346,43 @@ pub(crate) fn lower(
                 .push(sup.as_str());
         }
     }
+    // Classes on which a datatype property holds at most one value, by a
+    // `max 1` or `exactly 1` over every value of it.
+    let mut capped: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for item in &model.items {
+        if let Item::Axiom(Axiom::SubClassOf {
+            sub,
+            sup:
+                Expr::Restriction {
+                    property,
+                    kind: Restriction::Max(1) | Restriction::Exact(1),
+                    filler,
+                },
+        }) = item
+            && model.properties.get(property) == Some(&PropertyKind::Datatype)
+        {
+            let range = range_of.get(property.as_str()).copied();
+            let whole = match read_filler(filler.as_deref()) {
+                Filler::Unqualified => true,
+                Filler::Named(iri) => range == Some(iri),
+                Filler::Expression => false,
+            };
+            if whole {
+                capped
+                    .entry(property.as_str())
+                    .or_default()
+                    .push(sub.as_str());
+            }
+        }
+    }
     let context = Context {
         model,
         names: &lowered.names,
         members: &lowered.members,
         range_of: &range_of,
         named_sups: &named_sups,
+        functional: &functional,
+        capped: &capped,
         witnesses,
     };
 
@@ -360,8 +398,10 @@ pub(crate) fn lower(
                     kind,
                     filler,
                 },
-            } if owned(sub) => restriction_shape(&context, table, property, kind, filler.as_deref())
-                .map(|ask| (sub.clone(), property.clone(), ask)),
+            } if owned(sub) => {
+                restriction_shape(&context, table, sub, property, kind, filler.as_deref())
+                    .map(|ask| (sub.clone(), property.clone(), ask))
+            }
             Axiom::Domain {
                 property,
                 domain: Expr::Named(domain),
@@ -546,8 +586,12 @@ pub(crate) fn lower(
         }
     };
 
-    // Interfaces.
+    // Interfaces. `described` records, per documented IRI, which annotation
+    // its emitted description carries (a definition before a label) and
+    // where it was first emitted: only that annotation is mapped.
+    let mut described: BTreeMap<String, (&'static str, Target)> = BTreeMap::new();
     for (iri, name) in &lowered.names {
+        let artifact = artifact_id(name);
         let parents: Vec<&String> = edges
             .get(iri)
             .into_iter()
@@ -560,14 +604,18 @@ pub(crate) fn lower(
             let Some(id) = lowered.members.get(property) else {
                 continue;
             };
-            let description = model
-                .definitions
-                .get(property)
-                .or_else(|| model.labels.get(property))
-                .map_or_else(
-                    || format!("<{property}>"),
-                    |text| format!("{} <{property}>", text.trim()),
-                );
+            let documentation = documentation(model, property);
+            let description = documentation.map_or_else(
+                || format!("<{property}>"),
+                |(_, text)| format!("{} <{property}>", text.trim()),
+            );
+            let emitted = |described: &mut BTreeMap<String, (&'static str, Target)>| {
+                if let Some((predicate, _)) = documentation {
+                    described
+                        .entry(property.clone())
+                        .or_insert_with(|| (predicate, Target::member(&artifact, id)));
+                }
+            };
             match shape {
                 Shape::Link {
                     target,
@@ -589,6 +637,7 @@ pub(crate) fn lower(
                         "id": id, "description": description,
                         "target": target, "cardinality": cardinality,
                     }));
+                    emitted(&mut described);
                 }
                 Shape::Value { kind, required } => {
                     let mut property = json!({
@@ -598,14 +647,15 @@ pub(crate) fn lower(
                         fields.insert("constraints".into(), json!({ "nullable": true }));
                     }
                     properties.push(property);
+                    emitted(&mut described);
                 }
             }
         }
-        let text = model
-            .definitions
-            .get(iri)
-            .or_else(|| model.labels.get(iri))
-            .map_or_else(String::new, |text| format!("{} ", text.trim()));
+        let documentation = documentation(model, iri);
+        if let Some((predicate, _)) = documentation {
+            described.insert(iri.clone(), (predicate, Target::artifact(&artifact)));
+        }
+        let text = documentation.map_or_else(String::new, |(_, text)| format!("{} ", text.trim()));
         let mut interface = serde_json::Map::new();
         interface.insert("name".into(), json!(name));
         interface.insert("description".into(), json!(format!("{text}<{iri}>")));
@@ -626,13 +676,42 @@ pub(crate) fn lower(
     dispose(
         model,
         &mut lowered,
-        &own,
-        &rejected,
+        &Accounted {
+            own: &own,
+            rejected: &rejected,
+            edges: &edges,
+            range_of: &range_of,
+            described: &described,
+        },
         dropped_edges,
-        &edges,
-        &range_of,
     );
     Ok(lowered)
+}
+
+/// The annotation an IRI's description carries, and its text: its
+/// `skos:definition` when it has one, else its `rdfs:label`.
+fn documentation<'a>(model: &'a Model, iri: &str) -> Option<(&'static str, &'a String)> {
+    model
+        .definitions
+        .get(iri)
+        .map(|text| (crate::owl_model::SKOS_DEFINITION, text))
+        .or_else(|| {
+            model
+                .labels
+                .get(iri)
+                .map(|text| (crate::owl_model::RDFS_LABEL, text))
+        })
+}
+
+/// What the lowering decided, for the disposition of every item.
+struct Accounted<'a> {
+    own: &'a [(String, Own)],
+    /// Own axioms not lowered: item → detail.
+    rejected: &'a BTreeMap<usize, String>,
+    edges: &'a BTreeMap<String, BTreeMap<String, usize>>,
+    range_of: &'a BTreeMap<&'a str, &'a str>,
+    /// Documented IRI → the annotation its description carries, and where.
+    described: &'a BTreeMap<String, (&'static str, Target)>,
 }
 
 /// What the restriction lowering reads besides the restriction itself.
@@ -643,6 +722,11 @@ struct Context<'a> {
     range_of: &'a BTreeMap<&'a str, &'a str>,
     /// Class → its asserted named superclasses.
     named_sups: &'a BTreeMap<&'a str, Vec<&'a str>>,
+    /// Functional properties: one value at most, everywhere.
+    functional: &'a BTreeSet<&'a str>,
+    /// Datatype property → the classes a whole-property `max 1` or
+    /// `exactly 1` caps it on.
+    capped: &'a BTreeMap<&'a str, Vec<&'a str>>,
     witnesses: WitnessPolicy,
 }
 
@@ -662,6 +746,18 @@ impl Context<'_> {
         }
         false
     }
+
+    /// Whether every `class` holds at most one `property` value, so a
+    /// single-valued data member imposes no bound OWL does not state.
+    fn at_most_one(&self, class: &str, property: &str) -> bool {
+        self.functional.contains(property)
+            || self
+                .capped
+                .get(property)
+                .into_iter()
+                .flatten()
+                .any(|capping| self.subsumed(class, capping))
+    }
 }
 
 /// A restriction's filler, as the lowering reads it.
@@ -675,6 +771,16 @@ enum Filler<'a> {
     Expression,
 }
 
+/// How the lowering reads a restriction's filler.
+fn read_filler(filler: Option<&Expr>) -> Filler<'_> {
+    match filler {
+        None => Filler::Unqualified,
+        Some(Expr::Named(iri)) if iri == OWL_THING || iri == RDFS_LITERAL => Filler::Unqualified,
+        Some(Expr::Named(iri)) => Filler::Named(iri.as_str()),
+        Some(_) => Filler::Expression,
+    }
+}
+
 /// What a restriction asks of its class's member, or why it asks nothing the
 /// member can carry.
 #[allow(
@@ -684,6 +790,7 @@ enum Filler<'a> {
 fn restriction_shape(
     context: &Context<'_>,
     table: &mut TypeTable,
+    class: &str,
     property: &str,
     kind: &Restriction,
     filler: Option<&Expr>,
@@ -712,12 +819,7 @@ fn restriction_shape(
             ),
         );
     }
-    let filler = match filler {
-        None => Filler::Unqualified,
-        Some(Expr::Named(iri)) if iri == OWL_THING || iri == RDFS_LITERAL => Filler::Unqualified,
-        Some(Expr::Named(iri)) => Filler::Named(iri.as_str()),
-        Some(_) => Filler::Expression,
-    };
+    let filler = read_filler(filler);
     let range = context.range_of.get(property).copied();
     // (at least, at most) values the restriction counts.
     let (least, most) = match kind {
@@ -821,6 +923,17 @@ fn restriction_shape(
             });
             return match property_kind {
                 PropertyKind::Object => Ok(link(context, range, false, true, degraded, true)),
+                // A data member holds one value: required, it would also cap
+                // the property at one, which OWL states only by a functional
+                // property or a `max 1` over every value.
+                PropertyKind::Datatype if !context.at_most_one(class, property) => defer(
+                    &codes::OWL_FILLER_SCOPED,
+                    NornHome::EntityIr,
+                    format!(
+                        "{scope}; under witnesses: closed only its existence could be lowered, but a data member holds one value and nothing bounds {} to one value here (no FunctionalProperty and no max 1 over every value), so a required member would add a bound OWL does not state",
+                        model.compact(property)
+                    ),
+                ),
                 PropertyKind::Datatype => Ok(Ask::Member {
                     shape: Shape::Value {
                         kind: value_type(table, range.unwrap_or(""))?,
@@ -1154,12 +1267,16 @@ fn resolve(
 fn dispose(
     model: &Model,
     lowered: &mut Lowered,
-    own: &[(String, Own)],
-    rejected: &BTreeMap<usize, String>,
+    accounted: &Accounted<'_>,
     dropped_edges: BTreeMap<usize, Disposition>,
-    edges: &BTreeMap<String, BTreeMap<String, usize>>,
-    range_of: &BTreeMap<&str, &str>,
 ) {
+    let Accounted {
+        own,
+        rejected,
+        edges,
+        range_of,
+        described,
+    } = *accounted;
     let target_of = |class: &str, member: Option<&str>| {
         let artifact = artifact_id(lowered.names.get(class).map_or("", String::as_str));
         member.map_or_else(
@@ -1269,20 +1386,35 @@ fn dispose(
             Item::Annotation { subject, predicate } => {
                 let documented = predicate == crate::owl_model::RDFS_LABEL
                     || predicate == crate::owl_model::SKOS_DEFINITION;
-                if documented && lowered.names.contains_key(subject) {
-                    Disposition::Mapped {
-                        target: target_of(subject, None),
+                match described.get(subject) {
+                    // The description carries this annotation.
+                    Some((selected, target)) if documented && selected == predicate => Disposition::Mapped {
+                        target: target.clone(),
                         degraded: None,
                         decision: None,
-                    }
-                } else if documented && let Some(mapped) = mapped_property(subject) {
-                    mapped
-                } else {
-                    deferred(
+                    },
+                    Some((selected, _)) if documented => deferred(
+                        &codes::OWL_ANNOTATION,
+                        NornHome::WidgetIr,
+                        format!(
+                            "{} is not in the description: its {} takes precedence, so this text is kept in the source graph",
+                            model.compact(predicate),
+                            model.compact(selected)
+                        ),
+                    ),
+                    _ if documented => deferred(
+                        &codes::OWL_ANNOTATION,
+                        NornHome::WidgetIr,
+                        format!(
+                            "{} is documentation of a term no emitted description carries, kept in the source graph",
+                            model.compact(predicate)
+                        ),
+                    ),
+                    _ => deferred(
                         &codes::OWL_ANNOTATION,
                         NornHome::WidgetIr,
                         format!("{} is documentation, kept in the source graph", model.compact(predicate)),
-                    )
+                    ),
                 }
             }
             Item::AxiomAnnotation(_) => deferred(
