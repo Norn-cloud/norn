@@ -1,0 +1,29 @@
+{
+  "status": 200,
+  "body": {
+    "principal": {
+      "subjectId": "user:user-member",
+      "actorKind": "user",
+      "roles": [
+        "member"
+      ],
+      "roleTable": "studio-roles/1"
+    },
+    "policy": "demo.host.read",
+    "grantTable": "norn-cell-do-grants/3",
+    "capabilities": {
+      "population": {
+        "decision": "permit",
+        "rule": "norn-cell-do-grants/3:member"
+      },
+      "sources": {
+        "decision": "deny",
+        "rule": null
+      },
+      "values": {
+        "decision": "permit",
+        "rule": "norn-cell-do-grants/3:member"
+      }
+    }
+  }
+}

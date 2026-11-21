@@ -1,0 +1,71 @@
+{
+  "status": 200,
+  "body": {
+    "definitionsVersion": 2,
+    "items": [
+      {
+        "actionId": "docs.scanned_document.correct",
+        "title": "Correct an extracted total",
+        "description": null,
+        "objectKind": "docs.ScannedDocument",
+        "effect": "upsert_input_object",
+        "objectIdField": "id",
+        "inputSchema": {
+          "additionalProperties": false,
+          "properties": {
+            "correction_evidence": {
+              "description": "The evidence object the correction rests on, for example SCAN-INV-1042~total; copy it from the evidence beside the value.",
+              "title": "Evidence",
+              "type": "string"
+            },
+            "correction_reason": {
+              "description": "Why the imported value is wrong, kept with the correction.",
+              "title": "Reason",
+              "type": "string"
+            },
+            "currency": {
+              "enum": [
+                "USD"
+              ],
+              "type": "string"
+            },
+            "id": {
+              "description": "The scanned document to correct.",
+              "title": "Document",
+              "type": "string"
+            },
+            "total": {
+              "description": "The total as printed on the scanned page. It must equal the sum of the printed lines and, for a booked document, its journal entry; a misread line is corrected on that line.",
+              "nornType": {
+                "additivity": {
+                  "kind": "additive"
+                },
+                "currencySource": {
+                  "links": [],
+                  "property": "currency"
+                },
+                "kind": "decimal",
+                "scale": 2.0
+              },
+              "title": "Corrected total",
+              "type": "number"
+            }
+          },
+          "required": [
+            "id",
+            "currency",
+            "total",
+            "correction_reason",
+            "correction_evidence"
+          ],
+          "type": "object"
+        },
+        "uiEffects": {
+          "irreversible": false,
+          "destructive": false,
+          "money": []
+        }
+      }
+    ]
+  }
+}

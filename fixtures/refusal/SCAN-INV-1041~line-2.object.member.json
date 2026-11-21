@@ -1,0 +1,23 @@
+{
+  "status": 200,
+  "body": {
+    "objectType": "docs.DocumentLine",
+    "id": "SCAN-INV-1041~line-2",
+    "scope": "org_a/prod",
+    "version": 1,
+    "values": {
+      "amount": 12,
+      "corrected_by": null,
+      "correction_evidence": null,
+      "correction_reason": null,
+      "currency": "USD",
+      "description": "Crucible liner",
+      "document_id": "SCAN-INV-1041",
+      "id": "SCAN-INV-1041~line-2",
+      "line_no": 2,
+      "review": "extracted"
+    },
+    "withheld": false,
+    "withheldProperties": []
+  }
+}
