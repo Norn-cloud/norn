@@ -333,11 +333,15 @@ bastion and every runner (`/etc/norn/rivet-ca.pem`).
      on every runner. The runner reads `SSL_CERT_FILE` only at start, so a
      runner is never reloaded for a trust change, only restarted.
   3. Re-issue every leaf from the new CA and `systemctl reload haproxy`.
-  4. Remove the old CA from every bundle. Then `systemctl restart
-     norn-cell-rivet` on every runner (one at a time, waiting for each to
-     rejoin), so no runner keeps trusting the old root. For HAProxy, a reload
-     is enough on a scheduled rotation: old connections drain on the old
-     process and new ones verify against the new bundle.
+  4. Remove the old CA from every bundle. Then `systemctl reload haproxy`
+     on every engine and then the load balancer: HAProxy reads `ca.pem` only
+     when it loads its configuration, so until this reload it still accepts
+     client certificates from the old root. Check each with
+     `systemctl status haproxy` (active, reloaded after the bundle changed).
+     Then `systemctl restart norn-cell-rivet` on every runner (one at a time,
+     waiting for each to rejoin), so no runner keeps trusting the old root.
+     On a scheduled rotation a reload is enough for HAProxy: old connections
+     drain on the old process and new ones verify against the new bundle.
 - If the CA key, any private key or the admin token may have leaked, a reload
   is not enough: a reload leaves the old HAProxy process serving every open
   connection, so a session that authenticated under the old trust stays up
@@ -352,12 +356,32 @@ bastion and every runner (`/etc/norn/rivet-ca.pem`).
   3. `systemctl restart rivet-engine` on each engine, one at a time, waiting
      for the engine to answer `/namespaces` again, so the old token is gone
      from memory; then `systemctl restart norn-cell-rivet` on every runner.
-  4. Check that nothing from before the restart is left: on every engine and
+  4. Check that nothing from before the restart is left. On every engine and
      the load balancer, `ps -o pid,lstart -C haproxy` lists only processes
-     started after the restart (a reload would have left an old worker), and
-     the old token is refused:
-     `curl --cacert ca.pem -o /dev/null -w '%{http_code}\n' -H "authorization: Bearer <old token>" https://10.0.0.2:6420/namespaces`
-     prints 401.
+     started after the restart (a reload would have left an old worker).
+     Then, from the bastion, check each engine directly and the load
+     balancer, so one engine still holding the old token cannot hide behind
+     the balancer's health checks. With the tokens in files (mode 600,
+     on the bastion's tmpfs, removed afterwards), never on the command line:
+
+     ```sh
+     tls='--cacert /etc/rivet/tls/ca.pem --cert /etc/rivet/tls/bastion.pem'
+     for e in 10.0.0.11 10.0.0.12 10.0.0.13; do
+       new=$(curl -s $tls -o /dev/null -w '%{http_code}' -H @new-token.hdr "https://$e:6420/namespaces")
+       old=$(curl -s $tls -o /dev/null -w '%{http_code}' -H @old-token.hdr "https://$e:6420/namespaces")
+       echo "$e new=$new old=$old"   # must print new=200 old=401
+     done
+     lb_new=$(curl -s --cacert /etc/rivet/tls/ca.pem -o /dev/null -w '%{http_code}' -H @new-token.hdr https://10.0.0.2:6420/namespaces)
+     lb_old=$(curl -s --cacert /etc/rivet/tls/ca.pem -o /dev/null -w '%{http_code}' -H @old-token.hdr https://10.0.0.2:6420/namespaces)
+     echo "lb new=$lb_new old=$lb_old"   # must print new=200 old=401
+     ```
+
+     `new-token.hdr` and `old-token.hdr` each hold one line,
+     `authorization: Bearer <token>`. Every engine and the balancer must print
+     `new=200 old=401`; any other pair means that machine still runs with the
+     old token or the old trust, so repeat steps 2 and 3 on it. A `000` means
+     the TLS handshake failed: the bastion's certificate is not yet re-issued
+     from the new CA (step 3 of the CA replacement).
   Runners reconnect within seconds of the HAProxy restart; actors whose
   runner drops are served again when it rejoins, as in a runner restart.
 
