@@ -1308,7 +1308,9 @@ fn a_member_reads_a_records_history_without_its_sources_or_the_calls_input() {
         .map(String::as_str)
         .collect();
     fields.sort_unstable();
-    assert_eq!(fields, ["actionId", "actor", "kind"], "{admin}");
+    // `input` stays in the frozen contract (D84), deprecated and always empty.
+    assert_eq!(fields, ["actionId", "actor", "input", "kind"], "{admin}");
+    assert_eq!(writer["input"], json!({}), "{admin}");
     // The lineage is still Sources': the member is refused it.
     let lineage = cell.call(
         "GET",
