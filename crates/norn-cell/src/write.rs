@@ -727,6 +727,15 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                         &crate::system::claim_endpoints_of("i.\"observation_id\" = ?1"),
                         params![observation_id],
                     )?;
+                    // MAP-REPROCESS-1: an explicitly re-derived bundle consumes
+                    // the quarantined row it reprocesses (the guard rechecked
+                    // that it names exactly that row's capture address).
+                    self.conn.execute(
+                        &format!(
+                            "UPDATE \"{INBOX}\" SET \"consumed_commit_seq\" = ?1 WHERE \"consumed_commit_seq\" IS NULL AND \"observation_id\" = (SELECT json_extract(\"observed\", '$.input.reprocesses') FROM \"{INBOX}\" WHERE \"observation_id\" = ?2)"
+                        ),
+                        params![commit_seq, observation_id],
+                    )?;
                 }
                 if observation_id.starts_with(crate::mapping_page::PAGE_PREFIX) {
                     // OBS-PAGE-1: the page's still-pending members are consumed
