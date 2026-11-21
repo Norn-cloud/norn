@@ -651,6 +651,83 @@ impl ProbeActor {
                 json!({"wrote": n})
             }
             "count" => json!({"count": count(ctx, &param("tag", "turn")).await?}),
+            "fill" => {
+                // Fork evidence (#1130): `mb` MiB of incompressible 1 MiB rows in
+                // commits of `chunk` MiB (under the 128 MiB commit cap).
+                let total = number("mb", 16).max(0);
+                let chunk = number("chunk", 32).clamp(1, 96);
+                ctx.sql()
+                    .exec("CREATE TABLE IF NOT EXISTS fill (id INTEGER PRIMARY KEY, b BLOB NOT NULL)")
+                    .await?;
+                let started = std::time::Instant::now();
+                let mut added = 0;
+                while added < total {
+                    let n = chunk.min(total.saturating_sub(added));
+                    ctx.sql()
+                        .run(
+                            "INSERT INTO fill (b) SELECT randomblob(1048576) FROM \
+                             (WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < ?) SELECT x FROM c)",
+                            Some(vec![BindParam::Integer(n)]),
+                        )
+                        .await?;
+                    added = added.saturating_add(n);
+                }
+                let rows = one_integer(ctx, "SELECT count(*) FROM fill", vec![]).await?;
+                json!({"addedMb": added, "rows": rows, "ms": started.elapsed().as_secs_f64() * 1000.0})
+            }
+            "digest" => {
+                // A sha256 over every row of the probe's tables, in rowid order:
+                // `log` and `kv` on the first page (`after=0`), then `fill` rows
+                // with id > `after`, at most `limit` per call. The caller chains
+                // page hashes, so any size is digested in bounded calls.
+                use sha2::{Digest as _, Sha256};
+                let after = number("after", 0);
+                let limit = number("limit", 256).clamp(1, 4096);
+                let mut hasher = Sha256::new();
+                let feed = |hasher: &mut Sha256, row: &[ColumnValue]| {
+                    for value in row {
+                        match value {
+                            ColumnValue::Null => hasher.update(b"n"),
+                            ColumnValue::Integer(v) => hasher.update(format!("i{v};")),
+                            ColumnValue::Float(v) => hasher.update(format!("f{};", v.to_bits())),
+                            ColumnValue::Text(v) => hasher.update(format!("t{}:{v};", v.len())),
+                            ColumnValue::Blob(v) => {
+                                hasher.update(format!("b{}:", v.len()));
+                                hasher.update(v);
+                            }
+                        }
+                    }
+                };
+                if after == 0 {
+                    for sql in ["SELECT seq, kind, at, detail FROM log ORDER BY seq", "SELECT k, v FROM kv ORDER BY k"] {
+                        for row in &ctx.sql().execute(sql, None).await?.rows {
+                            feed(&mut hasher, row);
+                        }
+                    }
+                }
+                let has_fill = one_integer(ctx, "SELECT count(*) FROM sqlite_master WHERE name = 'fill'", vec![]).await? == Some(1);
+                let (mut last, mut count, mut bytes) = (after, 0_i64, 0_usize);
+                if has_fill {
+                    let page = ctx
+                        .sql()
+                        .execute(
+                            "SELECT id, b FROM fill WHERE id > ? ORDER BY id LIMIT ?",
+                            Some(vec![BindParam::Integer(after), BindParam::Integer(limit)]),
+                        )
+                        .await?;
+                    for row in &page.rows {
+                        if let Some(ColumnValue::Integer(id)) = row.first() {
+                            last = *id;
+                        }
+                        if let Some(ColumnValue::Blob(b)) = row.get(1) {
+                            bytes = bytes.saturating_add(b.len());
+                        }
+                        count = count.saturating_add(1);
+                        feed(&mut hasher, row);
+                    }
+                }
+                json!({"hash": format!("{:x}", hasher.finalize()), "last": last, "rows": count, "bytes": bytes, "done": count < limit})
+            }
             "clock" => {
                 let first = now_ms();
                 let started = std::time::Instant::now();

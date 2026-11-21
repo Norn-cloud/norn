@@ -28,12 +28,26 @@ async fn main() -> Result<()> {
         .with_writer(std::io::stderr)
         .init();
     let config = config::install(HostConfig::from_env());
-    let endpoint = std::env::var("RIVET_ENDPOINT").context("RIVET_ENDPOINT names the engine")?;
+    // Local development only (`NORN_RIVET_DEV_ENGINE=1`, no `RIVET_ENDPOINT`):
+    // RivetKit starts a local engine on 127.0.0.1:6420, downloading the release
+    // that matches the SDK (checksum-verified) when none is installed.
+    let dev_engine = std::env::var("NORN_RIVET_DEV_ENGINE").is_ok_and(|value| value == "1");
+    let endpoint = match std::env::var("RIVET_ENDPOINT") {
+        Ok(endpoint) if !dev_engine => endpoint,
+        Ok(_) => anyhow::bail!("NORN_RIVET_DEV_ENGINE=1 starts a local engine; unset RIVET_ENDPOINT"),
+        Err(_) if dev_engine => "http://default:default@127.0.0.1:6420".to_owned(),
+        Err(_) => anyhow::bail!("RIVET_ENDPOINT names the engine (or NORN_RIVET_DEV_ENGINE=1 for a local one)"),
+    };
     let listen = std::env::var("NORN_LISTEN").unwrap_or_else(|_unset| "127.0.0.1:8787".to_owned());
     let mut runner_config = rivetkit::ServeConfig::from_env()?;
-    // This host never starts or downloads an engine: it joins the one named.
-    runner_config.engine_spawn = rivetkit::EngineSpawnMode::Never;
-    runner_config.engine_auto_download = false;
+    if dev_engine {
+        runner_config.engine_spawn = rivetkit::EngineSpawnMode::Always;
+        runner_config.engine_auto_download = true;
+    } else {
+        // A deployed host never starts or downloads an engine: it joins the one named.
+        runner_config.engine_spawn = rivetkit::EngineSpawnMode::Never;
+        runner_config.engine_auto_download = false;
+    }
     let shutdown = CancellationToken::new();
     let runner = tokio::spawn(serve_actors(runner_config, shutdown.clone()));
     let client = Client::new(ClientConfig::new(endpoint));
