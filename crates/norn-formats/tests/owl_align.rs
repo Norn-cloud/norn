@@ -285,7 +285,7 @@ fn owl_alignment_held_lineage_is_a_reported_residual() {
     }
     let summary = aligned.summary();
     assert_eq!(summary["held"], 3);
-    let mut set = aligned.packs.clone();
+    let mut set = aligned.packs;
     set.push(canon());
     let coverage = validate_link_registry(&set)
         .unwrap()
