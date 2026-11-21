@@ -110,11 +110,6 @@ impl std::fmt::Debug for CheckpointKey {
 }
 
 impl CheckpointKey {
-    /// A fixed, public key for development hosts and tests only. It
-    /// authenticates nothing against anyone who has read this source: a
-    /// deployed host must use a key from its secret store.
-    pub const INSECURE_DEV_AND_TEST: Self = Self(*b"norn.open-checkpoint.TEST-KEY.v1");
-
     /// A key of 32 secret bytes.
     #[must_use]
     pub const fn from_bytes(bytes: [u8; 32]) -> Self {
@@ -455,6 +450,15 @@ mod tests {
     use super::{CheckpointKey, OpenCheckpoint, mac};
     use hmac::Mac as _;
 
+    /// 32 random bytes from SQLite's `randomblob`: a key for this test only.
+    fn random_bytes() -> [u8; 32] {
+        let conn = rusqlite::Connection::open_in_memory().expect("database");
+        let bytes: Vec<u8> = conn
+            .query_row("SELECT randomblob(32)", [], |row| row.get(0))
+            .expect("random bytes");
+        bytes.try_into().expect("32 bytes")
+    }
+
     fn checkpoint() -> OpenCheckpoint {
         OpenCheckpoint {
             head: crate::LedgerHead {
@@ -479,7 +483,7 @@ mod tests {
     /// one changed column, or another key, fails it.
     #[test]
     fn the_mac_binds_the_row_the_cell_and_the_key() {
-        let key = CheckpointKey::INSECURE_DEV_AND_TEST;
+        let key = CheckpointKey::from_bytes(random_bytes());
         let row = checkpoint();
         let tag = mac(&key, "cell-a", &row)
             .expect("mac")
@@ -490,23 +494,19 @@ mod tests {
         let mut changed = row.clone();
         changed.receipts_root = "r2".to_owned();
         assert!(!verifies(&key, "cell-a", &changed, &tag), "a changed root");
-        let other = CheckpointKey::from_bytes([7; 32]);
+        let other = CheckpointKey::from_bytes(random_bytes());
         assert!(!verifies(&other, "cell-a", &row, &tag), "another key");
     }
 
     #[test]
     fn a_key_is_64_hexadecimal_digits() {
-        let hex = "07".repeat(32);
-        assert_eq!(
-            CheckpointKey::from_hex(&hex).expect("key"),
-            CheckpointKey::from_bytes([7; 32])
-        );
+        let bytes = random_bytes();
+        let hex = super::root_hex(&bytes);
+        let key = CheckpointKey::from_hex(&hex).expect("key");
+        assert_eq!(key, CheckpointKey::from_bytes(bytes));
         assert!(CheckpointKey::from_hex("07").is_err());
         assert!(CheckpointKey::from_hex(&"zz".repeat(32)).is_err());
-        assert_eq!(
-            format!("{:?}", CheckpointKey::INSECURE_DEV_AND_TEST),
-            "CheckpointKey(<redacted>)"
-        );
+        assert_eq!(format!("{key:?}"), "CheckpointKey(<redacted>)");
     }
 
     /// S5 (#1551 round 2): a checkpoint table of an older layout, with no

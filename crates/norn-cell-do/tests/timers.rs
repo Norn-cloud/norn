@@ -532,8 +532,14 @@ fn a_flow_timer_runs_under_its_runs_pinned_rule() {
 
 /// The cell at `path` as a keyed host opens it (the test key).
 fn keyed_store(path: &Path) -> CellStore<NativeEngine> {
+    static KEY: std::sync::OnceLock<[u8; 32]> = std::sync::OnceLock::new();
+    let key = *KEY.get_or_init(|| {
+        let mut key = [0_u8; 32];
+        getrandom::fill(&mut key).unwrap();
+        key
+    });
     let options = StoreOptions {
-        checkpoint_key: Some(norn_cell::CheckpointKey::INSECURE_DEV_AND_TEST),
+        checkpoint_key: Some(norn_cell::CheckpointKey::from_bytes(key)),
         ..StoreOptions::default()
     };
     CellStore::open(path, marker(), options).unwrap()

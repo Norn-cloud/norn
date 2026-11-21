@@ -73,13 +73,29 @@ mod timers;
 use policy::{DevMetrics, DevPrincipals, LocalDeveloper};
 
 /// OPEN-CHECKPOINT-1 (#1551): the dev host authenticates its cell's open
-/// checkpoint with the fixed, public development key. A deployed host takes
-/// its key from its secret store.
-fn dev_store_options() -> StoreOptions {
+/// checkpoint with a random key it keeps beside the cell, outside the cell
+/// file: `.norn/checkpoint.key`, owner-only, made on first use. A deployed
+/// host takes its key from its secret store. Without a readable key the
+/// cell opens from genesis.
+fn dev_store_options(cell_path: &Path) -> StoreOptions {
     StoreOptions {
-        checkpoint_key: Some(norn_cell::CheckpointKey::INSECURE_DEV_AND_TEST),
+        checkpoint_key: dev_checkpoint_key(&cell_path.with_file_name("checkpoint.key")),
         ..StoreOptions::default()
     }
+}
+
+fn dev_checkpoint_key(path: &Path) -> Option<norn_cell::CheckpointKey> {
+    if let Ok(text) = std::fs::read_to_string(path) {
+        return norn_cell::CheckpointKey::from_hex(&text).ok();
+    }
+    let mut key = [0_u8; 32];
+    getrandom::fill(&mut key).ok()?;
+    let text = key.iter().fold(String::with_capacity(65), |mut text, byte| {
+        let _written = write!(text, "{byte:02x}");
+        text
+    });
+    write_private(path, &format!("{text}\n")).ok()?;
+    Some(norn_cell::CheckpointKey::from_bytes(key))
 }
 
 /// `norn-dev-host` options. The compile worker command follows `--`; the
@@ -845,7 +861,7 @@ impl Session<'_> {
                 diagnostics,
             })?
         };
-        let engine = NativeEngine::open(cell_path, dev_store_options())
+        let engine = NativeEngine::open(cell_path, dev_store_options(cell_path))
             .map_err(|error| refused(error.to_string()))?;
         let store = CellStore::provision_definitions_riding(
             engine,
@@ -918,7 +934,7 @@ fn reopen(
     if !path.exists() {
         return Ok((None, None));
     }
-    let engine = NativeEngine::open(path, dev_store_options())
+    let engine = NativeEngine::open(path, dev_store_options(path))
         .map_err(|error| unreadable(error.to_string()))?;
     let Some(active) = CellStore::read_active_definitions(&engine)
         .map_err(|error| unreadable(error.to_string()))?

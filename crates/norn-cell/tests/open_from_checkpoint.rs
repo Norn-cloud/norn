@@ -38,10 +38,26 @@ use quantity_support::{define, post, reserve};
 /// Commits apart the engine records a checkpoint (`open_checkpoint::EVERY`).
 const EVERY: u64 = 128;
 
+/// This test process's checkpoint key: random, from SQLite's
+/// `randomblob`, the same for every open in the process.
+fn test_key_bytes() -> [u8; 32] {
+    static KEY: std::sync::OnceLock<[u8; 32]> = std::sync::OnceLock::new();
+    *KEY.get_or_init(|| {
+        let engine = NativeEngine::open_in_memory().expect("engine");
+        let rows = engine
+            .query("SELECT randomblob(32)", &[])
+            .expect("random bytes");
+        let [SqlValue::Blob(bytes)] = &rows[0][..] else {
+            panic!("random bytes {rows:?}");
+        };
+        bytes.clone().try_into().expect("32 bytes")
+    })
+}
+
 /// The host's open options: the test key (#1551 round 4).
 fn keyed() -> StoreOptions {
     StoreOptions {
-        checkpoint_key: Some(norn_cell::CheckpointKey::INSECURE_DEV_AND_TEST),
+        checkpoint_key: Some(norn_cell::CheckpointKey::from_bytes(test_key_bytes())),
         ..StoreOptions::default()
     }
 }

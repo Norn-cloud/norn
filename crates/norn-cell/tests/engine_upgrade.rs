@@ -215,10 +215,9 @@ fn add_open_checkpoint(
     .expect("mac message");
     let mac = {
         use hmac::{KeyInit as _, Mac as _};
-        let mut mac = hmac::Hmac::<transparency_sha2::Sha256>::new_from_slice(
-            b"norn.open-checkpoint.TEST-KEY.v1",
-        )
-        .expect("key");
+        let mut mac =
+            hmac::Hmac::<transparency_sha2::Sha256>::new_from_slice(&test_key_bytes())
+                .expect("key");
         mac.update(&message);
         mac.finalize()
             .into_bytes()
@@ -262,10 +261,26 @@ fn raw(path: &Path) -> NativeEngine {
     NativeEngine::open(path, StoreOptions::default()).expect("engine")
 }
 
+/// This test process's checkpoint key: random, from SQLite's
+/// `randomblob`, the same for every open in the process.
+fn test_key_bytes() -> [u8; 32] {
+    static KEY: std::sync::OnceLock<[u8; 32]> = std::sync::OnceLock::new();
+    *KEY.get_or_init(|| {
+        let engine = NativeEngine::open_in_memory().expect("engine");
+        let rows = engine
+            .query("SELECT randomblob(32)", &[])
+            .expect("random bytes");
+        let [SqlValue::Blob(bytes)] = &rows[0][..] else {
+            panic!("random bytes {rows:?}");
+        };
+        bytes.clone().try_into().expect("32 bytes")
+    })
+}
+
 /// Opens with the test key, as a keyed host opens (#1551 round 4).
 fn keyed() -> StoreOptions {
     StoreOptions {
-        checkpoint_key: Some(norn_cell::CheckpointKey::INSECURE_DEV_AND_TEST),
+        checkpoint_key: Some(norn_cell::CheckpointKey::from_bytes(test_key_bytes())),
         ..StoreOptions::default()
     }
 }

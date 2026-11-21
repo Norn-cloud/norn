@@ -60,7 +60,7 @@ const REFUSAL_CODES = new Set(Object.entries({
   bulk: "above_max below_min digest_mismatch missing_column unreadable unsupported_law",
   cell:
     "base_mismatch not_provisioned provision_conflict provision_refused reserved_artifact " +
-    "scope_conflict sqlite unopenable",
+    "fenced scope_conflict sqlite unopenable verifying",
   commit:
     "conflict dangling_link duplicate_key duplicate_link duplicate_link_read effective_values " +
     "event_limit host identifier_too_long immutable_object invalid_link_read invalid_predicate_read " +
