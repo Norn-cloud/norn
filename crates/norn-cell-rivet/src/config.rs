@@ -165,7 +165,9 @@ mod tests {
     fn locked(name: &str) -> String {
         let lock = include_str!("../Cargo.lock");
         let entry = format!("name = \"{name}\"\n");
-        let at = lock.find(&entry).unwrap_or_else(|| panic!("{name} is not in Cargo.lock"));
+        let at = lock
+            .find(&entry)
+            .unwrap_or_else(|| panic!("{name} is not in Cargo.lock"));
         let rest = &lock[at + entry.len()..];
         rest.strip_prefix("version = \"")
             .and_then(|v| v.split('"').next())
@@ -191,8 +193,13 @@ mod tests {
             manifest.contains(&format!("rivetkit = {{ version = \"={RIVETKIT_VERSION}\"")),
             "Cargo.toml must pin rivetkit at ={RIVETKIT_VERSION}"
         );
-        let last = RIVETKIT_CHANNEL.last().expect("the channel lists this release");
-        assert_eq!(last.rivetkit, RIVETKIT_VERSION, "the last channel entry is this release");
+        let last = RIVETKIT_CHANNEL
+            .last()
+            .expect("the channel lists this release");
+        assert_eq!(
+            last.rivetkit, RIVETKIT_VERSION,
+            "the last channel entry is this release"
+        );
         assert!(
             last.from_storage <= STORAGE_VERSION,
             "the channel names storage version {} that this engine does not write ({STORAGE_VERSION})",
@@ -207,7 +214,10 @@ mod tests {
                 pair[0].rivetkit,
                 pair[0].from_storage
             );
-            assert_ne!(pair[0].rivetkit, pair[1].rivetkit, "a RivetKit release is listed once");
+            assert_ne!(
+                pair[0].rivetkit, pair[1].rivetkit,
+                "a RivetKit release is listed once"
+            );
         }
     }
 }
