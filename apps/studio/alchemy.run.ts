@@ -8,8 +8,9 @@ import { polarConfig } from "./worker/polar-config.ts"
 // The recorded Studio: `vite build` output (synthetic recorded engine documents
 // only) served as static assets on the custom domains in STUDIO_DOMAINS
 // (comma-separated); browser navigations to
-// client-side routes fall back to index.html. Credentials come from
-// CLOUDFLARE_* in the environment. State lives in ALCHEMY_STATE_DIR (outside
+// client-side routes fall back to index.html. Credentials are the Norn Cloudflare
+// account's API token: CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID from Infisical prod
+// /norn/cloudflare (never the Global API Key). State lives in ALCHEMY_STATE_DIR (outside
 // the repository) or the ignored `.alchemy`.
 // ALCHEMY_STAGE must name the stage: unset, the deploy refuses rather than
 // meaning production, and prod also needs NORN_DEPLOY_PROD=1.

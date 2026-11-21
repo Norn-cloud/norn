@@ -33,7 +33,7 @@ test("only preview binds a cell Worker, by script name; prod has none until prom
 })
 
 test("a missing cell Worker fails the deploy by name; an existing one passes", async () => {
-  const env = { CLOUDFLARE_ACCOUNT_ID: "a", CLOUDFLARE_EMAIL: "e", CLOUDFLARE_API_KEY: "k" }
+  const env = { CLOUDFLARE_ACCOUNT_ID: "a", CLOUDFLARE_API_TOKEN: "t" }
   let asked = ""
   const answer = (status: number) => async (url: RequestInfo | URL) => { asked = String(url); return new Response("{}", { status }) }
   await expect(requireWorkerScript("norn-cell-preview", env, answer(404) as typeof fetch)).rejects.toThrow("The cell Worker norn-cell-preview does not exist")
@@ -41,9 +41,8 @@ test("a missing cell Worker fails the deploy by name; an existing one passes", a
   await expect(requireWorkerScript("norn-cell-preview", env, answer(500) as typeof fetch)).rejects.toThrow("Cloudflare answered 500")
   await requireWorkerScript("norn-cell-preview", env, answer(200) as typeof fetch)
   await expect(requireWorkerScript("norn-cell-preview", {}, answer(200) as typeof fetch)).rejects.toThrow("CLOUDFLARE_ACCOUNT_ID")
-  // No credentials is named as such, before any request goes out.
+  // No token is named as such, before any request goes out; the Global API Key is not a way in.
   asked = ""
-  await expect(requireWorkerScript("norn-cell-preview", { CLOUDFLARE_ACCOUNT_ID: "a", CLOUDFLARE_EMAIL: "e" }, answer(200) as typeof fetch)).rejects.toThrow("CLOUDFLARE_API_TOKEN")
+  await expect(requireWorkerScript("norn-cell-preview", { CLOUDFLARE_ACCOUNT_ID: "a", CLOUDFLARE_EMAIL: "e", CLOUDFLARE_API_KEY: "k" }, answer(200) as typeof fetch)).rejects.toThrow("CLOUDFLARE_API_TOKEN")
   expect(asked).toBe("")
-  await requireWorkerScript("norn-cell-preview", { CLOUDFLARE_ACCOUNT_ID: "a", CLOUDFLARE_API_TOKEN: "t" }, answer(200) as typeof fetch)
 })

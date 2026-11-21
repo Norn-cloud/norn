@@ -9,7 +9,7 @@
  *
  *   bun scripts/seed-demo-org.ts --stage preview --member viewer@demo.norn.cloud=viewer --member analyst@demo.norn.cloud=member
  *
- * Uses a loopback-only Wrangler Worker and remote D1 binding. Needs CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_EMAIL and CLOUDFLARE_API_KEY. The members must already have signed up and verified their email addresses.
+ * Uses a loopback-only Wrangler Worker and remote D1 binding. Needs CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN (Infisical prod /norn/cloudflare; never the Global API Key). The members must already have signed up and verified their email addresses.
  */
 import { DEMO_ORG, parseMembers } from "./seed-demo-org-core.ts"
 export { DEMO_ORG, parseMembers, seedDemoOrg, seedStatements } from "./seed-demo-org-core.ts"
@@ -124,9 +124,9 @@ async function main(argv: readonly string[]) {
   const stage = argv[argv.indexOf("--stage") + 1]
   if (argv.indexOf("--stage") < 0 || stage !== "preview") throw new Error("--stage preview is required; prod gets org_demo only on promotion")
   const members = parseMembers(argv.flatMap((arg, index) => argv[index - 1] === "--member" ? [arg] : []))
-  const { CLOUDFLARE_ACCOUNT_ID: account, CLOUDFLARE_EMAIL: email, CLOUDFLARE_API_KEY: key } = process.env
-  if (!account || !email || !key) throw new Error("CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_EMAIL and CLOUDFLARE_API_KEY are required")
-  const api = (path: string) => discoverD1(`https://api.cloudflare.com/client/v4/accounts/${account}/d1/database${path}`, { "x-auth-email": email, "x-auth-key": key, "content-type": "application/json" })
+  const { CLOUDFLARE_ACCOUNT_ID: account, CLOUDFLARE_API_TOKEN: token } = process.env
+  if (!account || !token) throw new Error("CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN are required (Infisical prod /norn/cloudflare)")
+  const api = (path: string) => discoverD1(`https://api.cloudflare.com/client/v4/accounts/${account}/d1/database${path}`, { authorization: `Bearer ${token}`, "content-type": "application/json" })
   const name = `norn-studio-auth-${stage}`
   const found = await api(`?name=${name}`)
   if (!found.success) throw new SeedFailure(`could not list D1 databases: ${JSON.stringify(found.errors)}`, SEED_EXIT.refused)
