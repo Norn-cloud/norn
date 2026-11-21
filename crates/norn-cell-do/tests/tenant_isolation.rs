@@ -1179,6 +1179,31 @@ fn the_storage_free_gate_answers_outsiders_as_the_cell_does() {
 
 // ----------------------------------------------------- a parked call by id
 
+/// A hosted cell of `scope`, provisioned as the deployed host provisions one
+/// (the trusted base and the tenant's own set): a cell an action can park on.
+fn provisioned(scope: &CellScope) -> Host {
+    let mut cell = vacant(scope);
+    let set: Vec<Value> = serde_json::from_str::<Vec<Value>>(include_str!(
+        "../../../fixtures/demo/explorer/three-systems.definitions.json"
+    ))
+    .unwrap()
+    .into_iter()
+    .filter(|artifact| !norn_api::kernel_set::is_reserved(artifact["artifactId"].as_str().unwrap()))
+    .collect();
+    let body = json!({ "baseSha256": norn_cell_do::base::trusted_base().unwrap().sha256(),
+        "artifacts": set });
+    let provisioned = send(
+        &mut cell,
+        "POST",
+        norn_api::provision::PROVISION_PATH,
+        &query(scope),
+        Some(&user(&scope.org_id, "owner")),
+        &body.to_string(),
+    );
+    assert_eq!(provisioned.response.status, 200, "{}", provisioned.response.body);
+    cell
+}
+
 /// B with one direct parked call: the batches pack applied with an approval
 /// (deciders `owner`) gating its record action, and B's member calls it.
 /// Its decision id.
@@ -1251,7 +1276,8 @@ fn park_direct_call(b: &mut Host, scope: &CellScope) -> String {
 /// cell, read no item, at exactly the cost of an id that exists nowhere.
 #[test]
 fn a_parked_call_by_id_is_its_requesters_alone() {
-    let (mut b, ids) = tenant_b();
+    let ids = tenant_b().1;
+    let mut b = provisioned(&ids.scope);
     let parked = park_direct_call(&mut b, &ids.scope);
     let at_b = query(&ids.scope);
     let path = "/v1/decisions:requested";
@@ -1270,19 +1296,36 @@ fn a_parked_call_by_id_is_its_requesters_alone() {
         assert_eq!(served.calls, 0, "{outsider:?}");
         assert!(!served.response.body.contains(&parked), "{outsider:?}");
     }
-    for role in ["owner", "admin", "viewer"] {
-        let member = user(&ids.scope.org_id, role);
-        // Warm: a first request compiles the member's policies once.
-        send(&mut b, "GET", path, &absent, Some(&member), "");
-        let by_id = send(&mut b, "GET", path, &named, Some(&member), "");
-        let no_id = send(&mut b, "GET", path, &absent, Some(&member), "");
-        assert_eq!(
-            (by_id.response.status, by_id.calls),
-            (no_id.response.status, no_id.calls),
-            "{role}"
-        );
-        assert_eq!(json_of(&by_id.response)["items"], json!([]), "{role}");
-        assert!(!by_id.response.body.contains(&parked), "{role}");
+    // While it waits, and once B's owner approved it (its payload then
+    // reads through the resolved decision).
+    for phase in ["pending", "approved"] {
+        for role in ["owner", "admin", "viewer"] {
+            let member = user(&ids.scope.org_id, role);
+            // Warm: a first request compiles the member's policies once.
+            send(&mut b, "GET", path, &absent, Some(&member), "");
+            let by_id = send(&mut b, "GET", path, &named, Some(&member), "");
+            let no_id = send(&mut b, "GET", path, &absent, Some(&member), "");
+            assert_eq!(
+                (by_id.response.status, by_id.calls),
+                (no_id.response.status, no_id.calls),
+                "{phase}: {role}"
+            );
+            assert_eq!(json_of(&by_id.response)["items"], json!([]), "{phase}: {role}");
+            assert!(!by_id.response.body.contains(&parked), "{phase}: {role}");
+        }
+        if phase == "pending" {
+            let decided = send(
+                &mut b,
+                "POST",
+                &format!("/v1/decisions/{parked}:decide"),
+                &at_b,
+                Some(&user(&ids.scope.org_id, "owner")),
+                &json!({ "choice": "approve", "idempotencyKey": "b-approve-1" }).to_string(),
+            );
+            assert_eq!(decided.response.status, 200, "{}", decided.response.body);
+            let own = send(&mut b, "GET", path, &named, Some(&requester), "");
+            assert_eq!(json_of(&own.response)["items"][0]["canRun"], json!(true), "{}", own.response.body);
+        }
     }
     let scope_a = scope("org_a", "prod");
     let mut a = seeded(&scope_a, None);
