@@ -797,13 +797,8 @@ fn mixed_calls() -> Vec<(ActionQuery, Option<&'static str>, &'static str, String
         ..scoped("org_demo")
     };
     let mut calls = Vec::new();
-    for n in 0..6 {
-        let body = melt_body(
-            &format!("melt-{n}"),
-            "12",
-            &format!("{}", 10 - n % 3),
-            &format!("k{n}"),
-        );
+    for (n, output) in ["10", "9", "8", "10", "9", "8"].into_iter().enumerate() {
+        let body = melt_body(&format!("melt-{n}"), "12", output, &format!("k{n}"));
         calls.push((
             scoped("org_demo"),
             Some(OPERATOR),
