@@ -194,7 +194,11 @@ fn commit_counters_by_size() {
             json!(0),
             "environments: {line}"
         );
-        assert_eq!(counts["effective_model_builds"], json!(0), "effective models: {line}");
+        assert_eq!(
+            counts["effective_model_builds"],
+            json!(0),
+            "effective models: {line}"
+        );
         for counted in [first, counts] {
             assert_eq!(
                 counted["law_decodes"],
@@ -206,12 +210,7 @@ fn commit_counters_by_size() {
     for line in &lines {
         println!("COMMIT-COUNTERS {line}");
         let counts = &line["counts"];
-        for name in [
-            "sql_statements",
-            "rows_written",
-            "bytes_written",
-            "hashes",
-        ] {
+        for name in ["sql_statements", "rows_written", "bytes_written", "hashes"] {
             assert!(
                 counts[name].as_u64().is_some_and(|n| n > 0),
                 "{name} counted: {line}"
