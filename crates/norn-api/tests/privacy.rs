@@ -524,17 +524,6 @@ fn party_cell() -> (DevHost<NativeEngine>, tempfile::TempDir) {
                 ..CommitBatch::default()
             })
             .unwrap();
-        for (time, writes) in (3..).zip(later) {
-            store
-                .commit(&CommitBatch {
-                    world: MAIN_WORLD.into(),
-                    scope: physical(org).key(),
-                    logical_time: time,
-                    writes: writes.clone(),
-                    ..CommitBatch::default()
-                })
-                .unwrap();
-        }
     }
     let store = CellStore::open(&path, model, norn_cell::StoreOptions::default()).unwrap();
     let cell = DevHost::from_store(store, physical, |command| command.payload.clone())
@@ -901,17 +890,6 @@ fn a_provisioned_privacy_set_pseudonymizes_a_party_name() {
                 ..CommitBatch::default()
             })
             .unwrap();
-        for (time, writes) in (3..).zip(later) {
-            store
-                .commit(&CommitBatch {
-                    world: MAIN_WORLD.into(),
-                    scope: physical(org).key(),
-                    logical_time: time,
-                    writes: writes.clone(),
-                    ..CommitBatch::default()
-                })
-                .unwrap();
-        }
     }
     let store = CellStore::open(&path, model, norn_cell::StoreOptions::default()).unwrap();
     let cell = DevHost::from_store(store, physical, |command| command.payload.clone())
@@ -1116,17 +1094,6 @@ fn an_applied_pack_keeps_the_privacy_markings() {
                 ..CommitBatch::default()
             })
             .unwrap();
-        for (time, writes) in (3..).zip(later) {
-            store
-                .commit(&CommitBatch {
-                    world: MAIN_WORLD.into(),
-                    scope: physical(org).key(),
-                    logical_time: time,
-                    writes: writes.clone(),
-                    ..CommitBatch::default()
-                })
-                .unwrap();
-        }
     }
     let store = CellStore::open(&path, model, norn_cell::StoreOptions::default()).unwrap();
     let cell = DevHost::from_store(store, physical, |command| command.payload.clone())
