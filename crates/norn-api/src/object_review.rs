@@ -389,12 +389,12 @@ fn version_read<E: SqlEngine>(
     let stored = reader
         .object_at_version(MAIN_WORLD, &row.object_type, &row.id, version)
         .map_err(Refusal::host)?;
-    let decided_on = match &stored {
-        Some(record) => Some(record.clone()),
-        None if version > 1 => reader
-            .object_at_version(MAIN_WORLD, &row.object_type, &row.id, version - 1)
+    let decided_on = match (&stored, version.checked_sub(1).filter(|before| *before > 0)) {
+        (Some(record), _) => Some(record.clone()),
+        (None, Some(before)) => reader
+            .object_at_version(MAIN_WORLD, &row.object_type, &row.id, before)
             .map_err(Refusal::host)?,
-        None => None,
+        (None, None) => None,
     };
     let Some(decided_on) = decided_on else {
         return Ok(None);
