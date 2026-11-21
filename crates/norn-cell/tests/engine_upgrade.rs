@@ -37,9 +37,10 @@ const STORAGE_V1: &str = include_str!("fixtures/engine-storage-v1.json");
 const STORAGE_V2: &str = include_str!("fixtures/engine-storage-v2.json");
 
 /// Storage version 3 (#1483) adds the approval recovery tables, derived from
-/// the ledger, to every older cell. The fixtures hold no approving decision,
-/// so they arrive empty.
-fn add_approval_recovery_tables(image: &mut Value) {
+/// the ledger, to every older cell: `_norn_approved_call` gains
+/// `approved_calls` (the backfill from the cell's approving decisions), and
+/// `_norn_step_call` arrives empty, as no older commit owned a step call.
+fn add_approval_recovery_tables(image: &mut Value, approved_calls: &Value) {
     let objects = [
         (
             "table",
@@ -78,7 +79,7 @@ fn add_approval_recovery_tables(image: &mut Value) {
         "_norn_approved_call".to_owned(),
         serde_json::json!({
             "columns": ["rowid", "world", "decision_id", "command_id", "run_id", "resolved_at_ms", "refused_status", "refused_code", "refused_category", "consumed_seq"],
-            "rows": [],
+            "rows": approved_calls,
         }),
     );
     tables.insert(
@@ -285,7 +286,8 @@ fn a_storage_v1_cell_opens_on_this_engine_with_identical_receipts() {
         "table": "_norn_retained_definition",
         "sql": "CREATE UNIQUE INDEX \"_norn_retained_definition/version_id\" ON \"_norn_retained_definition\" (\"definitions_version\", \"id\")"
     }));
-    add_approval_recovery_tables(&mut expected);
+    // The v1 fixture holds no decision, so nothing is backfilled.
+    add_approval_recovery_tables(&mut expected, &serde_json::json!([]));
     let mut catalog = after;
     by_name(&mut catalog);
     by_name(&mut expected);
@@ -319,7 +321,10 @@ fn a_storage_v1_cell_opens_on_this_engine_with_identical_receipts() {
 
 /// A cell the last storage version 2 engine wrote (stamped, with #1469's
 /// index already in place) opens on this engine with its ledger and receipts
-/// intact; the upgrade restamps it and adds the approval recovery tables.
+/// intact; the upgrade restamps it and adds the approval recovery tables,
+/// backfilling `_norn_approved_call` from the direct call the v2 engine
+/// parked and approved: row for row what this engine records replaying the
+/// same history into a new cell.
 #[test]
 fn a_storage_v2_cell_opens_on_this_engine_with_identical_receipts() {
     let image: Value = serde_json::from_str(STORAGE_V2).expect("fixture");
@@ -334,11 +339,25 @@ fn a_storage_v2_cell_opens_on_this_engine_with_identical_receipts() {
         Admission::Upgrade { from: 2 }
     );
 
+    assert!(
+        rows(&before, "_norn_decision")
+            .as_array()
+            .is_some_and(|decisions| decisions.iter().any(|row| row[2]
+                == engine_fixture::APPROVAL_DECISION
+                && row[3] == engine_fixture::APPROVAL_COMMAND
+                && row[7] == "decided"
+                && row[8] == "approve")),
+        "the v2 engine recorded the approving decision"
+    );
+
     let mut store = open(&path).expect("a v2 cell opens on this engine");
     let head = store.read().verify_ledger().expect("the ledger verifies");
-    assert_eq!(head.commits, 3);
+    assert_eq!(head.commits, engine_fixture::COMMITS);
     let receipts = store.read().receipts().expect("receipts");
-    assert_eq!(receipts.len(), 3);
+    assert_eq!(
+        u64::try_from(receipts.len()).expect("count"),
+        engine_fixture::COMMITS
+    );
     for (batch, receipt) in engine_fixture::batches().iter().zip(&receipts) {
         match store.commit(batch).expect("replay") {
             CommitOutcome::Replayed(replayed) => assert_eq!(&replayed, receipt),
@@ -355,6 +374,27 @@ fn a_storage_v2_cell_opens_on_this_engine_with_identical_receipts() {
             "{table} is unchanged"
         );
     }
+    // This engine, replaying the same history into a new cell, records the
+    // approval as it commits; the upgrade must backfill exactly those rows.
+    let replayed = dir.path().join("replayed.sqlite");
+    engine_fixture::write_cell(&replayed);
+    let replayed = engine_fixture::image_of(&replayed);
+    let approved = rows(&replayed, "_norn_approved_call");
+    assert_eq!(
+        approved.as_array().map(Vec::len),
+        Some(1),
+        "a fresh cell records the one approved call: {approved}"
+    );
+    assert_eq!(approved[0][2], engine_fixture::APPROVAL_DECISION);
+    assert_eq!(
+        rows(&after, "_norn_approved_call"),
+        approved,
+        "the upgrade backfills the approved call row for row"
+    );
+    assert_eq!(
+        rows(&after, "_norn_step_call"),
+        rows(&replayed, "_norn_step_call")
+    );
     // The step restamps the existing `engine` row in place and adds the
     // approval recovery tables; nothing else changes.
     let stamp = serde_json::to_string(&EngineStamp::current()).expect("stamp");
@@ -367,7 +407,7 @@ fn a_storage_v2_cell_opens_on_this_engine_with_identical_receipts() {
         .expect("the v2 cell is stamped");
     stamp_row[2] = stamp.into();
     expected["storage"] = STORAGE_VERSION.into();
-    add_approval_recovery_tables(&mut expected);
+    add_approval_recovery_tables(&mut expected, approved);
     let mut catalog = after;
     by_name(&mut catalog);
     by_name(&mut expected);
