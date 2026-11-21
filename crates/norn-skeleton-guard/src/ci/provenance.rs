@@ -60,6 +60,28 @@ struct SoftwareSource {
     revision: String,
     license: String,
     evidence: FileRef,
+    /// How the vendored copy differs from upstream (Apache-2.0 section 4(b)). Required, and
+    /// non-empty, for an Apache-2.0 source; MIT asks for none.
+    #[serde(default)]
+    modifications: Option<String>,
+}
+
+/// The licences a vendored software source may carry: MIT, or Apache-2.0 with a statement of the
+/// changes made to it. Everything else (copyleft, unknown, custom) is refused.
+fn software_terms_valid(source: &SoftwareSource) -> bool {
+    match source.license.as_str() {
+        "MIT" => true,
+        "Apache-2.0" => source
+            .modifications
+            .as_deref()
+            .is_some_and(|m| !m.trim().is_empty()),
+        _ => false,
+    }
+}
+
+/// Whether a shipped notice is the Apache License 2.0 text an Apache-2.0 source requires.
+fn apache_notice(text: &str) -> bool {
+    text.contains("Apache License") && text.contains("Version 2.0")
 }
 
 #[derive(Clone, PartialEq, Eq, Deserialize)]
@@ -464,8 +486,12 @@ fn validate_sources(
                                 "software rights cannot clear schema/data payloads".to_owned(),
                             );
                         }
-                        if s.license == "MIT" && a.notices.is_empty() {
-                            errors.push("MIT source requires shipped notice".to_owned());
+                        // MIT from any source, Apache-2.0 from a vendored software source.
+                        if (s.license == "MIT"
+                            || (s.license == "Apache-2.0" && r.id.starts_with("software.")))
+                            && a.notices.is_empty()
+                        {
+                            errors.push(format!("{} source requires shipped notice", s.license));
                         }
                     }
                 }
@@ -926,10 +952,11 @@ fn inspect(root: &Path, paths: &[String], base: Option<&Path>) -> Report {
     };
     let artifacts = load_records(root, paths, &mut report);
     for s in software_sources {
-        if !s.id.starts_with("software.") || s.revision.is_empty() || s.license != "MIT" {
-            report
-                .policy_errors
-                .push(format!("invalid MIT software provenance {}", s.id));
+        if !s.id.starts_with("software.") || s.revision.is_empty() || !software_terms_valid(&s) {
+            report.policy_errors.push(format!(
+                "invalid software provenance {}: MIT, or Apache-2.0 with a modifications statement",
+                s.id
+            ));
         }
         if let Err(e) = reference(&s.evidence, &hashes) {
             report.policy_errors.push(e);
@@ -974,6 +1001,19 @@ fn inspect(root: &Path, paths: &[String], base: Option<&Path>) -> Report {
             });
             if !notice {
                 report.reject(&a.path, "MIT copyright/permission notice missing");
+            }
+        }
+        if a.sources.iter().any(|r| {
+            r.id.starts_with("software.")
+                && sources
+                    .get(&r.id)
+                    .is_some_and(|s| s.license == "Apache-2.0")
+        }) {
+            let notice = a.notices.iter().any(|n| {
+                bytes(root, &n.path).is_ok_and(|b| apache_notice(&String::from_utf8_lossy(&b)))
+            });
+            if !notice {
+                report.reject(&a.path, "Apache-2.0 licence notice missing");
             }
         }
     }
