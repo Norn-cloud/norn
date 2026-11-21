@@ -397,8 +397,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     /// the source event is neither in conflict nor disputed.
     pub(crate) fn check_mapping_bundle(&self, bundle: &MappingBundle) -> Result<(), CellError> {
         self.recheck_mapping_bundle(bundle)?;
-        if self.installed_definitions(None)?.map(|d| d.version) != Some(bundle.definitions_version)
-        {
+        if self.active_definitions_version()? != Some(bundle.definitions_version) {
             return Err(CellError::MappingBundleMismatch);
         }
         if self.mapping_conflict(bundle)?.is_some() || self.mapping_event_is_disputed(bundle)? {

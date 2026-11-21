@@ -1,0 +1,4 @@
+{
+  "order": 8,
+  "value": "quint verify verification/hosted-timers-v1/models/hosted-timers.qnt --backend apalache --init initOpened --step stepProgress --invariants typeOk dueProgress healthyNotStarved --max-steps 5"
+}
