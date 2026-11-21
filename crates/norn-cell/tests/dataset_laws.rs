@@ -1005,7 +1005,7 @@ fn a_row_past_the_fuel_budget_is_left_to_the_per_row_path() {
     let law = (
         "customer_is_invoice",
         "warning",
-        "self.customer == self.invoice",
+        "(self.customer ?? '') == self.invoice",
     );
     let (_dir, cell) = cell(&[law]);
     let (_engine_dir, engine) = engine();
