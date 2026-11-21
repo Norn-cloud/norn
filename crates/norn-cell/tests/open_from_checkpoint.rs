@@ -442,3 +442,278 @@ fn an_old_receipt_changed_in_place_is_never_served() {
     execute(&path, "DELETE FROM _norn_open_checkpoint");
     refused(&path);
 }
+
+// ---------------------------------------------------------------------------
+// #1551 round 2 (genesis parity): every check a genesis open runs has a
+// checkpoint-open equivalent (the table in `src/open_checkpoint.rs`). Each
+// test below fails on 257baa27bb.
+// ---------------------------------------------------------------------------
+
+/// Norn1 hash of `value`, as the engine content-addresses its own data.
+fn norn1<T: serde::Serialize>(value: &T) -> String {
+    use norn_ir::canonical::{HashProfile, canonical_json_of};
+    HashProfile::Norn1.hash_canonical_bytes(&canonical_json_of(value).expect("canonical"))
+}
+
+/// Rewrite receipt `commit` through `change`, together with its stored
+/// digest, so its body still hashes to it.
+fn rewrite_receipt(path: &Path, commit: u64, change: impl FnOnce(&mut serde_json::Value)) {
+    let engine = raw(path);
+    let text: String = engine
+        .query_row(
+            &format!("SELECT receipt FROM _norn_receipt WHERE commit_seq = {commit}"),
+            &[],
+            |row| row.get(0),
+        )
+        .expect("receipt");
+    let mut body: serde_json::Value = serde_json::from_str(&text).expect("receipt body");
+    change(&mut body);
+    engine
+        .execute(
+            "UPDATE _norn_receipt SET receipt = ?1, receipt_hash = ?2 WHERE commit_seq = ?3",
+            &[
+                SqlValue::Text(body.to_string()),
+                SqlValue::Text(norn1(&body)),
+                SqlValue::Integer(i64::try_from(commit).expect("commit")),
+            ],
+        )
+        .expect("rewrite receipt");
+}
+
+/// S1: an ordinary receipt after the checkpoint whose logical time goes
+/// back, rewritten with its own digest, refuses the open, as from genesis.
+#[test]
+fn a_suffix_receipt_whose_time_goes_back_refuses_an_open_from_the_checkpoint() {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("cell.sqlite");
+    cell(&path, EVERY + 10);
+    rewrite_receipt(&path, EVERY + 5, |body| {
+        body["logicalTime"] = serde_json::json!(1);
+    });
+    assert!(
+        open(&path).is_err(),
+        "a regressed suffix receipt opened from the checkpoint"
+    );
+    execute(&path, "DELETE FROM _norn_open_checkpoint");
+    refused(&path);
+}
+
+/// S2: the cell identity changed together with the binding and stored
+/// digest of the last export record a head checkpoint covers refuses the
+/// open: the checkpoint pins that record's digest.
+#[test]
+fn a_changed_identity_and_its_last_covered_export_record_refuse_an_open() {
+    const OTHER: &str = "0123456789abcdef0123456789abcdef";
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("cell.sqlite");
+    cell(&path, EVERY);
+    assert_eq!(checkpoint(&path).map(|(commits, ..)| commits), Some(EVERY));
+    let mut record = open(&path)
+        .expect("open")
+        .export_record(EVERY)
+        .expect("record")
+        .expect("the head commit has an export record");
+    record
+        .bindings
+        .insert("cell_id".to_owned(), OTHER.to_owned());
+    let engine = raw(&path);
+    engine
+        .execute(
+            "UPDATE _norn_export_journal SET record = ?1, hash = ?2 WHERE commit_seq = ?3",
+            &[
+                SqlValue::Text(serde_json::to_string(&record).expect("record")),
+                SqlValue::Text(record.hash().expect("hash")),
+                SqlValue::Integer(i64::try_from(EVERY).expect("commit")),
+            ],
+        )
+        .expect("rewrite the record");
+    engine
+        .execute(
+            &format!("UPDATE _norn_meta SET value = '{OTHER}' WHERE key = 'binding:cell_id'"),
+            &[],
+        )
+        .expect("rebind");
+    drop(engine);
+    assert!(
+        open(&path).is_err(),
+        "a changed identity and its last covered record opened from the checkpoint"
+    );
+    execute(&path, "DELETE FROM _norn_open_checkpoint");
+    refused(&path);
+}
+
+/// S3: a handle opened past a durable checkpoint never advances the next
+/// checkpoint over a ledger event that changed under it, between the two.
+#[test]
+fn a_checkpoint_never_advances_over_an_event_changed_before_the_handle_opened_past_it() {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("cell.sqlite");
+    cell(&path, EVERY + 12);
+    assert_eq!(checkpoint(&path).map(|(commits, ..)| commits), Some(EVERY));
+    let mut store = open(&path).expect("open at commit 140");
+    // A generic event before the handle's head, after the durable
+    // checkpoint, changed in place with its stored hash kept.
+    execute(
+        &path,
+        &format!(
+            "UPDATE _norn_ledger SET event = replace(event, 'fixture.put', 'fixture.pux') WHERE commit_seq = {}",
+            EVERY + 7
+        ),
+    );
+    for n in EVERY + 12..2 * EVERY + 2 {
+        store.commit(&put(n)).expect("commit");
+    }
+    drop(store);
+    assert_eq!(
+        checkpoint(&path).map(|(commits, ..)| commits),
+        Some(EVERY),
+        "the checkpoint advanced over an event it never verified"
+    );
+    refused(&path);
+}
+
+/// S4: an idempotency lookup compares the hashed body's own selectors with
+/// the query, so a covered receipt whose SQL `world` changed is never
+/// returned for another world.
+#[test]
+fn an_idempotency_lookup_never_trusts_a_changed_selector_column() {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("cell.sqlite");
+    cell(&path, EVERY + 10);
+    execute(
+        &path,
+        "UPDATE _norn_receipt SET world = 'shadow' WHERE commit_seq = 7",
+    );
+    let key: String = raw(&path)
+        .query_row(
+            "SELECT idempotency_key FROM _norn_receipt WHERE commit_seq = 7",
+            &[],
+            |row| row.get(0),
+        )
+        .expect("key");
+    {
+        let store = open(&path).expect("the open verifies from the checkpoint");
+        assert!(
+            !matches!(
+                store.read().receipt_by_idempotency_key("shadow", &key),
+                Ok(Some(_))
+            ),
+            "a lookup in another world returned the receipt"
+        );
+    }
+    execute(&path, "DELETE FROM _norn_open_checkpoint");
+    refused(&path);
+}
+
+/// S6: the retained canonical set of the active definitions, changed after
+/// its install is covered, refuses the open: the active version's typed
+/// install proof runs on every open.
+#[test]
+fn a_changed_active_definition_set_refuses_an_open_from_the_checkpoint() {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("cell.sqlite");
+    engine_fixture::write_cell(&path);
+    let model = engine_fixture::model();
+    let mut store = open(&path).expect("open");
+    store
+        .install_definitions(
+            model.clone(),
+            install_input(&model, "0.1.0"),
+            Some(0),
+            engine_fixture::SCOPE,
+        )
+        .expect("install");
+    let installed = store.read().verify_ledger().expect("ledger").commits;
+    for n in installed..EVERY + 10 {
+        store.commit(&put(n)).expect("commit");
+    }
+    drop(store);
+    assert_eq!(checkpoint(&path).map(|(commits, ..)| commits), Some(EVERY));
+    open(&path).expect("the untouched cell opens from its checkpoint");
+    raw(&path)
+        .execute(
+            "UPDATE _norn_definition_version SET canonical_set = ?1 WHERE version = 1",
+            &[SqlValue::Text(install_input(&model, "0.2.0").canonical_set)],
+        )
+        .expect("tamper");
+    assert!(
+        open(&path).is_err(),
+        "a changed active definition set opened from the checkpoint"
+    );
+    execute(&path, "DELETE FROM _norn_open_checkpoint");
+    refused(&path);
+}
+
+/// One installed definition set naming `model`'s object types at `version`.
+fn install_input(model: &norn_cell::Model, version: &str) -> norn_cell::InstalledDefinitionInput {
+    let artifacts: Vec<serde_json::Value> = model
+        .object_types()
+        .filter(|object_type| object_type.name.as_str() != norn_kernel::OWNED_ROWS_TYPE)
+        .map(|object_type| {
+            let (namespace, name) = object_type
+                .name
+                .as_str()
+                .rsplit_once('.')
+                .expect("qualified name");
+            serde_json::json!({
+                "irVersion": "0.1",
+                "artifactId": format!("{}.entity", object_type.name.as_str()),
+                "kind": "entity",
+                "namespace": namespace,
+                "name": name,
+                "version": version,
+                "lifecycle": "draft",
+                "scope": {"orgId": "org_demo", "environmentId": "dev"},
+                "dependencies": [],
+                "provenance": {"source": "authoring_sdk"},
+                "payload": {"entityVersion": "2.0", "objectType": object_type}
+            })
+        })
+        .collect();
+    norn_cell::InstalledDefinitionInput {
+        canonical_set: String::from_utf8(
+            RuntimeValue::from_json(serde_json::json!(artifacts))
+                .expect("exact JSON")
+                .canonical_json()
+                .expect("canonical"),
+        )
+        .expect("UTF-8"),
+        registry: Vec::new(),
+        receipt_sha256: format!("receipt-{version}"),
+        admission_receipt: None,
+        readmission: None,
+        diff: serde_json::json!({"added": {"count": 1, "ids": [version]}}),
+        installed_at: 1,
+        layout: None,
+    }
+}
+
+/// A ledger event the checkpoint covers, changed in place with its stored
+/// hash kept, is never served: every ledger read rehashes the entry.
+#[test]
+fn an_old_ledger_event_changed_in_place_is_never_served() {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("cell.sqlite");
+    cell(&path, EVERY + 10);
+    let seq: i64 = raw(&path)
+        .query_row(
+            "SELECT seq FROM _norn_ledger WHERE commit_seq = 7 ORDER BY seq LIMIT 1",
+            &[],
+            |row| row.get(0),
+        )
+        .expect("seq");
+    execute(
+        &path,
+        "UPDATE _norn_ledger SET event = replace(event, 'fixture.put', 'fixture.pux') WHERE commit_seq = 7",
+    );
+    {
+        let store = open(&path).expect("the open verifies from the checkpoint");
+        let after = u64::try_from(seq - 1).expect("seq");
+        assert!(
+            store.read().ledger_page(after, 1).is_err(),
+            "ledger_page served the changed event"
+        );
+    }
+    execute(&path, "DELETE FROM _norn_open_checkpoint");
+    refused(&path);
+}
