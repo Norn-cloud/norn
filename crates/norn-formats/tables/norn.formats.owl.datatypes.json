@@ -1,0 +1,479 @@
+{
+  "irVersion": "0.1",
+  "artifactId": "norn.formats.owl.datatypes",
+  "kind": "rule",
+  "namespace": "norn.formats",
+  "name": "owl_datatypes",
+  "version": "0.1.0",
+  "lifecycle": "draft",
+  "scope": {},
+  "dependencies": [],
+  "provenance": {
+    "source": "authoring_sdk",
+    "sourcePath": "crates/norn-formats/tables/norn.formats.owl.datatypes.json"
+  },
+  "payload": {
+    "ruleId": "norn.formats.rule.owl_datatypes",
+    "ruleVersion": "2.0",
+    "contract": "decide",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "slice": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        },
+        "event": {
+          "type": "object",
+          "properties": {
+            "datatype": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "datatype"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "slice",
+        "event"
+      ],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "facts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": [
+                  "set"
+                ]
+              },
+              "objectType": {
+                "type": "string",
+                "enum": [
+                  "technical.Mapping"
+                ]
+              },
+              "key": {
+                "type": "string"
+              },
+              "property": {
+                "type": "string",
+                "enum": [
+                  "version"
+                ]
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "op",
+              "objectType",
+              "key",
+              "property",
+              "value"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "commands": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "actionId": {
+                "type": "string",
+                "enum": [
+                  "norn.formats.type_table.row"
+                ]
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "text",
+                  "boolean",
+                  "date",
+                  "timestamp"
+                ]
+              },
+              "format": {
+                "type": "string",
+                "enum": [
+                  "",
+                  "uri"
+                ]
+              },
+              "timezone": {
+                "type": "string",
+                "enum": [
+                  "",
+                  "offset"
+                ]
+              },
+              "code": {
+                "type": "string",
+                "enum": [
+                  "",
+                  "format.owl.degraded"
+                ]
+              },
+              "detail": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "actionId",
+              "kind",
+              "format",
+              "timezone",
+              "code",
+              "detail"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "timers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "timerId": {
+                "type": "string"
+              },
+              "dueIn": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "timerId",
+              "dueIn"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "facts",
+        "commands",
+        "timers"
+      ],
+      "additionalProperties": false
+    },
+    "scopeRequired": [
+      "environmentId"
+    ],
+    "graph": {
+      "contentType": "application/vnd.gorules.decision",
+      "nodes": [
+        {
+          "id": "in",
+          "name": "type key",
+          "type": "inputNode"
+        },
+        {
+          "id": "table",
+          "name": "OWL datatypes; unbounded numerics and offset-free date-times stay lexical text",
+          "type": "decisionTableNode",
+          "content": {
+            "hitPolicy": "first",
+            "inputs": [
+              {
+                "id": "c_datatype",
+                "name": "datatype",
+                "field": "event.datatype"
+              }
+            ],
+            "outputs": [
+              {
+                "id": "o_kind",
+                "name": "kind",
+                "field": "kind"
+              },
+              {
+                "id": "o_format",
+                "name": "format",
+                "field": "format"
+              },
+              {
+                "id": "o_timezone",
+                "name": "timezone",
+                "field": "timezone"
+              },
+              {
+                "id": "o_code",
+                "name": "code",
+                "field": "code"
+              },
+              {
+                "id": "o_detail",
+                "name": "detail",
+                "field": "detail"
+              }
+            ],
+            "rules": [
+              {
+                "_id": "string",
+                "c_datatype": "'http://www.w3.org/2001/XMLSchema#string'",
+                "o_kind": "'text'",
+                "o_format": "''",
+                "o_timezone": "''",
+                "o_code": "''",
+                "o_detail": "''"
+              },
+              {
+                "_id": "normalized_string",
+                "c_datatype": "'http://www.w3.org/2001/XMLSchema#normalizedString'",
+                "o_kind": "'text'",
+                "o_format": "''",
+                "o_timezone": "''",
+                "o_code": "''",
+                "o_detail": "''"
+              },
+              {
+                "_id": "token",
+                "c_datatype": "'http://www.w3.org/2001/XMLSchema#token'",
+                "o_kind": "'text'",
+                "o_format": "''",
+                "o_timezone": "''",
+                "o_code": "''",
+                "o_detail": "''"
+              },
+              {
+                "_id": "language",
+                "c_datatype": "'http://www.w3.org/2001/XMLSchema#language'",
+                "o_kind": "'text'",
+                "o_format": "''",
+                "o_timezone": "''",
+                "o_code": "''",
+                "o_detail": "''"
+              },
+              {
+                "_id": "boolean",
+                "c_datatype": "'http://www.w3.org/2001/XMLSchema#boolean'",
+                "o_kind": "'boolean'",
+                "o_format": "''",
+                "o_timezone": "''",
+                "o_code": "''",
+                "o_detail": "''"
+              },
+              {
+                "_id": "any_uri",
+                "c_datatype": "'http://www.w3.org/2001/XMLSchema#anyURI'",
+                "o_kind": "'text'",
+                "o_format": "'uri'",
+                "o_timezone": "''",
+                "o_code": "''",
+                "o_detail": "''"
+              },
+              {
+                "_id": "date",
+                "c_datatype": "'http://www.w3.org/2001/XMLSchema#date'",
+                "o_kind": "'date'",
+                "o_format": "''",
+                "o_timezone": "''",
+                "o_code": "''",
+                "o_detail": "''"
+              },
+              {
+                "_id": "date_time_stamp",
+                "c_datatype": "'http://www.w3.org/2001/XMLSchema#dateTimeStamp'",
+                "o_kind": "'timestamp'",
+                "o_format": "''",
+                "o_timezone": "'offset'",
+                "o_code": "''",
+                "o_detail": "''"
+              },
+              {
+                "_id": "date_time",
+                "c_datatype": "'http://www.w3.org/2001/XMLSchema#dateTime'",
+                "o_kind": "'text'",
+                "o_format": "''",
+                "o_timezone": "''",
+                "o_code": "'format.owl.degraded'",
+                "o_detail": "'xsd:dateTime admits values without an offset, which a Norn timestamp refuses: kept as lexical text'"
+              },
+              {
+                "_id": "decimal",
+                "c_datatype": "'http://www.w3.org/2001/XMLSchema#decimal'",
+                "o_kind": "'text'",
+                "o_format": "''",
+                "o_timezone": "''",
+                "o_code": "'format.owl.degraded'",
+                "o_detail": "'an unbounded decimal has no scale to narrow to: kept as lexical text; the scale is a mapping decision'"
+              },
+              {
+                "_id": "integer",
+                "c_datatype": "'http://www.w3.org/2001/XMLSchema#integer'",
+                "o_kind": "'text'",
+                "o_format": "''",
+                "o_timezone": "''",
+                "o_code": "'format.owl.degraded'",
+                "o_detail": "'an unbounded integer exceeds 64 bits: kept as lexical text'"
+              },
+              {
+                "_id": "non_negative_integer",
+                "c_datatype": "'http://www.w3.org/2001/XMLSchema#nonNegativeInteger'",
+                "o_kind": "'text'",
+                "o_format": "''",
+                "o_timezone": "''",
+                "o_code": "'format.owl.degraded'",
+                "o_detail": "'an unbounded integer exceeds 64 bits: kept as lexical text'"
+              },
+              {
+                "_id": "positive_integer",
+                "c_datatype": "'http://www.w3.org/2001/XMLSchema#positiveInteger'",
+                "o_kind": "'text'",
+                "o_format": "''",
+                "o_timezone": "''",
+                "o_code": "'format.owl.degraded'",
+                "o_detail": "'an unbounded integer exceeds 64 bits: kept as lexical text'"
+              },
+              {
+                "_id": "double",
+                "c_datatype": "'http://www.w3.org/2001/XMLSchema#double'",
+                "o_kind": "'text'",
+                "o_format": "''",
+                "o_timezone": "''",
+                "o_code": "'format.owl.degraded'",
+                "o_detail": "'a binary float has no exact Norn type: kept as lexical text'"
+              },
+              {
+                "_id": "float",
+                "c_datatype": "'http://www.w3.org/2001/XMLSchema#float'",
+                "o_kind": "'text'",
+                "o_format": "''",
+                "o_timezone": "''",
+                "o_code": "'format.owl.degraded'",
+                "o_detail": "'a binary float has no exact Norn type: kept as lexical text'"
+              },
+              {
+                "_id": "rational",
+                "c_datatype": "'http://www.w3.org/2002/07/owl#rational'",
+                "o_kind": "'text'",
+                "o_format": "''",
+                "o_timezone": "''",
+                "o_code": "'format.owl.degraded'",
+                "o_detail": "'an exact rational has no Norn type: kept as lexical text'"
+              },
+              {
+                "_id": "real",
+                "c_datatype": "'http://www.w3.org/2002/07/owl#real'",
+                "o_kind": "'text'",
+                "o_format": "''",
+                "o_timezone": "''",
+                "o_code": "'format.owl.degraded'",
+                "o_detail": "'a real has no Norn type: kept as lexical text'"
+              },
+              {
+                "_id": "duration",
+                "c_datatype": "'http://www.w3.org/2001/XMLSchema#duration'",
+                "o_kind": "'text'",
+                "o_format": "''",
+                "o_timezone": "''",
+                "o_code": "'format.owl.degraded'",
+                "o_detail": "'a duration with months or years has no fixed length: kept as lexical text'"
+              },
+              {
+                "_id": "lang_string",
+                "c_datatype": "'http://www.w3.org/1999/02/22-rdf-syntax-ns#langString'",
+                "o_kind": "'text'",
+                "o_format": "''",
+                "o_timezone": "''",
+                "o_code": "'format.owl.degraded'",
+                "o_detail": "'the language tag is not kept: one text value'"
+              },
+              {
+                "_id": "plain_literal",
+                "c_datatype": "'http://www.w3.org/1999/02/22-rdf-syntax-ns#PlainLiteral'",
+                "o_kind": "'text'",
+                "o_format": "''",
+                "o_timezone": "''",
+                "o_code": "'format.owl.degraded'",
+                "o_detail": "'the language tag is not kept: one text value'"
+              },
+              {
+                "_id": "literal",
+                "c_datatype": "'http://www.w3.org/2000/01/rdf-schema#Literal'",
+                "o_kind": "'text'",
+                "o_format": "''",
+                "o_timezone": "''",
+                "o_code": "'format.owl.degraded'",
+                "o_detail": "'any literal: kept as lexical text'"
+              },
+              {
+                "_id": "other",
+                "c_datatype": "",
+                "o_kind": "'text'",
+                "o_format": "''",
+                "o_timezone": "''",
+                "o_code": "'format.owl.degraded'",
+                "o_detail": "'a custom, union or unknown data range: kept as lexical text'"
+              }
+            ],
+            "passThrough": true
+          }
+        },
+        {
+          "id": "emit",
+          "name": "row record",
+          "type": "expressionNode",
+          "content": {
+            "expressions": [
+              {
+                "id": "x_facts",
+                "key": "facts",
+                "value": "[]"
+              },
+              {
+                "id": "x_commands",
+                "key": "commands",
+                "value": "[{actionId: 'norn.formats.type_table.row', kind: kind, format: format, timezone: timezone, code: code, detail: detail}]"
+              },
+              {
+                "id": "x_timers",
+                "key": "timers",
+                "value": "[]"
+              }
+            ]
+          }
+        },
+        {
+          "id": "out",
+          "name": "row",
+          "type": "outputNode"
+        }
+      ],
+      "edges": [
+        {
+          "id": "e1",
+          "sourceId": "in",
+          "targetId": "table",
+          "type": "edge"
+        },
+        {
+          "id": "e2",
+          "sourceId": "table",
+          "targetId": "emit",
+          "type": "edge"
+        },
+        {
+          "id": "e3",
+          "sourceId": "emit",
+          "targetId": "out",
+          "type": "edge"
+        }
+      ]
+    }
+  }
+}
