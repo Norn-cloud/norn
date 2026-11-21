@@ -542,11 +542,11 @@ class Suite:
         if self.host.name != "rivet-native":
             return "not tested", "probed on the native Rivet host only; native Rust runs crates/norn-cell/tests/engine_upgrade.rs"
         run = secrets.token_hex(4)
-        results = {case: probed(self.base, "engine-upgrade", "ok", object_name=f"upgrade-{case}-{run}", case=case, timeout=120) for case in ("v1", "v2", "downgrade", "unknown")}
+        results = {case: probed(self.base, "engine-upgrade", "ok", object_name=f"upgrade-{case}-{run}", case=case, timeout=120) for case in ("v1", "v2", "v3", "downgrade", "unknown")}
         ok = all(result["ok"] is True for result in results.values())
-        v1, v2 = results["v1"], results["v2"]
-        detail = (f"v1→{v1['to']} and v2→{v2['to']}: ledger+receipts unchanged={v1['ledgerAndReceiptsUnchanged'] and v2['ledgerAndReceiptsUnchanged']}, "
-                  f"reopen writes nothing={v1['reopenWritesNothing'] and v2['reopenWritesNothing']}, heads v1 {v1['head']['commits']} commits / v2 {v2['head']['commits']}; "
+        ups = [results[case] for case in ("v1", "v2", "v3")]
+        detail = (f"v1, v2, v3 → {ups[0]['to']}: ledger+receipts unchanged={all(u['ledgerAndReceiptsUnchanged'] for u in ups)}, "
+                  f"reopen writes nothing={all(u['reopenWritesNothing'] for u in ups)}, heads {'/'.join(str(u['head']['commits']) for u in ups)} commits; "
                   f"newer stamp: {str(results['downgrade'].get('refusal'))[:60]!r} unchanged={results['downgrade'].get('unchanged')}; "
                   f"unreadable stamp: {str(results['unknown'].get('refusal'))[:60]!r} unchanged={results['unknown'].get('unchanged')}")
         return ("pass" if ok else "fail"), detail
