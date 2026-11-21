@@ -16,10 +16,15 @@
 //!   deadline decision run under one actor lock (`deadline`): a wake that
 //!   found no writer can never erase the recovery wake of a writer admitted
 //!   after it looked.
-//! - ENGINE-UPGRADE-1: the wake and the start's re-arm read the cell's
-//!   storage version first, without writing; for a cell this engine refuses
-//!   (a newer or unreadable stamp) they change nothing, so a refused upgrade
-//!   leaves the actor's database, host tables included, as it was.
+//! - ENGINE-UPGRADE-1: every start reads the cell's storage version first,
+//!   without writing, and a cell this engine refuses (a newer or unreadable
+//!   stamp, or one it cannot read) fails the start. A started actor's
+//!   `RivetKit` claims each due schedule row (it deletes the one-shot rows
+//!   from `_rivet_schedule_events`) before any handler runs, at the end of
+//!   its start and whenever a trigger comes due, so only an actor that never
+//!   starts leaves a refused cell's database, host tables included, as it
+//!   was. The engine retries the start; a release that reads the cell serves
+//!   it. The wake checks the version again before it writes.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -276,15 +281,27 @@ impl Actor for CellActor {
     }
 
     /// Every start re-arms the alarm's trigger from its row: a trigger lost
-    /// with a crash comes back with the restart. A cell this engine refuses
-    /// is not re-armed: a release that reads it re-arms on its own start.
+    /// with a crash comes back with the restart.
+    ///
+    /// A cell this engine refuses fails the start, before anything is
+    /// written: `RivetKit` drains the overdue schedule rows right after a
+    /// start that succeeds, deleting each before its handler could refuse
+    /// it (ENGINE-UPGRADE-1, the module docs).
     async fn on_start(self: Arc<Self>, ctx: Ctx<Self>) -> Result<()> {
-        match self.storage_admitted().await {
+        let admitted = self.storage_admitted().await;
+        #[cfg(feature = "conformance")]
+        if !matches!(admitted, Ok(true)) {
+            crate::conformance::start_refused(&ctx).await;
+        }
+        match admitted {
             Ok(true) => {}
-            Ok(false) => return Ok(()),
+            Ok(false) => {
+                return Err(anyhow!(
+                    "this engine does not serve the stored cell; the actor does not start"
+                ));
+            }
             Err(error) => {
-                tracing::error!(error = %format!("{error:#}"), "storage version unread; the alarm is not re-armed");
-                return Ok(());
+                return Err(error.context("the actor does not start"));
             }
         }
         if let Err(error) = self.alarm.resync(&ctx).await {
@@ -343,8 +360,9 @@ impl CellActor {
     }
 
     /// The alarm's trigger fired at `now` (Unix ms): the `WakeNow` handler.
-    /// Nothing is written for a cell this engine refuses: the alarm row
-    /// stays as it was, for a release that reads the cell.
+    /// A refused cell's actor does not start, so this is not reached for
+    /// one; checked again, the wake writes nothing for a cell restamped
+    /// while its actor runs.
     pub(crate) async fn wake(self: &Arc<Self>, ctx: &Ctx<Self>, now: i64) -> Result<()> {
         if !self.storage_admitted().await? {
             return Ok(());
@@ -686,7 +704,7 @@ impl CellActor {
                 | CellError::EngineUnknownVersion { .. }
                 | CellError::EngineUpgradeUnsupported { .. }),
             ) => {
-                tracing::error!(error = %refusal, "this engine does not serve the stored cell; its alarm is left untouched");
+                tracing::error!(error = %refusal, "this engine does not serve the stored cell; nothing is written");
                 Ok(false)
             }
             Err(error) => Err(anyhow!("read the cell's storage version: {error}")),
