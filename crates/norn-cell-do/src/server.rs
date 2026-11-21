@@ -4,7 +4,7 @@
 //! `/v1/definitions/{id}:retire`), the one governed action route,
 //! `POST /v1/actions/{actionId}`, the run routes (`POST /v1/runs`,
 //! `GET /v1/runs/{id}`), the decision routes (`GET /v1/decisions`,
-//! `POST /v1/decisions/{id}:decide`); and `POST /v1/mcp`, whose tools call
+//! `GET /v1/decisions:requested`, `POST /v1/decisions/{id}:decide`); and `POST /v1/mcp`, whose tools call
 //! these same routes ([`crate::mcp`]).
 //!
 //! The transport carries method, path, query, the `Authorization` header and
@@ -226,6 +226,8 @@ routes! {
     QuestionsCatalog => ("GET", "/v1/questions:catalog"),
     /// `GET /v1/decisions` (DECISIONS-1).
     Decisions => ("GET", "/v1/decisions"),
+    /// `GET /v1/decisions:requested` (APPROVAL-REQUESTED-1).
+    DecisionsRequested => ("GET", "/v1/decisions:requested"),
     /// `POST /v1/decisions/{id}:decide` (DECISIONS-1).
     Decide => ("POST", "/v1/decisions/{id}:decide"),
     /// `GET /v1/transforms/{transform}/rows`.
@@ -291,6 +293,7 @@ impl Route {
             "/v1/runs" => return Some(Self::RunStart),
             "/v1/questions:catalog" => return Some(Self::QuestionsCatalog),
             "/v1/decisions" => return Some(Self::Decisions),
+            "/v1/decisions:requested" => return Some(Self::DecisionsRequested),
             "/v1/datasets:load" => return Some(Self::DatasetLoad),
             "/v1/transforms:compile" => return Some(Self::TransformsCompile),
             "/v1/guard:prompt" => return Some(Self::GuardPrompt),
@@ -1986,6 +1989,59 @@ pub struct AccessDocument {
     pub grant_table: &'static str,
     /// One decision per read capability.
     pub capabilities: BTreeMap<&'static str, AccessDecision>,
+    /// With `objectType`: the collection asked about.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub object_type: Option<String>,
+    /// With `objectType`: what each role the table declares may do with that
+    /// collection, each decided by the PDP for that role alone.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub roles: Option<Vec<RoleAccess>>,
+}
+
+/// What one declared role alone may read of a collection and which of its
+/// actions it may call (`GET /v1/access?objectType=`).
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RoleAccess {
+    /// The declared role.
+    pub role: &'static str,
+    /// What every decision here is over: always [`COLLECTION_SCOPE`], the
+    /// collection asked about, never one record of it.
+    pub scope: &'static str,
+    /// Whether the role sees the collection's records, as Studio shows it.
+    pub see: SeeDecision,
+    /// One decision per read capability.
+    pub read: BTreeMap<&'static str, AccessDecision>,
+    /// Each callable action on the collection, by identity.
+    pub actions: Vec<crate::actions::RoleAction>,
+}
+
+/// The scope of every per-role answer of `GET /v1/access?objectType=`: the
+/// whole collection. A role permitted its values still reads a marked fact
+/// as the cell projects it for that reader (masked or withheld by its
+/// markings), decided at each read of each record.
+pub const COLLECTION_SCOPE: &str = "collection";
+
+/// Whether one role alone sees a collection's records: the read PDP's
+/// Population and Values decisions for it, read together by the cell.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SeeDecision {
+    /// `permit`: the role reads the collection's values; `partial`: only
+    /// which records exist (Population without Values); `deny`: neither.
+    pub decision: &'static str,
+    /// Always [`COLLECTION_SCOPE`]: a `permit` is the collection's, and a
+    /// marked fact is still masked or withheld per record by its markings.
+    pub scope: &'static str,
+}
+
+/// What `GET /v1/access?objectType=` asks: the read PDP and the action policy
+/// installed for the cell's active definitions.
+pub struct RoleExplainer<'a> {
+    /// The read PDP, asked one role at a time.
+    pub reads: &'a crate::policy::RoleReads,
+    /// The action policy, when the definitions install one.
+    pub actions: Option<&'a crate::actions::ActionPolicy>,
 }
 
 /// The verified principal, as the resolver recorded it.
@@ -2016,11 +2072,21 @@ pub struct AccessDecision {
 /// capability, the cell's actual PDP decision on each of its collections
 /// (`object_types`). An anonymous, out-of-scope or wholly denied caller gets
 /// the shared read denial.
+///
+/// With `objectType=<collection>` the decisions are over that collection
+/// only, and `roles` adds, for each role the declared table names, the read
+/// PDP's decision per capability and the action PDP's decision per callable
+/// action on it, each for a principal holding that role alone
+/// ([`RoleExplainer`]). No record is read: an action a rule grants only on a
+/// record's values or the caller's identity answers `conditional`. A caller
+/// who may not read the collection's population, or a collection the cell
+/// does not publish, gets the shared read denial.
 pub fn access<E: SqlEngine>(
     host: &DevHost<E>,
     principals: &dyn PrincipalResolver,
     caller: &CallerSlot,
     object_types: &[String],
+    explainer: &RoleExplainer<'_>,
     request: &Request<'_>,
 ) -> Response {
     respond(access_document(
@@ -2028,6 +2094,7 @@ pub fn access<E: SqlEngine>(
         principals,
         caller,
         object_types,
+        Some(explainer),
         request,
     ))
 }
@@ -2044,8 +2111,92 @@ pub fn access_outside<E: SqlEngine>(
         principals,
         &CallerSlot::default(),
         &[],
+        None,
         request,
     ))
+}
+
+/// The capabilities in the order `/v1/access` answers them, with their names.
+const CAPABILITIES: [(ReadCapability, &str); 3] = [
+    (ReadCapability::Population, "population"),
+    (ReadCapability::Values, "values"),
+    (ReadCapability::Sources, "sources"),
+];
+
+/// The caller's decision per read capability, with the grant-table role that
+/// grants each permitted one.
+fn caller_decisions(
+    roles: &[String],
+    decisions: &[(ReadCapability, Result<(), Refusal>)],
+) -> BTreeMap<&'static str, AccessDecision> {
+    decisions
+        .iter()
+        .zip(CAPABILITIES)
+        .map(|((capability, decided), (_, name))| {
+            let rule = DEMO_GRANTS
+                .entries
+                .iter()
+                .find(|(role, granted)| {
+                    roles.iter().any(|held| held == role) && granted.contains(capability)
+                })
+                .map(|(role, _)| format!("{}:{role}", DEMO_GRANTS.version));
+            let decision = if decided.is_ok() { "permit" } else { "deny" };
+            (
+                name,
+                AccessDecision {
+                    decision,
+                    rule: decided.is_ok().then_some(rule).flatten(),
+                },
+            )
+        })
+        .collect()
+}
+
+/// What each declared role alone may do with `object_type`, as the PDPs decide.
+fn role_access(explainer: &RoleExplainer<'_>, object_type: &str) -> Vec<RoleAccess> {
+    explainer
+        .reads
+        .roles()
+        .into_iter()
+        .map(|role| {
+            let permits =
+                |capability: ReadCapability| explainer.reads.permits(role, capability, object_type);
+            let see = match (
+                permits(ReadCapability::Population),
+                permits(ReadCapability::Values),
+            ) {
+                (true, true) => "permit",
+                (true, false) => "partial",
+                (false, _) => "deny",
+            };
+            RoleAccess {
+                role,
+                scope: COLLECTION_SCOPE,
+                see: SeeDecision {
+                    decision: see,
+                    scope: COLLECTION_SCOPE,
+                },
+                read: CAPABILITIES
+                    .iter()
+                    .map(|(capability, name)| {
+                        let permitted = permits(*capability);
+                        (
+                            *name,
+                            AccessDecision {
+                                decision: if permitted { "permit" } else { "deny" },
+                                rule: permitted
+                                    .then(|| format!("{}:{role}", explainer.reads.table())),
+                            },
+                        )
+                    })
+                    .collect(),
+                actions: explainer
+                    .actions
+                    .map(|policy| policy.role_decisions(role, object_type))
+                    .unwrap_or_default(),
+            }
+        })
+        .collect()
 }
 
 fn access_document<E: SqlEngine>(
@@ -2053,6 +2204,7 @@ fn access_document<E: SqlEngine>(
     principals: &dyn PrincipalResolver,
     caller: &CallerSlot,
     object_types: &[String],
+    explainer: Option<&RoleExplainer<'_>>,
     request: &Request<'_>,
 ) -> Result<String, Refusal> {
     if request.method != "GET" {
@@ -2063,12 +2215,22 @@ fn access_document<E: SqlEngine>(
             "this host is read-only; use GET",
         ));
     }
-    let fields = parse(request.query, &["orgId", "environmentId"])?;
+    let fields = parse(request.query, &["orgId", "environmentId", "objectType"])?;
     let scope = ScopeQuery {
         org_id: fields.get("orgId").cloned(),
         environment_id: fields.get("environmentId").cloned(),
     };
     let host = cell(host)?;
+    // With `objectType`, the decisions are over that one collection, and the
+    // document adds what each declared role may do with it.
+    let asked = fields.get("objectType").cloned();
+    let object_types = match &asked {
+        Some(object_type) if !object_types.contains(object_type) => {
+            return Err(norn_api::authz::read_denied());
+        }
+        Some(object_type) => std::slice::from_ref(object_type),
+        None => object_types,
+    };
     // The verified principal lives exactly as long as this request.
     let _request = RequestScope::new(principals);
     let subject = principals.resolve(request.authorization, request.now);
@@ -2089,14 +2251,10 @@ fn access_document<E: SqlEngine>(
         }
         first_denial.map_or(Ok(()), Err)
     };
-    let decisions: Vec<(ReadCapability, Result<(), Refusal>)> = [
-        ReadCapability::Population,
-        ReadCapability::Values,
-        ReadCapability::Sources,
-    ]
-    .into_iter()
-    .map(|capability| (capability, decide(capability)))
-    .collect();
+    let decisions: Vec<(ReadCapability, Result<(), Refusal>)> = CAPABILITIES
+        .iter()
+        .map(|(capability, _)| (*capability, decide(*capability)))
+        .collect();
     let caller = caller
         .current()
         .filter(|caller| Some(&caller.subject_id) == subject.as_ref());
@@ -2107,31 +2265,22 @@ fn access_document<E: SqlEngine>(
             .find_map(|(_, decided)| decided.err())
             .unwrap_or_else(|| Refusal::invalid("the cell publishes no collection")));
     };
-    let capabilities = decisions
-        .iter()
-        .map(|(capability, decided)| {
-            let name = match capability {
-                ReadCapability::Population => "population",
-                ReadCapability::Values => "values",
-                ReadCapability::Sources => "sources",
-            };
-            let rule = DEMO_GRANTS
-                .entries
-                .iter()
-                .find(|(role, granted)| {
-                    caller.roles.iter().any(|held| held == role) && granted.contains(capability)
+    let capabilities = caller_decisions(&caller.roles, &decisions);
+    let roles = match asked.as_deref() {
+        None => None,
+        // The caller must read the collection's population to be told who
+        // else may: a caller denied it is denied the whole document.
+        Some(object_type) => {
+            let Some(explainer) = explainer.filter(|_| {
+                decisions.iter().all(|(capability, decided)| {
+                    *capability != ReadCapability::Population || decided.is_ok()
                 })
-                .map(|(role, _)| format!("{}:{role}", DEMO_GRANTS.version));
-            let decision = if decided.is_ok() { "permit" } else { "deny" };
-            (
-                name,
-                AccessDecision {
-                    decision,
-                    rule: decided.is_ok().then_some(rule).flatten(),
-                },
-            )
-        })
-        .collect();
+            }) else {
+                return Err(norn_api::authz::read_denied());
+            };
+            Some(role_access(explainer, object_type))
+        }
+    };
     document_json(&AccessDocument {
         principal: AccessPrincipal {
             subject_id: caller.subject_id,
@@ -2142,5 +2291,7 @@ fn access_document<E: SqlEngine>(
         policy: READ_POLICY_ID,
         grant_table: DEMO_GRANTS.version,
         capabilities,
+        object_type: asked,
+        roles,
     })
 }

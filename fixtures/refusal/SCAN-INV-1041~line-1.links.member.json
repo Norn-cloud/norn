@@ -1,0 +1,31 @@
+{
+  "status": 200,
+  "body": {
+    "objectType": "docs.DocumentLine",
+    "id": "SCAN-INV-1041~line-1",
+    "items": [
+      {
+        "sourceType": "docs.DocumentLine",
+        "link": "document",
+        "source": "SCAN-INV-1041~line-1",
+        "targetType": "docs.ScannedDocument",
+        "target": "SCAN-INV-1041",
+        "version": 1
+      }
+    ],
+    "next": null,
+    "counts": {
+      "groups": [
+        {
+          "sourceType": "docs.DocumentLine",
+          "link": "document",
+          "targetType": "docs.ScannedDocument",
+          "direction": "out",
+          "count": 1
+        }
+      ],
+      "complete": true,
+      "bound": 500
+    }
+  }
+}

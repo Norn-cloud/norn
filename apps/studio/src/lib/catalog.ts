@@ -152,7 +152,7 @@ export interface Catalog {
   readonly byName: ReadonlyMap<string, Concept>
 }
 
-const SYSTEM_NAMES: Record<string, string> = { erpnext: "ERPNext", shopify: "Shopify", odoo: "Odoo", "norn-connect": "Norn" }
+const SYSTEM_NAMES: Record<string, string> = { erpnext: "ERPNext", shopify: "Shopify", odoo: "Odoo", scans: "Document scans", "norn-connect": "Norn" }
 
 /**
  * Whether the cell itself writes this source: its schema names the instance `cell` (the sync
@@ -165,6 +165,22 @@ export const cellOwned = (system: SourceSystem): boolean => system.schema?.insta
 export function systemName(system: string): string {
   const bare = system.replace(/^synthetic-/, "")
   return SYSTEM_NAMES[bare] ?? bare
+}
+
+/** The tones a source system's chip takes: one per system, never the status tones (green, red, gray). */
+const SYSTEM_TONES = ["blue", "teal", "violet", "amber", "pink", "orange"] as const
+
+/**
+ * One tone per source system, the same on every page: the known systems in a fixed order, any other
+ * by a hash of its name. Display only; it says nothing about the system.
+ */
+export function systemTone(system: string): (typeof SYSTEM_TONES)[number] {
+  const bare = system.replace(/^synthetic-/, "")
+  const known = Object.keys(SYSTEM_NAMES).indexOf(bare)
+  if (known >= 0) return SYSTEM_TONES[known % SYSTEM_TONES.length] ?? "blue"
+  let hash = 0
+  for (const char of bare) hash = (hash * 31 + char.charCodeAt(0)) >>> 0
+  return SYSTEM_TONES[hash % SYSTEM_TONES.length] ?? "blue"
 }
 
 /** `canon.SettlementObservation` → `Settlement observation`. */
