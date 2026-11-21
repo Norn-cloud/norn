@@ -536,6 +536,11 @@ pub struct NativeEngine {
     /// Set only inside [`SqlEngine::definition_writes`]: the retained
     /// definitions are writable while it is.
     definitions: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Inside [`SqlEngine::definition_writes`], the table the statement being
+    /// prepared writes: the first write SQLite reports for it. Every later
+    /// write it reports to another table (a foreign-key action, a REPLACE's
+    /// cascade) is refused (S1, #1547). Cleared before each statement.
+    target: std::sync::Arc<std::sync::Mutex<Option<String>>>,
     /// The journal mode an open asked for, applied once a store admits the file.
     journal_mode: std::cell::Cell<Option<&'static str>>,
 }
@@ -646,6 +651,8 @@ impl NativeEngine {
         let authorizer_flag = Arc::clone(&user_sql);
         let definitions = Arc::new(AtomicBool::new(false));
         let installing = Arc::clone(&definitions);
+        let target = Arc::new(std::sync::Mutex::new(None::<String>));
+        let statement_target = Arc::clone(&target);
         // Let SQLite parse transaction controls, including quoted SQL and
         // multi-statement batches. Only the adapter may control transactions.
         conn.authorizer(Some(move |context: AuthContext<'_>| {
@@ -658,16 +665,40 @@ impl NativeEngine {
             // not count, past the retained-actions cache. A trigger is never
             // the install's, so it is refused even then. SQLite names tables
             // case-insensitively, and so does this check.
-            let retained_write = if let AuthAction::Insert { table_name }
+            //
+            // Inside the scope, a statement writes only the table it names:
+            // SQLite reports a statement's own write before any it codes on
+            // the statement's behalf, so the first write reported while the
+            // statement is prepared is its target, and every write to
+            // another table (a foreign-key action into a retained table, or
+            // anywhere else) is refused, as is any trigger.
+            let written = if let AuthAction::Insert { table_name }
             | AuthAction::Update { table_name, .. }
             | AuthAction::Delete { table_name } = context.action
             {
-                retained_table(table_name)
+                Some(table_name)
             } else {
-                false
+                None
             };
-            if (retained_write
-                && (context.accessor.is_some() || !installing.load(Ordering::Relaxed)))
+            let refused_write = written.is_some_and(|table| {
+                if !installing.load(Ordering::Relaxed) {
+                    return retained_table(table);
+                }
+                if context.accessor.is_some() {
+                    return true;
+                }
+                let Ok(mut target) = statement_target.lock() else {
+                    return true;
+                };
+                match target.as_deref() {
+                    None => {
+                        *target = Some(table.to_owned());
+                        false
+                    }
+                    Some(own) => !own.eq_ignore_ascii_case(table),
+                }
+            });
+            if refused_write
                 || (authorizer_flag.load(Ordering::Relaxed)
                     && matches!(
                         context.action,
@@ -683,6 +714,7 @@ impl NativeEngine {
             conn,
             user_sql,
             definitions,
+            target,
             journal_mode: std::cell::Cell::new(None),
         })
     }
@@ -759,15 +791,30 @@ fn retained_table(table: &str) -> bool {
 /// so none is reused outside it.
 #[cfg(feature = "native")]
 struct DefinitionWrites<'a> {
-    flag: &'a std::sync::atomic::AtomicBool,
-    conn: &'a rusqlite::Connection,
+    engine: &'a NativeEngine,
 }
 
 #[cfg(feature = "native")]
 impl Drop for DefinitionWrites<'_> {
     fn drop(&mut self) {
-        self.flag.store(false, std::sync::atomic::Ordering::Relaxed);
-        self.conn.flush_prepared_statement_cache();
+        self.engine
+            .definitions
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        self.engine.next_statement();
+        self.engine.conn.flush_prepared_statement_cache();
+    }
+}
+
+#[cfg(feature = "native")]
+impl NativeEngine {
+    /// Inside a definition-writes scope, forget the previous statement's
+    /// target before the next statement is prepared (S1, #1547).
+    fn next_statement(&self) {
+        if self.definitions.load(std::sync::atomic::Ordering::Relaxed)
+            && let Ok(mut target) = self.target.lock()
+        {
+            *target = None;
+        }
     }
 }
 
@@ -891,10 +938,8 @@ impl SqlEngine for NativeEngine {
                 "nested definition writes refused".to_owned(),
             ));
         }
-        let _scope = DefinitionWrites {
-            flag: &self.definitions,
-            conn: &self.conn,
-        };
+        let _scope = DefinitionWrites { engine: self };
+        self.next_statement();
         f()
     }
 
@@ -915,6 +960,7 @@ impl SqlEngine for NativeEngine {
         let _counted = StatementCount::start(&self.conn, params);
         validate_bindings(sql, params)?;
         let _user_sql = UserSql::enter(&self.user_sql);
+        self.next_statement();
         // Every statement is prepared under the same authorizer state (the
         // user-SQL flag is set for every call; a definition-writes scope
         // flushes what it prepared when it ends), so a cached statement was
@@ -930,6 +976,7 @@ impl SqlEngine for NativeEngine {
         let _counted = StatementCount::start(&self.conn, params);
         validate_bindings(sql, params)?;
         let _user_sql = UserSql::enter(&self.user_sql);
+        self.next_statement();
         let mut statement = self.conn.prepare_cached(sql)?;
         let width = statement.column_count();
         let mut rows = statement.query(rusqlite::params_from_iter(params))?;
@@ -961,8 +1008,22 @@ impl SqlEngine for NativeEngine {
         let _counted = StatementCount::start(&self.conn, &[]);
         validate_bindings(sql, &[])?;
         let _user_sql = UserSql::enter(&self.user_sql);
-        self.conn.execute_batch(sql)?;
-        Ok(())
+        if !self.definitions.load(std::sync::atomic::Ordering::Relaxed) {
+            self.conn.execute_batch(sql)?;
+            return Ok(());
+        }
+        // Inside a definition-writes scope each statement of the batch is
+        // prepared with its own target, as `execute_batch` steps it: once.
+        use rusqlite::fallible_iterator::FallibleIterator as _;
+        let mut batch = rusqlite::Batch::new(&self.conn, sql);
+        loop {
+            self.next_statement();
+            let Some(mut statement) = batch.next()? else {
+                return Ok(());
+            };
+            let mut rows = statement.raw_query();
+            rows.next()?;
+        }
     }
 
     fn transaction<T, X: From<CellError>>(&self, f: impl FnOnce() -> Result<T, X>) -> Result<T, X> {

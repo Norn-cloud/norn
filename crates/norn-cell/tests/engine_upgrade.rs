@@ -38,8 +38,9 @@ const STORAGE_V2: &str = include_str!("fixtures/engine-storage-v2.json");
 const STORAGE_V3: &str = include_str!("fixtures/engine-storage-v3.json");
 const STORAGE_V4: &str = include_str!("fixtures/engine-storage-v4.json");
 
-/// Storage version 5 (#1547) adds the partial index of the version marking
-/// labels that are not empty to every older cell; no row changes.
+/// The marking history storage version (#1547) adds the partial index of the
+/// version marking labels that are not empty to every older cell; no row
+/// changes.
 fn add_marking_history_index(image: &mut Value) {
     image["schema"]
         .as_array_mut()
@@ -278,7 +279,7 @@ fn a_storage_v1_cell_opens_on_this_engine_with_identical_receipts() {
     }
     // Storage version 2 adds the stamp and changes nothing else; storage
     // version 3 adds the approval recovery tables; storage version 4
-    // rewrites no row; storage version 5 adds the marking history index.
+    // rewrites no row; the marking history version (#1547) adds its index.
     // A later data migration lists what it changes here.
     let stamp = serde_json::to_string(&EngineStamp::current()).expect("stamp");
     let mut expected = before;

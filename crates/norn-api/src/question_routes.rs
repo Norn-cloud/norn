@@ -27,6 +27,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use utoipa::IntoParams;
 
+/// S2 (#1547): a question that reads history (a knowledge cutoff, a
+/// property's versions, or a trace as answered) groups or filters by a
+/// property some version of which, current, past or deleted, holds a label.
+pub const MARKED_HISTORY: &str = "question.marked_history";
+
 /// Trusted per-request source frontier and authenticated history selection.
 pub struct QuestionSnapshot {
     /// Current host population, source coverage, authorization epoch and observation clock.
@@ -229,7 +234,8 @@ fn answer_plan<E: SqlEngine>(
     if snapshot.context.scope != host.scope().key() {
         return Err(read_denied());
     }
-    refuse_labeled_paths(host, cell.store(), plan, &snapshot.context.world)?;
+    let historical = snapshot.cutoff.is_some() || plan.as_of();
+    refuse_labeled_paths(host, cell.store(), plan, &snapshot.context.world, historical)?;
     let permits = |row: &ObjectRecord, grant| allowed(host, runtime, actor, question, row, grant);
     let mut withheld = BTreeSet::new();
     let mut visible = |row: &ObjectRecord| visible_recording(row, &permits, &mut withheld);
@@ -433,11 +439,19 @@ pub fn get_numeric_trace<E: SqlEngine>(
 /// world. A summary the store
 /// cannot prove complete refuses too (fail closed). A cell that declares no
 /// marking has none to find.
+///
+/// A `historical` question (at a knowledge cutoff, over a property's versions,
+/// or traced as answered at an earlier frontier) also reads retained values
+/// of deleted and relabelled rows, which the live summary does not see. It is
+/// refused with `question.marked_history` when any version, current or past,
+/// of a grouped or filtered property holds a label (S2, #1547): fail closed
+/// rather than prove which versions it reads are unmarked.
 fn refuse_labeled_paths<E: SqlEngine>(
     host: &DevHost<E>,
     store: &CellStore<E>,
     plan: &QuestionPlan,
     world: &str,
+    historical: bool,
 ) -> Result<(), Refusal> {
     let question = plan.question();
     if question.dimensions.is_empty() && question.filters.is_empty() {
@@ -480,6 +494,24 @@ fn refuse_labeled_paths<E: SqlEngine>(
                 .collect()
         };
         for object_type in types {
+            if historical
+                && reader
+                    .property_history_marked(world, &object_type, property)
+                    .map_err(Refusal::host)?
+            {
+                let mut refusal = Refusal::new(
+                    http::StatusCode::UNPROCESSABLE_ENTITY,
+                    MARKED_HISTORY,
+                    "the question reads history that holds marked values",
+                    "ask the current answer, or group and filter by a field none of whose versions is marked",
+                );
+                refusal.diagnostics = vec![crate::refusal::RefusalDiagnostic::error(
+                    MARKED_HISTORY,
+                    "this question groups or filters by a field whose earlier or deleted versions are marked",
+                    format!("/question{pointer}"),
+                )];
+                return Err(refusal);
+            }
             let labels = reader
                 .property_marking_summary(world, &object_type, property)
                 .map_err(Refusal::host)?;
@@ -521,7 +553,8 @@ fn trace_plan<E: SqlEngine>(
     if snapshot.context.scope != host.scope().key() {
         return Err(read_denied());
     }
-    refuse_labeled_paths(host, cell.store(), plan, &snapshot.context.world)?;
+    let historical = snapshot.cutoff.is_some() || answered.is_some() || plan.as_of();
+    refuse_labeled_paths(host, cell.store(), plan, &snapshot.context.world, historical)?;
     if snapshot.cutoff.is_some() {
         return Err(Refusal::from_compute(CellError::ComputeRefused(
             "core.compute.unsupported_engine",

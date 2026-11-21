@@ -126,7 +126,8 @@ const MARKING_VERSION_DDL: &str = r#"CREATE TABLE IF NOT EXISTS "_norn_marking_v
 pub(crate) const MARKING_CURRENT_NONEMPTY: &str = "_norn_marking_current_nonempty";
 const MARKING_NONEMPTY_DDL: &str = r#"CREATE INDEX IF NOT EXISTS "_norn_marking_current_nonempty" ON "_norn_marking_current" ("world", "object_type", "property") WHERE "markings" != '[]'"#;
 /// The partial index of the version labels that are not empty: a cell's
-/// history holds a label exactly when it has a row (storage version 5).
+/// history holds a label exactly when it has a row (a storage version of its
+/// own, #1547).
 pub(crate) const MARKING_VERSION_NONEMPTY: &str = "_norn_marking_version_nonempty";
 const MARKING_VERSION_NONEMPTY_DDL: &str = r#"CREATE INDEX IF NOT EXISTS "_norn_marking_version_nonempty" ON "_norn_marking_version" ("world", "object_type", "property") WHERE "markings" != '[]'"#;
 const MARKING_SUBJECT_DDL: &str = r#"CREATE TABLE IF NOT EXISTS "_norn_marking_subject" (

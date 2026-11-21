@@ -72,7 +72,7 @@ pub const CHANNEL: &[StorageVersion] = &[
     },
     StorageVersion {
         version: 5,
-        change: "#1547 S2: the partial index _norn_marking_version_nonempty, the bounded probe of whether a cell's history holds a marking label; a storage version 4 engine refuses a marking table with an index it does not know",
+        change: "#1547 S2: the partial index _norn_marking_version_nonempty, the bounded probe of whether a cell's history holds a marking label; an engine of the storage version before it refuses a marking table with an index it does not know",
     },
 ];
 
@@ -328,10 +328,11 @@ fn migrate_to<E: SqlEngine>(_engine: &E, to: u32) -> Result<(), CellError> {
         // from the cell's own approving decisions. No row is rewritten.
         // Version 4 rewrites nothing: a bundle without `derivation` is
         // derivation 1 and still verifies under it (MAP-DERIVATION-1).
-        // Version 5 adds `_norn_marking_version_nonempty`, which the schema
-        // statements that follow the chain create from the rows the cell
-        // holds; no row is rewritten (#1547).
-        2..=5 => Ok(()),
+        // The marking history version (#1547, the last entry of `CHANNEL`)
+        // adds `_norn_marking_version_nonempty`, which the schema statements
+        // that follow the chain create from the rows the cell holds; no row
+        // is rewritten. Its number is `STORAGE_VERSION`'s alone.
+        2..=STORAGE_VERSION => Ok(()),
         _ => Err(CellError::EngineUpgradeUnsupported {
             cell: to.saturating_sub(1),
             engine: STORAGE_VERSION,

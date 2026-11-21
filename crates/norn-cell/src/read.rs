@@ -1782,6 +1782,45 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         Ok(Some(labels))
     }
 
+    /// Whether any version, current, past or deleted, of `object_type` or a
+    /// subtype in `world` holds a label on `property` (S2, #1547). A question
+    /// that reads history groups or filters on retained values, which the
+    /// live [`Self::property_marking_summary`] does not see once a row is
+    /// deleted or relabelled. One seek of the partial nonempty version index
+    /// per concrete type, which `INDEXED BY` holds to: a plan that could not
+    /// use it fails, never scans.
+    ///
+    /// # Errors
+    /// Unknown type or a SQL-engine error.
+    pub fn property_history_marked(
+        &self,
+        world: &str,
+        object_type: &str,
+        property: &str,
+    ) -> Result<bool, CellError> {
+        if self.model.tables(object_type)?.is_empty() {
+            return Err(CellError::UnknownObjectType(object_type.to_owned()));
+        }
+        for definition in self.model.object_types() {
+            let concrete_type = definition.name.as_str();
+            if !self.model.is_a(concrete_type, object_type) {
+                continue;
+            }
+            let held: Option<i64> = self.conn.query_optional(
+                &format!(
+                    "SELECT 1 FROM \"{MARKING_VERSION}\" INDEXED BY \"{}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"property\" = ?3 AND \"markings\" != '[]' LIMIT 1",
+                    crate::system::MARKING_VERSION_NONEMPTY
+                ),
+                params![world, concrete_type, property],
+                |row| row.get(0),
+            )?;
+            if held.is_some() {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// Effective identity properties of the requested object type. These
     /// components can be embedded directly in the opaque public key.
     ///

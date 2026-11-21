@@ -1311,3 +1311,176 @@ fn a_declassified_history_is_never_served_clear_from_an_empty_catalog() {
         Some(&V::from("Ada"))
     );
 }
+
+/// A native engine that runs `hook` once, just before the first statement
+/// naming `marker` among its parameters: a commit by another connection at
+/// that point of a request.
+struct Hooked {
+    inner: NativeEngine,
+    marker: String,
+    hook: std::sync::Mutex<Option<Box<dyn FnOnce() + Send>>>,
+}
+
+impl Hooked {
+    fn fire(&self, params: &[norn_cell::engine::SqlValue]) {
+        if params
+            .iter()
+            .any(|param| matches!(param, norn_cell::engine::SqlValue::Text(text) if *text == self.marker))
+            && let Some(hook) = self.hook.lock().unwrap().take()
+        {
+            hook();
+        }
+    }
+}
+
+impl norn_cell::engine::SqlEngine for Hooked {
+    fn execute(
+        &self,
+        sql: &str,
+        params: &[norn_cell::engine::SqlValue],
+    ) -> Result<(), norn_cell::CellError> {
+        self.fire(params);
+        self.inner.execute(sql, params)
+    }
+    fn query(
+        &self,
+        sql: &str,
+        params: &[norn_cell::engine::SqlValue],
+    ) -> Result<Vec<Vec<norn_cell::engine::SqlValue>>, norn_cell::CellError> {
+        self.fire(params);
+        self.inner.query(sql, params)
+    }
+    fn execute_batch(&self, sql: &str) -> Result<(), norn_cell::CellError> {
+        self.inner.execute_batch(sql)
+    }
+    fn transaction<T, X: From<norn_cell::CellError>>(
+        &self,
+        f: impl FnOnce() -> Result<T, X>,
+    ) -> Result<T, X> {
+        self.inner.transaction(f)
+    }
+    fn platform_table_globs(&self) -> &'static [&'static str] {
+        self.inner.platform_table_globs()
+    }
+    fn read_isolation(&self) -> norn_cell::engine::ReadIsolation {
+        self.inner.read_isolation()
+    }
+    fn read_cache_revision(&self) -> Result<Option<(u64, u64)>, norn_cell::CellError> {
+        self.inner.read_cache_revision()
+    }
+    fn admitted(&self) -> Result<(), norn_cell::CellError> {
+        self.inner.admitted()
+    }
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, norn_cell::CellError>,
+    ) -> Result<T, norn_cell::CellError> {
+        self.inner.definition_writes(f)
+    }
+}
+
+/// Records every call an export hands the engine, and performs none.
+#[derive(Default)]
+struct Recording(std::sync::Mutex<Vec<String>>);
+impl norn_api::analytics_routes::Transport for Recording {
+    fn resumed(&self) -> Option<norn_api::analytics_routes::EngineAnswer> {
+        None
+    }
+    fn call(
+        &self,
+        call: &norn_api::analytics_routes::EngineCall,
+    ) -> Option<norn_api::analytics_routes::EngineAnswer> {
+        self.0.lock().unwrap().push(call.op.clone());
+        None
+    }
+}
+
+#[test]
+fn an_export_never_carries_a_row_committed_after_its_marking_decision() {
+    // S3 (#1547): the cell holds no label when the export decides that
+    // `norn.RuleRun`'s stored values may leave. Another connection then
+    // commits a RuleRun, whose detail the kernel labels, before the export
+    // chooses its frontier. The frontier would include that labelled row, so
+    // the export decides again at the moved version and is refused: no
+    // engine call is made.
+    const RUN: &str = "norn.RuleRun";
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("cell.sqlite");
+    let types: Vec<norn_ir::ObjectTypeDef> = [
+        json!({"name": ITEM, "properties": [{"id": "name", "type": {"kind": "text"}}]}),
+        json!({"name": RUN, "properties": [{"id": "detail", "type": {"kind": "text"}}]}),
+    ]
+    .into_iter()
+    .map(|object| serde_json::from_value(object).unwrap())
+    .collect();
+    let model = norn_cell::Model::from_definitions(&types, &[]).unwrap();
+    let put = |object_type: &str, key: &str, property: &str, value: &str| FactWriteRow::Put {
+        object_type: object_type.into(),
+        key: key.into(),
+        values: BTreeMap::from([(property.to_owned(), V::from(value))]),
+    };
+    {
+        let mut store =
+            CellStore::open(&path, model.clone(), norn_cell::StoreOptions::default()).unwrap();
+        store
+            .commit(&CommitBatch {
+                world: MAIN_WORLD.into(),
+                scope: physical("org_a").key(),
+                logical_time: 2,
+                writes: vec![put(ITEM, "i1", "name", "Lathe")],
+                ..CommitBatch::default()
+            })
+            .unwrap();
+    }
+    let export = |hooked: bool| {
+        let foreign = (path.clone(), model.clone());
+        let engine = Hooked {
+            inner: NativeEngine::open(&path, norn_cell::StoreOptions::default()).unwrap(),
+            marker: format!("analytics.dataset:{RUN}"),
+            hook: std::sync::Mutex::new(hooked.then(|| {
+                Box::new(move || {
+                    let mut store =
+                        CellStore::open(&foreign.0, foreign.1, norn_cell::StoreOptions::default())
+                            .unwrap();
+                    store
+                        .commit(&CommitBatch {
+                            world: MAIN_WORLD.into(),
+                            scope: physical("org_a").key(),
+                            logical_time: 3,
+                            writes: vec![put(RUN, "r1", "detail", "secret rule detail")],
+                            ..CommitBatch::default()
+                        })
+                        .unwrap();
+                }) as Box<dyn FnOnce() + Send>
+            })),
+        };
+        let store = CellStore::from_engine(engine, model.clone()).unwrap();
+        let host = DevHost::from_store(store, physical("org_a"), |command| command.payload.clone())
+            .unwrap()
+            .with_authorizer(Policy);
+        let transport = Recording::default();
+        let outcome = norn_api::analytics_routes::export_objects(
+            &host,
+            &norn_api::analytics_routes::ExportQuery {
+                org_id: Some("org_a".into()),
+                environment_id: Some("dev".into()),
+                columns: "detail".into(),
+                format: Some("jsonl".into()),
+            },
+            Some("viewer"),
+            RUN,
+            &Mapping,
+            &transport,
+        );
+        let calls = transport.0.into_inner().unwrap();
+        (outcome, calls)
+    };
+    // Unlabelled at one version: the export reaches the engine.
+    let (_outcome, calls) = export(false);
+    assert!(!calls.is_empty(), "an unlabelled export reaches the engine");
+    // The labelled row lands between the decision and the frontier.
+    let (outcome, calls) = export(true);
+    let refused = outcome.expect_err("the export is refused");
+    assert_eq!(refused.status, 403, "{refused:?}");
+    assert!(calls.is_empty(), "the engine was asked: {calls:?}");
+}
