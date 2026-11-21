@@ -1,0 +1,19 @@
+{
+  "sha256": "1d236942078fe4022cb72a50343ccd673a5029ab9b5cf929eadf7bb111fdeecd",
+  "origin": "derived",
+  "category": "generated",
+  "license": "Apache-2.0",
+  "sources": [],
+  "analyzed_sources": [],
+  "parents": [
+    "tools/lake-bakeoff/Cargo.toml"
+  ],
+  "rights_evidence": [
+    {
+      "path": "NOTICE",
+      "sha256": "2406eabb65e97bd8bfac55d5a3842d4f1051881646eba0f31e313f5f7dd5384d"
+    }
+  ],
+  "notices": [],
+  "connector": null
+}
