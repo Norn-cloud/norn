@@ -81,10 +81,64 @@ struct Held {
     /// An operation (the landing's download and load, a settle or a store)
     /// holds it.
     leased: bool,
-    /// The landing identity it landed and how far, once landed; only a
-    /// settle (residue left) or a store (files written) of that landing
-    /// may take it.
-    landed: Option<(String, Phase)>,
+    /// The landing contract it landed and the step it is at, once landed;
+    /// only a settle (residue left) or a store (files written) of exactly
+    /// that contract may take it.
+    landed: Option<Landed>,
+}
+
+/// OLAP-02 (Sol r4): the landing contract of an attempt, recorded by the
+/// engine at land time: the request it landed (by [`contract`]: landing
+/// identity, load identity, table, file, binding, pins and rules) and its
+/// latest answer. A later step must name exactly this request, and a store
+/// exactly this answer; nothing a caller echoes replaces what the engine
+/// recorded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Landed {
+    request: LandRequest,
+    answer: LandResponse,
+}
+
+impl Landed {
+    fn phase(&self) -> Phase {
+        Phase::of(&self.answer)
+    }
+}
+
+/// The immutable part of a landing request: all of it, with the attempt the
+/// engine minted, but the presigned GET URL, which is minted per call.
+fn contract(request: &LandRequest) -> LandRequest {
+    let mut request = request.clone();
+    request.load.file.url.clear();
+    request
+}
+
+/// The immutable part of a store request: its landing's [`contract`], the
+/// answer it stores and its objects' URIs, but the presigned PUT URLs,
+/// which are minted per call.
+fn store_contract(request: &StoreRequest) -> StoreRequest {
+    let mut request = request.clone();
+    request.land = contract(&request.land);
+    request.data.url.clear();
+    request.held.url.clear();
+    request
+}
+
+/// OLAP-02 (Sol r4): the receipt of a store, kept by tenant and attempt: the
+/// immutable request it was made by ([`store_contract`]) and the answer it
+/// gave. A replay answers this answer, and only for this request.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct StoreReceipt {
+    request: StoreRequest,
+    response: LandResponse,
+}
+
+fn json_text(value: &impl serde::Serialize) -> Outcome<String> {
+    serde_json::to_string(value).map_err(|error| refusal("analytics.engine", error.to_string()))
+}
+
+fn receipt_key(attempt: &str) -> String {
+    format!("store:{attempt}")
 }
 
 /// How far a landed attempt is: which next step may take it.
@@ -124,8 +178,8 @@ struct Lease<'e> {
     token: String,
     dir: PathBuf,
     /// Set when the attempt landed (or settled): the lease then releases
-    /// it, kept, for the next step of this landing.
-    landed: Option<(String, Phase)>,
+    /// it, kept, for the next step of exactly this contract.
+    landed: Option<Landed>,
 }
 
 impl Lease<'_> {
@@ -359,46 +413,52 @@ impl Engine {
         Ok((lease, file))
     }
 
-    /// OLAP-02: take the landed attempt `token` of `tenant` for the step
-    /// `phase` of `landing`. An attempt this engine does not hold is
-    /// [`ATTEMPT_UNKNOWN`]; one another operation holds (its download, its
-    /// load, or another settle or store is still running) is
-    /// [`ATTEMPT_BUSY`]; one of another landing, or not at that step, is
-    /// stale. A refusal touches nothing.
+    /// OLAP-02: take the landed attempt `request.attempt` of its tenant for
+    /// the step `phase` of `request`, with the answer its last step gave.
+    /// An attempt this engine does not hold is [`ATTEMPT_UNKNOWN`]; one
+    /// another operation holds (its download, its load, or another settle
+    /// or store is still running) is [`ATTEMPT_BUSY`]; one landed by any
+    /// other request (Sol r4: another landing, load, table, file, binding,
+    /// pins or rules), or not at that step, is stale. A refusal touches
+    /// nothing: the attempt, its staging and its files stay as they were.
     fn lease_attempt(
         &self,
-        tenant: &TenantId,
-        token: &str,
-        landing: &str,
+        request: &LandRequest,
         phase: Phase,
-    ) -> Outcome<Lease<'_>> {
+    ) -> Outcome<(Lease<'_>, LandResponse)> {
+        let tenant = &request.load.tenant;
+        let token = &request.attempt;
         let dir = self.private(tenant)?.join("scratch").join(token);
         let mut attempts = self.attempts();
-        let Some(held) = attempts.get_mut(&(tenant.clone(), token.to_owned())) else {
+        let Some(held) = attempts.get_mut(&(tenant.clone(), token.clone())) else {
             return Err(refusal(ATTEMPT_UNKNOWN, "the landing attempt is not held"));
         };
         if held.leased {
             return Err(refusal(ATTEMPT_BUSY, "the landing attempt is in use"));
         }
-        if held
+        let Some(landed) = held
             .landed
             .as_ref()
-            .is_none_or(|(of, at)| of != landing || *at != phase)
-        {
+            .filter(|landed| landed.request == contract(request) && landed.phase() == phase)
+        else {
             return Err(refusal(
                 STALE,
                 "the landing attempt is another landing's or another step's",
             ));
-        }
+        };
+        let answer = landed.answer.clone();
         held.leased = true;
         drop(attempts);
-        Ok(Lease {
-            engine: self,
-            tenant: tenant.clone(),
-            token: token.to_owned(),
-            dir,
-            landed: None,
-        })
+        Ok((
+            Lease {
+                engine: self,
+                tenant: tenant.clone(),
+                token: token.clone(),
+                dir,
+                landed: None,
+            },
+            answer,
+        ))
     }
 
     fn with<T>(&self, tenant: &TenantId, f: impl FnOnce(&Connection) -> Outcome<T>) -> Outcome<T> {
@@ -666,7 +726,10 @@ impl Engine {
         });
         let _source = std::fs::remove_file(&file);
         let landed = landed?;
-        lease.landed = Some((request.landing.clone(), Phase::of(&landed)));
+        lease.landed = Some(Landed {
+            request: contract(request),
+            answer: landed.clone(),
+        });
         Ok(landed)
     }
 
@@ -678,9 +741,12 @@ impl Engine {
     /// retry never resets this one's findings, LAW-01).
     ///
     /// OLAP-02: the settle takes the attempt by its engine-minted token,
-    /// only while it has residue of this landing and nothing else holds it;
-    /// a refusal to take it touches nothing. Once taken, a refused settle
-    /// drops the attempt's staging and removes it; it is the one owner.
+    /// only while it has residue, for exactly the request it landed (Sol r4:
+    /// the landing contract recorded at land time, so a settle that echoes
+    /// the landing but changes the load is refused before the attempt is
+    /// taken), and while nothing else holds it; a refusal to take it touches
+    /// nothing. Once taken, a refused settle drops the attempt's staging and
+    /// removes it; it is the one owner.
     ///
     /// # Errors
     /// [`ATTEMPT_UNKNOWN`], [`ATTEMPT_BUSY`], `core.compute.stale_input`
@@ -688,25 +754,22 @@ impl Engine {
     /// engine failure.
     pub fn settle(&self, request: &SettleRequest) -> Outcome<LandResponse> {
         let land = &request.land;
-        let mut lease = self.lease_attempt(
-            &land.load.tenant,
-            &land.attempt,
-            &land.landing,
-            Phase::Staged,
-        )?;
+        let (mut lease, _answer) = self.lease_attempt(land, Phase::Staged)?;
         let staged_table = staged(&land.load.table, &land.attempt);
         let settled = self.with(&land.load.tenant, |conn| {
-            if meta(conn, &format!("load:{}", staged_table.name))?.as_deref()
-                != Some(land.load.load.as_str())
-            {
-                return Err(refusal(STALE, "the landing attempt is not staged"));
-            }
-            let load: LoadResponse = serde_json::from_str(
-                &meta(conn, &format!("counts:{}", staged_table.name))?
-                    .ok_or_else(|| refusal(STALE, "the landing attempt is unknown"))?,
-            )
-            .map_err(|e| refusal("analytics.engine", e.to_string()))?;
+            // Taken: from here every refusal drops the staging with the
+            // attempt, so nothing of it is left behind.
             let settled = (|| {
+                if meta(conn, &format!("load:{}", staged_table.name))?.as_deref()
+                    != Some(land.load.load.as_str())
+                {
+                    return Err(refusal(STALE, "the landing attempt is not staged"));
+                }
+                let load: LoadResponse = serde_json::from_str(
+                    &meta(conn, &format!("counts:{}", staged_table.name))?
+                        .ok_or_else(|| refusal(STALE, "the landing attempt is unknown"))?,
+                )
+                .map_err(|e| refusal("analytics.engine", e.to_string()))?;
                 db(conn.execute_batch("BEGIN TRANSACTION"))?;
                 let settled = settle_rows(conn, &staged_table, request);
                 if settled.is_err() {
@@ -721,7 +784,10 @@ impl Engine {
             }
             settled
         })?;
-        lease.landed = Some((land.landing.clone(), Phase::of(&settled)));
+        lease.landed = Some(Landed {
+            request: contract(land),
+            answer: settled.clone(),
+        });
         Ok(settled)
     }
 
@@ -817,51 +883,58 @@ impl Engine {
 
     /// MANIFEST-CACHE-1: keep an attempt's files, which the caller has sent
     /// to their objects, as the files of the cache identity
-    /// [`dataset_cache_id`] names. Each file must still be the digest the
-    /// request names; it moves into the tenant's object directory under that
-    /// digest (an object already there must be the same digest). `send`
-    /// sends the two files (data, held) to their objects first.
+    /// [`dataset_cache_id`] names. Each file must still be the digest its
+    /// landing answered; it moves into the tenant's object directory under
+    /// that digest (an object already there must be the same digest).
+    /// `send` sends the two files (data, held) to their objects first.
     ///
     /// OLAP-02: the store takes the attempt by its engine-minted token, and
-    /// only once its files are written for this landing and nothing else
-    /// holds it; it is then the attempt's one owner and removes it, stored
-    /// or not. A store of an attempt still landing or settling is
-    /// [`ATTEMPT_BUSY`] and touches nothing. A replayed store of an attempt
-    /// already stored answers what the store answered, from the kept
-    /// record, and removes nothing.
+    /// only once its files are written, for exactly the request it landed
+    /// and the answer it gave (Sol r4: the answer stored is the engine's own
+    /// record, never the caller's), and while nothing else holds it; it is
+    /// then the attempt's one owner and removes it, stored or not. A store
+    /// of an attempt still landing or settling is [`ATTEMPT_BUSY`] and
+    /// touches nothing. A store keeps its receipt by tenant and attempt; a
+    /// replay of an attempt already stored must be that receipt's request
+    /// (only the presigned URLs may differ) and answers the receipt's
+    /// answer, removing nothing; any other body is stale.
     ///
     /// # Errors
-    /// [`ATTEMPT_UNKNOWN`], [`ATTEMPT_BUSY`], `bulk.digest_mismatch`, what
-    /// `send` refuses, or an I/O or engine failure.
+    /// [`ATTEMPT_UNKNOWN`], [`ATTEMPT_BUSY`], `core.compute.stale_input`,
+    /// `bulk.digest_mismatch`, what `send` refuses, or an I/O or engine
+    /// failure.
     pub fn store(
         &self,
         request: &StoreRequest,
         send: impl FnOnce(&Path, &Path) -> Outcome<()>,
     ) -> Outcome<LandResponse> {
         let land = &request.land;
-        let landed = &request.landed;
         let tenant = &land.load.tenant;
         let table = &land.load.table;
-        if landed.landing != land.landing || landed.attempt != land.attempt {
+        if request.landed.landing != land.landing || request.landed.attempt != land.attempt {
             return Err(refusal(STALE, "the answer is not this landing's"));
         }
-        let (Some(data_file), Some(held_file)) = (&landed.data, &landed.held) else {
+        if request.landed.data.is_none() || request.landed.held.is_none() {
             return Err(refusal(
                 "analytics.invalid",
                 "the landing has residue to settle",
             ));
-        };
-        for file in [data_file, held_file] {
-            if !is_hex64(&file.sha256) {
-                return Err(refusal("analytics.invalid", "a digest is 64 hex digits"));
-            }
         }
-        let lease = match self.lease_attempt(tenant, &land.attempt, &land.landing, Phase::Written) {
-            Ok(lease) => lease,
+        let (lease, answer) = match self.lease_attempt(land, Phase::Written) {
+            Ok(leased) => leased,
             Err(unknown) if unknown.code == ATTEMPT_UNKNOWN => {
-                return self.stored(request, data_file, held_file).ok_or(unknown);
+                return self.replayed(request)?.ok_or(unknown);
             }
             Err(refused) => return Err(refused),
+        };
+        if request.landed != answer {
+            return Err(refusal(STALE, "the answer is not this landing's"));
+        }
+        let (Some(data_file), Some(held_file)) = (&answer.data, &answer.held) else {
+            return Err(refusal(
+                "analytics.engine",
+                "a written attempt names its files",
+            ));
         };
         let (data, held) = lease.files();
         send(&data, &held)?;
@@ -892,46 +965,49 @@ impl Engine {
                 uri: request.held.uri.clone(),
             },
         };
-        let text = serde_json::to_string(&record)
-            .map_err(|error| refusal("analytics.engine", error.to_string()))?;
+        let record = json_text(&record)?;
+        let response = LandResponse {
+            stored: Some(cache.clone()),
+            ..answer
+        };
+        let receipt = json_text(&StoreReceipt {
+            request: store_contract(request),
+            response: response.clone(),
+        })?;
+        // The kept record and the receipt commit together, before the lease
+        // is released: a replay that finds the attempt gone finds its receipt.
         self.with(tenant, |conn| {
-            set_meta(conn, &format!("landing:{cache}"), &text)
+            db(conn.execute_batch("BEGIN TRANSACTION"))?;
+            let written = set_meta(conn, &format!("landing:{cache}"), &record)
+                .and_then(|()| set_meta(conn, &receipt_key(&land.attempt), &receipt));
+            if written.is_err() {
+                let _rolled_back = conn.execute_batch("ROLLBACK");
+                return written;
+            }
+            db(conn.execute_batch("COMMIT"))
         })?;
         drop(lease);
-        Ok(LandResponse {
-            stored: Some(cache),
-            ..landed.clone()
-        })
+        Ok(response)
     }
 
-    /// OLAP-02: the answer of a store of `request` that already happened:
-    /// the record kept for its cache identity holds exactly its files and
-    /// objects. Reads only; `None` when no such store happened.
-    fn stored(
-        &self,
-        request: &StoreRequest,
-        data: &LandedFile,
-        held: &LandedFile,
-    ) -> Option<LandResponse> {
-        let landed = &request.landed;
-        let table = &request.land.load.table;
-        let cache = dataset_cache_id(table, &data.sha256, &held.sha256);
-        let text = self
-            .with(&request.land.load.tenant, |conn| {
-                meta(conn, &format!("landing:{cache}"))
-            })
-            .ok()??;
-        let kept: KeptLanding = serde_json::from_str(&text).ok()?;
-        let same = |kept: &KeptFile, file: &LandedFile, object: &super::StoredObject| {
-            kept.sha256 == file.sha256 && kept.uri == object.uri
+    /// OLAP-02 (Sol r4): the answer of a store of `request` that already
+    /// happened, from the receipt kept for its tenant and attempt. Reads
+    /// only. `None` when no store of the attempt happened; stale when one
+    /// did, of any other request than this one ([`store_contract`]).
+    fn replayed(&self, request: &StoreRequest) -> Outcome<Option<LandResponse>> {
+        let land = &request.land;
+        let Some(text) = self.with(&land.load.tenant, |conn| {
+            meta(conn, &receipt_key(&land.attempt))
+        })?
+        else {
+            return Ok(None);
         };
-        (kept.table == *table
-            && same(&kept.data, data, &request.data)
-            && same(&kept.held, held, &request.held))
-        .then(|| LandResponse {
-            stored: Some(cache),
-            ..landed.clone()
-        })
+        let receipt: StoreReceipt = serde_json::from_str(&text)
+            .map_err(|error| refusal("analytics.engine", error.to_string()))?;
+        if receipt.request != store_contract(request) {
+            return Err(refusal(STALE, "the store is another request's"));
+        }
+        Ok(Some(receipt.response))
     }
 
     /// One records page of a source (HOST-READ-3 on the engine): the rows
@@ -3535,13 +3611,6 @@ fn seal(path: &Path) -> Outcome<()> {
     let mut permissions = std::fs::metadata(path).map_err(failed)?.permissions();
     permissions.set_readonly(true);
     std::fs::set_permissions(path, permissions).map_err(failed)
-}
-
-fn is_hex64(text: &str) -> bool {
-    text.len() == 64
-        && text
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 /// A kept object must hash to its digest before it is read.

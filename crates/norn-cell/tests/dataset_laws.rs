@@ -768,6 +768,67 @@ fn a_reader_sees_no_row_of_a_landing_until_it_is_stored() {
     );
 }
 
+/// OLAP-02 (Sol r4 S2): a settle is bound to the landing contract the
+/// engine recorded at land time. A settle that echoes the landing identity
+/// but names another load (or other pins, or another file) is refused
+/// before the attempt is taken: the attempt, its registry entry and its
+/// staged residue stay intact, and the correct settle then lands exactly
+/// what an undisturbed landing lands.
+#[test]
+fn a_settle_of_another_contract_is_refused_before_it_takes_the_attempt() {
+    let (_dir, cell) = cell(&laws(&[FUNCTION]));
+    let (engine_dir, engine) = engine();
+    let lines: Vec<Line> = (0..9)
+        .map(|_| Line {
+            invoice: "C9",
+            quantity: 2,
+            price: "3".into(),
+            customer: Some("bob"),
+            country: "FR",
+            occurred_at: INSTANTS[2],
+        })
+        .collect();
+    let bytes = csv(&lines);
+    let (request, pending) = land(&engine, &cell, bytes.as_bytes(), FileFormat::Csv);
+    assert!(pending.residue_total > 0 && pending.data.is_none());
+    let attempt_dir = engine_dir
+        .path()
+        .join("t")
+        .join(tenant().as_str())
+        .join("scratch")
+        .join(&pending.attempt);
+    let through = pending.residue.last().expect("residue").row;
+    let mut other_load = request.clone();
+    other_load.load.load = "land-2".into();
+    let mut other_pins = request.clone();
+    other_pins.pins.laws = "other-laws".into();
+    let mut other_file = request.clone();
+    other_file.load.file.uri = "s3://synthetic/uploads/other".into();
+    for forged in [other_load, other_pins, other_file] {
+        assert_eq!(
+            engine
+                .settle(&SettleRequest {
+                    land: forged,
+                    through,
+                    findings: Vec::new(),
+                })
+                .expect_err("another landing contract")
+                .code,
+            "core.compute.stale_input"
+        );
+        assert!(attempt_dir.is_dir(), "the attempt's directory is intact");
+    }
+    // The registry entry and the staged residue survive: the correct
+    // settle takes the attempt and lands what an undisturbed landing lands.
+    let (settled, _, _) = settle_all(&engine, &cell, &request, pending);
+    let (clean, clean_pending) = land(&engine, &cell, bytes.as_bytes(), FileFormat::Csv);
+    let (clean_landed, _, _) = settle_all(&engine, &cell, &clean, clean_pending);
+    assert_eq!(
+        (settled.data, settled.held, settled.findings),
+        (clean_landed.data, clean_landed.held, clean_landed.findings)
+    );
+}
+
 /// LAW-03: Parquet instants import exactly: a `TIMESTAMP_NS` keeps every
 /// nanosecond (before the epoch too), a `TIMESTAMPTZ` its instant, so a rule
 /// reads the value the file holds.
