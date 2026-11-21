@@ -224,9 +224,7 @@ fn materialize_historical_values(
     object_type: &norn_ir::ObjectTypeName,
     stored: &BTreeMap<String, Value>,
 ) -> Result<BTreeMap<String, Value>, CellError> {
-    let catalog = norn_kernel::TypeCatalog::new(model.object_types())
-        .with_interfaces(model.interfaces())
-        .with_property_types(model.property_types());
+    let catalog = model.type_catalog();
     let retained = stored
         .iter()
         .filter(|(property, _)| model.column(object_type.as_str(), property).is_ok())
@@ -2109,9 +2107,8 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         let Some(values) = snapshot.values else {
             return Ok(None);
         };
-        let catalog = norn_kernel::TypeCatalog::new(model.object_types())
-            .with_interfaces(model.interfaces())
-            .with_property_types(model.property_types())
+        let catalog = model
+            .type_catalog()
             .with_governing_laws(model.law_artifacts());
         let mut links = crate::link_laws::PinnedLinks {
             reader: self,

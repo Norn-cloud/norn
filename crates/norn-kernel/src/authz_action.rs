@@ -16,7 +16,8 @@ use crate::{ActionAuthorizer, ActionAuthzRequest, ActionDenial};
 /// An action authorizer backed by one admitted Cedar PDP and trusted shell
 /// request mapping.
 pub struct PdpActionAuthorizer<F> {
-    pdp: Pdp,
+    /// Shared, so a host may keep one compiled PDP per caller across calls.
+    pdp: std::sync::Arc<Pdp>,
     build_request: F,
 }
 
@@ -29,8 +30,11 @@ where
     /// claims. It should return [`ActionDenial::Invisible`] when its visibility
     /// check says the target may not be seen.
     #[must_use]
-    pub const fn new(pdp: Pdp, build_request: F) -> Self {
-        Self { pdp, build_request }
+    pub fn new(pdp: impl Into<std::sync::Arc<Pdp>>, build_request: F) -> Self {
+        Self {
+            pdp: pdp.into(),
+            build_request,
+        }
     }
 }
 

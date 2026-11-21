@@ -3303,6 +3303,32 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         validate_active_definition_pointer(self.conn)
     }
 
+    /// ADMIT-CACHE-1 (#1533): the active definitions' identity, its version
+    /// and admission receipt digest, without loading its payload: what a host
+    /// keys the work it does once per definitions version by.
+    ///
+    /// # Errors
+    /// SQL errors or a dangling active-version pointer.
+    pub fn active_definitions_identity(&self) -> Result<Option<(u64, String)>, CellError> {
+        let Some(version) = validate_active_definition_pointer(self.conn)? else {
+            return Ok(None);
+        };
+        let digest: Option<String> = self.conn.query_optional(
+            &format!(
+                "SELECT \"receipt_sha256\" FROM \"{DEFINITION_VERSION}\" WHERE \"version\" = ?1"
+            ),
+            params![to_i64(version, "definitions version")?],
+            |row| row.get(0),
+        )?;
+        let Some(digest) = digest else {
+            return Err(CellError::LedgerCorrupt {
+                seq: version,
+                reason: "active definitions pointer has no retained version".to_owned(),
+            });
+        };
+        Ok(Some((version, digest)))
+    }
+
     /// The retained definition set at `version`, or the active set when
     /// `version` is `None`.
     ///
