@@ -41,8 +41,17 @@ test("a record page names its type and copyable id, and offers every tab", async
   const html = await page("canon.Item", "demo/item/gold")
   expect(html).toContain("Gold scrap")
   expect(html).toContain("Copy demo/item/gold")
-  for (const tab of ["Overview", "Lineage", "Guarantees", "Access"]) expect(html).toContain(`>${tab}</button>`)
-  expect(html).toContain("No personal data marked")
+  for (const tab of ["Overview", "Lineage", "Guarantees"]) expect(html).toContain(`>${tab}</button>`)
+  // Who may act is the cell's decision: the rail is there, and the recorded demo says no role was decided.
+  expect(html).not.toContain(">Access</button>")
+  expect(html).toContain("Who can see or act")
+  expect(html).toContain("The recorded demo has no sign-in, so the cell decided no role&#x27;s access.")
+  expect(html).toContain("Rules it keeps")
+})
+
+test("each fact carries the system its field provenance names", async () => {
+  const html = await page("canon.Item", "demo/item/gold")
+  expect(html).toMatch(/data-fact="label"[\s\S]*?data-source="ERPNext"/)
 })
 
 test("a value the server recorded a source for opens its provenance", async () => {
