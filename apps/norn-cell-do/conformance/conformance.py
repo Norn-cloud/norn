@@ -801,8 +801,11 @@ class Suite:
                 return "fail", f"{stamp} stamp: the Rivet trigger was not pending at the kill (triggers {before.get('triggers')}, killed {killed - due:+d} ms from it), so the restart was not tested"
             served, afters = self.starts_after_restart(obj)
             same = [after.get("sha256") == before["sha256"] and after.get("pages") == before["pages"] and after.get("missing") == before["missing"] for after in afters]
-            ok &= bool(afters) and all(same) and not served
-            how = "the actor served" if served else f"{len(afters)} refused starts"
+            # Two refused starts, each digest identical to the pages before the kill: one alone leaves
+            # the first start's teardown unchecked, so a timeout with fewer fails.
+            refused_twice = not served and len(afters) >= 2
+            ok &= refused_twice and all(same)
+            how = "the actor served" if served else f"{len(afters)} refused starts" + ("" if refused_twice else " (timed out waiting for two)")
             rows.append(f"{stamp} stamp: trigger overdue {restarted - due} ms once the host was back; {before['pages']} pages before, after: {how}, pages {[a.get('pages', a.get('error')) for a in afters]}, identical={same}")
         return ("pass" if ok else "fail"), "; ".join(rows)
 
@@ -831,6 +834,7 @@ class Suite:
             if len(digests) >= 2:
                 return False, digests
             time.sleep(2)
+        # Timed out: the caller fails on fewer than two refused starts.
         return False, digests
 
     # -- interleaving

@@ -12,6 +12,36 @@ const DEFAULT_ENVIRONMENTS: &str = "dev,prod";
 /// SYNC-YIELD-2: the default sync step budget.
 const STEP_BUDGET_MS: u64 = 1500;
 
+/// The `RivetKit` release this host is built against: `rivetkit` and
+/// `rivetkit-core` in this workspace's `Cargo.lock`, which a unit test
+/// checks. `RivetKit` may commit its own `SQLite` schema migrations before
+/// `on_start` admits the cell, so a `RivetKit` change ships only with a Norn
+/// storage version bump (`docs/platform/engine-upgrades.md`, "`RivetKit`
+/// upgrades").
+pub const RIVETKIT_VERSION: &str = "3.1.1";
+
+/// One `RivetKit` release of the release channel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RivetkitRelease {
+    /// The `RivetKit` version.
+    pub rivetkit: &'static str,
+    /// The first Norn storage version written under it. Every cell stamped
+    /// at or above it, and below the next release's, was written by this
+    /// `RivetKit`.
+    pub from_storage: u32,
+}
+
+/// The allowed-upgrade list: every `RivetKit` release whose cells this host
+/// opens, oldest first. The last is [`RIVETKIT_VERSION`], and each starts at
+/// a storage version above the one before it, so a cell written under a
+/// newer `RivetKit` carries a newer storage version and is refused
+/// (`core.engine.downgrade`). Dropping an entry also raises
+/// `UPGRADES_FROM` past its storage versions.
+pub const RIVETKIT_CHANNEL: &[RivetkitRelease] = &[RivetkitRelease {
+    rivetkit: "3.1.1",
+    from_storage: 4,
+}];
+
 /// Everything the host reads from its environment.
 #[derive(Clone, Default)]
 pub struct HostConfig {
@@ -124,4 +154,60 @@ pub fn install(config: HostConfig) -> Arc<HostConfig> {
 #[must_use]
 pub fn get() -> Arc<HostConfig> {
     Arc::clone(CONFIG.get_or_init(|| Arc::new(HostConfig::from_env())))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{RIVETKIT_CHANNEL, RIVETKIT_VERSION};
+    use norn_cell::engine_release::STORAGE_VERSION;
+
+    /// The version `Cargo.lock` locks `name` at.
+    fn locked(name: &str) -> String {
+        let lock = include_str!("../Cargo.lock");
+        let entry = format!("name = \"{name}\"\n");
+        let at = lock.find(&entry).unwrap_or_else(|| panic!("{name} is not in Cargo.lock"));
+        let rest = &lock[at + entry.len()..];
+        rest.strip_prefix("version = \"")
+            .and_then(|v| v.split('"').next())
+            .unwrap_or_else(|| panic!("{name} has no version in Cargo.lock"))
+            .to_owned()
+    }
+
+    /// A `RivetKit` change in `Cargo.lock` fails here until
+    /// `RIVETKIT_VERSION` and `RIVETKIT_CHANNEL` name it, and the channel
+    /// admits a new entry only at a storage version above the last one's:
+    /// the `RivetKit` bump forces a storage version bump.
+    #[test]
+    fn rivetkit_pin_matches_the_lock_and_the_storage_version() {
+        for name in ["rivetkit", "rivetkit-core"] {
+            assert_eq!(
+                locked(name),
+                RIVETKIT_VERSION,
+                "{name} changed in Cargo.lock: bump STORAGE_VERSION, append a RIVETKIT_CHANNEL entry at it, and update RIVETKIT_VERSION (docs/platform/engine-upgrades.md)"
+            );
+        }
+        let manifest = include_str!("../Cargo.toml");
+        assert!(
+            manifest.contains(&format!("rivetkit = {{ version = \"={RIVETKIT_VERSION}\"")),
+            "Cargo.toml must pin rivetkit at ={RIVETKIT_VERSION}"
+        );
+        let last = RIVETKIT_CHANNEL.last().expect("the channel lists this release");
+        assert_eq!(last.rivetkit, RIVETKIT_VERSION, "the last channel entry is this release");
+        assert!(
+            last.from_storage <= STORAGE_VERSION,
+            "the channel names storage version {} that this engine does not write ({STORAGE_VERSION})",
+            last.from_storage
+        );
+        for pair in RIVETKIT_CHANNEL.windows(2) {
+            assert!(
+                pair[0].from_storage < pair[1].from_storage,
+                "RivetKit {} starts at storage version {}, not above {}'s {}: a RivetKit change needs a storage version bump",
+                pair[1].rivetkit,
+                pair[1].from_storage,
+                pair[0].rivetkit,
+                pair[0].from_storage
+            );
+            assert_ne!(pair[0].rivetkit, pair[1].rivetkit, "a RivetKit release is listed once");
+        }
+    }
 }
