@@ -200,7 +200,9 @@ pub fn check_engine_transport(endpoint: &str, plaintext: Option<&str>) -> Result
 
 #[cfg(test)]
 mod tests {
-    use super::{PLAINTEXT_SINGLE_HOST, RIVETKIT_CHANNEL, RIVETKIT_VERSION, check_engine_transport};
+    use super::{
+        PLAINTEXT_SINGLE_HOST, RIVETKIT_CHANNEL, RIVETKIT_VERSION, check_engine_transport,
+    };
     use norn_cell::engine_release::STORAGE_VERSION;
 
     #[test]
