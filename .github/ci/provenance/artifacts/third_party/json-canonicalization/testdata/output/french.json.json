@@ -1,0 +1,35 @@
+{
+  "sha256": "d99d0ebdcb0033cb858cfa830ae46bc0fb3309413b271f1da828c89901a27ed5",
+  "origin": "upstream",
+  "category": "standards-data",
+  "license": "Apache-2.0",
+  "sources": [
+    {
+      "id": "standards.cyberphone-json-canonicalization",
+      "revision": "32a48195b9b20fe67b1795e39e4509f14d860b45",
+      "evidence": {
+        "path": "registry/standards/cyberphone-json-canonicalization.source.json",
+        "sha256": "e1ee7e1d65607f5a8a843812eff1f50b0124c218cf26565c64dc270e77decb27"
+      }
+    }
+  ],
+  "analyzed_sources": [],
+  "parents": [],
+  "rights_evidence": [
+    {
+      "path": "registry/standards/cyberphone-json-canonicalization.source.json",
+      "sha256": "e1ee7e1d65607f5a8a843812eff1f50b0124c218cf26565c64dc270e77decb27"
+    },
+    {
+      "path": "third_party/json-canonicalization/LICENSE",
+      "sha256": "6821faaddedf2d78c95bb6d98b127e9e616097afd2f6bcc34389f000d13ab12d"
+    }
+  ],
+  "notices": [
+    {
+      "path": "third_party/json-canonicalization/LICENSE",
+      "sha256": "6821faaddedf2d78c95bb6d98b127e9e616097afd2f6bcc34389f000d13ab12d"
+    }
+  ],
+  "connector": null
+}

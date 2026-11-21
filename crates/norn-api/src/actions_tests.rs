@@ -711,3 +711,49 @@ fn a_call_that_leaves_its_target_unwritten_reports_its_current_version() {
         (committed.version, &committed.receipt)
     );
 }
+
+/// S5b: a call that left its target unwritten reports the target's version
+/// as of its own commit, on every replay: a later write to the target never
+/// changes what the call's recovery or replay reports.
+#[test]
+fn a_replay_reports_the_version_as_of_its_commit_after_a_later_write() {
+    let host = rows_host();
+    let query = scoped("org_demo");
+    let operator = Some(OPERATOR);
+    let body = |values: &str, version: &str, key: &str| {
+        format!(
+            r#"{{"input":{{"parentId":"order-1","parentValues":{values},"parentVersion":"{version}","rowOps":[]}},"idempotencyKey":"{key}"}}"#
+        )
+    };
+    let created = call(
+        &host,
+        &query,
+        operator,
+        ORDER_EDIT,
+        &body(r#"{"title":"first"}"#, "0", "create"),
+    )
+    .unwrap();
+    let unchanged = body("{}", &created.version.to_string(), "noop");
+    let committed = call(&host, &query, operator, ORDER_EDIT, &unchanged).unwrap();
+    assert_eq!(committed.version, created.version);
+    let later = call(
+        &host,
+        &query,
+        operator,
+        ORDER_EDIT,
+        &body(
+            r#"{"title":"second"}"#,
+            &created.version.to_string(),
+            "later",
+        ),
+    )
+    .unwrap();
+    assert!(later.version > created.version);
+    let replayed = call(&host, &query, operator, ORDER_EDIT, &unchanged).unwrap();
+    assert_eq!(replayed.outcome, ActionCallOutcome::Replayed);
+    assert_eq!(
+        (replayed.version, &replayed.receipt),
+        (committed.version, &committed.receipt),
+        "the version as of the call's commit, never the later write's"
+    );
+}

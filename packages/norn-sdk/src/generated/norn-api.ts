@@ -200,9 +200,12 @@ export interface paths {
          * `POST /v1/decisions/{id}:decide`.
          * @description For the approval of a parked action call (APPROVAL-1) the decider is
          *     never the call's requester (#618), and no flow turn runs: the answer is
-         *     recorded, and an approved call then commits through the shared action
-         *     dispatch as its requester ([`AsStarter`] makes the requester the host's
-         *     verified caller for that one call), its authority decided again there.
+         *     recorded, and an approved call then runs through the shared action
+         *     dispatch only under the requester's current authority ([`AsStarter`]:
+         *     the host runs it only when it can establish that authority, which a
+         *     decider's request never does). Otherwise the answer's `call` is
+         *     `not_executed` and the requester's own authenticated retry runs it
+         *     (APPROVAL-RECOVERY-1).
          *
          *     # Errors
          *     In this order: 404 `decision.not_found` (also for a caller who may not
@@ -1208,16 +1211,25 @@ export interface components {
             run: components["schemas"]["DecidedRun"];
         };
         /**
-         * @description What committing an approved call as its requester answered (APPROVAL-1).
-         *     The approval stands either way: the requester's own retry of the call
-         *     commits it.
+         * @description What the approved call is now (APPROVAL-1, APPROVAL-RECOVERY-1). The
+         *     approval stands either way.
          */
         DecidedCall: {
-            /** @description The requester's refusal code when it did not. */
+            /**
+             * @description The refusal code when it did not: its recorded refusal, or why this
+             *     try could not run it.
+             */
             code?: string | null;
             /** @description Whether the call committed. */
             committed: boolean;
+            /** @description Where it stands. */
+            state: components["schemas"]["DecidedCallState"];
         };
+        /**
+         * @description Where an approved action call stands (APPROVAL-RECOVERY-1).
+         * @enum {string}
+         */
+        DecidedCallState: "committed" | "refused" | "not_executed";
         /** @description The decision as decided. */
         DecidedDecision: {
             /** @description The chosen option id. */
@@ -1345,6 +1357,7 @@ export interface components {
             atMs: number;
             /** @description Who, in display words, never an id. */
             by?: string | null;
+            call?: components["schemas"]["DecidedCall"] | null;
             /** @description The chosen option, only for a reader who may read the run. */
             choice?: string | null;
             /** @description How it was resolved. */

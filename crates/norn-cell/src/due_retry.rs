@@ -44,6 +44,12 @@ pub fn decision_item(decision_id: &str) -> String {
     format!("decision/{decision_id}")
 }
 
+/// The retry key of an approved action call (APPROVAL-RECOVERY-1).
+#[must_use]
+pub fn approval_item(decision_id: &str) -> String {
+    format!("approval/{decision_id}")
+}
+
 /// One item's retry record.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DueRetry {
