@@ -27,7 +27,9 @@ sha2 = "0.10.9"
 url = { version = "2.5.8", default-features = false, features = ["std"] }
 utoipa = "6.0.0"
 
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# Native SQLite for this crate's own tests only: a host links the cell engine
+# it brings (NativeEngine, the Durable Object's, or Rivet's).
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 norn-cell = { path = "../norn-cell", default-features = false, features = ["native"] }
 
 [dev-dependencies]

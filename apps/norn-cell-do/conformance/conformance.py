@@ -17,6 +17,7 @@ Every row is pass, fail, not tested (the run could not show it) or measured
 
     conformance.py --reference REF --host celld  --project DIR [--out OUT]
     conformance.py --reference REF --host rivet  --project DIR [--out OUT]
+    NORN_CELL_RIVET=BIN conformance.py --reference REF --host rivet-native [--out OUT]
     conformance.py --reference REF --host url --url https://cell.example [--out OUT]
 
 `celld` and `rivet` start and stop the host themselves (state in a fresh temp directory, or
@@ -49,6 +50,8 @@ import urllib.parse
 import urllib.request
 
 ENGINE_IMAGE = "rivetdev/engine@sha256:6e585002b700dd4d3630808eb67884aa15d1a602d83781984edac47023b6d40f"
+# Rivet Engine 3.1.1 (`rivetdev/engine:3.1.1`), the release the native host's RivetKit pins.
+NATIVE_ENGINE_IMAGE = "rivetdev/engine@sha256:55cdfe9a92c0ee2f7d3ce5f388dab2ef8e0be1bab8e3f1adb7ba972f862e25d4"
 ORANGE_VERSION = "1.0.3"
 # The locked, test-only OpenOrange install (bun install --frozen-lockfile in this directory).
 LOCKED_ORANGE = Path(__file__).resolve().parent / "node_modules" / ".bin" / "orange"
@@ -152,6 +155,22 @@ def scripted(base, step, now_ms, hold=None, timeout=120, obj=None, marker=None):
     if marker:
         headers[MARKER_HEADER] = marker
     return request(base, step["method"], step["path"], at(step["query"], obj), step["body"] or None, headers, timeout)
+
+
+def seam(base, path, obj, deadline_s=180, **params):
+    """A wake seam's answer on the conformance cell `obj` (`/__conformance/<path>`), waiting out the
+    503/504 a host answers while it re-places the cell after a crash; raises on any other failure."""
+    query = at(ANALYTICS, obj) + "".join(f"&{k}={urllib.parse.quote(str(v))}" for k, v in params.items())
+    stop_at = time.time() + deadline_s
+    while True:
+        status, body, _, _ = request(base, "GET", f"/__conformance/{path}", query, timeout=180)
+        if status not in (503, 504) or time.time() > stop_at:
+            break
+        time.sleep(1)
+    document = json.loads(body) if body else {}
+    if status != 200 or "error" in document:
+        raise RuntimeError(f"seam {path}: {status} {body[:300]!r}")
+    return document
 
 
 def wait_ready(base, deadline_s, child=None):
@@ -351,7 +370,7 @@ class RivetHost:
             "-v", f"{engine / 'config.json'}:/etc/rivet/config.json:ro",
             "-v", f"{engine / 'log'}:/var/lib/rivet/log",
             "-v", f"{engine / 'objects'}:/var/lib/rivet/objects",
-            ENGINE_IMAGE,
+            getattr(self, "image", ENGINE_IMAGE),
         ], check=True, capture_output=True)
         stop_at = time.time() + 120
         while time.time() < stop_at:
@@ -412,6 +431,46 @@ class RivetHost:
 
     def data(self):
         return [self.state / "engine" / "log", self.state / "engine" / "objects"]
+
+
+class RivetNativeHost(RivetHost):
+    """The native Rivet host (crates/norn-cell-rivet, D131): a self-hosted Rivet Engine 3.1.1 (Docker,
+    pinned digest) with `norn-cell-rivet` runner processes, RivetKit's Rust SDK with the cell's SQLite
+    in process. The binary is a `conformance` build, named by NORN_CELL_RIVET."""
+
+    name = "rivet-native"
+
+    def __init__(self, state, lineage_key, runners=2):
+        self.project, self.state = None, state
+        self.runners = runners
+        self.lineage_key = lineage_key
+        self.token = secrets.token_hex(24)
+        self.ports = [free_port() for _ in range(runners)]
+        self.children = [None] * runners
+        self.container = f"norn-conformance-engine-{os.getpid()}"
+        self.binary = os.environ.get("NORN_CELL_RIVET")
+        if not self.binary or not Path(self.binary).is_file():
+            raise SystemExit("NORN_CELL_RIVET names the norn-cell-rivet binary (cargo build --features conformance in crates/norn-cell-rivet)")
+        self.image = NATIVE_ENGINE_IMAGE
+        self.version = f"norn-cell-rivet (rivetkit 3.1.1) on {NATIVE_ENGINE_IMAGE.split('@')[1][:19]}…"
+        config = {
+            "storage": {"log_directory": "/var/lib/rivet/log", "auto_provision_partitions": 1, "balancing": {"enabled": False}},
+            "object_storage": {"primary": {"file_system": {"path": "/var/lib/rivet/objects"}}},
+        }
+        (state / "engine").mkdir(parents=True, exist_ok=True)
+        (state / "engine" / "config.json").write_text(json.dumps(config))
+
+    def start_runner(self, index):
+        env = {
+            **os.environ,
+            "RIVET_ENDPOINT": f"http://default:{self.token}@127.0.0.1:6420",
+            "NORN_LISTEN": f"127.0.0.1:{self.ports[index]}",
+            "NORN_STAGE": "test",
+            "NORN_CONFORMANCE": "synthetic",
+            "NORN_LINEAGE_KEY": self.lineage_key,
+        }
+        log = open(self.state / f"runner-{index}.log", "ab")
+        self.children[index] = subprocess.Popen([self.binary], env=env, stdout=log, stderr=log, start_new_session=True)
 
 
 # ------------------------------------------------------------------ tests
@@ -491,6 +550,22 @@ class Suite:
         nested = probed(self.base, "tx-nested", "inner", "outerKept")
         ok = str(adapter["result"]).endswith(":pass") and "nested" in str(adapter["result"])
         return ("pass" if ok else "fail"), f"Norn refuses nesting before the platform (adapter={adapter['result']}); platform nesting (measured): inner error {nested['inner']!r}, outer kept={nested['outerKept']}"
+
+    def engine_upgrade(self):
+        """ENGINE-UPGRADE-1 (#1494) on the host's own SQLite: the storage version 1 and 2 fixtures open,
+        upgrade in place with ledger and receipts unchanged, and a newer or unreadable stamp refuses
+        and leaves the cell identical. Each case loads into a fresh probe object."""
+        if self.host.name != "rivet-native":
+            return "not tested", "probed on the native Rivet host only; native Rust runs crates/norn-cell/tests/engine_upgrade.rs"
+        run = secrets.token_hex(4)
+        results = {case: probed(self.base, "engine-upgrade", "ok", object_name=f"upgrade-{case}-{run}", case=case, timeout=120) for case in ("v1", "v2", "v3", "downgrade", "unknown")}
+        ok = all(result["ok"] is True for result in results.values())
+        ups = [results[case] for case in ("v1", "v2", "v3")]
+        detail = (f"v1, v2, v3 → {ups[0]['to']}: ledger+receipts unchanged={all(u['ledgerAndReceiptsUnchanged'] for u in ups)}, "
+                  f"reopen writes nothing={all(u['reopenWritesNothing'] for u in ups)}, heads {'/'.join(str(u['head']['commits']) for u in ups)} commits; "
+                  f"newer stamp: {str(results['downgrade'].get('refusal'))[:60]!r} unchanged={results['downgrade'].get('unchanged')}; "
+                  f"unreadable stamp: {str(results['unknown'].get('refusal'))[:60]!r} unchanged={results['unknown'].get('unchanged')}")
+        return ("pass" if ok else "fail"), detail
 
     # -- kills
 
@@ -626,6 +701,93 @@ class Suite:
         if survived != want["headJson"]:
             return "fail", f"acknowledged commit lost: head {survived} != {want['headJson']}"
         return "pass", f"acknowledged install (200) then the host was killed: the head after restart is the acknowledged one (answered again after {waited:.0f} ms)"
+
+    def log_has(self, token):
+        line = f"{MARKER_LINE} {token}".encode()
+        for path in self.host.logs():
+            try:
+                if line in path.read_bytes():
+                    return True
+            except OSError:
+                pass
+        return False
+
+    def wake_writer_race(self):
+        """TIMER-ALARM-1 under a concurrent write: a wake that read "no writer, nothing due" and then
+        pauses before it updates the alarm must not erase the recovery wake of a writer that started
+        meanwhile. The wake is paused at its final decision (a seam, no timing); a write starts; once
+        the write has either committed or is shown waiting for the wake's decision, the wake is
+        released; the host is killed after the write committed and before it updated the alarm. After
+        the restart the recovery alarm must still be set, so the cell wakes again."""
+        if self.host.name != "rivet-native":
+            return "not tested", "the wake seams are served by the native Rivet host only"
+        steps = self.ref["kill"]["script"]
+        want = self.ref["kill"]["native"]["steps"][0]
+        obj = f"wake-race-{secrets.token_hex(4)}"
+        head(self.base, obj=obj, timeout=300)
+        # What a delivery leaves before it decides: a recovery wake stands, nothing is due.
+        recovery = int(time.time() * 1000) + 60_000
+        seam(self.base, "alarm", obj, set=recovery)
+        token = secrets.token_hex(16)
+        paused = seam(self.base, "wake", obj, now=recovery, pause=1, token=token)
+        if paused.get("paused") is not True:
+            return "fail", f"the wake did not pause at its decision: {paused}"
+        writer_token = secrets.token_hex(16)
+        replied = []
+
+        def send():
+            try:
+                status, _, _, _ = scripted(self.base, steps[0], self.now, hold="after-write", timeout=600, obj=obj, marker=writer_token)
+                replied.append(status)
+            except OSError as error:
+                replied.append(f"error: {type(error).__name__}")
+
+        with concurrent.futures.ThreadPoolExecutor(1) as pool:
+            future = pool.submit(send)
+            # Whichever comes first: the write committed (old order), or it waits on the decision.
+            seen = wait_for(lambda: "waiting" if self.log_has(f"{token}-waiting") else "committed" if self.log_has(writer_token) else None, 120)
+            if seen is None:
+                return "fail", f"the write neither committed nor waited for the wake (replies {replied})"
+            released = seam(self.base, "wake-release", obj)
+            if not wait_for(lambda: self.log_has(writer_token) or None, 120):
+                return "fail", f"the write never reached its reply after the wake ({released}; replies {replied})"
+            if replied:
+                return "fail", f"the held write answered ({replied[0]}) before the kill"
+            self.host.kill()
+            future.result(timeout=120)
+        self.host.start()
+        # Read the alarm before anything opens the cell: an open re-arms from the cell's deadlines.
+        after = seam(self.base, "alarm", obj)
+        survived, _ = recovered_head(self.base, obj=obj)
+        landed = survived == want["headJson"]
+        detail = f"the write {seen} first; the wake released ({released.get('outcome')}); killed after the commit, before its alarm update; after the restart alarm={after.get('alarm')}, write landed={landed}"
+        if after.get("alarm") is None:
+            return "fail", "the recovery wake was erased: " + detail
+        if not landed:
+            return "fail", "the committed write did not survive: " + detail
+        return "pass", detail
+
+    def wake_refused_upgrade(self):
+        """ENGINE-UPGRADE-1 for the host's own tables: a cell stamped by a newer engine, or with a stamp
+        this engine cannot read, keeps its alarm through a restart and the actor's real wake, and its
+        persisted SQLite pages (host tables, schema and free pages included) stay byte-identical."""
+        if self.host.name != "rivet-native":
+            return "not tested", "the wake seams are served by the native Rivet host only"
+        rows, ok = [], True
+        for stamp in ("newer", "unknown"):
+            obj = f"wake-stamp-{stamp}-{secrets.token_hex(4)}"
+            head(self.base, obj=obj, timeout=300)
+            seam(self.base, "alarm", obj, set=int(time.time() * 1000) + 3_600_000)
+            seam(self.base, "restamp", obj, stamp=stamp)
+            before = seam(self.base, "pages", obj)
+            self.host.kill()
+            self.host.start()
+            woke = seam(self.base, "wake", obj, now=int(time.time() * 1000))
+            after = seam(self.base, "pages", obj)
+            same = before["sha256"] == after["sha256"] and before["pages"] == after["pages"] and before["missing"] == after["missing"]
+            ok &= same
+            rows.append(f"{stamp} stamp: {before['pages']} pages before, {after['pages']} after, identical={same} (wake {woke.get('outcome')!r:.80})")
+        return ("pass" if ok else "fail"), "; ".join(rows)
 
     # -- interleaving
 
@@ -1193,7 +1355,7 @@ def local_copy(source, lineage_key):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--reference", required=True, type=Path)
-    parser.add_argument("--host", required=True, choices=["celld", "rivet", "url"])
+    parser.add_argument("--host", required=True, choices=["celld", "rivet", "rivet-native", "url"])
     parser.add_argument("--project", type=Path)
     parser.add_argument("--state", type=Path)
     parser.add_argument("--url")
@@ -1216,6 +1378,12 @@ def main():
 def run(args, reference, cleanup):
     if args.host == "url":
         host = UrlHost(args.url)
+    elif args.host == "rivet-native":
+        # No Worker project: the runner is the norn-cell-rivet binary.
+        state = fresh_state(args.state, Path(tempfile.gettempdir()) / "norn-conformance-no-project")
+        if args.state is None:
+            cleanup.append(lambda: shutil.rmtree(state, ignore_errors=True))
+        host = RivetNativeHost(state, reference["lineageKey"])
     else:
         source = args.project.resolve()
         # State and logs never reach the project: by default a fresh temp directory; a supplied --state
@@ -1242,12 +1410,15 @@ def run(args, reference, cleanup):
         ("no split brain when a runner stalls mid-commit", suite.zombie, True),
         ("no split brain when a frozen runner thaws after its cell moved", suite.zombie_frozen, True),
         ("alarms (platform probes): fire, re-fire after a failing handler, rollback, kill", suite.alarms, False),
+        ("a wake's alarm decision never erases a concurrent write's recovery wake (kill before its update)", suite.wake_writer_race, True),
+        ("a refused storage version: restart and wake leave every SQLite page identical", suite.wake_refused_upgrade, True),
         ("SQLite version, affinity, limits", suite.sqlite, False),
         ("clock inside a synchronous call (measurement)", suite.clock, False),
         ("waitUntil background work completes after the reply", suite.wait_until, False),
         ("WebSocket live subscription across 15 s idle", suite.websocket, False),
         ("WebSocket survives the object hibernating", suite.websocket_hibernation, False),
         ("backup and restore in place", suite.backup_restore, True),
+        ("storage version upgrade and downgrade refusal on the host's SQLite", suite.engine_upgrade, False),
     ]
     only = set(args.only.split(",")) if args.only else None
     try:
