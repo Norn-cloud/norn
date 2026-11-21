@@ -449,11 +449,14 @@ fn definitions<E: SqlEngine>(
     Ok(Definitions { laws, callable })
 }
 
-/// One quarantined row and its open findings, as scanned.
+/// One quarantined row and the open findings the caller may see.
 struct Held {
     row: ObjectRecord,
     open: Vec<DataQualityFinding>,
 }
+
+/// One quarantined row and its open findings, as scanned under the lock.
+type Scanned = (ObjectRecord, Vec<crate::object_links::GatedFinding>);
 
 /// Scan `object_type` from its first row, at most `budget` rows; the held
 /// rows and whether the type was read to its end.
@@ -463,7 +466,7 @@ fn scan_type<E: SqlEngine>(
     object_type: &str,
     budget: &mut usize,
     start: &mut Option<(u64, Option<(u64, u64)>)>,
-) -> Result<(Vec<Held>, bool), Refusal> {
+) -> Result<(Vec<Scanned>, bool), Refusal> {
     let mut after: Option<String> = None;
     let mut held = Vec::new();
     loop {
@@ -495,7 +498,9 @@ fn scan_type<E: SqlEngine>(
                     .filter(|finding| finding.status == DataQualityFindingStatus::Open)
                     .collect();
                 if !open.is_empty() {
-                    batch.push(Held { row, open });
+                    let open =
+                        crate::object_links::gate_findings(reader, open).map_err(Refusal::host)?;
+                    batch.push((row, open));
                 }
             }
             Ok(((batch, scanned), last, done))
@@ -545,15 +550,24 @@ fn held_back<E: SqlEngine>(
         let mut start = None;
         let (held, exhausted) = scan_type(host, access, &object_type, &mut budget, &mut start)?;
         approximate |= !exhausted;
-        // The quarantined list's row gate, outside the cell lock.
-        let visible: Vec<Held> = held
+        // The quarantined list's row gate, outside the cell lock; a held link
+        // is disclosed as the link would be, and the snapshot is confirmed
+        // after the policy whether or not a record below reads evidence
+        // (OBS-LINK-DISPUTE-1).
+        let readable: Vec<Scanned> = held
             .into_iter()
-            .filter(|held| {
+            .filter(|(row, _)| {
                 [Population, Values]
                     .into_iter()
-                    .all(|capability| permitted(host, access, actor, &held.row, capability))
+                    .all(|capability| permitted(host, access, actor, row, capability))
             })
             .collect();
+        let visible: Vec<Held> =
+            crate::object_links::disclosed_findings(host, access, actor, &mut start, readable)?
+                .into_iter()
+                .map(|(row, open)| Held { row, open })
+                .filter(|held| !held.open.is_empty())
+                .collect();
         let mut by_rule: BTreeMap<DataQualityRuleRef, Vec<(&Held, &DataQualityFinding)>> =
             BTreeMap::new();
         for held in &visible {

@@ -8,56 +8,20 @@
     reason = "synthetic mapped-link correspondence"
 )]
 use norn_cell::mapping_bundle::MappingInput;
-use norn_cell::{CellStore, InstalledDefinitionInput, MAIN_WORLD, Model, SqliteCell, StoreOptions};
-use norn_ir::{
-    ArtifactEnvelope, InterfaceDef, ObjectTypeDef, PropertyTypeDef, RuntimeObject, RuntimeValue,
-};
+use norn_cell::{CellStore, MAIN_WORLD, SqliteCell, StoreOptions};
+use norn_ir::{ArtifactEnvelope, RuntimeObject, RuntimeValue};
 use norn_kernel::{FactKey, LinkKey, ObservationEvent, ObservationId, Observed};
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
-    path::{Path, PathBuf},
+    path::Path,
 };
 
 type Cell = SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject>;
-fn root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
-}
-fn fixture_artifacts() -> Vec<ArtifactEnvelope> {
-    let mut artifacts: Vec<ArtifactEnvelope> = Vec::new();
-    for dir in [
-        "core",
-        "packs/canon",
-        "packs/erpnext",
-        "packs/shopify",
-        "packs/odoo",
-    ] {
-        for file in
-            fs::read_dir(root().join(format!("registry/{dir}/artifacts"))).expect("artifacts")
-        {
-            let artifact: ArtifactEnvelope = serde_json::from_str(
-                &fs::read_to_string(file.expect("file").path()).expect("read"),
-            )
-            .expect("artifact");
-            if ![
-                "commerce.SalesOrder.entity",
-                "core.Order.interface",
-                "core.Entitlement.entity",
-                "identity.BusinessUnit.entity",
-                "location.Region.entity",
-                "location.Space.entity",
-                "party.Brand.entity",
-            ]
-            .contains(&artifact.artifact_id.as_str())
-            {
-                artifacts.push(artifact);
-            }
-        }
-    }
-    artifacts
-}
-
+#[path = "support/mapped_cell.rs"]
+mod mapped_cell;
+use mapped_cell::{fixture_artifacts, root};
 fn setup(path: &Path) -> Cell {
     setup_with(path, |_| {})
 }
@@ -65,76 +29,7 @@ fn setup(path: &Path) -> Cell {
 fn setup_with(path: &Path, edit: impl FnOnce(&mut Vec<ArtifactEnvelope>)) -> Cell {
     // Every plan in these tests is also checked against the wide journal scope.
     norn_cell::check_link_plans_against_wide_scope(true);
-    let mut artifacts = fixture_artifacts();
-    edit(&mut artifacts);
-    artifacts.sort_by(|a, b| a.artifact_id.cmp(&b.artifact_id));
-    let (base, candidate): (Vec<_>, Vec<_>) = artifacts
-        .iter()
-        .cloned()
-        .partition(|a| a.artifact_id.starts_with("core.") || a.artifact_id.starts_with("std."));
-    let diagnostics = norn_checker::check_artifact_set(
-        &candidate,
-        &norn_checker::EntityArtifactSetContext {
-            registry: &BTreeSet::new(),
-            base: &base,
-            tenant: None,
-        },
-    );
-    assert!(
-        diagnostics
-            .iter()
-            .all(|d| d.severity != norn_ir::DiagnosticSeverity::Error),
-        "{diagnostics:#?}"
-    );
-    let mut types: Vec<ObjectTypeDef> = vec![];
-    let mut interfaces: Vec<InterfaceDef> = vec![];
-    let mut properties: Vec<PropertyTypeDef> = vec![];
-    for artifact in &artifacts {
-        let payload = serde_json::to_value(artifact).expect("artifact")["payload"].clone();
-        if let Some(value) = payload.get("objectType") {
-            types.push(serde_json::from_value(value.clone()).expect("object"));
-        }
-        if let Some(value) = payload.get("interface") {
-            interfaces.push(serde_json::from_value(value.clone()).expect("interface"));
-        }
-        if let Some(value) = payload.get("propertyTypes") {
-            properties.extend(
-                serde_json::from_value::<Vec<PropertyTypeDef>>(value.clone()).expect("properties"),
-            );
-        }
-    }
-    let model = Model::from_definitions_with_interfaces(&types, &properties, &interfaces)
-        .expect("model")
-        .with_governing_laws(&artifacts)
-        .expect("laws");
-    let mut store = CellStore::open(path, model.clone(), StoreOptions::default()).expect("store");
-    // Bound before the first commit, so every exported record carries it.
-    store.bind("scope", "org_demo/dev").expect("scope");
-    store
-        .install_definitions(
-            model,
-            InstalledDefinitionInput {
-                canonical_set: String::from_utf8(
-                    norn_ir::canonical::canonical_json_of(&artifacts).expect("set"),
-                )
-                .expect("UTF8"),
-                registry: vec![],
-                // A well-formed digest, so the cell's history exports.
-                receipt_sha256: norn_ir::canonical::domain_hash_hex(
-                    b"norn.test.receipt\0",
-                    &"synthetic-mapped-links",
-                )
-                .expect("receipt digest"),
-                admission_receipt: None,
-                readmission: None,
-                diff: json!({}),
-                installed_at: 1_793_702_400_000,
-                layout: None,
-            },
-            None,
-            "org_demo/dev",
-        )
-        .expect("install");
+    let store = mapped_cell::store(path, edit);
     SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new()).expect("cell")
 }
 fn fixture(system: &str) -> Value {
@@ -887,7 +782,9 @@ fn absence_maps_to_null_and_a_required_source_field_refuses_it() {
 }
 
 proptest::proptest! {
-    #![proptest_config(proptest::test_runner::Config::with_cases(24))]
+    #![proptest_config(proptest::test_runner::Config::with_cases(
+        std::env::var("PROPTEST_CASES").ok().and_then(|cases| cases.parse().ok()).unwrap_or(24)
+    ))]
     /// The narrowed link plan equals the wide one (checked inside every
     /// mapping commit) over generated histories: deliveries in any order,
     /// re-pointed claims, redeliveries of older versions and, on the to-many
@@ -939,6 +836,11 @@ proptest::proptest! {
 
 /// A raw erpnext row at a fixed delivery clock, as a connector extract writes it.
 fn raw_of(row: &Value, event: &str) -> (Observed<RuntimeValue>, MappingInput) {
+    raw_in(row, event, "snapshot")
+}
+
+/// [`raw_of`] read from `partition`: another contributor of the same records.
+fn raw_in(row: &Value, event: &str, partition: &str) -> (Observed<RuntimeValue>, MappingInput) {
     let record = &row["record"];
     let alias = record["name"].as_str().expect("source alias").to_owned();
     let payload = RuntimeValue::from_json(record.clone()).expect("payload");
@@ -947,7 +849,11 @@ fn raw_of(row: &Value, event: &str) -> (Observed<RuntimeValue>, MappingInput) {
         .expect("digest");
     let source = "synthetic-erpnext".to_owned();
     let raw = Observed {
-        id: ObservationId(format!("delivery-{event}-{alias}")),
+        id: ObservationId(if partition == "snapshot" {
+            format!("delivery-{event}-{alias}")
+        } else {
+            format!("delivery-{partition}-{event}-{alias}")
+        }),
         provenance: norn_kernel::Provenance {
             source: source.clone(),
             source_id: alias.clone(),
@@ -963,7 +869,7 @@ fn raw_of(row: &Value, event: &str) -> (Observed<RuntimeValue>, MappingInput) {
         mapping: "erpnext.three.mapping".into(),
         dataset: row["dataset"].as_str().expect("dataset").into(),
         connector_instance: "demo".into(),
-        partition: "snapshot".into(),
+        partition: partition.into(),
         recorded_at: norn_ir::provenance::UtcTimestamp("2026-11-03T00:00:00Z".into()),
     };
     (raw, input)
@@ -1111,37 +1017,40 @@ fn obs_page_a_repeated_identity_refuses_the_whole_page_before_capture() {
     );
 }
 
-proptest::proptest! {
-    #![proptest_config(proptest::test_runner::Config::with_cases(24))]
-    /// OBS-PAGE-EQUIV: consuming pages equals consuming their records one by
-    /// one in page order, over committed end state (objects with versions,
-    /// values and lineage; links; claims; events; quarantine), modulo commit
-    /// count. Batches are split before a repeated identity, as a host does,
-    /// so identities repeat across pages; generated rows mix intra-page links
-    /// in both orders (orders before or after their holdings and parties),
-    /// re-pointed claims, cleared parties and older redeliveries.
-    #[test]
-    fn obs_page_equiv_pages_equal_one_by_one(
-        many in proptest::bool::ANY,
-        batches in proptest::collection::vec(
-            proptest::collection::vec((0u8..7, 0u8..4, 1u8..6), 1..9),
-            1..4,
-        ),
-    ) {
-        let directory = tempfile::tempdir().expect("directory");
-        let open = |name: &str| {
-            let path = directory.path().join(name);
-            if many { setup_with(&path, |artifacts| many_holding(artifacts)) } else { setup(&path) }
-        };
-        let (mut single, mut paged) = (open("single.sqlite"), open("paged.sqlite"));
-        let rows = fixture("erpnext")["snapshot"].as_array().expect("rows").clone();
-        let parties = ["demo/party/owner", "demo/party/custodian", "demo/party/customer", "clear"];
-        for batch in batches {
-            // Split before a repeated row identity, and per dataset (a page
-            // reads one dataset).
-            let mut pages: Vec<Vec<(Observed<RuntimeValue>, MappingInput)>> = Vec::new();
-            let mut seen = BTreeSet::new();
-            for (row, party, version) in batch {
+/// One generated step: (erpnext snapshot row, party it points at, source version).
+type Step = (u8, u8, u8);
+
+/// Both cells of an OBS-PAGE-EQUIV run, `many` choosing the to-many `peers` relation.
+fn equiv_cells(directory: &Path, many: bool) -> (Cell, Cell) {
+    let open = |name: &str| {
+        let path = directory.join(name);
+        if many {
+            setup_with(&path, |artifacts| many_holding(artifacts))
+        } else {
+            setup(&path)
+        }
+    };
+    (open("single.sqlite"), open("paged.sqlite"))
+}
+
+/// Deliver `batches` to `single` one record at a time and to `paged` a page
+/// at a time. Batches are split before a repeated identity, as a host does,
+/// and per dataset (a page reads one dataset).
+fn deliver(single: &mut Cell, by_page: &mut Cell, many: bool, batches: &[Vec<Step>]) {
+    let rows = fixture("erpnext")["snapshot"]
+        .as_array()
+        .expect("rows")
+        .clone();
+    let parties = [
+        "demo/party/owner",
+        "demo/party/custodian",
+        "demo/party/customer",
+        "clear",
+    ];
+    for batch in batches {
+        let batch: Vec<(Value, String)> = batch
+            .iter()
+            .map(|&(row, party, version)| {
                 let mut row = rows[usize::from(row)].clone();
                 let record = row["record"].as_object_mut().expect("record");
                 let party = parties[usize::from(party)];
@@ -1151,48 +1060,768 @@ proptest::proptest! {
                 if many && record.contains_key("owner_ref") {
                     record.insert("owner_ref".into(), json!(party));
                 }
-                let (raw, input) = raw_of(&row, &version.to_string());
-                let identity = raw.provenance.source_id.clone();
-                let split = pages.last().is_none_or(|page| {
-                    !seen.insert(identity.clone()) || page[0].1.dataset != input.dataset
-                });
-                if split {
-                    seen = BTreeSet::from([identity]);
-                    pages.push(Vec::new());
-                }
-                pages.last_mut().expect("page").push((raw, input));
+                (row, version.to_string())
+            })
+            .collect();
+        deliver_rows(single, by_page, &batch);
+    }
+}
+
+/// Deliver one batch of (erpnext row, source version) to `single` one record
+/// at a time and to `by_page` a page at a time, split as [`deliver`] splits.
+fn deliver_rows(single: &mut Cell, by_page: &mut Cell, batch: &[(Value, String)]) {
+    {
+        let mut pages: Vec<Vec<(Observed<RuntimeValue>, MappingInput)>> = Vec::new();
+        let mut seen = BTreeSet::new();
+        for (row, version) in batch {
+            let (raw, input) = raw_of(row, version);
+            let identity = raw.provenance.source_id.clone();
+            let split = pages.last().is_none_or(|page| {
+                !seen.insert(identity.clone()) || page[0].1.dataset != input.dataset
+            });
+            if split {
+                seen = BTreeSet::from([identity]);
+                pages.push(Vec::new());
             }
-            for page in pages {
-                for (raw, input) in &page {
-                    let (id, _) = single.inject_mapping_bundle(raw, input).expect("capture");
-                    single.process_mapping_outcome(&id).expect("one by one");
-                }
-                let raws: Vec<_> = page.iter().map(|(raw, _)| raw.clone()).collect();
-                let ids = paged
-                    .inject_mapping_page(&raws, &page[0].1)
-                    .expect("page capture");
-                for (id, _) in ids.pages {
-                    paged.process_mapping_page(&id).expect("page");
-                }
+            pages.last_mut().expect("page").push((raw, input));
+        }
+        for page in pages {
+            for (raw, input) in &page {
+                let (id, _) = single.inject_mapping_bundle(raw, input).expect("capture");
+                single.process_mapping_outcome(&id).expect("one by one");
+            }
+            let delivered: Vec<_> = page.iter().map(|(raw, _)| raw.clone()).collect();
+            deliver_page(by_page, &delivered, &page[0].1);
+        }
+    }
+}
+
+/// Deliver one page as a host does (`DevHost::ingest`): captured and
+/// committed whole, or, when the cell refuses a page that would capture a
+/// dispute after a record it commits (OBS-LINK-DISPUTE-1), one record per
+/// page, each captured and committed in order.
+fn deliver_page(cell: &mut Cell, raws: &[Observed<RuntimeValue>], input: &MappingInput) {
+    match cell.inject_mapping_page(raws, input) {
+        Ok(ids) => {
+            for (id, _) in ids.pages {
+                cell.process_mapping_page(&id).expect("page");
             }
         }
-        let ordered = claims_follow_their_referents(&paged);
-        proptest::prop_assert!(ordered.is_ok(), "{ordered:?}");
-        let (single, paged) = (end_state(&single), end_state(&paged));
-        let only = |a: &[String], b: &[String]| -> Vec<String> {
-            a.iter().filter(|line| !b.contains(line)).cloned().collect()
-        };
-        proptest::prop_assert!(
-            single == paged,
-            "one by one only: {:#?}\npaged only: {:#?}\nfirst order difference: {:#?}",
-            only(&single, &paged),
-            only(&paged, &single),
-            single
-                .iter()
-                .zip(&paged)
-                .position(|(a, b)| a != b)
-                .map(|at| (&single[at..at.saturating_add(3).min(single.len())], &paged[at..at.saturating_add(3).min(paged.len())]))
+        Err(norn_cell::CellError::MappingPageSpansDispute) if raws.len() > 1 => {
+            for raw in raws {
+                deliver_page(cell, std::slice::from_ref(raw), input);
+            }
+        }
+        Err(error) => panic!("page capture: {error}"),
+    }
+}
+
+/// OBS-PAGE-EQUIV over committed end state, explained when it fails.
+fn same_end_state(single: &Cell, paged: &Cell) -> Result<(), String> {
+    claims_follow_their_referents(paged)?;
+    let (single, paged) = (end_state(single), end_state(paged));
+    if single == paged {
+        return Ok(());
+    }
+    let only = |a: &[String], b: &[String]| -> Vec<String> {
+        a.iter().filter(|line| !b.contains(line)).cloned().collect()
+    };
+    Err(format!(
+        "one by one only: {:#?}\npaged only: {:#?}",
+        only(&single, &paged),
+        only(&paged, &single),
+    ))
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(
+        std::env::var("PROPTEST_CASES").ok().and_then(|cases| cases.parse().ok()).unwrap_or(24)
+    ))]
+    /// OBS-PAGE-EQUIV: consuming pages equals consuming their records one by
+    /// one in page order, over committed end state (objects with versions,
+    /// values and lineage; links; claims; events; quarantine), modulo commit
+    /// count. Identities repeat across pages; generated rows mix intra-page
+    /// links in both orders (orders before or after their holdings and
+    /// parties), re-pointed claims, cleared parties, older redeliveries and
+    /// conflicting re-sends of an event (FEED-CONFLICT).
+    #[test]
+    fn obs_page_equiv_pages_equal_one_by_one(
+        many in proptest::bool::ANY,
+        batches in proptest::collection::vec(
+            proptest::collection::vec((0u8..7, 0u8..4, 1u8..6), 1..9),
+            1..4,
+        ),
+    ) {
+        let directory = tempfile::tempdir().expect("directory");
+        let (mut single, mut paged) = equiv_cells(directory.path(), many);
+        deliver(&mut single, &mut paged, many, &batches);
+        let same = same_end_state(&single, &paged);
+        proptest::prop_assert!(same.is_ok(), "{}", same.err().unwrap_or_default());
+    }
+}
+
+/// #1490: the shrunk OBS-PAGE-EQUIV counterexample (its seed is also in
+/// `mapping_links.proptest-regressions`). Before the fix, one by one
+/// quarantined holding-north with a narrowed/wide plan mismatch while the
+/// page landed it.
+#[test]
+fn obs_page_equiv_conflicting_resend_seed_1490() {
+    let directory = tempfile::tempdir().expect("directory");
+    let (mut single, mut paged) = equiv_cells(directory.path(), true);
+    let batches = [
+        vec![(5, 2, 1), (5, 0, 4)],
+        vec![(0, 0, 1), (2, 0, 1), (5, 1, 4)],
+        vec![(4, 0, 1), (5, 0, 1)],
+    ];
+    deliver(&mut single, &mut paged, true, &batches);
+    same_end_state(&single, &paged).expect("pages equal one by one");
+}
+
+/// Deliver `steps` (one batch each) to both paths of a `many` cell, and
+/// list where either path's `peers` links or pending rows differ from
+/// `expected` with only the conflicting re-send quarantined, or the paths
+/// differ from each other.
+fn dispute_mismatches(steps: &[Vec<Step>], expected: &[(&str, &str)]) -> Vec<String> {
+    let directory = tempfile::tempdir().expect("directory");
+    let (mut single, mut paged) = equiv_cells(directory.path(), true);
+    for step in steps {
+        deliver(&mut single, &mut paged, true, std::slice::from_ref(step));
+    }
+    let expected: BTreeSet<(String, String)> = expected
+        .iter()
+        .map(|(source, target)| ((*source).to_owned(), (*target).to_owned()))
+        .collect();
+    let mut mismatches = Vec::new();
+    for (path, cell) in [("one by one", &single), ("paged", &paged)] {
+        let peers: BTreeSet<(String, String)> = graph(cell)
+            .into_iter()
+            .filter(|(_, _, link, _, _)| link == "peers")
+            .map(|(_, source, _, _, target)| (source, target))
+            .collect();
+        if peers != expected {
+            mismatches.push(format!("{path}: peers {peers:?}"));
+        }
+        let pending: Vec<String> = cell
+            .store()
+            .read()
+            .pending_observations()
+            .expect("pending")
+            .into_iter()
+            .map(|pending| pending.observation_id)
+            .filter(|id| !id.starts_with("mapping-page:"))
+            .collect();
+        if !(pending.len() == 1 && pending[0].starts_with("mapping-conflict:")) {
+            mismatches.push(format!("{path}: pending {pending:?}"));
+        }
+    }
+    if let Err(differ) = same_end_state(&single, &paged) {
+        mismatches.push(differ);
+    }
+    mismatches
+}
+
+const NORTH: &str = "demo/holding/owner/north/gold";
+const SOUTH: &str = "demo/holding/owner/south/gold";
+const OWNER: &str = "demo/party/owner";
+
+/// OBS-LINK-DISPUTE-1 (#1490): a conflicting re-send of a landed event
+/// freezes that record's claims. Its claim keeps its standing and its edge,
+/// so the older claim it superseded never comes back, on either path and
+/// whichever later commit reads the group.
+#[test]
+fn obs_link_dispute_freezes_the_disputed_records_links() {
+    let (owner, custodian, customer) = (0, 1, 2);
+    let (party_owner, party_customer, north, south) = (0, 2, 4, 5);
+    // 1. south v1 points at the absent customer: a pending claim A.
+    // 2. south v4 points at the owner: claim B supersedes A.
+    let history = [vec![(south, customer, 1)], vec![(south, owner, 4)]];
+    // 4. south v4 again with other content: FEED-CONFLICT on B's event.
+    let conflict = vec![(south, custodian, 4)];
+    // The issue's sequence: 3. both parties land (south -peers-> owner);
+    // 4.; 5. north v1 points at the owner. Before the fix the paths
+    // disagreed on north (one by one refused its plan as differing from the
+    // wide one, which read south's revived claim A).
+    let issue = [
+        history.to_vec(),
+        vec![vec![(party_owner, owner, 1), (party_customer, owner, 1)]],
+        vec![conflict.clone(), vec![(north, owner, 1)]],
+    ]
+    .concat();
+    // The owner lands only after the conflict: the disputed claim B keeps
+    // its standing but adds no edge, on either path.
+    let absent = [
+        history.to_vec(),
+        vec![conflict.clone(), vec![(party_owner, owner, 1)]],
+    ]
+    .concat();
+    // The customer lands only after the conflict, so its commit reads
+    // south's group on both paths and in production too. Before the fix it
+    // revived A and added south -peers-> customer.
+    let late = [
+        history.to_vec(),
+        vec![
+            vec![(party_owner, owner, 1)],
+            conflict,
+            vec![(party_customer, owner, 1)],
+        ],
+    ]
+    .concat();
+    let mismatches = [
+        (
+            "issue sequence",
+            dispute_mismatches(&issue, &[(NORTH, OWNER), (SOUTH, OWNER)]),
+        ),
+        ("late target", dispute_mismatches(&late, &[(SOUTH, OWNER)])),
+        ("owner absent at dispute", dispute_mismatches(&absent, &[])),
+    ];
+    assert!(
+        mismatches.iter().all(|(_, found)| found.is_empty()),
+        "{mismatches:#?}"
+    );
+}
+
+/// A `refers` relation between parties, mapped from one party row: the
+/// referred party (`REFERRED`) refers to `ZED`. Its target is a record of the
+/// same dataset, so the target and a re-send of the referring row can share
+/// one page.
+fn referring_parties(artifacts: &mut [ArtifactEnvelope]) {
+    edit_artifact(artifacts, "canon.Party.entity", |a| {
+        a["payload"]["objectType"]["links"] = json!([{
+            "id":"refers", "target":"canon.Party", "cardinality":{"to":"many","from":"many"}
+        }]);
+    });
+    edit_artifact(artifacts, "erpnext.three.mapping", |a| {
+        let map = a["payload"]["maps"]
+            .as_array_mut()
+            .expect("maps")
+            .iter_mut()
+            .find(|m| m["id"] == "party")
+            .expect("party");
+        map["links"] = json!([{
+            "key": "input.name == 'SYN-ERPNEXT-referred' ? 'demo/party/zed' : null",
+            "link": "refers",
+            "targetMap": "party",
+        }]);
+    });
+}
+
+const REFERRED: &str = "demo/party/referred";
+const ZED: &str = "demo/party/zed";
+
+/// An erpnext Party row for `name` (`SYN-ERPNEXT-<name>`), labelled `label`.
+fn party_row(name: &str, label: &str) -> Value {
+    let mut row = fixture("erpnext")["snapshot"][2].clone();
+    let record = row["record"].as_object_mut().expect("record");
+    record.insert("name".into(), json!(format!("SYN-ERPNEXT-{name}")));
+    record.insert(
+        "custom_norn_ref".into(),
+        json!(format!("demo/party/{name}")),
+    );
+    record.insert("label".into(), json!(label));
+    row
+}
+
+/// The `refers` links and held-link findings of each path, after `batches`.
+#[allow(clippy::type_complexity, reason = "both paths' links and findings")]
+fn refers_after(
+    batches: &[Vec<(Value, String)>],
+) -> Vec<(BTreeSet<(String, String)>, Vec<String>)> {
+    let directory = tempfile::tempdir().expect("directory");
+    let open = |name: &str| setup_with(&directory.path().join(name), |a| referring_parties(a));
+    let (mut single, mut paged) = (open("single.sqlite"), open("paged.sqlite"));
+    for batch in batches {
+        deliver_rows(&mut single, &mut paged, batch);
+    }
+    same_end_state(&single, &paged).expect("pages equal one by one");
+    [&single, &paged]
+        .into_iter()
+        .map(|cell| {
+            (
+                refers(cell),
+                held(cell).into_iter().map(|f| f.message).collect(),
+            )
+        })
+        .collect()
+}
+
+/// A cell's `refers` links, as (source, target).
+fn refers(cell: &Cell) -> BTreeSet<(String, String)> {
+    graph(cell)
+        .into_iter()
+        .filter(|(_, _, link, _, _)| link == "refers")
+        .map(|(_, source, _, _, target)| (source, target))
+        .collect()
+}
+
+/// The referred party's held-link findings.
+fn held(cell: &Cell) -> Vec<norn_ir::DataQualityFinding> {
+    cell.store()
+        .read()
+        .observation_findings(MAIN_WORLD, "canon.Party", REFERRED)
+        .expect("findings")
+        .into_iter()
+        .filter(|f| matches!(&f.rule_ref, norn_ir::DataQualityRuleRef::Builtin { id, .. } if id == norn_cell::LINK_HELD_RULE))
+        .collect()
+}
+
+/// A referring-parties cell named `name` in `directory`.
+fn referring_cell(directory: &Path, name: &str) -> Cell {
+    setup_with(&directory.join(name), |a| referring_parties(a))
+}
+
+/// Capture `(row, event, partition)` and process it one by one.
+fn one_by_one(cell: &mut Cell, (row, event, partition): (&Value, &str, &str)) -> String {
+    let (raw, input) = raw_in(row, event, partition);
+    let (id, _) = cell.inject_mapping_bundle(&raw, &input).expect("capture");
+    cell.process_mapping_outcome(&id).expect("one by one");
+    id
+}
+
+/// A party row named `name` whose record is the canonical `demo/party/<of>`:
+/// another source row for that party, which claims no `refers` link.
+fn alias_row(name: &str, of: &str, label: &str) -> Value {
+    let mut row = party_row(name, label);
+    row["record"]["custom_norn_ref"] = json!(format!("demo/party/{of}"));
+    row
+}
+
+/// Write a page row naming `members`, as an earlier version's capture did.
+fn page_row(cell: &mut Cell, members: &[String], provenance: norn_kernel::Provenance) -> String {
+    let page = format!(
+        "mapping-page:{}",
+        norn_ir::canonical::domain_hash_hex(b"norn.mapping.page.v1\0", members)
+            .expect("page digest")
+    );
+    cell.inject(&Observed {
+        id: ObservationId(page.clone()),
+        provenance,
+        input: RuntimeObject::from([
+            (
+                "contract".to_owned(),
+                RuntimeValue::from("norn.mapping_page/v1".to_owned()),
+            ),
+            (
+                "members".to_owned(),
+                RuntimeValue::Array(members.iter().cloned().map(RuntimeValue::from).collect()),
+            ),
+        ]),
+    })
+    .expect("page row");
+    page
+}
+
+/// OBS-LINK-DISPUTE-1 (Sol round 2, S1): a page captured by an earlier
+/// version can hold a dispute row between its members: here an unrelated
+/// party, the conflicting re-send of the referred party, then zed. One by
+/// one, zed's commit sees the conflict and holds the edge. The freeze reads
+/// the disputes that exist when a commit runs (round 4), so the old page's
+/// one commit, which runs after the conflict was captured, holds it too.
+#[test]
+fn obs_link_dispute_inside_a_page_captured_before_the_split_applies_record_by_record() {
+    let directory = tempfile::tempdir().expect("directory");
+    let mut single = referring_cell(directory.path(), "single.sqlite");
+    let mut paged = referring_cell(directory.path(), "paged.sqlite");
+    let referred = party_row("referred", "Referred");
+    for cell in [&mut single, &mut paged] {
+        one_by_one(cell, (&referred, "1", "snapshot"));
+    }
+    let batch = [
+        party_row("other", "Other"),
+        party_row("referred", "Referred, re-sent"),
+        party_row("zed", "Zed"),
+    ];
+    for row in &batch {
+        one_by_one(&mut single, (row, "1", "snapshot"));
+    }
+    // The previous version's capture: each record's own row, then one page
+    // row naming both mapped records, with the conflict row between them.
+    let mut members = Vec::new();
+    let mut provenance = None;
+    for row in &batch {
+        let (raw, input) = raw_of(row, "1");
+        let (id, _) = paged.inject_mapping_bundle(&raw, &input).expect("capture");
+        if id.starts_with("mapping-bundle:") {
+            provenance.get_or_insert_with(|| raw.provenance.clone());
+            members.push(id);
+        }
+    }
+    assert_eq!(
+        members.len(),
+        2,
+        "the re-send is a conflict row, not a member"
+    );
+    let page = page_row(&mut paged, &members, provenance.expect("provenance"));
+    paged.process_mapping_page(&page).expect("page");
+    same_end_state(&single, &paged).expect("the old page equals one by one");
+    for (cell, path) in [(&single, "one by one"), (&paged, "paged")] {
+        assert_eq!(refers(cell), BTreeSet::new(), "{path}: refers links");
+        assert_eq!(held(cell).len(), 1, "{path}: held findings");
+    }
+}
+
+/// OBS-LINK-DISPUTE-1 (Sol round 2, S3): a retried delivery commits under
+/// the disputes that exist when it is retried. An update to the referred
+/// party from another partition (it claims no link) is captured before the
+/// conflict and left pending; zed lands after the conflict, so the edge is
+/// held. Retrying the update re-plans the referred party's group: round 2
+/// dated that plan at the update's old position and added the edge. The
+/// dispute exists at the retry, so the edge stays held; processed right
+/// away, the update finds zed absent and adds nothing. Both orders end in
+/// the same state.
+#[test]
+fn obs_link_dispute_a_retried_update_dates_its_add_by_the_target() {
+    let directory = tempfile::tempdir().expect("directory");
+    let referred = party_row("referred", "Referred");
+    let update = alias_row("referred-desk", "referred", "Referred desk");
+    let resend = party_row("referred", "Referred, re-sent");
+    let zed = party_row("zed", "Zed");
+    let mut cells = Vec::new();
+    for (name, retried) in [("right-away.sqlite", false), ("retried.sqlite", true)] {
+        let mut cell = referring_cell(directory.path(), name);
+        one_by_one(&mut cell, (&referred, "1", "snapshot"));
+        let (raw, input) = raw_in(&update, "2", "desk");
+        let (pending, _) = cell.inject_mapping_bundle(&raw, &input).expect("capture");
+        if !retried {
+            cell.process_mapping_outcome(&pending).expect("right away");
+        }
+        one_by_one(&mut cell, (&resend, "1", "snapshot"));
+        one_by_one(&mut cell, (&zed, "1", "snapshot"));
+        if retried {
+            cell.process_mapping_outcome(&pending).expect("retried");
+        }
+        assert_eq!(refers(&cell), BTreeSet::new(), "{name}: refers links");
+        assert_eq!(held(&cell).len(), 1, "{name}: held findings");
+        cells.push(cell);
+    }
+    same_end_state(&cells[0], &cells[1]).expect("a retry equals processing right away");
+}
+
+/// An inbox row's position, read from the cell's file.
+fn position_of(db: &rusqlite::Connection, id: &str) -> i64 {
+    db.query_row(
+        "SELECT position FROM _norn_inbox WHERE observation_id = ?1",
+        [id],
+        |row| row.get(0),
+    )
+    .expect("inbox row")
+}
+
+/// The state a version before the run split (round 2) left in `cell` for
+/// `rows` (an unrelated party, the referred party's conflicting re-send,
+/// zed), captured as one page: each record's own row, one page row naming
+/// both mapped records with the conflict row between them, and that page
+/// committed as one, holding the edge (the round-1 freeze read the
+/// disputes that existed at commit). Round 3 refuses to commit such a page
+/// whole, so the test reaches that state by committing it while the
+/// unrelated record's inbox row is moved past the page, then moving it
+/// back: the positions end as they were captured.
+fn legacy_page_committed_across_the_conflict(cell: &mut Cell, path: &Path, rows: &[Value]) {
+    let mut members = Vec::new();
+    let mut provenance = None;
+    for row in rows {
+        let (raw, input) = raw_of(row, "1");
+        let (id, _) = cell.inject_mapping_bundle(&raw, &input).expect("capture");
+        if id.starts_with("mapping-bundle:") {
+            provenance.get_or_insert_with(|| raw.provenance.clone());
+            members.push(id);
+        }
+    }
+    assert_eq!(members.len(), 2, "the re-send is a conflict row");
+    let page = page_row(cell, &members, provenance.expect("provenance"));
+    let db = rusqlite::Connection::open(path).expect("open");
+    let captured = position_of(&db, &members[0]);
+    let past: i64 = db
+        .query_row("SELECT MAX(position) + 1 FROM _norn_inbox", [], |row| {
+            row.get(0)
+        })
+        .expect("last position");
+    let moved = |to: i64| {
+        db.execute(
+            "UPDATE _norn_inbox SET position = ?1 WHERE observation_id = ?2",
+            rusqlite::params![to, &members[0]],
+        )
+        .expect("move");
+    };
+    moved(past);
+    let outcomes = cell
+        .process_mapping_page(&page)
+        .expect("page")
+        .expect("pending");
+    moved(captured);
+    assert!(
+        outcomes
+            .iter()
+            .all(|(_, outcome)| *outcome == norn_cell::MappingOutcome::Landed),
+        "{outcomes:?}"
+    );
+    let consumed: BTreeSet<i64> = members
+        .iter()
+        .map(|id| {
+            db.query_row(
+                "SELECT consumed_commit_seq FROM _norn_inbox WHERE observation_id = ?1",
+                [id],
+                |row| row.get(0),
+            )
+            .expect("consumed")
+        })
+        .collect();
+    assert_eq!(consumed.len(), 1, "one commit consumed both members");
+    let conflict = position_of(
+        &db,
+        &db.query_row(
+            "SELECT observation_id FROM _norn_inbox WHERE observation_id LIKE 'mapping-conflict:%'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .expect("conflict"),
+    );
+    assert!(
+        captured < conflict && conflict < position_of(&db, &members[1]),
+        "the page straddles the conflict"
+    );
+    assert_eq!(refers(cell), BTreeSet::new(), "the page held the edge");
+}
+
+/// OBS-LINK-DISPUTE-1 (Sol round 3, S3): an update to the referred party,
+/// captured before the conflict, is retried after a page an earlier version
+/// committed across the conflict (the unrelated party before it, zed after
+/// it). Round 3 dated zed by that commit's earliest member, before the
+/// conflict, so the retry added the edge; one by one, zed lands after the
+/// conflict and the retry holds it. The freeze reads the dispute that exists
+/// at the retry, so both hold it.
+#[test]
+fn obs_link_dispute_a_retry_after_a_legacy_page_keeps_the_edge_held() {
+    let directory = tempfile::tempdir().expect("directory");
+    let referred = party_row("referred", "Referred");
+    let update = alias_row("referred-desk", "referred", "Referred desk");
+    let batch = [
+        party_row("other", "Other"),
+        party_row("referred", "Referred, re-sent"),
+        party_row("zed", "Zed"),
+    ];
+    let mut cells = Vec::new();
+    for (name, legacy) in [("one-by-one.sqlite", false), ("legacy.sqlite", true)] {
+        let path = directory.path().join(name);
+        let mut cell = referring_cell(directory.path(), name);
+        one_by_one(&mut cell, (&referred, "1", "snapshot"));
+        let (raw, input) = raw_in(&update, "2", "desk");
+        let (pending, _) = cell.inject_mapping_bundle(&raw, &input).expect("capture");
+        if legacy {
+            legacy_page_committed_across_the_conflict(&mut cell, &path, &batch);
+        } else {
+            for row in &batch {
+                one_by_one(&mut cell, (row, "1", "snapshot"));
+            }
+        }
+        assert_eq!(
+            cell.process_mapping_outcome(&pending).expect("retried"),
+            norn_cell::MappingOutcome::Landed
         );
+        cells.push((name, cell));
+    }
+    let found: Vec<_> = cells
+        .iter()
+        .map(|(name, cell)| (*name, refers(cell), held(cell).len()))
+        .collect();
+    assert_eq!(
+        found,
+        [
+            ("one-by-one.sqlite", BTreeSet::new(), 1),
+            ("legacy.sqlite", BTreeSet::new(), 1)
+        ],
+        "the edge stays held after the retry"
+    );
+    same_end_state(&cells[0].1, &cells[1].1).expect("the legacy page equals one by one");
+}
+
+/// OBS-LINK-DISPUTE-1 (Sol round 3, S3a): zed is created by an action after
+/// the conflict, so no mapping delivery establishes it and round 3 had no
+/// inbox position to date it by. An update to the referred party captured
+/// before the conflict, retried afterwards, then added the disputed edge.
+/// The dispute exists at the retry, so the edge stays held, as it does when
+/// the update is processed right away (zed is absent then).
+#[test]
+fn obs_link_dispute_a_retry_after_an_action_created_target_keeps_the_edge_held() {
+    let directory = tempfile::tempdir().expect("directory");
+    let referred = party_row("referred", "Referred");
+    let update = alias_row("referred-desk", "referred", "Referred desk");
+    let resend = party_row("referred", "Referred, re-sent");
+    let zed = FactKey::new("canon.Party", ZED);
+    // Zed's values as a mapping writes them, for the action to write.
+    let values = {
+        let mut cell = referring_cell(directory.path(), "values.sqlite");
+        one_by_one(&mut cell, (&party_row("zed", "Zed"), "1", "snapshot"));
+        norn_kernel::CellHost::load(&cell, &zed)
+            .expect("zed")
+            .values
+            .expect("present")
+    };
+    let mut found = Vec::new();
+    for (name, retried) in [("right-away.sqlite", false), ("retried.sqlite", true)] {
+        let mut cell = referring_cell(directory.path(), name);
+        one_by_one(&mut cell, (&referred, "1", "snapshot"));
+        let (raw, input) = raw_in(&update, "2", "desk");
+        let (pending, _) = cell.inject_mapping_bundle(&raw, &input).expect("capture");
+        if !retried {
+            cell.process_mapping_outcome(&pending).expect("right away");
+        }
+        one_by_one(&mut cell, (&resend, "1", "snapshot"));
+        norn_kernel::CellHost::commit(
+            &mut cell,
+            norn_kernel::CellCommit {
+                writes: vec![norn_kernel::FactWrite {
+                    key: zed.clone(),
+                    expected: norn_kernel::FactVersion::ABSENT,
+                    mutation: norn_kernel::FactMutation::Put {
+                        values: values.clone(),
+                    },
+                }],
+                ..norn_kernel::CellCommit::empty()
+            },
+        )
+        .expect("the action creates zed");
+        if retried {
+            assert_eq!(
+                cell.process_mapping_outcome(&pending).expect("retried"),
+                norn_cell::MappingOutcome::Landed
+            );
+        }
+        found.push((name, refers(&cell), held(&cell).len()));
+    }
+    assert_eq!(
+        found,
+        [
+            ("right-away.sqlite", BTreeSet::new(), 1),
+            ("retried.sqlite", BTreeSet::new(), 1)
+        ],
+        "the edge stays held after the retry"
+    );
+}
+
+/// OBS-LINK-DISPUTE-1 (round 4): a page that would capture a new dispute row
+/// after a record it commits captures nothing (its transaction rolls back),
+/// so the host can deliver its records one at a time. A page whose dispute
+/// comes before every record it commits is captured as before.
+#[test]
+fn obs_link_dispute_a_page_never_captures_a_dispute_after_a_member() {
+    let directory = tempfile::tempdir().expect("directory");
+    let mut cell = referring_cell(directory.path(), "capture.sqlite");
+    one_by_one(
+        &mut cell,
+        (&party_row("referred", "Referred"), "1", "snapshot"),
+    );
+    let page = |rows: &[Value]| -> (Vec<Observed<RuntimeValue>>, MappingInput) {
+        let mut input = None;
+        let raws = rows
+            .iter()
+            .map(|row| {
+                let (raw, row_input) = raw_of(row, "1");
+                input.get_or_insert(row_input);
+                raw
+            })
+            .collect();
+        (raws, input.expect("input"))
+    };
+    let (zed, resend) = (
+        party_row("zed", "Zed"),
+        party_row("referred", "Referred, re-sent"),
+    );
+    let before = cell.store().read().dump().expect("dump");
+    let (raws, input) = page(&[zed.clone(), resend.clone()]);
+    let refused = cell
+        .inject_mapping_page(&raws, &input)
+        .expect_err("the conflict follows zed");
+    assert!(
+        matches!(refused, norn_cell::CellError::MappingPageSpansDispute),
+        "{refused}"
+    );
+    assert_eq!(
+        cell.store().read().dump().expect("dump"),
+        before,
+        "nothing was captured"
+    );
+    let (raws, input) = page(&[resend, zed]);
+    let captured = cell
+        .inject_mapping_page(&raws, &input)
+        .expect("the conflict comes first");
+    assert!(
+        captured.records[0].starts_with("mapping-conflict:"),
+        "{captured:?}"
+    );
+    assert_eq!(captured.pages.len(), 1, "{captured:?}");
+}
+
+/// OBS-LINK-DISPUTE-1 (Sol round 2, S4): two disputed contributions holding
+/// one edge make one held finding, with both claims' lineage.
+#[test]
+fn obs_link_dispute_one_held_finding_per_edge() {
+    let directory = tempfile::tempdir().expect("directory");
+    let mut cell = referring_cell(directory.path(), "two.sqlite");
+    for partition in ["snapshot", "desk"] {
+        one_by_one(
+            &mut cell,
+            (&party_row("referred", "Referred"), "1", partition),
+        );
+    }
+    for partition in ["snapshot", "desk"] {
+        one_by_one(
+            &mut cell,
+            (&party_row("referred", "Referred, re-sent"), "1", partition),
+        );
+    }
+    one_by_one(&mut cell, (&party_row("zed", "Zed"), "1", "snapshot"));
+    assert_eq!(refers(&cell), BTreeSet::new(), "the edge is held");
+    let held = held(&cell);
+    assert_eq!(held.len(), 1, "{held:#?}");
+    assert_eq!(held[0].provenance.len(), 2, "both claims' lineage");
+    assert_eq!(
+        held[0].message.matches("conflict ").count(),
+        2,
+        "{}",
+        held[0].message
+    );
+}
+
+/// OBS-LINK-DISPUTE-1 (Sol, #1544): paging never moves the dispute boundary.
+/// The referred party lands with a pending claim to the absent zed; then one
+/// batch holds zed and a conflicting re-send of the referred party, in either
+/// order. Zed first: one by one commits the edge before the conflict is
+/// captured; the page would capture the conflict after zed, so the cell
+/// refuses it and the host delivers its records one at a time, adding the
+/// edge too. Conflict first: the freeze holds the edge on both paths, and
+/// the held edge is a finding on the referred party.
+#[test]
+fn obs_link_dispute_boundary_is_inbox_order_on_both_paths() {
+    let referred = || (party_row("referred", "Referred"), "1".to_owned());
+    let resend = || (party_row("referred", "Referred, re-sent"), "1".to_owned());
+    let zed = || (party_row("zed", "Zed"), "1".to_owned());
+    let edge = BTreeSet::from([(REFERRED.to_owned(), ZED.to_owned())]);
+    for (case, batch, links, held) in [
+        ("target, then conflict", vec![zed(), resend()], edge, false),
+        (
+            "conflict, then target",
+            vec![resend(), zed()],
+            BTreeSet::new(),
+            true,
+        ),
+    ] {
+        let paths = refers_after(&[vec![referred()], batch]);
+        for ((found, findings), path) in paths.iter().zip(["one by one", "paged"]) {
+            assert_eq!(found, &links, "{case}, {path}: refers links");
+            assert_eq!(
+                findings.len(),
+                usize::from(held),
+                "{case}, {path}: {findings:?}"
+            );
+            for message in findings {
+                assert!(
+                    message.starts_with(&format!(
+                        "link {REFERRED} -refers-> {ZED} held: record in dispute (conflict "
+                    )),
+                    "{case}, {path}: {message}"
+                );
+            }
+        }
     }
 }
 

@@ -1,5 +1,6 @@
 import { type QueryClient, queryOptions, useQuery, useQueryClient } from "@tanstack/react-query"
 import { forgetDrafts, sessionKey } from "../actions/kept-drafts.ts"
+import { forgetParkedCalls } from "../actions/parked-calls.ts"
 
 /** Who is signed in, as the Worker reports it (/api/me). Display only: the server decides every permission. */
 export interface Account {
@@ -29,8 +30,8 @@ function forgetReads(client: QueryClient): void {
 /**
  * The session query. Whenever a read of it names a different reader than the last one (the session
  * expired and `/api/me` answered 401, someone else signed in, or the organization changed), the
- * previous reader's reads are forgotten before the new answer is shown, the way a sign-out forgets
- * them. Hygiene only: every read is the server's decision for whoever asks.
+ * previous reader's reads and parked calls are forgotten before the new answer is shown, the way a
+ * sign-out forgets them. Hygiene only: every read is the server's decision for whoever asks.
  */
 export function accountQuery(client: QueryClient, fetcher: Fetch = (input, init) => fetch(input, init)) {
   return queryOptions({
@@ -38,7 +39,12 @@ export function accountQuery(client: QueryClient, fetcher: Fetch = (input, init)
     queryFn: async () => {
       const account = await readAccount(fetcher)
       const previous = client.getQueryData<Account | null>(SESSION)
-      if (previous !== undefined && sessionKey(previous) !== sessionKey(account)) forgetReads(client)
+      if (previous !== undefined && sessionKey(previous) !== sessionKey(account)) {
+        // A parked call's exact input and key are the previous reader's: never kept for the next,
+        // nor for the same reader coming back after a tenant switch or an expiry.
+        forgetParkedCalls()
+        forgetReads(client)
+      }
       return account
     },
     staleTime: 60_000,
@@ -77,12 +83,13 @@ export function useRefreshAccount() {
 
 /**
  * End the session, then forget everything read or kept as that reader (records, picker choices,
- * the inbox, unsent drafts) so the next reader in this tab never sees it, and re-read the session. A sign-out the
+ * the inbox, unsent drafts, parked calls) so the next reader in this tab never sees it, and re-read the session. A sign-out the
  * server did not complete forgets nothing and rethrows.
  */
 export async function endSession(client: QueryClient, signOut: () => Promise<void> = authApi.signOut): Promise<void> {
   await signOut()
   forgetDrafts()
+  forgetParkedCalls()
   forgetReads(client)
   await client.invalidateQueries({ queryKey: SESSION })
 }

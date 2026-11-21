@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate, useSearch } from "@tanstack/react-router"
-import { Inbox, RefreshCw, Sparkles } from "lucide-react"
+import { CheckCircle2, Hourglass, Inbox, Play, RefreshCw, Sparkles } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 import { EmptyState } from "@/components/panel"
 import { Button } from "@/components/ui/button"
@@ -9,7 +9,9 @@ import { cn } from "@/lib/utils"
 import type { CellResult } from "../lib/cell-read.ts"
 import { NO_DATA_CELL } from "../lib/definitions.ts"
 import { useLiveRefresh } from "../lib/live-reads.ts"
-import { badgeText, cellNow, countDecisions, DECISIONS_UNAVAILABLE, flowTitle, listDecisions, remaining, stepTitle, type Decision, type DecisionsPage } from "../lib/decisions.ts"
+import { badgeText, cellNow, countDecisions, DECISIONS_UNAVAILABLE, flowTitle, listDecisions, listRequested, parkedFrom, remaining, requestedAction, requestedPath, requestedWords, stepTitle, type Decision, type DecisionsPage, type RequestedDecision, type RequestedPage } from "../lib/decisions.ts"
+import { listActions } from "../lib/actions.ts"
+import { ActionSheet, type OpenAction } from "../actions/action-sheet.tsx"
 import { Countdown, DecisionSheet, RiskChip } from "./decision-sheet.tsx"
 
 type Read<T> = { readonly result: CellResult<T>; readonly receivedAt: number }
@@ -109,7 +111,57 @@ export function DecisionsPage() {
       </header>
       {missing && <p role="status" className="rounded-lg border border-node-border bg-muted/50 px-3 py-2 text-sm">That decision isn't waiting on you: it was resolved, it expired, or you're not one of its deciders.</p>}
       {body}
+      <RequestedCalls />
       <DecisionSheet decision={selected} now={now} onClose={() => choose(undefined)} onSettled={refresh} />
     </div>
+  )
+}
+
+const requestedKey = ["decisions", "requested"] as const
+
+/**
+ * The calls you sent that wait on an approval, as the cell lists them for their requester
+ * (APPROVAL-REQUESTED-1): pending a decider, or approved and not yet run. "Approved, run it" appears
+ * only when the cell offers it (`canRun`); it opens the call's sheet, which sends exactly the call the
+ * cell holds and shows the receipt, or the cell's refusal.
+ */
+function RequestedCalls() {
+  const read = useQuery<Read<RequestedPage>>({ queryKey: requestedKey, queryFn: async () => ({ result: await listRequested(), receivedAt: Date.now() }), retry: false })
+  useLiveRefresh(requestedPath(), requestedKey)
+  const catalog = useQuery({ queryKey: ["actions", "all", null], queryFn: () => listActions(undefined), retry: false, staleTime: 60_000 })
+  const page = read.data?.result.kind === "ok" ? read.data.result.value : undefined
+  const now = useCellClock(page?.serverNowMs, read.data?.receivedAt)
+  const [acting, setActing] = useState<OpenAction | null>(null)
+  const items = page?.items ?? []
+  const actions = catalog.data?.kind === "catalog" ? catalog.data.items : []
+  const run = (item: RequestedDecision) => setActing({ action: requestedAction(actions, item), parked: parkedFrom(item), runNow: true })
+  const open = (item: RequestedDecision) => setActing({ action: requestedAction(actions, item), parked: parkedFrom(item) })
+  // The sheet stays where it is when the list empties under it (the call it ran left the list).
+  return (
+    <>
+    {items.length > 0 && <section aria-labelledby="requested-heading" className="grid gap-2">
+      <h2 id="requested-heading" className="text-sm font-medium text-muted-foreground">Your requests</h2>
+      <ol className="grid gap-2" aria-label="Your requests">
+        {items.map((item) => (
+          <li key={item.id} className="flex flex-wrap items-center gap-3 rounded-node border border-node-border bg-card p-4 shadow-[var(--node-highlight),var(--elevation-node)]">
+            {item.status === "approved"
+              ? <CheckCircle2 className="size-4 shrink-0 text-[var(--tint-outcome)]" aria-hidden />
+              : <Hourglass className="size-4 shrink-0 text-muted-foreground" aria-hidden />}
+            <button type="button" onClick={() => open(item)} className="grid min-w-0 flex-1 gap-1 text-start focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none rounded-sm">
+              <span className="flex flex-wrap items-center gap-2 text-meta text-muted-foreground">
+                <span>{requestedAction(actions, item).title}</span>
+                {item.status === "pending" && <><span className="flex-1" /><Countdown expiresAtMs={item.expiresAtMs} now={now} /></>}
+              </span>
+              <span className="line-clamp-2 text-sm font-medium">{item.question}</span>
+              <span className="text-meta text-muted-foreground">{requestedWords(item)}</span>
+            </button>
+            <RiskChip risk={item.risk} />
+            {item.canRun && <Button type="button" size="sm" onClick={() => run(item)}><Play /> Approved, run it</Button>}
+          </li>
+        ))}
+      </ol>
+    </section>}
+    <ActionSheet open={acting} onClose={() => setActing(null)} />
+    </>
   )
 }

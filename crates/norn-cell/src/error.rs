@@ -496,6 +496,15 @@ pub enum CellError {
     /// A number does not fit the store's integer range.
     #[error("{0} is out of range")]
     OutOfRange(&'static str),
+    /// OBS-LINK-DISPUTE-1: a page would capture a dispute row (a conflict or
+    /// identity finding) after a record it commits, so that record's commit
+    /// would see a dispute one-by-one delivery commits it before. Nothing
+    /// was captured; the host delivers the page's records one at a time
+    /// (capture, then commit, each in order).
+    #[error(
+        "a mapping page captures a dispute after a record it commits; deliver its records one at a time"
+    )]
+    MappingPageSpansDispute,
     /// A fault probe stopped the commit (deterministic simulation only).
     #[error("injected crash at {0:?}")]
     InjectedCrash(CommitPoint),

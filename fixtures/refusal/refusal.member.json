@@ -1,0 +1,12 @@
+{
+  "status": 422,
+  "body": {
+    "format": "norn/refusal@2",
+    "retryable": false,
+    "reason": null,
+    "code": "core.laws.violated",
+    "category": "precondition",
+    "message": "a declared precondition does not hold",
+    "explanation": "diagnostic detail is unavailable under the caller's disclosure authority"
+  }
+}
