@@ -904,9 +904,8 @@ mod derive_once_recheck {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
     }
 
-    /// A store with the three source packs installed, and one `ERPNext`
-    /// snapshot row with the mapping input it derives under.
-    fn installed() -> (CellStore, RuntimeValue, MappingInput) {
+    /// The three source packs' artifacts, in id order.
+    fn artifacts() -> Vec<ArtifactEnvelope> {
         let mut artifacts: Vec<ArtifactEnvelope> = Vec::new();
         for dir in [
             "core",
@@ -938,6 +937,13 @@ mod derive_once_recheck {
             }
         }
         artifacts.sort_by(|a, b| a.artifact_id.cmp(&b.artifact_id));
+        artifacts
+    }
+
+    /// A store with the three source packs installed, and one `ERPNext`
+    /// snapshot row with the mapping input it derives under.
+    fn installed() -> (CellStore, RuntimeValue, MappingInput) {
+        let artifacts = artifacts();
         let (mut types, mut interfaces, mut properties) = (
             Vec::<ObjectTypeDef>::new(),
             Vec::<InterfaceDef>::new(),
@@ -1094,6 +1100,10 @@ mod derive_once_recheck {
                 .derived
                 .insert(bundle.digest.clone(), (plan, bundle.clone()));
         }
-        let _ = store.read().recheck_mapping_bundle(&bundle);
+        // Any return, an error included, fails the expected panic.
+        store
+            .read()
+            .recheck_mapping_bundle(&bundle)
+            .expect("only the assertion ends this recheck");
     }
 }
