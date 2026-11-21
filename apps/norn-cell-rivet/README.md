@@ -361,18 +361,20 @@ bastion and every runner (`/etc/norn/rivet-ca.pem`).
      started after the restart (a reload would have left an old worker).
      Then, from the bastion, check each engine directly and the load
      balancer, so one engine still holding the old token cannot hide behind
-     the balancer's health checks. With the tokens in files (mode 600,
-     on the bastion's tmpfs, removed afterwards), never on the command line:
+     the balancer's health checks. With the tokens in files in a private directory on the bastion's tmpfs
+     (created with `umask 077`, removed on exit), never on the command line:
 
      ```sh
+     umask 077; t=$(mktemp -d /dev/shm/rivet-tok.XXXXXX); trap 'rm -rf "$t"' EXIT
+     # write $t/new-token.hdr and $t/old-token.hdr here (one line each, see below)
      tls='--cacert /etc/rivet/tls/ca.pem --cert /etc/rivet/tls/bastion.pem'
      for e in 10.0.0.11 10.0.0.12 10.0.0.13; do
-       new=$(curl -s $tls -o /dev/null -w '%{http_code}' -H @new-token.hdr "https://$e:6420/namespaces")
-       old=$(curl -s $tls -o /dev/null -w '%{http_code}' -H @old-token.hdr "https://$e:6420/namespaces")
+       new=$(curl -s $tls -o /dev/null -w '%{http_code}' -H @"$t/new-token.hdr" "https://$e:6420/namespaces")
+       old=$(curl -s $tls -o /dev/null -w '%{http_code}' -H @"$t/old-token.hdr" "https://$e:6420/namespaces")
        echo "$e new=$new old=$old"   # must print new=200 old=401
      done
-     lb_new=$(curl -s --cacert /etc/rivet/tls/ca.pem -o /dev/null -w '%{http_code}' -H @new-token.hdr https://10.0.0.2:6420/namespaces)
-     lb_old=$(curl -s --cacert /etc/rivet/tls/ca.pem -o /dev/null -w '%{http_code}' -H @old-token.hdr https://10.0.0.2:6420/namespaces)
+     lb_new=$(curl -s --cacert /etc/rivet/tls/ca.pem -o /dev/null -w '%{http_code}' -H @"$t/new-token.hdr" https://10.0.0.2:6420/namespaces)
+     lb_old=$(curl -s --cacert /etc/rivet/tls/ca.pem -o /dev/null -w '%{http_code}' -H @"$t/old-token.hdr" https://10.0.0.2:6420/namespaces)
      echo "lb new=$lb_new old=$lb_old"   # must print new=200 old=401
      ```
 
