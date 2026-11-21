@@ -116,7 +116,10 @@ fn add_open_checkpoint(expected: &mut Value, after: &Value, head: &LedgerHead, r
         .expect("the upgrade adds the open checkpoint table")
         .clone();
     assert_eq!(entry["type"], "table");
-    expected["schema"].as_array_mut().expect("schema").push(entry);
+    expected["schema"]
+        .as_array_mut()
+        .expect("schema")
+        .push(entry);
     expected["tables"].as_object_mut().expect("tables").insert(
         "_norn_open_checkpoint".to_owned(),
         serde_json::json!({

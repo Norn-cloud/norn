@@ -93,7 +93,10 @@ pub(crate) fn load(engine: &impl SqlEngine) -> Result<Option<OpenCheckpoint>, Ce
 ///
 /// # Errors
 /// SQL failures.
-pub(crate) fn record(engine: &impl SqlEngine, checkpoint: &OpenCheckpoint) -> Result<(), CellError> {
+pub(crate) fn record(
+    engine: &impl SqlEngine,
+    checkpoint: &OpenCheckpoint,
+) -> Result<(), CellError> {
     engine.execute(
         &format!(
             "INSERT INTO \"{TABLE}\" (\"id\", \"commits\", \"seq\", \"hash\", \"receipts_root\") VALUES (1, ?1, ?2, ?3, ?4) \
@@ -112,10 +115,11 @@ pub(crate) fn record(engine: &impl SqlEngine, checkpoint: &OpenCheckpoint) -> Re
 /// Lowercase hex of a transparency root.
 pub(crate) fn root_hex(root: &[u8]) -> String {
     use std::fmt::Write as _;
-    root.iter().fold(String::with_capacity(64), |mut hex, byte| {
-        let _infallible = write!(hex, "{byte:02x}");
-        hex
-    })
+    root.iter()
+        .fold(String::with_capacity(64), |mut hex, byte| {
+            let _infallible = write!(hex, "{byte:02x}");
+            hex
+        })
 }
 
 /// A checkpoint that no longer anchors the file.

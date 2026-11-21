@@ -60,7 +60,10 @@ fn cell(path: &Path, commits: u64) {
     for n in engine_fixture::COMMITS..commits {
         store.commit(&put(n)).expect("commit");
     }
-    assert_eq!(store.read().verify_ledger().expect("ledger").commits, commits);
+    assert_eq!(
+        store.read().verify_ledger().expect("ledger").commits,
+        commits
+    );
 }
 
 fn checkpoint(path: &Path) -> Option<(u64, u64, String, String)> {
@@ -104,7 +107,11 @@ fn every_hundred_twenty_eighth_commit_records_the_verified_head() {
     let dir = tempfile::tempdir().expect("directory");
     let path = dir.path().join("cell.sqlite");
     cell(&path, EVERY - 1);
-    assert_eq!(checkpoint(&path), None, "no checkpoint before {EVERY} commits");
+    assert_eq!(
+        checkpoint(&path),
+        None,
+        "no checkpoint before {EVERY} commits"
+    );
     cell_more(&path, EVERY - 1, 2 * EVERY + 3);
     let (commits, seq, hash, _root) = checkpoint(&path).expect("a checkpoint");
     assert_eq!(commits, 2 * EVERY, "the last multiple of {EVERY}");
@@ -113,8 +120,14 @@ fn every_hundred_twenty_eighth_commit_records_the_verified_head() {
         .read()
         .ledger_page(seq.saturating_sub(1), 1)
         .expect("ledger");
-    assert_eq!(entry[0].hash, hash, "it names the ledger head at its commit");
-    assert_eq!(store.read().verify_ledger().expect("ledger").commits, 2 * EVERY + 3);
+    assert_eq!(
+        entry[0].hash, hash,
+        "it names the ledger head at its commit"
+    );
+    assert_eq!(
+        store.read().verify_ledger().expect("ledger").commits,
+        2 * EVERY + 3
+    );
 }
 
 fn cell_more(path: &Path, from: u64, to: u64) {
@@ -174,7 +187,10 @@ fn any_change_after_the_checkpoint_refuses_the_open() {
     // A ledger event after the checkpoint.
     execute(
         &path,
-        &format!("UPDATE _norn_ledger SET hash = 'ff' || substr(hash, 3) WHERE commit_seq = {}", EVERY + 5),
+        &format!(
+            "UPDATE _norn_ledger SET hash = 'ff' || substr(hash, 3) WHERE commit_seq = {}",
+            EVERY + 5
+        ),
     );
     refused(&path);
     // A value version after the checkpoint.
@@ -199,8 +215,12 @@ fn an_old_row_changed_in_place_is_refused_when_read_and_from_genesis() {
             &[],
         )
         .expect("row");
-    let [SqlValue::Text(world), SqlValue::Text(object_type), SqlValue::Text(id), SqlValue::Integer(version)] =
-        &row[0][..]
+    let [
+        SqlValue::Text(world),
+        SqlValue::Text(object_type),
+        SqlValue::Text(id),
+        SqlValue::Integer(version),
+    ] = &row[0][..]
     else {
         panic!("fact row {row:?}");
     };

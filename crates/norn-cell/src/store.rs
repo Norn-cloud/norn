@@ -2702,7 +2702,10 @@ impl<E: SqlEngine> CellStore<E> {
         let mut version_index = 0_usize;
         let mut active_version = 0_u64;
         let mut previous_install_seq = 0_u64;
-        for version in versions.iter().take_while(|version| version.commit_seq <= commits) {
+        for version in versions
+            .iter()
+            .take_while(|version| version.commit_seq <= commits)
+        {
             if version.version != next_version || version.commit_seq <= previous_install_seq {
                 return Err(CellError::LedgerCorrupt {
                     seq: version.commit_seq,
