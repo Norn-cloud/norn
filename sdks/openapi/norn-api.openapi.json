@@ -34741,6 +34741,7 @@
             "required": [
               "actionId",
               "actor",
+              "input",
               "kind"
             ],
             "properties": {
@@ -34751,6 +34752,12 @@
               "actor": {
                 "type": "string",
                 "description": "The verified caller the server attributed the call to."
+              },
+              "input": {
+                "type": "object",
+                "description": "Deprecated: always the empty object. The call's effective input is never disclosed.",
+                "additionalProperties": true,
+                "deprecated": true
               },
               "kind": {
                 "type": "string",
