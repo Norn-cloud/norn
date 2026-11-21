@@ -133,8 +133,10 @@ const fn property_kind(encoding: ValueEncoding) -> PropertyKind {
 /// decimals as exact number tokens).
 pub(crate) fn canonical_json<T: Serialize + ?Sized>(value: &T) -> Result<String, CellError> {
     let bytes = norn_ir::canonical::canonical_json_of(value)?;
-    // Norn1 output is UTF-8 JSON text by construction.
-    Ok(String::from_utf8_lossy(&bytes).into_owned())
+    // Norn1 output is UTF-8 JSON text by construction: take the bytes as
+    // they are (the lossy form only ever copied them).
+    Ok(String::from_utf8(bytes)
+        .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned()))
 }
 
 /// Norn1 hash (lower-case hex SHA-256 with the Norn1 domain tag) of `value`.

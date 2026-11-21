@@ -186,6 +186,9 @@ impl Drop for Slot<'_> {
 fn connection(stream: &TcpStream, handler: &Handler<'_>, persistent: bool) -> std::io::Result<()> {
     stream.set_read_timeout(Some(IDLE))?;
     stream.set_write_timeout(Some(IDLE))?;
+    // DEV-ONE-WRITE-1: an answer is complete when written; never hold it
+    // back waiting for an ACK.
+    stream.set_nodelay(true)?;
     let mut reader = BufReader::new(stream);
     for served in 0_usize.. {
         // Between requests, a closed, failed or idle connection just ends:
@@ -223,15 +226,29 @@ fn write_response(mut stream: &TcpStream, response: &Response, open: bool) -> st
         422 => "Unprocessable Content",
         _ => "Status",
     };
-    write!(
-        stream,
-        "HTTP/1.1 {} {reason}\r\ncontent-type: application/json\r\ncache-control: no-store\r\ncontent-length: {}\r\nconnection: {}\r\n\r\n{}",
+    stream.write_all(&encode_response(
         response.status,
-        response.body.len(),
-        if open { "keep-alive" } else { "close" },
-        response.body
-    )?;
+        reason,
+        &response.body,
+        open,
+    ))?;
     stream.flush()
+}
+
+/// DEV-ONE-WRITE-1 (#1533): the whole answer, head and body, as one buffer.
+/// Written in pieces onto a Nagle socket, each answer waited for the client's
+/// delayed ACK, an 88 ms floor per call; one `write_all` (and
+/// `TCP_NODELAY`, set per connection) sends it at once.
+fn encode_response(status: u16, reason: &str, body: &str, open: bool) -> Vec<u8> {
+    let head = format!(
+        "HTTP/1.1 {status} {reason}\r\ncontent-type: application/json\r\ncache-control: no-store\r\ncontent-length: {}\r\nconnection: {}\r\n\r\n",
+        body.len(),
+        if open { "keep-alive" } else { "close" },
+    );
+    let mut bytes = Vec::with_capacity(head.len().saturating_add(body.len()));
+    bytes.extend_from_slice(head.as_bytes());
+    bytes.extend_from_slice(body.as_bytes());
+    bytes
 }
 
 struct Parsed {
@@ -1184,6 +1201,45 @@ mod keepalive_tests {
         assert_eq!(answer(&mut reader).1, "close");
         let mut rest = Vec::new();
         assert_eq!(reader.read_to_end(&mut rest).unwrap(), 0);
+    }
+
+    #[test]
+    fn an_answer_is_sent_whole_without_waiting_for_an_ack() {
+        // DEV-ONE-WRITE-1: an answer written in pieces onto a Nagle socket
+        // waited for the client's delayed ACK (about 40 ms each, twice per
+        // call). Twenty keep-alive round trips of a cheap answer must take
+        // far less than one delayed ACK each.
+        let (port, _dir) = host();
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        stream.set_nodelay(true).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(30)))
+            .unwrap();
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        let started = std::time::Instant::now();
+        for sku in 0..20_u32 {
+            let body = format!(r#"{{"input":{{"sku":"SKU-{sku}"}},"idempotencyKey":"add-{sku}"}}"#);
+            let whole = format!(
+                "POST /v1/actions/shop.product.add?orgId=local&environmentId=dev HTTP/1.1\r\nhost: 127.0.0.1\r\ncontent-length: {}\r\n\r\n{body}",
+                body.len()
+            );
+            stream.write_all(whole.as_bytes()).unwrap();
+            assert_eq!(answer(&mut reader).0, 409);
+        }
+        let took = started.elapsed();
+        assert!(
+            took < Duration::from_millis(500),
+            "20 round trips took {took:?}"
+        );
+    }
+
+    #[test]
+    fn an_encoded_answer_is_its_head_then_its_body() {
+        let bytes = encode_response(409, "Conflict", r#"{"a":1}"#, true);
+        assert_eq!(
+            String::from_utf8(bytes).unwrap(),
+            "HTTP/1.1 409 Conflict\r\ncontent-type: application/json\r\ncache-control: no-store\r\ncontent-length: 7\r\nconnection: keep-alive\r\n\r\n{\"a\":1}"
+        );
     }
 
     #[test]
