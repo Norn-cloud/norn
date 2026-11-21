@@ -1,0 +1,1739 @@
+{
+  "format": "norn.cell.sqlite-image/1",
+  "storage": 2,
+  "schema": [
+    {
+      "type": "table",
+      "name": "_norn_clock",
+      "table": "_norn_clock",
+      "sql": "CREATE TABLE \"_norn_clock\" (\"id\" INTEGER NOT NULL PRIMARY KEY CHECK (\"id\"=1), \"logical_time\" INTEGER NOT NULL, \"commit_seq\" INTEGER NOT NULL, \"receipt_hash\" TEXT NOT NULL)"
+    },
+    {
+      "type": "table",
+      "name": "_norn_quantity_ledger",
+      "table": "_norn_quantity_ledger",
+      "sql": "CREATE TABLE \"_norn_quantity_ledger\" (\n      \"world\" TEXT NOT NULL, \"ledger\" TEXT NOT NULL, \"version\" INTEGER NOT NULL,\n      \"pack\" TEXT NOT NULL, \"unrestricted\" TEXT NOT NULL,\n      \"defined_at\" INTEGER NOT NULL,\n      PRIMARY KEY (\"world\", \"ledger\")\n    )"
+    },
+    {
+      "type": "table",
+      "name": "_norn_quantity_balance",
+      "table": "_norn_quantity_balance",
+      "sql": "CREATE TABLE \"_norn_quantity_balance\" (\n      \"world\" TEXT NOT NULL, \"ledger\" TEXT NOT NULL, \"account\" TEXT NOT NULL,\n      \"unit\" TEXT NOT NULL, \"layer\" TEXT NOT NULL, \"posted\" TEXT NOT NULL,\n      \"held\" TEXT NOT NULL, \"version\" INTEGER NOT NULL,\n      PRIMARY KEY (\"world\", \"ledger\", \"account\", \"unit\", \"layer\")\n    )"
+    },
+    {
+      "type": "table",
+      "name": "_norn_quantity_history",
+      "table": "_norn_quantity_history",
+      "sql": "CREATE TABLE \"_norn_quantity_history\" (\n      \"world\" TEXT NOT NULL, \"ledger\" TEXT NOT NULL, \"account\" TEXT NOT NULL,\n      \"unit\" TEXT NOT NULL, \"layer\" TEXT NOT NULL, \"posted\" TEXT NOT NULL,\n      \"held\" TEXT NOT NULL, \"version\" INTEGER NOT NULL, \"commit_seq\" INTEGER NOT NULL,\n      PRIMARY KEY (\"world\", \"ledger\", \"account\", \"unit\", \"layer\", \"version\")\n    )"
+    },
+    {
+      "type": "table",
+      "name": "_norn_quantity_reservation",
+      "table": "_norn_quantity_reservation",
+      "sql": "CREATE TABLE \"_norn_quantity_reservation\" (\n      \"world\" TEXT NOT NULL, \"ledger\" TEXT NOT NULL, \"id\" TEXT NOT NULL,\n      \"record\" TEXT NOT NULL, \"version\" INTEGER NOT NULL, \"commit_seq\" INTEGER NOT NULL,\n      \"created_at\" INTEGER NOT NULL,\n      PRIMARY KEY (\"world\", \"ledger\", \"id\")\n    )"
+    },
+    {
+      "type": "table",
+      "name": "_norn_quantity_posting",
+      "table": "_norn_quantity_posting",
+      "sql": "CREATE TABLE \"_norn_quantity_posting\" (\n      \"world\" TEXT NOT NULL, \"ledger\" TEXT NOT NULL, \"id\" TEXT NOT NULL,\n      \"record\" TEXT NOT NULL, \"reverses\" TEXT, \"version\" INTEGER NOT NULL,\n      \"commit_seq\" INTEGER NOT NULL, PRIMARY KEY (\"world\", \"ledger\", \"id\")\n    )"
+    },
+    {
+      "type": "index",
+      "name": "_norn_quantity_posting/reversal",
+      "table": "_norn_quantity_posting",
+      "sql": "CREATE UNIQUE INDEX \"_norn_quantity_posting/reversal\"\n      ON \"_norn_quantity_posting\" (\"world\", \"ledger\", \"reverses\")"
+    },
+    {
+      "type": "table",
+      "name": "_norn_meta",
+      "table": "_norn_meta",
+      "sql": "CREATE TABLE \"_norn_meta\" (\n  \"key\" TEXT NOT NULL,\n  \"value\" TEXT NOT NULL,\n  PRIMARY KEY (\"key\")\n)"
+    },
+    {
+      "type": "table",
+      "name": "_norn_pending_link",
+      "table": "_norn_pending_link",
+      "sql": "CREATE TABLE \"_norn_pending_link\" (\n  \"world\" TEXT NOT NULL,\n  \"source_type\" TEXT NOT NULL,\n  \"source_key\" TEXT NOT NULL,\n  \"record_key\" TEXT NOT NULL,\n  \"target_type\" TEXT NOT NULL,\n  \"target_key\" TEXT NOT NULL,\n  PRIMARY KEY (\"world\", \"source_type\", \"source_key\", \"record_key\")\n)"
+    },
+    {
+      "type": "index",
+      "name": "_norn_pending_link/target",
+      "table": "_norn_pending_link",
+      "sql": "CREATE INDEX \"_norn_pending_link/target\" ON \"_norn_pending_link\" (\"world\", \"target_type\", \"target_key\", \"record_key\")"
+    },
+    {
+      "type": "index",
+      "name": "_norn_pending_link/record",
+      "table": "_norn_pending_link",
+      "sql": "CREATE INDEX \"_norn_pending_link/record\" ON \"_norn_pending_link\" (\"world\", \"record_key\")"
+    },
+    {
+      "type": "table",
+      "name": "_norn_ledger",
+      "table": "_norn_ledger",
+      "sql": "CREATE TABLE \"_norn_ledger\" (\n  \"seq\" INTEGER NOT NULL,\n  \"commit_seq\" INTEGER NOT NULL,\n  \"world\" TEXT NOT NULL,\n  \"event\" TEXT NOT NULL,\n  \"prev_hash\" TEXT NOT NULL,\n  \"hash\" TEXT NOT NULL,\n  PRIMARY KEY (\"seq\")\n)"
+    },
+    {
+      "type": "index",
+      "name": "_norn_ledger/commit",
+      "table": "_norn_ledger",
+      "sql": "CREATE INDEX \"_norn_ledger/commit\" ON \"_norn_ledger\" (\"commit_seq\")"
+    },
+    {
+      "type": "index",
+      "name": "_norn_ledger/finding_sequence",
+      "table": "_norn_ledger",
+      "sql": "CREATE INDEX \"_norn_ledger/finding_sequence\" ON \"_norn_ledger\" (\"world\", json_extract(\"event\", '$.fact.id'), \"seq\", \"commit_seq\") WHERE json_extract(\"event\", '$.op') = 'data_quality_finding'"
+    },
+    {
+      "type": "index",
+      "name": "_norn_ledger/finding_subject",
+      "table": "_norn_ledger",
+      "sql": "CREATE INDEX \"_norn_ledger/finding_subject\" ON \"_norn_ledger\" (\"world\", json_extract(\"event\", '$.fact.subjects[0].objectType'), json_extract(\"event\", '$.fact.subjects[0].key')) WHERE json_extract(\"event\", '$.op') = 'data_quality_finding'"
+    },
+    {
+      "type": "index",
+      "name": "_norn_ledger/quantity_latest",
+      "table": "_norn_ledger",
+      "sql": "CREATE INDEX \"_norn_ledger/quantity_latest\" ON \"_norn_ledger\"\n      (\"world\", json_extract(\"event\", '$.request.ledgerId'), \"seq\" DESC)\n      WHERE json_extract(\"event\", '$.type')='quantity.transition'"
+    },
+    {
+      "type": "index",
+      "name": "_norn_ledger/quantity_reversal",
+      "table": "_norn_ledger",
+      "sql": "CREATE INDEX \"_norn_ledger/quantity_reversal\" ON \"_norn_ledger\"\n      (\"world\", json_extract(\"event\", '$.request.ledgerId'), json_extract(\"event\", '$.request.operation.original_id'))\n      WHERE json_extract(\"event\", '$.type')='quantity.transition'\n        AND json_extract(\"event\", '$.request.operation.kind')='reverse'"
+    },
+    {
+      "type": "table",
+      "name": "_norn_receipt",
+      "table": "_norn_receipt",
+      "sql": "CREATE TABLE \"_norn_receipt\" (\n  \"commit_seq\" INTEGER NOT NULL,\n  \"world\" TEXT NOT NULL,\n  \"idempotency_key\" TEXT,\n  \"request_hash\" TEXT NOT NULL,\n  \"receipt\" TEXT NOT NULL,\n  \"receipt_hash\" TEXT NOT NULL,\n  PRIMARY KEY (\"commit_seq\")\n)"
+    },
+    {
+      "type": "index",
+      "name": "_norn_receipt/quantity_boundary",
+      "table": "_norn_receipt",
+      "sql": "CREATE INDEX \"_norn_receipt/quantity_boundary\" ON \"_norn_receipt\"\n      (json_extract(\"receipt\", '$.firstEventSeq'))\n      WHERE json_extract(\"receipt\", '$.quantity.version')='norn.quantity.commit/2'"
+    },
+    {
+      "type": "index",
+      "name": "_norn_receipt/quantity_group_boundary",
+      "table": "_norn_receipt",
+      "sql": "CREATE INDEX \"_norn_receipt/quantity_group_boundary\" ON \"_norn_receipt\"\n      (json_extract(\"receipt\", '$.firstEventSeq'))\n      WHERE json_type(\"receipt\", '$.quantity')='array'"
+    },
+    {
+      "type": "index",
+      "name": "_norn_receipt/idempotency",
+      "table": "_norn_receipt",
+      "sql": "CREATE UNIQUE INDEX \"_norn_receipt/idempotency\" ON \"_norn_receipt\" (\"world\", \"idempotency_key\")"
+    },
+    {
+      "type": "table",
+      "name": "_norn_outbox",
+      "table": "_norn_outbox",
+      "sql": "CREATE TABLE \"_norn_outbox\" (\n  \"command_id\" TEXT NOT NULL,\n  \"position\" INTEGER NOT NULL,\n  \"generation\" INTEGER NOT NULL,\n  \"commit_seq\" INTEGER NOT NULL,\n  \"idempotency_key\" TEXT NOT NULL,\n  \"deadline\" INTEGER,\n  \"command\" TEXT NOT NULL,\n  \"result\" TEXT,\n  \"consumed_commit_seq\" INTEGER,\n  PRIMARY KEY (\"command_id\")\n)"
+    },
+    {
+      "type": "index",
+      "name": "_norn_outbox/position",
+      "table": "_norn_outbox",
+      "sql": "CREATE UNIQUE INDEX \"_norn_outbox/position\" ON \"_norn_outbox\" (\"position\")"
+    },
+    {
+      "type": "table",
+      "name": "_norn_perform_claim",
+      "table": "_norn_perform_claim",
+      "sql": "CREATE TABLE \"_norn_perform_claim\" (\n  \"command_id\" TEXT NOT NULL,\n  \"generation\" INTEGER NOT NULL,\n  \"commit_seq\" INTEGER NOT NULL,\n  PRIMARY KEY (\"command_id\", \"generation\")\n)"
+    },
+    {
+      "type": "table",
+      "name": "_norn_timer",
+      "table": "_norn_timer",
+      "sql": "CREATE TABLE \"_norn_timer\" (\n  \"timer_id\" TEXT NOT NULL,\n  \"due\" INTEGER NOT NULL,\n  \"timer\" TEXT NOT NULL,\n  \"commit_seq\" INTEGER NOT NULL,\n  PRIMARY KEY (\"timer_id\")\n)"
+    },
+    {
+      "type": "index",
+      "name": "_norn_timer/due",
+      "table": "_norn_timer",
+      "sql": "CREATE INDEX \"_norn_timer/due\" ON \"_norn_timer\" (\"due\", \"timer_id\")"
+    },
+    {
+      "type": "index",
+      "name": "_norn_timer/quantity_due",
+      "table": "_norn_timer",
+      "sql": "CREATE INDEX \"_norn_timer/quantity_due\" ON \"_norn_timer\" (\"due\", \"timer_id\")\n      WHERE \"timer_id\">='norn.quantity.expiry/' AND \"timer_id\"<'norn.quantity.expiry0'"
+    },
+    {
+      "type": "index",
+      "name": "_norn_timer/ordinary_due",
+      "table": "_norn_timer",
+      "sql": "CREATE INDEX \"_norn_timer/ordinary_due\" ON \"_norn_timer\" (\"due\", \"timer_id\")\n      WHERE \"timer_id\"<'norn.quantity.expiry/' OR \"timer_id\">='norn.quantity.expiry0'"
+    },
+    {
+      "type": "table",
+      "name": "_norn_run",
+      "table": "_norn_run",
+      "sql": "CREATE TABLE \"_norn_run\" (\n  \"command_id\" TEXT NOT NULL,\n  \"generation\" INTEGER NOT NULL,\n  \"attempt\" INTEGER NOT NULL,\n  \"outcome\" TEXT NOT NULL,\n  \"consumed_commit_seq\" INTEGER,\n  PRIMARY KEY (\"command_id\", \"generation\", \"attempt\")\n)"
+    },
+    {
+      "type": "table",
+      "name": "_norn_inbox",
+      "table": "_norn_inbox",
+      "sql": "CREATE TABLE \"_norn_inbox\" (\n  \"position\" INTEGER NOT NULL,\n  \"observation_id\" TEXT NOT NULL,\n  \"observed\" TEXT NOT NULL,\n  \"consumed_commit_seq\" INTEGER,\n  PRIMARY KEY (\"position\")\n)"
+    },
+    {
+      "type": "index",
+      "name": "_norn_inbox/id",
+      "table": "_norn_inbox",
+      "sql": "CREATE UNIQUE INDEX \"_norn_inbox/id\" ON \"_norn_inbox\" (\"observation_id\")"
+    },
+    {
+      "type": "table",
+      "name": "_norn_claim_endpoint",
+      "table": "_norn_claim_endpoint",
+      "sql": "CREATE TABLE \"_norn_claim_endpoint\" (\n  \"side\" TEXT NOT NULL,\n  \"key\" TEXT NOT NULL,\n  \"commit_seq\" INTEGER NOT NULL,\n  \"observation_id\" TEXT NOT NULL,\n  \"bytes\" INTEGER NOT NULL,\n  PRIMARY KEY (\"side\", \"key\", \"observation_id\")\n)"
+    },
+    {
+      "type": "index",
+      "name": "_norn_inbox/source_event",
+      "table": "_norn_inbox",
+      "sql": "CREATE INDEX \"_norn_inbox/source_event\" ON \"_norn_inbox\" (json_extract(\"observed\", '$.input.input.connectorInstance'), json_extract(\"observed\", '$.input.input.partition'), json_extract(\"observed\", '$.input.raw.source'), json_extract(\"observed\", '$.input.raw.source_id'), json_extract(\"observed\", '$.input.raw.event_id')) WHERE \"observation_id\" LIKE 'mapping-bundle:%'"
+    },
+    {
+      "type": "table",
+      "name": "_norn_version",
+      "table": "_norn_version",
+      "sql": "CREATE TABLE \"_norn_version\" (\n  \"world\" TEXT NOT NULL,\n  \"root_type\" TEXT NOT NULL,\n  \"id\" TEXT NOT NULL,\n  \"version\" INTEGER NOT NULL,\n  PRIMARY KEY (\"world\", \"root_type\", \"id\")\n)"
+    },
+    {
+      "type": "table",
+      "name": "_norn_link_version",
+      "table": "_norn_link_version",
+      "sql": "CREATE TABLE \"_norn_link_version\" (\n  \"world\" TEXT NOT NULL,\n  \"link_table\" TEXT NOT NULL,\n  \"source\" TEXT NOT NULL,\n  \"target\" TEXT NOT NULL,\n  \"link\" TEXT NOT NULL,\n  \"source_type\" TEXT NOT NULL,\n  \"target_type\" TEXT NOT NULL,\n  \"version\" INTEGER NOT NULL,\n  PRIMARY KEY (\"world\", \"link_table\", \"source\", \"target\")\n)"
+    },
+    {
+      "type": "index",
+      "name": "_norn_link_version/source",
+      "table": "_norn_link_version",
+      "sql": "CREATE INDEX \"_norn_link_version/source\" ON \"_norn_link_version\" (\"world\", \"source\")"
+    },
+    {
+      "type": "index",
+      "name": "_norn_link_version/target",
+      "table": "_norn_link_version",
+      "sql": "CREATE INDEX \"_norn_link_version/target\" ON \"_norn_link_version\" (\"world\", \"target\")"
+    },
+    {
+      "type": "index",
+      "name": "_norn_link_version/source_order",
+      "table": "_norn_link_version",
+      "sql": "CREATE INDEX \"_norn_link_version/source_order\" ON \"_norn_link_version\" (\"world\", \"source\", \"link_table\", \"target\", \"link\", \"source_type\", \"target_type\")"
+    },
+    {
+      "type": "index",
+      "name": "_norn_link_version/target_order",
+      "table": "_norn_link_version",
+      "sql": "CREATE INDEX \"_norn_link_version/target_order\" ON \"_norn_link_version\" (\"world\", \"target\", \"link_table\", \"source\", \"link\", \"source_type\", \"target_type\")"
+    },
+    {
+      "type": "index",
+      "name": "_norn_link_version/source_link_order",
+      "table": "_norn_link_version",
+      "sql": "CREATE INDEX \"_norn_link_version/source_link_order\" ON \"_norn_link_version\" (\"world\", \"source\", \"link\", \"link_table\", \"target\", \"source_type\", \"target_type\")"
+    },
+    {
+      "type": "index",
+      "name": "_norn_link_version/target_link_order",
+      "table": "_norn_link_version",
+      "sql": "CREATE INDEX \"_norn_link_version/target_link_order\" ON \"_norn_link_version\" (\"world\", \"target\", \"link\", \"link_table\", \"source\", \"source_type\", \"target_type\")"
+    },
+    {
+      "type": "table",
+      "name": "_norn_link_creation",
+      "table": "_norn_link_creation",
+      "sql": "CREATE TABLE \"_norn_link_creation\" (\n  \"world\" TEXT NOT NULL,\n  \"link_table\" TEXT NOT NULL,\n  \"source\" TEXT NOT NULL,\n  \"target\" TEXT NOT NULL,\n  \"created_commit\" INTEGER,\n  \"creation_version\" INTEGER,\n  PRIMARY KEY (\"world\", \"link_table\", \"source\", \"target\")\n)"
+    },
+    {
+      "type": "table",
+      "name": "_norn_definition_version",
+      "table": "_norn_definition_version",
+      "sql": "CREATE TABLE \"_norn_definition_version\" (\n  \"version\" INTEGER NOT NULL,\n  \"receipt_sha256\" TEXT NOT NULL,\n  \"canonical_set\" TEXT NOT NULL,\n  \"model_hash\" TEXT NOT NULL,\n  \"ddl_hash\" TEXT NOT NULL,\n  \"installed_at\" INTEGER NOT NULL,\n  \"commit_seq\" INTEGER NOT NULL,\n  PRIMARY KEY (\"version\")\n)"
+    },
+    {
+      "type": "index",
+      "name": "_norn_definition_version/commit",
+      "table": "_norn_definition_version",
+      "sql": "CREATE UNIQUE INDEX \"_norn_definition_version/commit\" ON \"_norn_definition_version\" (\"commit_seq\")"
+    },
+    {
+      "type": "table",
+      "name": "_norn_definition_registry",
+      "table": "_norn_definition_registry",
+      "sql": "CREATE TABLE \"_norn_definition_registry\" (\n  \"version\" INTEGER NOT NULL,\n  \"registry\" TEXT NOT NULL,\n  PRIMARY KEY (\"version\")\n)"
+    },
+    {
+      "type": "table",
+      "name": "_norn_definition_admission_receipt",
+      "table": "_norn_definition_admission_receipt",
+      "sql": "CREATE TABLE \"_norn_definition_admission_receipt\" (\n  \"version\" INTEGER NOT NULL,\n  \"receipt\" TEXT NOT NULL,\n  PRIMARY KEY (\"version\")\n)"
+    },
+    {
+      "type": "table",
+      "name": "_norn_definition_active",
+      "table": "_norn_definition_active",
+      "sql": "CREATE TABLE \"_norn_definition_active\" (\n  \"id\" INTEGER NOT NULL,\n  \"version\" INTEGER NOT NULL,\n  PRIMARY KEY (\"id\")\n)"
+    },
+    {
+      "type": "table",
+      "name": "_norn_definition_layout",
+      "table": "_norn_definition_layout",
+      "sql": "CREATE TABLE \"_norn_definition_layout\" (\n  \"version\" INTEGER NOT NULL,\n  \"layout_revision\" INTEGER NOT NULL,\n  \"sidecar\" TEXT NOT NULL,\n  PRIMARY KEY (\"version\")\n)"
+    },
+    {
+      "type": "table",
+      "name": "_norn_fact_values",
+      "table": "_norn_fact_values",
+      "sql": "CREATE TABLE \"_norn_fact_values\" (\n  \"world\" TEXT NOT NULL,\n  \"root_type\" TEXT NOT NULL,\n  \"object_type\" TEXT NOT NULL,\n  \"id\" TEXT NOT NULL,\n  \"version\" INTEGER NOT NULL,\n  \"commit_seq\" INTEGER NOT NULL,\n  \"snapshot\" TEXT NOT NULL,\n  \"hash\" TEXT NOT NULL,\n  PRIMARY KEY (\"world\", \"root_type\", \"id\", \"version\")\n)"
+    },
+    {
+      "type": "index",
+      "name": "_norn_fact_values/commit",
+      "table": "_norn_fact_values",
+      "sql": "CREATE INDEX \"_norn_fact_values/commit\" ON \"_norn_fact_values\" (\"world\", \"commit_seq\", \"root_type\", \"id\", \"version\")"
+    },
+    {
+      "type": "index",
+      "name": "_norn_fact_values/key_frontier",
+      "table": "_norn_fact_values",
+      "sql": "CREATE INDEX \"_norn_fact_values/key_frontier\" ON \"_norn_fact_values\" (\"world\", \"id\", \"commit_seq\", \"root_type\", \"version\")"
+    },
+    {
+      "type": "index",
+      "name": "_norn_fact_values/root_frontier",
+      "table": "_norn_fact_values",
+      "sql": "CREATE INDEX \"_norn_fact_values/root_frontier\" ON \"_norn_fact_values\" (\"world\", \"root_type\", \"commit_seq\", \"id\", \"version\")"
+    },
+    {
+      "type": "table",
+      "name": "_norn_marking_subject",
+      "table": "_norn_marking_subject",
+      "sql": "CREATE TABLE \"_norn_marking_subject\" (\n  \"subject\" INTEGER NOT NULL PRIMARY KEY,\n  \"world\" TEXT NOT NULL,\n  \"object_type\" TEXT NOT NULL,\n  \"id\" TEXT NOT NULL\n)"
+    },
+    {
+      "type": "index",
+      "name": "_norn_marking_subject/identity",
+      "table": "_norn_marking_subject",
+      "sql": "CREATE UNIQUE INDEX \"_norn_marking_subject/identity\" ON \"_norn_marking_subject\" (\"world\", \"object_type\", \"id\")"
+    },
+    {
+      "type": "table",
+      "name": "_norn_marking_current",
+      "table": "_norn_marking_current",
+      "sql": "CREATE TABLE \"_norn_marking_current\" (\n  \"world\" TEXT NOT NULL,\n  \"object_type\" TEXT NOT NULL,\n  \"subject\" INTEGER NOT NULL,\n  \"property\" TEXT NOT NULL,\n  \"version\" INTEGER NOT NULL,\n  \"markings\" TEXT NOT NULL,\n  PRIMARY KEY (\"world\", \"object_type\", \"subject\", \"property\")\n)"
+    },
+    {
+      "type": "table",
+      "name": "_norn_marking_version",
+      "table": "_norn_marking_version",
+      "sql": "CREATE TABLE \"_norn_marking_version\" (\n  \"world\" TEXT NOT NULL,\n  \"object_type\" TEXT NOT NULL,\n  \"subject\" INTEGER NOT NULL,\n  \"property\" TEXT NOT NULL,\n  \"version\" INTEGER NOT NULL,\n  \"markings\" TEXT NOT NULL,\n  PRIMARY KEY (\"world\", \"object_type\", \"subject\", \"property\", \"version\")\n)"
+    },
+    {
+      "type": "table",
+      "name": "_norn_marking_snapshot",
+      "table": "_norn_marking_snapshot",
+      "sql": "CREATE TABLE \"_norn_marking_snapshot\" (\n  \"world\" TEXT NOT NULL,\n  \"object_type\" TEXT NOT NULL,\n  \"id\" TEXT NOT NULL,\n  \"version\" INTEGER NOT NULL,\n  \"is_current\" INTEGER NOT NULL,\n  PRIMARY KEY (\"world\", \"object_type\", \"id\", \"version\", \"is_current\")\n)"
+    },
+    {
+      "type": "index",
+      "name": "_norn_marking_current_nonempty",
+      "table": "_norn_marking_current",
+      "sql": "CREATE INDEX \"_norn_marking_current_nonempty\" ON \"_norn_marking_current\" (\"world\", \"object_type\", \"property\") WHERE \"markings\" != '[]'"
+    },
+    {
+      "type": "table",
+      "name": "_norn_flow_run",
+      "table": "_norn_flow_run",
+      "sql": "CREATE TABLE \"_norn_flow_run\" (\n  \"world\" TEXT NOT NULL,\n  \"run_id\" TEXT NOT NULL,\n  \"generation\" INTEGER NOT NULL,\n  \"flow_id\" TEXT NOT NULL,\n  \"flow_version\" TEXT NOT NULL,\n  \"object_type\" TEXT NOT NULL,\n  \"state_property\" TEXT NOT NULL,\n  \"state\" TEXT,\n  \"version\" INTEGER NOT NULL,\n  \"created_at_ms\" INTEGER NOT NULL,\n  \"created_commit_seq\" INTEGER NOT NULL,\n  \"updated_at_ms\" INTEGER NOT NULL,\n  \"updated_commit_seq\" INTEGER NOT NULL,\n  PRIMARY KEY (\"world\", \"run_id\")\n)"
+    },
+    {
+      "type": "index",
+      "name": "_norn_flow_run/object",
+      "table": "_norn_flow_run",
+      "sql": "CREATE INDEX \"_norn_flow_run/object\" ON \"_norn_flow_run\" (\"world\", \"object_type\", \"run_id\")"
+    },
+    {
+      "type": "index",
+      "name": "_norn_flow_run/flow_state",
+      "table": "_norn_flow_run",
+      "sql": "CREATE INDEX \"_norn_flow_run/flow_state\" ON \"_norn_flow_run\" (\"world\", \"flow_id\", \"state\", \"run_id\")"
+    },
+    {
+      "type": "table",
+      "name": "_norn_decision",
+      "table": "_norn_decision",
+      "sql": "CREATE TABLE \"_norn_decision\" (\n  \"world\" TEXT NOT NULL,\n  \"decision_id\" TEXT NOT NULL,\n  \"command_id\" TEXT NOT NULL,\n  \"generation\" INTEGER NOT NULL,\n  \"run_id\" TEXT NOT NULL,\n  \"step\" TEXT NOT NULL,\n  \"resolution\" TEXT NOT NULL,\n  \"choice\" TEXT,\n  \"note\" TEXT,\n  \"decided_by\" TEXT,\n  \"idempotency_key\" TEXT,\n  \"request_hash\" TEXT,\n  \"resolved_at_ms\" INTEGER NOT NULL,\n  \"commit_seq\" INTEGER NOT NULL,\n  PRIMARY KEY (\"world\", \"decision_id\")\n)"
+    },
+    {
+      "type": "index",
+      "name": "_norn_decision/run",
+      "table": "_norn_decision",
+      "sql": "CREATE INDEX \"_norn_decision/run\" ON \"_norn_decision\" (\"world\", \"run_id\", \"decision_id\")"
+    },
+    {
+      "type": "table",
+      "name": "_norn_due_retry",
+      "table": "_norn_due_retry",
+      "sql": "CREATE TABLE \"_norn_due_retry\" (\n  \"item\" TEXT NOT NULL,\n  \"incarnation\" INTEGER NOT NULL,\n  \"attempts\" INTEGER NOT NULL,\n  \"eligible_at\" INTEGER NOT NULL,\n  PRIMARY KEY (\"item\")\n)"
+    },
+    {
+      "type": "table",
+      "name": "_norn_export_journal",
+      "table": "_norn_export_journal",
+      "sql": "CREATE TABLE \"_norn_export_journal\" (\n  \"commit_seq\" INTEGER NOT NULL,\n  \"hash\" TEXT NOT NULL,\n  \"record\" TEXT NOT NULL,\n  PRIMARY KEY (\"commit_seq\")\n)"
+    },
+    {
+      "type": "table",
+      "name": "_norn_retained_definition",
+      "table": "_norn_retained_definition",
+      "sql": "CREATE TABLE \"_norn_retained_definition\" (\n  \"id\" TEXT NOT NULL,\n  \"revision\" INTEGER NOT NULL,\n  \"kind\" TEXT NOT NULL,\n  \"lifecycle\" TEXT NOT NULL,\n  \"title\" TEXT NOT NULL,\n  \"payload\" TEXT NOT NULL,\n  \"payload_sha256\" TEXT NOT NULL,\n  \"signoff\" TEXT,\n  \"definitions_version\" INTEGER NOT NULL,\n  \"commit_seq\" INTEGER NOT NULL,\n  \"recorded_at\" INTEGER NOT NULL,\n  PRIMARY KEY (\"id\", \"revision\")\n)"
+    },
+    {
+      "type": "index",
+      "name": "_norn_retained_definition/version_id",
+      "table": "_norn_retained_definition",
+      "sql": "CREATE UNIQUE INDEX \"_norn_retained_definition/version_id\" ON \"_norn_retained_definition\" (\"definitions_version\", \"id\")"
+    },
+    {
+      "type": "index",
+      "name": "_norn_retained_definition/kind",
+      "table": "_norn_retained_definition",
+      "sql": "CREATE INDEX \"_norn_retained_definition/kind\" ON \"_norn_retained_definition\" (\"kind\", \"id\", \"revision\")"
+    },
+    {
+      "type": "table",
+      "name": "_norn_transform_materialization",
+      "table": "_norn_transform_materialization",
+      "sql": "CREATE TABLE \"_norn_transform_materialization\" (\n  \"transform\" TEXT NOT NULL,\n  \"plan_pin\" TEXT NOT NULL,\n  \"input_digest\" TEXT NOT NULL,\n  \"refreshed_at_ms\" INTEGER NOT NULL,\n  \"result\" TEXT NOT NULL,\n  \"result_digest\" TEXT NOT NULL,\n  PRIMARY KEY (\"transform\")\n)"
+    },
+    {
+      "type": "table",
+      "name": "_norn_payload",
+      "table": "_norn_payload",
+      "sql": "CREATE TABLE \"_norn_payload\" (\n        \"hash\" TEXT NOT NULL PRIMARY KEY, \"scope\" TEXT NOT NULL,\n        \"world\" TEXT NOT NULL, \"body\" TEXT NOT NULL\n    )"
+    },
+    {
+      "type": "table",
+      "name": "_norn_command_origin",
+      "table": "_norn_command_origin",
+      "sql": "CREATE TABLE \"_norn_command_origin\" (\n        \"command_id\" TEXT NOT NULL, \"generation\" INTEGER NOT NULL, \"commit_seq\" INTEGER NOT NULL,\n        PRIMARY KEY (\"command_id\",\"generation\")\n    )"
+    },
+    {
+      "type": "table",
+      "name": "_norn_export_payload",
+      "table": "_norn_export_payload",
+      "sql": "CREATE TABLE \"_norn_export_payload\" (\n        \"commit_seq\" INTEGER NOT NULL, \"ordinal\" INTEGER NOT NULL, \"hash\" TEXT NOT NULL,\n        PRIMARY KEY (\"commit_seq\",\"ordinal\")\n    )"
+    },
+    {
+      "type": "table",
+      "name": "_norn_ledger_payload",
+      "table": "_norn_ledger_payload",
+      "sql": "CREATE TABLE \"_norn_ledger_payload\" (\n        \"seq\" INTEGER NOT NULL PRIMARY KEY, \"scope\" TEXT NOT NULL,\n        \"world\" TEXT NOT NULL, \"hash\" TEXT NOT NULL\n    )"
+    },
+    {
+      "type": "table",
+      "name": "o:fixture.Item",
+      "table": "o:fixture.Item",
+      "sql": "CREATE TABLE \"o:fixture.Item\" (\n  \"_world\" TEXT NOT NULL,\n  \"_id\" TEXT NOT NULL,\n  \"_type\" TEXT NOT NULL,\n  \"_scope\" TEXT NOT NULL,\n  \"_version\" INTEGER NOT NULL,\n  \"p:qty\" INTEGER NOT NULL,\n  \"p:label\" TEXT NOT NULL,\n  PRIMARY KEY (\"_world\", \"_id\")\n)"
+    }
+  ],
+  "tables": {
+    "_norn_clock": {
+      "columns": [
+        "rowid",
+        "id",
+        "logical_time",
+        "commit_seq",
+        "receipt_hash"
+      ],
+      "rows": [
+        [
+          1,
+          1,
+          3000,
+          3,
+          "dc7fd672d4b15c335a587e27102b0f014556c1ea1f9f687329522f7c1eb96a3b"
+        ]
+      ]
+    },
+    "_norn_quantity_ledger": {
+      "columns": [
+        "rowid",
+        "world",
+        "ledger",
+        "version",
+        "pack",
+        "unrestricted",
+        "defined_at"
+      ],
+      "rows": []
+    },
+    "_norn_quantity_balance": {
+      "columns": [
+        "rowid",
+        "world",
+        "ledger",
+        "account",
+        "unit",
+        "layer",
+        "posted",
+        "held",
+        "version"
+      ],
+      "rows": []
+    },
+    "_norn_quantity_history": {
+      "columns": [
+        "rowid",
+        "world",
+        "ledger",
+        "account",
+        "unit",
+        "layer",
+        "posted",
+        "held",
+        "version",
+        "commit_seq"
+      ],
+      "rows": []
+    },
+    "_norn_quantity_reservation": {
+      "columns": [
+        "rowid",
+        "world",
+        "ledger",
+        "id",
+        "record",
+        "version",
+        "commit_seq",
+        "created_at"
+      ],
+      "rows": []
+    },
+    "_norn_quantity_posting": {
+      "columns": [
+        "rowid",
+        "world",
+        "ledger",
+        "id",
+        "record",
+        "reverses",
+        "version",
+        "commit_seq"
+      ],
+      "rows": []
+    },
+    "_norn_meta": {
+      "columns": [
+        "rowid",
+        "key",
+        "value"
+      ],
+      "rows": [
+        [
+          1,
+          "property_columns",
+          "p:"
+        ],
+        [
+          2,
+          "binding:cell_id",
+          "0f1e2d3c4b5a69788796a5b4c3d2e1f0"
+        ],
+        [
+          3,
+          "binding:cell_identity_format",
+          "norn.cell.identity/v1"
+        ],
+        [
+          4,
+          "format",
+          "norn.cell.store/8"
+        ],
+        [
+          5,
+          "ddl_hash",
+          "4fd2931b26362a54d53ec6479db55c71182096d043dafe509363d55c3a4ba668"
+        ],
+        [
+          6,
+          "engine",
+          "{\"format\":\"norn.cell.engine/1\",\"storage\":2,\"writer\":\"dev\"}"
+        ],
+        [
+          7,
+          "binding:scope",
+          "fixture/dev"
+        ]
+      ]
+    },
+    "_norn_pending_link": {
+      "columns": [
+        "rowid",
+        "world",
+        "source_type",
+        "source_key",
+        "record_key",
+        "target_type",
+        "target_key"
+      ],
+      "rows": []
+    },
+    "_norn_ledger": {
+      "columns": [
+        "rowid",
+        "seq",
+        "commit_seq",
+        "world",
+        "event",
+        "prev_hash",
+        "hash"
+      ],
+      "rows": [
+        [
+          1,
+          1,
+          1,
+          "main",
+          "{\"count\":5,\"type\":\"fixture.created\"}",
+          "0000000000000000000000000000000000000000000000000000000000000000",
+          "04dd82760447e487966981c294d18e233bdeafe8faa54beb6dae0eedc6a9fb04"
+        ],
+        [
+          2,
+          2,
+          3,
+          "main",
+          "{\"key\":\"a4\",\"type\":\"fixture.deleted\"}",
+          "04dd82760447e487966981c294d18e233bdeafe8faa54beb6dae0eedc6a9fb04",
+          "bedbc5ec850aa11924e373b155d4bd9eed3da701c338fba13aba29df2aae31ea"
+        ]
+      ]
+    },
+    "_norn_receipt": {
+      "columns": [
+        "rowid",
+        "commit_seq",
+        "world",
+        "idempotency_key",
+        "request_hash",
+        "receipt",
+        "receipt_hash"
+      ],
+      "rows": [
+        [
+          1,
+          1,
+          "main",
+          "create",
+          "53549d098ce57c7b9bb9b9ad50ff11972dede74652f3599ab014a1f222a12f8d",
+          "{\"commitSeq\":1,\"enqueued\":[],\"eventCount\":1,\"firstEventSeq\":1,\"idempotencyKey\":\"create\",\"ledgerHead\":\"04dd82760447e487966981c294d18e233bdeafe8faa54beb6dae0eedc6a9fb04\",\"logicalTime\":1000,\"requestHash\":\"53549d098ce57c7b9bb9b9ad50ff11972dede74652f3599ab014a1f222a12f8d\",\"scheduled\":[],\"world\":\"main\",\"written\":[{\"key\":\"a0\",\"objectType\":\"fixture.Item\",\"snapshotSha256\":\"cae0778b0d40356dfa7cd457664e724d162d7148ef410db2dc18dbd5ec4273bb\",\"version\":1},{\"key\":\"a1\",\"objectType\":\"fixture.Item\",\"snapshotSha256\":\"14af37f2c489ba04db4fed7cfc7449c9e757120e456d038b617eba58e5811d7d\",\"version\":1},{\"key\":\"a2\",\"objectType\":\"fixture.Item\",\"snapshotSha256\":\"5af7eb668d767bbeafa007a9012f981cdd5e728f7817e0853328d750080e1e05\",\"version\":1},{\"key\":\"a3\",\"objectType\":\"fixture.Item\",\"snapshotSha256\":\"e59dfd03de0bff24c9bfbe304721d5776a266ba3cfe7e944a5c9f97d5654b008\",\"version\":1},{\"key\":\"a4\",\"objectType\":\"fixture.Item\",\"snapshotSha256\":\"bf8116817fcd5e2c099def12a0ca6f76b4ee56c533661e2f772c7789a41404ed\",\"version\":1}]}",
+          "f5f196033d7a33c5e6e9927e55251f5eef469b51af1aefb87ca5cf73d8d66dc6"
+        ],
+        [
+          2,
+          2,
+          "main",
+          "update",
+          "0bb7bca25730955e4e7834b485805a3b4fbe30780ce0dcb7b208fd43fef5eb0a",
+          "{\"commitSeq\":2,\"enqueued\":[],\"eventCount\":0,\"firstEventSeq\":2,\"idempotencyKey\":\"update\",\"ledgerHead\":\"04dd82760447e487966981c294d18e233bdeafe8faa54beb6dae0eedc6a9fb04\",\"logicalTime\":2000,\"requestHash\":\"0bb7bca25730955e4e7834b485805a3b4fbe30780ce0dcb7b208fd43fef5eb0a\",\"scheduled\":[],\"world\":\"main\",\"written\":[{\"key\":\"a1\",\"objectType\":\"fixture.Item\",\"snapshotSha256\":\"21d41ebf7618b768639a39be7cf6e2ad33682583d6f50eabd0f6552b1941938e\",\"version\":2},{\"key\":\"b0\",\"objectType\":\"fixture.Item\",\"snapshotSha256\":\"571c50ade270402def62f8d6334d3a6fce3ab4b9238a57b09ef38ed227e8e2bc\",\"version\":1}]}",
+          "2aba71858bf713a38547789312516b6d2d80598001b434664a4cd578c1ff399d"
+        ],
+        [
+          3,
+          3,
+          "main",
+          "delete",
+          "c48af50c2ba60894330b7d19aa3c9cf81d30fc6771119f716b74d16d8dd631fb",
+          "{\"commitSeq\":3,\"enqueued\":[],\"eventCount\":1,\"firstEventSeq\":2,\"idempotencyKey\":\"delete\",\"ledgerHead\":\"bedbc5ec850aa11924e373b155d4bd9eed3da701c338fba13aba29df2aae31ea\",\"logicalTime\":3000,\"requestHash\":\"c48af50c2ba60894330b7d19aa3c9cf81d30fc6771119f716b74d16d8dd631fb\",\"scheduled\":[],\"world\":\"main\",\"written\":[{\"key\":\"a4\",\"objectType\":\"fixture.Item\",\"snapshotSha256\":\"b789750d6c50aaec7b621b67627b4f7aaec39ad313743dec4ada82ceee9e4a75\",\"version\":2}]}",
+          "dc7fd672d4b15c335a587e27102b0f014556c1ea1f9f687329522f7c1eb96a3b"
+        ]
+      ]
+    },
+    "_norn_outbox": {
+      "columns": [
+        "rowid",
+        "command_id",
+        "position",
+        "generation",
+        "commit_seq",
+        "idempotency_key",
+        "deadline",
+        "command",
+        "result",
+        "consumed_commit_seq"
+      ],
+      "rows": []
+    },
+    "_norn_perform_claim": {
+      "columns": [
+        "rowid",
+        "command_id",
+        "generation",
+        "commit_seq"
+      ],
+      "rows": []
+    },
+    "_norn_timer": {
+      "columns": [
+        "rowid",
+        "timer_id",
+        "due",
+        "timer",
+        "commit_seq"
+      ],
+      "rows": []
+    },
+    "_norn_run": {
+      "columns": [
+        "rowid",
+        "command_id",
+        "generation",
+        "attempt",
+        "outcome",
+        "consumed_commit_seq"
+      ],
+      "rows": []
+    },
+    "_norn_inbox": {
+      "columns": [
+        "rowid",
+        "position",
+        "observation_id",
+        "observed",
+        "consumed_commit_seq"
+      ],
+      "rows": []
+    },
+    "_norn_claim_endpoint": {
+      "columns": [
+        "rowid",
+        "side",
+        "key",
+        "commit_seq",
+        "observation_id",
+        "bytes"
+      ],
+      "rows": []
+    },
+    "_norn_version": {
+      "columns": [
+        "rowid",
+        "world",
+        "root_type",
+        "id",
+        "version"
+      ],
+      "rows": [
+        [
+          1,
+          "main",
+          "fixture.Item",
+          "a0",
+          1
+        ],
+        [
+          2,
+          "main",
+          "fixture.Item",
+          "a1",
+          2
+        ],
+        [
+          3,
+          "main",
+          "fixture.Item",
+          "a2",
+          1
+        ],
+        [
+          4,
+          "main",
+          "fixture.Item",
+          "a3",
+          1
+        ],
+        [
+          5,
+          "main",
+          "fixture.Item",
+          "a4",
+          2
+        ],
+        [
+          6,
+          "main",
+          "fixture.Item",
+          "b0",
+          1
+        ]
+      ]
+    },
+    "_norn_link_version": {
+      "columns": [
+        "rowid",
+        "world",
+        "link_table",
+        "source",
+        "target",
+        "link",
+        "source_type",
+        "target_type",
+        "version"
+      ],
+      "rows": []
+    },
+    "_norn_link_creation": {
+      "columns": [
+        "rowid",
+        "world",
+        "link_table",
+        "source",
+        "target",
+        "created_commit",
+        "creation_version"
+      ],
+      "rows": []
+    },
+    "_norn_definition_version": {
+      "columns": [
+        "rowid",
+        "version",
+        "receipt_sha256",
+        "canonical_set",
+        "model_hash",
+        "ddl_hash",
+        "installed_at",
+        "commit_seq"
+      ],
+      "rows": []
+    },
+    "_norn_definition_registry": {
+      "columns": [
+        "rowid",
+        "version",
+        "registry"
+      ],
+      "rows": []
+    },
+    "_norn_definition_admission_receipt": {
+      "columns": [
+        "rowid",
+        "version",
+        "receipt"
+      ],
+      "rows": []
+    },
+    "_norn_definition_active": {
+      "columns": [
+        "rowid",
+        "id",
+        "version"
+      ],
+      "rows": []
+    },
+    "_norn_definition_layout": {
+      "columns": [
+        "rowid",
+        "version",
+        "layout_revision",
+        "sidecar"
+      ],
+      "rows": []
+    },
+    "_norn_fact_values": {
+      "columns": [
+        "rowid",
+        "world",
+        "root_type",
+        "object_type",
+        "id",
+        "version",
+        "commit_seq",
+        "snapshot",
+        "hash"
+      ],
+      "rows": [
+        [
+          1,
+          "main",
+          "fixture.Item",
+          "fixture.Item",
+          "a0",
+          1,
+          1,
+          "{\"key\":\"a0\",\"lineage\":[\"fixture.Item\"],\"modelHash\":\"ba5a88c1f05fa26cc51fea6e2fc36a58753cddd81d79231bc1805b8d15bed983\",\"objectType\":\"fixture.Item\",\"rootType\":\"fixture.Item\",\"scope\":\"fixture/dev\",\"values\":{\"label\":\"item\",\"qty\":0},\"version\":1,\"world\":\"main\"}",
+          "cae0778b0d40356dfa7cd457664e724d162d7148ef410db2dc18dbd5ec4273bb"
+        ],
+        [
+          2,
+          "main",
+          "fixture.Item",
+          "fixture.Item",
+          "a1",
+          1,
+          1,
+          "{\"key\":\"a1\",\"lineage\":[\"fixture.Item\"],\"modelHash\":\"ba5a88c1f05fa26cc51fea6e2fc36a58753cddd81d79231bc1805b8d15bed983\",\"objectType\":\"fixture.Item\",\"rootType\":\"fixture.Item\",\"scope\":\"fixture/dev\",\"values\":{\"label\":\"item\",\"qty\":1},\"version\":1,\"world\":\"main\"}",
+          "14af37f2c489ba04db4fed7cfc7449c9e757120e456d038b617eba58e5811d7d"
+        ],
+        [
+          3,
+          "main",
+          "fixture.Item",
+          "fixture.Item",
+          "a2",
+          1,
+          1,
+          "{\"key\":\"a2\",\"lineage\":[\"fixture.Item\"],\"modelHash\":\"ba5a88c1f05fa26cc51fea6e2fc36a58753cddd81d79231bc1805b8d15bed983\",\"objectType\":\"fixture.Item\",\"rootType\":\"fixture.Item\",\"scope\":\"fixture/dev\",\"values\":{\"label\":\"item\",\"qty\":2},\"version\":1,\"world\":\"main\"}",
+          "5af7eb668d767bbeafa007a9012f981cdd5e728f7817e0853328d750080e1e05"
+        ],
+        [
+          4,
+          "main",
+          "fixture.Item",
+          "fixture.Item",
+          "a3",
+          1,
+          1,
+          "{\"key\":\"a3\",\"lineage\":[\"fixture.Item\"],\"modelHash\":\"ba5a88c1f05fa26cc51fea6e2fc36a58753cddd81d79231bc1805b8d15bed983\",\"objectType\":\"fixture.Item\",\"rootType\":\"fixture.Item\",\"scope\":\"fixture/dev\",\"values\":{\"label\":\"item\",\"qty\":3},\"version\":1,\"world\":\"main\"}",
+          "e59dfd03de0bff24c9bfbe304721d5776a266ba3cfe7e944a5c9f97d5654b008"
+        ],
+        [
+          5,
+          "main",
+          "fixture.Item",
+          "fixture.Item",
+          "a4",
+          1,
+          1,
+          "{\"key\":\"a4\",\"lineage\":[\"fixture.Item\"],\"modelHash\":\"ba5a88c1f05fa26cc51fea6e2fc36a58753cddd81d79231bc1805b8d15bed983\",\"objectType\":\"fixture.Item\",\"rootType\":\"fixture.Item\",\"scope\":\"fixture/dev\",\"values\":{\"label\":\"item\",\"qty\":4},\"version\":1,\"world\":\"main\"}",
+          "bf8116817fcd5e2c099def12a0ca6f76b4ee56c533661e2f772c7789a41404ed"
+        ],
+        [
+          6,
+          "main",
+          "fixture.Item",
+          "fixture.Item",
+          "a1",
+          2,
+          2,
+          "{\"key\":\"a1\",\"lineage\":[\"fixture.Item\"],\"modelHash\":\"ba5a88c1f05fa26cc51fea6e2fc36a58753cddd81d79231bc1805b8d15bed983\",\"objectType\":\"fixture.Item\",\"rootType\":\"fixture.Item\",\"scope\":\"fixture/dev\",\"values\":{\"label\":\"item\",\"qty\":10},\"version\":2,\"world\":\"main\"}",
+          "21d41ebf7618b768639a39be7cf6e2ad33682583d6f50eabd0f6552b1941938e"
+        ],
+        [
+          7,
+          "main",
+          "fixture.Item",
+          "fixture.Item",
+          "b0",
+          1,
+          2,
+          "{\"key\":\"b0\",\"lineage\":[\"fixture.Item\"],\"modelHash\":\"ba5a88c1f05fa26cc51fea6e2fc36a58753cddd81d79231bc1805b8d15bed983\",\"objectType\":\"fixture.Item\",\"rootType\":\"fixture.Item\",\"scope\":\"fixture/dev\",\"values\":{\"label\":\"item\",\"qty\":7},\"version\":1,\"world\":\"main\"}",
+          "571c50ade270402def62f8d6334d3a6fce3ab4b9238a57b09ef38ed227e8e2bc"
+        ],
+        [
+          8,
+          "main",
+          "fixture.Item",
+          "fixture.Item",
+          "a4",
+          2,
+          3,
+          "{\"key\":\"a4\",\"lineage\":[\"fixture.Item\"],\"modelHash\":\"ba5a88c1f05fa26cc51fea6e2fc36a58753cddd81d79231bc1805b8d15bed983\",\"objectType\":\"fixture.Item\",\"rootType\":\"fixture.Item\",\"scope\":\"fixture/dev\",\"values\":null,\"version\":2,\"world\":\"main\"}",
+          "b789750d6c50aaec7b621b67627b4f7aaec39ad313743dec4ada82ceee9e4a75"
+        ]
+      ]
+    },
+    "_norn_marking_subject": {
+      "columns": [
+        "rowid",
+        "subject",
+        "world",
+        "object_type",
+        "id"
+      ],
+      "rows": [
+        [
+          1,
+          1,
+          "main",
+          "fixture.Item",
+          "a0"
+        ],
+        [
+          2,
+          2,
+          "main",
+          "fixture.Item",
+          "a1"
+        ],
+        [
+          3,
+          3,
+          "main",
+          "fixture.Item",
+          "a2"
+        ],
+        [
+          4,
+          4,
+          "main",
+          "fixture.Item",
+          "a3"
+        ],
+        [
+          5,
+          5,
+          "main",
+          "fixture.Item",
+          "a4"
+        ],
+        [
+          6,
+          6,
+          "main",
+          "fixture.Item",
+          "b0"
+        ]
+      ]
+    },
+    "_norn_marking_current": {
+      "columns": [
+        "rowid",
+        "world",
+        "object_type",
+        "subject",
+        "property",
+        "version",
+        "markings"
+      ],
+      "rows": [
+        [
+          1,
+          "main",
+          "fixture.Item",
+          1,
+          "",
+          1,
+          "[]"
+        ],
+        [
+          2,
+          "main",
+          "fixture.Item",
+          1,
+          "label",
+          1,
+          "[]"
+        ],
+        [
+          3,
+          "main",
+          "fixture.Item",
+          1,
+          "qty",
+          1,
+          "[]"
+        ],
+        [
+          4,
+          "main",
+          "fixture.Item",
+          2,
+          "",
+          2,
+          "[]"
+        ],
+        [
+          5,
+          "main",
+          "fixture.Item",
+          2,
+          "label",
+          2,
+          "[]"
+        ],
+        [
+          6,
+          "main",
+          "fixture.Item",
+          2,
+          "qty",
+          2,
+          "[]"
+        ],
+        [
+          7,
+          "main",
+          "fixture.Item",
+          3,
+          "",
+          1,
+          "[]"
+        ],
+        [
+          8,
+          "main",
+          "fixture.Item",
+          3,
+          "label",
+          1,
+          "[]"
+        ],
+        [
+          9,
+          "main",
+          "fixture.Item",
+          3,
+          "qty",
+          1,
+          "[]"
+        ],
+        [
+          10,
+          "main",
+          "fixture.Item",
+          4,
+          "",
+          1,
+          "[]"
+        ],
+        [
+          11,
+          "main",
+          "fixture.Item",
+          4,
+          "label",
+          1,
+          "[]"
+        ],
+        [
+          12,
+          "main",
+          "fixture.Item",
+          4,
+          "qty",
+          1,
+          "[]"
+        ],
+        [
+          16,
+          "main",
+          "fixture.Item",
+          6,
+          "",
+          1,
+          "[]"
+        ],
+        [
+          17,
+          "main",
+          "fixture.Item",
+          6,
+          "label",
+          1,
+          "[]"
+        ],
+        [
+          18,
+          "main",
+          "fixture.Item",
+          6,
+          "qty",
+          1,
+          "[]"
+        ]
+      ]
+    },
+    "_norn_marking_version": {
+      "columns": [
+        "rowid",
+        "world",
+        "object_type",
+        "subject",
+        "property",
+        "version",
+        "markings"
+      ],
+      "rows": [
+        [
+          1,
+          "main",
+          "fixture.Item",
+          1,
+          "",
+          1,
+          "[]"
+        ],
+        [
+          2,
+          "main",
+          "fixture.Item",
+          1,
+          "label",
+          1,
+          "[]"
+        ],
+        [
+          3,
+          "main",
+          "fixture.Item",
+          1,
+          "qty",
+          1,
+          "[]"
+        ],
+        [
+          4,
+          "main",
+          "fixture.Item",
+          2,
+          "",
+          1,
+          "[]"
+        ],
+        [
+          5,
+          "main",
+          "fixture.Item",
+          2,
+          "label",
+          1,
+          "[]"
+        ],
+        [
+          6,
+          "main",
+          "fixture.Item",
+          2,
+          "qty",
+          1,
+          "[]"
+        ],
+        [
+          7,
+          "main",
+          "fixture.Item",
+          3,
+          "",
+          1,
+          "[]"
+        ],
+        [
+          8,
+          "main",
+          "fixture.Item",
+          3,
+          "label",
+          1,
+          "[]"
+        ],
+        [
+          9,
+          "main",
+          "fixture.Item",
+          3,
+          "qty",
+          1,
+          "[]"
+        ],
+        [
+          10,
+          "main",
+          "fixture.Item",
+          4,
+          "",
+          1,
+          "[]"
+        ],
+        [
+          11,
+          "main",
+          "fixture.Item",
+          4,
+          "label",
+          1,
+          "[]"
+        ],
+        [
+          12,
+          "main",
+          "fixture.Item",
+          4,
+          "qty",
+          1,
+          "[]"
+        ],
+        [
+          13,
+          "main",
+          "fixture.Item",
+          5,
+          "",
+          1,
+          "[]"
+        ],
+        [
+          14,
+          "main",
+          "fixture.Item",
+          5,
+          "label",
+          1,
+          "[]"
+        ],
+        [
+          15,
+          "main",
+          "fixture.Item",
+          5,
+          "qty",
+          1,
+          "[]"
+        ],
+        [
+          16,
+          "main",
+          "fixture.Item",
+          2,
+          "",
+          2,
+          "[]"
+        ],
+        [
+          17,
+          "main",
+          "fixture.Item",
+          2,
+          "label",
+          2,
+          "[]"
+        ],
+        [
+          18,
+          "main",
+          "fixture.Item",
+          2,
+          "qty",
+          2,
+          "[]"
+        ],
+        [
+          19,
+          "main",
+          "fixture.Item",
+          6,
+          "",
+          1,
+          "[]"
+        ],
+        [
+          20,
+          "main",
+          "fixture.Item",
+          6,
+          "label",
+          1,
+          "[]"
+        ],
+        [
+          21,
+          "main",
+          "fixture.Item",
+          6,
+          "qty",
+          1,
+          "[]"
+        ],
+        [
+          22,
+          "main",
+          "fixture.Item",
+          5,
+          "",
+          2,
+          "[]"
+        ],
+        [
+          23,
+          "main",
+          "fixture.Item",
+          5,
+          "label",
+          2,
+          "[]"
+        ],
+        [
+          24,
+          "main",
+          "fixture.Item",
+          5,
+          "qty",
+          2,
+          "[]"
+        ]
+      ]
+    },
+    "_norn_marking_snapshot": {
+      "columns": [
+        "rowid",
+        "world",
+        "object_type",
+        "id",
+        "version",
+        "is_current"
+      ],
+      "rows": [
+        [
+          1,
+          "main",
+          "fixture.Item",
+          "a0",
+          1,
+          1
+        ],
+        [
+          2,
+          "main",
+          "fixture.Item",
+          "a0",
+          1,
+          0
+        ],
+        [
+          4,
+          "main",
+          "fixture.Item",
+          "a1",
+          1,
+          0
+        ],
+        [
+          5,
+          "main",
+          "fixture.Item",
+          "a2",
+          1,
+          1
+        ],
+        [
+          6,
+          "main",
+          "fixture.Item",
+          "a2",
+          1,
+          0
+        ],
+        [
+          7,
+          "main",
+          "fixture.Item",
+          "a3",
+          1,
+          1
+        ],
+        [
+          8,
+          "main",
+          "fixture.Item",
+          "a3",
+          1,
+          0
+        ],
+        [
+          10,
+          "main",
+          "fixture.Item",
+          "a4",
+          1,
+          0
+        ],
+        [
+          11,
+          "main",
+          "fixture.Item",
+          "a1",
+          2,
+          1
+        ],
+        [
+          12,
+          "main",
+          "fixture.Item",
+          "a1",
+          2,
+          0
+        ],
+        [
+          13,
+          "main",
+          "fixture.Item",
+          "b0",
+          1,
+          1
+        ],
+        [
+          14,
+          "main",
+          "fixture.Item",
+          "b0",
+          1,
+          0
+        ],
+        [
+          16,
+          "main",
+          "fixture.Item",
+          "a4",
+          2,
+          0
+        ]
+      ]
+    },
+    "_norn_flow_run": {
+      "columns": [
+        "rowid",
+        "world",
+        "run_id",
+        "generation",
+        "flow_id",
+        "flow_version",
+        "object_type",
+        "state_property",
+        "state",
+        "version",
+        "created_at_ms",
+        "created_commit_seq",
+        "updated_at_ms",
+        "updated_commit_seq"
+      ],
+      "rows": []
+    },
+    "_norn_decision": {
+      "columns": [
+        "rowid",
+        "world",
+        "decision_id",
+        "command_id",
+        "generation",
+        "run_id",
+        "step",
+        "resolution",
+        "choice",
+        "note",
+        "decided_by",
+        "idempotency_key",
+        "request_hash",
+        "resolved_at_ms",
+        "commit_seq"
+      ],
+      "rows": []
+    },
+    "_norn_due_retry": {
+      "columns": [
+        "rowid",
+        "item",
+        "incarnation",
+        "attempts",
+        "eligible_at"
+      ],
+      "rows": []
+    },
+    "_norn_export_journal": {
+      "columns": [
+        "rowid",
+        "commit_seq",
+        "hash",
+        "record"
+      ],
+      "rows": [
+        [
+          1,
+          1,
+          "a3b4e930a27d19300bb85032cd04f568f3bc3b7c1639aa5d61cd9f70d1aa9b9c",
+          "norn.cell.payload-storage/1:{\"commit_seq\":1,\"inline\":\"{\\\"batch\\\":{\\\"effects\\\":[],\\\"events\\\":[{\\\"count\\\":5,\\\"type\\\":\\\"fixture.created\\\"}],\\\"facts\\\":[],\\\"idempotencyKey\\\":\\\"create\\\",\\\"links\\\":[],\\\"logicalTime\\\":1000,\\\"scope\\\":\\\"fixture/dev\\\",\\\"world\\\":\\\"main\\\",\\\"writes\\\":[{\\\"put\\\":{\\\"key\\\":\\\"a0\\\",\\\"objectType\\\":\\\"fixture.Item\\\",\\\"values\\\":{\\\"qty\\\":0}}},{\\\"put\\\":{\\\"key\\\":\\\"a1\\\",\\\"objectType\\\":\\\"fixture.Item\\\",\\\"values\\\":{\\\"qty\\\":1}}},{\\\"put\\\":{\\\"key\\\":\\\"a2\\\",\\\"objectType\\\":\\\"fixture.Item\\\",\\\"values\\\":{\\\"qty\\\":2}}},{\\\"put\\\":{\\\"key\\\":\\\"a3\\\",\\\"objectType\\\":\\\"fixture.Item\\\",\\\"values\\\":{\\\"qty\\\":3}}},{\\\"put\\\":{\\\"key\\\":\\\"a4\\\",\\\"objectType\\\":\\\"fixture.Item\\\",\\\"values\\\":{\\\"qty\\\":4}}}]},\\\"bindings\\\":{\\\"cell_id\\\":\\\"0f1e2d3c4b5a69788796a5b4c3d2e1f0\\\",\\\"cell_identity_format\\\":\\\"norn.cell.identity/v1\\\",\\\"scope\\\":\\\"fixture/dev\\\"},\\\"consumedInput\\\":null,\\\"ddlHash\\\":\\\"4fd2931b26362a54d53ec6479db55c71182096d043dafe509363d55c3a4ba668\\\",\\\"ddlSql\\\":null,\\\"entries\\\":[{\\\"commitSeq\\\":1,\\\"event\\\":{\\\"count\\\":5,\\\"type\\\":\\\"fixture.created\\\"},\\\"hash\\\":\\\"04dd82760447e487966981c294d18e233bdeafe8faa54beb6dae0eedc6a9fb04\\\",\\\"prevHash\\\":\\\"0000000000000000000000000000000000000000000000000000000000000000\\\",\\\"seq\\\":1,\\\"world\\\":\\\"main\\\"}],\\\"format\\\":\\\"norn.cell.export/5\\\",\\\"initialModel\\\":{\\\"objectTypes\\\":[{\\\"invariants\\\":[{\\\"expression\\\":\\\"self.qty >= 0\\\",\\\"id\\\":\\\"non_negative\\\",\\\"message\\\":\\\"qty is not negative\\\"}],\\\"name\\\":\\\"fixture.Item\\\",\\\"properties\\\":[{\\\"id\\\":\\\"qty\\\",\\\"type\\\":{\\\"kind\\\":\\\"integer\\\"}},{\\\"default\\\":\\\"item\\\",\\\"id\\\":\\\"label\\\",\\\"type\\\":{\\\"kind\\\":\\\"text\\\"}}]}],\\\"propertyTypes\\\":[]},\\\"modelHash\\\":\\\"ba5a88c1f05fa26cc51fea6e2fc36a58753cddd81d79231bc1805b8d15bed983\\\",\\\"previous\\\":\\\"0000000000000000000000000000000000000000000000000000000000000000\\\",\\\"receipt\\\":{\\\"body\\\":{\\\"commitSeq\\\":1,\\\"enqueued\\\":[],\\\"eventCount\\\":1,\\\"firstEventSeq\\\":1,\\\"idempotencyKey\\\":\\\"create\\\",\\\"ledgerHead\\\":\\\"04dd82760447e487966981c294d18e233bdeafe8faa54beb6dae0eedc6a9fb04\\\",\\\"logicalTime\\\":1000,\\\"requestHash\\\":\\\"53549d098ce57c7b9bb9b9ad50ff11972dede74652f3599ab014a1f222a12f8d\\\",\\\"scheduled\\\":[],\\\"world\\\":\\\"main\\\",\\\"written\\\":[{\\\"key\\\":\\\"a0\\\",\\\"objectType\\\":\\\"fixture.Item\\\",\\\"snapshotSha256\\\":\\\"cae0778b0d40356dfa7cd457664e724d162d7148ef410db2dc18dbd5ec4273bb\\\",\\\"version\\\":1},{\\\"key\\\":\\\"a1\\\",\\\"objectType\\\":\\\"fixture.Item\\\",\\\"snapshotSha256\\\":\\\"14af37f2c489ba04db4fed7cfc7449c9e757120e456d038b617eba58e5811d7d\\\",\\\"version\\\":1},{\\\"key\\\":\\\"a2\\\",\\\"objectType\\\":\\\"fixture.Item\\\",\\\"snapshotSha256\\\":\\\"5af7eb668d767bbeafa007a9012f981cdd5e728f7817e0853328d750080e1e05\\\",\\\"version\\\":1},{\\\"key\\\":\\\"a3\\\",\\\"objectType\\\":\\\"fixture.Item\\\",\\\"snapshotSha256\\\":\\\"e59dfd03de0bff24c9bfbe304721d5776a266ba3cfe7e944a5c9f97d5654b008\\\",\\\"version\\\":1},{\\\"key\\\":\\\"a4\\\",\\\"objectType\\\":\\\"fixture.Item\\\",\\\"snapshotSha256\\\":\\\"bf8116817fcd5e2c099def12a0ca6f76b4ee56c533661e2f772c7789a41404ed\\\",\\\"version\\\":1}]},\\\"hash\\\":\\\"f5f196033d7a33c5e6e9927e55251f5eef469b51af1aefb87ca5cf73d8d66dc6\\\"},\\\"storageVersion\\\":2,\\\"storeFormat\\\":\\\"norn.cell.store/8\\\"}\",\"references\":[{\"path\":[\"ddlSql\"],\"reference\":{\"hash\":\"cfc188be2326716ce154885dfe8d5f83e60ce084614fc7d7b2a0e1f7141e3abb\",\"scope\":\"fixture/dev\",\"world\":\"main\"}}],\"scope\":\"fixture/dev\",\"world\":\"main\"}"
+        ],
+        [
+          2,
+          2,
+          "73ba42db524f8cccabc3b867a22c775fd66e565ca5fb34b45b9975882f04884d",
+          "norn.cell.payload-storage/1:{\"commit_seq\":2,\"inline\":\"{\\\"batch\\\":{\\\"effects\\\":[],\\\"events\\\":[],\\\"facts\\\":[],\\\"idempotencyKey\\\":\\\"update\\\",\\\"links\\\":[],\\\"logicalTime\\\":2000,\\\"scope\\\":\\\"fixture/dev\\\",\\\"world\\\":\\\"main\\\",\\\"writes\\\":[{\\\"put\\\":{\\\"key\\\":\\\"a1\\\",\\\"objectType\\\":\\\"fixture.Item\\\",\\\"values\\\":{\\\"qty\\\":10}}},{\\\"put\\\":{\\\"key\\\":\\\"b0\\\",\\\"objectType\\\":\\\"fixture.Item\\\",\\\"values\\\":{\\\"qty\\\":7}}}]},\\\"bindings\\\":{\\\"cell_id\\\":\\\"0f1e2d3c4b5a69788796a5b4c3d2e1f0\\\",\\\"cell_identity_format\\\":\\\"norn.cell.identity/v1\\\",\\\"scope\\\":\\\"fixture/dev\\\"},\\\"consumedInput\\\":null,\\\"ddlHash\\\":\\\"4fd2931b26362a54d53ec6479db55c71182096d043dafe509363d55c3a4ba668\\\",\\\"ddlSql\\\":null,\\\"entries\\\":[],\\\"format\\\":\\\"norn.cell.export/5\\\",\\\"modelHash\\\":\\\"ba5a88c1f05fa26cc51fea6e2fc36a58753cddd81d79231bc1805b8d15bed983\\\",\\\"previous\\\":\\\"a3b4e930a27d19300bb85032cd04f568f3bc3b7c1639aa5d61cd9f70d1aa9b9c\\\",\\\"receipt\\\":{\\\"body\\\":{\\\"commitSeq\\\":2,\\\"enqueued\\\":[],\\\"eventCount\\\":0,\\\"firstEventSeq\\\":2,\\\"idempotencyKey\\\":\\\"update\\\",\\\"ledgerHead\\\":\\\"04dd82760447e487966981c294d18e233bdeafe8faa54beb6dae0eedc6a9fb04\\\",\\\"logicalTime\\\":2000,\\\"requestHash\\\":\\\"0bb7bca25730955e4e7834b485805a3b4fbe30780ce0dcb7b208fd43fef5eb0a\\\",\\\"scheduled\\\":[],\\\"world\\\":\\\"main\\\",\\\"written\\\":[{\\\"key\\\":\\\"a1\\\",\\\"objectType\\\":\\\"fixture.Item\\\",\\\"snapshotSha256\\\":\\\"21d41ebf7618b768639a39be7cf6e2ad33682583d6f50eabd0f6552b1941938e\\\",\\\"version\\\":2},{\\\"key\\\":\\\"b0\\\",\\\"objectType\\\":\\\"fixture.Item\\\",\\\"snapshotSha256\\\":\\\"571c50ade270402def62f8d6334d3a6fce3ab4b9238a57b09ef38ed227e8e2bc\\\",\\\"version\\\":1}]},\\\"hash\\\":\\\"2aba71858bf713a38547789312516b6d2d80598001b434664a4cd578c1ff399d\\\"},\\\"storageVersion\\\":2,\\\"storeFormat\\\":\\\"norn.cell.store/8\\\"}\",\"references\":[{\"path\":[\"ddlSql\"],\"reference\":{\"hash\":\"cfc188be2326716ce154885dfe8d5f83e60ce084614fc7d7b2a0e1f7141e3abb\",\"scope\":\"fixture/dev\",\"world\":\"main\"}}],\"scope\":\"fixture/dev\",\"world\":\"main\"}"
+        ],
+        [
+          3,
+          3,
+          "27d0eb166400331e5078bfaddc9b30a98da42a72f25e5f810a0d18b4a552d14f",
+          "norn.cell.payload-storage/1:{\"commit_seq\":3,\"inline\":\"{\\\"batch\\\":{\\\"effects\\\":[],\\\"events\\\":[{\\\"key\\\":\\\"a4\\\",\\\"type\\\":\\\"fixture.deleted\\\"}],\\\"facts\\\":[],\\\"idempotencyKey\\\":\\\"delete\\\",\\\"links\\\":[],\\\"logicalTime\\\":3000,\\\"scope\\\":\\\"fixture/dev\\\",\\\"world\\\":\\\"main\\\",\\\"writes\\\":[{\\\"delete\\\":{\\\"key\\\":\\\"a4\\\",\\\"objectType\\\":\\\"fixture.Item\\\"}}]},\\\"bindings\\\":{\\\"cell_id\\\":\\\"0f1e2d3c4b5a69788796a5b4c3d2e1f0\\\",\\\"cell_identity_format\\\":\\\"norn.cell.identity/v1\\\",\\\"scope\\\":\\\"fixture/dev\\\"},\\\"consumedInput\\\":null,\\\"ddlHash\\\":\\\"4fd2931b26362a54d53ec6479db55c71182096d043dafe509363d55c3a4ba668\\\",\\\"ddlSql\\\":null,\\\"entries\\\":[{\\\"commitSeq\\\":3,\\\"event\\\":{\\\"key\\\":\\\"a4\\\",\\\"type\\\":\\\"fixture.deleted\\\"},\\\"hash\\\":\\\"bedbc5ec850aa11924e373b155d4bd9eed3da701c338fba13aba29df2aae31ea\\\",\\\"prevHash\\\":\\\"04dd82760447e487966981c294d18e233bdeafe8faa54beb6dae0eedc6a9fb04\\\",\\\"seq\\\":2,\\\"world\\\":\\\"main\\\"}],\\\"format\\\":\\\"norn.cell.export/5\\\",\\\"modelHash\\\":\\\"ba5a88c1f05fa26cc51fea6e2fc36a58753cddd81d79231bc1805b8d15bed983\\\",\\\"previous\\\":\\\"73ba42db524f8cccabc3b867a22c775fd66e565ca5fb34b45b9975882f04884d\\\",\\\"receipt\\\":{\\\"body\\\":{\\\"commitSeq\\\":3,\\\"enqueued\\\":[],\\\"eventCount\\\":1,\\\"firstEventSeq\\\":2,\\\"idempotencyKey\\\":\\\"delete\\\",\\\"ledgerHead\\\":\\\"bedbc5ec850aa11924e373b155d4bd9eed3da701c338fba13aba29df2aae31ea\\\",\\\"logicalTime\\\":3000,\\\"requestHash\\\":\\\"c48af50c2ba60894330b7d19aa3c9cf81d30fc6771119f716b74d16d8dd631fb\\\",\\\"scheduled\\\":[],\\\"world\\\":\\\"main\\\",\\\"written\\\":[{\\\"key\\\":\\\"a4\\\",\\\"objectType\\\":\\\"fixture.Item\\\",\\\"snapshotSha256\\\":\\\"b789750d6c50aaec7b621b67627b4f7aaec39ad313743dec4ada82ceee9e4a75\\\",\\\"version\\\":2}]},\\\"hash\\\":\\\"dc7fd672d4b15c335a587e27102b0f014556c1ea1f9f687329522f7c1eb96a3b\\\"},\\\"storageVersion\\\":2,\\\"storeFormat\\\":\\\"norn.cell.store/8\\\"}\",\"references\":[{\"path\":[\"ddlSql\"],\"reference\":{\"hash\":\"cfc188be2326716ce154885dfe8d5f83e60ce084614fc7d7b2a0e1f7141e3abb\",\"scope\":\"fixture/dev\",\"world\":\"main\"}}],\"scope\":\"fixture/dev\",\"world\":\"main\"}"
+        ]
+      ]
+    },
+    "_norn_retained_definition": {
+      "columns": [
+        "rowid",
+        "id",
+        "revision",
+        "kind",
+        "lifecycle",
+        "title",
+        "payload",
+        "payload_sha256",
+        "signoff",
+        "definitions_version",
+        "commit_seq",
+        "recorded_at"
+      ],
+      "rows": []
+    },
+    "_norn_transform_materialization": {
+      "columns": [
+        "rowid",
+        "transform",
+        "plan_pin",
+        "input_digest",
+        "refreshed_at_ms",
+        "result",
+        "result_digest"
+      ],
+      "rows": []
+    },
+    "_norn_payload": {
+      "columns": [
+        "rowid",
+        "hash",
+        "scope",
+        "world",
+        "body"
+      ],
+      "rows": [
+        [
+          1,
+          "cfc188be2326716ce154885dfe8d5f83e60ce084614fc7d7b2a0e1f7141e3abb",
+          "fixture/dev",
+          "main",
+          "\"CREATE TABLE IF NOT EXISTS \\\"o:fixture.Item\\\" (\\n  \\\"_world\\\" TEXT NOT NULL,\\n  \\\"_id\\\" TEXT NOT NULL,\\n  \\\"_type\\\" TEXT NOT NULL,\\n  \\\"_scope\\\" TEXT NOT NULL,\\n  \\\"_version\\\" INTEGER NOT NULL,\\n  \\\"qty\\\" INTEGER NOT NULL,\\n  \\\"label\\\" TEXT NOT NULL,\\n  PRIMARY KEY (\\\"_world\\\", \\\"_id\\\")\\n);\\n\""
+        ]
+      ]
+    },
+    "_norn_command_origin": {
+      "columns": [
+        "rowid",
+        "command_id",
+        "generation",
+        "commit_seq"
+      ],
+      "rows": []
+    },
+    "_norn_export_payload": {
+      "columns": [
+        "rowid",
+        "commit_seq",
+        "ordinal",
+        "hash"
+      ],
+      "rows": [
+        [
+          1,
+          1,
+          0,
+          "cfc188be2326716ce154885dfe8d5f83e60ce084614fc7d7b2a0e1f7141e3abb"
+        ],
+        [
+          2,
+          2,
+          0,
+          "cfc188be2326716ce154885dfe8d5f83e60ce084614fc7d7b2a0e1f7141e3abb"
+        ],
+        [
+          3,
+          3,
+          0,
+          "cfc188be2326716ce154885dfe8d5f83e60ce084614fc7d7b2a0e1f7141e3abb"
+        ]
+      ]
+    },
+    "_norn_ledger_payload": {
+      "columns": [
+        "rowid",
+        "seq",
+        "scope",
+        "world",
+        "hash"
+      ],
+      "rows": []
+    },
+    "o:fixture.Item": {
+      "columns": [
+        "rowid",
+        "_world",
+        "_id",
+        "_type",
+        "_scope",
+        "_version",
+        "p:qty",
+        "p:label"
+      ],
+      "rows": [
+        [
+          1,
+          "main",
+          "a0",
+          "fixture.Item",
+          "fixture/dev",
+          1,
+          0,
+          "item"
+        ],
+        [
+          2,
+          "main",
+          "a1",
+          "fixture.Item",
+          "fixture/dev",
+          2,
+          10,
+          "item"
+        ],
+        [
+          3,
+          "main",
+          "a2",
+          "fixture.Item",
+          "fixture/dev",
+          1,
+          2,
+          "item"
+        ],
+        [
+          4,
+          "main",
+          "a3",
+          "fixture.Item",
+          "fixture/dev",
+          1,
+          3,
+          "item"
+        ],
+        [
+          6,
+          "main",
+          "b0",
+          "fixture.Item",
+          "fixture/dev",
+          1,
+          7,
+          "item"
+        ]
+      ]
+    }
+  }
+}

@@ -62,10 +62,14 @@ pub const CHANNEL: &[StorageVersion] = &[
         version: 2,
         change: "the engine stamp: _norn_meta `engine` records the storage version and the release that wrote it",
     },
+    StorageVersion {
+        version: 3,
+        change: "MAP-DERIVATION-1 (#1488): a mapping bundle records the runtime derivation it was captured under (`derivation`) and the quarantined bundle it reprocesses (`reprocesses`)",
+    },
 ];
 
 /// The storage version this engine writes.
-pub const STORAGE_VERSION: u32 = 2;
+pub const STORAGE_VERSION: u32 = 3;
 
 /// The oldest storage version this engine upgrades in place. Raising it
 /// retires the steps below it; an older cell must first open on a bridge
@@ -310,7 +314,9 @@ fn run_chain(
 fn migrate_to<E: SqlEngine>(_engine: &E, to: u32) -> Result<(), CellError> {
     match to {
         // Version 2 adds the stamp alone, which `upgrade` writes after the chain.
-        2 => Ok(()),
+        // Version 3 rewrites nothing: a bundle without `derivation` is
+        // derivation 1 and still verifies under it (MAP-DERIVATION-1).
+        2 | 3 => Ok(()),
         _ => Err(CellError::EngineUpgradeUnsupported {
             cell: to.saturating_sub(1),
             engine: STORAGE_VERSION,

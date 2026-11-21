@@ -2,8 +2,8 @@
 //! one through the ordered migrations with its ledger and receipts intact,
 //! and a cell this engine cannot serve refuses before anything touches it.
 //!
-//! `fixtures/engine-storage-v1.json` is a cell written by the last storage
-//! version 1 engine (`tests/engine_fixture_record.rs` records it).
+//! `fixtures/engine-storage-v<N>.json` is a cell written by the last storage
+//! version `N` engine (`tests/engine_fixture_record.rs` records it).
 #![cfg(feature = "native")]
 #![allow(
     clippy::arithmetic_side_effects,
@@ -34,6 +34,14 @@ use norn_cell::{
 use serde_json::Value;
 
 const STORAGE_V1: &str = include_str!("fixtures/engine-storage-v1.json");
+const STORAGE_V2: &str = include_str!("fixtures/engine-storage-v2.json");
+
+/// The catalog is compared by name: a recreated index takes a new place.
+fn by_name(image: &mut Value) {
+    if let Some(schema) = image["schema"].as_array_mut() {
+        schema.sort_by_key(|entry| entry["name"].to_string());
+    }
+}
 
 /// The v1 fixture, loaded into a new file.
 fn v1_cell(dir: &Path) -> PathBuf {
@@ -197,8 +205,9 @@ fn a_storage_v1_cell_opens_on_this_engine_with_identical_receipts() {
             "{table} is unchanged"
         );
     }
-    // Storage version 2 adds the stamp and changes nothing else. A later data
-    // migration lists what it changes here.
+    // Storage version 2 adds the stamp and changes nothing else, and storage
+    // version 3 rewrites no row. A later data migration lists what it
+    // changes here.
     let stamp = serde_json::to_string(&EngineStamp::current()).expect("stamp");
     let mut expected = before;
     let meta = expected["tables"]["_norn_meta"]["rows"]
@@ -222,12 +231,6 @@ fn a_storage_v1_cell_opens_on_this_engine_with_identical_receipts() {
         "table": "_norn_retained_definition",
         "sql": "CREATE UNIQUE INDEX \"_norn_retained_definition/version_id\" ON \"_norn_retained_definition\" (\"definitions_version\", \"id\")"
     }));
-    // The catalog is compared by name: a recreated index takes a new place.
-    let by_name = |image: &mut Value| {
-        if let Some(schema) = image["schema"].as_array_mut() {
-            schema.sort_by_key(|entry| entry["name"].to_string());
-        }
-    };
     let mut catalog = after;
     by_name(&mut catalog);
     by_name(&mut expected);
@@ -257,6 +260,66 @@ fn a_storage_v1_cell_opens_on_this_engine_with_identical_receipts() {
     };
     assert_eq!(receipt.body.commit_seq, 4);
     assert_eq!(store.read().verify_ledger().expect("ledger").commits, 4);
+}
+
+/// A cell the last storage version 2 engine wrote (stamped, with #1469's
+/// index already in place) opens on this engine with its ledger and receipts
+/// intact; the upgrade restamps it and changes nothing else.
+#[test]
+fn a_storage_v2_cell_opens_on_this_engine_with_identical_receipts() {
+    let image: Value = serde_json::from_str(STORAGE_V2).expect("fixture");
+    assert_eq!(image["storage"], 2, "the fixture records storage version 2");
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("cell.sqlite");
+    engine_fixture::load(&image, &path);
+    let before = engine_fixture::image_of(&path);
+    assert_eq!(before, image, "the image loads losslessly");
+    assert_eq!(
+        engine_release::admission(&raw(&path)).expect("admission"),
+        Admission::Upgrade { from: 2 }
+    );
+
+    let mut store = open(&path).expect("a v2 cell opens on this engine");
+    let head = store.read().verify_ledger().expect("the ledger verifies");
+    assert_eq!(head.commits, 3);
+    let receipts = store.read().receipts().expect("receipts");
+    assert_eq!(receipts.len(), 3);
+    for (batch, receipt) in engine_fixture::batches().iter().zip(&receipts) {
+        match store.commit(batch).expect("replay") {
+            CommitOutcome::Replayed(replayed) => assert_eq!(&replayed, receipt),
+            CommitOutcome::Committed(_) => panic!("a recorded commit was committed again"),
+        }
+    }
+    drop(store);
+
+    let after = engine_fixture::image_of(&path);
+    for table in ["_norn_ledger", "_norn_receipt"] {
+        assert_eq!(
+            rows(&after, table),
+            rows(&before, table),
+            "{table} is unchanged"
+        );
+    }
+    // The step restamps the existing `engine` row in place; nothing else
+    // changes.
+    let stamp = serde_json::to_string(&EngineStamp::current()).expect("stamp");
+    let mut expected = before;
+    let stamp_row = expected["tables"]["_norn_meta"]["rows"]
+        .as_array_mut()
+        .expect("meta rows")
+        .iter_mut()
+        .find(|row| row[1] == STAMP_KEY)
+        .expect("the v2 cell is stamped");
+    stamp_row[2] = stamp.into();
+    expected["storage"] = STORAGE_VERSION.into();
+    let mut catalog = after;
+    by_name(&mut catalog);
+    by_name(&mut expected);
+    assert_eq!(catalog, expected, "the upgrade writes the stamp alone");
+    assert_eq!(
+        engine_release::admission(&raw(&path)).expect("admission"),
+        Admission::Current
+    );
 }
 
 #[test]
@@ -307,7 +370,7 @@ fn the_v1_window_does_not_admit_a_cell_this_engine_upgraded() {
     assert!(matches!(
         engine_release::admit(&stored, previous),
         Err(CellError::EngineDowngrade {
-            cell: 2,
+            cell: STORAGE_VERSION,
             engine: 1,
             ..
         })
