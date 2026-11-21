@@ -337,6 +337,9 @@ PY
       # crates/norn-cell-rivet is its own Cargo workspace (D131): Rivet's SQLite and the native
       # engine cannot share the root lockfile. Its .cargo/config.toml (the SQLite flags Rivet's VFS
       # requires) applies only from its own directory, and it builds in its own target subtree.
+      # A RivetKit change ships only with a storage version bump, judged against the base (#1513).
+      python3 scripts/ci/test_rivetkit_channel.py
+      python3 scripts/ci/rivetkit_channel.py --base "${NORN_CI_BASE:-origin/main}"
       (
         cd crates/norn-cell-rivet
         export CARGO_TARGET_DIR="$CARGO_TARGET_DIR/rivet"

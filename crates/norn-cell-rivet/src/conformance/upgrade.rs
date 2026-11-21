@@ -359,8 +359,21 @@ pub(super) fn foreign_stamp(name: &str) -> Option<String> {
     match name {
         "newer" => Some(newer_stamp()),
         "unknown" => Some(UNKNOWN_STAMP.to_owned()),
+        "retired" => retired_stamp(),
         _ => None,
     }
+}
+
+/// A stamp below the retained `RivetKit` channel's floor
+/// ([`ADMISSION_FLOOR`](crate::config::ADMISSION_FLOOR)): a cell written under
+/// a retired `RivetKit` release, which the shared engine alone would upgrade.
+fn retired_stamp() -> Option<String> {
+    let storage = crate::config::ADMISSION_FLOOR
+        .checked_sub(1)
+        .filter(|storage| *storage > 0)?;
+    Some(format!(
+        r#"{{"format":"{STAMP_FORMAT}","storage":{storage},"writer":"drop-1"}}"#
+    ))
 }
 
 fn newer_stamp() -> String {

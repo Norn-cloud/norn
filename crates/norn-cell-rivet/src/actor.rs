@@ -34,7 +34,7 @@ use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
 use norn_api::scope::CellScope;
 use norn_cell::CellError;
-use norn_cell::engine_release::{self, THIS_ENGINE};
+use norn_cell::engine_release;
 use rivetkit::action::Raw;
 use rivetkit::{Action, Actor, Ctx, Handler, Request, Response, WebSocket};
 use serde::{Deserialize, Serialize};
@@ -683,9 +683,10 @@ impl CellActor {
         Ok(())
     }
 
-    /// ENGINE-UPGRADE-1, read only: whether this engine opens the cell stored
-    /// in the actor's database (none yet, current, or upgradable). A refusal
-    /// is logged and answers `false`.
+    /// ENGINE-UPGRADE-1, read only: whether this host opens the cell stored
+    /// in the actor's database (none yet, current, or upgradable within
+    /// [`RIVET_ENGINE`](crate::config::RIVET_ENGINE)). A refusal is logged and
+    /// answers `false`.
     ///
     /// # Errors
     /// The cell thread stopped, or the storage could not be read.
@@ -693,8 +694,7 @@ impl CellActor {
         let admitted = self
             .cell
             .call(|slot| {
-                engine_release::stored_version(&slot.engine()())
-                    .and_then(|stored| engine_release::admit(&stored, THIS_ENGINE))
+                engine_release::stored_version(&slot.engine()()).and_then(|stored| admit(&stored))
             })
             .await?;
         match admitted {
@@ -1235,5 +1235,114 @@ async fn read_bounded(mut response: reqwest::Response, limit: usize) -> Option<V
             Ok(None) => return Some(bytes),
             Err(_error) => return None,
         }
+    }
+}
+
+/// ENGINE-UPGRADE-1 on this host: what it does with a cell whose metadata
+/// says `stored`, within [`RIVET_ENGINE`](crate::config::RIVET_ENGINE). A
+/// stamp below the retained `RivetKit` channel's floor is refused like one
+/// below the engine's own (`core.engine.upgrade_unsupported`); a newer or
+/// unreadable stamp as everywhere else.
+///
+/// # Errors
+/// As [`engine_release::admit`].
+fn admit(stored: &engine_release::StoredVersion) -> Result<engine_release::Admission, CellError> {
+    engine_release::admit(stored, crate::config::RIVET_ENGINE)
+}
+
+#[cfg(test)]
+mod tests {
+    use norn_cell::CellError;
+    use norn_cell::engine_release::{
+        self, Admission, EngineStamp, EngineVersion, STAMP_FORMAT, STORAGE_VERSION, StoredVersion,
+    };
+
+    use super::admit;
+    use crate::config::{ADMISSION_FLOOR, RIVETKIT_CHANNEL, RivetkitRelease, admission_floor};
+
+    fn stamped(storage: u32) -> StoredVersion {
+        StoredVersion::Stamped(
+            serde_json::to_string(&EngineStamp {
+                format: STAMP_FORMAT.to_owned(),
+                storage,
+                writer: "drop-1".to_owned(),
+            })
+            .expect("a stamp serializes"),
+        )
+    }
+
+    /// The host's floor is the retained channel's: a cell stamped below it,
+    /// written under a retired `RivetKit` release, is refused at startup,
+    /// though the shared engine (`THIS_ENGINE`, floor `UPGRADES_FROM`) would
+    /// upgrade it. A stamp in the retained interval is admitted.
+    #[test]
+    fn startup_refuses_a_stamp_below_the_retained_channel() {
+        assert_eq!(
+            ADMISSION_FLOOR, 4,
+            "the channel retains RivetKit 3.1.1 from storage version 4"
+        );
+        let retired = ADMISSION_FLOOR.saturating_sub(1);
+        assert!(matches!(
+            engine_release::admit(&stamped(retired), engine_release::THIS_ENGINE),
+            Ok(Admission::Upgrade { .. })
+        ));
+        assert!(matches!(
+            admit(&stamped(retired)),
+            Err(CellError::EngineUpgradeUnsupported { cell, .. }) if cell == retired
+        ));
+        assert!(matches!(
+            admit(&StoredVersion::Unstamped),
+            Err(CellError::EngineUpgradeUnsupported { cell: 1, .. })
+        ));
+        for retained in ADMISSION_FLOOR..=STORAGE_VERSION {
+            assert!(
+                admit(&stamped(retained)).is_ok(),
+                "storage version {retained} is admitted"
+            );
+        }
+        assert_eq!(admit(&StoredVersion::Fresh).ok(), Some(Admission::Fresh));
+        assert!(matches!(
+            admit(&stamped(STORAGE_VERSION.saturating_add(1))),
+            Err(CellError::EngineDowngrade { .. })
+        ));
+    }
+
+    /// Retiring the oldest release raises the floor past its interval: with
+    /// a channel of 3.1.1 from 4 and 3.2.0 from 5, a stamp at 4 is admitted;
+    /// once 3.1.1 is dropped, it is refused and 5 is still admitted.
+    #[test]
+    fn retiring_a_release_refuses_its_interval() {
+        let both = [
+            RivetkitRelease {
+                rivetkit: "3.1.1",
+                from_storage: 4,
+            },
+            RivetkitRelease {
+                rivetkit: "3.2.0",
+                from_storage: 5,
+            },
+        ];
+        let window = |channel: &[RivetkitRelease]| EngineVersion {
+            storage: 5,
+            upgrades_from: admission_floor(channel),
+        };
+        let (_retired, retained) = both.split_at(1);
+        assert_eq!(admission_floor(&both), 4);
+        assert_eq!(admission_floor(retained), 5);
+        assert_eq!(
+            admission_floor(&[]),
+            u32::MAX,
+            "an empty channel admits nothing"
+        );
+        assert!(engine_release::admit(&stamped(4), window(&both)).is_ok());
+        assert!(matches!(
+            engine_release::admit(&stamped(4), window(retained)),
+            Err(CellError::EngineUpgradeUnsupported { cell: 4, .. })
+        ));
+        assert_eq!(
+            engine_release::admit(&stamped(5), window(retained)).ok(),
+            Some(Admission::Current)
+        );
+        assert_eq!(admission_floor(RIVETKIT_CHANNEL), ADMISSION_FLOOR);
     }
 }

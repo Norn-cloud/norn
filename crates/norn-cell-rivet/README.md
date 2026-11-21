@@ -73,10 +73,10 @@ with two runner processes.
 RivetKit is pinned at `=3.1.1` (`RIVETKIT_VERSION` in `src/config.rs`). RivetKit may commit its own SQLite schema migrations before `on_start` admits a cell, so:
 
 - a RivetKit version change ships only together with a Norn storage version bump;
-- the host refuses cells stamped by a different RivetKit version unless that version is in its allowed-upgrade list (`RIVETKIT_CHANNEL`);
+- the host refuses cells stamped by a different RivetKit version unless that version is in its allowed-upgrade list (`RIVETKIT_CHANNEL`). It admits cells from `ADMISSION_FLOOR`, the lowest `from_storage` the list retains, so retiring a release refuses its cells (`core.engine.upgrade_unsupported`);
 - rollback across a RivetKit version is unsupported: restore from a backup or a point-in-time restore instead.
 
-A unit test fails when `Cargo.lock`'s RivetKit version and `RIVETKIT_VERSION` differ, or when a new `RIVETKIT_CHANNEL` entry does not come with a higher storage version. See `docs/platform/engine-upgrades.md`, "RivetKit upgrades".
+`scripts/ci/rivetkit_channel.py` (in `core.sh rivet`) compares `Cargo.lock` and the channel with the pull request's base and fails closed without one. Each crate must be one crates.io entry with a checksum. The channel is append-only, and a changed RivetKit (version, source or checksum) needs one new entry at a `STORAGE_VERSION` above the base's. A unit test checks the tree on its own. See `docs/platform/engine-upgrades.md`, "RivetKit upgrades".
 
 ## Not covered yet
 
