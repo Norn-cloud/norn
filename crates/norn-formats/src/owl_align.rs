@@ -601,7 +601,7 @@ pub fn align(
         } else {
             format!("It specialises {via}, held out of the canon: {}", row.note)
         };
-        let reaches = match anchors.as_slice() {
+        let also = match anchors.as_slice() {
             [] => String::new(),
             [one] => format!(" Its lineage also reaches {one}."),
             several => format!(
@@ -611,7 +611,7 @@ pub fn align(
         };
         residuals.push(json!({
             "termId": term_of(name), "reason": "non_conforming",
-            "note": format!("{held_note}{reaches}"),
+            "note": format!("{held_note}{also}"),
         }));
     }
     for (name, (rows, superseded)) in &outcome {

@@ -310,7 +310,7 @@ fn with_parent(interfaces: &mut [ArtifactEnvelope], class: &str, parent: &str) {
     let artifact = interfaces
         .iter_mut()
         .find(|artifact| {
-            serde_json::to_value(&*artifact).unwrap()["payload"]["interface"]["name"] == class
+            serde_json::to_value(artifact).unwrap()["payload"]["interface"]["name"] == class
         })
         .unwrap();
     let mut value = serde_json::to_value(&*artifact).unwrap();

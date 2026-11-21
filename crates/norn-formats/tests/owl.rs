@@ -645,7 +645,11 @@ const NOTES: &str = concat!(
     "<https://example.org/onto/Ratios/keeps> <http://www.w3.org/2000/01/rdf-schema#label> \"keeps\"@en .\n",
 );
 
-fn property<'a>(interfaces: &'a BTreeMap<String, Value>, class: &str, id: &str) -> Option<&'a Value> {
+fn property<'a>(
+    interfaces: &'a BTreeMap<String, Value>,
+    class: &str,
+    id: &str,
+) -> Option<&'a Value> {
     interfaces[class]["properties"]
         .as_array()
         .into_iter()
@@ -736,7 +740,11 @@ fn owl_only_the_selected_annotation_is_mapped() {
         Disposition::Deferred { code, detail, .. } => {
             code == "format.owl.annotation" && detail.contains(SKOS)
         }
-        _ => false,
+        Disposition::Mapped { .. }
+        | Disposition::Extension { .. }
+        | Disposition::Rejected { .. }
+        | Disposition::Dropped { .. }
+        | Disposition::Unexplained => false,
     };
     // The class: definition carried, label displaced.
     assert!(mapped(annotation(&import, class("Holder", SKOS))));
@@ -746,7 +754,10 @@ fn owl_only_the_selected_annotation_is_mapped() {
     assert!(mapped(annotation(&import, class("Keeper", "rdfs:label"))));
     // A placed member: the definition wins over the label.
     let code = property(&interfaces, "ex.rt.Holder", "code").unwrap();
-    assert_eq!(code["description"], format!("A short identifier. <{rt}code>"));
+    assert_eq!(
+        code["description"],
+        format!("A short identifier. <{rt}code>")
+    );
     assert!(mapped(annotation(&import, member("code", SKOS))));
     let label = annotation(&import, member("code", "rdfs:label"));
     assert!(displaced(label), "{:?}", label.disposition);
@@ -758,5 +769,9 @@ fn owl_only_the_selected_annotation_is_mapped() {
     let notes_label = annotation(&import, member("notes", "rdfs:label"));
     assert!(!mapped(notes_label), "{:?}", notes_label.disposition);
     let notes_definition = annotation(&import, member("notes", SKOS));
-    assert!(!mapped(notes_definition), "{:?}", notes_definition.disposition);
+    assert!(
+        !mapped(notes_definition),
+        "{:?}",
+        notes_definition.disposition
+    );
 }
