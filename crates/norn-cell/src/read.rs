@@ -719,6 +719,16 @@ fn decode_receipts(rows: Vec<Vec<SqlValue>>) -> Result<Vec<Receipt>, CellError> 
     Ok(out)
 }
 
+/// Where a ledger verification from a checkpoint takes the quantity
+/// boundary in force at that checkpoint (OPEN-CHECKPOINT-1).
+#[derive(Debug, Clone, Copy)]
+enum BoundaryAtCheckpoint {
+    /// From the reader's cache, else by reading the receipts.
+    Lookup,
+    /// As the open checkpoint recorded it (`None`: the cell had none).
+    Known(Option<crate::quantity::FormatBoundary>),
+}
+
 pub(crate) fn to_i64(value: u64, what: &'static str) -> Result<i64, CellError> {
     if value > u64::try_from(MAX_SAFE_INTEGER).unwrap_or(u64::MAX) {
         return Err(CellError::OutOfRange(what));
@@ -3805,7 +3815,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         &self,
         checkpoint: &LedgerHead,
     ) -> Result<(LedgerHead, Option<crate::quantity::FormatBoundary>), CellError> {
-        self.verify_ledger_after(checkpoint, None)
+        self.verify_ledger_after(checkpoint, BoundaryAtCheckpoint::Lookup)
     }
 
     /// [`Self::verify_ledger_with_boundary`] from an open checkpoint that
@@ -3818,7 +3828,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         checkpoint: &LedgerHead,
         boundary: Option<crate::quantity::FormatBoundary>,
     ) -> Result<(LedgerHead, Option<crate::quantity::FormatBoundary>), CellError> {
-        self.verify_ledger_after(checkpoint, Some(boundary))
+        self.verify_ledger_after(checkpoint, BoundaryAtCheckpoint::Known(boundary))
     }
 
     #[allow(
@@ -3828,7 +3838,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
     fn verify_ledger_after(
         &self,
         checkpoint: &LedgerHead,
-        known_boundary: Option<Option<crate::quantity::FormatBoundary>>,
+        known_boundary: BoundaryAtCheckpoint,
     ) -> Result<(LedgerHead, Option<crate::quantity::FormatBoundary>), CellError> {
         let base = checkpoint.seq;
         let anchor_corrupt = || CellError::LedgerCorrupt {
@@ -3866,10 +3876,14 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             return Err(anchor_corrupt());
         }
 
-        let mut boundary = known_boundary
+        let known = match known_boundary {
+            BoundaryAtCheckpoint::Known(boundary) => Some(boundary),
+            BoundaryAtCheckpoint::Lookup => None,
+        };
+        let mut boundary = known
             .unwrap_or(self.quantity_boundary)
             .filter(|boundary| boundary.seq <= base);
-        if base > 0 && known_boundary.is_none() && self.quantity_boundary.is_none() {
+        if base > 0 && known.is_none() && self.quantity_boundary.is_none() {
             boundary = crate::quantity::format_boundary(self.conn)?
                 .filter(|boundary| boundary.seq <= base);
         }
