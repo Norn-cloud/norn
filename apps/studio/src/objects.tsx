@@ -235,8 +235,8 @@ function FactValue({ field, reads, onLineage }: { readonly field: Concept["field
   const value = reads.object.document.values[field.id]
   // A marked fact arrives projected for this reader: shown as the server projected it, never as the value.
   const masked = maskedOf(reads.object.document, field.id)
-  // A reveal belongs to the version and projection it was revealed under; a newer one starts masked again.
-  if (masked !== null) return <MaskedValue key={`${objectType}/${id}/${field.id}`} objectType={objectType} id={id} version={version} property={field.id} masked={masked} projected={value} />
+  // A reveal belongs to the record, property, version and projection it was revealed under (MaskedValue keys itself by them).
+  if (masked !== null) return <MaskedValue objectType={objectType} id={id} version={version} property={field.id} masked={masked} projected={value} />
   if (value === null || value === undefined) return <span className="text-muted-foreground">{text}</span>
   const label = field.label ?? field.id.replaceAll("_", " ")
   return (

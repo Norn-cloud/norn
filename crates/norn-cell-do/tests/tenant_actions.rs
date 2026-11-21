@@ -981,8 +981,10 @@ fn outsiders_cannot_tell_a_vacant_scope_from_a_tenant_with_live_questions() {
     let directory = tempfile::tempdir().unwrap();
     let mut served = provisioned(&directory.path().join("served.sqlite"), &[sale()]);
     let mut vacant = opened(&directory.path().join("vacant.sqlite"));
-    served.tenant.enable_analytics();
-    vacant.tenant.enable_analytics();
+    let issuer =
+        || norn_api::olap_credential::Issuer::parse(&format!("k1:{}", "A".repeat(43))).unwrap();
+    served.tenant.enable_analytics(issuer());
+    vacant.tenant.enable_analytics(issuer());
     assert!(served.tenant.is_provisioned() && !vacant.tenant.is_provisioned());
     let question = json!({ "question": sale_question("shop.amount") }).to_string();
     let outsiders: [Option<String>; 5] = [
@@ -1261,4 +1263,58 @@ fn a_record_conditioned_rule_answers_conditional() {
         };
         assert_eq!(role["actions"][0]["decision"], json!(expected), "{role}");
     }
+}
+
+/// A member (Population and Values, no Sources) reads a record's history:
+/// its versions and their values, never their source lineage, and no writer
+/// from a call record the member may not read. An admin is told the action
+/// and its verified actor. Neither is sent the call's effective input, which
+/// the kernel stores as a plain value whatever it carries.
+#[test]
+fn a_member_reads_a_records_history_without_its_sources_or_the_calls_input() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut cell = provisioned(&directory.path().join("a.sqlite"), &with_policy(&["admin"]));
+    assert_eq!(
+        cell.melt(MELT_ACTION, Some(&user("admin")), "h1").status,
+        200
+    );
+    let history = format!("/v1/objects/{MELT}/h1/history");
+    let read = |cell: &mut Cell, role: &str| {
+        let response = cell.call("GET", &history, Some(&user(role)), "");
+        assert_eq!(response.status, 200, "{role}: {}", response.body);
+        serde_json::from_str::<Value>(&response.body).unwrap()
+    };
+    let member = read(&mut cell, "member");
+    let versions = member["versions"].as_array().unwrap();
+    assert_eq!(versions.len(), 1, "{member}");
+    assert_eq!(versions[0]["values"]["id"], json!("h1"), "{member}");
+    assert_eq!(
+        versions[0]["writer"],
+        json!({ "kind": "other" }),
+        "{member}"
+    );
+    let admin = read(&mut cell, "admin");
+    let writer = &admin["versions"][0]["writer"];
+    assert_eq!(
+        (&writer["kind"], &writer["actionId"]),
+        (&json!("action"), &json!(MELT_ACTION)),
+        "{admin}"
+    );
+    assert!(writer["actor"].is_string(), "{admin}");
+    let mut fields: Vec<&str> = writer
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    fields.sort_unstable();
+    assert_eq!(fields, ["actionId", "actor", "kind"], "{admin}");
+    // The lineage is still Sources': the member is refused it.
+    let lineage = cell.call(
+        "GET",
+        &format!("/v1/objects/{MELT}/h1/lineage"),
+        Some(&user("member")),
+        "",
+    );
+    assert_ne!(lineage.status, 200, "{}", lineage.body);
 }

@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils"
 import { systemName } from "./lib/catalog.ts"
 import { readableTime } from "./lib/format.ts"
 import { liveTypeAccess, type RoleAccess, type TypeAccess } from "./lib/live.ts"
-import { changedProperties, readHistory, type ObjectVersion } from "./evidence/review.ts"
+import { changedProperties, historyUnavailable, readHistory } from "./evidence/review.ts"
 
 /** The cell's per-role decisions over one collection (`GET /v1/access?objectType=`), shared by the rail's parts. */
 export function useTypeAccess(objectType: string, live: boolean) {
@@ -112,16 +112,6 @@ export function RulesKept({ rules, title }: { readonly rules: readonly string[];
 /** Changes the rail lists before "See every change". */
 const RECENT = 3
 
-/** A short why from an action's recorded input, when it carries one under a plain name. */
-const why = (writer: ObjectVersion["writer"]): string | null => {
-  if (writer.kind !== "action") return null
-  for (const key of ["reason", "why", "note", "comment"]) {
-    const value = writer.input[key]
-    if (typeof value === "string" && value.trim() !== "") return value.trim()
-  }
-  return null
-}
-
 const humanize = (id: string): string => {
   const text = id.slice(id.lastIndexOf(".") + 1).replaceAll("_", " ")
   return text.charAt(0).toUpperCase() + text.slice(1)
@@ -129,8 +119,9 @@ const humanize = (id: string): string => {
 
 /**
  * The record's newest changes, from its history: what wrote each (an action and its verified actor,
- * or an import from a source system), when the cell committed it, what it changed and, when the
- * action's input says, why. The full history is on the page.
+ * or an import from a source system), when the cell committed it, and what it changed. No "why" is
+ * shown: the cell lists no call input, and authorizes no reason field of its own yet. The full
+ * history is on the page.
  */
 export function RecentChanges({ objectType, id, actionTitles, onAll }: {
   readonly objectType: string
@@ -146,7 +137,7 @@ export function RecentChanges({ objectType, id, actionTitles, onAll }: {
       action={versions.length > 0 ? <button type="button" className="underline-offset-4 hover:underline" onClick={onAll}>Every change</button> : undefined}>
       <Well className="px-3.5 pb-3">
         {read.isPending ? note("Reading the history…")
-          : read.isError || history === undefined ? note("The history could not be read.")
+          : read.isError || history === undefined ? <p data-history-unavailable="" className="px-2 py-2 text-meta text-muted-foreground">{historyUnavailable(read.error)}</p>
           : versions.length === 0 ? note("No version of this record is stored.")
           : (
             <ol className="space-y-3" aria-label="Recent changes">
@@ -157,7 +148,6 @@ export function RecentChanges({ objectType, id, actionTitles, onAll }: {
                 const what = writer.kind === "action" ? actionTitles.get(writer.actionId) ?? humanize(writer.actionId)
                   : writer.kind === "mapping" ? `Imported from ${systemName(writer.lineage.sourceRecordRef.system)}`
                   : "Written by a rule, an import, or a call not shown to you"
-                const reason = why(writer)
                 const when = readableTime(new Date(version.logicalTime).toISOString())
                 return (
                   <li key={version.version} data-version={version.version} className="text-sm leading-snug">
@@ -166,7 +156,6 @@ export function RecentChanges({ objectType, id, actionTitles, onAll }: {
                       {writer.kind === "action" && <>{writer.actor} · </>}{when}
                       {version.values === null ? " · deleted" : last ? " · created" : changed.length > 0 ? ` · changed ${changed.slice(0, 2).map((property) => property.replaceAll("_", " ")).join(", ")}${changed.length > 2 ? ` and ${changed.length - 2} more` : ""}` : " · no value changed"}
                     </div>
-                    {reason && <div className="pt-0.5 text-xs text-pretty"><span className="text-muted-foreground">Why: </span>{reason}</div>}
                   </li>
                 )
               })}
