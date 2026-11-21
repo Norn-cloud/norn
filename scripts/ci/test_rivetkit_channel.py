@@ -207,7 +207,7 @@ class Scenarios(unittest.TestCase):
         self.assert_tree_alone_passes()
         self.assert_refused("is downgraded from 3.1.1 to 3.1.0")
         # A pre-release of the pinned version ranks below it.
-        self.tree(lock("3.1.1-rc.1"), "3.1.1-rc.1", [("3.1.1-rc.1", 5)], 5)
+        self.tree(lock("3.1.1-rc.1", checksum="c" * 64), "3.1.1-rc.1", [("3.1.1-rc.1", 5)], 5)
         self.assert_refused("is downgraded from 3.1.1 to 3.1.1-rc.1")
 
     def test_an_equal_version_re_entry_is_refused(self):
