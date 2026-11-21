@@ -3225,10 +3225,9 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
 
     /// Append the batch's events to the ledger. Returns the first sequence,
     /// the new ledger head and the entries as written, so the export journal
-    /// records them without reading them back (INGEST-JOURNAL-MEMORY-1). An
-    /// event the journal proves against the persisted receipt (#1527 S1) is
-    /// returned as a ledger reader decodes it: its stored canonical text,
-    /// parsed.
+    /// records them without reading them back (INGEST-JOURNAL-MEMORY-1). Each
+    /// entry's event is the one a ledger reader decodes (#1527 S1): its
+    /// stored canonical text, parsed, with any payload stored apart resolved.
     pub(crate) fn append_events(&mut self) -> Result<(u64, String, Vec<LedgerEntry>), CellError> {
         for event in &self.batch.events {
             self.reader()
@@ -3246,22 +3245,13 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
         for event in &self.batch.events {
             seq = next(seq, "seq")?;
             let hash = entry_hash(seq, self.commit_seq, self.world, event, &prev)?;
-            let encoded = crate::payload_storage::encode_event(
+            let (encoded, stored) = crate::payload_storage::encode_event(
                 self.conn,
                 seq,
                 &self.batch.scope,
                 self.world,
                 event,
             )?;
-            // Only a `command.result` event's payload is stored apart
-            // (`payload_storage::decode_event`); a proven kind's stored text
-            // is its whole event. Were one ever stored apart, its proof would
-            // read the placeholder and refuse.
-            let stored = if crate::history::durable_event_is_proven(event) {
-                serde_json::from_str(&encoded)?
-            } else {
-                event.clone()
-            };
             self.conn.execute(
                 &format!(
                     "INSERT INTO \"{LEDGER}\" (\"seq\", \"commit_seq\", \"world\", \"event\", \"prev_hash\", \"hash\") VALUES (?1, ?2, ?3, ?4, ?5, ?6)"

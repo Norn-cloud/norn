@@ -226,19 +226,6 @@ pub(crate) fn record<E: SqlEngine>(
     for entry in &entries {
         reader.verify_durable_event(&entry.world, entry.commit_seq, &entry.event)?;
     }
-    // Compared as canonical text, the only form the record is hashed and
-    // stored in: the ledger keeps events canonical (NFC), so a read back may
-    // differ from a submitted spelling only where the bytes cannot.
-    #[cfg(debug_assertions)]
-    if crate::codec::canonical_json(&ledger_span(engine, model, receipt)?)?
-        != crate::codec::canonical_json(&entries)?
-    {
-        return Err(CellError::LedgerCorrupt {
-            seq: commit_seq,
-            reason: "the written event span differs from the ledger read back".to_owned(),
-        });
-    }
-
     let mut bindings = BTreeMap::new();
     let rows = engine.query(&format!(
         "SELECT \"key\", \"value\" FROM \"{META}\" WHERE \"key\" LIKE 'binding:%' ORDER BY \"key\""
@@ -284,28 +271,6 @@ pub(crate) fn record<E: SqlEngine>(
         params![to_i64(commit_seq, "commit_seq")?, hash, serialized],
     )?;
     Ok(())
-}
-
-/// The journal's former source of a commit's entries: its ledger span read
-/// back, every event proven against the commit's receipt in one read-only
-/// pass. Debug builds compare it with the entries the writer appended.
-#[cfg(debug_assertions)]
-fn ledger_span<E: SqlEngine>(
-    engine: &E,
-    model: &Model,
-    receipt: &Receipt,
-) -> Result<Vec<LedgerEntry>, CellError> {
-    let receipts = std::cell::RefCell::default();
-    let reader = StoreReader::new(engine, model).with_transaction_verified_receipts(&receipts);
-    let entries: Vec<_> = reader
-        .ledger(receipt.body.first_event_seq)?
-        .into_iter()
-        .filter(|entry| entry.commit_seq == receipt.body.commit_seq)
-        .collect();
-    for entry in &entries {
-        reader.verify_durable_event(&entry.world, entry.commit_seq, &entry.event)?;
-    }
-    Ok(entries)
 }
 
 impl<E: SqlEngine> CellStore<E> {

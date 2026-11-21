@@ -4268,4 +4268,54 @@ mod journal_proof_tests {
             .expect("record");
         assert_eq!(record.entries.len(), 1);
     }
+    /// #1527 S1: an event both classifiers claim, an `observed_fact` whose
+    /// nested event is a proven `created` and whose outer `type` is
+    /// `command.result` with a result of at least 1 KiB, is stored with its
+    /// result apart. The journal must record the full event a ledger reader
+    /// decodes, not the placeholder the ledger row holds, in every build.
+    #[test]
+    fn an_observed_created_command_result_journals_its_full_result() {
+        let store = store();
+        let mut batch = created();
+        let event = Value::from_json(serde_json::json!({
+            "op": "observed_fact",
+            "type": "command.result",
+            "result": {"blob": "x".repeat(2048)},
+            "event": {
+                "op": "created",
+                "key": {"objectType": "proof.Item", "key": "item"},
+                "values": {"value": "one"}
+            }
+        }))
+        .expect("event");
+        batch.events = vec![event.clone()];
+        store
+            .commit_guarded_inner(
+                &batch,
+                None,
+                None,
+                CommitOrigin::Current,
+                |_reader| Ok::<(), CellError>(()),
+                &mut |_point| Ok(()),
+            )
+            .expect("the overlapping event commits");
+        let stored: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM \"_norn_ledger_payload\"",
+                &[],
+                |row| row.get(0),
+            )
+            .expect("payload rows");
+        assert_eq!(stored, 1, "the result is stored apart");
+        let ledger = store.read().ledger(0).expect("ledger");
+        assert_eq!(ledger.len(), 1);
+        assert_eq!(ledger[0].event, event);
+        let record = store
+            .export_record(1)
+            .expect("record reads")
+            .expect("record");
+        assert_eq!(record.entries.len(), 1);
+        assert_eq!(record.entries[0].event, event);
+    }
 }

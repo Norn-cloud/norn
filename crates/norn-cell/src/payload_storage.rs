@@ -233,22 +233,33 @@ fn placeholder(reference: &Reference) -> Value {
     norn_ir::runtime_object! { "$nornPayload" => reference.hash.clone() }
 }
 
+/// Encode a ledger event for storage. Returns its stored text and the event
+/// exactly as [`decode_event`] reads it back: the stored text parsed, with a
+/// payload stored apart parsed from its body in place of its placeholder.
+/// The writer's journal and receipt proof use that value, so they see what a
+/// ledger reader sees whichever event shapes the classifiers overlap on
+/// (#1527 S1).
 pub(crate) fn encode_event(
     engine: &impl SqlEngine,
     seq: u64,
     scope: &str,
     world: &str,
     event: &Value,
-) -> Result<String, CellError> {
+) -> Result<(String, Value), CellError> {
+    let inline = |event: &Value| -> Result<(String, Value), CellError> {
+        let text = canonical_json(event)?;
+        let decoded = serde_json::from_str(&text)?;
+        Ok((text, decoded))
+    };
     if event.get("type").and_then(Value::as_str) != Some("command.result") {
-        return canonical_json(event);
+        return inline(event);
     }
     let Some(result) = event.get("result") else {
-        return canonical_json(event);
+        return inline(event);
     };
     let body = canonical_json(result)?;
     if body.len() < MIN_BYTES {
-        return canonical_json(event);
+        return inline(event);
     }
     let reference = store(engine, scope, world, &body)?;
     let mut encoded = event.clone();
@@ -265,7 +276,13 @@ pub(crate) fn encode_event(
             reference.hash
         ],
     )?;
-    canonical_json(&encoded)
+    let text = canonical_json(&encoded)?;
+    let mut decoded: Value = serde_json::from_str(&text)?;
+    decoded
+        .as_object_mut()
+        .ok_or_else(corrupt)?
+        .insert("result".to_owned(), serde_json::from_str(&body)?);
+    Ok((text, decoded))
 }
 
 pub(crate) fn decode_event(
