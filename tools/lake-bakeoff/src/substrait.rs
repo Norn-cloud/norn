@@ -105,11 +105,15 @@ async fn duck_to_datafusion(ctx: &SessionContext, dir: &std::path::Path, sql: &s
         conn.query_row("CALL get_substrait(?)", [sql], |row| row.get::<_, Vec<u8>>(0))
             .map_err(|e| e.to_string())
     })();
-    let bytes = match produced {
-        Ok(b) => b,
-        Err(e) => return json!({"ok": false, "stage": "duckdb get_substrait", "error": e}),
-    };
-    let plan = match Plan::decode(bytes.as_slice()) {
+    match produced {
+        Ok(bytes) => consume(ctx, &bytes).await,
+        Err(e) => json!({"ok": false, "stage": "duckdb get_substrait", "error": e}),
+    }
+}
+
+/// A Substrait plan another engine produced, consumed and run by DataFusion.
+async fn consume(ctx: &SessionContext, bytes: &[u8]) -> Json {
+    let plan = match Plan::decode(bytes) {
         Ok(p) => p,
         Err(e) => return json!({"ok": false, "stage": "decode", "error": e.to_string()}),
     };
@@ -146,10 +150,17 @@ pub async fn probe(dir: PathBuf, threads: usize) {
         nw = q("net_worth")
     );
     let back = duck_to_datafusion(&ctx, &dir, &duck_sql).await;
+    // The same shape from DuckDB 1.2.2's `get_substrait` (the last release
+    // with the extension), saved by an outside run.
+    let from_file = match std::fs::read(dir.join("duckdb-metric.substrait")) {
+        Ok(bytes) => consume(&ctx, &bytes).await,
+        Err(e) => json!({"ok": false, "stage": "read", "error": e.to_string()}),
+    };
     emit(json!({
         "bench": "substrait",
         "datafusionRoundTrip": {"law": law, "metric": metric},
         "duckdbFromDatafusionPlan": {"law": duck_law, "metric": duck_metric},
         "duckdbPlanIntoDatafusion": back,
+        "duckdb122PlanIntoDatafusion": from_file,
     }));
 }
