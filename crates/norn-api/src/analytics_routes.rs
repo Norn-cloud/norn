@@ -1162,21 +1162,26 @@ pub fn profile_objects<E: SqlEngine>(
     // markings profiles natively, over projected values, unless no live row
     // of this type carries a label on any of its properties. Then every value
     // projects as itself and the engine's profile is the native one.
-    // The decision and the profiled frontier are read at one cell version
-    // (S3, #1547); a later commit lies past that frontier, which the engine
-    // does not read.
-    let (leave, source, _snapshot) = {
-        let guard = host.cell()?;
-        decided_source(host, guard.store(), object_type, |reader| {
-            Ok(host.marking_catalog(reader)?.is_empty() || unlabeled(reader, object_type))
-        })?
+    let leave = |reader: &norn_cell::StoreReader<'_, E>| -> Result<bool, Refusal> {
+        Ok(host.marking_catalog(reader)?.is_empty() || unlabeled(reader, object_type))
     };
-    if !leave {
+    let unmarked = {
+        let guard = host.cell()?;
+        leave(&guard.store().read())?
+    };
+    if !unmarked {
         return crate::object_profile::get_object_profile(host, scope, actor, object_type, access);
     }
     let values = uniform_gate(host, scope, actor, object_type, access)?;
     let guard = host.cell()?;
     let store = guard.store();
+    // After the gate, so a denied caller costs what it did: the decision
+    // again, with the profiled frontier, at one cell version (S3, #1547).
+    let (unmarked, source, _snapshot) = decided_source(host, store, object_type, leave)?;
+    if !unmarked {
+        drop(guard);
+        return crate::object_profile::get_object_profile(host, scope, actor, object_type, access);
+    }
     let declared = store
         .model()
         .effective_property_types(object_type)

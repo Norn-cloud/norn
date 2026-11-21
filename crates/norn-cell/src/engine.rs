@@ -687,6 +687,15 @@ impl NativeEngine {
                 if context.accessor.is_some() {
                     return true;
                 }
+                // SQLite's own schema tables, which DDL writes as it runs,
+                // carry no row of a statement's: they neither name nor
+                // break its target.
+                if table
+                    .get(..7)
+                    .is_some_and(|head| head.eq_ignore_ascii_case("sqlite_"))
+                {
+                    return false;
+                }
                 let Ok(mut target) = statement_target.lock() else {
                     return true;
                 };

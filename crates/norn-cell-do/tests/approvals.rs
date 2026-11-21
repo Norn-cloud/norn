@@ -1099,6 +1099,15 @@ impl SqlEngine for Counted {
     fn read_cache_revision(&self) -> Result<Option<(u64, u64)>, norn_cell::CellError> {
         self.inner.read_cache_revision()
     }
+    fn admitted(&self) -> Result<(), norn_cell::CellError> {
+        self.inner.admitted()
+    }
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, norn_cell::CellError>,
+    ) -> Result<T, norn_cell::CellError> {
+        self.inner.definition_writes(f)
+    }
 }
 
 /// #1532 S2: another requester's decision id is looked up by the caller's
