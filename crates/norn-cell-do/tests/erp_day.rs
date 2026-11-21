@@ -48,7 +48,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
@@ -75,7 +75,7 @@ struct Host {
     reviewer: String,
     dir: PathBuf,
     keep: bool,
-    _events: Receiver<Value>,
+    _events: Mutex<Receiver<Value>>,
 }
 
 impl Host {
@@ -118,6 +118,7 @@ impl Host {
                 .recv_timeout(Duration::from_secs(600))
                 .expect("norn-dev-host became ready");
             assert_ne!(event["event"], "fatal", "{event}");
+            assert_ne!(event["event"], "rejected", "the ERP model was refused: {event}");
             if event["event"] == "ready" {
                 break event;
             }
@@ -137,7 +138,7 @@ impl Host {
             reviewer: read("dev.reviewer.token"),
             dir,
             keep,
-            _events: events,
+            _events: Mutex::new(events),
         };
         (host, open_s)
     }
@@ -693,7 +694,7 @@ fn erp_day() {
     let mut unexpected = 0;
     if let Some(target) = target {
         let before = host.cell_bytes();
-        let (tally, elapsed, reconnects) = level(&host, levels[0], f64::MAX, Some(target));
+        let (tally, elapsed, reconnects) = level(&host, levels[0], 1e9, Some(target));
         report(&format!("{} clients, storage run", levels[0]), &tally, elapsed, reconnects, &host);
         let grown = host.cell_bytes().saturating_sub(before);
         println!(

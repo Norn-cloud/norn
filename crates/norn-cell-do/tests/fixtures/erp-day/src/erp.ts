@@ -225,7 +225,7 @@ export const SalesInvoice = Norn.type({
   properties: InvoiceShape,
   identity: [{ name: "primary", properties: ["doc_id"] }],
   links: [{ id: "customer", target: Customer, cardinality: { to: "one", from: "many", required: true } }, { id: "order", target: SalesOrder, cardinality: { to: "one", from: "many", required: true } }],
-  defaults: { status: "draft", last_allocated: "0" },
+  defaults: { status: "draft", last_allocated: 0 },
   lifecycles: [{ property: "status", initial: ["draft"], terminal: ["done", "cancelled"], immutable: ["done", "cancelled"], transitions: [{ id: "submit", from: ["draft"], to: "submitted" }, { id: "complete", from: ["submitted"], to: "done" }, { id: "cancel", from: ["draft", "submitted"], to: "cancelled" }] }],
 })
 
