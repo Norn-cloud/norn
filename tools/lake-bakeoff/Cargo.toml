@@ -58,8 +58,3 @@ libc = "0.2.175"
 # As the workspace release profile: overflow checks stay on.
 [profile.release]
 overflow-checks = true
-
-# The binary-size probes, measured stripped.
-[profile.size]
-inherits = "release"
-strip = true

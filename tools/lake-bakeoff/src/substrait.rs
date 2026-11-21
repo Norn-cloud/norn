@@ -131,6 +131,12 @@ pub async fn probe(dir: PathBuf, threads: usize) {
     let (law, law_bytes) = round_trip(&ctx, law_plan(&ctx).await.expect("law plan")).await;
     let metric_frame = builder_query(&ctx, "q2_topn", "").await.expect("metric plan");
     let (metric, metric_bytes) = round_trip(&ctx, metric_frame).await;
+    // Kept for engines outside this binary (another DuckDB build).
+    for (name, bytes) in [("law", &law_bytes), ("metric", &metric_bytes)] {
+        if let Some(b) = bytes {
+            std::fs::write(dir.join(format!("{name}.substrait")), b).expect("plan file");
+        }
+    }
     let duck_law = law_bytes.as_deref().map(|b| duck_from_substrait(&dir, b));
     let duck_metric = metric_bytes.as_deref().map(|b| duck_from_substrait(&dir, b));
     // DuckDB's planner names its own functions; a plain metric shape.

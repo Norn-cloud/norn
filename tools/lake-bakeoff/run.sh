@@ -14,7 +14,7 @@ record() { grep '^RESULT ' | sed 's/^RESULT //' | tee -a "$OUT/results.jsonl"; }
 
 case "${1:-}" in
 build)
-  cargo build --release --manifest-path "$ROOT/tools/lake-bakeoff/Cargo.toml" --bin bakeoff
+  cargo build --release --locked --manifest-path "$ROOT/tools/lake-bakeoff/Cargo.toml" --bin bakeoff
   (cd "$ROOT" && cargo test --release --locked -p norn-cell --features duckdb --test bench_manifest --no-run)
   ;;
 data)
@@ -55,8 +55,12 @@ bench)
   ;;
 sizes)
   M="$ROOT/tools/lake-bakeoff/Cargo.toml"
-  cargo build --profile size --manifest-path "$M" --no-default-features --features duckdb-engine --bin size-duckdb
-  cargo build --profile size --manifest-path "$M" --no-default-features --features df-engine --bin size-datafusion
+  # Release artifacts, stripped after (a separate profile would rebuild DuckDB's C++).
+  for probe in duckdb datafusion; do
+    feature=$([ $probe = duckdb ] && echo duckdb-engine || echo df-engine)
+    cargo build --release --locked --manifest-path "$M" --no-default-features --features $feature --bin size-$probe
+    cp "$CARGO_TARGET_DIR/release/size-$probe" "$WORK/size-$probe.stripped" && strip "$WORK/size-$probe.stripped"
+  done
   (cd "$ROOT" && cargo build --release --locked -p norn-cell-do --features duckdb --bin norn-olapd)
   cp "$CARGO_TARGET_DIR/release/norn-olapd" "$WORK/norn-olapd.stripped" && strip "$WORK/norn-olapd.stripped"
   python3 - "$CARGO_TARGET_DIR" "$WORK" <<'PY' | tee -a "$OUT/results.jsonl"
@@ -64,8 +68,8 @@ import json, os, sys
 t, w = sys.argv[1], sys.argv[2]
 size = lambda p: os.path.getsize(p) if os.path.exists(p) else None
 print(json.dumps({"bench": "sizes",
-  "sizeDuckdbStripped": size(f"{t}/size/size-duckdb"),
-  "sizeDatafusionStripped": size(f"{t}/size/size-datafusion"),
+  "sizeDuckdbStripped": size(f"{w}/size-duckdb.stripped"),
+  "sizeDatafusionStripped": size(f"{w}/size-datafusion.stripped"),
   "olapdRelease": size(f"{t}/release/norn-olapd"),
   "olapdStripped": size(f"{w}/norn-olapd.stripped")}))
 PY
