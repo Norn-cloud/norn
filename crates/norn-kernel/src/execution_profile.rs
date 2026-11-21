@@ -108,10 +108,6 @@ impl<V: CommitView + ?Sized> CommitView for ProfileView<'_, V> {
         self.inner.concrete(key)
     }
 
-    fn ownership_is_local(&self) -> bool {
-        self.inner.ownership_is_local()
-    }
-
     fn can_read_observed_source_owners(&self) -> bool {
         self.inner.can_read_observed_source_owners()
     }
