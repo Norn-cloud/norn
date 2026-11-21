@@ -677,9 +677,10 @@ fn span_at(text: &str, bytes: &[u8], start: usize, depth: usize) -> Option<(Span
         b'"' => node(string_end(bytes, start)?, Vec::new()),
         b'-' | b'0'..=b'9' => {
             let mut end = next(start)?;
-            while bytes.get(end).is_some_and(|byte| {
-                matches!(byte, b'0'..=b'9' | b'.' | b'e' | b'E' | b'+' | b'-')
-            }) {
+            while bytes
+                .get(end)
+                .is_some_and(|byte| matches!(byte, b'0'..=b'9' | b'.' | b'e' | b'E' | b'+' | b'-'))
+            {
                 end = next(end)?;
             }
             // The former path reads this number through the runtime value's
@@ -816,20 +817,16 @@ fn spans_agree(text: &str, node: &Span, body: &Body, value: &Value) -> bool {
     let own = text.get(node.start..node.end) == Some(body.text.as_str())
         && node.children.len() == body.children.len();
     own && match value {
-        Value::Object(object) => object
-            .iter()
-            .zip(&node.children)
-            .zip(&body.children)
-            .all(|(((key, value), (span_key, child)), body)| {
+        Value::Object(object) => object.iter().zip(&node.children).zip(&body.children).all(
+            |(((key, value), (span_key, child)), body)| {
                 span_key.as_deref() == Some(key.as_str()) && spans_agree(text, child, body, value)
-            }),
-        Value::Array(values) => values
-            .iter()
-            .zip(&node.children)
-            .zip(&body.children)
-            .all(|((value, (span_key, child)), body)| {
+            },
+        ),
+        Value::Array(values) => values.iter().zip(&node.children).zip(&body.children).all(
+            |((value, (span_key, child)), body)| {
                 span_key.is_none() && spans_agree(text, child, body, value)
-            }),
+            },
+        ),
         Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => true,
     }
 }
