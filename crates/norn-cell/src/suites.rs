@@ -25,6 +25,10 @@ mod definitions_install;
 #[cfg(all(feature = "duckdb", feature = "native"))]
 #[path = "../tests/duckdb_transform.rs"]
 mod duckdb_transform;
+#[path = "../tests/engine_fixture_record.rs"]
+mod engine_fixture_record;
+#[path = "../tests/engine_upgrade.rs"]
+mod engine_upgrade;
 #[path = "../tests/exact_question.rs"]
 mod exact_question;
 #[path = "../tests/exact_values.rs"]
