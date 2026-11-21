@@ -1215,15 +1215,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         commit_seq: u64,
         value: &Value,
     ) -> Result<(), CellError> {
-        let event = if value.get("op").and_then(Value::as_str) == Some("observed_fact") {
-            value.get("event").unwrap_or(value)
-        } else {
-            value
-        };
-        if matches!(
-            event.get("op").and_then(Value::as_str),
-            Some("created" | "modified")
-        ) {
+        if durable_event_is_proven(value) {
             self.verify_event_values(world, Some(commit_seq), value)?;
         }
         Ok(())
@@ -2492,6 +2484,20 @@ fn decode_input(input: &norn_ir::RuntimeValue) -> Result<ConsumedInput, String> 
         }
         _ => Err("unknown consumed input kind".to_owned()),
     }
+}
+
+/// Whether [`StoreReader::verify_durable_event`] proves `value` against its
+/// commit's receipt: a `created` or `modified` event, bare or observed.
+pub(crate) fn durable_event_is_proven(value: &Value) -> bool {
+    let event = if value.get("op").and_then(Value::as_str) == Some("observed_fact") {
+        value.get("event").unwrap_or(value)
+    } else {
+        value
+    };
+    matches!(
+        event.get("op").and_then(Value::as_str),
+        Some("created" | "modified")
+    )
 }
 
 pub(crate) fn decode_snapshot(

@@ -2905,6 +2905,82 @@ fn sibling_links_to_unrelated_targets_keep_separate_versions() {
     assert_eq!(cell.load_link(&key).expect("loads").version, FactVersion(1));
 }
 
+/// #1527 S2: a link add reads both ends' adjacency, and a host error on
+/// that read refuses the commit in every build. Here `C`'s existing `A -rel->
+/// C` row in the link index names a link table that does not exist. A
+/// many-to-many add `B -rel-> C` checks no count at either end, yet the read
+/// of `C`'s adjacency fails, so the commit refuses and writes nothing.
+#[test]
+fn a_link_add_refuses_when_an_end_adjacency_read_fails() {
+    let thing = serde_json::from_value(json!({
+        "name": "acme.Thing",
+        "links": [{ "id": "rel", "target": "acme.Thing", "cardinality": { "to": "many", "from": "many" } }]
+    }))
+    .expect("decodes");
+    let model = common::model_of(&[thing]);
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("cell.sqlite");
+    let open = || -> OrderCell {
+        SqliteCell::open(
+            &path,
+            model.clone(),
+            StoreOptions::default(),
+            "org_demo/dev",
+            charge_responder,
+        )
+        .expect("opens")
+    };
+    let put = |key: &str| FactWrite {
+        key: FactKey::new("acme.Thing", key),
+        expected: FactVersion::ABSENT,
+        mutation: FactMutation::Put {
+            values: JsonObject::new(),
+        },
+    };
+    let rel = |source: &str, target: &str| {
+        LinkKey::new(
+            FactKey::new("acme.Thing", source),
+            "rel",
+            FactKey::new("acme.Thing", target),
+        )
+    };
+    let add = |source: &str, target: &str| CellCommit {
+        links: vec![LinkWrite {
+            key: rel(source, target),
+            expected: FactVersion::ABSENT,
+            mutation: LinkMutation::Add {
+                values: JsonObject::new(),
+            },
+        }],
+        ..CellCommit::empty()
+    };
+    let mut cell = open();
+    cell.commit(CellCommit {
+        writes: vec![put("A"), put("B"), put("C")],
+        ..CellCommit::empty()
+    })
+    .expect("creates");
+    cell.commit(add("A", "C")).expect("links A to C");
+    drop(cell);
+    let raw = rusqlite::Connection::open(&path).expect("corruption fixture");
+    let rows = raw
+        .execute(
+            "UPDATE _norn_link_version SET link_table = 'missing_link_table' WHERE source = 'A' AND target = 'C'",
+            [],
+        )
+        .expect("points the index at a missing table");
+    assert_eq!(rows, 1);
+    drop(raw);
+
+    let mut cell = open();
+    let refused = cell.commit(add("B", "C"));
+    assert!(matches!(refused, Err(CommitError::Host(_))), "{refused:?}");
+    assert_eq!(
+        cell.load_link(&rel("B", "C")).expect("loads").version,
+        FactVersion::ABSENT
+    );
+}
+
 /// #3013: a subtype that narrows an inherited link's target is honoured:
 /// with `Child.rel` narrowed to `acme.Child`, `Child/S -rel-> Base/T` is
 /// refused while `Base/S -rel-> Base/T` and `Child/S -rel-> Child/U` commit.

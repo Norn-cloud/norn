@@ -119,6 +119,9 @@ impl<E: SqlEngine> CellStore<E> {
         let catalog = TypeCatalog::new(model.object_types()).with_interfaces(model.interfaces());
         let canonical = CommitModel::new(&catalog);
         self.conn.transaction(|| {
+            // Capture writes only inbox rows: a plan proven once holds for
+            // every record of the page (INGEST-DERIVE-ONCE-1).
+            let _pinned = crate::mapping_bundle::PinnedPlans::open(&self.mapping_plans);
             let mut runs: Vec<(Vec<String>, BTreeSet<FactKey>, &Observed<RuntimeValue>)> =
                 Vec::new();
             let mut records = Vec::with_capacity(raws.len());
@@ -373,8 +376,13 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
         let mut commit = CellCommit::empty().consuming(page.consumed());
         let mut authorization = ObservationAuthorization::empty();
         let bundles: Vec<MappingBundle> = members.iter().map(|(_, b)| b.clone()).collect();
+        // INGEST-DERIVE-ONCE-1: every bundle is checked by the commit's own
+        // guard (`check_mapping_bundle`, inside the transaction, against the
+        // state the commit applies to). Any refusal of the page, by the guard
+        // or before it, sends its members down the per-record path, where each
+        // is checked again with its own outcome, so a check here first would
+        // only repeat the guard's.
         for bundle in &bundles {
-            self.store().read().check_mapping_bundle(bundle)?;
             self.store().read().prepare_mapping_records(
                 bundle,
                 &catalog,

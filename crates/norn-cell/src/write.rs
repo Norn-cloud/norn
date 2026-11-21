@@ -16,7 +16,8 @@ use crate::engine::{SqlEngine, SqlRow, SqlValue, params};
 use crate::error::CellError;
 use crate::model::{ColumnRef, Model};
 use crate::read::{
-    ObjectRecord, StoreReader, column_list, entry_hash, next, placeholders, to_i64, to_u64,
+    LedgerEntry, ObjectRecord, StoreReader, column_list, entry_hash, next, placeholders, to_i64,
+    to_u64,
 };
 use crate::store::{
     CommitBatch, Consumption, EffectRow, FactWriteRow, LinkChange, LinkedRow, OutboxCommand,
@@ -3222,9 +3223,12 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
         Ok(())
     }
 
-    /// Append the batch's events to the hash chain. Returns the first event's
-    /// sequence number and the head hash after the append.
-    pub(crate) fn append_events(&mut self) -> Result<(u64, String), CellError> {
+    /// Append the batch's events to the ledger. Returns the first sequence,
+    /// the new ledger head and the entries as written, so the export journal
+    /// records them without reading them back (INGEST-JOURNAL-MEMORY-1). Each
+    /// entry's event is the one a ledger reader decodes (#1527 S1): its
+    /// stored canonical text, parsed, with any payload stored apart resolved.
+    pub(crate) fn append_events(&mut self) -> Result<(u64, String, Vec<LedgerEntry>), CellError> {
         for event in &self.batch.events {
             self.reader()
                 .verify_durable_event(self.world, self.commit_seq, event)?;
@@ -3237,9 +3241,17 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
         let (mut seq, mut prev) = self.reader().ledger_tail()?;
         let first = next(seq, "seq")?;
         let commit_seq = self.commit_seq_sql()?;
+        let mut entries = Vec::with_capacity(self.batch.events.len());
         for event in &self.batch.events {
             seq = next(seq, "seq")?;
             let hash = entry_hash(seq, self.commit_seq, self.world, event, &prev)?;
+            let (encoded, stored) = crate::payload_storage::encode_event(
+                self.conn,
+                seq,
+                &self.batch.scope,
+                self.world,
+                event,
+            )?;
             self.conn.execute(
                 &format!(
                     "INSERT INTO \"{LEDGER}\" (\"seq\", \"commit_seq\", \"world\", \"event\", \"prev_hash\", \"hash\") VALUES (?1, ?2, ?3, ?4, ?5, ?6)"
@@ -3248,14 +3260,21 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                     to_i64(seq, "seq")?,
                     commit_seq,
                     self.world,
-                    crate::payload_storage::encode_event(self.conn, seq, &self.batch.scope, self.world, event)?,
+                    encoded,
                     prev,
                     hash
                 ],
             )?;
-            prev = hash;
+            entries.push(LedgerEntry {
+                seq,
+                commit_seq: self.commit_seq,
+                world: self.world.to_owned(),
+                event: stored,
+                prev_hash: std::mem::replace(&mut prev, hash.clone()),
+                hash,
+            });
         }
-        Ok((first, prev))
+        Ok((first, prev, entries))
     }
 
     /// Apply the outbox and timer effects, in order.
