@@ -638,6 +638,7 @@ fn canonical(payload: &RawValue) -> Result<String, Refusal> {
 }
 
 /// Run `kind`'s validator: the canonical payload and every finding.
+/// `replaces` is the id's revision this payload would replace, if any.
 #[allow(
     clippy::too_many_arguments,
     reason = "a definition's identity, payload and the host context its validator reads"
@@ -651,6 +652,7 @@ fn validate<E: SqlEngine>(
     id: &str,
     kind: &str,
     payload: &RawValue,
+    replaces: Option<u64>,
 ) -> Result<(Admitted, Vec<RefusalDiagnostic>), Refusal> {
     let canonical = canonical(payload)?;
     let value: Value = serde_json::from_str(&canonical).map_err(Refusal::host)?;
@@ -697,7 +699,12 @@ fn validate<E: SqlEngine>(
         }
         "binding" => {
             let roles: Vec<&str> = kinds.roles.iter().map(String::as_str).collect();
-            findings.extend(crate::binding_definitions::check(payload.get(), &roles));
+            let anchor = retained_binding_anchor(host, id, replaces)?;
+            findings.extend(crate::binding_definitions::check(
+                payload.get(),
+                &roles,
+                anchor.as_ref(),
+            ));
         }
         "approval" => {
             let roles: Vec<&str> = kinds.roles.iter().map(String::as_str).collect();
@@ -850,6 +857,36 @@ fn binding_versions<E: SqlEngine>(
         }
         after = page.last().map(|record| record.definition.id.clone());
     }
+}
+
+/// The anchor of binding `id`'s retained revision `replaces`: its stored
+/// digest and the exact digest of its stored manifest. `None` when nothing
+/// is replaced or that revision is not a binding.
+fn retained_binding_anchor<E: SqlEngine>(
+    host: &DevHost<E>,
+    id: &str,
+    replaces: Option<u64>,
+) -> Result<Option<crate::binding_definitions::RetainedAnchor>, Refusal> {
+    let Some(replaces) = replaces else {
+        return Ok(None);
+    };
+    let cell = host.cell()?;
+    let reader = cell.store().read();
+    Ok(reader
+        .retained_definition(id, Some(replaces))
+        .map_err(Refusal::host)?
+        .filter(|record| record.definition.kind == "binding")
+        .and_then(|record| crate::binding_definitions::retained_anchor(&record.definition.payload)))
+}
+
+/// The id's current retained revision, if any: what an install would replace.
+fn current_revision<E: SqlEngine>(host: &DevHost<E>, id: &str) -> Result<Option<u64>, Refusal> {
+    let cell = host.cell()?;
+    let reader = cell.store().read();
+    Ok(reader
+        .retained_definition(id, None)
+        .map_err(Refusal::host)?
+        .map(|record| record.definition.revision))
 }
 
 /// The cell's installed, non-retired binding definitions as agent tool
@@ -1319,6 +1356,7 @@ pub fn admit_definition<E: SqlEngine>(
         &request.id,
         &request.kind,
         &request.payload,
+        current_revision(host, &request.id)?,
     )?;
     let admitted = admitted(&diagnostics);
     let (restatement, restatement_sha256) = if admitted {
@@ -1587,6 +1625,7 @@ pub fn install_definition<E: SqlEngine>(
         &request.id,
         &request.kind,
         &request.payload,
+        request.expected_version,
     )?;
     if !admitted(&diagnostics) {
         return Err(refused(diagnostics));
