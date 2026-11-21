@@ -491,9 +491,9 @@ fn a_storage_v3_cell_opens_on_this_engine_with_identical_receipts() {
     assert_eq!(approved[0][2], engine_fixture::APPROVAL_DECISION);
     assert_eq!(approved[0][3], engine_fixture::APPROVAL_COMMAND);
 
-    let root = receipts_root(&store);
     let mut store = open(&path).expect("a v3 cell opens on this engine");
     let head = store.read().verify_ledger().expect("the ledger verifies");
+    let root = receipts_root(&store);
     assert_eq!(head.commits, engine_fixture::COMMITS);
     let receipts = store.read().receipts().expect("receipts");
     assert_eq!(
