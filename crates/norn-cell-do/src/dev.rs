@@ -90,10 +90,12 @@ fn dev_checkpoint_key(path: &Path) -> Option<norn_cell::CheckpointKey> {
     }
     let mut key = [0_u8; 32];
     getrandom::fill(&mut key).ok()?;
-    let text = key.iter().fold(String::with_capacity(65), |mut text, byte| {
-        let _written = write!(text, "{byte:02x}");
-        text
-    });
+    let text = key
+        .iter()
+        .fold(String::with_capacity(65), |mut text, byte| {
+            let _written = write!(text, "{byte:02x}");
+            text
+        });
     write_private(path, &format!("{text}\n")).ok()?;
     Some(norn_cell::CheckpointKey::from_bytes(key))
 }

@@ -215,9 +215,8 @@ fn add_open_checkpoint(
     .expect("mac message");
     let mac = {
         use hmac::{KeyInit as _, Mac as _};
-        let mut mac =
-            hmac::Hmac::<transparency_sha2::Sha256>::new_from_slice(&test_key_bytes())
-                .expect("key");
+        let mut mac = hmac::Hmac::<transparency_sha2::Sha256>::new_from_slice(&test_key_bytes())
+            .expect("key");
         mac.update(&message);
         mac.finalize()
             .into_bytes()
