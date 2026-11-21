@@ -13,7 +13,7 @@ use norn_cell_rivet::router::{Router, app};
 use rivetkit::client::{Client, ClientConfig};
 use tokio_util::sync::CancellationToken;
 
-/// `RivetKit` logs every SQLite statement's profile at `info`; the host keeps
+/// `RivetKit` logs every `SQLite` statement's profile at `info`; the host keeps
 /// its own `info` and `RivetKit`'s warnings unless `RUST_LOG` says otherwise.
 const DEFAULT_LOG: &str =
     "info,rivetkit_core=warn,rivetkit_sqlite_profile=warn,rivet_envoy_client=warn,rivetkit=warn";

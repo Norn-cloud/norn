@@ -64,7 +64,7 @@ const JWKS_TIMEOUT: Duration = Duration::from_secs(5);
 /// Engine steps one request may take (D102).
 const ENGINE_STEPS: usize = 64;
 /// A hung engine call must not hold the cell.
-const ENGINE_TIMEOUT: Duration = Duration::from_secs(120);
+const ENGINE_TIMEOUT: Duration = Duration::from_mins(2);
 /// The largest engine answer read back, in bytes.
 const MAX_ENGINE_BODY: usize = 64 * 1024 * 1024;
 /// A source page or an uploaded object, read once and bounded.

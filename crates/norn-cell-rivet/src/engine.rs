@@ -1,8 +1,8 @@
-//! `RivetEngine`: [`SqlEngine`] over one Rivet actor's embedded SQLite.
+//! `RivetEngine`: [`SqlEngine`] over one Rivet actor's embedded `SQLite`.
 //!
-//! The seam is synchronous and Rivet's SQLite is async, so the engine lives on
+//! The seam is synchronous and Rivet's `SQLite` is async, so the engine lives on
 //! the actor's cell thread ([`crate::thread`]) and blocks on each statement
-//! from there. With `RivetKit`'s `sqlite-local` feature SQLite runs in this
+//! from there. With `RivetKit`'s `sqlite-local` feature `SQLite` runs in this
 //! process on Rivet's VFS; a commit returns once the VFS commit is fsynced on
 //! a majority of the control plane's instances (#1130, spike section 1).
 //!
@@ -21,7 +21,7 @@ use tokio::runtime::Handle;
 /// How long one commit's transaction may stay open before `RivetKit` expires
 /// it. A provisioning set is the longest ordinary commit (thousands of
 /// statements, well under a second); a conformance hold spins at most 40 s.
-const TRANSACTION_TIMEOUT: Duration = Duration::from_secs(120);
+const TRANSACTION_TIMEOUT: Duration = Duration::from_mins(2);
 
 /// Tables the host platform keeps in the actor's own database: `RivetKit`'s
 /// internal storage (state, KV, queue, schedules) and this host's alarm and
@@ -39,7 +39,7 @@ pub trait StatementHook {
     fn before_commit(&self);
 }
 
-/// One actor's SQLite, driven from its cell thread.
+/// One actor's `SQLite`, driven from its cell thread.
 pub struct RivetEngine {
     db: SqliteDb,
     runtime: Handle,
@@ -137,7 +137,7 @@ fn decode(value: ColumnValue) -> Result<SqlValue, CellError> {
 }
 
 /// Refuses SQL that controls a transaction: only the adapter may, as on
-/// native SQLite (its authorizer) and the Durable Object (the platform). Each
+/// native `SQLite` (its authorizer) and the Durable Object (the platform). Each
 /// statement's first keyword is read past comments, outside quoted text.
 fn refuse_transaction_control(sql: &str) -> Result<(), CellError> {
     const CONTROL: &[&str] = &["BEGIN", "COMMIT", "END", "ROLLBACK", "SAVEPOINT", "RELEASE"];

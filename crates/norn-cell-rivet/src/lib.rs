@@ -2,11 +2,11 @@
 //!
 //! Ring 1 host perimeter, the third host behind the `SqlEngine` + `CellHost`
 //! seam next to the native host and the Durable Object host
-//! (`norn-cell-do`). The cell's SQLite is the actor's own, on Rivet's VFS in
+//! (`norn-cell-do`). The cell's `SQLite` is the actor's own, on Rivet's VFS in
 //! this process (`RivetKit` 3.1.1 `sqlite-local`); the request layer is
 //! `norn-cell-do`'s `Tenant` and `server` dispatch, unchanged.
 //!
-//! - [`engine`]: `RivetEngine`, the synchronous seam over the actor's SQLite.
+//! - [`engine`]: `RivetEngine`, the synchronous seam over the actor's `SQLite`.
 //! - [`thread`]: the actor's cell thread, the cell's writer lock.
 //! - [`core`]: one opened cell, the native counterpart of `NornCell`.
 //! - [`actor`]: the cell actor (`Cell` and `wake.mjs` of the Worker).

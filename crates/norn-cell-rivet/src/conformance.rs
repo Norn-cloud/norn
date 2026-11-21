@@ -16,7 +16,7 @@
 //!   (`/__conformance/wake`, `/__conformance/wake-release`), a hold after a
 //!   write's reply and before its deadline update (`x-norn-conformance-hold:
 //!   after-write`), a restamp below the engine (`/__conformance/restamp`),
-//!   and a digest of the actor's persisted SQLite pages
+//!   and a digest of the actor's persisted `SQLite` pages
 //!   (`/__conformance/pages`);
 //! - the probe actor: the Rivet platform properties the cell relies on, one
 //!   route each, over the same primitives the cell host uses.
@@ -54,7 +54,7 @@ const HOLD_HEADER: &str = "x-norn-conformance-hold";
 const MARKER_HEADER: &str = "x-norn-conformance-marker";
 const MARKER_LINE: &str = "norn-conformance-hold-reached";
 /// A wake seam waits this long for the wake it paused or released.
-const WAKE_SEAM_TIMEOUT: Duration = Duration::from_secs(120);
+const WAKE_SEAM_TIMEOUT: Duration = Duration::from_mins(2);
 
 /// This process, for the identity probes.
 static ISOLATE: std::sync::LazyLock<String> =
@@ -896,7 +896,7 @@ impl ProbeActor {
                 let ms = u64::try_from(number("ms", 300)).unwrap_or(0);
                 let tx = ctx
                     .sql()
-                    .begin_transaction(Some(Duration::from_secs(60)))
+                    .begin_transaction(Some(Duration::from_mins(1)))
                     .await?;
                 for i in 0..n {
                     tx.execute(LOG_INSERT, Some(log_params(&tag, &json!(i))))

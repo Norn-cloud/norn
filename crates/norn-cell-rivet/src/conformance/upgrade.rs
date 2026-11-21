@@ -1,4 +1,4 @@
-//! ENGINE-UPGRADE-1 (#1494) on Rivet's embedded SQLite: the storage-version
+//! ENGINE-UPGRADE-1 (#1494) on Rivet's embedded `SQLite`: the storage-version
 //! check lives in `norn-cell` below the host seam, so the Rivet host runs it
 //! with no host code. This probe proves it on a real actor database.
 //!
