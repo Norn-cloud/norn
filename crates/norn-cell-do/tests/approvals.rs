@@ -34,7 +34,10 @@ fn gate<E: SqlEngine>(cell: &Cell<E>, expires_in_ms: Option<u64>) {
 /// installing it again with another question is a new definitions version.
 fn gate_asking<E: SqlEngine>(
     cell: &Cell<E>,
-    expires_in_ms: Option<u64>, question: &str, replaces: Option<u64>) {
+    expires_in_ms: Option<u64>,
+    question: &str,
+    replaces: Option<u64>,
+) {
     let mut payload = json!({
         "action": MELT_ACTION,
         "decider": { "roles": ["admin"] },
@@ -88,7 +91,12 @@ fn pending(cell: &Cell, auth: Option<&str>) -> Value {
     page
 }
 
-fn decide<E: SqlEngine>(cell: &Cell<E>, auth: Option<&str>, id: &str, choice: &str) -> (u16, Value) {
+fn decide<E: SqlEngine>(
+    cell: &Cell<E>,
+    auth: Option<&str>,
+    id: &str,
+    choice: &str,
+) -> (u16, Value) {
     call(
         cell,
         "POST",
@@ -1048,7 +1056,7 @@ impl Counted {
         let select = sql.split_once(" FROM ").map_or("", |(select, _)| select);
         let payload = (sql.contains(r#"FROM "_norn_outbox""#) && select.contains(r#""command""#))
             || sql.contains(r#"FROM "_norn_receipt""#);
-        self.counts.set((all + 1, payloads + u64::from(payload)));
+        self.counts.set((all.saturating_add(1), payloads.saturating_add(u64::from(payload))));
     }
 }
 
@@ -1119,7 +1127,10 @@ fn another_requesters_id_loads_no_payload() {
         let (_, absent) = cost(APPROVER, &nowhere);
         assert_eq!(items, 0, "{phase}");
         assert_eq!(foreign.1, 0, "{phase}: a foreign id loaded a payload");
-        assert_eq!(foreign, absent, "{phase}: a foreign id costs what no id costs");
+        assert_eq!(
+            foreign, absent,
+            "{phase}: a foreign id costs what no id costs"
+        );
         let (items, own) = cost(OPERATOR, &id);
         assert_eq!(items, 1, "{phase}");
         assert!(own.1 > 0, "{phase}: the control loads the call");
@@ -1151,7 +1162,13 @@ fn a_call_past_its_deadline_is_not_listed() {
         assert_eq!(status, 200, "{page}");
         page
     };
-    assert_eq!(read(SCOPE.to_owned(), NOW)["items"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        read(SCOPE.to_owned(), NOW)["items"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
     let late = NOW + 120;
     assert_eq!(read(SCOPE.to_owned(), late)["items"], json!([]));
     let by_id = read(format!("{SCOPE}&id={id}"), late);

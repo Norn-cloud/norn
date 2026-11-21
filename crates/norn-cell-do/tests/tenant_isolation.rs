@@ -1200,7 +1200,11 @@ fn provisioned(scope: &CellScope) -> Host {
         Some(&user(&scope.org_id, "owner")),
         &body.to_string(),
     );
-    assert_eq!(provisioned.response.status, 200, "{}", provisioned.response.body);
+    assert_eq!(
+        provisioned.response.status, 200,
+        "{}",
+        provisioned.response.body
+    );
     cell
 }
 
@@ -1310,7 +1314,11 @@ fn a_parked_call_by_id_is_its_requesters_alone() {
                 (no_id.response.status, no_id.calls),
                 "{phase}: {role}"
             );
-            assert_eq!(json_of(&by_id.response)["items"], json!([]), "{phase}: {role}");
+            assert_eq!(
+                json_of(&by_id.response)["items"],
+                json!([]),
+                "{phase}: {role}"
+            );
             assert!(!by_id.response.body.contains(&parked), "{phase}: {role}");
         }
         if phase == "pending" {
@@ -1324,7 +1332,12 @@ fn a_parked_call_by_id_is_its_requesters_alone() {
             );
             assert_eq!(decided.response.status, 200, "{}", decided.response.body);
             let own = send(&mut b, "GET", path, &named, Some(&requester), "");
-            assert_eq!(json_of(&own.response)["items"][0]["canRun"], json!(true), "{}", own.response.body);
+            assert_eq!(
+                json_of(&own.response)["items"][0]["canRun"],
+                json!(true),
+                "{}",
+                own.response.body
+            );
         }
     }
     let scope_a = scope("org_a", "prod");
@@ -1333,9 +1346,23 @@ fn a_parked_call_by_id_is_its_requesters_alone() {
     let in_a = |id: &str| format!("{at_a}&id={id}");
     for role in ["owner", "admin", "member", "viewer"] {
         let member = user("org_a", role);
-        send(&mut a, "GET", path, &in_a(&"z".repeat(parked.len())), Some(&member), "");
+        send(
+            &mut a,
+            "GET",
+            path,
+            &in_a(&"z".repeat(parked.len())),
+            Some(&member),
+            "",
+        );
         let by_id = send(&mut a, "GET", path, &in_a(&parked), Some(&member), "");
-        let no_id = send(&mut a, "GET", path, &in_a(&"z".repeat(parked.len())), Some(&member), "");
+        let no_id = send(
+            &mut a,
+            "GET",
+            path,
+            &in_a(&"z".repeat(parked.len())),
+            Some(&member),
+            "",
+        );
         assert_eq!(
             (by_id.response.status, by_id.calls),
             (no_id.response.status, no_id.calls),

@@ -1215,9 +1215,7 @@ pub fn requested_decisions<E: SqlEngine>(
             };
             // Without an id only the calls that wait: pending a decider
             // before their deadline, or approved and not yet run.
-            if wanted.is_none()
-                && !(item.status == RequestedStatus::Pending || item.can_run)
-            {
+            if wanted.is_none() && !(item.status == RequestedStatus::Pending || item.can_run) {
                 continue;
             }
             // The limit counts only the caller's own calls that wait.
