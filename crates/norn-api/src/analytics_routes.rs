@@ -19,11 +19,15 @@
 use std::collections::BTreeMap;
 
 use norn_cell::analytics::{
-    DatasetRecord, EngineRefusal, EvaluateRequest, EvaluateResponse, ExportFormat, ExportRequest,
-    FileFormat, FileSource, FrontierResponse, LoadRequest, LoadResponse, Source, TenantId,
-    hex_digest,
+    EngineRefusal, EvaluateRequest, EvaluateResponse, ExportFormat, ExportRequest, FileFormat,
+    FileSource, FrontierResponse, LandRequest, LandResponse, LoadRequest, Source, StoreRequest,
+    StoredObject, TableSchema, TenantId, dataset_cache_id, hex_digest,
 };
 use norn_cell::compute::{ALL_MEMBERS, QueryContext, QueryResult};
+use norn_cell::dataset_manifest::{
+    CommittedManifest, DatasetManifest, DatasetRequest, MANIFEST_VERSION, ManifestCounts,
+    ManifestFile, ManifestPins, ManifestSource,
+};
 use norn_cell::engine::SqlEngine;
 use norn_cell::{CellError, CellStore, ObjectRecord};
 use norn_checker::EffectiveCatalog;
@@ -43,14 +47,15 @@ use crate::scope::{CellScope, ScopeQuery};
 const SYNC_BATCH: usize = 5_000;
 /// Engine steps one answer may take before it refuses.
 pub const MAX_STEPS: usize = 64;
-/// Lifetime of the presigned URL a load reads, in seconds.
+/// Lifetime of the presigned URLs a load reads and lands through, in seconds.
 const LOAD_URL_SECONDS: u64 = 900;
 
 /// One engine operation, as the host sends it: `POST /v1/<op>` with `body`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EngineCall {
-    /// `frontier`, `sync`, `evaluate`, `members`, `profile`, `load` or `export`.
+    /// `frontier`, `sync`, `evaluate`, `members`, `profile`, `page`, `land`,
+    /// `store` or `export`.
     pub op: String,
     /// Identity of the call; the answer names it, so a stale answer is never used.
     pub digest: String,
@@ -515,6 +520,16 @@ pub struct DatasetLoadRequest {
     pub upload_id: String,
     /// The admitted object type the rows are typed by.
     pub object_type: String,
+    /// MANIFEST-03: the admitted mapping onto the type the load binds its
+    /// columns by; needed only when more than one maps onto it.
+    #[serde(default)]
+    pub mapping: Option<String>,
+    /// MANIFEST-04: the caller's key for this load. A retry with the same
+    /// key and the same request answers with the first load's receipt; the
+    /// same key with another request is refused (409
+    /// `dataset.request_conflict`). A load without a key always commits.
+    #[serde(default)]
+    pub request_key: Option<String>,
 }
 
 /// A completed upload, as the cell recorded it.
@@ -541,6 +556,9 @@ pub trait Uploads {
     fn issued(&self, id: &str, scope_key: &str, uri: &str) -> bool;
     /// A GET URL for exactly `uri`, valid for `seconds` from `now_ms`.
     fn presigned_get(&self, uri: &str, seconds: u64, now_ms: u64) -> Option<String>;
+    /// MANIFEST-LAND-1: a PUT URL for the object `key` the cell lands a
+    /// dataset file at, valid for `seconds` from `now_ms`, and its durable URI.
+    fn presigned_put(&self, key: &str, seconds: u64, now_ms: u64) -> Option<(String, String)>;
 }
 
 /// The outcome of `POST /v1/datasets:load`.
@@ -551,37 +569,85 @@ pub struct NornDatasetLoad {
     pub object_type: String,
     /// The `upload` connection the load is reported under (SYNC-REPORT-1).
     pub connection_id: String,
-    /// The load identity; answers over the dataset name it.
+    /// The landing identity; answers over the dataset name it.
     pub load: String,
-    /// The file's durable URI.
+    /// MANIFEST-1: the committed manifest's identity.
+    pub manifest: String,
+    /// The receipt of the one commit that admitted the manifest.
+    pub receipt: String,
+    /// That commit's sequence number.
+    pub commit_seq: u64,
+    /// The source file's durable URI.
     pub uri: String,
-    /// The file's SHA-256, verified by the engine.
+    /// The source file's SHA-256, verified by the engine.
     pub sha256: String,
+    /// The landed data file: every admitted row, columnar.
+    pub data: NornDatasetFile,
+    /// The landed held-set file: every held-back row and its reason.
+    pub held: NornDatasetFile,
     /// Rows admitted.
     pub rows: u64,
     /// Rows quarantined.
     pub rejected: u64,
     /// Quarantined rows per reason code (`bulk.*`).
     pub reasons: BTreeMap<String, u64>,
-    /// File size in bytes.
+    /// Source file size in bytes.
     pub bytes: u64,
     /// Load time in milliseconds.
     pub millis: u64,
+}
+
+/// One landed dataset file, named by content.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NornDatasetFile {
+    /// The object's durable URI.
+    pub uri: String,
+    /// Its SHA-256.
+    pub sha256: String,
+    /// Rows in it.
+    pub rows: u64,
+    /// Bytes in it.
+    pub bytes: u64,
+}
+
+impl From<&ManifestFile> for NornDatasetFile {
+    fn from(file: &ManifestFile) -> Self {
+        Self {
+            uri: file.uri.clone(),
+            sha256: file.sha256.clone(),
+            rows: file.rows,
+            bytes: file.bytes,
+        }
+    }
 }
 
 /// BULK-LOAD-1: load a completed upload into the tenant's engine as the
 /// dataset `objectType`, typed by that admitted definition. The engine reads
 /// the object through a presigned URL, verifies its SHA-256, types every row,
 /// and quarantines a row it cannot type (or that misses a required value)
-/// with its reason. The load becomes the dataset's current one; each row
-/// traces to `(uri, sha256, row)`. Decided like any upload load
-/// (`SyncSource("upload")`); the load is reported as a run of the type's
-/// `upload` connection, as the cell's own observations (SYNC-REPORT-1).
+/// with its reason. The load becomes the dataset's current one when its
+/// manifest commits; each row traces to `(uri, sha256, row)`. The load is
+/// reported as a run of the type's `upload` connection, as the cell's own
+/// observations (SYNC-REPORT-1).
+///
+/// MANIFEST-03: a load is decided exactly as an observation load of the
+/// same rows: `SyncSource("upload")` and the destination connection's own
+/// grant (`SyncSource("upload.<type>")`), an admitted mapping onto the type
+/// that the load binds its columns by, and the markings a write of those
+/// rows would carry. A mapping or marking bulk ingest cannot enforce is
+/// refused, never loaded unchecked.
 ///
 /// # Errors
 /// A denied caller (one opaque 403), an unknown upload or type (404), a
-/// changed file (`bulk.digest_mismatch`, 422), or an unreachable engine.
-#[utoipa::path(post, path = "/v1/datasets:load", params(ScopeQuery), request_body = DatasetLoadRequest, responses((status = 200, description = "The load.", body = NornDatasetLoad), (status = 400, description = "The request was refused as invalid.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied.", body = Refusal), (status = 404, description = "The request was refused: not found.", body = Refusal), (status = 422, description = "The file was refused.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
+/// changed file (`bulk.digest_mismatch`, 422), a mapping or marking bulk
+/// ingest cannot enforce (422), stale pins or a reused request key (409), or
+/// an unreachable engine.
+#[utoipa::path(post, path = "/v1/datasets:load", params(ScopeQuery), request_body = DatasetLoadRequest, responses((status = 200, description = "The load.", body = NornDatasetLoad), (status = 400, description = "The request was refused as invalid.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied.", body = Refusal), (status = 404, description = "The request was refused: not found.", body = Refusal), (status = 409, description = "The definitions changed while the dataset landed, or the request key names another request.", body = Refusal), (status = 422, description = "The file was refused.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one load, in order: authorize, contract, land, commit, report"
+)]
 pub fn load_dataset<E: SqlEngine>(
     host: &DevHost<E>,
     scope: &ScopeQuery,
@@ -599,6 +665,20 @@ pub fn load_dataset<E: SqlEngine>(
     )?;
     let request: DatasetLoadRequest =
         serde_json::from_str(body).map_err(|e| Refusal::invalid(e.to_string()))?;
+    // The type's upload connection, whichever path loads it: an `:define`d
+    // type `upload.<Name>` reports where a cell load of it does.
+    let named = request.object_type.strip_prefix("upload.");
+    let connection_id = format!(
+        "upload.{}",
+        named.unwrap_or(&request.object_type).to_ascii_lowercase()
+    );
+    // MANIFEST-03: the destination's own grant, as a sync of it is decided.
+    crate::definition_routes::authorize(
+        host,
+        scope,
+        actor,
+        Operation::SyncSource(connection_id.clone()),
+    )?;
     // UPLOAD-RECORD-1: an upload this host instance never saw complete is
     // read from the record the cell kept at `:complete`.
     let record = match uploads.record(&request.upload_id) {
@@ -620,21 +700,58 @@ pub fn load_dataset<E: SqlEngine>(
     if !uploads.issued(&request.upload_id, &host.scope().key(), &record.uri) {
         return Err(dataset_not_found());
     }
-    let loaded = load_upload(
+    // MANIFEST-04: a request is fingerprinted by what it asks (the upload,
+    // the type and the mapping it names), never by what the definitions
+    // resolve it to now: a retry after a mapping edit keeps its first
+    // receipt. A request already committed answers with that receipt.
+    let keyed = request
+        .request_key
+        .as_deref()
+        .map(|key| keyed_request(key, &request, &record))
+        .transpose()?;
+    if let Some(keyed) = &keyed
+        && let Some(first) = committed_request(host, keyed)?
+    {
+        return Ok(replayed(
+            &request.object_type,
+            connection_id,
+            &record,
+            first,
+        ));
+    }
+    let contract = bulk_contract(host, &request.object_type, request.mapping.as_deref())?;
+    let landed = land_upload(
         host,
         &request.object_type,
         &record,
+        &contract,
         uploads,
         transport,
         now_ms,
     )?;
-    // The type's upload connection, whichever path loads it: an `:define`d
-    // type `upload.<Name>` reports where a cell load of it does.
-    let named = request.object_type.strip_prefix("upload.");
-    let connection_id = format!(
-        "upload.{}",
-        named.unwrap_or(&request.object_type).to_ascii_lowercase()
-    );
+    let (manifest, hash, receipt) =
+        match commit_manifest(host, &request.object_type, &record, &landed, keyed.as_ref()) {
+            Ok(committed) => committed,
+            // A concurrent commit of the same key: its request decides.
+            Err(conflict) if conflict.code == "dataset.request_conflict" => {
+                let Some(first) = keyed
+                    .as_ref()
+                    .map(|keyed| committed_request(host, keyed))
+                    .transpose()?
+                    .flatten()
+                else {
+                    return Err(conflict);
+                };
+                return Ok(replayed(
+                    &request.object_type,
+                    connection_id,
+                    &record,
+                    first,
+                ));
+            }
+            Err(refusal) => return Err(refusal),
+        };
+    let loaded = &landed.land.load;
     // Reported after the cell is released: the report commits through it.
     crate::sources::report_upload(
         host,
@@ -643,7 +760,7 @@ pub fn load_dataset<E: SqlEngine>(
             label: &record.file_name,
             uri: &record.uri,
             sha256: &record.sha256,
-            mapping: "",
+            mapping: &contract.mapping_id,
             actor: actor.unwrap_or_default(),
             started_ms: now_ms,
             ended_ms: now_ms.saturating_add(loaded.millis),
@@ -658,87 +775,676 @@ pub fn load_dataset<E: SqlEngine>(
     Ok(NornDatasetLoad {
         object_type: request.object_type,
         connection_id,
-        load: loaded.load,
+        load: manifest.load.clone(),
+        manifest: hash,
+        receipt: receipt.hash,
+        commit_seq: receipt.body.commit_seq,
         uri: record.uri,
         sha256: record.sha256,
+        data: (&manifest.data).into(),
+        held: (&manifest.held).into(),
         rows: loaded.rows,
         rejected: loaded.rejected,
-        reasons: loaded.reasons,
+        reasons: loaded.reasons.clone(),
         bytes: loaded.bytes,
         millis: loaded.millis,
     })
 }
 
-/// Load `record` into the engine as the dataset `object_type` and record it
-/// as the type's current load.
-fn load_upload<E: SqlEngine>(
+/// MANIFEST-03: what an observation load of the type would be decided by,
+/// as bulk ingest enforces it: the admitted mapping onto the type, the
+/// column binding it reads, and the table and pins the landing is typed
+/// and checked by. MANIFEST-01: all of it is read from one definitions
+/// revision, so a landing never pairs one revision's mapping with
+/// another's pins.
+struct BulkContract {
+    /// The mapping's artifact id.
+    mapping_id: String,
+    /// The file column of each property read from a differently named field.
+    binding: BTreeMap<String, String>,
+    /// The type's table.
+    table: TableSchema,
+    /// The pins, the resolved mapping's (`<artifact id>@<sha256>`) among them.
+    pins: ManifestPins,
+}
+
+fn unsupported(code: &str, detail: impl Into<String>) -> Refusal {
+    Refusal::new(
+        http::StatusCode::UNPROCESSABLE_ENTITY,
+        code,
+        "the dataset was not loaded",
+        detail.into(),
+    )
+}
+
+/// The source field a mapped property's value reads, if it reads one
+/// field as itself: `input.<f>`, or `timestamp(input.<f>)` (with its null
+/// guard), the conversion the engine's typing of a timestamp column is.
+fn plain_read(value: &str) -> Option<&str> {
+    fn field(text: &str) -> Option<&str> {
+        text.strip_prefix("input.")
+            .filter(|f| !f.is_empty() && f.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
+    }
+    fn converted(text: &str) -> Option<&str> {
+        text.strip_prefix("timestamp(")
+            .and_then(|rest| rest.strip_suffix(')'))
+            .and_then(field)
+    }
+    if let Some(read) = field(value) {
+        return Some(read);
+    }
+    if let Some(read) = converted(value) {
+        return Some(read);
+    }
+    let (test, rest) = value.split_once(" == null ? null : ")?;
+    let read = field(test)?;
+    (converted(rest)? == read).then_some(read)
+}
+
+/// MANIFEST-03: the admitted mapping onto `object_type` a bulk load binds
+/// its columns by (the one `named`, or the only one), its binding, and the
+/// write-side markings check: a load of a type whose rows a write would
+/// mark (a declared property marking, or a marked source field) is refused,
+/// as bulk ingest attaches no per-row markings.
+///
+/// MANIFEST-01: the definitions epoch and the cell are held from reading
+/// the set to capturing the pins, so the mapping, the markings, the table
+/// and the pins are one revision's; the commit then refuses any later one.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one contract, read top to bottom: the mapping, its reads, the markings, then the pins"
+)]
+fn bulk_contract<E: SqlEngine>(
     host: &DevHost<E>,
     object_type: &str,
-    record: &UploadRecord,
-    uploads: &dyn Uploads,
-    transport: &dyn Transport,
-    now_ms: u64,
-) -> Result<LoadResponse, Refusal> {
+    named: Option<&str>,
+) -> Result<BulkContract, Refusal> {
+    let _epoch = host.definition_read()?;
     let guard = host.cell()?;
     let store = guard.store();
+    let set: Vec<serde_json::Value> = match store
+        .read()
+        .installed_definitions(None)
+        .map_err(Refusal::host)?
+    {
+        Some(active) => serde_json::from_str(&active.canonical_set).map_err(Refusal::host)?,
+        None => Vec::new(),
+    };
+    let kind = |artifact: &serde_json::Value| {
+        artifact
+            .get("kind")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+    };
+    let id_of = |artifact: &serde_json::Value| {
+        artifact
+            .get("artifactId")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_owned()
+    };
+    let entities: Vec<String> = set
+        .iter()
+        .filter(|artifact| {
+            kind(artifact).as_deref() == Some("entity")
+                && artifact
+                    .pointer("/payload/objectType/name")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(object_type)
+        })
+        .map(id_of)
+        .collect();
+    let maps_of = |artifact: &serde_json::Value| -> Vec<serde_json::Value> {
+        artifact
+            .pointer("/payload/maps")
+            .and_then(serde_json::Value::as_array)
+            .map(|maps| {
+                maps.iter()
+                    .filter(|map| {
+                        map.pointer("/target/entity")
+                            .and_then(serde_json::Value::as_str)
+                            .is_some_and(|entity| entities.iter().any(|e| e == entity))
+                    })
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let candidates: Vec<&serde_json::Value> = set
+        .iter()
+        .filter(|artifact| kind(artifact).as_deref() == Some("mapping"))
+        .filter(|artifact| named.is_none_or(|named| id_of(artifact) == named))
+        .filter(|artifact| !maps_of(artifact).is_empty())
+        .collect();
+    let mapping = match candidates.as_slice() {
+        [one] => *one,
+        [] => {
+            return Err(unsupported(
+                "bulk.unmapped",
+                format!(
+                    "no admitted mapping onto {object_type} binds the load; admit one, as an observation load needs"
+                ),
+            ));
+        }
+        _ => {
+            return Err(Refusal::invalid(format!(
+                "more than one admitted mapping maps onto {object_type}; name one as mapping"
+            )));
+        }
+    };
+    let maps = maps_of(mapping);
+    let [map] = maps.as_slice() else {
+        return Err(unsupported(
+            "bulk.unsupported_mapping",
+            "the mapping maps onto the type more than once; load it through observations",
+        ));
+    };
+    // A map that filters, joins or computes beyond reading its fields is
+    // not one bulk ingest can enforce.
+    let plain = map.as_object().is_some_and(|fields| {
+        fields.keys().all(|key| {
+            matches!(
+                key.as_str(),
+                "id" | "source" | "target" | "subject" | "sourceRecord" | "properties"
+            )
+        })
+    });
+    if !plain {
+        return Err(unsupported(
+            "bulk.unsupported_mapping",
+            "the mapping does more than read fields; load it through observations",
+        ));
+    }
     let table = store
         .analytics_table(object_type)
         .map_err(|_unknown| dataset_not_found())?;
+    let mut reads = BTreeMap::new();
+    for entry in map
+        .get("properties")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let (Some(property), Some(value)) = (
+            entry.get("property").and_then(serde_json::Value::as_str),
+            entry.get("value").and_then(serde_json::Value::as_str),
+        ) else {
+            return Err(unsupported(
+                "bulk.unsupported_mapping",
+                "a mapped property is not a plain field read",
+            ));
+        };
+        let field = plain_read(value).ok_or_else(|| {
+            unsupported(
+                "bulk.unsupported_mapping",
+                format!("{property} is computed by the mapping; load it through observations"),
+            )
+        })?;
+        reads.insert(property.to_owned(), field.to_owned());
+    }
+    let mut binding = BTreeMap::new();
+    for column in &table.columns {
+        let field = reads.get(&column.id).ok_or_else(|| {
+            unsupported(
+                "bulk.unsupported_mapping",
+                format!("the mapping does not map {}", column.id),
+            )
+        })?;
+        if *field != column.id {
+            binding.insert(column.id.clone(), field.clone());
+        }
+    }
+    // Write-side markings: a declared marking of a column, or a marked
+    // source field the mapping reads, would mark every row a write lands.
+    let declared = store
+        .model()
+        .effective_property_markings(object_type)
+        .map_err(Refusal::host)?;
+    if let Some((column, _)) = declared.iter().find(|(column, markings)| {
+        !markings.is_empty() && table.columns.iter().any(|c| c.id == **column)
+    }) {
+        return Err(unsupported(
+            "bulk.unsupported_marking",
+            format!(
+                "{column} is marked, and a dataset load attaches no markings; load it through observations"
+            ),
+        ));
+    }
+    let schema_id = mapping
+        .pointer("/payload/source/schemaId")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let read: Vec<&String> = reads.values().collect();
+    let marked = set
+        .iter()
+        .filter(|artifact| id_of(artifact) == schema_id)
+        .filter_map(|schema| {
+            schema
+                .pointer("/payload/fields")
+                .and_then(serde_json::Value::as_array)
+        })
+        .flatten()
+        .find(|field| {
+            field
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|name| read.iter().any(|read| *read == name))
+                && field
+                    .get("markings")
+                    .and_then(serde_json::Value::as_array)
+                    .is_some_and(|markings| !markings.is_empty())
+        });
+    if let Some(field) = marked {
+        return Err(unsupported(
+            "bulk.unsupported_marking",
+            format!(
+                "the source field {} is marked, and a dataset load attaches no markings; load it through observations",
+                field
+                    .get("name")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+            ),
+        ));
+    }
+    // MANIFEST-PIN-1: no law or invariant is checked on this path yet, so
+    // a type that declares one is refused rather than admitted unchecked.
+    if !store
+        .model()
+        .governing_laws(object_type)
+        .map_err(Refusal::host)?
+        .is_empty()
+        || !store
+            .model()
+            .effective_invariants(object_type)
+            .map_err(Refusal::host)?
+            .is_empty()
+    {
+        return Err(Refusal::new(
+            http::StatusCode::UNPROCESSABLE_ENTITY,
+            "bulk.unsupported_law",
+            "the dataset was not loaded",
+            "the type declares laws or invariants, which a dataset load does not check yet; load it through observations",
+        ));
+    }
+    let mapping_id = id_of(mapping);
+    let mapping_pin = dataset_mapping_pin(&mapping_id, mapping).map_err(Refusal::host)?;
+    let pins = store
+        .dataset_pins(object_type, &binding, &mapping_pin)
+        .map_err(Refusal::host)?;
+    Ok(BulkContract {
+        mapping_id,
+        binding,
+        table,
+        pins,
+    })
+}
+
+/// MANIFEST-04: a request key and the fingerprint of what it asks: the
+/// upload (by its recorded identity), the type and the mapping it names
+/// (`null` for the type's only one). The mapping it resolved to is the
+/// manifest's own pin, not the request's.
+fn keyed_request(
+    key: &str,
+    request: &DatasetLoadRequest,
+    record: &UploadRecord,
+) -> Result<DatasetRequest, Refusal> {
+    let valid = !key.is_empty()
+        && key.len() <= 128
+        && key
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b':'));
+    if !valid {
+        return Err(Refusal::invalid(
+            "requestKey is 1 to 128 letters, digits, '-', '_', '.' or ':'",
+        ));
+    }
+    let fingerprint = norn_ir::canonical::domain_hash_hex(
+        b"norn.dataset-load.request.v1\0",
+        &serde_json::json!({
+            "objectType": request.object_type,
+            "uploadId": request.upload_id,
+            "uri": record.uri,
+            "sha256": record.sha256,
+            "mapping": request.mapping,
+        }),
+    )
+    .map_err(Refusal::host)?;
+    Ok(DatasetRequest {
+        key: key.to_owned(),
+        fingerprint,
+    })
+}
+
+/// MANIFEST-04: the commit a request key already made, if it made one for
+/// this request; the same key for another request is refused.
+fn committed_request<E: SqlEngine>(
+    host: &DevHost<E>,
+    keyed: &DatasetRequest,
+) -> Result<Option<(CommittedManifest, norn_cell::Receipt)>, Refusal> {
+    let found = host
+        .cell()?
+        .store()
+        .dataset_request(norn_cell::MAIN_WORLD, &keyed.key)
+        .map_err(Refusal::host)?;
+    match found {
+        None => Ok(None),
+        Some((committed, request, receipt)) if request.fingerprint == keyed.fingerprint => {
+            Ok(Some((committed, receipt)))
+        }
+        Some(_) => Err(request_conflict()),
+    }
+}
+
+fn request_conflict() -> Refusal {
+    Refusal::new(
+        http::StatusCode::CONFLICT,
+        "dataset.request_conflict",
+        "the dataset was not loaded",
+        "the request key was used for another load request",
+    )
+}
+
+/// The answer to a request already committed: its first manifest and receipt.
+fn replayed(
+    object_type: &str,
+    connection_id: String,
+    record: &UploadRecord,
+    (committed, receipt): (CommittedManifest, norn_cell::Receipt),
+) -> NornDatasetLoad {
+    let manifest = committed.manifest;
+    NornDatasetLoad {
+        object_type: object_type.to_owned(),
+        connection_id,
+        load: manifest.load.clone(),
+        manifest: committed.hash,
+        receipt: receipt.hash,
+        commit_seq: receipt.body.commit_seq,
+        uri: record.uri.clone(),
+        sha256: record.sha256.clone(),
+        data: (&manifest.data).into(),
+        held: (&manifest.held).into(),
+        rows: manifest.counts.admitted,
+        rejected: manifest.held.rows,
+        reasons: manifest.counts.held.clone(),
+        bytes: manifest.source.bytes,
+        millis: 0,
+    }
+}
+
+/// The pin a dataset manifest names for its mapping: `<artifact id>@<sha256>`
+/// of the mapping's Norn1 canonical bytes (#2882), so the key order or number
+/// spelling of the stored artifact never changes it.
+///
+/// # Errors
+/// The mapping has no Norn1 canonical form (for example a non-finite number).
+pub fn dataset_mapping_pin(
+    mapping_id: &str,
+    mapping: &serde_json::Value,
+) -> Result<String, norn_ir::canonical::CanonicalJsonError> {
+    let canonical = norn_ir::canonical::canonical_json_of(mapping)?;
+    Ok(format!("{mapping_id}@{}", hex_digest(&canonical)))
+}
+
+/// MANIFEST-CACHE-1: the content-addressed object key of a landed file:
+/// `datasets/<scope>/<type>/<sha256>.parquet`. A file's object is named by
+/// its bytes, so no landing overwrites another's.
+fn object_key(scope_key: &str, object_type: &str, sha256: &str) -> String {
+    format!("datasets/{scope_key}/{object_type}/{sha256}.parquet")
+}
+
+/// A landing whose files are stored: the request it was made by (with the
+/// attempt it ran as) and the engine's answer.
+struct Landing {
+    request: LandRequest,
+    land: LandResponse,
+    uris: [String; 2],
+}
+
+/// Landing steps one load may take: the landing, then storing its files.
+const MAX_LAND_STEPS: usize = 4;
+
+/// MANIFEST-LAND-1: type `record` by `object_type` on the engine, land it
+/// as the data and held-set Parquet files under an attempt the engine
+/// mints, and store them at their content-addressed objects.
+///
+/// MANIFEST-01: the landing's identity is the digest of its whole request
+/// without the attempt: the file, the table, the binding and the pins it is
+/// typed and checked by. An answer continues this landing only if it names
+/// that identity; the attempt is then the one the answer ran as, and its
+/// pins are carried to the commit unchanged.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one landing, step by step: begin, land, settle, store"
+)]
+fn land_upload<E: SqlEngine>(
+    host: &DevHost<E>,
+    object_type: &str,
+    record: &UploadRecord,
+    contract: &BulkContract,
+    uploads: &dyn Uploads,
+    transport: &dyn Transport,
+    now_ms: u64,
+) -> Result<Landing, Refusal> {
+    // The steps run without the cell, so the definitions may change under
+    // them; the commit decides by the contract's pins, carried here.
+    let table = contract.table.clone();
+    let pins = contract.pins.clone();
     let format = if record.content_type.contains("parquet") || record.uri.ends_with(".parquet") {
         FileFormat::Parquet
     } else {
         FileFormat::Csv
     };
-    let load = format!(
-        "l{}",
-        hex_digest(format!("{}\n{}\n{}", record.uri, record.sha256, table.pin).as_bytes())
-    );
-    let mut load_request = LoadRequest {
-        tenant: TenantId::of_scope(&host.scope().key()),
-        table,
-        load,
-        file: FileSource {
-            url: String::new(),
-            uri: record.uri.clone(),
-            sha256: record.sha256.clone(),
-            format,
-        },
-        headers: BTreeMap::new(),
-    };
-    // The URL is minted per request; the call's identity is the load without it.
-    let mut call = EngineCall::new("load", &load_request).map_err(engine_failure)?;
-    load_request.file.url = uploads
-        .presigned_get(&record.uri, LOAD_URL_SECONDS, now_ms)
-        .ok_or_else(|| Refusal::host("the object store is not configured"))?;
-    call.body = serde_json::to_string(&load_request).map_err(Refusal::host)?;
-    let answer =
-        exchange(store, transport, &load_request.tenant, None, &call).map_err(engine_failure)?;
-    if answer.status != 200 {
-        let refusal: EngineRefusal = decode(&answer.body).map_err(engine_failure)?;
-        return Err(Refusal::new(
-            http::StatusCode::UNPROCESSABLE_ENTITY,
-            &refusal.code,
-            "the dataset was not loaded",
-            &refusal.detail,
-        ));
-    }
-    let loaded: LoadResponse = decode(&answer.body).map_err(engine_failure)?;
-    let recorded_at = store.verified_head().map_err(Refusal::host)?.commits;
-    store
-        .record_analytics_dataset(
-            object_type,
-            &DatasetRecord {
-                load: loaded.load.clone(),
+    let scope_key = host.scope().key();
+    let mut request = LandRequest {
+        load: LoadRequest {
+            tenant: TenantId::of_scope(&scope_key),
+            table,
+            load: String::new(),
+            file: FileSource {
+                url: String::new(),
                 uri: record.uri.clone(),
                 sha256: record.sha256.clone(),
-                rows: loaded.rows,
-                rejected: loaded.rejected,
-                reasons: loaded.reasons.clone(),
-                recorded_at,
+                format,
             },
-        )
-        .map_err(Refusal::host)?;
-    Ok(loaded)
+            headers: contract.binding.clone(),
+        },
+        pins,
+        landing: String::new(),
+        attempt: String::new(),
+    };
+    let identity = EngineCall::new("land", &request)
+        .map_err(engine_failure)?
+        .digest;
+    request.load.load = format!("l{identity}");
+    request.landing.clone_from(&identity);
+    let store_digest = hex_digest(format!("store\n{identity}").as_bytes());
+    let ours = |answer: &EngineAnswer| answer.digest == identity || answer.digest == store_digest;
+    let mut answer = transport.resumed().filter(ours);
+    // OLAP-02: the engine mints the attempt (a landing names none); an
+    // answer names the attempt it ran as, and the store takes exactly that.
+    let unconfigured = || Refusal::host("the object store is not configured");
+    let mut call = EngineCall {
+        op: "land".to_owned(),
+        digest: identity.clone(),
+        body: String::new(),
+        stream: None,
+        credential: None,
+    };
+    for _ in 0..MAX_LAND_STEPS {
+        let done = if let Some(done) = answer.take() {
+            done
+        } else {
+            if call.op == "land" {
+                let mut sent = request.clone();
+                sent.load.file.url = uploads
+                    .presigned_get(&record.uri, LOAD_URL_SECONDS, now_ms)
+                    .ok_or_else(unconfigured)?;
+                call.body = serde_json::to_string(&sent).map_err(Refusal::host)?;
+            }
+            transport
+                .call(&call)
+                .ok_or_else(pending)
+                .map_err(engine_failure)?
+        };
+        if done.status != 200 {
+            let refusal: EngineRefusal = decode(&done.body).map_err(engine_failure)?;
+            return Err(Refusal::new(
+                http::StatusCode::UNPROCESSABLE_ENTITY,
+                &refusal.code,
+                "the dataset was not loaded",
+                &refusal.detail,
+            ));
+        }
+        let land: LandResponse = decode(&done.body).map_err(engine_failure)?;
+        if land.landing != identity {
+            return Err(stale_landing());
+        }
+        request.attempt.clone_from(&land.attempt);
+        let keys = [
+            object_key(&scope_key, object_type, &land.data.sha256),
+            object_key(&scope_key, object_type, &land.held.sha256),
+        ];
+        let mut objects = Vec::new();
+        for key in &keys {
+            objects.push(
+                uploads
+                    .presigned_put(key, LOAD_URL_SECONDS, now_ms)
+                    .ok_or_else(unconfigured)?,
+            );
+        }
+        let [(data_put, data_uri), (held_put, held_uri)] =
+            <[(String, String); 2]>::try_from(objects).map_err(|_two| unconfigured())?;
+        let uris = [data_uri.clone(), held_uri.clone()];
+        if land.stored.is_some() {
+            return Ok(Landing {
+                request,
+                land,
+                uris,
+            });
+        }
+        // MANIFEST-CACHE-1: the files go to objects named by their digests.
+        let store_request = StoreRequest {
+            land: request.clone(),
+            landed: land,
+            data: StoredObject {
+                uri: data_uri,
+                url: data_put,
+            },
+            held: StoredObject {
+                uri: held_uri,
+                url: held_put,
+            },
+        };
+        call = EngineCall {
+            op: "store".to_owned(),
+            digest: store_digest.clone(),
+            body: serde_json::to_string(&store_request).map_err(Refusal::host)?,
+            stream: None,
+            credential: None,
+        };
+    }
+    Err(Refusal::host("the landing did not settle"))
+}
+
+/// MANIFEST-01: an answer that is not this landing's own.
+fn stale_landing() -> Refusal {
+    Refusal::new(
+        http::StatusCode::CONFLICT,
+        "dataset.stale_landing",
+        "the dataset was not loaded",
+        "the engine answered for another landing; load the dataset again",
+    )
+}
+
+/// MANIFEST-COMMIT-1: commit the landing's manifest as the type's current
+/// dataset. Everything in it is the landing's own: the pins it was typed
+/// and checked by (MANIFEST-01), its files' digests and the cache identity
+/// made of them; nothing is recomputed, and pins that are no longer
+/// current refuse (`dataset.stale_pins`).
+fn commit_manifest<E: SqlEngine>(
+    host: &DevHost<E>,
+    object_type: &str,
+    record: &UploadRecord,
+    landing: &Landing,
+    keyed: Option<&DatasetRequest>,
+) -> Result<(DatasetManifest, String, norn_cell::Receipt), Refusal> {
+    let land = &landing.land;
+    let request = &landing.request;
+    let table = &request.load.table;
+    let cache = dataset_cache_id(table, &land.data.sha256, &land.held.sha256);
+    if land.landing != request.landing
+        || land.attempt != request.attempt
+        || land.stored.as_deref() != Some(cache.as_str())
+    {
+        return Err(stale_landing());
+    }
+    let [data_uri, held_uri] = landing.uris.clone();
+    let manifest = DatasetManifest {
+        version: MANIFEST_VERSION.to_owned(),
+        object_type: object_type.to_owned(),
+        load: cache,
+        source: ManifestSource {
+            uri: record.uri.clone(),
+            sha256: record.sha256.clone(),
+            format: request.load.file.format,
+            bytes: land.load.bytes,
+        },
+        binding: request.load.headers.clone(),
+        table: table.clone(),
+        pins: request.pins.clone(),
+        data: ManifestFile {
+            uri: data_uri,
+            sha256: land.data.sha256.clone(),
+            rows: land.data.rows,
+            bytes: land.data.bytes,
+        },
+        held: ManifestFile {
+            uri: held_uri,
+            sha256: land.held.sha256.clone(),
+            rows: land.held.rows,
+            bytes: land.held.bytes,
+        },
+        counts: ManifestCounts {
+            source: land.load.rows.saturating_add(land.load.rejected),
+            admitted: land.load.rows,
+            held: land.load.reasons.clone(),
+        },
+        valid_time: land.valid_time.clone(),
+    };
+    let (hash, receipt) = host
+        .cell()?
+        .commit_dataset_manifest(&manifest, keyed)
+        .map_err(manifest_refusal)?;
+    Ok((manifest, hash, receipt))
+}
+
+/// MANIFEST-CURRENT-1: the current dataset manifest of `object_type`, if it is one.
+///
+/// # Errors
+/// A store failure.
+pub fn current_manifest<E: SqlEngine>(
+    host: &DevHost<E>,
+    object_type: &str,
+) -> Result<Option<CommittedManifest>, Refusal> {
+    host.cell()?
+        .store()
+        .dataset_manifest(norn_cell::MAIN_WORLD, object_type)
+        .map_err(Refusal::host)
+}
+
+fn manifest_refusal(error: CellError) -> Refusal {
+    if let CellError::DatasetRefused { code, detail } = &error {
+        return Refusal::new(
+            http::StatusCode::CONFLICT,
+            code,
+            "the dataset manifest was not committed",
+            detail,
+        );
+    }
+    if matches!(error, CellError::IdempotencyConflict(_)) {
+        return request_conflict();
+    }
+    Refusal::host(error)
 }
 
 fn dataset_not_found() -> Refusal {
@@ -766,7 +1472,7 @@ pub fn serves_records<E: SqlEngine>(host: &DevHost<E>, object_type: &str) -> Res
     Ok(has_type
         && guard
             .store()
-            .analytics_dataset(object_type)
+            .dataset_manifest(norn_cell::MAIN_WORLD, object_type)
             .map_err(Refusal::host)?
             .is_some())
 }
@@ -807,9 +1513,9 @@ pub fn page_objects<E: SqlEngine>(
         .analytics_source(norn_cell::MAIN_WORLD, &host.scope().key(), object_type)
         .map_err(engine_failure)?;
     let quarantined = store
-        .analytics_dataset(object_type)
+        .dataset_manifest(norn_cell::MAIN_WORLD, object_type)
         .map_err(Refusal::host)?
-        .map_or(0, |dataset| dataset.rejected);
+        .map_or(0, |dataset| dataset.manifest.held.rows);
     let digest = norn_cell::compute::lineage::keyed_lineage_handle(
         object_query::CURSOR_KEY,
         &format!("{}\n{snapshot}", query.digest(object_type)),

@@ -21,10 +21,11 @@ use transparency_sha2::{Digest as _, Sha256};
 use super::{
     BucketTotals, Column, ColumnKind, ColumnProfile, EngineRefusal, EvaluateRequest,
     EvaluateResponse, ExportFormat, ExportRequest, FileFormat, Filter, FrontierRequest,
-    FrontierResponse, GroupKey, Literal, LoadRequest, LoadResponse, Lowered, MemberRow,
-    MembersRequest, MembersResponse, MirrorRow, PageClause, PageOp, PageOperand, PageRequest,
-    PageResponse, PageRow, ProfileRequest, ProfileResponse, Source, SyncRequest, TIME_LINK_COLUMN,
-    TableSchema, TenantId, Test, TimeLink, Value, hex,
+    FrontierResponse, GroupKey, LandRequest, LandResponse, LandedFile, Literal, LoadRequest,
+    LoadResponse, Lowered, MemberRow, MembersRequest, MembersResponse, MirrorRow, PageClause,
+    PageOp, PageOperand, PageRequest, PageResponse, PageRow, ProfileRequest, ProfileResponse,
+    Source, StoreRequest, SyncRequest, TIME_LINK_COLUMN, TableSchema, TenantId, Test, TimeLink,
+    ValidRange, Value, dataset_cache_id, hex,
 };
 
 /// An engine outcome: a typed refusal the cell maps to its own answer.
@@ -66,6 +67,117 @@ pub struct Settings {
 pub struct Engine {
     settings: Settings,
     tenants: Mutex<BTreeMap<TenantId, Arc<Mutex<Connection>>>>,
+    /// OLAP-02: the landing attempts this engine minted and still holds, by
+    /// tenant and token. An attempt exists from the moment its directory is
+    /// created until its one owner removes it; while an operation holds it
+    /// (`leased`) no other operation may touch it.
+    attempts: Mutex<BTreeMap<(TenantId, String), Held>>,
+}
+
+/// OLAP-02: one held landing attempt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Held {
+    /// An operation (the landing's download and load, or a store) holds it.
+    leased: bool,
+    /// The landing contract it landed, once landed; only a store of exactly
+    /// that contract may take it.
+    landed: Option<Landed>,
+}
+
+/// OLAP-02 (Sol r4): the landing contract of an attempt, recorded by the
+/// engine when it landed: the request it landed (by [`contract`]) and the
+/// answer it gave. A later step of the attempt must name exactly this
+/// request, and a store exactly this answer; nothing a caller echoes
+/// replaces what the engine recorded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Landed {
+    request: LandRequest,
+    answer: LandResponse,
+}
+
+/// The immutable part of a landing request: all of it, with the attempt the
+/// engine minted, but the presigned GET URL, which is minted per call.
+fn contract(request: &LandRequest) -> LandRequest {
+    let mut request = request.clone();
+    request.load.file.url.clear();
+    request
+}
+
+/// The immutable part of a store request: its landing's [`contract`], the
+/// answer it stores and its objects' URIs, but the presigned PUT URLs,
+/// which are minted per call.
+fn store_contract(request: &StoreRequest) -> StoreRequest {
+    let mut request = request.clone();
+    request.land = contract(&request.land);
+    request.data.url.clear();
+    request.held.url.clear();
+    request
+}
+
+/// OLAP-02 (Sol r4): the receipt of a store, kept by tenant and attempt: the
+/// immutable request it was made by ([`store_contract`]) and the answer it
+/// gave. A replay answers this answer, and only for this request.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct StoreReceipt {
+    request: StoreRequest,
+    response: LandResponse,
+}
+
+fn json_text(value: &impl serde::Serialize) -> Outcome<String> {
+    serde_json::to_string(value).map_err(|error| refusal("analytics.engine", error.to_string()))
+}
+
+fn receipt_key(attempt: &str) -> String {
+    format!("store:{attempt}")
+}
+
+/// A refusal of a landing attempt this engine does not hold (never minted,
+/// or already removed by its owner).
+pub const ATTEMPT_UNKNOWN: &str = "bulk.attempt_unknown";
+/// A refusal of a landing attempt another operation holds: its download or
+/// load is still running, or another store of it is.
+pub const ATTEMPT_BUSY: &str = "bulk.attempt_busy";
+
+/// OLAP-02: exclusive use of one landing attempt, minted by the engine
+/// ([`Engine::land`]) or taken by a store of its landing. The lease is the
+/// attempt's one cleanup owner: dropped, it removes the attempt's directory
+/// and forgets the attempt, unless it was released as landed. Nothing else
+/// removes an attempt, and nothing names one but its engine-minted token.
+struct Lease<'e> {
+    engine: &'e Engine,
+    tenant: TenantId,
+    token: String,
+    dir: PathBuf,
+    /// Set when the attempt landed: the lease then releases it, kept, for a
+    /// store of exactly this contract.
+    landed: Option<Landed>,
+}
+
+impl Lease<'_> {
+    fn files(&self) -> (PathBuf, PathBuf) {
+        (self.dir.join("data.parquet"), self.dir.join("held.parquet"))
+    }
+}
+
+impl Drop for Lease<'_> {
+    fn drop(&mut self) {
+        let key = (self.tenant.clone(), std::mem::take(&mut self.token));
+        if let Some(landed) = self.landed.take() {
+            let mut attempts = self.engine.attempts();
+            attempts.insert(
+                key,
+                Held {
+                    leased: false,
+                    landed: Some(landed),
+                },
+            );
+            return;
+        }
+        // Held by this lease alone, so no other operation can be using the
+        // directory, and its token is never minted again.
+        let _removed = std::fs::remove_dir_all(&self.dir);
+        self.engine.attempts().remove(&key);
+    }
 }
 
 fn ident(name: &str) -> String {
@@ -150,6 +262,7 @@ impl Engine {
         Ok(Self {
             settings,
             tenants: Mutex::new(BTreeMap::new()),
+            attempts: Mutex::new(BTreeMap::new()),
         })
     }
 
@@ -181,10 +294,14 @@ impl Engine {
             .map_err(|error| refusal("analytics.engine", error.to_string()))?;
         let conn = db(Connection::open(&path))?;
         let scratch = scratch.to_string_lossy().replace('\'', "''");
+        // MANIFEST-02: the tenant's private directory is its own; no other
+        // tenant's connection names it.
+        let private = self.private(tenant)?;
+        let private = private.to_string_lossy().replace('\'', "''");
         db(conn.execute_batch(&format!(
             "SET autoinstall_known_extensions=false; SET autoload_known_extensions=false; \
-             SET memory_limit='{}'; SET threads={}; SET temp_directory='{scratch}'; \
-             SET preserve_insertion_order=true; SET allowed_directories=['{scratch}/']; \
+             SET memory_limit='{}'; SET threads={}; SET temp_directory='{private}/spill'; \
+             SET preserve_insertion_order=true; SET allowed_directories=['{scratch}/', '{private}/']; \
              SET enable_external_access=false; \
              CREATE TABLE IF NOT EXISTS \":meta\" (key VARCHAR PRIMARY KEY, value VARCHAR NOT NULL);",
             self.settings.memory_limit.replace('\'', ""),
@@ -193,6 +310,119 @@ impl Engine {
         let conn = Arc::new(Mutex::new(conn));
         tenants.insert(tenant.clone(), Arc::clone(&conn));
         Ok(conn)
+    }
+
+    /// MANIFEST-02: the tenant's private directory, `<root>/t/<tenant>`,
+    /// readable and writable by this process alone. It holds one directory
+    /// per landing attempt (`scratch/<attempt>/`) and the landed files by
+    /// digest (`objects/`).
+    fn private(&self, tenant: &TenantId) -> Outcome<PathBuf> {
+        let dir = self.settings.root.join("t").join(tenant.as_str());
+        for sub in ["scratch", "objects", "spill"] {
+            private_dir(&dir.join(sub))?;
+        }
+        private_dir(&dir)?;
+        Ok(dir)
+    }
+
+    fn attempts(&self) -> std::sync::MutexGuard<'_, BTreeMap<(TenantId, String), Held>> {
+        self.attempts.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// OLAP-02 / MANIFEST-02: mint a landing attempt of `tenant`, held by
+    /// the returned lease: a fresh token no caller chose, its directory
+    /// created exclusively under the tenant's private scratch, and its
+    /// source file, created empty for the download.
+    fn begin_attempt(&self, tenant: &TenantId) -> Outcome<(Lease<'_>, std::fs::File)> {
+        let failed = |error: std::io::Error| refusal("analytics.engine", error.to_string());
+        let scratch = self.private(tenant)?.join("scratch");
+        // Created exclusively under a random name (retried on a clash), so
+        // the token names no directory that existed before, even one a
+        // previous process left.
+        let dir = tempfile::Builder::new()
+            .prefix("a")
+            .rand_bytes(31)
+            .tempdir_in(&scratch)
+            .map_err(failed)?
+            .keep();
+        let token = dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default()
+            .to_owned();
+        let key = (tenant.clone(), token);
+        let mut attempts = self.attempts();
+        if attempts.contains_key(&key) {
+            // The directory is new, so this cannot happen; if it did, the
+            // entry is another lease's and only the new directory goes.
+            drop(attempts);
+            let _removed = std::fs::remove_dir_all(&dir);
+            return Err(refusal("analytics.engine", "a landing token was reused"));
+        }
+        attempts.insert(
+            key.clone(),
+            Held {
+                leased: true,
+                landed: None,
+            },
+        );
+        drop(attempts);
+        let lease = Lease {
+            engine: self,
+            tenant: key.0,
+            token: key.1,
+            dir,
+            landed: None,
+        };
+        private_dir(&lease.dir)?;
+        let file = create_new(&lease.dir.join("source"))?;
+        Ok((lease, file))
+    }
+
+    /// OLAP-02: take the landed attempt `request.attempt` of its tenant for
+    /// a step of `request`, with the answer its landing gave. An attempt
+    /// this engine does not hold is [`ATTEMPT_UNKNOWN`]; one another
+    /// operation holds (its download, its load or another store is still
+    /// running) is [`ATTEMPT_BUSY`]; one landed by any other request (Sol
+    /// r4: another landing, load, table, file, binding or pins), or whose
+    /// answer is not `answer`, is stale. Every check is made before the
+    /// attempt is taken, so a refusal touches nothing: the attempt stays
+    /// held as it was.
+    fn lease_attempt(
+        &self,
+        request: &LandRequest,
+        answer: &LandResponse,
+    ) -> Outcome<(Lease<'_>, LandResponse)> {
+        let tenant = &request.load.tenant;
+        let token = &request.attempt;
+        let dir = self.private(tenant)?.join("scratch").join(token);
+        let mut attempts = self.attempts();
+        let Some(held) = attempts.get_mut(&(tenant.clone(), token.clone())) else {
+            return Err(refusal(ATTEMPT_UNKNOWN, "the landing attempt is not held"));
+        };
+        if held.leased {
+            return Err(refusal(ATTEMPT_BUSY, "the landing attempt is in use"));
+        }
+        let Some(landed) = held
+            .landed
+            .as_ref()
+            .filter(|landed| landed.request == contract(request) && landed.answer == *answer)
+        else {
+            return Err(refusal(STALE, "the landing attempt is another landing's"));
+        };
+        let answer = landed.answer.clone();
+        held.leased = true;
+        drop(attempts);
+        Ok((
+            Lease {
+                engine: self,
+                tenant: tenant.clone(),
+                token: token.clone(),
+                dir,
+                landed: None,
+            },
+            answer,
+        ))
     }
 
     fn with<T>(&self, tenant: &TenantId, f: impl FnOnce(&Connection) -> Outcome<T>) -> Outcome<T> {
@@ -368,27 +598,233 @@ impl Engine {
             ));
         }
         self.with(&request.tenant, |conn| {
-            db(conn.execute_batch("BEGIN TRANSACTION"))?;
-            let loaded = load_file(conn, request, file);
-            match loaded {
-                Ok((rows, reasons)) => {
-                    db(conn.execute_batch("COMMIT"))?;
-                    let rejected = reasons.values().sum();
-                    Ok(LoadResponse {
-                        load: request.load.clone(),
-                        rows,
-                        rejected,
-                        reasons,
-                        bytes,
-                        millis: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
-                    })
-                }
-                Err(error) => {
-                    let _rolled_back = conn.execute_batch("ROLLBACK");
-                    Err(error)
-                }
-            }
+            load_locked(conn, request, file, bytes, started)
         })
+    }
+
+    /// MANIFEST-LAND-1: land `request` in a fresh attempt: the engine mints
+    /// the attempt (OLAP-02: a token no caller chooses, so `request.attempt`
+    /// must be empty), `fetch` writes the source object into the attempt's
+    /// own source file, and the file is loaded under staging tables of the
+    /// attempt alone, then written as the attempt's two Parquet files: the data
+    /// file (every column of the staged table but the landing identity, in
+    /// source row order) and the held-set file (each held-back source row
+    /// with its reason and its text values). The staging is dropped in the
+    /// same call: nothing a reader sees changes until a manifest of exactly
+    /// these files commits and is read at its cache identity.
+    ///
+    /// MANIFEST-02: every file is made read-only before it is hashed, in a
+    /// directory only this process writes, so the bytes hashed are the bytes
+    /// read and sent.
+    ///
+    /// The answer names the attempt; it stays held, landed, for a store of
+    /// this landing ([`Self::store`]). Until then the landing holds it, so
+    /// no store, replayed or not, can remove it while `fetch` is still
+    /// writing; a failed landing removes it, and nothing else does.
+    ///
+    /// # Errors
+    /// `analytics.invalid` for a caller-named attempt, what `fetch` refuses,
+    /// as [`Self::load`], or the files cannot be written or read back.
+    pub fn land(
+        &self,
+        request: &LandRequest,
+        fetch: impl FnOnce(std::fs::File) -> Outcome<()>,
+    ) -> Outcome<LandResponse> {
+        if !request.attempt.is_empty() {
+            return Err(refusal(
+                "analytics.invalid",
+                "the engine names a landing's attempt; send none",
+            ));
+        }
+        let (mut lease, source) = self.begin_attempt(&request.load.tenant)?;
+        fetch(source)?;
+        let started = Instant::now();
+        let load_request = &request.load;
+        let dir = lease.dir.clone();
+        let file = dir.join("source");
+        seal(&file)?;
+        let (digest, bytes) =
+            sha256_file(&file).map_err(|error| refusal("bulk.unreadable", error.to_string()))?;
+        if digest != load_request.file.sha256 {
+            return Err(refusal(
+                "bulk.digest_mismatch",
+                "the file is not the recorded upload",
+            ));
+        }
+        let data = dir.join("data.parquet");
+        let held = dir.join("held.parquet");
+        let staged_table = staged(&load_request.table, &lease.token);
+        let staged = LoadRequest {
+            table: staged_table.clone(),
+            ..load_request.clone()
+        };
+        let (load, valid_time) = self.with(&load_request.tenant, |conn| {
+            let landed = (|| {
+                let load = load_locked(conn, &staged, &file, bytes, started)?;
+                copy_parquet(
+                    conn,
+                    &format!(
+                        "SELECT {} FROM {} ORDER BY \":row\"",
+                        data_columns(&staged_table).join(", "),
+                        dataset_table(&staged_table.name)
+                    ),
+                    &data,
+                )?;
+                copy_parquet(
+                    conn,
+                    &format!(
+                        "SELECT {} FROM {} ORDER BY \":row\", \":reason\"",
+                        held_columns(&staged_table).join(", "),
+                        quarantine_table(&staged_table.name)
+                    ),
+                    &held,
+                )?;
+                Ok((load, valid_ranges(conn, &staged_table)?))
+            })();
+            drop_staged(conn, &staged_table)?;
+            landed
+        })?;
+        let _source = std::fs::remove_file(&file);
+        let landed = |path: &Path, rows: u64| -> Outcome<LandedFile> {
+            seal(path)?;
+            let (sha256, bytes) = sha256_file(path)
+                .map_err(|error| refusal("analytics.engine", error.to_string()))?;
+            Ok(LandedFile {
+                sha256,
+                rows,
+                bytes,
+            })
+        };
+        let response = LandResponse {
+            landing: request.landing.clone(),
+            attempt: lease.token.clone(),
+            data: landed(&data, load.rows)?,
+            held: landed(&held, load.rejected)?,
+            load,
+            valid_time,
+            stored: None,
+        };
+        lease.landed = Some(Landed {
+            request: contract(&LandRequest {
+                attempt: lease.token.clone(),
+                ..request.clone()
+            }),
+            answer: response.clone(),
+        });
+        Ok(response)
+    }
+
+    /// MANIFEST-CACHE-1: keep an attempt's files, which the caller has sent
+    /// to their objects, as the files of the cache identity
+    /// [`dataset_cache_id`] names. Each file must still be the digest its
+    /// landing answered; it moves into the tenant's object directory under
+    /// that digest (an object already there must be the same digest).
+    /// `send` sends the two files (data, held) to their objects first.
+    ///
+    /// OLAP-02: the store takes the attempt by its engine-minted token, and
+    /// only for exactly the request it landed and the answer it gave (Sol
+    /// r4: the answer stored is the engine's own record, never the
+    /// caller's); it is then the attempt's one owner and removes it, stored
+    /// or not. A store of an attempt still landing is [`ATTEMPT_BUSY`] and
+    /// touches nothing. A store keeps its receipt by tenant and attempt; a
+    /// replay of an attempt already stored must be that receipt's request
+    /// (only the presigned URLs may differ) and answers the receipt's
+    /// answer, removing nothing; any other body is stale.
+    ///
+    /// # Errors
+    /// [`ATTEMPT_UNKNOWN`], [`ATTEMPT_BUSY`], `core.compute.stale_input`,
+    /// `bulk.digest_mismatch`, what `send` refuses, or an I/O or engine
+    /// failure.
+    pub fn store(
+        &self,
+        request: &StoreRequest,
+        send: impl FnOnce(&Path, &Path) -> Outcome<()>,
+    ) -> Outcome<LandResponse> {
+        let land = &request.land;
+        let tenant = &land.load.tenant;
+        let table = &land.load.table;
+        if request.landed.landing != land.landing || request.landed.attempt != land.attempt {
+            return Err(refusal(STALE, "the answer is not this landing's"));
+        }
+        let (lease, answer) = match self.lease_attempt(land, &request.landed) {
+            Ok(leased) => leased,
+            Err(unknown) if unknown.code == ATTEMPT_UNKNOWN => {
+                return self.replayed(request)?.ok_or(unknown);
+            }
+            Err(refused) => return Err(refused),
+        };
+        let (data, held) = lease.files();
+        send(&data, &held)?;
+        let objects = self.private(tenant)?.join("objects");
+        let mut kept = Vec::new();
+        for (path, file) in [(&data, &answer.data), (&held, &answer.held)] {
+            let target = objects.join(format!("{}.parquet", file.sha256));
+            verify_object(path, &file.sha256)?;
+            if target.exists() {
+                verify_object(&target, &file.sha256)?;
+            } else {
+                std::fs::rename(path, &target)
+                    .map_err(|error| refusal("analytics.engine", error.to_string()))?;
+            }
+            kept.push(target);
+        }
+        let cache = dataset_cache_id(table, &answer.data.sha256, &answer.held.sha256);
+        let record = KeptLanding {
+            table: table.clone(),
+            data: KeptFile {
+                path: kept.first().cloned().unwrap_or_default(),
+                sha256: answer.data.sha256.clone(),
+                uri: request.data.uri.clone(),
+            },
+            held: KeptFile {
+                path: kept.get(1).cloned().unwrap_or_default(),
+                sha256: answer.held.sha256.clone(),
+                uri: request.held.uri.clone(),
+            },
+        };
+        let response = LandResponse {
+            stored: Some(cache.clone()),
+            ..answer
+        };
+        let receipt = StoreReceipt {
+            request: store_contract(request),
+            response: response.clone(),
+        };
+        let (record, receipt) = (json_text(&record)?, json_text(&receipt)?);
+        // The kept record and the receipt commit together, before the lease
+        // is released: a replay that finds the attempt gone finds its receipt.
+        self.with(tenant, |conn| {
+            db(conn.execute_batch("BEGIN TRANSACTION"))?;
+            let written = set_meta(conn, &format!("landing:{cache}"), &record)
+                .and_then(|()| set_meta(conn, &receipt_key(&land.attempt), &receipt));
+            if written.is_err() {
+                let _rolled_back = conn.execute_batch("ROLLBACK");
+                return written;
+            }
+            db(conn.execute_batch("COMMIT"))
+        })?;
+        drop(lease);
+        Ok(response)
+    }
+
+    /// OLAP-02 (Sol r4): the answer of a store of `request` that already
+    /// happened, from the receipt kept for its tenant and attempt. Reads
+    /// only. `None` when no store of the attempt happened; stale when one
+    /// did, of any other request than this one ([`store_contract`]).
+    fn replayed(&self, request: &StoreRequest) -> Outcome<Option<LandResponse>> {
+        let land = &request.land;
+        let Some(text) = self.with(&land.load.tenant, |conn| {
+            meta(conn, &receipt_key(&land.attempt))
+        })?
+        else {
+            return Ok(None);
+        };
+        let receipt: StoreReceipt = serde_json::from_str(&text)
+            .map_err(|error| refusal("analytics.engine", error.to_string()))?;
+        if receipt.request != store_contract(request) {
+            return Err(refusal(STALE, "the store is another request's"));
+        }
+        Ok(Some(receipt.response))
     }
 
     /// One records page of a source (HOST-READ-3 on the engine): the rows
@@ -959,7 +1395,9 @@ impl Scope {
             }
             Source::Dataset { table, load } => {
                 if meta(conn, &format!("load:{table}"))?.as_deref() != Some(load.as_str()) {
-                    return Err(refusal(STALE, "the dataset was loaded again"));
+                    // MANIFEST-CACHE-1: a cache miss rebuilds the dataset
+                    // from the files of exactly its cache identity.
+                    hydrate(conn, table, load)?;
                 }
                 let schema = schema_of(conn, &format!("dataset:{table}"))?;
                 Ok(Self {
@@ -2099,14 +2537,9 @@ fn load_file(
     let quarantine = quarantine_table(&table.name);
     db(conn.execute_batch(&format!(
         "DROP TABLE IF EXISTS {dataset}; DROP TABLE IF EXISTS {quarantine}; CREATE TABLE {dataset} ({}); \
-         CREATE TABLE {quarantine} (\":row\" UBIGINT, \":load\" VARCHAR, \":reason\" VARCHAR{});",
+         CREATE TABLE {quarantine} ({});",
         dataset_ddl(table),
-        table.columns.iter().fold(String::new(), |mut out, c| {
-            out.push_str(", ");
-            out.push_str(&ident(&c.id));
-            out.push_str(" VARCHAR");
-            out
-        }),
+        quarantine_ddl(table),
     )))?;
     let mut columns = Vec::new();
     let mut values = Vec::new();
@@ -2131,7 +2564,7 @@ fn load_file(
     ))?;
     db(conn.execute(
         &format!(
-            "INSERT INTO {quarantine} SELECT \":row\", ?, \":reason\"{} FROM \":checked\" WHERE \":reason\" IS NOT NULL ORDER BY \":row\"",
+            "INSERT INTO {quarantine} SELECT \":row\", ?, \":reason\", NULL, TRUE{} FROM \":checked\" WHERE \":reason\" IS NOT NULL ORDER BY \":row\"",
             (0..table.columns.len()).fold(String::new(), |mut out, i| {
                 out.push_str(", c");
                 out.push_str(&i.to_string());
@@ -2165,6 +2598,291 @@ fn load_file(
         &format!("{} {}", request.file.sha256, request.file.uri),
     )?;
     Ok((rows, reasons))
+}
+
+/// The load step under the tenant's lock, in one transaction.
+fn load_locked(
+    conn: &Connection,
+    request: &LoadRequest,
+    file: &Path,
+    bytes: u64,
+    started: Instant,
+) -> Outcome<LoadResponse> {
+    db(conn.execute_batch("BEGIN TRANSACTION"))?;
+    match load_file(conn, request, file) {
+        Ok((rows, reasons)) => {
+            db(conn.execute_batch("COMMIT"))?;
+            let rejected = reasons.values().sum();
+            Ok(LoadResponse {
+                load: request.load.clone(),
+                rows,
+                rejected,
+                reasons,
+                bytes,
+                millis: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            })
+        }
+        Err(error) => {
+            let _rolled_back = conn.execute_batch("ROLLBACK");
+            Err(error)
+        }
+    }
+}
+
+/// The quarantine (held-set) table: each held-back source row with its
+/// reason, the rule that holds it (none for a row that could not be typed),
+/// whether it holds the row back, and the row's text values.
+fn quarantine_ddl(table: &TableSchema) -> String {
+    let mut columns = vec![
+        format!("{} UBIGINT", ident(":row")),
+        format!("{} VARCHAR", ident(":load")),
+        format!("{} VARCHAR", ident(":reason")),
+        format!("{} VARCHAR", ident(":rule")),
+        format!("{} BOOLEAN", ident(":holds")),
+    ];
+    columns.extend(
+        table
+            .columns
+            .iter()
+            .map(|c| format!("{} VARCHAR", ident(&c.id))),
+    );
+    columns.join(", ")
+}
+
+/// The data file's columns: the cache table's, without the landing identity.
+fn data_columns(table: &TableSchema) -> Vec<String> {
+    let mut columns = vec![ident(":id"), ident(":v"), ident(":row")];
+    for column in &table.columns {
+        columns.push(ident(&column.id));
+        if matches!(column.kind, ColumnKind::Timestamp | ColumnKind::Date) {
+            columns.push(derived(&column.id, "t"));
+            columns.push(derived(&column.id, "n"));
+        }
+    }
+    columns
+}
+
+/// The held-set file's columns: the quarantine table's, without the landing identity.
+fn held_columns(table: &TableSchema) -> Vec<String> {
+    let mut columns = vec![
+        ident(":row"),
+        ident(":reason"),
+        ident(":rule"),
+        ident(":holds"),
+    ];
+    columns.extend(table.columns.iter().map(|c| ident(&c.id)));
+    columns
+}
+
+fn quoted_path(path: &Path) -> String {
+    format!("'{}'", path.to_string_lossy().replace('\'', "''"))
+}
+
+/// Write one query's rows as a zstd Parquet file, in the query's order.
+fn copy_parquet(conn: &Connection, query: &str, path: &Path) -> Outcome<()> {
+    db(conn.execute_batch(&format!(
+        "COPY ({query}) TO {} (FORMAT parquet, COMPRESSION zstd, ROW_GROUP_SIZE 122880)",
+        quoted_path(path)
+    )))
+}
+
+/// Each temporal column's earliest and latest admitted value, by instant.
+fn valid_ranges(conn: &Connection, table: &TableSchema) -> Outcome<Vec<ValidRange>> {
+    let dataset = dataset_table(&table.name);
+    let mut ranges = Vec::new();
+    for column in &table.columns {
+        if !matches!(column.kind, ColumnKind::Timestamp | ColumnKind::Date) {
+            continue;
+        }
+        let (c, t, n) = (
+            ident(&column.id),
+            derived(&column.id, "t"),
+            derived(&column.id, "n"),
+        );
+        let end = |direction: &str| -> Outcome<Option<String>> {
+            let mut statement = db(conn.prepare(&format!(
+                "SELECT {c} FROM {dataset} WHERE {c} IS NOT NULL ORDER BY {t} {direction}, {n} {direction} LIMIT 1"
+            )))?;
+            let mut rows = db(statement.query([]))?;
+            match db(rows.next())? {
+                Some(row) => Ok(Some(db(row.get(0))?)),
+                None => Ok(None),
+            }
+        };
+        if let (Some(from), Some(to)) = (end("ASC")?, end("DESC")?) {
+            ranges.push(ValidRange {
+                column: column.id.clone(),
+                from,
+                to,
+            });
+        }
+    }
+    Ok(ranges)
+}
+
+/// MANIFEST-CACHE-1: the files a stored landing is kept as, by cache identity.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct KeptLanding {
+    table: TableSchema,
+    data: KeptFile,
+    held: KeptFile,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct KeptFile {
+    path: PathBuf,
+    sha256: String,
+    uri: String,
+}
+
+/// MANIFEST-CACHE-1: rebuild the dataset `table` at the cache identity
+/// `load` from the files kept for it. Each file must hash to the digest the
+/// identity was made of before any of it is read. The table is replaced in
+/// one transaction, so a reader sees the old dataset or the new one whole.
+fn hydrate(conn: &Connection, table: &str, load: &str) -> Outcome<()> {
+    let cold = || {
+        refusal(
+            DATASET_COLD,
+            "the dataset's files are not kept by this engine",
+        )
+    };
+    let text = meta(conn, &format!("landing:{load}"))?.ok_or_else(cold)?;
+    let kept: KeptLanding = serde_json::from_str(&text)
+        .map_err(|error| refusal("analytics.engine", error.to_string()))?;
+    if kept.table.name != table
+        || dataset_cache_id(&kept.table, &kept.data.sha256, &kept.held.sha256) != load
+    {
+        return Err(refusal(STALE, "the kept landing is not this dataset"));
+    }
+    verify_object(&kept.data.path, &kept.data.sha256)?;
+    verify_object(&kept.held.path, &kept.held.sha256)?;
+    db(conn.execute_batch("BEGIN TRANSACTION"))?;
+    let rebuilt = rebuild(conn, &kept, load);
+    if rebuilt.is_err() {
+        let _rolled_back = conn.execute_batch("ROLLBACK");
+        return rebuilt;
+    }
+    db(conn.execute_batch("COMMIT"))
+}
+
+/// The cache table and quarantine of a kept landing, from its files.
+fn rebuild(conn: &Connection, kept: &KeptLanding, load: &str) -> Outcome<()> {
+    let table = &kept.table;
+    let dataset = dataset_table(&table.name);
+    let quarantine = quarantine_table(&table.name);
+    db(conn.execute_batch(&format!(
+        "DROP TABLE IF EXISTS {dataset}; DROP TABLE IF EXISTS {quarantine}; \
+         CREATE TABLE {dataset} ({}); CREATE TABLE {quarantine} ({});",
+        dataset_ddl(table),
+        quarantine_ddl(table),
+    )))?;
+    let insert = |target: &str, columns: &[String], path: &Path| -> Outcome<()> {
+        let mut names = columns.to_vec();
+        names.push(ident(":load"));
+        let mut values = columns.to_vec();
+        values.push("?".to_owned());
+        db(conn.execute(
+            &format!(
+                "INSERT INTO {target} ({}) SELECT {} FROM read_parquet({})",
+                names.join(", "),
+                values.join(", "),
+                quoted_path(path)
+            ),
+            [load],
+        ))?;
+        Ok(())
+    };
+    insert(&dataset, &data_columns(table), &kept.data.path)?;
+    insert(&quarantine, &held_columns(table), &kept.held.path)?;
+    set_meta(conn, &format!("load:{}", table.name), load)?;
+    set_meta(
+        conn,
+        &format!("dataset:{}", table.name),
+        &schema_text(table)?,
+    )?;
+    set_meta(
+        conn,
+        &format!("lineage:{load}"),
+        &format!("{} {}", kept.data.sha256, kept.data.uri),
+    )
+}
+
+/// A refusal of a read whose dataset this engine cannot rebuild: the files
+/// of its committed manifest are not kept here.
+pub const DATASET_COLD: &str = "analytics.dataset_cold";
+
+/// The staging schema of one landing attempt: the type's columns under a
+/// name of the attempt alone (`<type>#<attempt>`), so a reader of the type,
+/// or another attempt, never sees it.
+fn staged(table: &TableSchema, attempt: &str) -> TableSchema {
+    TableSchema {
+        name: format!("{}#{attempt}", table.name),
+        ..table.clone()
+    }
+}
+
+/// Drop an attempt's staging tables and their records.
+fn drop_staged(conn: &Connection, staged: &TableSchema) -> Outcome<()> {
+    db(conn.execute_batch(&format!(
+        "DROP TABLE IF EXISTS {}; DROP TABLE IF EXISTS {};",
+        dataset_table(&staged.name),
+        quarantine_table(&staged.name),
+    )))?;
+    for key in ["load", "dataset"] {
+        db(conn.execute(
+            "DELETE FROM \":meta\" WHERE key = ?",
+            [format!("{key}:{}", staged.name)],
+        ))?;
+    }
+    Ok(())
+}
+
+/// MANIFEST-02: create `dir` if it is missing and make it this process's alone.
+fn private_dir(dir: &Path) -> Outcome<()> {
+    let failed = |error: std::io::Error| refusal("analytics.engine", error.to_string());
+    std::fs::create_dir_all(dir).map_err(failed)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)).map_err(failed)?;
+    }
+    Ok(())
+}
+
+/// MANIFEST-02: create `path`, which must not exist, for this process alone.
+fn create_new(path: &Path) -> Outcome<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+    }
+    options
+        .open(path)
+        .map_err(|error| refusal("analytics.engine", error.to_string()))
+}
+
+/// MANIFEST-02: make a written file read-only before it is hashed.
+fn seal(path: &Path) -> Outcome<()> {
+    let failed = |error: std::io::Error| refusal("bulk.unreadable", error.to_string());
+    let mut permissions = std::fs::metadata(path).map_err(failed)?.permissions();
+    permissions.set_readonly(true);
+    std::fs::set_permissions(path, permissions).map_err(failed)
+}
+
+/// A kept object must hash to its digest before it is read.
+fn verify_object(path: &Path, sha256: &str) -> Outcome<()> {
+    let (digest, _bytes) =
+        sha256_file(path).map_err(|error| refusal("bulk.unreadable", error.to_string()))?;
+    if digest == sha256 {
+        Ok(())
+    } else {
+        Err(refusal(
+            "bulk.digest_mismatch",
+            "a kept dataset file is not the one its manifest records",
+        ))
+    }
 }
 
 fn present(
