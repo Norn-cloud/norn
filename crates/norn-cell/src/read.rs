@@ -3484,8 +3484,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             // placeholders must never escape when their encoding index is
             // missing or changed; a diagnosis read (`verify` off) checks them
             // alone. Valid legacy lookalikes retain their own hash.
-            if (verify
-                || entry.event.get("type").and_then(Value::as_str) == Some("command.result"))
+            if (verify || entry.event.get("type").and_then(Value::as_str) == Some("command.result"))
                 && entry_hash(
                     entry.seq,
                     entry.commit_seq,
@@ -3901,7 +3900,9 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         let mut time_floor = 0_u64;
         if checkpoint.commits > 0 {
             let anchor = self.receipts_after(checkpoint.commits.saturating_sub(1), 1)?;
-            time_floor = anchor.first().map_or(0, |receipt| receipt.body.logical_time);
+            time_floor = anchor
+                .first()
+                .map_or(0, |receipt| receipt.body.logical_time);
             if !anchor.first().is_some_and(|receipt| {
                 receipt.body.commit_seq == checkpoint.commits
                     && receipt.body.ledger_head == checkpoint.hash

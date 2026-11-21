@@ -38,8 +38,8 @@ use crate::read::{
 };
 use crate::system::{
     DEFINITION_ACTIVE, DEFINITION_ADMISSION_RECEIPT, DEFINITION_LAYOUT, DEFINITION_REGISTRY,
-    DEFINITION_VERSION, INBOX, MARKING_CURRENT, MARKING_SNAPSHOT, MARKING_VERSION, META, OUTBOX, RECEIPT,
-    RUN, STORE_FORMAT, SYSTEM_DDL, ensure_marking_subject, marking_subject,
+    DEFINITION_VERSION, INBOX, MARKING_CURRENT, MARKING_SNAPSHOT, MARKING_VERSION, META, OUTBOX,
+    RECEIPT, RUN, STORE_FORMAT, SYSTEM_DDL, ensure_marking_subject, marking_subject,
 };
 use crate::write::Writer;
 
@@ -2923,8 +2923,9 @@ impl<E: SqlEngine> CellStore<E> {
             {
                 return Err(CellError::LedgerCorrupt {
                     seq: version.commit_seq,
-                    reason: "definition readmission changed its definitions or lost receipt evidence"
-                        .to_owned(),
+                    reason:
+                        "definition readmission changed its definitions or lost receipt evidence"
+                            .to_owned(),
                 });
             }
             validate_readmission_transition(previous, version, readmission)?;
@@ -2939,8 +2940,7 @@ impl<E: SqlEngine> CellStore<E> {
         )?;
         let installed_model = Model::from_retained_snapshot(&installation.model)?;
         installed_model.check_governing_laws(&version.canonical_set)?;
-        let entries =
-            reader.ledger_page(receipt.body.first_event_seq.saturating_sub(1), 1)?;
+        let entries = reader.ledger_page(receipt.body.first_event_seq.saturating_sub(1), 1)?;
         if installation.installed != *version
             || record.receipt != *receipt
             || installed_model.model_hash() != version.model_hash
@@ -2954,8 +2954,7 @@ impl<E: SqlEngine> CellStore<E> {
         {
             return Err(CellError::LedgerCorrupt {
                 seq: version.commit_seq,
-                reason: "definition history disagrees with its typed export record"
-                    .to_owned(),
+                reason: "definition history disagrees with its typed export record".to_owned(),
             });
         }
         Ok(())

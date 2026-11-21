@@ -166,9 +166,7 @@ pub(crate) fn definitions_digest(
         .take_while(|version| version.commit_seq <= commits)
         .try_fold(
             crate::codec::hash_json(&"norn.open-checkpoint.definitions/1")?,
-            |digest, version| {
-                crate::codec::hash_json(&(digest, crate::codec::hash_json(version)?))
-            },
+            |digest, version| crate::codec::hash_json(&(digest, crate::codec::hash_json(version)?)),
         )
 }
 
@@ -177,11 +175,7 @@ pub(crate) fn definitions_digest(
 /// # Errors
 /// SQL failures, or a checkpoint row out of range.
 pub(crate) fn load(engine: &impl SqlEngine) -> Result<Option<OpenCheckpoint>, CellError> {
-    let Some(row) = engine
-        .query(LOAD_SQL, params![])?
-        .into_iter()
-        .next()
-    else {
+    let Some(row) = engine.query(LOAD_SQL, params![])?.into_iter().next() else {
         return Ok(None);
     };
     let row = SqlRow(row);
@@ -286,7 +280,8 @@ mod tests {
     #[test]
     fn an_older_checkpoint_layout_refuses_under_either_quoted_string_mode() {
         use rusqlite::config::DbConfig;
-        const UNQUALIFIED: &str = r#"SELECT "commits", "quantity_receipts" FROM "_norn_open_checkpoint" WHERE "id" = 1"#;
+        const UNQUALIFIED: &str =
+            r#"SELECT "commits", "quantity_receipts" FROM "_norn_open_checkpoint" WHERE "id" = 1"#;
         for dqs in [true, false] {
             let conn = rusqlite::Connection::open_in_memory().expect("database");
             conn.set_db_config(DbConfig::SQLITE_DBCONFIG_DQS_DML, dqs)
