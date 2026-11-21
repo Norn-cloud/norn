@@ -171,6 +171,12 @@ fn per_row(cell: &mut Cell, lines: &[Line]) -> (BTreeSet<Finding>, BTreeSet<u64>
         }
         // The price stays an exact number token, never a float.
         let text = payload.to_string().replace("\"__PRICE__\"", &line.price);
+        // S4: a number the per-row decoder cannot hold exactly is refused
+        // before it is observed; the row is held back.
+        let Ok(payload) = Value::from_json_text(&text) else {
+            held.insert(row);
+            continue;
+        };
         let observed = Observed {
             id: ObservationId(format!("row-{row}")),
             provenance: Provenance {
@@ -182,7 +188,7 @@ fn per_row(cell: &mut Cell, lines: &[Line]) -> (BTreeSet<Finding>, BTreeSet<u64>
             input: norn_ir::runtime_object! {"contract"=>"norn.raw_observation/v1", "source"=>"Bench",
             "source_id"=>id.clone(), "event_id"=>format!("row-{row}"), "source_version"=>"2",
             "pipeline_version"=>"pipeline/1", "kind"=>"upsert", "extracted_at"=>1_793_750_400_000u64,
-            "payload"=>Value::from_json_text(&text).expect("payload"),
+            "payload"=>payload,
             "payload_digest"=>norn_ir::canonical::HashProfile::Norn1.hash_json(&text).expect("digest")},
         };
         let (bundle, _) = cell
@@ -428,15 +434,56 @@ struct SetBased {
 /// checked in one pass, the residue settled by the per-row evaluator; read
 /// back from the two Parquet files the landing wrote.
 fn set_based(cell: &Cell, lines: &[Line]) -> SetBased {
-    set_based_file(cell, csv(lines).as_bytes(), FileFormat::Csv)
+    set_based_file(cell, csv(lines).as_bytes(), FileFormat::Csv, lines)
 }
 
-/// [`set_based`], of a file of the lines in `format`.
-fn set_based_file(cell: &Cell, bytes: &[u8], format: FileFormat) -> SetBased {
+/// S3: every finding in the held-set file carries its row's values, as the
+/// per-row path holds them (a number canonical).
+fn assert_held_values(held: &std::path::Path, lines: &[Line]) {
+    let conn = duckdb::Connection::open_in_memory().expect("reader");
+    let mut statement = conn
+        .prepare(&format!(
+            "SELECT \":row\", {} FROM read_parquet('{}') WHERE \":rule\" IS NOT NULL ORDER BY 1",
+            FIELDS.join(", "),
+            held.display()
+        ))
+        .expect("held values");
+    let rows = statement
+        .query_map([], |row| {
+            let mut values = Vec::new();
+            for i in 1..=FIELDS.len() {
+                values.push(row.get::<_, Option<String>>(i)?);
+            }
+            Ok((row.get::<_, u64>(0)?, values))
+        })
+        .expect("held values");
+    for row in rows {
+        let (row, values) = row.expect("held row");
+        let line = &lines[usize::try_from(row - 1).expect("row")];
+        let price = norn_ir::Decimal::parse(&line.price)
+            .expect("a typed price")
+            .canonical();
+        let expected = vec![
+            Some(format!("line-{row}")),
+            Some(line.invoice.to_owned()),
+            Some("c".to_owned()),
+            Some(line.quantity.to_string()),
+            Some(price),
+            line.customer.map(str::to_owned),
+            Some(line.country.to_owned()),
+            Some(line.occurred_at.to_owned()),
+        ];
+        assert_eq!(values, expected, "the held values of row {row}");
+    }
+}
+
+/// [`set_based`], of a file of `lines` in `format`.
+fn set_based_file(cell: &Cell, bytes: &[u8], format: FileFormat, lines: &[Line]) -> SetBased {
     let (dir, engine) = engine();
     let (request, landed) = land(&engine, cell, bytes, format);
     let (landed, residue, rows) = settle_all(&engine, cell, &request, landed);
     let (data, held_path) = files(dir.path(), &landed.attempt);
+    assert_held_values(&held_path, lines);
     let mut findings = BTreeSet::new();
     let mut held = BTreeSet::new();
     for (row, rule, holds) in parquet_rows(&held_path, "\":rule\", \":holds\"") {
@@ -529,6 +576,9 @@ fn lines() -> impl proptest::strategy::Strategy<Value = Vec<Line>> {
             "-79228162514264337593543950.335".to_owned(),
             "0.001".to_owned(),
             "-0.001".to_owned(),
+            // S4: past the per-row decoder's exact range: never typed.
+            "80000000000000000000000000000".to_owned(),
+            "-79228162514264337593543950.336".to_owned(),
         ]),
         proptest::option::of(proptest::sample::select(vec!["ann", "\u{e9}"])),
         proptest::sample::select(vec!["GB", "XX"]),
@@ -555,6 +605,12 @@ fn decided(line: &Line) -> bool {
     line.customer.is_some_and(|customer| customer != "e\u{301}")
 }
 
+/// S4: whether `line` is typed at all: its price is in the per-row
+/// decoder's exact range. An untyped row is held back, never residue.
+fn typed(line: &Line) -> bool {
+    norn_ir::Decimal::parse(&line.price).is_ok()
+}
+
 proptest::proptest! {
     #![proptest_config(proptest::test_runner::Config::with_cases(16))]
     /// MANIFEST-LAWS-1 / LAW-05: lowered laws decide every row whose reads
@@ -571,7 +627,7 @@ proptest::proptest! {
         proptest::prop_assert_eq!(&set.data, &row_trusted);
         // Only rows with an absent read, or text not in NFC, are left to the
         // per-row evaluator.
-        let undecided = u64::try_from(lines.iter().filter(|line| !decided(line)).count()).expect("count");
+        let undecided = u64::try_from(lines.iter().filter(|line| typed(line) && !decided(line)).count()).expect("count");
         proptest::prop_assert_eq!(set.residue, undecided);
     }
 
@@ -586,7 +642,7 @@ proptest::proptest! {
         proptest::prop_assert_eq!(&set.findings, &row_findings);
         proptest::prop_assert_eq!(&set.held, &row_held);
         proptest::prop_assert_eq!(&set.data, &row_trusted);
-        proptest::prop_assert_eq!(set.residue, u64::try_from(lines.len()).expect("rows"));
+        proptest::prop_assert_eq!(set.residue, u64::try_from(lines.iter().filter(|line| typed(line)).count()).expect("rows"));
         let function = cell
             .store()
             .dataset_checks(TYPE, &cell.store().analytics_table(TYPE).expect("table"))
@@ -634,7 +690,7 @@ fn present_parquet_text_is_decided_as_the_per_row_path_decides_it() {
             occurred_at: "2026-10-01T09:30:00Z",
         })
         .collect();
-    let set = set_based_file(&cell, &parquet(&lines), FileFormat::Parquet);
+    let set = set_based_file(&cell, &parquet(&lines), FileFormat::Parquet, &lines);
     let (row_findings, row_held, row_trusted) = per_row(&mut cell, &lines);
     assert_eq!(set.findings, row_findings);
     assert_eq!(set.held, row_held);
@@ -884,4 +940,178 @@ fn parquet_instants_import_with_every_nanosecond_and_their_instant() {
             "1677-09-21T00:12:43.500000000Z",
         ]
     );
+}
+
+/// A plain line, `customer` as given.
+fn plain(customer: Option<&'static str>) -> Line {
+    Line {
+        invoice: "A1",
+        quantity: 1,
+        price: "1.5".into(),
+        customer,
+        country: "GB",
+        occurred_at: INSTANTS[0],
+    }
+}
+
+/// The attempt directories left under the engine directory `root`.
+fn attempts_left(root: &std::path::Path) -> usize {
+    let scratch = root.join("t").join(tenant().as_str()).join("scratch");
+    std::fs::read_dir(scratch).map_or(0, Iterator::count)
+}
+
+/// MANIFEST-LAWS-1 (Sol S1): a landing whose residue takes more pages than
+/// every host can settle within its engine steps is refused at land time
+/// with a stable code, and its staging and attempt are dropped, so nothing
+/// is left staged for a retry to strand. One page fewer lands.
+#[test]
+fn a_residue_past_the_page_bound_is_refused_and_leaves_nothing_staged() {
+    use norn_cell::analytics::{MAX_ENGINE_STEPS, MAX_RESIDUE_PAGES, RESIDUE_EXCEEDED};
+    // A landing is a land call, a settle per page and a store.
+    assert_eq!(MAX_RESIDUE_PAGES + 2, MAX_ENGINE_STEPS);
+    let (_dir, cell) = cell(&laws(&[FUNCTION]));
+    let (engine_dir, engine) = engine();
+    let pages = usize::try_from(MAX_RESIDUE_PAGES).expect("pages");
+    let fits: Vec<Line> = (0..pages).map(|_| plain(Some("ann"))).collect();
+    let over: Vec<Line> = (0..=pages).map(|_| plain(Some("ann"))).collect();
+    let paged = |lines: &[Line]| {
+        let bytes = csv(lines);
+        let mut request = land_request(&cell, bytes.as_bytes(), FileFormat::Csv);
+        request.residue_page = 1;
+        let landed = engine.land(&request, |mut file| {
+            file.write_all(bytes.as_bytes()).expect("source");
+            Ok(())
+        });
+        (request, landed)
+    };
+    let (_, refused) = paged(&over);
+    assert_eq!(refused.expect_err("too many pages").code, RESIDUE_EXCEEDED);
+    assert_eq!(attempts_left(engine_dir.path()), 0, "nothing is staged");
+    let (mut request, landed) = paged(&fits);
+    let landed = landed.expect("the bound itself lands");
+    request.attempt.clone_from(&landed.attempt);
+    let (landed, residue, _) = settle_all(&engine, &cell, &request, landed);
+    assert_eq!(residue, u64::try_from(pages).expect("rows"));
+    assert!(landed.data.is_some());
+}
+
+/// MANIFEST-LAWS-1 (Sol S2): a row whose rules may cost the per-row
+/// evaluator more fuel than it gives a row is never decided in SQL. Two
+/// identical 600 KB NFC texts are equal in SQL, but ZEN charges an equality
+/// its operands' bytes, so the per-row path refuses the row; the engine
+/// leaves it to that path, which refuses the dataset as it would.
+#[test]
+fn a_row_past_the_fuel_budget_is_left_to_the_per_row_path() {
+    let law = ("customer_is_invoice", "warning", "self.customer == self.invoice");
+    let (_dir, cell) = cell(&[law]);
+    let (_engine_dir, engine) = engine();
+    let wide: &'static str = Box::leak("a".repeat(600_000).into_boxed_str());
+    let lines = vec![
+        Line {
+            invoice: wide,
+            ..plain(Some(wide))
+        },
+        plain(Some("A1")),
+    ];
+    let (request, landed) = land(&engine, &cell, csv(&lines).as_bytes(), FileFormat::Csv);
+    assert_eq!(landed.residue_total, 1, "only the wide row is residue");
+    assert_eq!(landed.residue[0].row, 1);
+    cell.store()
+        .residue_findings(TYPE, &request.load.table, &landed.residue)
+        .expect_err("the per-row path refuses the wide row");
+}
+
+/// MANIFEST-LAWS-1 (Sol S4): a number past the per-row decoder's exact
+/// range is never typed, even where no law reads it: the per-row path
+/// refuses it, so the dataset path holds it back too.
+#[test]
+fn a_number_past_the_exact_range_is_never_trusted() {
+    let (_dir, mut cell) = cell(&[LOWERED[3]]);
+    let mut lines = vec![plain(Some("ann")), plain(Some("ann")), plain(Some("ann"))];
+    lines[0].price = "80000000000000000000000000000".into();
+    lines[1].price = "-79228162514264337593543950.336".into();
+    let (_engine_dir, engine) = engine();
+    let (_, landed) = land(&engine, &cell, csv(&lines).as_bytes(), FileFormat::Csv);
+    assert_eq!(landed.load.reasons.get("bulk.out_of_range"), Some(&2));
+    let set = set_based(&cell, &lines);
+    let (row_findings, row_held, row_trusted) = per_row(&mut cell, &lines);
+    assert_eq!(set.held, BTreeSet::from([1, 2]));
+    assert_eq!(set.data, BTreeSet::from([3]));
+    assert_eq!(
+        (set.findings, set.held, set.data),
+        (row_findings, row_held, row_trusted)
+    );
+}
+
+/// MANIFEST-LAWS-1 (Sol S5): a settle covers exactly the residue page the
+/// engine answered. One whose `through` passes the page's last row would
+/// drop rows no evaluator saw; it is refused before the attempt is taken,
+/// and the attempt then settles as an undisturbed one does.
+#[test]
+fn a_settle_past_the_answered_page_is_refused() {
+    let (_dir, cell) = cell(&laws(&[FUNCTION]));
+    let (_engine_dir, engine) = engine();
+    let lines: Vec<Line> = (0..9).map(|_| plain(Some("ann"))).collect();
+    let bytes = csv(&lines);
+    let (request, pending) = land(&engine, &cell, bytes.as_bytes(), FileFormat::Csv);
+    assert_eq!(pending.residue.last().expect("a page").row, 7);
+    assert_eq!(pending.residue_total, 9);
+    let findings = cell
+        .store()
+        .residue_findings(TYPE, &request.load.table, &pending.residue)
+        .expect("per-row residue");
+    for through in [9, 6] {
+        assert_eq!(
+            engine
+                .settle(&SettleRequest {
+                    land: request.clone(),
+                    through,
+                    findings: findings.clone(),
+                })
+                .expect_err("not the answered page")
+                .code,
+            "core.compute.stale_input"
+        );
+    }
+    let (settled, residue, _) = settle_all(&engine, &cell, &request, pending);
+    assert_eq!(residue, 9, "every residue row was evaluated");
+    let (clean, clean_pending) = land(&engine, &cell, bytes.as_bytes(), FileFormat::Csv);
+    let (clean, _, _) = settle_all(&engine, &cell, &clean, clean_pending);
+    assert_eq!(
+        (settled.data, settled.held, settled.findings),
+        (clean.data, clean.held, clean.findings)
+    );
+}
+
+/// MANIFEST-LAWS-1 (Sol S6): a residue page is bounded in bytes as well as
+/// rows: wide rows end a page early, and every row is still settled once.
+#[test]
+fn a_residue_page_of_wide_rows_is_bounded_in_bytes() {
+    use norn_cell::analytics::RESIDUE_PAGE_BYTES;
+    let (_dir, cell) = cell(&[FUNCTION]);
+    let (_engine_dir, engine) = engine();
+    let wide: &'static str = Box::leak("w".repeat(1 << 20).into_boxed_str());
+    let lines: Vec<Line> = (0..7).map(|_| plain(Some(wide))).collect();
+    let (request, mut landed) = land(&engine, &cell, csv(&lines).as_bytes(), FileFormat::Csv);
+    let mut rows = Vec::new();
+    let mut pages = 0;
+    while landed.residue_total > 0 {
+        let page = serde_json::to_string(&landed.residue).expect("page");
+        assert!(page.len() <= RESIDUE_PAGE_BYTES, "a page of {} bytes", page.len());
+        pages += 1;
+        let findings = cell
+            .store()
+            .residue_findings(TYPE, &request.load.table, &landed.residue)
+            .expect("per-row residue");
+        rows.extend(landed.residue.iter().map(|row| row.row));
+        landed = engine
+            .settle(&SettleRequest {
+                land: request.clone(),
+                through: *rows.last().expect("a row"),
+                findings,
+            })
+            .expect("settled");
+    }
+    assert!(pages > 1, "wide rows end a page early");
+    assert_eq!(rows, (1..=7).collect::<Vec<u64>>());
 }

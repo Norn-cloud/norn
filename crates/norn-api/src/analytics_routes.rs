@@ -46,7 +46,7 @@ use crate::scope::{CellScope, ScopeQuery};
 /// Committed versions sent per sync batch.
 const SYNC_BATCH: usize = 5_000;
 /// Engine steps one answer may take before it refuses.
-pub const MAX_STEPS: usize = 64;
+pub const MAX_STEPS: u32 = norn_cell::analytics::MAX_ENGINE_STEPS;
 /// Lifetime of the presigned URLs a load reads and lands through, in seconds.
 const LOAD_URL_SECONDS: u64 = 900;
 
@@ -1244,10 +1244,11 @@ struct Landing {
 }
 
 /// Landing steps one load may take: the landing, its residue settles, then
-/// storing its files.
-const MAX_LAND_STEPS: usize = 100_000;
+/// storing its files. MANIFEST-LAWS-1 (S1): the bound every host shares
+/// (the engine refuses a landing whose residue takes more pages).
+const MAX_LAND_STEPS: u32 = norn_cell::analytics::MAX_ENGINE_STEPS;
 /// Residue rows one landing answer carries at most.
-const RESIDUE_PAGE: u32 = 2_000;
+const RESIDUE_PAGE: u32 = norn_cell::analytics::RESIDUE_PAGE_ROWS;
 
 /// MANIFEST-LAND-1: type `record` by `object_type` on the engine, land it
 /// as the data and held-set Parquet files under an attempt the engine

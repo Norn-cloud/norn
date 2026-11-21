@@ -28,7 +28,7 @@ use norn_ir::{
 use norn_kernel::{FactKey, TypeCatalog};
 
 use crate::analytics::{
-    ColumnKind, ResidueRow, RowFinding, RowPredicate, RuleCheck, TableSchema, Value,
+    ColumnKind, ResidueRow, RowFinding, RowPredicate, RuleCheck, TableSchema, Value, rule_fuel,
 };
 use crate::engine::SqlEngine;
 use crate::model::Model;
@@ -65,6 +65,30 @@ fn lower_source(source: &str, table: &TableSchema) -> Option<RowPredicate> {
     let lowered = lower(&tree)?;
     lowered.kind(table)?;
     Some(lowered)
+}
+
+/// MANIFEST-LAWS-1 (S2): the nodes of an admitted ZEN source's row tree,
+/// before lowering (0 outside the subset, whose rows are all residue).
+fn source_nodes(source: &str) -> u64 {
+    norn_kernel::governing_laws::law_row_tree(source).map_or(0, |tree| nodes(&tree))
+}
+
+fn nodes(tree: &RowExpr) -> u64 {
+    let children = match tree {
+        RowExpr::Null
+        | RowExpr::Bool(_)
+        | RowExpr::Number(_)
+        | RowExpr::Text(_)
+        | RowExpr::Column(_) => 0,
+        RowExpr::Not(inner) | RowExpr::Negate(inner) => nodes(inner),
+        RowExpr::Arithmetic(_, a, b)
+        | RowExpr::Compare(_, a, b)
+        | RowExpr::And(a, b)
+        | RowExpr::Or(a, b)
+        | RowExpr::Coalesce(a, b) => nodes(a).saturating_add(nodes(b)),
+        RowExpr::Conditional(c, a, b) => nodes(c).saturating_add(nodes(a)).saturating_add(nodes(b)),
+    };
+    children.saturating_add(1)
 }
 
 fn lower(tree: &RowExpr) -> Option<RowPredicate> {
@@ -173,6 +197,7 @@ impl<E: SqlEngine> CellStore<E> {
                 condition: None,
                 predicate: lower_source(invariant.expression.as_str(), table),
                 expect: true,
+                fuel: rule_fuel(source_nodes(invariant.expression.as_str())),
             });
         }
         let laws = catalog
@@ -181,26 +206,37 @@ impl<E: SqlEngine> CellStore<E> {
         for artifact in laws {
             let (law, rule_ref) = norn_kernel::governing_laws::law_rule(&catalog, &name, artifact)
                 .map_err(|error| refused(error.to_string()))?;
-            let (condition, predicate) = match &law.response {
+            let (condition, predicate, nodes) = match &law.response {
                 LawResponse::Predicate { expression } => {
                     let condition = match &law.condition {
                         Some(condition) => lower_source(condition.as_str(), table).map(Some),
                         None => Some(None),
                     };
+                    let nodes = source_nodes(expression.as_str()).saturating_add(
+                        law.condition
+                            .as_ref()
+                            .map_or(0, |condition| source_nodes(condition.as_str())),
+                    );
                     match condition {
-                        Some(condition) => (condition, lower_source(expression.as_str(), table)),
-                        None => (None, None),
+                        Some(condition) => (
+                            condition,
+                            lower_source(expression.as_str(), table),
+                            nodes,
+                        ),
+                        None => (None, None, nodes),
                     }
                 }
-                LawResponse::Invariant { invariant_id, .. } => (
-                    None,
-                    invariants
+                LawResponse::Invariant { invariant_id, .. } => {
+                    let source = invariants
                         .iter()
                         .find(|(_, invariant)| invariant.id.as_str() == invariant_id)
-                        .and_then(|(_, invariant)| {
-                            lower_source(invariant.expression.as_str(), table)
-                        }),
-                ),
+                        .map(|(_, invariant)| invariant.expression.as_str());
+                    (
+                        None,
+                        source.and_then(|source| lower_source(source, table)),
+                        source.map_or(0, source_nodes),
+                    )
+                }
                 LawResponse::Action { .. }
                 | LawResponse::Transition { .. }
                 | LawResponse::TranslationPreserves { .. } => {
@@ -215,6 +251,7 @@ impl<E: SqlEngine> CellStore<E> {
                 condition,
                 predicate,
                 expect: matches!(law.modality, LawModality::Always {}),
+                fuel: rule_fuel(nodes),
             });
         }
         Ok(checks)

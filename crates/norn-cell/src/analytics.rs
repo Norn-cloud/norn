@@ -842,7 +842,60 @@ pub struct RuleCheck {
     pub predicate: Option<RowPredicate>,
     /// The value the predicate must have (`always`: true, `never`: false).
     pub expect: bool,
+    /// MANIFEST-LAWS-1 (S2): a bound on the fuel the per-row evaluator
+    /// charges for the rule's operations, apart from the data they read
+    /// ([`rule_fuel`]). The engine adds what each row's values cost and
+    /// leaves a row whose rules may cost more than [`ROW_FUEL`] to the
+    /// per-row evaluator.
+    pub fuel: u64,
 }
+
+/// MANIFEST-LAWS-1 (S2): the fuel the per-row evaluator gives one row's
+/// rules: its invariants share one decide budget and its governing laws
+/// another (`snapshot_observe::observation_rule_findings`). The engine
+/// compares the bound of all of a row's rules together against one budget,
+/// so it never decides a row either budget would refuse.
+#[must_use]
+pub fn row_fuel() -> u64 {
+    norn_ir::ResourceLimitProfile::norn_limits_v1()
+        .decide
+        .fuel_units
+}
+
+/// Fuel a rule's evaluation is charged at most beside its nodes: entering
+/// the rule, reading its result, and the checks around it.
+pub const RULE_FUEL: u64 = 64;
+/// Fuel one node of a rule's ZEN source is charged at most beside the data
+/// it reads: every node compiles to a few opcodes of one unit each, and an
+/// exact decimal site to a few more.
+pub const NODE_FUEL: u64 = 16;
+
+/// MANIFEST-LAWS-1 (S2): the static part of a rule's fuel bound: [`RULE_FUEL`]
+/// and [`NODE_FUEL`] for each node of its ZEN sources (the condition's
+/// too), counted before lowering, so a `??` the lowering drops is still
+/// paid for.
+#[must_use]
+pub fn rule_fuel(nodes: u64) -> u64 {
+    RULE_FUEL.saturating_add(NODE_FUEL.saturating_mul(nodes))
+}
+
+/// D102 / MANIFEST-LAWS-1 (S1): engine calls one request may make, on every
+/// host: the Durable Object's Worker takes this bound from the cell, and
+/// the native host's landing loop is bounded by it too.
+pub const MAX_ENGINE_STEPS: u32 = 64;
+/// MANIFEST-LAWS-1 (S1): residue pages one landing may take. A landing is
+/// one land call, a settle per page, and a store, so its calls fit
+/// [`MAX_ENGINE_STEPS`]; the engine refuses a landing whose residue takes
+/// more ([`RESIDUE_EXCEEDED`]) and drops its staging.
+pub const MAX_RESIDUE_PAGES: u32 = MAX_ENGINE_STEPS - 2;
+/// Residue rows one page carries at most.
+pub const RESIDUE_PAGE_ROWS: u32 = 2_000;
+/// MANIFEST-LAWS-1 (S6): serialized bytes one page's residue rows take at
+/// most; a page ends before the row that would pass it.
+pub const RESIDUE_PAGE_BYTES: usize = 4 << 20;
+/// A landing whose residue takes more than [`MAX_RESIDUE_PAGES`] pages, or
+/// holds a row larger than [`RESIDUE_PAGE_BYTES`].
+pub const RESIDUE_EXCEEDED: &str = "bulk.residue_exceeded";
 
 /// One rule a row fails, as the per-row evaluator found it for a residue row.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -926,7 +979,8 @@ pub struct LandRequest {
     /// MANIFEST-LAWS-1: every law and invariant that governs the type.
     #[serde(default)]
     pub checks: Vec<RuleCheck>,
-    /// Residue rows an answer carries at most.
+    /// Residue rows an answer carries at most (the engine takes at most
+    /// [`RESIDUE_PAGE_ROWS`], and at least one).
     pub residue_page: u32,
 }
 

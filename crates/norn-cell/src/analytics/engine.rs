@@ -28,6 +28,7 @@ use super::{
     Source, StoreRequest, SyncRequest, TIME_LINK_COLUMN, TableSchema, TenantId, Test, TimeLink,
     ValidRange, Value, dataset_cache_id, hex,
 };
+use super::{MAX_RESIDUE_PAGES, RESIDUE_EXCEEDED, RESIDUE_PAGE_BYTES, RESIDUE_PAGE_ROWS, row_fuel};
 
 /// An engine outcome: a typed refusal the cell maps to its own answer.
 pub type Outcome<T> = Result<T, EngineRefusal>;
@@ -420,14 +421,18 @@ impl Engine {
     /// or store is still running) is [`ATTEMPT_BUSY`]; one landed by any
     /// other request (Sol r4: another landing, load, table, file, binding,
     /// pins or rules), or not at that step, or (for a store, `answer`)
-    /// whose last answer is not `answer`, is stale. Every check is made
-    /// before the attempt is taken, so a refusal touches nothing: the
-    /// attempt, its staging and its files stay as they were.
+    /// whose last answer is not `answer`, is stale; so is (for a settle,
+    /// `through`) one whose last answer's residue page does not end at
+    /// `through` (S5: a settle covers exactly the page the engine answered,
+    /// never rows it has not shown). Every check is made before the attempt
+    /// is taken, so a refusal touches nothing: the attempt, its staging and
+    /// its files stay as they were.
     fn lease_attempt(
         &self,
         request: &LandRequest,
         phase: Phase,
         answer: Option<&LandResponse>,
+        through: Option<u64>,
     ) -> Outcome<(Lease<'_>, LandResponse)> {
         let tenant = &request.load.tenant;
         let token = &request.attempt;
@@ -449,6 +454,14 @@ impl Engine {
                 "the landing attempt is another landing's or another step's",
             ));
         };
+        if let Some(through) = through
+            && landed.answer.residue.last().map(|row| row.row) != Some(through)
+        {
+            return Err(refusal(
+                STALE,
+                "the settle does not end at the residue page the engine answered",
+            ));
+        }
         let answer = landed.answer.clone();
         held.leased = true;
         drop(attempts);
@@ -670,7 +683,9 @@ impl Engine {
     /// `analytics.invalid` for a caller-named attempt, what `fetch` refuses,
     /// as [`Self::load`], `bulk.unsupported_law` for a rule the engine does
     /// not type, `bulk.unsupported_encoding` for a column the file cannot
-    /// carry exactly, or the files cannot be written or read back.
+    /// carry exactly, [`RESIDUE_EXCEEDED`] for residue past
+    /// [`MAX_RESIDUE_PAGES`] pages (S1: refused before any answer, its
+    /// staging dropped), or the files cannot be written or read back.
     pub fn land(
         &self,
         request: &LandRequest,
@@ -715,6 +730,7 @@ impl Engine {
                 }
                 checked?;
                 db(conn.execute_batch("COMMIT"))?;
+                residue_fits(conn, &staged_table, request.residue_page)?;
                 set_meta(
                     conn,
                     &format!("counts:{}", staged_table.name),
@@ -753,11 +769,12 @@ impl Engine {
     ///
     /// # Errors
     /// [`ATTEMPT_UNKNOWN`], [`ATTEMPT_BUSY`], `core.compute.stale_input`
-    /// for an attempt that is not staged, `bulk.invalid_finding`, or an
-    /// engine failure.
+    /// for an attempt that is not staged or a `through` that is not the
+    /// last row of the page the engine answered (S5, before the attempt is
+    /// taken), `bulk.invalid_finding`, or an engine failure.
     pub fn settle(&self, request: &SettleRequest) -> Outcome<LandResponse> {
         let land = &request.land;
-        let (mut lease, _answer) = self.lease_attempt(land, Phase::Staged, None)?;
+        let (mut lease, _answer) = self.lease_attempt(land, Phase::Staged, None, Some(request.through))?;
         let staged_table = staged(&land.load.table, &land.attempt);
         let settled = self.with(&land.load.tenant, |conn| {
             // Taken: from here every refusal drops the staging with the
@@ -830,7 +847,7 @@ impl Engine {
             stored: None,
         };
         if residue_total > 0 {
-            response.residue = residue_rows(conn, &table, request.residue_page)?;
+            response.residue = residue_page(conn, &table, 0, request.residue_page)?;
             return Ok(response);
         }
         let (data, held) = (dir.join("data.parquet"), dir.join("held.parquet"));
@@ -923,7 +940,7 @@ impl Engine {
                 "the landing has residue to settle",
             ));
         }
-        let leased = self.lease_attempt(land, Phase::Written, Some(&request.landed));
+        let leased = self.lease_attempt(land, Phase::Written, Some(&request.landed), None);
         let (lease, answer) = match leased {
             Ok(leased) => leased,
             Err(unknown) if unknown.code == ATTEMPT_UNKNOWN => {
@@ -2481,6 +2498,30 @@ struct Parsed {
 }
 
 #[allow(clippy::too_many_lines, reason = "one arm per column kind")]
+/// MANIFEST-LAWS-1 (S4): a number the per-row decoder cannot hold exactly
+/// (`norn_ir::Decimal`: a 96-bit mantissa and at most 28 fractional digits
+/// once canonical) is not typed, whichever rules read it.
+const OUT_OF_RANGE: &str = "bulk.out_of_range";
+
+/// Whether the typed number `v` (a `DECIMAL`) is in the per-row decoder's
+/// exact range: its canonical digits (trailing fractional zeros and the
+/// sign dropped) are at most [`EXACT_MANTISSA`], with at most
+/// [`MAX_PREDICATE_SCALE`] of them fractional.
+fn exact_sql(v: &str) -> String {
+    let unsigned = format!("ltrim(CAST({v} AS VARCHAR), '-')");
+    let canonical = format!(
+        "(CASE WHEN strpos({unsigned}, '.') > 0 THEN rtrim(rtrim({unsigned}, '0'), '.') ELSE {unsigned} END)"
+    );
+    let fraction = format!(
+        "(CASE WHEN strpos({canonical}, '.') > 0 THEN strlen({canonical}) - strpos({canonical}, '.') ELSE 0 END)"
+    );
+    let digits = format!("ltrim(replace({canonical}, '.', ''), '0')");
+    let width = EXACT_MANTISSA.len();
+    format!(
+        "({fraction} <= {MAX_PREDICATE_SCALE} AND (strlen({digits}) < {width} OR (strlen({digits}) = {width} AND {digits} <= '{EXACT_MANTISSA}')))"
+    )
+}
+
 fn parse_sql(kind: ColumnKind, i: usize) -> Parsed {
     let c = format!("c{i}");
     let v = format!("v{i}");
@@ -2493,7 +2534,10 @@ fn parse_sql(kind: ColumnKind, i: usize) -> Parsed {
             columns: vec![format!(
                 "CASE WHEN translate({c}, '0123456789', '') IN ('', '-', '+') THEN TRY_CAST({c} AS DECIMAL(38,0)) END AS {v}"
             )],
-            reason: format!("CASE WHEN {v} IS NULL THEN 'bulk.not_integer' END"),
+            reason: format!(
+                "CASE WHEN {v} IS NULL THEN 'bulk.not_integer' WHEN NOT {} THEN '{OUT_OF_RANGE}' END",
+                exact_sql(&v)
+            ),
         },
         ColumnKind::Decimal { scale } => Parsed {
             columns: vec![
@@ -2508,7 +2552,9 @@ fn parse_sql(kind: ColumnKind, i: usize) -> Parsed {
                 ),
             ],
             reason: format!(
-                "CASE WHEN NOT s{i} THEN 'bulk.not_decimal' WHEN NOT f{i} THEN 'bulk.scale_exceeded' WHEN {v} IS NULL THEN 'bulk.not_decimal' END"
+                "CASE WHEN NOT s{i} THEN 'bulk.not_decimal' WHEN NOT f{i} THEN 'bulk.scale_exceeded' WHEN {v} IS NULL THEN 'bulk.not_decimal' \
+                 WHEN NOT {} THEN '{OUT_OF_RANGE}' END",
+                exact_sql(&v)
             ),
         },
         ColumnKind::Boolean => Parsed {
@@ -2922,6 +2968,43 @@ fn held_columns(table: &TableSchema) -> Vec<String> {
     columns
 }
 
+/// MANIFEST-LAWS-1 (S3): the held-set value columns of a typed staged row
+/// (`d`), as the text the per-row path holds: each value's text, a number
+/// as its canonical decimal (`1.500` is `1.5`).
+fn held_values(table: &TableSchema) -> Vec<String> {
+    table
+        .columns
+        .iter()
+        .map(|column| {
+            let text = format!("CAST(d.{} AS VARCHAR)", ident(&column.id));
+            match column.kind {
+                ColumnKind::Integer | ColumnKind::Decimal { .. } => format!(
+                    "CASE WHEN strpos({text}, '.') > 0 THEN rtrim(rtrim({text}, '0'), '.') ELSE {text} END"
+                ),
+                ColumnKind::Text
+                | ColumnKind::Boolean
+                | ColumnKind::Timestamp
+                | ColumnKind::Date
+                | ColumnKind::Opaque => text,
+            }
+        })
+        .collect()
+}
+
+/// The quarantine's column list for a rule finding: the metadata and every
+/// value column.
+fn finding_columns(table: &TableSchema) -> String {
+    let mut columns = vec![
+        ident(":row"),
+        ident(":load"),
+        ident(":reason"),
+        ident(":rule"),
+        ident(":holds"),
+    ];
+    columns.extend(table.columns.iter().map(|c| ident(&c.id)));
+    columns.join(", ")
+}
+
 fn quoted_path(path: &Path) -> String {
     format!("'{}'", path.to_string_lossy().replace('\'', "''"))
 }
@@ -3283,6 +3366,86 @@ fn check_sql(check: &RuleCheck, table: &TableSchema) -> Outcome<(Frag, Frag)> {
     Ok((residue, fails))
 }
 
+/// MANIFEST-LAWS-1 (S2): a bound, in SQL over the row, on the fuel the
+/// per-row evaluator charges for `check`: its static part
+/// ([`RuleCheck::fuel`]) and the data its operations read, as ZEN's meter
+/// charges it (an equality, `in` or text `+` its operands' sizes; every
+/// operator is charged so here). A value's size is a text's bytes and 1 for
+/// anything else. `None` for a rule outside the lowered subset.
+fn fuel_sql(check: &RuleCheck, table: &TableSchema) -> Option<String> {
+    let mut parts = vec![check.fuel.to_string()];
+    parts.push(data_fuel(check.predicate.as_ref()?, table));
+    if let Some(condition) = &check.condition {
+        parts.push(data_fuel(condition, table));
+    }
+    Some(format!("CAST({} AS HUGEINT)", parts.join(" + ")))
+}
+
+/// The data-proportional fuel of `node` and everything under it, in SQL.
+fn data_fuel(node: &RowPredicate, table: &TableSchema) -> String {
+    use RowPredicate as P;
+    match node {
+        P::Null | P::Bool(_) | P::Number(_) | P::Text(_) | P::Column(_) => "0".to_owned(),
+        P::Not(inner) | P::Negate(inner) => data_fuel(inner, table),
+        P::Add(a, b)
+        | P::Subtract(a, b)
+        | P::Multiply(a, b)
+        | P::Equal(a, b)
+        | P::NotEqual(a, b)
+        | P::Less(a, b)
+        | P::LessOrEqual(a, b)
+        | P::Greater(a, b)
+        | P::GreaterOrEqual(a, b)
+        | P::And(a, b)
+        | P::Or(a, b) => format!(
+            "{} + {} + {} + {}",
+            data_fuel(a, table),
+            data_fuel(b, table),
+            value_size(a, table),
+            value_size(b, table)
+        ),
+        P::Conditional(c, a, b) => format!(
+            "{} + {} + {}",
+            data_fuel(c, table),
+            data_fuel(a, table),
+            data_fuel(b, table)
+        ),
+    }
+}
+
+/// ZEN's shallow size of `node`'s value, in SQL: a text's bytes, else 1.
+fn value_size(node: &RowPredicate, table: &TableSchema) -> String {
+    use RowPredicate as P;
+    match node {
+        P::Text(text) => text.len().max(1).to_string(),
+        P::Column(id) if node.kind(table) == Some(PredicateKind::Text) => {
+            format!("coalesce(strlen({}), 0)", ident(id))
+        }
+        P::Conditional(_, a, b) => format!(
+            "greatest({}, {})",
+            value_size(a, table),
+            value_size(b, table)
+        ),
+        P::Null
+        | P::Bool(_)
+        | P::Number(_)
+        | P::Column(_)
+        | P::Not(_)
+        | P::Negate(_)
+        | P::Add(..)
+        | P::Subtract(..)
+        | P::Multiply(..)
+        | P::Equal(..)
+        | P::NotEqual(..)
+        | P::Less(..)
+        | P::LessOrEqual(..)
+        | P::Greater(..)
+        | P::GreaterOrEqual(..)
+        | P::And(..)
+        | P::Or(..) => "1".to_owned(),
+    }
+}
+
 /// MANIFEST-LAWS-1 / LAW-04: check every rule over the staged typed rows
 /// in one pass. For each rule, a row it cannot decide exactly is residue
 /// of that rule alone (`(row, rule)`); every row it decides and fails is a
@@ -3299,8 +3462,22 @@ fn check_rules(conn: &Connection, table: &TableSchema, request: &LandRequest) ->
     }
     let mut select = vec![Frag::raw(ident(":row"))];
     let mut columns = vec![format!("{} UBIGINT", ident(":row"))];
+    // S2: a row whose rules may cost the per-row evaluator more fuel than
+    // it gives a row is left to it for every rule, so the engine never
+    // decides a row the per-row path refuses. A rule outside the lowered
+    // subset already leaves every row to it.
+    let over = request
+        .checks
+        .iter()
+        .map(|check| fuel_sql(check, table))
+        .collect::<Option<Vec<_>>>()
+        .map(|fuel| format!("(({}) > {})", fuel.join(" + "), row_fuel()));
     for (i, check) in request.checks.iter().enumerate() {
         let (residue, fails) = check_sql(check, table)?;
+        let residue = match &over {
+            Some(over) => Frag::fmt(&format!("({{}} OR {over})"), &[&residue]),
+            None => residue,
+        };
         select.push(Frag::fmt(&format!("{{}} AS \"r{i}\""), &[&residue]));
         select.push(Frag::fmt(&format!("{{}} AS \"f{i}\""), &[&fails]));
         columns.push(format!("\"r{i}\" BOOLEAN"));
@@ -3316,15 +3493,20 @@ fn check_rules(conn: &Connection, table: &TableSchema, request: &LandRequest) ->
         &[&Frag::join(&select, ", ")],
     );
     db(conn.execute(&outcome.text, params_from_iter(outcome.params)))?;
+    let held_into = finding_columns(table);
+    let mut held = vec!["d.\":row\"".to_owned(), "?".into(), "?".into(), "?".into(), "?".into()];
+    held.extend(held_values(table));
+    let held = held.join(", ");
     for (i, check) in request.checks.iter().enumerate() {
         db(conn.execute(
             &format!("INSERT INTO {residue} SELECT \":row\", ? FROM \":outcome\" WHERE \"r{i}\""),
             params_from_iter([Sql::Text(check.rule.clone())]),
         ))?;
+        // S3: a finding carries the row's values, as the per-row path's does.
         db(conn.execute(
             &format!(
-                "INSERT INTO {quarantine} (\":row\", \":load\", \":reason\", \":rule\", \":holds\") \
-                 SELECT \":row\", ?, ?, ?, ? FROM \":outcome\" WHERE NOT \"r{i}\" AND \"f{i}\""
+                "INSERT INTO {quarantine} ({held_into}) SELECT {held} FROM \":outcome\" AS o \
+                 JOIN {dataset} AS d ON d.\":row\" = o.\":row\" WHERE NOT o.\"r{i}\" AND o.\"f{i}\""
             ),
             params_from_iter([
                 Sql::Text(request.load.load.clone()),
@@ -3343,6 +3525,11 @@ fn check_rules(conn: &Connection, table: &TableSchema, request: &LandRequest) ->
 fn settle_rows(conn: &Connection, table: &TableSchema, request: &SettleRequest) -> Outcome<()> {
     let quarantine = quarantine_table(&table.name);
     let residue = residue_table(&table.name);
+    let dataset = dataset_table(&table.name);
+    let columns = finding_columns(table);
+    let mut values = vec!["?".to_owned(), "?".into(), "?".into(), "?".into(), "?".into()];
+    values.extend(held_values(table));
+    let values = values.join(", ");
     let mut statement = db(conn.prepare(&format!(
         "SELECT count(*) FROM {residue} WHERE \":row\" = ? AND \":rule\" = ? AND \":row\" <= ?"
     )))?;
@@ -3365,9 +3552,10 @@ fn settle_rows(conn: &Connection, table: &TableSchema, request: &SettleRequest) 
                 ),
             ));
         }
+        // S3: from the staged row, so the finding carries its values.
         db(conn.execute(
             &format!(
-                "INSERT INTO {quarantine} (\":row\", \":load\", \":reason\", \":rule\", \":holds\") VALUES (?, ?, ?, ?, ?)"
+                "INSERT INTO {quarantine} ({columns}) SELECT {values} FROM {dataset} AS d WHERE d.\":row\" = ?"
             ),
             params_from_iter([
                 Sql::UBigInt(finding.row),
@@ -3375,6 +3563,7 @@ fn settle_rows(conn: &Connection, table: &TableSchema, request: &SettleRequest) 
                 Sql::Text(finding.label.clone()),
                 Sql::Text(finding.rule.clone()),
                 Sql::Boolean(finding.holds),
+                Sql::UBigInt(finding.row),
             ]),
         ))?;
     }
@@ -3415,8 +3604,20 @@ fn rule_counts(
     Ok((counts, held))
 }
 
-/// The first `limit` residue rows, in row order, with their present values.
-fn residue_rows(conn: &Connection, table: &TableSchema, limit: u32) -> Outcome<Vec<ResidueRow>> {
+/// MANIFEST-LAWS-1 (S6): the residue page after row `after`: the next
+/// residue rows in row order, at most `limit` of them (clamped to
+/// `1..=RESIDUE_PAGE_ROWS`), with their present values, ending before the
+/// row that would take the page's serialized rows past
+/// [`RESIDUE_PAGE_BYTES`]. The page's row ids are chosen first and only
+/// their rules are gathered, so a page never groups the whole residue, and
+/// rows are read one at a time, so a page never holds more than its bound
+/// and one row. A row that alone passes the bound is [`RESIDUE_EXCEEDED`].
+fn residue_page(
+    conn: &Connection,
+    table: &TableSchema,
+    after: u64,
+    limit: u32,
+) -> Outcome<Vec<ResidueRow>> {
     let mut select = vec![format!("d.{}", ident(":row"))];
     for column in &table.columns {
         select.push(format!("CAST(d.{} AS VARCHAR)", ident(&column.id)));
@@ -3429,37 +3630,88 @@ fn residue_rows(conn: &Connection, table: &TableSchema, limit: u32) -> Outcome<V
         }
     }
     select.push("r.\":rules\"".to_owned());
+    let residue = residue_table(&table.name);
     let mut statement = db(conn.prepare(&format!(
-        "SELECT {} FROM {} AS d JOIN (SELECT \":row\", string_agg(\":rule\", chr(10) ORDER BY \":rule\") AS \":rules\" \
-         FROM {} GROUP BY \":row\") AS r ON d.\":row\" = r.\":row\" ORDER BY d.\":row\" LIMIT ?",
+        "WITH ids AS (SELECT DISTINCT \":row\" FROM {residue} WHERE \":row\" > ? ORDER BY \":row\" LIMIT ?), \
+         r AS (SELECT \":row\", string_agg(\":rule\", chr(10) ORDER BY \":rule\") AS \":rules\" FROM {residue} \
+         WHERE \":row\" IN (SELECT \":row\" FROM ids) GROUP BY \":row\") \
+         SELECT {} FROM {} AS d JOIN r ON d.\":row\" = r.\":row\" ORDER BY d.\":row\"",
         select.join(", "),
         dataset_table(&table.name),
-        residue_table(&table.name),
     )))?;
     let rules_at = table.columns.len().saturating_mul(3).saturating_add(1);
-    let rows = db(
-        statement.query_map(params_from_iter([Sql::UInt(limit.max(1))]), |row| {
-            let mut values = BTreeMap::new();
-            for (i, column) in table.columns.iter().enumerate() {
-                let at = i.saturating_mul(3).saturating_add(1);
-                if let Some(value) = present(
-                    column.kind,
-                    row.get(at)?,
-                    row.get(at.saturating_add(1))?,
-                    row.get(at.saturating_add(2))?,
-                ) {
-                    values.insert(column.id.clone(), value);
-                }
+    let mut rows = db(statement.query(params_from_iter([
+        Sql::UBigInt(after),
+        Sql::UInt(limit.clamp(1, RESIDUE_PAGE_ROWS)),
+    ])))?;
+    let mut page = Vec::new();
+    let mut bytes = 0usize;
+    while let Some(row) = db(rows.next())? {
+        let mut values = BTreeMap::new();
+        for (i, column) in table.columns.iter().enumerate() {
+            let at = i.saturating_mul(3).saturating_add(1);
+            if let Some(value) = present(
+                column.kind,
+                db(row.get(at))?,
+                db(row.get(at.saturating_add(1)))?,
+                db(row.get(at.saturating_add(2)))?,
+            ) {
+                values.insert(column.id.clone(), value);
             }
-            let rules: String = row.get(rules_at)?;
-            Ok(ResidueRow {
-                row: row.get(0)?,
-                values,
-                rules: rules.split('\n').map(str::to_owned).collect(),
-            })
-        }),
-    )?;
-    db(rows.collect())
+        }
+        let rules: String = db(row.get(rules_at))?;
+        let residue = ResidueRow {
+            row: db(row.get(0))?,
+            values,
+            rules: rules.split('\n').map(str::to_owned).collect(),
+        };
+        // The row's JSON and the comma that separates it from the next.
+        let size = serde_json::to_string(&residue)
+            .map_err(|e| refusal("analytics.engine", e.to_string()))?
+            .len()
+            .saturating_add(1);
+        if size > RESIDUE_PAGE_BYTES {
+            return Err(refusal(
+                RESIDUE_EXCEEDED,
+                format!(
+                    "residue row {} is larger than a residue page ({RESIDUE_PAGE_BYTES} bytes)",
+                    residue.row
+                ),
+            ));
+        }
+        bytes = bytes.saturating_add(size);
+        if bytes > RESIDUE_PAGE_BYTES {
+            break;
+        }
+        page.push(residue);
+    }
+    Ok(page)
+}
+
+/// MANIFEST-LAWS-1 (S1): refuse a landing whose residue takes more than
+/// [`MAX_RESIDUE_PAGES`] pages of `limit` rows (or holds a row larger than a
+/// page), so every host settles it within [`super::MAX_ENGINE_STEPS`] calls.
+/// Pages are counted as [`residue_page`] answers them, each settle ending
+/// at its page's last row (S5), so the count is the settles the landing
+/// takes. Checked before the first answer; the caller drops the staging.
+fn residue_fits(conn: &Connection, table: &TableSchema, limit: u32) -> Outcome<()> {
+    let mut after = 0;
+    for _ in 0..MAX_RESIDUE_PAGES {
+        match residue_page(conn, table, after, limit)?.last() {
+            Some(last) => after = last.row,
+            None => return Ok(()),
+        }
+    }
+    if residue_page(conn, table, after, 1)?.is_empty() {
+        return Ok(());
+    }
+    Err(refusal(
+        RESIDUE_EXCEEDED,
+        format!(
+            "the landing leaves more residue than {MAX_RESIDUE_PAGES} pages of {} rows",
+            limit.clamp(1, RESIDUE_PAGE_ROWS)
+        ),
+    ))
 }
 
 /// MANIFEST-CACHE-1: the files a stored landing is kept as, by cache identity.
