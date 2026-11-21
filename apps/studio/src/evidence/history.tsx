@@ -49,7 +49,7 @@ export function History({ objectType, id }: { readonly objectType: string; reado
   const { catalog } = useCatalog()
   const scales = new Map((catalog?.byName.get(objectType)?.fields ?? []).flatMap(({ id: field, decimal }) => decimal?.scale === undefined ? [] : [[field, decimal.scale] as const]))
   if (read.isPending) return <Panel icon={HistoryIcon} label="History"><Well className="p-3 text-meta text-muted-foreground">Reading the history…</Well></Panel>
-  if (read.isError) return <Panel icon={HistoryIcon} label="History"><Well data-history-unavailable="" className="p-3 text-meta text-muted-foreground">{historyUnavailable(read.error)}</Well></Panel>
+  if (read.isError) return <Panel icon={HistoryIcon} label="History"><Well className="p-3 text-meta text-muted-foreground"><span data-history-unavailable="">{historyUnavailable(read.error)}</span></Well></Panel>
   const history = read.data
   const { versions, truncated } = history.document
   const timeProperty = timePropertyOf(metrics.data?.document.metrics ?? [], objectType)
