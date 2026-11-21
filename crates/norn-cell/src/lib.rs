@@ -39,6 +39,7 @@ pub mod dataset_manifest;
 pub mod decision_ledger;
 pub mod due_retry;
 pub mod engine;
+pub mod engine_release;
 pub mod error;
 pub mod export;
 mod export_journal;

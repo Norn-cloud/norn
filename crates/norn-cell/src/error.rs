@@ -172,6 +172,44 @@ pub enum CellError {
         /// The format this build reads and writes.
         expected: String,
     },
+    /// ENGINE-UPGRADE-1: the cell's storage version is newer than this
+    /// engine's; a newer release upgraded it (#1494).
+    #[error(
+        "{code}: cell storage version {cell} (written by {writer}) is newer than this engine's {engine}; open it with a release that reads storage version {cell}",
+        code = norn_checker::ENGINE_DOWNGRADE
+    )]
+    EngineDowngrade {
+        /// The cell's storage version.
+        cell: u32,
+        /// The release label that wrote it.
+        writer: String,
+        /// The storage version this engine writes.
+        engine: u32,
+    },
+    /// ENGINE-UPGRADE-1: the cell's engine stamp is not one this engine can
+    /// read, so it cannot order the cell against itself (#1494).
+    #[error(
+        "{code}: cell engine stamp {found:?} is not a version this engine reads",
+        code = norn_checker::ENGINE_UNKNOWN_VERSION
+    )]
+    EngineUnknownVersion {
+        /// The stored stamp, truncated.
+        found: String,
+    },
+    /// ENGINE-UPGRADE-1: the cell's storage version has no in-place upgrade
+    /// path in this engine, or a migration refused its data (#1494).
+    #[error(
+        "{code}: cell storage version {cell} cannot be upgraded to {engine} in place: {reason}",
+        code = norn_checker::ENGINE_UPGRADE_UNSUPPORTED
+    )]
+    EngineUpgradeUnsupported {
+        /// The cell's storage version.
+        cell: u32,
+        /// The storage version this engine writes.
+        engine: u32,
+        /// Why, naming the bridge release when there is one.
+        reason: String,
+    },
     /// The active definitions version changed since the installer planned.
     #[error("definitions version conflict: expected {expected:?}, found {actual:?}")]
     DefinitionVersionConflict {
