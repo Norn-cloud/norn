@@ -162,12 +162,14 @@ fn preimage(input: &ConsumedInput) -> Result<Option<Value>, CellError> {
 /// Persist a commit's replayable export record in the same engine transaction.
 ///
 /// INGEST-JOURNAL-MEMORY-1: `entries` are the ledger entries this commit's
-/// writer just appended, exactly as written (`append_events`), so the record
-/// is built from memory instead of reading the ledger back and re-proving
-/// every event the writer proved before appending it. The exporter
-/// ([`read_record`] and the export/restore paths) still verifies every record
-/// it reads. Debug builds also read the span back and prove it, as the
-/// journal did before, and refuse the commit if the two ever differ.
+/// writer just appended (`append_events`), so the record is built from memory
+/// instead of reading the ledger span back. Every `created` and `modified`
+/// event is still proven here, in every build, against this commit's
+/// persisted receipt (#1527 S1): the writer proved it before appending, but
+/// only against its pending snapshot digests, and the exporter's own check
+/// ([`read_record`]) runs after this transaction can no longer roll back.
+/// Debug builds also read the span back and prove it, as the journal did
+/// before, and refuse the commit if the two ever differ.
 #[allow(
     clippy::too_many_arguments,
     reason = "the commit's own parts, passed through"
@@ -215,6 +217,13 @@ pub(crate) fn record<E: SqlEngine>(
             seq: commit_seq,
             reason: "export journal event span disagrees with the receipt".to_owned(),
         });
+    }
+    // Each proven event as a ledger reader decodes it, against the receipt
+    // just inserted: one read-only pass, so the receipt is verified once.
+    let receipts = std::cell::RefCell::default();
+    let reader = StoreReader::new(engine, model).with_transaction_verified_receipts(&receipts);
+    for entry in &entries {
+        reader.verify_durable_event(&entry.world, entry.commit_seq, &entry.event)?;
     }
     // Compared as canonical text, the only form the record is hashed and
     // stored in: the ledger keeps events canonical (NFC), so a read back may

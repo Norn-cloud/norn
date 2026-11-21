@@ -4105,3 +4105,117 @@ mod identity_history_tests {
         }
     }
 }
+
+#[cfg(all(test, feature = "native"))]
+#[allow(
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    reason = "journal proof fixture"
+)]
+mod journal_proof_tests {
+    use super::{
+        CellError, CellStore, CommitBatch, CommitOrigin, CommitPoint, FactWriteRow, MAIN_WORLD,
+        Model, Value,
+    };
+    use crate::engine::{SqlEngine as _, SqlRow, params};
+    use crate::history::FactSnapshot;
+    use std::collections::BTreeMap;
+
+    fn store() -> CellStore {
+        let item = serde_json::from_value(serde_json::json!({
+            "name": "proof.Item",
+            "properties": [{"id": "value", "type": {"kind": "text"}}]
+        }))
+        .expect("definition");
+        CellStore::open_in_memory(Model::from_definitions(&[item], &[]).expect("model"))
+            .expect("store")
+    }
+
+    fn created() -> CommitBatch {
+        CommitBatch {
+            world: MAIN_WORLD.to_owned(),
+            scope: "org/dev".to_owned(),
+            writes: vec![FactWriteRow::Put {
+                object_type: "proof.Item".to_owned(),
+                key: "item".to_owned(),
+                values: BTreeMap::from([("value".to_owned(), Value::from("one"))]),
+            }],
+            events: vec![
+                Value::from_json(serde_json::json!({
+                    "op": "created",
+                    "key": {"objectType": "proof.Item", "key": "item"},
+                    "values": {"value": "one"}
+                }))
+                .expect("event"),
+            ],
+            ..CommitBatch::default()
+        }
+    }
+
+    /// #1527 S1: a stored `created` event is bound to the receipt its commit
+    /// persists, in every build. Here the event's snapshot changes after the
+    /// writer proved the event (against its pending digests) and before the
+    /// receipt is written: same values, rehashed, so the snapshot is
+    /// self-consistent but not the one the receipt commits to. The commit
+    /// must refuse and write nothing; the exporter's own check would only
+    /// find it once the commit can no longer roll back.
+    #[test]
+    fn a_created_event_is_proven_against_the_persisted_receipt() {
+        let store = store();
+        let conn = &store.conn;
+        let mut rebind = |point: CommitPoint| -> Result<(), CellError> {
+            if point == CommitPoint::EffectsEnqueued {
+                let rows = conn.query(
+                    "SELECT \"snapshot\" FROM \"_norn_fact_values\" WHERE \"id\" = 'item' AND \"version\" = 1",
+                    &[],
+                )?;
+                let text: String = SqlRow(rows[0].clone()).get(0)?;
+                let mut snapshot: FactSnapshot = serde_json::from_str(&text)?;
+                snapshot.scope = "org/other".to_owned();
+                conn.execute(
+                    "UPDATE \"_norn_fact_values\" SET \"snapshot\" = ?1, \"hash\" = ?2 WHERE \"id\" = 'item' AND \"version\" = 1",
+                    params![
+                        crate::codec::canonical_json(&snapshot)?,
+                        crate::codec::hash_json(&snapshot)?
+                    ],
+                )?;
+            }
+            Ok(())
+        };
+        let outcome = store.commit_guarded_inner(
+            &created(),
+            None,
+            None,
+            CommitOrigin::Current,
+            |_reader| Ok::<(), CellError>(()),
+            &mut rebind,
+        );
+        assert!(
+            matches!(
+                outcome,
+                Err(super::GuardedError::Store(CellError::HistoricalValueUnproven(_)))
+            ),
+            "{outcome:?}"
+        );
+        assert_eq!(store.export_commit_count().expect("journal head"), 0);
+        assert!(store.read().ledger(0).expect("ledger").is_empty());
+
+        // Untouched, the same commit lands and its record exports.
+        let store = self::store();
+        store
+            .commit_guarded_inner(
+                &created(),
+                None,
+                None,
+                CommitOrigin::Current,
+                |_reader| Ok::<(), CellError>(()),
+                &mut |_point| Ok(()),
+            )
+            .expect("authentic commit");
+        let record = store
+            .export_record(1)
+            .expect("record reads")
+            .expect("record");
+        assert_eq!(record.entries.len(), 1);
+    }
+}
