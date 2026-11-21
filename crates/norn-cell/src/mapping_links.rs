@@ -36,6 +36,8 @@ struct Entry {
     id: String,
     contribution: String,
     fresh: bool,
+    /// OBS-LINK-DISPUTE-1: the claim's source event is in conflict or its
+    /// identity is disputed; `link_plan_over` freezes such claims.
     disputed: bool,
 }
 
@@ -445,8 +447,16 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                 .as_ref()
                 .map(|t| fact(&t.object_type, &t.key))
         };
+        // OBS-LINK-DISPUTE-1: a dispute freezes the claims it covers. They
+        // keep their standing (they still supersede older claims of their
+        // contribution, contest rivals and hold their edge) but authorize no
+        // new edge until review settles the event. A dispute is captured
+        // without a commit, so it must not change any group's standings:
+        // dropping the disputed claims here revived the claims they had
+        // superseded, and whichever later commit happened to read the group
+        // applied that, so the end state depended on batching (#1490).
         let mut groups = BTreeMap::<_, Vec<&Entry>>::new();
-        for entry in entries.iter().filter(|e| !e.disputed) {
+        for entry in &entries {
             let source = fact(&entry.claim.source_type, &entry.claim.source_key);
             groups
                 .entry((source, entry.claim.role.clone()))
@@ -484,7 +494,9 @@ impl<S: SqlEngine> StoreReader<'_, S> {
                     .zip(&ranked)
                     .any(|(o, s)| *s != Standing::Superseded && target(o).as_ref() == Some(&to));
                 let mutation = match standing {
-                    Standing::Current if !exists && present(source)? && present(&to)? => {
+                    Standing::Current
+                        if !entry.disputed && !exists && present(source)? && present(&to)? =>
+                    {
                         LinkMutation::Add {
                             values: model
                                 .effective_link_values(

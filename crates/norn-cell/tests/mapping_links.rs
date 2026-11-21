@@ -887,7 +887,9 @@ fn absence_maps_to_null_and_a_required_source_field_refuses_it() {
 }
 
 proptest::proptest! {
-    #![proptest_config(proptest::test_runner::Config::with_cases(24))]
+    #![proptest_config(proptest::test_runner::Config::with_cases(
+        std::env::var("PROPTEST_CASES").ok().and_then(|cases| cases.parse().ok()).unwrap_or(24)
+    ))]
     /// The narrowed link plan equals the wide one (checked inside every
     /// mapping commit) over generated histories: deliveries in any order,
     /// re-pointed claims, redeliveries of older versions and, on the to-many
@@ -1111,15 +1113,104 @@ fn obs_page_a_repeated_identity_refuses_the_whole_page_before_capture() {
     );
 }
 
+/// One generated step: (erpnext snapshot row, party it points at, source version).
+type Step = (u8, u8, u8);
+
+/// Both cells of an OBS-PAGE-EQUIV run, `many` choosing the to-many `peers` relation.
+fn equiv_cells(directory: &Path, many: bool) -> (Cell, Cell) {
+    let open = |name: &str| {
+        let path = directory.join(name);
+        if many {
+            setup_with(&path, |artifacts| many_holding(artifacts))
+        } else {
+            setup(&path)
+        }
+    };
+    (open("single.sqlite"), open("paged.sqlite"))
+}
+
+/// Deliver `batches` to `single` one record at a time and to `paged` a page
+/// at a time. Batches are split before a repeated identity, as a host does,
+/// and per dataset (a page reads one dataset).
+fn deliver(single: &mut Cell, by_page: &mut Cell, many: bool, batches: &[Vec<Step>]) {
+    let rows = fixture("erpnext")["snapshot"]
+        .as_array()
+        .expect("rows")
+        .clone();
+    let parties = [
+        "demo/party/owner",
+        "demo/party/custodian",
+        "demo/party/customer",
+        "clear",
+    ];
+    for batch in batches {
+        let mut pages: Vec<Vec<(Observed<RuntimeValue>, MappingInput)>> = Vec::new();
+        let mut seen = BTreeSet::new();
+        for &(row, party, version) in batch {
+            let mut row = rows[usize::from(row)].clone();
+            let record = row["record"].as_object_mut().expect("record");
+            let party = parties[usize::from(party)];
+            if record.contains_key("provider_ref") && party != "clear" {
+                record.insert("provider_ref".into(), json!(party));
+            }
+            if many && record.contains_key("owner_ref") {
+                record.insert("owner_ref".into(), json!(party));
+            }
+            let (raw, input) = raw_of(&row, &version.to_string());
+            let identity = raw.provenance.source_id.clone();
+            let split = pages.last().is_none_or(|page| {
+                !seen.insert(identity.clone()) || page[0].1.dataset != input.dataset
+            });
+            if split {
+                seen = BTreeSet::from([identity]);
+                pages.push(Vec::new());
+            }
+            pages.last_mut().expect("page").push((raw, input));
+        }
+        for page in pages {
+            for (raw, input) in &page {
+                let (id, _) = single.inject_mapping_bundle(raw, input).expect("capture");
+                single.process_mapping_outcome(&id).expect("one by one");
+            }
+            let delivered: Vec<_> = page.iter().map(|(raw, _)| raw.clone()).collect();
+            let ids = by_page
+                .inject_mapping_page(&delivered, &page[0].1)
+                .expect("page capture");
+            for (id, _) in ids.pages {
+                by_page.process_mapping_page(&id).expect("page");
+            }
+        }
+    }
+}
+
+/// OBS-PAGE-EQUIV over committed end state, explained when it fails.
+fn same_end_state(single: &Cell, paged: &Cell) -> Result<(), String> {
+    claims_follow_their_referents(paged)?;
+    let (single, paged) = (end_state(single), end_state(paged));
+    if single == paged {
+        return Ok(());
+    }
+    let only = |a: &[String], b: &[String]| -> Vec<String> {
+        a.iter().filter(|line| !b.contains(line)).cloned().collect()
+    };
+    Err(format!(
+        "one by one only: {:#?}\npaged only: {:#?}",
+        only(&single, &paged),
+        only(&paged, &single),
+    ))
+}
+
 proptest::proptest! {
-    #![proptest_config(proptest::test_runner::Config::with_cases(24))]
+    #![proptest_config(proptest::test_runner::Config::with_cases(
+        std::env::var("PROPTEST_CASES").ok().and_then(|cases| cases.parse().ok()).unwrap_or(24)
+    ))]
     /// OBS-PAGE-EQUIV: consuming pages equals consuming their records one by
     /// one in page order, over committed end state (objects with versions,
     /// values and lineage; links; claims; events; quarantine), modulo commit
-    /// count. Batches are split before a repeated identity, as a host does,
-    /// so identities repeat across pages; generated rows mix intra-page links
-    /// in both orders (orders before or after their holdings and parties),
-    /// re-pointed claims, cleared parties and older redeliveries.
+    /// count. Identities repeat across pages; generated rows mix intra-page
+    /// links in both orders (orders before or after their holdings and
+    /// parties), re-pointed claims, cleared parties, older redeliveries and
+    /// conflicting re-sends of an event (FEED-CONFLICT).
     #[test]
     fn obs_page_equiv_pages_equal_one_by_one(
         many in proptest::bool::ANY,
@@ -1129,71 +1220,123 @@ proptest::proptest! {
         ),
     ) {
         let directory = tempfile::tempdir().expect("directory");
-        let open = |name: &str| {
-            let path = directory.path().join(name);
-            if many { setup_with(&path, |artifacts| many_holding(artifacts)) } else { setup(&path) }
-        };
-        let (mut single, mut paged) = (open("single.sqlite"), open("paged.sqlite"));
-        let rows = fixture("erpnext")["snapshot"].as_array().expect("rows").clone();
-        let parties = ["demo/party/owner", "demo/party/custodian", "demo/party/customer", "clear"];
-        for batch in batches {
-            // Split before a repeated row identity, and per dataset (a page
-            // reads one dataset).
-            let mut pages: Vec<Vec<(Observed<RuntimeValue>, MappingInput)>> = Vec::new();
-            let mut seen = BTreeSet::new();
-            for (row, party, version) in batch {
-                let mut row = rows[usize::from(row)].clone();
-                let record = row["record"].as_object_mut().expect("record");
-                let party = parties[usize::from(party)];
-                if record.contains_key("provider_ref") && party != "clear" {
-                    record.insert("provider_ref".into(), json!(party));
-                }
-                if many && record.contains_key("owner_ref") {
-                    record.insert("owner_ref".into(), json!(party));
-                }
-                let (raw, input) = raw_of(&row, &version.to_string());
-                let identity = raw.provenance.source_id.clone();
-                let split = pages.last().is_none_or(|page| {
-                    !seen.insert(identity.clone()) || page[0].1.dataset != input.dataset
-                });
-                if split {
-                    seen = BTreeSet::from([identity]);
-                    pages.push(Vec::new());
-                }
-                pages.last_mut().expect("page").push((raw, input));
-            }
-            for page in pages {
-                for (raw, input) in &page {
-                    let (id, _) = single.inject_mapping_bundle(raw, input).expect("capture");
-                    single.process_mapping_outcome(&id).expect("one by one");
-                }
-                let raws: Vec<_> = page.iter().map(|(raw, _)| raw.clone()).collect();
-                let ids = paged
-                    .inject_mapping_page(&raws, &page[0].1)
-                    .expect("page capture");
-                for (id, _) in ids.pages {
-                    paged.process_mapping_page(&id).expect("page");
-                }
-            }
-        }
-        let ordered = claims_follow_their_referents(&paged);
-        proptest::prop_assert!(ordered.is_ok(), "{ordered:?}");
-        let (single, paged) = (end_state(&single), end_state(&paged));
-        let only = |a: &[String], b: &[String]| -> Vec<String> {
-            a.iter().filter(|line| !b.contains(line)).cloned().collect()
-        };
-        proptest::prop_assert!(
-            single == paged,
-            "one by one only: {:#?}\npaged only: {:#?}\nfirst order difference: {:#?}",
-            only(&single, &paged),
-            only(&paged, &single),
-            single
-                .iter()
-                .zip(&paged)
-                .position(|(a, b)| a != b)
-                .map(|at| (&single[at..at.saturating_add(3).min(single.len())], &paged[at..at.saturating_add(3).min(paged.len())]))
-        );
+        let (mut single, mut paged) = equiv_cells(directory.path(), many);
+        deliver(&mut single, &mut paged, many, &batches);
+        let same = same_end_state(&single, &paged);
+        proptest::prop_assert!(same.is_ok(), "{}", same.err().unwrap_or_default());
     }
+}
+
+/// #1490: the shrunk OBS-PAGE-EQUIV counterexample (its seed is also in
+/// `mapping_links.proptest-regressions`). Before the fix, one by one
+/// quarantined holding-north with a narrowed/wide plan mismatch while the
+/// page landed it.
+#[test]
+fn obs_page_equiv_conflicting_resend_seed_1490() {
+    let directory = tempfile::tempdir().expect("directory");
+    let (mut single, mut paged) = equiv_cells(directory.path(), true);
+    let batches = [
+        vec![(5, 2, 1), (5, 0, 4)],
+        vec![(0, 0, 1), (2, 0, 1), (5, 1, 4)],
+        vec![(4, 0, 1), (5, 0, 1)],
+    ];
+    deliver(&mut single, &mut paged, true, &batches);
+    same_end_state(&single, &paged).expect("pages equal one by one");
+}
+
+/// Deliver `steps` (one batch each) to both paths of a `many` cell, and
+/// list where either path's `peers` links or pending rows differ from
+/// `expected` with only the conflicting re-send quarantined, or the paths
+/// differ from each other.
+fn dispute_mismatches(steps: &[Vec<Step>], expected: &[(&str, &str)]) -> Vec<String> {
+    let directory = tempfile::tempdir().expect("directory");
+    let (mut single, mut paged) = equiv_cells(directory.path(), true);
+    for step in steps {
+        deliver(&mut single, &mut paged, true, std::slice::from_ref(step));
+    }
+    let expected: BTreeSet<(String, String)> = expected
+        .iter()
+        .map(|(source, target)| ((*source).to_owned(), (*target).to_owned()))
+        .collect();
+    let mut mismatches = Vec::new();
+    for (path, cell) in [("one by one", &single), ("paged", &paged)] {
+        let peers: BTreeSet<(String, String)> = graph(cell)
+            .into_iter()
+            .filter(|(_, _, link, _, _)| link == "peers")
+            .map(|(_, source, _, _, target)| (source, target))
+            .collect();
+        if peers != expected {
+            mismatches.push(format!("{path}: peers {peers:?}"));
+        }
+        let pending: Vec<String> = cell
+            .store()
+            .read()
+            .pending_observations()
+            .expect("pending")
+            .into_iter()
+            .map(|pending| pending.observation_id)
+            .filter(|id| !id.starts_with("mapping-page:"))
+            .collect();
+        if !(pending.len() == 1 && pending[0].starts_with("mapping-conflict:")) {
+            mismatches.push(format!("{path}: pending {pending:?}"));
+        }
+    }
+    if let Err(differ) = same_end_state(&single, &paged) {
+        mismatches.push(differ);
+    }
+    mismatches
+}
+
+const NORTH: &str = "demo/holding/owner/north/gold";
+const SOUTH: &str = "demo/holding/owner/south/gold";
+const OWNER: &str = "demo/party/owner";
+
+/// OBS-LINK-DISPUTE-1 (#1490): a conflicting re-send of a landed event
+/// freezes that record's claims. Its claim keeps its standing and its edge,
+/// so the older claim it superseded never comes back, on either path and
+/// whichever later commit reads the group.
+#[test]
+fn obs_link_dispute_freezes_the_disputed_records_links() {
+    let (owner, custodian, customer) = (0, 1, 2);
+    let (party_owner, party_customer, north, south) = (0, 2, 4, 5);
+    // 1. south v1 points at the absent customer: a pending claim A.
+    // 2. south v4 points at the owner: claim B supersedes A.
+    let history = [vec![(south, customer, 1)], vec![(south, owner, 4)]];
+    // 4. south v4 again with other content: FEED-CONFLICT on B's event.
+    let conflict = vec![(south, custodian, 4)];
+    // The issue's sequence: 3. both parties land (south -peers-> owner);
+    // 4.; 5. north v1 points at the owner. Before the fix the paths
+    // disagreed on north (one by one refused its plan as differing from the
+    // wide one, which read south's revived claim A).
+    let issue = [
+        history.to_vec(),
+        vec![vec![(party_owner, owner, 1), (party_customer, owner, 1)]],
+        vec![conflict.clone(), vec![(north, owner, 1)]],
+    ]
+    .concat();
+    // The customer lands only after the conflict, so its commit reads
+    // south's group on both paths and in production too. Before the fix it
+    // revived A and added south -peers-> customer.
+    let late = [
+        history.to_vec(),
+        vec![
+            vec![(party_owner, owner, 1)],
+            conflict,
+            vec![(party_customer, owner, 1)],
+        ],
+    ]
+    .concat();
+    let mismatches = [
+        (
+            "issue sequence",
+            dispute_mismatches(&issue, &[(NORTH, OWNER), (SOUTH, OWNER)]),
+        ),
+        ("late target", dispute_mismatches(&late, &[(SOUTH, OWNER)])),
+    ];
+    assert!(
+        mismatches.iter().all(|(_, found)| found.is_empty()),
+        "{mismatches:#?}"
+    );
 }
 
 /// OBS-PAGE-1 export/restore: a page commit's export carries the members it
