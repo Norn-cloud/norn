@@ -384,9 +384,15 @@ impl Engine {
     /// this engine does not hold is [`ATTEMPT_UNKNOWN`]; one another
     /// operation holds (its download, its load or another store is still
     /// running) is [`ATTEMPT_BUSY`]; one landed by any other request (Sol
-    /// r4: another landing, load, table, file, binding or pins) is stale.
-    /// A refusal touches nothing: the attempt stays held as it was.
-    fn lease_attempt(&self, request: &LandRequest) -> Outcome<(Lease<'_>, LandResponse)> {
+    /// r4: another landing, load, table, file, binding or pins), or whose
+    /// answer is not `answer`, is stale. Every check is made before the
+    /// attempt is taken, so a refusal touches nothing: the attempt stays
+    /// held as it was.
+    fn lease_attempt(
+        &self,
+        request: &LandRequest,
+        answer: &LandResponse,
+    ) -> Outcome<(Lease<'_>, LandResponse)> {
         let tenant = &request.load.tenant;
         let token = &request.attempt;
         let dir = self.private(tenant)?.join("scratch").join(token);
@@ -400,7 +406,7 @@ impl Engine {
         let Some(landed) = held
             .landed
             .as_ref()
-            .filter(|landed| landed.request == contract(request))
+            .filter(|landed| landed.request == contract(request) && landed.answer == *answer)
         else {
             return Err(refusal(STALE, "the landing attempt is another landing's"));
         };
@@ -740,16 +746,13 @@ impl Engine {
         if request.landed.landing != land.landing || request.landed.attempt != land.attempt {
             return Err(refusal(STALE, "the answer is not this landing's"));
         }
-        let (lease, answer) = match self.lease_attempt(land) {
+        let (lease, answer) = match self.lease_attempt(land, &request.landed) {
             Ok(leased) => leased,
             Err(unknown) if unknown.code == ATTEMPT_UNKNOWN => {
                 return self.replayed(request)?.ok_or(unknown);
             }
             Err(refused) => return Err(refused),
         };
-        if request.landed != answer {
-            return Err(refusal(STALE, "the answer is not this landing's"));
-        }
         let (data, held) = lease.files();
         send(&data, &held)?;
         let objects = self.private(tenant)?.join("objects");
