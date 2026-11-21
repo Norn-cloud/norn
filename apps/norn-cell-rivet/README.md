@@ -328,12 +328,38 @@ bastion and every runner (`/etc/norn/rivet-ca.pem`).
   leaked:
   1. Make the new CA.
   2. Put a bundle of both CA certificates as `ca.pem` everywhere (engines,
-     load balancer, bastion, runners), and reload HAProxy and restart the
-     runners.
-  3. Re-issue every leaf from the new CA and reload.
-  4. Remove the old CA from every bundle and reload.
-- If any private key or the admin token may have leaked, rotate the admin
-  token too (it is the same on every engine and runner).
+     load balancer, bastion, runners), then `systemctl reload haproxy` on
+     every engine and the load balancer and `systemctl restart norn-cell-rivet`
+     on every runner. The runner reads `SSL_CERT_FILE` only at start, so a
+     runner is never reloaded for a trust change, only restarted.
+  3. Re-issue every leaf from the new CA and `systemctl reload haproxy`.
+  4. Remove the old CA from every bundle. Then `systemctl restart
+     norn-cell-rivet` on every runner (one at a time, waiting for each to
+     rejoin), so no runner keeps trusting the old root. For HAProxy, a reload
+     is enough on a scheduled rotation: old connections drain on the old
+     process and new ones verify against the new bundle.
+- If the CA key, any private key or the admin token may have leaked, a reload
+  is not enough: a reload leaves the old HAProxy process serving every open
+  connection, so a session that authenticated under the old trust stays up
+  until its peer closes it. After step 4:
+  1. Rotate the admin token (it is the same on every engine and runner): put
+     the new one in Infisical, the engines' configs and every runner's
+     `RIVET_ENDPOINT`.
+  2. `systemctl restart haproxy` (never `reload`) on every engine and then the
+     load balancer. A restart stops the old process, which ends every TLS
+     session it held, so every client, including one holding a stolen
+     certificate, has to handshake again against the new bundle.
+  3. `systemctl restart rivet-engine` on each engine, one at a time, waiting
+     for the engine to answer `/namespaces` again, so the old token is gone
+     from memory; then `systemctl restart norn-cell-rivet` on every runner.
+  4. Check that nothing from before the restart is left: on every engine and
+     the load balancer, `ps -o pid,lstart -C haproxy` lists only processes
+     started after the restart (a reload would have left an old worker), and
+     the old token is refused:
+     `curl --cacert ca.pem -o /dev/null -w '%{http_code}\n' -H "authorization: Bearer <old token>" https://10.0.0.2:6420/namespaces`
+     prints 401.
+  Runners reconnect within seconds of the HAProxy restart; actors whose
+  runner drops are served again when it rejoins, as in a runner restart.
 
 ### Admin and fork routes refuse missing or wrong credentials
 

@@ -14,6 +14,11 @@ Wants=network-online.target
 User=norn
 Group=norn
 EnvironmentFile=/etc/norn/cell-rivet.env
+# The plaintext override is for one machine (compose) only. systemd applies
+# UnsetEnvironment= after EnvironmentFile=, so a stale
+# NORN_RIVET_PLAINTEXT_ENGINE in the env file is dropped and an http://
+# RIVET_ENDPOINT fails closed.
+UnsetEnvironment=NORN_RIVET_PLAINTEXT_ENGINE
 ExecStart=/usr/local/bin/norn-cell-rivet
 Restart=always
 RestartSec=2
