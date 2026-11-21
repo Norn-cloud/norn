@@ -50,9 +50,12 @@
           "FinancialInstrument",
           "LegalEntity"
         ],
-        "mapping": "none",
-        "mappingEvidence": [],
-        "importerIssue": null
+        "mapping": "partial",
+        "mappingEvidence": [
+          "crates/norn-formats/src/owl.rs",
+          "registry/standards/imports/edmc-fibo-2026q3.read.json"
+        ],
+        "importerIssue": "Norn-cloud/norn#1512"
       },
       "priority": {
         "sapParity": "P1",

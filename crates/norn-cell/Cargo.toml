@@ -60,6 +60,9 @@ name = "mapping_links"
 name = "model_interfaces"
 
 [[test]]
+name = "ontology_lending"
+
+[[test]]
 name = "parent_rows"
 
 [[test]]

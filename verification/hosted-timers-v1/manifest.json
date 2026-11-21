@@ -1,0 +1,354 @@
+{
+  "schemaVersion": "norn.verification.hosted-timers-v1/1",
+  "issue": "#1464 as merged (962938d9d8); Sol rounds 1 and 2 on #1471 (9d86daa, 70e7678e85)",
+  "quint": "0.32.0",
+  "apalache": "0.56.1",
+  "models": [
+    {
+      "path": "models/hosted-timers.qnt",
+      "module": "hosted_timers",
+      "scope": "the Durable Object wake (write-ahead guard, post-commit rearm that can fail, recovery wake kept while a request writes, arming at open) against committed deadlines; per-item retry eligibility with doubling backoff under a per-wake budget, ordered by original deadline; recorded-then-resolved decision expiry; flow timer run pin (apps/norn-cell-do/wake.mjs, worker.mjs; crates/norn-api/src/timers.rs run_due/next_due; crates/norn-cell/src/due_retry.rs; decisions::expire; run_routes::pinned_flow)",
+      "invariants": [
+        "typeOk",
+        "wakeCovers",
+        "expiryRecoverable",
+        "expiryAtomic",
+        "timerRunsPinnedRule",
+        "dueProgress",
+        "healthyNotStarved"
+      ],
+      "bounds": {
+        "itemSlots": 3,
+        "requests": 1,
+        "kinds": [
+          "reservation",
+          "timer",
+          "decision"
+        ],
+        "perWakeBudget": 2,
+        "time": [
+          0,
+          7
+        ],
+        "timeUnit": "60 s (RECOVERY_MS = STUCK_RETRY_MS)",
+        "backoff": [
+          1,
+          2,
+          4,
+          8
+        ],
+        "recoveryWake": 1,
+        "alarmFairness": 1,
+        "faults": 1,
+        "rules": 2,
+        "legacyDeadlines": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "lateness": 3,
+        "progressStep": "stepProgress: idle time and whole alarm rounds (the clock moves at most FAIR past the alarm, then one run_due pass, completed or lost after any prefix, then the final alarm), over the deploy-time cell's items, opened at time 0",
+        "newDeadlines": "1..3 units ahead",
+        "progressDepth": "Apalache depth 6 for safety, not 7: depth 7 holds but takes 498 s on a 4-vCPU Boat VM, over the fast profile's 300 s per-attempt budget, so the gate claims depth 6 only (the deepest safety mutant needs 5 steps); depth 5 for progress (the advisory-retry mutant needs 4); seeded simulation of 10,000 traces to depth 15"
+      },
+      "assumptions": [
+        "A1 a DO storage write (setAlarm, a cell commit) is durable when its await resolves; one alarm handler runs at a time",
+        "A2 alarm delivery is fair: the clock never passes a set alarm by more than FAIR without it firing",
+        "A3 at most FAULTS faults per trace: an isolate loss (it kills the alarm handler and every request in flight) or a failed resolving commit of an expiry",
+        "A4 no logical time passes while one alarm handler runs (run_due is one synchronous wasm call); requests interleave with it at its awaits, and the recovery set and run_due are one step",
+        "A5 an item's handling outcome (healthy or failing) is fixed per incarnation",
+        "A6 a cell from before alarms is armed when it is first opened after the deploy; no deploy-time sweep opens cells nobody calls, so wakeCovers holds from the cell's first open"
+      ],
+      "variants": [
+        {
+          "step": "stepNoGuard",
+          "invariant": "wakeCovers",
+          "maxSteps": 6,
+          "meaning": "S1: no write-ahead guard; a commit whose rearm never runs (a crash, a failed scheduling call) has no wake"
+        },
+        {
+          "step": "stepLaterAlarmReplaces",
+          "invariant": "wakeCovers",
+          "maxSteps": 6,
+          "meaning": "S1: the rearm or open sets the alarm exactly, so a later deadline postpones a guard or recovery wake another request still relies on"
+        },
+        {
+          "step": "stepNoRecoveryWake",
+          "invariant": "wakeCovers",
+          "maxSteps": 6,
+          "meaning": "S1: the delivered alarm is gone until the handler's end, so a lost handler leaves due work with no wake"
+        },
+        {
+          "step": "stepDropRecoveryWhileWriting",
+          "invariant": "wakeCovers",
+          "maxSteps": 6,
+          "meaning": "S1: the alarm's end sets the exact next alarm while a request is still writing, so that request's commit followed by a crash has no wake"
+        },
+        {
+          "step": "stepNoOpenArm",
+          "invariant": "wakeCovers",
+          "maxSteps": 6,
+          "meaning": "S1: opening a cell does not arm it, so a cell from before alarms keeps its deadlines and no alarm"
+        },
+        {
+          "step": "stepSplitExpiry",
+          "invariant": "expiryRecoverable",
+          "maxSteps": 6,
+          "meaning": "S2: a recorded expiry leaves the schedule before its resolving commit lands (the round-1 shape), so a failed or lost resolution is never resumed"
+        },
+        {
+          "step": "stepNoFirstWins",
+          "invariant": "expiryAtomic",
+          "maxSteps": 6,
+          "meaning": "S2: a decider's result overwrites a recorded expiry, so the resolution is not the recorded result"
+        },
+        {
+          "step": "stepActiveRuleTimer",
+          "invariant": "timerRunsPinnedRule",
+          "maxSteps": 6,
+          "meaning": "S5: a flow timer runs the rule active when it fires"
+        },
+        {
+          "step": "stepScheduledRuleTimer",
+          "invariant": "timerRunsPinnedRule",
+          "maxSteps": 6,
+          "meaning": "S5: a flow timer runs the rule active when it was scheduled, not its run's starting rule"
+        },
+        {
+          "init": "initOpened",
+          "step": "stepFailureStopsPass",
+          "invariant": "dueProgress",
+          "maxSteps": 5,
+          "meaning": "R1: a failed item stops the pass and has no persisted retry time, so the items behind it are never tried"
+        },
+        {
+          "init": "initOpened",
+          "step": "stepAdvisoryRetry",
+          "invariant": "healthyNotStarved",
+          "maxSteps": 5,
+          "meaning": "S3/R1: retry timing is advisory, so failing items refill every pass and a healthy item behind them starves"
+        },
+        {
+          "init": "initOpened",
+          "step": "stepDeferOverflow",
+          "invariant": "healthyNotStarved",
+          "maxSteps": 5,
+          "meaning": "Sol r2 S3: a pass that leaves eligible work asks for the recovery wake instead of waking at once, so a healthy item behind older failing items is handled past its lateness bound on the pass that completes it (only the doneAt clause sees it)"
+        }
+      ],
+      "witnesses": [
+        {
+          "invariant": "witnessDecisionResolved",
+          "maxSteps": 6
+        },
+        {
+          "invariant": "witnessExpiryResumed",
+          "maxSteps": 6
+        },
+        {
+          "invariant": "witnessPinnedAfterChange",
+          "maxSteps": 6
+        },
+        {
+          "invariant": "witnessPinnedBeforeScheduling",
+          "maxSteps": 6
+        },
+        {
+          "invariant": "witnessRetried",
+          "maxSteps": 6
+        },
+        {
+          "invariant": "witnessLateCovered",
+          "maxSteps": 6
+        },
+        {
+          "invariant": "witnessLostWithDueWork",
+          "maxSteps": 6
+        },
+        {
+          "init": "initOpened",
+          "step": "stepProgress",
+          "invariant": "witnessHealthyAfterSkip",
+          "maxSteps": 5
+        },
+        {
+          "init": "initOpened",
+          "step": "stepProgress",
+          "invariant": "witnessHealthyAtLateBound",
+          "maxSteps": 7
+        }
+      ],
+      "checks": [
+        {
+          "gate": "hosted-timers-quint",
+          "profile": "fast",
+          "invariants": [
+            "typeOk",
+            "wakeCovers",
+            "expiryRecoverable",
+            "expiryAtomic",
+            "timerRunsPinnedRule"
+          ],
+          "maxSteps": 6
+        },
+        {
+          "gate": "hosted-timers-progress-quint",
+          "profile": "full",
+          "init": "initOpened",
+          "step": "stepProgress",
+          "invariants": [
+            "typeOk",
+            "dueProgress",
+            "healthyNotStarved"
+          ],
+          "maxSteps": 5
+        },
+        {
+          "gate": "hosted-timers-progress-sim",
+          "profile": "fast",
+          "mode": "simulate",
+          "init": "initOpened",
+          "step": "stepProgress",
+          "invariants": [
+            "progress"
+          ],
+          "maxSteps": 15,
+          "samples": 10000,
+          "seed": 1
+        }
+      ],
+      "conformance": {
+        "init": "initConform",
+        "step": "stepConform",
+        "invariant": "progress",
+        "maxSteps": 14,
+        "seeds": 24,
+        "test": "crates/norn-cell-do/tests/hosted_timers_quint.rs"
+      }
+    },
+    {
+      "path": "models/approval-fencing.qnt",
+      "module": "approval_fencing",
+      "scope": "the approval of a parked call under APPROVAL-RECOVERY-1: the decide records the approval only, and the requester's retry consumes it only when its command id (digest and gate revision) still matches under the held definition epoch and the retry's own verified token allows the call, against a concurrent definitions install, an issuer revocation at any time and tokens minted before it (crates/norn-api/src/actions.rs call_action/through_gate/approval_of/effective_digest, approvals.rs, decisions.rs decide; crates/norn-cell-do/src/server.rs handle_all, principal.rs TokenPrincipals, policy.rs ReadPolicy); a supporting check of the hosted approval path, not evidence for INV-AUTH-STALE-REJECT",
+      "invariants": [
+        "typeOk",
+        "noStaleApprovedExecution"
+      ],
+      "bounds": {
+        "calls": 2,
+        "definitionParts": [
+          "action",
+          "writer",
+          "defaults",
+          "laws",
+          "gate"
+        ],
+        "revisions": 2,
+        "issuerChanges": 2,
+        "tokens": 3
+      },
+      "assumptions": [
+        "A1 a definition change takes the definition epoch exclusively; a retry takes it for read",
+        "A2 the step a call licenses runs under the definition active at its dispatch",
+        "A3 a request's authority is the grant its verified bearer token carries, resolved before dispatch (server.rs handle_all, principal.rs TokenPrincipals) and read under the hold only from that request's CallerSlot (policy.rs ReadPolicy); the issuer revokes or restores a grant at any time, a dispatch's hold included, and a token carries the issuer's grant as of when it was minted"
+      ],
+      "variants": [
+        {
+          "step": "stepUnfencedCheck",
+          "invariant": "noStaleApprovedExecution",
+          "maxSteps": 5,
+          "meaning": "#1464 Sol S6: the command read releases its epoch before the commit, so a definition change lands between check and step"
+        },
+        {
+          "step": "stepConsumeSuperseded",
+          "invariant": "noStaleApprovedExecution",
+          "maxSteps": 6,
+          "meaning": "#1464 Sol S6: after a stale approval's call parks anew, the retry still consumes the superseded approval (found by its key, not its command id)"
+        },
+        {
+          "step": "stepNarrowDigest",
+          "invariant": "noStaleApprovedExecution",
+          "maxSteps": 5,
+          "meaning": "#1464 Sol should: the digest covers the action and writer only, so a change to defaults, law pins or decider roles keeps the approval"
+        },
+        {
+          "step": "stepDecideExecutes",
+          "invariant": "noStaleApprovedExecution",
+          "maxSteps": 4,
+          "meaning": "#1483 APPROVAL-RECOVERY-1: the approver's decide executes the call under the token recorded when it parked, so a requester whose newer token carries no grant gets the call run"
+        },
+        {
+          "step": "stepParkedAuthority",
+          "invariant": "noStaleApprovedExecution",
+          "maxSteps": 6,
+          "meaning": "#1483 APPROVAL-RECOVERY-1 S2: the requester's retry is decided under the token recorded at park, older than the retry's own verified token"
+        },
+        {
+          "step": "stepReadBeforeReplace",
+          "invariant": "noStaleApprovedExecution",
+          "maxSteps": 6,
+          "meaning": "#1471 Sol round 2 S1, round 3 S3: read-before-replace regression: the retry's authority is read from the principal slot before resolve records this request's verified token in it, so the retry is decided on the principal the previous request left, older than its own token (on this route resolve replaces the slot on every request before dispatch, so removing end_request alone does not produce this)"
+        }
+      ],
+      "witnesses": [
+        {
+          "invariant": "witnessExecuted",
+          "maxSteps": 4
+        },
+        {
+          "invariant": "witnessReparkedAfterChange",
+          "maxSteps": 5
+        },
+        {
+          "invariant": "witnessUnrelatedRevisionKeepsApproval",
+          "maxSteps": 5
+        },
+        {
+          "invariant": "witnessReparkedThenExecuted",
+          "maxSteps": 8
+        },
+        {
+          "invariant": "witnessDeniedStaysApproved",
+          "maxSteps": 6
+        },
+        {
+          "invariant": "witnessRestoredThenExecuted",
+          "maxSteps": 10
+        },
+        {
+          "invariant": "witnessOutstandingTokenExecutes",
+          "maxSteps": 5
+        }
+      ],
+      "checks": [
+        {
+          "gate": "approval-fencing-quint",
+          "profile": "fast",
+          "invariants": [
+            "typeOk",
+            "noStaleApprovedExecution"
+          ],
+          "maxSteps": 10
+        }
+      ],
+      "conformance": {
+        "init": "init",
+        "step": "stepConform",
+        "invariant": "safety",
+        "maxSteps": 16,
+        "seeds": 24,
+        "test": "crates/norn-cell-do/tests/approval_fencing_quint.rs"
+      },
+      "guarantee": "Authority is as of the request's own verified token, not the issuer's state now: an approved call executes only under exactly the definition its consumed approval was given for, and only under the grant of the verified token of the request that ran it. The cell keeps no membership store; the token's roles are resolved before dispatch and the definition epoch is taken after, so the bound on revocation is the verifier's, as for live reads (UI-LIVE-1): it caps a token's signed lifetime (exp - iat) at 300 s (MAX_LIFETIME_SECONDS) but accepts it until 30 s past exp (LEEWAY_SECONDS), and the dispatch decides on the principal verified at request entry without re-checking expiry at the commit. An issuer revocation therefore reaches an approved call at most 330 s after the iat of the newest token minted before it, plus the duration of any request verified before exp + 30 s (the verifier rejects at equality), which may still commit. A call can run after the issuer revoked the grant, under a token verified before the revocation (witnessOutstandingTokenExecutes)."
+    }
+  ],
+  "notProved": [
+    "Conformance is trace-driven, not a refinement proof: the committed ITF traces of stepConform drive the real run_due/next_due (timer rows only: reservations that fail and flow timers that succeed or fail; decisions, losses and failed commits are not replayed) and the real DO approval dispatch (one writer change and unchanged reinstalls); wake.mjs is not driven from the model (its rules have unit tests in wake.test.mjs).",
+    "Progress is bounded response under explicit fairness (A2) and a fault budget (A3), checked as invariants to the BMC depth; it is not unbounded LTL liveness with weak fairness.",
+    "Bounded: Apalache BMC to the stated depths over three item slots, one request in flight, budget two, logical time 0..7, two calls, two revisions, two issuer changes and three tokens; nothing beyond those bounds is claimed.",
+    "A decider's own resolution is one step (its record-then-commit crash window is its caller's retry, not the wake's); live-law validation at install, sync scheduling against the global sync lease and the published severity of defs.live_data_unchecked are not modelled.",
+    "Token lifetime is not modelled as time: a token carries the issuer's grant as of its minting until the requester's next token, with no expiry; the bound (300 s signed lifetime, MAX_LIFETIME_SECONDS, plus 30 s verification leeway, LEEWAY_SECONDS, plus the duration of a request verified before exp + 30 s, which may still commit) is the code's, not the model's. A re-check of the grant against the issuer under the dispatch's hold is not a property of the code and is not claimed."
+  ],
+  "conformanceGate": "hosted-timers-conformance"
+}

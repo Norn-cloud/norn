@@ -540,9 +540,9 @@ export interface paths {
         /**
          * HOST-READ-6: an object's proven versions, newest first, with what wrote each.
          * @description # Errors
-         *     A denied gate (the opaque 403); an absent, withheld or source-withheld
-         *     object (one 404); a commit between the reads (409 `object.snapshot_moved`);
-         *     or a host failure.
+         *     A denied gate (the opaque 403); an absent or withheld object (one 404;
+         *     Sources is not needed, and gates only each version's lineage); a commit
+         *     between the reads (409 `object.snapshot_moved`); or a host failure.
          */
         get: operations["get_object_history"];
         put?: never;
@@ -11978,7 +11978,11 @@ export interface components {
             objectType: string;
             /** @description True when older versions exist beyond [`MAX_HISTORY_VERSIONS`]. */
             truncated: boolean;
-            /** @description The versions listed, newest first. */
+            /**
+             * @description The versions the caller may read, newest first. A version is listed
+             *     only when the caller holds Population and Values on that version's own
+             *     record, and only when it changed a value the caller may see.
+             */
             versions: components["schemas"]["NornObjectVersion"][];
         };
         /**
@@ -12789,7 +12793,10 @@ export interface components {
             actionId: string;
             /** @description The verified caller the server attributed the call to. */
             actor: string;
-            /** @description The effective input (caller input plus server derivations); decimals are exact JSON number tokens. */
+            /**
+             * @deprecated
+             * @description Deprecated: always the empty object. The call's effective input is never disclosed.
+             */
             input: {
                 [key: string]: unknown;
             };
@@ -14880,7 +14887,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The object's proven versions, newest first, each with its commit and what wrote it. */
+            /** @description The object's proven versions the caller may read, newest first, each with its commit and what wrote it. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -14907,7 +14914,7 @@ export interface operations {
                     "application/json": components["schemas"]["Refusal"];
                 };
             };
-            /** @description The request was refused (`object.not_found`): the object is absent, withheld or source-withheld; these are not told apart. A quarantined object is served. */
+            /** @description The request was refused (`object.not_found`): the object is absent or withheld (no Population or Values); these are not told apart. Sources is not needed: without it no version names its source lineage. A quarantined object is served. */
             404: {
                 headers: {
                     [name: string]: unknown;
