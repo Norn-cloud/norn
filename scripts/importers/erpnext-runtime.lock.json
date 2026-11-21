@@ -48,6 +48,24 @@
       "sha256": "e79633b8d0564816cee8a99f5c9acf9a0e6fc7257c7209acd684ecad53a89dd6",
       "license": "upstream-terms-unresolved",
       "distribution": "external-runtime-test-input-only"
+    },
+    "dectest-2.62.zip": {
+      "url": "https://speleotrove.com/decimal/dectest.zip",
+      "sha256": "b70a224cd52e82b7a8150aedac5efa2d0cb3941696fd829bdbe674f9f65c3926",
+      "license": "upstream-terms-unresolved",
+      "distribution": "external-runtime-test-input-only",
+      "revision": "2.62",
+      "extractTo": "dectest",
+      "members": {
+        "base.decTest": "e6ebb1839991a7089b3e5f3e2938360222a58e508d49dfa71c1cc36d5acd5152",
+        "add.decTest": "a9473f47bb55954053583e71efa7e984ed897e75ad6bfbbe7aa603390becb264",
+        "subtract.decTest": "bf4dcea54e8e41aec67f5e7e417b14f414fc0af2d6a47e8bd691914733ec5491",
+        "compare.decTest": "3a444dc9e7cf58e0ea645edd86c3e11c40076c061142dba8fad5079f70faf0ae",
+        "dqBase.decTest": "22ee8af01c98c26eb581503bed93d38f9218530d1a7700a6c2a2f73ae972e60a",
+        "dqAdd.decTest": "17d0213375adc66241ddb6000ecdc124a892396b9d44fffd94207ec92697944f",
+        "dqSubtract.decTest": "977398b439fc3014addfdff3427182fe85fd106b725bf723c6567f30dc158d06",
+        "dqCompare.decTest": "3028d7cb716d6af73c2c18b66bad04907059f23a33578b790ea65faf779faa67"
+      }
     }
   }
 }

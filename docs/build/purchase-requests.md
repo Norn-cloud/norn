@@ -140,8 +140,10 @@ Then, in the developer's Studio:
 
 In the reviewer's Studio:
 
-3. Sign off the request in Decisions.
-4. Approve it.
+3. Sign off the request in Decisions. The sign-off runs nothing: the request
+   is submitted when its requester retries the same submit (same idempotency
+   key), under the requester's own authority (APPROVAL-RECOVERY-1).
+4. Once it is submitted, approve it.
 
 The developer's own Approve is refused.
 

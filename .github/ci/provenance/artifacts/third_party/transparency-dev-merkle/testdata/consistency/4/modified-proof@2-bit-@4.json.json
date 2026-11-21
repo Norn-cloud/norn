@@ -1,0 +1,35 @@
+{
+  "sha256": "fee5be7b0e9aacf6e654396a5c406335e92991aac778d5f0277343f6222142b1",
+  "origin": "upstream",
+  "category": "standards-data",
+  "license": "Apache-2.0",
+  "sources": [
+    {
+      "id": "standards.transparency-dev-merkle",
+      "revision": "75a6539d7b48af0d529236f24487d2814fd1dca7",
+      "evidence": {
+        "path": "registry/standards/transparency-dev-merkle.source.json",
+        "sha256": "2264a5af182743c7cfbf1793aed1c439c6f8ddd29f9ff0479ca8565563d84614"
+      }
+    }
+  ],
+  "analyzed_sources": [],
+  "parents": [],
+  "rights_evidence": [
+    {
+      "path": "registry/standards/transparency-dev-merkle.source.json",
+      "sha256": "2264a5af182743c7cfbf1793aed1c439c6f8ddd29f9ff0479ca8565563d84614"
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    }
+  ],
+  "notices": [
+    {
+      "path": "LICENSE",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    }
+  ],
+  "connector": null
+}
