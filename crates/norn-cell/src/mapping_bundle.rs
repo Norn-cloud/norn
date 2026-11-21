@@ -177,6 +177,54 @@ pub(crate) struct MappingPlanCache {
     /// inbox id, with the exact row text they were decoded from: a row whose
     /// text is unchanged needs no second decode and recomputation.
     pub(crate) claims: BTreeMap<String, (String, MappingBundle)>,
+    /// INGEST-DERIVE-ONCE-1: bundles this store derived, by digest, with the
+    /// exact plan they were derived under. A bundle equal to one derived under
+    /// the very plan a recheck verifies is that recheck's derivation: the
+    /// derivation is a pure function of the plan and the bundle's own inputs
+    /// (raw, input, version, derivation, reprocesses), all compared here.
+    derived: BTreeMap<String, (Arc<MappingPlan>, MappingBundle)>,
+    /// INGEST-DERIVE-ONCE-1: plans proven inside the current transaction scope
+    /// ([`PinnedPlans`]), by version and mapping. Nothing writes the retained
+    /// definitions, the export journal or receipts inside such a scope, so the
+    /// install a plan was proven from is the one every later read in it sees.
+    pinned: Option<BTreeMap<(u64, String), Arc<MappingPlan>>>,
+}
+
+/// Most bundles [`MappingPlanCache`] keeps as derived: two full pages, so a
+/// page's capture is still known when its commit rechecks it.
+const MAX_DERIVED_BUNDLES: usize = 2 * crate::mapping_page::MAX_PAGE_RECORDS;
+
+/// INGEST-DERIVE-ONCE-1: a scope inside one engine transaction in which a
+/// retained mapping plan, once proven, is reused instead of re-reading and
+/// re-verifying the install on every derivation. Only a scope that writes no
+/// retained definitions, export journal rows or receipts may open one (a
+/// page's capture, a commit's read-only guard). A nested scope leaves the
+/// outer one in place.
+pub(crate) struct PinnedPlans<'a> {
+    cache: &'a std::cell::RefCell<MappingPlanCache>,
+    opened: bool,
+}
+
+impl<'a> PinnedPlans<'a> {
+    pub(crate) fn open(cache: &'a std::cell::RefCell<MappingPlanCache>) -> Self {
+        let mut plans = cache.borrow_mut();
+        let opened = plans.pinned.is_none();
+        if opened {
+            plans.pinned = Some(BTreeMap::new());
+        }
+        drop(plans);
+        Self { cache, opened }
+    }
+}
+
+impl Drop for PinnedPlans<'_> {
+    fn drop(&mut self) {
+        if self.opened {
+            // No borrow of the cache outlives a call, so this never conflicts;
+            // a scope's plans never survive it.
+            self.cache.borrow_mut().pinned = None;
+        }
+    }
 }
 
 /// Most claim bundles [`MappingPlanCache`] keeps.
@@ -270,6 +318,32 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     /// re-read and compared on every call; only the pure model projection,
     /// governing-law check and mapping compilation are reused.
     fn mapping_plan(
+        &self,
+        input: &MappingInput,
+        version: u64,
+    ) -> Result<Arc<MappingPlan>, CellError> {
+        let pin = (version, input.mapping.clone());
+        if let Some(cache) = self.mapping_plans
+            && let Some(plan) = cache
+                .borrow()
+                .pinned
+                .as_ref()
+                .and_then(|pinned| pinned.get(&pin))
+        {
+            return Ok(Arc::clone(plan));
+        }
+        let plan = self.proven_mapping_plan(input, version)?;
+        if let Some(cache) = self.mapping_plans
+            && let Some(pinned) = cache.borrow_mut().pinned.as_mut()
+        {
+            pinned.insert(pin, Arc::clone(&plan));
+        }
+        Ok(plan)
+    }
+
+    /// [`Self::mapping_plan`] proven from the store: the full MAPPING-PLAN-1
+    /// verification of the installed row, journal record and receipt.
+    fn proven_mapping_plan(
         &self,
         input: &MappingInput,
         version: u64,
@@ -435,6 +509,43 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         reprocesses: Option<String>,
     ) -> Result<MappingBundle, CellError> {
         let plan = self.mapping_plan(input, version)?;
+        self.derive_under(plan, raw, input, version, derivation, reprocesses)
+    }
+
+    /// [`Self::derived_mapping_bundle`] under an already proven `plan`,
+    /// remembered as derived under it (INGEST-DERIVE-ONCE-1).
+    fn derive_under(
+        &self,
+        plan: Arc<MappingPlan>,
+        raw: &RuntimeValue,
+        input: &MappingInput,
+        version: u64,
+        derivation: Derivation,
+        reprocesses: Option<String>,
+    ) -> Result<MappingBundle, CellError> {
+        let bundle = Self::compute_under(&plan, raw, input, version, derivation, reprocesses)?;
+        if let Some(cache) = self.mapping_plans {
+            let mut cache = cache.borrow_mut();
+            if cache.derived.len() >= MAX_DERIVED_BUNDLES {
+                cache.derived.clear();
+            }
+            cache
+                .derived
+                .insert(bundle.digest.clone(), (plan, bundle.clone()));
+        }
+        Ok(bundle)
+    }
+
+    /// The bundle `raw` derives under `plan`: a pure function of its
+    /// arguments, which reads and writes no cache.
+    fn compute_under(
+        plan: &MappingPlan,
+        raw: &RuntimeValue,
+        input: &MappingInput,
+        version: u64,
+        derivation: Derivation,
+        reprocesses: Option<String>,
+    ) -> Result<MappingBundle, CellError> {
         let field = |name: &str| {
             raw.get(name)
                 .and_then(RuntimeValue::as_str)
@@ -522,6 +633,20 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         })
     }
 
+    /// INGEST-DERIVE-ONCE-1: whether `bundle` equals one this store derived
+    /// under exactly `plan` (the same proven plan object), field for field.
+    fn derived_under(&self, plan: &Arc<MappingPlan>, bundle: &MappingBundle) -> bool {
+        self.mapping_plans.is_some_and(|cache| {
+            cache
+                .borrow()
+                .derived
+                .get(&bundle.digest)
+                .is_some_and(|(derived_plan, derived)| {
+                    Arc::ptr_eq(derived_plan, plan) && derived == bundle
+                })
+        })
+    }
+
     /// INGEST-GROUP-1: what records of `input` can write and link to under
     /// the active definitions, as identity roots (a subtype and its root
     /// share keys).
@@ -531,10 +656,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     /// model cannot root (an interface link target): the caller then keeps
     /// the batch's own order.
     pub fn mapping_footprint(&self, input: &MappingInput) -> Result<MappingFootprint, CellError> {
-        let version = self
-            .installed_definitions(None)?
-            .ok_or_else(mismatch)?
-            .version;
+        let version = self.active_definitions_version()?.ok_or_else(mismatch)?;
         let plan = self.mapping_plan(input, version)?;
         let compiled = plan.compiled.as_ref().map_err(|_diagnostics| mismatch())?;
         let (writes, links) = compiled.footprint(&input.dataset);
@@ -558,16 +680,43 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     pub fn recheck_mapping_bundle(&self, bundle: &MappingBundle) -> Result<(), CellError> {
         let active = self.active_definitions_version()?.ok_or_else(mismatch)?;
         if bundle.definitions_version > active
-            || self
-                .installed_definitions(Some(bundle.definitions_version))?
-                .is_none()
+            || !self.definitions_version_retained(bundle.definitions_version)?
         {
             return Err(mismatch());
         }
+        let derivations = derivations_of(bundle.derivation)?;
+        // INGEST-DERIVE-ONCE-1: the plan is proven exactly as a derivation
+        // proves it. A bundle this store derived under that same plan, equal
+        // field for field, was derived under one of `derivations` (its own
+        // derivation number names them), so it is this recheck's result and
+        // is not derived again.
+        let plan = self.mapping_plan(&bundle.input, bundle.definitions_version)?;
+        if self.derived_under(&plan, bundle) {
+            // A debug-only cross-check, never an admission decision: it
+            // derives afresh without touching the cache and asserts the
+            // remembered bundle is that derivation, so debug and release
+            // admit exactly the same bundles.
+            debug_assert!(
+                derivations.iter().any(|derivation| {
+                    Self::compute_under(
+                        &plan,
+                        &bundle.raw,
+                        &bundle.input,
+                        bundle.definitions_version,
+                        *derivation,
+                        bundle.reprocesses.clone(),
+                    )
+                    .is_ok_and(|fresh| fresh == *bundle)
+                }),
+                "a remembered derivation differs from a fresh one"
+            );
+            return Ok(());
+        }
         // MAP-DERIVATION-1: verified under the derivation it was captured
         // with, so a newer parser never changes what retained evidence proves.
-        for derivation in derivations_of(bundle.derivation)? {
-            if self.derived_mapping_bundle(
+        for derivation in derivations {
+            if self.derive_under(
+                Arc::clone(&plan),
                 &bundle.raw,
                 &bundle.input,
                 bundle.definitions_version,
@@ -626,11 +775,11 @@ impl<E: SqlEngine> CellStore<E> {
         raw: &Observed<RuntimeValue>,
         input: &MappingInput,
     ) -> Result<(String, bool), CellError> {
+        // The active version alone; the plan proves the set it names.
         let version = self
             .read()
-            .installed_definitions(None)?
-            .ok_or_else(mismatch)?
-            .version;
+            .active_definitions_version()?
+            .ok_or_else(mismatch)?;
         if let Some(captured) = crate::mapping_identity::capture(self, raw, input, version)? {
             return Ok(captured);
         }
@@ -736,5 +885,225 @@ mod label_identity {
                 digest(&definitions.iter().collect::<Vec<_>>()).expect("digest")
             );
         }
+    }
+}
+
+#[cfg(all(test, feature = "native", not(target_arch = "wasm32")))]
+#[allow(
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    reason = "INGEST-DERIVE-ONCE-1 recheck fixture"
+)]
+mod derive_once_recheck {
+    use super::*;
+    use crate::{CellStore, InstalledDefinitionInput, Model};
+    use norn_ir::{InterfaceDef, ObjectTypeDef, PropertyTypeDef};
+    use std::path::PathBuf;
+
+    fn root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+    }
+
+    /// The three source packs' artifacts, in id order.
+    fn artifacts() -> Vec<ArtifactEnvelope> {
+        let mut artifacts: Vec<ArtifactEnvelope> = Vec::new();
+        for dir in [
+            "core",
+            "packs/canon",
+            "packs/erpnext",
+            "packs/shopify",
+            "packs/odoo",
+        ] {
+            for file in std::fs::read_dir(root().join(format!("registry/{dir}/artifacts")))
+                .expect("artifacts")
+            {
+                let artifact: ArtifactEnvelope = serde_json::from_str(
+                    &std::fs::read_to_string(file.expect("file").path()).expect("read"),
+                )
+                .expect("artifact");
+                if ![
+                    "commerce.SalesOrder.entity",
+                    "core.Order.interface",
+                    "core.Entitlement.entity",
+                    "identity.BusinessUnit.entity",
+                    "location.Region.entity",
+                    "location.Space.entity",
+                    "party.Brand.entity",
+                ]
+                .contains(&artifact.artifact_id.as_str())
+                {
+                    artifacts.push(artifact);
+                }
+            }
+        }
+        artifacts.sort_by(|a, b| a.artifact_id.cmp(&b.artifact_id));
+        artifacts
+    }
+
+    /// A store with the three source packs installed, and one `ERPNext`
+    /// snapshot row with the mapping input it derives under.
+    fn installed() -> (CellStore, RuntimeValue, MappingInput) {
+        let artifacts = artifacts();
+        let (mut types, mut interfaces, mut properties) = (
+            Vec::<ObjectTypeDef>::new(),
+            Vec::<InterfaceDef>::new(),
+            Vec::<PropertyTypeDef>::new(),
+        );
+        for artifact in &artifacts {
+            let payload = serde_json::to_value(artifact).expect("artifact")["payload"].clone();
+            if let Some(value) = payload.get("objectType") {
+                types.push(serde_json::from_value(value.clone()).expect("object"));
+            }
+            if let Some(value) = payload.get("interface") {
+                interfaces.push(serde_json::from_value(value.clone()).expect("interface"));
+            }
+            if let Some(value) = payload.get("propertyTypes") {
+                properties.extend(
+                    serde_json::from_value::<Vec<PropertyTypeDef>>(value.clone())
+                        .expect("properties"),
+                );
+            }
+        }
+        let model = Model::from_definitions_with_interfaces(&types, &properties, &interfaces)
+            .expect("model")
+            .with_governing_laws(&artifacts)
+            .expect("laws");
+        let mut store = CellStore::open_in_memory(model.clone()).expect("store");
+        store.bind("scope", "org_demo/dev").expect("scope");
+        store
+            .install_definitions(
+                model,
+                InstalledDefinitionInput {
+                    canonical_set: String::from_utf8(
+                        norn_ir::canonical::canonical_json_of(&artifacts).expect("set"),
+                    )
+                    .expect("UTF8"),
+                    registry: vec![],
+                    receipt_sha256: norn_ir::canonical::domain_hash_hex(
+                        b"norn.test.receipt\0",
+                        &"derive-once-recheck",
+                    )
+                    .expect("receipt digest"),
+                    admission_receipt: None,
+                    readmission: None,
+                    diff: serde_json::json!({}),
+                    installed_at: 1_793_702_400_000,
+                    layout: None,
+                },
+                None,
+                "org_demo/dev",
+            )
+            .expect("install");
+        let source: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(root().join("registry/packs/erpnext/synthetic.json"))
+                .expect("fixture"),
+        )
+        .expect("json");
+        let row = &source["snapshot"][0];
+        let payload = RuntimeValue::from_json(row["record"].clone()).expect("payload");
+        let digest = norn_ir::canonical::HashProfile::Norn1
+            .hash_json(serde_json::to_string(&payload).expect("json"))
+            .expect("digest");
+        let raw = norn_ir::runtime_object! {
+            "contract"=>"norn.raw_observation/v1", "source"=>"synthetic-erpnext", "source_id"=>"row-0",
+            "event_id"=>"snapshot", "source_version"=>"0", "pipeline_version"=>"synthetic/1", "kind"=>"upsert",
+            "extracted_at"=>1_793_702_400_000u64, "payload"=>payload, "payload_digest"=>digest,
+        };
+        let input = MappingInput {
+            mapping: "erpnext.three.mapping".into(),
+            dataset: row["dataset"].as_str().expect("dataset").into(),
+            connector_instance: "demo".into(),
+            partition: "snapshot".into(),
+            recorded_at: norn_ir::provenance::UtcTimestamp("2026-11-03T00:00:00Z".into()),
+        };
+        (store, raw, input)
+    }
+
+    /// The remembered bundle, and the derived cache filled to capacity with
+    /// it among the entries.
+    fn remembered_at_capacity(
+        store: &CellStore,
+        raw: &RuntimeValue,
+        input: &MappingInput,
+    ) -> MappingBundle {
+        let reader = store.read();
+        let version = reader
+            .active_definitions_version()
+            .expect("active")
+            .expect("installed");
+        let bundle = reader.mapping_bundle(raw, input, version).expect("derived");
+        let mut cache = store.mapping_plans.borrow_mut();
+        let (plan, _) = cache
+            .derived
+            .get(&bundle.digest)
+            .cloned()
+            .expect("remembered");
+        for filler in 0..MAX_DERIVED_BUNDLES - 1 {
+            let mut other = bundle.clone();
+            other.digest = format!("filler-{filler}");
+            cache
+                .derived
+                .insert(other.digest.clone(), (Arc::clone(&plan), other));
+        }
+        assert_eq!(cache.derived.len(), MAX_DERIVED_BUNDLES);
+        bundle
+    }
+
+    /// INGEST-DERIVE-ONCE-1: a recheck that hits a remembered derivation,
+    /// including its debug-only cross-check, leaves the derived cache exactly
+    /// as it was, even at capacity, where a remembering derivation clears it.
+    #[test]
+    fn a_remembered_recheck_never_touches_the_derived_cache() {
+        let (store, raw, input) = installed();
+        let bundle = remembered_at_capacity(&store, &raw, &input);
+        let before: Vec<String> = store
+            .mapping_plans
+            .borrow()
+            .derived
+            .keys()
+            .cloned()
+            .collect();
+        store
+            .read()
+            .recheck_mapping_bundle(&bundle)
+            .expect("rechecked");
+        let after: Vec<String> = store
+            .mapping_plans
+            .borrow()
+            .derived
+            .keys()
+            .cloned()
+            .collect();
+        assert_eq!(after, before);
+    }
+
+    /// The debug cross-check asserts and never returns an error: a remembered
+    /// bundle that differs from a fresh derivation is a broken invariant.
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "a remembered derivation differs from a fresh one")]
+    fn a_remembered_bundle_unlike_its_fresh_derivation_is_an_assertion() {
+        let (store, raw, input) = installed();
+        let mut bundle = remembered_at_capacity(&store, &raw, &input);
+        // Remember a bundle no derivation produces, under the same plan.
+        bundle
+            .diagnostics
+            .push(RuntimeValue::from_json(serde_json::json!("forged")).expect("value"));
+        {
+            let mut cache = store.mapping_plans.borrow_mut();
+            let (plan, _) = cache
+                .derived
+                .get(&bundle.digest)
+                .cloned()
+                .expect("remembered");
+            cache
+                .derived
+                .insert(bundle.digest.clone(), (plan, bundle.clone()));
+        }
+        // Any return, an error included, fails the expected panic.
+        store
+            .read()
+            .recheck_mapping_bundle(&bundle)
+            .expect("only the assertion ends this recheck");
     }
 }

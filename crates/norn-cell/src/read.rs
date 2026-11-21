@@ -3303,6 +3303,23 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         validate_active_definition_pointer(self.conn)
     }
 
+    /// Whether a retained definition set is installed at `version`, without
+    /// loading it: exactly `installed_definitions(Some(version)).is_some()`
+    /// for any version at or below the active one.
+    ///
+    /// # Errors
+    /// SQL errors.
+    pub(crate) fn definitions_version_retained(&self, version: u64) -> Result<bool, CellError> {
+        Ok(self
+            .conn
+            .query_optional(
+                &format!("SELECT 1 FROM \"{DEFINITION_VERSION}\" WHERE \"version\" = ?1"),
+                params![to_i64(version, "definitions version")?],
+                |row| row.get::<i64>(0),
+            )?
+            .is_some())
+    }
+
     /// The retained definition set at `version`, or the active set when
     /// `version` is `None`.
     ///
