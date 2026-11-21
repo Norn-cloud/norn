@@ -281,13 +281,21 @@ fn the_requester_reads_and_runs_their_approved_call() {
     );
 
     // A rejected call reads rejected and is never offered.
-    let (_, parked) = convert(&cell, OPERATOR, &melt_body("melt-8", "12", "10", "operator-r2"));
+    let (_, parked) = convert(
+        &cell,
+        OPERATOR,
+        &melt_body("melt-8", "12", "10", "operator-r2"),
+    );
     let rejected_id = parked["decision"]["id"].as_str().unwrap().to_owned();
     let (status, _) = decide(&cell, APPROVER, &rejected_id, "reject");
     assert_eq!(status, 200);
     assert_eq!(requested(&cell, OPERATOR, None)["items"], json!([]));
     let rejected = requested(&cell, OPERATOR, Some(&rejected_id));
-    assert_eq!(rejected["items"][0]["status"], json!("rejected"), "{rejected}");
+    assert_eq!(
+        rejected["items"][0]["status"],
+        json!("rejected"),
+        "{rejected}"
+    );
     assert_eq!(rejected["items"][0]["canRun"], json!(false));
 }
 

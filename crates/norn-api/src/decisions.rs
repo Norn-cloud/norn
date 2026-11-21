@@ -1033,8 +1033,8 @@ fn requested_document(
     state: Option<&CallState>,
 ) -> Result<RequestedDecision, Refusal> {
     let input = RuntimeValue::Object(held.call.input.clone());
-    let encoded_input = String::from_utf8(input.canonical_json().map_err(Refusal::host)?)
-        .map_err(Refusal::host)?;
+    let encoded_input =
+        String::from_utf8(input.canonical_json().map_err(Refusal::host)?).map_err(Refusal::host)?;
     Ok(RequestedDecision {
         id: decision.id.clone(),
         question: decision.request.question.clone(),
@@ -1047,7 +1047,7 @@ fn requested_document(
             && matches!(state, Some(CallState::NotExecuted)),
         call: RequestedCall {
             action: held.call.action.clone(),
-            definition: held.call.definition.clone(),
+            definition: held.definition.clone(),
             input,
             encoded_input,
             idempotency_key: held.call.idempotency_key.clone(),

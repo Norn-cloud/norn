@@ -290,9 +290,9 @@ fn decisions<E: SqlEngine>(
             }
         }
         (DecisionsRoute::Collection, _) => Err(not_allowed("decisions are listed with GET")),
-        (DecisionsRoute::Requested, _) => {
-            Err(not_allowed("the caller's requested calls are listed with GET"))
-        }
+        (DecisionsRoute::Requested, _) => Err(not_allowed(
+            "the caller's requested calls are listed with GET",
+        )),
         (DecisionsRoute::Decide(_), _) => Err(not_allowed("a decision is decided with POST")),
     }
 }
