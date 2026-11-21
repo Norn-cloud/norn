@@ -788,8 +788,10 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             .scope)
     }
 
-    pub(crate) fn verify_value_history(&self) -> Result<(), CellError> {
-        for receipt in self.receipt_stream() {
+    /// Every value version written after `commits` matches its receipt's
+    /// digest (OPEN-CHECKPOINT-1: `commits` is the open checkpoint's, or 0).
+    pub(crate) fn verify_value_history_after(&self, commits: u64) -> Result<(), CellError> {
+        for receipt in self.receipt_stream_from(commits) {
             let receipt = receipt?;
             for row in receipt.body.written {
                 let stored: Option<(String, String, String)> = self.conn.query_optional(

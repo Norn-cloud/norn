@@ -28,7 +28,7 @@ use norn_cell::engine_release::{
 use norn_cell::export::Exporter;
 use norn_cell::test_door::TestCommit as _;
 use norn_cell::{
-    CellError, CellStore, CommitOutcome, InstalledDefinitionInput, JournalMode, Model,
+    CellError, CellStore, CommitOutcome, InstalledDefinitionInput, JournalMode, LedgerHead, Model,
     RestoreError, StoreOptions,
 };
 use serde_json::Value;
@@ -36,6 +36,7 @@ use serde_json::Value;
 const STORAGE_V1: &str = include_str!("fixtures/engine-storage-v1.json");
 const STORAGE_V2: &str = include_str!("fixtures/engine-storage-v2.json");
 const STORAGE_V3: &str = include_str!("fixtures/engine-storage-v3.json");
+const STORAGE_V4: &str = include_str!("fixtures/engine-storage-v4.json");
 
 /// Storage version 3 (#1483) adds the approval recovery tables, derived from
 /// the ledger, to every older cell: `_norn_approved_call` gains
@@ -88,6 +89,39 @@ fn add_approval_recovery_tables(image: &mut Value, approved_calls: &Value) {
         serde_json::json!({
             "columns": ["rowid", "world", "commit_seq", "run_id", "command_id", "generation"],
             "rows": [],
+        }),
+    );
+}
+
+/// The cell's transparency root, as the open checkpoint records it.
+fn receipts_root(store: &CellStore<NativeEngine>) -> String {
+    store
+        .transparency_checkpoint()
+        .expect("root")
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// Storage version 5 (OPEN-CHECKPOINT-1, #1533) adds `_norn_open_checkpoint`,
+/// and the upgrading open records in it the head it verified, with the root
+/// of its receipts: the one row it writes besides the stamp.
+fn add_open_checkpoint(expected: &mut Value, after: &Value, head: &LedgerHead, root: &str) {
+    let entry = after["schema"]
+        .as_array()
+        .expect("schema")
+        .iter()
+        .find(|entry| entry["name"] == "_norn_open_checkpoint")
+        .expect("the upgrade adds the open checkpoint table")
+        .clone();
+    assert_eq!(entry["type"], "table");
+    expected["schema"].as_array_mut().expect("schema").push(entry);
+    expected["tables"].as_object_mut().expect("tables").insert(
+        "_norn_open_checkpoint".to_owned(),
+        serde_json::json!({
+            "columns": ["rowid", "id", "commits", "seq", "hash", "receipts_root"],
+            "rows": [[1, 1, head.commits, head.seq, head.hash, root]],
         }),
     );
 }
@@ -235,6 +269,7 @@ fn a_storage_v1_cell_opens_on_this_engine_with_identical_receipts() {
     // receipt under the new engine.
     let mut store = open(&path).expect("a v1 cell opens on this engine");
     let head = store.read().verify_ledger().expect("the ledger verifies");
+    let root = receipts_root(&store);
     assert_eq!(head.commits, 3);
     let receipts = store.read().receipts().expect("receipts");
     assert_eq!(receipts.len(), 3);
@@ -289,6 +324,7 @@ fn a_storage_v1_cell_opens_on_this_engine_with_identical_receipts() {
     }));
     // The v1 fixture holds no decision, so nothing is backfilled.
     add_approval_recovery_tables(&mut expected, &serde_json::json!([]));
+    add_open_checkpoint(&mut expected, &after, &head, &root);
     let mut catalog = after;
     by_name(&mut catalog);
     by_name(&mut expected);
@@ -353,6 +389,7 @@ fn a_storage_v2_cell_opens_on_this_engine_with_identical_receipts() {
     );
 
     let mut store = open(&path).expect("a v2 cell opens on this engine");
+    let root = receipts_root(&store);
     let head = store.read().verify_ledger().expect("the ledger verifies");
     assert_eq!(head.commits, engine_fixture::COMMITS);
     let receipts = store.read().receipts().expect("receipts");
@@ -410,6 +447,7 @@ fn a_storage_v2_cell_opens_on_this_engine_with_identical_receipts() {
     stamp_row[2] = stamp.into();
     expected["storage"] = STORAGE_VERSION.into();
     add_approval_recovery_tables(&mut expected, approved);
+    add_open_checkpoint(&mut expected, &after, &head, &root);
     let mut catalog = after;
     by_name(&mut catalog);
     by_name(&mut expected);
@@ -450,6 +488,7 @@ fn a_storage_v3_cell_opens_on_this_engine_with_identical_receipts() {
     assert_eq!(approved[0][2], engine_fixture::APPROVAL_DECISION);
     assert_eq!(approved[0][3], engine_fixture::APPROVAL_COMMAND);
 
+    let root = receipts_root(&store);
     let mut store = open(&path).expect("a v3 cell opens on this engine");
     let head = store.read().verify_ledger().expect("the ledger verifies");
     assert_eq!(head.commits, engine_fixture::COMMITS);
@@ -504,6 +543,7 @@ fn a_storage_v3_cell_opens_on_this_engine_with_identical_receipts() {
         .expect("the v3 cell is stamped");
     stamp_row[2] = stamp.into();
     expected["storage"] = STORAGE_VERSION.into();
+    add_open_checkpoint(&mut expected, &after, &head, &root);
     let mut catalog = after;
     by_name(&mut catalog);
     by_name(&mut expected);
@@ -514,6 +554,69 @@ fn a_storage_v3_cell_opens_on_this_engine_with_identical_receipts() {
     );
 
     // A reopen at the current version writes nothing.
+    let store = open(&path).expect("reopen");
+    assert_eq!(store.read().verify_ledger().expect("ledger"), head);
+    drop(store);
+    let mut reopened = engine_fixture::image_of(&path);
+    by_name(&mut reopened);
+    assert_eq!(reopened, catalog, "a current open writes nothing");
+}
+
+/// A cell the last storage version 4 engine wrote opens on this engine with
+/// its ledger and receipts intact. Step 5 (OPEN-CHECKPOINT-1, #1533) adds
+/// `_norn_open_checkpoint`: the upgrading open verifies the whole history
+/// and records its head and receipt root there, the one row it writes
+/// besides the stamp. The next open verifies from that checkpoint and
+/// writes nothing.
+#[test]
+fn a_storage_v4_cell_opens_on_this_engine_with_identical_receipts() {
+    let image: Value = serde_json::from_str(STORAGE_V4).expect("fixture");
+    assert_eq!(image["storage"], 4, "the fixture records storage version 4");
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("cell.sqlite");
+    engine_fixture::load(&image, &path);
+    let before = engine_fixture::image_of(&path);
+    assert_eq!(before, image, "the image loads losslessly");
+    assert_eq!(
+        engine_release::admission(&raw(&path)).expect("admission"),
+        Admission::Upgrade { from: 4 }
+    );
+
+    let mut store = open(&path).expect("a v4 cell opens on this engine");
+    let head = store.read().verify_ledger().expect("the ledger verifies");
+    let root = receipts_root(&store);
+    assert_eq!(head.commits, engine_fixture::COMMITS);
+    let receipts = store.read().receipts().expect("receipts");
+    for (batch, receipt) in engine_fixture::batches().iter().zip(&receipts) {
+        match store.commit(batch).expect("replay") {
+            CommitOutcome::Replayed(replayed) => assert_eq!(&replayed, receipt),
+            CommitOutcome::Committed(_) => panic!("a recorded commit was committed again"),
+        }
+    }
+    assert_eq!(store.verified_head().expect("head"), head);
+    drop(store);
+
+    let after = engine_fixture::image_of(&path);
+    let stamp = serde_json::to_string(&EngineStamp::current()).expect("stamp");
+    let mut expected = before;
+    let stamp_row = expected["tables"]["_norn_meta"]["rows"]
+        .as_array_mut()
+        .expect("meta rows")
+        .iter_mut()
+        .find(|row| row[1] == STAMP_KEY)
+        .expect("the v4 cell is stamped");
+    stamp_row[2] = stamp.into();
+    expected["storage"] = STORAGE_VERSION.into();
+    add_open_checkpoint(&mut expected, &after, &head, &root);
+    let mut catalog = after;
+    by_name(&mut catalog);
+    by_name(&mut expected);
+    assert_eq!(
+        catalog, expected,
+        "the upgrade writes the stamp and the open checkpoint alone"
+    );
+
+    // A reopen verifies from the checkpoint and writes nothing.
     let store = open(&path).expect("reopen");
     assert_eq!(store.read().verify_ledger().expect("ledger"), head);
     drop(store);

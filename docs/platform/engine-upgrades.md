@@ -34,11 +34,21 @@ The version metadata the engine checks is compiled in: `CHANNEL` lists each stor
 A refused or failed open leaves the file byte-identical. Nothing is committed until every check that can refuse the file has passed:
 
 - The native engine (`NativeEngine::open`) admits the storage version before it sets the journal mode, which SQLite stores in the file.
-- An open runs the schema step, the migrations, and the verification of the whole ledger, every receipt, the definition history, the fork pin and an expected cell identity in one transaction. The migrations run before this engine's schema statements, so each step sees the layout it was written for. If any later check fails (a model mismatch, a ledger that does not verify), the upgrade rolls back with it.
+- An open runs the schema step, the migrations, and the verification of the history, the fork pin and an expected cell identity in one transaction. The migrations run before this engine's schema statements, so each step sees the layout it was written for. If any later check fails (a model mismatch, a ledger that does not verify), the upgrade rolls back with it.
+- The history is verified from the cell's open checkpoint (storage version 5, OPEN-CHECKPOINT-1, #1533), or from genesis when it has none. See [Checkpointed open](#checkpointed-open).
 - Provisioning an existing cell admits it again and runs the migrations at the start of its write transaction, before any other statement, so a second opener that changed the version after the first check is caught.
 - A fork admits the copied snapshot and refuses unless it is at this engine's storage version, before it reads the copy's head or writes its pin. A copy is never migrated.
 
 Hosts already turn an open refusal into `cell.unopenable`, and the reason reaches only a definition writer.
+
+## Checkpointed open
+
+From storage version 5 an open does not re-verify every commit from the first one. `_norn_open_checkpoint` holds one row: a ledger head this engine verified (commit count, last event sequence and hash) and the RFC 6962 root of the receipt digests of those commits. The code is `crates/norn-cell/src/open_checkpoint.rs`.
+
+- **When it is written.** After every 128th commit, once `verified_head` has verified the chain up to it, and at the end of an open that upgraded the cell (that open writes anyway). A same-version open still writes nothing. The row is metadata: it is never part of a receipt, a ledger event or an export, and a failed write keeps the previous checkpoint.
+- **What an open checks.** The checkpoint must still anchor the file: the ledger entry at its sequence carries its hash, and its last commit's receipt names that head and verifies. The receipt digests of its commits must rebuild its root, so no receipt it covers was replaced, even one rewritten with its own hash. Everything after it is verified exactly as a genesis open verifies it: the chain and receipts, the definition history, the value history and each export record's cell identity. Object identities are checked over the current state, as before. With no checkpoint the open verifies from genesis; one that does not anchor the file refuses the open.
+- **What it does not re-read.** The bodies of rows before the checkpoint. A consistent rewrite of that history changes the anchored head or the receipt root and refuses. An old row changed in place with its stored hashes kept is refused when it is read, because every historical read verifies its own proof (a value version against its receipt's digest, a receipt against its hash). A verification from genesis finds it: an operator's scrub opens a copy of the file with its checkpoint row deleted.
+- **What still grows with history.** The open reads every receipt digest once to rebuild the transparency log in memory (about a microsecond per commit), and the definition history reads every installed version.
 
 ## Exports and restore
 

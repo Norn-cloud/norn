@@ -70,10 +70,14 @@ pub const CHANNEL: &[StorageVersion] = &[
         version: 4,
         change: "MAP-DERIVATION-1 (#1488): a mapping bundle records the runtime derivation it was captured under (`derivation`) and the quarantined bundle it reprocesses (`reprocesses`)",
     },
+    StorageVersion {
+        version: 5,
+        change: "OPEN-CHECKPOINT-1 (#1533): _norn_open_checkpoint holds the last verified ledger head and its receipt root; an open verifies only the history after it",
+    },
 ];
 
 /// The storage version this engine writes.
-pub const STORAGE_VERSION: u32 = 4;
+pub const STORAGE_VERSION: u32 = 5;
 
 /// The oldest storage version this engine upgrades in place. Raising it
 /// retires the steps below it; an older cell must first open on a bridge
@@ -324,7 +328,11 @@ fn migrate_to<E: SqlEngine>(_engine: &E, to: u32) -> Result<(), CellError> {
         // from the cell's own approving decisions. No row is rewritten.
         // Version 4 rewrites nothing: a bundle without `derivation` is
         // derivation 1 and still verifies under it (MAP-DERIVATION-1).
-        2..=4 => Ok(()),
+        // Version 5 adds `_norn_open_checkpoint`, created empty by the
+        // schema statements that follow the chain; the upgrading open then
+        // verifies the whole history and records its head there
+        // (OPEN-CHECKPOINT-1). No row is rewritten.
+        2..=5 => Ok(()),
         _ => Err(CellError::EngineUpgradeUnsupported {
             cell: to.saturating_sub(1),
             engine: STORAGE_VERSION,

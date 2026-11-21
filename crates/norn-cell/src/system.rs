@@ -624,4 +624,6 @@ pub const SYSTEM_DDL: &[&str] = &[
   PRIMARY KEY ("world", "object_type", "id", "version", "is_current")
 )"#,
     MARKING_NONEMPTY_DDL,
+    // OPEN-CHECKPOINT-1 (#1533), storage version 5.
+    crate::open_checkpoint::DDL,
 ];

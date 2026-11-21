@@ -59,6 +59,7 @@ mod mapping_process;
 mod migration;
 pub mod mining;
 mod observation_quality;
+mod open_checkpoint;
 pub mod provision;
 pub use observation_quality::AuthoritativePage;
 mod identity;

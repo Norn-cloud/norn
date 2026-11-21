@@ -50,11 +50,14 @@ pub(crate) fn read(engine: &impl SqlEngine) -> Result<Option<CellId>, CellError>
     parse_binding(format.as_deref(), value.as_deref())
 }
 
-pub(crate) fn verify_history(engine: &impl SqlEngine) -> Result<(), CellError> {
+/// Every export record committed after `commits` names this cell's identity
+/// (OPEN-CHECKPOINT-1: `commits` is the open checkpoint's, or 0; the records
+/// before it were verified before the checkpoint was written).
+pub(crate) fn verify_history_after(engine: &impl SqlEngine, commits: u64) -> Result<(), CellError> {
     let current = read(engine)?;
     let mut next = engine.query_optional(
-        "SELECT commit_seq FROM _norn_export_journal ORDER BY commit_seq LIMIT 1",
-        params![],
+        "SELECT commit_seq FROM _norn_export_journal WHERE commit_seq > ?1 ORDER BY commit_seq LIMIT 1",
+        params![crate::read::to_i64(commits, "commit sequence")?],
         |row| row.get::<i64>(0),
     )?;
     while let Some(sequence) = next {

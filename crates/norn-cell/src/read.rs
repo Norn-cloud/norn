@@ -3572,7 +3572,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         self.receipt_stream_from(0)
     }
 
-    fn receipt_stream_from(
+    pub(crate) fn receipt_stream_from(
         &self,
         checkpoint: u64,
     ) -> impl Iterator<Item = Result<Receipt, CellError>> + '_ {

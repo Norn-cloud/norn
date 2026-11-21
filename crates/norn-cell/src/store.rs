@@ -2556,22 +2556,23 @@ impl<E: SqlEngine> CellStore<E> {
         // One proof cache for this read-only pass (#1423): receipts and the
         // retained writer models are proven once per pass, not once per event.
         let pass = RefCell::default();
+        // OPEN-CHECKPOINT-1: an open that upgrades the cell writes anyway, so
+        // it also records the head it verifies; any other open writes nothing.
+        let upgrading = matches!(
+            crate::engine_release::admission(&store.conn)?,
+            crate::engine_release::Admission::Upgrade { .. }
+        );
         let (head, boundary, transparency, fork) = store.conn.transaction(|| {
             Self::init_schema(&store.conn, &store.model, source)?;
             if let Some(expected) = expected {
                 store.require_cell_id(expected)?;
             }
-            crate::cell_identity::verify_history(&store.conn)?;
-            let (head, boundary) = store
-                .read()
-                .with_transaction_verified_receipts(&pass)
-                .verify_ledger_with_boundary(&LedgerHead::genesis())?;
-            store.verify_definition_history()?;
-            store.read().verify_value_history()?;
-            crate::identity::validate(&store.read())?;
-            let transparency = crate::transparency::load(&store.conn)?;
+            let (head, boundary, transparency) = store.verify_history(&pass)?;
             let fork = crate::fork::load_pin(&store.conn)?;
             refuse_pin_past(fork.as_ref(), head.commits)?;
+            if upgrading {
+                store.record_open_checkpoint(&head, &transparency)?;
+            }
             Ok::<_, CellError>((head, boundary, transparency, fork))
         })?;
         store.verified.replace(head);
@@ -2598,18 +2599,138 @@ fn refuse_pin_past(
 }
 
 impl<E: SqlEngine> CellStore<E> {
+    /// Admit the file's history (OPEN-CHECKPOINT-1, #1533): from its open
+    /// checkpoint when it has one, else from genesis. The checkpoint must
+    /// still anchor the ledger and rebuild its receipt root, and everything
+    /// after it is verified in full: the chain and receipts, the definition
+    /// history, the value history and each export record's cell identity.
+    /// The object identities are checked over the whole current state.
+    /// Returns the verified head, its quantity boundary and the receipt log.
+    fn verify_history(
+        &self,
+        pass: &RefCell<crate::history::VerifiedReceipts>,
+    ) -> Result<
+        (
+            LedgerHead,
+            Option<crate::quantity::FormatBoundary>,
+            crate::transparency::ReceiptLog,
+        ),
+        CellError,
+    > {
+        let checkpoint = crate::open_checkpoint::load(&self.conn)?;
+        let from = checkpoint
+            .as_ref()
+            .map_or_else(LedgerHead::genesis, |checkpoint| checkpoint.head.clone());
+        let transparency = crate::transparency::load_bound(&self.conn, checkpoint.as_ref())?;
+        crate::cell_identity::verify_history_after(&self.conn, from.commits)?;
+        let (head, boundary) = self
+            .read()
+            .with_transaction_verified_receipts(pass)
+            .verify_ledger_with_boundary(&from)?;
+        self.verify_definition_history(from.commits)?;
+        self.read().verify_value_history_after(from.commits)?;
+        crate::identity::validate(&self.read())?;
+        if transparency.len() != head.commits {
+            return Err(crate::open_checkpoint::corrupt(
+                head.commits,
+                "the receipt log and the ledger disagree on the commit count",
+            ));
+        }
+        Ok((head, boundary, transparency))
+    }
+
+    /// OPEN-CHECKPOINT-1: record `head`, which this engine verified, with the
+    /// root of `log`, its receipt digests, as the cell's open checkpoint.
+    fn record_open_checkpoint(
+        &self,
+        head: &LedgerHead,
+        log: &crate::transparency::ReceiptLog,
+    ) -> Result<(), CellError> {
+        if log.len() != head.commits {
+            return Err(crate::open_checkpoint::corrupt(
+                head.commits,
+                "the receipt log and the ledger disagree on the commit count",
+            ));
+        }
+        crate::open_checkpoint::record(
+            &self.conn,
+            &crate::open_checkpoint::OpenCheckpoint {
+                head: head.clone(),
+                receipts_root: crate::open_checkpoint::root_hex(log.root().as_bytes()),
+            },
+        )
+    }
+
+    /// OPEN-CHECKPOINT-1: after the commit that made the cell `commits` long,
+    /// every [`crate::open_checkpoint::EVERY`] commits, verify the chain up to
+    /// the head ([`Self::verified_head`], which verifies only what was
+    /// committed since its last verification) and record it. A failure here
+    /// keeps the previous checkpoint, which still anchors the file, and is
+    /// reported, never hidden: the next open verifies more, never less.
+    fn checkpoint_after_commit(&self, commits: u64) {
+        if commits == 0 || commits % crate::open_checkpoint::EVERY != 0 {
+            return;
+        }
+        let recorded = self.verified_head().and_then(|head| {
+            if head.commits != commits {
+                // Another handle committed past this one; its own commit
+                // checkpoints that head.
+                return Ok(());
+            }
+            self.conn
+                .transaction(|| self.record_open_checkpoint(&head, &self.transparency.borrow()))
+        });
+        if let Err(error) = recorded {
+            tracing::warn!(%error, commits, "open checkpoint not recorded; the last one stands");
+        }
+    }
+
+    /// Verify the retained definition history from the receipts after
+    /// `commits` (OPEN-CHECKPOINT-1: the open checkpoint's, or 0 for a whole
+    /// verification). The versions installed at or before `commits` were
+    /// verified before that checkpoint was written; they are checked here for
+    /// order and as the active version at the checkpoint alone.
     #[allow(
         clippy::too_many_lines,
         reason = "startup validates every retained install before serving the cell"
     )]
-    fn verify_definition_history(&self) -> Result<(), CellError> {
+    fn verify_definition_history(&self, commits: u64) -> Result<(), CellError> {
         let reader = self.read();
         let versions = reader.installed_definition_versions()?;
-        let receipts = reader.receipt_stream();
+        let receipts = reader.receipt_stream_from(commits);
         let mut next_version = 1_u64;
         let mut version_index = 0_usize;
         let mut active_version = 0_u64;
         let mut previous_install_seq = 0_u64;
+        for version in versions.iter().take_while(|version| version.commit_seq <= commits) {
+            if version.version != next_version || version.commit_seq <= previous_install_seq {
+                return Err(CellError::LedgerCorrupt {
+                    seq: version.commit_seq,
+                    reason: "definition history version or receipt order is inconsistent"
+                        .to_owned(),
+                });
+            }
+            active_version = version.version;
+            previous_install_seq = version.commit_seq;
+            next_version = next_version
+                .checked_add(1)
+                .ok_or(CellError::OutOfRange("definitions version"))?;
+            version_index = version_index
+                .checked_add(1)
+                .ok_or(CellError::OutOfRange("definition history index"))?;
+        }
+        if commits > 0
+            && reader
+                .receipts_after(commits.saturating_sub(1), 1)?
+                .first()
+                .is_none_or(|receipt| receipt.body.definitions_version != active_version)
+        {
+            return Err(CellError::LedgerCorrupt {
+                seq: commits,
+                reason: "the open checkpoint's receipt names a definitions version not in force"
+                    .to_owned(),
+            });
+        }
 
         for receipt in receipts {
             let receipt = receipt?;
@@ -3241,12 +3362,8 @@ impl<E: SqlEngine> CellStore<E> {
                         || !active.is_some_and(|set| set.model_hash == self.model.model_hash() && set.ddl_hash == self.model.ddl_hash()) {
                         return Err(CellError::IdempotencyConflict("tenant provisioning".to_owned()).into());
                     }
-                    crate::cell_identity::verify_history(&self.conn)?;
                     let pass = RefCell::default();
-                    let (head, boundary) = self.read().with_transaction_verified_receipts(&pass).verify_ledger_with_boundary(&LedgerHead::genesis())?;
-                    self.verify_definition_history()?;
-                    self.read().verify_value_history()?;
-                    crate::identity::validate(&self.read())?;
+                    let (head, boundary, _log) = self.verify_history(&pass)?;
                     // FORK-PIN-1: refused before the transaction commits.
                     refuse_pin_past(self.fork.as_ref(), head.commits)?;
                     self.verified.replace(head);
@@ -3575,6 +3692,7 @@ impl<E: SqlEngine> CellStore<E> {
                 } else if let Err(error) = self.refresh_transparency() {
                     tracing::warn!(%error, "committed receipt; transparency cache refresh deferred");
                 }
+                self.checkpoint_after_commit(receipt.body.commit_seq);
                 #[cfg(feature = "native")]
                 self.export_notify.notify_one();
                 tracing::debug!(
