@@ -473,23 +473,42 @@ pub struct Caller {
 
 /// Where the resolver records the current request's verified principal for
 /// the policy. Every request records first (possibly nobody), so a caller
-/// never outlives its request; the cell serves one request at a time.
+/// never outlives its request. A request runs on one thread from resolution
+/// to answer, and the slot keeps each thread's caller apart, so requests a
+/// host serves concurrently (the dev host's workers, DEV-CONCURRENT-1) never
+/// see each other's caller.
 #[derive(Debug, Default)]
-pub struct CallerSlot(Mutex<Option<Caller>>);
+pub struct CallerSlot(Mutex<Vec<(Option<std::thread::ThreadId>, Caller)>>);
 
 impl CallerSlot {
-    /// Record the request's verified principal, or nobody.
+    /// Record the request's verified principal, or nobody, for the calling
+    /// thread's request.
     pub fn record(&self, caller: Option<Caller>) {
+        let me = this_thread();
         if let Ok(mut slot) = self.0.lock() {
-            *slot = caller;
+            slot.retain(|(thread, _)| *thread != me);
+            if let Some(caller) = caller {
+                slot.push((me, caller));
+            }
         }
     }
 
-    /// The current request's verified principal, if any.
+    /// The calling thread's request's verified principal, if any.
     #[must_use]
     pub fn current(&self) -> Option<Caller> {
-        self.0.lock().ok().and_then(|slot| slot.clone())
+        let me = this_thread();
+        self.0.lock().ok().and_then(|slot| {
+            slot.iter()
+                .find(|(thread, _)| *thread == me)
+                .map(|(_, caller)| caller.clone())
+        })
     }
+}
+
+/// The calling thread, on a host with threads; the Durable Object cell has
+/// one thread and serves one request at a time.
+fn this_thread() -> Option<std::thread::ThreadId> {
+    (!cfg!(target_arch = "wasm32")).then(|| std::thread::current().id())
 }
 
 /// The compiled read rules with no grant, one per object type of the cell's
@@ -1168,5 +1187,46 @@ impl norn_api::object_routes::ObjectAccess for CellObjectAccess {
             row.id.clone_into(&mut request.resource.id);
         }
         Ok(request)
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used, reason = "caller slot scenarios")]
+mod caller_slot_tests {
+    use super::{Caller, CallerSlot};
+
+    fn caller(subject: &str) -> Caller {
+        Caller {
+            subject_id: subject.to_owned(),
+            roles: Vec::new(),
+            actor_kind: "user",
+            role_table: "test",
+        }
+    }
+
+    /// DEV-CONCURRENT-1: two requests in flight on two threads each see
+    /// their own caller, and ending one never ends the other's.
+    #[test]
+    fn concurrent_requests_never_see_each_others_caller() {
+        let slot = CallerSlot::default();
+        let (arrived, go) = (std::sync::Barrier::new(2), std::sync::Barrier::new(2));
+        std::thread::scope(|scope| {
+            for subject in ["alice", "bob"] {
+                let (slot, arrived, go) = (&slot, &arrived, &go);
+                scope.spawn(move || {
+                    slot.record(Some(caller(subject)));
+                    arrived.wait();
+                    // Both are recorded now; each still reads its own.
+                    assert_eq!(
+                        slot.current().map(|c| c.subject_id),
+                        Some(subject.to_owned())
+                    );
+                    go.wait();
+                    slot.record(None);
+                    assert_eq!(slot.current(), None);
+                });
+            }
+        });
+        assert_eq!(slot.current(), None, "this thread recorded nobody");
     }
 }
