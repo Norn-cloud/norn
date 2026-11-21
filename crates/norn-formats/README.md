@@ -32,10 +32,14 @@ An OWL source is pinned by `registry/standards/imports/<atlas id>.read.json`: th
 ```sh
 scripts/bootstrap-ontology-tools.sh   # the hash-locked rdflib
 target/ontology-tools/venv/bin/python -I scripts/importers/owl_sources.py fetch registry/standards/imports/edmc-fibo-2026q3.read.json --output <dir>
-cargo run -p norn-formats --bin norn-format-read -- registry/standards/imports/edmc-fibo-2026q3.read.json --originals <dir> --emit-dir <out>
+cargo run -p norn-formats --bin norn-format-read -- registry/standards/imports/edmc-fibo-2026q3.read.json --originals <dir> --emit-dir <out> --align registry/standards/imports/edmc-fibo-2026q3.align.json
 ```
 
 `<out>` gets `artifacts.json`, `source_schema.json`, `loss.jsonl` (the axiom report, one entry per line) and `summary.json`. `owl_sources.py pin <manifest>` recomputes the closure and its pins for a new release.
+
+`--align <table>` (`owl_align`) also writes `packs.json` and `alignment.json`. The table is a short, reviewed list of anchor classes (FIBO `Agent` → `core.Agent`, `Contract` → `core.Commitment`, `Debt` → `core.Claim`, `FinancialInstrument` and `Account` → `core.Resource`, `Payment` → `core.EconomicEvent`), with explicit precedence where FIBO places a class under two REA concepts. Each imported class becomes one term of an ontology pack (an `exact_match` to its IRI and one closed shape), and the link pack to the canon makes it `subsumed_by` the one anchor its lineage reaches. A class whose lineage reaches no anchor is a `canon_gap` residual, and one that reaches two anchors with no precedence between them is `non_conforming`. Nothing is dropped, and `validate_link_registry` proves the link total.
+
+Measure on a build host, never the shared agent host: `python3 scripts/bench_ontology_admission.py --emit-dir <out>` admits the vocabulary in growing cuts (`tests/owl_scale.rs`), the two packs, today's canon set as the baseline, and a lending cell over the vocabulary (`crates/norn-cell/tests/ontology_lending.rs`): object types that implement the imported interfaces, records, and laws, installed and committed, with and without the vocabulary.
 
 ## Boundary
 

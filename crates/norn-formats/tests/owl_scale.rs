@@ -21,8 +21,9 @@
 //!   and link targets, admitted by `check_artifact_set` as a registry layer;
 //! - `owl-packs`: the ontology and link packs admitted, then the ontology
 //!   registry and the link registry (totality) validated with the canon;
-//! - `canon`: today's canon (`registry/packs/canon` over `registry/core`);
-//! - `three-systems`: the canon with the ERPNext, Shopify and Odoo packs.
+//! - `three-systems`: today's admitted canon set: the canon with the ERPNext
+//!   and Shopify packs over `registry/core` (the set `norn-cell`'s explorer
+//!   and label tests install).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -241,19 +242,29 @@ fn owl_scale_admission() {
                 Err(diagnostics) => json!(registry_errors(&diagnostics).into_iter().take(5).collect::<Vec<_>>()),
             };
         }
-        (baseline @ ("canon" | "three-systems"), _) => {
-            let mut dirs = vec!["registry/core/artifacts", "registry/packs/canon/artifacts"];
-            if baseline == "three-systems" {
-                dirs.extend([
-                    "registry/packs/erpnext/artifacts",
-                    "registry/packs/shopify/artifacts",
-                    "registry/packs/odoo/artifacts",
-                ]);
-            }
-            let (base, candidate): (Vec<_>, Vec<_>) =
-                dirs.iter().flat_map(|dir| read_dir(dir)).partition(|a| {
-                a.artifact_id.starts_with("core.") || a.artifact_id.starts_with("std.")
-            });
+        ("three-systems", _) => {
+            // The admitted three-systems set, as `norn-cell`'s
+            // `explorer_documents.rs` and `label_identity.rs` select it.
+            let excluded = [
+                "commerce.SalesOrder.entity",
+                "core.Order.interface",
+                "core.Entitlement.entity",
+                "identity.BusinessUnit.entity",
+                "location.Region.entity",
+                "location.Space.entity",
+                "party.Brand.entity",
+            ];
+            let dirs = [
+                "registry/core/artifacts",
+                "registry/packs/canon/artifacts",
+                "registry/packs/erpnext/artifacts",
+                "registry/packs/shopify/artifacts",
+            ];
+            let (base, candidate): (Vec<_>, Vec<_>) = dirs
+                .iter()
+                .flat_map(|dir| read_dir(dir))
+                .filter(|a| !excluded.contains(&a.artifact_id.as_str()))
+                .partition(|a| a.artifact_id.starts_with("core.") || a.artifact_id.starts_with("std."));
             let (millis, errors) = admit(&candidate, &base);
             record["artifacts"] = json!(candidate.len());
             record["base"] = json!(base.len());

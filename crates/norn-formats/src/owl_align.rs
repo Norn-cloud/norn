@@ -4,7 +4,9 @@
 //!
 //! - **The ontology pack** has one `class` term per imported interface
 //!   (`norn.<namespace>.<kebab-name>`, an `exact_match` mapping to the class
-//!   IRI of the pinned release), parented by the interface's first `extends`.
+//!   IRI of the pinned release, ratified as generated identity), parented by
+//!   the interface's first `extends`, and one closed shape: the class IRI and
+//!   every single-valued member it declares or inherits.
 //! - **The link pack** joins it to the canon. A class whose lineage (itself
 //!   and every `extends` ancestor) meets exactly one anchor, after
 //!   precedence, is `subsumed_by` that anchor's canon term. A class that meets
@@ -179,6 +181,112 @@ struct Class {
     iri: String,
     extends: Vec<String>,
     description: Option<String>,
+    members: Vec<Member>,
+}
+
+/// One declared member of an imported interface, as its shape field sees it.
+struct Member {
+    id: String,
+    /// The shape value type (`string`, `term_ref`, ...).
+    value_type: &'static str,
+    /// The link target's interface name.
+    target: Option<String>,
+    required: bool,
+    to_one: bool,
+}
+
+/// The members an interface declares: properties (one value each) and links.
+fn members_of(interface: &Value) -> Vec<Member> {
+    let list = |key: &str| {
+        interface
+            .get(key)
+            .and_then(Value::as_array)
+            .map_or(&[][..], Vec::as_slice)
+            .iter()
+    };
+    let text = |value: &Value, pointer: &str| {
+        value
+            .pointer(pointer)
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    };
+    let mut members = Vec::new();
+    for property in list("properties") {
+        let Some(id) = text(property, "/id") else { continue };
+        let value_type = match text(property, "/type/kind").as_deref() {
+            Some("boolean") => "boolean",
+            Some("date" | "timestamp") => "date_time",
+            _ => "string",
+        };
+        let nullable = property
+            .pointer("/constraints/nullable")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        members.push(Member {
+            id,
+            value_type,
+            target: None,
+            required: !nullable,
+            to_one: true,
+        });
+    }
+    for link in list("links") {
+        let (Some(id), Some(target)) = (text(link, "/id"), text(link, "/target")) else {
+            continue;
+        };
+        members.push(Member {
+            id,
+            value_type: "term_ref",
+            target: Some(target),
+            required: link
+                .pointer("/cardinality/required")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            to_one: text(link, "/cardinality/to").as_deref() == Some("one"),
+        });
+    }
+    members
+}
+
+/// The closed promotion shape of a class: its source IRI, then every
+/// single-valued member it declares or inherits (the nearest declaration
+/// wins, as interfaces only narrow). A shape field's `maxCount` is a number,
+/// so many-valued members stay on the interface and out of the shape.
+fn shape_of(name: &str, by_name: &BTreeMap<String, Class>) -> Value {
+    let mut fields = vec![json!({
+        "fieldId": "source_iri", "valueType": "iri", "minCount": 1, "maxCount": 1,
+    })];
+    let mut seen = BTreeSet::from(["source_iri".to_owned()]);
+    let mut visited = BTreeSet::new();
+    let mut queue = std::collections::VecDeque::from([name.to_owned()]);
+    while let Some(node) = queue.pop_front() {
+        if !visited.insert(node.clone()) {
+            continue;
+        }
+        let Some(class) = by_name.get(&node) else { continue };
+        for member in &class.members {
+            if !seen.insert(member.id.clone()) {
+                continue;
+            }
+            if !member.to_one {
+                continue;
+            }
+            let mut field = json!({
+                "fieldId": member.id, "valueType": member.value_type,
+                "minCount": u8::from(member.required), "maxCount": 1,
+            });
+            if let (Some(target), Some(object)) = (&member.target, field.as_object_mut()) {
+                object.insert("targetTermId".into(), json!(term_of(target)));
+            }
+            fields.push(field);
+        }
+        queue.extend(class.extends.iter().cloned());
+    }
+    let term = term_of(name);
+    json!({
+        "shapeId": format!("shape.{}", term.trim_start_matches("norn.")),
+        "termId": term, "closed": true, "fields": fields,
+    })
 }
 
 fn classes(interfaces: &[ArtifactEnvelope]) -> Result<BTreeMap<String, Class>, String> {
@@ -211,6 +319,7 @@ fn classes(interfaces: &[ArtifactEnvelope]) -> Result<BTreeMap<String, Class>, S
             .and_then(Value::as_str)
             .filter(|text| !text.trim().is_empty())
             .map(str::to_owned);
+        let members = members_of(interface);
         if by_name
             .insert(
                 name.clone(),
@@ -218,6 +327,7 @@ fn classes(interfaces: &[ArtifactEnvelope]) -> Result<BTreeMap<String, Class>, S
                     iri,
                     extends,
                     description,
+                    members,
                 },
             )
             .is_some()
@@ -345,6 +455,7 @@ pub fn align(
     let source = admission.source_id.as_str();
     let mut terms = Vec::new();
     let mut mappings = Vec::new();
+    let mut shapes = Vec::new();
     let mut term_ids = BTreeSet::new();
     for (name, class) in &by_name {
         let term = term_of(name);
@@ -370,6 +481,7 @@ pub fn align(
             fields.insert("parentTermId".into(), json!(term_of(parent)));
         }
         terms.push(entry);
+        shapes.push(shape_of(name, &by_name));
         mappings.push(json!({
             "mappingId": format!("map.{}", term.trim_start_matches("norn.")),
             "termId": term, "sourceId": source, "externalIri": class.iri,
@@ -377,6 +489,9 @@ pub fn align(
             "justification": "The term is this class of the pinned release, imported by the OWL reader.",
             "evidenceRefs": [source], "confidenceBasisPoints": 10000,
             "reviewedBy": alignment.reviewed_by, "reviewedAt": alignment.reviewed_at,
+            // The term is generated from this class: identity, not judgement.
+            "ratifiedBy": format!("{} (generated term: the class itself)", crate::owl::OWL_READER_ADAPTER),
+            "ratifiedAt": alignment.reviewed_at,
         }));
     }
     let pack = envelope(
@@ -384,7 +499,7 @@ pub fn align(
         &format!("{source} classes imported by the OWL reader"),
         &json!({
             "packId": alignment.pack_id, "packVersion": "0.1", "packKind": "ontology",
-            "sources": [admission], "terms": terms, "mappings": mappings,
+            "sources": [admission], "terms": terms, "mappings": mappings, "shapes": shapes,
         }),
     )?;
 

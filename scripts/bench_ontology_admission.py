@@ -9,7 +9,9 @@ nothing upstream is committed. Run on a build host (Boat), never on the shared a
     python3 scripts/bench_ontology_admission.py --emit-dir <dir> [--permille 125,250,500,1000] [--repeat 3]
 
 Prints one JSON object: every run's record (`set`, `artifacts`, `extends`, `links`,
-`properties`, `admitMillis`, `errors`, `peakKiB`) and, for the OWL vocabulary, the fitted
+`properties`, `admitMillis`, `errors`, `peakKiB`; for `lending:<mode>`, the definitions
+install and the per-commit latency of `crates/norn-cell/tests/ontology_lending.rs` with the
+vocabulary installed and implemented, or not at all) and, for the OWL vocabulary, the fitted
 exponent of admission time in the artifact count (time ~ n^k), which says whether admission
 grows linearly or with the set squared (#1417 C1/C5).
 """
@@ -24,15 +26,26 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-TEST = ["cargo", "test", "--release", "--locked", "-p", "norn-formats", "--test", "owl_scale", "--",
-        "--ignored", "--exact", "owl_scale_admission", "--nocapture", "--test-threads", "1"]
+SCALE = ["cargo", "test", "--release", "--locked", "-p", "norn-formats", "--test", "owl_scale", "--",
+         "--ignored", "--exact", "owl_scale_admission", "--nocapture", "--test-threads", "1"]
+LENDING = ["cargo", "test", "--release", "--locked", "-p", "norn-cell", "--test", "ontology_lending", "--",
+           "--ignored", "--exact", "owl_lending_cell", "--nocapture", "--test-threads", "1"]
 
 
 def run(emit_dir: Path, scale_set: str) -> dict:
-    env = dict(os.environ, NORN_OWL_EMIT_DIR=str(emit_dir), NORN_OWL_SCALE_SET=scale_set)
-    out = subprocess.run(TEST, cwd=ROOT, env=env, check=True, capture_output=True, text=True).stdout
-    line = next(line for line in out.splitlines() if line.startswith("NORN_OWL_SCALE "))
-    return json.loads(line.removeprefix("NORN_OWL_SCALE "))
+    env = dict(os.environ, NORN_OWL_EMIT_DIR=str(emit_dir))
+    if scale_set.startswith("lending:"):
+        command, marker = LENDING, "NORN_OWL_LENDING "
+        env["NORN_LENDING_MODE"] = scale_set.removeprefix("lending:")
+    else:
+        command, marker = SCALE, "NORN_OWL_SCALE "
+        env["NORN_OWL_SCALE_SET"] = scale_set
+    out = subprocess.run(command, cwd=ROOT, env=env, check=True, capture_output=True, text=True).stdout
+    # libtest prints `test <name> ... ` on the same line before the record.
+    line = next(line for line in out.splitlines() if marker in line)
+    record = json.loads(line.split(marker, 1)[1])
+    record.setdefault("set", scale_set)
+    return record
 
 
 def exponent(points: list[tuple[int, float]]) -> float | None:
@@ -56,14 +69,17 @@ def main() -> None:
     emit_dir = args.emit_dir.resolve()
     if ROOT in emit_dir.parents or emit_dir == ROOT:
         raise SystemExit("the import is upstream-derived: keep --emit-dir outside the repository")
-    sets = ["canon", "three-systems", *(f"owl:{f}" for f in args.permille.split(","))]
+    sets = ["three-systems", *(f"owl:{f}" for f in args.permille.split(","))]
     if (emit_dir / "packs.json").exists():
         sets.append("owl-packs")
+    sets += ["lending:ontology", "lending:plain"]
     runs = []
     for scale_set in sets:
         records = [run(emit_dir, scale_set) for _ in range(args.repeat)]
         best = min(records, key=lambda record: record.get("admitMillis", 0))
         best["admitMillisRuns"] = [record.get("admitMillis") for record in records]
+        if "commit" in best:
+            best["commitP50UsRuns"] = [record["commit"]["p50_us"] for record in records]
         runs.append(best)
     owl = [(r["artifacts"], r["admitMillis"]) for r in runs if r["set"].startswith("owl:")]
     print(json.dumps({"runs": runs, "owlTimeExponent": exponent(owl), "cpus": os.cpu_count()}, indent=2))
