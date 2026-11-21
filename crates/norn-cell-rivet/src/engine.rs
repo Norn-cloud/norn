@@ -29,7 +29,7 @@ const TRANSACTION_TIMEOUT: Duration = Duration::from_secs(120);
 pub const PLATFORM_TABLE_GLOBS: &[&str] = &["_rivet*", "__rivet*", "_norn_host_*"];
 
 /// A hook into every statement the engine runs, for the host conformance
-/// seams only ([`crate::conformance`]); production builds install none.
+/// seams only (the `conformance` module); production builds install none.
 pub trait StatementHook {
     /// A transaction began.
     fn begin(&self);
