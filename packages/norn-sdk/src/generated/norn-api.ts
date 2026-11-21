@@ -12707,6 +12707,13 @@ export interface components {
             actionId: string;
             /** @description The verified caller the server attributed the call to. */
             actor: string;
+            /**
+             * @deprecated
+             * @description Deprecated: always the empty object. The call's effective input is never disclosed.
+             */
+            input: {
+                [key: string]: unknown;
+            };
             /** @enum {string} */
             kind: "action";
         } | {
