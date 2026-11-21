@@ -38,6 +38,14 @@
     clippy::as_conversions,
     clippy::too_many_lines,
     clippy::disallowed_methods,
+    clippy::arithmetic_side_effects,
+    clippy::cast_possible_wrap,
+    clippy::panic,
+    clippy::string_slice,
+    clippy::needless_pass_by_value,
+    clippy::wildcard_enum_match_arm,
+    clippy::semicolon_if_nothing_returned,
+    clippy::manual_is_multiple_of,
     reason = "a bench: wall clock, printed tables, fixed fixtures"
 )]
 
@@ -46,9 +54,9 @@ use std::io::{BufRead as _, BufReader, Read as _, Write as _};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver};
-use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
@@ -118,7 +126,10 @@ impl Host {
                 .recv_timeout(Duration::from_secs(600))
                 .expect("norn-dev-host became ready");
             assert_ne!(event["event"], "fatal", "{event}");
-            assert_ne!(event["event"], "rejected", "the ERP model was refused: {event}");
+            assert_ne!(
+                event["event"], "rejected",
+                "the ERP model was refused: {event}"
+            );
             if event["event"] == "ready" {
                 break event;
             }
@@ -185,7 +196,13 @@ impl Conn {
         }
     }
 
-    fn call(&mut self, method: &str, path: &str, token: &str, body: Option<&Value>) -> (u16, Value) {
+    fn call(
+        &mut self,
+        method: &str,
+        path: &str,
+        token: &str,
+        body: Option<&Value>,
+    ) -> (u16, Value) {
         let body = body.map(Value::to_string).unwrap_or_default();
         let separator = if path.contains('?') { '&' } else { '?' };
         let request = format!(
@@ -349,7 +366,12 @@ fn rate_cents(item: usize) -> i64 {
 impl Client<'_> {
     /// One command; counts its latency when it commits. `Err` carries the
     /// refusal for the caller to judge.
-    fn act(&mut self, action: &'static str, key: &str, input: Value) -> Result<Value, (u16, Value)> {
+    fn act(
+        &mut self,
+        action: &'static str,
+        key: &str,
+        input: Value,
+    ) -> Result<Value, (u16, Value)> {
         let started = Instant::now();
         let token = self.host.developer.clone();
         let (status, body) = self.conn.call(
@@ -379,9 +401,9 @@ impl Client<'_> {
     fn read(&mut self, kind: &str, id: &str) -> Option<Value> {
         self.tally.reads += 1;
         let token = self.host.developer.clone();
-        let (status, body) = self
-            .conn
-            .call("GET", &format!("/v1/objects/erp.{kind}/{id}"), &token, None);
+        let (status, body) =
+            self.conn
+                .call("GET", &format!("/v1/objects/erp.{kind}/{id}"), &token, None);
         (status == 200).then_some(body)
     }
 
@@ -408,7 +430,11 @@ impl Client<'_> {
     }
 
     fn journal(&mut self, id: &str, memo: &str, legs: &[(&str, i64, i64)]) {
-        self.must("journal.create", &format!("{id}-c"), json!({ "doc_id": id, "memo": memo }));
+        self.must(
+            "journal.create",
+            &format!("{id}-c"),
+            json!({ "doc_id": id, "memo": memo }),
+        );
         for (n, (account, debit, credit)) in legs.iter().enumerate() {
             self.must(
                 "journal.add_line",
@@ -447,22 +473,50 @@ impl Client<'_> {
         };
         let count = 1 + self.rng.below(5) as usize;
         let lines: Vec<(usize, i64)> = (0..count)
-            .map(|_| (self.rng.below(ITEMS as u64) as usize, 1 + self.rng.below(20) as i64))
+            .map(|_| {
+                (
+                    self.rng.below(ITEMS as u64) as usize,
+                    1 + self.rng.below(20) as i64,
+                )
+            })
             .collect();
-        let total: i64 = lines.iter().map(|(item, qty)| rate_cents(*item) * qty).sum();
+        let total: i64 = lines
+            .iter()
+            .map(|(item, qty)| rate_cents(*item) * qty)
+            .sum();
 
         let order = format!("SO-{id}");
-        self.must("sales_order.create", &format!("{order}-c"), json!({ "doc_id": order, "customer_id": customer, "total": money(total) }));
+        self.must(
+            "sales_order.create",
+            &format!("{order}-c"),
+            json!({ "doc_id": order, "customer_id": customer, "total": money(total) }),
+        );
         self.lines("sales_order.add_line", &order, &lines);
-        self.must("sales_order.submit", &format!("{order}-s"), json!({ "doc_id": order }));
+        self.must(
+            "sales_order.submit",
+            &format!("{order}-s"),
+            json!({ "doc_id": order }),
+        );
 
         let delivery = format!("DN-{id}");
-        self.must("delivery.create", &format!("{delivery}-c"), json!({ "doc_id": delivery, "order_id": order }));
+        self.must(
+            "delivery.create",
+            &format!("{delivery}-c"),
+            json!({ "doc_id": delivery, "order_id": order }),
+        );
         for (n, (item, qty)) in lines.iter().enumerate() {
             self.move_stock(*item, -qty, &format!("{delivery}-m{n}"));
         }
-        self.must("delivery.submit", &format!("{delivery}-s"), json!({ "doc_id": delivery }));
-        self.must("sales_order.complete", &format!("{order}-d"), json!({ "doc_id": order }));
+        self.must(
+            "delivery.submit",
+            &format!("{delivery}-s"),
+            json!({ "doc_id": delivery }),
+        );
+        self.must(
+            "sales_order.complete",
+            &format!("{order}-d"),
+            json!({ "doc_id": order }),
+        );
 
         let invoice = format!("SI-{id}");
         self.must(
@@ -471,16 +525,44 @@ impl Client<'_> {
             json!({ "doc_id": invoice, "customer_id": customer, "order_id": order, "total": money(total), "outstanding": money(total) }),
         );
         self.lines("sales_invoice.add_line", &invoice, &lines);
-        self.must("sales_invoice.submit", &format!("{invoice}-s"), json!({ "doc_id": invoice }));
+        self.must(
+            "sales_invoice.submit",
+            &format!("{invoice}-s"),
+            json!({ "doc_id": invoice }),
+        );
         let tax = total / 7;
-        self.journal(&format!("JE-{id}-si"), "sales invoice", &[("1200 Receivables", total, 0), ("4000 Revenue", 0, total - tax), ("2300 Tax payable", 0, tax)]);
+        self.journal(
+            &format!("JE-{id}-si"),
+            "sales invoice",
+            &[
+                ("1200 Receivables", total, 0),
+                ("4000 Revenue", 0, total - tax),
+                ("2300 Tax payable", 0, tax),
+            ],
+        );
 
         let payment = format!("PE-{id}");
         self.must("payment.receive", &format!("{payment}-c"), json!({ "doc_id": payment, "customer_id": customer, "amount": money(total), "unallocated": money(total) }));
-        self.must("payment.allocate", &format!("{payment}-a"), json!({ "doc_id": payment, "unallocated": money(0) }));
-        self.must("sales_invoice.allocate", &format!("{invoice}-a"), json!({ "doc_id": invoice, "outstanding": money(0), "last_allocated": money(total) }));
-        self.must("sales_invoice.complete", &format!("{invoice}-d"), json!({ "doc_id": invoice }));
-        self.journal(&format!("JE-{id}-pe"), "payment", &[("1000 Bank", total, 0), ("1200 Receivables", 0, total)]);
+        self.must(
+            "payment.allocate",
+            &format!("{payment}-a"),
+            json!({ "doc_id": payment, "unallocated": money(0) }),
+        );
+        self.must(
+            "sales_invoice.allocate",
+            &format!("{invoice}-a"),
+            json!({ "doc_id": invoice, "outstanding": money(0), "last_allocated": money(total) }),
+        );
+        self.must(
+            "sales_invoice.complete",
+            &format!("{invoice}-d"),
+            json!({ "doc_id": invoice }),
+        );
+        self.journal(
+            &format!("JE-{id}-pe"),
+            "payment",
+            &[("1000 Bank", total, 0), ("1200 Receivables", 0, total)],
+        );
 
         if n % 50 == 7 {
             // The law refuses a move that would leave the bin negative.
@@ -488,9 +570,18 @@ impl Client<'_> {
             if let Some(current) = self.read("Bin", &bin) {
                 let on_hand = cents(&current["values"]["on_hand"]) / 100;
                 let over = -(on_hand + 1);
-                match self.act("stock.move", &format!("{id}-over"), json!({ "bin_id": bin, "on_hand": "-1", "last_move": over.to_string() })) {
-                    Err((status, _)) if (400..500).contains(&status) => self.tally.expected_refusals += 1,
-                    other => self.tally.unexpected.push(format!("over-issue was not refused: {other:?}")),
+                match self.act(
+                    "stock.move",
+                    &format!("{id}-over"),
+                    json!({ "bin_id": bin, "on_hand": "-1", "last_move": over.to_string() }),
+                ) {
+                    Err((status, _)) if (400..500).contains(&status) => {
+                        self.tally.expected_refusals += 1
+                    }
+                    other => self
+                        .tally
+                        .unexpected
+                        .push(format!("over-issue was not refused: {other:?}")),
                 }
             }
         }
@@ -498,38 +589,76 @@ impl Client<'_> {
         if n % 4 == 1 {
             let po = format!("PO-{id}");
             let lines: Vec<(usize, i64)> = (0..count)
-                .map(|_| (self.rng.below(ITEMS as u64) as usize, 10 + self.rng.below(90) as i64))
+                .map(|_| {
+                    (
+                        self.rng.below(ITEMS as u64) as usize,
+                        10 + self.rng.below(90) as i64,
+                    )
+                })
                 .collect();
-            let total: i64 = lines.iter().map(|(item, qty)| rate_cents(*item) * qty).sum();
-            self.must("purchase_order.create", &format!("{po}-c"), json!({ "doc_id": po, "supplier": "SUP-0001", "total": money(total) }));
+            let total: i64 = lines
+                .iter()
+                .map(|(item, qty)| rate_cents(*item) * qty)
+                .sum();
+            self.must(
+                "purchase_order.create",
+                &format!("{po}-c"),
+                json!({ "doc_id": po, "supplier": "SUP-0001", "total": money(total) }),
+            );
             self.lines("purchase_order.add_line", &po, &lines);
             let submit_key = format!("{po}-s");
-            match self.act("purchase_order.submit", &submit_key, json!({ "doc_id": po })) {
+            match self.act(
+                "purchase_order.submit",
+                &submit_key,
+                json!({ "doc_id": po }),
+            ) {
                 Ok(_) => {}
                 Err((202, body)) => {
                     // APPROVAL-WHEN-1: over 5000 the reviewer signs off, then
                     // the requester's own retry commits it.
                     self.tally.parked += 1;
-                    let decision = body["decision"]["id"].as_str().unwrap_or_default().to_owned();
+                    let decision = body["decision"]["id"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_owned();
                     let token = self.host.reviewer.clone();
                     let (status, answer) = self.conn.call(
                         "POST",
                         &format!("/v1/decisions/{decision}:decide"),
                         &token,
-                        Some(&json!({ "choice": "approve", "idempotencyKey": format!("{po}-sign") })),
+                        Some(
+                            &json!({ "choice": "approve", "idempotencyKey": format!("{po}-sign") }),
+                        ),
                     );
                     if status != 200 {
-                        self.tally.unexpected.push(format!("decide {po}: {status} {answer}"));
+                        self.tally
+                            .unexpected
+                            .push(format!("decide {po}: {status} {answer}"));
                     }
-                    self.must("purchase_order.submit", &submit_key, json!({ "doc_id": po }));
+                    self.must(
+                        "purchase_order.submit",
+                        &submit_key,
+                        json!({ "doc_id": po }),
+                    );
                 }
-                Err((status, body)) => self.tally.unexpected.push(format!("purchase_order.submit {po}: {status} {body}")),
+                Err((status, body)) => self
+                    .tally
+                    .unexpected
+                    .push(format!("purchase_order.submit {po}: {status} {body}")),
             }
             for (n, (item, qty)) in lines.iter().enumerate() {
                 self.move_stock(*item, *qty, &format!("{po}-r{n}"));
             }
-            self.must("purchase_order.complete", &format!("{po}-d"), json!({ "doc_id": po }));
-            self.journal(&format!("JE-{id}-po"), "purchase receipt", &[("1400 Inventory", total, 0), ("2000 Payables", 0, total)]);
+            self.must(
+                "purchase_order.complete",
+                &format!("{po}-d"),
+                json!({ "doc_id": po }),
+            );
+            self.journal(
+                &format!("JE-{id}-po"),
+                "purchase receipt",
+                &[("1400 Inventory", total, 0), ("2000 Payables", 0, total)],
+            );
         }
     }
 }
@@ -564,7 +693,11 @@ fn setup(host: &Host) {
         let bin = format!("BIN-{i:04}");
         client.must("bin.open", &format!("{bin}-c"), json!({ "bin_id": bin, "item_code": item, "warehouse": "Stores", "on_hand": OPENING_STOCK.to_string(), "last_move": "0" }));
     }
-    assert!(client.tally.unexpected.is_empty(), "{:#?}", client.tally.unexpected);
+    assert!(
+        client.tally.unexpected.is_empty(),
+        "{:#?}",
+        client.tally.unexpected
+    );
 }
 
 /// Run `clients` threads until `deadline` passes or `target` commands commit.
@@ -578,7 +711,8 @@ fn level(host: &Host, clients: usize, seconds: f64, target: Option<u64>) -> (Tal
     let reconnects = AtomicU64::new(0);
     std::thread::scope(|scope| {
         for c in 0..clients {
-            let (committed, stop, tallies, run, reconnects) = (&committed, &stop, &tallies, &run, &reconnects);
+            let (committed, stop, tallies, run, reconnects) =
+                (&committed, &stop, &tallies, &run, &reconnects);
             scope.spawn(move || {
                 let mut client = Client {
                     conn: Conn::new(&host.addr),
@@ -592,7 +726,8 @@ fn level(host: &Host, clients: usize, seconds: f64, target: Option<u64>) -> (Tal
                     let before = client.tally.committed;
                     client.cycle(n);
                     n += 1;
-                    let total = committed.fetch_add(client.tally.committed - before, Ordering::Relaxed)
+                    let total = committed
+                        .fetch_add(client.tally.committed - before, Ordering::Relaxed)
                         + client.tally.committed
                         - before;
                     if target.is_some_and(|target| total >= target)
@@ -644,7 +779,10 @@ fn report(label: &str, tally: &Tally, elapsed: f64, reconnects: u64, host: &Host
         );
     }
     for line in tally.unexpected.iter().take(5) {
-        println!("  unexpected: {}", line.chars().take(400).collect::<String>());
+        println!(
+            "  unexpected: {}",
+            line.chars().take(400).collect::<String>()
+        );
     }
 }
 
@@ -652,11 +790,19 @@ fn report(label: &str, tally: &Tally, elapsed: f64, reconnects: u64, host: &Host
 #[ignore = "a release bench over the real dev host"]
 fn erp_day() {
     let (dir, keep) = std::env::var("NORN_ERP_DIR").map_or_else(
-        |_| (std::env::temp_dir().join(format!("norn-erp-day-{}", nonce())), false),
+        |_| {
+            (
+                std::env::temp_dir().join(format!("norn-erp-day-{}", nonce())),
+                false,
+            )
+        },
         |dir| (PathBuf::from(dir), true),
     );
     let (host, open_s) = Host::start(dir, keep);
-    println!("ERP open: ready in {open_s:.2}s, cell {:.1} MB", host.cell_bytes() as f64 / 1e6);
+    println!(
+        "ERP open: ready in {open_s:.2}s, cell {:.1} MB",
+        host.cell_bytes() as f64 / 1e6
+    );
 
     if std::env::var("NORN_ERP_REOPEN").is_ok() {
         let mut client = Client {
@@ -678,24 +824,40 @@ fn erp_day() {
             client.tally.committed - 1,
             client.tally.unexpected.len()
         );
-        assert!(client.tally.unexpected.is_empty(), "{:#?}", client.tally.unexpected);
+        assert!(
+            client.tally.unexpected.is_empty(),
+            "{:#?}",
+            client.tally.unexpected
+        );
         return;
     }
 
     let started = Instant::now();
     setup(&host);
-    println!("ERP setup: {:.1}s, cell {:.1} MB", started.elapsed().as_secs_f64(), host.cell_bytes() as f64 / 1e6);
+    println!(
+        "ERP setup: {:.1}s, cell {:.1} MB",
+        started.elapsed().as_secs_f64(),
+        host.cell_bytes() as f64 / 1e6
+    );
     let levels: Vec<usize> = env_or("NORN_ERP_CLIENTS", "1,10,100")
         .split(',')
         .map(|level| level.trim().parse().unwrap())
         .collect();
     let seconds: f64 = env_or("NORN_ERP_SECONDS", "30").parse().unwrap();
-    let target = std::env::var("NORN_ERP_COMMANDS").ok().map(|value| value.parse::<u64>().unwrap());
+    let target = std::env::var("NORN_ERP_COMMANDS")
+        .ok()
+        .map(|value| value.parse::<u64>().unwrap());
     let mut unexpected = 0;
     if let Some(target) = target {
         let before = host.cell_bytes();
         let (tally, elapsed, reconnects) = level(&host, levels[0], 1e9, Some(target));
-        report(&format!("{} clients, storage run", levels[0]), &tally, elapsed, reconnects, &host);
+        report(
+            &format!("{} clients, storage run", levels[0]),
+            &tally,
+            elapsed,
+            reconnects,
+            &host,
+        );
         let grown = host.cell_bytes().saturating_sub(before);
         println!(
             "ERP storage: {} commands grew the cell {:.1} MB = {:.0} bytes/command",
@@ -707,7 +869,13 @@ fn erp_day() {
     } else {
         for clients in levels {
             let (tally, elapsed, reconnects) = level(&host, clients, seconds, None);
-            report(&format!("{clients} clients"), &tally, elapsed, reconnects, &host);
+            report(
+                &format!("{clients} clients"),
+                &tally,
+                elapsed,
+                reconnects,
+                &host,
+            );
             unexpected += tally.unexpected.len();
         }
     }
