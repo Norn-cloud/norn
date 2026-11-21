@@ -657,7 +657,7 @@ impl Engine {
                     &format!("counts:{}", staged_table.name),
                     &counts_text(&load)?,
                 )?;
-                self.landing(conn, &lease.dir, request, load)
+                Self::landing(conn, &lease.dir, request, load)
             })();
             if landed.is_err() {
                 drop_staged(conn, &staged_table)?;
@@ -714,7 +714,7 @@ impl Engine {
                 }
                 settled?;
                 db(conn.execute_batch("COMMIT"))?;
-                self.landing(conn, &lease.dir, land, load)
+                Self::landing(conn, &lease.dir, land, load)
             })();
             if settled.is_err() {
                 drop_staged(conn, &staged_table)?;
@@ -733,7 +733,6 @@ impl Engine {
     /// back, and its valid time spans only them; the held-set file holds
     /// every row that could not be typed and every finding.
     fn landing(
-        &self,
         conn: &Connection,
         dir: &Path,
         request: &LandRequest,
