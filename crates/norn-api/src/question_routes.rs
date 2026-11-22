@@ -529,7 +529,7 @@ fn refuse_labeled_paths<E: SqlEngine>(
                 refusal.diagnostics = vec![crate::refusal::RefusalDiagnostic::error(
                     MARKED_HISTORY,
                     "this question groups or filters by a field whose earlier or deleted versions are marked",
-                    pointer.clone(),
+                    pointer,
                 )];
                 return Err(refusal);
             }
@@ -546,7 +546,7 @@ fn refuse_labeled_paths<E: SqlEngine>(
                 refusal.diagnostics = vec![crate::refusal::RefusalDiagnostic::error(
                     norn_checker::metric::codes::MARKED_FIELD,
                     "this question groups or filters by a field whose values are marked",
-                    pointer.clone(),
+                    pointer,
                 )];
                 return Err(refusal);
             }
