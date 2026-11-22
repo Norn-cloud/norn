@@ -331,6 +331,9 @@ export function QuestionsPage() {
         {board.isError && <p className="text-destructive">{board.error.message}</p>}
         {board.data?.map((read) => <QuestionCard key={read.question.document.name} read={read} />)}
         <RestatementCard />
+        <div className="flex justify-end">
+          <Button asChild variant="outline"><Link to="/examples/$scene" params={{ scene: "explorer" }}>Explore sample records</Link></Button>
+        </div>
       </>}
     </section>
   )

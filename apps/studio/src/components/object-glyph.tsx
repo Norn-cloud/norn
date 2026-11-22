@@ -1,4 +1,4 @@
-import { ArrowLeftRight, Box, ClipboardList, Layers, Link2, Package, Receipt, Scale, Truck, UserRound, Users, Warehouse, type LucideIcon } from "lucide-react"
+import { ArrowLeftRight, Box, ClipboardList, FileCheck2, Layers, Link2, Package, Receipt, Scale, Truck, UserRound, Users, Wallet, Warehouse, type LucideIcon } from "lucide-react"
 import { IconTile, type Tone } from "@/components/chip"
 
 type Appearance = { readonly icon: LucideIcon; readonly tone: Tone }
@@ -15,6 +15,14 @@ const OBJECTS: Readonly<Record<string, Appearance>> = {
   "canon.ValuationPolicy": { icon: Scale, tone: "orange" },
   "core.analytics.Restatement": { icon: ArrowLeftRight, tone: "violet" },
   "norn.ObservedLinkClaim": { icon: Link2, tone: "blue" },
+  Client: { icon: UserRound, tone: "blue" },
+  Account: { icon: Wallet, tone: "violet" },
+  Transaction: { icon: ArrowLeftRight, tone: "teal" },
+  KYC: { icon: FileCheck2, tone: "pink" },
+  Posting: { icon: Receipt, tone: "green" },
+  RiskProfile: { icon: Scale, tone: "amber" },
+  Loan: { icon: ClipboardList, tone: "orange" },
+  Repayment: { icon: Receipt, tone: "green" },
 }
 
 export function objectAppearance(name: string, shared = false): Appearance {

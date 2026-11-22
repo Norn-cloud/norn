@@ -32,6 +32,8 @@ export interface Env {
   readonly NORN_HOST?: Fetcher
   /** The organization members' sessions start in (preview: the seeded `org_demo`). */
   readonly STUDIO_DEFAULT_ORG?: string
+  /** Optional presentation branding for the seeded workspace, configured in preview only. */
+  readonly STUDIO_DEMO_HEADER_PRIVATE?: string
   /** The header the edge sets to the client's address (client-ip.ts); required, the Worker refuses auth without it. */
   readonly STUDIO_CLIENT_IP_HEADER?: string
   /** The tool gateway and Studio's OAuth client there (#772); all three or none. */
@@ -193,12 +195,25 @@ async function me(request: Request, env: Env): Promise<Response> {
   const session = await auth(env).api.getSession({ headers: request.headers })
   if (session === null) return refuse(401, "Sign in first.")
   const member = await activeMembership(auth(env), session.user.id, session.session.activeOrganizationId)
+  const previewBrand = member?.organizationId === "org_demo" ? demoBrand(env.STUDIO_DEMO_HEADER_PRIVATE) : undefined
   return Response.json(
     { user: { id: session.user.id, name: session.user.name, email: session.user.email }, organization: member === null ? null : { id: member.organizationId, name: member.organizationName, role: member.role },
       // The caller's active workspace's data environment, from its server-provisioned metadata; null without one.
-      environmentId: member?.environmentId ?? null },
+      environmentId: member?.environmentId ?? null, ...previewBrand ? { previewBrand } : {} },
     { headers: { "cache-control": "no-store" } },
   )
+}
+
+function demoBrand(setting: string | undefined): { name: string; logoUrl: string } | undefined {
+  if (!setting) return undefined
+  try {
+    const config: unknown = JSON.parse(setting)
+    if (!config || typeof config !== "object" || !("name" in config) || !("logoUrl" in config)) return undefined
+    if (typeof config.name !== "string" || !config.name.trim() || config.name.length > 80 || typeof config.logoUrl !== "string") return undefined
+    const logo = new URL(config.logoUrl)
+    if (logo.protocol !== "https:" || logo.username || logo.password) return undefined
+    return { name: config.name.trim(), logoUrl: logo.href }
+  } catch { return undefined }
 }
 
 const mcpOn = (env: Env) => env.STUDIO_MCP === "on"

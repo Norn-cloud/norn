@@ -6,6 +6,7 @@ import { forgetParkedCalls } from "../actions/parked-calls.ts"
 export interface Account {
   readonly user: { readonly id: string; readonly name: string; readonly email: string }
   readonly organization: { readonly id: string; readonly name: string; readonly role: string } | null
+  readonly previewBrand?: { readonly name: string; readonly logoUrl: string }
 }
 
 const SESSION = ["session"] as const

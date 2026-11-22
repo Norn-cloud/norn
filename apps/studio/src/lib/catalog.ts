@@ -158,6 +158,31 @@ const SYSTEMS = {
   odoo: { name: "Odoo", tone: "violet" },
   excel: { name: "Excel", tone: "teal" },
   postgresql: { name: "PostgreSQL", tone: "blue" },
+  kafka: { name: "Kafka", tone: "violet" },
+  spark: { name: "Spark", tone: "orange" },
+  iceberg: { name: "Iceberg", tone: "blue" },
+  airflow: { name: "Airflow", tone: "teal" },
+  mlflow: { name: "MLflow", tone: "teal" },
+  "scikit-learn": { name: "scikit-learn", tone: "orange" },
+  gitlab: { name: "GitLab", tone: "orange" },
+  kubernetes: { name: "Kubernetes", tone: "blue" },
+  openshift: { name: "OpenShift", tone: "red" },
+  ollama: { name: "Ollama", tone: "gray" },
+  "power-bi": { name: "Power BI", tone: "amber" },
+  tableau: { name: "Tableau", tone: "blue" },
+  pgvector: { name: "pgvector", tone: "violet" },
+  aws: { name: "AWS", tone: "orange" },
+  python: { name: "Python", tone: "blue" },
+  fastapi: { name: "FastAPI", tone: "teal" },
+  langgraph: { name: "LangGraph", tone: "violet" },
+  grafana: { name: "Grafana", tone: "orange" },
+  salesforce: { name: "Salesforce", tone: "blue" },
+  "i-score": { name: "I-Score", tone: "violet" },
+  instapay: { name: "InstaPay", tone: "violet" },
+  fawry: { name: "Fawry", tone: "amber" },
+  egx: { name: "EGX", tone: "orange" },
+  mcdr: { name: "MCDR", tone: "orange" },
+  fra: { name: "FRA", tone: "green" },
   scans: { name: "Document scans", tone: "amber" },
   "norn-connect": { name: "Norn", tone: "violet" },
 } as const
@@ -193,7 +218,7 @@ const SYSTEM_TONES = ["blue", "teal", "violet", "amber", "pink", "orange"] as co
  * One tone per source system, the same on every page: the known systems in a fixed order, any other
  * by a hash of its name. Display only; it says nothing about the system.
  */
-export function systemTone(system: string): (typeof SYSTEM_TONES)[number] | "green" {
+export function systemTone(system: string): (typeof SYSTEM_TONES)[number] | (typeof SYSTEMS)[keyof typeof SYSTEMS]["tone"] {
   const known = systemStyle(system)
   if (known) return known.tone
   const bare = systemKey(system)

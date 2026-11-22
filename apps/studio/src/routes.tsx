@@ -6,6 +6,7 @@ import { ConnectionsPage } from "./connections.tsx"
 import { QuestionTreePage } from "./question-tree.tsx"
 import { DashboardBoardPage, DashboardEditorPage, DashboardsPage } from "./dashboards.tsx"
 import { GuaranteesPage } from "./guarantees.tsx"
+import { ExamplePage } from "./examples.tsx"
 import { MarkingsPage } from "./markings.tsx"
 import { PAGES, type PagePath } from "./lib/pages.ts"
 import { RecordsPage } from "./grid/records-page.tsx"
@@ -46,6 +47,7 @@ export const COMPONENTS: { readonly [P in PagePath]: RouteComponent } = {
   "/guarantees": GuaranteesPage,
   "/markings": MarkingsPage,
   "/connections": ConnectionsWithBindings,
+  "/examples/$scene": ExamplePage,
 }
 
 /** Where an old address now lives: Questions became Metrics, and a saved link still opens its page. */

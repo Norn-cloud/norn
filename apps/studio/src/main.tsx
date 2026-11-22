@@ -39,7 +39,11 @@ function Root() {
   const account = useAccount()
   // Sidekick is offered only where a bridge serves it (a private deployment); elsewhere the rail shows no entry for it.
   const sidekick = useSidekickServed()
-  if (account.data != null) return <Shell sections={SECTIONS} assistant={sidekick ? { title: "Sidekick", content: <Sidekick /> } : undefined} account={account.data} onSignOut={() => void signOut()} />
+  if (account.data != null) {
+    const brand = account.data.previewBrand
+    return <Shell sections={SECTIONS} assistant={sidekick ? { title: "Sidekick", content: <Sidekick /> } : undefined} account={account.data} onSignOut={() => void signOut()}
+      tools={brand && <span className="me-1.5 hidden min-w-0 items-center gap-2 rounded-full border bg-card py-1 ps-2.5 pe-2 text-[10px] whitespace-nowrap text-muted-foreground md:inline-flex"><span>Prepared for</span><img src={brand.logoUrl} alt={brand.name} referrerPolicy="no-referrer" className="h-5 max-w-20 object-contain" /></span>} />
+  }
   if (account.isPending) return null
   if (account.isError) {
     return (

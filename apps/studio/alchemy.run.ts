@@ -33,12 +33,14 @@ requireSignInRecipe(target)
 const credentials = cloudflareCredentials(process.env)
 useCloudflareCredentials(process.env, credentials)
 const auth = authDeploy(process.env, target)
+const demoHeader = target.stage === "preview" ? process.env.STUDIO_DEMO_HEADER_PRIVATE?.trim() : undefined
 // Preview binds the Norn cell Worker as NORN_HOST by script name; the script must already exist.
 const host = cellHost(target)
 if (host !== undefined) await requireWorkerScript(host, credentials)
 // The scan below must see the secret's value, so keep a copy before taking it out of the environment.
 const scanEnv = { ...process.env }
 delete process.env.BETTER_AUTH_SECRET
+delete process.env.STUDIO_DEMO_HEADER_PRIVATE
 // OpenTelemetry export (worker/telemetry.ts): off unless OTEL_EXPORTER_OTLP_ENDPOINT is set; its headers become a Worker secret.
 const otel = otelSettings(process.env)
 delete process.env.OTEL_EXPORTER_OTLP_HEADERS
@@ -84,6 +86,7 @@ export const studio = await Vite("studio", {
     // Cloudflare sets cf-connecting-ip itself; the Worker refuses auth without this (#1328).
     STUDIO_CLIENT_IP_HEADER: "cf-connecting-ip",
     ...auth.defaultOrg === undefined ? {} : { STUDIO_DEFAULT_ORG: auth.defaultOrg },
+    ...demoHeader ? { STUDIO_DEMO_HEADER_PRIVATE: alchemy.secret(demoHeader) } : {},
     // Invite-only sign-up (worker/index.ts signUpEmails): required on every stage.
     STUDIO_SIGNUP_EMAILS: auth.signUpEmails.join(","),
     ...host === undefined ? {} : { NORN_HOST: WorkerRef({ service: host }) },

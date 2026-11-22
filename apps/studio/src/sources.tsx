@@ -39,6 +39,12 @@ export function DenseTable({ head, children }: { readonly head: ReactNode; reado
 
 export const RECORDED_HINT = "Documents the engine produced, replayed exactly. Not a live connection."
 
+const EXAMPLE_STACK = [
+  "aws", "python", "postgresql", "fastapi", "langgraph", "grafana", "kafka", "iceberg", "mlflow",
+  "spark", "airflow", "scikit-learn", "gitlab", "kubernetes", "openshift", "ollama", "pgvector",
+  "power-bi", "tableau", "salesforce", "i-score", "instapay", "fawry", "egx", "mcdr", "fra",
+]
+
 function Systems({ catalog, recorded }: { readonly catalog: Catalog; readonly recorded: boolean }) {
   const concepts = catalog.concepts.filter(({ definition }) => definition === "object type")
   const relationships = concepts.reduce((total, { relationships }) => total + relationships.length, 0)
@@ -338,6 +344,12 @@ export function SourcesPage() {
           </TabsContent>
           </Tabs>
         </Panel>
+        {recorded && <Panel icon={Database} label="Works with">
+          <div className="space-y-2 px-4 pb-3">
+            <p className="text-meta text-muted-foreground">Example business feeds and data tools</p>
+            <div className="flex flex-wrap gap-1.5">{EXAMPLE_STACK.map((system) => <SourceChip key={system} system={system} title="Example system" />)}</div>
+          </div>
+        </Panel>}
       </>}
     </section>
   )
