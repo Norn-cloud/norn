@@ -12,11 +12,16 @@ const widget = (): Plugin => ({
   },
 })
 
+const financeOnly = process.env.VITE_STUDIO_FINANCE_DEMO === "1"
+const index = fileURLToPath(new URL("./index.html", import.meta.url))
+
 export default defineConfig({
-  plugins: [react(), tailwindcss(), widget()],
+  plugins: [react(), tailwindcss(), ...financeOnly ? [] : [widget()]],
   resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
   server: { fs: { allow: ["../.."] } },
   // The contact sheet (sheet.html) builds beside the app so a deployed stage serves it too.
   // The app's input stays `index`: its entry chunk is assets/index-<hash>.js, which the deploys' served-build checks read.
-  build: { rollupOptions: { input: { index: fileURLToPath(new URL("./index.html", import.meta.url)), sheet: fileURLToPath(new URL("./sheet.html", import.meta.url)) } } },
+  build: { rollupOptions: { input: {
+    index, ...financeOnly ? {} : { sheet: fileURLToPath(new URL("./sheet.html", import.meta.url)) },
+  } } },
 })
