@@ -17,7 +17,7 @@ import type { Concept, Field } from "../lib/catalog.ts"
 import { NO_DATA_CELL } from "../lib/definitions.ts"
 import { recordName } from "../lib/objects.ts"
 import { cycleSort, DATA_CHANGED, LIMITS, recordsQueryParams, SERVER_QUERY_UNAVAILABLE, sortable, totalText, type Predicate, type RecordsQuery, type SortKey } from "../lib/records-query.ts"
-import { diagnosticsAt, readRecords, type RecordsRead } from "../lib/records-source.ts"
+import { diagnosticsAt, readRecordedRecords, readRecords, type RecordsRead } from "../lib/records-source.ts"
 import { transport } from "../lib/transport.ts"
 import { ACTIONS_UNAVAILABLE, writesWhole, type ActionSummary } from "../lib/actions.ts"
 import { ActionSheet, useActions, type OpenAction } from "../actions/action-sheet.tsx"
@@ -64,9 +64,10 @@ const STICKY = "sticky left-0 z-10 shadow-[1px_0_0_var(--node-border)]"
 /** The query a grid shows, as a saved view keeps it. */
 export interface GridQuery { readonly filter: Predicate | null; readonly sort: readonly SortKey[]; readonly columns: readonly string[] }
 
-export function RecordsGrid({ concept, read = readRecords, initial, onQuery }: {
+export function RecordsGrid({ concept, read = readRecords, recorded = false, initial, onQuery }: {
   readonly concept: Concept
   readonly read?: Read
+  readonly recorded?: boolean
   /** The query to open with: a saved view's. */
   readonly initial?: Partial<GridQuery>
   /** Told the query the grid shows, whenever it changes. */
@@ -95,7 +96,7 @@ export function RecordsGrid({ concept, read = readRecords, initial, onQuery }: {
   const [acting, setActing] = useState<OpenAction | null>(null)
   const [viewing, setViewing] = useState<{ readonly id: string; readonly since: number } | null>(null)
   const navigate = useNavigate()
-  const catalog = useActions(name)
+  const catalog = useActions(name, undefined, !recorded)
   const actions = catalog.data?.kind === "catalog" ? catalog.data.items : []
   const creates = actions.filter(writesWhole)
   // Off with the reason while the cell takes no actions; absent when it offers this reader none.
@@ -104,8 +105,8 @@ export function RecordsGrid({ concept, read = readRecords, initial, onQuery }: {
   const [filterOpen, setFilterOpen] = useState(false)
   const client = useQueryClient()
   const query: RecordsQuery = { sort, filter, limit, ...cursors[pageIndex] === undefined ? {} : { after: cursors[pageIndex] } }
-  const key = ["records", name, recordsQueryParams(query).toString()] as const
-  const result = useQuery({ queryKey: key, queryFn: () => read(name, query), placeholderData: keepPreviousData, retry: false })
+  const key = ["records", name, recordsQueryParams(query).toString(), ...recorded ? ["recorded"] : []] as const
+  const result = useQuery({ queryKey: key, queryFn: () => recorded ? readRecordedRecords(name, query.after) : read(name, query), placeholderData: keepPreviousData, retry: false })
   const data = result.data
 
   const restart = () => { setCursors([undefined]); setPageIndex(0); setActive(0) }
@@ -402,7 +403,7 @@ function RecordDrawer({ concept, fields, row, origin, actions, actionsOff, onClo
                         <Link to="/sources/$concept/$" params={{ concept: type, _splat: id }} className="underline-offset-4 hover:underline">{id}</Link></li>
                     })}</ul>}
             </section>}
-            <section className="grid gap-2" aria-label="Actions">
+            {origin === "live" && <section className="grid gap-2" aria-label="Actions">
               <h3 className="text-sm font-medium">Actions</h3>
               {actionsOff !== undefined
                 ? <p className="text-meta text-muted-foreground">{actionsOff}</p>
@@ -415,7 +416,7 @@ function RecordDrawer({ concept, fields, row, origin, actions, actionsOff, onClo
                       <Play /> {writesWhole(action) ? `${action.title} (edit)` : action.title}
                     </Button>
                   ))}</div>}
-            </section>
+            </section>}
             <Button asChild variant="outline" size="sm" className="justify-self-start">
               <Link to="/sources/$concept/$" params={{ concept: record.objectType, _splat: record.id }}><ExternalLink /> Open full record</Link>
             </Button>

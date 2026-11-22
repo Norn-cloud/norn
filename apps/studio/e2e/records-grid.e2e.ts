@@ -225,6 +225,17 @@ test("a workspace with no data cell says so and calls nothing", async ({ page })
   await shoot(page, "no-cell")
 })
 
+test("the recorded Sources catalog opens its own records and their lineage without a cell", async ({ page }) => {
+  await session(page, null)
+  await page.goto("/sources/canon.Holding")
+  const holding = grid(page).getByRole("row", { name: /demo\/holding\/owner\/north\/gold/ })
+  await expect(holding).toBeVisible()
+  await holding.click()
+  await page.getByRole("link", { name: "Open full record" }).click()
+  await page.getByRole("tab", { name: "Lineage", exact: true }).click()
+  await expect(page.getByText("SYN-SHOPIFY-holding-north", { exact: true })).toBeVisible()
+})
+
 test("loading shows placeholder rows, and an empty type says nothing is stored yet", async ({ page }) => {
   await session(page)
   let release: () => void = () => {}

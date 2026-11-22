@@ -2,7 +2,7 @@ import { CellUnavailable, readStudioScope, scopedHostFetch, type StudioScope } f
 import { readDocument, type Read } from "./exact.ts"
 import { nextCursor, recordsPath, servedQuery, snapshotMoved, totalOf, type RecordsQuery, type Served, type Total } from "./records-query.ts"
 import { currentMode } from "./live-transport.ts"
-import { transport, type ObjectPage } from "./transport.ts"
+import { recordedTransport, transport, type ObjectPage } from "./transport.ts"
 
 /** One diagnostic of a refusal, its pointer into the request (`/sort/0`, `/filter/all/1/value`, `/after`). */
 export interface QueryDiagnostic { readonly code: string; readonly message: string; readonly pointer: string | null }
@@ -42,6 +42,11 @@ const defaults: RecordsDeps = {
 function recordedPage(read: Read<ObjectPage> | null): RecordsRead {
   if (read === null) return { kind: "none" }
   return { kind: "page", read, origin: "recorded", served: null, next: nextCursor(read.document), total: null }
+}
+
+/** Read a page from the same snapshot as the Sources catalog. */
+export async function readRecordedRecords(objectType: string, after?: string): Promise<RecordsRead> {
+  return recordedPage(await recordedTransport.objectPage(objectType, after))
 }
 
 function diagnosticsOf(body: unknown): readonly QueryDiagnostic[] {

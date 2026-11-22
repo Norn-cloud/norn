@@ -260,7 +260,7 @@ export function ObjectTypePage() {
       {read.isPending && <p className="text-muted-foreground">Reading definitions…</p>}
       {read.isError && <p className="text-destructive">{read.error.message}</p>}
       {catalog && (concept ? <ObjectTypeDetail catalog={catalog} concept={concept} recorded={read.data?.origin === "recorded"} /> : <EmptyState icon={Shapes}>No object type named {type} is installed.</EmptyState>)}
-      {concept?.definition === "object type" && <RecordsGrid key={concept.name} concept={concept} />}
+      {concept?.definition === "object type" && <RecordsGrid key={concept.name} concept={concept} recorded={read.data?.origin === "recorded"} />}
     </div>
   )
 }
