@@ -638,7 +638,7 @@ def workflow_verdict_canaries(source: str) -> None:
                                         cwd=ROOT, capture_output=True, text=True, timeout=10, check=True).stdout)
     full_plan = packed(full_plan)
     affected = packed(affected)
-    passed = dict.fromkeys(("CORE", "TEST"), "success")
+    passed = dict.fromkeys(("PLANNER", "CORE", "TEST"), "success")
     cases = [(event, full_plan, passed, True) for event in ("push", "merge_group", "workflow_dispatch")]
     cases.append(("pull_request", affected, passed, True))
     cases.extend((event, affected, passed, False)
@@ -1467,7 +1467,7 @@ def workflow_context_canaries(source: str) -> None:
             document = copy.deepcopy(workflow)
             document["jobs"][name]["steps"][-1]["shell"] = "/usr/bin/true {0}"
             rejected(f"{name} shell override", document)
-        for key in ("DRAFT", "BASE", "HEAD_SHA", "PLAN", "CORE", "TEST"):
+        for key in ("DRAFT", "BASE", "HEAD_SHA", "PLAN", "PLANNER", "CORE", "TEST"):
             document = copy.deepcopy(workflow)
             document["jobs"]["full"]["steps"][0]["env"][key] = "forged"
             rejected(f"forged verdict input {key}", document)
@@ -1861,6 +1861,8 @@ def workflow_canaries() -> None:
         ("more bundles than the start budget", "length <= 3 and all(.[];", "length <= 6 and all(.[];"),
         ("missing full-plan branch", 'else plan=$(bash scripts/ci/core.sh plan); fi', 'else plan="{}"; fi'),
         ("forged core verdict", "CORE: ${{ needs.core.result }}", "CORE: success"),
+        ("forged planner verdict", "PLANNER: ${{ needs.plan.result }}", "PLANNER: success"),
+        ("missing planner verdict", '[ "$PLANNER" = success ]', 'true'),
         ("missing full-plan assertion", '[ "$mode" = full ]', 'true'),
         ("planned skipped job accepted", '[ "$2" -eq 0 ]', 'true'),
         ("cancelled main verdict skipped", "!(cancelled() && github.event_name == 'pull_request' && !github.event.pull_request.draft)", "!cancelled()"),

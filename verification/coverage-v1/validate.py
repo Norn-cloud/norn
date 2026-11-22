@@ -849,6 +849,7 @@ df -h /
             "full: verdict must run and fail closed")
     verdict = '''set -euo pipefail
 [ "$EVENT" != pull_request ] || [ "$DRAFT" = false ] || { echo "Draft head is not admitted for full qualification"; exit 1; }
+[ "$PLANNER" = success ] || { echo "plan $PLANNER"; exit 1; }
 jq -e --arg base "$BASE" --arg head "$HEAD_SHA" '
   type == "object" and (.mode == "full" or .mode == "affected") and
   .base_sha == $base and .head_sha == $head and
@@ -874,7 +875,7 @@ echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN"
         "BASE": "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}",
         "HEAD_SHA": "${{ github.event.merge_group.head_sha || github.sha }}",
         "EVENT": "${{ github.event_name }}", "PLAN": "${{ needs.plan.outputs.plan }}",
-        "CORE": "${{ needs.core.result }}",
+        "PLANNER": "${{ needs.plan.result }}", "CORE": "${{ needs.core.result }}",
         "TEST": "${{ needs.test.result }}",
     }
     require(any(step.get("run", "").strip() == verdict and "if" not in step

@@ -123,17 +123,18 @@ def row(spec):
 
 
 def admitted_at(entries):
-    """Admission is the start of the gate plan, but only for a run whose bundles were not
-    skipped: a draft head runs no bundle and is not admitted. Legacy runs (no bundle jobs) and
-    runs since #1348's hosted plan job have a plan job; in between the plan was core's first
-    step, so core's start is admission."""
-    bundles = [j for j in entries if j["name"].split(" ", 1)[0] == "bundle"]
-    bundled = any(j["conclusion"] != "skipped" for j in bundles)
+    """Admission is the start of the gate plan, but only for a run whose gated jobs ran: a draft
+    head, or a run whose planner failed, starts no bundle and is not admitted. The gated jobs
+    are the bundles, or the legacy test and phase shards. Legacy runs and runs since #1348's
+    hosted plan job have a plan job; in between the plan was core's first step, so core's start
+    is admission."""
+    gated = any(j["name"].split(" ", 1)[0] in {"bundle", "test", "phase"} and j["conclusion"] != "skipped"
+                for j in entries)
     plan = [j["started_at"] for j in entries if j["name"] == "plan" and j["started_at"]]
     if plan:
-        return min(plan) if bundled or not bundles else None
+        return min(plan) if gated else None
     core = [j["started_at"] for j in entries if j["name"] == "core" and j["started_at"]]
-    return min(core) if bundled and core else None
+    return min(core) if gated and core else None
 
 
 def attempt_document(rows, merges):
@@ -229,7 +230,10 @@ def self_test():
     plan_job = {"name": "plan", "conclusion": "success", "started_at": late}
     core_job = {"name": "core", "conclusion": "success", "started_at": early}
     bundle = {"name": "bundle (1)", "conclusion": "success", "started_at": late}
-    assert admitted_at([core_job, plan_job]) == late
+    shard = {"name": "test (heavy-1)", "conclusion": "success", "started_at": late}
+    assert admitted_at([core_job, plan_job, shard]) == late
+    # A planner that failed before its matrix expanded leaves no gated row: not admitted.
+    assert admitted_at([core_job, plan_job]) is None
     assert admitted_at([core_job, bundle]) == early
     assert admitted_at([core_job, dict(bundle, conclusion="skipped")]) is None
     assert admitted_at([core_job]) is None
