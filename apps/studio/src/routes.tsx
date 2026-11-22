@@ -10,7 +10,9 @@ import { ExamplePage } from "./examples.tsx"
 import { FinanceSources } from "./finance/workspace.tsx"
 import { FinanceRecordRoute } from "./finance/record-pages.tsx"
 import { FinanceExamples } from "./finance/examples.tsx"
-import { FinanceHome, FinanceMarkings, FinanceRules, FinanceWorkflows } from "./finance/operations.tsx"
+import { objectTab } from "./finance/definitions.tsx"
+import { FinanceWorkflows } from "./finance/behavior-pages.tsx"
+import { FinanceHome, FinanceMarkings, FinanceRules } from "./finance/operations.tsx"
 import { FinanceOptimisation, FinancePolicyType } from "./finance/policies.tsx"
 import { FinanceMetrics } from "./finance/metrics.tsx"
 import { financeDemo } from "./lib/finance-demo.ts"
@@ -72,9 +74,10 @@ export function routeTree<R extends AnyRootRoute>(root: R) {
     createRoute({ getParentRoute: () => root, path: "/", component: FinanceHome }),
     createRoute({
       getParentRoute: () => root, path: "/sources", component: FinanceSources,
-      validateSearch: (search: Record<string, unknown>) => ({ view: search.view === "graph" ? "graph" as const : undefined, model: search.model === "full" ? "full" as const : undefined }),
+      validateSearch: (search: Record<string, unknown>) => ({ view: search.view === "graph" ? "graph" as const : undefined, model: search.model === "full" || search.model === "aggregates" ? search.model : undefined }),
     }),
-    createRoute({ getParentRoute: () => root, path: "/sources/$concept", component: FinanceRecordRoute }),
+    createRoute({ getParentRoute: () => root, path: "/sources/$concept", component: FinanceRecordRoute,
+      validateSearch: (search: Record<string, unknown>) => ({ tab: search.tab ? objectTab(search.tab) : undefined }) }),
     createRoute({ getParentRoute: () => root, path: "/sources/$concept/$", component: FinanceRecordRoute }),
     createRoute({ getParentRoute: () => root, path: "/objects/$type", component: FinanceRecordRoute }),
     createRoute({ getParentRoute: () => root, path: "/metrics", component: FinanceMetrics }),

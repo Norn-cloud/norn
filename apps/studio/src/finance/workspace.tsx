@@ -1,8 +1,9 @@
 import { Link, useSearch } from "@tanstack/react-router"
-import { ArrowRight, BadgeCheck, BriefcaseBusiness, Building2, CalendarClock, ClipboardList, CreditCard, Database, FileCheck, Files, Gauge, GitMerge, Landmark, LifeBuoy, Network, Receipt, UserRound, type LucideIcon } from "lucide-react"
+import { ArrowRight, BadgeCheck, Box, BriefcaseBusiness, Building2, CalendarClock, ClipboardList, CreditCard, Database, FileCheck, Files, Gauge, GitMerge, Landmark, LifeBuoy, Network, Receipt, UserRound, type LucideIcon } from "lucide-react"
 import { useState } from "react"
 import { Chip, IconTile } from "@/components/chip"
 import { cn } from "@/lib/utils"
+import { AGGREGATES, AUXILIARY_TYPES, type AuxiliaryType } from "./behavior.ts"
 import { isFinanceType } from "./records.ts"
 import { CLIENT_FIELDS, MARKS, MODEL_LINKS, ROW_COUNT, SYSTEMS, TYPES, type FinanceType, type MarkId } from "./data.ts"
 
@@ -24,6 +25,17 @@ export function Mark({ id, className }: { readonly id: MarkId; readonly classNam
     <span aria-hidden className={loaded ? "invisible" : undefined}>{letters ?? name.slice(0, 2).toUpperCase()}</span>
     {file && <img src={`/finance-marks/${file}`} alt="" className={cn("absolute inset-0 size-full object-contain p-[12%]", !loaded && "opacity-0")} onLoad={() => setLoaded(true)} />}
   </span>
+}
+
+export function SystemDependencies({ systems, needs }: { readonly systems: readonly MarkId[]; readonly needs: string }) {
+  return <div className="space-y-1.5">
+    <div className="flex flex-wrap items-center gap-1.5" aria-label="Required systems">
+      {systems.map(id => <span key={id} className="inline-flex items-center gap-1 rounded-full border pe-1.5 text-[10px] text-muted-foreground">
+        <Mark id={id} className="size-5 rounded-full border-0 text-[7px]" />{MARKS[id].name}
+      </span>)}
+    </div>
+    <p className="text-xs text-muted-foreground"><strong className="font-medium text-foreground">Needs</strong> · {needs}</p>
+  </div>
 }
 
 export function FinanceHeading({ title, description }: { readonly title: string; readonly description: string }) {
@@ -82,24 +94,48 @@ const MODEL_POSITIONS: Record<FinanceType, readonly [number, number]> = {
   "kyc-check": [79, 46], "hardship-case": [79, 64], "brokerage-account": [79, 84], order: [49, 84],
 }
 
-function FullModel() {
+const AGGREGATE_POSITIONS: Record<FinanceType | AuxiliaryType, readonly [number, number]> = {
+  client: [17, 18], "kyc-check": [17, 35], "relationship-assignment": [17, 49],
+  loan: [50, 18], installment: [50, 35],
+  "brokerage-account": [83, 18], order: [83, 35], holdings: [83, 49],
+  "credit-report": [17, 71], "relationship-manager": [17, 88], "hardship-case": [50, 71],
+  payment: [50, 88], "regulatory-return": [83, 71],
+}
+type ModelNode = keyof typeof AGGREGATE_POSITIONS
+
+function FullModel({ showAggregates }: { readonly showAggregates: boolean }) {
+  const edges: readonly (readonly [ModelNode, ModelNode])[] = [
+    ...MODEL_LINKS.map(([from, , to]) => [from, to] as const),
+    ...(showAggregates ? AGGREGATES.flatMap(group => group.related.map(member => [group.root, member] as const)) : []),
+  ]
+  const modelPosition = (id: ModelNode) => showAggregates || !isFinanceType(id) ? AGGREGATE_POSITIONS[id] : MODEL_POSITIONS[id]
+  const positions = showAggregates ? AGGREGATE_POSITIONS : MODEL_POSITIONS
   return <div className="space-y-3">
-    <section aria-label="Full finance model graph" className="relative grid grid-cols-2 gap-2 rounded-2xl border bg-surface-subtle p-3 md:block md:h-[29rem] md:bg-[radial-gradient(var(--border)_1px,transparent_1px)] md:bg-size-[16px_16px]">
+    <section aria-label={showAggregates ? "Finance aggregate boundaries" : "Full finance model graph"} className="relative grid grid-cols-2 gap-2 rounded-2xl border bg-surface-subtle p-3 md:block md:h-[32rem] md:bg-[radial-gradient(var(--border)_1px,transparent_1px)] md:bg-size-[16px_16px]">
+      {showAggregates && AGGREGATES.map(({ root }) => <div key={root} className="absolute top-[3%] bottom-[42%] hidden w-[29%] -translate-x-1/2 rounded-xl border border-dashed border-data-accent/75 bg-data-accent/5 md:block" style={{ left: `${AGGREGATE_POSITIONS[root][0]}%` }}>
+        <p className="px-2 pt-1 text-center text-[10px] font-semibold text-tone-blue">{TYPES[root].name} aggregate</p>
+      </div>)}
       <svg aria-hidden viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 hidden size-full md:block">
-        {MODEL_LINKS.map(([from, _, to]) => {
-          const [x, y] = MODEL_POSITIONS[from]
-          const [a, b] = MODEL_POSITIONS[to]
-          const midpoint = (x + a) / 2
-          return <path key={from + to} d={x === a ? `M${x} ${y} V${b}` : `M${x} ${y} C${midpoint} ${y} ${midpoint} ${b} ${a} ${b}`}
-            fill="none" stroke="var(--data-accent)" strokeOpacity={0.65} strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+        {edges.map(([from, to]) => {
+          const [x, y] = modelPosition(from)
+          const [a, b] = modelPosition(to)
+          const mid = (x + a) / 2
+          return <path key={from + to} d={x === a ? `M${x} ${y} V${b}` : `M${x} ${y} C${mid} ${y} ${mid} ${b} ${a} ${b}`}
+            fill="none" stroke="var(--data-accent)" strokeOpacity={0.58} strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
         })}
       </svg>
-      {Object.entries(MODEL_POSITIONS).map(([type, [left, top]]) => {
-        if (!isFinanceType(type)) return null
-        const definition = TYPES[type]
-        return <Link key={type} to="/sources/$concept" params={{ concept: type }}
-          className={cn("z-10 flex items-center gap-2 rounded-xl border bg-card p-2 text-xs font-medium shadow-sm hover:border-data-accent md:absolute md:w-[20%] md:-translate-1/2", type === "client" && "border-data-accent ring-4 ring-data-accent/15")}
-          style={{ left: `${left}%`, top: `${top}%` }}><TypeTile type={type} />{definition.name}</Link>
+      {Object.entries(positions).map(([type, [left, top]]) => {
+        const auxiliary = type === "relationship-assignment" || type === "holdings" ? AUXILIARY_TYPES[type] : undefined
+        const core = isFinanceType(type) ? TYPES[type] : undefined
+        if (!auxiliary && !core) return null
+        const root = AGGREGATES.some(group => group.root === type)
+        return <Link key={type} to={auxiliary ? `/policies/${type}` : `/sources/${type}`}
+          className={cn("z-10 flex items-center gap-2 rounded-xl border bg-card p-2 text-xs font-medium shadow-sm hover:border-data-accent md:absolute md:w-[23%] md:-translate-1/2",
+            (showAggregates ? root : type === "client") && "border-data-accent ring-2 ring-data-accent/15")}
+          style={{ left: `${left}%`, top: `${top}%` }}>
+          {isFinanceType(type) ? <TypeTile type={type} /> : <Mark id={auxiliary?.source ?? "norn"} />}
+          <span>{core?.name ?? auxiliary?.name}{showAggregates && root && <span className="block text-[10px] text-muted-foreground">Aggregate root</span>}</span>
+        </Link>
       })}
     </section>
     <section aria-label="Model relationships" className="rounded-xl border bg-card p-3">
@@ -120,7 +156,9 @@ const tabClass = "inline-flex items-center gap-1.5 rounded-lg border border-tran
 export function FinanceSources() {
   const search = useSearch({ strict: false })
   const graph = "view" in search && search.view === "graph"
-  const full = graph && "model" in search && search.model === "full"
+  const model = graph && "model" in search ? search.model : undefined
+  const aggregate = model === "aggregates"
+  const full = model === "full" || aggregate
   return <section className="space-y-4">
     <FinanceHeading title="Sources" description="Seven systems mapped to one client, lending and payments model." />
     <nav aria-label="Sources views" className="flex flex-wrap gap-1 rounded-xl border bg-card p-1">
@@ -129,11 +167,16 @@ export function FinanceSources() {
     </nav>
     {graph ? <>
       <div className="flex flex-wrap items-end justify-between gap-2">
-        <div className="space-y-1"><h2 className="text-section font-semibold">{full ? "Full finance model" : "How your lending data fits together"}</h2>
-          <p className="text-xs text-muted-foreground">{full ? "11 object types and the relationships between them." : "Four feeds resolve to one borrower on National ID."}</p></div>
-        <Link to="/sources" search={{ view: "graph", model: full ? undefined : "full" }} className={cn(tabClass, "border-border")}>{full ? "Borrower view" : "Full model"}</Link>
+        <div className="space-y-1"><h2 className="text-section font-semibold">{aggregate ? "Finance model by aggregate" : full ? "Full finance model" : "How your lending data fits together"}</h2>
+          <p className="text-xs text-muted-foreground">{aggregate ? "Client, Loan and Brokerage account own changes inside their boundaries." : full ? "11 object types and the relationships between them." : "Four feeds resolve to one borrower on National ID."}</p></div>
+        <div className="flex flex-wrap gap-1.5">
+          <Link to="/sources" search={{ view: "graph", model: full ? undefined : "full" }} className={cn(tabClass, "border-border")}>{full ? "Borrower view" : "Full model"}</Link>
+          <Link to="/sources" search={{ view: "graph", model: aggregate ? "full" : "aggregates" }} className={cn(tabClass, "border-border", aggregate && activeTab)} aria-current={aggregate ? "page" : undefined}>
+            <Box className="size-4" />Aggregate boundaries
+          </Link>
+        </div>
       </div>
-      {full ? <FullModel /> : <ModelGraph />}
+      {full ? <FullModel showAggregates={aggregate} /> : <ModelGraph />}
       <div className="flex flex-wrap gap-1.5">{Object.entries(TYPES).map(([type, item]) => <Link key={type} to="/sources/$concept" params={{ concept: type }}><Chip tone={item.tone} className="rounded-full hover:ring-1 hover:ring-border">{item.name}</Chip></Link>)}</div>
     </> : <>
       <div className="flex flex-wrap gap-x-6 gap-y-2 rounded-xl border bg-surface-subtle px-3.5 py-2.5 text-xs text-muted-foreground">

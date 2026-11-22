@@ -1,4 +1,4 @@
-import { Link, Navigate, useParams } from "@tanstack/react-router"
+import { Link, Navigate, useParams, useSearch } from "@tanstack/react-router"
 import { ArrowRight, ChevronRight, Clock3, GitMerge, Network, Search, Waypoints } from "lucide-react"
 import { useState } from "react"
 import { Chip } from "@/components/chip"
@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils"
 import { CLIENT, MARKS, TYPES, type FinanceType, type MarkId } from "./data.ts"
 import { BY_ID, LINKS, RECORDS, isFinanceType, type Fact, type FinanceRecord } from "./records.ts"
 import { financePolicyMenu } from "./policies.tsx"
-import { TypeDefinition } from "./definitions.tsx"
+import { OBJECT_TABS, objectTab, TypeDefinition } from "./definitions.tsx"
 import { FinanceHeading, Mark, TypeTile } from "./workspace.tsx"
 
 export const financeSourceMenu = (): readonly MenuEntry[] =>
@@ -34,18 +34,20 @@ export function FinanceRecordRoute() {
 
 function TypeList({ type }: { readonly type: FinanceType }) {
   const [search, setSearch] = useState("")
-  const [tab, setTab] = useState<"Definition" | "Records">("Definition")
+  const routeSearch = useSearch({ strict: false })
+  const tab = objectTab("tab" in routeSearch ? routeSearch.tab : undefined)
   const records = RECORDS.filter((record) => record.type === type)
   const term = search.trim().toLowerCase()
   const matches = records.filter(({ id, name, summary }) => `${id} ${name} ${summary}`.toLowerCase().includes(term))
   return <section className="space-y-4">
     <Link to="/sources" search={{ view: "graph" }} className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground">Sources <ChevronRight className="size-3" /> Business model</Link>
     <FinanceHeading title={TYPES[type].plural} description={`Model definition and ${records.length} sample records.`} />
-    <div role="group" aria-label="Object type views" className="flex flex-wrap gap-1 rounded-xl border bg-card p-1">
-      {(["Definition", "Records"] as const).map(view => <button key={view} type="button" aria-pressed={tab === view} onClick={() => setTab(view)}
-        className={cn("rounded-lg px-3 py-1.5 text-sm font-medium text-muted-foreground hover:bg-muted", tab === view && "bg-data-accent/10 text-foreground")}>{view}</button>)}
-    </div>
-    {tab === "Definition" ? <TypeDefinition type={type} /> : <div className="rounded-2xl border bg-card">
+    <nav aria-label="Object type views" className="flex flex-wrap gap-1 rounded-xl border bg-card p-1">
+      {OBJECT_TABS.map(({ id, label }) => <Link key={id} to="/sources/$concept" params={{ concept: type }} search={{ tab: id === "overview" ? undefined : id }}
+        aria-current={tab === id ? "page" : undefined}
+        className={cn("rounded-lg px-2.5 py-1.5 text-sm font-medium text-muted-foreground hover:bg-muted", tab === id && "bg-data-accent/10 text-foreground")}>{label}</Link>)}
+    </nav>
+    {tab !== "records" ? <TypeDefinition type={type} tab={tab} /> : <div className="rounded-2xl border bg-card">
       <div className="border-b p-3">
         <label className="relative block max-w-sm"><span className="sr-only">Find a record</span><Search className="absolute start-2.5 top-2.5 size-4 text-muted-foreground" /><Input className="ps-8" placeholder="Find a record" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
       </div>
@@ -152,7 +154,7 @@ export function RecordDetail({ record }: { readonly record: FinanceRecord }) {
   return <section className="space-y-4">
     <nav aria-label="Record breadcrumbs" className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
       <Link to="/sources" className="hover:text-foreground">Sources</Link><ChevronRight className="size-3" />
-      <Link to="/sources/$concept" params={{concept:record.type}} className="hover:text-foreground">{TYPES[record.type].plural}</Link><ChevronRight className="size-3" />
+      <Link to="/sources/$concept" params={{concept:record.type}} search={{ tab: "records" }} className="hover:text-foreground">{TYPES[record.type].plural}</Link><ChevronRight className="size-3" />
       <span className="text-foreground" aria-current="page">{record.id}</span>
     </nav>
     <FinanceHeading title={record.name} description={`${TYPES[record.type].name} · ${record.id}`} />

@@ -6,7 +6,8 @@ import { Panel } from "@/components/panel"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import type { MenuEntry } from "../shell.tsx"
-import { MARKS, ROW_COUNT, type FinanceType, type MarkId } from "./data.ts"
+import { AUXILIARY_TYPES } from "./behavior.ts"
+import { MARKS, ROW_COUNT, TYPES, type FinanceType, type MarkId } from "./data.ts"
 import { egp } from "./records.ts"
 import { FinanceHeading, Mark } from "./workspace.tsx"
 
@@ -18,6 +19,8 @@ const POLICY_TYPES = {
   portfolio: "Portfolio",
   lease: "Lease",
   "gl-entry": "GL entry",
+  "relationship-assignment": AUXILIARY_TYPES["relationship-assignment"].name,
+  holdings: AUXILIARY_TYPES.holdings.name,
 } as const
 
 type PolicyType = FinanceType | keyof typeof POLICY_TYPES
@@ -135,12 +138,19 @@ export function BusinessPolicies({ type }: { readonly type: PolicyType }) {
 export function FinancePolicyType() {
   const { scope } = useParams({ strict: false })
   const type = (Object.keys(POLICY_TYPES) as (keyof typeof POLICY_TYPES)[]).find(key => key === scope) ?? "loan-product"
+  const auxiliary = type === "relationship-assignment" || type === "holdings" ? AUXILIARY_TYPES[type] : undefined
   return <section className="space-y-4">
-    <FinanceHeading title={POLICY_TYPES[type]} description="Business limits and operating parameters used across the finance model." />
+    <FinanceHeading title={POLICY_TYPES[type]} description={auxiliary ? `Entity in the ${TYPES[auxiliary.parent].name} aggregate.` : "Business limits and operating parameters used across the finance model."} />
     <nav aria-label="Policy types" className="flex flex-wrap gap-1.5">
       {financePolicyMenu().map(({ href, label }) => <Link key={href} to={href}><Chip tone={href.endsWith(type) ? "blue" : "gray"}>{label}</Chip></Link>)}
     </nav>
-    {type === "lease" || type === "gl-entry" ? <Panel label="Source object definition" icon={ClipboardList}>
+    {auxiliary ? <Panel label="Entity definition" icon={ClipboardList}>
+      <div className="space-y-2 px-5 pt-1 pb-4">
+        <div className="flex items-center gap-2 text-xs"><Mark id={auxiliary.source} />{MARKS[auxiliary.source].name}</div>
+        <ul className="flex flex-wrap gap-1.5">{auxiliary.fields.map(field => <li key={field}><Chip mono>{field}</Chip></li>)}</ul>
+        <Link to="/sources/$concept" params={{ concept: auxiliary.parent }} search={{ tab: "links" }} className="inline-flex items-center gap-1 text-sm text-tone-blue hover:underline">Open aggregate links<ArrowRight className="size-4" /></Link>
+      </div>
+    </Panel> : type === "lease" || type === "gl-entry" ? <Panel label="Source object definition" icon={ClipboardList}>
       <div className="space-y-2 px-5 pt-1 pb-4">
         <div className="flex items-center gap-2 text-xs"><Mark id={type === "lease" ? "leasing" : "ledger"} />{type === "lease" ? "Leasing ledger" : "General ledger"}</div>
         <ul className="flex flex-wrap gap-1.5">{SOURCE_FIELDS[type].map(field => <li key={field}><Chip mono>{field}</Chip></li>)}</ul>
@@ -159,7 +169,7 @@ const CONSTRAINTS = [
   { name: "60 calls per agent per day", reason: "Each assignment consumes one unit of daily capacity.", to: "/policies/collections-agent", hash: "agent-capacity", binding: true },
   { name: "Match agent and borrower languages", reason: "Assign only an agent who speaks the borrower's preferred language.", to: "/policies/collections-agent", hash: "agent-languages", binding: true },
   { name: "Pause collections for open hardship", reason: "Exclude accounts with an open CRM hardship case.", to: "/guarantees", hash: "hardship", binding: true },
-  { name: "Fawry cut-off at 16:00 EET", reason: "Move promises received after the cut-off to the next settlement day.", to: "/sources/payment", hash: "fawry-cutoff", binding: false },
+  { name: "Fawry cut-off at 16:00 EET", reason: "Move promises received after the cut-off to the next settlement day.", to: "/sources/payment", search: { tab: "policies" }, hash: "fawry-cutoff", binding: false },
 ] as const
 
 const ASSIGNMENTS = [
@@ -189,11 +199,11 @@ export function FinanceOptimisation() {
       </Panel>
     </div>
     <Panel label="Constraints" icon={Shield}>
-      <ul className="divide-y px-5 pb-2">{CONSTRAINTS.map(({ name, reason, to, hash, binding }) => <li key={name} className="flex flex-wrap items-start justify-between gap-2 py-2">
-        <div><Link to={to} hash={hash} className="flex items-center gap-1 text-sm font-medium text-tone-blue hover:underline">{name}<ArrowRight className="size-3.5" /></Link>
+      <ul className="divide-y px-5 pb-2">{CONSTRAINTS.map(constraint => { const { name, reason, to, hash, binding } = constraint; return <li key={name} className="flex flex-wrap items-start justify-between gap-2 py-2">
+        <div><Link to={to} hash={hash} search={"search" in constraint ? constraint.search : undefined} className="flex items-center gap-1 text-sm font-medium text-tone-blue hover:underline">{name}<ArrowRight className="size-3.5" /></Link>
           <p className="text-xs text-muted-foreground">{reason}</p></div>
         <Chip tone={binding ? "amber" : "gray"}>{binding ? "Binding" : "Within limit"}</Chip>
-      </li>)}</ul>
+      </li>})}</ul>
     </Panel>
     <Panel label="Solved plan" icon={ClipboardList}>
       <div className="overflow-x-auto px-5 pb-3">

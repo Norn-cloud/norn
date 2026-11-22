@@ -8,6 +8,8 @@ import { CLIENT, MARKS, SYSTEMS, type MarkId } from "./data.ts"
 import { egp } from "./records.ts"
 import { Mark } from "./workspace.tsx"
 
+const counted = (count: number, singular: string, plural = `${singular}s`) => `${count} ${count === 1 ? singular : plural}`
+
 type MappingStatus = "Mapped" | "Key" | "Partial" | "Conflict" | "Suggested" | "Unmapped" | "Ignored"
 type Field = {
   readonly source: MarkId
@@ -96,8 +98,8 @@ function IdentityReview({ decisions, decide }: {
         <thead className="text-xs text-muted-foreground"><tr><th scope="col" className="pb-1 text-start">Field</th><th scope="col" className="pb-1 text-start">Source record A</th><th scope="col" className="pb-1 text-start">Source record B</th></tr></thead>
         <tbody>{fields.map(([label, a, b]) => <tr key={label} className="border-t">
           <th scope="row" className="py-1.5 text-start font-medium">{label}</th>
-          <td className={cn("overflow-wrap-anywhere pe-2", a !== b && "text-tone-amber")} dir="auto">{a}</td>
-          <td className={cn("overflow-wrap-anywhere", a !== b && "text-tone-amber")} dir="auto">{b}</td>
+          <td className={cn("overflow-wrap-anywhere pe-2 text-start", a !== b && "text-tone-amber")}><bdi>{a}</bdi></td>
+          <td className={cn("overflow-wrap-anywhere text-start", a !== b && "text-tone-amber")}><bdi>{b}</bdi></td>
         </tr>)}</tbody>
       </table>
       <div className="flex flex-wrap gap-1.5">
@@ -163,7 +165,7 @@ export function DatasetMapping() {
         </div>
         <div className="space-y-1">
           <div className="h-1.5 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-data-accent" style={{ width: `${100 * wired.length / properties.length}%` }} /></div>
-          <p className="text-xs text-muted-foreground">{wired.length} of {properties.length} properties mapped · {partial} partial mappings · {conflicts} conflicts</p>
+          <p className="text-xs text-muted-foreground">{wired.length} of {properties.length} properties mapped · {counted(partial, "partial mapping")} · {counted(conflicts, "conflict")}</p>
         </div>
       </header>
       <div className="space-y-1.5 p-3">
@@ -204,7 +206,7 @@ export function DatasetMapping() {
         </aside>}
         <div className="flex flex-wrap items-center gap-2 border-t pt-2">
           <Button size="sm" variant="outline" onClick={() => setPublish(true)}>Publish model</Button>
-          {publish && <p role="status" className="text-xs text-muted-foreground">Preview · {unresolved} unmapped properties, {partial} partial mappings, {conflicts} conflicts. The data contract quarantines records missing required fields.</p>}
+          {publish && <p role="status" className="text-xs text-muted-foreground">Preview · {counted(unresolved, "unmapped property", "unmapped properties")}, {counted(partial, "partial mapping")}, {counted(conflicts, "conflict")}. The data contract quarantines records missing required fields.</p>}
         </div>
       </div>
     </section>

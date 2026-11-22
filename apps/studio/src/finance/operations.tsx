@@ -1,87 +1,13 @@
-import { Link, useParams } from "@tanstack/react-router"
+import { Link } from "@tanstack/react-router"
 import { ArrowRight, BadgeCheck, CircleAlert, Database, Fingerprint, GitMerge, Shield, ShieldX } from "lucide-react"
 import { Chip } from "@/components/chip"
 import { Panel } from "@/components/panel"
-import { cn } from "@/lib/utils"
-import type { Workflow } from "../lib/workflows.ts"
+import { COMMANDS, isFinanceCommand, type RuleId } from "./behavior.ts"
 import type { MenuEntry } from "../shell.tsx"
-import { WorkflowCard } from "../workflows.tsx"
-import { CLIENT, MARKS, ROW_COUNT, SYSTEMS, TYPES, type FinanceType, type MarkId } from "./data.ts"
-import { FinanceHeading, Mark, TypeTile } from "./workspace.tsx"
+import { CLIENT, ROW_COUNT, SYSTEMS, TYPES, type FinanceType, type MarkId } from "./data.ts"
+import { FinanceHeading, Mark, SystemDependencies, TypeTile } from "./workspace.tsx"
 
 type Systems = readonly [MarkId, MarkId, ...MarkId[]]
-type ProcessStep = readonly [from: string, step: string, to: string, condition: string, systems: Systems, needs: string]
-
-function SystemsNeeded({ systems, needs }: { readonly systems: Systems; readonly needs: string }) {
-  return <div className="space-y-1.5">
-    <div className="flex flex-wrap items-center gap-1.5" aria-label="Required systems">
-      {systems.map(id => <span key={id} className="inline-flex items-center gap-1 rounded-full border pe-1.5 text-[10px] text-muted-foreground"><Mark id={id} className="size-5 rounded-full border-0 text-[7px]" />{MARKS[id].name}</span>)}
-    </div>
-    <p className="text-xs text-muted-foreground"><strong className="font-medium text-foreground">Needs</strong> · {needs}</p>
-  </div>
-}
-
-function process(id: string, title: string, type: FinanceType, description: string, terminal: string[], steps: readonly [ProcessStep, ...ProcessStep[]]) {
-  const transitions = steps.map(([from, id, to, description]) => ({ from: [from], id, to, description }))
-  const workflow: Workflow = {
-    objectType: TYPES[type].name,
-    description,
-    lifecycle: { property: id, initial: [steps[0][0]], terminal, transitions },
-    steps: transitions.map(transition => ({ transition, actions: [] })),
-    laws: [],
-  }
-  return { id, title, workflow, steps }
-}
-
-const PROCESSES = [
-  process("origination", "Loan origination", "loan", "From a CRM lead to disbursement and regulatory reporting.", ["Reported to FRA"], [
-    ["Applied", "Register CRM lead", "Lead matched", "An eligible CRM lead matches or creates one LMS application.", ["salesforce", "postgres"], "The CRM lead and the LMS application have to resolve to the same borrower."],
-    ["Lead matched", "Verify e-KYC", "KYC verified", "Identity and liveness checks pass and the verification is current.", ["valify", "salesforce"], "Valify evidence has to agree with the lead identity held in CRM."],
-    ["KYC verified", "Pull I-Score", "I-Score pulled", "The bureau inquiry is no more than 30 days old and matches the verified national ID.", ["iscore", "valify"], "The bureau report needs to match the identity verified by Valify."],
-    ["I-Score pulled", "Underwrite in the LMS", "Approved", "I-Score is at least 600 or manual approval is recorded. Debt-to-income is at most 50%. Product terms and review capacity meet policy.", ["postgres", "iscore", "salesforce"], "Underwriting combines bureau evidence with application values and CRM risk flags."],
-    ["Approved", "Disburse via InstaPay", "Disbursed", "LMS approval, current KYC, a fresh I-Score inquiry and no open CRM fraud or hardship flag.", ["instapay", "postgres", "valify", "iscore", "salesforce"], "Payment release depends on approval, verified identity, bureau freshness and CRM flags."],
-    ["Disbursed", "File with FRA", "Reported to FRA", "The disbursed amounts appear in the reconciled monthly return.", ["fra", "postgres", "instapay"], "The return needs both the LMS disbursement and the confirmation from InstaPay."],
-  ]),
-  process("collections", "Repayment & collections", "installment", "Route arrears through hardship review and settlement before deciding the brokerage hold.", ["Brokerage held", "Brokerage released"], [
-    ["Performing", "Read days past due", "Arrears identified", "An LMS installment is overdue after applying confirmed settlements.", ["postgres", "fawry", "instapay"], "A missed payment can only be confirmed after the bank settlement window is checked."],
-    ["Arrears identified", "Check CRM hardship", "Hardship reviewed", "Check the borrower's CRM case. Open hardship pauses collections and late fees.", ["salesforce", "postgres"], "CRM owns the hardship case and the LMS controls dunning."],
-    ["Hardship reviewed", "Issue Fawry payment link", "Payment link sent", "The installment is overdue and collections has not been paused for hardship.", ["fawry", "postgres", "salesforce"], "Fawry needs the LMS balance and CRM's clearance before sending a payment link."],
-    ["Payment link sent", "Reconcile settlement", "Settlement checked", "A payment is matched within T+2, or an exception is opened.", ["fawry", "instapay", "postgres"], "Only a confirmed settlement matched to the installment can clear the balance."],
-    ["Settlement checked", "Hold brokerage account", "Brokerage held", "The client remains at 30 or more days past due.", ["postgres", "egx", "mcdr"], "The arrears calculation is in the LMS and the hold applies to the brokerage account."],
-    ["Settlement checked", "Release brokerage hold", "Brokerage released", "The matched payment clears the arrears threshold.", ["postgres", "egx", "mcdr"], "Brokerage needs the reconciled LMS position to release the hold."],
-  ]),
-  process("brokerage", "Brokerage onboarding", "brokerage-account", "Verify identity, confirm margin eligibility, open and fund the account, and assign its RM.", ["RM assigned"], [
-    ["Application received", "Verify e-KYC", "KYC verified", "Valify verifies the applicant on the CRM onboarding case.", ["valify", "salesforce"], "The identity result has to attach to the applicant tracked by CRM."],
-    ["KYC verified", "Check margin eligibility", "Margin eligibility checked", "A recent I-Score report matches the verified applicant and suitability is on file.", ["iscore", "valify", "egx"], "Brokerage suitability needs the Valify identity and matching bureau report."],
-    ["Margin eligibility checked", "Open MCDR account", "Account opened at MCDR", "MCDR acknowledges the brokerage account for the verified applicant.", ["mcdr", "valify"], "MCDR opens the account using an identity verified upstream."],
-    ["Account opened at MCDR", "Confirm InstaPay funding", "Funded", "InstaPay settles a deposit against the MCDR account number.", ["instapay", "mcdr"], "Payment settlement and account ownership come from different sources."],
-    ["Funded", "Assign CRM relationship manager", "RM assigned", "CRM assigns an RM against the funded MCDR account holder.", ["salesforce", "instapay", "mcdr"], "CRM needs the actual funded account and its holder to record the assignment."],
-  ]),
-] as const
-
-export const financeWorkflowMenu = (): readonly MenuEntry[] => PROCESSES.map(({ id, title }) => ({ href: `/workflows/${id}`, label: title }))
-
-export function FinanceWorkflows() {
-  const { process: id } = useParams({ strict: false })
-  const selected = PROCESSES.find(item => item.id === id) ?? PROCESSES[0]
-  return <section className="space-y-5">
-    <FinanceHeading title="Workflows" description="Follow the states and conditions for lending, collections and brokerage onboarding." />
-    <nav aria-label="Finance workflows" className="flex flex-wrap gap-1 rounded-xl border bg-card p-1">
-      {PROCESSES.map(item => <Link key={item.id} to="/workflows/$process" params={{ process: item.id }}
-        aria-current={item === selected ? "page" : undefined}
-        className={cn("rounded-lg px-3 py-1.5 text-sm font-medium text-muted-foreground hover:bg-muted", item === selected && "bg-data-accent/10 text-foreground")}>
-        {item.title}
-      </Link>)}
-    </nav>
-    <WorkflowCard key={selected.id} workflow={selected.workflow} title={selected.title} illustrative annotateStep={(id, compact) => {
-      const step = selected.steps.find(([, name]) => name === id)
-      if (!step) return null
-      const [, , , , systems, needs] = step
-      return compact ? <span title={`Needs · ${needs}`} className="flex gap-0.5 ps-7 pt-1">{systems.map(system => <Mark key={system} id={system} className="size-5 rounded-md text-[7px]" />)}</span>
-        : <SystemsNeeded systems={systems} needs={needs} />
-    }} />
-  </section>
-}
 
 interface Refusal {
   readonly action: string
@@ -99,7 +25,7 @@ const SOURCE_OBJECTS = {
 } as const
 
 interface FinanceRule {
-  readonly id: string
+  readonly id: RuleId
   readonly title: string
   readonly guards: string
   readonly reads: readonly [RuleObject, RuleObject, ...RuleObject[]]
@@ -126,7 +52,7 @@ export const RULES: readonly FinanceRule[] = [
   },
   {
     id: "exposure", title: "Total exposure per client ≤ EGP 5M",
-    guards: "Loan.approve, Order.margin", reads: ["client", "loan", "brokerage-account", "lease"],
+    guards: "Loan.approve, Order.placeMargin", reads: ["client", "loan", "brokerage-account", "lease"],
     path: "Client → holds → {Loan, Brokerage account, Lease} (sum)",
     systems: ["postgres", "egx", "mcdr", "leasing"],
     condition: "Sum outstanding loans, margin credit and leases by national ID. Refuse an increase above EGP 5,000,000.",
@@ -150,7 +76,7 @@ export const RULES: readonly FinanceRule[] = [
   },
   {
     id: "margin", title: "No margin or withdrawal while in arrears",
-    guards: "Order.margin, Brokerage account.withdraw", reads: ["brokerage-account", "client", "loan", "installment"],
+    guards: "Order.placeMargin, BrokerageAccount.withdraw", reads: ["brokerage-account", "client", "loan", "installment"],
     path: "Brokerage account ← holds ← Client → holds → Loan → has → Installment (DPD)",
     systems: ["postgres", "egx", "mcdr"],
     condition: "At 30 or more days past due in the LMS, block margin orders and brokerage cash withdrawals.",
@@ -179,7 +105,7 @@ export const RULES: readonly FinanceRule[] = [
   },
   {
     id: "reporting", title: "FRA return equals source totals",
-    guards: "Regulatory return.file", reads: ["regulatory-return", "loan", "brokerage-account", "gl-entry"],
+    guards: "RegulatoryReturn.file", reads: ["regulatory-return", "loan", "brokerage-account", "gl-entry"],
     path: "Regulatory return → aggregate by period → {Loan, Brokerage account, GL entry}",
     systems: ["fra", "postgres", "egx", "mcdr", "ledger"],
     condition: "Reconcile the monthly FRA return to LMS outstanding, brokerage positions and the general ledger for the same period.",
@@ -191,6 +117,27 @@ const refusedCount = RULES.filter(rule => rule.refusal).length
 
 export const financeRuleMenu = (): readonly MenuEntry[] => RULES.map(({ id, title }) => ({ href: `#${id}`, label: title }))
 
+export function RuleScope({ rule }: { readonly rule: Pick<FinanceRule, "guards" | "reads" | "path"> }) {
+  const { guards, reads, path } = rule
+  return <dl className="space-y-2 text-xs">
+    <div className="flex items-baseline gap-2">
+      <dt className="w-10 shrink-0 text-muted-foreground">Guards</dt><dd className="flex flex-wrap gap-1.5">
+        {guards.split(", ").map(guard => isFinanceCommand(guard)
+          ? <Link key={guard} to="/sources/$concept" params={{ concept: COMMANDS[guard].on }} search={{ tab: "commands" }} hash={guard} className="font-mono text-tone-blue hover:underline">{guard}</Link>
+          : <code key={guard}>{guard}</code>)}
+      </dd>
+    </div>
+    <div className="flex items-baseline gap-2"><dt className="w-10 shrink-0 text-muted-foreground">Reads</dt><dd className="flex flex-wrap gap-1">
+      {reads.map(type => {
+        const auxiliary = type === "lease" || type === "gl-entry"
+        const item = auxiliary ? SOURCE_OBJECTS[type] : TYPES[type]
+        return <Link key={type} to={auxiliary ? `/policies/${type}` : `/sources/${type}`} className="rounded-md hover:ring-1 hover:ring-border"><Chip tone={item.tone}>{item.name}</Chip></Link>
+      })}
+    </dd></div>
+    <div className="flex items-baseline gap-2"><dt className="w-10 shrink-0 text-muted-foreground">Path</dt><dd className="font-mono leading-relaxed text-muted-foreground">{path}</dd></div>
+  </dl>
+}
+
 export function FinanceRules() {
   return <section className="space-y-4">
     <FinanceHeading title="Rules" description="Inspect finance checks and the evidence behind each recorded refusal in the synthetic sample." />
@@ -199,22 +146,14 @@ export function FinanceRules() {
       <Chip tone="red" icon={ShieldX} className="rounded-full">{refusedCount} actions refused</Chip>
     </div>
     <div className="grid gap-3 lg:grid-cols-2">
-      {RULES.map(({ id, title, guards, reads, path, condition, systems, needs, refusal }) => <Panel key={id} id={id} label={title} icon={Shield} className="scroll-mt-4"
+      {RULES.map(rule => {
+        const { id, title, condition, systems, needs, refusal } = rule
+        return <Panel key={id} id={id} label={title} icon={Shield} className="scroll-mt-4"
         action={<Chip tone="green" dot>Check passed</Chip>}>
         <div className="space-y-3 px-5 pt-2 pb-4">
-          <dl className="space-y-2 border-b pb-3 text-xs">
-            <div className="flex items-baseline gap-2"><dt className="w-10 shrink-0 text-muted-foreground">Guards</dt><dd><code>{guards}</code></dd></div>
-            <div className="flex items-baseline gap-2"><dt className="w-10 shrink-0 text-muted-foreground">Reads</dt><dd className="flex flex-wrap gap-1">
-              {reads.map(type => {
-                const auxiliary = type === "lease" || type === "gl-entry"
-                const item = auxiliary ? SOURCE_OBJECTS[type] : TYPES[type]
-                return <Link key={type} to={auxiliary ? `/policies/${type}` : `/sources/${type}`} className="rounded-md hover:ring-1 hover:ring-border"><Chip tone={item.tone}>{item.name}</Chip></Link>
-              })}
-            </dd></div>
-            <div className="flex items-baseline gap-2"><dt className="w-10 shrink-0 text-muted-foreground">Path</dt><dd className="font-mono leading-relaxed text-muted-foreground">{path}</dd></div>
-          </dl>
+          <div className="border-b pb-3"><RuleScope rule={rule} /></div>
           <p className="text-sm">{condition}</p>
-          <SystemsNeeded systems={systems} needs={needs} />
+          <SystemDependencies systems={systems} needs={needs} />
           {id === "settlement" && <Link to="/metrics" hash="corrections" className="inline-flex items-center gap-1 text-xs font-medium text-tone-blue hover:underline">View settlement correction<ArrowRight className="size-3.5" /></Link>}
           {refusal ? <div className="space-y-2 rounded-xl border border-tone-red/25 bg-tone-red/5 p-3">
             <p className="text-xs font-semibold text-tone-red">{refusal.action}</p>
@@ -225,7 +164,8 @@ export function FinanceRules() {
             No refusal recorded in this sample
           </p>}
         </div>
-      </Panel>)}
+      </Panel>
+      })}
     </div>
   </section>
 }

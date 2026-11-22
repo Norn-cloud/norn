@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
 import { guardsWords } from "./lib/guard-words.ts"
-import { createContext, use, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react"
+import { createContext, use, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react"
 import { Background, Handle, MarkerType, Position, ReactFlow, type Edge, type Node, type NodeProps, type ReactFlowInstance } from "@xyflow/react"
 import "@xyflow/react/dist/style.css"
 import { Badge } from "@/components/ui/badge"
@@ -25,8 +25,7 @@ const useNames = () => use(Names)
 
 type Pick = (id: string | undefined) => void
 type StateData = { pinned: string | undefined; label: string; start: boolean; terminal: boolean; laws: number; backs: { id: string; label: string; to: string; toLabel: string }[]; faded: boolean; lit: boolean; onPick: Pick; onHover: Pick }
-type StepAnnotation = (id: string, compact: boolean) => ReactNode
-type StepData = { annotation?: ReactNode; pinned: string | undefined; order: number; label: string; sub: string; faded: boolean; lit: boolean; onPick: Pick; onHover: Pick; id: string }
+type StepData = { pinned: string | undefined; order: number; label: string; sub: string; faded: boolean; lit: boolean; onPick: Pick; onHover: Pick; id: string }
 type MoreData = { count: number; onExpand: () => void }
 
 /** Every card on the chart floats with the shared node depth; the lit path takes the accent ring, the rest fades. */
@@ -93,7 +92,6 @@ function StepCard_({ data }: NodeProps<Node<StepData, "step">>) {
         <span className="line-clamp-2">{data.label}</span>
       </div>
       <div className="line-clamp-2 ps-7 pt-0.5 text-meta text-muted-foreground">{data.sub}</div>
-      {data.annotation}
     </button>
   )
 }
@@ -118,7 +116,7 @@ function moveFrom(tree: Tree, at: string, key: string): string | undefined {
 }
 
 /** The lifecycle as a left-to-right decision tree: hover or pin an element to light its path from the start and its next options. */
-function Chart({ workflow, pinned, onPin, annotateStep }: { readonly workflow: Workflow; readonly pinned: string | undefined; readonly onPin: Pick; readonly annotateStep: StepAnnotation | undefined }) {
+function Chart({ workflow, pinned, onPin }: { readonly workflow: Workflow; readonly pinned: string | undefined; readonly onPin: Pick }) {
   const state = useNames()
   const { lifecycle } = workflow
   const tree = useMemo(() => treeOf(lifecycle), [lifecycle])
@@ -154,7 +152,7 @@ function Chart({ workflow, pinned, onPin, annotateStep }: { readonly workflow: W
     const guards = node.transition.guards ?? []
     const fields = guardedFields(guards)
     const plain = guardsWords(guards)
-    return { id: node.id, type: "step", position, data: { ...common, id: node.id, order: node.order, annotation: annotateStep?.(node.transition.id, true), label: state(node.transition.id), sub: node.transition.description ?? (guards.length === 0 ? "Always" : `Requires: ${plain ?? fields.join(", ")}`) } }
+    return { id: node.id, type: "step", position, data: { ...common, id: node.id, order: node.order, label: state(node.transition.id), sub: node.transition.description ?? (guards.length === 0 ? "Always" : `Requires: ${plain ?? fields.join(", ")}`) } }
   })
   if (folded > 0) {
     const below = Math.max(...nodes.map(({ position }) => position.y)) + CARD_H + GAP_Y
@@ -234,21 +232,20 @@ function Condition({ transition }: { readonly transition: Workflow["steps"][numb
 }
 
 /** The focused step: what it changes, when it is allowed, what fires it and the laws that govern it. */
-function StepCard({ workflow, step, illustrative, annotateStep }: { readonly workflow: Workflow; readonly step: Workflow["steps"][number]; readonly illustrative: boolean; readonly annotateStep: StepAnnotation | undefined }) {
+function StepCard({ workflow, step }: { readonly workflow: Workflow; readonly step: Workflow["steps"][number] }) {
   const state = useNames()
   const { transition, actions } = step
   return (
-    <div className={cn("grid gap-4 p-4 text-sm", !illustrative && "md:grid-cols-[1fr_1fr_1.4fr] 2xl:grid-cols-1")}>
-      <div className={cn(!illustrative && "md:col-span-3 2xl:col-span-1")}>
+    <div className="grid gap-4 p-4 text-sm md:grid-cols-[1fr_1fr_1.4fr] 2xl:grid-cols-1">
+      <div className="md:col-span-3 2xl:col-span-1">
         <div className="text-panel font-medium">{state(transition.id)}</div>
         <div className="text-muted-foreground">{transition.from.map(state).join(" or ")} → {state(transition.to)}</div>
       </div>
       <div className="space-y-1">
         <div className="text-meta font-medium text-muted-foreground">Allowed only when</div>
-        {illustrative ? transition.description : <Condition transition={transition} />}
+        <Condition transition={transition} />
       </div>
-      {annotateStep?.(transition.id, false)}
-      {!illustrative && <div className="space-y-1">
+      <div className="space-y-1">
         <div className="text-meta font-medium text-muted-foreground">Action</div>
         {actions.length === 0 && <div className="text-muted-foreground">None declared</div>}
         {actions.map((action) => (
@@ -257,8 +254,8 @@ function StepCard({ workflow, step, illustrative, annotateStep }: { readonly wor
             <div className="text-meta text-muted-foreground">Not available yet: the server does not accept actions here yet.</div>
           </div>
         ))}
-      </div>}
-      {!illustrative && <div className="space-y-1">
+      </div>
+      <div className="space-y-1">
         <div className="text-meta font-medium text-muted-foreground">Laws that govern it</div>
         {workflow.laws.length === 0 && <div className="text-muted-foreground">None declared on {words(workflow.objectType)}</div>}
         {workflow.laws.map((law) => (
@@ -270,15 +267,15 @@ function StepCard({ workflow, step, illustrative, annotateStep }: { readonly wor
             <p className="text-meta text-muted-foreground">{law.rationale}</p>
           </div>
         ))}
-      </div>}
+      </div>
     </div>
   )
 }
 
-export function WorkflowCard({ workflow, title, flow, recorded = false, illustrative = false, annotateStep }: { readonly workflow: Workflow; readonly title: string; readonly flow?: RunFlow | undefined; readonly recorded?: boolean; readonly illustrative?: boolean; readonly annotateStep?: StepAnnotation }) {
+function WorkflowCard({ workflow, title, flow, recorded }: { readonly workflow: Workflow; readonly title: string; readonly flow: RunFlow | undefined; readonly recorded: boolean }) {
   const { lifecycle } = workflow
   const { view } = useView()
-  const state = useMemo(() => (name: string) => illustrative ? name : (view !== "technical" && flow ? flowName(flow, name) : undefined) ?? words(name), [flow, illustrative, view])
+  const state = useMemo(() => (name: string) => (view !== "technical" && flow ? flowName(flow, name) : undefined) ?? words(name), [flow, view])
   const tree = useMemo(() => treeOf(lifecycle), [lifecycle])
   const [pinned, setPinned] = useState<string>()
   const node = tree.nodes.find(({ id }) => id === pinned)
@@ -292,7 +289,7 @@ export function WorkflowCard({ workflow, title, flow, recorded = false, illustra
     <section id={anchor(workflow)} className="scroll-mt-4 space-y-3">
       <div className="space-y-1 px-1">
         <div className="flex flex-wrap items-center gap-2">
-          <h2 className="text-section font-medium">{illustrative ? title : `${title}: ${words(lifecycle.property).toLowerCase()}`}</h2>
+          <h2 className="text-section font-medium">{title}: {words(lifecycle.property).toLowerCase()}</h2>
           {recorded && <Badge variant="outline" title="Definitions the server admitted, replayed exactly. Not a live connection.">Recorded</Badge>}
         </div>
         <p className="max-w-[80ch] text-meta text-muted-foreground">
@@ -305,14 +302,14 @@ export function WorkflowCard({ workflow, title, flow, recorded = false, illustra
       </div>
       {/* The chart takes the full width; what is pinned opens beside it, and only then. */}
       <div className={cn("grid gap-3", pinned !== undefined && "xl:grid-cols-[minmax(0,1fr)_20rem]")}>
-        <Panel label="Steps" action={illustrative ? "Select a step to read its condition" : "Select a state or step to see its condition, action and laws; arrow keys move, Esc clears"}>
+        <Panel label="Steps" action="Select a state or step to see its condition, action and laws; arrow keys move, Esc clears">
           {pinned && <Breadcrumb tree={tree} pinned={pinned} />}
-          <Well className="bg-canvas-surface"><Chart workflow={workflow} pinned={pinned} onPin={setPinned} annotateStep={annotateStep} /></Well>
+          <Well className="bg-canvas-surface"><Chart workflow={workflow} pinned={pinned} onPin={setPinned} /></Well>
         </Panel>
         {pinned !== undefined && (
           <Panel label={node?.kind === "state" ? "Pinned state" : "Pinned step"} action={<Button type="button" size="sm" variant="ghost" className="h-7 px-2" onClick={() => setPinned(undefined)}>Clear</Button>}>
             <Well>
-              {step && <StepCard workflow={workflow} step={step} illustrative={illustrative} annotateStep={annotateStep} />}
+              {step && <StepCard workflow={workflow} step={step} />}
               {node?.kind === "state" && <StateSummary workflow={workflow} name={node.state} />}
             </Well>
           </Panel>
