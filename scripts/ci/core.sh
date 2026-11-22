@@ -11,7 +11,7 @@ export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
 # `all` runs every phase, in this order, in one checkout. CI packs its
 # selected tasks in sequential bundles; `test-shards` proves
 # that the shards together select exactly the full test set, each test once.
-phases=(cheap test doctest features duckdb wasm clippy doc guards integration browser formal provenance)
+phases=(cheap test doctest features duckdb wasm clippy doc guards integration-authoring integration-wasm integration-clients browser formal provenance)
 # Each heavy shard isolates the slowest tests (nextest timings, #3541). The
 # rest shards hash-partition every other test.
 heavy=(
@@ -351,7 +351,7 @@ PY
       # The guards phase runs in every plan, full or affected.
       "${nextest[@]}" run --locked --ignore-default-filter --no-fail-fast "${guard[@]}"
       ;;
-    integration)
+    integration-authoring)
       cargo build --locked -p norn-cli
       cargo build --locked -p norn-cell-do --bin norn-dev-host
       ensure_tool wasm-bindgen-cli 0.2.129 wasm-bindgen
@@ -363,6 +363,17 @@ PY
       bun tools/norn-ts/src/cli.ts compile tools/norn-ts/fixtures/quickstart --org example --env local --out "$upstream/task.json"
       printf "{}\n" > "$upstream/context.json"
       "$NORN_BIN" check --artifacts "$upstream/task.json" --context "$upstream/context.json" > "$upstream/check.json"
+      # runnable-docs runs each release test the status matrix names; build
+      # them first so its bounded runs only execute (#1171 integrated gate).
+      grep -oE 'cargo test --locked -p [a-z-]+ (--test [a-z_]+|--lib)' docs/authoring/runnable/status.md | sort -u |
+        while read -r build; do $build --no-run; done
+      (cd tools/norn-ts && bun install --frozen-lockfile --backend copyfile && bun run typecheck && bun test --timeout 60000)
+      ;;
+    integration-wasm)
+      export CI=true
+      ensure_tool wasm-bindgen-cli 0.2.129 wasm-bindgen
+      crates/norn-checker-wasm/scripts/build-pkg.sh
+      export NORN_CHECKER_WASM_PKG="$CARGO_TARGET_DIR/norn-checker-wasm/pkg"
       cargo test --locked -p norn-checker-wasm --test parity -- --test-threads=1
       node crates/norn-checker-wasm/tests/parity/parity.mjs "$NORN_CHECKER_WASM_PKG" "$NORN_CHECKER_WASM_PARITY_OUT"
       # TENANT-ISOLATION-1 (S8): the cell Worker's boundary over its real Wasm gate, built as it ships.
@@ -370,16 +381,16 @@ PY
       wasm-bindgen "${CARGO_TARGET_DIR:-$PWD/target}/wasm32-unknown-unknown/wasm-release/norn_cell_do.wasm" \
         --target web --out-name norn_cell_do --out-dir "$upstream/norn-cell-do-pkg"
       (cd apps/norn-cell-do && NORN_CELL_DO_PKG="$upstream/norn-cell-do-pkg" bun test ./worker.wasm.test.mjs)
-      # runnable-docs runs each release test the status matrix names; build
-      # them first so its bounded runs only execute (#1171 integrated gate).
-      grep -oE 'cargo test --locked -p [a-z-]+ (--test [a-z_]+|--lib)' docs/authoring/runnable/status.md | sort -u |
-        while read -r build; do $build --no-run; done
       # The ZEN-only engine package pages load (#1325): pages and the checker share one
       # evaluator so they cannot disagree, so it answers every evaluation of the shared
       # corpus exactly as the checker package does.
       NORN_WASM_ENGINE=1 crates/norn-checker-wasm/scripts/build-pkg.sh
       node crates/norn-checker-wasm/tests/parity/engine-parity.mjs "$NORN_CHECKER_WASM_PKG" "${CARGO_TARGET_DIR:-$PWD/target}/norn-checker-wasm/engine"
-      (cd tools/norn-ts && bun install --frozen-lockfile --backend copyfile && bun run typecheck && bun test --timeout 60000)
+      ;;
+    integration-clients)
+      export CI=true
+      cargo build --locked -p norn-cell-do --bin norn-dev-host
+      export NORN_DEV_HOST_BIN="$CARGO_TARGET_DIR/debug/norn-dev-host"
       # The SDK and demo UI typecheck and tests run in `cheap`; the diff below proves
       # the regenerated SDK is the committed one those runs checked.
       (cd packages/norn-sdk && bun install --frozen-lockfile --backend copyfile)
@@ -499,7 +510,9 @@ weights = {
     "test/rest-1": 521, "test/rest-2": 266, "test/rest-3": 257,
     "phase/doctest": 48, "phase/features": 791, "phase/duckdb": 630, "phase/wasm": 239,
     "phase/clippy": 119, "phase/doc": 88, "phase/guards": 532,
-    "phase/integration": 1841, "phase/provenance": 13, "phase/test-shards": 14,
+    # Initial estimates include builds repeated on separate VMs.
+    "phase/integration-authoring": 1050, "phase/integration-wasm": 540,
+    "phase/integration-clients": 430, "phase/provenance": 13, "phase/test-shards": 14,
     "phase/browser": 596,
 }
 # A bundle's test build on a Boat VM: p50 of cargo's "Finished `test` profile" time in the

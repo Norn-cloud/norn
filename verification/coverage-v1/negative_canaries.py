@@ -756,7 +756,7 @@ def studio_browser_pin_canaries() -> None:
                 ("all skipped passes", "        [[ $ran -gt 0 ]] || { printf 'browser: Playwright ran no tests (every row skipped)\\n' >&2; exit 1; }\n", ""),
                 ("skips while tests exist", "          exit 1\n        fi\n        printf '::notice::browser", "        fi\n        printf '::notice::browser"),
                 ("no listing check", "        [[ ${listed:-0} -gt 0 ]] || { printf 'browser: Playwright lists no tests\\n' >&2; exit 1; }\n", ""),
-                ("not in the plan", " integration browser formal ", " integration formal "),
+                ("not in the plan", " integration-clients browser formal ", " integration-clients formal "),
                 ("no checker-admission test", "        decision=$(NORN_CHECKER_WASM_REQUIRED=1 bun test test/decision.test.ts 2>&1) || { printf '%s\\n' \"$decision\"; exit 1; }\n", ""),
                 ("no named-case check", "        grep -qxE '\\(pass\\) the checker admits what a drawn decision lowers to \\[[0-9.]+m?s\\]' <<< \"$decision\" || { printf 'browser: the checker-admission case did not run and pass\\n' >&2; exit 1; }\n", ""),
                 ("named case matched as a substring", "grep -qxE '\\(pass\\) the checker admits", "grep -qE '\\(pass\\) the checker admits"),
@@ -774,6 +774,28 @@ def studio_browser_pin_canaries() -> None:
             finally:
                 validator.CORE_RUNNER = ROOT / "scripts/ci/core.sh"
             raise AssertionError(f"browser phase mutation passed: {label}")
+
+
+def integration_partition_canaries() -> None:
+    validator = load_module("norn_integration_canaries", VALIDATOR)
+    core = validator.CORE_RUNNER.read_text(encoding="utf-8")
+    command = '      bash sdks/python/run-demo.sh "$upstream/python-client"\n'
+    with tempfile.TemporaryDirectory() as directory:
+        validator.CORE_RUNNER = Path(directory) / "core.sh"
+        for mutated, diagnostic in (
+                (core.replace(" integration-wasm ", " "), "integration phases must each be registered once"),
+                (core.replace(command, ""), "integration check must run exactly once"),
+                (core.replace(command, command * 2), "integration check must run exactly once"),
+                (core.replace("bun test --timeout 60000)", "bun test --timeout 60000 ./test/init.test.ts)"),
+                 "integration check must run exactly once")):
+            validator.CORE_RUNNER.write_text(mutated, encoding="utf-8")
+            try:
+                validator.validate_workflow_integrity([])
+            except validator.InvalidCoverage as error:
+                if diagnostic in str(error):
+                    continue
+                raise
+            raise AssertionError(f"integration partition mutation passed: {diagnostic}")
 
 
 def workflow_cleanup_canaries(source: str) -> None:
@@ -2542,6 +2564,7 @@ def main() -> int:
         workflow_sccache_canaries(source)
         studio_browser_phase_canaries()
         studio_browser_pin_canaries()
+        integration_partition_canaries()
         rust_parity_evidence_canaries()
         workflow_trusted_policy_canaries(source)
         workflow_expression_cap_canaries()
