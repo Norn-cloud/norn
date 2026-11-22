@@ -883,8 +883,9 @@ mod tests {
                 }
             }
         }
-        assert!(
-            offenders.is_empty(),
+        assert_eq!(
+            offenders.len(),
+            0,
             "the KEK is named outside the vault: {offenders:?}"
         );
     }

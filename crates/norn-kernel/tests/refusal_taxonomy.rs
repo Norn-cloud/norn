@@ -258,7 +258,7 @@ fn refusal_categories_are_stable() {
             (code, category),
             "{refusal}"
         );
-        assert!(!refusal.message.is_empty());
+        assert_ne!(refusal.message.len(), 0);
     }
     // A wrapped decision refusal keeps its code and category.
     let wrapped = ActionRefusal::<Infallible>::Decision(DecisionRefusal::Stale {

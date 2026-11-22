@@ -155,7 +155,7 @@ fn admitted(nodes: Value, output: &str) -> norn_checker::transform::TransformPla
     documents.push(view(nodes, output));
     let pool = envelopes(documents);
     let found = findings_of(&pool);
-    assert!(found.is_empty(), "{found:#?}");
+    assert_eq!(found, [], "{found:#?}");
     admit(pool.last().expect("view"), &pool, &BTreeSet::new()).expect("admitted")
 }
 
@@ -182,7 +182,7 @@ fn refuses(nodes: Value, output: &str, code: &str) {
 #[track_caller]
 fn admits(nodes: Value, output: &str) {
     let found = findings(nodes, output);
-    assert!(found.is_empty(), "{found:#?}");
+    assert_eq!(found, [], "{found:#?}");
 }
 
 fn num(text: &str) -> RuntimeValue {
@@ -859,7 +859,7 @@ fn materialization_is_declared_and_checked() {
     let plan_of = |upkeep: Value| {
         let pool = upkept(upkeep);
         let found = findings_of(&pool);
-        assert!(found.is_empty(), "{found:#?}");
+        assert_eq!(found, [], "{found:#?}");
         admit(pool.last().expect("view"), &pool, &BTreeSet::new()).expect("admitted")
     };
     assert_eq!(
@@ -969,7 +969,7 @@ fn every_aggregate_of_a_quantity_groups_by_its_unit_and_currency() {
         "a",
     );
     let found = findings_of(&counted);
-    assert!(found.is_empty(), "{found:#?}");
+    assert_eq!(found, [], "{found:#?}");
     refused(
         by(
             json!([{"column": "lane"}]),
@@ -992,7 +992,7 @@ fn every_aggregate_of_a_quantity_groups_by_its_unit_and_currency() {
         "a",
     );
     let found = findings_of(&distinct);
-    assert!(found.is_empty(), "{found:#?}");
+    assert_eq!(found, [], "{found:#?}");
     let plan =
         admit(distinct.last().expect("view"), &distinct, &BTreeSet::new()).expect("admitted");
     // The count is a number of amounts, not an amount: it carries no source.
@@ -1010,7 +1010,7 @@ fn every_aggregate_of_a_quantity_groups_by_its_unit_and_currency() {
         "a",
     );
     let found = findings_of(&pool);
-    assert!(found.is_empty(), "{found:#?}");
+    assert_eq!(found, [], "{found:#?}");
     let plan = admit(pool.last().expect("view"), &pool, &BTreeSet::new()).expect("admitted");
     let schema = plan.output_schema();
     let column = |name: &str| schema.column(name).expect("column");
@@ -1043,7 +1043,7 @@ fn every_aggregate_of_a_quantity_groups_by_its_unit_and_currency() {
             .any(|finding| finding.code == "metric.validation.mixed_unit")
     );
     let found = findings_of(&window(json!(["weight_unit"])));
-    assert!(found.is_empty(), "{found:#?}");
+    assert_eq!(found, [], "{found:#?}");
 }
 
 #[test]
@@ -1065,7 +1065,7 @@ fn a_column_label_travels_with_the_column_and_a_blank_one_refuses() {
     });
     let pool = shipments(nodes.clone(), "w");
     let found = findings_of(&pool);
-    assert!(found.is_empty(), "{found:#?}");
+    assert_eq!(found, [], "{found:#?}");
     let plan = admit(pool.last().expect("view"), &pool, &BTreeSet::new()).expect("admitted");
     let schema = plan.output_schema();
     let label = |name: &str| schema.column(name).expect("column").label.clone();

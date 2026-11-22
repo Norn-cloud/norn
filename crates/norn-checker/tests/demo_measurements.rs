@@ -287,8 +287,9 @@ fn d1a_exact_measurements_history_and_showcase() {
     assert_eq!(outputs, ["58.8", "73.5", "78.4", "83.3"]);
     assert_eq!(gold_inputs[60..].iter().sum::<i64>(), 300_000);
     for record in &records {
-        assert!(
-            record.links.is_empty(),
+        assert_eq!(
+            record.links,
+            [],
             "no canonical promotion before link qualification"
         );
         let mut parts = record.provenance.source.record.rsplitn(3, '/');

@@ -413,7 +413,7 @@ fn a_population_past_the_bound_answers_with_digests_that_paging_recomputes() {
         .analytics_prepare(&plan, context, &tenant())
         .expect("prepared");
     for (key, row) in &answered.rows {
-        assert!(row.members.is_empty());
+        assert_eq!(row.members.len(), 0);
         let exact_row = &exact.rows[key];
         assert_eq!(row.totals, exact_row.totals);
         assert_eq!(row.null_counts, exact_row.null_counts);
@@ -834,7 +834,7 @@ fn bulk_path_measurements() {
         let started = Instant::now();
         let answer = engine.evaluate(&ask("csv")).expect("question");
         times.push(started.elapsed().as_secs_f64());
-        assert!(!answer.buckets.is_empty());
+        assert_ne!(answer.buckets, []);
     }
     times.sort_by(f64::total_cmp);
     println!(
@@ -1225,7 +1225,7 @@ mod scales {
                 }],
             );
             let answer = compare(&store, &engine, &plan, &context).expect("answered");
-            assert!(answer.rows.is_empty());
+            assert_eq!(answer.rows.len(), 0);
         }
     }
 

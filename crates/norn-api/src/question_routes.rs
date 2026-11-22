@@ -1001,14 +1001,12 @@ pub fn metric_summary(
                 |path| path.property.0.clone(),
             )
         }),
-        time_links: time
-            .map(|path| {
-                path.links
-                    .iter()
-                    .map(|link| link.as_str().to_owned())
-                    .collect()
-            })
-            .unwrap_or_default(),
+        time_links: time.map_or_default(|path| {
+            path.links
+                .iter()
+                .map(|link| link.as_str().to_owned())
+                .collect()
+        }),
         numerator: definition.type_params.numerator.clone(),
         denominator: definition.type_params.denominator.clone(),
         unit_partition,

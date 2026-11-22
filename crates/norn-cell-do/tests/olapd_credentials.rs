@@ -111,9 +111,8 @@ impl Daemon {
     /// The raw response, status line, headers and body, to `<method> /v1/<op>`.
     fn send(&self, method: &str, op: &str, authorization: Option<&str>, body: &str) -> Vec<u8> {
         let mut stream = TcpStream::connect(self.addr).unwrap();
-        let authorization = authorization
-            .map(|value| format!("authorization: {value}\r\n"))
-            .unwrap_or_default();
+        let authorization =
+            authorization.map_or_default(|value| format!("authorization: {value}\r\n"));
         write!(
             stream,
             "{method} /v1/{op} HTTP/1.1\r\nhost: olapd\r\n{authorization}content-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
@@ -152,8 +151,7 @@ fn status(response: &[u8]) -> &str {
 fn body(response: &[u8]) -> String {
     let text = String::from_utf8_lossy(response);
     text.split_once("\r\n\r\n")
-        .map(|(_, body)| body.to_owned())
-        .unwrap_or_default()
+        .map_or_default(|(_, body)| body.to_owned())
 }
 
 fn frontier(of: &TenantId) -> String {
@@ -559,6 +557,6 @@ fn concurrent_loads_with_the_same_load_id_never_share_bytes() {
             .map(|entry| entry.unwrap().file_name())
             .filter(|name| name.to_string_lossy().starts_with("load-"))
             .collect();
-        assert!(left.is_empty(), "{left:?}");
+        assert_eq!(left.len(), 0, "{left:?}");
     }
 }

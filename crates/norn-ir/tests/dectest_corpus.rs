@@ -489,8 +489,9 @@ fn dectest_cases_hold_for_the_claimed_decimal_operations() {
         tally.failed.len(),
         tally.skipped
     );
-    assert!(
-        tally.failed.is_empty(),
+    assert_eq!(
+        tally.failed.len(),
+        0,
         "{} dectest failures:\n{}",
         tally.failed.len(),
         tally.failed.join("\n")

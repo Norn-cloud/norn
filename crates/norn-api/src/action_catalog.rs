@@ -530,9 +530,9 @@ mod tests {
         );
         let mut optional = action.clone();
         optional.slice[0].optional = true;
-        assert!(existing_targets(&optional).is_empty());
+        assert_eq!(existing_targets(&optional), []);
         let mut proposed = action;
         proposed.slice.clear();
-        assert!(existing_targets(&proposed).is_empty());
+        assert_eq!(existing_targets(&proposed), []);
     }
 }

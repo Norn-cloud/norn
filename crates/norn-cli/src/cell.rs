@@ -244,8 +244,7 @@ fn encode(value: &str) -> String {
 fn text(value: &Value, key: &str) -> String {
     value
         .get(key)
-        .map(|v| v.as_str().map_or_else(|| v.to_string(), str::to_owned))
-        .unwrap_or_default()
+        .map_or_default(|v| v.as_str().map_or_else(|| v.to_string(), str::to_owned))
 }
 
 /// Append one line to `out`.
@@ -279,8 +278,7 @@ fn plan_summary(plan: &Value) -> String {
             let from = artifact
                 .get("fromVersion")
                 .and_then(Value::as_str)
-                .map(|from| format!("{from} -> "))
-                .unwrap_or_default();
+                .map_or_default(|from| format!("{from} -> "));
             line(
                 &mut out,
                 &format!(
@@ -334,8 +332,7 @@ fn diagnostics(out: &mut String, document: &Value) {
         let at = finding
             .pointer("/span/pointer")
             .and_then(Value::as_str)
-            .map(|pointer| format!(" at {pointer}"))
-            .unwrap_or_default();
+            .map_or_default(|pointer| format!(" at {pointer}"));
         line(
             out,
             &format!(

@@ -92,7 +92,7 @@ fn rule_ir_v2_valid_corpus_checks_clean() {
         .map(|entry| entry.expect("directory entry").path())
         .collect();
     files.sort();
-    assert!(!files.is_empty(), "the valid RuleIR v2 corpus is empty");
+    assert_ne!(files.len(), 0, "the valid RuleIR v2 corpus is empty");
     let mut node_types = std::collections::BTreeSet::new();
     let mut policies = std::collections::BTreeSet::new();
     let mut contracts = std::collections::BTreeSet::new();
@@ -150,7 +150,7 @@ fn check_invalid_corpus(dir: &str, snapshot_dir: &str) -> std::collections::BTre
         .get("fixtures")
         .and_then(Value::as_array)
         .expect("manifest lists fixtures");
-    assert!(!entries.is_empty(), "the invalid-fixture manifest is empty");
+    assert_ne!(entries.len(), 0, "the invalid-fixture manifest is empty");
 
     // Every fixture file is listed, so none silently drops out.
     let mut on_disk: Vec<String> = fs::read_dir(&dir)
@@ -184,7 +184,7 @@ fn check_invalid_corpus(dir: &str, snapshot_dir: &str) -> std::collections::BTre
         let code = field(entry, "code");
         covered.insert(code.to_owned());
         let error_at = field(entry, "error_at");
-        assert!(!field(entry, "reason").is_empty(), "{file}: empty reason");
+        assert_ne!(field(entry, "reason").len(), 0, "{file}: empty reason");
         assert!(
             codes::lookup(code).is_some(),
             "{file}: {code} is unregistered"

@@ -823,7 +823,7 @@ fn cp1(
         "0",
         "1",
     );
-    assert!(cell.store().read().pending_commands().unwrap().is_empty());
+    assert_eq!(cell.store().read().pending_commands().unwrap(), []);
     let before = cell.store().read().dump().unwrap();
     let head = cell.store().read().verify_ledger().unwrap();
     drop(cell);
@@ -860,8 +860,8 @@ fn inv_one_lot_fifo_delivery_has_no_placeholder_and_reopens() {
     let path = directory.path().join("single-lot.sqlite");
     let mut cell = open(&path, &fixture);
     seed_book(&mut cell, false);
-    assert!(rows(&cell, "Holding").is_empty());
-    assert!(rows(&cell, "Leg").is_empty());
+    assert_eq!(rows(&cell, "Holding"), []);
+    assert_eq!(rows(&cell, "Leg"), []);
     fixture
         .invoke(
             &mut cell,
@@ -976,10 +976,7 @@ fn inv_one_lot_fifo_delivery_has_no_placeholder_and_reopens() {
 #[test]
 fn inv_stock_scope_and_principal_are_authoritative() {
     let fixture = Fixture::load();
-    assert!(
-        fixture.laws.is_empty(),
-        "stock closure does not import Conversion"
-    );
+    assert_eq!(fixture.laws, [], "stock closure does not import Conversion");
     let directory = tempfile::tempdir().unwrap();
     let mut cell = open(&directory.path().join("scope.sqlite"), &fixture);
     seed_book(&mut cell, false);
@@ -1207,7 +1204,7 @@ fn inv_receive_transfer_fifo_sell_refuses_over_delivery_and_reopens() {
             ("COGS", "60"),
         ],
     );
-    assert!(cell.store().read().pending_commands().unwrap().is_empty());
+    assert_eq!(cell.store().read().pending_commands().unwrap(), []);
     let final_dump = cell.store().read().dump().unwrap();
     let head = cell.store().read().verify_ledger().unwrap();
     drop(cell);

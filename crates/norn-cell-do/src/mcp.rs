@@ -292,10 +292,7 @@ impl Catalog {
         let mut actions = BTreeMap::new();
         let mut remedies: BTreeMap<String, Vec<String>> = BTreeMap::new();
         if questions.is_some() {
-            for (_, action) in callable
-                .map(|callable| callable.actions)
-                .unwrap_or_default()
-            {
+            for (_, action) in callable.map_or_default(|callable| callable.actions) {
                 let Ok(mut tool) = norn_projections::mcp::action_tool(&action) else {
                     continue;
                 };
@@ -1121,13 +1118,12 @@ fn titled_metrics(mut value: RuntimeValue) -> RuntimeValue {
             let links: Vec<String> = snapshot
                 .get("timeLinks")
                 .and_then(RuntimeValue::as_array)
-                .map(|links| {
+                .map_or_default(|links| {
                     links
                         .iter()
                         .filter_map(|link| link.as_str().map(str::to_owned))
                         .collect()
-                })
-                .unwrap_or_default();
+                });
             let latest = snapshot
                 .pointer("/additivity/aggregate")
                 .and_then(RuntimeValue::as_str)
@@ -1144,13 +1140,12 @@ fn titled_metrics(mut value: RuntimeValue) -> RuntimeValue {
             let links: Vec<String> = snapshot
                 .pointer("/x-norn/timeDimension/links")
                 .and_then(RuntimeValue::as_array)
-                .map(|links| {
+                .map_or_default(|links| {
                     links
                         .iter()
                         .filter_map(|link| link.as_str().map(str::to_owned))
                         .collect()
-                })
-                .unwrap_or_default();
+                });
             let time = snapshot
                 .pointer("/x-norn/timeDimension/property")
                 .and_then(RuntimeValue::as_str)

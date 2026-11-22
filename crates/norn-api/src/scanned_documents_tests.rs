@@ -270,7 +270,7 @@ fn loaded_by_pages() -> CellStore<NativeEngine> {
     let mut pages: Vec<(String, Vec<Observed<RuntimeValue>>)> = Vec::new();
     for (dataset, record) in snapshot_rows() {
         if pages.last().is_none_or(|(current, _)| *current != dataset) {
-            pages.push((dataset.clone(), Vec::new()));
+            pages.push((dataset, Vec::new()));
         }
         if let Some((_, rows)) = pages.last_mut() {
             rows.push(raw(&record));

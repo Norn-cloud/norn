@@ -39,7 +39,7 @@ fn map_roles_interpretation_survives_closed_root_without_becoming_source_records
         serde_json::from_value(wire.clone()).expect("JSON tree"),
     )
     .expect("mapping root");
-    assert!(root.unknown_fields().is_empty());
+    assert_eq!(root.unknown_fields().len(), 0);
     assert_eq!(
         serde_json::to_value(root.to_json_value()).expect("wire JSON"),
         wire
@@ -225,7 +225,7 @@ fn mapping_entitlements_and_identity_bindings_roundtrip_through_envelope_root() 
 
     let envelope: ArtifactEnvelope = serde_json::from_value(wire.clone())
         .expect("declared mapping members are retained by the closed payload root");
-    assert!(envelope.payload.unknown_fields().is_empty());
+    assert_eq!(envelope.payload.unknown_fields().len(), 0);
     let payload =
         serde_json::to_value(envelope.payload.to_json_value()).expect("mapping payload serializes");
     assert_eq!(payload, wire["payload"]);

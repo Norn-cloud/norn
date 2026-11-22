@@ -749,7 +749,7 @@ pub(super) mod tests {
         let host = host(dir.path());
         let metrics = DevMetrics::new([7_u8; 32], scope());
         let questions = metrics.questions(&host).expect("runtime");
-        assert!(!AdHocQuestions::<NativeEngine>::definitions(&questions).is_empty());
+        assert_ne!(AdHocQuestions::<NativeEngine>::definitions(&questions), []);
         // Every derived sum answers, on whichever engine lowered it.
         for definition in AdHocQuestions::<NativeEngine>::definitions(&questions)
             .iter()

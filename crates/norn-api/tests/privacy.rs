@@ -995,7 +995,7 @@ fn a_question_cannot_group_or_filter_by_a_marked_party_name() {
         std::slice::from_ref(&by_kind),
         &catalog,
     );
-    assert!(findings.is_empty(), "{findings:?}");
+    assert_eq!(findings, [], "{findings:?}");
     assert!(refused(&question(
         json!([{ "path": owner("display_name") }]),
         json!([])
