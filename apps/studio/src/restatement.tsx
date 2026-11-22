@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
 import { Badge } from "@/components/ui/badge"
+import { Chip } from "@/components/chip"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { buckets, contribution, declarations, fraction, shown, type Bucket } from "./lib/answer.ts"
@@ -7,17 +8,18 @@ import { day, headline } from "./lib/format.ts"
 import { restated, sameAnswer } from "./lib/restatement.ts"
 import { transport, type Answer } from "./lib/transport.ts"
 import { CorrectionsStatus } from "./restatement-status.tsx"
+import { cn } from "@/lib/utils"
 
 const changes = (count: number) => `${count} committed ${count === 1 ? "change" : "changes"}`
 
-function Reading({ title, when, bucket, note }: { readonly title: string; readonly when: string; readonly bucket: Bucket | undefined; readonly note?: string }) {
+function Reading({ title, when, bucket, note, tone }: { readonly title: string; readonly when: string; readonly bucket: Bucket | undefined; readonly note?: string; readonly tone: "blue" | "amber" | "gray" }) {
   return (
-    <div className="space-y-1 rounded-lg border p-4">
-      <div className="text-sm font-medium">{title}</div>
+    <div className={cn("space-y-1.5 rounded-xl border bg-card p-4", tone === "amber" && "border-tone-amber/30 bg-tone-amber/5", tone === "blue" && "border-data-accent/35 bg-data-accent/5")}>
+      <Chip tone={tone} dot={tone !== "gray"} className="rounded-full">{title}</Chip>
       <div className="text-xs text-muted-foreground">{when}</div>
       {bucket
         ? <>
-            <div className="pt-2 text-figure leading-none font-normal tracking-[-0.02em] tabular-nums">{shown(bucket)}</div>
+            <div className={cn("pt-2 text-figure leading-none font-medium tracking-[-0.02em] tabular-nums", tone === "amber" && "text-tone-amber", tone === "blue" && "text-tone-blue")}>{shown(bucket)}</div>
             <div className="text-meta text-muted-foreground tabular-nums">{fraction(bucket.totals)}{bucket.totals.length > 1 && ` = ${bucket.value} exactly`}</div>
           </>
         : <div className="pt-2 text-muted-foreground">Not in this read.</div>}
@@ -54,12 +56,13 @@ export function RestatementCard() {
           <div key={change.key} className="space-y-4">
             <h3 className="font-medium">{change.label}</h3>
             <div className="grid gap-4 md:grid-cols-3">
-              <Reading title="Published" when={read(answer.document)} bucket={change.published} />
-              <Reading title="Corrected" when={read(corrected.document)} bucket={change.corrected} />
+              <Reading title="Published" when={read(answer.document)} bucket={change.published} tone="blue" />
+              <Reading title="Corrected" when={read(corrected.document)} bucket={change.corrected} tone="amber" />
               <Reading
                 title={`As known on ${day(asOf.document.knowledgeTimeMs)}`}
                 when={`Read again after the correction, at the earlier cutoff (${changes(asOf.document.result.knownAsOf)})`}
                 bucket={change.asOf}
+                tone="gray"
                 note={change.asOf && change.published && (sameAnswer(change.asOf, change.published) ? "Exactly the published answer." : "Differs from the published answer.")}
               />
             </div>

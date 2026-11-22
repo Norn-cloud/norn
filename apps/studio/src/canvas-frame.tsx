@@ -254,7 +254,7 @@ function Frame(props: CanvasFrameProps) {
     const base = props.toEdge(edge, on("edge", edge.id), selection.edges.includes(edge.id), graph)
     const failing = on("edge", edge.id).length > 0
     const active = selection.edges.includes(edge.id) || selection.nodes.includes(edge.source) || selection.nodes.includes(edge.target)
-    const tone = failing ? "var(--destructive)" : active ? "var(--edge-active)" : "var(--edge)"
+    const tone = failing ? "var(--destructive)" : "var(--edge-active)"
     return { ...base, className: cn(base.className, failing ? "canvas-edge-failing" : active && "canvas-edge-active"), markerEnd: { type: MarkerType.ArrowClosed, color: tone, width: 14, height: 14 } }
   }
   // Focus (selection, and what the pointer is over) dims everything not connected to it. The pointer's part is

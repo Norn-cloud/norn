@@ -152,7 +152,27 @@ export interface Catalog {
   readonly byName: ReadonlyMap<string, Concept>
 }
 
-const SYSTEM_NAMES: Record<string, string> = { erpnext: "ERPNext", shopify: "Shopify", odoo: "Odoo", scans: "Document scans", "norn-connect": "Norn" }
+const SYSTEMS = {
+  erpnext: { name: "ERPNext", tone: "blue" },
+  shopify: { name: "Shopify", tone: "green" },
+  odoo: { name: "Odoo", tone: "violet" },
+  excel: { name: "Excel", tone: "teal" },
+  postgresql: { name: "PostgreSQL", tone: "blue" },
+  scans: { name: "Document scans", tone: "amber" },
+  "norn-connect": { name: "Norn", tone: "violet" },
+} as const
+
+const aliases: Readonly<Record<string, string>> = { erp: "erpnext", postgres: "postgresql", xlsx: "excel", "microsoft excel": "excel" }
+
+export function systemKey(system: string): string {
+  const key = system.replace(/^synthetic-/i, "").toLowerCase()
+  return Object.hasOwn(aliases, key) ? aliases[key]! : key
+}
+
+const systemStyle = (system: string) => {
+  const key = systemKey(system)
+  return Object.hasOwn(SYSTEMS, key) ? SYSTEMS[key as keyof typeof SYSTEMS] : undefined
+}
 
 /**
  * Whether the cell itself writes this source: its schema names the instance `cell` (the sync
@@ -163,21 +183,20 @@ export const cellOwned = (system: SourceSystem): boolean => system.schema?.insta
 
 /** `synthetic-erpnext` → `ERPNext`; an unknown system keeps the name the server sent. */
 export function systemName(system: string): string {
-  const bare = system.replace(/^synthetic-/, "")
-  return SYSTEM_NAMES[bare] ?? bare
+  return systemStyle(system)?.name ?? system.replace(/^synthetic-/i, "")
 }
 
-/** The tones a source system's chip takes: one per system, never the status tones (green, red, gray). */
+/** Tones for source systems outside the built-in catalog. */
 const SYSTEM_TONES = ["blue", "teal", "violet", "amber", "pink", "orange"] as const
 
 /**
  * One tone per source system, the same on every page: the known systems in a fixed order, any other
  * by a hash of its name. Display only; it says nothing about the system.
  */
-export function systemTone(system: string): (typeof SYSTEM_TONES)[number] {
-  const bare = system.replace(/^synthetic-/, "")
-  const known = Object.keys(SYSTEM_NAMES).indexOf(bare)
-  if (known >= 0) return SYSTEM_TONES[known % SYSTEM_TONES.length] ?? "blue"
+export function systemTone(system: string): (typeof SYSTEM_TONES)[number] | "green" {
+  const known = systemStyle(system)
+  if (known) return known.tone
+  const bare = systemKey(system)
   let hash = 0
   for (const char of bare) hash = (hash * 31 + char.charCodeAt(0)) >>> 0
   return SYSTEM_TONES[hash % SYSTEM_TONES.length] ?? "blue"

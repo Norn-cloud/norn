@@ -1,11 +1,12 @@
 import { useQuery } from "@tanstack/react-query"
 import { MarkingChips, useMarkingCatalog } from "@/components/marking-chip"
 import { Link, useParams } from "@tanstack/react-router"
-import { ArrowRight, Box, Database, Layers, Search, Shapes } from "lucide-react"
+import { ArrowRight, Database, Search, Shapes } from "lucide-react"
 import { useMemo, useState, type ReactNode } from "react"
 import { KpiTile, StatStrip } from "@/components/kpi-tile"
 import { Chip } from "@/components/chip"
-import { cn } from "@/lib/utils"
+import { ObjectTile, objectAppearance } from "@/components/object-glyph"
+import { SourceChip, SourceTile } from "@/components/source-chip"
 import { EmptyState, PageHeader, Panel, Well } from "@/components/panel"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -47,16 +48,16 @@ function Systems({ catalog, recorded }: { readonly catalog: Catalog; readonly re
   return (
     <div className="space-y-3">
       <StatStrip>
-        <KpiTile icon={Database} label={systemsLabel} value={outside.length} sub={outside.map(({ name }) => name).join(" · ") || "none mapped yet"} />
+        <KpiTile icon={Database} label={systemsLabel} value={outside.length} sub={outside.length ? <span className="flex flex-wrap gap-1">{outside.map(({ id, name }) => <SourceChip key={id} system={name} />)}</span> : "none mapped yet"} />
         <KpiTile icon={Shapes} label="One business model" value={concepts.length} sub={`object types, built on ${catalog.concepts.length - concepts.length} shared interfaces`} />
         <KpiTile icon={ArrowRight} label="Links between them" value={relationships} sub="declared once, read the same from every system" />
       </StatStrip>
       <Panel icon={Database} label={systemsLabel}>
         <Well className="divide-y divide-border/70">
           {outside.length === 0 && <EmptyState icon={Database} title="No mapped system">No admitted mapping feeds this cell from a source system yet.</EmptyState>}
-          {outside.map((system, index) => (
+          {outside.map((system) => (
             <div key={system.id} className="flex items-center gap-3 px-4 py-2.5">
-              <span aria-hidden className={cn("flex size-8 shrink-0 items-center justify-center rounded-lg text-sm font-semibold", MONOGRAM[index % MONOGRAM.length])}>{system.name.charAt(0).toUpperCase()}</span>
+              <SourceTile system={system.name} />
               <span className="min-w-0 flex-1">
                 <span className="block font-medium">{system.name}</span>
                 {system.schema && <span className="block truncate text-xs text-muted-foreground">
@@ -80,12 +81,6 @@ function Systems({ catalog, recorded }: { readonly catalog: Catalog; readonly re
   )
 }
 
-/** One tone per connected system's monogram, in the order the catalog lists them. */
-const MONOGRAM = [
-  "bg-tone-blue/12 text-tone-blue", "bg-tone-green/12 text-tone-green", "bg-tone-violet/12 text-tone-violet",
-  "bg-tone-orange/12 text-tone-orange", "bg-tone-teal/12 text-tone-teal", "bg-tone-pink/12 text-tone-pink",
-] as const
-
 /** Business shows a type's plain one-line summary; Technical shows the registry's own description and the type's id. */
 const about = (concept: Concept, view: View): { readonly text: string; readonly lang: string } | undefined => {
   // The registry's own description is English; a summary carries the language it was written in.
@@ -100,12 +95,12 @@ function ConceptCard({ concept }: { readonly concept: Concept }) {
     <Link to="/sources/$concept" params={{ concept: concept.name }} className="h-full rounded-lg text-start outline-none focus-visible:ring-3 focus-visible:ring-ring/30">
       <Card size="sm" className="h-full ring-foreground/10 transition-colors hover:ring-foreground/25">
         <CardHeader>
-          <CardTitle lang={concept.titleLang}>{concept.title}</CardTitle>
+          <CardTitle lang={concept.titleLang} className="flex items-center gap-2.5"><ObjectTile name={concept.name} shared={concept.definition === "interface"} />{concept.title}</CardTitle>
           <CardDescription lang={about(concept, view)?.lang} className="line-clamp-2 min-h-[2lh]">{about(concept, view)?.text}</CardDescription>
         </CardHeader>
         <CardContent className="mt-auto space-y-3 text-sm">
           <p className="text-muted-foreground tabular-nums">{concept.fields.length} {concept.fields.length === 1 ? "fact" : "facts"} · {concept.relationships.length} {concept.relationships.length === 1 ? "link" : "links"}</p>
-          {systems.length > 0 && <div className="flex flex-wrap gap-1">{systems.map((system) => <Badge key={system} variant="secondary">{system}</Badge>)}</div>}
+          {systems.length > 0 && <div className="flex flex-wrap gap-1">{systems.map((system) => <SourceChip key={system} system={system} />)}</div>}
         </CardContent>
       </Card>
     </Link>
@@ -142,7 +137,7 @@ function SourceMatrix({ concept }: { readonly concept: Concept }) {
       <DenseTable head={
         <TableRow>
           <TableHead>Fact</TableHead>
-          {concept.feeds.map(({ system, dataset }) => <TableHead key={`${system}/${dataset}`}><div>{system}</div><div className="font-normal text-muted-foreground">{dataset}</div></TableHead>)}
+          {concept.feeds.map(({ system, dataset }) => <TableHead key={`${system}/${dataset}`}><SourceChip system={system} /><div className="pt-0.5 font-normal text-muted-foreground">{dataset}</div></TableHead>)}
         </TableRow>
       }>
         {[...concept.fields.map(({ id }) => ({ id, label: id.replaceAll("_", " ") })),
@@ -280,7 +275,10 @@ export function useSourcesMenu(): readonly MenuEntry[] | undefined {
   // The cell counts each type for this caller; a type it may not list has no count, and the recording has none.
   const counts = useQuery({ queryKey: ["catalog", "counts"], queryFn: transport.objectCounts }).data
   return catalog && (["object type", "interface"] as const).flatMap((definition) => catalog.concepts.filter((concept) => concept.definition === definition)
-    .map((concept): MenuEntry => ({ href: `/sources/${concept.name}`, label: concept.title, group: definition === "object type" ? "Object types" : "Shared interfaces", icon: definition === "object type" ? Box : Layers, kind: "objectType", count: menuCount(counts?.[concept.name]) })))
+    .map((concept): MenuEntry => {
+      const { icon, tone } = objectAppearance(concept.name, definition === "interface")
+      return { href: `/sources/${concept.name}`, label: concept.title, group: definition === "object type" ? "Object types" : "Shared interfaces", icon, iconTone: tone, kind: "objectType", count: menuCount(counts?.[concept.name]) }
+    }))
 }
 
 /** A menu entry's count: exact, or the server's lower bound as text ("500+"); none when the cell sent none. */

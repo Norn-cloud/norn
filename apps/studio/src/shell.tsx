@@ -24,6 +24,7 @@ import { useStudioScope } from "@/lib/definitions"
 import { useAccount, type Account } from "@/lib/session"
 import nornMark from "@/assets/norn-mark.webp"
 import { Keys } from "@/components/keys"
+import { IconTile, type Tone } from "@/components/chip"
 
 export interface Section {
   readonly path: string
@@ -56,6 +57,7 @@ export interface MenuEntry {
   readonly group?: string
   /** The entry's leading icon; its kind's icon when absent. */
   readonly icon?: LucideIcon
+  readonly iconTone?: Tone
   /** The kind of artefact the entry is, which colours its icon. */
   readonly kind?: Kind
   /** A count the server reported for the entry (records, open items). */
@@ -302,7 +304,7 @@ function AppletPanel({ section, pathname, live }: { readonly section: Section; r
               return (
                 <TreeItem key={entry.href} value={entry.href} label={text} className={focusRow}>
                   <TreeItemLabel render={<Link {...target(section, entry.href)} onClick={close} />} className={cn(label, entry.kind && KINDS[entry.kind].svg)}>
-                    {Icon && <Icon aria-hidden />}<span className="truncate">{entry.label}</span>
+                    {Icon && (entry.iconTone ? <IconTile tone={entry.iconTone} className="size-6 rounded-md [&_svg]:size-3.5"><Icon /></IconTile> : <Icon aria-hidden />)}<span className="truncate">{entry.label}</span>
                     {count && <span className="ms-auto text-xs text-muted-foreground tabular-nums">{count}</span>}
                   </TreeItemLabel>
                 </TreeItem>

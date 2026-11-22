@@ -1,12 +1,12 @@
 import { useQuery } from "@tanstack/react-query"
 import { NO_DATA_CELL } from "@/lib/definitions"
 import { Link } from "@tanstack/react-router"
-import { useEffect, useState, type ReactNode } from "react"
+import { useEffect, useId, useState, type ReactNode } from "react"
 import { ChartLine, Clock, Cpu, Database, Ellipsis, GitCommitHorizontal, Info, Rows3, Split } from "lucide-react"
 import { Chip } from "@/components/chip"
 import { cn } from "@/lib/utils"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts"
+import { Area, AreaChart, CartesianGrid, ReferenceDot, XAxis, YAxis } from "recharts"
 import { Badge } from "@/components/ui/badge"
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
@@ -226,6 +226,8 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
   const ratio = rows.some(({ totals }) => totals.length > 1)
   const freshness = FRESHNESS[answer.freshness]
   const frame = chartFrame(rows)
+  const fillId = useId()
+  const selected = frame?.points.find(({ label }) => label === (open ?? lead.bucket)?.label)
   const sources = Object.entries(answer.watermarks).flatMap(([source, partitions]) =>
     Object.values(partitions).map(({ complete }) => `${systemName(source)} ${complete ? "complete" : "incomplete"}`))
   const [drill, setDrill] = useState<Drill>()
@@ -280,7 +282,7 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
               {lead.bucket.suppressed ? <span className="block text-[3.5rem] leading-none font-light tracking-[-0.045em] text-muted-foreground">—</span> : (
                 <AnswerProvenance variant="block" className="rounded-md text-start outline-none focus-visible:ring-3 focus-visible:ring-ring/30"
                   label={lead.label} value={figure(lead.bucket, unit)} provenance={provenanceOf(lead.bucket)} records={lead.bucket.members.length} onTrace={() => setOpen(lead.bucket)}>
-                  <span className="block text-[3rem] leading-none font-light tracking-[-0.045em] tabular-nums sm:text-[4rem]">{figure(lead.bucket, unit)}</span>
+                  <span className="block text-[3rem] leading-none font-light tracking-[-0.045em] tabular-nums text-tone-blue sm:text-[4rem]">{figure(lead.bucket, unit)}</span>
                 </AnswerProvenance>
               )}
               <div className="flex flex-wrap items-center gap-2 pt-1 text-meta text-muted-foreground tabular-nums">
@@ -290,15 +292,18 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
             </div>
             {(peak || total) && <div className="flex flex-wrap gap-x-10 gap-y-3 sm:text-end">
               {total && <div><div className="text-meta text-muted-foreground">{total.label}</div><div className="pt-1.5 text-[1.375rem] font-light tracking-[-0.02em] tabular-nums">{total.value}</div></div>}
-              {peak && <div><div className="text-meta text-muted-foreground">Peak {grain}</div><div className="pt-1.5 text-[1.375rem] font-light tracking-[-0.02em] tabular-nums">{figure(peak, unit)}</div><div className="text-xs text-muted-foreground">{peak.label.replace(/^\w+ of /, "")}</div></div>}
+              {peak && <div><Chip tone="blue">Peak {grain}</Chip><div className="pt-1.5 text-[1.375rem] font-semibold tracking-[-0.02em] tabular-nums text-tone-blue">{figure(peak, unit)}</div><div className="text-xs text-muted-foreground">{peak.label.replace(/^\w+ of /, "")}</div></div>}
             </div>}
           </div>
         ) : <p className="max-w-[72ch] text-pretty text-muted-foreground">{lead.sentence}</p>}
         {series && (frame ? (
-          <ChartContainer config={{ position: { label: named, color: "var(--chart-1)" } }} className="mt-6 h-64 w-full sm:h-72">
+          <ChartContainer config={{ position: { label: named, color: "var(--data-accent)" } }} className="mt-6 h-64 w-full sm:h-72">
             <AreaChart data={[...frame.points]} margin={{ left: 0, right: 8, top: 8 }}>
               <defs>
-                <pattern id="answer-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="6" stroke="var(--color-position)" strokeOpacity={0.16} strokeWidth={1.2} /></pattern>
+                <linearGradient id={fillId} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="var(--color-position)" stopOpacity={0.28} />
+                  <stop offset="100%" stopColor="var(--color-position)" stopOpacity={0.03} />
+                </linearGradient>
               </defs>
               <CartesianGrid vertical={false} stroke="var(--border)" />
               <XAxis dataKey="label" tickLine={false} axisLine={false} tickFormatter={(label: string) => label.replace(/^\w+ of /, "")} minTickGap={32} tick={{ fill: "var(--muted-foreground)", fontSize: 11 }} />
@@ -309,7 +314,8 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
                   <span className="font-mono tabular-nums">{String(item.payload?.shown)}{item.payload?.position === null ? null : <span className="text-muted-foreground"> ({String(item.payload?.exact)})</span>}</span>
                 </div>
               )} />} />
-              <Area dataKey="position" type="monotone" stroke="var(--color-position)" strokeWidth={1.75} fill="url(#answer-hatch)" activeDot={{ r: 4, fill: "var(--action)", stroke: "var(--card)", strokeWidth: 2 }} dot={false} isAnimationActive={false} />
+              <Area dataKey="position" type="monotone" stroke="var(--color-position)" strokeWidth={2.25} fill={`url(#${fillId})`} fillOpacity={1} activeDot={{ r: 5, fill: "var(--data-accent)", stroke: "var(--card)", strokeWidth: 2 }} dot={false} isAnimationActive={false} />
+              {selected?.position != null && <ReferenceDot x={selected.label} y={selected.position} r={6} fill="var(--data-accent)" stroke="var(--card)" strokeWidth={2} />}
             </AreaChart>
           </ChartContainer>
         ) : <EmptyState icon={ChartLine}>{chartEmpty(rows)}</EmptyState>)}

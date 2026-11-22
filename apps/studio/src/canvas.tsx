@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query"
 import { useCallback, useMemo, useState } from "react"
 import { BaseEdge, EdgeLabelRenderer, Handle, Position, useStore, useStoreApi, type EdgeProps, type Connection, type Edge, type Node, type NodeProps } from "@xyflow/react"
 import { Network, Trash2 } from "lucide-react"
-import { Badge } from "@/components/ui/badge"
+import { Chip } from "@/components/chip"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
@@ -244,7 +244,7 @@ function Editor({ definitions, envelope, lifecycle }: { readonly definitions: re
     const set = definitions.map((other) => other.artifactId === envelope.artifactId ? compiled.envelope : other)
     const placed = place(checker.data(set).diagnostics.diagnostics, envelope.artifactId, compiled.origins, new Set(graph.nodes.map(({ id }) => id)))
     const found: Issue[] = introduced(placed, baseline).added.map(({ finding: { code, message }, node, edge }) => ({ code, message, ...(node ? { node } : {}), ...(edge ? { edge } : {}) }))
-    return { issues: found, status: found.length === 0 ? <Badge variant="outline">Checker: no new findings</Badge> : <Badge variant="destructive">Checker: {found.length} new {found.length === 1 ? "finding" : "findings"}</Badge> }
+    return { issues: found, status: found.length === 0 ? <Chip tone="green" dot>Checker: no new findings</Chip> : <Chip tone="red" dot>Checker: {found.length} new {found.length === 1 ? "finding" : "findings"}</Chip> }
   }, [checker.isError, checker.data, baseline, definitions, envelope, lifecycle])
 
   const props = useMemo(() => lifecycleFrame(envelope, lifecycle, issues, baseline?.filter(({ artifactId }) => artifactId === envelope.artifactId) ?? []), [envelope, lifecycle, issues, baseline])

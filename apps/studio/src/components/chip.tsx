@@ -5,6 +5,15 @@ import { cn } from "@/lib/utils"
 /** The detail colours of design system v1: a chip, a dot or a series takes one; a surface never does. */
 export type Tone = "gray" | "green" | "amber" | "red" | "blue" | "violet" | "teal" | "pink" | "orange"
 
+/** The same tint across tiles and source chips, including the active theme's contrast. */
+export function IconTile({ tone, children, className }: { readonly tone: Tone; readonly children: ReactNode; readonly className?: string }) {
+  return (
+    <span aria-hidden className={cn("inline-flex size-8 shrink-0 items-center justify-center rounded-lg bg-[color-mix(in_oklab,currentColor_15%,transparent)] [&_svg]:size-4 [&_img]:size-4", className)} style={{ color: `var(--tone-${tone})` }}>
+      {children}
+    </span>
+  )
+}
+
 const TONE: Readonly<Record<Tone, string>> = {
   gray: "text-tone-gray bg-tone-gray/10 dark:bg-tone-gray/15",
   green: "text-tone-green bg-tone-green/10 dark:bg-tone-green/15",

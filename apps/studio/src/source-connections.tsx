@@ -8,7 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import type { Read } from "@/lib/exact"
 import { CellRefusal, NotServed, cellRead } from "@/lib/live-transport"
 import { transport, type Artifact } from "@/lib/transport"
-import { systemName } from "./lib/catalog.ts"
+import { SourceChip } from "@/components/source-chip"
 import { connectionStatus, watermarkText } from "./lib/format.ts"
 import { UploadCsv } from "./upload-csv.tsx"
 
@@ -110,7 +110,7 @@ export function SourceConnections() {
               const read = connections.data
               return (
                 <TableRow key={id}>
-                  <TableCell><div className="font-medium">{values.label ?? id}</div><div className="text-xs text-muted-foreground">{systemName(values.system ?? "")} · <span className="font-mono">{values.target}</span></div></TableCell>
+                  <TableCell><div className="font-medium">{values.label ?? id}</div><div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">{values.system && <SourceChip system={values.system} />} <span className="font-mono">{values.target}</span></div></TableCell>
                   <TableCell>
                     <Badge variant={status.variant}>{status.label}</Badge>
                     {status.note && <div className="max-w-64 pt-1 text-xs whitespace-normal text-muted-foreground">{status.note}</div>}

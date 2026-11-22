@@ -327,7 +327,7 @@ function Lineage({ lineage, evidence = [], actionFor }: { readonly lineage: Sour
       {!lineage && <EmptyState icon={Database}>No source record is retained for this record.</EmptyState>}
       {lineage && <>
         <div>
-          <div className="text-panel font-medium">{systemName(lineage.sourceRecordRef.system)}</div>
+          <SourceChip system={lineage.sourceRecordRef.system} />
           <p className="text-meta text-muted-foreground">Source record <code>{lineage.documentRef.record}</code>, mapped by <code>{lineage.mappingPin.artifactId}</code> version {lineage.mappingPin.version}</p>
         </div>
         <DenseTable head={<TableRow><TableHead>Fact</TableHead><TableHead>Read from</TableHead><TableHead>Rule</TableHead><TableHead>Recorded</TableHead></TableRow>}>

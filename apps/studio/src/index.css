@@ -51,6 +51,7 @@
   /* The one restrained colour: the primary add/create action, as a solid round button. */
   --action: #5b52f0;
   --action-foreground: #ffffff;
+  --data-accent: #5b8cff;
   /* Detail colour, never a surface: one hue per kind of artefact for its icons and chips; each ≥ 4.5:1 on white and on the canvas. */
   --kind-source: #0f766e;
   --kind-mapping: #475569;
@@ -92,7 +93,7 @@
   --canvas-surface: #fafafa;
   --canvas-dot: rgb(15 23 42 / 0.09);
   --edge: #8a929e;
-  --edge-active: var(--ring);
+  --edge-active: var(--data-accent);
   /* One tint per kind of thing on a canvas; chips mix it into a pale fill, so it stays a hint, not a theme. */
   --tint-state: #64748b;
   --tint-tool: #2563eb;
@@ -180,7 +181,7 @@
   --canvas-surface: #151517;
   --canvas-dot: rgb(255 255 255 / 0.08);
   --edge: #73737d;
-  --edge-active: var(--ring);
+  --edge-active: var(--data-accent);
   --tint-state: #94a3b8;
   --tint-tool: #60a5fa;
   --tint-ask: #fb923c;
@@ -212,6 +213,7 @@
   --color-link: var(--link);
   --color-action: var(--action);
   --color-action-foreground: var(--action-foreground);
+  --color-data-accent: var(--data-accent);
   --color-success: var(--success);
   --color-kind-source: var(--kind-source);
   --color-kind-mapping: var(--kind-mapping);
@@ -317,6 +319,10 @@
 .canvas-node-selected:hover { box-shadow: var(--node-highlight), 0 0 0 2px var(--canvas-surface), 0 0 0 4px var(--node-ring), var(--elevation-node-hover); }
 .canvas-node-failing:hover { box-shadow: var(--node-highlight), 0 0 0 2px var(--canvas-surface), 0 0 0 4px color-mix(in oklab, var(--destructive) 55%, transparent), var(--elevation-node-hover); }
 .canvas-node.canvas-node-selected.canvas-node-failing { box-shadow: var(--node-highlight), 0 0 0 2px var(--canvas-surface), 0 0 0 4px var(--node-ring), 0 0 0 6px color-mix(in oklab, var(--destructive) 55%, transparent), var(--elevation-node-hover); }
+.canvas-node[data-node-kind="initial"] { border-color: color-mix(in oklab, var(--tone-green) 35%, var(--node-border)); background: color-mix(in oklab, var(--tone-green) 6%, var(--card)); }
+.canvas-node[data-node-kind="terminal"] { background: color-mix(in oklab, var(--tone-gray) 7%, var(--card)); }
+.canvas-node.canvas-node-failing { border-color: var(--destructive); }
+.canvas-node.canvas-node-failing::after { content: ""; position: absolute; inset: 0; pointer-events: none; border-radius: inherit; box-shadow: 0 0 24px color-mix(in oklab, var(--destructive) 34%, transparent); }
 @media (prefers-reduced-motion: reduce) { .canvas-node, .canvas-node:hover { transition: none; transform: none; } }
 /* Canvas edges: thin and muted; the active path in the accent, its direction drawn by a slow dash. */
 .react-flow {
@@ -332,6 +338,7 @@
 }
 .canvas-controls { border-radius: 12px; overflow: hidden; border: 1px solid var(--node-border); }
 .canvas-minimap { border-radius: 12px; overflow: hidden; border: 1px solid var(--node-border); box-shadow: var(--elevation-node); backdrop-filter: blur(6px); }
+[data-canvas-surface] .react-flow { --xy-edge-stroke-default: var(--edge-active); }
 .react-flow__edge-textbg { fill: var(--card); stroke: var(--node-border); stroke-width: 1px; }
 .react-flow__edge-text { fill: var(--muted-foreground); font-size: 11px; font-weight: 500; }
 .react-flow .react-flow__edge.canvas-edge-active .react-flow__edge-text { fill: var(--foreground); }

@@ -3,6 +3,8 @@ import "@xyflow/react/dist/style.css"
 import { useNavigate } from "@tanstack/react-router"
 import { useMemo, type CSSProperties } from "react"
 import type { Catalog, Concept } from "./lib/catalog.ts"
+import { ObjectTile } from "@/components/object-glyph"
+import { SourceChip } from "@/components/source-chip"
 
 type TypeNode = Node<{ concept: Concept }, "type">
 
@@ -16,8 +18,14 @@ function TypeCard({ data: { concept } }: NodeProps<TypeNode>) {
   return (
     <div className="w-[220px] cursor-pointer rounded-xl border bg-card px-3 py-2 shadow-sm transition-shadow hover:shadow-md">
       <Handle type="target" position={Position.Top} className="!opacity-0" />
-      <div className="truncate text-sm font-medium" lang={concept.titleLang}>{concept.title}</div>
-      <div className="truncate text-xs text-muted-foreground">{concept.fields.length} facts · {concept.relationships.length} links{systems.length > 0 ? ` · ${systems.join(", ")}` : ""}</div>
+      <div className="flex items-center gap-2">
+        <ObjectTile name={concept.name} className="size-7" />
+        <div className="min-w-0">
+          <div className="truncate text-sm font-medium" lang={concept.titleLang}>{concept.title}</div>
+          <div className="truncate text-xs text-muted-foreground">{concept.fields.length} facts · {concept.relationships.length} links</div>
+        </div>
+      </div>
+      {systems.length > 0 && <div className="mt-1.5 flex gap-1 overflow-hidden" title={systems.join(", ")}>{systems.map((system) => <SourceChip key={system} system={system} className="h-4.5 text-[10px]" />)}</div>}
       <Handle type="source" position={Position.Bottom} className="!opacity-0" />
     </div>
   )
