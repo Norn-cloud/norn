@@ -15,7 +15,7 @@ Boat never uses the GitHub Actions cache: its egress limit is account-wide, and 
 A compiler cache maps an input hash to an output. Anyone who can write it can make a later build pick up an output they chose, so only code that has landed on `main` writes. A merge group does not: it runs the queued pull request's own build scripts, proc macros and tests before that code lands, and a pull request enters the queue on green checks alone.
 
 - The `core` and `test` jobs enter the `ci-cache-writer-boat` environment only for a `push` to `main` that runs on Boat: made and started by `github-merge-queue[bot]`, with `NORN_MAIN_RUNNER=boat` (#1369). A human's push or re-run of main runs hosted and never receives the key. The environment's only deployment branch is `main`. The retired `ci-cache-writer` environment holds no secrets, so a re-run of a workflow from before #1369 gets no writable key.
-- `NORN_SCCACHE_KEY_ID` and `NORN_SCCACHE_SECRET` are repository secrets holding a **read-only** R2 token. The environment overrides them with a read-write token. Every other run, merge groups and pull requests included, gets only the read-only token.
+- The R2 keys live in Infisical, never in GitHub secrets (the credential policy, `norn-skeleton-guard` `ci::credentials`). On Boat, the step "Read the shared cache keys from Infisical over OIDC" logs in as the Infisical identity `NORN_SCCACHE_INFISICAL_IDENTITY_ID` names and reads `NORN_SCCACHE_{BUCKET,ENDPOINT,KEY_ID,SECRET}` from `NORN_SCCACHE_INFISICAL_PATH`. The repository variables name the **read-only** identity and folder; the `ci-cache-writer-boat` environment's own variables name the read-write ones, and the writer identity's OIDC binding is that environment's subject, so no other run can log in as it. Every other run, merge groups and pull requests included, gets only the read-only token. A fork's run gets no OIDC token at all.
 - The start step also sets `SCCACHE_S3_RW_MODE=READ_ONLY` for every event except a `push` to `refs/heads/main`.
 - The keys are in the environment of the "Start sccache or compile without it" step and of the server it starts. They are never written to `GITHUB_ENV`, but that server runs as the same user as every later step, so same-repository pull-request code on Boat can read the read-only key. What stops a pull request or a merge group from writing is the read-only token's scope and the environment's branch rule, not step scoping.
 
@@ -29,13 +29,15 @@ The bucket has no object expiry configured, so an object stays until it is delet
 
 A cache outage never fails a build: the wrapper falls back to plain `rustc` when sccache itself errors.
 
-## Secrets
+## Credentials
 
-| Name | Where | Holds |
+No GitHub secrets: `core` and `test` have `id-token: write` for the key step and nothing else reads a token.
+
+| Variable | Where | Names |
 |---|---|---|
-| `NORN_SCCACHE_BUCKET` | repository | bucket name |
-| `NORN_SCCACHE_ENDPOINT` | repository | `https://<account>.r2.cloudflarestorage.com` |
-| `NORN_SCCACHE_KEY_ID`, `NORN_SCCACHE_SECRET` | repository | read-only R2 token |
-| `NORN_SCCACHE_KEY_ID`, `NORN_SCCACHE_SECRET` | `ci-cache-writer-boat` environment | read-write R2 token |
+| `NORN_SCCACHE_INFISICAL_IDENTITY_ID` | repository | the read-only identity (OIDC subject `repo:Norn-cloud/norn:*`, audience `https://github.com/Norn-cloud`) |
+| `NORN_SCCACHE_INFISICAL_IDENTITY_ID` | `ci-cache-writer-boat` environment | the read-write identity (OIDC subject `repo:Norn-cloud/norn:environment:ci-cache-writer-boat`) |
+| `NORN_SCCACHE_INFISICAL_PROJECT_ID` | repository | the Infisical project holding the keys |
+| `NORN_SCCACHE_INFISICAL_PATH` | repository / environment | the folder (prod) with `NORN_SCCACHE_BUCKET`, `NORN_SCCACHE_ENDPOINT`, `NORN_SCCACHE_KEY_ID`, `NORN_SCCACHE_SECRET` |
 
-Without the bucket secrets, Boat keeps its local cache, as before.
+Without the variables, or when any read fails, Boat keeps its local cache, as before. The old `NORN_SCCACHE_*` repository and environment secrets are drift: the daily credential audit in `Norn-cloud/norn-ops` fails until they are deleted.

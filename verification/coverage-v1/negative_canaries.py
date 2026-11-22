@@ -1608,6 +1608,15 @@ def workflow_context_canaries(source: str) -> None:
                     ("cache keys outside the start step", lambda job: next(step for step in job["steps"]
                         if step.get("uses", "").startswith("Swatinem/rust-cache@")).__setitem__("env",
                         {"NORN_SCCACHE_SECRET": "${{ secrets.NORN_SCCACHE_SECRET }}"})),
+                    # The keys come from Infisical over OIDC, never from GitHub secrets again.
+                    ("cache keys back in GitHub secrets", lambda job: next(step for step in job["steps"]
+                        if step.get("name") == "Start sccache or compile without it").__setitem__("env",
+                        {"NORN_SCCACHE_%s" % name: "${{ secrets.NORN_SCCACHE_%s }}" % name
+                         for name in ("BUCKET", "ENDPOINT", "KEY_ID", "SECRET")})),
+                    ("cache-key step on hosted runners", lambda job: next(step for step in job["steps"]
+                        if step.get("id") == "sccache-keys").pop("if")),
+                    ("cache-key step without its OIDC token", lambda job: job.pop("permissions")),
+                    ("job-wide write permissions for the cache", lambda job: job.__setitem__("permissions", "write-all")),
                     ("fatal start", lambda job: next(step for step in job["steps"]
                         if step.get("name") == "Start sccache or compile without it").__setitem__("run",
                         "set -e\nsccache --start-server\necho RUSTC_WRAPPER=sccache >> \"$GITHUB_ENV\"\n"))):

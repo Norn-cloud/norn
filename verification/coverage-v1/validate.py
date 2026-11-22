@@ -128,8 +128,47 @@ CORE_RUNNER = ROOT / "scripts/ci/core.sh"
 # secret of the `ci-cache-writer-boat` environment, which a push to main enters exactly when it
 # runs on Boat (#1369): made and started by the merge queue's bot, with NORN_MAIN_RUNNER set. A
 # hosted main push (a human's push or re-run included) never receives the key.
-SCCACHE_SECRETS = {name: "${{ secrets.%s }}" % name for name in
-                   ("NORN_SCCACHE_BUCKET", "NORN_SCCACHE_ENDPOINT", "NORN_SCCACHE_KEY_ID", "NORN_SCCACHE_SECRET")}
+# The keys live in Infisical, never in GitHub secrets (norn-skeleton-guard ci::credentials): the
+# step before the start step reads them over OIDC and hands them over as its outputs.
+SCCACHE_SECRETS = {"NORN_SCCACHE_%s" % name: "${{ steps.sccache-keys.outputs.%s }}" % name.lower() for name in
+                   ("BUCKET", "ENDPOINT", "KEY_ID", "SECRET")}
+SCCACHE_KEY_VARS = {"INFISICAL_IDENTITY_ID": "${{ vars.NORN_SCCACHE_INFISICAL_IDENTITY_ID }}",
+                    "INFISICAL_PROJECT_ID": "${{ vars.NORN_SCCACHE_INFISICAL_PROJECT_ID }}",
+                    "INFISICAL_SECRET_PATH": "${{ vars.NORN_SCCACHE_INFISICAL_PATH }}"}
+SCCACHE_KEYS = r"""set -uo pipefail
+skip() { echo "::warning::shared cache off: $1"; exit 0; }
+if [ -z "${INFISICAL_IDENTITY_ID:-}" ] || [ -z "${INFISICAL_PROJECT_ID:-}" ] || [ -z "${INFISICAL_SECRET_PATH:-}" ]; then
+  echo "::notice::shared cache off: the NORN_SCCACHE_INFISICAL_* variables are not set"
+  exit 0
+fi
+[ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || skip "this run has no OIDC token (a fork)"
+api=https://app.infisical.com/api
+# Bearers reach curl on stdin, never in argv; every value is masked before it is used.
+jwt=$(printf 'header = "Authorization: bearer %s"\n' "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" |
+  curl -fsS --max-time 30 -K - "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://github.com/Norn-cloud" | jq -er .value) ||
+  skip "the GitHub OIDC token request failed"
+echo "::add-mask::$jwt"
+token=$(jq -cn --arg id "$INFISICAL_IDENTITY_ID" --arg jwt "$jwt" '{identityId: $id, jwt: $jwt}' |
+  curl -fsS --max-time 30 -H 'content-type: application/json' --data @- "$api/v1/auth/oidc-auth/login" | jq -er .accessToken) ||
+  skip "the Infisical OIDC login failed"
+echo "::add-mask::$token"
+secrets=$(printf 'header = "Authorization: Bearer %s"\n' "$token" |
+  curl -fsS --max-time 30 -K - -G --data-urlencode "workspaceId=$INFISICAL_PROJECT_ID" --data-urlencode environment=prod \
+    --data-urlencode "secretPath=$INFISICAL_SECRET_PATH" "$api/v3/secrets/raw") || skip "the Infisical read failed"
+outputs=''
+for name in BUCKET ENDPOINT KEY_ID SECRET; do
+  value=$(jq -er --arg key "NORN_SCCACHE_$name" '.secrets[] | select(.secretKey == $key) | .secretValue' <<<"$secrets") ||
+    skip "NORN_SCCACHE_$name is not in Infisical $INFISICAL_SECRET_PATH"
+  echo "::add-mask::$value"
+  outputs+="$(tr '[:upper:]' '[:lower:]' <<<"$name")=$value"$'\n'
+done
+printf '%s' "$outputs" >> "$GITHUB_OUTPUT"
+echo "::notice::shared cache keys read from Infisical $INFISICAL_SECRET_PATH over OIDC"
+"""
+SCCACHE_KEYS_STEP = {"name": "Read the shared cache keys from Infisical over OIDC", "id": "sccache-keys",
+                     "if": "${{ runner.environment == 'self-hosted' }}", "env": SCCACHE_KEY_VARS, "run": SCCACHE_KEYS}
+# core and test may mint an OIDC token, for that step; no other job may.
+OIDC_PERMISSIONS = {"contents": "read", "id-token": "write"}
 CACHE_WRITER_ENVIRONMENT = "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor == 'github-merge-queue[bot]' && github.triggering_actor == 'github-merge-queue[bot]' && vars.NORN_MAIN_RUNNER == 'boat' && 'ci-cache-writer-boat' || '' }}"
 SCCACHE_START = r"""set -uo pipefail
 # Hosted runners share the GitHub Actions cache. A disposable Boat VM never uses it (its
@@ -628,13 +667,18 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
     for name, job in jobs.items():
         require(name in {"core", "test"} or "environment" not in job,
                 f"{name}: only core and test may name the cache-writer environment")
+        permissions = job.get("permissions") or {}
+        require(permissions == OIDC_PERMISSIONS if name in {"core", "test"} else "id-token" not in permissions,
+                f"{name}: only core and test mint an OIDC token, with contents: read beside it")
         for step in job.get("steps", []):
-            expected = SCCACHE_SECRETS if (name in {"core", "test"}
-                                           and step.get("name") == "Start sccache or compile without it") else {}
-            require({key: value for key, value in (step.get("env") or {}).items() if "NORN_SCCACHE_" in str(value)} == expected,
+            in_cache_job = name in {"core", "test"}
+            expected = (SCCACHE_SECRETS if in_cache_job and step.get("name") == "Start sccache or compile without it"
+                        else SCCACHE_KEY_VARS if in_cache_job and step.get("id") == "sccache-keys" else {})
+            require({key: value for key, value in (step.get("env") or {}).items()
+                     if "NORN_SCCACHE_" in f"{key}={value}"} == expected,
                     f"{name}: shared cache keys may reach only the sccache start step")
-    require(source.count("secrets.NORN_SCCACHE_") == 2 * len(SCCACHE_SECRETS),
-            "shared cache keys may appear only in the two sccache start steps")
+    require(source.count("steps.sccache-keys.outputs.") == 2 * len(SCCACHE_SECRETS) and "secrets.NORN_SCCACHE_" not in source,
+            "shared cache keys may appear only in the two sccache start steps, from Infisical")
     # The gate plan is a step of core (one Boat start fewer per run), not a job of its own.
     require(set(jobs) == {"core", "test", "full", "trusted-policy"}, "workflow job inventory changed")
     check_names = {"core": "core", "full": "full", "trusted-policy": "trusted-policy evaluation"}
@@ -716,6 +760,8 @@ echo "$plan"'''
         {"uses": "mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba",
          "with": {"version": "v0.19.0", "disable_annotations": True}},
         # RUSTC_WRAPPER is set only once the sccache server runs; otherwise plain rustc.
+        # The keys come from Infisical over OIDC, on Boat only.
+        SCCACHE_KEYS_STEP,
         {"name": "Start sccache or compile without it", "env": SCCACHE_SECRETS, "run": SCCACHE_START},
         {"uses": "Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0",
          "with": {"cache-targets": False, "shared-key": "cargo-registry",
@@ -814,7 +860,7 @@ df -h /
                 and checkouts[0]["with"]["persist-credentials"] is False
                 and type(checkouts[0]["with"]["fetch-depth"]) is int,
                 f"{name}: checkout must bind the default candidate repository, ref and workspace")
-        require(len([step for step in job_steps if "run" in step]) == {"core": 7, "test": 5}[name],
+        require(len([step for step in job_steps if "run" in step]) == {"core": 8, "test": 6}[name],
                 f"{name}: unexpected executable preparation step")
         require(all(not step.get("env") for step in job_steps if "run" not in step),
                 f"{name}: setup steps must not override the execution environment")

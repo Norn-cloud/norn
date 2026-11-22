@@ -1,4 +1,5 @@
 //! Public-core CI: candidate checks and base-owned policy over candidate data.
+pub mod credentials;
 pub mod git;
 pub mod provenance;
 pub mod workflow_lint;
@@ -630,6 +631,7 @@ pub fn run_with_evidence(root: &Path, base: &Path, evidence: Option<&Path>) -> V
             Ok(doc) => {
                 errors.extend(concurrency_error(path, &doc));
                 errors.extend(pinned_step_errors(path, &doc));
+                errors.extend(credentials::errors(path, &doc));
                 if let Some(yaml::Value::Map(jobs)) = doc.get("jobs") {
                     for (name, job) in jobs {
                         if !runner_is_admitted(

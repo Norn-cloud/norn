@@ -37,6 +37,10 @@ jobs:
     # (#1369): made and started by the merge queue, with NORN_MAIN_RUNNER set. A human re-run or
     # push runs hosted, uses the Actions cache and never receives the key.
     environment: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor == 'github-merge-queue[bot]' && github.triggering_actor == 'github-merge-queue[bot]' && vars.NORN_MAIN_RUNNER == 'boat' && 'ci-cache-writer-boat' || '' }}
+    # OIDC for the cache-key step; a fork's run gets no token.
+    permissions:
+      contents: read
+      id-token: write
     env:
       SCCACHE_CACHE_SIZE: 10G
       SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
@@ -116,12 +120,55 @@ jobs:
         with:
           version: v0.19.0
           disable_annotations: true
+      # The shared cache's R2 keys live in Infisical, never in GitHub secrets (credential policy,
+      # norn-skeleton-guard ci::credentials). This step logs in over OIDC as the identity that
+      # NORN_SCCACHE_INFISICAL_IDENTITY_ID names (the read-only one; in `ci-cache-writer-boat` the
+      # environment's own variable names the writer, whose OIDC binding is that environment) and
+      # hands the keys to the start step only. Without the variables, on a fork, or on any failure,
+      # Boat keeps its local cache: a cache outage never fails a build.
+      - name: Read the shared cache keys from Infisical over OIDC
+        id: sccache-keys
+        if: ${{ runner.environment == 'self-hosted' }}
+        env:
+          INFISICAL_IDENTITY_ID: ${{ vars.NORN_SCCACHE_INFISICAL_IDENTITY_ID }}
+          INFISICAL_PROJECT_ID: ${{ vars.NORN_SCCACHE_INFISICAL_PROJECT_ID }}
+          INFISICAL_SECRET_PATH: ${{ vars.NORN_SCCACHE_INFISICAL_PATH }}
+        run: |
+          set -uo pipefail
+          skip() { echo "::warning::shared cache off: $1"; exit 0; }
+          if [ -z "${INFISICAL_IDENTITY_ID:-}" ] || [ -z "${INFISICAL_PROJECT_ID:-}" ] || [ -z "${INFISICAL_SECRET_PATH:-}" ]; then
+            echo "::notice::shared cache off: the NORN_SCCACHE_INFISICAL_* variables are not set"
+            exit 0
+          fi
+          [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || skip "this run has no OIDC token (a fork)"
+          api=https://app.infisical.com/api
+          # Bearers reach curl on stdin, never in argv; every value is masked before it is used.
+          jwt=$(printf 'header = "Authorization: bearer %s"\n' "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" |
+            curl -fsS --max-time 30 -K - "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://github.com/Norn-cloud" | jq -er .value) ||
+            skip "the GitHub OIDC token request failed"
+          echo "::add-mask::$jwt"
+          token=$(jq -cn --arg id "$INFISICAL_IDENTITY_ID" --arg jwt "$jwt" '{identityId: $id, jwt: $jwt}' |
+            curl -fsS --max-time 30 -H 'content-type: application/json' --data @- "$api/v1/auth/oidc-auth/login" | jq -er .accessToken) ||
+            skip "the Infisical OIDC login failed"
+          echo "::add-mask::$token"
+          secrets=$(printf 'header = "Authorization: Bearer %s"\n' "$token" |
+            curl -fsS --max-time 30 -K - -G --data-urlencode "workspaceId=$INFISICAL_PROJECT_ID" --data-urlencode environment=prod \
+              --data-urlencode "secretPath=$INFISICAL_SECRET_PATH" "$api/v3/secrets/raw") || skip "the Infisical read failed"
+          outputs=''
+          for name in BUCKET ENDPOINT KEY_ID SECRET; do
+            value=$(jq -er --arg key "NORN_SCCACHE_$name" '.secrets[] | select(.secretKey == $key) | .secretValue' <<<"$secrets") ||
+              skip "NORN_SCCACHE_$name is not in Infisical $INFISICAL_SECRET_PATH"
+            echo "::add-mask::$value"
+            outputs+="$(tr '[:upper:]' '[:lower:]' <<<"$name")=$value"$'\n'
+          done
+          printf '%s' "$outputs" >> "$GITHUB_OUTPUT"
+          echo "::notice::shared cache keys read from Infisical $INFISICAL_SECRET_PATH over OIDC"
       - name: Start sccache or compile without it
         env:
-          NORN_SCCACHE_BUCKET: ${{ secrets.NORN_SCCACHE_BUCKET }}
-          NORN_SCCACHE_ENDPOINT: ${{ secrets.NORN_SCCACHE_ENDPOINT }}
-          NORN_SCCACHE_KEY_ID: ${{ secrets.NORN_SCCACHE_KEY_ID }}
-          NORN_SCCACHE_SECRET: ${{ secrets.NORN_SCCACHE_SECRET }}
+          NORN_SCCACHE_BUCKET: ${{ steps.sccache-keys.outputs.bucket }}
+          NORN_SCCACHE_ENDPOINT: ${{ steps.sccache-keys.outputs.endpoint }}
+          NORN_SCCACHE_KEY_ID: ${{ steps.sccache-keys.outputs.key_id }}
+          NORN_SCCACHE_SECRET: ${{ steps.sccache-keys.outputs.secret }}
         # Writes only constants this step computes (true/false, a path under RUNNER_TEMP).
         run: | # zizmor: ignore[github-env]
           set -uo pipefail
@@ -215,6 +262,10 @@ jobs:
     # (#1369): made and started by the merge queue, with NORN_MAIN_RUNNER set. A human re-run or
     # push runs hosted, uses the Actions cache and never receives the key.
     environment: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor == 'github-merge-queue[bot]' && github.triggering_actor == 'github-merge-queue[bot]' && vars.NORN_MAIN_RUNNER == 'boat' && 'ci-cache-writer-boat' || '' }}
+    # OIDC for the cache-key step; a fork's run gets no token.
+    permissions:
+      contents: read
+      id-token: write
     env:
       SCCACHE_CACHE_SIZE: 10G
       SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
@@ -290,12 +341,55 @@ jobs:
         with:
           version: v0.19.0
           disable_annotations: true
+      # The shared cache's R2 keys live in Infisical, never in GitHub secrets (credential policy,
+      # norn-skeleton-guard ci::credentials). This step logs in over OIDC as the identity that
+      # NORN_SCCACHE_INFISICAL_IDENTITY_ID names (the read-only one; in `ci-cache-writer-boat` the
+      # environment's own variable names the writer, whose OIDC binding is that environment) and
+      # hands the keys to the start step only. Without the variables, on a fork, or on any failure,
+      # Boat keeps its local cache: a cache outage never fails a build.
+      - name: Read the shared cache keys from Infisical over OIDC
+        id: sccache-keys
+        if: ${{ runner.environment == 'self-hosted' }}
+        env:
+          INFISICAL_IDENTITY_ID: ${{ vars.NORN_SCCACHE_INFISICAL_IDENTITY_ID }}
+          INFISICAL_PROJECT_ID: ${{ vars.NORN_SCCACHE_INFISICAL_PROJECT_ID }}
+          INFISICAL_SECRET_PATH: ${{ vars.NORN_SCCACHE_INFISICAL_PATH }}
+        run: |
+          set -uo pipefail
+          skip() { echo "::warning::shared cache off: $1"; exit 0; }
+          if [ -z "${INFISICAL_IDENTITY_ID:-}" ] || [ -z "${INFISICAL_PROJECT_ID:-}" ] || [ -z "${INFISICAL_SECRET_PATH:-}" ]; then
+            echo "::notice::shared cache off: the NORN_SCCACHE_INFISICAL_* variables are not set"
+            exit 0
+          fi
+          [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || skip "this run has no OIDC token (a fork)"
+          api=https://app.infisical.com/api
+          # Bearers reach curl on stdin, never in argv; every value is masked before it is used.
+          jwt=$(printf 'header = "Authorization: bearer %s"\n' "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" |
+            curl -fsS --max-time 30 -K - "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://github.com/Norn-cloud" | jq -er .value) ||
+            skip "the GitHub OIDC token request failed"
+          echo "::add-mask::$jwt"
+          token=$(jq -cn --arg id "$INFISICAL_IDENTITY_ID" --arg jwt "$jwt" '{identityId: $id, jwt: $jwt}' |
+            curl -fsS --max-time 30 -H 'content-type: application/json' --data @- "$api/v1/auth/oidc-auth/login" | jq -er .accessToken) ||
+            skip "the Infisical OIDC login failed"
+          echo "::add-mask::$token"
+          secrets=$(printf 'header = "Authorization: Bearer %s"\n' "$token" |
+            curl -fsS --max-time 30 -K - -G --data-urlencode "workspaceId=$INFISICAL_PROJECT_ID" --data-urlencode environment=prod \
+              --data-urlencode "secretPath=$INFISICAL_SECRET_PATH" "$api/v3/secrets/raw") || skip "the Infisical read failed"
+          outputs=''
+          for name in BUCKET ENDPOINT KEY_ID SECRET; do
+            value=$(jq -er --arg key "NORN_SCCACHE_$name" '.secrets[] | select(.secretKey == $key) | .secretValue' <<<"$secrets") ||
+              skip "NORN_SCCACHE_$name is not in Infisical $INFISICAL_SECRET_PATH"
+            echo "::add-mask::$value"
+            outputs+="$(tr '[:upper:]' '[:lower:]' <<<"$name")=$value"$'\n'
+          done
+          printf '%s' "$outputs" >> "$GITHUB_OUTPUT"
+          echo "::notice::shared cache keys read from Infisical $INFISICAL_SECRET_PATH over OIDC"
       - name: Start sccache or compile without it
         env:
-          NORN_SCCACHE_BUCKET: ${{ secrets.NORN_SCCACHE_BUCKET }}
-          NORN_SCCACHE_ENDPOINT: ${{ secrets.NORN_SCCACHE_ENDPOINT }}
-          NORN_SCCACHE_KEY_ID: ${{ secrets.NORN_SCCACHE_KEY_ID }}
-          NORN_SCCACHE_SECRET: ${{ secrets.NORN_SCCACHE_SECRET }}
+          NORN_SCCACHE_BUCKET: ${{ steps.sccache-keys.outputs.bucket }}
+          NORN_SCCACHE_ENDPOINT: ${{ steps.sccache-keys.outputs.endpoint }}
+          NORN_SCCACHE_KEY_ID: ${{ steps.sccache-keys.outputs.key_id }}
+          NORN_SCCACHE_SECRET: ${{ steps.sccache-keys.outputs.secret }}
         # Writes only constants this step computes (true/false, a path under RUNNER_TEMP).
         run: | # zizmor: ignore[github-env]
           set -uo pipefail

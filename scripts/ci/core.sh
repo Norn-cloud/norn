@@ -205,6 +205,27 @@ lint_workflows() {
   ((status == 0 || status >= 10)) || { printf 'workflow lint: zizmor failed (%s)\n' "$status" >&2; exit 1; }
   cargo xtask ci workflow-lint --findings "$dir/findings.json"
 }
+# No literal secret in the tracked tree (credential policy). gitleaks, pinned by version and digest,
+# scans `git archive HEAD` with its built-in rules and no allowlist of any kind: a tracked
+# .gitleaks.toml or .gitleaksignore fails, inline allow comments are ignored, and it runs outside
+# the checkout so no untracked ignore file is read. A false positive is fixed in the fixture.
+scan_secrets() {
+  local dir="$upstream/secret-scan" gitleaks=gitleaks configs tree
+  [[ $(gitleaks version 2> /dev/null) == 8.28.0 ]] || {
+    [[ $(uname -sm) == 'Linux x86_64' ]] || { printf 'secret scan: no pinned gitleaks for %s\n' "$(uname -sm)" >&2; exit 1; }
+    mkdir -p "$dir"
+    curl -fsSL --retry 3 -o "$dir/gitleaks.tar.gz" https://github.com/gitleaks/gitleaks/releases/download/v8.28.0/gitleaks_8.28.0_linux_x64.tar.gz
+    printf '%s  %s\n' a65b5253807a68ac0cafa4414031fd740aeb55f54fb7e55f386acb52e6a840eb "$dir/gitleaks.tar.gz" | sha256sum -c --quiet -
+    tar -xzf "$dir/gitleaks.tar.gz" -C "$dir" gitleaks
+    gitleaks="$dir/gitleaks"
+  }
+  configs=$(git ls-files -- ':(glob)**/.gitleaks.toml' ':(glob)**/.gitleaksignore')
+  [[ -z $configs ]] || { printf 'secret scan: no gitleaks allowlist may be tracked: %s\n' "$configs" >&2; exit 1; }
+  # A fresh directory per scan under $upstream, which the EXIT trap removes.
+  mkdir -p "$dir" && tree=$(mktemp -d "$dir/tree.XXXXXX")
+  git archive HEAD | tar -x -C "$tree"
+  (cd "$dir" && "$gitleaks" dir "$tree" --no-banner --redact --ignore-gitleaks-allow --gitleaks-ignore-path "$dir" --exit-code 1)
+}
 run_phase() {
   if [[ $1 != cheap && $1 != test-shards && $1 != browser && $1 != duckdb && " ${phases[*]} " == *" $1 "* ]]; then prepare_inputs; fi
   case "$1" in
@@ -236,6 +257,7 @@ run_phase() {
       python3 scripts/importers/test_owl_sources.py
       python3 scripts/metrics/test_metrics.py
       lint_workflows
+      scan_secrets
       cargo xtask ci policy
       cargo xtask ci provenance
       # The Rust half of the concurrency parity check runs on every plan, whatever packages the
