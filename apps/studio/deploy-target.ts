@@ -64,18 +64,59 @@ const PRODUCTION_DOMAINS = "studio.norn.cloud,studio-demo.norn.cloud"
 /** Production's custom domains; both must be attached to the production Worker. */
 export const PROD_DOMAINS = PRODUCTION_DOMAINS.split(",")
 
-export interface LiveDomain { readonly hostname: string; readonly service: string; readonly environment?: string }
+export interface LiveDomain { readonly hostname: string; readonly service: string; readonly environment?: string; readonly enabled?: boolean }
 
-/** How the account's Worker custom domains differ from production's: both attached, to the production Worker. */
+/**
+ * How the account's Worker custom domains differ from production's: each production hostname has
+ * exactly one attachment, to the production Worker, in its `production` environment, and enabled.
+ * A missing `environment` or `enabled` is a difference, not a pass.
+ */
 export function domainParity(domains: readonly LiveDomain[]): string[] {
   const issues: string[] = []
   for (const hostname of PROD_DOMAINS) {
     const found = domains.filter((domain) => domain.hostname === hostname)
     if (found.length === 0) issues.push(`custom domain ${hostname} is not attached`)
-    else if (found.some((domain) => domain.service !== PROD_RECORDED_DEMO.worker)) issues.push(`custom domain ${hostname} is attached to ${found.map((d) => d.service).join(", ")}, expected ${PROD_RECORDED_DEMO.worker}`)
-    else if (found.some((domain) => domain.environment !== undefined && domain.environment !== "production")) issues.push(`custom domain ${hostname} serves environment ${found.map((d) => d.environment).join(", ")}, expected production`)
+    else if (found.length > 1) issues.push(`custom domain ${hostname} has ${found.length} attachments, expected one`)
+    else {
+      const [domain] = found as [LiveDomain]
+      if (domain.service !== PROD_RECORDED_DEMO.worker) issues.push(`custom domain ${hostname} is attached to ${domain.service}, expected ${PROD_RECORDED_DEMO.worker}`)
+      if (domain.environment !== "production") issues.push(`custom domain ${hostname} serves environment ${domain.environment ?? "none"}, expected production`)
+      if (domain.enabled !== true) issues.push(`custom domain ${hostname} is not enabled`)
+    }
   }
   return issues
+}
+
+export interface LiveDeployment { readonly id: string; readonly created_on: string; readonly versions: readonly { readonly version_id: string; readonly percentage: number }[] }
+
+/** The version serving all traffic: the newest deployment, with one version at 100%. Undefined during a split rollout or with no deployment. */
+export function activeVersion(deployments: readonly LiveDeployment[]): string | undefined {
+  const newest = [...deployments].sort((a, b) => Date.parse(b.created_on) - Date.parse(a.created_on))[0]
+  if (newest === undefined || newest.versions.length !== 1 || newest.versions[0]!.percentage !== 100) return undefined
+  return newest.versions[0]!.version_id
+}
+
+/** One event from a Workers Tail (trace-v1), as far as the parity check reads it. */
+export interface TailEvent {
+  readonly scriptName?: string
+  readonly scriptVersion?: { readonly id?: string }
+  readonly event?: { readonly request?: { readonly url?: string; readonly method?: string }; readonly response?: { readonly status?: number } }
+}
+
+/**
+ * Ties the cutover probe to the destination Worker: among the events of a tail opened on the
+ * production Worker, the probe's own request (a one-time nonce as its query key; Tail redacts query
+ * values) must appear, run by that Worker at its active version, answering 400. A 400 from some other Worker, or from a stale version, fails.
+ */
+export function agentTailIssue(probeUrl: string, events: readonly TailEvent[], version: string | undefined): string | undefined {
+  const mine = events.filter((event) => event.event?.request?.url === probeUrl && event.event.request.method === "POST")
+  if (mine.length === 0) return `${probeUrl} never reached ${PROD_RECORDED_DEMO.worker} (no tail event for the probe)`
+  if (version === undefined) return `${PROD_RECORDED_DEMO.worker} has no single active version at 100%`
+  const wrong = mine.find((event) => event.scriptName !== PROD_RECORDED_DEMO.worker || event.scriptVersion?.id !== version)
+  if (wrong !== undefined) return `${probeUrl} ran on ${wrong.scriptName ?? "an unnamed Worker"} version ${wrong.scriptVersion?.id ?? "unknown"}, expected ${PROD_RECORDED_DEMO.worker} version ${version}`
+  const status = mine[0]!.event?.response?.status
+  if (status !== 400) return `${probeUrl}: ${PROD_RECORDED_DEMO.worker} answered ${status ?? "nothing"} in its tail, not the assistant's 400`
+  return undefined
 }
 
 /**

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
-import { agentAnswerIssue, authDeploy, cellHost, cloudflareCredentials, deployTarget, domainParity, NORN_CLOUDFLARE_ACCOUNT_ID, PROD_DOMAINS, prodParity, PROD_RECORDED_DEMO, requireSignInRecipe, requireWorkerScript, useCloudflareCredentials, wranglerEnv } from "../deploy-target.ts"
+import { activeVersion, agentAnswerIssue, agentTailIssue, authDeploy, cellHost, cloudflareCredentials, deployTarget, domainParity, NORN_CLOUDFLARE_ACCOUNT_ID, PROD_DOMAINS, prodParity, PROD_RECORDED_DEMO, requireSignInRecipe, requireWorkerScript, useCloudflareCredentials, wranglerEnv } from "../deploy-target.ts"
 
 const preview = deployTarget({ ALCHEMY_STAGE: "preview", STUDIO_DOMAINS: "studio-preview.norn.cloud" })
 const prod = deployTarget({ ALCHEMY_STAGE: "prod", NORN_DEPLOY_PROD: "1" })
@@ -82,12 +82,18 @@ test("production parity: the live recorded-demo metadata matches; the sign-in St
   expect(prod.worker).toBe(PROD_RECORDED_DEMO.worker)
 })
 
-test("production parity: both prod domains are attached to the production Worker", () => {
-  const attached = PROD_DOMAINS.map((hostname) => ({ hostname, service: "norn-studio-recorded", environment: "production" }))
+test("production parity: both prod domains are attached, enabled, in production, to the production Worker", () => {
+  const attached = PROD_DOMAINS.map((hostname) => ({ hostname, service: "norn-studio-recorded", environment: "production", enabled: true }))
+  const demo = attached[1]!
   expect(PROD_DOMAINS).toEqual(["studio.norn.cloud", "studio-demo.norn.cloud"])
   expect(domainParity(attached)).toEqual([])
   expect(domainParity(attached.slice(0, 1))).toEqual(["custom domain studio-demo.norn.cloud is not attached"])
-  expect(domainParity([attached[0]!, { hostname: "studio-demo.norn.cloud", service: "norn-studio-recorded-preview" }])).toEqual(["custom domain studio-demo.norn.cloud is attached to norn-studio-recorded-preview, expected norn-studio-recorded"])
+  expect(domainParity([attached[0]!, { ...demo, service: "norn-studio-recorded-preview" }])).toEqual(["custom domain studio-demo.norn.cloud is attached to norn-studio-recorded-preview, expected norn-studio-recorded"])
+  expect(domainParity([attached[0]!, { ...demo, enabled: false }])).toEqual(["custom domain studio-demo.norn.cloud is not enabled"])
+  // Missing fields are differences, not passes.
+  expect(domainParity([attached[0]!, { hostname: demo.hostname, service: demo.service }])).toEqual(["custom domain studio-demo.norn.cloud serves environment none, expected production", "custom domain studio-demo.norn.cloud is not enabled"])
+  expect(domainParity([attached[0]!, { ...demo, environment: "staging" }])).toEqual(["custom domain studio-demo.norn.cloud serves environment staging, expected production"])
+  expect(domainParity([...attached, demo])).toEqual(["custom domain studio-demo.norn.cloud has 2 attachments, expected one"])
   expect(domainParity([...attached, { hostname: "preview.norn.cloud", service: "x" }])).toEqual([])
 })
 
@@ -100,6 +106,23 @@ test("cutover: /api/agent must give the assistant's own answer, nothing else", (
   const script = readFileSync(new URL("../scripts/prod-parity.ts", import.meta.url), "utf8")
   expect(script).toContain('process.argv.includes("--cutover")')
   expect(script).toContain("domainParity(")
+  expect(script).toContain("agentTailIssue(probeUrl, events, version)")
+})
+
+test("cutover: the answer is tied to the production Worker at its active version", () => {
+  const url = "https://studio.norn.cloud/api/agent?norn-parity-abc"
+  const ran = (scriptName: string, id: string, status = 400, at = url) => ({ scriptName, scriptVersion: { id }, event: { request: { url: at, method: "POST" }, response: { status } } })
+  expect(agentTailIssue(url, [ran("norn-studio-recorded", "v2")], "v2")).toBeUndefined()
+  expect(agentTailIssue(url, [], "v2")).toContain("never reached norn-studio-recorded")
+  expect(agentTailIssue(url, [ran("norn-studio-recorded", "v2", 400, "https://studio.norn.cloud/api/agent?other")], "v2")).toContain("never reached")
+  expect(agentTailIssue(url, [ran("norn-studio-recorded", "v1")], "v2")).toContain("version v1, expected norn-studio-recorded version v2")
+  expect(agentTailIssue(url, [ran("norn-studio-recorded-preview", "v2")], "v2")).toContain("ran on norn-studio-recorded-preview")
+  expect(agentTailIssue(url, [ran("norn-studio-recorded", "v2", 404)], "v2")).toContain("answered 404")
+  expect(agentTailIssue(url, [ran("norn-studio-recorded", "v2")], undefined)).toContain("no single active version")
+  const d = (id: string, created_on: string, versions: { version_id: string; percentage: number }[]) => ({ id, created_on, versions })
+  expect(activeVersion([d("a", "2026-11-01T00:00:00Z", [{ version_id: "v1", percentage: 100 }]), d("b", "2026-11-02T00:00:00Z", [{ version_id: "v2", percentage: 100 }])])).toBe("v2")
+  expect(activeVersion([d("b", "2026-11-02T00:00:00Z", [{ version_id: "v2", percentage: 50 }, { version_id: "v1", percentage: 50 }])])).toBeUndefined()
+  expect(activeVersion([])).toBeUndefined()
 })
 
 test("Cloudflare credentials: the Norn workers token and account only, and never the Global key", () => {
