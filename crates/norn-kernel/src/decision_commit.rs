@@ -808,6 +808,24 @@ impl<'a> TypeCatalog<'a> {
             .collect())
     }
 
+    /// MANIFEST-LAWS-1: every invariant that applies to `object_type`, with
+    /// its owner, in the order the per-row evaluator checks them. A bulk
+    /// path reads this to evaluate the same declarations, or to refuse.
+    ///
+    /// # Errors
+    /// Returns the name of an interface referenced by the object's lineage
+    /// that is absent from this catalog.
+    pub fn effective_invariants(
+        &self,
+        object_type: &ObjectTypeName,
+    ) -> Result<Vec<(InvariantOwner, &'a Invariant)>, ObjectTypeName> {
+        Ok(self
+            .invariants(object_type)?
+            .into_iter()
+            .map(|effective| (effective.owner, effective.invariant))
+            .collect())
+    }
+
     /// Owners of the invariants named `id` in the effective contract of the
     /// object type or interface `name`.
     ///

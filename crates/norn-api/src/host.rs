@@ -906,6 +906,18 @@ impl<E: SqlEngine> DevHost<E> {
             .collect())
     }
 
+    /// The engine table schema of every object type the model holds, as a
+    /// dataset load of it is typed by (MANIFEST-LAND-1). A schema is the
+    /// model's, not data: no row is read, and every read is still authorized.
+    /// # Errors
+    /// Poisoned synchronization or a type the engine cannot lower refuses.
+    pub fn analytics_tables(&self) -> Result<Vec<norn_cell::analytics::TableSchema>, Refusal> {
+        self.cell()?
+            .store()
+            .analytics_tables()
+            .map_err(Refusal::host)
+    }
+
     /// The current revision of the retained definition `id`, if any, read
     /// under the definitions read epoch. The host's own authority checks
     /// (`/v1/access:decide` reads a binding's `runRole`) read it here; no

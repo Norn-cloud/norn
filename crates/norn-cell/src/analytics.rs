@@ -23,14 +23,12 @@ use serde::{Deserialize, Serialize};
 use transparency_sha2::{Digest as _, Sha256};
 
 mod assemble;
-mod dataset;
 #[cfg(all(feature = "duckdb", feature = "native"))]
 pub mod engine;
 mod lower;
 mod mirror;
 
 pub use assemble::{Prepared, bucket_value};
-pub use dataset::DatasetRecord;
 pub use lower::{lower, table_schema};
 pub use mirror::MirrorBatch;
 
@@ -629,6 +627,125 @@ pub struct LoadResponse {
     pub bytes: u64,
     /// Wall time of the load, for the record.
     pub millis: u64,
+}
+
+/// MANIFEST-LAND-1: load a dataset file and land it as columnar files in
+/// the attempt's private directory: the typed rows in the data file and the
+/// held-back rows in the held file. Nothing a reader sees changes: the rows
+/// are staged under the attempt alone, and a dataset is read only at a
+/// committed manifest's cache identity ([`dataset_cache_id`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LandRequest {
+    /// The load: the source file, its typing and its binding (`headers`).
+    pub load: LoadRequest,
+    /// MANIFEST-PIN-1: the pins the cell typed and checks this landing by;
+    /// the manifest commits exactly these, or is refused as stale.
+    pub pins: crate::dataset_manifest::ManifestPins,
+    /// The landing identity: the digest of this request without its
+    /// attempt. Every answer of the landing echoes it.
+    #[serde(default)]
+    pub landing: String,
+    /// The attempt: one landing's own staging and files, never another's.
+    /// OLAP-02: the engine mints it, so a landing sends none (an attempt
+    /// named by the caller refuses); a store names the one its landing's
+    /// answer named.
+    #[serde(default)]
+    pub attempt: String,
+}
+
+/// MANIFEST-LAND-1 / MANIFEST-CACHE-1: store an attempt's landed files. Each
+/// is sent to its content-addressed object only if its bytes are the digest
+/// the landing answered, then kept by digest in the tenant's private object
+/// directory, which a cache miss rebuilds the dataset from. The answer is
+/// `landed` with its cache identity ([`LandResponse::stored`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StoreRequest {
+    /// The landing whose files are stored.
+    pub land: LandRequest,
+    /// The landing's answer: the files and what they hold.
+    pub landed: LandResponse,
+    /// The data file's object.
+    pub data: StoredObject,
+    /// The held-set file's object.
+    pub held: StoredObject,
+}
+
+/// The content-addressed object a landed file is stored at.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StoredObject {
+    /// The object's durable URI, named by the file's digest.
+    pub uri: String,
+    /// A presigned PUT URL for exactly that object; minted per call and not
+    /// part of the call's identity.
+    #[serde(default)]
+    pub url: String,
+}
+
+/// One landed file: its content identity as the engine wrote it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LandedFile {
+    /// The file's SHA-256.
+    pub sha256: String,
+    /// Rows in the file.
+    pub rows: u64,
+    /// Bytes in the file.
+    pub bytes: u64,
+}
+
+/// The earliest and latest instant of one temporal column of a landing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ValidRange {
+    /// The column (a timestamp or date property).
+    pub column: String,
+    /// The earliest value's text, by its exact instant.
+    pub from: String,
+    /// The latest value's text, by its exact instant.
+    pub to: String,
+}
+
+/// The outcome of a landing step.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LandResponse {
+    /// The landing identity the request named.
+    pub landing: String,
+    /// The attempt the engine minted for the landing.
+    pub attempt: String,
+    /// The load's counts, as [`LoadResponse`].
+    pub load: LoadResponse,
+    /// The data file: every admitted row with its source row offset.
+    pub data: LandedFile,
+    /// The held-set file: one row per held-back source row and reason.
+    pub held: LandedFile,
+    /// Each temporal column's range over the admitted rows.
+    pub valid_time: Vec<ValidRange>,
+    /// MANIFEST-CACHE-1: once the files are stored, the cache identity a
+    /// manifest of exactly these files reads them at.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stored: Option<String>,
+}
+
+/// MANIFEST-CACHE-1: the cache identity of a dataset: its table and the
+/// digests of its data and held-set files, and nothing a load chose. A
+/// manifest records it as its `load`; the engine answers a dataset only at
+/// it, rebuilding the table from the files of exactly those digests.
+#[must_use]
+pub fn dataset_cache_id(table: &TableSchema, data_sha256: &str, held_sha256: &str) -> String {
+    format!(
+        "l{}",
+        hex_digest(
+            format!(
+                "{}\n{}\n{data_sha256}\n{held_sha256}",
+                table.name, table.pin
+            )
+            .as_bytes()
+        )
+    )
 }
 
 /// Profile columns of a source.

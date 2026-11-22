@@ -157,4 +157,7 @@ impl norn_api::analytics_routes::Uploads for crate::connect::Connect {
     fn presigned_get(&self, uri: &str, seconds: u64, now_ms: u64) -> Option<String> {
         self.signed_get(uri, u32::try_from(seconds).ok()?, now_ms)
     }
+    fn presigned_put(&self, key: &str, seconds: u64, now_ms: u64) -> Option<(String, String)> {
+        self.signed_put(key, u32::try_from(seconds).ok()?, now_ms)
+    }
 }
