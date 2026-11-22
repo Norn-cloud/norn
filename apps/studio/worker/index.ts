@@ -1,5 +1,5 @@
 import { forwardToHost, originAllowed, resolveActor } from "./actor.ts"
-import { activeMembership, createAuth, verifyMagicLinkOrigin, type Auth, type MagicLinkMail } from "./auth.ts"
+import { activeMembership, createAuth, verifyMagicLinkOrigin, type Auth, type MagicLinkMail, type Membership } from "./auth.ts"
 import { passwordScrypt } from "./password.ts"
 import { clientIpHeader } from "./client-ip.ts"
 import { connectors } from "./connectors.ts"
@@ -11,6 +11,7 @@ import { polarConfig, settingsOf } from "./polar-config.ts"
 import { acceptWorkspaceInvitation, createWorkspace } from "./workspaces.ts"
 import { cellScope } from "./scope.ts"
 import { instrumented } from "./telemetry.ts"
+import { ACCESS_DEMO_EMAIL, ACCESS_DEMO_ORG, ACCESS_PREVIEW_URL, verifyPreviewAccess } from "./preview-access.ts"
 
 /** The Studio Worker: Better Auth under /api/auth, authenticated /api/*, static assets for everything else. */
 export interface Env {
@@ -34,6 +35,8 @@ export interface Env {
   readonly STUDIO_DEFAULT_ORG?: string
   /** Optional presentation branding for the seeded workspace, configured in preview only. */
   readonly STUDIO_DEMO_HEADER_PRIVATE?: string
+  readonly STUDIO_ACCESS_ISSUER?: string
+  readonly STUDIO_ACCESS_AUD?: string
   /** The header the edge sets to the client's address (client-ip.ts); required, the Worker refuses auth without it. */
   readonly STUDIO_CLIENT_IP_HEADER?: string
   /** The tool gateway and Studio's OAuth client there (#772); all three or none. */
@@ -195,13 +198,45 @@ async function me(request: Request, env: Env): Promise<Response> {
   const session = await auth(env).api.getSession({ headers: request.headers })
   if (session === null) return refuse(401, "Sign in first.")
   const member = await activeMembership(auth(env), session.user.id, session.session.activeOrganizationId)
-  const previewBrand = member?.organizationId === "org_demo" ? demoBrand(env.STUDIO_DEMO_HEADER_PRIVATE) : undefined
+  return account(env, session.user, member)
+}
+
+function account(env: Env, user: { id: string; name: string; email: string }, member: Membership | null, access = false): Response {
+  const previewBrand = member?.organizationId === ACCESS_DEMO_ORG ? demoBrand(env.STUDIO_DEMO_HEADER_PRIVATE) : undefined
   return Response.json(
-    { user: { id: session.user.id, name: session.user.name, email: session.user.email }, organization: member === null ? null : { id: member.organizationId, name: member.organizationName, role: member.role },
-      // The caller's active workspace's data environment, from its server-provisioned metadata; null without one.
-      environmentId: member?.environmentId ?? null, ...previewBrand ? { previewBrand } : {} },
+    { user: { id: user.id, name: user.name, email: user.email }, organization: member === null ? null : { id: member.organizationId, name: member.organizationName, role: member.role },
+      environmentId: member?.environmentId ?? null, ...previewBrand ? { previewBrand } : {}, ...access ? { authentication: "cloudflare-access" } : {} },
     { headers: { "cache-control": "no-store" } },
   )
+}
+
+/** The gated recorded preview exposes the analyst read and the recorded app. It mints no Studio cookie. */
+async function accessPreview(request: Request, env: Env, pathname: string): Promise<Response> {
+  const { STUDIO_ACCESS_ISSUER: issuer, STUDIO_ACCESS_AUD: audience } = env
+  if (env.BETTER_AUTH_URL !== ACCESS_PREVIEW_URL || env.STUDIO_DEFAULT_ORG !== ACCESS_DEMO_ORG
+    || !issuer || !audience || !(await verifyPreviewAccess(request, issuer, audience))) {
+    return refuse(401, "Cloudflare Access authentication is required.", { "x-studio-authentication": "cloudflare-access" })
+  }
+  if (ACTOR_HEADERS.some((header) => request.headers.has(header))) return refuse(400, "Identity comes from Cloudflare Access.")
+  if (request.method !== "GET" && request.method !== "HEAD") return refuse(405, "This demo is read-only.")
+  if (pathname === "/api/me") {
+    const authInstance = auth(env)
+    const { adapter } = await authInstance.$context
+    const user = await adapter.findOne<{ id: string; name: string; email: string; emailVerified: boolean }>({
+      model: "user", where: [{ field: "email", value: ACCESS_DEMO_EMAIL }],
+    })
+    if (!user?.emailVerified) return refuse(503, "The demo analyst is unavailable.")
+    const member = await activeMembership(authInstance, user.id, ACCESS_DEMO_ORG)
+    if (member?.role !== "member" || member.environmentId !== null) return refuse(503, "The demo analyst workspace is unavailable.")
+    return account(env, user, member, true)
+  }
+  if (pathname.toLowerCase().startsWith("/api/") || pathname === MCP_PATH || OAUTH_DISCOVERY.has(pathname)) {
+    return refuse(404, "No such demo endpoint.")
+  }
+  const response = await env.ASSETS.fetch(request)
+  const served = new Response(response.body, response)
+  served.headers.set("cache-control", "private, no-store")
+  return served
 }
 
 function demoBrand(setting: string | undefined): { name: string; logoUrl: string; workspaceName?: string } | undefined {
@@ -309,6 +344,7 @@ const OAUTH_DISCOVERY = new Set([
 const handler = {
   async fetch(request, env) {
     const { pathname } = new URL(request.url)
+    if (env.STUDIO_ACCESS_ISSUER !== undefined || env.STUDIO_ACCESS_AUD !== undefined) return accessPreview(request, env, pathname)
     if (mcpOn(env) && pathname === MCP_PATH) {
       if (ACTOR_HEADERS.some((name) => request.headers.has(name))) return refuse(400, "Identity comes from the signed-in grant, not a request header.")
       return serveMcp(request, { auth: auth(env), baseURL: env.BETTER_AUTH_URL, trustedOrigins: trustedOrigins(env), host: env.NORN_HOST, assets: env.ASSETS })

@@ -4,6 +4,7 @@ import { FileSystemStateStore } from "alchemy/state"
 import { authDeploy, cellHost, cloudflareCredentials, deployTarget, otelSettings, requireSignInRecipe, requireWorkerScript, scanState, useCloudflareCredentials } from "./deploy-target.ts"
 import { billingModeStatement } from "./worker/billing.ts"
 import { polarConfig } from "./worker/polar-config.ts"
+import { ACCESS_PREVIEW_URL, validAccessConfig } from "./worker/preview-access.ts"
 
 // The recorded Studio: `vite build` output (synthetic recorded engine documents
 // only) served as static assets on the custom domains in STUDIO_DOMAINS
@@ -33,6 +34,12 @@ requireSignInRecipe(target)
 const credentials = cloudflareCredentials(process.env)
 useCloudflareCredentials(process.env, credentials)
 const auth = authDeploy(process.env, target)
+const accessIssuer = process.env.STUDIO_ACCESS_ISSUER
+const accessAud = process.env.STUDIO_ACCESS_AUD
+const accessEnabled = accessIssuer !== undefined || accessAud !== undefined
+if (accessEnabled && (target.stage !== "preview" || auth.url !== ACCESS_PREVIEW_URL || !validAccessConfig(accessIssuer, accessAud))) {
+  throw new Error("Studio Access requires the explicit preview stage, team issuer, and application audience")
+}
 const demoHeader = target.stage === "preview" ? process.env.STUDIO_DEMO_HEADER_PRIVATE?.trim() : undefined
 // Preview binds the Norn cell Worker as NORN_HOST by script name; the script must already exist.
 const host = cellHost(target)
@@ -73,7 +80,7 @@ console.log(`Billing mode: ${billing === undefined ? "off" : "on"}`)
 
 export const studio = await Vite("studio", {
   name: target.worker,
-  assets: { directory: "dist", run_worker_first: ["/api/*"] },
+  assets: { directory: "dist", run_worker_first: accessEnabled ? true : ["/api/*"] },
   entrypoint: "./worker/index.ts",
   compatibilityDate: "2026-10-20",
   compatibilityFlags: ["nodejs_compat"],
@@ -81,6 +88,7 @@ export const studio = await Vite("studio", {
   wrangler: { secrets: false },
   bindings: {
     AUTH_DB: authDb,
+    ...accessEnabled ? { STUDIO_ACCESS_ISSUER: accessIssuer!, STUDIO_ACCESS_AUD: accessAud! } : {},
     BETTER_AUTH_SECRET: alchemy.secret(auth.secret),
     BETTER_AUTH_URL: auth.url,
     // Cloudflare sets cf-connecting-ip itself; the Worker refuses auth without this (#1328).

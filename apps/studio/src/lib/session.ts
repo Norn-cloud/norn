@@ -6,6 +6,7 @@ import { forgetParkedCalls } from "../actions/parked-calls.ts"
 export interface Account {
   readonly user: { readonly id: string; readonly name: string; readonly email: string }
   readonly organization: { readonly id: string; readonly name: string; readonly role: string } | null
+  readonly authentication?: "cloudflare-access"
   readonly previewBrand?: { readonly name: string; readonly logoUrl: string; readonly workspaceName?: string }
 }
 
@@ -18,7 +19,7 @@ type Fetch = (input: string, init?: RequestInit) => Promise<Response>
 
 async function readAccount(fetcher: Fetch): Promise<Account | null> {
   const response = await fetcher("/api/me", { headers: { accept: "application/json" } })
-  if (response.status === 401) return null
+  if (response.status === 401 && response.headers.get("x-studio-authentication") !== "cloudflare-access") return null
   if (!response.ok) throw new Error(`The session check failed (${response.status}).`)
   return (await response.json()) as Account
 }
