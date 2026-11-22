@@ -59,6 +59,17 @@ jobs:
           ref: 6c84ba382774c0c0ce01f0ec5b6489718037f70a
           persist-credentials: false
           fetch-depth: 0
+      # Boat allocates a different runner directory for each job. The Rust cache
+      # hashes the absolute compiler working directory, so compile through the seed path.
+      - name: Mount checkout at the compiler seed path
+        if: ${{ runner.environment == 'self-hosted' }}
+        run: |
+          set -euo pipefail
+          workspace=/home/user/actions-runner/_work/norn/norn
+          if [[ "$GITHUB_WORKSPACE" != "$workspace" ]]; then
+            sudo mkdir -p -- "$workspace"
+            sudo mount --bind -- "$GITHUB_WORKSPACE" "$workspace"
+          fi
       # A same-repository pull request runs on Boat only while NORN_PR_RUNNER is
       # 'boat'; otherwise it falls back to hosted runners, which must never go
       # unnoticed. Fork pull requests run hosted by design and stay quiet.
@@ -189,7 +200,9 @@ jobs:
           plan=$(jq -c --arg base "$BASE" --arg head "$HEAD_SHA" '. + {base_sha: $base, head_sha: $head}' <<<"$plan")
           echo "plan=$plan" >> "$GITHUB_OUTPUT"
           echo "$plan"
-      - run: bash scripts/ci/core.sh cheap
+      - run: |
+          if [[ "$RUNNER_ENVIRONMENT" == self-hosted ]]; then cd /home/user/actions-runner/_work/norn/norn; fi
+          bash scripts/ci/core.sh cheap
       - name: Show compiler cache stats
         if: always()
         run: sccache --show-stats || true
@@ -245,6 +258,17 @@ jobs:
           ref: 6c84ba382774c0c0ce01f0ec5b6489718037f70a
           persist-credentials: false
           fetch-depth: 0
+      # Boat allocates a different runner directory for each job. The Rust cache
+      # hashes the absolute compiler working directory, so compile through the seed path.
+      - name: Mount checkout at the compiler seed path
+        if: ${{ runner.environment == 'self-hosted' }}
+        run: |
+          set -euo pipefail
+          workspace=/home/user/actions-runner/_work/norn/norn
+          if [[ "$GITHUB_WORKSPACE" != "$workspace" ]]; then
+            sudo mkdir -p -- "$workspace"
+            sudo mount --bind -- "$GITHUB_WORKSPACE" "$workspace"
+          fi
       # Boat's managed base image ships only the versioned libclang-18.so.18, which
       # clang-sys (bindgen) rejects; it loads the unversioned libclang.so that hosted
       # ubuntu-24.04 already has. Install it once per VM, or link it, then require it.
@@ -356,7 +380,9 @@ jobs:
       - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: nextest@0.9.150,cargo-deny@0.19.0,wasm-bindgen@0.2.129
-      - run: bash scripts/ci/core.sh bundle "$PLAN" "$BUNDLE_ID"
+      - run: |
+          if [[ "$RUNNER_ENVIRONMENT" == self-hosted ]]; then cd /home/user/actions-runner/_work/norn/norn; fi
+          bash scripts/ci/core.sh bundle "$PLAN" "$BUNDLE_ID"
       - name: Show compiler cache stats
         if: always()
         run: sccache --show-stats || true
