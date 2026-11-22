@@ -35,7 +35,7 @@ export const PROD_RECORDED_DEMO = {
   forbidden: ["AUTH_DB", "BETTER_AUTH_SECRET", "BETTER_AUTH_URL"],
 } as const
 
-export interface LiveBinding { readonly name: string; readonly type: string; readonly class_name?: string | null }
+export interface LiveBinding { readonly name: string; readonly type: string; readonly class_name?: string | null; readonly script_name?: string | null }
 export interface LiveSettings { readonly compatibility_date?: string; readonly compatibility_flags?: readonly string[]; readonly bindings?: readonly LiveBinding[] }
 
 /** How a deployed Worker differs from the production recipe; empty when it matches. */
@@ -50,6 +50,9 @@ export function prodParity(live: LiveSettings): string[] {
   for (const [name, className] of Object.entries(PROD_RECORDED_DEMO.durableObjectClass)) {
     const found = bindings.find((binding) => binding.name === name)
     if (found !== undefined && found.class_name !== className) issues.push(`${name} binds class ${found.class_name ?? "none"}, expected ${className}`)
+    // The class must belong to the production Worker itself: a binding to another script's class
+    // (script_name set to anything else) would keep budgets in a Worker this recipe does not own.
+    if (found !== undefined && found.script_name != null && found.script_name !== PROD_RECORDED_DEMO.worker) issues.push(`${name} binds ${className} owned by ${found.script_name}, expected ${PROD_RECORDED_DEMO.worker} itself`)
   }
   for (const name of PROD_RECORDED_DEMO.forbidden) if (bindings.some((binding) => binding.name === name)) issues.push(`sign-in binding ${name} on production`)
   if (live.compatibility_date !== PROD_RECORDED_DEMO.compatibilityDate) issues.push(`compatibility date ${live.compatibility_date ?? "none"}, expected ${PROD_RECORDED_DEMO.compatibilityDate}`)
@@ -58,6 +61,38 @@ export function prodParity(live: LiveSettings): string[] {
 }
 
 const PRODUCTION_DOMAINS = "studio.norn.cloud,studio-demo.norn.cloud"
+/** Production's custom domains; both must be attached to the production Worker. */
+export const PROD_DOMAINS = PRODUCTION_DOMAINS.split(",")
+
+export interface LiveDomain { readonly hostname: string; readonly service: string; readonly environment?: string }
+
+/** How the account's Worker custom domains differ from production's: both attached, to the production Worker. */
+export function domainParity(domains: readonly LiveDomain[]): string[] {
+  const issues: string[] = []
+  for (const hostname of PROD_DOMAINS) {
+    const found = domains.filter((domain) => domain.hostname === hostname)
+    if (found.length === 0) issues.push(`custom domain ${hostname} is not attached`)
+    else if (found.some((domain) => domain.service !== PROD_RECORDED_DEMO.worker)) issues.push(`custom domain ${hostname} is attached to ${found.map((d) => d.service).join(", ")}, expected ${PROD_RECORDED_DEMO.worker}`)
+    else if (found.some((domain) => domain.environment !== undefined && domain.environment !== "production")) issues.push(`custom domain ${hostname} serves environment ${found.map((d) => d.environment).join(", ")}, expected production`)
+  }
+  return issues
+}
+
+/**
+ * The assistant's own answer to an unauthenticated POST /api/agent with an empty body: 400 JSON
+ * `{"error":"Missing session."}`. Anything else (the static Studio's 404, a 5xx, an edge page)
+ * means /api/agent is not live on that host. Costs no model call.
+ */
+export function agentAnswerIssue(hostname: string, status: number, contentType: string | null, body: string): string | undefined {
+  let error: unknown
+  try {
+    error = (JSON.parse(body) as { error?: unknown }).error
+  } catch {
+    error = undefined
+  }
+  if (status === 400 && /^application\/json/.test(contentType ?? "") && error === "Missing session.") return undefined
+  return `https://${hostname}/api/agent answered ${status} ${contentType ?? ""}, not the assistant's 400 "Missing session."`
+}
 
 /** A hostname of at least two DNS labels, each 1–63 lowercase letters, digits or inner dashes. */
 const hostname = (domain: string): boolean =>
@@ -122,18 +157,29 @@ export function useCloudflareCredentials(env: Record<string, string | undefined>
   env.CLOUDFLARE_ACCOUNT_ID = credentials.accountId
 }
 
-/** Variables a spawned tool (Wrangler) may inherit besides its credentials: the toolchain only. */
-const TOOL_ENV = ["PATH", "HOME", "LANG", "LC_ALL", "TERM", "TMPDIR", "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE"] as const
+/** Variables a spawned tool (Wrangler) may inherit besides its credentials: the toolchain only (not HOME). */
+const TOOL_ENV = ["PATH", "LANG", "LC_ALL", "TERM", "TMPDIR", "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE"] as const
 
 /**
  * A sanitized environment for Wrangler: the toolchain variables, the checked token and account,
- * and its config in `configDir` (so a stored `wrangler login` or another account's cache is never
- * read). Nothing else from the parent: no Global API Key, no other secret.
+ * and a temporary HOME and XDG directories inside `scratchDir` (a fresh temporary directory the
+ * caller removes), so a stored `wrangler login`, `~/.wrangler` or another account's cache is
+ * never read. Nothing else from the parent: no Global API Key, no other secret, not its HOME.
  */
-export function wranglerEnv(env: Readonly<Record<string, string | undefined>>, credentials: CloudflareCredentials, configDir: string): Record<string, string> {
+export function wranglerEnv(env: Readonly<Record<string, string | undefined>>, credentials: CloudflareCredentials, scratchDir: string): Record<string, string> {
   const out: Record<string, string> = {}
   for (const name of TOOL_ENV) { const value = env[name]; if (value !== undefined) out[name] = value }
-  return { ...out, XDG_CONFIG_HOME: configDir, WRANGLER_SEND_METRICS: "false", CLOUDFLARE_API_TOKEN: credentials.apiToken, CLOUDFLARE_ACCOUNT_ID: credentials.accountId }
+  return {
+    ...out,
+    HOME: join(scratchDir, "home"),
+    XDG_CONFIG_HOME: join(scratchDir, "config"),
+    XDG_CACHE_HOME: join(scratchDir, "cache"),
+    XDG_DATA_HOME: join(scratchDir, "data"),
+    XDG_STATE_HOME: join(scratchDir, "state"),
+    WRANGLER_SEND_METRICS: "false",
+    CLOUDFLARE_API_TOKEN: credentials.apiToken,
+    CLOUDFLARE_ACCOUNT_ID: credentials.accountId,
+  }
 }
 
 /** Better Auth's deploy-time inputs. Every stage signs users in; there is no unauthenticated Studio. */

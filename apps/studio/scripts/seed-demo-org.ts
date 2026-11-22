@@ -9,7 +9,7 @@
  *
  *   bun scripts/seed-demo-org.ts --stage preview --member viewer@demo.norn.cloud=viewer --member analyst@demo.norn.cloud=member
  *
- * Uses a loopback-only Wrangler Worker and remote D1 binding. Needs CLOUDFLARE_WORKERS_API_TOKEN and CLOUDFLARE_ACCOUNT_ID (the Norn account; Infisical prod /norn/cloudflare); the Global API Key variables refuse it, and Wrangler runs with a sanitized environment (deploy-target.ts wranglerEnv). The members must already have signed up and verified their email addresses.
+ * Uses a loopback-only Wrangler Worker and remote D1 binding. Needs CLOUDFLARE_WORKERS_API_TOKEN and CLOUDFLARE_ACCOUNT_ID (the Norn account; Infisical prod /norn/cloudflare); the Global API Key variables refuse it, and Wrangler runs with a sanitized environment and a temporary HOME (deploy-target.ts wranglerEnv). The members must already have signed up and verified their email addresses.
  */
 import { DEMO_ORG, parseMembers } from "./seed-demo-org-core.ts"
 import { cloudflareCredentials, wranglerEnv } from "../deploy-target.ts"
@@ -149,6 +149,8 @@ async function main(argv: readonly string[]) {
   try {
     await writeFile(configPath, JSON.stringify(config), { mode: 0o600 })
     await writeFile(join(dir, ".dev.vars"), `SEED_TOKEN=${JSON.stringify(token)}\n`, { mode: 0o600 })
+    // Wrangler's HOME and XDG directories (wranglerEnv) live in this temporary directory too.
+    for (const sub of ["home", "config", "cache", "data", "state"]) await import("node:fs/promises").then(({ mkdir }) => mkdir(join(dir, sub), { mode: 0o700 }))
     const child = Bun.spawn([resolve(import.meta.dir, "../node_modules/.bin/wrangler"), "dev", "--config", configPath, "--ip", "127.0.0.1", "--port", String(port), "--inspector-port", "0"], { stdout: "ignore", stderr: "ignore", env: wranglerEnv(process.env, credentials, dir) })
     await withWrangler(child, async (signal) => {
       const response = await seedWhenReady(child.exited, `http://127.0.0.1:${port}`, token, members, undefined, signal)

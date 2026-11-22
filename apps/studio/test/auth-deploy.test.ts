@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
-import { authDeploy, cellHost, cloudflareCredentials, deployTarget, NORN_CLOUDFLARE_ACCOUNT_ID, prodParity, PROD_RECORDED_DEMO, requireSignInRecipe, requireWorkerScript, useCloudflareCredentials, wranglerEnv } from "../deploy-target.ts"
+import { agentAnswerIssue, authDeploy, cellHost, cloudflareCredentials, deployTarget, domainParity, NORN_CLOUDFLARE_ACCOUNT_ID, PROD_DOMAINS, prodParity, PROD_RECORDED_DEMO, requireSignInRecipe, requireWorkerScript, useCloudflareCredentials, wranglerEnv } from "../deploy-target.ts"
 
 const preview = deployTarget({ ALCHEMY_STAGE: "preview", STUDIO_DOMAINS: "studio-preview.norn.cloud" })
 const prod = deployTarget({ ALCHEMY_STAGE: "prod", NORN_DEPLOY_PROD: "1" })
@@ -76,7 +76,30 @@ test("production parity: the live recorded-demo metadata matches; the sign-in St
     "compatibility date 2026-10-20, expected 2026-11-01",
   ])
   expect(prodParity({ ...live, bindings: live.bindings.map((b) => b.name === "AGENT_BUDGET" ? { ...b, class_name: "Other" } : b) })).toEqual(["AGENT_BUDGET binds class Other, expected AgentBudget"])
+  // The class must belong to the production Worker itself, not to another script.
+  expect(prodParity({ ...live, bindings: live.bindings.map((b) => b.name === "AGENT_BUDGET" ? { ...b, script_name: "norn-studio-recorded-preview" } : b) })).toEqual(["AGENT_BUDGET binds AgentBudget owned by norn-studio-recorded-preview, expected norn-studio-recorded itself"])
+  expect(prodParity({ ...live, bindings: live.bindings.map((b) => b.name === "AGENT_BUDGET" ? { ...b, script_name: "norn-studio-recorded" } : b) })).toEqual([])
   expect(prod.worker).toBe(PROD_RECORDED_DEMO.worker)
+})
+
+test("production parity: both prod domains are attached to the production Worker", () => {
+  const attached = PROD_DOMAINS.map((hostname) => ({ hostname, service: "norn-studio-recorded", environment: "production" }))
+  expect(PROD_DOMAINS).toEqual(["studio.norn.cloud", "studio-demo.norn.cloud"])
+  expect(domainParity(attached)).toEqual([])
+  expect(domainParity(attached.slice(0, 1))).toEqual(["custom domain studio-demo.norn.cloud is not attached"])
+  expect(domainParity([attached[0]!, { hostname: "studio-demo.norn.cloud", service: "norn-studio-recorded-preview" }])).toEqual(["custom domain studio-demo.norn.cloud is attached to norn-studio-recorded-preview, expected norn-studio-recorded"])
+  expect(domainParity([...attached, { hostname: "preview.norn.cloud", service: "x" }])).toEqual([])
+})
+
+test("cutover: /api/agent must give the assistant's own answer, nothing else", () => {
+  expect(agentAnswerIssue("studio.norn.cloud", 400, "application/json", '{"error":"Missing session."}')).toBeUndefined()
+  expect(agentAnswerIssue("studio.norn.cloud", 404, "text/html", "<html>")).toContain("not the assistant's 400")
+  expect(agentAnswerIssue("studio.norn.cloud", 502, "text/html", "bad gateway")).toContain("502")
+  expect(agentAnswerIssue("studio.norn.cloud", 400, "text/html", '{"error":"Missing session."}')).toBeDefined()
+  expect(agentAnswerIssue("studio.norn.cloud", 400, "application/json", '{"error":"other"}')).toBeDefined()
+  const script = readFileSync(new URL("../scripts/prod-parity.ts", import.meta.url), "utf8")
+  expect(script).toContain('process.argv.includes("--cutover")')
+  expect(script).toContain("domainParity(")
 })
 
 test("Cloudflare credentials: the Norn workers token and account only, and never the Global key", () => {
@@ -96,10 +119,18 @@ test("the process environment ends up with the checked token as Alchemy's only C
   expect(env).toEqual({ PATH: "/bin", CLOUDFLARE_API_TOKEN: "workers-token", CLOUDFLARE_ACCOUNT_ID: NORN_CLOUDFLARE_ACCOUNT_ID })
 })
 
-test("Wrangler runs with a sanitized environment: toolchain, the checked token, its own config dir", () => {
-  const parent = { PATH: "/bin", HOME: "/home/x", GH_TOKEN: "gh", CLOUDFLARE_API_KEY: "k", CLOUDFLARE_API_TOKEN: "combined", INFISICAL_TOKEN: "i", BETTER_AUTH_SECRET: secret }
+test("Wrangler runs with a sanitized environment: toolchain, the checked token, a temporary HOME and XDG dirs", () => {
+  const parent = { PATH: "/bin", HOME: "/home/x", XDG_CONFIG_HOME: "/home/x/.config", GH_TOKEN: "gh", CLOUDFLARE_API_KEY: "k", CLOUDFLARE_API_TOKEN: "combined", INFISICAL_TOKEN: "i", BETTER_AUTH_SECRET: secret }
   expect(wranglerEnv(parent, { accountId: NORN_CLOUDFLARE_ACCOUNT_ID, apiToken: "workers-token" }, "/tmp/seed")).toEqual({
-    PATH: "/bin", HOME: "/home/x", XDG_CONFIG_HOME: "/tmp/seed", WRANGLER_SEND_METRICS: "false", CLOUDFLARE_API_TOKEN: "workers-token", CLOUDFLARE_ACCOUNT_ID: NORN_CLOUDFLARE_ACCOUNT_ID,
+    PATH: "/bin",
+    HOME: "/tmp/seed/home",
+    XDG_CONFIG_HOME: "/tmp/seed/config",
+    XDG_CACHE_HOME: "/tmp/seed/cache",
+    XDG_DATA_HOME: "/tmp/seed/data",
+    XDG_STATE_HOME: "/tmp/seed/state",
+    WRANGLER_SEND_METRICS: "false",
+    CLOUDFLARE_API_TOKEN: "workers-token",
+    CLOUDFLARE_ACCOUNT_ID: NORN_CLOUDFLARE_ACCOUNT_ID,
   })
   const seed = readFileSync(new URL("../scripts/seed-demo-org.ts", import.meta.url), "utf8")
   expect(seed).toContain("env: wranglerEnv(process.env, credentials, dir)")
