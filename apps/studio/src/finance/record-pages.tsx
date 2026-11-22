@@ -132,6 +132,20 @@ export function Neighbourhood({ record }: { readonly record: FinanceRecord }) {
   </section>
 }
 
+function PaymentAllocation({ record }: { readonly record: FinanceRecord }) {
+  const installment = LINKS.find(link => link.to === record.id && link.label === "is paid by")?.from
+  const loanId = LINKS.find(link => link.to === installment && link.label === "has")?.from
+  const borrowerId = LINKS.find(link => link.to === loanId && link.label === "holds")?.from
+  const loan = loanId ? BY_ID.get(loanId) : undefined
+  const borrower = borrowerId ? BY_ID.get(borrowerId) : undefined
+  if (!loan || !borrower) return null
+  return <section aria-label="Payment allocation" className="flex flex-wrap gap-2 rounded-xl border bg-card p-3">
+    {([[loan, "Applied to"], [borrower, "Paid by"]] as const).map(([target, label]) => <RecordLink key={target.id} record={target} className="inline-flex items-center gap-1.5 rounded-lg border px-2 py-1 text-xs hover:border-data-accent">
+      <span className="text-muted-foreground">{label}</span><ArrowRight className="size-3 text-tone-blue" /><strong className="font-medium">{TYPES[target.type].name}</strong><code>{target.id}</code>
+    </RecordLink>)}
+  </section>
+}
+
 export function RecordDetail({ record }: { readonly record: FinanceRecord }) {
   const [active, setActive] = useState<Fact>(record.facts[0]!)
   const history = record.history
@@ -159,6 +173,7 @@ export function RecordDetail({ record }: { readonly record: FinanceRecord }) {
       </section>
       <Lineage fact={active} />
     </div>
+    {record.type === "payment" && <PaymentAllocation record={record} />}
     {history && <section aria-label="Score history" className="rounded-2xl border bg-card p-4">
       <h2 className="mb-3 text-sm font-semibold">I-Score history</h2>
       <ol className="grid max-w-lg grid-cols-3 gap-2">{history.map(({ date, score }, index) => <li key={date} className={cn("rounded-lg border bg-surface-subtle p-3", index === history.length - 1 && "border-data-accent bg-data-accent/10")}>

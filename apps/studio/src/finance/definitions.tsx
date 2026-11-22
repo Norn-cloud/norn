@@ -75,7 +75,7 @@ function fieldSources(type: FinanceType, key: string): readonly (readonly [MarkI
 export function TypeDefinition({ type }: { readonly type: FinanceType }) {
   const { key, fields } = DEFINITIONS[type]
   const links = MODEL_LINKS.filter(([from, , to]) => type === from || type === to)
-  const rules = RULES.filter(rule => rule.scope === type || type === "loan" && ["exposure", "hardship", "margin", "settlement"].includes(rule.id))
+  const rules = RULES.filter(rule => rule.reads.includes(type))
   return <div className="space-y-3">
     <div className="grid gap-3 xl:grid-cols-2">
       <Panel label="Identity" icon={KeyRound}>

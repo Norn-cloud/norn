@@ -1,15 +1,16 @@
 import { Link, useParams } from "@tanstack/react-router"
-import { Check, FileScan, KeyRound, ScanLine, Shield, Sparkles } from "lucide-react"
+import { ArrowRight, FileScan, ScanLine, Shield } from "lucide-react"
 import { useState } from "react"
 import { Chip } from "@/components/chip"
 import { Button } from "@/components/ui/button"
 import type { MenuEntry } from "../shell.tsx"
 import { cn } from "@/lib/utils"
-import { CLIENT, SYSTEMS, TYPES, type FinanceType } from "./data.ts"
+import { CLIENT, TYPES, type FinanceType } from "./data.ts"
+import { DatasetMapping } from "./mapping.tsx"
 import { MARKING_FIELDS, MARKING_ROLES, canRevealSample, type MarkingRole } from "./operations.tsx"
 import { BY_ID, egp } from "./records.ts"
 import { Neighbourhood, RecordLink } from "./record-pages.tsx"
-import { FinanceHeading, Mark, TypeTile } from "./workspace.tsx"
+import { FinanceHeading, TypeTile } from "./workspace.tsx"
 
 const scenes = [
   { id: "explorer", title: "Object explorer", detail: "Follow a client to their loans, payments, and supporting evidence." },
@@ -42,6 +43,17 @@ function Explorer() {
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border bg-card px-3 py-2 text-sm">
       <span>Deposit amount / <span lang="ar">مبلغ الإيداع</span></span><strong className="tabular-nums text-tone-blue">{egp(CLIENT.depositAmount)}.00</strong>
     </div>
+    <section aria-label="Brokerage funding path" className="grid items-center gap-2 rounded-xl border bg-surface-subtle p-3 lg:grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr]">
+      {[
+        { label: "Client", value: CLIENT.id, relation: "holds" },
+        { label: "Brokerage account", value: CLIENT.account, relation: "receives" },
+        { label: "Funding transaction", value: CLIENT.depositRef, relation: "posts to" },
+        { label: "GL journal", value: "GL-1042" },
+      ].map(({ label, value, relation }) => <div key={label} className="contents">
+        <div className="rounded-lg border bg-card p-2"><div className="text-xs font-semibold">{label}</div><code className="text-[10px] text-muted-foreground">{value}</code></div>
+        {relation && <span className="flex items-center gap-1 text-[10px] text-muted-foreground">{relation}<ArrowRight className="size-3 text-tone-blue" /></span>}
+      </div>)}
+    </section>
     <Neighbourhood record={record} />
   </div>
 }
@@ -103,44 +115,5 @@ function DocumentMapping() {
         </div>)}</div>
       </article>
     </div>
-  </section>
-}
-
-const MAPPINGS = [
-  { source:"Core lending", path:"lms.loans.national_id", target:"Client.nationalId", type:"client", format:"text", key:true },
-  { source:"I-Score", path:"$.subject.national_id", target:"Client.nationalId", type:"client", format:"text", key:true },
-  { source:"Salesforce", path:"Client__c.National_Id__c", target:"Client.nationalId", type:"client", format:"text", key:true },
-  { source:"Salesforce", path:"Client__c.cust_nm", target:"Client.name", type:"client", format:"text" },
-  { source:"Payments", path:"$.collection.payer_ref", target:"Client.payerRef", type:"client", format:"text" },
-  { source:"I-Score", path:"$.subject.score", target:"CreditReport.score", type:"credit-report", format:"integer", suggested:true },
-  { source:"Payments", path:"$.settlement.amount_egp", target:"Payment.amount", type:"payment", format:"EGP" },
-  { source:"Valify", path:"$.checks.identity.status", target:"KycCheck.status", type:"kyc-check", format:"enum" },
-  { source:"MCDR", path:"$.account.account_no", target:"BrokerageAccount.number", type:"brokerage-account", format:"text" },
-] as const
-
-function DatasetMapping() {
-  return <section className="grid gap-3 lg:grid-cols-[15rem_minmax(0,1fr)]">
-    <aside className="space-y-2 rounded-2xl border bg-card p-3.5">
-      <h2 className="text-sm font-semibold">Source schemas</h2>
-      {SYSTEMS.map(({id,name,marks,schema})=><div key={id} className="flex items-center gap-2 rounded-lg bg-muted/45 p-1.5">
-        <div className="flex -space-x-1">{marks.map(mark=><Mark key={mark} id={mark} className="size-7"/>)}</div>
-        <div className="min-w-0"><div className="text-xs font-semibold">{name}</div><code className="text-[10px] text-muted-foreground">{schema}</code></div>
-      </div>)}
-    </aside>
-    <section className="overflow-hidden rounded-2xl border bg-card">
-      <header className="space-y-2 border-b bg-surface-subtle p-3.5">
-        <div className="flex flex-wrap items-center gap-2"><h2 className="text-sm font-semibold">{CLIENT.name} · {CLIENT.id}</h2><Chip tone="blue" icon={Shield} className="rounded-full">Data contract</Chip></div>
-        <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground"><KeyRound className="size-3.5 text-tone-blue"/>Matching key <code>{CLIENT.nationalId}</code><span>· {CLIENT.account} · {egp(CLIENT.regularPayment)} repayment</span></div>
-        <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground"><span>Required national ID and payment reference · On failure</span><Chip tone="amber" className="rounded-full">Quarantine</Chip></div>
-      </header>
-      <div className="space-y-1.5 p-3">{MAPPINGS.map(row=><div key={row.path} className="grid min-w-0 grid-cols-[minmax(0,1fr)_2.5rem_minmax(0,1fr)] items-center">
-        <div className="flex h-12 min-w-0 flex-col justify-center rounded-lg border bg-surface-subtle px-2"><span className="truncate text-[10px] text-muted-foreground">{row.source}</span><code className="truncate text-[11px]" title={row.path}>{row.path}</code></div>
-        <Curve type={row.type}/>
-        <div className="flex h-12 min-w-0 items-center gap-1.5 rounded-lg border px-2"><TypeTile type={row.type}/><div className="min-w-0 flex-1"><code className="block truncate text-[11px]" title={row.target}>{row.target}</code><span className="text-[9px] text-muted-foreground">{row.format}</span></div>
-          {"key" in row&&<Chip tone="green" icon={Check} className="hidden rounded-full sm:inline-flex">key</Chip>}
-          {"suggested" in row&&<Chip tone="violet" icon={Sparkles} className="hidden rounded-full sm:inline-flex">Suggested</Chip>}
-        </div>
-      </div>)}</div>
-    </section>
   </section>
 }

@@ -91,10 +91,19 @@ interface Refusal {
   readonly href: string
 }
 
+type RuleObject = FinanceType | "lease" | "gl-entry"
+
+const SOURCE_OBJECTS = {
+  lease: { name: "Lease", tone: "teal" },
+  "gl-entry": { name: "GL entry", tone: "violet" },
+} as const
+
 interface FinanceRule {
   readonly id: string
   readonly title: string
-  readonly scope: FinanceType
+  readonly guards: string
+  readonly reads: readonly [RuleObject, RuleObject, ...RuleObject[]]
+  readonly path: string
   readonly condition: string
   readonly systems: Systems
   readonly needs: string
@@ -103,7 +112,9 @@ interface FinanceRule {
 
 export const RULES: readonly FinanceRule[] = [
   {
-    id: "kyc", title: "No disbursement without fresh evidence", scope: "loan",
+    id: "kyc", title: "No disbursement without fresh evidence",
+    guards: "Loan.disburse", reads: ["loan", "client", "kyc-check", "credit-report", "hardship-case"],
+    path: "Loan ← holds ← Client → verified by → KYC check · Client → reported by → Credit report · Client → has → Hardship case",
     systems: ["valify", "iscore", "salesforce", "postgres"],
     condition: "LMS approval requires current verified Valify KYC, an I-Score inquiry within 30 days and no open CRM fraud or hardship flag.",
     needs: "Only the joined record can establish LMS approval, KYC validity, bureau freshness and CRM clearance.",
@@ -114,25 +125,33 @@ export const RULES: readonly FinanceRule[] = [
     },
   },
   {
-    id: "exposure", title: "Total exposure per client ≤ EGP 5M", scope: "client",
+    id: "exposure", title: "Total exposure per client ≤ EGP 5M",
+    guards: "Loan.approve, Order.margin", reads: ["client", "loan", "brokerage-account", "lease"],
+    path: "Client → holds → {Loan, Brokerage account, Lease} (sum)",
     systems: ["postgres", "egx", "mcdr", "leasing"],
     condition: "Sum outstanding loans, margin credit and leases by national ID. Refuse an increase above EGP 5,000,000.",
     needs: "Loans, margin positions and lease obligations are recorded separately and must be merged by national ID.",
   },
   {
-    id: "settlement", title: "Match every settlement within T+2", scope: "payment",
+    id: "settlement", title: "Match every settlement within T+2",
+    guards: "Payment", reads: ["payment", "installment", "loan"],
+    path: "Payment → settles → Installment ← has ← Loan",
     systems: ["fawry", "instapay", "postgres"],
     condition: "Match each Fawry or InstaPay settlement to an LMS installment within two business days, or open an exception.",
     needs: "Payment providers confirm settled amounts. The LMS provides the installment allocation and due date.",
   },
   {
-    id: "hardship", title: "An open hardship case pauses collections", scope: "hardship-case",
+    id: "hardship", title: "An open hardship case pauses collections",
+    guards: "Installment.dun, Installment.lateFee", reads: ["hardship-case", "client", "loan", "installment"],
+    path: "Hardship case ← has ← Client → holds → Loan → has → Installment",
     systems: ["salesforce", "postgres"],
     condition: "An open hardship case blocks LMS dunning and late fees.",
     needs: "CRM owns the case and the LMS schedules calls, reminders and late fees.",
   },
   {
-    id: "margin", title: "No margin or withdrawal while in arrears", scope: "brokerage-account",
+    id: "margin", title: "No margin or withdrawal while in arrears",
+    guards: "Order.margin, Brokerage account.withdraw", reads: ["brokerage-account", "client", "loan", "installment"],
+    path: "Brokerage account ← holds ← Client → holds → Loan → has → Installment (DPD)",
     systems: ["postgres", "egx", "mcdr"],
     condition: "At 30 or more days past due in the LMS, block margin orders and brokerage cash withdrawals.",
     needs: "The outstanding loan is held by the LMS while the withdrawal or margin request arrives through brokerage.",
@@ -143,19 +162,25 @@ export const RULES: readonly FinanceRule[] = [
     },
   },
   {
-    id: "identity", title: "Conflicting identity blocks credit decisions", scope: "credit-report",
+    id: "identity", title: "Conflicting identity blocks credit decisions",
+    guards: "Loan.approve", reads: ["client", "credit-report", "kyc-check"],
+    path: "Client → reported by → Credit report · Client → verified by → KYC check (compare name and DOB)",
     systems: ["salesforce", "iscore", "valify"],
     condition: "Send matching national IDs with conflicting names or dates of birth to identity review before a credit decision.",
     needs: "Only a comparison of the CRM, bureau and verified identity records can detect the conflict.",
   },
   {
-    id: "aml", title: "Screen third-party payers", scope: "payment",
+    id: "aml", title: "Screen third-party payers",
+    guards: "Payment", reads: ["payment", "client", "loan"],
+    path: "Payment → payer · Loan ← holds ← Client (compare payer with borrower)",
     systems: ["fawry", "salesforce", "postgres"],
     condition: "Raise an AML review when a payer other than the borrower sends more than EGP 50,000 in a month.",
     needs: "Fawry identifies the payer. The client model resolves the borrower across the CRM and LMS.",
   },
   {
-    id: "reporting", title: "FRA return equals source totals", scope: "regulatory-return",
+    id: "reporting", title: "FRA return equals source totals",
+    guards: "Regulatory return.file", reads: ["regulatory-return", "loan", "brokerage-account", "gl-entry"],
+    path: "Regulatory return → aggregate by period → {Loan, Brokerage account, GL entry}",
     systems: ["fra", "postgres", "egx", "mcdr", "ledger"],
     condition: "Reconcile the monthly FRA return to LMS outstanding, brokerage positions and the general ledger for the same period.",
     needs: "The filed return has to match separately maintained balances and posted journal entries.",
@@ -174,10 +199,20 @@ export function FinanceRules() {
       <Chip tone="red" icon={ShieldX} className="rounded-full">{refusedCount} actions refused</Chip>
     </div>
     <div className="grid gap-3 lg:grid-cols-2">
-      {RULES.map(({ id, title, scope, condition, systems, needs, refusal }) => <Panel key={id} id={id} label={title} icon={Shield} className="scroll-mt-4"
+      {RULES.map(({ id, title, guards, reads, path, condition, systems, needs, refusal }) => <Panel key={id} id={id} label={title} icon={Shield} className="scroll-mt-4"
         action={<Chip tone="green" dot>Check passed</Chip>}>
         <div className="space-y-3 px-5 pt-2 pb-4">
-          <div className="flex flex-wrap items-center gap-2"><TypeTile type={scope} /><span className="text-xs text-muted-foreground">Scope · {TYPES[scope].name}</span></div>
+          <dl className="space-y-2 border-b pb-3 text-xs">
+            <div className="flex items-baseline gap-2"><dt className="w-10 shrink-0 text-muted-foreground">Guards</dt><dd><code>{guards}</code></dd></div>
+            <div className="flex items-baseline gap-2"><dt className="w-10 shrink-0 text-muted-foreground">Reads</dt><dd className="flex flex-wrap gap-1">
+              {reads.map(type => {
+                const auxiliary = type === "lease" || type === "gl-entry"
+                const item = auxiliary ? SOURCE_OBJECTS[type] : TYPES[type]
+                return <Link key={type} to={auxiliary ? `/policies/${type}` : `/sources/${type}`} className="rounded-md hover:ring-1 hover:ring-border"><Chip tone={item.tone}>{item.name}</Chip></Link>
+              })}
+            </dd></div>
+            <div className="flex items-baseline gap-2"><dt className="w-10 shrink-0 text-muted-foreground">Path</dt><dd className="font-mono leading-relaxed text-muted-foreground">{path}</dd></div>
+          </dl>
           <p className="text-sm">{condition}</p>
           <SystemsNeeded systems={systems} needs={needs} />
           {id === "settlement" && <Link to="/metrics" hash="corrections" className="inline-flex items-center gap-1 text-xs font-medium text-tone-blue hover:underline">View settlement correction<ArrowRight className="size-3.5" /></Link>}
@@ -236,7 +271,7 @@ export function FinanceMarkings() {
 const OVERVIEW = [
   { count: SYSTEMS.length, label: "Systems synced", tone: "green", icon: Database, to: "/sources" },
   { count: 11_872, label: "Borrowers merged", tone: "blue", icon: GitMerge, to: "/sources/client" },
-  { count: 32, label: "In review", tone: "amber", icon: CircleAlert },
+  { count: 32, label: "In review", tone: "amber", icon: CircleAlert, to: "/examples/dataset", hash: "review" },
   { count: 212, label: "Quarantined", tone: "amber", icon: Shield },
   { count: 1, label: "Correction this week", tone: "blue", icon: BadgeCheck, to: "/metrics", hash: "corrections" },
   { count: refusedCount, label: "Refused actions", tone: "red", icon: ShieldX, to: "/guarantees", hash: "kyc" },

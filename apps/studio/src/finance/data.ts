@@ -1,6 +1,6 @@
 import type { Tone } from "@/components/chip"
 
-export type MarkId = "postgres" | "iscore" | "salesforce" | "fawry" | "instapay" | "egx" | "mcdr" | "valify" | "fra" | "aws" | "leasing" | "ledger" | "norn"
+export type MarkId = "postgres" | "iscore" | "salesforce" | "fawry" | "instapay" | "egx" | "mcdr" | "valify" | "fra" | "aws" | "leasing" | "ledger" | "norn" | "model"
 
 export const MARKS: Readonly<Record<MarkId, { name: string; tone: Tone; file?: string; letters?: string }>> = {
   postgres: { name: "PostgreSQL", tone: "blue", file: "postgresql.org.png" },
@@ -14,6 +14,7 @@ export const MARKS: Readonly<Record<MarkId, { name: string; tone: Tone; file?: s
   fra: { name: "FRA", tone: "green", file: "fra.gov.eg.png" },
   leasing: { name: "Leasing", tone: "teal", letters: "LE" },
   ledger: { name: "General ledger", tone: "violet", letters: "GL" },
+  model: { name: "MLflow", tone: "violet", letters: "ML" },
   norn: { name: "Declared in Norn", tone: "blue", letters: "N" },
   aws: { name: "AWS", tone: "amber", file: "aws.amazon.com.png" },
 }

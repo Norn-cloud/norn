@@ -16,6 +16,8 @@ const POLICY_TYPES = {
   "credit-officer": "Credit officer",
   "collections-agent": "Collections agent",
   portfolio: "Portfolio",
+  lease: "Lease",
+  "gl-entry": "GL entry",
 } as const
 
 type PolicyType = FinanceType | keyof typeof POLICY_TYPES
@@ -138,9 +140,20 @@ export function FinancePolicyType() {
     <nav aria-label="Policy types" className="flex flex-wrap gap-1.5">
       {financePolicyMenu().map(({ href, label }) => <Link key={href} to={href}><Chip tone={href.endsWith(type) ? "blue" : "gray"}>{label}</Chip></Link>)}
     </nav>
-    <BusinessPolicies type={type} />
+    {type === "lease" || type === "gl-entry" ? <Panel label="Source object definition" icon={ClipboardList}>
+      <div className="space-y-2 px-5 pt-1 pb-4">
+        <div className="flex items-center gap-2 text-xs"><Mark id={type === "lease" ? "leasing" : "ledger"} />{type === "lease" ? "Leasing ledger" : "General ledger"}</div>
+        <ul className="flex flex-wrap gap-1.5">{SOURCE_FIELDS[type].map(field => <li key={field}><Chip mono>{field}</Chip></li>)}</ul>
+        <Link to="/guarantees" hash={type === "lease" ? "exposure" : "reporting"} className="inline-flex items-center gap-1 text-sm text-tone-blue hover:underline">View the rule that reads this source<ArrowRight className="size-4" /></Link>
+      </div>
+    </Panel> : <BusinessPolicies type={type} />}
   </section>
 }
+
+const SOURCE_FIELDS = {
+  lease: ["Lease reference", "Client national ID", "Outstanding principal (EGP)", "As-of date"],
+  "gl-entry": ["Journal reference", "Posting period", "Debit (EGP)", "Credit (EGP)"],
+} as const
 
 const CONSTRAINTS = [
   { name: "60 calls per agent per day", reason: "Each assignment consumes one unit of daily capacity.", to: "/policies/collections-agent", hash: "agent-capacity", binding: true },
