@@ -651,6 +651,19 @@ pub fn run_with_evidence(root: &Path, base: &Path, evidence: Option<&Path>) -> V
             Err(error) => errors.push(format!("{path}: {error}")),
         }
     }
+    // A local composite action's steps hold no long-lived credential either.
+    for path in files.iter().filter(|path| {
+        let name = path.rsplit('/').next().unwrap_or("");
+        name == "action.yml" || name == "action.yaml"
+    }) {
+        match std::fs::read_to_string(root.join(path))
+            .map_err(|e| e.to_string())
+            .and_then(|text| yaml::parse(&text))
+        {
+            Ok(doc) => errors.extend(credentials::errors(path, &doc)),
+            Err(error) => errors.push(format!("{path}: {error}")),
+        }
+    }
     errors
 }
 
