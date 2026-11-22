@@ -452,7 +452,11 @@ impl<E: SqlEngine> DevHost<E> {
     /// the same [`MappingInput`](norn_cell::mapping_bundle::MappingInput),
     /// split at [`PAGE_ROWS`] and before a repeated source record, are
     /// captured by `inject_mapping_page` and committed by
-    /// `process_mapping_page`. The trusted host's sync calls this; no caller
+    /// `process_mapping_page`. A page over the cell's byte bound is delivered
+    /// as two halves, and a page the cell refuses because it would capture a
+    /// dispute after a record it commits (OBS-LINK-DISPUTE-1) as one page per
+    /// record; each smaller page is captured and committed before the next
+    /// is captured. The trusted host's sync calls this; no caller
     /// supplies facts, and a refused row stays in the inbox as quarantined
     /// evidence with its reasons. Rows already captured are captured once.
     /// Returns one outcome per row, in row order.
@@ -504,7 +508,7 @@ impl<E: SqlEngine> DevHost<E> {
         // is used only for inputs proven independent, and never under a
         // budget, whose continuation point needs batch order.
         let independent = budget.is_none() && groupable(rows) && self.independent_inputs(rows)?;
-        let framed = pages(rows, independent);
+        let mut framed: std::collections::VecDeque<Page<'_>> = pages(rows, independent).into();
         let mut report = IngestReport {
             outcomes: Vec::with_capacity(rows.len()),
             next: None,
@@ -518,7 +522,7 @@ impl<E: SqlEngine> DevHost<E> {
             budget.is_some_and(|budget| work.saturating_add(more) > budget.total_ms)
         };
         let commit_ms = budget.map_or(0, |budget| budget.commit_ms);
-        for (input, page) in framed {
+        while let Some((input, page)) = framed.pop_front() {
             let first = page.first().map_or(0, |(at, _)| *at);
             let row_ms = budget.map_or(0, |budget| {
                 budget
@@ -529,14 +533,14 @@ impl<E: SqlEngine> DevHost<E> {
                 report.next = Some(first);
                 break;
             }
-            let delivered: Vec<Observed<RuntimeValue>> =
-                page.iter().map(|(_, raw)| (*raw).clone()).collect();
-            let captured = self.capture_page(&delivered, input)?;
+            let Some(captured) = self.capture_page(input, page.clone(), &mut framed)? else {
+                continue;
+            };
             report.work_ms = report.work_ms.saturating_add(row_ms);
-            let records: Vec<String> = captured
-                .iter()
-                .flat_map(|part| part.records.iter().cloned())
-                .collect();
+            let norn_cell::mapping_page::CapturedPage {
+                pages: captured,
+                records,
+            } = captured;
             // Each run member's own page position ([`member_position`]).
             let mut cursor = 0_usize;
             let mut locate = |id: &str| member_position(&records, &mut cursor, id);
@@ -548,7 +552,7 @@ impl<E: SqlEngine> DevHost<E> {
             let mut settled = 0_usize;
             let mut stop: Option<usize> = None;
             let mut outcomes = std::collections::BTreeMap::new();
-            'runs: for (page_id, _new) in captured.iter().flat_map(|part| &part.pages) {
+            'runs: for (page_id, _new) in &captured {
                 if committed && spent(report.work_ms, commit_ms) {
                     stop = Some(settled);
                     break;
@@ -644,21 +648,35 @@ impl<E: SqlEngine> DevHost<E> {
         Ok(answers)
     }
 
-    /// Capture one page, halving a page over the cell's byte bound; the parts
-    /// in row order.
-    fn capture_page(
+    /// Capture one framed page; `None` when the cell captured nothing and
+    /// the page went back to the front of `framed` as smaller pages, each
+    /// captured and committed before the next is captured: two halves of a
+    /// page over the cell's byte bound, or one page per record of a page
+    /// that would capture a dispute after a record it commits
+    /// (OBS-LINK-DISPUTE-1), which is the one-by-one path itself.
+    fn capture_page<'a>(
         &self,
-        raws: &[Observed<RuntimeValue>],
-        input: &norn_cell::mapping_bundle::MappingInput,
-    ) -> Result<Vec<norn_cell::mapping_page::CapturedPage>, Refusal> {
-        match self.observing_raw(|cell| cell.inject_mapping_page(raws, input))? {
-            Err(CellError::OutOfRange("mapping page bytes")) if raws.len() > 1 => {
-                let (first, second) = raws.split_at(raws.len() / 2);
-                let mut parts = self.capture_page(first, input)?;
-                parts.extend(self.capture_page(second, input)?);
-                Ok(parts)
+        input: &'a norn_cell::mapping_bundle::MappingInput,
+        mut page: Vec<(usize, &'a Observed<RuntimeValue>)>,
+        framed: &mut std::collections::VecDeque<Page<'a>>,
+    ) -> Result<Option<norn_cell::mapping_page::CapturedPage>, Refusal> {
+        let delivered: Vec<Observed<RuntimeValue>> =
+            page.iter().map(|(_, raw)| (*raw).clone()).collect();
+        match self.observing_raw(|cell| cell.inject_mapping_page(&delivered, input))? {
+            Ok(captured) => Ok(Some(captured)),
+            Err(CellError::OutOfRange("mapping page bytes")) if page.len() > 1 => {
+                let rest = page.split_off(page.len() / 2);
+                framed.push_front((input, rest));
+                framed.push_front((input, page));
+                Ok(None)
             }
-            other => Ok(vec![other.map_err(Refusal::host)?]),
+            Err(CellError::MappingPageSpansDispute) if page.len() > 1 => {
+                for row in page.into_iter().rev() {
+                    framed.push_front((input, vec![row]));
+                }
+                Ok(None)
+            }
+            Err(error) => Err(Refusal::host(error)),
         }
     }
 

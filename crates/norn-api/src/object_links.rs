@@ -228,6 +228,90 @@ fn endpoint_listed<E: SqlEngine>(
     collection && permitted(host, access, actor, row, Population)
 }
 
+/// OBS-LINK-DISPUTE-1: a finding about one link (`core.boundary.link_held`)
+/// names both of its endpoints, so it is disclosed under the policy links are
+/// listed under: [`endpoint_listed`] on every row it names. The rows are read
+/// under the cell lock ([`gate_findings`]); the policy runs outside it, and
+/// the snapshot is confirmed after it ([`disclosed_findings`]), as the link
+/// route does. Every other finding passes unchanged.
+pub(crate) struct GatedFinding {
+    finding: norn_ir::DataQualityFinding,
+    /// The rows a link finding names (`None` for one that is absent);
+    /// `None` for a finding that names no link.
+    endpoints: Option<Vec<Option<ObjectRecord>>>,
+}
+
+/// Read the rows each link finding of `findings` names, under the lock.
+pub(crate) fn gate_findings<E: SqlEngine>(
+    reader: &norn_cell::StoreReader<'_, E>,
+    findings: Vec<norn_ir::DataQualityFinding>,
+) -> Result<Vec<GatedFinding>, norn_cell::CellError> {
+    findings
+        .into_iter()
+        .map(|finding| {
+            let link = matches!(
+                &finding.rule_ref,
+                norn_ir::DataQualityRuleRef::Builtin { id, .. } if id == norn_cell::LINK_HELD_RULE
+            );
+            let endpoints = if link {
+                Some(
+                    finding
+                        .subjects
+                        .iter()
+                        .map(|subject| {
+                            reader.object(MAIN_WORLD, subject.object_type.as_str(), &subject.key)
+                        })
+                        .collect::<Result<Vec<_>, _>>()?,
+                )
+            } else {
+                None
+            };
+            Ok(GatedFinding { finding, endpoints })
+        })
+        .collect()
+}
+
+/// The findings of each entry of `gated` the caller may see, decided outside
+/// the lock, then confirmed at the snapshot `start` the rows were read at:
+/// a commit while the policy ran (say, one changing an endpoint's
+/// access-driving fields) refuses the read (`object.snapshot_moved`) rather
+/// than disclose by a row that no longer holds, as [`visible_batch`] does
+/// for links. One confirmation covers every entry, whether or not any later
+/// read of the route takes the lock again.
+///
+/// # Errors
+/// `object.snapshot_moved` when the cell committed since `start`.
+pub(crate) fn disclosed_findings<E: SqlEngine, K>(
+    host: &DevHost<E>,
+    access: &dyn ObjectAccess,
+    actor: &str,
+    start: &mut Option<(u64, Option<(u64, u64)>)>,
+    gated: Vec<(K, Vec<GatedFinding>)>,
+) -> Result<Vec<(K, Vec<norn_ir::DataQualityFinding>)>, Refusal> {
+    let mut collections = BTreeMap::new();
+    let disclosed = gated
+        .into_iter()
+        .map(|(key, findings)| {
+            let findings = findings
+                .into_iter()
+                .filter(|gated| {
+                    gated.endpoints.as_ref().is_none_or(|rows| {
+                        rows.iter().all(|row| {
+                            row.as_ref().is_some_and(|row| {
+                                endpoint_listed(host, access, actor, row, &mut collections)
+                            })
+                        })
+                    })
+                })
+                .map(|gated| gated.finding)
+                .collect();
+            (key, findings)
+        })
+        .collect();
+    locked(host, access, start, |_| Ok(()))?;
+    Ok(disclosed)
+}
+
 /// The state of one links scan under one snapshot.
 struct LinkScan<'q> {
     query: &'q LinkQuery,

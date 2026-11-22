@@ -158,13 +158,15 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         Ok(disputed)
     }
 
-    pub(crate) fn identity_evidence(&self) -> Result<Vec<IdentityEvidence>, CellError> {
-        let rows = self.conn.query(&format!("SELECT observation_id, observed FROM {INBOX} WHERE observation_id LIKE 'mapping-identity:%' ORDER BY position"), params![])?;
+    /// Every captured identity dispute with its inbox position, in capture order.
+    pub(crate) fn identity_evidence(&self) -> Result<Vec<(u64, IdentityEvidence)>, CellError> {
+        let rows = self.conn.query(&format!("SELECT position, observation_id, observed FROM {INBOX} WHERE observation_id LIKE 'mapping-identity:%' ORDER BY position"), params![])?;
         let mut evidence = Vec::new();
         for values in rows {
             let row = crate::engine::SqlRow(values);
-            let stored_id: String = row.get(0)?;
-            let encoded: String = row.get(1)?;
+            let position = crate::read::to_u64(row.get(0)?, "inbox position")?;
+            let stored_id: String = row.get(1)?;
+            let encoded: String = row.get(2)?;
             let observed: Observed<RuntimeValue> = serde_json::from_str(&encoded)?;
             let guard: IdentityEvidence =
                 norn_ir::runtime::decode(&observed.input).map_err(CellError::Encoding)?;
@@ -187,7 +189,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             {
                 return Err(CellError::MappingBundleMismatch);
             }
-            evidence.push(guard);
+            evidence.push((position, guard));
         }
         Ok(evidence)
     }
