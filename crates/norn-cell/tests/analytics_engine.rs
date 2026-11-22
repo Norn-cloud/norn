@@ -602,6 +602,74 @@ fn a_load_types_rows_and_quarantines_refused_ones_with_reasons() {
     );
 }
 
+/// BULK-LOAD-1 (Sol r3 S9): a direct load writes its lineage in its load
+/// transaction. With the lineage write refused by the tenant database, the
+/// load refuses and commits nothing: the dataset is still the first load's,
+/// and the refused load has no lineage record.
+#[test]
+fn a_direct_load_whose_lineage_write_fails_commits_nothing() {
+    use ::duckdb::OptionalExt as _;
+    let (dir, engine) = engine();
+    let (_store, plan, _context) = by_metal(true, 100);
+    let (first, first_sha) = csv(
+        &engine,
+        &[
+            "metal,occurred_at,input,recovered,loss",
+            "gold,2026-10-23T12:00:00Z,1.5,1.25,0",
+        ],
+    );
+    let (second, second_sha) = csv(
+        &engine,
+        &[
+            "metal,occurred_at,input,recovered,loss",
+            "gold,2026-10-23T12:00:00Z,1.5,1.25,0",
+            "silver,2026-10-23T12:00:00Z,2,1,0",
+        ],
+    );
+    let request = load_request(&plan, "load-1", first_sha);
+    let table = request.table.name.clone();
+    engine.load(&request, first.path()).expect("first load");
+    // Inject the failure: the tenant's metadata table refuses one key.
+    drop(engine);
+    let database = dir.path().join(format!("{}.duckdb", tenant().as_str()));
+    let open = || ::duckdb::Connection::open(&database).expect("tenant database");
+    open()
+        .execute_batch(
+            "CREATE TABLE \":kept\" AS SELECT * FROM \":meta\"; DROP TABLE \":meta\"; \
+             CREATE TABLE \":meta\" (key VARCHAR PRIMARY KEY, value VARCHAR NOT NULL, \
+             CHECK (key <> 'lineage:load-2')); \
+             INSERT INTO \":meta\" SELECT * FROM \":kept\"; DROP TABLE \":kept\";",
+        )
+        .expect("refusing metadata table");
+    let engine = Engine::new(Settings {
+        root: dir.path().to_path_buf(),
+        memory_limit: "256MB".into(),
+        threads: 1,
+    })
+    .expect("engine");
+    engine
+        .load(&load_request(&plan, "load-2", second_sha), second.path())
+        .expect_err("the lineage write is refused");
+    drop(engine);
+    let conn = open();
+    let meta = |key: &str| -> Option<String> {
+        conn.query_row("SELECT value FROM \":meta\" WHERE key = ?", [key], |row| {
+            row.get(0)
+        })
+        .optional()
+        .expect("meta")
+    };
+    assert_eq!(meta(&format!("load:{table}")).as_deref(), Some("load-1"));
+    assert!(meta("lineage:load-1").is_some());
+    assert_eq!(meta("lineage:load-2"), None);
+    let rows: u64 = conn
+        .query_row(&format!("SELECT count(*) FROM \"d:{table}\""), [], |row| {
+            row.get(0)
+        })
+        .expect("dataset rows");
+    assert_eq!(rows, 1, "the replacement dataset did not commit");
+}
+
 proptest::proptest! {
     #![proptest_config(proptest::test_runner::Config::with_cases(12))]
     /// QUERY-ENGINE-1 over a loaded dataset: the same rows committed to a cell

@@ -1183,7 +1183,7 @@ fn the_fuel_bound_pays_the_typed_property_charge() {
     let table = store.analytics_table(TYPE).expect("table");
     // Sol's row: SQL must leave it to the per-row path, which refuses it.
     let sol = 499_944;
-    let (_engine_dir, sol_engine) = engine_with("2GB");
+    let (sol_dir, sol_engine) = engine_with("2GB");
     let bytes = wide_typed_csv(&[sol]);
     let (request, landed) = land(&sol_engine, &cell, bytes.as_bytes(), FileFormat::Csv);
     assert_eq!(
@@ -1193,6 +1193,10 @@ fn the_fuel_bound_pays_the_typed_property_charge() {
     store
         .residue_findings(TYPE, &request.load.table, &landed.residue)
         .expect_err("the per-row path exhausts its fuel");
+    // Sol r3 S8: the upload is refused before its store, so it left no
+    // lineage record behind.
+    drop(sol_engine);
+    assert_eq!(lineage_records(sol_dir.path()), Vec::<String>::new());
     // The bound itself: `a == b` is charged both operands' bytes beside the
     // checks' static fuel, which carries the typed-property charge.
     let checks = store.dataset_checks(TYPE, &table).expect("checks");
@@ -1345,7 +1349,8 @@ fn lineage_records(root: &std::path::Path) -> Vec<String> {
 
 /// MANIFEST-LAWS-1 (Sol r2 S8): a landing refused at its preflight (a
 /// residue past the page bound, or a row wider than a page) leaves no
-/// `lineage:<load>` record; one that passes it records its lineage.
+/// `lineage:<load>` record; one that is stored records its lineage (Sol r3
+/// S8: in its store transaction).
 #[test]
 fn a_landing_refused_at_preflight_leaves_no_lineage() {
     use norn_cell::analytics::{MAX_RESIDUE_PAGES, RESIDUE_EXCEEDED, RESIDUE_PAGE_BYTES};
@@ -1376,12 +1381,32 @@ fn a_landing_refused_at_preflight_leaves_no_lineage() {
         assert_eq!(lineage_records(engine_dir.path()), Vec::<String>::new());
     }
     let (engine_dir, engine) = engine();
-    let _landed = land(
+    let (request, landed) = land(
         &engine,
         &cell,
         csv(&[plain(Some("ann"))]).as_bytes(),
         FileFormat::Csv,
     );
+    let (landed, _, _) = settle_all(&engine, &cell, &request, landed);
+    let (data, held) = (
+        landed.data.clone().expect("data"),
+        landed.held.clone().expect("held"),
+    );
+    let object = |sha: &str| StoredObject {
+        uri: format!("s3://synthetic/{sha}.parquet"),
+        url: String::new(),
+    };
+    engine
+        .store(
+            &StoreRequest {
+                land: request,
+                landed,
+                data: object(&data.sha256),
+                held: object(&held.sha256),
+            },
+            |_data, _held| Ok(()),
+        )
+        .expect("stored");
     drop(engine);
     assert_eq!(
         lineage_records(engine_dir.path()),

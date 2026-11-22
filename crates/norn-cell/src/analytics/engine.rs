@@ -650,9 +650,7 @@ impl Engine {
             ));
         }
         self.with(&request.tenant, |conn| {
-            let load = load_locked(conn, request, file, bytes, started)?;
-            set_lineage(conn, request)?;
-            Ok(load)
+            load_locked(conn, request, file, bytes, started, Lineage::Write)
         })
     }
 
@@ -724,7 +722,7 @@ impl Engine {
         };
         let landed = self.with(&load_request.tenant, |conn| {
             let landed = (|| {
-                let load = load_locked(conn, &staged_load, &file, bytes, started)?;
+                let load = load_locked(conn, &staged_load, &file, bytes, started, Lineage::Skip)?;
                 db(conn.execute_batch("BEGIN TRANSACTION"))?;
                 let checked = check_rules(conn, &staged_table, request);
                 if checked.is_err() {
@@ -738,9 +736,7 @@ impl Engine {
                     &format!("counts:{}", staged_table.name),
                     &counts_text(&load)?,
                 )?;
-                let answer = Self::landing(conn, &lease.dir, request, load)?;
-                set_lineage(conn, load_request)?;
-                Ok(answer)
+                Self::landing(conn, &lease.dir, request, load)
             })();
             if landed.is_err() {
                 drop_staged(conn, &staged_table)?;
@@ -997,12 +993,16 @@ impl Engine {
             request: store_contract(request),
             response: response.clone(),
         })?;
-        // The kept record and the receipt commit together, before the lease
-        // is released: a replay that finds the attempt gone finds its receipt.
+        // The kept record, the receipt and the load's lineage commit
+        // together, before the lease is released: a replay that finds the
+        // attempt gone finds its receipt. Sol r3 S8: lineage is written only
+        // here, once residue has settled and both files are sent, so a
+        // landing refused before its store leaves none behind.
         self.with(tenant, |conn| {
             db(conn.execute_batch("BEGIN TRANSACTION"))?;
             let written = set_meta(conn, &format!("landing:{cache}"), &record)
-                .and_then(|()| set_meta(conn, &receipt_key(&land.attempt), &receipt));
+                .and_then(|()| set_meta(conn, &receipt_key(&land.attempt), &receipt))
+                .and_then(|()| set_lineage(conn, &land.load));
             if written.is_err() {
                 let _rolled_back = conn.execute_batch("ROLLBACK");
                 return written;
@@ -2899,8 +2899,8 @@ fn load_file(
 }
 
 /// The lineage record of load `request`: its source file's digest and
-/// object. Sol r2 S8: a landing writes it only once its preflight has
-/// passed, so a refused landing leaves none behind.
+/// object. A direct load writes it in its load transaction; a landing
+/// writes it in its store transaction (Sol r3 S8/S9).
 fn set_lineage(conn: &Connection, request: &LoadRequest) -> Outcome<()> {
     set_meta(
         conn,
@@ -2909,16 +2909,32 @@ fn set_lineage(conn: &Connection, request: &LoadRequest) -> Outcome<()> {
     )
 }
 
-/// The load step under the tenant's lock, in one transaction.
+/// Whether a load step writes its load's lineage in its own transaction:
+/// a direct load does; a landing's staged load does not (its store does).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Lineage {
+    Write,
+    Skip,
+}
+
+/// The load step under the tenant's lock, in one transaction (Sol r3 S9:
+/// with a direct load's lineage, so neither commits without the other).
 fn load_locked(
     conn: &Connection,
     request: &LoadRequest,
     file: &Path,
     bytes: u64,
     started: Instant,
+    lineage: Lineage,
 ) -> Outcome<LoadResponse> {
     db(conn.execute_batch("BEGIN TRANSACTION"))?;
-    match load_file(conn, request, file) {
+    let loaded = load_file(conn, request, file).and_then(|loaded| {
+        if lineage == Lineage::Write {
+            set_lineage(conn, request)?;
+        }
+        Ok(loaded)
+    });
+    match loaded {
         Ok((rows, reasons)) => {
             db(conn.execute_batch("COMMIT"))?;
             let rejected = reasons.values().sum();
