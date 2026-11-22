@@ -31,6 +31,7 @@ cache survives them.
 import argparse
 import concurrent.futures
 from contextlib import contextmanager
+from datetime import datetime, timezone
 import http.client
 import json
 import os
@@ -202,10 +203,14 @@ class Cluster:
         cid = self.container(service)
         if not cid:
             raise RuntimeError(f"engine {service} is absent")
+        injected_at = datetime.now(timezone.utc)
         run(["sudo", "docker", "kill", "-s", "KILL", cid])
-        state = run(["sudo", "docker", "inspect", "-f", "{{.State.Running}} {{.State.ExitCode}}", cid]).stdout.strip()
-        if state != "false 137":
-            raise RuntimeError(f"engine {service} did not exit from SIGKILL: {state}")
+        state = json.loads(run(["sudo", "docker", "inspect", "-f", "{{json .State}}", cid]).stdout)
+        if state["Running"] or state["ExitCode"] != 137 or state["OOMKilled"]:
+            raise RuntimeError(f"engine {service} did not exit from injected SIGKILL")
+        finished_at = datetime.fromisoformat(state["FinishedAt"].replace("Z", "+00:00"))
+        if finished_at < injected_at:
+            raise RuntimeError(f"engine {service} exited before SIGKILL was injected")
 
     def start_engine(self, service):
         self.compose("up", "-d", "--no-deps", service)
