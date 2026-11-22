@@ -20,7 +20,6 @@ import * as g from "./lib/canvas/graph.ts"
 import { STATE_SPACING, tidyLifecycle } from "./lib/canvas/layout.ts"
 import { compile, decompile, edgeId, lifecycleKinds, lifecyclesIn, stepKey, type LifecycleRef } from "./lib/canvas/lifecycle.ts"
 import { AutomationEditor } from "./automation-canvas.tsx"
-import { financeLifecycleTitle } from "./lib/finance-demo.ts"
 import { words } from "./lib/format.ts"
 import type { Envelope } from "./lib/transport.ts"
 import { EditorShortcuts } from "@/components/keys"
@@ -189,7 +188,7 @@ function Inspector({ editing, issues, standing, kinds }: { readonly editing: Edi
 export function lifecycleFrame(envelope: Envelope, lifecycle: LifecycleRef, issues: CanvasFrameProps["issues"], standing: readonly Finding[]): CanvasFrameProps {
   return {
     draftKey: `lifecycle:${lifecycle.artifactId}:${lifecycle.index}`,
-    label: `${financeLifecycleTitle(words(lifecycle.objectType))}: ${words(lifecycle.property).toLowerCase()}`,
+    label: `${words(lifecycle.objectType)}: ${words(lifecycle.property).toLowerCase()}`,
     // A status canvas opens tidy: the main row straight, side states in a band, the fewest crossings.
     initial: tidyLifecycle(decompile(envelope, lifecycle), STATE_SPACING), kinds: lifecycleKinds(lifecycle), nodeTypes: NODE_TYPES, edgeTypes: EDGE_TYPES, issues,
     empty: "This lifecycle has no states. Add one to start.",
@@ -279,7 +278,7 @@ export function CanvasPageView({ definitions }: { readonly definitions: Definiti
         <p className="max-w-2xl text-muted-foreground">Draw how a process moves. The checker validates edits as you make them. Drafts stay in this browser.</p>
       </div>
       <div className="flex flex-wrap gap-1.5">
-        {found.map((ref, index) => <Button key={`${ref.artifactId}:${ref.index}`} size="sm" variant={kind === "lifecycle" && index === chosen ? "default" : "outline"} onClick={() => { setKind("lifecycle"); setChosen(index) }}>{financeLifecycleTitle(words(ref.objectType))}</Button>)}
+        {found.map((ref, index) => <Button key={`${ref.artifactId}:${ref.index}`} size="sm" variant={kind === "lifecycle" && index === chosen ? "default" : "outline"} onClick={() => { setKind("lifecycle"); setChosen(index) }}>{words(ref.objectType)}</Button>)}
         <Button size="sm" variant={kind === "automation" ? "default" : "outline"} onClick={() => setKind("automation")}>Automation</Button>
       </div>
       {kind === "automation" && <AutomationEditor />}

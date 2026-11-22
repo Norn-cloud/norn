@@ -13,6 +13,7 @@ import { useQuestionsMenu } from "./questions.tsx"
 import { routeTree } from "./routes.tsx"
 import { Sidekick, useSidekickServed } from "./sidekick/panel.tsx"
 import { Shell, type Section } from "./shell.tsx"
+import { financeDemo } from "./lib/finance-demo.ts"
 import { useSourcesMenu } from "./sources.tsx"
 import { useWorkflowsMenu } from "./workflows.tsx"
 import "./index.css"
@@ -31,6 +32,10 @@ const SECTIONS: readonly Section[] = [
   { path: "/connections", label: "Connections", icon: Plug, summary: "Apps and tools from your tool gateway, run through Norn's policy.", group: "System", liveOnly: true },
 ]
 
+const FINANCE_SECTIONS: readonly Section[] = [
+  { path: "/sources", label: "Sources", icon: Database, summary: "Mapped lending, brokerage, and payment systems.", kind: "source", group: "Model" },
+]
+
 /**
  * Signed out (an explicit 401), a visitor sees only the sign-in page; signed in, the Studio.
  * A failed check keeps the last known account; with none, it offers a retry, never the sign-in page.
@@ -42,7 +47,7 @@ function Root() {
   if (account.data != null) {
     const brand = account.data.previewBrand
     const usesAccess = account.data.authentication === "cloudflare-access"
-    return <Shell sections={SECTIONS} assistant={sidekick ? { title: "Sidekick", content: <Sidekick /> } : undefined} account={account.data} onSignOut={() => {
+    return <Shell sections={financeDemo ? FINANCE_SECTIONS : SECTIONS} assistant={sidekick ? { title: "Sidekick", content: <Sidekick /> } : undefined} account={account.data} onSignOut={() => {
         if (usesAccess) window.location.assign("/cdn-cgi/access/logout")
         else void signOut()
       }}

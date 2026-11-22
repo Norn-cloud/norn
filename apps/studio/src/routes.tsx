@@ -7,6 +7,8 @@ import { QuestionTreePage } from "./question-tree.tsx"
 import { DashboardBoardPage, DashboardEditorPage, DashboardsPage } from "./dashboards.tsx"
 import { GuaranteesPage } from "./guarantees.tsx"
 import { ExamplePage } from "./examples.tsx"
+import { FinanceSources } from "./finance/workspace.tsx"
+import { financeDemo } from "./lib/finance-demo.ts"
 import { MarkingsPage } from "./markings.tsx"
 import { PAGES, type PagePath } from "./lib/pages.ts"
 import { RecordsPage } from "./grid/records-page.tsx"
@@ -61,6 +63,14 @@ export function movedTo(pathname: string): string | undefined {
 
 /** The app's routes under `root`: Home at "/", then every page, then the old addresses that redirect. */
 export function routeTree<R extends AnyRootRoute>(root: R) {
+  if (financeDemo) return root.addChildren([
+    createRoute({ getParentRoute: () => root, path: "/", beforeLoad: () => { throw redirect({ href: "/sources", replace: true }) } }),
+    createRoute({
+      getParentRoute: () => root, path: "/sources", component: FinanceSources,
+      validateSearch: (search: Record<string, unknown>) => ({ view: search.view === "graph" ? "graph" as const : undefined }),
+    }),
+    createRoute({ getParentRoute: () => root, path: "/$", beforeLoad: () => { throw redirect({ href: "/sources", replace: true }) } }),
+  ])
   return root.addChildren([
     ...(Object.keys(PAGES) as PagePath[]).map((path) => createRoute({ getParentRoute: () => root, path, component: COMPONENTS[path] })),
     // One splat per old prefix: it matches the prefix itself and everything under it.
