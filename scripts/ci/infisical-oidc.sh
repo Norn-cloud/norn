@@ -48,7 +48,7 @@ secrets=$(printf 'header = "Authorization: Bearer %s"\n' "$token" |
 # changed by the shell (command substitution would strip a trailing LF).
 jq -e --args '. as $raw | ($raw.secrets | type) == "array" and all($ARGS.positional[];
   . as $key | [$raw.secrets[] | select(.secretKey == $key) | .secretValue]
-  | length == 1 and (.[0] | type) == "string" and (.[0] | length) > 0 and (.[0] | test("[\r\n]") | not) and (.[0] | contains("\u0000") | not))' \
+  | length == 1 and (.[0] | type) == "string" and (.[0] | length) > 0 and (.[0] | test("[\r\n]") | not) and (.[0] | explode | any(. == 0) | not))' \
   "$@" <<<"$secrets" > /dev/null ||
   fail "each of $* must be in Infisical $environment $path exactly once, a non-empty single line without NUL"
 outputs=''
