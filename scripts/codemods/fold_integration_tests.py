@@ -297,7 +297,7 @@ def edit_manifest(crate: Crate, folded: list[dict]) -> tuple[str, dict[str, list
 OPTION_VALUES = {
     "-p", "--package", "--features", "-F", "--target", "--profile", "-j", "--jobs",
     "--manifest-path", "--bin", "--example", "--bench", "--color", "--message-format",
-    "--target-dir", "--config", "-Z", "--exclude", "--lib",
+    "--target-dir", "--config", "-Z", "--exclude",
 }
 TOKEN = r"[A-Za-z0-9_:=./{}$+-]+"
 # Between two tokens of one command: spaces, a shell or Rust-string line
@@ -306,6 +306,10 @@ SEP = r'(?:[ \t]*\\\n[ \t]*|[ \t]*"[ \t]*\n[ \t]*"[ \t]*|[ \t]+)'
 COMMAND = re.compile(rf"cargo{SEP}test(?:{SEP}{TOKEN})+")
 MD_SEP = r"(?:[ \t]*\n[ \t]*|[ \t]+)"
 MD_COMMAND = re.compile(rf"cargo{MD_SEP}test(?:{MD_SEP}{TOKEN})+")
+
+
+def positional_or_exact(tokens: list[str]) -> bool:
+    return "--exact" in tokens
 
 
 def rewrite_command(command: str, folded: dict[tuple[str, str], str], separator: str) -> str:
@@ -331,6 +335,11 @@ def rewrite_command(command: str, folded: dict[tuple[str, str], str], separator:
         raise Refused(f"{command!r} mixes folded and unfolded --test targets")
     modules = [tokens[i] for i in hits]
     first = hits[0]
+    # A libtest filter is a substring: `pack::` also selects `ontology_pack::`.
+    for module in modules:
+        wider = {other for crate, other in folded if crate == package and other != module and other.endswith(module)}
+        if not wider <= set(modules) and not positional_or_exact(tokens):
+            raise Refused(f"{command!r}: `{module}::` would also select {sorted(wider - set(modules))}")
     keep = [i for i in range(len(tokens)) if not any(i in (h - 1, h) for h in hits[1:])]
     dashdash = next((i for i in keep if tokens[i] == "--"), None)
     positional = None
