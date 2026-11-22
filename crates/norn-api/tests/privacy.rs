@@ -1436,7 +1436,9 @@ fn an_export_never_carries_a_row_committed_after_its_marking_decision() {
         let foreign = (path.clone(), model.clone());
         let engine = Hooked {
             inner: NativeEngine::open(&path, norn_cell::StoreOptions::default()).unwrap(),
-            marker: format!("analytics.dataset:{RUN}"),
+            // The source read's first query, between the decision and the
+            // frontier: the type's committed dataset manifest, if any.
+            marker: norn_cell::dataset_manifest::MANIFEST_EVENT.to_owned(),
             hook: std::sync::Mutex::new(hooked.then(|| -> Box<dyn FnOnce() + Send> {
                 Box::new(move || {
                     let mut store =
