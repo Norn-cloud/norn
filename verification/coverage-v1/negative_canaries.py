@@ -1623,6 +1623,14 @@ def workflow_context_canaries(source: str) -> None:
                 document = copy.deepcopy(workflow)
                 change(document["jobs"][name])
                 rejected(f"{name} sccache {label}", document)
+        document = copy.deepcopy(workflow)
+        document["jobs"]["core"]["permissions"].pop("actions")
+        rejected("core secret inventory without environment read permission", document)
+        document = copy.deepcopy(workflow)
+        step = next(step for step in document["jobs"]["core"]["steps"]
+                    if step.get("name") == "Audit Actions secret inventory")
+        step["continue-on-error"] = True
+        rejected("core secret inventory failure ignored", document)
         # Outside core and test no job mints an OIDC token, `write-all` included.
         for name in ("full", "trusted-policy"):
             for label, permissions in (("write-all", "write-all"), ("id-token", {"id-token": "write"})):

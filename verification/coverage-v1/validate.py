@@ -844,7 +844,7 @@ df -h /
                 and checkouts[0]["with"]["persist-credentials"] is False
                 and type(checkouts[0]["with"]["fetch-depth"]) is int,
                 f"{name}: checkout must bind the default candidate repository, ref and workspace")
-        require(len([step for step in job_steps if "run" in step]) == {"core": 8, "test": 6}[name],
+        require(len([step for step in job_steps if "run" in step]) == {"core": 9, "test": 6}[name],
                 f"{name}: unexpected executable preparation step")
         require(all(not step.get("env") for step in job_steps if "run" not in step),
                 f"{name}: setup steps must not override the execution environment")
