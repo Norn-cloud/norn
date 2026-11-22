@@ -190,10 +190,10 @@ lint_workflows() {
     8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
   fetch zizmor https://github.com/zizmorcore/zizmor/releases/download/v1.32.0/zizmor-x86_64-unknown-linux-gnu.tar.gz \
     bb110cc765eca9cd7efb2e284a956be5974c60027b0970f16397d86208a9957b
-  "$dir/actionlint" -config-file crates/norn-skeleton-guard/actionlint.yaml -no-color -shellcheck= -pyflakes= .github/workflows/*.yml
-  "$dir/zizmor" --quiet --quiet --offline --strict-collection --config crates/norn-skeleton-guard/zizmor.yml --no-progress --format plain .github/workflows
+  "$dir/actionlint" -config-file crates/norn-skeleton-guard/actionlint.yaml -no-color -shellcheck= -pyflakes=
+  "$dir/zizmor" --quiet --quiet --offline --collect=all --strict-collection --config crates/norn-skeleton-guard/zizmor.yml --no-progress --format plain .github/workflows
   # The baseline only shrinks: every ignore must still cover a finding of the unfiltered report.
-  "$dir/zizmor" --quiet --quiet --offline --strict-collection --no-config --no-ignores \
+  "$dir/zizmor" --quiet --quiet --offline --collect=all --strict-collection --no-config --no-ignores \
     --pedantic --no-exit-codes --format json .github/workflows > "$dir/findings.json"
   cargo xtask ci workflow-lint --findings "$dir/findings.json"
   # Require every finding of these audits, including pedantic findings and inline ignores.
