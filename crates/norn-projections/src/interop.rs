@@ -151,7 +151,7 @@ impl From<CanonicalJsonError> for InteropError {
 
 /// The `producer` URI of every export.
 pub const NORN_PRODUCER: &str =
-    "https://github.com/Norn-cloud/norn-platform/tree/main/crates/norn-projections";
+    "https://github.com/Norn-cloud/norn/tree/main/crates/norn-projections";
 
 /// The `OpenLineage` spec version the events conform to.
 pub const OPENLINEAGE_SPEC_VERSION: &str = "2-0-2";
@@ -162,7 +162,7 @@ pub const OPENLINEAGE_RUN_EVENT_SCHEMA_URL: &str =
 
 /// The `_schemaURL` of the `nornCommit` run facet (its JSON Schema is
 /// `crates/norn-projections/schemas/openlineage-norn-facets.json`).
-pub const NORN_COMMIT_FACET_SCHEMA_URL: &str = "https://raw.githubusercontent.com/Norn-cloud/norn-platform/main/crates/norn-projections/schemas/openlineage-norn-facets.json#/$defs/NornCommitRunFacet";
+pub const NORN_COMMIT_FACET_SCHEMA_URL: &str = "https://raw.githubusercontent.com/Norn-cloud/norn/main/crates/norn-projections/schemas/openlineage-norn-facets.json#/$defs/NornCommitRunFacet";
 
 /// The logical Norn namespace key, also used when a source record lacks a
 /// system key. Emitted `OpenLineage` namespaces are cell-scoped URNs.
