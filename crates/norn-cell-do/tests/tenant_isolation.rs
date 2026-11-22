@@ -47,6 +47,9 @@ mod governed;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use ed25519_dalek::{Signer, SigningKey};
 use norn_api::scope::CellScope;
+use norn_cell::dataset_manifest::{
+    DatasetManifest, MANIFEST_VERSION, ManifestCounts, ManifestFile, ManifestSource,
+};
 use norn_cell::engine::{NativeEngine, ReadIsolation, SqlEngine, SqlValue};
 use norn_cell::{CellError, CommitBatch, FactWriteRow, MAIN_WORLD};
 use norn_cell_do::analytics::{self, DemoQuestions};
@@ -86,6 +89,13 @@ impl Counting {
 }
 
 impl SqlEngine for Counting {
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.inner.definition_writes(f)
+    }
+
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
         self.tick();
         self.inner.execute(sql, params)
@@ -622,6 +632,7 @@ fn probes(route: Route, ids: &Ids) -> Vec<Probe> {
         Route::Run => get(format!("/v1/runs/{run}")),
         Route::QuestionsCatalog => get("/v1/questions:catalog".into()),
         Route::Decisions => get("/v1/decisions".into()),
+        Route::DecisionsRequested => get("/v1/decisions:requested".into()),
         Route::Decide => post(
             format!("/v1/decisions/{decision}:decide"),
             json!({"choice": "approve", "idempotencyKey": "k-1"}),
@@ -1014,24 +1025,52 @@ fn analytics_b() -> Host {
     let scope = analytics::analytics_scope();
     let calls = Rc::new(Cell::new(0));
     let analytics::Analytics {
-        store,
+        mut store,
         plan,
         definitions,
         catalog,
     } = analytics::provision(Counting::new(&calls), &scope).unwrap();
-    let recorded_at = store.verified_head().unwrap().commits;
+    // A loaded dataset is a committed manifest (#1381 MANIFEST-COMMIT-1).
+    let table = store.analytics_table(analytics::TYPE).unwrap();
+    let binding = BTreeMap::new();
+    let (data, held) = ("ab".repeat(32), "cd".repeat(32));
+    let file = |sha256: &str, rows| ManifestFile {
+        uri: format!("s3://uploads-bucket/uploads/org_demo%2Fanalytics/{sha256}.parquet"),
+        sha256: sha256.to_owned(),
+        rows,
+        bytes: 1,
+    };
+    let manifest = DatasetManifest {
+        version: MANIFEST_VERSION.into(),
+        object_type: analytics::TYPE.into(),
+        load: norn_cell::analytics::dataset_cache_id(&table, &data, &held),
+        source: ManifestSource {
+            uri: "s3://uploads-bucket/uploads/org_demo%2Fanalytics/b-dataset.csv".into(),
+            sha256: "ef".repeat(32),
+            format: norn_cell::analytics::FileFormat::Csv,
+            bytes: 1,
+        },
+        pins: store
+            .dataset_pins(analytics::TYPE, &binding, "b.mapping@1")
+            .unwrap(),
+        binding,
+        table,
+        data: file(&data, 3),
+        held: file(&held, 0),
+        counts: ManifestCounts {
+            source: 3,
+            admitted: 3,
+            held: BTreeMap::new(),
+        },
+        valid_time: Vec::new(),
+    };
     store
-        .record_analytics_dataset(
-            analytics::TYPE,
-            &norn_cell::analytics::DatasetRecord {
-                load: "l-b-dataset-1".into(),
-                uri: "s3://uploads-bucket/uploads/org_demo%2Fanalytics/b-dataset.csv".into(),
-                sha256: "ab".repeat(32),
-                rows: 3,
-                rejected: 0,
-                reasons: BTreeMap::new(),
-                recorded_at,
-            },
+        .commit_dataset_manifest(
+            MAIN_WORLD,
+            &scope.key(),
+            norn_cell::provision::K1_CLOCK,
+            &manifest,
+            None,
         )
         .unwrap();
     assert!(!definitions.is_empty(), "the fixture publishes metrics");
@@ -1110,7 +1149,8 @@ fn an_outsider_at_a_cell_with_metrics_and_a_dataset_learns_nothing() {
                 assert_eq!(served, absent, "{method} {path}?{query} as {outsider:?}");
                 assert_eq!(served.calls, 0, "{method} {path}");
                 assert!(!served.engine && !served.continued && !served.scheduled);
-                assert!(!served.response.body.contains("l-b-dataset-1"));
+                assert!(!served.response.body.contains("b-dataset"));
+                assert!(!served.response.body.contains(&"ab".repeat(32)));
                 compared += 1;
             }
         }
@@ -1174,4 +1214,199 @@ fn the_storage_free_gate_answers_outsiders_as_the_cell_does() {
         body: "",
     };
     assert!(gate.outsider::<Counting>(&tokens, &request).is_none());
+}
+
+// ----------------------------------------------------- a parked call by id
+
+/// A hosted cell of `scope`, provisioned as the deployed host provisions one
+/// (the trusted base and the tenant's own set): a cell an action can park on.
+fn provisioned(scope: &CellScope) -> Host {
+    let mut cell = vacant(scope);
+    let set: Vec<Value> = serde_json::from_str::<Vec<Value>>(include_str!(
+        "../../../fixtures/demo/explorer/three-systems.definitions.json"
+    ))
+    .unwrap()
+    .into_iter()
+    .filter(|artifact| !norn_api::kernel_set::is_reserved(artifact["artifactId"].as_str().unwrap()))
+    .collect();
+    let body = json!({ "baseSha256": norn_cell_do::base::trusted_base().unwrap().sha256(),
+        "artifacts": set });
+    let provisioned = send(
+        &mut cell,
+        "POST",
+        norn_api::provision::PROVISION_PATH,
+        &query(scope),
+        Some(&user(&scope.org_id, "owner")),
+        &body.to_string(),
+    );
+    assert_eq!(
+        provisioned.response.status, 200,
+        "{}",
+        provisioned.response.body
+    );
+    cell
+}
+
+/// B with one direct parked call: the batches pack applied with an approval
+/// (deciders `owner`) gating its record action, and B's member calls it.
+/// Its decision id.
+fn park_direct_call(b: &mut Host, scope: &CellScope) -> String {
+    const RECORD: &str = "lab.batch.record";
+    let at = query(scope);
+    let owner = user(&scope.org_id, "owner");
+    let artifacts: Vec<Value> = [
+        include_str!("../../../fixtures/packs/batches/artifacts/lab.Batch.entity.json"),
+        include_str!("../../../fixtures/packs/batches/artifacts/lab.batch.access.policy.json"),
+        include_str!("../../../fixtures/packs/batches/artifacts/lab.batch.mass_conserved.law.json"),
+        include_str!("../../../fixtures/packs/batches/artifacts/lab.batch.record.action.json"),
+    ]
+    .iter()
+    .map(|text| serde_json::from_str(text).unwrap())
+    .collect();
+    let mut gate = json!({ "kind": "approval", "id": "lab.batch.record_approval", "payload": {
+        "action": RECORD, "decider": { "roles": ["owner"] },
+        "question": "Record this batch?", "risk": "high" } });
+    let change = |gate: &Value, expected: Option<u64>| {
+        let mut body = json!({ "artifacts": artifacts, "approvals": [gate] });
+        if let Some(version) = expected {
+            body["expectedVersion"] = json!(version);
+        }
+        body.to_string()
+    };
+    let planned = send(
+        b,
+        "POST",
+        norn_api::cell_definitions::PLAN_PATH,
+        &at,
+        Some(&owner),
+        &change(&gate, None),
+    );
+    assert_eq!(planned.response.status, 200, "{}", planned.response.body);
+    let plan = json_of(&planned.response);
+    gate["signoff"] = json!({ "restatementSha256": plan["approvals"][0]["restatementSha256"] });
+    let catalog = send(b, "GET", "/v1/definitions", &at, Some(&owner), "");
+    let version = json_of(&catalog.response)["version"].as_u64().unwrap();
+    let applied = send(
+        b,
+        "POST",
+        norn_api::cell_definitions::APPLY_PATH,
+        &at,
+        Some(&owner),
+        &change(&gate, Some(version)),
+    );
+    assert_eq!(applied.response.status, 200, "{}", applied.response.body);
+    let call = json!({ "input": { "id": "b-parked-1", "material": "copper", "input_g": "100.000",
+        "output_g": "98.000", "loss_g": "2.000", "loss_reason": null },
+        "idempotencyKey": "b-parked-1" });
+    let parked = send(
+        b,
+        "POST",
+        &format!("/v1/actions/{RECORD}"),
+        &at,
+        Some(&user(&scope.org_id, "member")),
+        &call.to_string(),
+    );
+    assert_eq!(parked.response.status, 202, "{}", parked.response.body);
+    json_of(&parked.response)["decision"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+/// #1532 S5: B's direct parked call, named by its id. Its requester reads
+/// it (the control). Every outsider at B is answered as at a vacant scope,
+/// with no storage touched; B's other members, and A's members in A's own
+/// cell, read no item, at exactly the cost of an id that exists nowhere.
+#[test]
+fn a_parked_call_by_id_is_its_requesters_alone() {
+    let ids = tenant_b().1;
+    let mut b = provisioned(&ids.scope);
+    let parked = park_direct_call(&mut b, &ids.scope);
+    let at_b = query(&ids.scope);
+    let path = "/v1/decisions:requested";
+    let named = format!("{at_b}&id={parked}");
+    let absent = format!("{at_b}&id={}", "z".repeat(parked.len()));
+    let requester = user(&ids.scope.org_id, "member");
+    let own = send(&mut b, "GET", path, &named, Some(&requester), "");
+    assert_eq!(own.response.status, 200, "{}", own.response.body);
+    assert_eq!(json_of(&own.response)["items"][0]["id"], json!(parked));
+
+    let mut nowhere = vacant(&ids.scope);
+    for outsider in outsiders() {
+        let served = send(&mut b, "GET", path, &named, outsider.as_deref(), "");
+        let vacant = send(&mut nowhere, "GET", path, &named, outsider.as_deref(), "");
+        assert_eq!(served, vacant, "{outsider:?}");
+        assert_eq!(served.calls, 0, "{outsider:?}");
+        assert!(!served.response.body.contains(&parked), "{outsider:?}");
+    }
+    // While it waits, and once B's owner approved it (its payload then
+    // reads through the resolved decision).
+    for phase in ["pending", "approved"] {
+        for role in ["owner", "admin", "viewer"] {
+            let member = user(&ids.scope.org_id, role);
+            // Warm: a first request compiles the member's policies once.
+            send(&mut b, "GET", path, &absent, Some(&member), "");
+            let by_id = send(&mut b, "GET", path, &named, Some(&member), "");
+            let no_id = send(&mut b, "GET", path, &absent, Some(&member), "");
+            assert_eq!(
+                (by_id.response.status, by_id.calls),
+                (no_id.response.status, no_id.calls),
+                "{phase}: {role}"
+            );
+            assert_eq!(
+                json_of(&by_id.response)["items"],
+                json!([]),
+                "{phase}: {role}"
+            );
+            assert!(!by_id.response.body.contains(&parked), "{phase}: {role}");
+        }
+        if phase == "pending" {
+            let decided = send(
+                &mut b,
+                "POST",
+                &format!("/v1/decisions/{parked}:decide"),
+                &at_b,
+                Some(&user(&ids.scope.org_id, "owner")),
+                &json!({ "choice": "approve", "idempotencyKey": "b-approve-1" }).to_string(),
+            );
+            assert_eq!(decided.response.status, 200, "{}", decided.response.body);
+            let own = send(&mut b, "GET", path, &named, Some(&requester), "");
+            assert_eq!(
+                json_of(&own.response)["items"][0]["canRun"],
+                json!(true),
+                "{}",
+                own.response.body
+            );
+        }
+    }
+    let scope_a = scope("org_a", "prod");
+    let mut a = seeded(&scope_a, None);
+    let at_a = query(&scope_a);
+    let in_a = |id: &str| format!("{at_a}&id={id}");
+    for role in ["owner", "admin", "member", "viewer"] {
+        let member = user("org_a", role);
+        send(
+            &mut a,
+            "GET",
+            path,
+            &in_a(&"z".repeat(parked.len())),
+            Some(&member),
+            "",
+        );
+        let by_id = send(&mut a, "GET", path, &in_a(&parked), Some(&member), "");
+        let no_id = send(
+            &mut a,
+            "GET",
+            path,
+            &in_a(&"z".repeat(parked.len())),
+            Some(&member),
+            "",
+        );
+        assert_eq!(
+            (by_id.response.status, by_id.calls),
+            (no_id.response.status, no_id.calls),
+            "{role}"
+        );
+        assert!(!by_id.response.body.contains(&parked), "{role}");
+    }
 }

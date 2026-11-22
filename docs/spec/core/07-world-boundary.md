@@ -170,6 +170,35 @@ creates or changes; a transient pending row that never commits is not part of
 the comparison; generated pages mix refusals, identities repeated
 across pages, intra-page links in both orders, and pages refused for framing).
 
+**OBS-LINK-DISPUTE-1** (#1490, #1544; beside OBS-PAGE-1): a FEED-CONFLICT or
+identity dispute freezes the observed link claims of the disputed event. They
+keep their standing (they supersede older claims of their contribution, contest
+rivals and keep their edge) but authorize no new edge. The freeze reads the
+dispute rows that exist when the commit runs, on every path; no inbox position
+dates it. An edge committed before the dispute stays committed (a dispute only
+holds `Add`s), and a delivery processed late (a retried record) commits under
+the disputes of its retry, whatever created its endpoints (a mapping or an
+action). Paged delivery equals one by one because a page never captures a
+new dispute row after a record it commits: one by one commits that record
+before the dispute exists. Such a page captures nothing (its capture
+transaction rolls back) and the host delivers its records one at a time,
+each captured and committed in order, which is the one-by-one path itself.
+Every commit of a page then sees the same disputes, so one page commit equals
+its records' commits, including a page captured by an earlier version.
+(Rounds 2 and 3 of #1544 dated each `Add` by inbox position instead; each
+round found a delivery the dating missed: a legacy page dated by its earliest
+member, a target created by an action. Reading the live state needs no date.)
+An edge the freeze withholds is one open
+`core.boundary.link_held` finding on the disputed source subject (one per
+edge, with every holding claim's lineage), derived from the retained evidence,
+for as long as the dispute lasts. It names the target, so a host discloses it,
+and counts it, only to a caller who may see both endpoints, under the policy
+that lists the link itself; that policy runs outside the cell lock, so the read
+then confirms its snapshot, and a commit meanwhile refuses it
+(`object.snapshot_moved`), as the link route does. Releasing a dispute and re-planning its links is
+the governed review action FEED-CONFLICT names; until it exists, a frozen
+claim stays frozen (#1549).
+
 **Ingest rulings** (2026-11-20, from the distributor-1 deployment test, #1484;
 pending maintainer review; additions beside OBS-PAGE-1, which is unchanged):
 

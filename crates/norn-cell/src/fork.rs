@@ -349,6 +349,13 @@ mod tests {
     }
 
     impl SqlEngine for Racing {
+        fn definition_writes<T>(
+            &self,
+            f: impl FnOnce() -> Result<T, CellError>,
+        ) -> Result<T, CellError> {
+            self.native.definition_writes(f)
+        }
+
         fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
             self.native.execute(sql, params)
         }

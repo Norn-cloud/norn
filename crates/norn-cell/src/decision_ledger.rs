@@ -771,6 +771,32 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             .collect()
     }
 
+    /// APPROVAL-RECOVERY-1: the approved calls no commit consumed and no
+    /// refusal decided yet, in the ledger order of their approving commits,
+    /// at most `limit` of them: the calls that wait for their requester's
+    /// retry.
+    ///
+    /// # Errors
+    /// SQL engine or decode errors.
+    pub fn unconsumed_approved_calls(
+        &self,
+        world: &str,
+        limit: usize,
+    ) -> Result<Vec<ApprovedCall>, CellError> {
+        let rows = self.conn.query(
+            &format!(
+                r#"SELECT {APPROVED_COLUMNS} FROM "{APPROVED_CALL}" a JOIN "{DECISION}" d ON d."world"=a."world" AND d."decision_id"=a."decision_id" WHERE a."world"=?1 AND a."consumed_seq" IS NULL AND a."refused_code" IS NULL ORDER BY d."commit_seq" LIMIT ?2"#
+            ),
+            params![
+                world,
+                to_i64(u64::try_from(limit).unwrap_or(u64::MAX), "limit")?
+            ],
+        )?;
+        rows.into_iter()
+            .map(|values| decode_approved(&SqlRow(values)))
+            .collect()
+    }
+
     /// S6c: the approval the commit `commit_seq` consumed, if it consumed
     /// one. A commit that names none (made before consumption was recorded,
     /// or ungated) answers `None`, read from the ledger-derived rows alone,

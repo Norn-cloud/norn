@@ -101,3 +101,35 @@ test("kept drafts are the session's and a sign-out forgets them", async () => {
   await endSession(client, async () => {})
   expect(keptDrafts.get(alice, "purchasing.request.submit:{}")).toBeUndefined()
 })
+
+// #1532 S3: a parked call's exact input and key are its reader's. A tenant switch (the same user in
+// another organization), or an expiry, forgets them, and switching back does not bring them back.
+test("a tenant switch forgets parked calls, and switching back does not restore them", async () => {
+  const { accountQuery } = await import("../src/lib/session.ts")
+  const { sessionKey } = await import("../src/actions/kept-drafts.ts")
+  const { forgetParkedCalls, parkedCalls } = await import("../src/actions/parked-calls.ts")
+  forgetParkedCalls()
+  const inOrg = (id: string) => ({ user: { id: "u1", name: "Alice", email: "a@example.com" }, organization: { id, name: id, role: "member" } })
+  const answers: Response[] = []
+  const client = new QueryClient()
+  const read = (answer: Response) => {
+    answers.push(answer)
+    return client.fetchQuery({ ...accountQuery(client, async () => answers.shift() as Response), staleTime: 0 })
+  }
+  const call = { decision: { id: "dec_1", expiresAtMs: 9 }, input: '{"amount":"1240.000"}', key: "k-parked" }
+  const form = "canon.holding.adjust:{}"
+  await read(Response.json(inOrg("o1")))
+  parkedCalls.set(sessionKey(inOrg("o1")), form, call)
+  // The same reader read again keeps it.
+  await read(Response.json(inOrg("o1")))
+  expect(parkedCalls.get(sessionKey(inOrg("o1")), form)).toEqual(call)
+  // The tenant switches, then back: the call is gone in both.
+  await read(Response.json(inOrg("o2")))
+  expect(parkedCalls.get(sessionKey(inOrg("o1")), form)).toBeUndefined()
+  await read(Response.json(inOrg("o1")))
+  expect(parkedCalls.get(sessionKey(inOrg("o1")), form)).toBeUndefined()
+  // An expiry forgets it too.
+  parkedCalls.set(sessionKey(inOrg("o1")), form, call)
+  expect(await read(new Response(null, { status: 401 }))).toBeNull()
+  expect(parkedCalls.get(sessionKey(inOrg("o1")), form)).toBeUndefined()
+})
