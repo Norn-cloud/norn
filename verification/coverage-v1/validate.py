@@ -124,6 +124,7 @@ FORMAL_WORKFLOW = ROOT / ".github/workflows/ci-policy.yml"
 CI_WORKFLOWS = (FORMAL_WORKFLOW,)
 PROMOTED_RUNNER = ROOT / "scripts/verify-promoted-subsystems.sh"
 CORE_RUNNER = ROOT / "scripts/ci/core.sh"
+AUTHORING_INVENTORY = ROOT / "scripts/ci/authoring-test-files.txt"
 # The keys of the shared Boat cache (R2) reach only the sccache start step. The writable key is a
 # secret of the `ci-cache-writer-boat` environment, which a push to main enters exactly when it
 # runs on Boat (#1369): made and started by the merge queue's bot, with NORN_MAIN_RUNNER set. A
@@ -891,6 +892,56 @@ echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN"
     contained = 'prune_target() {\n  local root target entry name\n  root=$(realpath -m -- "$PWD") && target=$(realpath -m -- "${CARGO_TARGET_DIR:-$PWD/target}") || return 0\n  if [[ $target != "$root/target" ]]; then\n    printf \'::warning::refusing to prune %s: only %s/target may be pruned\\n\' "$target" "$root"\n    return 0\n  fi\n  for entry in "$target"/*; do\n    name=${entry##*/}\n    [[ -d $entry && ! -L $entry && $name != verification-* ]] || continue\n    if [[ $name == doc || -d $entry/.fingerprint ]] || compgen -G "$entry/*/.fingerprint" > /dev/null; then\n      rm -rf -- "$entry"\n    fi\n  done\n}\n'
     require(runner.count(prune) == 1 and runner.count(contained) == 1 and runner.count("rm -rf") == 2,
             "bundle may prune only Cargo build outputs, between tasks that share no build")
+    # The integration partition owns each existing check exactly once. The
+    # authoring phase keeps Bun's full discovery, including new test files.
+    integration_checks = {
+        "integration-authoring": (
+            "bun tools/norn-ts/src/cli.ts compile tools/norn-ts/fixtures/quickstart --org example --env local --out \"$upstream/task.json\"",
+            '\"$NORN_BIN\" check --artifacts \"$upstream/task.json\" --context \"$upstream/context.json\" > \"$upstream/check.json\"',
+            "run_authoring_tests",
+        ),
+        "integration-wasm": (
+            "cargo test --locked -p norn-checker-wasm --test parity -- --test-threads=1",
+            'node crates/norn-checker-wasm/tests/parity/parity.mjs "$NORN_CHECKER_WASM_PKG" "$NORN_CHECKER_WASM_PARITY_OUT"',
+            '(cd apps/norn-cell-do && NORN_CELL_DO_PKG="$upstream/norn-cell-do-pkg" bun test ./worker.wasm.test.mjs)',
+            'node crates/norn-checker-wasm/tests/parity/engine-parity.mjs "$NORN_CHECKER_WASM_PKG" "${CARGO_TARGET_DIR:-$PWD/target}/norn-checker-wasm/engine"',
+        ),
+        "integration-clients": (
+            "(cd packages/norn-sdk && bun run generate)",
+            '"$upstream/openapi-venv/bin/python" -m openapi_spec_validator sdks/openapi/norn-api.openapi.json',
+            "git diff --exit-code -- sdks/openapi/norn-api.openapi.json packages/norn-sdk/src/generated/norn-api.ts",
+            'bash sdks/python/run-demo.sh "$upstream/python-client"',
+        ),
+    }
+    registered = re.search(r"^phases=\(([^\n]*)\)$", runner, re.MULTILINE)
+    phases = registered[1].split() if registered else []
+    require([phase for phase in phases if phase.startswith("integration")] == list(integration_checks),
+            "integration phases must each be registered once")
+    runner_lines = [line.strip() for line in runner.splitlines()]
+    for phase, checks in integration_checks.items():
+        block = re.findall(rf"^    {phase}\)\n(.*?)^      ;;$", runner, re.MULTILINE | re.DOTALL)
+        require(len(block) == 1, f"{phase}: must have exactly one phase body")
+        lines = [line.strip() for line in block[0].splitlines()]
+        for check in checks:
+            require(lines.count(check) == 1 and runner_lines.count(check) == 1,
+                    f"{phase}: integration check must run exactly once: {check}")
+    authoring = re.findall(r"^run_authoring_tests\(\) \(\n(.*?)^\)$", runner, re.MULTILINE | re.DOTALL)
+    require(len(authoring) == 1 and all(
+        authoring[0].splitlines().count(command) == 1 for command in (
+            '  bun test --timeout 60000 --shard=1/2 --reporter=junit --reporter-outfile="$upstream/authoring-1.xml" &',
+            '  bun test --timeout 60000 --shard=2/2 --reporter=junit --reporter-outfile="$upstream/authoring-2.xml" &',
+            '  wait "$first" || status=1',
+            '  wait "$second" || status=1',
+            '  (( status == 0 )) || exit "$status"',
+            'if not expected or actual != expected:',
+            'idle = sorted(set(expected) - executed - skip_allowed)',
+            'if idle:',
+        )), "authoring shards must execute and check coverage exactly once")
+    # Only a reviewed, pinned file may have every test skipped: engine-alpha's single test is
+    # gated on pending seams by design. A marker on any other file is refused here.
+    inventory = AUTHORING_INVENTORY.read_text(encoding="utf-8").splitlines()
+    require({line.split()[0] for line in inventory if len(line.split()) > 1} == {"test/engine-alpha.test.ts"},
+            "authoring inventory: only test/engine-alpha.test.ts may be skip-allowed")
     # Studio browser rows (#1113): never a silent pass. Tests without a config fail, and so
     # does a config whose match lists no tests.
     browser = '    browser)\n      # Studio browser rows (#1113): Playwright against `vite preview` of this build, with the\n      # checker WASM package built into apps/studio/src/checker. Without a config there is\n      # nothing to run; browser tests without a config are a broken setup, never a skip.\n      if ! compgen -G \'apps/studio/playwright.config.*\' > /dev/null; then\n        if compgen -G \'apps/studio/e2e/*.e2e.ts\' > /dev/null; then\n          printf \'browser: apps/studio/e2e has browser tests but no playwright.config\\n\' >&2\n          exit 1\n        fi\n        printf \'::notice::browser: no apps/studio/playwright.config.*; no Studio browser tests to run\\n\'\n        return 0\n      fi\n      # The checker package needs the wasm32 target. CI\'s pinned toolchain step installs it;\n      # a hand run on a plain toolchain fails here, not deep inside the WASM build.\n      local wasm_lib\n      wasm_lib=$(rustc --print target-libdir --target wasm32-unknown-unknown 2> /dev/null) || wasm_lib=\'\'\n      if [[ -z $wasm_lib || ! -d $wasm_lib ]]; then\n        printf \'browser: %s has no wasm32-unknown-unknown target; run under the pinned CI toolchain (dtolnay/rust-toolchain in ci-policy.yml)\\n\' "$(rustc --version 2> /dev/null || echo \'no rustc\')" >&2\n        exit 1\n      fi\n      ensure_tool wasm-bindgen-cli 0.2.129 wasm-bindgen\n      crates/norn-checker-wasm/scripts/build-pkg.sh "$PWD/apps/studio/src/checker"\n      NORN_WASM_ENGINE=1 crates/norn-checker-wasm/scripts/build-pkg.sh "$PWD/apps/studio/src/engine"\n      (\n        cd apps/studio\n        bun install --frozen-lockfile --ignore-scripts --backend copyfile\n        # The checker-admission case needs the WASM package built above, so it runs here,\n        # not in the cheap phase, and is required: a missing package fails it, never skips.\n        decision=$(NORN_CHECKER_WASM_REQUIRED=1 bun test test/decision.test.ts 2>&1) || { printf \'%s\\n\' "$decision"; exit 1; }\n        printf \'%s\\n\' "$decision"\n        # The step proves nothing unless that named case ran and passed: skipped, renamed or deleted fails.\n        grep -qxE \'\\(pass\\) the checker admits what a drawn decision lowers to \\[[0-9.]+m?s\\]\' <<< "$decision" || { printf \'browser: the checker-admission case did not run and pass\\n\' >&2; exit 1; }\n        bun run build\n        # "No tests found" must fail: a broken testDir or testMatch is never a pass.\n        listed=$(bunx playwright test --list | sed -n \'s/^Total: \\([0-9][0-9]*\\) tests\\{0,1\\} in .*/\\1/p\')\n        [[ ${listed:-0} -gt 0 ]] || { printf \'browser: Playwright lists no tests\\n\' >&2; exit 1; }\n        # A suite of only skipped rows must fail too: require at least one executed test.\n        report="$upstream/playwright.json"\n        PLAYWRIGHT_JSON_OUTPUT_NAME="$report" bunx playwright test --reporter=list,json\n        ran=$(python3 -c \'import json, sys; stats = json.load(open(sys.argv[1]))["stats"]; print(stats.get("expected", 0) + stats.get("flaky", 0))\' "$report")\n        [[ $ran -gt 0 ]] || { printf \'browser: Playwright ran no tests (every row skipped)\\n\' >&2; exit 1; }\n      )\n      ;;\n'
