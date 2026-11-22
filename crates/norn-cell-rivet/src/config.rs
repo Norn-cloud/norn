@@ -198,8 +198,8 @@ pub const PLAINTEXT_SINGLE_HOST: &str = "single-host";
 
 /// Refuse an engine endpoint that would carry the admin token in cleartext
 /// across a network. `RIVET_ENDPOINT` holds the token (it travels in every
-/// request and in the node socket's handshake), so it must be `https` or
-/// `wss`, except to a loopback address, or when the operator states with
+/// request and in the node socket's handshake), so it must be `https` except
+/// for a loopback address or when the operator states with
 /// `NORN_RIVET_PLAINTEXT_ENGINE=single-host` that the engine is on the same
 /// machine's bridge network. The error never repeats the endpoint, which
 /// holds the token.
@@ -210,8 +210,8 @@ pub fn check_engine_transport(endpoint: &str, plaintext: Option<&str>) -> Result
     let url = reqwest::Url::parse(endpoint)
         .map_err(|_unparsed| "RIVET_ENDPOINT is not a URL".to_owned())?;
     match url.scheme() {
-        "https" | "wss" => Ok(()),
-        "http" | "ws" => {
+        "https" => Ok(()),
+        "http" => {
             let host = url.host_str().unwrap_or_default();
             let bare = host.trim_start_matches('[').trim_end_matches(']');
             let loopback = host == "localhost"
@@ -246,7 +246,7 @@ mod tests {
         let ok =
             |endpoint: &str, flag: Option<&str>| check_engine_transport(endpoint, flag).is_ok();
         assert!(ok("https://default:t@10.0.0.2:6420", None));
-        assert!(ok("wss://default:t@lb.rivet.internal:6420", None));
+        assert!(!ok("wss://default:t@lb.rivet.internal:6420", None));
         assert!(ok("http://default:t@127.0.0.1:6420", None));
         assert!(ok("http://default:t@[::1]:6420", None));
         assert!(ok("http://default:t@localhost:6420", None));

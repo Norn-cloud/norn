@@ -116,7 +116,7 @@ class Cluster:
             "NORN_HOST_ISSUER=unused", "NORN_HOST_JWKS_URL=unused", f"NORN_LINEAGE_KEY={lineage_key}",
             "",
         ]))
-        self.meter_since = None
+        self.meter_snapshot = []
 
     @staticmethod
     def free_port():
@@ -133,6 +133,13 @@ class Cluster:
     def container(self, service):
         out = self.compose("ps", "-a", "-q", service, check=False).stdout.strip()
         return out.splitlines()[0] if out else None
+
+    def require_unused_project(self):
+        label = f"label=com.docker.compose.project={self.project}"
+        for kind in ("container", "network", "volume"):
+            args = ["-a"] if kind == "container" else []
+            if run(["sudo", "docker", kind, "ls", "-q", *args, "--filter", label]).stdout.strip():
+                raise RuntimeError(f"Compose project {self.project} already has a {kind}")
 
     def up(self):
         started = time.perf_counter()
@@ -170,11 +177,13 @@ class Cluster:
                 log(f"runner {index} exited on its own (code {child.returncode}); restarting it")
                 self.start_runner(index)
 
-    def kill_runner(self, index):
+    def kill_runner(self, index, *, require_running=True):
         child = self.children[index]
         if child is not None and child.poll() is None:
             os.killpg(child.pid, signal.SIGKILL)
             child.wait(timeout=30)
+        elif require_running:
+            raise RuntimeError(f"runner {index} was already stopped")
         self.children[index] = None
 
     def wait_ready(self, base, seconds=300):
@@ -190,7 +199,12 @@ class Cluster:
 
     def kill_engine(self, service):
         cid = self.container(service)
-        run(["sudo", "docker", "kill", "-s", "KILL", cid], check=False)
+        if not cid:
+            raise RuntimeError(f"engine {service} is absent")
+        run(["sudo", "docker", "kill", "-s", "KILL", cid])
+        running = run(["sudo", "docker", "inspect", "-f", "{{.State.Running}}", cid]).stdout.strip()
+        if running != "false":
+            raise RuntimeError(f"engine {service} did not stop after SIGKILL")
 
     def start_engine(self, service):
         self.compose("up", "-d", "--no-deps", service)
@@ -209,15 +223,21 @@ class Cluster:
 
     def down(self):
         for index in range(len(self.children)):
-            self.kill_runner(index)
+            self.kill_runner(index, require_running=False)
         self.compose("down", "-v", "--remove-orphans", check=False)
 
     def meter(self):
         """Every S3 request the engines made so far: (method, path, status) per line."""
         cid = self.container("s3-meter")
-        out = run(["sudo", "docker", "logs", cid], check=False)
+        if not cid:
+            raise RuntimeError("the S3 meter container is absent")
+        out = run(["sudo", "docker", "logs", cid])
         lines = (out.stdout + out.stderr).splitlines()
-        return [tuple(line.split(" ", 3)[1:4]) for line in lines if line.startswith("S3 ") and len(line.split(" ")) >= 4]
+        current = [tuple(line.split(" ", 3)[1:4]) for line in lines if line.startswith("S3 ") and len(line.split(" ")) >= 4]
+        if current[:len(self.meter_snapshot)] != self.meter_snapshot:
+            raise RuntimeError("the S3 meter log lost its previous prefix")
+        self.meter_snapshot = current
+        return current
 
 
 def classify(requests):
@@ -645,6 +665,8 @@ def phase_storage(cluster, reference, state, cells, commits, settle):
 
 
 def phase_latency(cluster, reference, state, samples):
+    if samples <= 0:
+        raise ValueError("the latency phase needs at least one sample")
     writers = Writers(cluster, reference, state, count=1, tag="t")
     writers.open_cells()
     cell = writers.cells[0]
@@ -666,7 +688,9 @@ def phase_latency(cluster, reference, state, samples):
         status, _, ms = request(base, "GET", "/__probe/count", "object=floor&tag=floor")
         if status == 200:
             small.append(ms)
-    return {"samples": samples, "commitMs": summary(commits), "readMs": summary(reads), "oneRowCommitMs": summary(floor), "oneRowReadMs": summary(small)}
+    complete = all(len(values) == samples for values in (commits, reads, floor, small))
+    return {"status": "pass" if complete else "fail", "samples": samples, "commitMs": summary(commits),
+            "readMs": summary(reads), "oneRowCommitMs": summary(floor), "oneRowReadMs": summary(small)}
 
 
 def main():
@@ -683,7 +707,7 @@ def main():
     parser.add_argument("--storage-cells", type=int, default=20)
     parser.add_argument("--storage-commits", type=int, default=50, help="commits per cell in the storage phase")
     parser.add_argument("--state", type=Path)
-    parser.add_argument("--project", default="norn-dura", help="compose project: one per concurrent cluster")
+    parser.add_argument("--project", default="norn-dura", help="Compose project name prefix; each run gets its own suffix")
     parser.add_argument("--lb-port", type=int, default=6420, help="loopback port of the engines' load balancer")
     parser.add_argument("--out", type=Path)
     args = parser.parse_args()
@@ -693,7 +717,9 @@ def main():
     reference = json.loads(args.reference.read_text())
     state = args.state or Path(tempfile.mkdtemp(prefix="norn-dura-"))
     state.mkdir(parents=True, exist_ok=True)
-    cluster = Cluster(state, binary, reference["lineageKey"], args.project, args.lb_port)
+    project = f"{args.project}-{secrets.token_hex(6)}"
+    cluster = Cluster(state, binary, reference["lineageKey"], project, args.lb_port)
+    cluster.require_unused_project()
     results = {"engine": "rivetdev/engine 3.1.1 x3", "phases": {}}
     phases = {
         "kill": lambda: phase_kill(cluster, reference, state, args.rounds),
