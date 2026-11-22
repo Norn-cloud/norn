@@ -36,7 +36,7 @@ use norn_kernel::{
     FactState, FactVersion, Generation, LedgerSeq, LinkKey, LinkMutation, LinkReadTarget,
     LinkState, LogicalTime, ObservationAuthorization, ObservationEvent, ObservationId, Observed,
     OwnedRowsCommitProof, Performed, PredicateObject, PredicateQuery, PredicateReadMember,
-    Proposed, TimerId, TypeCatalog, WrittenLinkVersion, WrittenVersion, check_commit_identifiers,
+    Proposed, TimerId, WrittenLinkVersion, WrittenVersion, check_commit_identifiers,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -1848,10 +1848,9 @@ where
         };
         if prior.is_none() {
             let store_model = self.store.model();
-            let catalog = TypeCatalog::new(store_model.object_types())
-                .with_interfaces(store_model.interfaces())
-                .with_governing_laws(store_model.law_artifacts())
-                .with_property_types(store_model.property_types());
+            let catalog = store_model
+                .type_catalog()
+                .with_governing_laws(store_model.law_artifacts());
             let model = CommitModel::new(&catalog);
             let reader = self.store.read();
             let view = GuardView(&reader);
@@ -2004,10 +2003,9 @@ where
                 }
             }
             let model = reader.model();
-            let catalog = TypeCatalog::new(model.object_types())
-                .with_interfaces(model.interfaces())
-                .with_governing_laws(model.law_artifacts())
-                .with_property_types(model.property_types());
+            let catalog = model
+                .type_catalog()
+                .with_governing_laws(model.law_artifacts());
             let model = CommitModel::new(&catalog);
             Proposed::new(&commit)
                 .authorize(authorization, owned_rows)?

@@ -3398,67 +3398,72 @@ impl<E: SqlEngine> CellStore<E> {
                 (installation.as_ref(), install_record)
             {
                 record.installed.commit_seq = commit_seq;
-                self.conn.execute(
-                    &format!(
-                        "INSERT INTO \"{DEFINITION_VERSION}\" (\"version\", \"receipt_sha256\", \"canonical_set\", \"model_hash\", \"ddl_hash\", \"installed_at\", \"commit_seq\") VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"
-                    ),
-                    params![
-                        to_i64(version, "definitions version")?,
-                        record.installed.receipt_sha256,
-                        record.installed.canonical_set,
-                        record.installed.model_hash,
-                        record.installed.ddl_hash,
-                        to_i64(record.installed.installed_at, "definitions installed_at")?,
-                        to_i64(commit_seq, "commit_seq")?,
-                    ],
-                )?;
-                let registry_json = serde_json::to_string(&record.installed.registry)
-                    .map_err(CellError::Json)?;
-                self.conn.execute(
-                    &format!(
-                        "INSERT INTO \"{DEFINITION_REGISTRY}\" (\"version\", \"registry\") VALUES (?1, ?2)"
-                    ),
-                    params![to_i64(version, "definitions version")?, registry_json],
-                )?;
-                if let Some(receipt) = &record.installed.admission_receipt {
+                // S1 (#1547): the one place the retained definitions are
+                // written; the engine refuses every other write to them.
+                self.conn.definition_writes(|| {
                     self.conn.execute(
                         &format!(
-                            "INSERT INTO \"{DEFINITION_ADMISSION_RECEIPT}\" (\"version\", \"receipt\") VALUES (?1, ?2)"
-                        ),
-                        params![to_i64(version, "definitions version")?, receipt],
-                    )?;
-                }
-                if let Some(layout) = &record.installed.layout {
-                    self.conn.execute(
-                        &format!(
-                            "INSERT INTO \"{DEFINITION_LAYOUT}\" (\"version\", \"layout_revision\", \"sidecar\") VALUES (?1, ?2, ?3)"
+                            "INSERT INTO \"{DEFINITION_VERSION}\" (\"version\", \"receipt_sha256\", \"canonical_set\", \"model_hash\", \"ddl_hash\", \"installed_at\", \"commit_seq\") VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"
                         ),
                         params![
                             to_i64(version, "definitions version")?,
-                            to_i64(record.installed.layout_revision, "layout revision")?,
-                            layout,
+                            record.installed.receipt_sha256,
+                            record.installed.canonical_set,
+                            record.installed.model_hash,
+                            record.installed.ddl_hash,
+                            to_i64(record.installed.installed_at, "definitions installed_at")?,
+                            to_i64(commit_seq, "commit_seq")?,
                         ],
                     )?;
-                }
-                for change in record.retained.iter().chain(&record.riding) {
-                    crate::retained::insert(
-                        &self.conn,
-                        &change.definition,
-                        version,
-                        commit_seq,
-                        record.installed.installed_at,
+                    let registry_json = serde_json::to_string(&record.installed.registry)
+                        .map_err(CellError::Json)?;
+                    self.conn.execute(
+                        &format!(
+                            "INSERT INTO \"{DEFINITION_REGISTRY}\" (\"version\", \"registry\") VALUES (?1, ?2)"
+                        ),
+                        params![to_i64(version, "definitions version")?, registry_json],
                     )?;
-                }
-                self.conn.execute(
-                    &format!("DELETE FROM \"{DEFINITION_ACTIVE}\" WHERE \"id\" = 1"),
-                    params![],
-                )?;
-                self.conn.execute(
-                    &format!(
-                        "INSERT INTO \"{DEFINITION_ACTIVE}\" (\"id\", \"version\") VALUES (1, ?1)"
-                    ),
-                    params![to_i64(version, "definitions version")?],
-                )?;
+                    if let Some(receipt) = &record.installed.admission_receipt {
+                        self.conn.execute(
+                            &format!(
+                                "INSERT INTO \"{DEFINITION_ADMISSION_RECEIPT}\" (\"version\", \"receipt\") VALUES (?1, ?2)"
+                            ),
+                            params![to_i64(version, "definitions version")?, receipt],
+                        )?;
+                    }
+                    if let Some(layout) = &record.installed.layout {
+                        self.conn.execute(
+                            &format!(
+                                "INSERT INTO \"{DEFINITION_LAYOUT}\" (\"version\", \"layout_revision\", \"sidecar\") VALUES (?1, ?2, ?3)"
+                            ),
+                            params![
+                                to_i64(version, "definitions version")?,
+                                to_i64(record.installed.layout_revision, "layout revision")?,
+                                layout,
+                            ],
+                        )?;
+                    }
+                    for change in record.retained.iter().chain(&record.riding) {
+                        crate::retained::insert(
+                            &self.conn,
+                            &change.definition,
+                            version,
+                            commit_seq,
+                            record.installed.installed_at,
+                        )?;
+                    }
+                    self.conn.execute(
+                        &format!("DELETE FROM \"{DEFINITION_ACTIVE}\" WHERE \"id\" = 1"),
+                        params![],
+                    )?;
+                    self.conn.execute(
+                        &format!(
+                            "INSERT INTO \"{DEFINITION_ACTIVE}\" (\"id\", \"version\") VALUES (1, ?1)"
+                        ),
+                        params![to_i64(version, "definitions version")?],
+                    )?;
+                    Ok(())
+                })?;
                 self.conn.execute(
                     &format!("UPDATE \"{META}\" SET \"value\" = ?1 WHERE \"key\" = 'ddl_hash'"),
                     params![install.candidate_model.ddl_hash()],

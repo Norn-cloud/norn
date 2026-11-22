@@ -277,6 +277,18 @@ pub(crate) fn asof_plan(
     base: &norn_checker::metric::compute::QuestionPlan,
     at: &str,
 ) -> norn_checker::metric::compute::QuestionPlan {
+    let mut question = base.question().clone();
+    question.freshness = norn_ir::metric::FreshnessPolicy::AsOf {
+        at: norn_ir::UtcTimestamp(at.into()),
+    };
+    admit_on(store, base.definitions(), &question)
+}
+/// Admit `question` over `definitions` against the cell's own object type.
+pub(crate) fn admit_on(
+    store: &norn_cell::CellStore,
+    definitions: &[MetricDefinition],
+    question: &QuestionIR,
+) -> norn_checker::metric::compute::QuestionPlan {
     use norn_ir::{ArtifactEnvelope, ArtifactKind, ArtifactPayload, EntityIrVersion, EntityRootV2};
     let mut artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(include_str!(
         "../../../../fixtures/ir/metrics/ontology.json"
@@ -301,12 +313,7 @@ pub(crate) fn asof_plan(
     )
     .expect("payload");
     let catalog = norn_checker::EffectiveCatalog::from_artifacts(&artifacts[..1]);
-    let mut question = base.question().clone();
-    question.freshness = norn_ir::metric::FreshnessPolicy::AsOf {
-        at: norn_ir::UtcTimestamp(at.into()),
-    };
-    norn_checker::metric::compute::admit(base.definitions(), &question, &catalog, 100)
-        .expect("admitted AsOf")
+    norn_checker::metric::compute::admit(definitions, question, &catalog, 100).expect("admitted")
 }
 pub(crate) type QualityHost = norn_cell::SqliteCell<
     norn_kernel::ObservationEvent,
