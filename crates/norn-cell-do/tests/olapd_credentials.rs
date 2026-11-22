@@ -6,7 +6,9 @@
 //! exists. Expired and rotated-out credentials are refused, and rotation
 //! needs no restart. A credential is good for the one operation and body it
 //! was minted for (OLAP-03); the scope is checked before the request is
-//! routed or parsed (OLAP-04); concurrent loads never share a scratch file
+//! routed or parsed (OLAP-04); concurrent loads never share a scratch file,
+//! and a landing attempt is the daemon's to name and has one owner at a
+//! time, so no store removes another landing's files or a running download
 //! (OLAP-02); and the retired token refuses startup whatever its value
 //! (OLAP-05).
 #![cfg(all(feature = "duckdb", not(target_arch = "wasm32")))]
@@ -23,7 +25,8 @@ use std::ffi::OsString;
 use std::io::{BufRead as _, BufReader, Read as _, Write as _};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Barrier};
+use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::{Arc, Barrier, Mutex};
 use std::time::Duration;
 
 use base64::Engine as _;
@@ -35,10 +38,12 @@ use norn_api::olap_credential::{
 };
 use norn_cell::analytics::engine::Settings;
 use norn_cell::analytics::{
-    Column, ColumnKind, FileFormat, FileSource, LoadRequest, LoadResponse, TableSchema, TenantId,
+    Column, ColumnKind, FileFormat, FileSource, LandRequest, LandResponse, LoadRequest,
+    StoreRequest, StoredObject, TableSchema, TenantId,
 };
+use norn_cell::dataset_manifest::ManifestPins;
 use norn_cell_do::olap::Exchange;
-use norn_cell_do::olapd::{Config, serve};
+use norn_cell_do::olapd::{Config, NoSeam, Seam, serve_with};
 use serde_json::json;
 
 const NOW: u64 = 1_800_000_000_000;
@@ -80,6 +85,11 @@ struct Daemon {
 
 /// A running daemon whose keyring holds `issuers`, at `NOW`.
 fn daemon(issuers: &[&Issuer]) -> Daemon {
+    daemon_with(issuers, Arc::new(NoSeam))
+}
+
+/// [`daemon`], announcing its seam points to `seam`.
+fn daemon_with(issuers: &[&Issuer], seam: Arc<dyn Seam>) -> Daemon {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("olap");
     let keys = directory.path().join("keyring");
@@ -97,7 +107,7 @@ fn daemon(issuers: &[&Issuer]) -> Daemon {
         },
     };
     let serving = Arc::clone(&clock);
-    std::thread::spawn(move || serve(&listener, config, serving));
+    std::thread::spawn(move || serve_with(&listener, config, serving, seam));
     Daemon {
         addr,
         root,
@@ -110,18 +120,7 @@ fn daemon(issuers: &[&Issuer]) -> Daemon {
 impl Daemon {
     /// The raw response, status line, headers and body, to `<method> /v1/<op>`.
     fn send(&self, method: &str, op: &str, authorization: Option<&str>, body: &str) -> Vec<u8> {
-        let mut stream = TcpStream::connect(self.addr).unwrap();
-        let authorization =
-            authorization.map_or_default(|value| format!("authorization: {value}\r\n"));
-        write!(
-            stream,
-            "{method} /v1/{op} HTTP/1.1\r\nhost: olapd\r\n{authorization}content-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-            body.len()
-        )
-        .unwrap();
-        let mut response = Vec::new();
-        stream.read_to_end(&mut response).unwrap();
-        response
+        send_to(self.addr, method, op, authorization, body)
     }
 
     fn post(&self, op: &str, authorization: Option<&str>, body: &str) -> Vec<u8> {
@@ -134,7 +133,7 @@ impl Daemon {
 
     /// `POST /v1/<op>` with the credential `issuer`'s cell for `of` mints for it.
     fn by(&self, issuer: &Issuer, of: &TenantId, op: &str, body: &str) -> Vec<u8> {
-        self.call(op, &mint(issuer, of, op, body), body)
+        by_at(self.addr, issuer, of, op, body)
     }
 
     fn database_exists(&self, tenant: &TenantId) -> bool {
@@ -142,6 +141,55 @@ impl Daemon {
             .join(format!("{}.duckdb", tenant.as_str()))
             .exists()
     }
+
+    /// The landing attempts of `of` on disk.
+    fn attempts(&self, of: &TenantId) -> Vec<String> {
+        let scratch = self.root.join("t").join(of.as_str()).join("scratch");
+        let mut names: Vec<String> = std::fs::read_dir(scratch)
+            .map(|entries| {
+                entries
+                    .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        names
+    }
+}
+
+/// `POST /v1/<op>` to the daemon at `addr`, with `issuer`'s credential for `of`.
+fn by_at(addr: SocketAddr, issuer: &Issuer, of: &TenantId, op: &str, body: &str) -> Vec<u8> {
+    let credential = mint(issuer, of, op, body);
+    send_to(
+        addr,
+        "POST",
+        op,
+        Some(&format!("Bearer {credential}")),
+        body,
+    )
+}
+
+/// The raw response, status line, headers and body, to `<method> /v1/<op>`.
+fn send_to(
+    addr: SocketAddr,
+    method: &str,
+    op: &str,
+    authorization: Option<&str>,
+    body: &str,
+) -> Vec<u8> {
+    let mut stream = TcpStream::connect(addr).unwrap();
+    let authorization = authorization
+        .map(|value| format!("authorization: {value}\r\n"))
+        .unwrap_or_default();
+    write!(
+        stream,
+        "{method} /v1/{op} HTTP/1.1\r\nhost: olapd\r\n{authorization}content-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+        body.len()
+    )
+    .unwrap();
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).unwrap();
+    response
 }
 
 fn status(response: &[u8]) -> &str {
@@ -151,7 +199,8 @@ fn status(response: &[u8]) -> &str {
 fn body(response: &[u8]) -> String {
     let text = String::from_utf8_lossy(response);
     text.split_once("\r\n\r\n")
-        .map_or_default(|(_, body)| body.to_owned())
+        .map(|(_, body)| body.to_owned())
+        .unwrap_or_default()
 }
 
 fn frontier(of: &TenantId) -> String {
@@ -480,12 +529,12 @@ fn overlapping_store(objects: Vec<(String, Vec<u8>)>) -> SocketAddr {
     addr
 }
 
-/// OLAP-02: two tenants load at once under the same load id. Each load reads
-/// exactly its own bytes from its own scratch file, the daemon removes only
-/// what it created, and a file already where the load id would once have
+/// OLAP-02 / MANIFEST-02: two tenants land at once under the same load id
+/// and landing identity. Each landing reads exactly its own bytes from its
+/// own attempt's file, and a file already where the load id would once have
 /// put it is neither read, truncated nor removed.
 #[test]
-fn concurrent_loads_with_the_same_load_id_never_share_bytes() {
+fn concurrent_landings_of_the_same_load_never_share_bytes() {
     let host = issuer("k1", 7);
     let daemon = daemon(&[&host]);
     let (a, b) = (tenant("org_a/prod"), tenant("org_b/prod"));
@@ -505,26 +554,37 @@ fn concurrent_loads_with_the_same_load_id_never_share_bytes() {
     let planted = daemon.root.join("tmp").join("load-same");
     std::fs::create_dir_all(daemon.root.join("tmp")).unwrap();
     std::fs::write(&planted, b"planted").unwrap();
-    let request = |of: &TenantId, name: &str, bytes: &[u8]| LoadRequest {
-        tenant: of.clone(),
-        table: TableSchema {
-            name: "shop.Sale".to_owned(),
-            columns: vec![Column {
-                id: "n".to_owned(),
-                kind: ColumnKind::Text,
-                nullable: false,
-                laws: Vec::new(),
-            }],
-            pin: "p1".to_owned(),
+    let request = |of: &TenantId, name: &str, bytes: &[u8]| LandRequest {
+        load: LoadRequest {
+            tenant: of.clone(),
+            table: TableSchema {
+                name: "shop.Sale".to_owned(),
+                columns: vec![Column {
+                    id: "n".to_owned(),
+                    kind: ColumnKind::Text,
+                    nullable: false,
+                    laws: Vec::new(),
+                }],
+                pin: "p1".to_owned(),
+            },
+            load: "same".to_owned(),
+            file: FileSource {
+                url: format!("http://{store}/{name}.csv"),
+                uri: format!("s3://uploads/{name}.csv"),
+                sha256: body_digest(bytes),
+                format: FileFormat::Csv,
+            },
+            headers: std::collections::BTreeMap::new(),
         },
-        load: "same".to_owned(),
-        file: FileSource {
-            url: format!("http://{store}/{name}.csv"),
-            uri: format!("s3://uploads/{name}.csv"),
-            sha256: body_digest(bytes),
-            format: FileFormat::Csv,
+        pins: ManifestPins {
+            definitions_version: 1,
+            model_hash: "model".to_owned(),
+            binding: "binding".to_owned(),
+            mapping: "mapping@sha".to_owned(),
+            laws: "laws".to_owned(),
         },
-        headers: std::collections::BTreeMap::new(),
+        landing: "same".to_owned(),
+        attempt: String::new(),
     };
     let loads = [
         (
@@ -540,23 +600,351 @@ fn concurrent_loads_with_the_same_load_id_never_share_bytes() {
     let answers: Vec<Vec<u8>> = std::thread::scope(|scope| {
         let ((a_of, a_body), (b_of, b_body)) = (&loads[0], &loads[1]);
         // Both loads are in flight before either is awaited.
-        let first = scope.spawn(move || on.by(minting, a_of, "load", a_body));
-        let second = scope.spawn(move || on.by(minting, b_of, "load", b_body));
+        let first = scope.spawn(move || on.by(minting, a_of, "land", a_body));
+        let second = scope.spawn(move || on.by(minting, b_of, "land", b_body));
         vec![first.join().unwrap(), second.join().unwrap()]
     });
     for (answer, rows) in answers.iter().zip([4000, 6000]) {
         assert_eq!(status(answer), "200", "{}", body(answer));
-        let loaded: LoadResponse = serde_json::from_str(&body(answer)).unwrap();
-        assert_eq!((loaded.rows, loaded.rejected), (rows, 0));
+        let landed: LandResponse = serde_json::from_str(&body(answer)).unwrap();
+        assert_eq!((landed.load.rows, landed.load.rejected), (rows, 0));
     }
     assert_eq!(std::fs::read(&planted).unwrap(), b"planted");
-    for of in [&a, &b] {
-        let scratch = daemon.root.join("tmp").join(of.as_str());
-        let left: Vec<_> = std::fs::read_dir(&scratch)
-            .unwrap()
-            .map(|entry| entry.unwrap().file_name())
-            .filter(|name| name.to_string_lossy().starts_with("load-"))
-            .collect();
-        assert_eq!(left.len(), 0, "{left:?}");
+}
+
+/// A landing of `bytes` (one text column `n`) by `of`, downloaded from `url`.
+fn land_request(of: &TenantId, url: String, bytes: &[u8]) -> LandRequest {
+    LandRequest {
+        load: LoadRequest {
+            tenant: of.clone(),
+            table: TableSchema {
+                name: "shop.Sale".to_owned(),
+                columns: vec![Column {
+                    id: "n".to_owned(),
+                    kind: ColumnKind::Text,
+                    nullable: false,
+                    laws: Vec::new(),
+                }],
+                pin: "p1".to_owned(),
+            },
+            load: format!("l{}", body_digest(bytes)),
+            file: FileSource {
+                url,
+                uri: "s3://uploads/sale.csv".to_owned(),
+                sha256: body_digest(bytes),
+                format: FileFormat::Csv,
+            },
+            headers: std::collections::BTreeMap::new(),
+        },
+        pins: ManifestPins {
+            definitions_version: 1,
+            model_hash: "model".to_owned(),
+            binding: "binding".to_owned(),
+            mapping: "mapping@sha".to_owned(),
+            laws: "laws".to_owned(),
+        },
+        landing: format!("landing-{}", body_digest(bytes)),
+        attempt: String::new(),
     }
+}
+
+/// The store of `landed`, the answer of `land`, to objects on `store`.
+fn store_request(store: SocketAddr, land: &LandRequest, landed: &LandResponse) -> StoreRequest {
+    let object = |sha: &str| StoredObject {
+        uri: format!("s3://datasets/{sha}.parquet"),
+        url: format!("http://{store}/put/{sha}"),
+    };
+    StoreRequest {
+        land: LandRequest {
+            attempt: landed.attempt.clone(),
+            ..land.clone()
+        },
+        landed: landed.clone(),
+        data: object(&landed.data.sha256),
+        held: object(&landed.held.sha256),
+    }
+}
+
+/// An object store: `GET /<name>` serves `objects[name]`, and `PUT` keeps
+/// the body under its path. A `GET` of `gated` sends half its bytes, says so
+/// on `started`, and sends the rest only once `release` is signalled, so a
+/// test runs calls while that download is in flight, deterministically.
+struct ObjectStore {
+    addr: SocketAddr,
+    puts: Arc<Mutex<std::collections::BTreeMap<String, Vec<u8>>>>,
+}
+
+fn object_store(
+    objects: Vec<(String, Vec<u8>)>,
+    gated: Option<(String, Sender<()>, Receiver<()>)>,
+) -> ObjectStore {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let puts = Arc::new(Mutex::new(std::collections::BTreeMap::new()));
+    let kept = Arc::clone(&puts);
+    let gated = Arc::new(Mutex::new(gated));
+    let objects = Arc::new(objects);
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let (objects, kept, gated) =
+                (Arc::clone(&objects), Arc::clone(&kept), Arc::clone(&gated));
+            std::thread::spawn(move || {
+                let mut stream = stream.unwrap();
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                let mut parts = line.split_whitespace();
+                let (method, path) = (
+                    parts.next().unwrap().to_owned(),
+                    parts.next().unwrap().to_owned(),
+                );
+                let mut length = 0_usize;
+                loop {
+                    let mut header = String::new();
+                    reader.read_line(&mut header).unwrap();
+                    if header.trim().is_empty() {
+                        break;
+                    }
+                    if let Some((name, value)) = header.split_once(':')
+                        && name.eq_ignore_ascii_case("content-length")
+                    {
+                        length = value.trim().parse().unwrap();
+                    }
+                }
+                if method == "PUT" {
+                    let mut sent = vec![0_u8; length];
+                    reader.read_exact(&mut sent).unwrap();
+                    kept.lock().unwrap().insert(path, sent);
+                    stream
+                        .write_all(
+                            b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                        )
+                        .unwrap();
+                    return;
+                }
+                let name = path.trim_start_matches('/');
+                let bytes = &objects.iter().find(|(n, _)| n == name).unwrap().1;
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                    bytes.len()
+                )
+                .unwrap();
+                let gate = {
+                    let mut gated = gated.lock().unwrap();
+                    if gated.as_ref().is_some_and(|(g, _, _)| g == name) {
+                        gated.take()
+                    } else {
+                        None
+                    }
+                };
+                match gate {
+                    Some((_, started, release)) => {
+                        let half = bytes.len() / 2;
+                        stream.write_all(&bytes[..half]).unwrap();
+                        stream.flush().unwrap();
+                        started.send(()).unwrap();
+                        release.recv().unwrap();
+                        stream.write_all(&bytes[half..]).unwrap();
+                    }
+                    None => stream.write_all(bytes).unwrap(),
+                }
+            });
+        }
+    });
+    ObjectStore { addr, puts }
+}
+
+fn rows_csv(prefix: &str, rows: usize) -> Vec<u8> {
+    use std::fmt::Write as _;
+    let mut text = String::from("n\n");
+    for i in 0..rows {
+        writeln!(text, "{prefix}{i:06}").unwrap();
+    }
+    text.into_bytes()
+}
+
+/// Runs `then` at the first `/v1/store` that returned from the engine.
+#[derive(Default)]
+struct AfterStore(Mutex<Option<Box<dyn FnOnce() + Send>>>);
+
+impl Seam for AfterStore {
+    fn stored(&self, _tenant: &TenantId, _stored: bool) {
+        let then = self.0.lock().unwrap().take();
+        if let Some(then) = then {
+            then();
+        }
+    }
+}
+
+/// OLAP-02: one tenant, two landings. Landing B is made at the exact point
+/// where store A has returned from the engine and its answer is not yet
+/// sent, the window in which A's cleanup once removed its attempt a second
+/// time, by name. B cannot take A's attempt: the daemon names every attempt
+/// and refuses a caller-named one, and the token it mints for B is B's
+/// alone. B's files survive A's store and B stores them.
+#[test]
+fn a_store_never_removes_a_landing_made_while_it_finishes() {
+    let host = issuer("k1", 7);
+    let seam = Arc::new(AfterStore::default());
+    let shared: Arc<dyn Seam> = Arc::<AfterStore>::clone(&seam);
+    let daemon = daemon_with(&[&host], shared);
+    let of = tenant("org_a/prod");
+    let (bytes_a, bytes_b) = (rows_csv("a", 300), rows_csv("b", 500));
+    let store = object_store(
+        vec![
+            ("a.csv".to_owned(), bytes_a.clone()),
+            ("b.csv".to_owned(), bytes_b.clone()),
+        ],
+        None,
+    );
+    let land_a = land_request(&of, format!("http://{}/a.csv", store.addr), &bytes_a);
+    let answer = daemon.by(&host, &of, "land", &serde_json::to_string(&land_a).unwrap());
+    assert_eq!(status(&answer), "200", "{}", body(&answer));
+    let landed_a: LandResponse = serde_json::from_str(&body(&answer)).unwrap();
+    assert!(!landed_a.attempt.is_empty(), "the daemon names the attempt");
+    // Landing B, run inside store A's window.
+    let land_b = land_request(&of, format!("http://{}/b.csv", store.addr), &bytes_b);
+    let reused = LandRequest {
+        attempt: landed_a.attempt.clone(),
+        ..land_b.clone()
+    };
+    let b_answers = Arc::new(Mutex::new(Vec::new()));
+    {
+        let (addr, answers, of) = (daemon.addr, Arc::clone(&b_answers), of.clone());
+        let (reused, fresh) = (
+            serde_json::to_string(&reused).unwrap(),
+            serde_json::to_string(&land_b).unwrap(),
+        );
+        *seam.0.lock().unwrap() = Some(Box::new(move || {
+            let minting = issuer("k1", 7);
+            let mut answers = answers.lock().unwrap();
+            answers.push(by_at(addr, &minting, &of, "land", &reused));
+            answers.push(by_at(addr, &minting, &of, "land", &fresh));
+        }));
+    }
+    let stored_a = daemon.by(
+        &host,
+        &of,
+        "store",
+        &serde_json::to_string(&store_request(store.addr, &land_a, &landed_a)).unwrap(),
+    );
+    assert_eq!(status(&stored_a), "200", "{}", body(&stored_a));
+    let b_answers = b_answers.lock().unwrap().clone();
+    let [reused_answer, fresh_answer] = <[Vec<u8>; 2]>::try_from(b_answers).unwrap();
+    assert_eq!(
+        status(&reused_answer),
+        "400",
+        "a caller never names an attempt: {}",
+        body(&reused_answer)
+    );
+    assert_eq!(status(&fresh_answer), "200", "{}", body(&fresh_answer));
+    let landed_b: LandResponse = serde_json::from_str(&body(&fresh_answer)).unwrap();
+    assert_ne!(landed_b.attempt, landed_a.attempt);
+    assert_eq!(
+        daemon.attempts(&of),
+        vec![landed_b.attempt.clone()],
+        "B's attempt survives A's store"
+    );
+    let stored_b = daemon.by(
+        &host,
+        &of,
+        "store",
+        &serde_json::to_string(&store_request(store.addr, &land_b, &landed_b)).unwrap(),
+    );
+    assert_eq!(status(&stored_b), "200", "{}", body(&stored_b));
+    let puts = store.puts.lock().unwrap();
+    assert!(puts.contains_key(&format!("/put/{}", landed_b.data.sha256)));
+    assert!(daemon.attempts(&of).is_empty());
+}
+
+/// OLAP-02: a store of an attempt whose download is still running, first
+/// or replayed, is refused and touches nothing: the download finishes, the
+/// landing answers its rows, and its own store then succeeds.
+#[test]
+fn a_store_during_a_download_leaves_the_download_intact() {
+    let host = issuer("k1", 7);
+    let daemon = daemon(&[&host]);
+    let of = tenant("org_a/prod");
+    let bytes = rows_csv("s", 4000);
+    let (started_tx, started) = channel();
+    let (release, release_rx) = channel();
+    let store = object_store(
+        vec![("slow.csv".to_owned(), bytes.clone())],
+        Some(("slow.csv".to_owned(), started_tx, release_rx)),
+    );
+    let land = land_request(&of, format!("http://{}/slow.csv", store.addr), &bytes);
+    let land_body = serde_json::to_string(&land).unwrap();
+    let addr = daemon.addr;
+    let (landing_of, landing_body) = (of.clone(), land_body);
+    let landing = std::thread::spawn(move || {
+        by_at(addr, &issuer("k1", 7), &landing_of, "land", &landing_body)
+    });
+    started.recv().unwrap();
+    // The download is half written. A racing store can know only the
+    // attempt's directory; it names that and the landing.
+    let [token] = <[String; 1]>::try_from(daemon.attempts(&of)).unwrap();
+    let file = |sha: &str| norn_cell::analytics::LandedFile {
+        sha256: sha.repeat(32),
+        rows: 1,
+        bytes: 1,
+    };
+    let early = LandResponse {
+        landing: land.landing.clone(),
+        attempt: token.clone(),
+        load: norn_cell::analytics::LoadResponse {
+            load: land.load.load.clone(),
+            rows: 1,
+            rejected: 0,
+            reasons: std::collections::BTreeMap::new(),
+            bytes: 1,
+            millis: 0,
+        },
+        data: file("ab"),
+        held: file("cd"),
+        valid_time: Vec::new(),
+        stored: None,
+    };
+    let early = serde_json::to_string(&store_request(store.addr, &land, &early)).unwrap();
+    for _replay in 0..2 {
+        let refused = daemon.by(&host, &of, "store", &early);
+        assert_eq!(status(&refused), "422", "{}", body(&refused));
+        assert!(
+            body(&refused).contains("bulk.attempt_busy"),
+            "{}",
+            body(&refused)
+        );
+        assert_eq!(
+            daemon.attempts(&of),
+            vec![token.clone()],
+            "the download is intact"
+        );
+    }
+    release.send(()).unwrap();
+    let answer = landing.join().unwrap();
+    assert_eq!(status(&answer), "200", "{}", body(&answer));
+    let landed: LandResponse = serde_json::from_str(&body(&answer)).unwrap();
+    assert_eq!(
+        (landed.attempt.as_str(), landed.load.rows),
+        (token.as_str(), 4000)
+    );
+    let stored = daemon.by(
+        &host,
+        &of,
+        "store",
+        &serde_json::to_string(&store_request(store.addr, &land, &landed)).unwrap(),
+    );
+    assert_eq!(status(&stored), "200", "{}", body(&stored));
+    // A replay of the finished store answers alike and removes nothing.
+    let replayed = daemon.by(
+        &host,
+        &of,
+        "store",
+        &serde_json::to_string(&store_request(store.addr, &land, &landed)).unwrap(),
+    );
+    assert_eq!(
+        (status(&replayed), body(&replayed)),
+        (status(&stored), body(&stored))
+    );
+    assert!(daemon.attempts(&of).is_empty());
 }
