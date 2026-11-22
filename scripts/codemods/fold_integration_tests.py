@@ -77,11 +77,14 @@ class Refused(Exception):
     pass
 
 
-def _sibling(name: str, directory: Path):
-    """Load a repository script by explicit path (as the other scripts do, #513)."""
+def _sibling(name, directory=None):
+    """Load sibling module `name` from its source by explicit path: never through sys.path,
+    never from a bytecode cache, never a same-named module loaded some other way (#513)."""
+    import pathlib
+    import sys
     import types
 
-    path = directory / f"{name}.py"
+    path = (directory or pathlib.Path(__file__).resolve().parent) / f"{name}.py"
     loaded = sys.modules.get(name)
     if getattr(loaded, "__norn_sibling__", None) == str(path):
         return loaded
@@ -89,9 +92,12 @@ def _sibling(name: str, directory: Path):
     module.__file__ = str(path)
     module.__norn_sibling__ = str(path)
     sys.modules[name] = module
-    exec(compile(path.read_bytes(), str(path), "exec", dont_inherit=True), module.__dict__)
+    try:
+        exec(compile(path.read_bytes(), str(path), "exec", dont_inherit=True), module.__dict__)
+    except BaseException:
+        del sys.modules[name]
+        raise
     return module
-
 
 # ---------------------------------------------------------------- crates
 
