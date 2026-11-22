@@ -38,10 +38,10 @@ jobs:
     # (#1369): made and started by the merge queue, with NORN_MAIN_RUNNER set. A human re-run or
     # push runs hosted, uses the Actions cache and never receives the key.
     environment: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor == 'github-merge-queue[bot]' && github.triggering_actor == 'github-merge-queue[bot]' && vars.NORN_MAIN_RUNNER == 'boat' && 'ci-cache-writer-boat' || '' }}
-    # OIDC for the cache-key step; a fork's run gets no token.
     permissions:
       contents: read
-      id-token: write
+      actions: read # Enumerate deployment environments for the secret inventory.
+      id-token: write # Read the shared cache keys from Infisical over OIDC.
     env:
       SCCACHE_CACHE_SIZE: 10G
       SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
@@ -121,9 +121,8 @@ jobs:
         with:
           version: v0.19.0
           disable_annotations: true
-      # The shared cache's R2 keys live in Infisical, never in GitHub secrets (credential policy,
-      # norn-skeleton-guard ci::credentials), and only the reviewed helper scripts/ci/infisical-oidc.sh
-      # reads them, over OIDC, as this step's one command. A push to main (Boat only, inside
+      # The shared cache's R2 keys live in Infisical. This step reads them over OIDC using the
+      # helper pinned by the workflow contract. A push to main (Boat only, inside
       # `ci-cache-writer-boat`) logs in as the writer its environment variables name, in the writer's
       # own Infisical project; every other run as the reader, in the reader's project, which holds only
       # the read-only key. An unset variable yields '' (never the other role). With `--optional`, unset
@@ -213,6 +212,10 @@ jobs:
       # The full gate is `core.sh all` split into parallel bundle jobs. The plan comes from
       # core.sh itself, so CI runs exactly its shards and phases (all but formal).
       # Pull requests use affected plans; merge groups and main run the full set.
+      - name: Audit Actions secret inventory
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 -I scripts/ci/actions-secret-inventory.py
       - id: plan
         env:
           BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
@@ -235,10 +238,9 @@ jobs:
     # (#1369): made and started by the merge queue, with NORN_MAIN_RUNNER set. A human re-run or
     # push runs hosted, uses the Actions cache and never receives the key.
     environment: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor == 'github-merge-queue[bot]' && github.triggering_actor == 'github-merge-queue[bot]' && vars.NORN_MAIN_RUNNER == 'boat' && 'ci-cache-writer-boat' || '' }}
-    # OIDC for the cache-key step; a fork's run gets no token.
     permissions:
       contents: read
-      id-token: write
+      id-token: write # Read the shared cache keys from Infisical over OIDC.
     env:
       SCCACHE_CACHE_SIZE: 10G
       SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
@@ -314,9 +316,8 @@ jobs:
         with:
           version: v0.19.0
           disable_annotations: true
-      # The shared cache's R2 keys live in Infisical, never in GitHub secrets (credential policy,
-      # norn-skeleton-guard ci::credentials), and only the reviewed helper scripts/ci/infisical-oidc.sh
-      # reads them, over OIDC, as this step's one command. A push to main (Boat only, inside
+      # The shared cache's R2 keys live in Infisical. This step reads them over OIDC using the
+      # helper pinned by the workflow contract. A push to main (Boat only, inside
       # `ci-cache-writer-boat`) logs in as the writer its environment variables name, in the writer's
       # own Infisical project; every other run as the reader, in the reader's project, which holds only
       # the read-only key. An unset variable yields '' (never the other role). With `--optional`, unset
@@ -452,10 +453,10 @@ jobs:
     # Write access serves only the last step, which removes a failing pull
     # request from the merge queue. No step runs candidate code.
     permissions:
-      contents: write
-      issues: read
-      pull-requests: write
-      statuses: write
+      contents: write # Remove a rejected pull request from the merge queue.
+      issues: read # Read maintainer approval comments.
+      pull-requests: write # Remove a rejected pull request from the merge queue.
+      statuses: write # Publish the head-bound policy status.
     # An edit re-runs when either the new or the previous body mentions the
     # command, so removing an approval re-evaluates and fails closed. `contains`
     # also covers bodies the gate accepts after trimming.

@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
-# The one reviewed way a workflow acquires a credential (credential policy, norn-skeleton-guard
-# ci::credentials): it reads secrets from Infisical over GitHub OIDC into this step's outputs. No
-# workflow mints an OIDC token or calls the Infisical API itself, and a credential-named input may
-# only come from a step that runs this script (or from an OIDC action). Usage, in a job with
-# `permissions: id-token: write`:
+# Read Infisical secrets over GitHub OIDC into this step's outputs. Usage in a job
+# with id-token: write:
 #   INFISICAL_IDENTITY_ID=… INFISICAL_PROJECT_ID=… bash scripts/ci/infisical-oidc.sh <env> <path> NAME…
 # Each NAME becomes the output `name` (lower case). Every value is checked (non-empty, one line) and
 # masked before any is written, and the outputs are written at once or not at all; bearers reach

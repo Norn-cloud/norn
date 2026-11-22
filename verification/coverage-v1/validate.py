@@ -128,7 +128,7 @@ CORE_RUNNER = ROOT / "scripts/ci/core.sh"
 # `ci-cache-writer-boat` environment names the writer identity, and a push to main enters it exactly
 # when it runs on Boat (#1369): made and started by the merge queue's bot, with NORN_MAIN_RUNNER
 # set. A hosted main push (a human's push or re-run included) never logs in as the writer.
-# The keys live in Infisical, never in GitHub secrets (norn-skeleton-guard ci::credentials): the
+# The keys live in Infisical. The
 # step before the start step reads them over OIDC with the reviewed helper
 # scripts/ci/infisical-oidc.sh and hands them over as its outputs.
 SCCACHE_SECRETS = {"NORN_SCCACHE_%s" % name: "${{ steps.sccache-keys.outputs.norn_sccache_%s }}" % name.lower()
@@ -140,7 +140,7 @@ SCCACHE_ROLE = ("${{ github.event_name == 'push' && github.ref == 'refs/heads/ma
                 " || github.event_name != 'push' && vars.NORN_SCCACHE_READER_INFISICAL_%s"
                 " || github.ref != 'refs/heads/main' && vars.NORN_SCCACHE_READER_INFISICAL_%s || '' }}")
 SCCACHE_KEY_VARS = {"INFISICAL_%s" % what: SCCACHE_ROLE % (what, what, what) for what in ("IDENTITY_ID", "PROJECT_ID")}
-# The step's one command is the reviewed helper (the credential lint admits its outputs only then).
+# Pin the cache step to the Infisical OIDC helper.
 SCCACHE_KEYS = ("bash scripts/ci/infisical-oidc.sh --optional prod /sccache"
                 " NORN_SCCACHE_BUCKET NORN_SCCACHE_ENDPOINT NORN_SCCACHE_KEY_ID NORN_SCCACHE_SECRET")
 SCCACHE_KEYS_STEP = {"name": "Read the shared cache keys from Infisical over OIDC", "id": "sccache-keys",
@@ -647,7 +647,8 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
                 f"{name}: only core and test may name the cache-writer environment")
         permissions = job.get("permissions") or {}
         # `write-all` grants id-token: write too (and `"id-token" in "write-all"` is a substring test).
-        require(permissions == OIDC_PERMISSIONS if name in {"core", "test"}
+        require(permissions == {**OIDC_PERMISSIONS, "actions": "read"} if name == "core"
+                else permissions == OIDC_PERMISSIONS if name == "test"
                 else permissions != "write-all" and "id-token" not in permissions,
                 f"{name}: only core and test mint an OIDC token, with contents: read beside it")
         for step in job.get("steps", []):
@@ -830,6 +831,9 @@ df -h /
         after_checkout = preparation.index(checkout) + 1
         preparation[after_checkout:after_checkout] = ([hosted_warning] if name == "core" else []) + [libclang]
         if name == "core":
+            preparation.append({"name": "Audit Actions secret inventory",
+                                "env": {"GITHUB_TOKEN": "${{ github.token }}"},
+                                "run": "python3 -I scripts/ci/actions-secret-inventory.py"})
             preparation.append({"id": "plan", "env": plan_env, "run": plan_command + "\n"})
         require(json.dumps(job_steps[:-1], sort_keys=True) == json.dumps(preparation, sort_keys=True),
                 f"{name}: preparation actions and inputs must match the approved contract")

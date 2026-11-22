@@ -1,5 +1,4 @@
 //! Public-core CI: candidate checks and base-owned policy over candidate data.
-pub mod credentials;
 pub mod git;
 pub mod provenance;
 pub mod workflow_lint;
@@ -24,7 +23,7 @@ const GATE_DIRECTORIES: [&str; 2] = [".cargo/", "crates/norn-skeleton-guard/"];
 /// A gate file absent from the base must stay absent. The toolchain files are gates although
 /// none exists, as defence in depth: rustup reads them from the working directory, but the
 /// gated `validate-runner-policy.py` sets `RUSTUP_TOOLCHAIN`, which takes precedence.
-const GATE_FILES: [&str; 26] = [
+const GATE_FILES: [&str; 30] = [
     // Python isolation (#513): the base-owned check and its canaries, and every file a gated
     // Python file loads by explicit path, so none of them can change what a gate decides.
     "scripts/ci/python_isolation.py",
@@ -39,6 +38,10 @@ const GATE_FILES: [&str; 26] = [
     "rust-toolchain",
     "verification/coverage-v1/fixtures/pull-request-concurrency.json",
     "scripts/ci/core.sh",
+    "scripts/ci/actions-secret-inventory.py",
+    "scripts/ci/infisical-oidc.sh",
+    "scripts/ci/secret-scan.sh",
+    "scripts/ci/test_infisical_oidc.py",
     "scripts/ci/contract_diff.py",
     "scripts/ci/test_contract_diff.py",
     "scripts/ci/contract-breaks.json",
@@ -631,7 +634,6 @@ pub fn run_with_evidence(root: &Path, base: &Path, evidence: Option<&Path>) -> V
             Ok(doc) => {
                 errors.extend(concurrency_error(path, &doc));
                 errors.extend(pinned_step_errors(path, &doc));
-                errors.extend(credentials::errors(path, &doc));
                 if let Some(yaml::Value::Map(jobs)) = doc.get("jobs") {
                     for (name, job) in jobs {
                         if !runner_is_admitted(
@@ -648,19 +650,6 @@ pub fn run_with_evidence(root: &Path, base: &Path, evidence: Option<&Path>) -> V
                     errors.push(format!("{path}: missing jobs"));
                 }
             }
-            Err(error) => errors.push(format!("{path}: {error}")),
-        }
-    }
-    // A local composite action's steps hold no long-lived credential either.
-    for path in files.iter().filter(|path| {
-        let name = path.rsplit('/').next().unwrap_or("");
-        name == "action.yml" || name == "action.yaml"
-    }) {
-        match std::fs::read_to_string(root.join(path))
-            .map_err(|e| e.to_string())
-            .and_then(|text| yaml::parse(&text))
-        {
-            Ok(doc) => errors.extend(credentials::errors(path, &doc)),
             Err(error) => errors.push(format!("{path}: {error}")),
         }
     }
