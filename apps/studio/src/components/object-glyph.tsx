@@ -1,9 +1,12 @@
-import { ArrowLeftRight, Box, ClipboardList, FileCheck2, Layers, Link2, Package, Receipt, Scale, Truck, UserRound, Users, Wallet, Warehouse, type LucideIcon } from "lucide-react"
+import { ReceiptText, ArrowLeftRight, Box, ClipboardList, FileCheck2, Layers, Link2, Package, Receipt, Scale, Truck, UserRound, Users, Wallet, Warehouse, type LucideIcon } from "lucide-react"
 import { IconTile, type Tone } from "@/components/chip"
 
 type Appearance = { readonly icon: LucideIcon; readonly tone: Tone }
 
 const OBJECTS: Readonly<Record<string, Appearance>> = {
+  "canon.Repayment": { icon: ReceiptText, tone: "green" },
+  "canon.Loan": { icon: ClipboardList, tone: "orange" },
+  "canon.Client": { icon: UserRound, tone: "blue" },
   "canon.Holding": { icon: Warehouse, tone: "blue" },
   "canon.OrderLine": { icon: ClipboardList, tone: "violet" },
   "canon.Delivery": { icon: Truck, tone: "teal" },

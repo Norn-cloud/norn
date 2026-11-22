@@ -18,6 +18,7 @@ import { KINDS, type Kind } from "@/lib/kinds"
 import { cn } from "@/lib/utils"
 import { ViewProvider, useView } from "@/lib/view"
 import { LOCALES, LocaleProvider, directionOf, isLocale, useLocale } from "@/lib/locale"
+import { financeDemo } from "@/lib/finance-demo"
 import { WORKSPACES, WORKSPACE_GROUPS } from "@/lib/workspaces"
 import { useMode } from "@/lib/live-transport"
 import { useStudioScope } from "@/lib/definitions"
@@ -103,7 +104,7 @@ function useOpenWorkspace() {
     ? { id: "live", name: account.data?.organization?.name ?? scope.data?.orgId ?? "Connected cell", detail: `Live cell${scope.data ? ` · ${scope.data.orgId}/${scope.data.environmentId}` : ""}` }
     : mode.data?.kind !== "recorded"
       ? { id: "pending", name: account.data?.organization?.name ?? scope.data?.orgId ?? "Workspace", detail: mode.isError || mode.failureCount > 0 ? "Can't reach the cell · retrying" : "Connecting…" }
-      : recorded && { id: recorded.id, name: recorded.name, detail: recorded.detail }
+      : recorded && { id: recorded.id, name: (financeDemo ? account.data?.previewBrand?.workspaceName : undefined) ?? recorded.name, detail: recorded.detail }
   return { live, open }
 }
 
@@ -141,8 +142,8 @@ function ScopeSwitcher() {
                   </KitMenuItem>
                 )
                 : (
-                  <KitMenuRadioItem key={workspace.id} value={workspace.id} label={workspace.name} disabled={live || !workspace.recorded} className="flex-col items-start gap-0">
-                    <span>{workspace.name}</span><span className="text-xs text-muted-foreground">{workspace.detail}</span>
+                  <KitMenuRadioItem key={workspace.id} value={workspace.id} label={workspace.id === open?.id ? open.name : workspace.name} disabled={live || !workspace.recorded} className="flex-col items-start gap-0">
+                    <span>{workspace.id === open?.id ? open.name : workspace.name}</span><span className="text-xs text-muted-foreground">{workspace.detail}</span>
                   </KitMenuRadioItem>
                 ))}
             </div>

@@ -1,3 +1,4 @@
+import { financeDemo } from "./lib/finance-demo.ts"
 import { useQueries, useQuery } from "@tanstack/react-query"
 import { Link, useParams } from "@tanstack/react-router"
 import { Fragment, useEffect, useMemo, useRef, useState } from "react"
@@ -323,7 +324,7 @@ export function QuestionsPage() {
   const board = useQuery({ queryKey: ["question-board"], queryFn: transport.questionBoard, enabled: recorded })
   return (
     <section className="space-y-6">
-      <PageHeader title="Metrics" description={recorded ? "See how the cell calculated weekly yield and what changed when a source record was corrected." : "The numbers your records add up to, answered exactly by the server. Every number opens to the records behind it."}
+      <PageHeader title="Metrics" description={recorded ? (financeDemo ? "Track the share of repayments reconciled each week and see what changed after a source correction." : "See how the cell calculated weekly yield and what changed when a source record was corrected.") : "The numbers your records add up to, answered exactly by the server. Every number opens to the records behind it."}
         actions={live && <><Button asChild variant="outline" size="sm"><Link to="/metrics/build">Step by step</Link></Button><Button asChild size="sm"><Link to="/metrics/new"><Plus />Explore a metric</Link></Button></>} />
       {mode.isError && <p className="text-destructive">{mode.error.message}</p>}
       {live ? <LiveQuestionsBoard /> : mode.data && <>

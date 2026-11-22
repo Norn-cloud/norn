@@ -1,3 +1,5 @@
+import { financeDemo } from "./finance-demo.ts"
+
 /** A project Studio can open: its recorded documents, or a note that it has none here. */
 export interface Workspace {
   readonly id: string
@@ -21,7 +23,9 @@ export const WORKSPACES: readonly Workspace[] = [
   // CC BY-NC-SA: nothing derived from it is committed here.
   { id: "olist", name: "Olist e-commerce", group: "Industry benchmarks", detail: "Benchmark run offline (licence NC)", recorded: false, results: "https://github.com/Norn-cloud/norn/issues/531" },
   // The synthetic recorded world is the jewelry business: gold scrap, its yield and the three systems that feed it.
-  { id: "jewelry", name: "Jewelry", group: "First-party", detail: "Recorded · synthetic gold-scrap data", recorded: true },
+  financeDemo
+    ? { id: "financial-services", name: "Financial services", group: "First-party", detail: "Synthetic example", recorded: true }
+    : { id: "jewelry", name: "Jewelry", group: "First-party", detail: "Recorded · synthetic gold-scrap data", recorded: true },
 ]
 
 export const WORKSPACE_GROUPS = [...new Set(WORKSPACES.map(({ group }) => group))]

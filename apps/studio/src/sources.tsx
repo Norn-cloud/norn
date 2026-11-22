@@ -1,3 +1,4 @@
+import { financeDemo } from "./lib/finance-demo.ts"
 import { useQuery } from "@tanstack/react-query"
 import { MarkingChips, useMarkingCatalog } from "@/components/marking-chip"
 import { Link, useParams } from "@tanstack/react-router"
@@ -37,7 +38,7 @@ export function DenseTable({ head, children }: { readonly head: ReactNode; reado
   )
 }
 
-export const RECORDED_HINT = "Documents the engine produced, replayed exactly. Not a live connection."
+export const RECORDED_HINT = financeDemo ? "Synthetic finance examples from recorded data." : "Documents the engine produced, replayed exactly. Not a live connection."
 
 const EXAMPLE_STACK = [
   "aws", "python", "postgresql", "fastapi", "langgraph", "grafana", "kafka", "iceberg", "mlflow",
@@ -309,7 +310,7 @@ export function SourcesPage() {
     <section className="space-y-5">
       <PageHeader title="Sources" meta={recorded && <Badge variant="outline" title={RECORDED_HINT}>Recorded demo</Badge>}
         description={recorded
-          ? "This snapshot uses synthetic ERPNext and Shopify records. Both systems map into the same business model for holdings, orders, and deliveries."
+          ? (financeDemo ? "Synthetic ERPNext and Shopify records map into the same model for clients, loans, and repayments." : "This snapshot uses synthetic ERPNext and Shopify records. Both systems map into the same business model for holdings, orders, and deliveries.")
           : "Each source system keeps its own records. Norn maps them into the same business model for holdings, orders, and deliveries."} />
       {read.isPending && <p className="text-muted-foreground">Reading definitions…</p>}
       {read.isError && <p className="text-destructive">{read.error.message}</p>}

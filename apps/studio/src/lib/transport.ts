@@ -1,4 +1,5 @@
 import type { Schemas } from "../../../../packages/norn-sdk/src/index.ts"
+import { financeDemo, financeRecording } from "./finance-demo.ts"
 import { readDocument, type Read } from "./exact.ts"
 import { currentMode, liveTransport, type ObjectCounts } from "./live-transport.ts"
 import { readsOf } from "./objects.ts"
@@ -60,7 +61,16 @@ export interface Transport {
   readonly object: (objectType: string, id: string) => Promise<ObjectReads | null>
 }
 
-const recordings = import.meta.glob<string>(["../../../../fixtures/demo/answers/*.json", "../../../../fixtures/demo/explorer/**/*.json", "../../../../fixtures/demo/guarantees/*.json"], { query: "?raw", import: "default", eager: true })
+const originalRecordings = import.meta.glob<string>(["../../../../fixtures/demo/answers/*.json", "../../../../fixtures/demo/explorer/**/*.json", "../../../../fixtures/demo/guarantees/*.json"], { query: "?raw", import: "default", eager: true })
+
+// The finance presentation changes display names and synthetic IDs, leaving the
+// recorded documents and the live transport intact.
+const recordings = financeDemo
+  ? Object.fromEntries(Object.entries(originalRecordings).map(([path, source]) => [
+      path.includes("/explorer/objects/") ? financeRecording(path) : path,
+      financeRecording(source),
+    ]))
+  : originalRecordings
 
 const optional = <T,>(name: string): Read<T> | null =>
   recordings[`../../../../fixtures/demo/${name}`] === undefined ? null : recorded<T>(name)

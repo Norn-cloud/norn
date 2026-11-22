@@ -8,6 +8,7 @@ import { day, headline } from "./lib/format.ts"
 import { restated, sameAnswer } from "./lib/restatement.ts"
 import { transport, type Answer } from "./lib/transport.ts"
 import { CorrectionsStatus } from "./restatement-status.tsx"
+import { financeDemo } from "./lib/finance-demo.ts"
 import { cn } from "@/lib/utils"
 
 const changes = (count: number) => `${count} committed ${count === 1 ? "change" : "changes"}`
@@ -45,7 +46,7 @@ export function RestatementCard() {
       <CardHeader>
         <div className="flex flex-wrap items-center gap-2">
           <CardTitle role="heading" aria-level={2} className="text-xl">Corrections to {headline(declared.question).toLowerCase()}</CardTitle>
-          {recorded && <Badge variant="outline" title="Documents the engine produced, replayed exactly. Not a live connection.">Recorded</Badge>}
+          {recorded && <Badge variant="outline" title={financeDemo ? "Synthetic finance example." : "Documents the engine produced, replayed exactly. Not a live connection."}>Recorded</Badge>}
         </div>
         <CardDescription>
           When a source record is corrected, the answer is recalculated. The answer published before the correction stays readable exactly as it was.
