@@ -933,6 +933,8 @@ echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN"
             '  wait "$second" || status=1',
             '  (( status == 0 )) || exit "$status"',
             'if not expected or actual != expected:',
+            'idle = sorted(set(expected) - executed - skip_allowed)',
+            'if idle:',
         )), "authoring shards must execute and check coverage exactly once")
     # Studio browser rows (#1113): never a silent pass. Tests without a config fail, and so
     # does a config whose match lists no tests.

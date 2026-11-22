@@ -15,7 +15,7 @@ test/dashboard.test.ts
 test/decisions.test.ts
 test/dev-install.test.ts
 test/dev-loop.test.ts
-test/engine-alpha.test.ts
+test/engine-alpha.test.ts skip-allowed
 test/entity-builders.test.ts
 test/eval-batch.test.ts
 test/existing-cli.test.ts

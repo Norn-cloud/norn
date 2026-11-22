@@ -226,16 +226,27 @@ import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-expected = collections.Counter(Path(sys.argv[1]).read_text(encoding="utf-8").splitlines())
-actual = collections.Counter()
+# A line `path skip-allowed` names a file whose every test may be skipped (a gated test).
+inventory = [line.split() for line in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()]
+if any(len(fields) not in (1, 2) or fields[1:] not in ([], ["skip-allowed"]) for fields in inventory):
+    sys.exit("authoring inventory: each line is `path` or `path skip-allowed`")
+expected = collections.Counter(fields[0] for fields in inventory)
+skip_allowed = {fields[0] for fields in inventory if fields[1:]}
+actual, executed = collections.Counter(), set()
 for report in sys.argv[2:]:
     suites = ET.parse(report).getroot().findall("./testsuite")
     if not any(case.find("skipped") is None for suite in suites for case in suite.findall("testcase")):
         sys.exit(f"{report}: no authoring tests executed")
     actual.update(suite.attrib["file"] for suite in suites)
+    executed.update(suite.attrib["file"] for suite in suites
+                    if any(case.find("skipped") is None for case in suite.findall("testcase")))
 if not expected or actual != expected:
     sys.exit(f"Authoring shard coverage differs: missing={list(expected - actual)}, extra or repeated={list(actual - expected)}")
-print(f"Authoring shards covered exactly the {len(expected)} inventoried test files")
+# A file counts only when one of its tests ran: a suite of skipped cases is not coverage.
+idle = sorted(set(expected) - executed - skip_allowed)
+if idle:
+    sys.exit(f"Authoring files with no executed test: {idle}")
+print(f"Authoring shards covered exactly the {len(expected)} inventoried test files, {len(executed)} with executed tests")
 PYTHON
 )
 
