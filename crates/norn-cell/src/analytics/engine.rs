@@ -138,12 +138,32 @@ struct StoreReceipt {
 
 const STORE_RECEIPT_VERSION: u8 = 1;
 
+#[derive(Default, serde::Deserialize)]
+#[serde(try_from = "u8")]
+enum StoreReceiptVersion {
+    #[default]
+    Unversioned,
+    Current,
+}
+
+impl TryFrom<u8> for StoreReceiptVersion {
+    type Error = &'static str;
+
+    fn try_from(version: u8) -> Result<Self, Self::Error> {
+        if version == STORE_RECEIPT_VERSION {
+            Ok(Self::Current)
+        } else {
+            Err("unknown store receipt version")
+        }
+    }
+}
+
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RecordedStore {
     // Unversioned receipts are from before the introduction of row laws.
     #[serde(default)]
-    version: u8,
+    version: StoreReceiptVersion,
     request: Box<RawValue>,
     response: Box<RawValue>,
 }
@@ -1190,17 +1210,20 @@ impl Engine {
             |error: serde_json::Error| refusal("analytics.engine", error.to_string());
         let receipt: RecordedStore = serde_json::from_str(&text).map_err(decode_error)?;
         let recorded_request: StoreRequest = match receipt.version {
-            0 => legacy_store_request(&receipt.request).map_err(decode_error)?,
-            STORE_RECEIPT_VERSION if !legacy => {
+            StoreReceiptVersion::Unversioned => {
+                legacy_store_request(&receipt.request).map_err(decode_error)?
+            }
+            StoreReceiptVersion::Current if !legacy => {
                 serde_json::from_str(receipt.request.get()).map_err(decode_error)?
             }
-            STORE_RECEIPT_VERSION => return Err(refusal(STALE, "the store is another request's")),
-            _ => return Err(refusal("analytics.engine", "unknown store receipt version")),
+            StoreReceiptVersion::Current => {
+                return Err(refusal(STALE, "the store is another request's"));
+            }
         };
         if recorded_request != store_contract(request) {
             return Err(refusal(STALE, "the store is another request's"));
         }
-        let answer = if receipt.version == 0 {
+        let answer = if matches!(receipt.version, StoreReceiptVersion::Unversioned) {
             serde_json::from_str::<LegacyLandingAnswer>(receipt.response.get())
                 .map_err(decode_error)?
                 .into()
@@ -4487,8 +4510,9 @@ mod tests {
         assert_eq!(
             reopened
                 .with(&tenant, |conn| meta(conn, &key))
-                .expect("receipt"),
-            Some(receipt)
+                .expect("receipt")
+                .as_deref(),
+            Some(receipt.as_str())
         );
         let changed = refreshed.replace("s3://synthetic/data", "s3://synthetic/other");
         let mismatch: StoreBody = serde_json::from_str(&changed).expect("changed object");
@@ -4499,6 +4523,24 @@ mod tests {
                 .code,
             STALE
         );
+        for (attempt, version) in [("aZero", "0"), ("aFuture", "2"), ("aNull", "null")] {
+            let key = receipt_key(attempt);
+            let unsupported = receipt
+                .replacen('{', &format!("{{\"version\":{version},"), 1)
+                .replace("aOld", attempt);
+            reopened
+                .with(&tenant, |conn| set_meta(conn, &key, &unsupported))
+                .expect("stored unsupported receipt");
+            let body: StoreBody =
+                serde_json::from_str(&original.replace("aOld", attempt)).expect("old store body");
+            assert_eq!(
+                reopened
+                    .store_json(&body, |_, _| panic!("a refusal sends nothing"))
+                    .expect_err("explicit unsupported version")
+                    .code,
+                "analytics.engine"
+            );
+        }
     }
 
     /// MANIFEST-LAWS-1 (Sol r2 S6): `DuckDB` materializes a query's whole
