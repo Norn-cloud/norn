@@ -180,8 +180,9 @@ class Cluster:
     def kill_runner(self, index, *, require_running=True):
         child = self.children[index]
         if child is not None and child.poll() is None:
-            os.killpg(child.pid, signal.SIGKILL)
-            child.wait(timeout=30)
+            child.kill()
+            if child.wait(timeout=30) != -signal.SIGKILL and require_running:
+                raise RuntimeError(f"runner {index} did not exit from SIGKILL")
         elif require_running:
             raise RuntimeError(f"runner {index} was already stopped")
         self.children[index] = None
@@ -202,9 +203,9 @@ class Cluster:
         if not cid:
             raise RuntimeError(f"engine {service} is absent")
         run(["sudo", "docker", "kill", "-s", "KILL", cid])
-        running = run(["sudo", "docker", "inspect", "-f", "{{.State.Running}}", cid]).stdout.strip()
-        if running != "false":
-            raise RuntimeError(f"engine {service} did not stop after SIGKILL")
+        state = run(["sudo", "docker", "inspect", "-f", "{{.State.Running}} {{.State.ExitCode}}", cid]).stdout.strip()
+        if state != "false 137":
+            raise RuntimeError(f"engine {service} did not exit from SIGKILL: {state}")
 
     def start_engine(self, service):
         self.compose("up", "-d", "--no-deps", service)
