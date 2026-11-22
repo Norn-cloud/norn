@@ -123,13 +123,15 @@ def row(spec):
 
 
 def admitted_at(entries):
-    """Legacy runs had a plan job, and admission is its start. On the consolidated workflow the
-    plan is the first step of core, so core's start is admission, but only for a run whose
-    bundles were not skipped: a draft head runs core alone and is not admitted."""
-    legacy = [j["started_at"] for j in entries if j["name"] == "plan" and j["started_at"]]
-    if legacy:
-        return min(legacy)
-    bundled = any(j["name"].split(" ", 1)[0] == "bundle" and j["conclusion"] != "skipped" for j in entries)
+    """Admission is the start of the gate plan, but only for a run whose bundles were not
+    skipped: a draft head runs no bundle and is not admitted. Legacy runs (no bundle jobs) and
+    runs since #1348's hosted plan job have a plan job; in between the plan was core's first
+    step, so core's start is admission."""
+    bundles = [j for j in entries if j["name"].split(" ", 1)[0] == "bundle"]
+    bundled = any(j["conclusion"] != "skipped" for j in bundles)
+    plan = [j["started_at"] for j in entries if j["name"] == "plan" and j["started_at"]]
+    if plan:
+        return min(plan) if bundled or not bundles else None
     core = [j["started_at"] for j in entries if j["name"] == "core" and j["started_at"]]
     return min(core) if bundled and core else None
 
@@ -231,6 +233,8 @@ def self_test():
     assert admitted_at([core_job, bundle]) == early
     assert admitted_at([core_job, dict(bundle, conclusion="skipped")]) is None
     assert admitted_at([core_job]) is None
+    assert admitted_at([core_job, plan_job, dict(bundle, started_at=early)]) == late
+    assert admitted_at([core_job, plan_job, dict(bundle, conclusion="skipped")]) is None
     import copy
     second = copy.deepcopy(first)
     second.update(attempt=2, conclusion="success")
