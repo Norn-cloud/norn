@@ -835,7 +835,8 @@ def integration_partition_canaries() -> None:
                 for file in shard_files:
                     suite = ET.SubElement(root, "testsuite", file=file)
                     if has_cases:
-                        case = ET.SubElement(suite, "testcase", name="example")
+                        # Like Bun's report: a describe block nests its cases in an inner suite.
+                        case = ET.SubElement(ET.SubElement(suite, "testsuite", name="block"), "testcase", name="example")
                         if file in skipped:
                             ET.SubElement(case, "skipped")
                 ET.ElementTree(root).write(report, encoding="utf-8")

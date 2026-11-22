@@ -235,11 +235,12 @@ skip_allowed = {fields[0] for fields in inventory if fields[1:]}
 actual, executed = collections.Counter(), set()
 for report in sys.argv[2:]:
     suites = ET.parse(report).getroot().findall("./testsuite")
-    if not any(case.find("skipped") is None for suite in suites for case in suite.findall("testcase")):
+    # Bun nests each describe block as an inner testsuite: count cases at any depth.
+    if not any(case.find("skipped") is None for suite in suites for case in suite.iter("testcase")):
         sys.exit(f"{report}: no authoring tests executed")
     actual.update(suite.attrib["file"] for suite in suites)
     executed.update(suite.attrib["file"] for suite in suites
-                    if any(case.find("skipped") is None for case in suite.findall("testcase")))
+                    if any(case.find("skipped") is None for case in suite.iter("testcase")))
 if not expected or actual != expected:
     sys.exit(f"Authoring shard coverage differs: missing={list(expected - actual)}, extra or repeated={list(actual - expected)}")
 # A file counts only when one of its tests ran: a suite of skipped cases is not coverage.
