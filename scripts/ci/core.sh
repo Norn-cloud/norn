@@ -205,6 +205,43 @@ lint_workflows() {
   ((status == 0 || status >= 10)) || { printf 'workflow lint: zizmor failed (%s)\n' "$status" >&2; exit 1; }
   cargo xtask ci workflow-lint --findings "$dir/findings.json"
 }
+# Split by file in separate Bun processes so module mocks and environment
+# changes within one shard cannot affect the other.
+run_authoring_tests() (
+  cd tools/norn-ts
+  bun install --frozen-lockfile --backend copyfile
+  bun run typecheck
+  bun test --timeout 60000 --shard=1/2 --reporter=junit --reporter-outfile="$upstream/authoring-1.xml" &
+  first=$!
+  bun test --timeout 60000 --shard=2/2 --reporter=junit --reporter-outfile="$upstream/authoring-2.xml" &
+  second=$!
+  status=0
+  wait "$first" || status=1
+  wait "$second" || status=1
+  (( status == 0 )) || exit "$status"
+  python3 - "$upstream/authoring-1.xml" "$upstream/authoring-2.xml" <<'PYTHON'
+import collections
+import os
+import re
+import subprocess
+import sys
+import xml.etree.ElementTree as ET
+
+tracked = subprocess.check_output(["git", "ls-files", "-z", "--", "."]).split(b"\0")
+pattern = re.compile(r"(?:^|[./_-])(?:test|spec)\.[cm]?[jt]sx?$")
+expected = collections.Counter(path for raw in tracked if pattern.search(path := os.fsdecode(raw)))
+actual = collections.Counter()
+for report in sys.argv[1:]:
+    suites = ET.parse(report).getroot().findall("./testsuite")
+    if not suites:
+        sys.exit(f"{report}: no authoring tests reported")
+    actual.update(suite.attrib["file"] for suite in suites)
+if not expected or actual != expected:
+    sys.exit(f"Authoring shard coverage differs: missing={list(expected - actual)}, extra or repeated={list(actual - expected)}")
+print(f"Authoring shards ran exactly the {len(expected)} tracked test files")
+PYTHON
+)
+
 run_phase() {
   if [[ $1 != cheap && $1 != test-shards && $1 != browser && $1 != duckdb && " ${phases[*]} " == *" $1 "* ]]; then prepare_inputs; fi
   case "$1" in
@@ -367,7 +404,7 @@ PY
       # them first so its bounded runs only execute (#1171 integrated gate).
       grep -oE 'cargo test --locked -p [a-z-]+ (--test [a-z_]+|--lib)' docs/authoring/runnable/status.md | sort -u |
         while read -r build; do $build --no-run; done
-      (cd tools/norn-ts && bun install --frozen-lockfile --backend copyfile && bun run typecheck && bun test --timeout 60000)
+      run_authoring_tests
       ;;
     integration-wasm)
       export CI=true
@@ -510,9 +547,9 @@ weights = {
     "test/rest-1": 521, "test/rest-2": 266, "test/rest-3": 257,
     "phase/doctest": 48, "phase/features": 791, "phase/duckdb": 630, "phase/wasm": 239,
     "phase/clippy": 119, "phase/doc": 88, "phase/guards": 532,
-    # Initial estimates include builds repeated on separate VMs.
-    "phase/integration-authoring": 1050, "phase/integration-wasm": 540,
-    "phase/integration-clients": 430, "phase/provenance": 13, "phase/test-shards": 14,
+    # Split integration timings from run 45037150223; authoring includes an estimate for two concurrent Bun shards.
+    "phase/integration-authoring": 1030, "phase/integration-wasm": 707,
+    "phase/integration-clients": 170, "phase/provenance": 13, "phase/test-shards": 14,
     "phase/browser": 596,
 }
 # A bundle's test build on a Boat VM: p50 of cargo's "Finished `test` profile" time in the

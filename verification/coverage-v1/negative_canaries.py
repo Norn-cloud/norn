@@ -786,8 +786,10 @@ def integration_partition_canaries() -> None:
                 (core.replace(" integration-wasm ", " "), "integration phases must each be registered once"),
                 (core.replace(command, ""), "integration check must run exactly once"),
                 (core.replace(command, command * 2), "integration check must run exactly once"),
-                (core.replace("bun test --timeout 60000)", "bun test --timeout 60000 ./test/init.test.ts)"),
-                 "integration check must run exactly once")):
+                (core.replace("--shard=2/2", "--shard=1/2"),
+                 "authoring shards must execute and check coverage exactly once"),
+                (core.replace("if not expected or actual != expected:", "if False:"),
+                 "authoring shards must execute and check coverage exactly once")):
             validator.CORE_RUNNER.write_text(mutated, encoding="utf-8")
             try:
                 validator.validate_workflow_integrity([])
