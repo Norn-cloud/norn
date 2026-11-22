@@ -846,7 +846,8 @@ pub struct RuleCheck {
     /// charges for the rule's operations, apart from the data they read
     /// ([`rule_fuel`]). The engine adds what each row's values cost and
     /// leaves a row whose rules may cost more than [`row_fuel`] to the
-    /// per-row evaluator.
+    /// per-row evaluator. A landing's first check also carries the row's
+    /// typed-property charge, paid once per row before any rule.
     pub fuel: u64,
 }
 

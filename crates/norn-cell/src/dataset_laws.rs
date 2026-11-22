@@ -157,7 +157,10 @@ const fn severity_of(law: LawSeverity) -> DataQualitySeverity {
 
 impl<E: SqlEngine> CellStore<E> {
     /// MANIFEST-LAWS-1: every invariant and governing law of `object_type`,
-    /// as the engine checks it over a dataset of `table`.
+    /// as the engine checks it over a dataset of `table`. The first check's
+    /// fuel also carries the row's typed-property charge
+    /// (`snapshot_observe::observation_typed_fuel`), so the checks' fuel
+    /// together bounds what the per-row evaluator charges a row.
     ///
     /// # Errors
     /// `bulk.unsupported_law` for a law the per-row evaluator refuses or one
@@ -253,6 +256,17 @@ impl<E: SqlEngine> CellStore<E> {
                 expect: matches!(law.modality, LawModality::Always {}),
                 fuel: rule_fuel(nodes),
             });
+        }
+        // S2: the per-row evaluator charges a row one unit per typed
+        // property before its first rule. The engine sums every check's
+        // fuel for a row, so the first check carries that charge once.
+        if let Some(first) = checks.first_mut() {
+            first.fuel =
+                first
+                    .fuel
+                    .saturating_add(norn_kernel::snapshot_observe::observation_typed_fuel(
+                        &catalog, &name,
+                    ));
         }
         Ok(checks)
     }

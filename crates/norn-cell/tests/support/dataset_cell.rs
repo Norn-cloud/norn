@@ -44,6 +44,16 @@ pub fn artifacts(
     fields: &[Field],
     laws: &[(&str, &str, &str)],
 ) -> (Vec<ArtifactEnvelope>, Vec<ArtifactEnvelope>) {
+    artifacts_with(name, fields, laws, &[])
+}
+
+/// [`artifacts`], the type also declaring `invariants` (`(id, expression)`).
+pub fn artifacts_with(
+    name: &str,
+    fields: &[Field],
+    laws: &[(&str, &str, &str)],
+    invariants: &[(&str, &str)],
+) -> (Vec<ArtifactEnvelope>, Vec<ArtifactEnvelope>) {
     let provenance =
         json!({"source":"system","sourcePath":"crates/norn-cell/tests/support/dataset_cell.rs"});
     let scope = json!({"environmentId":"dev","orgId":"org_demo"});
@@ -66,16 +76,23 @@ pub fn artifacts(
             property
         })
         .collect();
+    let invariants: Vec<_> = invariants
+        .iter()
+        .map(|(id, expression)| json!({"id":id,"expression":expression,"message":id}))
+        .collect();
     let entity_id = format!("{name}.entity");
     let interface_name = format!("{name}Source");
     let interface_id = format!("{interface_name}.interface");
-    let entity = wrap(
+    let mut entity = wrap(
         &entity_id,
         "entity",
         json!({"entityVersion":"2.0","objectType":{"name":name,"implements":[interface_name],
             "identity":[{"name":"primary","properties":[identity]}],"properties":properties}}),
         json!([{"artifactId":"core.units","kind":"entity","required":true,"version":"1.0.0"}]),
     );
+    if !invariants.is_empty() {
+        entity["payload"]["objectType"]["invariants"] = json!(invariants);
+    }
     let interface = wrap(
         &interface_id,
         "entity",
@@ -100,6 +117,7 @@ pub fn artifacts(
         .map(|(ordinal, field)| {
             let kind = match field.kind["kind"].as_str() {
                 Some("decimal") => "decimal",
+                Some("integer") => "integer",
                 _ => "string",
             };
             json!({"dataset":"Rows","name":field.id,"nativeType":"text","ordinal":ordinal,
@@ -162,7 +180,17 @@ pub fn cell(
     fields: &[Field],
     laws: &[(&str, &str, &str)],
 ) -> (tempfile::TempDir, Cell) {
-    let (artifacts, base) = artifacts(name, fields, laws);
+    cell_with(name, fields, laws, &[])
+}
+
+/// [`cell`], the type also declaring `invariants` (`(id, expression)`).
+pub fn cell_with(
+    name: &str,
+    fields: &[Field],
+    laws: &[(&str, &str, &str)],
+    invariants: &[(&str, &str)],
+) -> (tempfile::TempDir, Cell) {
+    let (artifacts, base) = artifacts_with(name, fields, laws, invariants);
     let wire = |set: &[ArtifactEnvelope]| -> Vec<Value> {
         set.iter()
             .map(|a| Value::from_json(serde_json::to_value(a).expect("wire")).expect("value"))

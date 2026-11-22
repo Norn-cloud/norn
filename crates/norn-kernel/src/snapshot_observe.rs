@@ -1623,6 +1623,18 @@ pub fn finding_quarantines(
             && severity == DataQualitySeverity::Error))
 }
 
+/// MANIFEST-LAWS-1 (S2): the fuel [`observation_rule_findings`] charges a
+/// row of `object_type` before any rule: one unit of its invariant budget
+/// per typed property the runtime domain check reads. The dataset path's
+/// fuel bound adds it once per row.
+#[must_use]
+pub fn observation_typed_fuel(
+    catalog: &TypeCatalog<'_>,
+    object_type: &norn_ir::ObjectTypeName,
+) -> u64 {
+    crate::commit_check::typed_property_units(catalog, object_type)
+}
+
 /// MANIFEST-LAWS-1: the findings an observation of `values` as `key` records,
 /// rule by rule, by the per-row path's own evaluation: the effective values,
 /// every property check and invariant, then every governing law. A law that

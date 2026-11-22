@@ -650,7 +650,9 @@ impl Engine {
             ));
         }
         self.with(&request.tenant, |conn| {
-            load_locked(conn, request, file, bytes, started)
+            let load = load_locked(conn, request, file, bytes, started)?;
+            set_lineage(conn, request)?;
+            Ok(load)
         })
     }
 
@@ -736,7 +738,9 @@ impl Engine {
                     &format!("counts:{}", staged_table.name),
                     &counts_text(&load)?,
                 )?;
-                Self::landing(conn, &lease.dir, request, load)
+                let answer = Self::landing(conn, &lease.dir, request, load)?;
+                set_lineage(conn, load_request)?;
+                Ok(answer)
             })();
             if landed.is_err() {
                 drop_staged(conn, &staged_table)?;
@@ -2500,8 +2504,9 @@ struct Parsed {
 
 #[allow(clippy::too_many_lines, reason = "one arm per column kind")]
 /// MANIFEST-LAWS-1 (S4): a number the per-row decoder cannot hold exactly
-/// (`norn_ir::Decimal`: a 96-bit mantissa and at most 28 fractional digits
-/// once canonical) is not typed, whichever rules read it.
+/// (an Integer: a signed 64-bit integer; a Decimal: `norn_ir::Decimal`, a
+/// 96-bit mantissa and at most 28 fractional digits once canonical) is not
+/// typed, whichever rules read it.
 const OUT_OF_RANGE: &str = "bulk.out_of_range";
 
 /// Whether the typed number `v` (a `DECIMAL`) is in the per-row decoder's
@@ -2535,9 +2540,12 @@ fn parse_sql(kind: ColumnKind, i: usize) -> Parsed {
             columns: vec![format!(
                 "CASE WHEN translate({c}, '0123456789', '') IN ('', '-', '+') THEN TRY_CAST({c} AS DECIMAL(38,0)) END AS {v}"
             )],
+            // S4: an Integer is a signed 64-bit integer to the per-row
+            // property codec, not a decimal, so its range is i64's.
             reason: format!(
-                "CASE WHEN {v} IS NULL THEN 'bulk.not_integer' WHEN NOT {} THEN '{OUT_OF_RANGE}' END",
-                exact_sql(&v)
+                "CASE WHEN {v} IS NULL THEN 'bulk.not_integer' WHEN NOT ({v} BETWEEN {} AND {}) THEN '{OUT_OF_RANGE}' END",
+                i64::MIN,
+                i64::MAX
             ),
         },
         ColumnKind::Decimal { scale } => Parsed {
@@ -2887,12 +2895,18 @@ fn load_file(
         &format!("dataset:{}", table.name),
         &schema_text(table)?,
     )?;
+    Ok((rows, reasons))
+}
+
+/// The lineage record of load `request`: its source file's digest and
+/// object. Sol r2 S8: a landing writes it only once its preflight has
+/// passed, so a refused landing leaves none behind.
+fn set_lineage(conn: &Connection, request: &LoadRequest) -> Outcome<()> {
     set_meta(
         conn,
         &format!("lineage:{}", request.load),
         &format!("{} {}", request.file.sha256, request.file.uri),
-    )?;
-    Ok((rows, reasons))
+    )
 }
 
 /// The load step under the tenant's lock, in one transaction.
@@ -3614,16 +3628,155 @@ fn rule_counts(
 /// residue rows in row order, at most `limit` of them (clamped to
 /// `1..=RESIDUE_PAGE_ROWS`), with their present values, ending before the
 /// row that would take the page's serialized rows past
-/// [`RESIDUE_PAGE_BYTES`]. The page's row ids are chosen first and only
-/// their rules are gathered, so a page never groups the whole residue, and
-/// rows are read one at a time, so a page never holds more than its bound
-/// and one row. A row that alone passes the bound is [`RESIDUE_EXCEEDED`].
+/// [`RESIDUE_PAGE_BYTES`]. A row that alone passes the bound is
+/// [`RESIDUE_EXCEEDED`].
+///
+/// Sol r2 S6: `DuckDB` materializes a query's whole result before its first
+/// row is read, so the wide values are never in the candidate query. It
+/// reads the next row ids, their rules and each row's value bytes (a lower
+/// bound on its serialized size: JSON only adds keys, quotes and escapes).
+/// Only the rows whose value bytes fit the page together are then read with
+/// their values, so a page's read holds at most [`RESIDUE_PAGE_BYTES`] of
+/// values. Their exact serialized size then ends the page.
 fn residue_page(
     conn: &Connection,
     table: &TableSchema,
     after: u64,
     limit: u32,
 ) -> Outcome<Vec<ResidueRow>> {
+    let mut statement = db(conn.prepare(&residue_candidates_sql(table)))?;
+    let candidates = db(db(statement.query_map(
+        params_from_iter([
+            Sql::UBigInt(after),
+            Sql::UInt(limit.clamp(1, RESIDUE_PAGE_ROWS)),
+        ]),
+        |row| {
+            Ok((
+                row.get::<_, u64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, u64>(2)?,
+            ))
+        },
+    ))?
+    .collect::<Result<Vec<_>, _>>())?;
+    // S7: a page's JSON is its rows, a comma between each two, and its two
+    // brackets: the count starts at one bracket and each row adds itself
+    // and one separator (the last one's is the closing bracket).
+    let mut lower = 1usize;
+    let mut fits = 0usize;
+    for (_, _, bytes) in &candidates {
+        lower = lower.saturating_add(
+            usize::try_from(*bytes)
+                .unwrap_or(usize::MAX)
+                .saturating_add(1),
+        );
+        if lower > RESIDUE_PAGE_BYTES {
+            break;
+        }
+        fits = fits.saturating_add(1);
+    }
+    let mut page = Vec::new();
+    let mut bytes = 1usize;
+    if let (true, Some((first, ..)), Some((last, ..))) = (
+        fits > 0,
+        candidates.first(),
+        candidates.get(fits.saturating_sub(1)),
+    ) {
+        let mut statement = db(conn.prepare(&residue_values_sql(table)))?;
+        let mut rows = db(statement.query(params_from_iter([
+            Sql::UBigInt(*first),
+            Sql::UBigInt(*last),
+        ])))?;
+        let mut taken = candidates.iter();
+        while let Some(row) = db(rows.next())? {
+            let id: u64 = db(row.get(0))?;
+            let Some((candidate, rules, _)) = taken.next().filter(|(at, ..)| *at == id) else {
+                return Err(refusal(
+                    "analytics.engine",
+                    "a residue page read other rows than its candidates",
+                ));
+            };
+            let mut values = BTreeMap::new();
+            for (i, column) in table.columns.iter().enumerate() {
+                let at = i.saturating_mul(3).saturating_add(1);
+                if let Some(value) = present(
+                    column.kind,
+                    db(row.get(at))?,
+                    db(row.get(at.saturating_add(1)))?,
+                    db(row.get(at.saturating_add(2)))?,
+                ) {
+                    values.insert(column.id.clone(), value);
+                }
+            }
+            let residue = ResidueRow {
+                row: *candidate,
+                values,
+                rules: rules.split('\n').map(str::to_owned).collect(),
+            };
+            // The row's JSON and the separator after it.
+            let size = serde_json::to_string(&residue)
+                .map_err(|e| refusal("analytics.engine", e.to_string()))?
+                .len()
+                .saturating_add(1);
+            if size.saturating_add(1) > RESIDUE_PAGE_BYTES {
+                return Err(too_wide(residue.row));
+            }
+            bytes = bytes.saturating_add(size);
+            if bytes > RESIDUE_PAGE_BYTES {
+                return Ok(page);
+            }
+            page.push(residue);
+        }
+    }
+    // Every candidate read fits: the first one left unread starts the next
+    // page, unless its value bytes alone already pass a page.
+    match candidates.get(fits) {
+        Some((row, _, value_bytes))
+            if usize::try_from(*value_bytes)
+                .unwrap_or(usize::MAX)
+                .saturating_add(2)
+                > RESIDUE_PAGE_BYTES =>
+        {
+            Err(too_wide(*row))
+        }
+        _ => Ok(page),
+    }
+}
+
+/// S6: the residue page's candidates after `?`, at most `?` rows: each
+/// row's id, its rules and its text values' bytes. It reads no value
+/// itself, so the result `DuckDB` materializes holds no wide value.
+fn residue_candidates_sql(table: &TableSchema) -> String {
+    // Only text is wide, and its JSON holds every byte of it; a number's or
+    // a Boolean's text is short, and its canonical form may be shorter.
+    let mut value_bytes = vec!["0".to_owned()];
+    for column in &table.columns {
+        if matches!(
+            column.kind,
+            ColumnKind::Text | ColumnKind::Opaque | ColumnKind::Timestamp | ColumnKind::Date
+        ) {
+            value_bytes.push(format!(
+                "coalesce(strlen(CAST(d.{} AS VARCHAR)), 0)",
+                ident(&column.id)
+            ));
+        }
+    }
+    let residue = residue_table(&table.name);
+    format!(
+        "WITH ids AS (SELECT DISTINCT \":row\" FROM {residue} WHERE \":row\" > ? ORDER BY \":row\" LIMIT ?), \
+         r AS (SELECT \":row\", string_agg(\":rule\", chr(10) ORDER BY \":rule\") AS \":rules\" FROM {residue} \
+         WHERE \":row\" IN (SELECT \":row\" FROM ids) GROUP BY \":row\") \
+         SELECT r.\":row\", r.\":rules\", CAST({} AS UBIGINT) FROM {} AS d JOIN r ON d.\":row\" = r.\":row\" \
+         ORDER BY r.\":row\"",
+        value_bytes.join(" + "),
+        dataset_table(&table.name),
+    )
+}
+
+/// S6: the values of the residue rows from `?` through `?`, the candidates
+/// whose value bytes fit one page together: the id, then for each column
+/// its text and, for an instant, its ordering key.
+fn residue_values_sql(table: &TableSchema) -> String {
     let mut select = vec![format!("d.{}", ident(":row"))];
     for column in &table.columns {
         select.push(format!("CAST(d.{} AS VARCHAR)", ident(&column.id)));
@@ -3635,63 +3788,21 @@ fn residue_page(
             select.push("CAST(NULL AS INTEGER)".to_owned());
         }
     }
-    select.push("r.\":rules\"".to_owned());
-    let residue = residue_table(&table.name);
-    let mut statement = db(conn.prepare(&format!(
-        "WITH ids AS (SELECT DISTINCT \":row\" FROM {residue} WHERE \":row\" > ? ORDER BY \":row\" LIMIT ?), \
-         r AS (SELECT \":row\", string_agg(\":rule\", chr(10) ORDER BY \":rule\") AS \":rules\" FROM {residue} \
-         WHERE \":row\" IN (SELECT \":row\" FROM ids) GROUP BY \":row\") \
-         SELECT {} FROM {} AS d JOIN r ON d.\":row\" = r.\":row\" ORDER BY d.\":row\"",
+    format!(
+        "SELECT {} FROM {} AS d WHERE d.\":row\" BETWEEN ? AND ? \
+         AND d.\":row\" IN (SELECT \":row\" FROM {}) ORDER BY d.\":row\"",
         select.join(", "),
         dataset_table(&table.name),
-    )))?;
-    let rules_at = table.columns.len().saturating_mul(3).saturating_add(1);
-    let mut rows = db(statement.query(params_from_iter([
-        Sql::UBigInt(after),
-        Sql::UInt(limit.clamp(1, RESIDUE_PAGE_ROWS)),
-    ])))?;
-    let mut page = Vec::new();
-    let mut bytes = 0usize;
-    while let Some(row) = db(rows.next())? {
-        let mut values = BTreeMap::new();
-        for (i, column) in table.columns.iter().enumerate() {
-            let at = i.saturating_mul(3).saturating_add(1);
-            if let Some(value) = present(
-                column.kind,
-                db(row.get(at))?,
-                db(row.get(at.saturating_add(1)))?,
-                db(row.get(at.saturating_add(2)))?,
-            ) {
-                values.insert(column.id.clone(), value);
-            }
-        }
-        let rules: String = db(row.get(rules_at))?;
-        let residue = ResidueRow {
-            row: db(row.get(0))?,
-            values,
-            rules: rules.split('\n').map(str::to_owned).collect(),
-        };
-        // The row's JSON and the comma that separates it from the next.
-        let size = serde_json::to_string(&residue)
-            .map_err(|e| refusal("analytics.engine", e.to_string()))?
-            .len()
-            .saturating_add(1);
-        if size > RESIDUE_PAGE_BYTES {
-            return Err(refusal(
-                RESIDUE_EXCEEDED,
-                format!(
-                    "residue row {} is larger than a residue page ({RESIDUE_PAGE_BYTES} bytes)",
-                    residue.row
-                ),
-            ));
-        }
-        bytes = bytes.saturating_add(size);
-        if bytes > RESIDUE_PAGE_BYTES {
-            break;
-        }
-        page.push(residue);
-    }
-    Ok(page)
+        residue_table(&table.name),
+    )
+}
+
+/// [`RESIDUE_EXCEEDED`] for residue row `row`, larger than a page alone.
+fn too_wide(row: u64) -> EngineRefusal {
+    refusal(
+        RESIDUE_EXCEEDED,
+        format!("residue row {row} is larger than a residue page ({RESIDUE_PAGE_BYTES} bytes)"),
+    )
 }
 
 /// MANIFEST-LAWS-1 (S1): refuse a landing whose residue takes more than
@@ -4106,4 +4217,68 @@ fn outliers(
         count: total,
         examples,
     }))
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used, reason = "a test of the residue page's queries")]
+mod tests {
+    use super::*;
+
+    /// MANIFEST-LAWS-1 (Sol r2 S6): `DuckDB` materializes a query's whole
+    /// result before its first row is read, so the candidate query of a
+    /// residue page carries no value: only each row's id, rules and value
+    /// bytes. Three residue rows of 3 MiB text each: the candidates read
+    /// three narrow rows, and the page reads and answers the one that fits.
+    #[test]
+    fn a_residue_page_materializes_no_value_before_it_fits_the_page() {
+        let table = TableSchema {
+            name: "t.Wide".into(),
+            columns: vec![Column {
+                id: "wide".into(),
+                kind: ColumnKind::Text,
+                nullable: true,
+                laws: Vec::new(),
+            }],
+            pin: String::new(),
+        };
+        let wide = 3usize << 20;
+        let conn = Connection::open_in_memory().expect("duckdb");
+        conn.execute_batch(&format!(
+            "CREATE TABLE {dataset} ({}); CREATE TABLE {residue} (\":row\" UBIGINT, \":rule\" VARCHAR); \
+             INSERT INTO {dataset} (\":row\", \"wide\") SELECT i, repeat('w', {wide}) FROM range(1, 4) AS t(i); \
+             INSERT INTO {residue} SELECT i, 'r' FROM range(1, 4) AS t(i);",
+            dataset_ddl(&table),
+            dataset = dataset_table(&table.name),
+            residue = residue_table(&table.name),
+        ))
+        .expect("tables");
+        let mut statement = conn
+            .prepare(&residue_candidates_sql(&table))
+            .expect("candidates");
+        let candidates = statement
+            .query_map(params_from_iter([Sql::UBigInt(0), Sql::UInt(100)]), |row| {
+                Ok((
+                    row.get::<_, u64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, u64>(2)?,
+                ))
+            })
+            .expect("candidates read")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("candidate rows");
+        assert_eq!(statement.column_count(), 3, "no value column is read");
+        let wide_bytes = u64::try_from(wide).expect("bytes");
+        assert_eq!(
+            candidates,
+            (1..=3)
+                .map(|row| (row, "r".to_owned(), wide_bytes))
+                .collect::<Vec<_>>()
+        );
+        let page = residue_page(&conn, &table, 0, 100).expect("page");
+        assert_eq!(page.iter().map(|row| row.row).collect::<Vec<_>>(), vec![1]);
+        assert_eq!(
+            page.first().and_then(|row| row.values.get("wide")),
+            Some(&Value::Text("w".repeat(wide)))
+        );
+    }
 }

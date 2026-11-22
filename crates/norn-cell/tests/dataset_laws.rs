@@ -232,10 +232,15 @@ fn per_row(cell: &mut Cell, lines: &[Line]) -> (BTreeSet<Finding>, BTreeSet<u64>
 }
 
 fn engine() -> (tempfile::TempDir, Engine) {
+    engine_with("256MB")
+}
+
+/// An engine under the `DuckDB` memory limit `memory`.
+fn engine_with(memory: &str) -> (tempfile::TempDir, Engine) {
     let dir = tempfile::tempdir().expect("engine dir");
     let engine = Engine::new(Settings {
         root: dir.path().to_path_buf(),
-        memory_limit: "256MB".into(),
+        memory_limit: memory.into(),
         threads: 1,
     })
     .expect("engine");
@@ -1122,4 +1127,264 @@ fn a_residue_page_of_wide_rows_is_bounded_in_bytes() {
     }
     assert!(pages > 1, "wide rows end a page early");
     assert_eq!(rows, (1..=7).collect::<Vec<u64>>());
+}
+
+/// Typed properties of [`wide_typed_cell`]: Sol's S2 case.
+const TYPED: usize = 120;
+
+/// A type with two required texts `a` and `b`, [`TYPED`] decimals and the
+/// invariant `self.a == self.b`: the kernel charges the typed properties to
+/// a row's invariant budget.
+fn wide_typed_cell() -> (tempfile::TempDir, Cell) {
+    let text = |id: &'static str| Field {
+        id,
+        kind: json!({"kind":"text"}),
+        required: true,
+    };
+    let mut fields = vec![text("id"), text("a"), text("b")];
+    fields.extend((0..TYPED).map(|i| Field {
+        id: Box::leak(format!("d{i}").into_boxed_str()),
+        kind: json!({"kind":"decimal","scale":0,"unit":{"system":"ucum","code":"1"},
+            "additivity":{"kind":"additive"}}),
+        required: true,
+    }));
+    support::cell_with(TYPE, &fields, &[], &[("a_is_b", "self.a == self.b")])
+}
+
+/// The CSV of [`wide_typed_cell`] rows whose `a` and `b` are both `width`
+/// bytes of `x`.
+fn wide_typed_csv(widths: &[usize]) -> String {
+    let decimals: Vec<String> = (0..TYPED).map(|i| format!("d{i}")).collect();
+    let mut out = format!("id,a,b,{}\n", decimals.join(","));
+    for (index, width) in widths.iter().enumerate() {
+        let text = "x".repeat(*width);
+        writeln!(
+            out,
+            "line-{},{text},{text},{}",
+            index + 1,
+            vec!["1"; TYPED].join(",")
+        )
+        .expect("a String takes the line");
+    }
+    out
+}
+
+/// MANIFEST-LAWS-1 (Sol r2 S2): the SQL fuel bound pays the kernel's
+/// typed-property charge (one unit per typed property, once per row,
+/// before any rule). With [`TYPED`] decimals, a text equality whose
+/// operands are each one byte past the bound is left to the per-row path,
+/// one at the bound is decided in SQL and the per-row path decides it too,
+/// and Sol's 499,944-byte operands, which SQL decided before, are residue
+/// that the per-row path refuses.
+#[test]
+fn the_fuel_bound_pays_the_typed_property_charge() {
+    let (_dir, cell) = wide_typed_cell();
+    let store = cell.store();
+    let table = store.analytics_table(TYPE).expect("table");
+    // Sol's row: SQL must leave it to the per-row path, which refuses it.
+    let sol = 499_944;
+    let (_engine_dir, sol_engine) = engine_with("2GB");
+    let bytes = wide_typed_csv(&[sol]);
+    let (request, landed) = land(&sol_engine, &cell, bytes.as_bytes(), FileFormat::Csv);
+    assert_eq!(
+        landed.residue_total, 1,
+        "Sol's row is left to the per-row path"
+    );
+    store
+        .residue_findings(TYPE, &request.load.table, &landed.residue)
+        .expect_err("the per-row path exhausts its fuel");
+    // The bound itself: `a == b` is charged both operands' bytes beside the
+    // checks' static fuel, which carries the typed-property charge.
+    let checks = store.dataset_checks(TYPE, &table).expect("checks");
+    assert_eq!(checks.len(), 1);
+    let budget = norn_cell::analytics::row_fuel();
+    let at = usize::try_from((budget - checks[0].fuel) / 2).expect("width");
+    assert!(sol > at + 1, "Sol's case is past the bound");
+    let (_engine_dir, engine) = engine_with("2GB");
+    let bytes = wide_typed_csv(&[at, at + 1]);
+    let (request, landed) = land(&engine, &cell, bytes.as_bytes(), FileFormat::Csv);
+    let residue: Vec<u64> = landed.residue.iter().map(|row| row.row).collect();
+    assert_eq!(residue, vec![2], "only the row past the bound is residue");
+    // The row at the bound fits the per-row budget, so SQL may decide it.
+    let mut at_bound = landed.residue[0].clone();
+    at_bound.row = 1;
+    for column in ["a", "b"] {
+        at_bound.values.insert(
+            column.into(),
+            norn_cell::analytics::Value::Text("x".repeat(at)),
+        );
+    }
+    assert_eq!(
+        store
+            .residue_findings(TYPE, &request.load.table, &[at_bound])
+            .expect("the per-row path decides the row at the bound"),
+        Vec::new()
+    );
+}
+
+/// MANIFEST-LAWS-1 (Sol r2 S4): an Integer column is typed in the signed
+/// 64-bit range the per-row property codec holds, not the decimal
+/// mantissa's. Both endpoints land; the values just past them are refused
+/// as out of range, as the codec refuses them, even with no rule reading
+/// the column.
+#[test]
+fn an_integer_is_typed_in_the_signed_64_bit_range() {
+    let fields = vec![
+        Field {
+            id: "id",
+            kind: json!({"kind":"text"}),
+            required: true,
+        },
+        Field {
+            id: "count",
+            kind: json!({"kind":"integer","additivity":{"kind":"additive"}}),
+            required: true,
+        },
+    ];
+    let (_dir, cell) = support::cell(TYPE, &fields, &[]);
+    let values = [
+        i128::from(i64::MIN),
+        i128::from(i64::MAX),
+        i128::from(i64::MIN) - 1,
+        i128::from(i64::MAX) + 1,
+    ];
+    let mut bytes = "id,count\n".to_owned();
+    for (index, value) in values.iter().enumerate() {
+        writeln!(bytes, "line-{},{value}", index + 1).expect("a String takes the line");
+        // The per-row property codec is the reference.
+        let number = Value::from_json_text(value.to_string()).expect("a JSON number");
+        assert_eq!(
+            norn_checker::property_codec::encode(norn_ir::PropertyKind::Integer, &number).is_ok(),
+            index < 2,
+            "{value}"
+        );
+    }
+    let (engine_dir, engine) = engine();
+    let (request, landed) = land(&engine, &cell, bytes.as_bytes(), FileFormat::Csv);
+    assert_eq!(landed.load.reasons.get("bulk.out_of_range"), Some(&2));
+    assert_eq!(landed.load.rejected, 2);
+    let (landed, _, _) = settle_all(&engine, &cell, &request, landed);
+    let (data, _) = files(engine_dir.path(), &landed.attempt);
+    let rows: Vec<(u64, Option<String>, bool)> =
+        parquet_rows(&data, "CAST(\"count\" AS VARCHAR), CAST(NULL AS BOOLEAN)");
+    assert_eq!(
+        rows,
+        vec![
+            (1, Some(i64::MIN.to_string()), false),
+            (2, Some(i64::MAX.to_string()), false),
+        ]
+    );
+}
+
+/// The serialized size of the residue row a one-line landing of `plain`
+/// with a customer of `width` bytes answers.
+fn residue_row_bytes(cell: &Cell, width: usize) -> usize {
+    let (_engine_dir, engine) = engine();
+    let customer: &'static str = Box::leak("w".repeat(width).into_boxed_str());
+    let (_, landed) = land(
+        &engine,
+        cell,
+        &parquet(&[plain(Some(customer))]),
+        FileFormat::Parquet,
+    );
+    serde_json::to_string(&landed.residue[0])
+        .expect("row")
+        .len()
+}
+
+/// MANIFEST-LAWS-1 (Sol r2 S7): a page's bound counts its brackets. A row
+/// whose page (`[row]`) is exactly [`RESIDUE_PAGE_BYTES`] is answered, and
+/// one a byte wider, which alone passes a page, is refused.
+#[test]
+fn a_residue_page_counts_its_brackets() {
+    use norn_cell::analytics::{RESIDUE_EXCEEDED, RESIDUE_PAGE_BYTES};
+    let (_dir, cell) = cell(&[FUNCTION]);
+    // A customer's bytes are its row's bytes one for one.
+    let base = 1 << 10;
+    let overhead = residue_row_bytes(&cell, base) - base;
+    let fits = RESIDUE_PAGE_BYTES - 2 - overhead;
+    assert_eq!(residue_row_bytes(&cell, fits) + 2, RESIDUE_PAGE_BYTES);
+    let (_engine_dir, engine) = engine();
+    let at: &'static str = Box::leak("w".repeat(fits).into_boxed_str());
+    // A row past CSV's 2 MB line comes as Parquet.
+    let (_, landed) = land(
+        &engine,
+        &cell,
+        &parquet(&[plain(Some(at))]),
+        FileFormat::Parquet,
+    );
+    assert_eq!(
+        serde_json::to_string(&landed.residue).expect("page").len(),
+        RESIDUE_PAGE_BYTES
+    );
+    let over: &'static str = Box::leak("w".repeat(fits + 1).into_boxed_str());
+    let bytes = parquet(&[plain(Some(over))]);
+    let request = land_request(&cell, &bytes, FileFormat::Parquet);
+    let refused = engine
+        .land(&request, |mut file| {
+            file.write_all(&bytes).expect("source");
+            Ok(())
+        })
+        .expect_err("a page one byte past the bound");
+    assert_eq!(refused.code, RESIDUE_EXCEEDED);
+}
+
+/// The `lineage:` records of the engine directory `root`, read once the
+/// engine that wrote them is gone.
+fn lineage_records(root: &std::path::Path) -> Vec<String> {
+    let conn = duckdb::Connection::open(root.join(format!("{}.duckdb", tenant().as_str())))
+        .expect("the tenant's database");
+    let mut statement = conn
+        .prepare("SELECT key FROM \":meta\" WHERE key LIKE 'lineage:%' ORDER BY key")
+        .expect("lineage");
+    let keys = statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .expect("keys");
+    keys.map(|key| key.expect("key")).collect()
+}
+
+/// MANIFEST-LAWS-1 (Sol r2 S8): a landing refused at its preflight (a
+/// residue past the page bound, or a row wider than a page) leaves no
+/// `lineage:<load>` record; one that passes it records its lineage.
+#[test]
+fn a_landing_refused_at_preflight_leaves_no_lineage() {
+    use norn_cell::analytics::{MAX_RESIDUE_PAGES, RESIDUE_EXCEEDED, RESIDUE_PAGE_BYTES};
+    let (_dir, cell) = cell(&laws(&[FUNCTION]));
+    let pages = usize::try_from(MAX_RESIDUE_PAGES).expect("pages");
+    let too_wide: &'static str = Box::leak("w".repeat(RESIDUE_PAGE_BYTES).into_boxed_str());
+    let refusals = [
+        (
+            (0..=pages).map(|_| plain(Some("ann"))).collect::<Vec<_>>(),
+            1,
+        ),
+        (vec![plain(Some(too_wide))], 7),
+    ];
+    for (lines, page) in refusals {
+        let (engine_dir, engine) = engine();
+        // Parquet carries a row past CSV's 2 MB line.
+        let bytes = parquet(&lines);
+        let mut request = land_request(&cell, &bytes, FileFormat::Parquet);
+        request.residue_page = page;
+        let refused = engine
+            .land(&request, |mut file| {
+                file.write_all(&bytes).expect("source");
+                Ok(())
+            })
+            .expect_err("refused at preflight");
+        assert_eq!(refused.code, RESIDUE_EXCEEDED);
+        drop(engine);
+        assert_eq!(lineage_records(engine_dir.path()), Vec::<String>::new());
+    }
+    let (engine_dir, engine) = engine();
+    let _landed = land(
+        &engine,
+        &cell,
+        csv(&[plain(Some("ann"))]).as_bytes(),
+        FileFormat::Csv,
+    );
+    drop(engine);
+    assert_eq!(
+        lineage_records(engine_dir.path()),
+        vec!["lineage:land-1".to_owned()]
+    );
 }
