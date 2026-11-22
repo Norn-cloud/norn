@@ -193,10 +193,10 @@ jobs:
           tool: nextest@0.9.150,cargo-deny@0.19.0,wasm-bindgen@0.2.129
       # The full gate is `core.sh all` split into parallel bundle jobs. The plan comes from
       # core.sh itself, so CI runs exactly its shards and phases (all but formal).
-      # Pull requests and merge groups use affected plans; main runs the full set.
+      # Pull requests use affected plans; merge groups and main run the full set.
       - id: plan
         env:
-          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || '' }}
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
           HEAD_SHA: ${{ github.event.merge_group.head_sha || github.sha }}
         run: |
           if [ -n "$BASE" ]; then plan=$(bash scripts/ci/core.sh plan --affected "$BASE" "$HEAD_SHA"); else plan=$(bash scripts/ci/core.sh plan); fi
@@ -378,7 +378,7 @@ jobs:
       - env:
           EVENT: ${{ github.event_name }}
           DRAFT: ${{ github.event.pull_request.draft || false }}
-          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || '' }}
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
           HEAD_SHA: ${{ github.event.merge_group.head_sha || github.sha }}
           PLAN: ${{ needs.core.outputs.plan }}
           CORE: ${{ needs.core.result }}
@@ -401,9 +401,9 @@ jobs:
           ran() { [ "$1" = success ] || { [ "$1" = skipped ] && [ "$2" -eq 0 ]; }; }
           [ "$CORE" = success ] || { echo "core $CORE"; exit 1; }
           mode=$(jq -er .mode <<<"$PLAN")
-          [ "$EVENT" = pull_request ] || [ "$EVENT" = merge_group ] || [ "$mode" = full ] || { echo "$EVENT needs the full plan, got $mode"; exit 1; }
-          # An affected merge-group plan must keep the always-run phases (core.sh plan).
-          [ "$EVENT" != merge_group ] || [ "$mode" = full ] || jq -e '(["guards", "provenance", "clippy"] - .phase) == []' <<<"$PLAN" >/dev/null || { echo "merge_group affected plan dropped an always-run phase"; exit 1; }
+          # Only pull-request feedback is narrowed; the merge queue, main and manual runs run every shard
+          # and phase, so nothing reaches main without the full suite (#1348).
+          [ "$EVENT" = pull_request ] || [ "$mode" = full ] || { echo "$EVENT needs the full plan, got $mode"; exit 1; }
           ran "$TEST" "$(jq -er '.bundle | length' <<<"$PLAN")" || { echo "test ended $TEST"; exit 1; }
           echo "$mode plan passed: $(jq -r '.reason // "every shard and phase"' <<<"$PLAN")"
   trusted-policy:
