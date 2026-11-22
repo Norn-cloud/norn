@@ -640,8 +640,7 @@ impl Model {
                 let property = self.compact(property);
                 let filler = filler
                     .as_deref()
-                    .map(|filler| format!(" {}", self.render(filler)))
-                    .unwrap_or_default();
+                    .map_or_default(|filler| format!(" {}", self.render(filler)));
                 match kind {
                     Restriction::Some => format!("{family}SomeValuesFrom({property}{filler})"),
                     Restriction::All => format!("{family}AllValuesFrom({property}{filler})"),

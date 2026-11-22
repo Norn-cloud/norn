@@ -425,8 +425,8 @@ fn lower_node(plan: &TransformPlan, id: &str, step: &Step) -> Result<String, Cel
                     .as_ref()
                     .map(|read| column(source, read).and_then(|c| kind(&c.ty)))
                     .transpose()?;
-                let target = read.as_deref().map(quote).unwrap_or_default();
-                let key = read.as_deref().map(key_column).unwrap_or_default();
+                let target = read.as_deref().map_or_default(quote);
+                let key = read.as_deref().map_or_default(key_column);
                 let timestamp = read_kind == Some(Kind::Timestamp);
                 match (function, timestamp) {
                     (AggregateFn::Count, _) if read.is_none() => {
@@ -501,7 +501,7 @@ fn lower_node(plan: &TransformPlan, id: &str, step: &Step) -> Result<String, Cel
             let window = format!("{partition}{order}");
             let mut items = vec!["w.*".to_owned()];
             for (name, function, read, offset) in columns {
-                let target = read.as_deref().map(quote).unwrap_or_default();
+                let target = read.as_deref().map_or_default(quote);
                 let read_kind = read
                     .as_ref()
                     .map(|read| column(source, read).and_then(|c| kind(&c.ty)))
@@ -517,7 +517,7 @@ fn lower_node(plan: &TransformPlan, id: &str, step: &Step) -> Result<String, Cel
                             "lead"
                         };
                         if read_kind == Some(Kind::Timestamp) {
-                            let key = read.as_deref().map(key_column).unwrap_or_default();
+                            let key = read.as_deref().map_or_default(key_column);
                             items.push(format!(
                                 "{shift}({key}, {offset}) OVER ({window}) AS {}",
                                 key_column(name)

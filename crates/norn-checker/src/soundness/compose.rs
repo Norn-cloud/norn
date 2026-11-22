@@ -524,7 +524,7 @@ mod tests {
         let product = compose(&page(), &chart(), &sync()).expect("small");
         // The pending page assumes the draft is still a draft.
         let breaches = product.assumption_violations(|ui, backend| ui != 1 || backend == 0);
-        assert!(breaches.is_empty(), "pending only sees drafts here");
+        assert_eq!(breaches, [], "pending only sees drafts here");
         // The done page assumes payment, which only another actor may make.
         let breaches = product.assumption_violations(|ui, backend| ui != 2 || backend == 2);
         let states: Vec<(usize, usize)> = breaches.iter().map(|(s, _)| product.pairs[*s]).collect();

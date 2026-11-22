@@ -2192,8 +2192,7 @@ fn role_access(explainer: &RoleExplainer<'_>, object_type: &str) -> Vec<RoleAcce
                     .collect(),
                 actions: explainer
                     .actions
-                    .map(|policy| policy.role_decisions(role, object_type))
-                    .unwrap_or_default(),
+                    .map_or_default(|policy| policy.role_decisions(role, object_type)),
             }
         })
         .collect()

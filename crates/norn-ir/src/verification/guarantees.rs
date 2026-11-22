@@ -437,7 +437,7 @@ mod tests {
                     let input = json!({"index":0,"goalKind":"preservation","eligible":eligible,"verdict":verdict,"level":level,"evidence":null,"scenario":null});
                     let valid = eligible || (verdict == unknown && level == unknown);
                     assert_eq!(
-                        serde_json::from_value::<GoalGuarantee>(input.clone()).is_ok(),
+                        serde_json::from_value::<GoalGuarantee>(input).is_ok(),
                         valid
                     );
                     let mut constructed:GoalGuarantee=serde_json::from_value(json!({"eligible":true,"index":0,"goalKind":"preservation","verdict":verdict,"level":level,"evidence":null,"scenario":null})).expect("eligible fixture");

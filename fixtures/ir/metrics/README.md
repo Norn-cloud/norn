@@ -31,6 +31,6 @@ searchAround/groupBy/aggregate/window/compare/freshness.
 
 The pinned schema and Apache-2.0 attribution are under `osi/`. Regenerate full
 metric documents on Boat with `NORN_UPDATE_METRIC_GOLDENS=1 cargo test --locked
--p norn-checker --test metric_interchange`. The test validates stripped exports
+-p norn-checker --test suites metric_interchange::`. The test validates stripped exports
 against the upstream schema and checks near-identity import with ontology
 binding. No semantic datasets or relationships are independently authored.

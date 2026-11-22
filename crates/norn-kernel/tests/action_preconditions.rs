@@ -481,8 +481,9 @@ impl CellHost for RacingCell {
                     .link_reads
                     .first()
                     .expect("complete prepared link read");
-                assert!(
-                    read.targets.is_empty(),
+                assert_eq!(
+                    read.targets,
+                    [],
                     "initial snapshot was complete and bounded"
                 );
                 let refusal = CommitError::UnsupportedLinkRead {

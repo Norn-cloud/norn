@@ -756,7 +756,7 @@ fn topological(plan: &norn_ir::RelationalPlan, out: &mut Vec<Diagnostic>) -> Opt
         }
         state.insert(id, false);
         stack.push((id, true));
-        let inputs = plan.nodes.get(id).map(node_inputs).unwrap_or_default();
+        let inputs = plan.nodes.get(id).map_or_default(node_inputs);
         for input in inputs.into_iter().rev() {
             match state.get(input) {
                 Some(true) => {}

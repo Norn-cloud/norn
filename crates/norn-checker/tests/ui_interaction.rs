@@ -135,8 +135,9 @@ fn has(found: &[Diagnostic], code: &str, pointer: &str) -> bool {
 }
 
 fn none(found: &[Diagnostic]) {
-    assert!(
-        interaction(found).is_empty(),
+    assert_eq!(
+        interaction(found),
+        [],
         "unexpected interaction findings: {:#?}",
         interaction(found)
     );

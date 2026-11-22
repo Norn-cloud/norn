@@ -122,7 +122,7 @@ fn manifest_is_pinned_and_matches_the_translated_cases() {
         };
         assert_eq!(entry["issue"], issue);
         let reason = entry["reason"].as_str().unwrap();
-        assert!(!reason.is_empty());
+        assert_ne!(reason.len(), 0);
         assert_eq!(
             manifest["excluded"]["compliance-level-2"][model],
             format!("#{issue}: {reason} (guarded by a no-hit witness)")
@@ -206,8 +206,9 @@ fn dmn_tck_applicable_subset() {
     for path in json_files(&dir().join("cases")) {
         checked += check_fixture(&path, &mut failures);
     }
-    assert!(
-        failures.is_empty(),
+    assert_eq!(
+        failures.len(),
+        0,
         "{} TCK failures:\n{}",
         failures.len(),
         failures.join("\n")
@@ -222,8 +223,9 @@ fn norn_decision_table_cases() {
     for path in json_files(&dir().join("norn")) {
         checked += check_fixture(&path, &mut failures);
     }
-    assert!(
-        failures.is_empty(),
+    assert_eq!(
+        failures.len(),
+        0,
         "{} Norn case failures:\n{}",
         failures.len(),
         failures.join("\n")

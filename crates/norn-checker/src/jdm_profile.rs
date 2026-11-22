@@ -1883,7 +1883,7 @@ mod tests {
     fn a_unique_table_is_admitted_only_when_proved_disjoint() {
         // Disjoint and total: admitted.
         let disjoint = unique_payload(&["tier == 'a'", "tier == 'b' or tier == 'c'"], &finite());
-        assert!(unique_codes(&disjoint).is_empty());
+        assert_eq!(unique_codes(&disjoint).len(), 0);
         // tier a and vip overlap at {tier: a, vip: true}: refused with the witness.
         let overlapping = unique_payload(&["tier == 'a'", "vip"], &finite());
         let mut found = Vec::new();
@@ -2139,7 +2139,7 @@ mod tests {
         assert_eq!(keys(&closure), ["demo.discount@1", "demo.tier@1"]);
         // A standalone rule has an empty closure, and its own identity.
         let leaf = super::rule_closure(&set, &[], "demo.tier").expect("leaf resolves");
-        assert!(leaf.sub_decisions.is_empty());
+        assert_eq!(leaf.sub_decisions.len(), 0);
         assert_ne!(leaf.digest, closure.digest);
         // The digest is exactly the rule set: stable, and moved by any member.
         assert_eq!(

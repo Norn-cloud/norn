@@ -171,7 +171,7 @@ fn cell_host_mutant_leaking_refused_enqueue_is_caught() {
 fn cell_host_mutant_ignoring_consumption_is_caught() {
     let failure = run_cell_host::<Mutant<1>>(&Settings::new(file!()).without_persistence())
         .expect_err("a host that never consumes deliveries must fail the laws");
-    assert!(!failure.transitions.is_empty(), "{failure}");
+    assert_ne!(failure.transitions, [], "{failure}");
 }
 
 #[test]

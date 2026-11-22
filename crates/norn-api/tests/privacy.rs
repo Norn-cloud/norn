@@ -1050,7 +1050,7 @@ fn a_question_cannot_group_or_filter_by_a_marked_party_name() {
         std::slice::from_ref(&by_kind),
         &catalog,
     );
-    assert!(findings.is_empty(), "{findings:?}");
+    assert_eq!(findings, [], "{findings:?}");
     assert!(refused(&question(
         json!([{ "path": owner("display_name") }]),
         json!([])
@@ -1479,10 +1479,10 @@ fn an_export_never_carries_a_row_committed_after_its_marking_decision() {
     };
     // Unlabelled at one version: the export reaches the engine.
     let (_outcome, calls) = export(false);
-    assert!(!calls.is_empty(), "an unlabelled export reaches the engine");
+    assert_ne!(calls.len(), 0, "an unlabelled export reaches the engine");
     // The labelled row lands between the decision and the frontier.
     let (outcome, calls) = export(true);
     let refused = outcome.expect_err("the export is refused");
     assert_eq!(refused.status, 403, "{refused:?}");
-    assert!(calls.is_empty(), "the engine was asked: {calls:?}");
+    assert_eq!(calls.len(), 0, "the engine was asked: {calls:?}");
 }

@@ -76,8 +76,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         self.model()
             .object_types()
             .find(|def| def.name.as_str() == object_type)
-            .map(rule::partition_sources)
-            .unwrap_or_default()
+            .map_or_default(rule::partition_sources)
     }
 
     /// Subjects of `object_type` whose versions up to `frontier` hold more than

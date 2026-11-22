@@ -169,7 +169,7 @@ pub fn validate_flow_source_map(
                         "artifact id {:?} is listed more than once",
                         artifact_ref.artifact_id
                     ),
-                    pointer.clone(),
+                    pointer,
                     Some(artifact_ref.artifact_id.clone()),
                 ));
                 continue;
