@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shlex
 import sys
 from collections import defaultdict
 from dataclasses import dataclass
@@ -68,9 +69,29 @@ class ObservedTest:
     leaf_name: str
     source_hint: str
     binary_hint: str
+    package: str | None = None
 
 
-def rust_passes(log: str) -> list[ObservedTest]:
+def cargo_package(command: str) -> str | None:
+    # Promoted results independently check declared commands against executed argv.
+    argv = shlex.split(command)
+    if argv[:2] != ["cargo", "test"]:
+        return None
+    cargo_args = argv[2:argv.index("--")] if "--" in argv else argv[2:]
+    if "--workspace" in cargo_args or "--all" in cargo_args:
+        return None
+    packages = []
+    for index, arg in enumerate(cargo_args):
+        if arg in {"-p", "--package"}:
+            packages.append(cargo_args[index + 1])
+        elif arg.startswith("--package="):
+            packages.append(arg.split("=", 1)[1])
+        elif arg.startswith("-p"):
+            packages.append(arg[2:])
+    return packages[0] if len(packages) == 1 else None
+
+
+def rust_passes(log: str, package: str | None = None) -> list[ObservedTest]:
     observed: list[ObservedTest] = []
     source_hint = ""
     binary_hint = ""
@@ -91,6 +112,7 @@ def rust_passes(log: str) -> list[ObservedTest]:
                 qualified.rsplit("::", 1)[-1],
                 source_hint,
                 binary_hint,
+                package,
             )
         )
     expected_count = sum(
@@ -135,6 +157,7 @@ def artifact_matches(artifact: str, test: ObservedTest) -> bool:
         # (scripts/codemods/fold_integration_tests.py).
         folded = (
             Path(source_relative).parent.as_posix() == "tests"
+            and test.package == parts[1]
             and test.source_hint == "tests/suites.rs"
             and test.binary_hint.startswith("suites-")
             and test.qualified_name.startswith(f"{expected_binary}::")
@@ -173,7 +196,37 @@ def selector_observed(
     )
 
 
+HOSTED_TIMER_REPLAYS = (
+    "hosted_timers_quint",
+    "approval_fencing_quint",
+)
+
+
+def require_hosted_timer_replays(log: str, package: str | None) -> None:
+    observed = rust_passes(log, package)
+    for module in HOSTED_TIMER_REPLAYS:
+        artifact = f"crates/norn-cell-do/tests/{module}.rs"
+        name = f"{module}::{module}_traces"
+        if not selector_observed(artifact, name, observed):
+            raise SelectorEvidenceError(f"hosted-timers-conformance: missing passing {name}")
+
+
 def run_canaries() -> None:
+    runner = "     Running tests/suites.rs (target/debug/deps/suites-0123abcd)\n"
+    package = cargo_package("cargo test --locked -p norn-cell-do --test suites")
+    passes = [
+        f"test {module}::{module}_traces ... ok\n"
+        for module in HOSTED_TIMER_REPLAYS
+    ]
+    require_hosted_timer_replays(runner + "".join(passes) + "test result: ok. 2 passed\n", package)
+    for passed in passes:
+        try:
+            require_hosted_timer_replays(runner + passed + "test result: ok. 1 passed\n", package)
+        except SelectorEvidenceError:
+            pass
+        else:
+            raise SelectorEvidenceError("hosted-timers-conformance accepted a filtered-out replay")
+
     rust = rust_passes(
         "     Running unittests src/lib.rs (target/debug/deps/canary)\n"
         "test storage::tests::exact_named_case ... ok\n"
@@ -230,10 +283,13 @@ def run_canaries() -> None:
     folded = rust_passes(
         "     Running tests/suites.rs (target/debug/deps/suites-0123abcd)\n"
         "test canary_bin::folded_case ... ok\n"
-        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured\n"
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured\n",
+        cargo_package("cargo test --locked -p norn-engine --test suites"),
     )
     if not selector_observed(
         "crates/norn-engine/tests/canary_bin.rs", "folded_case", folded
+    ) or selector_observed(
+        "crates/norn-other/tests/canary_bin.rs", "folded_case", folded
     ) or selector_observed(
         "crates/norn-engine/tests/other_bin.rs", "folded_case", folded
     ) or selector_observed(
@@ -277,6 +333,8 @@ def test_evidence(coverage: dict) -> Iterable[tuple[str, str, str, str, str]]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--hosted-timers-log", type=Path)
+    parser.add_argument("--cargo-command")
     parser.add_argument("--coverage", type=Path, default=coverage_manifest.COVERAGE)
     parser.add_argument("--gates", type=Path, default=DEFAULT_GATES)
     parser.add_argument("--log-root", type=Path, default=DEFAULT_LOG_ROOT)
@@ -284,6 +342,13 @@ def main() -> int:
     args = parser.parse_args()
 
     run_canaries()
+    if args.hosted_timers_log is not None:
+        require_hosted_timer_replays(
+            args.hosted_timers_log.read_text(encoding="utf-8"),
+            cargo_package(args.cargo_command or ""),
+        )
+        return 0
+
     coverage = coverage_manifest.load(args.coverage)
     gate_manifest = load_json(args.gates)
     all_gates_by_command: dict[str, list[dict]] = defaultdict(list)
@@ -322,7 +387,7 @@ def main() -> int:
             cache_key = (gate["id"], gate["evidenceKind"])
             if cache_key not in parsed_logs:
                 log = log_path.read_text(encoding="utf-8", errors="strict")
-                parsed_logs[cache_key] = rust_passes(log)
+                parsed_logs[cache_key] = rust_passes(log, cargo_package(gate["command"]))
             if selector_observed(
                 artifact, selector, parsed_logs[cache_key]
             ):

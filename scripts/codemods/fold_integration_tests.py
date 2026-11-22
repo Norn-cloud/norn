@@ -357,6 +357,10 @@ def rewrite_command(command: str, folded: dict[tuple[str, str], str], separator:
         positional = i
         break
     after = keep if dashdash is None else [i for i in keep if i > dashdash]
+    if dashdash is not None and (
+        not after or any(tokens[i] not in {"--exact", "--ignored", "--include-ignored", "--nocapture", "--show-output"} for i in after)
+    ):
+        raise Refused(f"{command!r}: unsupported libtest arguments after --")
     exact = any(tokens[i] == "--exact" for i in after) if dashdash is not None else False
     new = {i: tokens[i] for i in keep}
     new[first] = SUITE

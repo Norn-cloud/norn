@@ -281,6 +281,10 @@ run_gate() {
         printf '[fail] %s executed zero Rust tests\n' "$gate_id" | tee -a "$log_path" >&2
         return 1
       fi
+      if [[ "$gate_id" == "hosted-timers-conformance" ]]; then
+        python3 scripts/validate-executed-test-selectors.py \
+          --hosted-timers-log "$log_path" --cargo-command "$executed_command" || return 1
+      fi
       ;;
     bun-tests)
       observed_test_count="$({
