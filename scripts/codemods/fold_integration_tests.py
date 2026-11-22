@@ -389,16 +389,21 @@ def rewrite_command(command: str, folded: dict[tuple[str, str], str], separator:
     return "".join(out)
 
 
-# An argument the token pattern cannot read (a quoted word after a space) continues the
-# command past the match: rewriting only the matched part could add a module filter that
-# libtest ORs with the unseen one, so such a command is refused unless it stays unchanged.
-CONTINUED = re.compile(r"""[ \t]+["']""")
+# A rewrite is allowed only where the command provably ends at the match: anything the token
+# pattern could not read (a quoted word, a glob, a substitution, a line continuation) may be
+# another libtest filter, which libtest would OR with the inserted module filter. So a command
+# that would change must be followed by the end of the text or line, a shell separator, a
+# comment, a closing quote, bracket or comma, or a string escape such as `\\n`; anything
+# else is refused. In a Markdown code
+# span a newline does not end the command.
+ENDS = re.compile(r"""[ \t]*(?:\Z|\n|[;&|#])|["'`),\]]|\\[nrt]""")
+SPAN_ENDS = re.compile(r"""[ \t]*(?:\Z|`)""")
 
 
-def rewrite_match(match: re.Match, folded, separator: str) -> str:
+def rewrite_match(match: re.Match, folded, separator: str, span: bool = False) -> str:
     rewritten = rewrite_command(match[0], folded, separator)
-    if rewritten != match[0] and CONTINUED.match(match.string, match.end()):
-        raise Refused(f"{match[0]!r} continues with an argument the codemod cannot read")
+    if rewritten != match[0] and not (SPAN_ENDS if span else ENDS).match(match.string, match.end()):
+        raise Refused(f"{match[0]!r} continues with text the codemod cannot read")
     return rewritten
 
 
@@ -413,7 +418,7 @@ def rewrite_commands(text: str, folded, markdown: bool = False) -> str:
             out.append(COMMAND.sub(lambda m: rewrite_match(m, folded, SEP), part))
         else:
             out.append(re.sub(r"`[^`]+`", lambda span: MD_COMMAND.sub(
-                lambda m: rewrite_match(m, folded, MD_SEP), span[0]), part))
+                lambda m: rewrite_match(m, folded, MD_SEP, span=True), span[0]), part))
     return "".join(out)
 
 
