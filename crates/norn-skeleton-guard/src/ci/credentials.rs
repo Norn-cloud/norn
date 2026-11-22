@@ -189,6 +189,9 @@ pub const OIDC_ACTIONS: &[OidcAction] = &[
     },
 ];
 
+/// The scope name of a composite action's `runs.steps`.
+const COMPOSITE: &str = "composite action";
+
 /// Every credential-policy error in one workflow document.
 #[must_use]
 pub fn errors(path: &str, document: &Value) -> Vec<String> {
