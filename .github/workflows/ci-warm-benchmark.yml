@@ -202,9 +202,15 @@ jobs:
           echo "$plan"
       - run: |
           if [[ "$RUNNER_ENVIRONMENT" == self-hosted ]]; then
-            cd /home/user/actions-runner/_work/norn/norn
-            # The seed used Cargo's default ~/.cargo without an environment override.
-            unset CARGO_HOME
+            # Keep Bun's working directory and discovery order out of the Rust path experiment.
+            cargo() (
+              workspace=/home/user/actions-runner/_work/norn/norn
+              cd "$workspace${PWD#"$GITHUB_WORKSPACE"}"
+              unset CARGO_HOME
+              export CARGO_TARGET_DIR="$workspace/target"
+              command cargo "$@"
+            )
+            export -f cargo
           fi
           bash scripts/ci/core.sh cheap
       - name: Show compiler cache stats
@@ -213,7 +219,7 @@ jobs:
   test:
     name: bundle (${{ matrix.bundle.id }})
     needs: [core]
-    if: fromJSON(needs.core.outputs.plan).bundle[0] != null
+    if: always() && !cancelled() && needs.core.outputs.plan != '' && fromJSON(needs.core.outputs.plan).bundle[0] != null
     # The writable cache key is an environment secret of `ci-cache-writer-boat` (deployment
     # branch: main only). Merge groups and pull requests see only the read-only repository key.
     # A main push enters the environment exactly when the runner's main-push arm sends it to Boat
