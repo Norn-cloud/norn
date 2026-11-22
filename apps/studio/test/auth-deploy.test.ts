@@ -48,7 +48,7 @@ test("production is the recorded-demo Studio: this entry point refuses it before
   requireSignInRecipe(preview)
   // The refusal comes first: before credentials, auth, or any API call.
   const run = readFileSync(new URL("../alchemy.run.ts", import.meta.url), "utf8")
-  const order = ["requireSignInRecipe(target)", "cloudflareCredentials(process.env)", "authDeploy(process.env, target)", "requireWorkerScript(", "createCloudflareApi()", "await alchemy("].map((marker) => run.indexOf(marker))
+  const order = ["requireSignInRecipe(target)", "cloudflareCredentials(process.env)", "authDeploy(process.env, target)", "requireWorkerScript(host", "await alchemy(", "await createCloudflareApi()"].map((marker) => run.indexOf(marker))
   expect(order.every((at) => at >= 0)).toBe(true)
   expect([...order].sort((a, b) => a - b)).toEqual(order)
 })
@@ -76,7 +76,7 @@ test("production parity: the live recorded-demo metadata matches; the sign-in St
     "compatibility date 2026-10-20, expected 2026-11-01",
   ])
   expect(prodParity({ ...live, bindings: live.bindings.map((b) => b.name === "AGENT_BUDGET" ? { ...b, class_name: "Other" } : b) })).toEqual(["AGENT_BUDGET binds class Other, expected AgentBudget"])
-  expect(PROD_RECORDED_DEMO.worker).toBe(prod.worker)
+  expect(prod.worker).toBe(PROD_RECORDED_DEMO.worker)
 })
 
 test("Cloudflare credentials: the Norn workers token and account only, and never the Global key", () => {
