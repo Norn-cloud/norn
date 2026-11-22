@@ -1,0 +1,23 @@
+{
+  "status": 200,
+  "body": {
+    "objectType": "docs.ScannedDocument",
+    "id": "SCAN-INV-1041",
+    "quarantined": false,
+    "findings": [],
+    "evidence": [
+      {
+        "objectType": "docs.FieldEvidence",
+        "id": "SCAN-INV-1041~lines.1.amount"
+      },
+      {
+        "objectType": "docs.FieldEvidence",
+        "id": "SCAN-INV-1041~lines.2.amount"
+      },
+      {
+        "objectType": "docs.FieldEvidence",
+        "id": "SCAN-INV-1041~total"
+      }
+    ]
+  }
+}

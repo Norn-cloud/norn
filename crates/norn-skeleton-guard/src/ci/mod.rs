@@ -62,11 +62,18 @@ const GATE_FILES: [&str; 26] = [
 /// jobs stay hosted. The gate plan is a step of `core`, so no `plan` job may take a Boat start.
 const BOAT_RUNNER: &str = "${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}";
 
+/// [`BOAT_RUNNER`] plus one arm for main pushes (#1369), so the shared compiler cache, which
+/// only a push to main may write, gets a writer on Boat. The arm admits only a push of
+/// `refs/heads/main` made and started by the merge queue's bot (every main commit lands
+/// through the queue), and only while `NORN_MAIN_RUNNER` is `boat`. Both expressions are
+/// admitted until the workflow takes this one; the guard then drops [`BOAT_RUNNER`].
+const BOAT_RUNNER_WITH_MAIN: &str = "${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat') || (github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor == 'github-merge-queue[bot]' && github.triggering_actor == 'github-merge-queue[bot]' && vars.NORN_MAIN_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}";
+
 fn runner_is_admitted(path: &str, job: &str, runner: Option<&str>) -> bool {
     matches!(runner, Some("ubuntu-latest" | "ubuntu-24.04"))
         || (path == ".github/workflows/ci-policy.yml"
             && matches!(job, "core" | "test" | "full")
-            && runner == Some(BOAT_RUNNER))
+            && (runner == Some(BOAT_RUNNER) || runner == Some(BOAT_RUNNER_WITH_MAIN)))
 }
 
 /// The pull-request arm every admitted concurrency group starts with: one group per
@@ -1260,6 +1267,66 @@ mod tests {
             "core",
             Some(super::BOAT_RUNNER)
         ));
+    }
+
+    #[test]
+    fn runner_routing_admits_merge_queue_main_pushes_only_by_opt_in() {
+        let path = ".github/workflows/ci-policy.yml";
+        let main = super::BOAT_RUNNER_WITH_MAIN;
+        // The main arm extends the admitted expression; it changes nothing else.
+        assert_eq!(
+            main.replace(
+                " || (github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor == 'github-merge-queue[bot]' && github.triggering_actor == 'github-merge-queue[bot]' && vars.NORN_MAIN_RUNNER == 'boat')",
+                ""
+            ),
+            super::BOAT_RUNNER
+        );
+        let reject = |job: &str, changed: &str| {
+            assert_ne!(changed, main, "no-op mutation");
+            assert!(
+                !super::runner_is_admitted(path, job, Some(changed)),
+                "{job}: {changed}"
+            );
+        };
+        assert!(!super::runner_is_admitted(path, "plan", Some(main)));
+        for job in ["trusted-policy", "phase", "unknown"] {
+            assert!(!super::runner_is_admitted(path, job, Some(main)));
+        }
+        assert!(!super::runner_is_admitted(
+            ".github/workflows/trusted-merge-group.yml",
+            "core",
+            Some(main)
+        ));
+        for job in ["core", "test", "full"] {
+            assert!(super::runner_is_admitted(path, job, Some(main)));
+            for removed in [
+                "github.event_name == 'push' && ",
+                " && github.ref == 'refs/heads/main'",
+                " && github.actor == 'github-merge-queue[bot]'",
+                " && github.triggering_actor == 'github-merge-queue[bot]'",
+                " && vars.NORN_MAIN_RUNNER == 'boat'",
+            ] {
+                reject(job, &main.replace(removed, ""));
+            }
+            for (before, after) in [
+                ("'push'", "'workflow_dispatch'"),
+                ("'push'", "'pull_request_target'"),
+                ("'refs/heads/main'", "'refs/heads/demo/robin'"),
+                ("github.ref == 'refs/heads/main'", "github.ref != ''"),
+                (
+                    "github.actor == 'github-merge-queue[bot]'",
+                    "github.actor != 'dependabot[bot]'",
+                ),
+                (
+                    "github.triggering_actor == 'github-merge-queue[bot]'",
+                    "github.triggering_actor == 'dependabot[bot]'",
+                ),
+                ("vars.NORN_MAIN_RUNNER", "vars.NORN_PR_RUNNER"),
+                ("NORN_MAIN_RUNNER == 'boat'", "NORN_MAIN_RUNNER != ''"),
+            ] {
+                reject(job, &main.replace(before, after));
+            }
+        }
     }
 
     fn concurrency(path: &str, source: &str) -> Option<String> {

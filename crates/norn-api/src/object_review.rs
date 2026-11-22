@@ -40,6 +40,7 @@ use utoipa::openapi::schema::{
 
 use crate::authz::ReadCapability::{Population, Sources, Values};
 use crate::host::DevHost;
+use crate::object_links::{GatedFinding, disclosed_findings, gate_findings};
 use crate::object_routes::{
     MAX_QUERY_SCAN, ObjectAccess, SCAN_BATCH, collection, locked, not_found, permitted,
 };
@@ -273,7 +274,7 @@ pub fn get_object_findings<E: SqlEngine>(
     let (_epoch, actor) = collection(host, scope, actor, object_type, access)?;
     let mut start = None;
     let row = reviewable(host, access, &actor, (object_type, id), &mut start)?;
-    let (mut document, linked, disputes) = locked(host, access, &mut start, |reader| {
+    let (mut document, linked, disputes, gated) = locked(host, access, &mut start, |reader| {
         let page = reader
             .links_touching_page(
                 MAIN_WORLD,
@@ -298,17 +299,28 @@ pub fn get_object_findings<E: SqlEngine>(
                 quarantined: reader
                     .observation_is_quarantined(MAIN_WORLD, &row)
                     .map_err(Refusal::host)?,
-                findings: reader
-                    .observation_findings(MAIN_WORLD, &row.object_type, &row.id)
-                    .map_err(Refusal::host)?,
+                findings: Vec::new(),
                 evidence: Vec::new(),
             },
             linked,
             reader
                 .source_disagreements(MAIN_WORLD, &row.object_type, &row.id, None)
                 .map_err(Refusal::host)?,
+            gate_findings(
+                reader,
+                reader
+                    .observation_findings(MAIN_WORLD, &row.object_type, &row.id)
+                    .map_err(Refusal::host)?,
+            )
+            .map_err(Refusal::host)?,
         ))
     })?;
+    // OBS-LINK-DISPUTE-1: a held link is disclosed as the link would be,
+    // at the snapshot the findings were read at.
+    document.findings = disclosed_findings(host, access, &actor, &mut start, vec![((), gated)])?
+        .into_iter()
+        .flat_map(|((), findings)| findings)
+        .collect();
     // Each evidence row is disclosed on its own Population and Values.
     for (object_type, id) in linked {
         let evidence = locked(host, access, &mut start, |reader| {
@@ -587,7 +599,7 @@ pub fn get_quarantined_objects<E: SqlEngine>(
     let mut start = None;
     let mut after: Option<String> = None;
     let mut scanned = 0usize;
-    let mut candidates: Vec<(ObjectRecord, u64)> = Vec::new();
+    let mut candidates: Vec<(ObjectRecord, Vec<GatedFinding>)> = Vec::new();
     let exhausted = loop {
         let (batch, done) = locked(host, access, &mut start, |reader| {
             if !reader.model().has_type(object_type) {
@@ -603,22 +615,22 @@ pub fn get_quarantined_objects<E: SqlEngine>(
                     .observation_is_quarantined(MAIN_WORLD, &row)
                     .map_err(Refusal::host)?
                 {
-                    let open = reader
+                    let open: Vec<DataQualityFinding> = reader
                         .observation_findings(MAIN_WORLD, &row.object_type, &row.id)
                         .map_err(Refusal::host)?
-                        .iter()
+                        .into_iter()
                         .filter(|finding| finding.status == norn_ir::DataQualityFindingStatus::Open)
-                        .count();
-                    held.push((row, u64::try_from(open).unwrap_or(u64::MAX)));
+                        .collect();
+                    held.push((row, gate_findings(reader, open).map_err(Refusal::host)?));
                 } else {
-                    held.push((row, 0));
+                    held.push((row, Vec::new()));
                 }
             }
             Ok((held, done))
         })?;
         scanned = scanned.saturating_add(batch.len());
         after = batch.last().map(|(row, _)| row.id.clone());
-        candidates.extend(batch.into_iter().filter(|(_, open)| *open > 0));
+        candidates.extend(batch.into_iter().filter(|(_, open)| !open.is_empty()));
         if done {
             break true;
         }
@@ -627,16 +639,21 @@ pub fn get_quarantined_objects<E: SqlEngine>(
         }
     };
     // Authorization runs outside the cell lock, row by row.
-    let items = candidates
+    let readable: Vec<_> = candidates
         .into_iter()
         .filter(|(row, _)| {
             [Population, Values]
                 .into_iter()
                 .all(|capability| permitted(host, access, &actor, row, capability))
         })
-        .map(|(row, open_findings)| NornQuarantinedObject {
+        .collect();
+    // OBS-LINK-DISPUTE-1: a held link counts only where it is disclosed, at
+    // the snapshot the rows were read at.
+    let items = disclosed_findings(host, access, &actor, &mut start, readable)?
+        .into_iter()
+        .map(|(row, open)| NornQuarantinedObject {
             id: row.id,
-            open_findings,
+            open_findings: u64::try_from(open.len()).unwrap_or(u64::MAX),
         })
         .collect();
     Ok(NornQuarantinedPage {

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { QueryClient, QueryObserver } from "@tanstack/react-query"
 import type { ActionReceipt, ActionSummary, CallResult, CatalogRead } from "../src/lib/actions.ts"
-import { inFlight, init, offeredFor, recordCatalog, undoOf, update, type Cmd, type Msg, type State } from "../src/lib/screen/call.ts"
+import { inFlight, init, offeredFor, parkedOf, recordCatalog, resume, undoOf, update, type Cmd, type Msg, type State } from "../src/lib/screen/call.ts"
 
 // Properties of the renderer core over seeded random message sequences (D79: properties, not cases).
 
@@ -46,6 +46,8 @@ function session(seed: number, length = 60): { readonly risky: boolean; readonly
       (): Msg => ({ kind: "retry" }),
       (): Msg => ({ kind: "again", key: `k${keys++}` }),
       (): Msg => ({ kind: "undo", key: `k${keys++}` }),
+      // The cell serves the parked call back exactly as it was sent (APPROVAL-REQUESTED-1).
+      (): Msg => ({ kind: "run-approved", decisionId: state.phase.kind === "pending" ? state.phase.decision.id : "elsewhere", actionId: "learning.triage_episode", input: state.sent?.input ?? "{}", key: state.sent?.key ?? "kx", next: `k${keys++}` }),
     ])()
     const [after, cmds] = update(state, msg)
     steps.push({ before: state, msg, after, cmds })
@@ -192,4 +194,59 @@ test("a live record's cached catalog offers nothing while it is read again, or a
   expect(observer.getCurrentResult().data).toEqual({ kind: "catalog", items: cached })
   expect(offer()).toEqual({ kind: "unreadable" })
   unsubscribe()
+})
+
+// APPROVAL-REQUESTED-1: a parked call keeps its exact encoded input and key, and "Approved, run it"
+// sends exactly the call the cell serves back, only from that decision's pending phase.
+const TARGET = { actionId: "ops.refund", risky: false } as const
+const PARKED = { decision: { id: "dec_1", expiresAtMs: 9 }, input: '{"amount":"1240.00","id":"r-1"}', key: "k-parked" } as const
+
+test("a parked call keeps its exact input and key: the sheet reopens on it as it was sent", () => {
+  const sending = update(init(TARGET, "k-parked"), { kind: "submit", input: PARKED.input })[0]
+  const [pending] = update(sending, { kind: "answered", result: { kind: "pending", decision: PARKED.decision } })
+  expect(parkedOf(pending)).toEqual(PARKED)
+  const resumed = resume(TARGET, PARKED)
+  expect(resumed.phase).toEqual({ kind: "pending", decision: PARKED.decision })
+  expect(parkedOf(resumed)).toEqual(PARKED)
+  // Nothing but a parked phase is a parked call.
+  expect(parkedOf(init(TARGET, "k0"))).toBeNull()
+  expect(parkedOf(sending)).toBeNull()
+})
+
+test("run-approved sends exactly the served call, under its key, once; a retry after an outage re-sends it", () => {
+  const served = { kind: "run-approved", decisionId: "dec_1", actionId: "ops.refund", input: '{"amount":"1240.00","id":"r-1"}', key: "k-parked", next: "k-draft" } as const
+  const [running, cmds] = update(resume(TARGET, PARKED), served)
+  expect(running.phase.kind).toBe("sending")
+  expect(cmds).toEqual([{ kind: "call", actionId: "ops.refund", input: served.input, key: served.key }])
+  // A second click while it is out starts nothing.
+  expect(update(running, served)).toEqual([running, []])
+  const [failed] = update(running, { kind: "threw", message: "offline" })
+  expect(update(failed, { kind: "retry" })[1]).toEqual(cmds)
+  const [done, after] = update(running, { kind: "answered", result: { kind: "receipt", receipt: receipt(4) } })
+  expect(done.phase.kind).toBe("done")
+  expect(after).toEqual([{ kind: "refetch" }])
+})
+
+test("run-approved is only for the decision this form waits on and its own action", () => {
+  const pending = resume(TARGET, PARKED)
+  const call = { kind: "run-approved", decisionId: "dec_1", actionId: "ops.refund", input: PARKED.input, key: PARKED.key, next: "k-draft" } as const
+  expect(update(pending, { ...call, decisionId: "dec_other" })).toEqual([pending, []])
+  expect(update(pending, { ...call, actionId: "ops.other" })).toEqual([pending, []])
+  const editing = init(TARGET, "k0")
+  expect(update(editing, call)).toEqual([editing, []])
+  // The served call wins over what this tab kept: the cell holds the call.
+  const [, cmds] = update(pending, { ...call, input: '{"amount":"1240.000","id":"r-1"}' })
+  expect(cmds).toEqual([{ kind: "call", actionId: "ops.refund", input: '{"amount":"1240.000","id":"r-1"}', key: PARKED.key }])
+})
+
+test("a refused approved run is final for that call: a draft sent after it is a new call under a new key", () => {
+  const [running] = update(resume(TARGET, PARKED), { kind: "run-approved", decisionId: "dec_1", actionId: "ops.refund", input: PARKED.input, key: PARKED.key, next: "k-draft" })
+  const [refused] = update(running, { kind: "answered", result: { kind: "refused", status: 403, code: "action.denied", message: "denied", diagnostics: [] } })
+  expect(refused.phase.kind).toBe("refused")
+  // Even without an edit, the parked key never carries another body.
+  expect(update(refused, { kind: "submit", input: "{}" })[1]).toEqual([{ kind: "call", actionId: "ops.refund", input: "{}", key: "k-draft" }])
+  const [edited] = update(refused, { kind: "edit", key: "k-new" })
+  expect(edited.key).toBe("k-new")
+  const [, cmds] = update(edited, { kind: "submit", input: "{}" })
+  expect(cmds).toEqual([{ kind: "call", actionId: "ops.refund", input: "{}", key: "k-new" }])
 })

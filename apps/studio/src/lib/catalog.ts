@@ -152,7 +152,7 @@ export interface Catalog {
   readonly byName: ReadonlyMap<string, Concept>
 }
 
-const SYSTEM_NAMES: Record<string, string> = { erpnext: "ERPNext", shopify: "Shopify", odoo: "Odoo", "norn-connect": "Norn" }
+const SYSTEM_NAMES: Record<string, string> = { erpnext: "ERPNext", shopify: "Shopify", odoo: "Odoo", scans: "Document scans", "norn-connect": "Norn" }
 
 /**
  * Whether the cell itself writes this source: its schema names the instance `cell` (the sync

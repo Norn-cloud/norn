@@ -132,13 +132,17 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         self.indexed_source_findings(object_type, key, false)
     }
 
-    pub(crate) fn verified_source_conflicts(&self) -> Result<Vec<MappingConflict>, CellError> {
-        let rows = self.conn.query(&format!("SELECT observation_id, observed FROM {INBOX} WHERE observation_id LIKE 'mapping-conflict:%' ORDER BY position"), params![])?;
+    /// Every captured conflict with its inbox position, in capture order.
+    pub(crate) fn verified_source_conflicts(
+        &self,
+    ) -> Result<Vec<(u64, MappingConflict)>, CellError> {
+        let rows = self.conn.query(&format!("SELECT position, observation_id, observed FROM {INBOX} WHERE observation_id LIKE 'mapping-conflict:%' ORDER BY position"), params![])?;
         let mut conflicts = Vec::new();
         for values in rows {
             let row = crate::engine::SqlRow(values);
-            let stored_id: String = row.get(0)?;
-            let encoded: String = row.get(1)?;
+            let position = crate::read::to_u64(row.get(0)?, "inbox position")?;
+            let stored_id: String = row.get(1)?;
+            let encoded: String = row.get(2)?;
             let observed: Observed<RuntimeValue> = serde_json::from_str(&encoded)?;
             let conflict: MappingConflict =
                 norn_ir::runtime::decode(&observed.input).map_err(CellError::Encoding)?;
@@ -148,7 +152,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             {
                 return Err(CellError::MappingBundleMismatch);
             }
-            conflicts.push(conflict);
+            conflicts.push((position, conflict));
         }
         Ok(conflicts)
     }
@@ -203,9 +207,43 @@ pub(crate) struct SourceDisputeIndex {
     revision: Option<(u64, u64)>,
     initialized: bool,
     subjects: BTreeMap<(String, String), Vec<(bool, DataQualityFinding)>>,
-    identities: BTreeSet<[String; 5]>,
-    conflicts: BTreeSet<[String; 5]>,
+    /// Disputed source events (NFC keys), conflicts and identity disputes alike.
+    events: BTreeMap<[String; 5], EventDispute>,
     roots_by_key: BTreeMap<String, BTreeSet<String>>,
+}
+
+/// OBS-LINK-DISPUTE-1: the dispute rows covering one source event.
+#[derive(Debug, Clone)]
+pub(crate) struct EventDispute {
+    /// The inbox position of the earliest row, whose `first_seen` dates a
+    /// held-link finding. It orders evidence only: the freeze itself reads
+    /// whether a row exists when the commit runs.
+    pub(crate) position: u64,
+    /// The dispute rows' inbox ids (`mapping-conflict:` / `mapping-identity:`).
+    pub(crate) rows: BTreeSet<String>,
+    /// When the earliest row's finding was first seen.
+    pub(crate) first_seen: norn_ir::provenance::UtcTimestamp,
+}
+
+impl SourceDisputeIndex {
+    fn dispute(
+        &mut self,
+        keys: [String; 5],
+        position: u64,
+        row: String,
+        finding: &DataQualityFinding,
+    ) {
+        let entry = self.events.entry(keys).or_insert_with(|| EventDispute {
+            position,
+            rows: BTreeSet::new(),
+            first_seen: finding.first_seen.clone(),
+        });
+        if position < entry.position {
+            entry.position = position;
+            entry.first_seen = finding.first_seen.clone();
+        }
+        entry.rows.insert(row);
+    }
 }
 
 impl<E: SqlEngine> StoreReader<'_, E> {
@@ -226,18 +264,23 @@ impl<E: SqlEngine> StoreReader<'_, E> {
 
     fn collect_source_dispute_index(&self) -> Result<SourceDisputeIndex, CellError> {
         let mut index = SourceDisputeIndex::default();
-        for conflict in self.verified_source_conflicts()? {
-            index.conflicts.insert(
+        for (position, conflict) in self.verified_source_conflicts()? {
+            index.dispute(
                 crate::mapping_identity::keys(&conflict.incoming.raw, &conflict.incoming.input)?
                     .map(|key| norn_ir::canonical::nfc(&key)),
+                position,
+                format!("mapping-conflict:{}", conflict.finding.id),
+                &conflict.finding,
             );
             self.index_source_finding(&mut index, &conflict.incoming, false, &conflict.finding)?;
         }
-        for guard in self.identity_evidence()? {
-            index.identities.insert(crate::mapping_identity::keys(
-                &guard.bundle.raw,
-                &guard.bundle.input,
-            )?);
+        for (position, guard) in self.identity_evidence()? {
+            index.dispute(
+                crate::mapping_identity::keys(&guard.bundle.raw, &guard.bundle.input)?,
+                position,
+                format!("mapping-identity:{}", guard.finding.id),
+                &guard.finding,
+            );
             self.index_source_finding(&mut index, &guard.bundle, true, &guard.finding)?;
         }
         Ok(index)
@@ -390,8 +433,16 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     ) -> Result<bool, CellError> {
         let keys = crate::mapping_identity::keys(&bundle.raw, &bundle.input)?
             .map(|key| norn_ir::canonical::nfc(&key));
-        self.with_source_dispute_index(|index| {
-            index.identities.contains(&keys) || index.conflicts.contains(&keys)
-        })
+        self.with_source_dispute_index(|index| index.events.contains_key(&keys))
+    }
+
+    /// The dispute rows covering `bundle`'s source event, if any.
+    pub(crate) fn mapping_event_dispute(
+        &self,
+        bundle: &MappingBundle,
+    ) -> Result<Option<EventDispute>, CellError> {
+        let keys = crate::mapping_identity::keys(&bundle.raw, &bundle.input)?
+            .map(|key| norn_ir::canonical::nfc(&key));
+        self.with_source_dispute_index(|index| index.events.get(&keys).cloned())
     }
 }

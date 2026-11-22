@@ -1,0 +1,28 @@
+{
+  "status": 422,
+  "body": {
+    "format": "norn/refusal@2",
+    "retryable": false,
+    "reason": {
+      "law": "canon.ItemizedDocument.total_matches_lines",
+      "subject": "docs.ScannedDocument/SCAN-INV-1041",
+      "values": {
+        "lines.amount": [
+          18.5,
+          12
+        ],
+        "total": 30
+      },
+      "pin": {
+        "kind": "law",
+        "artifactId": "canon.ItemizedDocument.total_matches_lines.law",
+        "lawId": "canon.ItemizedDocument.total_matches_lines",
+        "version": "sha256:18f52fd6fea89c188a2295a098a01b66e949a90c77ec002447a857351651eada"
+      }
+    },
+    "code": "core.laws.violated",
+    "category": "precondition",
+    "message": "a declared precondition does not hold",
+    "explanation": "docs.ScannedDocument/SCAN-INV-1041: core.laws.violated: canon.ItemizedDocument.total_matches_lines: A document's total must equal the sum of its lines; when they differ, a digit was usually misread or a decimal point dropped."
+  }
+}

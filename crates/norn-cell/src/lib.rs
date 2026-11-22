@@ -54,6 +54,7 @@ pub mod mapping_bundle;
 pub mod mapping_conflict;
 mod mapping_identity;
 mod mapping_links;
+pub use mapping_links::LINK_HELD_RULE;
 #[doc(hidden)]
 pub use mapping_links::check_link_plans_against_wide_scope;
 pub mod mapping_page;
