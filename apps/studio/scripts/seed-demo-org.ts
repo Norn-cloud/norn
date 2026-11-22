@@ -9,9 +9,10 @@
  *
  *   bun scripts/seed-demo-org.ts --stage preview --member viewer@demo.norn.cloud=viewer --member analyst@demo.norn.cloud=member
  *
- * Uses a loopback-only Wrangler Worker and remote D1 binding. Needs CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_EMAIL and CLOUDFLARE_API_KEY. The members must already have signed up and verified their email addresses.
+ * Uses a loopback-only Wrangler Worker and remote D1 binding. Needs CLOUDFLARE_WORKERS_API_TOKEN and CLOUDFLARE_ACCOUNT_ID (the Norn account; Infisical prod /norn/cloudflare); the Global API Key variables refuse it, and Wrangler runs with a sanitized environment and a temporary HOME (deploy-target.ts wranglerEnv). The members must already have signed up and verified their email addresses.
  */
 import { DEMO_ORG, parseMembers } from "./seed-demo-org-core.ts"
+import { cloudflareCredentials, wranglerEnv } from "../deploy-target.ts"
 export { DEMO_ORG, parseMembers, seedDemoOrg, seedStatements } from "./seed-demo-org-core.ts"
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { createServer } from "node:net"
@@ -124,9 +125,10 @@ async function main(argv: readonly string[]) {
   const stage = argv[argv.indexOf("--stage") + 1]
   if (argv.indexOf("--stage") < 0 || stage !== "preview") throw new Error("--stage preview is required; prod gets org_demo only on promotion")
   const members = parseMembers(argv.flatMap((arg, index) => argv[index - 1] === "--member" ? [arg] : []))
-  const { CLOUDFLARE_ACCOUNT_ID: account, CLOUDFLARE_EMAIL: email, CLOUDFLARE_API_KEY: key } = process.env
-  if (!account || !email || !key) throw new Error("CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_EMAIL and CLOUDFLARE_API_KEY are required")
-  const api = (path: string) => discoverD1(`https://api.cloudflare.com/client/v4/accounts/${account}/d1/database${path}`, { "x-auth-email": email, "x-auth-key": key, "content-type": "application/json" })
+  // The Norn workers token and account only, checked before any request or spawn.
+  const credentials = cloudflareCredentials(process.env)
+  const { accountId: account, apiToken } = credentials
+  const api = (path: string) => discoverD1(`https://api.cloudflare.com/client/v4/accounts/${account}/d1/database${path}`, { authorization: `Bearer ${apiToken}`, "content-type": "application/json" })
   const name = `norn-studio-auth-${stage}`
   const found = await api(`?name=${name}`)
   if (!found.success) throw new SeedFailure(`could not list D1 databases: ${JSON.stringify(found.errors)}`, SEED_EXIT.refused)
@@ -147,7 +149,9 @@ async function main(argv: readonly string[]) {
   try {
     await writeFile(configPath, JSON.stringify(config), { mode: 0o600 })
     await writeFile(join(dir, ".dev.vars"), `SEED_TOKEN=${JSON.stringify(token)}\n`, { mode: 0o600 })
-    const child = Bun.spawn([resolve(import.meta.dir, "../node_modules/.bin/wrangler"), "dev", "--config", configPath, "--ip", "127.0.0.1", "--port", String(port), "--inspector-port", "0"], { stdout: "ignore", stderr: "ignore", env: process.env })
+    // Wrangler's HOME and XDG directories (wranglerEnv) live in this temporary directory too.
+    for (const sub of ["home", "config", "cache", "data", "state"]) await import("node:fs/promises").then(({ mkdir }) => mkdir(join(dir, sub), { mode: 0o700 }))
+    const child = Bun.spawn([resolve(import.meta.dir, "../node_modules/.bin/wrangler"), "dev", "--config", configPath, "--ip", "127.0.0.1", "--port", String(port), "--inspector-port", "0"], { stdout: "ignore", stderr: "ignore", env: wranglerEnv(process.env, credentials, dir) })
     await withWrangler(child, async (signal) => {
       const response = await seedWhenReady(child.exited, `http://127.0.0.1:${port}`, token, members, undefined, signal)
       let body: unknown

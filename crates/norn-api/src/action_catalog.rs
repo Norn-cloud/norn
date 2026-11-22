@@ -18,7 +18,6 @@
 //! refused exactly as that read is, and its state is never disclosed. Guards
 //! are not evaluated here: the call decides them.
 use crate::{
-    action_admission::RetainedActions,
     actions::{ActionQuery, action_denied},
     authz::{AccessRequest, Operation},
     host::DevHost,
@@ -58,11 +57,16 @@ pub fn callable_actions<E: SqlEngine>(
     host.scope()
         .admit(query.org_id.as_deref(), query.environment_id.as_deref())
         .map_err(|_refused| action_denied())?;
-    let installed = host.active_definitions()?.ok_or_else(action_denied)?;
-    let retained = RetainedActions::load(&installed, host.scope())?;
+    let (version, retained) = {
+        let _epoch = host.definition_read()?;
+        let cell = host.cell()?;
+        // ADMIT-CACHE-1 (#1533): verified once per definitions version.
+        host.retained(&cell.store().read())?
+            .ok_or_else(action_denied)?
+    };
     let actions = retained
         .actions
-        .into_iter()
+        .iter()
         .filter(|(_, action)| {
             host.authorizer
                 .authorize(&AccessRequest {
@@ -72,11 +76,9 @@ pub fn callable_actions<E: SqlEngine>(
                 })
                 .is_ok()
         })
+        .cloned()
         .collect();
-    Ok(CallableActions {
-        version: installed.version,
-        actions,
-    })
+    Ok(CallableActions { version, actions })
 }
 
 /// `GET /v1/actions` query: the scope, and optionally one target object type.

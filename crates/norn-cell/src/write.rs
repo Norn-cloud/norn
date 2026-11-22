@@ -966,11 +966,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
         object_type: &str,
         values: &BTreeMap<String, Value>,
     ) -> Result<BTreeMap<String, Value>, CellError> {
-        let catalog = self.catalog.get_or_init(|| {
-            TypeCatalog::new(self.model.object_types())
-                .with_interfaces(self.model.interfaces())
-                .with_property_types(self.model.property_types())
-        });
+        let catalog = self.catalog.get_or_init(|| self.model.type_catalog());
         catalog
             .effective_object_values(&ObjectTypeName(object_type.to_owned()), values)
             .map_err(|error| match error {

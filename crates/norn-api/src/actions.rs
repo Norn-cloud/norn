@@ -373,25 +373,22 @@ pub(crate) fn call_action_bound<E: SqlEngine>(
         return Err(invalid_at("/input", "input must be a JSON object"));
     };
     let mut cell = host.cell()?;
-    let installed = cell
-        .store()
-        .read()
-        .installed_definitions(None)
-        .map_err(Refusal::host)?
+    // ADMIT-CACHE-1 (#1533): verified once per definitions version.
+    let (installed_version, admitted) = host
+        .retained(&cell.store().read())?
         .ok_or_else(action_denied)?;
-    let admitted = crate::action_admission::RetainedActions::load(&installed, host.scope())?;
     let (artifact, action) = admitted
         .actions
         .iter()
         .find(|(_, action)| action.action_id == action_id)
         .ok_or_else(action_denied)?;
-    if query.version.is_some_and(|pin| pin != installed.version) {
+    if query.version.is_some_and(|pin| pin != installed_version) {
         return Err(stale_pin(&mut cell, approved, principal, attempt)?);
     }
     let model = cell.store().model().clone();
-    let catalog = TypeCatalog::new(model.object_types())
-        .with_property_types(model.property_types())
-        .with_interfaces(model.interfaces())
+    // ADMIT-CACHE-1: the model's definition work is derived once per model.
+    let catalog = model
+        .type_catalog()
         .with_governing_laws(model.law_artifacts())
         .with_action_rules(&admitted.rules);
     let now = turn_clock(&mut cell, now)?;

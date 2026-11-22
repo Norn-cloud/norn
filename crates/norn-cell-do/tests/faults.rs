@@ -665,6 +665,13 @@ impl DoStorage for CommitsOnRollback {
     fn exec_batch(&self, sql: &str) -> Result<(), CellError> {
         self.0.exec_batch(sql)
     }
+
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.0.definition_writes(f)
+    }
 }
 
 /// The request-layer laws can fail: a storage that lets a faulted request's

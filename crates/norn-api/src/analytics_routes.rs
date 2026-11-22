@@ -467,7 +467,12 @@ pub fn export_objects<E: SqlEngine>(
     let store = guard.store();
     // PRIVACY-1: an export carries stored values, so a cell that declares
     // markings exports nothing; a marked value leaves only through a reveal.
-    if !host.marking_catalog(&store.read())?.is_empty() {
+    // The decision and the frontier the engine exports are read at one cell
+    // version (S3, #1547), and the engine exports the rows live at it.
+    let (leave, source, snapshot) = decided_source(host, store, object_type, |reader| {
+        stored_values_leave(host, reader, object_type)
+    })?;
+    if !leave {
         return Err(crate::authz::read_denied());
     }
     let table = store.analytics_table(object_type).map_err(engine_failure)?;
@@ -488,9 +493,6 @@ pub fn export_objects<E: SqlEngine>(
         }
     }
     let tenant = TenantId::of_scope(&host.scope().key());
-    let (source, snapshot) = store
-        .analytics_source(norn_cell::MAIN_WORLD, &host.scope().key(), object_type)
-        .map_err(engine_failure)?;
     let mut call = EngineCall::new(
         "export",
         &ExportRequest {
@@ -1558,7 +1560,7 @@ pub fn serves_records<E: SqlEngine>(host: &DevHost<E>, object_type: &str) -> Res
     let has_type = guard.store().model().has_type(object_type);
     // PRIVACY-1: the engine mirror holds stored values, so a cell that
     // declares markings reads its records natively, where they are projected.
-    if has_type && !host.marking_catalog(&guard.store().read())?.is_empty() {
+    if has_type && !stored_values_leave(host, &guard.store().read(), object_type)? {
         return Ok(false);
     }
     Ok(has_type
@@ -1873,6 +1875,54 @@ fn page_clause(
     })
 }
 
+/// PRIVACY-1: whether `object_type`'s current stored values may leave as
+/// they are stored: the cell holds no marking label, or it declares no
+/// marking and no live row of the type carries one, so its labels (the
+/// kernel's on its own records, or earlier versions') are elsewhere (#1547).
+///
+/// # Errors
+/// A store failure.
+fn stored_values_leave<E: SqlEngine>(
+    host: &DevHost<E>,
+    reader: &norn_cell::StoreReader<'_, E>,
+    object_type: &str,
+) -> Result<bool, Refusal> {
+    let catalog = host.marking_catalog(reader)?;
+    Ok(catalog.is_empty()
+        || (!crate::privacy::declares(&catalog) && unlabeled(reader, object_type)))
+}
+
+/// S3 (#1547): `leave`, whether `object_type`'s stored values may reach the
+/// engine, and the analytics source an engine call reads, at one cell
+/// version. A commit by any
+/// connection between the decision and the frontier would let a row the
+/// decision never saw into the call, so the two are bracketed by the cell's
+/// version (head and foreign-write revision): a moved version is read again,
+/// up to three times, then refused with the retryable `object.snapshot_moved`.
+/// The engine reads the rows live at that frontier.
+///
+/// # Errors
+/// A moved snapshot, an engine without a revision, or a store failure.
+fn decided_source<E: SqlEngine>(
+    host: &DevHost<E>,
+    store: &CellStore<E>,
+    object_type: &str,
+    leave: impl Fn(&norn_cell::StoreReader<'_, E>) -> Result<bool, Refusal>,
+) -> Result<(bool, norn_cell::analytics::Source, String), Refusal> {
+    for _attempt in 0..3 {
+        let reader = store.read();
+        let start = crate::object_routes::cell_version(&reader)?;
+        let leave = leave(&reader)?;
+        let (source, snapshot) = store
+            .analytics_source(norn_cell::MAIN_WORLD, &host.scope().key(), object_type)
+            .map_err(engine_failure)?;
+        if crate::object_routes::cell_version(&reader)? == start {
+            return Ok((leave, source, snapshot));
+        }
+    }
+    Err(crate::object_routes::snapshot_moved())
+}
+
 /// Whether every live row of `object_type` has a complete marking snapshot
 /// with no label on any of its properties. An unknown type, an incomplete
 /// snapshot or an unbounded summary counts as labeled: it fails closed to the
@@ -1910,26 +1960,32 @@ pub fn profile_objects<E: SqlEngine>(
     // markings profiles natively, over projected values, unless no live row
     // of this type carries a label on any of its properties. Then every value
     // projects as itself and the engine's profile is the native one.
-    let marked = {
-        let guard = host.cell()?;
-        let reader = guard.store().read();
-        !host.marking_catalog(&reader)?.is_empty() && !unlabeled(&reader, object_type)
+    let leave = |reader: &norn_cell::StoreReader<'_, E>| -> Result<bool, Refusal> {
+        Ok(host.marking_catalog(reader)?.is_empty() || unlabeled(reader, object_type))
     };
-    if marked {
+    let unmarked = {
+        let guard = host.cell()?;
+        leave(&guard.store().read())?
+    };
+    if !unmarked {
         return crate::object_profile::get_object_profile(host, scope, actor, object_type, access);
     }
     let values = uniform_gate(host, scope, actor, object_type, access)?;
     let guard = host.cell()?;
     let store = guard.store();
+    // After the gate, so a denied caller costs what it did: the decision
+    // again, with the profiled frontier, at one cell version (S3, #1547).
+    let (unmarked, source, _snapshot) = decided_source(host, store, object_type, leave)?;
+    if !unmarked {
+        drop(guard);
+        return crate::object_profile::get_object_profile(host, scope, actor, object_type, access);
+    }
     let declared = store
         .model()
         .effective_property_types(object_type)
         .map_err(|_unknown| crate::object_routes::not_found())?;
     let table = store.analytics_table(object_type).map_err(engine_failure)?;
     let tenant = TenantId::of_scope(&host.scope().key());
-    let (source, _snapshot) = store
-        .analytics_source(norn_cell::MAIN_WORLD, &host.scope().key(), object_type)
-        .map_err(engine_failure)?;
     let call = EngineCall::new(
         "profile",
         &ProfileRequest {
