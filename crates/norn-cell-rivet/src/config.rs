@@ -223,8 +223,8 @@ pub fn check_engine_transport(endpoint: &str, plaintext: Option<&str>) -> Result
             } else {
                 Err(
                     "RIVET_ENDPOINT is plaintext http to a non-loopback engine, which would send \
-                     the admin token in cleartext: use https (apps/norn-cell-rivet/README.md, \
-                     \"Transport security\"), or set NORN_RIVET_PLAINTEXT_ENGINE=single-host \
+                     the admin token in cleartext: use https, or set \
+                     NORN_RIVET_PLAINTEXT_ENGINE=single-host \
                      when the engine is on this machine's bridge network"
                         .to_owned(),
                 )

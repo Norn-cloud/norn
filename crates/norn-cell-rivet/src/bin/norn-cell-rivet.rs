@@ -2,7 +2,7 @@
 //! conformance builds, the probe actor) to the Rivet engine named by
 //! `RIVET_ENDPOINT` (`https://<namespace>:<token>@host:6420`; plaintext only to
 //! loopback or with `NORN_RIVET_PLAINTEXT_ENGINE=single-host`), and the public
-//! router on `NORN_LISTEN` (default `127.0.0.1:8787`). Any runner routes to
+//! router on `NORN_LISTEN` or the platform's `PORT`. Any runner routes to
 //! any cell: requests reach the actor through the engine's gateway.
 
 use std::sync::Arc;
@@ -29,35 +29,22 @@ async fn main() -> Result<()> {
         .with_writer(std::io::stderr)
         .init();
     let config = config::install(HostConfig::from_env());
-    // Local development only (`NORN_RIVET_DEV_ENGINE=1`, no `RIVET_ENDPOINT`):
-    // RivetKit starts a local engine on 127.0.0.1:6420, downloading the release
-    // that matches the SDK (checksum-verified) when none is installed.
-    let dev_engine = std::env::var("NORN_RIVET_DEV_ENGINE").is_ok_and(|value| value == "1");
-    let endpoint = match std::env::var("RIVET_ENDPOINT") {
-        Ok(endpoint) if !dev_engine => endpoint,
-        Ok(_) => {
-            anyhow::bail!("NORN_RIVET_DEV_ENGINE=1 starts a local engine; unset RIVET_ENDPOINT")
-        }
-        Err(_) if dev_engine => "http://default:default@127.0.0.1:6420".to_owned(),
-        Err(_) => anyhow::bail!(
-            "RIVET_ENDPOINT names the engine (or NORN_RIVET_DEV_ENGINE=1 for a local one)"
-        ),
-    };
+    let endpoint = std::env::var("RIVET_ENDPOINT").context("RIVET_ENDPOINT names the engine")?;
     config::check_engine_transport(
         &endpoint,
         std::env::var("NORN_RIVET_PLAINTEXT_ENGINE").ok().as_deref(),
     )
     .map_err(anyhow::Error::msg)?;
-    let listen = std::env::var("NORN_LISTEN").unwrap_or_else(|_unset| "127.0.0.1:8787".to_owned());
+    let listen = std::env::var("NORN_LISTEN").unwrap_or_else(|_unset| {
+        std::env::var("PORT").map_or_else(
+            |_unset| "127.0.0.1:8787".to_owned(),
+            |port| format!("0.0.0.0:{port}"),
+        )
+    });
     let mut runner_config = rivetkit::ServeConfig::from_env()?;
-    if dev_engine {
-        runner_config.engine_spawn = rivetkit::EngineSpawnMode::Always;
-        runner_config.engine_auto_download = true;
-    } else {
-        // A deployed host never starts or downloads an engine: it joins the one named.
-        runner_config.engine_spawn = rivetkit::EngineSpawnMode::Never;
-        runner_config.engine_auto_download = false;
-    }
+    // The runner joins the named engine and never starts or downloads one.
+    runner_config.engine_spawn = rivetkit::EngineSpawnMode::Never;
+    runner_config.engine_auto_download = false;
     let shutdown = CancellationToken::new();
     let runner = tokio::spawn(serve_actors(runner_config, shutdown.clone()));
     let client = Client::new(ClientConfig::new(endpoint));

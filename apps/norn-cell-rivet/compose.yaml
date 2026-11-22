@@ -1,15 +1,5 @@
-# Self-hosted Norn cells on Rivet (D131): three Rivet Engine instances, each
-# with its own log disk; one S3-compatible bucket; a load balancer; and two
-# norn-cell-rivet runners. README.md lists every variable and covers Hetzner
-# Object Storage in place of the bundled test bucket (profile s3).
-#
-#   cp apps/norn-cell-rivet/env.example apps/norn-cell-rivet/.env   # then edit it
-#   docker compose -f apps/norn-cell-rivet/compose.yaml --profile s3 up -d --build
-#
-# Ports: the runners' 8787 is published (put TLS in front of it), and the
-# engines' 6420 (through `lb`) on loopback only, for the operator. 6421
-# (between instances: plaintext and unauthenticated) stays on the compose
-# network.
+# Same-host rehearsal for three Rivet engines and two Norn runners.
+# See README.md for usage. Published ports are restricted to loopback.
 name: norn-rivet
 
 x-engine: &engine
@@ -40,7 +30,7 @@ x-engine-env: &engine-env
   RIVET__TELEMETRY__ENABLED: "false"
   # Plain-http S3 endpoints are refused unless this is true (object_store reads
   # AWS_* settings from the environment). Only for a bucket on the compose
-  # network (profile s3); Hetzner Object Storage is https.
+  # network (profile s3).
   AWS_ALLOW_HTTP: ${S3_ALLOW_HTTP:-false}
 
 x-runner: &runner
@@ -56,7 +46,7 @@ x-runner: &runner
 x-runner-env: &runner-env
   RIVET_ENDPOINT: http://default:${RIVET_ADMIN_TOKEN}@lb:6420
   # One machine: the token stays on this host's bridge network. The runner refuses plaintext to
-  # any other engine (README.md, "Transport security"); the three-machine recipe is https.
+  # any other engine unless HTTPS is configured.
   NORN_RIVET_PLAINTEXT_ENGINE: single-host
   NORN_HOST_ISSUER: ${NORN_HOST_ISSUER:?set NORN_HOST_ISSUER}
   NORN_HOST_JWKS_URL: ${NORN_HOST_JWKS_URL:?set NORN_HOST_JWKS_URL}
@@ -113,14 +103,12 @@ services:
   runner-1:
     <<: *runner
     environment: *runner-env
-    ports: ["${NORN_PORT:-8787}:8787"]
+    ports: ["127.0.0.1:${NORN_PORT:-8787}:8787"]
   runner-2:
     <<: *runner
     environment: *runner-env
 
-  # Tests and local trials only: an S3-compatible bucket on this machine
-  # (RustFS 1.0.6, Apache-2.0; MinIO no longer publishes community images or
-  # binaries). Production points S3_* at Hetzner Object Storage (README.md).
+  # Local S3-compatible test bucket (RustFS 1.0.6, Apache-2.0).
   s3:
     profiles: [s3]
     image: rustfs/rustfs@sha256:ee717072290bec9b11abfc0365f8310b00df1cd9b3639943edae47bdef05044a
