@@ -57,19 +57,20 @@ def skip_end(text, i):
             else:
                 j += 1
         return len(text)
-    if i and (text[i - 1].isalnum() or text[i - 1] == "_"):
-        return None  # inside an identifier: `bar"` can't open a literal, `r` here is a name
-    raw = RAW.match(text, i)
+    # A prefix letter (r, b, c) inside an identifier is part of the name (`bar"`, `r#type`), but a
+    # quote always opens a literal: `r#type"…"` is the identifier `r#type`, then a string.
+    after_ident = i and (text[i - 1].isalnum() or text[i - 1] == "_")
+    raw = None if after_ident else RAW.match(text, i)
     if raw:
         close = '"' + raw.group(1)
         return text.index(close, raw.end()) + len(close)
-    string = STRING.match(text, i)
+    string = STRING.match(text, i) if not after_ident or text[i] == '"' else None
     if string:
         j = string.end()
         while text[j] != '"':
             j += 2 if text[j] == "\\" else 1
         return j + 1
-    char = CHAR.match(text, i)
+    char = CHAR.match(text, i) if not after_ident or text[i] == "'" else None
     if char:
         return char.end()
     return None
@@ -114,6 +115,19 @@ def split_top(s):
     bounds = [-1] + cuts + [len(s)]
     return [s[a + 1:b] for a, b in zip(bounds, bounds[1:])]
 
+def has_comment(s):
+    """True when s holds a line or block comment outside its literals."""
+    i = 0
+    while i < len(s):
+        end = skip_end(s, i)
+        if end is not None:
+            if s.startswith(("//", "/*"), i):
+                return True
+            i = end
+        else:
+            i += 1
+    return False
+
 def top_level(s):
     """s's code at bracket depth 0, with literals, comments and bracketed contents removed."""
     out, depth = [], 0
@@ -132,6 +146,8 @@ RECEIVER = re.compile(r"[&*]*\s*[A-Za-z_][A-Za-z0-9_]*(?:\s*(?:\.|::|\?)\s*[A-Za
 
 def condition(first):
     """(negated, receiver) when `first` is exactly `[!]X.is_empty()`, else None."""
+    if has_comment(first):
+        return None  # a comment inside the condition: rewriting could move code into it
     body = first.strip()
     neg = body.startswith("!")
     if neg:
@@ -140,7 +156,7 @@ def condition(first):
         return None
     receiver = body[: -len(".is_empty()")].rstrip()
     shape = top_level(receiver)
-    if not receiver or not RECEIVER.fullmatch(shape) or re.search(r"\b(as|if|match|let|move)\b", shape):
+    if not receiver or not RECEIVER.fullmatch(shape) or re.search(r"\b(as|if|match|let|move|return|break|continue|loop|while|for|unsafe|async|yield)\b", shape):
         return None
     return neg, receiver
 
@@ -173,24 +189,35 @@ def offset(text, line, column):
     return start + column - 1
 
 def lenfix_text(text, at):
-    """Switch the `assert_xx!(X, [])` whose span contains each index in `at` to `X.len(), 0`."""
+    """Switch the innermost `assert_xx!(X, [])` whose compared pair holds each index in `at` to
+    `assert_xx!((X).len(), 0)`. An error in the message arguments, or in a receiver holding a
+    comment, is left alone."""
     fixed = 0
     for point in sorted(at, reverse=True):
         starts = {i for i, c in code_positions(text) if c == "a"}
+        best = None
         for m in re.finditer(r"\bassert_(eq|ne)!\(", text):
             if m.start() not in starts or m.start() > point:
                 continue
             close = args_end(text, m.end() - 1)
             if point > close:
                 continue
-            parts = split_top(text[m.end():close])
-            if len(parts) < 2 or parts[1].strip() != "[]":
-                continue
-            parts[0] = parts[0].rstrip() + ".len()"
-            parts[1] = " 0"
-            text = text[:m.end()] + ",".join(parts) + text[close:]
-            fixed += 1
-            break
+            best = m  # later starts are nested deeper: the last one holding the point wins
+        if best is None:
+            continue
+        close = args_end(text, best.end() - 1)
+        parts = split_top(text[best.end():close])
+        if len(parts) < 2 or parts[1].strip() != "[]" or has_comment(parts[0]):
+            continue
+        if point > best.end() + len(parts[0]) + 1 + len(parts[1]):
+            continue  # the error is in the message arguments, not the comparison
+        receiver = parts[0].strip()
+        simple = RECEIVER.fullmatch(top_level(receiver)) and not receiver.startswith(("&", "*"))
+        lead = parts[0][: len(parts[0]) - len(parts[0].lstrip())]
+        parts[0] = lead + (receiver if simple else f"({receiver})") + ".len()"
+        parts[1] = " 0"
+        text = text[:best.end()] + ",".join(parts) + text[close:]
+        fixed += 1
     return text, fixed
 
 def lenfix(logs):
@@ -235,6 +262,12 @@ def test():
         ('assert!(v.is_empty(), "/* ( */ {}", \')\');', 'assert_eq!(v, [], "/* ( */ {}", \')\');'),
         ("assert!(v.is_empty(), /* ( */ \"x\");", "assert_eq!(v, [], /* ( */ \"x\");"),
         ('assert!(v.is_empty(), r#"a "( b"#);', 'assert_eq!(v, [], r#"a "( b"#);'),
+        # A raw identifier followed by a string (Rust 2024 macro input) doesn't derail the scan.
+        ('m!(r#type"assert!(xs.is_empty())"); assert!(v.is_empty());', 'm!(r#type"assert!(xs.is_empty())"); assert_eq!(v, []);'),
+        # Comments or control flow inside the condition: left for a person.
+        ("assert!(ok // .is_empty()\n);", None),
+        ("assert!(xs // why\n    .is_empty());", None),
+        ("assert!(return(xs).is_empty());", None),
     ]
     bad = 0
     for source, want in cases:
@@ -251,7 +284,22 @@ def test():
     got, n = lenfix_text(text, {offset(text, 4, 16)})
     if n != 1 or "assert_eq!(map.len(), 0)" not in got or "assert_eq!(items, [])" not in got:
         bad += 1; print("lenfix missed the assert the error is in:", got)
-    print(f"{len(cases) + 2 - bad}/{len(cases) + 2} cases passed")
+    lens = [
+        # The innermost assert holding the error is the one rewritten.
+        ("assert_eq!(f(|| assert_eq!(map, [])), [])", 27, "assert_eq!(f(|| assert_eq!(map.len(), 0)), [])"),
+        # An error in the message arguments leaves the comparison alone.
+        ('assert_eq!(xs, [], "{}", bad)', 26, None),
+        # A borrowed or indexed receiver keeps its grouping.
+        ("assert_eq!(&xs[1..], [])", 12, "assert_eq!((&xs[1..]).len(), 0)"),
+        # A receiver holding a comment is left for a person.
+        ("assert_eq!(xs // why\n, [])", 12, None),
+    ]
+    for source, column, want in lens:
+        got, n = lenfix_text(source, {offset(source, 1, column)})
+        if got != (source if want is None else want):
+            bad += 1; print(f"lenfix {source!r}: got {got!r}, want {want!r}")
+    total = len(cases) + 2 + len(lens)
+    print(f"{total - bad}/{total} cases passed")
     sys.exit(1 if bad else 0)
 
 if __name__ == "__main__":
