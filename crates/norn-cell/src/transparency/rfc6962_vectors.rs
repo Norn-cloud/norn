@@ -212,8 +212,9 @@ impl Tally {
             self.failed.len(),
             self.skipped
         );
-        assert!(
-            self.failed.is_empty(),
+        assert_eq!(
+            self.failed.len(),
+            0,
             "{corpus} failures:\n{}",
             self.failed.join("\n")
         );

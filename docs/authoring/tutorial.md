@@ -22,7 +22,7 @@ Two programs are called `norn` (renaming one is [#1451](https://github.com/Norn-
 
 No release carries the TypeScript CLI, the checker WASM or the dev host yet. From `drop-29` on, a `drop-*` release attaches the Rust `norn` for Linux and macOS, the TypeScript SDK, the Python client, `install.sh` and `SHA256SUMS` (what [`scripts/release/assets.sh`](../../scripts/release/assets.sh) builds); none of these is needed for this tutorial.
 
-You need Rust 1.98.0 with the `wasm32-unknown-unknown` target, `wasm-bindgen-cli` 0.2.129, Bun 1.3.14, Node with `npx` (the checker build runs binaryen's `wasm-opt` through it), and `sha256sum` (the checker build prints checksums with it; on macOS it comes with GNU coreutils, `brew install coreutils`). Build in a checkout of the repository:
+You need Rust 1.100.0 with the `wasm32-unknown-unknown` target, `wasm-bindgen-cli` 0.2.129, Bun 1.3.14, Node with `npx` (the checker build runs binaryen's `wasm-opt` through it), and `sha256sum` (the checker build prints checksums with it; on macOS it comes with GNU coreutils, `brew install coreutils`). Build in a checkout of the repository:
 
 ```sh
 git clone https://github.com/Norn-cloud/norn && cd norn

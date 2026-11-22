@@ -759,8 +759,7 @@ fn a_question_install_on_a_tenant_cell_is_unavailable_not_denied() {
             let document: Value = serde_json::from_str(&response.body).unwrap();
             let codes: Vec<&str> = document["diagnostics"]
                 .as_array()
-                .map(|found| found.iter().filter_map(|d| d["code"].as_str()).collect())
-                .unwrap_or_default();
+                .map_or_default(|found| found.iter().filter_map(|d| d["code"].as_str()).collect());
             // `:admit` reports its findings (200, not admitted); `:install`
             // refuses with them (422).
             let expected = if path.ends_with(":admit") { 200 } else { 422 };
@@ -963,8 +962,7 @@ fn a_tenant_cell_answers_and_installs_its_derived_questions() {
     assert_eq!(unknown.status, 422, "{document}");
     let codes: Vec<&str> = document["diagnostics"]
         .as_array()
-        .map(|found| found.iter().filter_map(|d| d["code"].as_str()).collect())
-        .unwrap_or_default();
+        .map_or_default(|found| found.iter().filter_map(|d| d["code"].as_str()).collect());
     assert_eq!(
         codes,
         vec!["metric.validation.unknown_metric"],

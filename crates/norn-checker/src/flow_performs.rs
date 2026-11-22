@@ -279,10 +279,9 @@ mod tests {
             assert_eq!(refs[0].name, None, "{cell}");
         }
         // A record that is not a perform is not reported.
-        assert!(
-            perform_refs(&table_payload("[{kind: 'timer', due: 1}]"))
-                .unwrap()
-                .is_empty()
+        assert_eq!(
+            perform_refs(&table_payload("[{kind: 'timer', due: 1}]")).unwrap(),
+            []
         );
     }
 

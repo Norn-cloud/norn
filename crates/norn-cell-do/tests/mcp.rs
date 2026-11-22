@@ -147,7 +147,7 @@ fn initialize_negotiates_the_revision_and_declares_the_ui_extension() {
         );
     }
     // A stateless request needs no prior handshake.
-    assert!(!tools(&cell, VIEWER).is_empty());
+    assert_ne!(tools(&cell, VIEWER).len(), 0);
 }
 
 #[test]

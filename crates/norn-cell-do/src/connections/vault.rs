@@ -376,8 +376,7 @@ impl LocalKeyring {
         ring.keys.insert(current, *decode_key(KEK_VAR, value)?);
         for entry in vars
             .get(KEKS_PREVIOUS_VAR)
-            .map(String::as_str)
-            .unwrap_or_default()
+            .map_or_default(String::as_str)
             .split(',')
             .map(str::trim)
             .filter(|entry| !entry.is_empty())

@@ -112,8 +112,9 @@ fn new_envelope_fixtures_roundtrip_with_pinned_hashes() {
         let envelope: ArtifactEnvelope = serde_json::from_str(source)
             .unwrap_or_else(|error| panic!("{name} should deserialize: {error}"));
         assert_eq!(envelope.kind(), kind, "{name} kind");
-        assert!(
-            envelope.payload.unknown_fields().is_empty(),
+        assert_eq!(
+            envelope.payload.unknown_fields().len(),
+            0,
             "{name} has undeclared members: {:?}",
             envelope.payload.unknown_fields()
         );

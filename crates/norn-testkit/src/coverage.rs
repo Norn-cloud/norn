@@ -96,8 +96,9 @@ impl Coverage {
     #[track_caller]
     pub fn assert_covered(&self, required: &[&str]) {
         let missing = self.missing(required);
-        assert!(
-            missing.is_empty(),
+        assert_eq!(
+            missing.len(),
+            0,
             "coverage gap: {missing:?} never exercised; raise cases or reweight strategies\n{self}"
         );
     }
