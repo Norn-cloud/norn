@@ -273,74 +273,13 @@ pub fn errors(path: &str, document: &Value) -> Vec<String> {
         // run of the reviewed helper that writes no output of its own.
         let mut acquired: Vec<String> = Vec::new();
         for step in job.get("steps").map(Value::items).unwrap_or_default() {
-            for section in ["env", "with"] {
-                for (key, value) in step.get(section).map(Value::entries).unwrap_or_default() {
-                    source_error(&mut out, path, (job_name, section), key, value, &acquired);
-                }
-            }
-            let uses = step
-                .get("uses")
-                .and_then(Value::as_str)
-                .map(|uses| uses.split('@').next().unwrap_or(uses).to_ascii_lowercase());
-            let mut acquires = false;
-            if let Some(action) = OIDC_ACTIONS
-                .iter()
-                .find(|action| uses.as_deref() == Some(action.action))
-            {
-                needs_oidc.push(action.action);
-                let with = step.get("with");
-                let input = with.and_then(|with| with.get(action.input));
-                let admitted = match (input.and_then(Value::as_str), action.value) {
-                    (Some(_), None) => true,
-                    (Some(got), Some(want)) => got == want,
-                    (None, _) => false,
-                };
-                if !admitted {
-                    out.push(format!(
-                        "{path}::{job_name}: {} must set `{}{}` (its OIDC mode)",
-                        action.action,
-                        action.input,
-                        action
-                            .value
-                            .map(|value| format!(": {value}"))
-                            .unwrap_or_default()
-                    ));
-                }
-                let forbidden: Vec<&str> = with
-                    .map(Value::keys)
-                    .into_iter()
-                    .flatten()
-                    .filter(|key| {
-                        action
-                            .forbidden
-                            .iter()
-                            .any(|bad| key.eq_ignore_ascii_case(bad))
-                    })
-                    .collect();
-                for key in &forbidden {
-                    out.push(format!(
-                        "{path}::{job_name}: {} input `{key}` is a non-OIDC credential; set only `{}`",
-                        action.action, action.input
-                    ));
-                }
-                acquires = admitted && forbidden.is_empty();
-            }
-            let run = step.get("run").and_then(Value::as_str).unwrap_or_default();
-            acquires |= run.contains(HELPER) && !contains_ignore_case(run, "GITHUB_OUTPUT");
-            if acquires && let Some(id) = step.get("id").and_then(Value::as_str) {
-                acquired.push(id.to_ascii_lowercase());
-            }
-            for line in run.lines() {
-                let line = line.to_ascii_lowercase();
-                if line.contains("infisical login")
-                    && !line.contains("--method=oidc-auth")
-                    && !line.contains("--method oidc-auth")
-                {
-                    out.push(format!(
-                        "{path}::{job_name}: `infisical login` must use --method=oidc-auth"
-                    ));
-                }
-            }
+            step_errors(
+                &mut out,
+                (path, job_name),
+                step,
+                &mut acquired,
+                &mut needs_oidc,
+            );
         }
         let permissions = job.get("permissions").or(workflow_permissions);
         if job_name != COMPOSITE
@@ -353,6 +292,94 @@ pub fn errors(path: &str, document: &Value) -> Vec<String> {
         }
     }
     out
+}
+
+/// One step's errors; records the step in `acquired` when its outputs may carry
+/// a credential, and in `needs_oidc` when it uses an OIDC action.
+fn step_errors(
+    out: &mut Vec<String>,
+    (path, job_name): (&str, &str),
+    step: &Value,
+    acquired: &mut Vec<String>,
+    needs_oidc: &mut Vec<&'static str>,
+) {
+    for section in ["env", "with"] {
+        for (key, value) in step.get(section).map(Value::entries).unwrap_or_default() {
+            source_error(out, path, (job_name, section), key, value, acquired);
+        }
+    }
+    let uses = step
+        .get("uses")
+        .and_then(Value::as_str)
+        .map(|uses| uses.split('@').next().unwrap_or(uses).to_ascii_lowercase());
+    let mut yields_credential = false;
+    if let Some(action) = OIDC_ACTIONS
+        .iter()
+        .find(|action| uses.as_deref() == Some(action.action))
+    {
+        needs_oidc.push(action.action);
+        yields_credential = oidc_action_admitted(out, (path, job_name), action, step.get("with"));
+    }
+    let run = step.get("run").and_then(Value::as_str).unwrap_or_default();
+    yields_credential |= run.contains(HELPER) && !contains_ignore_case(run, "GITHUB_OUTPUT");
+    if yields_credential && let Some(id) = step.get("id").and_then(Value::as_str) {
+        acquired.push(id.to_ascii_lowercase());
+    }
+    for line in run.lines() {
+        let line = line.to_ascii_lowercase();
+        if line.contains("infisical login")
+            && !line.contains("--method=oidc-auth")
+            && !line.contains("--method oidc-auth")
+        {
+            out.push(format!(
+                "{path}::{job_name}: `infisical login` must use --method=oidc-auth"
+            ));
+        }
+    }
+}
+
+/// Whether an OIDC action runs in its OIDC mode and nothing else; pushes why not.
+fn oidc_action_admitted(
+    out: &mut Vec<String>,
+    (path, job_name): (&str, &str),
+    action: &OidcAction,
+    with: Option<&Value>,
+) -> bool {
+    let input = with.and_then(|with| with.get(action.input));
+    let admitted = match (input.and_then(Value::as_str), action.value) {
+        (Some(_), None) => true,
+        (Some(got), Some(want)) => got == want,
+        (None, _) => false,
+    };
+    if !admitted {
+        out.push(format!(
+            "{path}::{job_name}: {} must set `{}{}` (its OIDC mode)",
+            action.action,
+            action.input,
+            action
+                .value
+                .map(|value| format!(": {value}"))
+                .unwrap_or_default()
+        ));
+    }
+    let forbidden: Vec<&str> = with
+        .map(Value::keys)
+        .into_iter()
+        .flatten()
+        .filter(|key| {
+            action
+                .forbidden
+                .iter()
+                .any(|bad| key.eq_ignore_ascii_case(bad))
+        })
+        .collect();
+    for key in &forbidden {
+        out.push(format!(
+            "{path}::{job_name}: {} input `{key}` is a non-OIDC credential; set only `{}`",
+            action.action, action.input
+        ));
+    }
+    admitted && forbidden.is_empty()
 }
 
 /// Whether an `env:` or `with:` key names a credential (`*_TOKEN`, `*_SECRET`,
@@ -370,11 +397,11 @@ fn credential_named(section: &str, key: &str) -> bool {
         })
         || parts.windows(2).any(|pair| {
             matches!(
-                (pair[0], pair[1]),
-                (
+                pair,
+                [
                     "API" | "ACCESS" | "PRIVATE" | "AUTH" | "SECRET" | "SIGNING" | "DEPLOY" | "SSH",
                     "KEY"
-                ) | ("KEY", "ID")
+                ] | ["KEY", "ID"]
             )
         })
 }
@@ -501,27 +528,25 @@ fn secret_reads(parent: Option<&str>, text: &str) -> Vec<String> {
 /// single-quoted string literal (`''` inside one is an escaped quote, which
 /// toggling twice handles). An unclosed expression runs to the end of the value.
 fn expressions(text: &str) -> Vec<&str> {
-    let bytes = text.as_bytes();
     let mut found = Vec::new();
-    let mut from = 0;
-    while let Some(start) = text[from..].find("${{").map(|at| from + at + 3) {
+    let mut rest = text;
+    while let Some((_, after)) = rest.split_once("${{") {
         let mut in_string = false;
-        let mut end = None;
-        let mut at = start;
-        while at < bytes.len() {
-            match bytes[at] {
-                b'\'' => in_string = !in_string,
-                b'}' if !in_string && bytes.get(at + 1) == Some(&b'}') => {
-                    end = Some(at);
+        let mut end = after.len();
+        let mut chars = after.char_indices().peekable();
+        while let Some((at, c)) = chars.next() {
+            match c {
+                '\'' => in_string = !in_string,
+                '}' if !in_string && chars.peek().is_some_and(|&(_, next)| next == '}') => {
+                    end = at;
                     break;
                 }
                 _ => {}
             }
-            at += 1;
         }
-        let stop = end.unwrap_or(bytes.len());
-        found.push(&text[start..stop]);
-        from = (stop + 2).min(text.len());
+        let (expression, tail) = after.split_at_checked(end).unwrap_or((after, ""));
+        found.push(expression);
+        rest = tail.strip_prefix("}}").unwrap_or(tail);
     }
     found
 }
