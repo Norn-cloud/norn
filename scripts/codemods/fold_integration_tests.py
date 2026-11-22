@@ -389,18 +389,31 @@ def rewrite_command(command: str, folded: dict[tuple[str, str], str], separator:
     return "".join(out)
 
 
+# An argument the token pattern cannot read (a quoted word after a space) continues the
+# command past the match: rewriting only the matched part could add a module filter that
+# libtest ORs with the unseen one, so such a command is refused unless it stays unchanged.
+CONTINUED = re.compile(r"""[ \t]+["']""")
+
+
+def rewrite_match(match: re.Match, folded, separator: str) -> str:
+    rewritten = rewrite_command(match[0], folded, separator)
+    if rewritten != match[0] and CONTINUED.match(match.string, match.end()):
+        raise Refused(f"{match[0]!r} continues with an argument the codemod cannot read")
+    return rewritten
+
+
 def rewrite_commands(text: str, folded, markdown: bool = False) -> str:
     if not markdown:
-        return COMMAND.sub(lambda m: rewrite_command(m[0], folded, SEP), text)
+        return COMMAND.sub(lambda m: rewrite_match(m, folded, SEP), text)
     # Markdown: fenced blocks are shell; prose is rewritten only inside a code
     # span, where a command may wrap across lines.
     out = []
     for index, part in enumerate(re.split(r"(^```.*?^```)", text, flags=re.MULTILINE | re.DOTALL)):
         if index % 2:
-            out.append(COMMAND.sub(lambda m: rewrite_command(m[0], folded, SEP), part))
+            out.append(COMMAND.sub(lambda m: rewrite_match(m, folded, SEP), part))
         else:
             out.append(re.sub(r"`[^`]+`", lambda span: MD_COMMAND.sub(
-                lambda m: rewrite_command(m[0], folded, MD_SEP), span[0]), part))
+                lambda m: rewrite_match(m, folded, MD_SEP), span[0]), part))
     return "".join(out)
 
 
