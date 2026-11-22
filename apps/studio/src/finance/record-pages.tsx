@@ -7,13 +7,15 @@ import type { MenuEntry } from "../shell.tsx"
 import { cn } from "@/lib/utils"
 import { CLIENT, MARKS, TYPES, type FinanceType, type MarkId } from "./data.ts"
 import { BY_ID, LINKS, RECORDS, isFinanceType, type Fact, type FinanceRecord } from "./records.ts"
+import { financePolicyMenu } from "./policies.tsx"
+import { TypeDefinition } from "./definitions.tsx"
 import { FinanceHeading, Mark, TypeTile } from "./workspace.tsx"
 
 export const financeSourceMenu = (): readonly MenuEntry[] =>
-  Object.entries(TYPES).map(([type, definition]) => ({
+  [...Object.entries(TYPES).map(([type, definition]): MenuEntry => ({
     href: `/sources/${type}`, label: definition.name, group: "Object types", kind: "objectType",
     count: RECORDS.filter((record) => record.type === type).length,
-  }))
+  })), ...financePolicyMenu()]
 
 export function RecordLink({ record, children, className }: {
   readonly record: FinanceRecord; readonly children: React.ReactNode; readonly className?: string
@@ -32,13 +34,18 @@ export function FinanceRecordRoute() {
 
 function TypeList({ type }: { readonly type: FinanceType }) {
   const [search, setSearch] = useState("")
+  const [tab, setTab] = useState<"Definition" | "Records">("Definition")
   const records = RECORDS.filter((record) => record.type === type)
   const term = search.trim().toLowerCase()
   const matches = records.filter(({ id, name, summary }) => `${id} ${name} ${summary}`.toLowerCase().includes(term))
   return <section className="space-y-4">
     <Link to="/sources" search={{ view: "graph" }} className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground">Sources <ChevronRight className="size-3" /> Business model</Link>
-    <FinanceHeading title={TYPES[type].plural} description={`${records.length} sample records in the finance workspace.`} />
-    <div className="rounded-2xl border bg-card">
+    <FinanceHeading title={TYPES[type].plural} description={`Model definition and ${records.length} sample records.`} />
+    <div role="group" aria-label="Object type views" className="flex flex-wrap gap-1 rounded-xl border bg-card p-1">
+      {(["Definition", "Records"] as const).map(view => <button key={view} type="button" aria-pressed={tab === view} onClick={() => setTab(view)}
+        className={cn("rounded-lg px-3 py-1.5 text-sm font-medium text-muted-foreground hover:bg-muted", tab === view && "bg-data-accent/10 text-foreground")}>{view}</button>)}
+    </div>
+    {tab === "Definition" ? <TypeDefinition type={type} /> : <div className="rounded-2xl border bg-card">
       <div className="border-b p-3">
         <label className="relative block max-w-sm"><span className="sr-only">Find a record</span><Search className="absolute start-2.5 top-2.5 size-4 text-muted-foreground" /><Input className="ps-8" placeholder="Find a record" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
       </div>
@@ -56,7 +63,7 @@ function TypeList({ type }: { readonly type: FinanceType }) {
         </table>
         {matches.length === 0 && <p className="p-4 text-sm text-muted-foreground">No sample records match this search.</p>}
       </div>
-    </div>
+    </div>}
   </section>
 }
 

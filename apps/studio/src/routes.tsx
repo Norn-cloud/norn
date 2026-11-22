@@ -10,6 +10,8 @@ import { ExamplePage } from "./examples.tsx"
 import { FinanceSources } from "./finance/workspace.tsx"
 import { FinanceRecordRoute } from "./finance/record-pages.tsx"
 import { FinanceExamples } from "./finance/examples.tsx"
+import { FinanceHome, FinanceMarkings, FinanceRules, FinanceWorkflows } from "./finance/operations.tsx"
+import { FinanceOptimisation, FinancePolicyType } from "./finance/policies.tsx"
 import { FinanceMetrics } from "./finance/metrics.tsx"
 import { financeDemo } from "./lib/finance-demo.ts"
 import { MarkingsPage } from "./markings.tsx"
@@ -67,15 +69,21 @@ export function movedTo(pathname: string): string | undefined {
 /** The app's routes under `root`: Home at "/", then every page, then the old addresses that redirect. */
 export function routeTree<R extends AnyRootRoute>(root: R) {
   if (financeDemo) return root.addChildren([
-    createRoute({ getParentRoute: () => root, path: "/", beforeLoad: () => { throw redirect({ href: "/sources", replace: true }) } }),
+    createRoute({ getParentRoute: () => root, path: "/", component: FinanceHome }),
     createRoute({
       getParentRoute: () => root, path: "/sources", component: FinanceSources,
-      validateSearch: (search: Record<string, unknown>) => ({ view: search.view === "graph" ? "graph" as const : undefined }),
+      validateSearch: (search: Record<string, unknown>) => ({ view: search.view === "graph" ? "graph" as const : undefined, model: search.model === "full" ? "full" as const : undefined }),
     }),
     createRoute({ getParentRoute: () => root, path: "/sources/$concept", component: FinanceRecordRoute }),
     createRoute({ getParentRoute: () => root, path: "/sources/$concept/$", component: FinanceRecordRoute }),
     createRoute({ getParentRoute: () => root, path: "/objects/$type", component: FinanceRecordRoute }),
     createRoute({ getParentRoute: () => root, path: "/metrics", component: FinanceMetrics }),
+    createRoute({ getParentRoute: () => root, path: "/workflows", component: FinanceWorkflows }),
+    createRoute({ getParentRoute: () => root, path: "/workflows/$process", component: FinanceWorkflows }),
+    createRoute({ getParentRoute: () => root, path: "/guarantees", component: FinanceRules }),
+    createRoute({ getParentRoute: () => root, path: "/markings", component: FinanceMarkings }),
+    createRoute({ getParentRoute: () => root, path: "/policies/$scope", component: FinancePolicyType }),
+    createRoute({ getParentRoute: () => root, path: "/optimisations/collections", component: FinanceOptimisation }),
     createRoute({ getParentRoute: () => root, path: "/examples", beforeLoad: () => { throw redirect({ href: "/examples/explorer", replace: true }) } }),
     createRoute({ getParentRoute: () => root, path: "/examples/$scene", component: FinanceExamples }),
     createRoute({ getParentRoute: () => root, path: "/$", beforeLoad: () => { throw redirect({ href: "/sources", replace: true }) } }),

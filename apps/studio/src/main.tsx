@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { RouterProvider, createRootRoute, createRouter } from "@tanstack/react-router"
-import { Blend, ChartLine, Database, Fingerprint, House, Inbox, LayoutDashboard, Network, Plug, ShieldCheck, Workflow } from "lucide-react"
+import { Blend, ChartLine, Database, Fingerprint, House, Inbox, LayoutDashboard, Network, Plug, ShieldCheck, Workflow, ListChecks } from "lucide-react"
 import { StrictMode } from "react"
 import { Button } from "@/components/ui/button"
 import { endSession, useAccount } from "@/lib/session"
@@ -16,6 +16,7 @@ import { Shell, type Section } from "./shell.tsx"
 import { financeDemo } from "./lib/finance-demo.ts"
 import { financeSourceMenu } from "./finance/record-pages.tsx"
 import { financeExampleMenu } from "./finance/examples.tsx"
+import { financeRuleMenu, financeWorkflowMenu } from "./finance/operations.tsx"
 import { financeMetricMenu } from "./finance/metrics.tsx"
 import { useSourcesMenu } from "./sources.tsx"
 import { useWorkflowsMenu } from "./workflows.tsx"
@@ -36,9 +37,14 @@ const SECTIONS: readonly Section[] = [
 ]
 
 const FINANCE_SECTIONS: readonly Section[] = [
-  { path: "/sources", label: "Sources", icon: Database, summary: "Mapped lending, brokerage, and payment systems.", kind: "source", group: "Model", useMenu: financeSourceMenu, paths: ["/objects"] },
+  { path: "/", label: "Home", icon: House, summary: "Finance activity and exceptions.", group: "Work" },
+  { path: "/sources", label: "Sources", icon: Database, summary: "Mapped lending, brokerage, and payment systems.", kind: "source", group: "Model", useMenu: financeSourceMenu, paths: ["/objects", "/policies"] },
   { path: "/metrics", label: "Metrics", icon: ChartLine, summary: "Repayment reconciliation and corrections.", kind: "question", group: "Model", useMenu: financeMetricMenu },
   { path: "/examples", label: "Examples", icon: Network, summary: "Object explorer, document mapping and dataset mapping.", group: "Model", useMenu: financeExampleMenu },
+  { path: "/workflows", label: "Workflows", icon: Workflow, summary: "States and conditions for finance processes.", kind: "workflow", group: "Rules", useMenu: financeWorkflowMenu },
+  { path: "/guarantees", label: "Rules", icon: ShieldCheck, summary: "Finance checks and refusal evidence.", kind: "guarantee", group: "Rules", useMenu: financeRuleMenu },
+  { path: "/markings", label: "Markings", icon: Fingerprint, summary: "How each role sees personal data.", group: "Rules" },
+  { path: "/optimisations/collections", label: "Optimisation", icon: ListChecks, summary: "Collections allocation for the next seven days.", group: "Rules" },
 ]
 
 /**

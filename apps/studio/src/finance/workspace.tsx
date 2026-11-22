@@ -3,7 +3,8 @@ import { ArrowRight, BadgeCheck, BriefcaseBusiness, Building2, CalendarClock, Cl
 import { useState } from "react"
 import { Chip, IconTile } from "@/components/chip"
 import { cn } from "@/lib/utils"
-import { CLIENT_FIELDS, MARKS, ROW_COUNT, SYSTEMS, TYPES, type FinanceType, type MarkId } from "./data.ts"
+import { isFinanceType } from "./records.ts"
+import { CLIENT_FIELDS, MARKS, MODEL_LINKS, ROW_COUNT, SYSTEMS, TYPES, type FinanceType, type MarkId } from "./data.ts"
 
 const glyphs: Record<FinanceType, LucideIcon> = {
   client: UserRound, loan: Landmark, installment: CalendarClock, payment: CreditCard,
@@ -75,21 +76,64 @@ function ModelGraph() {
   </section>
 }
 
+const MODEL_POSITIONS: Record<FinanceType, readonly [number, number]> = {
+  client: [49, 42], loan: [19, 40], installment: [19, 65], payment: [19, 86],
+  "regulatory-return": [19, 16], "relationship-manager": [79, 10], "credit-report": [79, 28],
+  "kyc-check": [79, 46], "hardship-case": [79, 64], "brokerage-account": [79, 84], order: [49, 84],
+}
+
+function FullModel() {
+  return <div className="space-y-3">
+    <section aria-label="Full finance model graph" className="relative grid grid-cols-2 gap-2 rounded-2xl border bg-surface-subtle p-3 md:block md:h-[29rem] md:bg-[radial-gradient(var(--border)_1px,transparent_1px)] md:bg-size-[16px_16px]">
+      <svg aria-hidden viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 hidden size-full md:block">
+        {MODEL_LINKS.map(([from, _, to]) => {
+          const [x, y] = MODEL_POSITIONS[from]
+          const [a, b] = MODEL_POSITIONS[to]
+          const midpoint = (x + a) / 2
+          return <path key={from + to} d={x === a ? `M${x} ${y} V${b}` : `M${x} ${y} C${midpoint} ${y} ${midpoint} ${b} ${a} ${b}`}
+            fill="none" stroke="var(--data-accent)" strokeOpacity={0.65} strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+        })}
+      </svg>
+      {Object.entries(MODEL_POSITIONS).map(([type, [left, top]]) => {
+        if (!isFinanceType(type)) return null
+        const definition = TYPES[type]
+        return <Link key={type} to="/sources/$concept" params={{ concept: type }}
+          className={cn("z-10 flex items-center gap-2 rounded-xl border bg-card p-2 text-xs font-medium shadow-sm hover:border-data-accent md:absolute md:w-[20%] md:-translate-1/2", type === "client" && "border-data-accent ring-4 ring-data-accent/15")}
+          style={{ left: `${left}%`, top: `${top}%` }}><TypeTile type={type} />{definition.name}</Link>
+      })}
+    </section>
+    <section aria-label="Model relationships" className="rounded-xl border bg-card p-3">
+      <h3 className="mb-2 text-sm font-semibold">Relationships and cardinalities</h3>
+      <ul className="grid gap-x-4 gap-y-1.5 md:grid-cols-2">
+        {MODEL_LINKS.map(([from, forward, to, , outgoing, incoming]) => <li key={from + to} className="flex flex-wrap items-center gap-1.5 border-t pt-1.5 text-xs">
+          <strong className="font-medium">{TYPES[from].name}</strong><Chip mono>{incoming}</Chip><span className="text-muted-foreground">{forward}</span><ArrowRight className="size-3 text-tone-blue" />
+          <strong className="font-medium">{TYPES[to].name}</strong><Chip mono>{outgoing}</Chip>
+        </li>)}
+      </ul>
+    </section>
+  </div>
+}
+
 const activeTab = "border-data-accent bg-data-accent/10 text-foreground"
 const tabClass = "inline-flex items-center gap-1.5 rounded-lg border border-transparent px-3 py-1.5 text-sm font-medium text-muted-foreground hover:bg-muted"
 
 export function FinanceSources() {
   const search = useSearch({ strict: false })
   const graph = "view" in search && search.view === "graph"
+  const full = graph && "model" in search && search.model === "full"
   return <section className="space-y-4">
     <FinanceHeading title="Sources" description="Seven systems mapped to one client, lending and payments model." />
     <nav aria-label="Sources views" className="flex flex-wrap gap-1 rounded-xl border bg-card p-1">
-      <Link to="/sources" search={{ view: undefined }} className={cn(tabClass, !graph && activeTab)} aria-current={!graph ? "page" : undefined}><Database className="size-4" />Mapped systems</Link>
-      <Link to="/sources" search={{ view: "graph" }} className={cn(tabClass, graph && activeTab)} aria-current={graph ? "page" : undefined}><Network className="size-4" />Graph</Link>
+      <Link to="/sources" search={{ view: undefined, model: undefined }} className={cn(tabClass, !graph && activeTab)} aria-current={!graph ? "page" : undefined}><Database className="size-4" />Mapped systems</Link>
+      <Link to="/sources" search={{ view: "graph", model: undefined }} className={cn(tabClass, graph && activeTab)} aria-current={graph ? "page" : undefined}><Network className="size-4" />Graph</Link>
     </nav>
     {graph ? <>
-      <div className="space-y-1"><h2 className="text-section font-semibold">How your lending data fits together</h2><p className="text-xs text-muted-foreground">Four feeds resolve to one borrower on National ID.</p></div>
-      <ModelGraph />
+      <div className="flex flex-wrap items-end justify-between gap-2">
+        <div className="space-y-1"><h2 className="text-section font-semibold">{full ? "Full finance model" : "How your lending data fits together"}</h2>
+          <p className="text-xs text-muted-foreground">{full ? "11 object types and the relationships between them." : "Four feeds resolve to one borrower on National ID."}</p></div>
+        <Link to="/sources" search={{ view: "graph", model: full ? undefined : "full" }} className={cn(tabClass, "border-border")}>{full ? "Borrower view" : "Full model"}</Link>
+      </div>
+      {full ? <FullModel /> : <ModelGraph />}
       <div className="flex flex-wrap gap-1.5">{Object.entries(TYPES).map(([type, item]) => <Link key={type} to="/sources/$concept" params={{ concept: type }}><Chip tone={item.tone} className="rounded-full hover:ring-1 hover:ring-border">{item.name}</Chip></Link>)}</div>
     </> : <>
       <div className="flex flex-wrap gap-x-6 gap-y-2 rounded-xl border bg-surface-subtle px-3.5 py-2.5 text-xs text-muted-foreground">
@@ -114,7 +158,7 @@ export function FinanceSources() {
         </article>)}
         <div className="flex flex-col items-start justify-between gap-4 rounded-2xl border bg-surface-subtle p-4">
           <div className="space-y-1"><h2 className="flex items-center gap-2 text-sm font-semibold"><Mark id="aws" className="size-6" />Cloud infrastructure</h2><p className="text-xs text-muted-foreground">AWS hosts the example data platform.</p></div>
-          <Link to="/sources" search={{ view: "graph" }} className="inline-flex items-center gap-1.5 text-sm font-medium text-tone-blue hover:underline">Explore the business model <ArrowRight className="size-4" /></Link>
+          <Link to="/sources" search={{ view: "graph", model: undefined }} className="inline-flex items-center gap-1.5 text-sm font-medium text-tone-blue hover:underline">Explore the business model <ArrowRight className="size-4" /></Link>
         </div>
       </div>
     </>}

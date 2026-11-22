@@ -1,6 +1,6 @@
 import type { Tone } from "@/components/chip"
 
-export type MarkId = "postgres" | "iscore" | "salesforce" | "fawry" | "instapay" | "egx" | "mcdr" | "valify" | "fra" | "aws"
+export type MarkId = "postgres" | "iscore" | "salesforce" | "fawry" | "instapay" | "egx" | "mcdr" | "valify" | "fra" | "aws" | "leasing" | "ledger" | "norn"
 
 export const MARKS: Readonly<Record<MarkId, { name: string; tone: Tone; file?: string; letters?: string }>> = {
   postgres: { name: "PostgreSQL", tone: "blue", file: "postgresql.org.png" },
@@ -12,6 +12,9 @@ export const MARKS: Readonly<Record<MarkId, { name: string; tone: Tone; file?: s
   mcdr: { name: "MCDR", tone: "teal", letters: "MCDR" },
   valify: { name: "Valify", tone: "pink", file: "valify.me.png" },
   fra: { name: "FRA", tone: "green", file: "fra.gov.eg.png" },
+  leasing: { name: "Leasing", tone: "teal", letters: "LE" },
+  ledger: { name: "General ledger", tone: "violet", letters: "GL" },
+  norn: { name: "Declared in Norn", tone: "blue", letters: "N" },
   aws: { name: "AWS", tone: "amber", file: "aws.amazon.com.png" },
 }
 
@@ -28,7 +31,7 @@ export const SYSTEMS: readonly MappedSystem[] = [
   { id: "lms", name: "Core lending (LMS)", marks: ["postgres"], schema: "lms.public.v3", datasets: [["loans", 12_480], ["installments", 94_620], ["disbursements", 11_930]], syncedAt: "09:42" },
   { id: "credit", name: "I-Score credit bureau", marks: ["iscore"], schema: "iscore.credit.v2", datasets: [["credit reports", 8_614], ["scores", 25_842], ["inquiries", 10_406]], syncedAt: "09:36" },
   { id: "crm", name: "Salesforce CRM", marks: ["salesforce"], schema: "crm.customer.v2", datasets: [["clients", 9_208], ["relationship managers", 34], ["cases", 1_427]], syncedAt: "09:40" },
-  { id: "payments", name: "Payments", marks: ["fawry", "instapay"], schema: "payments.settlement.v4", datasets: [["collections", 71_560], ["settlements", 18_286]], syncedAt: "09:42" },
+  { id: "payments", name: "Bank settlement", marks: ["fawry", "instapay"], schema: "payments.settlement.v4", datasets: [["collections", 71_560], ["settlements", 18_286]], syncedAt: "09:42" },
   { id: "brokerage", name: "Brokerage", marks: ["egx", "mcdr"], schema: "brokerage.trades.v2", datasets: [["accounts", 3_126], ["orders", 26_940], ["holdings", 7_804]], syncedAt: "09:31" },
   { id: "kyc", name: "e-KYC", marks: ["valify"], schema: "valify.checks.v1", datasets: [["identity checks", 9_234]], syncedAt: "09:38" },
   { id: "reporting", name: "FRA regulatory reporting", marks: ["fra"], schema: "fra.monthly.v1", datasets: [["monthly returns", 24]], syncedAt: "09:20" },
@@ -52,8 +55,9 @@ export type FinanceType = keyof typeof TYPES
 
 export const CLIENT = {
   id: "CL-1042", name: "Mariam Nasser", nationalId: "DEMO-NID-1042", payerRef: "PAY-1042",
-  account: "BA-1042", brokerOrder: "ORD-1042", phone: "+20 000 000 1042", address: "12 Sample Avenue, Cairo",
+  account: "BA-1042", brokerOrder: "ORD-1042", phone: "+20 1X XXX X0017", address: "12 Sample Avenue, Cairo",
   birth: "14 Feb 1987", regularPayment: 24_750, document: "STMT-1042", report: "CR-1042",
+  depositAmount: 125_000, depositRef: "DEP-1042", depositDate: "20 Nov 2026",
 } as const
 
 export const CLIENT_FIELDS = [
@@ -64,3 +68,19 @@ export const CLIENT_FIELDS = [
 ] as const
 
 export const ROW_COUNT = new Intl.NumberFormat("en-GB")
+
+type Cardinality = "1" | "0..1" | "0..*"
+type ModelLink = readonly [from: FinanceType, forward: string, to: FinanceType, inverse: string, outgoing: Cardinality, incoming: Cardinality]
+
+export const MODEL_LINKS: readonly ModelLink[] = [
+  ["client", "holds", "loan", "is held by", "0..*", "1"],
+  ["loan", "has", "installment", "belongs to", "0..*", "1"],
+  ["installment", "is paid by", "payment", "pays", "0..*", "0..1"],
+  ["client", "reported by", "credit-report", "reports on", "0..*", "1"],
+  ["client", "verified by", "kyc-check", "verifies", "0..*", "1"],
+  ["relationship-manager", "manages", "client", "is managed by", "0..*", "0..1"],
+  ["client", "has", "hardship-case", "supports", "0..*", "1"],
+  ["client", "holds", "brokerage-account", "is held by", "0..*", "1"],
+  ["brokerage-account", "has", "order", "is placed on", "0..*", "1"],
+  ["loan", "filed in", "regulatory-return", "includes", "0..*", "0..*"],
+]

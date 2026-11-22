@@ -60,6 +60,7 @@ function loanSet(ref: string, suffix: "A" | "B", client: string, amount: number,
     ] },
     { id: payment, type: "payment", name: "Fawry repayment", status: "Settled", summary: egp(due), facts: [
       fact("Payment amount", egp(due), "fawry", "$.settlement.amount_egp", "Payment.amount", "Fawry cash collection"),
+      fact("Currency", "EGP", "fawry", "$.settlement.currency", "Payment.currency"),
       fact("Payer reference", `PAY-${ref}`, "fawry", "$.collection.payer_ref", "Payment.payerRef"),
       fact("Settlement date", "20 Nov 2026", "fawry", "$.settlement.posted_on", "Payment.settledOn"),
     ] },
@@ -82,7 +83,8 @@ export const RECORDS: readonly FinanceRecord[] = [
     ], history: [{ date: "22 Sep", score: score - 36 }, { date: "22 Oct", score: score - 18 }, { date: "22 Nov", score }] },
     { id: `KYC-${ref}`, type: "kyc-check", name: "Identity verification", status: "Verified", summary: "Document + liveness", facts: [
       fact("Verification result", "Verified", "valify", "$.checks.identity.status", "KycCheck.status"),
-      fact("Verified on", "18 Oct 2026", "valify", "$.checks.identity.verified_on", "KycCheck.verifiedOn"),
+      fact("Verified on", ref === "1042" ? "5 Nov 2026" : "18 Oct 2026", "valify", "$.checks.identity.verified_on", "KycCheck.verifiedOn"),
+      ...(ref === "1042" ? [fact("Previous verification expired", "3 Nov 2026", "valify", "$.checks.previous.expires_on", "KycCheck.previousExpiresOn")] : []),
       fact("Client", name, "salesforce", "Client__c.cust_nm", "KycCheck.client"),
     ] },
     { id: `RM-${ref}`, type: "relationship-manager", name: relationshipManager, status: "Assigned", summary: `${city} relationship desk`, facts: [
