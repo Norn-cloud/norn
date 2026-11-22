@@ -108,7 +108,7 @@ const REFUSAL_CODES = new Set(Object.entries({
   query:
     "cursor_invalid invalid limit_invalid op_invalid property_unknown sort_invalid too_many " +
     "value_invalid",
-  question: "bucket_bound_exceeded not_found refused",
+  question: "bucket_bound_exceeded marked_history not_found refused",
   request: "invalid too_large",
   reveal: "idempotency_conflict",
   route: "method_not_allowed not_found",
