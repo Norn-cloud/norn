@@ -1,7 +1,6 @@
 import { existsSync, readFileSync, readdirSync, type Dirent } from "node:fs"
 import { join } from "node:path"
 import { exportConfig } from "../norn-cell-do/otlp.mjs"
-import { workerSettings } from "./cloudflare-api.ts"
 
 /**
  * Which Studio a stage runs:
@@ -344,6 +343,8 @@ export const cellHost = (target: DeployTarget): string | undefined => CELL_HOSTS
 export async function requireWorkerScript(script: string, credentials: CloudflareCredentials, fetcher: typeof fetch = fetch): Promise<void> {
   // The workers token for the Norn account only (cloudflareCredentials), checked before the request.
   // Bounded (30 s, cloudflare-api.ts call): a stalled connection fails the deploy instead of hanging it.
+  // Loaded here, not at the top: celld-deploy-cell imports this module without Studio's packages.
+  const { workerSettings } = await import("./cloudflare-api.ts")
   const answer = await workerSettings({ credentials, fetch: fetcher }, script)
   if (answer.ok) return
   if (answer.status === 404) throw new Error(`The cell Worker ${script} does not exist on this account; deploy it before binding Studio to it as NORN_HOST`)

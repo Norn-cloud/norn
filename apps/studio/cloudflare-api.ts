@@ -7,9 +7,13 @@
  * (Retry.none): each operation sends exactly one request, as the hand-written fetches did. Each call
  * is bounded; on the deadline it rejects with the same TimeoutError `AbortSignal.timeout` raised.
  *
- * A call answers `{ ok: true, value }` or `{ ok: false, status, error }`, where `status` is the HTTP
- * status Cloudflare answered (the scripts print it) and `error` distilled's typed error. A request
- * that got no answer (DNS, connection) rejects with the transport error, as fetch did.
+ * A call answers `{ ok: true, value }`, or `{ ok: false, status, error, response }` for any reply
+ * that is not 2xx or that distilled refuses. `status` is the HTTP status Cloudflare answered (the
+ * scripts print it), `error` is distilled's typed error, and `response` is Cloudflare's own reply,
+ * still unread for a non-2xx one: as with fetch, the decision is made from the status line and
+ * headers, and only a caller that wants the error envelope (the D1 lookup) reads the body, under the
+ * same deadline. A request that got no answer (DNS, connection) rejects with the transport error,
+ * as fetch did.
  */
 import * as Credentials from "@distilled.cloud/cloudflare/Credentials"
 import * as d1 from "@distilled.cloud/cloudflare/d1"
@@ -30,28 +34,42 @@ export interface CloudflareClient {
   readonly fetch?: typeof fetch
 }
 
-export type Answer<A, E> = { readonly ok: true; readonly value: A } | { readonly ok: false; readonly status: number; readonly error: E }
+export type Answer<A, E> =
+  | { readonly ok: true; readonly value: A }
+  | { readonly ok: false; readonly status: number; readonly error: E | undefined; readonly response: Response }
 
-/** Run one distilled operation: one request, no retry, bounded by `timeoutMs`. */
-export async function call<A, E>(client: CloudflareClient, operation: Effect.Effect<A, E, Credentials.Credentials | HttpClient.HttpClient>, timeoutMs = 30_000): Promise<Answer<A, E>> {
+/**
+ * Run one distilled operation: one request, no retry, bounded by `timeoutMs`. `headers` are added
+ * to the request (the D1 lookup sent `content-type: application/json` on its GET).
+ */
+export async function call<A, E>(client: CloudflareClient, operation: Effect.Effect<A, E, Credentials.Credentials | HttpClient.HttpClient>, timeoutMs = 30_000, headers: Readonly<Record<string, string>> = {}): Promise<Answer<A, E>> {
   const send = client.fetch ?? globalThis.fetch
-  let status: number | undefined
+  const deadline = AbortSignal.timeout(timeoutMs)
+  let reply: Response | undefined
   const recording = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    const response = await send(input, init)
-    status = response.status
-    return response
+    // The request is bounded by the call's own deadline (and never by distilled's signal), so the
+    // reply's body stays readable after the operation ends, until that deadline.
+    const merged = new Headers(init?.headers)
+    for (const [name, value] of Object.entries(headers)) merged.set(name, value)
+    const response = await send(input, { ...init, headers: merged, signal: deadline })
+    if (response.ok) { reply = response.clone(); return response }
+    // Not 2xx: distilled decides from the status alone, and the body is left for the caller.
+    reply = response
+    return new Response(null, { status: response.status, statusText: response.statusText, headers: response.headers })
   }) as typeof fetch
   const layer = Layer.mergeAll(
     FetchHttpClient.layer,
     Layer.succeed(FetchHttpClient.Fetch, recording),
     Credentials.fromApiToken({ apiToken: Redacted.make(client.credentials.apiToken) }),
   )
-  const deadline = AbortSignal.timeout(timeoutMs)
   const exit = await Effect.runPromiseExit(operation.pipe(Retry.none, Effect.provide(layer)), { signal: deadline })
+  if (deadline.aborted && reply === undefined) throw new DOMException("The operation timed out.", "TimeoutError")
+  const failure = Exit.isFailure(exit) ? exit.cause.reasons.find(Cause.isFailReason) : undefined
+  if (reply !== undefined && (!reply.ok || Exit.isFailure(exit))) {
+    if (Exit.isFailure(exit) && failure === undefined && deadline.aborted) throw new DOMException("The operation timed out.", "TimeoutError")
+    return { ok: false, status: reply.status, error: failure?.error, response: reply }
+  }
   if (Exit.isSuccess(exit)) return { ok: true, value: exit.value }
-  if (deadline.aborted) throw new DOMException("The operation timed out.", "TimeoutError")
-  const failure = exit.cause.reasons.find(Cause.isFailReason)
-  if (failure !== undefined && status !== undefined) return { ok: false, status, error: failure.error }
   throw failure !== undefined ? transportError(failure.error) : Cause.squash(exit.cause)
 }
 
@@ -59,12 +77,6 @@ export async function call<A, E>(client: CloudflareClient, operation: Effect.Eff
 const transportError = (error: unknown): unknown => {
   const { reason, cause } = (error ?? {}) as { reason?: { cause?: unknown }; cause?: unknown }
   return reason?.cause instanceof Error ? reason.cause : cause instanceof Error ? cause : error
-}
-
-/** The `{ code, message }` Cloudflare answered with, as its envelope's `errors` carried it. */
-export const answerErrors = (error: unknown): { code?: number; message: string }[] => {
-  const { code, message } = (error ?? {}) as { code?: unknown; message?: unknown }
-  return [{ ...(typeof code === "number" ? { code } : {}), message: typeof message === "string" ? message : String(error) }]
 }
 
 type Settings = workers.GetScriptScriptAndVersionSettingResponse
@@ -117,4 +129,4 @@ export const closeTail = (client: CloudflareClient, script: string, id: string) 
 
 /** GET /accounts/{account}/d1/database?name={name} (the first page, as before) */
 export const d1Databases = (client: CloudflareClient, name: string, timeoutMs = 15_000) =>
-  call(client, d1.listDatabases({ accountId: client.credentials.accountId, name }), timeoutMs)
+  call(client, d1.listDatabases({ accountId: client.credentials.accountId, name }), timeoutMs, { "content-type": "application/json" })

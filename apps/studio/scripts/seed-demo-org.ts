@@ -12,7 +12,7 @@
  * Finds the D1 database through distilled's typed client (cloudflare-api.ts), then seeds it through a loopback-only Wrangler Worker and remote D1 binding: the seed is one atomic `db.batch` in Worker code, which the D1 REST API does not offer, so `wrangler dev` stays. Needs CLOUDFLARE_WORKERS_API_TOKEN and CLOUDFLARE_ACCOUNT_ID (the Norn account; Infisical prod /norn/cloudflare); the Global API Key variables refuse it, and Wrangler runs with a sanitized environment and a temporary HOME (deploy-target.ts wranglerEnv). The members must already have signed up and verified their email addresses.
  */
 import { DEMO_ORG, parseMembers } from "./seed-demo-org-core.ts"
-import { answerErrors, d1Databases, type CloudflareClient } from "../cloudflare-api.ts"
+import { d1Databases, type CloudflareClient } from "../cloudflare-api.ts"
 import { cloudflareCredentials, wranglerEnv } from "../deploy-target.ts"
 export { DEMO_ORG, parseMembers, seedDemoOrg, seedStatements } from "./seed-demo-org-core.ts"
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
@@ -87,13 +87,25 @@ export async function seedWhenReady(exited: Promise<number>, base: string, token
   } finally { limit.dispose() }
 }
 
-/** Find the stage's D1 database through the control plane (GET /d1/database?name=), under a cancellable deadline. */
+/**
+ * Find the stage's D1 database through the control plane (GET /d1/database?name=), under a
+ * cancellable deadline. A refusal prints Cloudflare's own `errors` envelope; an unreadable reply
+ * is a failed discovery.
+ */
 export async function discoverD1(client: CloudflareClient, name: string, timeoutMs = 15_000): Promise<{ uuid: string; name: string } | undefined> {
+  const fail = (error: unknown) => new SeedFailure(timedOut(error) ? "D1 discovery timed out" : "D1 discovery failed", timedOut(error) ? SEED_EXIT.timeout : SEED_EXIT.refused)
   let found: Awaited<ReturnType<typeof d1Databases>>
   try { found = await d1Databases(client, name, timeoutMs) }
-  catch (error) { throw new SeedFailure(timedOut(error) ? "D1 discovery timed out" : "D1 discovery failed", timedOut(error) ? SEED_EXIT.timeout : SEED_EXIT.refused) }
-  if (!found.ok) throw new SeedFailure(`could not list D1 databases: ${JSON.stringify(answerErrors(found.error))}`, SEED_EXIT.refused)
-  return found.value.result.flatMap(({ uuid, name: named }) => uuid != null && named != null ? [{ uuid, name: named }] : []).find((db) => db.name === name)
+  catch (error) { throw fail(error) }
+  if (!found.ok) {
+    let envelope: { errors?: unknown }
+    try { envelope = await found.response.json() as { errors?: unknown } }
+    catch (error) { throw fail(error) }
+    throw new SeedFailure(`could not list D1 databases: ${JSON.stringify(envelope?.errors)}`, SEED_EXIT.refused)
+  }
+  const result: unknown = found.value.result
+  if (!Array.isArray(result)) throw fail(undefined)
+  return (result as { uuid?: string | null; name?: string | null }[]).flatMap(({ uuid, name: named }) => uuid != null && named != null ? [{ uuid, name: named }] : []).find((db) => db.name === name)
 }
 
 /** Reap Wrangler on success, error, SIGINT and SIGTERM before returning. */

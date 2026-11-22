@@ -21,7 +21,8 @@ function recording(...replies: Reply[]): { client: CloudflareClient; sent: Sent[
     const headers = new Headers(init?.headers)
     sent.push({ method: init?.method ?? "GET", url: String(url), authorization: headers.get("authorization"), contentType: headers.get("content-type"), body: typeof init?.body === "string" ? init.body : init?.body === undefined || init.body === null ? "" : await new Response(init.body).text() })
     const reply = replies.shift() ?? envelope({})
-    return new Response(typeof reply.body === "string" ? reply.body : JSON.stringify(reply.body), { status: reply.status ?? 200, headers: { "content-type": "application/json" } })
+    const status = reply.status ?? 200
+    return new Response(status === 204 || status === 304 ? null : typeof reply.body === "string" ? reply.body : JSON.stringify(reply.body), { status, headers: { "content-type": "application/json" } })
   }
   return { client: { credentials, fetch: send as typeof fetch }, sent }
 }
@@ -51,7 +52,7 @@ test("each operation sends the request the hand-written fetch sent", async () =>
 
   const databases = recording(envelope([{ uuid: "db-1", name: "norn-studio-auth-preview" }], { page: 1, per_page: 20, count: 1, total_count: 1 }))
   expect((await d1Databases(databases.client, "norn-studio-auth-preview")).ok).toBe(true)
-  expect(databases.sent).toEqual([get("/d1/database?name=norn-studio-auth-preview")])
+  expect(databases.sent).toEqual([{ ...get("/d1/database?name=norn-studio-auth-preview"), contentType: "application/json" }])
 
   const script = recording(envelope({}))
   await requireWorkerScript("norn-cell-preview", credentials, script.client.fetch)
@@ -96,6 +97,26 @@ test("typed errors map to the scripts' messages", async () => {
   expect(await discoverD1(recording(envelope([{ uuid: "db-1", name: "norn-studio-auth-preview" }], { page: 1, per_page: 20, count: 1, total_count: 1 })).client, "norn-studio-auth-preview")).toEqual({ uuid: "db-1", name: "norn-studio-auth-preview" })
   const unreachable: CloudflareClient = { credentials, fetch: (async () => { throw new TypeError("Unable to connect") }) as unknown as typeof fetch }
   await expect(discoverD1(unreachable, "norn-studio-auth-preview")).rejects.toMatchObject({ exitCode: SEED_EXIT.refused, message: "D1 discovery failed" })
+})
+
+test("a Worker check decides from the status line, never waiting on the body; a 304 is not success", async () => {
+  // A 404 whose body never arrives: the old fetch decided from headers, and so does the typed client.
+  const stalledBody = ((_url: RequestInfo | URL, init?: RequestInit) => Promise.resolve(new Response(new ReadableStream({ start() {} }), { status: 404 }))) as typeof fetch
+  const started = Date.now()
+  await expect(requireWorkerScript("norn-cell-preview", credentials, stalledBody)).rejects.toThrow("The cell Worker norn-cell-preview does not exist")
+  expect(await recipeIssues("norn", { credentials, fetch: stalledBody })).toBeUndefined()
+  expect(Date.now() - started).toBeLessThan(5_000)
+  await expect(requireWorkerScript("norn-cell-preview", credentials, recording({ status: 304, body: "" }).client.fetch)).rejects.toThrow(/^Could not check the cell Worker norn-cell-preview: Cloudflare answered 304$/)
+})
+
+test("D1 discovery prints Cloudflare's own errors envelope; an unreadable reply is a failed discovery (exit 125)", async () => {
+  const twoErrors = { status: 403, body: { success: false, errors: [{ code: 10000, message: "Authentication error" }, { code: 9109, message: "Unauthorized to access requested resource" }], messages: [], result: null } }
+  await expect(discoverD1(recording(twoErrors).client, "norn-studio-auth-preview")).rejects.toMatchObject({ exitCode: SEED_EXIT.refused, message: `could not list D1 databases: ${JSON.stringify(twoErrors.body.errors)}` })
+  const refusedIn200 = { body: { success: false, errors: [{ code: 7500, message: "bad" }], messages: [], result: null } }
+  await expect(discoverD1(recording(refusedIn200).client, "norn-studio-auth-preview")).rejects.toMatchObject({ exitCode: SEED_EXIT.refused, message: 'could not list D1 databases: [{"code":7500,"message":"bad"}]' })
+  for (const reply of [{ status: 502, body: "<html>bad gateway</html>" }, { status: 200, body: "<html>not json</html>" }]) {
+    await expect(discoverD1(recording(reply).client, "norn-studio-auth-preview")).rejects.toMatchObject({ exitCode: SEED_EXIT.refused, message: "D1 discovery failed" })
+  }
 })
 
 test("no call retries: a throttled or failing answer is one request", async () => {
