@@ -99,7 +99,10 @@ export async function discoverD1(client: CloudflareClient, name: string, timeout
   catch (error) { throw fail(error) }
   if (envelope === null || typeof envelope !== "object" || envelope.success !== true) throw new SeedFailure(`could not list D1 databases: ${JSON.stringify(envelope?.errors)}`, SEED_EXIT.refused)
   if (!Array.isArray(envelope.result)) throw fail(undefined)
-  return (envelope.result as { uuid?: unknown; name?: unknown }[]).flatMap(({ uuid, name: named }) => typeof uuid === "string" && typeof named === "string" ? [{ uuid, name: named }] : []).find((db) => db.name === name)
+  // The first entry naming the database, as before; entries before it that are not databases are skipped.
+  const database = (envelope.result as unknown[]).find((db): db is { uuid: string; name: string } =>
+    db !== null && typeof db === "object" && typeof (db as { uuid?: unknown }).uuid === "string" && (db as { name?: unknown }).name === name)
+  return database === undefined ? undefined : { uuid: database.uuid, name: database.name }
 }
 
 /** Reap Wrangler on success, error, SIGINT and SIGTERM before returning. */

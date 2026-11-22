@@ -122,6 +122,8 @@ test("D1 discovery prints Cloudflare's own errors envelope; an unreadable reply 
 test("D1 discovery needs the envelope's success: a matching database without it is a refusal", async () => {
   const noSuccess = { body: { errors: [{ code: 1, message: "partial" }], result: [{ uuid: "db-1", name: "norn-studio-auth-preview" }] } }
   await expect(discoverD1(recording(noSuccess).client, "norn-studio-auth-preview")).rejects.toMatchObject({ exitCode: SEED_EXIT.refused, message: 'could not list D1 databases: [{"code":1,"message":"partial"}]' })
+  const withNull = envelope([{ uuid: "db-1", name: "norn-studio-auth-preview" }, null], { page: 1, per_page: 20, count: 2, total_count: 2 })
+  expect(await discoverD1(recording(withNull).client, "norn-studio-auth-preview")).toEqual({ uuid: "db-1", name: "norn-studio-auth-preview" })
   const stalled200: CloudflareClient = { credentials, fetch: ((_url: RequestInfo | URL, init?: RequestInit) => Promise.resolve(new Response(new ReadableStream({ start(controller) { init?.signal?.addEventListener("abort", () => controller.error(init.signal?.reason)) } }), { status: 200 }))) as typeof fetch }
   await expect(discoverD1(stalled200, "norn-studio-auth-preview", 40)).rejects.toMatchObject({ exitCode: SEED_EXIT.timeout, message: "D1 discovery timed out" })
 })
