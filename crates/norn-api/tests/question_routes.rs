@@ -1893,6 +1893,111 @@ fn a_historical_question_on_a_deleted_labelled_field_is_refused() {
     );
 }
 
+/// S2a (#1547): a metric's default filter is a predicate on row values too.
+/// The question neither groups nor filters by `metal`; its sums carry
+/// `metal = gold` as their metrics' default. Every conversion's `metal` was
+/// labelled and then deleted, so the as-of total at the cutoff before the
+/// delete would still reveal whether a deleted labelled value matched. It
+/// refuses with `question.marked_history`, pointing at the default filter.
+#[test]
+fn a_historical_sum_whose_default_filter_reads_a_deleted_labelled_field_is_refused() {
+    let (mut store, base, mut context) = fixture();
+    context.scope = physical().key();
+    context.world = norn_cell::MAIN_WORLD.into();
+    install_runtime_marking(&mut store, &context.scope);
+    let keys = fixture_keys();
+    let labelled = store
+        .commit(&CommitBatch {
+            world: norn_cell::MAIN_WORLD.into(),
+            scope: context.scope.clone(),
+            logical_time: CLOCK,
+            writes: fixture_writes(),
+            events: vec![
+                norn_ir::RuntimeValue::from_json(serde_json::json!({
+                    "type": "observation.recorded",
+                    "mapped": keys.iter().map(|key| serde_json::json!({
+                        "objectType": TYPE,
+                        "key": key,
+                        "propertyProvenance": {"metal": {"markings": ["pii.contact"]}}
+                    })).collect::<Vec<_>>()
+                }))
+                .expect("event"),
+            ],
+            ..CommitBatch::default()
+        })
+        .expect("K1")
+        .receipt()
+        .clone();
+    store
+        .commit(&CommitBatch {
+            world: norn_cell::MAIN_WORLD.into(),
+            scope: context.scope.clone(),
+            logical_time: CLOCK + 1000,
+            writes: keys
+                .iter()
+                .map(|key| FactWriteRow::Delete {
+                    object_type: TYPE.into(),
+                    key: key.clone(),
+                })
+                .collect(),
+            ..CommitBatch::default()
+        })
+        .expect("K2 deletes every labelled row");
+    let gold: Vec<norn_ir::metric::MetricFilter> = serde_json::from_value(serde_json::json!(
+        [{"path":{"property":"metal"},"operator":"eq","value":"gold"}]
+    ))
+    .expect("default filter");
+    let mut definitions = base.definitions().to_vec();
+    for definition in &mut definitions {
+        if definition.metric_type != norn_ir::metric::MetricType::Ratio {
+            definition.norn.default_filters.clone_from(&gold);
+        }
+    }
+    let mut question = base.question().clone();
+    question.filters.clear();
+    question.freshness = norn_ir::metric::FreshnessPolicy::AsOf {
+        at: norn_ir::UtcTimestamp("2026-10-26T00:00:00Z".into()),
+    };
+    let historical = admit_on(&store, &definitions, &question);
+    assert!(
+        historical.question().filters.is_empty()
+            && historical.sums().iter().all(|sum| sum.filters == gold),
+        "the predicate is the metrics' default, not the question's"
+    );
+    let host = DevHost::from_store(store, physical(), |_| BTreeMap::new())
+        .expect("host")
+        .with_authorizer(Policy);
+    let at_cutoff = Runtime {
+        bad_row: false,
+        plan: historical,
+        context,
+        cutoff: Some(KnowledgeCutoff {
+            recorded_at: LogicalTime::from_millis(labelled.body.logical_time),
+            frontier: labelled.body.commit_seq,
+        }),
+        cutoff_receipt: None,
+        resolved: Arc::new(AtomicUsize::new(0)),
+        min_disclosed: norn_api::question_routes::DEFAULT_MIN_DISCLOSED_BUCKET,
+    };
+    let refused = get_answer(&host, &scope(), Some("reader"), QUESTION, &at_cutoff)
+        .expect_err("the as-of total reads the deleted labelled values");
+    assert_eq!(
+        (refused.status, refused.code.as_str()),
+        (422, norn_api::question_routes::MARKED_HISTORY),
+        "{refused:?}"
+    );
+    assert!(
+        refused.diagnostics.iter().any(|d| {
+            d.code == norn_api::question_routes::MARKED_HISTORY
+                && d
+                    .span
+                    .as_ref()
+                    .is_some_and(|span| span.pointer.ends_with("/norn/defaultFilters/0"))
+        }),
+        "{refused:?}"
+    );
+}
+
 /// PRIVACY-4 at answer time. `metal` declares no marking, so admission admits
 /// the question that filters by it; but a source classified the conversions'
 /// `metal` at runtime (`pii.contact`), so its values carry that label. The

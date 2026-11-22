@@ -451,7 +451,8 @@ pub fn get_numeric_trace<E: SqlEngine>(
 /// of deleted and relabelled rows, which the live summary does not see. It is
 /// refused with `question.marked_history` when any version, current or past,
 /// of a grouped or filtered property holds a label (S2, #1547): fail closed
-/// rather than prove which versions it reads are unmarked.
+/// rather than prove which versions it reads are unmarked. "Filtered" covers
+/// every lowered sum's filters, its metric's default filters included (S2a).
 fn refuse_labeled_paths<E: SqlEngine>(
     host: &DevHost<E>,
     store: &CellStore<E>,
@@ -460,7 +461,13 @@ fn refuse_labeled_paths<E: SqlEngine>(
     historical: bool,
 ) -> Result<(), Refusal> {
     let question = plan.question();
-    if question.dimensions.is_empty() && question.filters.is_empty() {
+    // A lowered sum's filters (its metric's defaults, S2a #1547) are
+    // predicates on row values too: a total can reveal whether a marked
+    // value matched, so they are checked like the question's own.
+    if question.dimensions.is_empty()
+        && question.filters.is_empty()
+        && plan.sums().iter().all(|sum| sum.filters.is_empty())
+    {
         return Ok(());
     }
     let reader = store.read();
@@ -471,14 +478,22 @@ fn refuse_labeled_paths<E: SqlEngine>(
         .dimensions
         .iter()
         .enumerate()
-        .map(|(index, dimension)| (format!("/groupBy/{index}"), &dimension.path))
+        .map(|(index, dimension)| (format!("/question/groupBy/{index}"), &dimension.path))
         .chain(
             question
                 .filters
                 .iter()
                 .enumerate()
-                .map(|(index, filter)| (format!("/filter/{index}"), &filter.path)),
-        );
+                .map(|(index, filter)| (format!("/question/filter/{index}"), &filter.path)),
+        )
+        .chain(plan.sums().iter().flat_map(|sum| {
+            sum.filters.iter().enumerate().map(move |(index, filter)| {
+                (
+                    format!("/metric/{}/norn/defaultFilters/{index}", sum.name),
+                    &filter.path,
+                )
+            })
+        }));
     for (pointer, path) in paths {
         let property = path.property.as_str();
         // An own path is read on the grain; a linked one (admitted only for a
@@ -514,7 +529,7 @@ fn refuse_labeled_paths<E: SqlEngine>(
                 refusal.diagnostics = vec![crate::refusal::RefusalDiagnostic::error(
                     MARKED_HISTORY,
                     "this question groups or filters by a field whose earlier or deleted versions are marked",
-                    format!("/question{pointer}"),
+                    pointer.clone(),
                 )];
                 return Err(refusal);
             }
@@ -531,7 +546,7 @@ fn refuse_labeled_paths<E: SqlEngine>(
                 refusal.diagnostics = vec![crate::refusal::RefusalDiagnostic::error(
                     norn_checker::metric::codes::MARKED_FIELD,
                     "this question groups or filters by a field whose values are marked",
-                    format!("/question{pointer}"),
+                    pointer.clone(),
                 )];
                 return Err(refusal);
             }
