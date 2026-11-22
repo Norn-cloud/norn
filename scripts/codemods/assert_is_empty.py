@@ -142,7 +142,7 @@ def top_level(s):
 
 # A receiver: a path, method chain or indexing, optionally behind & or *. No operator, closure,
 # cast or block at its top level, so `X.is_empty()` is the whole condition.
-RECEIVER = re.compile(r"[&*]*\s*[A-Za-z_][A-Za-z0-9_]*(?:\s*(?:\.|::|\?)\s*[A-Za-z0-9_]*|!)*\s*")
+RECEIVER = re.compile(r"[&*]*\s*[A-Za-z_][A-Za-z0-9_]*(?:\s*(?:\.|::)\s*[A-Za-z0-9_]+|\s*\?|!)*\s*")
 
 def condition(first):
     """(negated, receiver) when `first` is exactly `[!]X.is_empty()`, else None."""
@@ -196,7 +196,7 @@ def lenfix_text(text, at):
     for point in sorted(at, reverse=True):
         starts = {i for i, c in code_positions(text) if c == "a"}
         best = None
-        for m in re.finditer(r"\bassert_(eq|ne)!\(", text):
+        for m in re.finditer(r"\bassert_(eq|ne)!\s*[(\[{]", text):
             if m.start() not in starts or m.start() > point:
                 continue
             close = args_end(text, m.end() - 1)
@@ -293,6 +293,11 @@ def test():
         ("assert_eq!(&xs[1..], [])", 12, "assert_eq!((&xs[1..]).len(), 0)"),
         # A receiver holding a comment is left for a person.
         ("assert_eq!(xs // why\n, [])", 12, None),
+        # A nested assert written with braces or a space after `!` is still the innermost.
+        ("assert_eq!(f(|| assert_eq!{map, []}), [])", 28, "assert_eq!(f(|| assert_eq!{map.len(), 0}), [])"),
+        ("assert_eq!(f(|| assert_eq! (map, [])), [])", 29, "assert_eq!(f(|| assert_eq! (map.len(), 0)), [])"),
+        # A range is grouped before `.len()`.
+        ("assert_eq!(start..end, [])", 12, "assert_eq!((start..end).len(), 0)"),
     ]
     for source, column, want in lens:
         got, n = lenfix_text(source, {offset(source, 1, column)})
