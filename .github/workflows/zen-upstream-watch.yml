@@ -1,0 +1,95 @@
+name: Zen upstream watch
+
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: zen-upstream-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    permissions:
+      contents: read
+      issues: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: List upstream zen releases since the fork base and update the tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          pin=crates/norn-skeleton-guard/zen-pin.json
+          upstream="$(jq -er .upstream.repository "${pin}")"
+          base_tag="$(jq -er .upstream.base_tag "${pin}")"
+          norn_tag="$(jq -er .tag "${pin}")"
+          base_version="${base_tag##*-v}"
+          base_date="$(gh api "repos/${upstream}/releases/tags/${base_tag}" --jq .published_at)"
+          releases="$(gh api --paginate "repos/${upstream}/releases?per_page=100" \
+            | jq -r --arg published "${base_date}" --arg base "${base_version}" \
+              '.[] | select(.draft | not)
+                  | select(.tag_name | test("^zen-(engine|expression|types|tmpl|macros)-v[0-9]+[.][0-9]+[.][0-9]+([-.][A-Za-z0-9.-]+)?$"))
+                  | select(.published_at >= $published)
+                  | select((.tag_name | sub("^zen-[a-z]+-v"; "")) != $base)
+                  | "| [`\(.tag_name)`](\(.html_url)) | \(.published_at[:10]) | \(if .prerelease then "pre-release" else "stable" end) | \(if ((.body // "") | test("(?i)security|CVE-|GHSA-|RUSTSEC-")) then "**check: mentions security**" else "" end) |"')"
+          # Advisories: a failed request must not read as "no advisories".
+          # Only an explicit 404 (advisories not available for the repo) is
+          # treated as empty, and the issue says so.
+          adv_err="${RUNNER_TEMP}/advisories.err"
+          if advisories="$(gh api --paginate "repos/${upstream}/security-advisories?state=published&per_page=100" \
+              --jq '.[] | "- [\(.ghsa_id)](\(.html_url)), \(.severity), published \(.published_at[:10])"' 2>"${adv_err}")"; then
+            advisories_note="${advisories:-None published.}"
+          elif grep -q 'HTTP 404' "${adv_err}"; then
+            advisories=""
+            advisories_note="Not available for ${upstream} (HTTP 404)."
+          else
+            echo "::error::security-advisories request failed:"
+            cat "${adv_err}"
+            exit 1
+          fi
+          title="zen upstream watch: gorules/zen releases since ${base_tag}"
+          body_file="${RUNNER_TEMP}/zen-watch.md"
+          {
+            echo "Automated by \`.github/workflows/zen-upstream-watch.yml\`. Last run: $(date -u +%Y-%m-%dT%H:%MZ)."
+            echo
+            echo "Fork pin: \`${norn_tag}\` on upstream base \`${base_tag}\` (published ${base_date:0:10}). See [Taking upstream fixes](${GITHUB_SERVER_URL}/${GH_REPO}/blob/main/vendor/zen/README.md#taking-upstream-fixes)."
+            echo
+            if [[ -n "${releases}" ]]; then
+              echo "## Rust crate releases newer than the base"
+              echo
+              echo "| Tag | Published | Kind | Notes |"
+              echo "| --- | --- | --- | --- |"
+              echo "${releases}"
+            else
+              echo "No Rust crate release newer than \`${base_tag}\`."
+            fi
+            echo
+            echo "## Published upstream security advisories"
+            echo
+            echo "${advisories_note}"
+            echo
+            echo "Prioritize security fixes. Close this issue after recording the review or updating the vendored pin."
+          } > "${body_file}"
+          # Issue lookup and updates through the REST API (`gh api` only).
+          existing="$(gh api --paginate "repos/${GH_REPO}/issues?state=open&per_page=100" \
+            --jq '.[] | select(.pull_request | not) | select(.title | startswith("zen upstream watch")) | .number' \
+            | sed -n 1p)"
+          if [[ -n "${existing}" ]]; then
+            gh api -X PATCH "repos/${GH_REPO}/issues/${existing}" \
+              -f title="${title}" -F body=@"${body_file}" --jq .html_url
+            echo "Updated #${existing}"
+          elif [[ -n "${releases}${advisories}" ]]; then
+            gh api -X POST "repos/${GH_REPO}/issues" \
+              -f title="${title}" -F body=@"${body_file}" --jq .html_url
+          else
+            echo "Nothing new upstream; no issue opened."
+          fi
