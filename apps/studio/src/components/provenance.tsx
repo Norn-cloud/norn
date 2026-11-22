@@ -243,7 +243,7 @@ export function AnswerProvenance({ label, value, provenance, onTrace, records, v
   readonly children: ReactNode
 }) {
   const [open, setOpen] = useState(false)
-  const trace = onTrace && <button type="button" onClick={() => { setOpen(false); onTrace() }} className="text-sm font-medium underline-offset-4 hover:underline">See the {records} {records === 1 ? "record" : "records"} and their receipts</button>
+  const trace = onTrace && <button type="button" onClick={() => { setOpen(false); onTrace() }} className="text-sm font-medium underline-offset-4 hover:underline">See the {records} contributing {records === 1 ? "record" : "records"}</button>
   return (
     <ProvenancePopover variant={variant} className={className} label={label} open={open} onOpenChange={setOpen} card={<ProvenanceCard label={label} value={value} trace={trace}><ProvenanceSteps provenance={provenance} /></ProvenanceCard>}>
       {children}

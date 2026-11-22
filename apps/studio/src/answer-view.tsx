@@ -267,7 +267,7 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
           {read.answer.origin === "live"
             ? <Chip tone="green" dot pulse title="Read now from the cell as your account.">Live</Chip>
             : <Chip tone="gray" title="A document the engine produced, replayed exactly. Not a live connection.">Recorded snapshot</Chip>}
-          <Chip tone={answer.freshness === "exact" || answer.freshness === "fresh" ? "green" : "amber"} dot title={freshness.meaning}>{freshness.label}</Chip>
+          <Chip tone={answer.freshness === "exact" || answer.freshness === "fresh" ? "green" : "amber"} dot title={freshness.meaning}>{!live && (answer.freshness === "exact" || answer.freshness === "fresh") ? "Up to date at capture" : freshness.label}</Chip>
         </div>
         {refusal && <RefusedNote refusal={refusal} />}
       </div>
